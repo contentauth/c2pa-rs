@@ -10,7 +10,7 @@ Use the tool on a file in one of the [supported formats](https://github.com/cont
 
 For a simple example of calling c2patool from a Node.js server application, see the [c2patool-service-example](https://github.com/contentauth/c2patool-service-example) repository.
 
-<div style={{display: 'none'}}>
+<div class="github-only">
 
 **Additional documentation**:
 

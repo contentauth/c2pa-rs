@@ -4,7 +4,7 @@
 
 For information on support tiers for CI tests, see [Support tiers for C2PA Rust SDK products](https://github.com/contentauth/c2pa-rs/blob/main/docs/support-tiers.md)
 
-<div style={{display: 'none'}}>
+<div class="github-only">
 
 The **[Coalition for Content Provenance and Authenticity](https://c2pa.org)** (C2PA) addresses the prevalence of misleading information online through the development of technical standards for certifying the source and history (or provenance) of media content. The C2PA Rust library is part of the [Content Authenticity Initiative](https://contentauthenticity.org) open-source SDK.
 

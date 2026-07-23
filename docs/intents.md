@@ -4,7 +4,7 @@ _Intents_ tell the C2PA `Builder` what kind of manifest you are creating. They e
 
 You can use an intent for any asset type.  Intents are about the operation (create/edit/update), not the asset type.
 
-<div style={{display: 'none'}}>
+<div class="github-only">
 
 **References**:
 
