@@ -7,7 +7,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.26.59](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.58...c2patool-v0.26.59)
+## [0.26.72](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.71...c2patool-v0.26.72)
+_13 July 2026_
+
+## [0.26.71](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.70...c2patool-v0.26.71)
+_13 July 2026_
+
+## [0.26.70](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.69...c2patool-v0.26.70)
+_09 July 2026_
+
+### Fixed
+
+* Fix new Clippy warnings for Rust 1.97.0 ([#2279](https://github.com/contentauth/c2pa-rs/pull/2279))
+* Ensure created has a dst and don't add parent when actions already exist ([#2264](https://github.com/contentauth/c2pa-rs/pull/2264))
+
+## [0.26.69](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.68...c2patool-v0.26.69)
+_07 July 2026_
+
+## [0.26.68](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.67...c2patool-v0.26.68)
+_19 June 2026_
+
+## [0.26.67](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.66...c2patool-v0.26.67)
+_11 June 2026_
+
+### Added
+
+* Remove some long deprecated APIs ([#2206](https://github.com/contentauth/c2pa-rs/pull/2206))
+
+## [0.26.66](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.65...c2patool-v0.26.66)
+_11 June 2026_
+
+### Fixed
+
+* Enable c2pa features in sub-crates since default-features is disabled at the workspace-level ([#2219](https://github.com/contentauth/c2pa-rs/pull/2219))
+
+### Other
+
+* Use latest `release-plz` and add a dry run job on release PRs ([#2217](https://github.com/contentauth/c2pa-rs/pull/2217))
+
+## [0.26.65](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.64...c2patool-v0.26.65)
+_09 June 2026_
+
+### Fixed
+
+* DLL hijacking vulnerability in c2patool (CAI-8608) ([#2031](https://github.com/contentauth/c2pa-rs/pull/2031))
+
+## [0.26.64](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.63...c2patool-v0.26.64)
+_08 June 2026_
+
+## [0.26.63](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.62...c2patool-v0.26.63)
+_04 June 2026_
+
+## [0.26.62](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.61...c2patool-v0.26.62)
+_03 June 2026_
+
+## [0.26.61](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.60...c2patool-v0.26.61)
+_01 June 2026_
+
+## [0.26.60](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.59...c2patool-v0.26.60)
+_27 May 2026_
+
+### Added
+
+* Add Intent support to c2patool ([#2171](https://github.com/contentauth/c2pa-rs/pull/2171))
+* Support CAWG callback signing via c_ffi ([#2118](https://github.com/contentauth/c2pa-rs/pull/2118))
+
+### Fixed
+
+* Share reqwest HTTP clients ([#2152](https://github.com/contentauth/c2pa-rs/pull/2152))
+
+### Added
+
+* `--create <source-type>` flag to sign an asset as a new original creation with the specified [C2PA digital source type](https://cv.iptc.org/newscodes/digitalsourcetype/) (e.g. `digitalCapture`, `trainedAlgorithmicMedia`). Automatically injects a `c2pa.created` action. Mutually exclusive with `--update` and `--parent`.
+* `--update` flag to generate an [update manifest](https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_update_manifests) for non-editorial changes applied to an already-signed asset. Automatically injects a `c2pa.opened` action and sets the source asset as the parent ingredient. The source asset must already contain a C2PA manifest. Mutually exclusive with `--create`.
+
+### Changed
+
+* Default signing behavior now applies **Edit** intent: the source asset is automatically added as a parent ingredient and a `c2pa.opened` action is injected. Previously no intent or parent was set automatically.
+* Signature validation after signing is now enabled by default in all builds (previously only in test builds). Use `--no_signing_verify` to skip it.(https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.58...c2patool-v0.26.59)
 _12 May 2026_
 
 ## [0.26.58](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.26.57...c2patool-v0.26.58)

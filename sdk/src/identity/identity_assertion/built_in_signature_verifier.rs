@@ -33,7 +33,7 @@ use crate::{
 pub struct BuiltInSignatureVerifier<'a> {
     /// Configuration to use when an identity claims aggregation credential is
     /// presented.
-    pub ica_verifier: IcaSignatureVerifier,
+    pub ica_verifier: IcaSignatureVerifier<'a>,
 
     /// Configuration to use when an X.509 credential is presented.
     pub x509_verifier: X509SignatureVerifier<'a>,
@@ -194,7 +194,7 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::{
-        crypto::raw_signature,
+        context::Context,
         identity::{
             builder::{
                 AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner,
@@ -237,15 +237,14 @@ mod tests {
         let (cawg_cert_chain, cawg_private_key) =
             cert_chain_and_private_key_for_alg(SigningAlg::Ed25519);
 
-        let cawg_raw_signer = raw_signature::async_signer_from_cert_chain_and_private_key(
-            &cawg_cert_chain,
-            &cawg_private_key,
-            SigningAlg::Ed25519,
-            None,
-        )
-        .unwrap();
+        let cawg_raw_signer =
+            c2pa_raw_crypto::signer_from_private_key(&cawg_private_key, SigningAlg::Ed25519)
+                .unwrap();
 
-        let x509_holder = AsyncX509CredentialHolder::from_async_raw_signer(cawg_raw_signer);
+        let x509_holder = AsyncX509CredentialHolder::from_async_raw_signer(
+            cawg_raw_signer,
+            crate::crypto::cert_chain_pem_to_der(&cawg_cert_chain).unwrap(),
+        );
         let iab = AsyncIdentityAssertionBuilder::for_credential_holder(x509_holder);
         c2pa_signer.add_identity_assertion(iab);
 
@@ -270,7 +269,8 @@ mod tests {
         drop(ia_iter);
 
         // And that identity assertion should be valid for this manifest.
-        let verifier = default_built_in_signature_verifier();
+        let context = Context::new();
+        let verifier = default_built_in_signature_verifier(&context);
         let sig_info = ia.validate(manifest, &mut st, &verifier).await.unwrap();
 
         let BuiltInCredential::X509Signature(sig_info) = sig_info else {
@@ -320,7 +320,8 @@ mod tests {
         drop(ia_iter);
 
         // And that identity assertion should be valid for this manifest.
-        let verifier = default_built_in_signature_verifier();
+        let context = Context::new();
+        let verifier = default_built_in_signature_verifier(&context);
         let ica = ia.validate(manifest, &mut st, &verifier).await.unwrap();
 
         let BuiltInCredential::IdentityClaimsAggregationCredential(ica) = ica else {
@@ -432,7 +433,8 @@ mod tests {
         drop(ia_iter);
 
         // And that identity assertion should be valid for this manifest.
-        let verifier = default_built_in_signature_verifier();
+        let context = Context::new();
+        let verifier = default_built_in_signature_verifier(&context);
         let err = ia.validate(manifest, &mut st, &verifier).await.unwrap_err();
 
         match err {

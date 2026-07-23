@@ -26,17 +26,23 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::json;
 use serde_with::skip_serializing_none;
 use uuid::Uuid;
-use zip::{write::SimpleFileOptions, ZipArchive, ZipWriter};
+use zip::ZipArchive;
 
 #[allow(deprecated)]
-use crate::assertions::CreativeWork;
+use crate::assertions::{CreativeWork, Exif};
+// Only the experimental filtering API resolves ingredient references by positional assertion
+// label, so these helpers are needed only when that feature is enabled.
+#[cfg(feature = "experimental_builder_filter")]
+use crate::jumbf::labels::{
+    assertion_label_from_uri, label_segment_from_uri, parse_positional_label,
+};
 use crate::{
     assertion::{AssertionBase, AssertionDecodeError},
     assertions::{
         c2pa_action,
         labels::{self, parse_label},
         Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash, DataHash,
-        DigitalSourceType, EmbeddedData, ExclusionsMap, Exif, MerkleMap, Metadata, SoftwareAgent,
+        DigitalSourceType, EmbeddedData, ExclusionsMap, MerkleMap, Metadata, SoftwareAgent,
         SubsetMap, Thumbnail, TimeStamp, User, UserCbor,
     },
     claim::Claim,
@@ -52,11 +58,17 @@ use crate::{
     store::Store,
     utils::{
         hash_utils::hash_to_b64, merkle::MerkleAccumulator, mime::format_to_mime,
-        path_utils::sanitize_archive_path,
+        path_utils::sanitize_archive_path, xmp_inmemory_utils::XmpInfo,
     },
     AsyncSigner, ClaimGeneratorInfo, EphemeralSigner, HashRange, HashedUri, Ingredient,
     ManifestAssertionKind, Reader, Relationship, Signer,
 };
+
+/// Label for the `archive:type` field in working-store archive metadata.
+const ARCHIVE_TYPE: &str = "archive:type";
+
+/// Label for the `archive::ingredient_id` field in working-store archive metadata.
+const ARCHIVE_INGREDIENT_ID: &str = "archive::ingredient_id";
 
 /// The hash binding type that a [`Builder`] will use for embeddable signing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,16 +97,22 @@ pub(crate) enum ArchiveKind {
 }
 
 impl ArchiveKind {
-    fn archive_type_str(&self) -> &'static str {
-        match self {
-            ArchiveKind::Builder => labels::ARCHIVE_TYPE_BUILDER,
-            ArchiveKind::Ingredient { .. } => labels::ARCHIVE_TYPE_INGREDIENT,
+    pub fn from_metadata(metadata: &Metadata) -> Option<Self> {
+        let archive_type = metadata.value.get(ARCHIVE_TYPE)?.as_str()?;
+        match archive_type {
+            labels::ARCHIVE_TYPE_BUILDER => Some(ArchiveKind::Builder),
+            labels::ARCHIVE_TYPE_INGREDIENT => {
+                let ingredient_id = metadata
+                    .value
+                    .get(ARCHIVE_INGREDIENT_ID)?
+                    .as_str()?
+                    .to_string();
+                Some(ArchiveKind::Ingredient { ingredient_id })
+            }
+            _ => None,
         }
     }
 }
-
-/// Version of the Builder Archive file
-const ARCHIVE_VERSION: &str = "1";
 
 /// Use a ManifestDefinition to define a manifest and to build a `ManifestStore`.
 /// A manifest is a collection of ingredients and assertions
@@ -184,7 +202,7 @@ fn default_format() -> String {
 
 // TryFrom implementations for ManifestDefinition
 
-/// Implement TryFrom for &str (JSON string)
+/// Implement TryFrom for &str (JSON string).
 impl TryFrom<&str> for ManifestDefinition {
     type Error = Error;
 
@@ -193,7 +211,7 @@ impl TryFrom<&str> for ManifestDefinition {
     }
 }
 
-/// Implement TryFrom for String
+/// Implement TryFrom for String.
 impl TryFrom<String> for ManifestDefinition {
     type Error = Error;
 
@@ -406,13 +424,11 @@ pub struct Builder {
 
     /// Base path to search for resources.
     #[cfg(feature = "file_io")]
-    #[deprecated(note = "Use set_base_path() instead")]
     #[serde(skip)]
-    pub base_path: Option<PathBuf>,
+    base_path: Option<PathBuf>,
 
     /// A builder should construct a created, opened or updated manifest.
-    #[deprecated(note = "Use set_intent() to set or intent()")]
-    pub intent: Option<BuilderIntent>,
+    intent: Option<BuilderIntent>,
 
     /// Manifest labels to fetch timestamps for.
     ///
@@ -441,6 +457,19 @@ pub struct Builder {
 impl AsRef<Builder> for Builder {
     fn as_ref(&self) -> &Self {
         self
+    }
+}
+
+/// Returns `true` if `child` resolves to a location inside `ancestor`.
+///
+/// Both are canonicalized so symlinks and `.`/`..` segments are resolved; if
+/// canonicalization fails (e.g. a path does not exist) it falls back to a
+/// lexical prefix comparison.
+#[cfg(feature = "file_io")]
+fn path_is_within(child: &Path, ancestor: &Path) -> bool {
+    match (child.canonicalize(), ancestor.canonicalize()) {
+        (Ok(child), Ok(ancestor)) => child.starts_with(ancestor),
+        _ => child.starts_with(ancestor),
     }
 }
 
@@ -567,7 +596,6 @@ impl Builder {
     /// * `intent` - The [`BuilderIntent`] for this [`Builder`].
     /// # Returns
     /// * A mutable reference to the [`Builder`].
-    #[allow(deprecated)]
     pub fn set_intent(&mut self, intent: BuilderIntent) -> &mut Self {
         // Note: We can't modify context.settings anymore since Context is in an Arc
         // The intent is stored in the Builder itself
@@ -577,7 +605,6 @@ impl Builder {
 
     /// Returns the current [`BuilderIntent`] for this [`Builder`], if set.
     /// If not set, it will use the Settings default intent.
-    #[allow(deprecated)]
     pub fn intent(&self) -> Option<BuilderIntent> {
         let mut intent = self.intent.clone();
         if intent.is_none() {
@@ -710,7 +737,6 @@ impl Builder {
     /// # Returns
     /// * A mutable reference to the [`Builder`].
     #[cfg(feature = "file_io")]
-    #[allow(deprecated)]
     pub fn set_base_path<P: Into<PathBuf>>(&mut self, base_path: P) -> &mut Self {
         let base_path = base_path.into();
         // make sure the resource store is updated to the current base path
@@ -719,6 +745,45 @@ impl Builder {
 
         self.base_path = Some(base_path);
         self
+    }
+
+    /// Returns the base path used to search for resources, if set.
+    #[cfg(feature = "file_io")]
+    pub fn base_path(&self) -> Option<&Path> {
+        self.base_path.as_deref()
+    }
+
+    /// Apply the resource base path and manifest containment root before disk-backed
+    /// resources are read at claim time.
+    ///
+    /// `base_path` is where relative identifiers are resolved from; the containment
+    /// root is the boundary they may not escape (defaults to `base_path`).
+    ///
+    /// Each ingredient is confined to its own base directory, widened to the
+    /// top-level manifest root only when that base lives *inside* the manifest tree.
+    /// This lets a nested ingredient (base is a subdirectory of the manifest dir)
+    /// reference sibling resources via `..`, while an ingredient loaded from an
+    /// unrelated directory (e.g. via `--parent`) stays confined to its own folder
+    /// and is not spuriously allowed to escape — or forced to escape — the manifest
+    /// root.
+    #[cfg(feature = "file_io")]
+    fn apply_resource_base_path(&mut self) {
+        if let Some(base_path) = self.base_path.clone() {
+            self.resources.set_base_path(&base_path);
+            self.resources.set_resource_root(&base_path);
+            for ingredient in self.definition.ingredients.iter_mut() {
+                let ingredient_root = match ingredient.resources().base_path() {
+                    Some(ingredient_base) if path_is_within(ingredient_base, &base_path) => {
+                        base_path.clone()
+                    }
+                    Some(ingredient_base) => ingredient_base.to_path_buf(),
+                    None => base_path.clone(),
+                };
+                ingredient
+                    .resources_mut()
+                    .set_resource_root(ingredient_root);
+            }
+        }
     }
 
     /// Sets the remote_url for this [`Builder`].
@@ -889,6 +954,221 @@ impl Builder {
         Ok(self)
     }
 
+    /// Retains only the actions for which `keep` returns true, across every actions assertion.
+    ///
+    /// `keep` is applied to each action in each `c2pa.actions*` assertion. A manifest may carry
+    /// more than one (a created-list actions assertion, which holds the inception action, plus a
+    /// gathered-list actions assertion of user actions), and all are filtered. When anything is
+    /// removed from an assertion, its `allActionsIncluded` is set to `false`. An actions assertion
+    /// left with no actions is dropped entirely.
+    ///
+    /// The inception action (`c2pa.created`/`c2pa.opened`) is always kept regardless of `keep`, and
+    /// is moved to index 0 of its assertion if needed, so a manifest that already carries an
+    /// inception stays valid per the C2PA spec. This only ever affects the created-list actions
+    /// assertion; a gathered-list assertion has no inception action to keep.
+    ///
+    /// This does not touch ingredients. Call [`Builder::filter_ingredients`]
+    /// (`filter_ingredients(|_| false)` to drop all orphans) afterwards if you also want to drop
+    /// ingredients now orphaned by the removed actions.
+    ///
+    /// # Arguments
+    /// * `keep` - A predicate; the action is retained when it returns true.
+    /// # Returns
+    /// * A mutable reference to the [`Builder`]. A no-op if there is no actions assertion.
+    /// # Errors
+    /// * Returns an [`Error`] if an assertion cannot be decoded or rebuilt.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This method is available only with the `experimental_builder_filter`
+    /// feature enabled. It is exempt from this crate's usual semantic-versioning stability
+    /// guarantees and may change in a backward-incompatible way, or be removed entirely, in any
+    /// release.
+    ///
+    /// </div>
+    #[cfg(feature = "experimental_builder_filter")]
+    pub fn filter_actions<F>(&mut self, mut keep: F) -> Result<&mut Self>
+    where
+        F: FnMut(&Action) -> bool,
+    {
+        // Every actions assertion (created-list and gathered-list), in positional order.
+        let positions: Vec<usize> = self
+            .definition
+            .assertions
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.label().starts_with(Actions::LABEL))
+            .map(|(i, _)| i)
+            .collect();
+
+        let mut emptied: Vec<usize> = Vec::new();
+        for pos in positions {
+            // Decode a working copy; all fallible work happens before any mutation of `self`.
+            let mut actions: Actions = self.definition.assertions[pos].to_assertion()?;
+            let original_len = actions.actions.len();
+
+            // Force-keep the inception action regardless of the predicate. Only the created-list
+            // assertion contains one, so this never affects a gathered-list assertion.
+            actions.actions.retain(|a| {
+                keep(a) || a.action() == c2pa_action::CREATED || a.action() == c2pa_action::OPENED
+            });
+
+            if actions.actions.is_empty() {
+                // A c2pa.actions assertion must have a non-empty actions array. Only a gathered
+                // assertion can reach empty (the created one keeps its inception); drop it rather
+                // than erroring, mirroring how an empty actions assertion is otherwise omitted.
+                emptied.push(pos);
+                continue;
+            }
+
+            // Keep the surviving inception at index 0 of its assertion. A no-op for valid input
+            // where it is already first.
+            if let Some(idx) = actions.actions.iter().position(|a| {
+                a.action() == c2pa_action::CREATED || a.action() == c2pa_action::OPENED
+            }) {
+                if idx != 0 {
+                    let inception = actions.actions.remove(idx);
+                    actions.actions.insert(0, inception);
+                }
+            }
+
+            if actions.actions.len() < original_len {
+                // `allActionsIncluded` is a v2 actions-assertion field; the SDK always writes the
+                // latest assertion version, so this is always safe when anything was removed.
+                actions.all_actions_included = Some(false);
+            }
+
+            // Replace the data in place: preserves the entry's label, `created` flag, and kind,
+            // and never leaves the Builder without its assertion on error.
+            self.definition.assertions[pos].data =
+                AssertionData::Cbor(c2pa_cbor::value::to_value(&actions)?);
+        }
+
+        // Remove emptied assertions from the back so earlier indices stay valid.
+        for pos in emptied.into_iter().rev() {
+            self.definition.assertions.remove(pos);
+        }
+
+        Ok(self)
+    }
+
+    /// Retains ingredients, then rewrites positional ingredient references so linked actions
+    /// stay valid.
+    ///
+    /// An ingredient is kept if any of the following hold:
+    /// - it is referenced by a current action (via `parameters.ingredients` URLs or the
+    ///   `ingredientIds`/`instanceId` parameters) in any actions assertion,
+    /// - it is a [`Relationship::ParentOf`] ingredient (lineage for `c2pa.opened`), or
+    /// - `rescue` returns true for it.
+    ///
+    /// `rescue` therefore only ever rescues an otherwise-orphaned ingredient; it can never drop a
+    /// referenced or lineage ingredient (that would break spec validation). Use `rescue` for
+    /// provenance-aware policy, e.g. "this ingredient's embedded manifest chain contains a signal
+    /// of interest, so retain the whole ingredient (and its nested chain)"; the closure may inspect
+    /// the ingredient's [`manifest_data`](Ingredient::manifest_data) to decide. Prune all orphans
+    /// with `filter_ingredients(|_| false)`. Call [`Builder::filter_actions`] first if you are also
+    /// removing actions: the keep-set is computed from whatever actions currently remain.
+    ///
+    /// # Arguments
+    /// * `rescue` - A predicate that can rescue an otherwise-orphaned ingredient by returning true.
+    /// # Returns
+    /// * A mutable reference to the [`Builder`].
+    /// # Errors
+    /// * Returns an [`Error`] if an assertion cannot be decoded or rebuilt.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This method is available only with the `experimental_builder_filter`
+    /// feature enabled. It is exempt from this crate's usual semantic-versioning stability
+    /// guarantees and may change in a backward-incompatible way, or be removed entirely, in any
+    /// release.
+    ///
+    /// </div>
+    #[cfg(feature = "experimental_builder_filter")]
+    pub fn filter_ingredients<F>(&mut self, mut rescue: F) -> Result<&mut Self>
+    where
+        F: FnMut(&Ingredient) -> bool,
+    {
+        // Snapshot ingredient ids in positional order BEFORE pruning so the positional `__N`
+        // references can be remapped afterwards. The id is label-or-instance_id, matching how
+        // `to_claim` keys ingredients (builder.rs `ingredient_map`) and how `ingredientIds`
+        // parameters resolve.
+        let pre_filter_ids: Vec<String> = self
+            .definition
+            .ingredients
+            .iter()
+            .map(Ingredient::effective_id_internal)
+            .collect();
+
+        // Every actions assertion (created-list and gathered-list): references can live in any of
+        // them, and each must have its positional URLs rewritten after the prune.
+        let actions_positions: Vec<usize> = self
+            .definition
+            .assertions
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| a.label().starts_with(Actions::LABEL))
+            .map(|(i, _)| i)
+            .collect();
+
+        // Decode each actions assertion (WITHOUT mutating self) and union the referenced-ingredient
+        // keep-set across all of them.
+        let mut keep_set: HashSet<String> = HashSet::new();
+        let mut decoded: Vec<(usize, Actions)> = Vec::with_capacity(actions_positions.len());
+        for pos in actions_positions {
+            let actions: Actions = self.definition.assertions[pos].to_assertion()?;
+            for action in &actions.actions {
+                // Symbolic references: ingredientIds / org.cai.ingredientIds / instanceId /
+                // deprecated instance_id. Relationship-agnostic: any referenced ingredient is
+                // kept whatever its relationship (e.g. `c2pa.edited` -> `inputTo`).
+                for id in action.ingredient_ids() {
+                    keep_set.insert(id);
+                }
+                // Positional `parameters.ingredients` HashedUri references -> ingredients[N].
+                if let Some(uris) = action.parameters().and_then(|p| p.ingredients.as_ref()) {
+                    for uri in uris {
+                        if let Some(label) = assertion_label_from_uri(&uri.url()) {
+                            let (_, idx) = parse_positional_label(&label);
+                            if let Some(id) = pre_filter_ids.get(idx) {
+                                keep_set.insert(id.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            decoded.push((pos, actions));
+        }
+
+        // Prune: keep referenced, `parentOf`, or caller-rescued ingredients; drop the rest.
+        self.definition.ingredients.retain(|ing| {
+            keep_set.contains(&ing.effective_id_internal())
+                || matches!(ing.relationship(), &Relationship::ParentOf)
+                || rescue(ing)
+        });
+
+        // Rewrite each actions assertion's positional `__N` references to the ingredients' new
+        // positions, then replace its data in place. Encoding runs before the mutation, so an
+        // error leaves the Builder intact.
+        let new_ids: Vec<String> = self
+            .definition
+            .ingredients
+            .iter()
+            .map(Ingredient::effective_id_internal)
+            .collect();
+        let id_to_new_idx: HashMap<&str, usize> = new_ids
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (id.as_str(), i))
+            .collect();
+        for (pos, mut actions) in decoded {
+            rewrite_action_ingredient_urls(&mut actions, &pre_filter_ids, &id_to_new_idx)?;
+            self.definition.assertions[pos].data =
+                AssertionData::Cbor(c2pa_cbor::value::to_value(&actions)?);
+        }
+
+        Ok(self)
+    }
+
     /// Request a trusted timestamp for manifests with the given label.
     ///
     /// This only records the label on the builder. During signing, any matching manifest(s) will
@@ -935,11 +1215,11 @@ impl Builder {
         self.context
             .check_progress(ProgressPhase::AddingIngredient, 1, 1)?;
 
-        let ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
+        #[allow(unused_mut)]
+        let mut ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
 
         if format == "c2pa" || format == "application/c2pa" {
-            let reader = Reader::from_shared_context(&self.context).with_stream(format, stream)?;
-            let parent_ingredient = self.add_ingredient_from_reader(&reader)?;
+            let parent_ingredient = self.add_ingredient_from_archive(stream)?;
             parent_ingredient.merge(&ingredient);
             return self
                 .definition
@@ -969,7 +1249,12 @@ impl Builder {
     where
         I: Into<Ingredient>,
     {
-        self.definition.ingredients.push(ingredient.into());
+        let ingredient: Ingredient = ingredient.into();
+        // If the ingredient was loaded from a manifest store, chain its resolver
+        // onto builder.resources so that builder.resources.get(uri) can serve
+        // bytes from that store without eagerly copying them.
+        ingredient.chain_resolver_to(&mut self.resources);
+        self.definition.ingredients.push(ingredient);
         self
     }
 
@@ -998,68 +1283,6 @@ impl Builder {
         let _size = stream.read_to_end(&mut buf)?;
         self.resources.add(sanitized_id, buf)?;
         Ok(self)
-    }
-
-    /// Convert the Builder into a archive formatted stream.
-    ///
-    /// The archive is a stream in zip format containing the manifest JSON, resources, and ingredients.
-    /// # Arguments
-    /// * `stream` - A stream to write the zip into.
-    /// # Errors
-    /// * Returns an [`Error`] if the archive cannot be written.
-    fn old_to_archive(&self, stream: impl Write + Seek) -> Result<()> {
-        drop(
-            // this drop seems to be required to force a flush before reading back.
-            {
-                let mut zip = ZipWriter::new(stream);
-                let options =
-                    SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
-                // write a version file
-                zip.start_file("version.txt", options)
-                    .map_err(|e| Error::OtherError(Box::new(e)))?;
-                zip.write_all(ARCHIVE_VERSION.as_bytes())?;
-                // write the manifest.json file
-                zip.start_file("manifest.json", options)
-                    .map_err(|e| Error::OtherError(Box::new(e)))?;
-                zip.write_all(&serde_json::to_vec(self)?)?;
-                // add resource files to a resources folder
-                zip.start_file("resources/", options)
-                    .map_err(|e| Error::OtherError(Box::new(e)))?;
-                for (id, data) in self.resources.resources() {
-                    let sanitized_id = sanitize_archive_path(id)?;
-                    zip.start_file(format!("resources/{sanitized_id}"), options)
-                        .map_err(|e| Error::OtherError(Box::new(e)))?;
-                    zip.write_all(data)?;
-                }
-                // Write the manifest_data files
-                // The filename is filesystem safe version of the associated manifest_label
-                // with a .c2pa extension inside a "manifests" folder.
-                zip.start_file("manifests/", options)
-                    .map_err(|e| Error::OtherError(Box::new(e)))?;
-                for ingredient in self.definition.ingredients.iter() {
-                    for (id, data) in ingredient.resources().resources() {
-                        let sanitized_id = sanitize_archive_path(id)?;
-                        zip.start_file(format!("resources/{sanitized_id}"), options)
-                            .map_err(|e| Error::OtherError(Box::new(e)))?;
-                        zip.write_all(data)?;
-                    }
-
-                    if let Some(manifest_label) = ingredient.active_manifest() {
-                        if let Some(manifest_data) = ingredient.manifest_data() {
-                            // Convert to valid archive / file path name
-                            let manifest_name = manifest_label.replace([':'], "_") + ".c2pa";
-                            let sanitized_manifest_name = sanitize_archive_path(&manifest_name)?;
-                            zip.start_file(format!("manifests/{sanitized_manifest_name}"), options)
-                                .map_err(|e| Error::OtherError(Box::new(e)))?;
-                            zip.write_all(&manifest_data)?;
-                        }
-                    }
-                }
-                zip.finish()
-            }
-            .map_err(|e| Error::OtherError(Box::new(e)))?,
-        );
-        Ok(())
     }
 
     /// Unpacks an archive stream into a Builder.
@@ -1158,7 +1381,7 @@ impl Builder {
                 };
 
                 if index >= builder.definition.ingredients.len() {
-                    return Err(Error::OtherError(Box::new(std::io::Error::other(format!(
+                    Err(Error::OtherError(Box::new(std::io::Error::other(format!(
                         "Invalid ingredient index {index}"
                     )))))?; // todo add specific error
                 }
@@ -1172,23 +1395,20 @@ impl Builder {
 
     /// Creates a builder archive from the builder and writes it to a stream.
     ///
-    /// This will be stored in the standard application/c2pa .c2pa JUMBF format
-    /// The legacy zip format will be written if `builder.generate_c2pa_archive` is set to `false`
-    /// See docs/working-stores.md for more information.
-    ///
     /// # Arguments
-    /// * `stream` - A stream to write the C2PA archive or ZIP file into.
+    /// * `stream` - A stream to write the C2PA archive into.
     ///
     /// # Errors
     /// * Returns an [`Error`] if the archive cannot be written.
     pub fn to_archive(&self, mut stream: impl Write + Seek) -> Result<()> {
-        if let Some(true) = self.context.settings().builder.generate_c2pa_archive {
-            let c2pa_data = self.working_store_sign(ArchiveKind::Builder)?;
-            stream.write_all(&c2pa_data)?;
-            return Ok(());
+        if self.context.settings().builder.generate_c2pa_archive == Some(false) {
+            return Err(Error::NotImplemented(
+                "ZIP archive format is no longer supported; remove the generate_c2pa_archive=false setting".to_string(),
+            ));
         }
-
-        self.old_to_archive(stream)
+        let c2pa_data = self.working_store_sign(ArchiveKind::Builder)?;
+        stream.write_all(&c2pa_data)?;
+        Ok(())
     }
 
     /// Writes a JUMBF working-store archive that contains a single ingredient from this builder.
@@ -1221,17 +1441,6 @@ impl Builder {
             ingredient_id: ingredient_id.to_string(),
         })?;
         stream.write_all(&c2pa_data)?;
-        Ok(())
-    }
-
-    /// Copies binary resources from `store` into this builder when the id is not already present.
-    fn merge_resources_from_store(&mut self, store: &ResourceStore) -> Result<()> {
-        for (id, data) in store.resources() {
-            let sanitized_id = sanitize_archive_path(id)?;
-            if !self.resources.exists(&sanitized_id) {
-                self.resources.add(sanitized_id, data.clone())?;
-            }
-        }
         Ok(())
     }
 
@@ -1451,11 +1660,7 @@ impl Builder {
 
         for ingredient in &definition.ingredients {
             // use the label if it exists and is not empty, otherwise use the instance_id
-            let id = ingredient
-                .label()
-                .filter(|label| !label.is_empty())
-                .map(|label| label.to_string())
-                .unwrap_or_else(|| ingredient.instance_id().to_string());
+            let id = ingredient.effective_id_internal();
 
             // add it to the claim
             let uri = ingredient.add_to_claim(
@@ -1577,6 +1782,7 @@ impl Builder {
                     let cw: CreativeWork = manifest_assertion.to_assertion()?;
                     claim.add_assertion(&cw)
                 }
+                #[allow(deprecated)]
                 Exif::LABEL => {
                     let exif: Exif = manifest_assertion.to_assertion()?;
                     add_assertion(&mut claim, &exif, manifest_assertion.created())
@@ -1781,7 +1987,7 @@ impl Builder {
             }
 
             // If a "ComponentOf" ingredient doesn't have an associated "c2pa.placed" action, create it here.
-            for (_id, (relationship, uri)) in ingredient_map.iter() {
+            for (relationship, uri) in ingredient_map.values() {
                 if *relationship == &Relationship::ComponentOf
                     && !referenced_uris.contains(&uri.url())
                 {
@@ -1880,7 +2086,27 @@ impl Builder {
             self.intent(),
             Some(BuilderIntent::Edit | BuilderIntent::Update)
         );
-        if auto_parent && !self.definition.ingredients.iter().any(|i| i.is_parent()) {
+        // Don't auto-add a parentOf ingredient if the user's manifest already declares a
+        // c2pa.created or c2pa.opened action — those are mutually exclusive with auto-parent.
+        let has_created_or_opened = self.definition.assertions.iter().any(|a| {
+            if !a.label.starts_with(crate::assertions::Actions::LABEL) {
+                return false;
+            }
+            let Ok(actions) = a.to_assertion::<crate::assertions::Actions>() else {
+                return false;
+            };
+            actions.actions().iter().any(|act| {
+                matches!(
+                    act.action(),
+                    crate::assertions::c2pa_action::CREATED
+                        | crate::assertions::c2pa_action::OPENED
+                )
+            })
+        });
+        if auto_parent
+            && !has_created_or_opened
+            && !self.definition.ingredients.iter().any(|i| i.is_parent())
+        {
             let parent_def = serde_json::json!({
                 "relationship": "parentOf",
             });
@@ -1980,21 +2206,17 @@ impl Builder {
 
             if let Some(claim) = provenance_claim.claim_ingredient(&manifest_label) {
                 let signature = claim.cose_sign1()?.signature;
+                let context = self.context();
                 if _sync {
                     timestamp_assertion.refresh_timestamp(
                         tsa_url,
                         &manifest_label,
                         &signature,
-                        &self.context().resolver(),
+                        context,
                     )?;
                 } else {
                     timestamp_assertion
-                        .refresh_timestamp_async(
-                            tsa_url,
-                            &manifest_label,
-                            &signature,
-                            &self.context().resolver_async(),
-                        )
+                        .refresh_timestamp_async(tsa_url, &manifest_label, &signature, context)
                         .await?;
                 }
             }
@@ -2818,6 +3040,13 @@ impl Builder {
                 .get_box_hashed_embeddable_manifest_async(signer, &self.context)
                 .await
         }?;
+        if self.context.settings().verify.verify_after_sign {
+            if _sync {
+                store.verify_store_strict(None, &self.context)?;
+            } else {
+                store.verify_store_strict_async(None, &self.context).await?;
+            }
+        }
         // get composed version for embedding to JPEG
         Store::get_composed_manifest(&bytes, format)
     }
@@ -2853,14 +3082,13 @@ impl Builder {
     {
         let format = format_to_mime(format);
         self.definition.format.clone_from(&format);
-        // todo:: read instance_id from xmp from stream ?
-        self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
+        if let Some(instance_id) = XmpInfo::from_source(source, &format).instance_id {
+            self.definition.instance_id = instance_id;
+        }
+        source.rewind()?;
 
         #[cfg(feature = "file_io")]
-        #[allow(deprecated)]
-        if let Some(base_path) = &self.base_path {
-            self.resources.set_base_path(base_path);
-        }
+        self.apply_resource_base_path();
 
         self.maybe_add_parent(&format, source)?;
 
@@ -2953,14 +3181,13 @@ impl Builder {
     {
         let format = format_to_mime(format);
         self.definition.format.clone_from(&format);
-        // todo:: read instance_id from xmp from stream ?
-        self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
+        if let Some(instance_id) = XmpInfo::from_source(source, &format).instance_id {
+            self.definition.instance_id = instance_id;
+        }
+        source.rewind()?;
 
         #[cfg(feature = "file_io")]
-        #[allow(deprecated)]
-        if let Some(base_path) = &self.base_path {
-            self.resources.set_base_path(base_path);
-        }
+        self.apply_resource_base_path();
 
         self.maybe_add_parent(&format, source)?;
 
@@ -3244,30 +3471,31 @@ impl Builder {
                 .await?
         };
 
-        match reader.active_archive_type() {
-            Some(labels::ArchiveType::Ingredient) => {}
-            Some(other) => {
-                return Err(Error::BadParam(format!(
-                    "expected an ingredient archive (archive:type {:?}), found {other:?}",
-                    labels::ARCHIVE_TYPE_INGREDIENT
-                )));
+        let ingredient_id = match reader.active_archive_kind() {
+            Some(ArchiveKind::Ingredient { ingredient_id }) => Some(ingredient_id),
+            // we should return an error here, but be tolerant in the transition if this has a parent.
+            Some(ArchiveKind::Builder) if reader.active_manifest().is_some() => None,
+            _ => {
+                // early examples of ingredient archives may have been created without the correct archive metadata
+                // if it has an active manifest with a an ingredient store, allow it.
+                if let Some(manifest) = reader.active_manifest() {
+                    if !manifest.ingredients().is_empty() {
+                        None
+                    } else {
+                        return Err(Error::BadParam(
+                            "expected an ingredient archive (org.contentauth.archive.metadata with archive:type ingredient)".to_string()));
+                    }
+                } else {
+                    return Err(Error::BadParam(
+                        "expected an ingredient archive (org.contentauth.archive.metadata with archive:type ingredient)".to_string()));
+                }
             }
-            None => {
-                return Err(Error::BadParam(format!(
-                    "expected a C2PA ingredient archive (org.contentauth.archive.metadata with archive:type {:?}); use add_ingredient_from_reader or add_ingredient_from_stream for other stores",
-                    labels::ARCHIVE_TYPE_INGREDIENT
-                )));
-            }
-        }
+        };
 
-        if let Some(m) = reader.active_manifest() {
-            self.merge_resources_from_store(m.resources())?;
-            for ing in m.ingredients() {
-                self.merge_resources_from_store(ing.resources())?;
-            }
+        let mut ingredient = reader.to_ingredient()?;
+        if let Some(id) = ingredient_id {
+            ingredient.set_label(id);
         }
-
-        let ingredient = reader.to_ingredient()?;
         self.add_ingredient(ingredient);
         self.definition
             .ingredients
@@ -3306,16 +3534,22 @@ impl Builder {
                 .to_claim()?,
         };
 
-        let archive_type = kind.archive_type_str();
-        let json = json!(
-            {
-                "@context":
-                {
-                    "archive": "https://contentauth.org/ns/archive#",
-                },
-                "archive:type": archive_type
+        let json = match &kind {
+            ArchiveKind::Ingredient { ingredient_id } if !ingredient_id.is_empty() => json!({
+                "@context": { "archive": "https://contentauth.org/ns/archive#" },
+                ARCHIVE_TYPE: labels::ARCHIVE_TYPE_INGREDIENT,
+                ARCHIVE_INGREDIENT_ID: ingredient_id
+            }),
+            ArchiveKind::Builder => json!({
+                "@context": { "archive": "https://contentauth.org/ns/archive#" },
+                ARCHIVE_TYPE: labels::ARCHIVE_TYPE_BUILDER
+            }),
+            _ => {
+                return Err(Error::BadParam(
+                    "ingredient_id is required for ingredient archives".to_string(),
+                ))
             }
-        )
+        }
         .to_string();
 
         let archive_metadata = Metadata::new(labels::ARCHIVE_METADATA, &json)?;
@@ -3355,6 +3589,97 @@ impl std::fmt::Display for Builder {
     }
 }
 
+/// Outcome of rewriting one positional ingredient reference after pruning.
+#[cfg(feature = "experimental_builder_filter")]
+enum UriRewrite {
+    /// Already points at the correct index (or is not a tracked positional ref); leave as-is.
+    Unchanged,
+    /// The referenced ingredient was pruned, so the reference now dangles.
+    Stale,
+    /// Repointed to the ingredient's new index.
+    Rewritten(HashedUri),
+}
+
+/// Rewrites a single `HashedUri` whose URL ends in a positional ingredient label so it points at
+/// the ingredient's new position after pruning.
+#[cfg(feature = "experimental_builder_filter")]
+fn rewrite_one_ingredient_uri(
+    hu: &HashedUri,
+    pre_filter_ids: &[String],
+    id_to_new_idx: &HashMap<&str, usize>,
+) -> UriRewrite {
+    let url = hu.url();
+    let label = label_segment_from_uri(&url);
+    let label_start = url.len() - label.len();
+    let (base, old_idx) = parse_positional_label(label);
+    // An out-of-range index is not a positional ingredient ref we track; leave it untouched
+    // rather than guessing (`get` bounds-checks, so this never panics on malformed input).
+    let Some(instance_id) = pre_filter_ids.get(old_idx) else {
+        return UriRewrite::Unchanged;
+    };
+    let Some(&new_idx) = id_to_new_idx.get(instance_id.as_str()) else {
+        return UriRewrite::Stale;
+    };
+    if new_idx == old_idx {
+        return UriRewrite::Unchanged;
+    }
+    let new_url = format!(
+        "{}{}",
+        &url[..label_start],
+        Claim::label_with_instance(base, new_idx)
+    );
+    UriRewrite::Rewritten(HashedUri::new(new_url, hu.alg(), &hu.hash()))
+}
+
+/// Rewrites `parameters.ingredients[].url` on every action so positional labels
+/// (`c2pa.ingredient.v3__N`) point at the new positions of the surviving ingredients.
+///
+/// Required after any ingredient is pruned: `to_claim` re-emits the surviving ingredients
+/// positionally at sign time, so any stale `__N` reference would otherwise dangle.
+#[cfg(feature = "experimental_builder_filter")]
+fn rewrite_action_ingredient_urls(
+    actions: &mut Actions,
+    pre_filter_ids: &[String],
+    id_to_new_idx: &HashMap<&str, usize>,
+) -> Result<()> {
+    let mut rewritten = Vec::with_capacity(actions.actions.len());
+    for action in actions.actions.drain(..) {
+        let Some(ingredient_uris) = action.parameters().and_then(|p| p.ingredients.as_ref()) else {
+            rewritten.push(action);
+            continue;
+        };
+
+        let mut changed = false;
+        let mut remapped_uris: Vec<HashedUri> = Vec::with_capacity(ingredient_uris.len());
+        for uri in ingredient_uris {
+            match rewrite_one_ingredient_uri(uri, pre_filter_ids, id_to_new_idx) {
+                UriRewrite::Rewritten(new) => {
+                    changed = true;
+                    remapped_uris.push(new);
+                }
+                UriRewrite::Stale => {
+                    log::warn!(
+                        "action '{}' has stale ingredient ref '{}'",
+                        action.action(),
+                        label_segment_from_uri(&uri.url()),
+                    );
+                    remapped_uris.push(uri.clone());
+                }
+                UriRewrite::Unchanged => remapped_uris.push(uri.clone()),
+            }
+        }
+
+        if changed {
+            // Propagate rather than swallow: a failed remap would silently dangle references.
+            rewritten.push(action.set_parameter("ingredients", remapped_uris)?);
+        } else {
+            rewritten.push(action);
+        }
+    }
+    actions.actions = rewritten;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
@@ -3379,7 +3704,6 @@ mod tests {
         asset_handlers::bmff_io::{
             inject_manifest_into_free_box, inject_placeholder, read_bmff_c2pa_boxes,
         },
-        crypto::raw_signature::SigningAlg,
         hash_stream_by_alg,
         maybe_send_sync::MaybeSend,
         settings::Settings,
@@ -3393,7 +3717,7 @@ mod tests {
             test_signer::{async_test_signer, test_signer},
         },
         validation_results::ValidationState,
-        Reader,
+        Reader, SigningAlg,
     };
 
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
@@ -8751,14 +9075,16 @@ mod tests {
 
     #[test]
     fn test_to_archive_preserves_duplicate_label_assertions() -> Result<()> {
-        let mut builder = Builder::default();
+        let context = Context::new().into_shared();
+        let mut builder = Builder::from_shared_context(&context);
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
         builder.add_assertion("org.contentauth.test", &json!({"v": 1}))?;
         builder.add_assertion("org.contentauth.test", &json!({"v": 2}))?;
 
         let mut archive = Cursor::new(Vec::new());
         builder.to_archive(&mut archive)?;
         archive.rewind()?;
-        let mut builder = Builder::default().with_archive(archive)?;
+        let mut builder = Builder::from_shared_context(&context).with_archive(archive)?;
 
         let signer = test_signer(SigningAlg::Ps256);
         let mut output = Cursor::new(Vec::new());
@@ -8818,12 +9144,7 @@ mod tests {
         )?;
 
         let mut ingredient_archive = Cursor::new(Vec::new());
-        let ingredient_id = {
-            let ing = &builder.definition.ingredients[0];
-            ing.label()
-                .map(String::from)
-                .unwrap_or_else(|| ing.instance_id().to_string())
-        };
+        let ingredient_id = builder.definition.ingredients[0].effective_id_internal();
         builder.write_ingredient_archive(&ingredient_id, &mut ingredient_archive)?;
 
         let archive_bytes = ingredient_archive.into_inner();
@@ -8856,6 +9177,237 @@ mod tests {
                 .is_ok_and(|data| data.as_slice() == TEST_THUMBNAIL),
             "thumbnail resource bytes should match the original TEST_THUMBNAIL"
         );
+        assert_eq!(
+            builder2.definition.ingredients[0].label(),
+            Some("ingredient_1"),
+            "producer-supplied ingredient label should survive the archive round-trip via archive:ingredient_id"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_two_ingredient_archives_link_distinctly_via_actions() -> Result<()> {
+        // Create two ingredient archives with distinct ids ("ing-a", "ing-b"),
+        // load both into a builder, then sign.
+        let settings = Settings::new().with_value("builder.generate_c2pa_archive", true)?;
+        let context = Context::new().with_settings(settings)?.into_shared();
+
+        // Build two ingredient archives.
+        let make_archive = |id: &str, title: &str| -> Result<Vec<u8>> {
+            let mut builder = Builder::from_shared_context(&context)
+                .with_definition(r#"{"title": "Producer manifest"}"#)?;
+            let mut src = Cursor::new(TEST_IMAGE);
+            builder.add_ingredient_from_stream(
+                json!({
+                    "title": title,
+                    "format": "image/jpeg",
+                    "relationship": "componentOf",
+                    "label": id,
+                })
+                .to_string(),
+                "image/jpeg",
+                &mut src,
+            )?;
+            let mut archive = Cursor::new(Vec::new());
+            builder.write_ingredient_archive(id, &mut archive)?;
+            Ok(archive.into_inner())
+        };
+        let archive_a = make_archive("ing-a", "Ingredient A")?;
+        let archive_b = make_archive("ing-b", "Ingredient B")?;
+
+        // Builder: add both ingredient archives,
+        // then attach an action that links ing-b only.
+        let manifest_def = json!({
+            "claim_generator_info": [{ "name": "c2pa-test", "version": "1.0" }],
+            "title": "Two-ingredient signing manifest",
+            "assertions": [
+                {
+                    "label": "c2pa.actions.v2",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.placed",
+                                "parameters": { "ingredientIds": ["ing-b"] }
+                            }
+                        ]
+                    }
+                }
+            ]
+        });
+        let mut signing_builder =
+            Builder::from_shared_context(&context).with_definition(manifest_def.to_string())?;
+        signing_builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+        signing_builder.add_ingredient_from_archive(&mut Cursor::new(archive_a))?;
+        signing_builder.add_ingredient_from_archive(&mut Cursor::new(archive_b))?;
+
+        assert_eq!(
+            signing_builder.definition.ingredients[0].label(),
+            Some("ing-a")
+        );
+        assert_eq!(
+            signing_builder.definition.ingredients[1].label(),
+            Some("ing-b")
+        );
+
+        // Sign...
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+        let signer = test_signer(SigningAlg::Ps256);
+        signing_builder.sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)?;
+
+        // Resolve the placed action's URL → ingredient.title and confirm it's "Ingredient B"
+        // (proves identity rather than relying on JUMBF slot ordering).
+        dest.rewind()?;
+        let reader = Reader::from_shared_context(&context).with_stream("image/jpeg", &mut dest)?;
+        let manifest = reader.active_manifest().expect("active manifest present");
+        let placed_url: &str = manifest
+            .assertions()
+            .iter()
+            .find(|a| a.label().contains("c2pa.actions"))
+            .and_then(|a| a.value().ok())
+            .and_then(|v: &serde_json::Value| {
+                v["actions"]
+                    .as_array()?
+                    .iter()
+                    .find(|act| act["action"] == "c2pa.placed")?
+                    .get("parameters")?
+                    .get("ingredients")?
+                    .as_array()?
+                    .first()?
+                    .get("url")?
+                    .as_str()
+            })
+            .expect("placed action references an ingredient URL");
+
+        let target_label = placed_url.trim_start_matches("self#jumbf=c2pa.assertions/");
+        let linked_title = manifest
+            .ingredients()
+            .iter()
+            .find(|i| i.label() == Some(target_label))
+            .and_then(Ingredient::title)
+            .expect("ingredient with title present for resolved URL");
+        assert_eq!(
+            linked_title, "Ingredient B",
+            "placed action must link Ingredient B; got url {placed_url}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_two_ingredient_archives_each_linked_componentof_placed() -> Result<()> {
+        // 2 ingredient archives are linked componentOf via two distinct c2pa.placed
+        // actions (one per ingredient).
+        let settings = Settings::new().with_value("builder.generate_c2pa_archive", true)?;
+        let context = Context::new().with_settings(settings)?.into_shared();
+
+        let make_archive = |id: &str, title: &str| -> Result<Vec<u8>> {
+            let mut builder = Builder::from_shared_context(&context)
+                .with_definition(r#"{"title": "Producer manifest"}"#)?;
+            let mut src = Cursor::new(TEST_IMAGE);
+            builder.add_ingredient_from_stream(
+                json!({
+                    "title": title,
+                    "format": "image/jpeg",
+                    "relationship": "componentOf",
+                    "label": id,
+                })
+                .to_string(),
+                "image/jpeg",
+                &mut src,
+            )?;
+            let mut archive = Cursor::new(Vec::new());
+            builder.write_ingredient_archive(id, &mut archive)?;
+            Ok(archive.into_inner())
+        };
+        let archive_a = make_archive("ing-a", "Ingredient A")?;
+        let archive_b = make_archive("ing-b", "Ingredient B")?;
+
+        let manifest_def = json!({
+            "claim_generator_info": [{ "name": "c2pa-test", "version": "1.0" }],
+            "title": "Two-ingredient componentOf placed manifest",
+            "assertions": [
+                {
+                    "label": "c2pa.actions.v2",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.placed",
+                                "parameters": { "ingredientIds": ["ing-a"] }
+                            },
+                            {
+                                "action": "c2pa.placed",
+                                "parameters": { "ingredientIds": ["ing-b"] }
+                            }
+                        ]
+                    }
+                }
+            ]
+        });
+        let mut signing_builder =
+            Builder::from_shared_context(&context).with_definition(manifest_def.to_string())?;
+        signing_builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+        signing_builder.add_ingredient_from_archive(&mut Cursor::new(archive_a))?;
+        signing_builder.add_ingredient_from_archive(&mut Cursor::new(archive_b))?;
+
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+        let signer = test_signer(SigningAlg::Ps256);
+        signing_builder.sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)?;
+
+        dest.rewind()?;
+        let reader = Reader::from_shared_context(&context).with_stream("image/jpeg", &mut dest)?;
+        print!("reader JSON: {}", reader.json());
+        let manifest = reader.active_manifest().expect("active manifest present");
+        let actions_value: serde_json::Value = manifest
+            .assertions()
+            .iter()
+            .find(|a| a.label().contains("c2pa.actions"))
+            .and_then(|a| a.value().ok().cloned())
+            .expect("c2pa.actions assertion present");
+
+        // Verify ingredients and actions were properly linked
+        let placed_urls: Vec<&str> = actions_value["actions"]
+            .as_array()
+            .expect("actions array")
+            .iter()
+            .filter(|act| act["action"] == "c2pa.placed")
+            .filter_map(|act| {
+                act.get("parameters")?
+                    .get("ingredients")?
+                    .as_array()?
+                    .first()?
+                    .get("url")?
+                    .as_str()
+            })
+            .collect();
+        assert_eq!(
+            placed_urls.len(),
+            2,
+            "expected two placed actions each referencing one ingredient; got {placed_urls:?}"
+        );
+        let title_for_url = |url: &str| -> &str {
+            let target_label = url.trim_start_matches("self#jumbf=c2pa.assertions/");
+            manifest
+                .ingredients()
+                .iter()
+                .find(|i| i.label() == Some(target_label))
+                .and_then(Ingredient::title)
+                .expect("ingredient with title present for resolved URL")
+        };
+        assert_eq!(
+            title_for_url(placed_urls[0]),
+            "Ingredient A",
+            "first placed action must link Ingredient A; got url {}",
+            placed_urls[0]
+        );
+        assert_eq!(
+            title_for_url(placed_urls[1]),
+            "Ingredient B",
+            "second placed action must link Ingredient B; got url {}",
+            placed_urls[1]
+        );
 
         Ok(())
     }
@@ -8877,8 +9429,6 @@ mod tests {
         archive_new.rewind()?;
         let mut header = [0u8; 12];
         archive_new.read_exact(&mut header)?;
-        // C2PA archives should start with JUMBF box structure
-        // Check for "jumb" box type at offset 4-8
         assert_eq!(
             &header[4..8],
             b"jumb",
@@ -8893,8 +9443,12 @@ mod tests {
             .with_definition(r#"{"title": "Test Old Format"}"#)?;
 
         let mut archive_old = Cursor::new(Vec::new());
-        builder_old.to_archive(&mut archive_old)?;
+        builder_old
+            .to_archive(&mut archive_old)
+            .expect_err("Expected error for old format");
 
+        // now load an actual old format archive from fixtures to confirm it's ZIP
+        let mut archive_old = std::fs::File::open("tests/fixtures/old_format_archive.zip")?;
         // Verify it's ZIP format (starts with PK signature)
         archive_old.rewind()?;
         let mut zip_header = [0u8; 4];
@@ -8987,6 +9541,7 @@ mod tests {
 
         let ingredient_folder = fixture_path("ingredient");
         builder.set_base_path(&ingredient_folder);
+        assert_eq!(builder.base_path(), Some(ingredient_folder.as_path()));
 
         let ingredient_json =
             std::fs::read_to_string(ingredient_folder.join("ingredient.json")).unwrap();
@@ -9440,10 +9995,10 @@ mod tests {
     // An attacker embedding "base_path": "/" must not be able to redirect resource
     // resolution to an arbitrary filesystem root (file exfiltration via archive).
     //
-    // Uses the legacy zip archive path (generate_c2pa_archive = false) so we can
-    // manipulate the manifest.json inside the zip before loading it back.
-    #[test]
+    // Validate that the legacy zip archive path (generate_c2pa_archive = false) isn't supported
+    // And then load an old archive that contains "base_path": "/" in its manifest.json
     #[cfg(feature = "file_io")]
+    #[test]
     fn test_base_path_not_deserialized_from_archive() {
         // Force the old zip format so we can manipulate manifest.json directly.
         let settings = Settings::new()
@@ -9452,39 +10007,15 @@ mod tests {
         let builder = Builder::from_context(Context::new().with_settings(settings).unwrap());
 
         let mut archive = Cursor::new(Vec::new());
-        builder.to_archive(&mut archive).unwrap();
-        archive.rewind().unwrap();
+        // we now get an error when trying to write the archive because the old format is not supported for writing.
+        builder
+            .to_archive(&mut archive)
+            .expect_err("Expected error for old format");
 
-        // Inject "base_path": "/" into manifest.json inside the zip.
-        let mut modified = Cursor::new(Vec::new());
-        {
-            let mut zip_in = ZipArchive::new(&mut archive).unwrap();
-            let mut zip_out = ZipWriter::new(&mut modified);
-            let options =
-                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        // Load the "bad_path_archive.zip" fixture, which contains a manifest.json with "base_path": "/".
+        let bad_archive = std::fs::File::open(fixture_path("bad_path_archive.zip")).unwrap();
 
-            for i in 0..zip_in.len() {
-                let mut entry = zip_in.by_index(i).unwrap();
-                let name = entry.name().to_string();
-                let mut buf = Vec::new();
-                entry.read_to_end(&mut buf).unwrap();
-
-                zip_out.start_file(&name, options).unwrap();
-                if name == "manifest.json" {
-                    let mut value: serde_json::Value = serde_json::from_slice(&buf).unwrap();
-                    value["base_path"] = serde_json::Value::String("/".to_string());
-                    zip_out
-                        .write_all(&serde_json::to_vec(&value).unwrap())
-                        .unwrap();
-                } else {
-                    zip_out.write_all(&buf).unwrap();
-                }
-            }
-            zip_out.finish().unwrap();
-        }
-        modified.rewind().unwrap();
-
-        let loaded = Builder::from_archive(modified).unwrap();
+        let loaded = Builder::from_archive(bad_archive).unwrap();
 
         assert!(
             loaded.base_path.is_none(),
@@ -9505,5 +10036,813 @@ mod tests {
 
         let future = builder.sign_async(&signer, "image/jpeg", &mut src, &mut dst);
         assert_send(future);
+    }
+
+    // Tests for the experimental `filter_actions` / `filter_ingredients` API. Kept in a
+    // feature-gated submodule so the whole suite compiles only when the feature is enabled.
+    #[cfg(feature = "experimental_builder_filter")]
+    mod filter_tests {
+        use super::*;
+
+        /// Create a `Builder` (with test context) from a JSON manifest definition.
+        fn removal_builder(def: serde_json::Value) -> Builder {
+            Builder::from_context(test_context())
+                .with_definition(def.to_string())
+                .expect("with_definition")
+        }
+
+        /// Extract the first `Actions` assertion off a builder.
+        fn builder_actions(b: &Builder) -> Actions {
+            b.definition
+                .assertions
+                .iter()
+                .find(|a| a.label().starts_with(Actions::LABEL))
+                .expect("actions assertion present")
+                .to_assertion()
+                .expect("actions assertion decodes")
+        }
+
+        /// Extract every `Actions` assertion off a builder, in positional order.
+        fn builder_all_actions(b: &Builder) -> Vec<Actions> {
+            b.definition
+                .assertions
+                .iter()
+                .filter(|a| a.label().starts_with(Actions::LABEL))
+                .map(|a| a.to_assertion().expect("actions assertion decodes"))
+                .collect()
+        }
+
+        /// The url of an action's first positional ingredient reference, if any.
+        fn first_ing_url(a: &Action) -> Option<String> {
+            a.parameters()
+                .and_then(|p| p.ingredients.as_ref())
+                .and_then(|v| v.first())
+                .map(|u| u.url())
+        }
+
+        /// A componentOf ingredient (label == instance_id) referenced by positional URL tests.
+        fn positional_ingredient(label: &str) -> serde_json::Value {
+            json!({
+                "title": label,
+                "format": "image/jpeg",
+                "relationship": "componentOf",
+                "label": label,
+                "instance_id": label,
+            })
+        }
+
+        /// A `c2pa.placed` action referencing a single positional ingredient label.
+        fn positional_placed(idx: usize) -> serde_json::Value {
+            let label = Claim::label_with_instance("c2pa.ingredient.v3", idx);
+            json!({
+                "action": "c2pa.placed",
+                "parameters": {
+                    "ingredients": [{
+                        "url": format!("self#jumbf=c2pa.assertions/{label}"),
+                        "alg": "sha256",
+                        "hash": [1, 2, 3, 4],
+                    }]
+                }
+            })
+        }
+
+        fn created_action() -> serde_json::Value {
+            json!({
+                "action": "c2pa.created",
+                "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty",
+            })
+        }
+
+        fn sign_and_read(mut b: Builder) -> Vec<crate::validation_status::ValidationStatus> {
+            let signer = test_signer(SigningAlg::Ps256);
+            let mut dest = Cursor::new(Vec::new());
+            b.sign(
+                signer.as_ref(),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+                &mut dest,
+            )
+            .expect("sign");
+            dest.rewind().unwrap();
+            let reader = Reader::default()
+                .with_stream("image/jpeg", &mut dest)
+                .expect("read");
+            assert!(reader.active_manifest().is_some());
+            reader
+                .validation_status()
+                .map(|s| s.to_vec())
+                .unwrap_or_default()
+        }
+
+        fn assert_no_action_failures(status: Vec<crate::validation_status::ValidationStatus>) {
+            for s in &status {
+                assert_ne!(
+                    s.code(),
+                    "assertion.action.malformed",
+                    "action malformed: {s:?}"
+                );
+                assert_ne!(
+                    s.code(),
+                    "assertion.action.ingredientMismatch",
+                    "action ingredient mismatch: {s:?}"
+                );
+            }
+        }
+
+        // the inception action is force-kept even when the predicate would drop it, and moved to index 0.
+        #[test]
+        fn filter_actions_force_keeps_inception() {
+            let mut b = removal_builder(json!({
+                "assertions": [{ "label": "c2pa.actions.v2", "data": { "actions": [
+                    { "action": "c2pa.color_adjustments" },
+                    created_action(),
+                    { "action": "c2pa.cropped" },
+                ]}}]
+            }));
+            // Predicate drops everything, but c2pa.created is force-kept and moved to index 0.
+            b.filter_actions(|_| false).unwrap();
+            let actions = builder_actions(&b);
+            assert_eq!(actions.actions.len(), 1);
+            assert_eq!(actions.actions[0].action(), c2pa_action::CREATED);
+            assert_eq!(actions.all_actions_included, Some(false));
+        }
+
+        // targeted middle action is removed; surviving order/count preserved.
+        #[test]
+        fn filter_actions_removes_middle_keeps_order() {
+            let mut b = removal_builder(json!({
+                "assertions": [{ "label": "c2pa.actions.v2", "data": { "actions": [
+                    created_action(),
+                    { "action": "c2pa.color_adjustments" },
+                    { "action": "c2pa.cropped" },
+                ]}}]
+            }));
+            b.filter_actions(|a| a.action() != "c2pa.color_adjustments")
+                .unwrap();
+            let actions = builder_actions(&b);
+            assert_eq!(actions.actions.len(), 2);
+            assert_eq!(actions.actions[0].action(), c2pa_action::CREATED);
+            assert_eq!(actions.actions[1].action(), "c2pa.cropped");
+            assert_eq!(actions.all_actions_included, Some(false));
+        }
+
+        // filtering every action out drops the emptied assertion (no error); other assertions remain.
+        #[test]
+        fn filter_actions_empty_drops_assertion() {
+            let mut b = removal_builder(json!({
+                "assertions": [
+                    { "label": "c2pa.actions.v2", "data": { "actions": [
+                        { "action": "c2pa.color_adjustments" },
+                        { "action": "c2pa.cropped" },
+                    ]}},
+                    { "label": "org.test.assertion", "data": "x" },
+                ]
+            }));
+            b.filter_actions(|_| false).unwrap();
+            assert!(b
+                .definition
+                .assertions
+                .iter()
+                .all(|a| !a.label().starts_with(Actions::LABEL)));
+            // Non-actions assertions are untouched.
+            assert!(b
+                .definition
+                .assertions
+                .iter()
+                .any(|a| a.label() == "org.test.assertion"));
+        }
+
+        // no-op when there is no actions assertion.
+        #[test]
+        fn filter_actions_noop_without_actions() {
+            let mut b = removal_builder(json!({
+                "assertions": [{ "label": "org.test.assertion", "data": "x" }]
+            }));
+            b.filter_actions(|_| false).unwrap();
+            assert!(b
+                .definition
+                .assertions
+                .iter()
+                .all(|a| !a.label().starts_with(Actions::LABEL)));
+        }
+
+        // the v1 `c2pa.actions` label is preserved on rebuild.
+        #[test]
+        fn filter_actions_preserves_v1_label() {
+            let mut b = removal_builder(json!({
+                "assertions": [{ "label": "c2pa.actions", "data": { "actions": [
+                    created_action(),
+                    { "action": "c2pa.color_adjustments" },
+                ]}}]
+            }));
+            b.filter_actions(|a| a.action() != "c2pa.color_adjustments")
+                .unwrap();
+            let label = b
+                .definition
+                .assertions
+                .iter()
+                .find(|a| a.label().starts_with(Actions::LABEL))
+                .unwrap()
+                .label()
+                .to_string();
+            assert_eq!(label, "c2pa.actions");
+        }
+
+        // the created/gathered flag on the actions assertion survives the in-place rebuild.
+        #[test]
+        fn filter_actions_preserves_created_flag() {
+            let mut b = removal_builder(json!({
+                "assertions": [{
+                    "label": "c2pa.actions.v2",
+                    "data": { "actions": [
+                        created_action(),
+                        { "action": "c2pa.color_adjustments" },
+                    ]},
+                    "created": true
+                }]
+            }));
+            b.filter_actions(|a| a.action() != "c2pa.color_adjustments")
+                .unwrap();
+            let def = b
+                .definition
+                .assertions
+                .iter()
+                .find(|a| a.label().starts_with(Actions::LABEL))
+                .unwrap();
+            assert!(def.created(), "created flag must survive the rebuild");
+        }
+
+        // filter_actions applies to EVERY actions assertion (created-list and gathered-list).
+        #[test]
+        fn filter_actions_spans_all_assertions() {
+            let mut b = removal_builder(json!({
+                "assertions": [
+                    { "label": "c2pa.actions.v2", "created": true, "data": { "actions": [
+                        created_action(),
+                        { "action": "c2pa.color_adjustments" },
+                    ]}},
+                    { "label": "c2pa.actions.v2", "data": { "actions": [
+                        { "action": "c2pa.color_adjustments" },
+                        { "action": "c2pa.cropped" },
+                    ]}},
+                ]
+            }));
+            // Drop color_adjustments from BOTH the created and the gathered actions assertion.
+            b.filter_actions(|a| a.action() != "c2pa.color_adjustments")
+                .unwrap();
+            let all = builder_all_actions(&b);
+            assert_eq!(all.len(), 2);
+            // created-list keeps the inception action.
+            assert_eq!(
+                all[0]
+                    .actions
+                    .iter()
+                    .map(|a| a.action())
+                    .collect::<Vec<_>>(),
+                vec![c2pa_action::CREATED]
+            );
+            // gathered-list keeps cropped.
+            assert_eq!(
+                all[1]
+                    .actions
+                    .iter()
+                    .map(|a| a.action())
+                    .collect::<Vec<_>>(),
+                vec!["c2pa.cropped"]
+            );
+        }
+
+        // filtering a gathered actions assertion to empty drops only it; the created one stays.
+        #[test]
+        fn filter_actions_drops_only_emptied_gathered_assertion() {
+            let mut b = removal_builder(json!({
+                "assertions": [
+                    { "label": "c2pa.actions.v2", "created": true, "data": { "actions": [ created_action() ]}},
+                    { "label": "c2pa.actions.v2", "data": { "actions": [
+                        { "action": "c2pa.color_adjustments" },
+                    ]}},
+                ]
+            }));
+            b.filter_actions(|a| a.action() != "c2pa.color_adjustments")
+                .unwrap();
+            let all = builder_all_actions(&b);
+            assert_eq!(all.len(), 1);
+            assert_eq!(all[0].actions[0].action(), c2pa_action::CREATED);
+        }
+
+        // an ingredient referenced only by a removed action is pruned.
+        #[test]
+        fn filter_ingredients_prunes_orphan_after_action_removal() {
+            let mut b = removal_builder(json!({
+                "ingredients": [
+                    { "title": "keep", "format": "image/jpeg", "relationship": "componentOf", "label": "ing_keep", "instance_id": "id_keep" },
+                    { "title": "drop", "format": "image/jpeg", "relationship": "componentOf", "label": "ing_drop", "instance_id": "id_drop" },
+                ],
+                "assertions": [{ "label": "c2pa.actions.v2", "data": { "actions": [
+                    created_action(),
+                    { "action": "c2pa.placed", "parameters": { "ingredientIds": ["ing_keep"] } },
+                    { "action": "c2pa.placed", "parameters": { "ingredientIds": ["ing_drop"] } },
+                ]}}]
+            }));
+            b.filter_actions(|a| {
+                !a.get_parameter::<Vec<String>>("ingredientIds")
+                    .map(|ids| ids.iter().any(|i| i == "ing_drop"))
+                    .unwrap_or(false)
+            })
+            .unwrap();
+            b.filter_ingredients(|_| false).unwrap();
+            let labels: Vec<_> = b
+                .definition
+                .ingredients
+                .iter()
+                .map(|i| i.label().unwrap().to_string())
+                .collect();
+            assert_eq!(labels, vec!["ing_keep"]);
+        }
+
+        // a parentOf ingredient is kept even when no surviving action references it.
+        #[test]
+        fn filter_ingredients_keeps_parent_of() {
+            let mut b = removal_builder(json!({
+                "ingredients": [
+                    { "title": "parent", "format": "image/jpeg", "relationship": "parentOf", "label": "ing_parent", "instance_id": "id_parent" },
+                ],
+                "assertions": [{ "label": "c2pa.actions.v2", "data": { "actions": [ created_action() ]}}]
+            }));
+            b.filter_ingredients(|_| false).unwrap();
+            assert_eq!(b.definition.ingredients.len(), 1);
+            assert_eq!(b.definition.ingredients[0].label(), Some("ing_parent"));
+        }
+
+        // an ingredient reference keeps it whether the ingredient carries a label only, an
+        // instance_id only, or both (label is the effective id when present).
+        #[test]
+        fn filter_ingredients_matches_label_or_instance_id() {
+            let mut b = removal_builder(json!({
+                "ingredients": [
+                    // label only
+                    { "title": "a", "format": "image/jpeg", "relationship": "componentOf", "label": "ing_label" },
+                    // instance_id only (no label)
+                    { "title": "b", "format": "image/jpeg", "relationship": "componentOf", "instance_id": "id_only" },
+                    // both present: label prevails as the effective id
+                    { "title": "c", "format": "image/jpeg", "relationship": "componentOf", "label": "ing_both", "instance_id": "id_both" },
+                ],
+                "assertions": [{ "label": "c2pa.actions.v2", "data": { "actions": [
+                    created_action(),
+                    { "action": "c2pa.placed", "parameters": { "ingredientIds": ["ing_label"] } },
+                    { "action": "c2pa.placed", "parameters": { "ingredientIds": ["id_only"] } },
+                    { "action": "c2pa.placed", "parameters": { "ingredientIds": ["ing_both"] } },
+                ]}}]
+            }));
+            // Nothing is rescued by the predicate; all three survive purely via their references.
+            b.filter_ingredients(|_| false).unwrap();
+            assert_eq!(b.definition.ingredients.len(), 3);
+        }
+
+        // when an ingredient has both a label and an instance_id, the label is its effective id, so a
+        // reference by instance_id alone does not keep it (mirrors how ingredientIds resolve).
+        #[test]
+        fn filter_ingredients_label_prevails_over_instance_id() {
+            let mut b = removal_builder(json!({
+                "ingredients": [
+                    { "title": "c", "format": "image/jpeg", "relationship": "componentOf", "label": "ing_both", "instance_id": "id_both" },
+                ],
+                "assertions": [{ "label": "c2pa.actions.v2", "data": { "actions": [
+                    created_action(),
+                    { "action": "c2pa.placed", "parameters": { "ingredientIds": ["id_both"] } },
+                ]}}]
+            }));
+            b.filter_ingredients(|_| false).unwrap();
+            // Referenced only by its instance_id, but the label is the effective id, so it is orphaned.
+            assert!(b.definition.ingredients.is_empty());
+        }
+
+        // an action that references its ingredient only via the deprecated top-level `instanceId`
+        // field still keeps that ingredient (exercises the Action::ingredient_ids fallback path).
+        #[test]
+        fn filter_ingredients_deprecated_instance_id_reference() {
+            let mut b = removal_builder(json!({
+                "ingredients": [
+                    { "title": "d", "format": "image/jpeg", "relationship": "componentOf", "instance_id": "dep_id" },
+                ],
+                "assertions": [{ "label": "c2pa.actions.v2", "data": { "actions": [
+                    created_action(),
+                    // `instanceId` at the action top level maps to the deprecated `Action::instance_id`
+                    // field, not a parameter.
+                    { "action": "c2pa.placed", "instanceId": "dep_id" },
+                ]}}]
+            }));
+            b.filter_ingredients(|_| false).unwrap();
+            assert_eq!(b.definition.ingredients.len(), 1);
+            assert_eq!(b.definition.ingredients[0].instance_id(), "dep_id");
+        }
+
+        // rewrite_action_ingredient_urls (and rewrite_one_ingredient_uri) directly: a positional ref
+        // whose ingredient was pruned degrades to a logged Stale ref kept as-is, an out-of-range ref
+        // is left Unchanged, and a valid shift is Rewritten. Driven directly because filter_ingredients
+        // never prunes an ingredient that a surviving action still references.
+        #[test]
+        fn rewrite_action_ingredient_urls_stale_shift_and_out_of_range() {
+            use std::collections::HashMap;
+            let mut actions: Actions = serde_json::from_value(json!({ "actions": [
+                { "action": "c2pa.placed", "parameters": { "ingredients": [
+                    { "url": "self#jumbf=c2pa.assertions/c2pa.ingredient.v3", "alg": "sha256", "hash": [1] },
+                    { "url": "self#jumbf=c2pa.assertions/c2pa.ingredient.v3__1", "alg": "sha256", "hash": [2] },
+                    { "url": "self#jumbf=c2pa.assertions/c2pa.ingredient.v3__9", "alg": "sha256", "hash": [3] },
+                ]}},
+            ]}))
+            .unwrap();
+
+            // Pre-prune order was [id0, id1]; id0 was pruned, id1 survives at new index 0.
+            let pre_filter_ids = vec!["id0".to_string(), "id1".to_string()];
+            let mut id_to_new_idx: HashMap<&str, usize> = HashMap::new();
+            id_to_new_idx.insert("id1", 0);
+
+            rewrite_action_ingredient_urls(&mut actions, &pre_filter_ids, &id_to_new_idx).unwrap();
+
+            let urls: Vec<String> = actions.actions[0]
+                .parameters()
+                .unwrap()
+                .ingredients
+                .as_ref()
+                .unwrap()
+                .iter()
+                .map(|u| u.url())
+                .collect();
+            // idx0 -> id0 pruned: Stale, left as-is.
+            assert!(urls[0].ends_with("c2pa.ingredient.v3"));
+            // __1 -> id1 moved to index 0: Rewritten to the base label.
+            assert!(urls[1].ends_with("c2pa.ingredient.v3"));
+            // __9 out of range: Unchanged.
+            assert!(urls[2].ends_with("c2pa.ingredient.v3__9"));
+        }
+
+        // the keep-set spans EVERY actions assertion: an ingredient referenced only from the
+        // gathered-list actions assertion must survive an orphan prune.
+        #[test]
+        fn filter_ingredients_keep_set_spans_all_assertions() {
+            let mut b = removal_builder(json!({
+                "ingredients": [
+                    { "title": "g", "format": "image/jpeg", "relationship": "componentOf", "label": "ing_gathered", "instance_id": "ing_gathered" },
+                ],
+                "assertions": [
+                    { "label": "c2pa.actions.v2", "created": true, "data": { "actions": [ created_action() ]}},
+                    { "label": "c2pa.actions.v2", "data": { "actions": [
+                        { "action": "c2pa.placed", "parameters": { "ingredientIds": ["ing_gathered"] } },
+                    ]}},
+                ]
+            }));
+            // The ingredient is referenced only by the gathered assertion; it must not be pruned.
+            b.filter_ingredients(|_| false).unwrap();
+            assert_eq!(b.definition.ingredients.len(), 1);
+            assert_eq!(b.definition.ingredients[0].label(), Some("ing_gathered"));
+        }
+
+        // remove the middle ingredient (via its action); __2 collapses to __1, __1 -> base.
+        #[test]
+        fn filter_ingredients_reindex_middle_hole() {
+            let mut b = removal_builder(json!({
+                "ingredients": [
+                    positional_ingredient("ing0"),
+                    positional_ingredient("ing1"),
+                    positional_ingredient("ing2"),
+                ],
+                "assertions": [{ "label": "c2pa.actions.v2", "data": { "actions": [
+                    created_action(),
+                    positional_placed(0),
+                    positional_placed(1),
+                    positional_placed(2),
+                ]}}]
+            }));
+            // Remove the action referencing ingredient[1] (__1), orphaning it.
+            b.filter_actions(|a| !first_ing_url(a).is_some_and(|u| u.ends_with("__1")))
+                .unwrap();
+            b.filter_ingredients(|_| false).unwrap();
+
+            // ingredient[1] gone; ingredient[2] shifted to index 1.
+            let labels: Vec<_> = b
+                .definition
+                .ingredients
+                .iter()
+                .map(|i| i.label().unwrap().to_string())
+                .collect();
+            assert_eq!(labels, vec!["ing0", "ing2"]);
+
+            let urls: Vec<String> = builder_actions(&b)
+                .actions
+                .iter()
+                .filter_map(first_ing_url)
+                .collect();
+            assert!(urls.iter().any(|u| u.ends_with("c2pa.ingredient.v3"))); // idx0 base
+            assert!(urls.iter().any(|u| u.ends_with("c2pa.ingredient.v3__1"))); // was __2 -> __1
+            assert!(!urls.iter().any(|u| u.ends_with("__2")));
+        }
+
+        // multiple / non-contiguous removals leave no dangling or colliding __N.
+        #[test]
+        fn filter_ingredients_reindex_noncontiguous() {
+            let mut b = removal_builder(json!({
+                "ingredients": [
+                    positional_ingredient("ing0"),
+                    positional_ingredient("ing1"),
+                    positional_ingredient("ing2"),
+                    positional_ingredient("ing3"),
+                ],
+                "assertions": [{ "label": "c2pa.actions.v2", "data": { "actions": [
+                    created_action(),
+                    positional_placed(0),
+                    positional_placed(1),
+                    positional_placed(2),
+                    positional_placed(3),
+                ]}}]
+            }));
+            // Remove the actions referencing ingredients at index 0 (base) and 2 (__2).
+            b.filter_actions(|a| {
+                !first_ing_url(a)
+                    .is_some_and(|u| u.ends_with("c2pa.ingredient.v3") || u.ends_with("__2"))
+            })
+            .unwrap();
+            b.filter_ingredients(|_| false).unwrap();
+
+            let labels: Vec<_> = b
+                .definition
+                .ingredients
+                .iter()
+                .map(|i| i.label().unwrap().to_string())
+                .collect();
+            assert_eq!(labels, vec!["ing1", "ing3"]); // idx1 -> 0, idx3 -> 1
+
+            let urls: Vec<String> = builder_actions(&b)
+                .actions
+                .iter()
+                .filter_map(first_ing_url)
+                .collect();
+            assert!(urls.iter().any(|u| u.ends_with("c2pa.ingredient.v3"))); // ing1 -> idx0
+            assert!(urls.iter().any(|u| u.ends_with("c2pa.ingredient.v3__1"))); // ing3 -> idx1
+            assert!(!urls
+                .iter()
+                .any(|u| u.ends_with("__2") || u.ends_with("__3")));
+        }
+
+        // `c2pa.edited` + `inputTo` ingredient survives while its action survives; pruned when removed.
+        #[test]
+        fn filter_ingredients_edited_input_to() {
+            let def = json!({
+                "ingredients": [
+                    { "title": "edit", "format": "image/jpeg", "relationship": "inputTo", "label": "ing_edit", "instance_id": "id_edit" },
+                ],
+                "assertions": [{ "label": "c2pa.actions.v2", "data": { "actions": [
+                    created_action(),
+                    { "action": "c2pa.edited", "parameters": { "ingredientIds": ["ing_edit"] } },
+                ]}}]
+            });
+
+            // edited survives -> inputTo ingredient kept, relationship unchanged.
+            let mut kept = removal_builder(def.clone());
+            kept.filter_ingredients(|_| false).unwrap();
+            assert_eq!(kept.definition.ingredients.len(), 1);
+            assert_eq!(
+                kept.definition.ingredients[0].relationship(),
+                &Relationship::InputTo
+            );
+
+            // edited removed -> inputTo ingredient pruned.
+            let mut dropped = removal_builder(def);
+            dropped
+                .filter_actions(|a| a.action() != "c2pa.edited")
+                .unwrap();
+            dropped.filter_ingredients(|_| false).unwrap();
+            assert!(dropped.definition.ingredients.is_empty());
+        }
+
+        // a parentOf ingredient at a non-zero index survives and its opened link re-indexes.
+        #[test]
+        fn filter_ingredients_parent_of_nonzero_index() {
+            let mut b = removal_builder(json!({
+                "ingredients": [
+                    positional_ingredient("comp"),
+                    { "title": "parent", "format": "image/jpeg", "relationship": "parentOf", "label": "parent", "instance_id": "parent" },
+                ],
+                "assertions": [{ "label": "c2pa.actions.v2", "data": { "actions": [
+                    { "action": "c2pa.opened", "parameters": { "ingredients": [{
+                        "url": "self#jumbf=c2pa.assertions/c2pa.ingredient.v3__1",
+                        "alg": "sha256", "hash": [9, 9]
+                    }]}},
+                    positional_placed(0),
+                ]}}]
+            }));
+            // Remove the placed action (ref __0), orphaning the componentOf ingredient at index 0.
+            b.filter_actions(|a| {
+                !first_ing_url(a).is_some_and(|u| u.ends_with("c2pa.ingredient.v3"))
+            })
+            .unwrap();
+            b.filter_ingredients(|_| false).unwrap();
+
+            // Only the parentOf ingredient remains, now at index 0.
+            assert_eq!(b.definition.ingredients.len(), 1);
+            assert_eq!(
+                b.definition.ingredients[0].relationship(),
+                &Relationship::ParentOf
+            );
+            // opened's __1 reference re-indexed to the base label (idx 0).
+            let opened_url = builder_actions(&b)
+                .actions
+                .iter()
+                .find(|a| a.action() == c2pa_action::OPENED)
+                .and_then(first_ing_url)
+                .unwrap();
+            assert!(opened_url.ends_with("c2pa.ingredient.v3"));
+        }
+
+        // a diamond ingredient shared by two actions re-indexes consistently and is kept
+        // while at least one referencing action survives.
+        #[test]
+        fn filter_ingredients_diamond_shared() {
+            let base_def = json!({
+                "ingredients": [
+                    positional_ingredient("orphan"), // idx0, referenced by nothing
+                    positional_ingredient("shared"), // idx1, referenced by two actions
+                ],
+                "assertions": [{ "label": "c2pa.actions.v2", "data": { "actions": [
+                    created_action(),
+                    { "action": "c2pa.edited", "parameters": { "ingredients": [{
+                        "url": "self#jumbf=c2pa.assertions/c2pa.ingredient.v3__1", "alg": "sha256", "hash": [1] }]}},
+                    { "action": "c2pa.placed", "parameters": { "ingredients": [{
+                        "url": "self#jumbf=c2pa.assertions/c2pa.ingredient.v3__1", "alg": "sha256", "hash": [1] }]}},
+                ]}}]
+            });
+
+            // Prune the orphan at idx0 -> shared moves to idx0; both actions must remap to base.
+            let mut b = removal_builder(base_def.clone());
+            b.filter_ingredients(|_| false).unwrap();
+            let labels: Vec<_> = b
+                .definition
+                .ingredients
+                .iter()
+                .map(|i| i.label().unwrap().to_string())
+                .collect();
+            assert_eq!(labels, vec!["shared"]); // kept exactly once
+            let ref_urls: Vec<String> = builder_actions(&b)
+                .actions
+                .iter()
+                .filter_map(first_ing_url)
+                .collect();
+            assert_eq!(ref_urls.len(), 2);
+            assert!(ref_urls.iter().all(|u| u.ends_with("c2pa.ingredient.v3")));
+
+            // Remove only one of the two referring actions -> shared still referenced, not pruned.
+            let mut b2 = removal_builder(base_def);
+            b2.filter_actions(|a| a.action() != "c2pa.placed").unwrap();
+            b2.filter_ingredients(|_| false).unwrap();
+            let labels2: Vec<_> = b2
+                .definition
+                .ingredients
+                .iter()
+                .map(|i| i.label().unwrap().to_string())
+                .collect();
+            assert_eq!(labels2, vec!["shared"]);
+        }
+
+        /// Produce a signed JPEG (single `c2pa.created`) for use as a nested ingredient.
+        fn signed_created_jpeg() -> Vec<u8> {
+            let mut b = removal_builder(json!({
+                "format": "image/jpeg",
+                "assertions": [{ "label": "c2pa.actions.v2", "data": { "actions": [ created_action() ]}}]
+            }));
+            let signer = test_signer(SigningAlg::Ps256);
+            let mut dest = Cursor::new(Vec::new());
+            b.sign(
+                signer.as_ref(),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+                &mut dest,
+            )
+            .unwrap();
+            dest.into_inner()
+        }
+
+        // a kept ingredient's embedded manifest chain is untouched by top-level pruning.
+        #[test]
+        fn filter_ingredients_preserves_nested_chain() {
+            let nested = signed_created_jpeg();
+            let mut b = removal_builder(json!({
+                "format": "image/jpeg",
+                "assertions": [{ "label": "c2pa.actions.v2", "data": { "actions": [
+                    created_action(),
+                    { "action": "c2pa.placed", "parameters": { "ingredientIds": ["nested"] } },
+                ]}}]
+            }));
+            b.add_ingredient_from_stream(
+                json!({ "title": "nested", "relationship": "componentOf", "label": "nested" })
+                    .to_string(),
+                "image/jpeg",
+                &mut Cursor::new(nested),
+            )
+            .unwrap();
+
+            // The nested ingredient is referenced, so it survives an orphan prune with its chain.
+            b.filter_ingredients(|_| false).unwrap();
+            assert_eq!(b.definition.ingredients.len(), 1);
+            assert!(b.definition.ingredients[0].active_manifest().is_some());
+
+            // Sign the top-level builder and confirm the nested chain reads back intact.
+            let signer = test_signer(SigningAlg::Ps256);
+            let mut dest = Cursor::new(Vec::new());
+            b.sign(
+                signer.as_ref(),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+                &mut dest,
+            )
+            .unwrap();
+            dest.rewind().unwrap();
+            let reader = Reader::default()
+                .with_stream("image/jpeg", &mut dest)
+                .unwrap();
+            let active = reader.active_manifest().unwrap();
+            let ing = &active.ingredients()[0];
+            let nested_label = ing.active_manifest().expect("nested active_manifest");
+            assert!(
+                reader.get_manifest(nested_label).is_some(),
+                "nested manifest chain must survive top-level pruning"
+            );
+        }
+
+        // a deep-nested orphan is pruned by default but rescued by a manifest_data predicate.
+        #[test]
+        fn filter_ingredients_predicate_rescues_orphan() {
+            let nested = signed_created_jpeg();
+            let make = || {
+                let mut b = removal_builder(json!({
+                    "format": "image/jpeg",
+                    "assertions": [{ "label": "c2pa.actions.v2", "data": { "actions": [ created_action() ]}}]
+                }));
+                // Orphan ingredient: no action references it, but it carries an embedded manifest chain.
+                b.add_ingredient_from_stream(
+                    json!({ "title": "orphan", "relationship": "componentOf", "label": "orphan" })
+                        .to_string(),
+                    "image/jpeg",
+                    &mut Cursor::new(nested.clone()),
+                )
+                .unwrap();
+                b
+            };
+
+            // Default prune drops the orphan.
+            let mut pruned = make();
+            pruned.filter_ingredients(|_| false).unwrap();
+            assert!(pruned.definition.ingredients.is_empty());
+
+            // A predicate that inspects manifest_data rescues it (whole chain rides along).
+            let mut rescued = make();
+            rescued
+                .filter_ingredients(|ing| ing.manifest_data().is_some())
+                .unwrap();
+            assert_eq!(rescued.definition.ingredients.len(), 1);
+            assert!(rescued.definition.ingredients[0]
+                .active_manifest()
+                .is_some());
+        }
+
+        // end-to-end sign + re-read produces no action/ingredient validation failures.
+        #[test]
+        fn filter_removal_end_to_end() {
+            // Case A: c2pa.created, remove a non-inception action and prune.
+            let mut created = removal_builder(json!({
+                "format": "image/jpeg",
+                "assertions": [{ "label": "c2pa.actions.v2", "data": { "actions": [
+                    created_action(),
+                    { "action": "c2pa.color_adjustments" },
+                ]}}]
+            }));
+            created
+                .filter_actions(|a| a.action() != "c2pa.color_adjustments")
+                .unwrap();
+            created.filter_ingredients(|_| false).unwrap();
+            assert_no_action_failures(sign_and_read(created));
+
+            // Case B: c2pa.opened + parentOf; remove the placed action and prune its ingredient.
+            let mut source = Cursor::new(TEST_IMAGE);
+            let mut opened = Builder::default().with_definition(manifest_json()).unwrap();
+            opened
+                .add_ingredient_from_stream(parent_json(), "image/jpeg", &mut source)
+                .unwrap();
+            opened
+                .resources
+                .add("thumbnail.jpg", TEST_THUMBNAIL.to_vec())
+                .unwrap();
+            opened
+                .filter_actions(|a| a.action() != "c2pa.placed")
+                .unwrap();
+            opened.filter_ingredients(|_| false).unwrap();
+            // The parentOf (CA.jpg) ingredient survives; the componentOf INGREDIENT_2 is gone.
+            assert!(opened.definition.ingredients.iter().any(|i| i.is_parent()));
+            assert!(!opened
+                .definition
+                .ingredients
+                .iter()
+                .any(|i| i.label() == Some("INGREDIENT_2")));
+            assert_no_action_failures(sign_and_read(opened));
+        }
     }
 }

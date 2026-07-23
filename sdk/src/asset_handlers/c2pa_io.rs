@@ -24,7 +24,7 @@ use crate::{
     error::{Error, Result},
 };
 
-static SUPPORTED_TYPES: [&str; 3] = [
+pub(crate) static SUPPORTED_TYPES: [&str; 3] = [
     "c2pa",
     "application/c2pa",
     "application/x-c2pa-manifest-store",
@@ -177,7 +177,6 @@ pub mod tests {
 
     use super::{AssetIO, C2paIO, CAIReader, CAIWriter};
     use crate::{
-        crypto::raw_signature::SigningAlg,
         status_tracker::{ErrorBehavior, StatusTracker},
         store::Store,
         utils::{
@@ -185,6 +184,7 @@ pub mod tests {
             test::{fixture_path, temp_dir_path},
             test_signer::test_signer,
         },
+        SigningAlg,
     };
 
     #[test]

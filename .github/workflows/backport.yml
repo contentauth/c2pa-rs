@@ -1,0 +1,69 @@
+name: Backport
+
+# Cherry-picks a merged `main` PR onto a release-line branch (upstream-first:
+# everything lands on `main` first, then is brought forward). Add a label of
+# the form `backport-<branch>` to a PR; when it merges, this opens a backport
+# PR against that branch:
+#   * backport-stable  -> stable      (the currently-active additive line)
+#   * backport-v0.90    -> v0.90       (a specific long-lived line)
+#
+# The opened backport PR is gated by Tier 1A + cargo-semver-checks (see
+# semver-checks.yml). To run the full Tier 1A+1B+2 suite on a risky backport,
+# add the `check-release` label to the backport PR.
+#
+# Engine: korthout/backport-action (self-contained GitHub Action; no external
+# service). Mergify is a documented alternative if richer conflict handling or
+# merge queues are ever needed -- see docs/release-process.md.
+
+on:
+  pull_request_target:
+    types: [closed, labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  backport:
+    name: Backport merged PR
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      - name: Create backport PRs
+        id: backport
+        uses: korthout/backport-action@d07416681cab29bf2661702f925f020aaa962997 # v3
+        with:
+          github_token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          # Labels look like `backport-<branch>`; the captured group is the
+          # target branch name.
+          label_pattern: '^backport-(?<target>.+)$'
+          pull_title: '${pull_title} (backport #${pull_number})'
+          pull_description: |
+            Automated backport of #${pull_number} to `${target_branch}`.
+
+            Upstream-first: this change already merged to `main`. If the
+            cherry-pick did not apply cleanly, adapt it so it compiles and
+            passes tests on this branch.
+
+      # Arm GitHub's native auto-merge on each backport PR that was opened. The
+      # actual merge only fires once the target branch's protection rules are
+      # satisfied -- i.e. CI is green and at least one approving review is in --
+      # so those requirements must be configured as branch protection on the
+      # release-line branches (CI passing + 1 required approval). Requires
+      # "Allow auto-merge" to be enabled in the repository settings.
+      - name: Enable auto-merge on backport PRs
+        if: steps.backport.outputs.created_pull_numbers != ''
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          CREATED_PRS: ${{ steps.backport.outputs.created_pull_numbers }}
+        run: |
+          for pr in $CREATED_PRS; do
+            echo "Enabling auto-merge (squash) on backport PR #$pr"
+            gh pr merge "$pr" --auto --squash --repo "$GITHUB_REPOSITORY"
+          done

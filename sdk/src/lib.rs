@@ -243,20 +243,36 @@ pub use assertions::DigitalSourceType;
 #[doc(inline)]
 pub use assertions::Relationship;
 pub use builder::{Builder, BuilderIntent, HashType, ManifestDefinition};
+pub use c2pa_raw_crypto::{RawSignatureValidationError, RawSigner, RawSignerError, SigningAlg};
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
 #[doc(inline)]
 pub use context::{Context, ProgressCallbackFunc, ProgressPhase};
-pub use crypto::raw_signature::SigningAlg;
+
+/// JSON Schema proxy for [`SigningAlg`].
+///
+/// `c2pa_raw_crypto::SigningAlg` intentionally does not depend on `schemars`,
+/// so it does not implement [`schemars::JsonSchema`]. SDK types that expose a
+/// `SigningAlg` in their JSON schema reference this mirror (whose variants match
+/// `SigningAlg`'s serialized form) via `#[schemars(with = "...")]`.
+#[cfg(feature = "json_schema")]
+#[derive(schemars::JsonSchema)]
+#[allow(dead_code)]
+pub(crate) enum SigningAlgSchema {
+    Es256,
+    Es384,
+    Es512,
+    Ps256,
+    Ps384,
+    Ps512,
+    Ed25519,
+}
 pub use error::{Error, Result};
 #[doc(hidden)]
 pub use external_manifest::ManifestPatchCallback;
 pub use hash_utils::{hash_stream_by_alg, HashRange};
 pub use hashed_uri::HashedUri;
 pub use ingredient::Ingredient;
-#[cfg(feature = "file_io")]
-#[doc(hidden)]
-pub use ingredient::{DefaultOptions, IngredientOptions};
 pub use manifest::{Manifest, SignatureInfo};
 pub use manifest_assertion::{ManifestAssertion, ManifestAssertionKind};
 pub use reader::Reader;

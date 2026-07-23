@@ -65,8 +65,53 @@ fn test_bad_data_hash() -> Result<()> {
 
     let mut dest = Cursor::new(Vec::new());
 
-    let result = builder.sign(context.signer()?, format, &mut source, &mut dest);
-    assert!(matches!(result, Err(Error::HashMismatch(..))));
+    let err = builder
+        .sign(context.signer()?, format, &mut source, &mut dest)
+        .unwrap_err();
+
+    let validation_results = match err {
+        Error::InvalidManifest(validation_results) => validation_results,
+        other => panic!("{other:?}"),
+    };
+
+    assert_eq!(
+        validation_results.active_manifest().unwrap().failure[0].code(),
+        validation_status::ASSERTION_DATAHASH_MISMATCH
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_created_action_missing_digital_source_type() -> Result<()> {
+    let context = test_context().into_shared();
+
+    const TEST_IMAGE: &[u8] = include_bytes!("fixtures/CA.jpg");
+    let format = "image/jpeg";
+    let mut source = Cursor::new(TEST_IMAGE);
+
+    let mut builder = Builder::from_shared_context(&context);
+
+    // Manually craft a c2pa.created action without a digitalSourceType, bypassing
+    // the BuilderIntent::Create API (which requires a DigitalSourceType at the type level).
+    builder.add_action(serde_json::json!({
+        "action": "c2pa.created"
+    }))?;
+
+    let mut dest = Cursor::new(Vec::new());
+    let err = builder
+        .sign(context.signer()?, format, &mut source, &mut dest)
+        .unwrap_err();
+
+    let validation_results = match err {
+        Error::InvalidManifest(validation_results) => validation_results,
+        other => panic!("{other:?}"),
+    };
+
+    assert_eq!(
+        validation_results.active_manifest().unwrap().failure[0].code(),
+        validation_status::ASSERTION_ACTION_MALFORMED
+    );
 
     Ok(())
 }

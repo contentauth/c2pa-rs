@@ -45,7 +45,11 @@ fn test_hash_data_assertion_structure() -> Result<()> {
         "c2pa.hash.data.hash must start with \"b64'\" prefix, got: {hash:?}"
     );
     assert!(
-        hash.len() > "b64'".len(),
+        hash.ends_with('\''),
+        "c2pa.hash.data.hash must end with a closing \"'\", got: {hash:?}"
+    );
+    assert!(
+        hash.len() > "b64''".len(),
         "c2pa.hash.data.hash payload must not be empty"
     );
 
@@ -65,6 +69,10 @@ fn test_hash_data_assertion_structure() -> Result<()> {
         assert!(
             pad_str.starts_with("b64'"),
             "c2pa.hash.data.pad must start with \"b64'\" prefix, got: {pad_str:?}"
+        );
+        assert!(
+            pad_str.ends_with('\''),
+            "c2pa.hash.data.pad must end with a closing \"'\", got: {pad_str:?}"
         );
     }
 
@@ -154,6 +162,10 @@ fn test_action_ingredient_hash_is_base64() -> Result<()> {
             assert!(
                 hash_str.starts_with("b64'"),
                 "action[{i}] ingredient hash must start with \"b64'\" prefix, got: {hash_str:?}"
+            );
+            assert!(
+                hash_str.ends_with('\''),
+                "action[{i}] ingredient hash must end with a closing \"'\", got: {hash_str:?}"
             );
         }
     }

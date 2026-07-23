@@ -29,15 +29,16 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{
-    create_signer, format_from_path, settings::Settings, BoxedSigner, Builder, CallbackSigner,
-    ClaimGeneratorInfo, Context as C2paContext, Error, Ingredient, ManifestDefinition, Reader,
-    Signer, SigningAlg,
+    create_signer, format_from_path, settings::Settings, BoxedSigner, Builder, BuilderIntent,
+    CallbackSigner, ClaimGeneratorInfo, Context as C2paContext, DigitalSourceType, Error,
+    Ingredient, ManifestDefinition, Reader, Signer, SigningAlg,
 };
 use clap::{Parser, Subcommand};
 use env_logger::Env;
 use etcetera::BaseStrategy;
 use log::debug;
 use serde::Deserialize;
+use serde_json::json;
 use signer::SignConfig;
 use tempfile::NamedTempFile;
 use url::Url;
@@ -85,6 +86,19 @@ struct CliArgs {
     /// Path to a parent file.
     #[clap(short, long)]
     parent: Option<PathBuf>,
+
+    /// Digital source type for a new creation (e.g. `digitalCapture`, `empty`).
+    ///
+    /// Passing this flag sets the builder intent to `Create`.
+    /// Mutually exclusive with `--update` and `--parent`.
+    #[clap(long, conflicts_with = "update", conflicts_with = "parent")]
+    create: Option<String>,
+
+    /// Treat this as an update manifest (non-editorial changes to a parent asset).
+    ///
+    /// Mutually exclusive with `--create`.
+    #[clap(long, conflicts_with = "create")]
+    update: bool,
 
     /// Manifest definition passed as a JSON string.
     #[clap(short, long, conflicts_with = "manifest")]
@@ -467,8 +481,8 @@ fn ext_normal(path: &Path) -> String {
     }
 }
 
-// loads an ingredient, allowing for a folder or json ingredient
-fn load_ingredient(path: &Path) -> Result<Ingredient> {
+// adds an ingredient, from a file, folder or json definition
+fn add_ingredient(builder: &mut Builder, path: &Path, is_parent: bool) -> Result<()> {
     // if the path is a folder, look for ingredient.json
     let mut path_buf = PathBuf::from(path);
     let path = if path.is_dir() {
@@ -478,16 +492,27 @@ fn load_ingredient(path: &Path) -> Result<Ingredient> {
         path
     };
     if path.extension() == Some(std::ffi::OsStr::new("json")) {
+        // ingredient is a json file, load it directly and set the base path for any resources
         let json = std::fs::read_to_string(path)?;
         let mut ingredient: Ingredient = serde_json::from_slice(json.as_bytes())?;
         if let Some(base) = path.parent() {
             ingredient.resources_mut().set_base_path(base);
         }
-        Ok(ingredient)
+        if is_parent {
+            ingredient.set_relationship(c2pa::Relationship::ParentOf);
+        }
+        builder.add_ingredient(ingredient.clone());
+        Ok(())
     } else {
-        #[allow(deprecated)]
-        let result = Ingredient::from_file(path)?;
-        Ok(result)
+        // ingredient is a file, load it as an ingredient with a relationship
+        let mut file = File::open(path)?;
+        let format = format_from_path(path)
+            .ok_or_else(|| anyhow!("Could not determine format from path: {:?}", path))?;
+        let json = json!({
+            "relationship": if is_parent { c2pa::Relationship::ParentOf } else { c2pa::Relationship::ComponentOf },
+        }).to_string();
+        builder.add_ingredient_from_stream(json, &format, &mut file)?;
+        Ok(())
     }
 }
 
@@ -958,6 +983,24 @@ pub(crate) fn folder_mode_output_path_ok(path: &Path) -> bool {
 }
 
 fn main() -> Result<()> {
+    // Harden against DLL hijacking on Windows by removing the current working
+    // directory from the DLL search path. Without this, Windows' default DLL
+    // search order includes the CWD, which allows an attacker to place a
+    // malicious DLL alongside the executable. LOAD_LIBRARY_SEARCH_DEFAULT_DIRS
+    // restricts the search to: the application directory, System32, and
+    // directories added via AddDllDirectory/SetDllDirectory — excluding the CWD.
+    // SAFETY: no invariants to uphold; the argument is a valid constant.
+    #[cfg(windows)]
+    unsafe {
+        if windows_sys::Win32::System::LibraryLoader::SetDefaultDllDirectories(
+            windows_sys::Win32::System::LibraryLoader::LOAD_LIBRARY_SEARCH_DEFAULT_DIRS,
+        ) == 0
+        {
+            let err = windows_sys::Win32::Foundation::GetLastError();
+            bail!("Failed to set default DLL directories (error {err})");
+        }
+    }
+
     let args = CliArgs::parse();
 
     // default to error logging, RUST_LOG=debug to get detailed debug logging
@@ -1007,11 +1050,6 @@ fn main() -> Result<()> {
         println!("{}", tree::tree(path)?);
         return Ok(());
     }
-
-    let is_fragment = matches!(
-        &args.command,
-        Some(Commands::Fragment { fragments_glob: _ })
-    );
 
     // configure the SDK
     let mut settings = configure_sdk(&args).context("Could not configure c2pa-rs")?;
@@ -1084,28 +1122,30 @@ fn main() -> Result<()> {
                         path = base.join(&path)
                     }
                 }
-                let ingredient = load_ingredient(&path)?;
-                builder.add_ingredient(ingredient);
+                add_ingredient(&mut builder, &path, false)?;
             }
         }
 
         if let Some(parent_path) = args.parent {
-            let mut ingredient = load_ingredient(&parent_path)?;
-            ingredient.set_is_parent();
-            builder.add_ingredient(ingredient);
+            add_ingredient(&mut builder, &parent_path, true)?
         }
 
-        // If the source file has a manifest store, and no parent is specified treat the source as a parent.
-        // note: This could be treated as an update manifest eventually since the image is the same
-        let has_parent = builder.definition.ingredients.iter().any(|i| i.is_parent());
-        if !has_parent && !is_fragment {
-            #[allow(deprecated)]
-            let mut source_ingredient = Ingredient::from_file(path)?;
-            if source_ingredient.manifest_data().is_some() {
-                source_ingredient.set_is_parent();
-                builder.add_ingredient(source_ingredient);
-            }
-        }
+        // Default to Edit intent unless --create/--update override it. If the manifest already
+        // declares its own c2pa.created or c2pa.opened action, Builder itself guards against
+        // auto-adding a conflicting parentOf ingredient or action.
+        let intent = if let Some(source_type_str) = &args.create {
+            let source_type: DigitalSourceType =
+                serde_json::from_value(serde_json::Value::String(source_type_str.clone()))
+                    .with_context(|| {
+                        format!("Invalid --create source type: '{source_type_str}'")
+                    })?;
+            BuilderIntent::Create(source_type)
+        } else if args.update {
+            BuilderIntent::Update
+        } else {
+            BuilderIntent::Edit
+        };
+        builder.set_intent(intent);
 
         if let Some(remote) = args.remote {
             if args.sidecar {
@@ -1307,12 +1347,22 @@ fn main() -> Result<()> {
         }
         create_dir_all(&output)?;
         if args.ingredient {
-            #[allow(deprecated)]
-            let report = Ingredient::from_file_with_folder(path, &output)
-                .map_err(special_errs)?
-                .to_string();
+            let mut builder = Builder::from_shared_context(&context);
+            let ingredient = builder
+                .add_ingredient_from_stream(
+                    "{}",
+                    &format_from_path(path).ok_or(c2pa::Error::UnsupportedType)?,
+                    &mut File::open(path)?,
+                )
+                .map_err(special_errs)?;
+            // write resources to the output folder explicitly
+            for (id, data) in ingredient.resources().resources() {
+                std::fs::write(output.join(id), data)?;
+            }
+            let report = ingredient.to_string();
+
             File::create(output.join("ingredient.json"))?.write_all(&report.into_bytes())?;
-            println!("Ingredient report written to the directory {:?}", &output);
+            println!("Ingredient report written to the directory {:?}", output);
         } else {
             let reader = Reader::from_shared_context(&context)
                 .with_file(path)
@@ -1326,11 +1376,15 @@ fn main() -> Result<()> {
                 File::create(output.join("detailed.json"))?.write_all(&detailed.into_bytes())?;
             }
             File::create(output.join("manifest_store.json"))?.write_all(&report.into_bytes())?;
-            println!("Manifest report written to the directory {:?}", &output);
+            println!("Manifest report written to the directory {:?}", output);
         }
     } else if args.ingredient {
-        #[allow(deprecated)]
-        let ingredient = Ingredient::from_file(path).map_err(special_errs)?;
+        let mut builder = Builder::from_shared_context(&context);
+        let ingredient = builder.add_ingredient_from_stream(
+            r#"{"relationship":"component-of"}"#,
+            &format_from_path(path).ok_or(c2pa::Error::UnsupportedType)?,
+            &mut File::open(path)?,
+        )?;
         println!("{}", ingredient)
     } else if let Some(Commands::Fragment {
         fragments_glob: Some(fg),

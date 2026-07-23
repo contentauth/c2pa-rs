@@ -43,6 +43,7 @@ fn temp_path(name: &str) -> PathBuf {
     create_dir_all(&path).ok();
     path.join(name)
 }
+
 #[test]
 fn tool_not_found() -> Result<(), Box<dyn Error>> {
     let mut cmd = Command::new(cargo::cargo_bin!("c2patool"));
@@ -100,6 +101,7 @@ fn tool_embed_jpeg_report() -> Result<(), Box<dyn Error>> {
         .stdout(str::contains("My Title"));
     Ok(())
 }
+
 #[test]
 fn tool_fs_output_report() -> Result<(), Box<dyn Error>> {
     let path = temp_path("output_dir");
@@ -692,5 +694,88 @@ fn tool_read_image_crjson() -> Result<(), Box<dyn Error>> {
         .success()
         .stdout(str::contains("\"jsonGenerator\""))
         .stdout(str::contains("https://c2pa.org/crjson"));
+    Ok(())
+}
+
+// Minimal manifest definition with no actions; lets the SDK auto-inject the
+// correct c2pa.created / c2pa.opened action based on intent.
+const MINIMAL_MANIFEST: &str = r#"{"assertions": []}"#;
+
+#[test]
+// c2patool earth_apollo17.jpg --create digitalCapture -c '{"assertions":[]}' -o out.jpg -f
+// Create intent: auto-injects c2pa.created with digitalCapture, no parent ingredient.
+fn intent_create_adds_created_action() -> Result<(), Box<dyn Error>> {
+    Command::new(cargo::cargo_bin!("c2patool"))
+        .arg(fixture_path(TEST_IMAGE))
+        .arg("--create")
+        .arg("digitalCapture")
+        .arg("-c")
+        .arg(MINIMAL_MANIFEST)
+        .arg("-o")
+        .arg(temp_path("intent_create_out.jpg"))
+        .arg("-f")
+        .assert()
+        .success()
+        .stdout(str::contains("c2pa.created"))
+        .stdout(str::contains("digitalCapture"))
+        .stdout(str::contains("parentOf").not());
+    Ok(())
+}
+
+#[test]
+// --create and --parent are mutually exclusive at the CLI level.
+fn intent_create_rejects_parent_flag() -> Result<(), Box<dyn Error>> {
+    Command::new(cargo::cargo_bin!("c2patool"))
+        .arg(fixture_path(TEST_IMAGE))
+        .arg("--create")
+        .arg("digitalCapture")
+        .arg("--parent")
+        .arg(fixture_path(TEST_IMAGE))
+        .arg("-c")
+        .arg(MINIMAL_MANIFEST)
+        .arg("-o")
+        .arg(temp_path("intent_create_parent_out.jpg"))
+        .arg("-f")
+        .assert()
+        .failure()
+        .stderr(str::contains("cannot be used with"));
+    Ok(())
+}
+
+#[test]
+// Default (no --create / --update flag) = Edit intent.
+// SDK auto-adds source as parent ingredient and injects c2pa.opened tied to it.
+fn intent_edit_default_adds_parent_and_opened_action() -> Result<(), Box<dyn Error>> {
+    Command::new(cargo::cargo_bin!("c2patool"))
+        .arg(fixture_path(TEST_IMAGE))
+        .arg("-c")
+        .arg(MINIMAL_MANIFEST)
+        .arg("-o")
+        .arg(temp_path("intent_edit_out.jpg"))
+        .arg("-f")
+        .assert()
+        .success()
+        .stdout(str::contains("c2pa.opened"))
+        .stdout(str::contains("parentOf"));
+    Ok(())
+}
+
+#[test]
+// --update = Update manifest intent.
+// The source must already have a manifest (update manifests require provenance on the parent).
+// SDK auto-adds source as parent ingredient and injects c2pa.opened tied to it.
+fn intent_update_adds_parent_and_opened_action() -> Result<(), Box<dyn Error>> {
+    Command::new(cargo::cargo_bin!("c2patool"))
+        .arg(fixture_path(TEST_IMAGE_WITH_MANIFEST)) // C.jpg already has a manifest
+        .arg("--update")
+        .arg("-c")
+        .arg(MINIMAL_MANIFEST)
+        .arg("-o")
+        .arg(temp_path("intent_update_out.jpg"))
+        .arg("-f")
+        .assert()
+        .success()
+        .stdout(str::contains("c2pa.opened"))
+        .stdout(str::contains("parentOf"));
     Ok(())
 }

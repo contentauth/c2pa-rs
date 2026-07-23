@@ -21,9 +21,9 @@ use c2pa_macros::c2pa_test_async;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{
-    crypto::raw_signature::SigningAlg,
     identity::{x509::X509SignatureVerifier, IdentityAssertion},
     status_tracker::{LogKind, StatusTracker},
+    SigningAlg,
 };
 
 /// An identity assertion MUST contain a valid CBOR data structure that contains
@@ -440,6 +440,7 @@ mod invalid_sig_type {
 
     use super::*;
     use crate::{
+        context::Context,
         identity::{
             claim_aggregation::IcaSignatureVerifier, x509::X509SignatureVerifier, IdentityAssertion,
         },
@@ -563,7 +564,8 @@ mod invalid_sig_type {
         assert_eq!(sp.sig_type, "INVALID.identity.naive_credential".to_owned());
 
         // Intentionally not using NaiveSignatureVerifier here.
-        let ica_verifier = IcaSignatureVerifier {};
+        let context = Context::new();
+        let ica_verifier = IcaSignatureVerifier::new(&context);
         let err = ia
             .validate(
                 reader.active_manifest().unwrap(),

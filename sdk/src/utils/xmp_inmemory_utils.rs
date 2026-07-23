@@ -79,7 +79,9 @@ fn extract_xmp_key(xmp: &str, key: &str) -> Option<String> {
                 } else if e.name() == QName(key.as_bytes()) {
                     // tag case
                     if let Ok(s) = reader.read_text(e.name()) {
-                        return Some(s.to_string());
+                        if let Ok(s) = s.decode() {
+                            return Some(s.into_owned());
+                        }
                     }
                 }
             }

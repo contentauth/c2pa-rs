@@ -85,6 +85,23 @@ pub struct Trust {
     pub trust_config: Option<String>,
     /// List of explicitly allowed certificates as a PEM bundle.
     pub allowed_list: Option<String>,
+    /// Exact-match allow-list of trusted CAWG identity claims aggregation (ICA)
+    /// issuer DIDs.
+    ///
+    /// Each entry is a full DID string (any DID method) that is compared, after
+    /// stripping any fragment, against the `issuer` of an ICA verifiable
+    /// credential. An issuer that is not present on this list is reported with
+    /// the informational code `cawg.ica.untrusted_issuer` for that identity
+    /// assertion and its `cawg.ica.credential_valid` success code is withheld.
+    ///
+    /// The default value is empty, meaning that NO ICA issuer is trusted. This
+    /// is a deliberate secure default: a self-issued `did:jwk` (or any other
+    /// issuer) is not trustworthy simply because its signature is
+    /// self-consistent. Populate this list with the DIDs of issuers you trust.
+    // TO DO (CAI-12709): This field is only meaningful for `cawg_trust`, not for
+    // the C2PA `trust`. Move it (and the other CAWG-relevant settings) to a
+    // dedicated `CawgTrust` struct so it no longer pollutes the C2PA `Trust`.
+    pub trusted_ica_issuers: Option<Vec<String>>,
 }
 
 impl Trust {
@@ -152,6 +169,13 @@ impl Default for Trust {
                 trust_anchors: None,
                 trust_config: None,
                 allowed_list: None,
+                // Trust the ICA issuer DIDs used by the bundled CAWG test
+                // fixtures so the existing ICA validation tests continue to
+                // produce `cawg.ica.credential_valid`.
+                trusted_ica_issuers: Some(vec![
+                    "did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9".to_string(),
+                    "did:web:connected-identities.identity-stage.adobe.com".to_string(),
+                ]),
             };
 
             trust.trust_config = Some(
@@ -177,6 +201,7 @@ impl Default for Trust {
                 trust_anchors: None,
                 trust_config: None,
                 allowed_list: None,
+                trusted_ica_issuers: None,
             }
         }
     }
@@ -295,6 +320,11 @@ pub struct Core {
     /// See more information in the spec here:
     /// [Compressed manifests - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_compressed_boxes)
     pub prefer_compress_manifests: bool,
+    /// Maximum size in megabytes of a Brotli-decompressed JUMBF manifest.
+    /// Limits memory consumption from decompression bomb attacks.
+    ///
+    /// The default is 32 MB.
+    pub max_decompressed_manifest_size_in_mb: usize,
 }
 
 impl Default for Core {
@@ -306,12 +336,19 @@ impl Default for Core {
             decode_identity_assertions: true,
             allowed_network_hosts: None,
             prefer_compress_manifests: false,
+            max_decompressed_manifest_size_in_mb: 32,
         }
     }
 }
 
 impl SettingsValidate for Core {
     fn validate(&self) -> Result<()> {
+        const MAX_MANIFEST_SIZE_MB: usize = 1024; // 1 GiB
+        if self.max_decompressed_manifest_size_in_mb > MAX_MANIFEST_SIZE_MB {
+            return Err(Error::BadParam(format!(
+                "max_decompressed_manifest_size_in_mb must not exceed {MAX_MANIFEST_SIZE_MB} MB"
+            )));
+        }
         Ok(())
     }
 }
@@ -338,8 +375,8 @@ pub struct Verify {
     /// Whether to verify the manifest after signing in the [`Builder`].
     ///
     /// The default value is false.
-    /// There is a known bug related to this setting: [#1875](https://github.com/contentauth/c2pa-rs/issues/1875).
-    /// When the bug is fixed, the default value should be true.
+    ///
+    /// In the future, this setting will default to true.
     ///
     /// <div class="warning">
     /// Disabling validation can improve signing performance, BUT it carries the risk of signing an invalid
@@ -348,6 +385,12 @@ pub struct Verify {
     ///
     /// [`Builder`]: crate::Builder
     pub verify_after_sign: bool,
+    /// Whether to include asset hash validation when verifying after signing.
+    ///
+    /// The default value is false.
+    ///
+    /// Has no effect when [`Verify::verify_after_sign`] is false.
+    pub(crate) verify_after_sign_hash: bool,
     /// Whether to verify certificates against the trust lists specified in [`Trust`]. To configure
     /// timestamp certificate verification, see [`Verify::verify_timestamp_trust`].
     ///
@@ -406,7 +449,8 @@ impl Default for Verify {
     fn default() -> Self {
         Self {
             verify_after_reading: true,
-            verify_after_sign: false, // TODO: Update docs when #1875 is fixed.
+            verify_after_sign: true,
+            verify_after_sign_hash: cfg!(test),
             verify_trust: true,
             verify_timestamp_trust: !cfg!(test), // verify timestamp trust unless in test mode
             ocsp_fetch: false,
@@ -421,8 +465,12 @@ impl SettingsValidate for Verify {}
 
 /// Settings for configuring all aspects of c2pa-rs.
 ///
-/// [Settings::default] will be set thread-locally by default. Any settings set via
-/// [Settings::from_toml] or [Settings::from_file] will also be thread-local.
+/// [`Settings::default`] is used as the thread-local configuration by default.
+/// Use [`Settings::new`] together with builder-style methods such as
+/// [`with_toml`] to construct a configuration without modifying thread-local
+/// state.
+///
+/// [`with_toml`]: Settings::with_toml
 #[cfg_attr(
     feature = "json_schema",
     derive(schemars::JsonSchema),
@@ -1053,15 +1101,6 @@ pub mod tests {
     use crate::utils::io_utils::tempdirectory;
     use crate::{utils::test::test_settings, SigningAlg};
 
-    #[cfg(feature = "file_io")]
-    fn save_settings_as_json<P: AsRef<Path>>(settings_path: P) -> Result<()> {
-        let settings = get_thread_local_settings();
-
-        let settings_json = serde_json::to_string_pretty(&settings).map_err(Error::JsonError)?;
-
-        std::fs::write(settings_path, settings_json.as_bytes()).map_err(Error::IoError)
-    }
-
     /// Legacy test: verifies the thread-local settings API reads defaults and round-trips values.
     #[test]
     fn test_thread_local_settings() {
@@ -1103,7 +1142,8 @@ pub mod tests {
         let temp_dir = tempdirectory().unwrap();
         let op = crate::utils::test::temp_dir_path(&temp_dir, "sdk_config.json");
 
-        save_settings_as_json(&op).unwrap();
+        let settings_json = serde_json::to_string_pretty(&Settings::default()).unwrap();
+        std::fs::write(&op, settings_json.as_bytes()).unwrap();
 
         let settings = Settings::new().with_file(&op).unwrap();
         assert_eq!(settings, Settings::default());
@@ -1125,10 +1165,18 @@ pub mod tests {
             merkle_tree_chunk_size_in_kb = true
             merkle_tree_max_proofs = "sha1000000"
             backing_store_memory_threshold_in_mb = -123456
+            max_decompressed_manifest_size_in_mb = -123456
         }
         .to_string();
 
         assert!(Settings::new().with_toml(&modified_core).is_err());
+    }
+
+    #[test]
+    fn test_core_validate_rejects_oversized_manifest_cap() {
+        let result =
+            Settings::default().with_value("core.max_decompressed_manifest_size_in_mb", 1025usize);
+        assert!(result.is_err());
     }
 
     /// Legacy test: verifies arbitrary (hidden) keys can be stored and retrieved via the

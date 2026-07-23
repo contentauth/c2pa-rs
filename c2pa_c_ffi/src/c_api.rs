@@ -17,16 +17,11 @@ use std::{
 };
 
 // C has no namespace so we prefix things with C2PA to make them unique (as namespace)
-#[cfg(feature = "file_io")]
-use c2pa::Ingredient;
 use c2pa::{
     assertions::DataHash, create_signer, Builder as C2paBuilder, CallbackSigner, Context,
     ProgressPhase, Reader as C2paReader, Settings as C2paSettings, SigningAlg,
 };
 
-//use tokio::runtime::Builder;
-#[cfg(feature = "file_io")]
-use crate::json_api::{read_file, sign_file};
 #[cfg(test)]
 use crate::safe_slice_from_raw_parts;
 // Import macros and utilities from cimpl
@@ -917,66 +912,6 @@ pub unsafe extern "C" fn c2pa_context_cancel(ctx: *mut C2paContext) -> c_int {
     ctx.cancel();
     0
 }
-
-///
-/// # Errors
-/// Returns NULL if there were errors, otherwise returns a JSON string.
-/// The error string can be retrieved by calling c2pa_error.
-///
-/// # Safety
-/// Reads from NULL-terminated C strings.
-/// The returned value MUST be released by calling release_string
-/// and it is no longer valid after that call.
-#[cfg(feature = "file_io")]
-#[no_mangle]
-#[deprecated(
-    note = "Use c2pa_reader_from_context() with an explicit context for new implementations."
-)]
-#[allow(deprecated)]
-pub unsafe extern "C" fn c2pa_read_file(
-    path: *const c_char,
-    data_dir: *const c_char,
-) -> *mut c_char {
-    let path = cstr_or_return_null!(path);
-    let data_dir = cstr_option!(data_dir);
-
-    let result = read_file(&path, data_dir);
-    let json = ok_or_return_null!(result);
-    to_c_string(json)
-}
-
-/// Returns an Ingredient JSON string from a file path.
-///
-/// Any thumbnail or C2PA data will be written to data_dir if provided.
-///
-/// # Errors
-/// Returns NULL if there were errors, otherwise returns a JSON string
-/// containing the Ingredient.
-/// The error string can be retrieved by calling c2pa_error.
-///
-/// # Safety
-/// Reads from NULL-terminated C strings.
-/// The returned value MUST be released by calling release_string
-/// and it is no longer valid after that call.
-#[cfg(feature = "file_io")]
-#[no_mangle]
-#[deprecated(
-    note = "Use c2pa_builder_add_ingredient_from_stream() with an explicit context for new implementations."
-)]
-#[allow(deprecated)]
-pub unsafe extern "C" fn c2pa_read_ingredient_file(
-    path: *const c_char,
-    data_dir: *const c_char,
-) -> *mut c_char {
-    let path = cstr_or_return_null!(path);
-    let data_dir = cstr_or_return_null!(data_dir);
-    // Legacy C API: uses thread-local settings. Use c2pa_reader_from_context for new implementations.
-    let result = Ingredient::from_file_with_folder(path, data_dir).map_err(Error::from_c2pa_error);
-    let ingredient = ok_or_return_null!(result);
-    let json = serde_json::to_string(&ingredient).unwrap_or_default();
-    to_c_string(json)
-}
-
 #[repr(C)]
 /// Defines the configuration for a Signer.
 ///
@@ -991,46 +926,6 @@ pub struct C2paSignerInfo {
     pub private_key: *const c_char,
     /// The timestamp authority URL or NULL.
     pub ta_url: *const c_char,
-}
-
-/// Add a signed manifest to the file at path with the given signer information.
-///
-/// # Errors
-/// Returns an error field if there were errors.
-///
-/// # Safety
-/// Reads from NULL-terminated C strings.
-/// The returned value MUST be released by calling release_string
-/// and it is no longer valid after that call.
-#[cfg(feature = "file_io")]
-#[no_mangle]
-#[deprecated(
-    note = "Use c2pa_builder_from_context() with c2pa_builder_sign_to_stream() for new implementations."
-)]
-#[allow(deprecated)]
-pub unsafe extern "C" fn c2pa_sign_file(
-    source_path: *const c_char,
-    dest_path: *const c_char,
-    manifest: *const c_char,
-    signer_info: &C2paSignerInfo,
-    data_dir: *const c_char,
-) -> *mut c_char {
-    // Convert C pointers into Rust.
-    let source_path = cstr_or_return_null!(source_path);
-    let dest_path = cstr_or_return_null!(dest_path);
-    let manifest = cstr_or_return_null!(manifest);
-    let data_dir = cstr_option!(data_dir);
-
-    let signer_info = SignerInfo {
-        alg: cstr_or_return_null!(signer_info.alg),
-        sign_cert: cstr_or_return_null!(signer_info.sign_cert).into_bytes(),
-        private_key: cstr_or_return_null!(signer_info.private_key).into_bytes(),
-        ta_url: cstr_option!(signer_info.ta_url),
-    };
-    // Read manifest from JSON and then sign and write it.
-    let result = sign_file(&source_path, &dest_path, &manifest, &signer_info, data_dir);
-    ok_or_return_null!(result); // we don't return the bytes, just an empty string for ok
-    to_c_string("".to_string())
 }
 
 /// Frees a string allocated by Rust.
@@ -1446,8 +1341,18 @@ pub unsafe extern "C" fn c2pa_reader_json(reader_ptr: *mut C2paReader) -> *mut c
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_detailed_json(reader_ptr: *mut C2paReader) -> *mut c_char {
     let c2pa_reader = deref_or_return_null!(reader_ptr, C2paReader);
-
     to_c_string(c2pa_reader.detailed_json())
+}
+
+/// Returns a crJSON string generated from a C2paReader.
+///
+/// # Safety
+/// The returned value MUST be released by calling c2pa_free
+/// and it is no longer valid after that call.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_reader_crjson(reader_ptr: *mut C2paReader) -> *mut c_char {
+    let c2pa_reader = deref_or_return_null!(reader_ptr, C2paReader);
+    to_c_string(c2pa_reader.crjson())
 }
 
 /// Returns the remote url of the manifest if it was obtained remotely.
@@ -2933,7 +2838,6 @@ unsafe fn c2pa_mime_types_to_c_array(strs: Vec<String>, count: *mut usize) -> *c
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use std::{ffi::CString, io::Seek, panic::catch_unwind};
 
@@ -2948,6 +2852,7 @@ mod tests {
 
     /// Helper to create a signer and builder for testing
     /// Returns (signer, builder)
+    #[allow(deprecated)]
     fn setup_signer_and_builder_for_signing_tests() -> (*mut C2paSigner, *mut C2paBuilder) {
         let certs = include_str!(fixture_path!("certs/ed25519.pub"));
         let private_key = include_bytes!(fixture_path!("certs/ed25519.pem"));
@@ -2971,6 +2876,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_ed25519_sign() {
         let bytes = b"test";
         let private_key = include_bytes!(fixture_path!("certs/ed25519.pem"));
@@ -2982,6 +2888,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_signer_from_info() {
         let certs = include_str!(fixture_path!("certs/ed25519.pub"));
         let private_key = include_bytes!(fixture_path!("certs/ed25519.pem"));
@@ -3018,6 +2925,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_sign_with_info() {
         let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
         let mut source_stream = TestStream::new(source_image.to_vec());
@@ -3050,6 +2958,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn builder_add_actions_and_sign() {
         let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
         let mut source_stream = TestStream::new(source_image.to_vec());
@@ -3114,6 +3023,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn builder_create_intent_digital_creation_and_sign() {
         let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
         let mut source_stream = TestStream::new(source_image.to_vec());
@@ -3177,6 +3087,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn builder_create_intent_empty_and_sign() {
         let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
         let mut source_stream = TestStream::new(source_image.to_vec());
@@ -3234,6 +3145,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn builder_edit_intent_and_sign() {
         // Use an already-signed image as the source for editing
         let signed_source_image = include_bytes!(fixture_path!("C.jpg"));
@@ -3310,6 +3222,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_builder_no_embed() {
         let manifest_def = CString::new("{}").unwrap();
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
@@ -3335,6 +3248,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_load_settings() {
         let settings = CString::new("{}").unwrap();
         let format = CString::new("json").unwrap();
@@ -3343,115 +3257,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "file_io")]
-    fn test_c2pa_read_file_null_path() {
-        let data_dir = CString::new("/tmp").unwrap();
-        let result = unsafe { c2pa_read_file(std::ptr::null(), data_dir.as_ptr()) };
-        assert!(result.is_null());
-        let error = unsafe { c2pa_error() };
-        let error_str = unsafe { CString::from_raw(error) };
-        assert_eq!(error_str.to_str().unwrap(), "NullParameter: path");
-    }
-
-    #[test]
-    #[cfg(feature = "file_io")]
-    fn test_c2pa_read_ingredient_file_null_path() {
-        let data_dir = CString::new("/tmp").unwrap();
-        let result = unsafe { c2pa_read_ingredient_file(std::ptr::null(), data_dir.as_ptr()) };
-        assert!(result.is_null());
-        let error = unsafe { c2pa_error() };
-        let error_str = unsafe { CString::from_raw(error) };
-        assert_eq!(error_str.to_str().unwrap(), "NullParameter: path");
-    }
-
-    #[test]
-    #[cfg(feature = "file_io")]
-    fn test_c2pa_sign_file_null_source_path() {
-        let dest_path = CString::new("/tmp/output.jpg").unwrap();
-        let manifest = CString::new("{}").unwrap();
-        let signer_info = C2paSignerInfo {
-            alg: std::ptr::null(),
-            sign_cert: std::ptr::null(),
-            private_key: std::ptr::null(),
-            ta_url: std::ptr::null(),
-        };
-        let result = unsafe {
-            c2pa_sign_file(
-                std::ptr::null(),
-                dest_path.as_ptr(),
-                manifest.as_ptr(),
-                &signer_info,
-                std::ptr::null(),
-            )
-        };
-        assert!(result.is_null());
-        let error = unsafe { c2pa_error() };
-        let error_str = unsafe { CString::from_raw(error) };
-        assert_eq!(error_str.to_str().unwrap(), "NullParameter: source_path");
-    }
-
-    #[test]
-    #[cfg(feature = "file_io")]
-    fn test_c2pa_sign_file_success() {
-        use std::{fs, path::PathBuf};
-
-        // Setup paths
-        let base = env!("CARGO_MANIFEST_DIR");
-        let source = format!("{base}/../sdk/tests/fixtures/IMG_0003.jpg");
-        let temp_dir = PathBuf::from(base).join("../target/tmp");
-        fs::create_dir_all(&temp_dir).unwrap();
-        let dest = temp_dir.join("c2pa_sign_file_test_output.jpg");
-
-        let source_path = CString::new(source).unwrap();
-        let dest_path = CString::new(dest.to_str().unwrap()).unwrap();
-        let manifest = CString::new("{}").unwrap();
-
-        // Setup signer info
-        let alg = CString::new("es256").unwrap();
-        let cert = CString::new(include_str!(fixture_path!("certs/es256.pub"))).unwrap();
-        let key =
-            CString::new(include_bytes!(fixture_path!("certs/es256.pem")).as_slice()).unwrap();
-
-        let signer_info = C2paSignerInfo {
-            alg: alg.as_ptr(),
-            sign_cert: cert.as_ptr(),
-            private_key: key.as_ptr(),
-            ta_url: std::ptr::null(),
-        };
-
-        // Call c2pa_sign_file
-        let result = unsafe {
-            c2pa_sign_file(
-                source_path.as_ptr(),
-                dest_path.as_ptr(),
-                manifest.as_ptr(),
-                &signer_info,
-                std::ptr::null(),
-            )
-        };
-
-        // Verify result is not null and is an empty string
-        assert!(
-            !result.is_null(),
-            "c2pa_sign_file should return non-null on success"
-        );
-        let result_str = unsafe { CString::from_raw(result) };
-        assert_eq!(
-            result_str.to_str().unwrap(),
-            "",
-            "c2pa_sign_file should return empty string on success"
-        );
-
-        // Verify the output file was created and has content
-        assert!(dest.exists(), "Output file should exist");
-        let metadata = fs::metadata(&dest).unwrap();
-        assert!(metadata.len() > 0, "Output file should have content");
-
-        // Clean up
-        fs::remove_file(dest).ok();
-    }
-
-    #[test]
+    #[allow(deprecated)]
     fn test_c2pa_reader_remote_url() {
         let mut stream = TestStream::new(include_bytes!(fixture_path!("cloud.jpg")).to_vec());
 
@@ -3474,6 +3280,7 @@ mod tests {
 
     // cargo test test_reader_file_with_wrong_label -- --nocapture
     #[test]
+    #[allow(deprecated)]
     fn test_reader_file_with_wrong_label() {
         let mut stream = TestStream::new(
             include_bytes!(fixture_path!("adobe-20220124-E-clm-CAICAI.jpg")).to_vec(),
@@ -3487,6 +3294,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_reader_from_stream_null_format() {
         let mut stream = TestStream::new(Vec::new());
 
@@ -3498,15 +3306,42 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_reader_from_stream_cawg() {
+        // This fixture's identity claims aggregation (ICA) credential is signed
+        // by a `did:jwk` issuer. ICA issuers are untrusted by default, so we must
+        // add that issuer to `cawg_trust.trusted_ica_issuers` for the credential
+        // to be reported as valid.
+        let builder = unsafe { c2pa_context_builder_new() };
+        let settings = unsafe { c2pa_settings_new() };
+
+        let path = CString::new("cawg_trust.trusted_ica_issuers").unwrap();
+        let value = CString::new(
+            r#"["did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9"]"#,
+        )
+        .unwrap();
+        let result = unsafe { c2pa_settings_set_value(settings, path.as_ptr(), value.as_ptr()) };
+        assert_eq!(result, 0);
+
+        let result = unsafe { c2pa_context_builder_set_settings(builder, settings) };
+        assert_eq!(result, 0);
+
+        let context = unsafe { c2pa_context_builder_build(builder) };
+        assert!(!context.is_null());
+
+        let reader = unsafe { c2pa_reader_from_context(context) };
+        assert!(!reader.is_null());
+
         let source_image = include_bytes!(
             "../../sdk/src/identity/tests/fixtures/claim_aggregation/ica_validation/success.jpg"
         );
         let mut stream = TestStream::new(source_image.to_vec());
         let format = CString::new("image/jpeg").unwrap();
-        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), stream.as_ptr()) };
-        assert!(!reader.is_null());
-        let json = unsafe { c2pa_reader_json(reader) };
+        let configured_reader =
+            unsafe { c2pa_reader_with_stream(reader, format.as_ptr(), stream.as_ptr()) };
+        assert!(!configured_reader.is_null());
+
+        let json = unsafe { c2pa_reader_json(configured_reader) };
         assert!(!json.is_null());
         let json_str = unsafe { CString::from_raw(json) };
         assert!(json_str.to_str().unwrap().contains("Silly Cats 929"));
@@ -3514,7 +3349,12 @@ mod tests {
             .to_str()
             .unwrap()
             .contains("cawg.ica.credential_valid"));
-        unsafe { c2pa_reader_free(reader) };
+
+        unsafe {
+            c2pa_free(settings as *mut c_void);
+            c2pa_free(context as *mut c_void);
+            c2pa_reader_free(configured_reader);
+        };
     }
 
     #[test]
@@ -3582,6 +3422,15 @@ mod tests {
         let mut dest_stream = TestStream::new(Vec::new());
 
         let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+
+        let result = unsafe {
+            c2pa_builder_set_intent(
+                builder,
+                C2paBuilderIntent::Create,
+                C2paDigitalSourceType::Empty,
+            )
+        };
+        assert_eq!(result, 0);
 
         let format = CString::new("image/jpeg").unwrap();
         let mut manifest_bytes_ptr = std::ptr::null();
@@ -3654,6 +3503,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_builder_add_resource_null_uri() {
         let manifest_def = CString::new("{}").unwrap();
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
@@ -3669,6 +3519,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_builder_to_archive_null_stream() {
         let manifest_def = CString::new("{}").unwrap();
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
@@ -3682,6 +3533,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_builder_add_ingredient_from_archive_null_stream() {
         let manifest_def = CString::new("{}").unwrap();
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
@@ -3706,6 +3558,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_builder_write_ingredient_archive_null_stream() {
         let manifest_def = CString::new("{}").unwrap();
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
@@ -3726,6 +3579,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_builder_write_ingredient_archive_null_ingredient_id() {
         let manifest_def = CString::new("{}").unwrap();
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
@@ -3787,6 +3641,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_create_callback_signer() {
         extern "C" fn test_callback(
             _context: *const (),
@@ -3819,6 +3674,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_sign_with_callback_signer() {
         // Create an example callback that uses the Ed25519 signing function,
         // since we have it around. It is important a "real" callback returns -1 on error.
@@ -3957,6 +3813,7 @@ mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
+    #[allow(deprecated)]
     fn test_reader_from_file_cawg_identity() {
         let settings = CString::new(include_bytes!(
             "../../cli/tests/fixtures/trust/cawg_test_settings.toml"
@@ -3987,6 +3844,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_signer_from_settings() {
         const SETTINGS: &str = include_str!("../../sdk/tests/fixtures/test_settings.json");
         let settings = CString::new(SETTINGS).unwrap();
@@ -4298,6 +4156,7 @@ verify_after_sign = true
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_reader_detailed_json() {
         use std::ffi::CStr;
 
@@ -4327,6 +4186,7 @@ verify_after_sign = true
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_reader_is_embedded() {
         // Test with embedded manifest
         let source_image = include_bytes!(fixture_path!("C.jpg"));
@@ -4392,6 +4252,7 @@ verify_after_sign = true
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_builder_add_ingredient_from_stream() {
         let manifest_def = CString::new("{}").unwrap();
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
@@ -4421,6 +4282,7 @@ verify_after_sign = true
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_builder_with_definition() {
         // Create initial builder
         let manifest_def = CString::new("{}").unwrap();
@@ -4442,6 +4304,7 @@ verify_after_sign = true
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_builder_with_definition_null_json() {
         // Create initial builder
         let manifest_def = CString::new("{}").unwrap();
@@ -4461,6 +4324,7 @@ verify_after_sign = true
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_builder_with_archive() {
         // Create initial builder
         let manifest_def = CString::new("{}").unwrap();
@@ -4486,6 +4350,7 @@ verify_after_sign = true
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_builder_with_archive_null_stream() {
         // Create initial builder
         let manifest_def = CString::new("{}").unwrap();
@@ -4505,6 +4370,7 @@ verify_after_sign = true
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_reader_with_fragment() {
         // Create initial reader
         let source_image = include_bytes!(fixture_path!("C.jpg"));
@@ -4541,6 +4407,7 @@ verify_after_sign = true
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_reader_with_fragment_null_format() {
         // Create initial reader
         let source_image = include_bytes!(fixture_path!("C.jpg"));
@@ -4619,6 +4486,7 @@ verify_after_sign = true
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_builder_add_action_null_action() {
         let manifest_def = CString::new("{}").unwrap();
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
@@ -4666,6 +4534,7 @@ verify_after_sign = true
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_string_free_backward_compat() {
         // Test that string_free works for backward compatibility
         let test_str = CString::new("test string").unwrap();
@@ -4679,6 +4548,7 @@ verify_after_sign = true
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_string_free_null() {
         // Should handle null gracefully
         unsafe {
@@ -4688,6 +4558,7 @@ verify_after_sign = true
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_release_string() {
         // Test the deprecated c2pa_release_string function
         let test_str = CString::new("test string for release").unwrap();
@@ -4701,6 +4572,7 @@ verify_after_sign = true
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_ed25519_sign_actually_calls_function() {
         // Fix: The existing test_ed25519_sign doesn't call c2pa_ed25519_sign!
         let bytes = b"test data to sign";
@@ -4728,6 +4600,7 @@ verify_after_sign = true
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_ed25519_sign_null_key() {
         let bytes = b"test data";
 
@@ -4750,6 +4623,7 @@ verify_after_sign = true
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_reader_json_better_coverage() {
         // The existing test only tests null, let's test with valid reader
         let source_image = include_bytes!(fixture_path!("C.jpg"));
@@ -4805,6 +4679,7 @@ verify_after_sign = true
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_reader_from_manifest_data_and_stream() {
         // First, create a signed image to get manifest bytes
         let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
@@ -4813,6 +4688,15 @@ verify_after_sign = true
         let mut dest_stream = TestStream::new(dest_vec);
 
         let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+
+        let result = unsafe {
+            c2pa_builder_set_intent(
+                builder,
+                C2paBuilderIntent::Create,
+                C2paDigitalSourceType::Empty,
+            )
+        };
+        assert_eq!(result, 0);
 
         let format = CString::new("image/jpeg").unwrap();
         let mut manifest_bytes_ptr = std::ptr::null();
@@ -4869,6 +4753,7 @@ verify_after_sign = true
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_reader_from_manifest_data_and_stream_null_format() {
         let source_image = include_bytes!(fixture_path!("C.jpg"));
         let mut stream = TestStream::new(source_image.to_vec());
@@ -4890,6 +4775,7 @@ verify_after_sign = true
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_reader_resource_to_stream() {
         // Use an existing fixture with C2PA data
         let source_image = include_bytes!(fixture_path!("C.jpg"));
@@ -4944,6 +4830,7 @@ verify_after_sign = true
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_reader_resource_to_stream_null_uri() {
         // Use an existing fixture with C2PA data
         let source_image = include_bytes!(fixture_path!("C.jpg"));
@@ -5305,6 +5192,7 @@ verify_after_sign = true
     /// Verify that `c2pa_identity_signer_create` produces a combined signer
     /// that embeds a valid X.509 identity assertion in the signed manifest.
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_identity_signer_create() {
         let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
         let mut source_stream = TestStream::new(source_image.to_vec());
@@ -5348,7 +5236,21 @@ verify_after_sign = true
             CimplError::last_message()
         );
 
-        let manifest_def = CString::new("{}").unwrap();
+        let manifest_def = CString::new(
+            serde_json::json!({
+                "assertions": [{
+                    "label": "c2pa.actions",
+                    "data": {
+                        "actions": [{
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
+                        }]
+                    }
+                }]
+            })
+            .to_string(),
+        )
+        .unwrap();
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
         assert!(!builder.is_null());
 

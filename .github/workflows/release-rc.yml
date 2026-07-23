@@ -1,0 +1,141 @@
+name: Cut release-candidate build
+
+# Cuts a numbered release-candidate BUILD (-rc.1, -rc.2, ...) from a release-
+# candidate BRANCH (e.g. `0.90.0-rc`). This is what lets downstream consumers
+# who depend on pre-built binaries validate a breaking train during its bake:
+# each RC build is tagged and gets a *prerelease* GitHub release with binaries
+# attached, but it is NEVER published to crates.io.
+#
+# How it fits together (see docs/release-process.md):
+#   * `release-train-cut.yml` creates the `0.N.0-rc` branch and invokes this
+#     workflow once to produce the first build, `-rc.1`.
+#   * A maintainer re-runs this workflow (workflow_dispatch on the RC branch)
+#     to cut `-rc.2`, `-rc.3`, ... after bugfixes have been cherry-picked onto
+#     the RC branch during the bake.
+#
+# This workflow only sets versions and pushes tags. The tags then drive the
+# binary builds: `c2pa-v*` -> library-release.yml, `c2patool-v*` ->
+# c2patool-release.yml, both of which mark `-rc.` tags as prereleases.
+#
+# Publishing is gated by branch/tag names, not by this workflow: the tags
+# contain `-rc.` and never match a crates.io publish trigger (release.yml only
+# runs on `stable` / `v0.*` branch pushes), so an RC build can never reach
+# crates.io by construction.
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+
+jobs:
+  cut-rc:
+    name: Cut release-candidate build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse to run outside a release-candidate branch
+        run: |
+          # An RC branch is named `<version>-rc` (no numeric suffix; the number
+          # lives on the build tag, not the branch). Guard against accidentally
+          # dispatching this against main / stable / a v0.x line.
+          case "${{ github.ref_name }}" in
+            *-rc) echo "Running on RC branch ${{ github.ref_name }}." ;;
+            *)
+              echo "::error::release-rc must be dispatched on a *-rc branch, not '${{ github.ref_name }}'."
+              exit 1
+              ;;
+          esac
+
+      - name: Checkout RC branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
+
+      # `cargo set-version` (from cargo-edit) keeps intra-workspace dependency
+      # requirements in sync when it bumps a crate -- e.g. c2patool's dependency
+      # on c2pa -- which a hand edit would miss.
+      - name: Install cargo-edit
+        uses: baptiste0928/cargo-install@f204293d9709061b7bc1756fec3ec4e2cd57dec0 # v3.4.0
+        with:
+          crate: cargo-edit
+          version: "0.13.6"
+
+      - name: Compute release-candidate versions
+        id: ver
+        run: |
+          meta() { cargo metadata --format-version=1 --no-deps | jq -r ".packages[]|select(.name==\"$1\")|.version"; }
+          CUR_C2PA=$(meta c2pa); CUR_TOOL=$(meta c2patool)
+
+          # Strip any `-rc.N` or `-dev` prerelease suffix to get the base release
+          # version each crate is heading toward.
+          base() { local b="${1%-rc.*}"; echo "${b%-dev}"; }
+          BASE_C2PA=$(base "$CUR_C2PA"); BASE_TOOL=$(base "$CUR_TOOL")
+
+          # The build number is derived from c2pa and applied in lockstep to
+          # both crates, so "-rc.N" identifies one coherent candidate. On a
+          # freshly cut branch the version is still `-dev` (no `-rc.`), so we
+          # start at 1; otherwise we increment the current number.
+          if [[ "$CUR_C2PA" == *-rc.* ]]; then
+            N=$(( ${CUR_C2PA##*-rc.} + 1 ))
+          else
+            N=1
+          fi
+
+          RC_C2PA="${BASE_C2PA}-rc.${N}"
+          RC_TOOL="${BASE_TOOL}-rc.${N}"
+          {
+            echo "rc_c2pa=$RC_C2PA"
+            echo "rc_tool=$RC_TOOL"
+            echo "tag_c2pa=c2pa-v${RC_C2PA}"
+            echo "tag_tool=c2patool-v${RC_TOOL}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Cutting c2pa $RC_C2PA / c2patool $RC_TOOL (build #$N)."
+
+      - name: Fail if build tags already exist
+        run: |
+          for tag in "${{ steps.ver.outputs.tag_c2pa }}" "${{ steps.ver.outputs.tag_tool }}"; do
+            if git ls-remote --exit-code --tags origin "$tag" >/dev/null 2>&1; then
+              echo "::error::Tag $tag already exists; a build with this number was already cut."
+              exit 1
+            fi
+          done
+
+      - name: Set release-candidate versions
+        run: |
+          # `-p c2pa` also moves c2pa-c-ffi, which shares the workspace version.
+          cargo set-version -p c2pa "${{ steps.ver.outputs.rc_c2pa }}"
+          cargo set-version -p c2patool "${{ steps.ver.outputs.rc_tool }}"
+
+      - name: Commit and tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore: set ${{ github.ref_name }} to ${{ steps.ver.outputs.rc_c2pa }}"
+          # Push the commit and the build tags. The tags trigger the binary
+          # builds (library-release.yml / c2patool-release.yml). Pushing with a
+          # PAT (RELEASE_PLZ_TOKEN) is required so those tag-triggered workflows
+          # actually run -- pushes made with the default GITHUB_TOKEN do not
+          # cascade into other workflows.
+          git tag "${{ steps.ver.outputs.tag_c2pa }}"
+          git tag "${{ steps.ver.outputs.tag_tool }}"
+          git push origin "HEAD:${{ github.ref_name }}"
+          git push origin "${{ steps.ver.outputs.tag_c2pa }}" "${{ steps.ver.outputs.tag_tool }}"
+
+      - name: Summary
+        run: |
+          {
+            echo "## Release-candidate build cut"
+            echo ""
+            echo "- \`c2pa\` / \`c2pa-c-ffi\`: **${{ steps.ver.outputs.rc_c2pa }}** (tag \`${{ steps.ver.outputs.tag_c2pa }}\`)"
+            echo "- \`c2patool\`: **${{ steps.ver.outputs.rc_tool }}** (tag \`${{ steps.ver.outputs.tag_tool }}\`)"
+            echo ""
+            echo "Prerelease GitHub releases with binaries are building for these tags."
+            echo "Nothing is published to crates.io."
+          } >> "$GITHUB_STEP_SUMMARY"
