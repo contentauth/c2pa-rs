@@ -1241,6 +1241,17 @@ impl Reader {
                 }
             }
         }
+
+        // Wire the archive store as a lazy resolver so that JUMBF URI identifiers in
+        // the definition (thumbnails, ingredient data) can be resolved when re-signing.
+        let label = builder.definition.label.clone().unwrap_or_default();
+        builder
+            .resources
+            .set_resolver(Arc::new(crate::manifest::ManifestStoreResolver {
+                store: Arc::clone(&self.store),
+                label,
+            }));
+
         Ok(builder)
     }
 

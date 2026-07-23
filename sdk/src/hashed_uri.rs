@@ -24,7 +24,7 @@ use crate::utils::DebugByteSlice;
 ///
 /// This is described in [URI References in the C2PA Technical
 /// Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_uri_references).
-#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct HashedUri {
     /// JUMBF URI reference
@@ -83,6 +83,19 @@ impl HashedUri {
         &self.salt
     }
 }
+
+// `salt` is deliberately excluded: it's `skip_serializing`/`skip_deserializing` (a
+// signing-time artifact, not part of a HashedUri's wire identity), so a `HashedUri`
+// obtained in-memory before signing (which carries the real salt) and the same
+// reference read back after a round trip (which never has one) should still compare
+// equal. Derived `PartialEq` would include `salt` and break that.
+impl PartialEq for HashedUri {
+    fn eq(&self, other: &Self) -> bool {
+        self.url == other.url && self.alg == other.alg && self.hash == other.hash
+    }
+}
+
+impl Eq for HashedUri {}
 
 impl fmt::Debug for HashedUri {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {

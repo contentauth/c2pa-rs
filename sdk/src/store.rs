@@ -4307,7 +4307,7 @@ pub mod tests {
         status_tracker::{LogItem, StatusTracker},
         utils::{
             patch::patch_bytes,
-            test::{create_test_claim, create_test_streams, fixture_path},
+            test::{create_test_claim, create_test_streams, fixture_path, SAMPLE_PNG},
             test_signer::{async_test_signer, test_signer},
         },
         ClaimGeneratorInfo, DigitalSourceType, SigningAlg,
@@ -4828,7 +4828,7 @@ pub mod tests {
         context.settings_mut().verify.verify_after_sign = false;
 
         // test adding to actual image
-        let (format, mut input_stream, mut output_stream) = create_test_streams("libpng-test.png");
+        let (format, mut input_stream, mut output_stream) = create_test_streams(SAMPLE_PNG);
 
         // Create claims store.
         let mut store = Store::from_context(&context);
@@ -4935,7 +4935,7 @@ pub mod tests {
         context.settings_mut().verify.verify_after_sign = false;
 
         // test adding to actual image
-        let (format, mut input_stream, mut output_stream) = create_test_streams("libpng-test.png");
+        let (format, mut input_stream, mut output_stream) = create_test_streams(SAMPLE_PNG);
 
         // Create claims store.
         let mut store = Store::from_context(&context);
@@ -7615,7 +7615,7 @@ pub mod tests {
         let context = crate::context::Context::new();
 
         // Create test streams from fixture
-        let (format, mut input_stream, mut output_stream) = create_test_streams("libpng-test.png");
+        let (format, mut input_stream, mut output_stream) = create_test_streams(SAMPLE_PNG);
 
         // Create claims store.
         let mut store = Store::from_context(&context);
