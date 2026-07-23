@@ -57,7 +57,7 @@ Breaking changes and larger refactors are batched onto a scheduled train:
 
 1. On the scheduled date, a release-candidate branch `0.(x+1).0-rc` is cut from `main`, and its first build `0.(x+1).0-rc.1` is cut immediately (versions set, tagged, prerelease binaries built). **RC branches are not published to crates.io** (their name keeps them off every crates.io publish trigger), but each build **does** get a prerelease GitHub release with binaries so downstream consumers that depend on pre-built binaries can validate during the bake. See [RC builds](#release-candidate-builds).
 2. **Bake period: minimum 3 business days.** Only bug fixes are accepted during the bake, and they follow upstream-first (fix on `main`, cherry-pick to the candidate). After fixes land, cut a fresh build (`-rc.2`, `-rc.3`, …) so downstream has updated binaries to test. Hold longer than 3 business days if needed to validate across the downstream projects we maintain.
-3. **Promote** (a deliberate, manual step): first snapshot the outgoing `stable` as `v0.<old>` so the retiring line is available for backports, then merge the candidate into `stable`. `release-plz` then opens the `0.(x+1).0` version/changelog PR on `stable`; merging it publishes the breaking release.
+3. **Promote** (a deliberate, manual trigger): run the [release-promote](#release-promotion) workflow (`workflow_dispatch` on the `0.(x+1).0-rc` branch). It snapshots the outgoing `stable` as `v0.<old>` (so the retiring line stays available for backports), **strips the candidate's `-rc.N` suffix to the final `0.(x+1).0`**, generates the changelog, and opens a release PR into `stable`. Merging that PR publishes the breaking release. Stripping the suffix before it reaches `stable` is deliberate: a raw merge of the candidate would carry a `0.(x+1).0-rc.N` version onto `stable`, where `release-plz` refuses to proceed because a prerelease build tag (`c2pa-v0.(x+1).0-rc.N`) already exists for that version (see [release promotion](#release-promotion)).
 
 ### Cadence: scheduled, but not forced
 
@@ -181,6 +181,19 @@ As a backstop to the proactive check above, a scheduled job, [`reconciliation.ym
 
 The first build (`-rc.1`) is cut automatically when the train is cut. A maintainer re-runs this workflow (via `workflow_dispatch` on the RC branch) to cut a fresh build after bugfixes have been cherry-picked onto the branch during the bake. Tags are pushed with a PAT (`RELEASE_PLZ_TOKEN`) so the tag-driven binary workflows actually run — pushes made with the default `GITHUB_TOKEN` do not cascade into other workflows.
 
+### Release promotion
+
+[`release-promote.yml`](../.github/workflows/release-promote.yml) performs the deliberate, manual promotion of a baked candidate branch (`0.N.0-rc`) onto `stable` (`workflow_dispatch` on the RC branch). It:
+
+1. Snapshots the outgoing `stable` as a `v0.<old>` branch, so the retiring line stays available for backports.
+2. Strips the candidate's `-rc.N` suffix to the final `0.N.0` (via `cargo set-version`, so intra-workspace deps stay in sync) on a `promote/…` branch cut from the RC branch.
+3. Generates the final-version changelog with `release-plz`.
+4. Opens a PR from the `promote/…` branch into `stable`, labeled `release`. Merging it triggers [`release.yml`](#release-plz), which publishes and creates the real `c2pa-v0.N.0` / `c2patool-v0.M.0` tags.
+
+**Why the suffix is stripped before `stable` sees it.** `release-rc.yml` tags each candidate build `c2pa-v0.N.0-rc.M` for the prerelease binaries. `release-plz` treats a git tag as evidence that a version was released, so if a raw `git merge` of the candidate carried `0.N.0-rc.M` onto `stable`, `release-plz release-pr` would abort: *"local package `c2pa` has a greater version (0.N.0-rc.M) with respect to the registry package, but the git tag `c2pa-v0.N.0-rc.M` exists."* Promoting to the final `0.N.0` sidesteps this entirely -- `release-plz` then looks for `c2pa-v0.N.0`, which does not exist -- **without deleting any RC tags** (which must survive, as they own the prerelease binary releases).
+
+**Why the changelog needs post-processing.** `release-plz` will not touch a version that is already manually set ahead of the registry, and it baselines the changelog against the highest matching git tag -- which would be a `-rc.N` build tag. The workflow works around both non-destructively: it deletes the `-rc.N` tags from its *ephemeral* checkout only (never pushed; the remote tags and their binary releases are untouched), temporarily resets the crate versions to the last published release so `release-plz` generates a full-train changelog, then restores the forced final versions. Because `release-plz` computes each crate's bump from its own commits -- and cannot know the train's forced-minor, lockstep-across-crates policy -- [`normalize_promotion_changelog.py`](../.github/scripts/normalize_promotion_changelog.py) then retitles each crate's newest changelog section to the forced final version (or inserts a header-only section for a crate with no commits of its own, e.g. `c2patool`). Review these sections in the promotion PR before merging.
+
 ### Cross-repo canary
 
 [`canary-extracted-crates.yml`](../.github/workflows/canary-extracted-crates.yml) builds `c2pa-rs` `main` against the `main` of each extracted crate via a throwaway `[patch]`, and files an issue on failure. The `[patch]` exists only inside the runner; the patch-dependency guard guarantees it can never reach a release.
@@ -265,6 +278,7 @@ Branch-name patterns (`v0.*`, `*-rc*`) can be covered with a single ruleset each
 Some release automation pushes directly to protected branches and so must be on the ruleset **bypass list** — grant this to the identity behind `RELEASE_PLZ_TOKEN`:
 
 * [`release-train-cut.yml`](#release-train-cut) commits the next-dev-cycle bump straight to `main`, and [`release-rc.yml`](#release-candidate-builds) commits `-rc.N` version bumps straight to the RC branch. Both bypass the pull-request rule by design (they are mechanical version bumps, not reviewed changes).
+* [`release-promote.yml`](#release-promotion) creates the `v0.<old>` snapshot branch (a `v0.*` protected pattern) when promoting a train. It does **not** push to `stable` directly -- the promotion lands via a reviewed release PR -- but creating the snapshot branch requires bypass of the `v0.*` ruleset.
 
 ## One-time setup
 
