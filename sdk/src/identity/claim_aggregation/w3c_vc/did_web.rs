@@ -209,7 +209,7 @@ pub(crate) fn to_url(did: &str) -> Result<String, DidWebError> {
 
     // For the case [::1] which is a loopback address
     host_part.retain(|c| c != '[' && c != ']');
-    
+
     let mut invalid_host = host_part.parse::<std::net::IpAddr>().is_ok();
 
     if !invalid_host {
