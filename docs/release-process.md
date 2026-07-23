@@ -94,7 +94,7 @@ The model only works if we stay disciplined about keeping the fast lane non-brea
 
 * **Review norm:** "Can this ship additively? If yes, it goes out now. If it requires a break, it waits for the next train."
 * **Forward-compatible tools:** prefer `#[non_exhaustive]` (enums/structs), sealed traits, and default trait methods so future additions stay compatible.
-* **Deprecate-then-remove:** when we must break, add the replacement API additively now and mark the old one `#[deprecated]`. Removal of the old API rides a later train, after the deprecation window elapses. See the [deprecation policy](deprecation-policy.md). Users get the improvement immediately and a window to migrate.
+* **Deprecate-then-remove:** when we must break, add the replacement API additively and mark the old one `#[deprecated]`. Per the [deprecation policy](deprecation-policy.md), both the deprecation mark and the eventual removal are made on `main` only – never backported: the deprecation surfaces to users when the next train is cut, and the removal rides the following train. The additive replacement can still ship on the current line, so users get the new API right away and a full train's window to migrate before the old one disappears.
 * **Extract-with-re-export:** moving code into a separate crate is additive as long as the public paths are preserved by re-exporting (`pub use`). See [extracted crates](#extracted-crates-multi-repo).
 
 ## Extracted crates (multi-repo)
