@@ -1476,6 +1476,10 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 // copy the strips
                 with_order!(so_entry.value_bytes.as_slice(), self.endianness, |src| {
                     for cnt in sbcs.iter() {
+                        // Reject byte counts that would push the cumulative copy
+                        // past the source length before doing any per-strip work.
+                        accumulate_copy_len(&mut copied, *cnt, source_len, "strip")?;
+
                         // get the offset
                         let so: u64 = match so_entry.entry_type {
                             4u16 => {
@@ -1489,8 +1493,6 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                             16u16 => src.read_u64()?,
                             _ => return Err(Error::InvalidAsset("invalid TIFF strip".to_string())),
                         };
-
-                        accumulate_copy_len(&mut copied, *cnt, source_len, "strip")?;
 
                         let dest_offset = self.writer.stream_position()?;
                         dest_offsets.push(dest_offset);
@@ -1584,6 +1586,10 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 // copy the tiles
                 with_order!(to_entry.value_bytes.as_slice(), self.endianness, |src| {
                     for cnt in tbcs.iter() {
+                        // Reject byte counts that would push the cumulative copy
+                        // past the source length before doing any per-tile work.
+                        accumulate_copy_len(&mut copied, *cnt, source_len, "tile")?;
+
                         // get the offset
                         let to: u64 = match to_entry.entry_type {
                             4u16 => {
@@ -1593,8 +1599,6 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                             16u16 => src.read_u64()?,
                             _ => return Err(Error::InvalidAsset("invalid TIFF tile".to_string())),
                         };
-
-                        accumulate_copy_len(&mut copied, *cnt, source_len, "tile")?;
 
                         let dest_offset = self.writer.stream_position()?;
                         dest_offsets.push(dest_offset);
@@ -1708,6 +1712,10 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
             // copy the BigTable blocks
             with_order!(bo_entry.value_bytes.as_slice(), self.endianness, |src| {
                 for cnt in bbcs.iter() {
+                    // Reject byte counts that would push the cumulative copy past
+                    // the source length before doing any per-block work.
+                    accumulate_copy_len(&mut copied, *cnt, source_len, "BigTable")?;
+
                     let bo: u64 = match bo_entry.entry_type {
                         4u16 => {
                             let s = src.read_u32()?;
@@ -1720,8 +1728,6 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                         16u16 => src.read_u64()?,
                         _ => return Err(Error::InvalidAsset("invalid TIFF BigTable".to_string())),
                     };
-
-                    accumulate_copy_len(&mut copied, *cnt, source_len, "BigTable")?;
 
                     let dest_offset = self.writer.stream_position()?;
                     dest_offsets.push(dest_offset); // save offset where the new BigTable block is written for patching later
