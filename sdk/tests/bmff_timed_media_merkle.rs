@@ -10,13 +10,13 @@
 // files for the specific language governing permissions and limitations under
 // each license.
 
-//! Characterization tests for the BMFF *timed-media, track-based Merkle*
+//! Characterization tests for the BMFF timed-media, track-based Merkle
 //! verification path in [`BmffHash::verify_stream_hash`].
 //!
 //! This is the branch in `bmff_hash.rs` that enumerates tracks and reads
 //! individual samples (historically via the third-party `mp4` crate's
 //! `Mp4Reader::read_header` / `tracks()` / `read_sample()`), where a Merkle
-//! map's `local_id` is a *track id* rather than an `mdat` index. It is a
+//! map's `local_id` is a track id rather than an `mdat` index. It is a
 //! verify-only, legacy BMFF-v2 interop path: no current signer emits it, so it
 //! has no end-to-end coverage.
 //!
@@ -260,12 +260,47 @@ fn build_merkle_uuid_box(unique_id: u64, local_id: u64, location: u64) -> Vec<u8
     build_box(b"uuid", &payload)
 }
 
+/// Optional `free`-box padding to sprinkle through the assembled file, used to
+/// characterize that the reader skips padding boxes and still computes correct
+/// sample offsets across them. Each field is a payload byte count; zero means no
+/// box is inserted at that position.
+#[derive(Default, Clone, Copy)]
+struct Padding {
+    // `free` box at the start of the `moov` container (before `mvhd`/`trak`).
+    in_moov: usize,
+    // `free` box between `moov` and `mdat` (shifts every sample offset).
+    before_mdat: usize,
+    // `free` box appended after `mdat` (trailing data).
+    trailing: usize,
+}
+
+/// Builds a `free` box with an `n`-byte zero payload, or nothing when `n == 0`.
+fn maybe_free_box(n: usize) -> Vec<u8> {
+    if n == 0 {
+        Vec::new()
+    } else {
+        build_box(b"free", &vec![0u8; n])
+    }
+}
+
 /// Assembles a complete single-track timed-media MP4 whose sample bytes are laid
 /// out contiguously in a single `mdat`, one chunk per `stsc` run. Returns the
 /// file bytes together with the per-chunk root hashes (SHA-256 over each chunk's
 /// concatenated sample bytes) so the caller can populate a matching assertion.
 fn build_single_track_asset(track: TrackSpec, samples: &[&[u8]]) -> (Vec<u8>, Vec<Vec<u8>>) {
+    build_single_track_asset_padded(track, samples, Padding::default())
+}
+
+/// Like [`build_single_track_asset`], but inserts `free`-box padding per `pad`.
+fn build_single_track_asset_padded(
+    track: TrackSpec,
+    samples: &[&[u8]],
+    pad: Padding,
+) -> (Vec<u8>, Vec<Vec<u8>>) {
     let sample_count = samples.len() as u32;
+    let free_in_moov = maybe_free_box(pad.in_moov);
+    let free_before_mdat = maybe_free_box(pad.before_mdat);
+    let trailing_free = maybe_free_box(pad.trailing);
 
     // Group samples into chunks per the stsc runs. Since we use one chunk per
     // run with `samples_per_chunk` samples each, walk the samples accordingly.
@@ -322,6 +357,7 @@ fn build_single_track_asset(track: TrackSpec, samples: &[&[u8]]) -> (Vec<u8>, Ve
     let moov_placeholder = build_box(
         b"moov",
         &[
+            free_in_moov.clone(),
             build_mvhd(),
             build_trak(&track, sample_count, &placeholder_offsets),
         ]
@@ -335,7 +371,11 @@ fn build_single_track_asset(track: TrackSpec, samples: &[&[u8]]) -> (Vec<u8>, Ve
         uuid_boxes.extend_from_slice(&build_merkle_uuid_box(0, track.track_id as u64, location));
     }
 
-    let mdat_payload_offset = (ftyp.len() + uuid_boxes.len() + moov_placeholder.len() + 8) as u64;
+    // The mdat payload begins after ftyp, the uuid boxes, moov, any `free` box
+    // between moov and mdat, and the 8-byte mdat header.
+    let mdat_payload_offset =
+        (ftyp.len() + uuid_boxes.len() + moov_placeholder.len() + free_before_mdat.len() + 8)
+            as u64;
 
     // Concatenate sample bytes and compute each chunk's absolute file offset.
     let mut mdat_payload = Vec::new();
@@ -354,6 +394,7 @@ fn build_single_track_asset(track: TrackSpec, samples: &[&[u8]]) -> (Vec<u8>, Ve
     let moov = build_box(
         b"moov",
         &[
+            free_in_moov,
             build_mvhd(),
             build_trak(&track, sample_count, &real_offsets),
         ]
@@ -369,7 +410,9 @@ fn build_single_track_asset(track: TrackSpec, samples: &[&[u8]]) -> (Vec<u8>, Ve
     file.extend_from_slice(&ftyp);
     file.extend_from_slice(&uuid_boxes);
     file.extend_from_slice(&moov);
+    file.extend_from_slice(&free_before_mdat);
     file.extend_from_slice(&build_box(b"mdat", &mdat_payload));
+    file.extend_from_slice(&trailing_free);
 
     (file, roots)
 }
@@ -548,6 +591,37 @@ fn valid_multi_stsc_run_verifies() {
         .expect("multi-stsc-run asset should verify");
 }
 
+/// `free`-box padding scattered through the file — inside `moov`, between `moov`
+/// and `mdat`, and trailing after `mdat` — must be tolerated: the reader skips
+/// the padding boxes and still resolves sample offsets across them. Uses two
+/// chunks so the shifted `stco`/sample offsets are actually exercised.
+#[test]
+fn free_box_padding_is_tolerated() {
+    let track = TrackSpec {
+        track_id: 1,
+        stsc: vec![StscEntry {
+            first_chunk: 1,
+            samples_per_chunk: 1,
+            sample_description_index: 1,
+        }],
+        sample_sizes: SampleSizes::Variable(vec![6, 4]),
+        use_co64: false,
+    };
+    let samples: [&[u8]; 2] = [b"padpad", b"tail"];
+    let pad = Padding {
+        in_moov: 9,
+        before_mdat: 17,
+        trailing: 5,
+    };
+    let (file, roots) = build_single_track_asset_padded(track, &samples, pad);
+
+    let bmff_hash = track_merkle_assertion(1, &roots);
+    let mut reader = Cursor::new(file);
+    bmff_hash
+        .verify_stream_hash(&mut reader, Some("sha256"))
+        .expect("asset with free-box padding should verify");
+}
+
 /// A tampered sample (byte flipped after the roots were computed) must fail with
 /// a hash mismatch, confirming the sample bytes actually feed the Merkle check.
 #[test]
@@ -600,10 +674,9 @@ fn unknown_track_local_id_is_rejected() {
     let err = bmff_hash
         .verify_stream_hash(&mut reader, Some("sha256"))
         .unwrap_err();
-    let msg = err.to_string();
     assert!(
-        msg.contains("Merkle location not found") || msg.contains("location"),
-        "unexpected error: {msg}"
+        matches!(err, c2pa::Error::HashMismatch(ref m) if m == "Merkle location not found"),
+        "unexpected error: {err:?}"
     );
 }
 
@@ -639,10 +712,9 @@ fn empty_stsc_is_rejected() {
     let err = bmff_hash
         .verify_stream_hash(&mut reader, Some("sha256"))
         .unwrap_err();
-    let msg = err.to_string();
     assert!(
-        msg.contains("no stsc entries") || msg.contains("stsc"),
-        "unexpected error: {msg}"
+        matches!(err, c2pa::Error::InvalidAsset(ref m) if m == "BMFF has no stsc entries"),
+        "unexpected error: {err:?}"
     );
 }
 
@@ -669,9 +741,8 @@ fn zero_samples_per_chunk_is_rejected() {
     let err = bmff_hash
         .verify_stream_hash(&mut reader, Some("sha256"))
         .unwrap_err();
-    let msg = err.to_string();
     assert!(
-        msg.contains("samples_per_chunk") || msg.contains("stsc"),
-        "unexpected error: {msg}"
+        matches!(err, c2pa::Error::InvalidAsset(ref m) if m == "stsc samples_per_chunk must be non-zero"),
+        "unexpected error: {err:?}"
     );
 }
