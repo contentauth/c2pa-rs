@@ -1198,7 +1198,17 @@ impl BmffHash {
                     }
                     // check that the subsets do not overlap
                     for i in 0..subsets.len() - 1 {
-                        if subsets[i].offset + subsets[i].length > subsets[i + 1].offset {
+                        // `offset` and `length` are attacker-controlled u64s from
+                        // CBOR; a sum that overflows u64 cannot fit the addressing
+                        // space, so treat it as malformed rather than panicking on
+                        // the add (overflow-checked builds abort otherwise).
+                        let subset_end = subsets[i]
+                            .offset
+                            .checked_add(subsets[i].length)
+                            .ok_or_else(|| {
+                                Error::C2PAValidation(ASSERTION_BMFFHASH_MALFORMED.to_string())
+                            })?;
+                        if subset_end > subsets[i + 1].offset {
                             return Err(Error::C2PAValidation(
                                 ASSERTION_BMFFHASH_MALFORMED.to_string(),
                             ));
@@ -2472,6 +2482,7 @@ fn stsc_index(track: &Mp4Track, sample_id: u32) -> crate::Result<usize> {
 
 #[cfg(test)]
 mod bmff_hash_tests {
+    #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
     use std::io::Cursor;
@@ -2519,6 +2530,81 @@ mod bmff_hash_tests {
             &box_info,
             &mut merkle_map,
         );
+    }
+
+    fn bmff_hash_with_subsets(subsets: Vec<SubsetMap>) -> BmffHash {
+        let mut bmff_hash = BmffHash::new("test", "sha256", None);
+        let mut exclusion = ExclusionsMap::new("/mdat".to_owned());
+        exclusion.subset = Some(subsets);
+        bmff_hash.add_exclusions(&mut vec![exclusion]);
+        bmff_hash
+    }
+
+    /// Regression: `offset` and `length` are attacker-controlled `u64`s from
+    /// CBOR. When `offset + length` overflows `u64`, `verify_self` used to panic
+    /// with "attempt to add with overflow" (process abort, exit 101) while
+    /// validating a crafted BmffHash assertion — no valid signature required.
+    /// It must now surface a validation error instead of crashing.
+    #[test]
+    fn verify_self_rejects_subset_offset_length_overflow() {
+        let bmff_hash = bmff_hash_with_subsets(vec![
+            // offset + length overflows u64
+            SubsetMap {
+                offset: 100,
+                length: u64::MAX,
+            },
+            SubsetMap {
+                offset: 200,
+                length: 0,
+            },
+        ]);
+
+        assert!(
+            matches!(bmff_hash.verify_self(), Err(Error::C2PAValidation(_))),
+            "overflowing subset must be rejected as malformed, not panic",
+        );
+    }
+
+    /// A genuine (non-overflowing) overlap must still be rejected — the fix must
+    /// not weaken the existing overlap check.
+    #[test]
+    fn verify_self_rejects_overlapping_subsets() {
+        let bmff_hash = bmff_hash_with_subsets(vec![
+            // ends at 30, past the next subset's offset (20) → overlap
+            SubsetMap {
+                offset: 0,
+                length: 30,
+            },
+            SubsetMap {
+                offset: 20,
+                length: 5,
+            },
+        ]);
+
+        assert!(matches!(
+            bmff_hash.verify_self(),
+            Err(Error::C2PAValidation(_))
+        ));
+    }
+
+    /// Positive: valid ordered, non-overlapping subsets must still pass — the fix
+    /// must not over-reject legitimate assertions.
+    #[test]
+    fn verify_self_accepts_valid_non_overlapping_subsets() {
+        let bmff_hash = bmff_hash_with_subsets(vec![
+            SubsetMap {
+                offset: 0,
+                length: 10,
+            },
+            SubsetMap {
+                offset: 20,
+                length: 5,
+            },
+        ]);
+
+        bmff_hash
+            .verify_self()
+            .expect("valid non-overlapping subsets must pass verify_self");
     }
 
     fn make_bmff_merkle_entries(count: usize) -> Vec<BmffMerkleMap> {
