@@ -7036,7 +7036,7 @@ pub mod tests {
         // Check that both redactions are present
         let redacted_claim = new_claim.claim_ingredient(pc.label()).unwrap();
         assert!(redacted_claim
-            .get_assertion(labels::SCHEMA_ORG, 0)
+            .get_assertion(labels::SCHEMA_ORG_INTERNAL, 0)
             .is_none());
 
         assert!(redacted_claim
