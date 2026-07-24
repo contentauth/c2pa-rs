@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.90.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.2...c2pa-v0.90.3)
+_24 July 2026_
+
+### Fixed
+
+* Harden against integer overflow attacks in exclusion subsets checks in BMFF hash processing (backport #2359) ([#2360](https://github.com/contentauth/c2pa-rs/pull/2360))
+
 ## [0.90.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.1...c2pa-v0.90.2)
 _23 July 2026_
 
