@@ -21,6 +21,16 @@ permissions:
 jobs:
   semver-checks:
     name: cargo-semver-checks
+
+    # Trusted PRs only: same-repo branch, or a fork PR a maintainer has labeled
+    # `safe to test`/`check-release`. cargo-semver-checks compiles the PR's
+    # code, so untrusted forks must not run it unreviewed. We key off the PR's
+    # head repository rather than `author_association` (see tier-1a.yml).
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
+      contains(github.event.pull_request.labels.*.name, 'check-release')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

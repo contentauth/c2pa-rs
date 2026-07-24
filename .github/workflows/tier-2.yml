@@ -8,6 +8,11 @@
 # release-candidate (`*-rc*`) branch -- this includes backport PRs and the
 # release-plz release PR. For a PR against `main`, add the "check-release" label
 # to run this suite on demand.
+#
+# On top of that scope, the suite only runs for trusted PRs (those whose branch
+# lives in this repository, plus fork PRs a maintainer has labeled `safe to
+# test`/`check-release`); see tier-1a.yml for why trust keys off the PR's head
+# repository rather than `author_association`.
 
 name: Tier 2
 
@@ -32,7 +37,20 @@ on:
 jobs:
   c-library-mobile-builds:
     name: C library mobile builds
-    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event.pull_request.base.ref == 'stable' || startsWith(github.event.pull_request.base.ref, 'v0.') || contains(github.event.pull_request.base.ref, '-rc') || contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+
+    # Trusted (same-repo branch, or fork PR labeled `safe to test`/
+    # `check-release`) AND in scope for the release-oriented Tier 2 suite.
+    if: >-
+      (github.event_name != 'pull_request' ||
+        github.event.pull_request.head.repo.full_name == github.repository ||
+        contains(github.event.pull_request.labels.*.name, 'safe to test') ||
+        contains(github.event.pull_request.labels.*.name, 'check-release')) &&
+      (github.event_name == 'push' || github.event_name == 'schedule' ||
+        github.event.pull_request.base.ref == 'stable' ||
+        startsWith(github.event.pull_request.base.ref, 'v0.') ||
+        contains(github.event.pull_request.base.ref, '-rc') ||
+        contains(github.event.pull_request.labels.*.name, 'release') ||
+        contains(github.event.pull_request.labels.*.name, 'check-release'))
     runs-on: ${{ matrix.os }}
 
     strategy:
