@@ -20,15 +20,16 @@ env:
 jobs:
   build:
     name: Build benchmarks
+
+    # Only same-repo PR branches are trusted to run benchmarks; the benchmark
+    # job needs AWS/S3 and Codspeed secrets, which are never available to
+    # fork-originated PR runs, so there is deliberately no label escape hatch
+    # here. We key off the PR's head repository rather than `author_association`
+    # (see tier-1a.yml) so private org members with write access are not
+    # excluded.
     if: |
       github.event_name != 'pull_request' ||
-      (github.event.pull_request.head.repo.full_name == github.repository &&
-        (github.event.pull_request.author_association == 'COLLABORATOR' ||
-        github.event.pull_request.author_association == 'MEMBER' ||
-        github.event.pull_request.user.login == 'dependabot[bot]' ||
-        contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-        contains(github.event.pull_request.labels.*.name, 'check-release') ||
-        contains(github.event.pull_request.labels.*.name, 'benchmark')))
+      github.event.pull_request.head.repo.full_name == github.repository
 
     runs-on: ubuntu-latest
 

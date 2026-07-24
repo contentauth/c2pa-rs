@@ -25,7 +25,6 @@ use crate::{
     assertion::{AssertionBase, AssertionData},
     assertions::{labels, Actions, AssertionMetadata, EmbeddedData, Metadata, SoftwareAgent},
     claim::{ClaimAssertionType, RemoteManifest},
-    crypto::raw_signature::SigningAlg,
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
     hashed_uri::HashedUri,
@@ -38,7 +37,7 @@ use crate::{
     resource_store::{ResourceRef, ResourceStore, StoreResolver},
     status_tracker::StatusTracker,
     store::Store,
-    ClaimGeneratorInfo, Context, ManifestAssertionKind,
+    ClaimGeneratorInfo, Context, ManifestAssertionKind, SigningAlg,
 };
 
 /// This is used internally when generating manifests from a Store
@@ -723,6 +722,10 @@ impl std::fmt::Display for Manifest {
 pub struct SignatureInfo {
     /// Human-readable issuing authority for this signature.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "json_schema",
+        schemars(with = "Option<crate::SigningAlgSchema>")
+    )]
     pub alg: Option<SigningAlg>,
     /// Human-readable issuing authority for this signature.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -770,7 +773,7 @@ pub(crate) mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
-    use crate::crypto::raw_signature::SigningAlg;
+    use crate::SigningAlg;
     #[cfg(feature = "file_io")]
     use crate::status_tracker::StatusTracker;
     #[cfg(feature = "file_io")]
