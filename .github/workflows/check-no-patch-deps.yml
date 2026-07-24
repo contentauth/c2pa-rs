@@ -18,6 +18,17 @@ on:
 jobs:
   check:
     name: No patch/git dependencies
+
+    # When invoked directly on a PR, run only for trusted PRs (same-repo branch,
+    # or a fork PR labeled `safe to test`/`check-release`); see tier-1a.yml for
+    # why trust keys off the PR's head repository rather than
+    # `author_association`. Invocations via `workflow_call` are not pull-request
+    # events, so the first clause lets the reusable guard always run there.
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
+      contains(github.event.pull_request.labels.*.name, 'check-release')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
