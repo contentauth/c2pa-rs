@@ -31,7 +31,7 @@ use crate::{
     error::{Error, Result},
     utils::{
         io_utils::{patch_stream, tempfile_builder, ReaderUtils},
-        xmp_inmemory_utils::{add_provenance, MIN_XMP},
+        xmp_inmemory_utils::{add_provenance, extract_provenance, remove_provenance, MIN_XMP},
     },
 };
 
@@ -679,6 +679,67 @@ impl RemoteRefEmbed for PngIO {
             crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
         }
     }
+
+    fn supports_remove_reference(&self) -> bool {
+        true
+    }
+
+    fn remove_reference_to_stream(
+        &self,
+        source_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+    ) -> Result<()> {
+        source_stream.rewind()?;
+
+        // If there's no existing XMP, or no stale provenance value in it, there's nothing
+        // to clear -- just pass the asset through unchanged.
+        let needs_clearing = match self.read_xmp(source_stream) {
+            Some(xmp) => extract_provenance(&xmp).is_some(),
+            None => false,
+        };
+
+        if !needs_clearing {
+            source_stream.rewind()?;
+            output_stream.rewind()?;
+            io::copy(source_stream, output_stream)?;
+            return Ok(());
+        }
+
+        source_stream.rewind()?;
+        // read_xmp() above already confirmed this is Some
+        let xmp = self.read_xmp(source_stream).ok_or(Error::EmbeddingError)?;
+        let updated_xmp = remove_provenance(&xmp)?;
+
+        // make XMP chunk
+        let mut xmp_data = Vec::new();
+        let mut xmp_encoder = png_pong::Encoder::new(&mut xmp_data).into_chunk_enc();
+
+        let mut xmp_chunk = png_pong::chunk::Chunk::InternationalText(InternationalText {
+            key: XMP_KEY.to_string(),
+            langtag: "".to_string(),
+            transkey: "".to_string(),
+            val: updated_xmp,
+            compressed: false,
+        });
+        xmp_encoder
+            .encode(&mut xmp_chunk)
+            .map_err(|_| Error::EmbeddingError)?;
+
+        if let Some((xmp_start, xmp_len)) = get_xmp_insertion_point(source_stream) {
+            output_stream.rewind()?;
+            patch_stream(
+                source_stream,
+                output_stream,
+                xmp_start,
+                xmp_len as u64,
+                &xmp_data,
+            )?;
+
+            Ok(())
+        } else {
+            Err(Error::EmbeddingError)
+        }
+    }
 }
 
 impl AssetBoxHash for PngIO {
@@ -847,6 +908,60 @@ pub mod tests {
         let provenance = crate::utils::xmp_inmemory_utils::extract_provenance(&new_xmp).unwrap();
 
         assert!(provenance.contains("some test data"));
+    }
+
+    #[test]
+    fn test_png_xmp_remove_reference() {
+        let ap = test::fixture_path("libpng-test.png");
+        let mut source_stream = std::fs::File::open(ap).unwrap();
+
+        let temp_dir = tempdirectory().unwrap();
+        let with_provenance = temp_dir_path(&temp_dir, "with_provenance.png");
+        let mut with_provenance_stream = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&with_provenance)
+            .unwrap();
+
+        let png_io = PngIO {};
+        let eh = png_io.remote_ref_writer_ref().unwrap();
+
+        // simulate a previous signing that embedded a (now stale) remote manifest URL
+        eh.embed_reference_to_stream(
+            &mut source_stream,
+            &mut with_provenance_stream,
+            RemoteRefEmbedType::Xmp("https://example.com/stale-manifest".to_string()),
+        )
+        .unwrap();
+
+        with_provenance_stream.rewind().unwrap();
+        let xmp = png_io.read_xmp(&mut with_provenance_stream).unwrap();
+        assert!(
+            crate::utils::xmp_inmemory_utils::extract_provenance(&xmp)
+                .unwrap()
+                .contains("stale-manifest")
+        );
+
+        // re-sign without a remote manifest: the stale provenance must be cleared
+        let cleared = temp_dir_path(&temp_dir, "cleared.png");
+        let mut cleared_stream = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&cleared)
+            .unwrap();
+
+        with_provenance_stream.rewind().unwrap();
+        assert!(eh.supports_remove_reference());
+        eh.remove_reference_to_stream(&mut with_provenance_stream, &mut cleared_stream)
+            .unwrap();
+
+        cleared_stream.rewind().unwrap();
+        let cleared_xmp = png_io.read_xmp(&mut cleared_stream).unwrap();
+        assert!(crate::utils::xmp_inmemory_utils::extract_provenance(&cleared_xmp).is_none());
     }
 
     #[test]

@@ -253,6 +253,25 @@ pub trait RemoteRefEmbed {
         output_stream: &mut dyn CAIReadWrite,
         embed_ref: RemoteRefEmbedType,
     ) -> Result<()>;
+
+    /// Whether this handler implements real logic in [`Self::remove_reference_to_stream`].
+    /// Defaults to `false` so most handlers are unaffected; override alongside a real
+    /// implementation of `remove_reference_to_stream`.
+    fn supports_remove_reference(&self) -> bool {
+        false
+    }
+
+    /// Remove any previously embedded remote reference (e.g. a stale XMP
+    /// `dcterms:provenance` URL left over from an earlier signing) from the asset stream,
+    /// leaving the rest of the asset unchanged. Only called when
+    /// [`Self::supports_remove_reference`] returns `true`.
+    fn remove_reference_to_stream(
+        &self,
+        _source_stream: &mut dyn CAIRead,
+        _output_stream: &mut dyn CAIReadWrite,
+    ) -> Result<()> {
+        Err(crate::Error::UnsupportedType)
+    }
 }
 
 /// `ComposedManifestRefEmbed` is used to generate a C2PA manifest.  The

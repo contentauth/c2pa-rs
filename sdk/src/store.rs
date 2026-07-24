@@ -3037,9 +3037,19 @@ impl Store {
         let io_handler = get_assetio_handler(format);
 
         let is_bmff = is_bmff_format(format);
-        // fast_path applies to all formats: when there is no XMP embed and no manifest removal,
-        // we can pass input_stream directly to the write/hash steps, skipping one full-file copy.
-        let fast_path = url.is_none() && !remove_manifests;
+        // Some format handlers (currently PNG) can clear a stale remote-manifest reference
+        // (e.g. a `dcterms:provenance` XMP URL left over from a previous signing) even when
+        // this save isn't adding a new remote reference itself. When that's the case we can no
+        // longer take the fully-untouched fast path.
+        let can_clear_provenance = io_handler
+            .as_ref()
+            .and_then(|h| h.remote_ref_writer_ref())
+            .map(|w| w.supports_remove_reference())
+            .unwrap_or(false);
+        // fast_path applies to all formats: when there is no XMP embed, no manifest removal, and
+        // no stale provenance to clear, we can pass input_stream directly to the write/hash
+        // steps, skipping one full-file copy.
+        let fast_path = url.is_none() && !remove_manifests && !can_clear_provenance;
 
         context.check_progress(ProgressPhase::Writing, 1, 2)?;
 
@@ -3073,6 +3083,20 @@ impl Store {
                         RemoteRefEmbedType::Xmp(url),
                     )?;
                 }
+            } else if remove_manifests && can_clear_provenance {
+                let manifest_writer = io_handler
+                    .get_writer(format)
+                    .ok_or(Error::UnsupportedType)?;
+                let external_ref_writer = io_handler
+                    .remote_ref_writer_ref()
+                    .ok_or(Error::XmpNotSupported)?;
+
+                let mut tmp_stream = io_utils::stream_with_fs_fallback(threshold, input_len)?;
+                manifest_writer.remove_cai_store_from_stream(input_stream, &mut tmp_stream)?;
+
+                tmp_stream.rewind()?;
+                external_ref_writer
+                    .remove_reference_to_stream(&mut tmp_stream, &mut intermediate_stream)?;
             } else if remove_manifests {
                 let manifest_writer = io_handler
                     .get_writer(format)
@@ -3080,6 +3104,15 @@ impl Store {
 
                 manifest_writer
                     .remove_cai_store_from_stream(input_stream, &mut intermediate_stream)?;
+            } else if can_clear_provenance {
+                // No new remote URL and no manifest removal needed, but a stale remote
+                // reference from a previous signing may still be present -- clear it.
+                let external_ref_writer = io_handler
+                    .remote_ref_writer_ref()
+                    .ok_or(Error::XmpNotSupported)?;
+
+                external_ref_writer
+                    .remove_reference_to_stream(input_stream, &mut intermediate_stream)?;
             } else if !fast_path {
                 // XMP or manifest-removal was NOT the trigger — but fast_path is false,
                 // which can only happen if remove_manifests is true (already handled above).
@@ -7608,6 +7641,133 @@ pub mod tests {
     #[test]
     fn test_external_manifest_embedded_webp() {
         external_manifest_test("sample1.webp");
+    }
+
+    /// A PNG that already carries a `dcterms:provenance` value in its XMP, simulating an
+    /// asset previously signed (e.g. by another C2PA implementation) with a remote manifest.
+    fn png_with_stale_provenance() -> Vec<u8> {
+        use crate::{asset_handlers::png_io::PngIO, asset_io::AssetIO};
+
+        let source_path = fixture_path("libpng-test.png");
+        let mut source = std::fs::File::open(source_path).unwrap();
+        let mut output = std::io::Cursor::new(Vec::new());
+
+        let png_io = PngIO {};
+        let eh = png_io.remote_ref_writer_ref().unwrap();
+        eh.embed_reference_to_stream(
+            &mut source,
+            &mut output,
+            RemoteRefEmbedType::Xmp("https://example.com/stale-manifest".to_string()),
+        )
+        .unwrap();
+
+        output.into_inner()
+    }
+
+    /// Verifies `xmp_inmemory_utils::remove_provenance` is invoked exactly when there's a
+    /// stale `dcterms:provenance` to clear and never otherwise, across every `RemoteManifest`
+    /// mode -- signing must not pay for an unnecessary XMP read/rewrite when there's nothing
+    /// to remove, and must not skip clearing a stale reference when there is one, per
+    /// https://github.com/contentauth/c2pa-rs/issues/1532.
+    fn assert_remove_provenance_called(
+        had_prior_provenance: bool,
+        configure: impl FnOnce(&mut Claim),
+        expect_called: bool,
+    ) {
+        use crate::utils::xmp_inmemory_utils::REMOVE_PROVENANCE_CALLS;
+
+        let context = crate::context::Context::new();
+        let mut store = Store::from_context(&context);
+
+        let mut claim = create_test_claim().unwrap();
+        configure(&mut claim);
+        store.commit_claim(claim).unwrap();
+
+        let source_bytes = if had_prior_provenance {
+            png_with_stale_provenance()
+        } else {
+            std::fs::read(fixture_path("libpng-test.png")).unwrap()
+        };
+        let mut input_stream = std::io::Cursor::new(source_bytes);
+        let mut output_stream = std::io::Cursor::new(Vec::new());
+        let signer = test_signer(SigningAlg::Ps256);
+
+        REMOVE_PROVENANCE_CALLS.with(|c| c.set(0));
+        store
+            .save_to_stream(
+                "image/png",
+                &mut input_stream,
+                &mut output_stream,
+                signer.as_ref(),
+                &context,
+            )
+            .unwrap();
+        let calls = REMOVE_PROVENANCE_CALLS.with(|c| c.get());
+
+        if expect_called {
+            assert_eq!(
+                calls, 1,
+                "expected remove_provenance to be called exactly once"
+            );
+        } else {
+            assert_eq!(calls, 0, "expected remove_provenance not to be called");
+        }
+    }
+
+    #[test]
+    fn test_remove_provenance_not_called_no_remote_without_prior_provenance() {
+        assert_remove_provenance_called(false, |_claim| {}, false);
+    }
+
+    #[test]
+    fn test_remove_provenance_called_no_remote_with_prior_provenance() {
+        assert_remove_provenance_called(true, |_claim| {}, true);
+    }
+
+    #[test]
+    fn test_remove_provenance_not_called_sidecar_without_prior_provenance() {
+        assert_remove_provenance_called(false, |claim| claim.set_external_manifest(), false);
+    }
+
+    #[test]
+    fn test_remove_provenance_called_sidecar_with_prior_provenance() {
+        assert_remove_provenance_called(true, |claim| claim.set_external_manifest(), true);
+    }
+
+    #[test]
+    fn test_remove_provenance_not_called_embed_with_remote_without_prior_provenance() {
+        assert_remove_provenance_called(
+            false,
+            |claim| claim.set_embed_remote_manifest("http://my_remote_url").unwrap(),
+            false,
+        );
+    }
+
+    #[test]
+    fn test_remove_provenance_not_called_embed_with_remote_with_prior_provenance() {
+        assert_remove_provenance_called(
+            true,
+            |claim| claim.set_embed_remote_manifest("http://my_remote_url").unwrap(),
+            false,
+        );
+    }
+
+    #[test]
+    fn test_remove_provenance_not_called_remote_without_prior_provenance() {
+        assert_remove_provenance_called(
+            false,
+            |claim| claim.set_remote_manifest("http://my_remote_url").unwrap(),
+            false,
+        );
+    }
+
+    #[test]
+    fn test_remove_provenance_not_called_remote_with_prior_provenance() {
+        assert_remove_provenance_called(
+            true,
+            |claim| claim.set_remote_manifest("http://my_remote_url").unwrap(),
+            false,
+        );
     }
 
     #[test]

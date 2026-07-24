@@ -207,6 +207,112 @@ fn add_xmp_key(xmp: &str, key: &str, value: &str) -> Result<String> {
     String::from_utf8(result).map_err(|e| Error::XmpWriteError(e.to_string()))
 }
 
+/// Remove a key from XMP's rdf:Description attributes, if present. No-op if the key isn't present.
+fn remove_xmp_key(xmp: &str, key: &str) -> Result<String> {
+    let orig_length = xmp.len();
+
+    // Minimal padding should be 2 KB to 4 KB. This is used if no XMP packet end is found.
+    // If no packet end is found and the original length is less than 4096, the packet will be
+    // extended.
+    let mut target_length = orig_length.max(4096);
+    // Remove the ending xpacket if present for easier manipulation
+    let xpacket_end = "<?xpacket end";
+    let xpacket_end_length = XMP_END.len();
+    let xmp_body = if let Some(pos) = xmp.rfind(xpacket_end) {
+        target_length = orig_length - xpacket_end_length;
+        xmp[..pos].trim_end()
+    } else {
+        xmp
+    };
+
+    let mut reader = Reader::from_str(xmp_body);
+    // Do not trim text to preserve whitespace
+    reader.config_mut().trim_text(false);
+    reader.config_mut().expand_empty_elements = false;
+    let mut writer = Writer::new(Cursor::new(Vec::new()));
+    loop {
+        let event = reader
+            .read_event()
+            .map_err(|e| Error::XmpReadError(e.to_string()))?;
+        match event {
+            Event::Start(ref e) if e.name() == QName(RDF_DESCRIPTION) => {
+                let mut elem = BytesStart::from_content(
+                    String::from_utf8_lossy(RDF_DESCRIPTION),
+                    RDF_DESCRIPTION.len(),
+                );
+                for attr in e.attributes() {
+                    match attr {
+                        Ok(attr) => {
+                            if attr.key != QName(key.as_bytes()) {
+                                elem.extend_attributes([attr]);
+                            }
+                        }
+                        Err(e) => {
+                            error!("Error at position {}", reader.buffer_position());
+                            return Err(Error::XmpReadError(e.to_string()));
+                        }
+                    }
+                }
+                writer
+                    .write_event(Event::Start(elem))
+                    .map_err(|e| Error::XmpWriteError(e.to_string()))?;
+            }
+            Event::Empty(ref e) if e.name() == QName(RDF_DESCRIPTION) => {
+                let mut elem = BytesStart::from_content(
+                    String::from_utf8_lossy(RDF_DESCRIPTION),
+                    RDF_DESCRIPTION.len(),
+                );
+                for attr in e.attributes() {
+                    match attr {
+                        Ok(attr) => {
+                            if attr.key != QName(key.as_bytes()) {
+                                elem.extend_attributes([attr]);
+                            }
+                        }
+                        Err(e) => {
+                            error!("Error at position {}", reader.buffer_position());
+                            return Err(Error::XmpReadError(e.to_string()));
+                        }
+                    }
+                }
+                writer
+                    .write_event(Event::Empty(elem))
+                    .map_err(|e| Error::XmpWriteError(e.to_string()))?;
+            }
+            Event::Eof => break,
+            e => {
+                writer
+                    .write_event(e)
+                    .map_err(|e| Error::XmpWriteError(e.to_string()))?;
+            }
+        }
+    }
+    // Maintain XMP packet length with padding if possible.
+    let padding_length = target_length.saturating_sub(writer.get_ref().get_ref().len());
+    write_xmp_padding(&mut writer.get_mut(), padding_length)?;
+    let result = writer.into_inner().into_inner();
+    String::from_utf8(result).map_err(|e| Error::XmpWriteError(e.to_string()))
+}
+
+// Test-only call counter so tests can assert `remove_provenance` was (or wasn't) invoked,
+// e.g. to verify callers skip the XMP rewrite entirely when there's no stale provenance to
+// clear. Thread-local because cargo runs each test on its own thread, so counts don't leak
+// across tests even when run in parallel.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static REMOVE_PROVENANCE_CALLS: std::cell::Cell<usize> = std::cell::Cell::new(0);
+}
+
+/// Remove the dc:provenance value from xmp, if present. This is used to clear a stale
+/// remote-manifest reference left over from a previous signing when re-signing an asset
+/// without a new remote manifest. No-op if the key isn't present.
+pub fn remove_provenance(xmp: &str) -> Result<String> {
+    #[cfg(test)]
+    REMOVE_PROVENANCE_CALLS.with(|c| c.set(c.get() + 1));
+
+    remove_xmp_key(xmp, "dcterms:provenance")
+}
+
 /// extract the dc:provenance value from xmp
 pub fn extract_provenance(xmp: &str) -> Option<String> {
     extract_xmp_key(xmp, "dcterms:provenance")
