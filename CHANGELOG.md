@@ -9,6 +9,14 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.90.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.1...c2pa-v0.90.2)
+_23 July 2026_
+
+### Fixed
+
+* Reject loopback and DNS-rebinding hosts in did:web resolution (CAI-10364) (backport #2349) ([#2353](https://github.com/contentauth/c2pa-rs/pull/2353))
+* Harden against memory amplification attacks in copy of strip, tile and big table of TIFF file (backport #2282) ([#2348](https://github.com/contentauth/c2pa-rs/pull/2348))
+
 ## [0.90.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.0...c2pa-v0.90.1)
 _21 July 2026_
 
