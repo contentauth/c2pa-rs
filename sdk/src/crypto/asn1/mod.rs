@@ -79,8 +79,10 @@ fn extract_der_content(der_bytes: &[u8]) -> Result<&str, der::Error> {
     }
 
     // Extract and validate UTF-8
-    Ok(std::str::from_utf8(&der_bytes[header_len..header_len + content_len])
-        .map_err(|_| der::Tag::Utf8String.value_error())?)
+    Ok(
+        std::str::from_utf8(&der_bytes[header_len..header_len + content_len])
+            .map_err(|_| der::Tag::Utf8String.value_error())?,
+    )
 }
 
 /// Algorithm identifier for use with bcder
