@@ -42,8 +42,8 @@ use der::{Decode, Encode};
 /// - The header cannot be encoded
 pub(crate) fn reconstruct_der_bytes(tag: u8, content: &[u8]) -> Result<Vec<u8>, der::Error> {
     // Use der crate's Header which handles both short and long form length encoding
-    let der_tag = der::Tag::try_from(tag)?;
-    let header = der::Header::new(der_tag, content.len())?;
+    let der_tag = der::Tag::from_der(&[tag])?;
+    let header = der::Header::new(der_tag, der::Length::try_from(content.len())?);
 
     // Encode the header (tag + length)
     let mut der_bytes = Vec::new();
@@ -72,15 +72,15 @@ fn extract_der_content(der_bytes: &[u8]) -> Result<&str, der::Error> {
 
     // Get the content portion - header.encoded_len() gives a Length we need to convert
     let header_len: usize = header.encoded_len()?.try_into()?;
-    let content_len: usize = header.length.try_into()?;
+    let content_len: usize = header.length().try_into()?;
 
     if der_bytes.len() < header_len + content_len {
         Err(der::Tag::GeneralizedTime.length_error())?;
     }
 
     // Extract and validate UTF-8
-    std::str::from_utf8(&der_bytes[header_len..header_len + content_len])
-        .map_err(|_| der::Tag::Utf8String.value_error())
+    Ok(std::str::from_utf8(&der_bytes[header_len..header_len + content_len])
+        .map_err(|_| der::Tag::Utf8String.value_error())?)
 }
 
 /// Algorithm identifier for use with bcder
@@ -260,17 +260,17 @@ impl GeneralizedTime {
         // If that fails, manually parse to allow fractional seconds
         // DER format: Tag (0x18) + Length + Content
         if bytes.len() < 2 {
-            return Err(der::Tag::GeneralizedTime.length_error());
+            return Err(der::Tag::GeneralizedTime.length_error().into());
         }
 
         if bytes[0] != 0x18 {
             // 0x18 = GENERALIZED_TIME tag
-            return Err(der::Tag::GeneralizedTime.value_error());
+            return Err(der::Tag::GeneralizedTime.value_error().into());
         }
 
         let length = bytes[1] as usize;
         if bytes.len() != length + 2 {
-            return Err(der::Tag::GeneralizedTime.length_error());
+            return Err(der::Tag::GeneralizedTime.length_error().into());
         }
 
         let content = &bytes[2..];
@@ -280,7 +280,7 @@ impl GeneralizedTime {
         // Parse RFC 3161 format: YYYYMMDDHHmmss[.f*]Z
         // Minimum length: 15 chars (YYYYMMDDHHmmssZ)
         if time_str.len() < 15 || !time_str.ends_with('Z') {
-            return Err(der::Tag::GeneralizedTime.value_error());
+            return Err(der::Tag::GeneralizedTime.value_error().into());
         }
 
         // Extract components
@@ -314,17 +314,17 @@ impl GeneralizedTime {
         let nanoseconds = if !frac_part.is_empty() {
             // Should start with a dot
             if !frac_part.starts_with('.') {
-                return Err(der::Tag::GeneralizedTime.value_error());
+                return Err(der::Tag::GeneralizedTime.value_error().into());
             }
 
             let frac_digits = &frac_part[1..]; // Remove leading dot
             if frac_digits.is_empty() || frac_digits.len() > 9 {
-                return Err(der::Tag::GeneralizedTime.value_error());
+                return Err(der::Tag::GeneralizedTime.value_error().into());
             }
 
             // Verify all bytes are ASCII digits
             if !frac_digits.as_bytes()[0].is_ascii_digit() {
-                return Err(der::Tag::GeneralizedTime.value_error());
+                return Err(der::Tag::GeneralizedTime.value_error().into());
             }
 
             // Decode the fractional seconds using approach from RustCrypto's x509-tsp

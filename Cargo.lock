@@ -563,7 +563,7 @@ dependencies = [
  "const-hex",
  "const-oid 0.9.6",
  "coset",
- "der",
+ "der 0.8.1",
  "dhat",
  "ecdsa",
  "ed25519-dalek",
@@ -1262,10 +1262,11 @@ dependencies = [
 
 [[package]]
 name = "der"
-version = "0.8.0"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71fd89660b2dc699704064e59e9dba0147b903e85319429e131620d022be411b"
+checksum = "a69dedd701da44b0536442edf09c81a64b0ab97a7a4a5e3d1971f00027cbc63d"
 dependencies = [
+ "const-oid 0.10.2",
  "zeroize",
 ]
 
@@ -1375,7 +1376,7 @@ version = "0.16.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee27f32b5c5292967d2d4a9d7f1e0b0aed2c15daded5a60300e4abb9d8020bca"
 dependencies = [
- "der",
+ "der 0.7.10",
  "digest 0.10.7",
  "elliptic-curve",
  "rfc6979",
