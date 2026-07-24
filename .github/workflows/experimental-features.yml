@@ -1,0 +1,75 @@
+# Build, lint, and test the SDK with all experimental features enabled.
+#
+# This workflow is intentionally **non-blocking**: every job sets
+# `continue-on-error: true`, and it is deliberately NOT added to the list of
+# required status checks in branch protection. A failure here therefore never
+# blocks a merge — it is an advisory signal only.
+#
+# The rationale is described in docs/experimental-features.md: experimental
+# (`unstable_*`) features are community-supported and outside the SDK's
+# stability and maintenance commitments, so the CAI team does not gate `main`
+# on their health. When this job goes red, the fix is the responsibility of the
+# feature's registered contact; a feature that stays broken is removed from the
+# build per the "Build and CI expectations" policy.
+
+name: Experimental features (non-blocking)
+
+on:
+  workflow_dispatch:
+  # Daily run against main to surface bitrot in experimental features even
+  # when no PR touches them.
+  schedule:
+    - cron: '30 8 * * *'
+  pull_request:
+    branches:
+      - main
+      - stable
+      - 'v0.*'
+      - '*-rc*'
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+jobs:
+  experimental-features:
+    name: Build, lint, and test experimental features
+    # Advisory only: never block a merge on the health of experimental features.
+    continue-on-error: true
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Collect experimental features
+        id: features
+        run: |
+          # All `unstable_`-prefixed features on the c2pa crate are experimental
+          # (see docs/experimental-features.md). Pair them with a crypto backend
+          # (`rust_native_crypto`) because the SDK fails to compile without one.
+          UNSTABLE=$(cargo metadata --format-version=1 \
+            | jq -r '[.packages[] | select(.name=="c2pa") | .features | keys | map(select(startswith("unstable_"))) | .[]] | unique | join(" ")')
+
+          echo "Experimental features: ${UNSTABLE:-(none)}"
+          echo "features=rust_native_crypto $UNSTABLE" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: cargo build -p c2pa --no-default-features --features "${{ steps.features.outputs.features }}"
+
+      - name: Clippy
+        run: cargo clippy -p c2pa --no-default-features --features "${{ steps.features.outputs.features }}" --all-targets -- -Dwarnings
+
+      - name: Test
+        env:
+          RUST_BACKTRACE: "1"
+        run: cargo test -p c2pa --no-default-features --features "${{ steps.features.outputs.features }}"

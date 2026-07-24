@@ -12,6 +12,8 @@ An experimental feature is functionality that has been accepted into the SDK sou
 
 Experimental features let us give promising contributions a home and real-world exposure without expanding the surface area that the CAI team guarantees to support indefinitely.
 
+In particular, experimental features are **not** covered by the [Deprecation policy](deprecation-policy.md) or its timelines. An experimental feature can be changed or removed in any release, with no deprecation window – once it is removed, it is gone.
+
 ## Conditions for acceptance
 
 To be accepted as an experimental feature, a contribution must satisfy all of the following conditions.
@@ -46,6 +48,10 @@ The feature must be added to the [Registry of experimental features](#registry-o
 - A brief (a few sentences) description of the feature's behavior.
 - Contact information for support, including **at least one GitHub username** of a maintainer or sponsor who can answer questions about the feature.
 
+### 6. Same licensing and dependency review as the rest of the SDK
+
+Experimental features are exempt from the CAI team's *maintenance* commitments, not from the project's legal and supply-chain requirements. The contributed code must be offered under the SDK's existing license terms, and any new dependency (see condition 3) is subject to the same license-compatibility and security review as any other dependency in the tree. A feature whose license or dependencies cannot be cleared is not eligible for acceptance – experimental or otherwise.
+
 ## Stability and support expectations
 
 By accepting a feature as experimental, the CAI team makes **no** stability guarantees about it:
@@ -53,19 +59,36 @@ By accepting a feature as experimental, the CAI team makes **no** stability guar
 - **Unstable by design.** Any APIs or behaviors gated by an experimental feature flag are considered unstable and may be altered or removed at any time, in any release, without following the [Deprecation policy](deprecation-policy.md).
 - **Best-effort maintenance.** The CAI team will make a best effort to keep experimental features building and working as the primary SDK evolves, but reserves the right to disable or remove an experimental feature if it cannot be made compatible with the primary SDK code.
 - **Community-supported.** Day-to-day support for an experimental feature is primarily the responsibility of the contributor and the contacts listed in the registry, not the CAI team.
+- **Security handled by responsiveness.** A security or licensing problem reported against experimental code is handled on the same best-effort, community-supported basis. If the registered contact does not address it promptly, the CAI team will disable or remove the feature immediately rather than wait out any window – protecting the primary SDK takes precedence over preserving an experimental feature.
 
-### Exempt from release-number calculations
+### Exempt from breaking-change calculations
 
-Because experimental features are gated behind a non-default flag and excluded from the public API of a default build, changing or removing one is **not** considered a breaking change under the [Deprecation policy](deprecation-policy.md), and it does **not** affect the crate's version number.
+Because experimental features are gated behind a non-default flag and excluded from the public API of a default build, changing or removing one is **not** considered a breaking change under the [Deprecation policy](deprecation-policy.md), and it never forces a minor/breaking (`0.x.0`) version bump.
 
-The `unstable_` flag prefix makes this automatic: [`cargo-semver-checks`](https://github.com/obi1kenobi/cargo-semver-checks) ignores `unstable_`-prefixed features by default, so a change confined to an experimental feature is never flagged as a break and never triggers a breaking (`0.x.0`) bump. Experimental APIs are therefore free to change at will – including breaking changes, at any time, in any release – **provided that the change does not affect any API in the public/stable surface** (a default build, or any non-experimental feature). See [Semver checks](release-process.md#semver-checks) in the release process.
+The `unstable_` flag prefix makes this automatic: [`cargo-semver-checks`](https://github.com/obi1kenobi/cargo-semver-checks) ignores `unstable_`-prefixed features by default, so a change confined to an experimental feature is never flagged as a break. Experimental APIs are therefore free to change at will – including breaking changes, at any time, in any release – **provided that the change does not affect any API in the public/stable surface** (a default build, or any non-experimental feature). See [Semver checks](release-process.md#semver-checks) in the release process.
+
+This does **not** mean experimental changes are invisible to consumers. A change to an experimental feature may still ride an ordinary patch (`0.x.y`) release, and it is recorded in a dedicated **Experimental** section of the changelog so that anyone who has opted into an `unstable_` feature has a clear, human-readable signal of what changed. What the exemption removes is the *semver guarantee* (and the minor/breaking bump), not the paper trail. To get this routing, mark such commits with the `experimental` scope – for example `feat(experimental): add widget export` or `fix(experimental): correct frame ordering` – and never use the breaking (`!`) marker on them, since experimental APIs are outside semver by definition. See [Version numbering](release-process.md#version-numbering-across-a-train) and the commit-scope rules in the release process.
+
+## Build and CI expectations
+
+Experimental features are held to the SDK's quality bar **at contribution time** – they must build cleanly and pass `cargo +nightly fmt`, `clippy`, and their own tests when accepted – but keeping them green over time is best-effort and primarily the contact's responsibility, not the CAI team's.
+
+To make that split concrete:
+
+- **Not part of the merge gate.** A dedicated, **non-blocking** workflow ([`experimental-features.yml`](../.github/workflows/experimental-features.yml)) builds, lints, and tests the SDK with every `unstable_` feature enabled, on pull requests and on a daily schedule. It is advisory only – it is deliberately not a required status check, so a failure there never blocks a merge.
+- **Broken features get disabled, not fixed on demand.** When an experimental feature stops building or passing – for example after a Rust toolchain update or a refactor of the primary SDK – the CAI team will notify the registered contact. If it is not repaired promptly, the feature is disabled (removed from the build, and ultimately from the tree) rather than holding up the SDK. This keeps one unmaintained feature from blocking everyone.
+- **Being separated from the required `--all-features` builds.** Several required jobs currently build with `--all-features`, which pulls experimental features into the merge gate and re-imposes the maintenance burden this policy avoids. Aligning those jobs to build only the non-experimental feature set – so the non-blocking workflow above is the only place `unstable_` features are exercised in CI – is tracked in [#2362](https://github.com/contentauth/c2pa-rs/issues/2362).
 
 ## Promotion or removal
 
 An experimental feature is not expected to remain experimental forever. Over time, an experimental feature may be:
 
 - **Promoted** to a fully supported feature if it proves valuable and the CAI team is able to take on its maintenance. At that point it becomes subject to the normal stability and deprecation guarantees.
-- **Removed** if it falls out of maintenance, cannot be kept compatible with the primary SDK, or is no longer of sufficient value to justify its presence in the tree.
+- **Removed** if it falls out of maintenance, loses its last responsive contact, cannot be kept compatible with the primary SDK, or is no longer of sufficient value to justify its presence in the tree.
+
+### Handing off or losing a contact
+
+A registered contact is the feature's lifeline. Contacts are kept current by pull request: a contact who can no longer support a feature should hand it off by updating the registry to name a replacement. If a feature is left with **no responsive contact** – nobody who answers questions or repairs breakage – it becomes an immediate candidate for removal under the rule above; the CAI team is not obligated to adopt an orphaned experimental feature.
 
 ## Registry of experimental features
 

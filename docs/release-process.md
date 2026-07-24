@@ -187,6 +187,10 @@ The first build (`-rc.1`) is cut automatically when the train is cut. A maintain
 
 [`canary-extracted-crates.yml`](../.github/workflows/canary-extracted-crates.yml) builds `c2pa-rs` `main` against the `main` of each extracted crate via a throwaway `[patch]`, and files an issue on failure. The `[patch]` exists only inside the runner; the patch-dependency guard guarantees it can never reach a release.
 
+### Experimental features build
+
+[`experimental-features.yml`](../.github/workflows/experimental-features.yml) builds, lints, and tests the SDK with every `unstable_` feature enabled, on PRs and daily. It is **non-blocking by design** (`continue-on-error`, and not a required check): [experimental features](experimental-features.md) are community-supported and outside the CAI team's maintenance commitments, so `main` is never gated on their health. A persistent failure is grounds for disabling the feature, not for holding up the SDK. (Separating experimental features out of the *required* `--all-features` jobs is tracked in [#2362](https://github.com/contentauth/c2pa-rs/issues/2362).)
+
 ### Label sync
 
 Labels the process depends on are version-controlled in [`.github/labels.yml`](../.github/labels.yml) and synced by [`labels.yml`](../.github/workflows/labels.yml).
@@ -221,7 +225,9 @@ The `type` must be one of (bold = preferred in most cases):
 * **`docs`**: documentation.
 * `build`, `ci`, `perf`, `refactor`, `revert`, `style`, `test`, `update` (the last used by Dependabot).
 
-`scope` is optional; if present it must be one of `c2patool`, `export_schema`, `make_test_images`, `sdk`, or `c2pa_c_ffi`. If omitted, drop the parentheses too. `description` is a short sentence, capitalized, no trailing period, preferably under 70 characters.
+`scope` is optional; if present it must be one of `c2patool`, `export_schema`, `make_test_images`, `sdk`, `c2pa_c_ffi`, or `experimental`. If omitted, drop the parentheses too. `description` is a short sentence, capitalized, no trailing period, preferably under 70 characters.
+
+Use the `experimental` scope for any change confined to an [experimental feature](experimental-features.md) (for example `feat(experimental): add widget export`). It routes the change into a dedicated **Experimental** section of the changelog and keeps it from driving a minor/breaking bump – the change may still ride an ordinary patch release, but experimental APIs are outside semver, so never combine it with the breaking (`!`) marker.
 
 > MAINTENANCE NOTE: if these rules change, keep [`.github/workflows/pr_title.yml`](../.github/workflows/pr_title.yml) and [`.commitlintrc.yml`](../.commitlintrc.yml) in sync.
 
