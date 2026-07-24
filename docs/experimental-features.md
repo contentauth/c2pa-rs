@@ -10,7 +10,7 @@ This policy complements the [Deprecation policy](deprecation-policy.md) and [Sup
 
 An experimental feature is functionality that has been accepted into the SDK source tree but is **not** covered by the SDK's normal stability and maintenance commitments. We accept experimental features when we judge the feature to be of value to the community but cannot commit to maintaining it ourselves.
 
-Experimental features let us give promising contributions a home and real-world exposure without expanding the surface area that the CAI team guarantees to support indefinitely.
+Experimental features let us give promising contributions a home and real-world exposure without expanding the surface area that the CAI team guarantees to support indefinitely. The same mechanism also serves first-party features that the CAI team maintains but is not ready to stabilize – for example, an API built for an internal need whose long-term design is still an open question.
 
 In particular, experimental features are **not** covered by the [Deprecation policy](deprecation-policy.md) or its timelines. An experimental feature can be changed or removed in any release, with no deprecation window – once it is removed, it is gone.
 
@@ -96,4 +96,4 @@ The following table lists the experimental features currently present in the SDK
 
 | Feature | Cargo flag | Description | Contact |
 | -- | -- | -- | -- |
-| _(none yet)_ | | | |
+| Builder action/ingredient filtering | `unstable_builder_filter` | Adds `Builder::filter_actions`, `Builder::filter_ingredients`, and `Ingredient::effective_id` for filtering the actions and ingredients written into a manifest. Maintained by the Adobe CAI team to serve an internal need; kept experimental because the long-term viability of the API design is not yet settled. | Adobe CAI team ([@contentauth](https://github.com/contentauth)) |
