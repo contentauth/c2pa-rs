@@ -6469,7 +6469,7 @@ pub mod tests {
         claim.add_claim_generator_info(cgi);
 
         // created redacted uri
-        let redacted_uri = to_assertion_uri(pc.label(), labels::SCHEMA_ORG);
+        let redacted_uri = to_assertion_uri(pc.label(), labels::SCHEMA_ORG_INTERNAL);
 
         let (manifest_bytes, _) = Store::load_jumbf_from_stream(
             format,
@@ -6635,7 +6635,7 @@ pub mod tests {
         // make sure the redaction stuck
         let redacted_claim = resolved_store.get_claim(pc.label()).unwrap();
         assert!(redacted_claim
-            .get_assertion(labels::SCHEMA_ORG, 0)
+            .get_assertion(labels::SCHEMA_ORG_INTERNAL, 0)
             .is_none());
     }
 
@@ -6688,7 +6688,7 @@ pub mod tests {
         claim.add_claim_generator_info(cgi);
 
         // created redacted uri
-        let redacted_uri = to_assertion_uri(pc.label(), labels::SCHEMA_ORG);
+        let redacted_uri = to_assertion_uri(pc.label(), labels::SCHEMA_ORG_INTERNAL);
 
         let (manifest_bytes, _) = Store::load_jumbf_from_stream(
             format,
@@ -6790,7 +6790,7 @@ pub mod tests {
         // the confict_store is adjusted to remove the conflicting claim
         let not_redacted_claim = new_claim.claim_ingredient(pc.label()).unwrap();
         assert!(not_redacted_claim
-            .get_assertion(labels::SCHEMA_ORG, 0)
+            .get_assertion(labels::SCHEMA_ORG_INTERNAL, 0)
             .is_some());
 
         // load ingredient with redaction
@@ -6804,7 +6804,7 @@ pub mod tests {
         // the confict_store is adjusted to remove the conflicting claim
         let redacted_claim = new_claim.claim_ingredient(pc.label()).unwrap();
         assert!(redacted_claim
-            .get_assertion(labels::SCHEMA_ORG, 0)
+            .get_assertion(labels::SCHEMA_ORG_INTERNAL, 0)
             .is_none());
     }
 
@@ -6855,7 +6855,7 @@ pub mod tests {
         claim.add_claim_generator_info(cgi.clone());
 
         // created redacted uri
-        let redacted_uri = to_assertion_uri(pc.label(), labels::SCHEMA_ORG);
+        let redacted_uri = to_assertion_uri(pc.label(), labels::SCHEMA_ORG_INTERNAL);
 
         output_stream.rewind().unwrap();
         let ingredient_vec = load_jumbf_from_stream(format, &mut output_stream).unwrap();
@@ -7035,7 +7035,7 @@ pub mod tests {
         // Check that both redactions are present
         let redacted_claim = new_claim.claim_ingredient(pc.label()).unwrap();
         assert!(redacted_claim
-            .get_assertion(labels::SCHEMA_ORG, 0)
+            .get_assertion(labels::SCHEMA_ORG_INTERNAL, 0)
             .is_none());
 
         assert!(redacted_claim
@@ -8452,7 +8452,7 @@ pub mod tests {
         store.commit_claim(claim).unwrap();
 
         // Do we generate JUMBF?
-        let signer = test_cawg_signer(SigningAlg::Ps256, &[labels::SCHEMA_ORG]).unwrap();
+        let signer = test_cawg_signer(SigningAlg::Ps256, &[labels::SCHEMA_ORG_INTERNAL]).unwrap();
 
         store
             .save_to_bmff_fragmented(
