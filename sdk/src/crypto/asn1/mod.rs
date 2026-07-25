@@ -1353,4 +1353,196 @@ mod tests {
             );
         }
     }
+
+    /// Buffer too short to hold even a DER tag and length byte.
+    #[test]
+    fn test_rfc3161_too_short() {
+        let empty: &[u8] = &[];
+        let err = GeneralizedTime::from_der_bytes_rfc3161(empty)
+            .expect_err("empty buffer should be rejected");
+        assert_eq!(
+            err.kind(),
+            der::ErrorKind::Length {
+                tag: der::Tag::GeneralizedTime
+            },
+            "expected Length error for empty buffer, got {:?}",
+            err.kind()
+        );
+
+        let tag_only: &[u8] = &[0x18];
+        let err = GeneralizedTime::from_der_bytes_rfc3161(tag_only)
+            .expect_err("tag byte without length should be rejected");
+        assert_eq!(
+            err.kind(),
+            der::ErrorKind::Length {
+                tag: der::Tag::GeneralizedTime
+            },
+            "expected Length error for tag-only buffer, got {:?}",
+            err.kind()
+        );
+    }
+
+    /// First byte is not the GENERALIZED_TIME tag (0x18).
+    #[test]
+    fn test_rfc3161_wrong_tag() {
+        // 0x17 = UTCTime, not GeneralizedTime.
+        let mut der_bytes = vec![0x17, 0x0d];
+        der_bytes.extend_from_slice(b"2301010000000");
+
+        let err = GeneralizedTime::from_der_bytes_rfc3161(&der_bytes)
+            .expect_err("UTCTime tag should be rejected");
+        assert_eq!(
+            err.kind(),
+            der::ErrorKind::Value {
+                tag: der::Tag::GeneralizedTime
+            },
+            "expected Value error for wrong tag, got {:?}",
+            err.kind()
+        );
+    }
+
+    /// Declared DER length does not match the actual content length.
+    /// The check is an exact comparison (`bytes.len() != length + 2`), so both
+    /// an over-declared and an under-declared length are rejected.
+    #[test]
+    fn test_rfc3161_length_mismatch() {
+        // Content is 15 bytes, but the length byte claims 32.
+        let mut over = vec![0x18, 0x20];
+        over.extend_from_slice(b"20230101000000Z");
+        let err = GeneralizedTime::from_der_bytes_rfc3161(&over)
+            .expect_err("over-declared length should be rejected");
+        assert_eq!(
+            err.kind(),
+            der::ErrorKind::Length {
+                tag: der::Tag::GeneralizedTime
+            },
+            "expected Length error for over-declared length, got {:?}",
+            err.kind()
+        );
+
+        // Content is 15 bytes, but the length byte claims 5.
+        let mut under = vec![0x18, 0x05];
+        under.extend_from_slice(b"20230101000000Z");
+        let err = GeneralizedTime::from_der_bytes_rfc3161(&under)
+            .expect_err("under-declared length should be rejected");
+        assert_eq!(
+            err.kind(),
+            der::ErrorKind::Length {
+                tag: der::Tag::GeneralizedTime
+            },
+            "expected Length error for under-declared length, got {:?}",
+            err.kind()
+        );
+    }
+
+    /// Content is shorter than the 15-char minimum, or does not end with 'Z'.
+    #[test]
+    fn test_rfc3161_too_short_time_str() {
+        let short = "2023";
+        let mut der_bytes = vec![0x18, short.len() as u8];
+        der_bytes.extend_from_slice(short.as_bytes());
+        let err = GeneralizedTime::from_der_bytes_rfc3161(&der_bytes)
+            .expect_err("content under 15 chars should be rejected");
+        assert_eq!(
+            err.kind(),
+            der::ErrorKind::Value {
+                tag: der::Tag::GeneralizedTime
+            },
+            "expected Value error for short content, got {:?}",
+            err.kind()
+        );
+
+        let no_z = "20230101000000X";
+        let mut der_bytes = vec![0x18, no_z.len() as u8];
+        der_bytes.extend_from_slice(no_z.as_bytes());
+        let err = GeneralizedTime::from_der_bytes_rfc3161(&der_bytes)
+            .expect_err("content without trailing 'Z' should be rejected");
+        assert_eq!(
+            err.kind(),
+            der::ErrorKind::Value {
+                tag: der::Tag::GeneralizedTime
+            },
+            "expected Value error for missing trailing 'Z', got {:?}",
+            err.kind()
+        );
+    }
+
+    /// A fractional part is present but does not begin with '.'.
+    #[test]
+    fn test_rfc3161_frac_missing_dot() {
+        let time_str = "20230101000000XZ";
+        let mut der_bytes = vec![0x18, time_str.len() as u8];
+        der_bytes.extend_from_slice(time_str.as_bytes());
+
+        let err = GeneralizedTime::from_der_bytes_rfc3161(&der_bytes)
+            .expect_err("fractional part without leading dot should be rejected");
+        assert_eq!(
+            err.kind(),
+            der::ErrorKind::Value {
+                tag: der::Tag::GeneralizedTime
+            },
+            "expected Value error for missing fractional dot, got {:?}",
+            err.kind()
+        );
+    }
+
+    /// A '.' immediately followed by 'Z', i.e. zero fractional digits.
+    #[test]
+    fn test_rfc3161_frac_empty() {
+        let time_str = "20230101000000.Z";
+        let mut der_bytes = vec![0x18, time_str.len() as u8];
+        der_bytes.extend_from_slice(time_str.as_bytes());
+
+        let err = GeneralizedTime::from_der_bytes_rfc3161(&der_bytes)
+            .expect_err("empty fractional digits should be rejected");
+        assert_eq!(
+            err.kind(),
+            der::ErrorKind::Value {
+                tag: der::Tag::GeneralizedTime
+            },
+            "expected Value error for empty fractional digits, got {:?}",
+            err.kind()
+        );
+    }
+
+    /// More than 9 fractional digits (nanosecond precision is the maximum).
+    #[test]
+    fn test_rfc3161_frac_too_long() {
+        let time_str = "20230101000000.1234567890Z"; // 10 fractional digits
+        let mut der_bytes = vec![0x18, time_str.len() as u8];
+        der_bytes.extend_from_slice(time_str.as_bytes());
+
+        let err = GeneralizedTime::from_der_bytes_rfc3161(&der_bytes)
+            .expect_err("more than 9 fractional digits should be rejected");
+        assert_eq!(
+            err.kind(),
+            der::ErrorKind::Value {
+                tag: der::Tag::GeneralizedTime
+            },
+            "expected Value error for over-long fractional digits, got {:?}",
+            err.kind()
+        );
+    }
+
+    /// The fractional part starts with a non-digit byte.
+    /// Kept to a single character on purpose: only the first fractional byte is
+    /// checked here, so something like ".5aZ" would instead fail later during
+    /// integer parsing.
+    #[test]
+    fn test_rfc3161_frac_nonascii_digit() {
+        let time_str = "20230101000000.aZ";
+        let mut der_bytes = vec![0x18, time_str.len() as u8];
+        der_bytes.extend_from_slice(time_str.as_bytes());
+
+        let err = GeneralizedTime::from_der_bytes_rfc3161(&der_bytes)
+            .expect_err("non-digit fractional part should be rejected");
+        assert_eq!(
+            err.kind(),
+            der::ErrorKind::Value {
+                tag: der::Tag::GeneralizedTime
+            },
+            "expected Value error for non-digit fractional part, got {:?}",
+            err.kind()
+        );
+    }
 }
