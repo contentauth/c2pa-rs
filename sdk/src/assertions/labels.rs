@@ -198,6 +198,11 @@ pub const ASSET_REFERENCE: &str = "c2pa.asset-ref";
 /// See [Multi asset hash - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_multi_asset_hash).
 pub const PART: &str = ".part";
 
+/// Label for multi asset hashes
+///
+/// See [Multi asset hash - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_multi_asset_hash).
+pub const MULTI_ASSET_HASH: &str = "c2pa.hash.multi-asset";
+
 /// Label prefix for a C2PA metadata assertion.
 ///
 /// A [metadata assertion](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_metadata)
