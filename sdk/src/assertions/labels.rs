@@ -162,14 +162,26 @@ pub const IPTC_PHOTO_METADATA: &str = "stds.iptc.photo-metadata";
 ///
 /// See [Use of Schema.org - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_use_of_schema_org).
 #[doc(hidden)]
+#[deprecated(
+    since = "0.91.0",
+    note = "This attribute is deprecated from C2PA spec version 2.0. Will be deleted on or after 2026-11-09."
+)]
 pub const SCHEMA_ORG: &str = "schema.org";
 
-/// Label prefix for a claim review assertion.
-///
-/// See [Claim review - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_claim_review).
+pub(crate) const SCHEMA_ORG_INTERNAL: &str = "schema.org";
+
+/// Label prefix for a Claim Review assertion. Deprecated since C2PA 2.0 spec.
+#[deprecated(
+    since = "0.91.0",
+    note = "This attribute is deprecated from C2PA spec version 2.0. Will be deleted on or after 2026-11-09."
+)]
 pub const CLAIM_REVIEW: &str = "stds.schema-org.ClaimReview";
 
-/// Label prefix for a creative work assertion.  Deprecated.
+/// Label prefix for a Creative Work assertion. Deprecated in C2PA 2.0 spec.
+#[deprecated(
+    since = "0.91.0",
+    note = "This attribute is deprecated from C2PA spec version 2.0. Will be deleted on or after 2026-11-09."
+)]
 pub const CREATIVE_WORK: &str = "stds.schema-org.CreativeWork";
 
 /// Label prefix for a timestamp assertion.
@@ -197,6 +209,11 @@ pub const ASSET_REFERENCE: &str = "c2pa.asset-ref";
 ///
 /// See [Multi asset hash - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_multi_asset_hash).
 pub const PART: &str = ".part";
+
+/// Label for multi asset hashes
+///
+/// See [Multi asset hash - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_multi_asset_hash).
+pub const MULTI_ASSET_HASH: &str = "c2pa.hash.multi-asset";
 
 /// Label prefix for a C2PA metadata assertion.
 ///
