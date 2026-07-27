@@ -138,7 +138,7 @@ impl CloudData {
         l == labels::DATA_HASH
             || l == labels::BOX_HASH
             || l == labels::COLLECTION_HASH
-            || l == "c2pa.hash.multi-asset"
+            || l == labels::MULTI_ASSET_HASH
             || l.starts_with(labels::BMFF_HASH)
     }
 
@@ -228,8 +228,8 @@ pub mod tests {
         assert!(make("c2pa.hash.bmff.v3").is_hard_binding());
         assert!(make(labels::BOX_HASH).is_hard_binding());
         assert!(make(labels::COLLECTION_HASH).is_hard_binding());
-        assert!(make("c2pa.hash.multi-asset").is_hard_binding());
-        assert!(!make("c2pa.metadata").is_hard_binding());
+        assert!(make(labels::MULTI_ASSET_HASH).is_hard_binding());
+        assert!(!make(labels::METADATA).is_hard_binding());
     }
 
     #[test]
