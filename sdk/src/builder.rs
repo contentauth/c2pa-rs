@@ -5931,6 +5931,28 @@ mod tests {
         assert!(m.ingredients()[0].active_manifest().is_some());
     }
 
+    #[c2pa_test_async]
+    async fn test_add_cloud_ingredient_ignore_ingredient_errors() {
+        let mut cloud_image = Cursor::new(TEST_IMAGE_CLOUD);
+
+        let settings = Settings::default()
+            .with_value("verify.remote_manifest_fetch", false)
+            .unwrap()
+            .with_value("builder.ignore_ingredient_errors", true)
+            .unwrap();
+        let context = Context::default().with_settings(settings).unwrap();
+
+        let mut builder = Builder::from_context(context);
+
+        let ingredient = builder
+            .add_ingredient_from_stream_async(parent_json(), "image/jpeg", &mut cloud_image)
+            .await
+            .unwrap();
+
+        assert_eq!(ingredient.validation_status(), None);
+        assert_eq!(ingredient.validation_results(), None);
+    }
+
     #[test]
     fn test_redaction() {
         let context = test_context();

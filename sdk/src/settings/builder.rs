@@ -591,6 +591,16 @@ pub struct BuilderSettings {
     ///
     /// [`TimeStamp`]: crate::assertions::TimeStamp
     pub auto_timestamp_assertion: TimeStampSettings,
+    /// Whether to ignore errors encountered while loading or validating an ingredient's
+    /// manifest (e.g. a remote manifest that couldn't be fetched, or an invalid file format).
+    ///
+    /// The default value is false.
+    ///
+    /// <div class="warning">
+    /// When enabled, an ingredient whose manifest can't be loaded or validated is returned
+    /// with no validation status or validation results set, instead of failing.
+    /// </div>
+    pub ignore_ingredient_errors: bool,
 }
 
 impl Default for BuilderSettings {
@@ -607,6 +617,7 @@ impl Default for BuilderSettings {
             prefer_box_hash: false,
             generate_c2pa_archive: Some(true),
             auto_timestamp_assertion: TimeStampSettings::default(),
+            ignore_ingredient_errors: false,
         }
     }
 }
