@@ -31,3 +31,6 @@ pub mod pdf_io;
 
 #[cfg(feature = "plain_text")]
 pub mod text_io;
+
+#[cfg(feature = "structured_text")]
+pub mod structured_text_io;
