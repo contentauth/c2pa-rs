@@ -857,6 +857,7 @@ fn order_certificates_leaf_to_root(
     Ok(ordered_certs)
 }
 
+/// bcder is non-negative and big-endian
 fn integer_to_i64(int: &bcder::Integer) -> i64 {
     let bytes = int.as_slice();
     if bytes.is_empty() || bytes.len() > 8 {
