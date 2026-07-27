@@ -5695,6 +5695,9 @@ pub mod tests {
     }
 
     #[test]
+    // With the `plain_text` feature enabled, `.txt` is a supported type and
+    // this test's premise no longer holds.
+    #[cfg(not(feature = "plain_text"))]
     fn test_unsupported_type_without_external_manifest() {
         let context = Context::new();
         let (format, mut input_stream, _output_stream) =

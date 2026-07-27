@@ -42,6 +42,11 @@ openssl = [
     "c2pa_raw_crypto/openssl",
 ]
 pdf = ["dep:lopdf"]
+# Text asset handlers built on the `c2pa-text` reference implementation, which is
+# maintained by EncypherAI (https://github.com/encypherai/c2pa-text). These
+# features are disabled by default; please report issues with these handlers at
+# https://github.com/encypherai/c2pa-text/issues rather than to this repository.
+plain_text = ["dep:c2pa-text"]
 rust_native_crypto = ["c2pa_raw_crypto/rust_native_crypto"]
 # TODO: make our async tests always use the async API so we don't need ureq + reqwest
 #       see https://github.com/contentauth/c2pa-rs/issues/1364
@@ -101,6 +106,7 @@ byteordered = "0.6.0"
 chrono = { version = "0.4.44", default-features = false, features = ["serde"] }
 c2pa_cbor = "0.77.2"
 c2pa_raw_crypto = { version = "0.1.2", default-features = false }
+c2pa-text = { version = "3.0.0", optional = true }
 const-hex = "1.19"
 coset = "0.4.2"
 der = { version = "0.8.1", features = ["alloc", "std", "oid"] }
