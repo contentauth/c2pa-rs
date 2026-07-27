@@ -14,6 +14,12 @@ $ c2pagen generate --output sdk/benches/fixtures
 This can take 1hr+ to complete due to the complexity of the file formats and the sheer size of some of
 the assets.
 
+To see a list of all possible assets to generate:
+
+```bash
+$ c2pagen list
+```
+
 If you only want to benchmark a specific asset, generate it explicitly instead, for example:
 
 ```bash
