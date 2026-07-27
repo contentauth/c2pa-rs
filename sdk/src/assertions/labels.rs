@@ -388,7 +388,9 @@ pub fn instance(label: &str) -> usize {
 /// );
 /// ```
 pub fn add_thumbnail_format(label: &str, format: &str) -> String {
-    match format {
+    // mimetypes are case-insensitive (RFC 2045 section 5.1).
+    let format = format.to_lowercase();
+    match format.as_str() {
         "image/jpeg" | "jpeg" | "jpg" => format!("{label}.jpeg"),
         "image/png" | "png" => format!("{label}.png"),
         "image/svg+xml" | "svg" => format!("{label}.svg"),

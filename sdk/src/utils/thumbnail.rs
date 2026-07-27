@@ -36,9 +36,12 @@ impl ThumbnailFormat {
     /// Create a new [ThumbnailFormat] from the given format extension or mime type.
     ///
     /// If the format is unsupported, this function will return `None`.
+    /// `from_extension` lowercases internally but `from_mime_type` does not, so
+    /// normalize first to accept uppercase MIME types (RFC 2045 section 5.1).
     pub fn new(format: &str) -> Option<ThumbnailFormat> {
-        ImageFormat::from_extension(format)
-            .or_else(|| ImageFormat::from_mime_type(format))
+        let format = format.to_lowercase();
+        ImageFormat::from_extension(&format)
+            .or_else(|| ImageFormat::from_mime_type(&format))
             .and_then(|format| ThumbnailFormat::try_from(format).ok())
     }
 }
@@ -488,6 +491,54 @@ pub mod tests {
         ImageReader::with_format(Cursor::new(bytes), format.into())
             .decode()
             .unwrap();
+    }
+
+    #[test]
+    fn test_make_thumbnail_bytes_from_stream_uppercase_mime_png() {
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [builder.thumbnail]
+                    prefer_smallest_format = false
+                    ignore_errors = false
+                }
+                .to_string(),
+            )
+            .unwrap();
+
+        let (format, bytes) =
+            make_thumbnail_bytes_from_stream("IMAGE/PNG", Cursor::new(TEST_PNG), &settings)
+                .unwrap()
+                .unwrap();
+
+        assert!(matches!(format, ThumbnailFormat::Png));
+
+        ImageReader::with_format(Cursor::new(bytes), format.into())
+            .decode()
+            .unwrap();
+    }
+
+    /// Uppercase extension spellings work,
+    /// because `ImageFormat::from_extension` lowercases.
+    #[test]
+    fn test_make_thumbnail_bytes_from_stream_uppercase_extension() {
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [builder.thumbnail]
+                    prefer_smallest_format = false
+                    ignore_errors = false
+                }
+                .to_string(),
+            )
+            .unwrap();
+
+        let (format, _) =
+            make_thumbnail_bytes_from_stream("JPG", Cursor::new(TEST_JPEG), &settings)
+                .unwrap()
+                .unwrap();
+
+        assert!(matches!(format, ThumbnailFormat::Jpeg));
     }
 
     #[test]

@@ -9033,6 +9033,44 @@ mod tests {
     }
 
     #[test]
+    fn test_set_thumbnail_uppercase_mime_v1_claim() {
+        let definition = ManifestDefinition {
+            claim_version: Some(1),
+            claim_generator_info: [ClaimGeneratorInfo::default()].to_vec(),
+            format: "image/jpeg".to_string(),
+            title: Some("Test_Manifest".to_string()),
+            ..Default::default()
+        };
+
+        let mut builder = Builder {
+            definition,
+            ..Default::default()
+        };
+
+        let mut thumbnail = Cursor::new(TEST_THUMBNAIL);
+        builder.set_thumbnail("IMAGE/JPEG", &mut thumbnail).unwrap();
+
+        let claim = builder.to_claim().unwrap();
+        let labels: Vec<String> = claim
+            .claim_assertion_store()
+            .iter()
+            .map(|a| a.label_raw())
+            .collect();
+
+        assert!(
+            labels
+                .iter()
+                .any(|l| l.contains(labels::JPEG_CLAIM_THUMBNAIL)),
+            "expected a {} assertion, got: {labels:?}",
+            labels::JPEG_CLAIM_THUMBNAIL
+        );
+        assert!(
+            !labels.iter().any(|l| l.contains("IMAGE/JPEG")),
+            "uppercase format leaked into an assertion label: {labels:?}"
+        );
+    }
+
+    #[test]
     fn test_with_archive() -> Result<()> {
         let builder = Builder::default().with_definition(r#"{"title": "Test Image"}"#)?;
 
