@@ -409,38 +409,26 @@ pub fn add_thumbnail_format(label: &str, format: &str) -> String {
 mod tests {
     use super::*;
 
-    /// Repro: `add_thumbnail_format` matches the format string case-sensitively.
-    /// An uppercase mimetype falls through, producing a label
-    /// ("c2pa.thumbnail.claim/IMAGE/JPEG") instead of "c2pa.thumbnail.claim.jpeg".
-    /// Downstream label lookups then fail to find the thumbnail.
+    /// MIME types are case-insensitive (RFC 2045 section 5.1), so every
+    /// spelling produces the same label. Before this was handled, an uppercase
+    /// type missed every match arm and fell through to the '/'-joined fallback,
+    /// yielding "c2pa.thumbnail.claim/IMAGE/JPEG".
     #[test]
-    fn test_add_thumbnail_format_uppercase_mime() {
-        assert_eq!(
-            add_thumbnail_format(CLAIM_THUMBNAIL, "IMAGE/JPEG"),
-            JPEG_CLAIM_THUMBNAIL
-        );
+    fn test_add_thumbnail_format_case_insensitive() {
+        // (label prefix, format, expected label)
+        let cases = [
+            (CLAIM_THUMBNAIL, "image/jpeg", JPEG_CLAIM_THUMBNAIL),
+            (CLAIM_THUMBNAIL, "IMAGE/JPEG", JPEG_CLAIM_THUMBNAIL),
+            (CLAIM_THUMBNAIL, "Image/Jpeg", JPEG_CLAIM_THUMBNAIL),
+            (CLAIM_THUMBNAIL, "JPG", JPEG_CLAIM_THUMBNAIL),
+            (INGREDIENT_THUMBNAIL, "image/png", PNG_INGREDIENT_THUMBNAIL),
+            (INGREDIENT_THUMBNAIL, "IMAGE/PNG", PNG_INGREDIENT_THUMBNAIL),
+            (CLAIM_THUMBNAIL, "IMAGE/SVG+XML", SVG_CLAIM_THUMBNAIL),
+        ];
 
-        assert_eq!(
-            add_thumbnail_format(INGREDIENT_THUMBNAIL, "IMAGE/PNG"),
-            PNG_INGREDIENT_THUMBNAIL
-        );
-    }
-
-    /// The lowercase counterpart of [test_add_thumbnail_format_uppercase_mime].
-    /// Pins the ordinary lowercase spelling so a case-normalizing fix cannot
-    /// regress it (e.g. by normalizing to uppercase, or handling only
-    /// "IMAGE/JPEG").
-    #[test]
-    fn test_add_thumbnail_format_lowercase_mime() {
-        assert_eq!(
-            add_thumbnail_format(CLAIM_THUMBNAIL, "image/jpeg"),
-            JPEG_CLAIM_THUMBNAIL
-        );
-
-        assert_eq!(
-            add_thumbnail_format(INGREDIENT_THUMBNAIL, "image/png"),
-            PNG_INGREDIENT_THUMBNAIL
-        );
+        for (label, format, expected) in cases {
+            assert_eq!(add_thumbnail_format(label, format), expected);
+        }
     }
 
     /// Regression tests for usize underflow in `parse_label` when the input

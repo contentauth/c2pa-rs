@@ -9032,6 +9032,11 @@ mod tests {
         assert!(reader_json.contains("thumbnail.ingredient"));
     }
 
+    /// `set_thumbnail` stores the format verbatim, bypassing `format_to_mime`,
+    /// so the v1 claim path is where an uppercase type reaches
+    /// `add_thumbnail_format`. Before this was handled, the malformed label it
+    /// returned was truncated at the '/' by `Assertion::label_root`, dropping
+    /// the format suffix and leaving a bare `c2pa.thumbnail.claim` assertion.
     #[test]
     fn test_set_thumbnail_uppercase_mime_v1_claim() {
         let definition = ManifestDefinition {
@@ -9048,9 +9053,11 @@ mod tests {
         };
 
         let mut thumbnail = Cursor::new(TEST_THUMBNAIL);
-        builder.set_thumbnail("IMAGE/JPEG", &mut thumbnail).unwrap();
+        builder
+            .set_thumbnail("IMAGE/JPEG", &mut thumbnail)
+            .expect("thumbnail should be set");
 
-        let claim = builder.to_claim().unwrap();
+        let claim = builder.to_claim().expect("claim should build");
         let labels: Vec<String> = claim
             .claim_assertion_store()
             .iter()

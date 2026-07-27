@@ -437,10 +437,12 @@ pub mod tests {
             .unwrap();
     }
 
-    /// An uppercase MIME format (e.g. "IMAGE/JPEG") yields no thumbnail.
-    /// (Because checks are case-sensitive and not normalized).
+    /// Formats are matched as mimetypes with case-insensitively.
+    ///
+    /// `ignore_errors` is disabled so an unresolved format surfaces as an `Err`
+    /// rather than the silent `Ok(None)` the default settings produce.
     #[test]
-    fn test_make_thumbnail_bytes_from_stream_uppercase_mime() {
+    fn test_make_thumbnail_bytes_from_stream_format_case_insensitive() {
         let settings = Settings::new()
             .with_toml(
                 &toml::toml! {
@@ -450,95 +452,33 @@ pub mod tests {
                 }
                 .to_string(),
             )
-            .unwrap();
+            .expect("settings should build");
 
-        let (format, bytes) =
-            make_thumbnail_bytes_from_stream("IMAGE/JPEG", Cursor::new(TEST_JPEG), &settings)
-                .unwrap()
-                .unwrap();
+        // (format, source image, expected resolved format)
+        let cases = [
+            ("image/jpeg", TEST_JPEG, ThumbnailFormat::Jpeg),
+            ("IMAGE/JPEG", TEST_JPEG, ThumbnailFormat::Jpeg),
+            ("Image/Jpeg", TEST_JPEG, ThumbnailFormat::Jpeg),
+            ("image/png", TEST_PNG, ThumbnailFormat::Png),
+            ("IMAGE/PNG", TEST_PNG, ThumbnailFormat::Png),
+            // Extensions already resolve case-insensitively via
+            // `ImageFormat::from_extension`; pin that so it cannot regress.
+            ("jpg", TEST_JPEG, ThumbnailFormat::Jpeg),
+            ("JPG", TEST_JPEG, ThumbnailFormat::Jpeg),
+        ];
 
-        assert!(matches!(format, ThumbnailFormat::Jpeg));
+        for (input, source, expected) in cases {
+            let (format, bytes) =
+                make_thumbnail_bytes_from_stream(input, Cursor::new(source), &settings)
+                    .unwrap_or_else(|err| panic!("{input} should be a supported format: {err}"))
+                    .unwrap_or_else(|| panic!("{input} should produce a thumbnail"));
 
-        ImageReader::with_format(Cursor::new(bytes), format.into())
-            .decode()
-            .unwrap();
-    }
+            assert_eq!(format, expected, "wrong format resolved for {input}");
 
-    /// The lowercase counterpart of
-    /// [test_make_thumbnail_bytes_from_stream_uppercase_mime]. Pins the
-    /// ordinary lowercase spelling so a case-normalizing fix cannot regress it
-    /// (e.g. by normalizing to uppercase, or handling only "IMAGE/JPEG").
-    #[test]
-    fn test_make_thumbnail_bytes_from_stream_lowercase_mime() {
-        let settings = Settings::new()
-            .with_toml(
-                &toml::toml! {
-                    [builder.thumbnail]
-                    prefer_smallest_format = false
-                    ignore_errors = false
-                }
-                .to_string(),
-            )
-            .unwrap();
-
-        let (format, bytes) =
-            make_thumbnail_bytes_from_stream("image/jpeg", Cursor::new(TEST_JPEG), &settings)
-                .unwrap()
-                .unwrap();
-
-        assert!(matches!(format, ThumbnailFormat::Jpeg));
-
-        ImageReader::with_format(Cursor::new(bytes), format.into())
-            .decode()
-            .unwrap();
-    }
-
-    #[test]
-    fn test_make_thumbnail_bytes_from_stream_uppercase_mime_png() {
-        let settings = Settings::new()
-            .with_toml(
-                &toml::toml! {
-                    [builder.thumbnail]
-                    prefer_smallest_format = false
-                    ignore_errors = false
-                }
-                .to_string(),
-            )
-            .unwrap();
-
-        let (format, bytes) =
-            make_thumbnail_bytes_from_stream("IMAGE/PNG", Cursor::new(TEST_PNG), &settings)
-                .unwrap()
-                .unwrap();
-
-        assert!(matches!(format, ThumbnailFormat::Png));
-
-        ImageReader::with_format(Cursor::new(bytes), format.into())
-            .decode()
-            .unwrap();
-    }
-
-    /// Uppercase extension spellings work,
-    /// because `ImageFormat::from_extension` lowercases.
-    #[test]
-    fn test_make_thumbnail_bytes_from_stream_uppercase_extension() {
-        let settings = Settings::new()
-            .with_toml(
-                &toml::toml! {
-                    [builder.thumbnail]
-                    prefer_smallest_format = false
-                    ignore_errors = false
-                }
-                .to_string(),
-            )
-            .unwrap();
-
-        let (format, _) =
-            make_thumbnail_bytes_from_stream("JPG", Cursor::new(TEST_JPEG), &settings)
-                .unwrap()
-                .unwrap();
-
-        assert!(matches!(format, ThumbnailFormat::Jpeg));
+            ImageReader::with_format(Cursor::new(bytes), format.into())
+                .decode()
+                .unwrap_or_else(|err| panic!("{input} thumbnail should decode: {err}"));
+        }
     }
 
     #[test]

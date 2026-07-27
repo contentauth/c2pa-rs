@@ -51,8 +51,8 @@ pub fn extension_to_mime(extension: &str) -> Option<&'static str> {
 /// Convert a format to a MIME type
 /// formats can be passed in as extensions, e.g. "jpg" or "jpeg"
 /// or as MIME types, e.g. "image/jpeg"
-/// MIME types are case-insensitive (RFC 2045 section 5.1),
-// so the format gets lowercased.
+/// MIME types are case-insensitive (RFC 2045 section 5.1), so the format is
+/// lowercased before matching.
 pub fn format_to_mime(format: &str) -> String {
     let format = format.to_lowercase();
     match extension_to_mime(&format) {
@@ -108,8 +108,6 @@ pub fn format_from_path<P: AsRef<std::path::Path>>(path: P) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-
     use super::*;
 
     /// MIME type and subtype are case-insensitive per RFC 2045 section 5.1.
