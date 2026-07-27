@@ -222,6 +222,8 @@ where
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::unwrap_used)]
+    #![allow(clippy::expect_used)]
+    #![allow(clippy::panic)]
 
     use image::GenericImageView;
 
