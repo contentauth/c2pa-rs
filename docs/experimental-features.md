@@ -47,10 +47,15 @@ The feature must be added to the [Registry of experimental features](#registry-o
 - The Cargo feature flag in `unstable_<name>` form.
 - A brief (a few sentences) description of the feature's behavior.
 - Contact information for support, including **at least one GitHub username** of a maintainer or sponsor who can answer questions about the feature.
+- A link to the feature's open discussion issue (see condition 7).
 
 ### 6. Same licensing and dependency review as the rest of the SDK
 
 Experimental features are exempt from the CAI team's *maintenance* commitments, not from the project's legal and supply-chain requirements. The contributed code must be offered under the SDK's existing license terms, and any new dependency (see condition 3) is subject to the same license-compatibility and security review as any other dependency in the tree. A feature whose license or dependencies cannot be cleared is not eligible for acceptance – experimental or otherwise.
+
+### 7. Tracked by an open discussion issue
+
+Before a feature is accepted, an issue must be opened on the [`c2pa-rs` issue tracker](https://github.com/contentauth/c2pa-rs/issues) proposing it as an experimental feature. The team and community use that issue to discuss and agree to host the feature in the first place; it then stays open for the life of the feature as the standing home for design discussion, change proposals, bug reports, and any argument for promotion or removal. Each registry entry links to its feature's issue. Closing the issue signals that the feature has been promoted or removed.
 
 ## Stability and support expectations
 
@@ -77,7 +82,7 @@ To make that split concrete:
 
 - **Not part of the merge gate.** A dedicated, **non-blocking** workflow ([`experimental-features.yml`](../.github/workflows/experimental-features.yml)) builds, lints, and tests the SDK with every `unstable_` feature enabled, on pull requests and on a daily schedule. It is advisory only – it is deliberately not a required status check, so a failure there never blocks a merge.
 - **Broken features get disabled, not fixed on demand.** When an experimental feature stops building or passing – for example after a Rust toolchain update or a refactor of the primary SDK – the CAI team will notify the registered contact. If it is not repaired promptly, the feature is disabled (removed from the build, and ultimately from the tree) rather than holding up the SDK. This keeps one unmaintained feature from blocking everyone.
-- **Being separated from the required `--all-features` builds.** Several required jobs currently build with `--all-features`, which pulls experimental features into the merge gate and re-imposes the maintenance burden this policy avoids. Aligning those jobs to build only the non-experimental feature set – so the non-blocking workflow above is the only place `unstable_` features are exercised in CI – is tracked in [#2362](https://github.com/contentauth/c2pa-rs/issues/2362).
+- **Excluded from the required tier suites.** The required [Tier 1A](../.github/workflows/tier-1a.yml), [Tier 1B](../.github/workflows/tier-1b.yml), and [Tier 2](../.github/workflows/tier-2.yml) suites build the non-experimental feature set only, so experimental breakage cannot fail the merge gate. (They compute the feature list from `cargo metadata` and filter out `unstable_`-prefixed features; Tier 2 builds no `unstable_` features to begin with.) A few remaining `--all-features` jobs outside the tier suites – `beta-preflight`, the cross-repo canary, and the `docs.rs` build – are tracked for the same treatment in [#2362](https://github.com/contentauth/c2pa-rs/issues/2362).
 
 ## Promotion or removal
 
@@ -94,6 +99,6 @@ A registered contact is the feature's lifeline. Contacts are kept current by pul
 
 The following table lists the experimental features currently present in the SDK. See [Conditions for acceptance](#conditions-for-acceptance) for what each entry must include.
 
-| Feature | Cargo flag | Description | Contact |
-| -- | -- | -- | -- |
-| Builder action/ingredient filtering | `unstable_builder_filter` | Adds `Builder::filter_actions`, `Builder::filter_ingredients`, and `Ingredient::effective_id` for filtering the actions and ingredients written into a manifest. Maintained by the Adobe CAI team to serve an internal need; kept experimental because the long-term viability of the API design is not yet settled. | Adobe CAI team ([@contentauth](https://github.com/contentauth)) |
+| Feature | Cargo flag | Description | Contact | Discussion |
+| -- | -- | -- | -- | -- |
+| Builder action/ingredient filtering | `unstable_builder_filter` | Adds `Builder::filter_actions`, `Builder::filter_ingredients`, and `Ingredient::effective_id` for filtering the actions and ingredients written into a manifest. Maintained by the Adobe CAI team to serve an internal need; kept experimental because the long-term viability of the API design is not yet settled. | Adobe CAI team ([@contentauth](https://github.com/contentauth)) | [#2368](https://github.com/contentauth/c2pa-rs/issues/2368) |

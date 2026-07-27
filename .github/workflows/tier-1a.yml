@@ -38,6 +38,7 @@ jobs:
     name: Get features
     runs-on: ubuntu-latest
     outputs:
+      features: ${{ steps.get-features.outputs.features }}
       rust-native-features: ${{ steps.get-features.outputs.rust-native-features }}
       openssl-features: ${{ steps.get-features.outputs.openssl-features }}
     steps:
@@ -52,10 +53,16 @@ jobs:
       - name: Get all features
         id: get-features
         run: |
-          FEATURES=$(cargo metadata --format-version=1 | jq -r '[.packages[] | select(.name=="c2pa") | .features | keys | map(select(. != "default")) | .[]] | unique | join(" ")')
+          # Experimental (`unstable_`) features are deliberately excluded from
+          # the required suite: they sit outside the SDK's normal support
+          # commitments and must not gate main or the release branches. They are
+          # exercised separately by the non-blocking experimental-features.yml.
+          # See docs/experimental-features.md and #2362.
+          FEATURES=$(cargo metadata --format-version=1 | jq -r '[.packages[] | select(.name=="c2pa") | .features | keys | map(select(. != "default" and (startswith("unstable_") | not))) | .[]] | unique | join(" ")')
 
           RUST_NATIVE_FEATURES=$(echo $FEATURES | sed 's/openssl//g')
           OPENSSL_FEATURES=$(echo $FEATURES | sed 's/rust_native_crypto//g')
+          echo "features=$FEATURES" >> "$GITHUB_OUTPUT"
           echo "rust-native-features=$RUST_NATIVE_FEATURES" >> "$GITHUB_OUTPUT"
           echo "openssl-features=$OPENSSL_FEATURES" >> "$GITHUB_OUTPUT"
 
@@ -341,6 +348,7 @@ jobs:
 
   docs_stable:
     name: Doc build (stable, warnings denied)
+    needs: get-features
     runs-on: ubuntu-latest
 
     if: |
@@ -367,10 +375,12 @@ jobs:
       # (advances every ~6 weeks, not daily). These builds use plain `cargo
       # doc` and omit `--cfg docsrs`, so the nightly-only `doc_cfg` feature in
       # sdk/src/lib.rs stays inert and stable can compile the docs.
+      # Experimental (`unstable_`) features are excluded from this required doc
+      # build; the non-blocking experimental-features.yml covers them.
       - name: c2pa docs
         env:
           RUSTDOCFLAGS: -Dwarnings
-        run: cargo doc -p c2pa --no-deps --all-features
+        run: cargo doc -p c2pa --no-deps --features "${{ needs.get-features.outputs.features }}"
 
       - name: c2pa-c-ffi docs
         env:
