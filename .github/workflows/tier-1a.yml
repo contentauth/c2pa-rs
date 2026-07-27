@@ -91,7 +91,7 @@ jobs:
           # the required suite: they sit outside the SDK's normal support
           # commitments and must not gate main or the release branches. They are
           # exercised separately by the non-blocking experimental-features.yml.
-          # See docs/experimental-features.md and #2362.
+          # See docs/experimental-features.md.
           FEATURES=$(cargo metadata --format-version=1 | jq -r '[.packages[] | select(.name=="c2pa") | .features | keys | map(select(. != "default" and (startswith("unstable_") | not))) | .[]] | unique | join(" ")')
 
           RUST_NATIVE_FEATURES=$(echo $FEATURES | sed 's/openssl//g')

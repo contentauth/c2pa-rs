@@ -35,7 +35,7 @@ jobs:
           # (`unstable_`) features, so this preflight mirrors a full build
           # without pulling in experimental code. Experimental features are
           # exercised only by the non-blocking experimental-features.yml; see
-          # docs/experimental-features.md and #2362.
+          # docs/experimental-features.md.
           FEATURES=$(cargo metadata --format-version=1 --no-deps | jq -r '[.packages[] | .features | keys[]] | unique | map(select(. != "default" and (startswith("unstable_") | not))) | join(" ")')
           echo "features=$FEATURES" >> "$GITHUB_OUTPUT"
 
