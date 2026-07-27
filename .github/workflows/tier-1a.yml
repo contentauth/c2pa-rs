@@ -34,6 +34,40 @@ on:
       - '*-rc*'
 
 jobs:
+  # Decide once whether this run is trusted, and expose the result to every
+  # other job. A run is trusted when it is not a pull request (push, schedule,
+  # or manual dispatch), when the PR branch lives in this repository, or when a
+  # maintainer has applied the `safe to test` or `check-release` label to a
+  # fork PR.
+  #
+  # We key trust off the PR's head repository rather than `author_association`
+  # because GitHub only reports `MEMBER`/`COLLABORATOR` for public org members
+  # and direct collaborators. A private org member with team-granted write
+  # access shows up as `CONTRIBUTOR` and would otherwise be denied CI even
+  # though they can push branches here. Pushing a branch to this repository
+  # already requires write access, so "the branch is in this repo" is an
+  # accurate, maintenance-free proxy for "the author is a trusted team member".
+  authorize:
+    name: Authorize CI run
+    runs-on: ubuntu-latest
+    outputs:
+      # Full trust: run the entire CI suite.
+      trusted: ${{ steps.decide.outputs.trusted }}
+
+      # Run originates from this repository (not a fork), so repository secrets
+      # (e.g. the Codecov token) are available. Fork PRs never receive secrets,
+      # even when labeled `safe to test`, so secret-dependent steps must gate on
+      # this rather than on `trusted`.
+      same-repo: ${{ steps.decide.outputs.same-repo }}
+    steps:
+      - name: Determine trust level
+        id: decide
+        run: |
+          {
+            echo "same-repo=${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}"
+            echo "trusted=${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository || contains(github.event.pull_request.labels.*.name, 'safe to test') || contains(github.event.pull_request.labels.*.name, 'check-release') }}"
+          } >> "$GITHUB_OUTPUT"
+
   get-features:
     name: Get features
     runs-on: ubuntu-latest
@@ -61,14 +95,8 @@ jobs:
 
   tests-openssl:
     name: Unit tests (OpenSSL installed)
-    needs: get-features
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
+    needs: [authorize, get-features]
+    if: needs.authorize.outputs.trusted == 'true'
 
     runs-on: ubuntu-latest
 
@@ -106,11 +134,7 @@ jobs:
       # Tokens aren't available for PRs originating from forks,
       # so we don't attempt to upload code coverage in that case.
       - name: Upload code coverage results
-        if: |
-          github.event_name != 'pull_request' ||
-          github.event.pull_request.author_association == 'COLLABORATOR' ||
-          github.event.pull_request.author_association == 'MEMBER' ||
-          github.event.pull_request.user.login == 'dependabot[bot]'
+        if: needs.authorize.outputs.same-repo == 'true'
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -120,14 +144,8 @@ jobs:
 
   tests-rust-native-crypto:
     name: Unit tests (Rust native crypto installed)
-    needs: get-features
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
+    needs: [authorize, get-features]
+    if: needs.authorize.outputs.trusted == 'true'
 
     runs-on: ubuntu-latest
 
@@ -165,11 +183,7 @@ jobs:
       # Tokens aren't available for PRs originating from forks,
       # so we don't attempt to upload code coverage in that case.
       - name: Upload code coverage results
-        if: |
-          github.event_name != 'pull_request' ||
-          github.event.pull_request.author_association == 'COLLABORATOR' ||
-          github.event.pull_request.author_association == 'MEMBER' ||
-          github.event.pull_request.user.login == 'dependabot[bot]'
+        if: needs.authorize.outputs.same-repo == 'true'
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -179,14 +193,8 @@ jobs:
 
   tests-cli:
     name: Unit tests (c2patool)
-    needs: get-features
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
+    needs: [authorize, get-features]
+    if: needs.authorize.outputs.trusted == 'true'
 
     runs-on: ubuntu-latest
 
@@ -218,11 +226,7 @@ jobs:
       # Tokens aren't available for PRs originating from forks,
       # so we don't attempt to upload code coverage in that case.
       - name: Upload code coverage results
-        if: |
-          github.event_name != 'pull_request' ||
-          github.event.pull_request.author_association == 'COLLABORATOR' ||
-          github.event.pull_request.author_association == 'MEMBER' ||
-          github.event.pull_request.user.login == 'dependabot[bot]'
+        if: needs.authorize.outputs.same-repo == 'true'
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -232,14 +236,8 @@ jobs:
 
   tests-windows-arm-openssl:
     name: Unit tests (Windows ARM, OpenSSL)
-    needs: get-features
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
+    needs: [authorize, get-features]
+    if: needs.authorize.outputs.trusted == 'true'
 
     runs-on: windows-11-arm
 
@@ -264,14 +262,8 @@ jobs:
 
   tests-windows-arm-rust-native-crypto:
     name: Unit tests (Windows ARM, Rust native crypto)
-    needs: get-features
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
+    needs: [authorize, get-features]
+    if: needs.authorize.outputs.trusted == 'true'
 
     runs-on: windows-11-arm
 
@@ -296,15 +288,10 @@ jobs:
 
   docs_rs:
     name: Preflight docs.rs build
+    needs: authorize
     runs-on: ubuntu-latest
 
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
+    if: needs.authorize.outputs.trusted == 'true'
 
     steps:
       - name: Checkout repository
@@ -313,7 +300,11 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
-          toolchain: nightly
+          # Pinned to the nightly docs.rs itself runs (see the version string
+          # at https://docs.rs/about/builds). Pinning decouples this preflight
+          # from the Rust team's daily nightly churn; refresh periodically
+          # (e.g. at release time) to track what docs.rs is actually using.
+          toolchain: nightly-2026-07-12
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
@@ -324,36 +315,64 @@ jobs:
           crate: cargo-docs-rs
           version: "1.0.4"
 
+      # This job only verifies that the docs.rs build itself succeeds under the
+      # docs.rs environment (`--cfg docsrs`). We deliberately do not deny any
+      # warnings here: docs.rs does not build with `-Dwarnings`, and warning
+      # enforcement is handled on the predictable stable toolchain in the
+      # `docs_stable` job below.
       - name: Preflight c2pa-rs docs.rs
-        env:
-          RUSTDOCFLAGS: -Dwarnings
         run: cargo docs-rs -p c2pa
 
       - name: Preflight c2pa-c-ffi docs.rs
-        env:
-          RUSTDOCFLAGS: -Dwarnings
         run: cargo docs-rs -p c2pa-c-ffi
 
-      - name: Preflight c2patool cargo docs
+  docs_stable:
+    name: Doc build (stable, warnings denied)
+    needs: authorize
+    runs-on: ubuntu-latest
+
+    if: needs.authorize.outputs.trusted == 'true'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      # Blanket `-Dwarnings` enforcement on the predictable stable toolchain
+      # (advances every ~6 weeks, not daily). These builds use plain `cargo
+      # doc` and omit `--cfg docsrs`, so the nightly-only `doc_cfg` feature in
+      # sdk/src/lib.rs stays inert and stable can compile the docs.
+      - name: c2pa docs
+        env:
+          RUSTDOCFLAGS: -Dwarnings
+        run: cargo doc -p c2pa --no-deps --all-features
+
+      - name: c2pa-c-ffi docs
+        env:
+          RUSTDOCFLAGS: -Dwarnings
+        run: cargo doc -p c2pa-c-ffi --no-deps --all-features
+
+      - name: c2patool docs
         env:
           RUSTDOCFLAGS: -Dwarnings
         run: cargo doc -p c2patool --no-deps --all-features
 
   doc-tests:
     name: Doc tests (requires nightly Rust)
-    needs: get-features
+    needs: [authorize, get-features]
     # TODO: Remove this once cargo-llvm-cov can run doc tests and generate
     # coverage. (This requires a bug fix that is only available in nightly Rust.)
     # Watch https://github.com/taiki-e/cargo-llvm-cov/issues/2
     # for progress.
 
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
+    if: needs.authorize.outputs.trusted == 'true'
 
     runs-on: ubuntu-latest
 
@@ -395,11 +414,7 @@ jobs:
       # Tokens aren't available for PRs originating from forks,
       # so we don't attempt to upload code coverage in that case.
       # - name: Upload code coverage results
-      #   if: |
-      #     github.event_name != 'pull_request' ||
-      #     github.event.pull_request.author_association == 'COLLABORATOR' ||
-      #     github.event.pull_request.author_association == 'MEMBER' ||
-      #     github.event.pull_request.user.login == 'dependabot[bot]'
+      #   if: needs.authorize.outputs.same-repo == 'true'
       #   uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
       #   with:
       #     token: ${{ secrets.CODECOV_TOKEN }}
@@ -408,13 +423,8 @@ jobs:
 
   cargo-check:
     name: Default features build
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
+    needs: authorize
+    if: needs.authorize.outputs.trusted == 'true'
 
     runs-on: ubuntu-latest
 
@@ -435,13 +445,8 @@ jobs:
 
   cargo-lock:
     name: Cargo.lock is up to date
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
+    needs: authorize
+    if: needs.authorize.outputs.trusted == 'true'
 
     runs-on: ubuntu-latest
 
@@ -459,14 +464,8 @@ jobs:
 
   tests-wasm:
     name: Unit tests (Wasm)
-    needs: get-features
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
+    needs: [authorize, get-features]
+    if: needs.authorize.outputs.trusted == 'true'
 
     runs-on: ubuntu-latest
 
@@ -504,14 +503,8 @@ jobs:
 
   tests-wasi:
     name: Unit tests (WASI)
-    needs: get-features
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
+    needs: [authorize, get-features]
+    if: needs.authorize.outputs.trusted == 'true'
 
     runs-on: ubuntu-latest
 
@@ -559,14 +552,8 @@ jobs:
 
   clippy_check:
     name: Clippy
-    needs: get-features
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
+    needs: [authorize, get-features]
+    if: needs.authorize.outputs.trusted == 'true'
 
     runs-on: ubuntu-latest
 
@@ -591,13 +578,8 @@ jobs:
 
   cargo_fmt:
     name: Enforce Rust code format
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
+    needs: authorize
+    if: needs.authorize.outputs.trusted == 'true'
 
     runs-on: ubuntu-latest
 
@@ -616,13 +598,8 @@ jobs:
 
   cargo-deny:
     name: License / vulnerability audit
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
+    needs: authorize
+    if: needs.authorize.outputs.trusted == 'true'
 
     runs-on: ubuntu-latest
 

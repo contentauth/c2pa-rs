@@ -252,6 +252,41 @@ impl Ingredient {
         self.instance_id.as_deref().unwrap_or("None") // todo: deprecate and change to Option<&str>
     }
 
+    /// Returns the id used to reference this ingredient from a claim: its [`label`](Self::label)
+    /// when present and non-empty, otherwise its [`instance_id`](Self::instance_id).
+    ///
+    /// This is how the [`Builder`](crate::Builder) keys ingredients when resolving action
+    /// `ingredientIds` and emitting positional assertion labels, so any code matching actions to
+    /// ingredients must use the same rule. It is public for exactly that reason: external code
+    /// filtering or matching actions against ingredients (e.g. via [`Builder::filter_actions`] and
+    /// [`Builder::filter_ingredients`]) must not reimplement (and risk diverging from) this rule.
+    ///
+    /// [`Builder::filter_actions`]: crate::Builder::filter_actions
+    /// [`Builder::filter_ingredients`]: crate::Builder::filter_ingredients
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This method is available only with the `experimental_builder_filter`
+    /// feature enabled. It is exempt from this crate's usual semantic-versioning stability
+    /// guarantees and may change in a backward-incompatible way, or be removed entirely, in any
+    /// release.
+    ///
+    /// </div>
+    #[cfg(feature = "experimental_builder_filter")]
+    pub fn effective_id(&self) -> String {
+        self.effective_id_internal()
+    }
+
+    /// Crate-internal form of [`effective_id`](Self::effective_id), always available regardless of
+    /// which features are enabled. Signing (`Builder::to_claim`) and ingredient-archive keying
+    /// depend on this rule, so it cannot itself be feature-gated.
+    pub(crate) fn effective_id_internal(&self) -> String {
+        self.label()
+            .filter(|label| !label.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| self.instance_id().to_string())
+    }
+
     /// Returns the provenance URI if available.
     pub fn provenance(&self) -> Option<&str> {
         self.provenance.as_deref()

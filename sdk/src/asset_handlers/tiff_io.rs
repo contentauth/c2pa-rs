@@ -599,6 +599,34 @@ where
     c2pa_mode: bool,
 }
 
+/// Accumulates one strip/tile/BigTable byte count into `copied` and rejects the
+/// tag once the running total exceeds the source stream length.
+///
+/// TIFF strip/tile/BigTable data lives inside the source file, so a legitimate
+/// `sum(byte_counts)` is at most the file size. A crafted file can instead list
+/// many entries whose offsets all point at the same bytes and whose counts sum
+/// to far more than the file, making the clone re-copy the input over and over
+/// and grow the in-memory output to gigabytes (memory amplification → OOM
+/// abort; ~4.9 GB from a 293 KB input in the reported PoC). Capping the
+/// cumulative copy length at the source length stops that while leaving
+/// well-formed files untouched.
+///
+/// `kind` labels the error ("strip", "tile", "BigTable"). The error is returned
+/// via `Result` so the caller propagates it with `?`. Note that `with_order!`
+/// inlines its body into a `match` arm — it is not a real closure — so that `?`
+/// (like a bare `return`) exits `clone_image_data` directly, not just a closure.
+fn accumulate_copy_len(copied: &mut u64, cnt: u64, source_len: u64, kind: &str) -> Result<()> {
+    *copied = copied
+        .checked_add(cnt)
+        .ok_or_else(|| Error::InvalidAsset(format!("TIFF {kind} byte counts overflow")))?;
+    if *copied > source_len {
+        return Err(Error::InvalidAsset(format!(
+            "TIFF {kind} byte counts exceed source length"
+        )));
+    }
+    Ok(())
+}
+
 impl<T: Read + Write + Seek> TiffCloner<T> {
     pub fn new(endianness: Endianness, big_tiff: bool, writer: T) -> Result<TiffCloner<T>> {
         let bo = ByteOrdered::runtime(writer, endianness);
@@ -1436,9 +1464,22 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 let current_offset = self.offset()?;
                 self.writer.seek(SeekFrom::Start(current_offset))?;
 
+                // Cap cumulative copy bytes at the source stream length. Legit
+                // TIFF strip data lives inside the file, so sum(byte_counts)
+                // is at most the file size. A crafted file where 50 000 strip
+                // offsets all point to byte 0 could otherwise cause each strip
+                // to re-copy the whole file (~5 GiB output from a 293 KiB
+                // input, OOM abort).
+                let source_len = stream_len(asset_reader)?;
+                let mut copied: u64 = 0;
+
                 // copy the strips
                 with_order!(so_entry.value_bytes.as_slice(), self.endianness, |src| {
                     for cnt in sbcs.iter() {
+                        // Reject byte counts that would push the cumulative copy
+                        // past the source length before doing any per-strip work.
+                        accumulate_copy_len(&mut copied, *cnt, source_len, "strip")?;
+
                         // get the offset
                         let so: u64 = match so_entry.entry_type {
                             4u16 => {
@@ -1537,9 +1578,18 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                 let current_offset = self.offset()?;
                 self.writer.seek(SeekFrom::Start(current_offset))?;
 
+                // Cap cumulative copy bytes at the source stream length (see
+                // the strip path above for rationale).
+                let source_len = stream_len(asset_reader)?;
+                let mut copied: u64 = 0;
+
                 // copy the tiles
                 with_order!(to_entry.value_bytes.as_slice(), self.endianness, |src| {
                     for cnt in tbcs.iter() {
+                        // Reject byte counts that would push the cumulative copy
+                        // past the source length before doing any per-tile work.
+                        accumulate_copy_len(&mut copied, *cnt, source_len, "tile")?;
+
                         // get the offset
                         let to: u64 = match to_entry.entry_type {
                             4u16 => {
@@ -1654,9 +1704,18 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
             let current_offset = self.offset()?;
             self.writer.seek(SeekFrom::Start(current_offset))?;
 
+            // Cap cumulative copy bytes at the source stream length (see
+            // clone_image_data strip path for rationale).
+            let source_len = stream_len(asset_reader)?;
+            let mut copied: u64 = 0;
+
             // copy the BigTable blocks
             with_order!(bo_entry.value_bytes.as_slice(), self.endianness, |src| {
                 for cnt in bbcs.iter() {
+                    // Reject byte counts that would push the cumulative copy past
+                    // the source length before doing any per-block work.
+                    accumulate_copy_len(&mut copied, *cnt, source_len, "BigTable")?;
+
                     let bo: u64 = match bo_entry.entry_type {
                         4u16 => {
                             let s = src.read_u32()?;
@@ -2652,6 +2711,7 @@ pub enum TiffError {
 
 #[cfg(test)]
 pub mod tests {
+    #![allow(clippy::expect_used)]
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
@@ -3201,6 +3261,133 @@ pub mod tests {
         // After the fix: must return Err(Error::InvalidAsset) without any allocation.
         let locations = tiff_io.get_object_locations_from_stream(&mut stream);
         assert!(matches!(locations, Err(Error::InvalidAsset(_))));
+    }
+
+    // Helper: build an IfdClonedEntry of LONG (u32) values in little-endian.
+    fn u32_strip_entry(tag: u16, values: &[u32]) -> IfdClonedEntry {
+        let mut value_bytes = Vec::with_capacity(values.len() * 4);
+        for v in values {
+            value_bytes.extend_from_slice(&v.to_le_bytes());
+        }
+        IfdClonedEntry {
+            entry_tag: tag,
+            entry_type: 4, // LONG
+            value_count: values.len() as u64,
+            value_bytes,
+        }
+    }
+
+    // Regression: a TIFF whose strip byte counts sum to more than the actual
+    // source stream length must be rejected. Pre-fix, `clone_image_data`
+    // would honor an attacker-chosen sum (50 000 strips × source_len) and
+    // grow the in-memory output to gigabytes, aborting with OOM (~4.9 GB
+    // from a 293 KB input in the reported PoC).
+    #[test]
+    fn clone_image_data_rejects_strip_byte_count_amplification() {
+        // 100-byte source; 10 strips claiming 200 bytes each → sum 2000 > 100.
+        let mut asset_reader = Cursor::new(vec![0u8; 100]);
+
+        let n = 10;
+        let byte_counts: Vec<u32> = vec![200u32; n];
+        let offsets: Vec<u32> = vec![0u32; n];
+
+        let mut ifd: BTreeMap<u16, IfdClonedEntry> = BTreeMap::new();
+        ifd.insert(
+            STRIPBYTECOUNTS,
+            u32_strip_entry(STRIPBYTECOUNTS, &byte_counts),
+        );
+        ifd.insert(STRIPOFFSETS, u32_strip_entry(STRIPOFFSETS, &offsets));
+
+        let writer = Cursor::new(Vec::<u8>::new());
+        let mut cloner = TiffCloner::new(Endianness::Little, false, writer).unwrap();
+        let result = cloner.clone_image_data(&mut ifd, &mut asset_reader);
+
+        assert!(
+            matches!(&result, Err(Error::InvalidAsset(msg)) if msg.contains("exceed source length")),
+            "expected InvalidAsset for over-cap strip byte counts, got {result:?}",
+        );
+    }
+
+    // Regression: same amplification pattern in the tile branch of
+    // `clone_image_data`. `sum(tile_byte_counts) > source_len` must be
+    // rejected before any copy is performed.
+    #[test]
+    fn clone_image_data_rejects_tile_byte_count_amplification() {
+        let mut asset_reader = Cursor::new(vec![0u8; 100]);
+
+        let n = 8;
+        let byte_counts: Vec<u32> = vec![u32::MAX / n as u32; n]; // huge sum
+        let offsets: Vec<u32> = vec![0u32; n];
+
+        let mut ifd: BTreeMap<u16, IfdClonedEntry> = BTreeMap::new();
+        ifd.insert(
+            TILEBYTECOUNTS,
+            u32_strip_entry(TILEBYTECOUNTS, &byte_counts),
+        );
+        ifd.insert(TILEOFFSETS, u32_strip_entry(TILEOFFSETS, &offsets));
+
+        let writer = Cursor::new(Vec::<u8>::new());
+        let mut cloner = TiffCloner::new(Endianness::Little, false, writer).unwrap();
+        let result = cloner.clone_image_data(&mut ifd, &mut asset_reader);
+
+        assert!(
+            matches!(&result, Err(Error::InvalidAsset(msg)) if msg.contains("exceed source length")),
+            "expected InvalidAsset for over-cap tile byte counts, got {result:?}",
+        );
+    }
+
+    // Happy path: strip byte counts that legitimately sum to <= source_len
+    // must still copy successfully. Guards against a future refactor that
+    // makes the cap too strict.
+    #[test]
+    fn clone_image_data_accepts_valid_strip_byte_counts() {
+        let mut asset_reader = Cursor::new(vec![0xaau8; 100]);
+
+        // 5 strips × 10 bytes = 50 bytes, well within 100.
+        let byte_counts: Vec<u32> = vec![10u32; 5];
+        let offsets: Vec<u32> = vec![0u32; 5];
+
+        let mut ifd: BTreeMap<u16, IfdClonedEntry> = BTreeMap::new();
+        ifd.insert(
+            STRIPBYTECOUNTS,
+            u32_strip_entry(STRIPBYTECOUNTS, &byte_counts),
+        );
+        ifd.insert(STRIPOFFSETS, u32_strip_entry(STRIPOFFSETS, &offsets));
+
+        let writer = Cursor::new(Vec::<u8>::new());
+        let mut cloner = TiffCloner::new(Endianness::Little, false, writer).unwrap();
+        cloner
+            .clone_image_data(&mut ifd, &mut asset_reader)
+            .expect("valid strip byte counts should copy successfully");
+    }
+
+    // Unit test for the shared cap helper used by the strip, tile, and BigTable
+    // copy loops. Covers the running-total accounting, the exceed-source-length
+    // rejection (with the per-kind label), and the checked_add overflow guard.
+    #[test]
+    fn accumulate_copy_len_caps_and_labels() {
+        // Accumulates within the cap.
+        let mut copied = 0u64;
+        accumulate_copy_len(&mut copied, 40, 100, "strip").expect("within cap");
+        accumulate_copy_len(&mut copied, 60, 100, "strip").expect("exactly at cap");
+        assert_eq!(copied, 100);
+
+        // One more byte exceeds the source length and is rejected with the label.
+        let err = accumulate_copy_len(&mut copied, 1, 100, "tile").unwrap_err();
+        assert!(
+            matches!(&err, Error::InvalidAsset(msg)
+                if msg.contains("tile") && msg.contains("exceed source length")),
+            "got {err:?}",
+        );
+
+        // A count that overflows the u64 running total is rejected too.
+        let mut copied = u64::MAX;
+        let err = accumulate_copy_len(&mut copied, 1, u64::MAX, "BigTable").unwrap_err();
+        assert!(
+            matches!(&err, Error::InvalidAsset(msg)
+                if msg.contains("BigTable") && msg.contains("overflow")),
+            "got {err:?}",
+        );
     }
 
     /*  disable until I find smaller DNG

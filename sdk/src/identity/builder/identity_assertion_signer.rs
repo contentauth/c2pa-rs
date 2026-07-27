@@ -13,11 +13,11 @@
 
 use std::sync::RwLock;
 
+use c2pa_raw_crypto::{RawSigner, SigningAlg};
+
 use crate::{
-    crypto::raw_signature::{RawSigner, SigningAlg},
-    dynamic_assertion::DynamicAssertion,
-    identity::builder::IdentityAssertionBuilder,
-    Result, Signer,
+    crypto::cose::cose_reserve_size, dynamic_assertion::DynamicAssertion,
+    identity::builder::IdentityAssertionBuilder, Result, Signer,
 };
 
 /// An `IdentityAssertionSigner` extends the [`Signer`] interface to add zero or
@@ -27,15 +27,18 @@ use crate::{
 /// [`Manifest`]: crate::Manifest
 pub struct IdentityAssertionSigner {
     signer: Box<dyn RawSigner + Send + Sync>,
+    cert_chain: Vec<Vec<u8>>,
     identity_assertions: RwLock<Vec<IdentityAssertionBuilder>>,
 }
 
 impl IdentityAssertionSigner {
     /// Create an `IdentityAssertionSigner` wrapping the provided [`RawSigner`]
-    /// instance.
-    pub fn new(signer: Box<dyn RawSigner + Send + Sync>) -> Self {
+    /// instance and its signing certificate chain (each certificate in DER
+    /// form, end-entity first).
+    pub fn new(signer: Box<dyn RawSigner + Send + Sync>, cert_chain: Vec<Vec<u8>>) -> Self {
         Self {
             signer,
+            cert_chain,
             identity_assertions: RwLock::new(vec![]),
         }
     }
@@ -44,8 +47,10 @@ impl IdentityAssertionSigner {
     /// using test credentials for a particular algorithm.
     #[cfg(test)]
     pub(crate) fn from_test_credentials(alg: SigningAlg) -> Self {
+        use c2pa_raw_crypto::signer_from_private_key;
+
         use crate::{
-            crypto::raw_signature::signer_from_cert_chain_and_private_key,
+            crypto::cert_chain_pem_to_der,
             identity::tests::fixtures::cert_chain_and_private_key_for_alg,
         };
 
@@ -53,8 +58,8 @@ impl IdentityAssertionSigner {
 
         #[allow(clippy::unwrap_used)]
         Self {
-            signer: signer_from_cert_chain_and_private_key(&cert_chain, &private_key, alg, None)
-                .unwrap(),
+            signer: signer_from_private_key(&private_key, alg).unwrap(),
+            cert_chain: cert_chain_pem_to_der(&cert_chain).unwrap(),
             identity_assertions: RwLock::new(vec![]),
         }
     }
@@ -86,39 +91,16 @@ impl Signer for IdentityAssertionSigner {
     }
 
     fn certs(&self) -> Result<Vec<Vec<u8>>> {
-        self.signer.cert_chain().map_err(|e| e.into())
+        Ok(self.cert_chain.clone())
     }
 
     fn reserve_size(&self) -> usize {
-        self.signer.reserve_size()
-    }
-
-    fn ocsp_val(&self) -> Option<Vec<u8>> {
-        self.signer.ocsp_response()
-    }
-
-    fn time_authority_url(&self) -> Option<String> {
-        self.signer.time_stamp_service_url()
-    }
-
-    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
-        self.signer.time_stamp_request_headers()
-    }
-
-    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
-        self.signer
-            .time_stamp_request_body(message)
-            .map_err(|e| e.into())
-    }
-
-    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
-        self.signer
-            .send_time_stamp_request(message)
-            .map(|r| r.map_err(|e| e.into()))
-    }
-
-    fn raw_signer(&self) -> Option<Box<&dyn RawSigner>> {
-        Some(Box::new(&*self.signer))
+        cose_reserve_size(
+            self.signer.max_signature_size(),
+            &self.cert_chain,
+            false,
+            None,
+        )
     }
 
     fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {

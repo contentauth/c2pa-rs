@@ -767,43 +767,64 @@ impl Action {
         Ok(self)
     }
 
-    /// Extracts ingredient IDs from the action
-    /// There are many deprecated ways to specify ingredient IDs
-    /// priority: parameters.ingredientIds, parameters.org.cai.ingredientIds, parameters.instanceId, instanceId.
-    /// This is used to map actions to their associated ingredients.
-    /// We don't want any of these fields in the final CBOR, so we remove them after extracting.
-    pub(crate) fn extract_ingredient_ids(&mut self) -> Option<Vec<String>> {
-        let ingredient_ids = self.remove_parameter(INGREDIENT_IDS);
-        let cai_ingredient_ids = self.remove_parameter("org.cai.ingredientIds");
-        let param_instance_id = self.remove_parameter("instanceId");
-        #[allow(deprecated)]
-        let instance_id = self.instance_id.take();
-        let mut ids: Vec<String> = Vec::new();
-
-        let mut convert_ids = |val: Option<c2pa_cbor::Value>| {
-            if let Some(val) = val {
-                match val {
-                    c2pa_cbor::Value::Array(arr) => {
-                        for v in arr {
-                            if let c2pa_cbor::Value::Text(s) = v {
-                                ids.push(s);
-                            }
-                        }
-                    }
-                    c2pa_cbor::Value::Text(s) => ids.push(s),
-                    _ => {}
-                }
+    /// Reads the ingredient IDs an action references, without mutating the action.
+    ///
+    /// There are many deprecated ways to specify ingredient IDs; this checks every linking
+    /// mechanism in priority order: `parameters.ingredientIds`, `parameters.org.cai.ingredientIds`,
+    /// `parameters.instanceId`, then the deprecated `instanceId` field (only when none of the
+    /// parameters are present). Used to map actions to their associated ingredients.
+    ///
+    /// This is the read-only counterpart of [`Self::extract_ingredient_ids`], which additionally
+    /// removes the parameters it reads. Use this when the action must stay intact (e.g. computing
+    /// which ingredients are referenced during a prune).
+    pub(crate) fn ingredient_ids(&self) -> Vec<String> {
+        let convert = |val: Option<c2pa_cbor::Value>| -> Vec<String> {
+            match val {
+                Some(c2pa_cbor::Value::Array(arr)) => arr
+                    .into_iter()
+                    .filter_map(|v| match v {
+                        c2pa_cbor::Value::Text(s) => Some(s),
+                        _ => None,
+                    })
+                    .collect(),
+                Some(c2pa_cbor::Value::Text(s)) => vec![s],
+                _ => vec![],
             }
         };
 
-        convert_ids(ingredient_ids);
-        convert_ids(cai_ingredient_ids);
-        convert_ids(param_instance_id);
+        let mut ids = Vec::new();
+        ids.extend(convert(self.get_parameter(INGREDIENT_IDS)));
+        ids.extend(convert(self.get_parameter("org.cai.ingredientIds")));
+        ids.extend(convert(self.get_parameter("instanceId")));
+        if ids.is_empty() {
+            #[allow(deprecated)]
+            if let Some(id) = self.instance_id.as_deref() {
+                ids.push(id.to_owned());
+            }
+        }
+        ids
+    }
 
-        if !ids.is_empty() {
-            Some(ids)
+    /// Extracts ingredient IDs from the action, removing the parameters it reads.
+    ///
+    /// Reads the same links as [`Self::ingredient_ids`], then removes the temporary
+    /// `ingredientIds` / `org.cai.ingredientIds` / `instanceId` parameters and the deprecated
+    /// `instanceId` field, because we don't want any of them in the final CBOR.
+    pub(crate) fn extract_ingredient_ids(&mut self) -> Option<Vec<String>> {
+        let ids = self.ingredient_ids();
+
+        self.remove_parameter(INGREDIENT_IDS);
+        self.remove_parameter("org.cai.ingredientIds");
+        self.remove_parameter("instanceId");
+        #[allow(deprecated)]
+        {
+            self.instance_id = None;
+        }
+
+        if ids.is_empty() {
+            None
         } else {
-            instance_id.map(|s| vec![s])
+            Some(ids)
         }
     }
 }

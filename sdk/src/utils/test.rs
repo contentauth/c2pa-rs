@@ -33,13 +33,13 @@ use crate::{
     asset_io::CAIReadWrite,
     claim::Claim,
     context::Context,
-    crypto::{cose::CertificateTrustPolicy, raw_signature::SigningAlg},
+    crypto::cose::CertificateTrustPolicy,
     hash_utils::Hasher,
     jumbf_io::get_assetio_handler,
     resource_store::UriOrResource,
     store::Store,
     utils::{io_utils::tempdirectory, mime::extension_to_mime},
-    AsyncSigner, ClaimGeneratorInfo, Result,
+    AsyncSigner, ClaimGeneratorInfo, Result, SigningAlg,
 };
 
 pub const TEST_SMALL_JPEG: &str = "earth_apollo17.jpg";

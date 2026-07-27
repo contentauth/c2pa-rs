@@ -8,6 +8,12 @@
 # release-candidate (`*-rc*`) branch -- this includes backport PRs and the
 # release-plz release PR. For a PR against `main`, add the "check-release" label
 # to run this suite on demand.
+#
+# On top of that scope, the suite only runs for trusted PRs (those whose branch
+# lives in this repository, plus fork PRs a maintainer has labeled `safe to
+# test`/`check-release`); see tier-1a.yml for why trust keys off the PR's head
+# repository rather than `author_association`. Both conditions are combined once
+# in the `authorize` job below into a single `run-suite` decision.
 
 name: Tier 1B
 
@@ -31,10 +37,22 @@ on:
       - '*-rc*'
 
 jobs:
+  authorize:
+    name: Authorize CI run
+    runs-on: ubuntu-latest
+    outputs:
+      run-suite: ${{ steps.decide.outputs.run-suite }}
+    steps:
+      - name: Determine whether to run the Tier 1B suite
+        id: decide
+        run: |
+          echo "run-suite=${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository || contains(github.event.pull_request.labels.*.name, 'safe to test') || contains(github.event.pull_request.labels.*.name, 'check-release')) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event.pull_request.base.ref == 'stable' || startsWith(github.event.pull_request.base.ref, 'v0.') || contains(github.event.pull_request.base.ref, '-rc') || contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')) }}" >> "$GITHUB_OUTPUT"
+
   get-features:
     name: Get features
+    needs: authorize
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event.pull_request.base.ref == 'stable' || startsWith(github.event.pull_request.base.ref, 'v0.') || contains(github.event.pull_request.base.ref, '-rc') || contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    if: needs.authorize.outputs.run-suite == 'true'
     outputs:
       rust-native-features: ${{ steps.get-features.outputs.rust-native-features }}
       openssl-features: ${{ steps.get-features.outputs.openssl-features }}
@@ -59,8 +77,8 @@ jobs:
 
   tests-openssl:
     name: Unit tests (with OpenSSL installed)
-    needs: get-features
-    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event.pull_request.base.ref == 'stable' || startsWith(github.event.pull_request.base.ref, 'v0.') || contains(github.event.pull_request.base.ref, '-rc') || contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    needs: [authorize, get-features]
+    if: needs.authorize.outputs.run-suite == 'true'
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -90,8 +108,8 @@ jobs:
 
   tests-rust-native-crypto:
     name: Unit tests (with Rust native crypto installed)
-    needs: get-features
-    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event.pull_request.base.ref == 'stable' || startsWith(github.event.pull_request.base.ref, 'v0.') || contains(github.event.pull_request.base.ref, '-rc') || contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    needs: [authorize, get-features]
+    if: needs.authorize.outputs.run-suite == 'true'
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -121,8 +139,8 @@ jobs:
 
   tests-cross:
     name: Unit tests
-    needs: get-features
-    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event.pull_request.base.ref == 'stable' || startsWith(github.event.pull_request.base.ref, 'v0.') || contains(github.event.pull_request.base.ref, '-rc') || contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    needs: [authorize, get-features]
+    if: needs.authorize.outputs.run-suite == 'true'
     runs-on: ubuntu-latest
 
     strategy:
@@ -158,8 +176,8 @@ jobs:
 
   test-direct-minimal-versions:
     name: Unit tests with minimum versions of direct dependencies
-    needs: get-features
-    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event.pull_request.base.ref == 'stable' || startsWith(github.event.pull_request.base.ref, 'v0.') || contains(github.event.pull_request.base.ref, '-rc') || contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    needs: [authorize, get-features]
+    if: needs.authorize.outputs.run-suite == 'true'
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -187,8 +205,8 @@ jobs:
 
   unused_deps:
     name: Check for unused dependencies
-    needs: get-features
-    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event.pull_request.base.ref == 'stable' || startsWith(github.event.pull_request.base.ref, 'v0.') || contains(github.event.pull_request.base.ref, '-rc') || contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    needs: [authorize, get-features]
+    if: needs.authorize.outputs.run-suite == 'true'
     runs-on: ubuntu-latest
 
     permissions:

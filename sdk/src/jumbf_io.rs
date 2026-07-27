@@ -488,8 +488,8 @@ pub mod tests {
     use super::*;
     use crate::{
         asset_io::RemoteRefEmbedType,
-        crypto::raw_signature::SigningAlg,
         utils::{test::create_test_store, test_signer::test_signer},
+        SigningAlg,
     };
 
     #[test]

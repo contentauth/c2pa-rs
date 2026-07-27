@@ -609,9 +609,7 @@ mod tests {
     use std::io::Cursor;
 
     use super::*;
-    use crate::{
-        crypto::raw_signature::SigningAlg, utils::test_signer::test_signer, Builder, Reader,
-    };
+    use crate::{utils::test_signer::test_signer, Builder, Reader, SigningAlg};
 
     #[test]
     fn resource_store() {
