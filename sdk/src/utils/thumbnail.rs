@@ -461,6 +461,35 @@ pub mod tests {
             .unwrap();
     }
 
+    /// The lowercase counterpart of
+    /// [test_make_thumbnail_bytes_from_stream_uppercase_mime]. Pins the
+    /// ordinary lowercase spelling so a case-normalizing fix cannot regress it
+    /// (e.g. by normalizing to uppercase, or handling only "IMAGE/JPEG").
+    #[test]
+    fn test_make_thumbnail_bytes_from_stream_lowercase_mime() {
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [builder.thumbnail]
+                    prefer_smallest_format = false
+                    ignore_errors = false
+                }
+                .to_string(),
+            )
+            .unwrap();
+
+        let (format, bytes) =
+            make_thumbnail_bytes_from_stream("image/jpeg", Cursor::new(TEST_JPEG), &settings)
+                .unwrap()
+                .unwrap();
+
+        assert!(matches!(format, ThumbnailFormat::Jpeg));
+
+        ImageReader::with_format(Cursor::new(bytes), format.into())
+            .decode()
+            .unwrap();
+    }
+
     #[test]
     fn test_make_thumbnail_with_prefer_smallest_format() {
         let settings = Settings::new()
