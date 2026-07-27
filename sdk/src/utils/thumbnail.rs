@@ -434,6 +434,33 @@ pub mod tests {
             .unwrap();
     }
 
+    /// An uppercase MIME format (e.g. "IMAGE/JPEG") yields no thumbnail.
+    /// (Because checks are case-sensitive and not normalized).
+    #[test]
+    fn test_make_thumbnail_bytes_from_stream_uppercase_mime() {
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [builder.thumbnail]
+                    prefer_smallest_format = false
+                    ignore_errors = false
+                }
+                .to_string(),
+            )
+            .unwrap();
+
+        let (format, bytes) =
+            make_thumbnail_bytes_from_stream("IMAGE/JPEG", Cursor::new(TEST_JPEG), &settings)
+                .unwrap()
+                .unwrap();
+
+        assert!(matches!(format, ThumbnailFormat::Jpeg));
+
+        ImageReader::with_format(Cursor::new(bytes), format.into())
+            .decode()
+            .unwrap();
+    }
+
     #[test]
     fn test_make_thumbnail_with_prefer_smallest_format() {
         let settings = Settings::new()

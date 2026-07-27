@@ -407,6 +407,23 @@ pub fn add_thumbnail_format(label: &str, format: &str) -> String {
 mod tests {
     use super::*;
 
+    /// Repro: `add_thumbnail_format` matches the format string case-sensitively,
+    /// An uppercase mimetype falls through, producing a label
+    /// ("c2pa.thumbnail.claim/IMAGE/JPEG") instead of "c2pa.thumbnail.claim.jpeg".
+    /// Downstream label lookups then fail to find the thumbnail.
+    #[test]
+    fn test_add_thumbnail_format_uppercase_mime() {
+        assert_eq!(
+            add_thumbnail_format(CLAIM_THUMBNAIL, "IMAGE/JPEG"),
+            JPEG_CLAIM_THUMBNAIL
+        );
+
+        assert_eq!(
+            add_thumbnail_format(INGREDIENT_THUMBNAIL, "IMAGE/PNG"),
+            PNG_INGREDIENT_THUMBNAIL
+        );
+    }
+
     /// Regression tests for usize underflow in `parse_label` when the input
     /// is a bare version token with no base label (e.g. "v1").
     ///
