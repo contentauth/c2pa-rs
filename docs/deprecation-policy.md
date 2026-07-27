@@ -4,7 +4,7 @@ The Content Authenticity Initiative SDK is an evolving project. Prior to our 1.0
 
 This policy applies to the Rust library and all language bindings (JavaScript, Node.js, C, C++, Swift, Kotlin, and Python).
 
-The **removal schedule** differs by project. The Rust SDK (`c2pa-rs`) runs on a formal [release-train](release-process.md) cadence, so its deprecation and removal timeline is expressed in terms of release trains rather than calendar days (see below). The language bindings do not (yet) run on a release-train cadence, so they continue to follow a calendar-based grace period (nominally 60 days pre-1.0), anchored to the Rust SDK's train so a binding can serve that notice on top of the native library (see [Stage 2](#stage-2-grace-period)). Everything else in this policy – the requirement that a replacement exist first, the content of the notice, the migration guide, and the communication channels – applies uniformly to every project.
+The **removal schedule** differs by project. The Rust SDK (`c2pa-rs`) runs on a formal [release-process](release-process.md) cadence, so its deprecation and removal timeline is expressed in terms of release trains rather than calendar days (see below). The language bindings do not (yet) run on a release-train cadence, so they continue to follow a calendar-based grace period (nominally 60 days pre-1.0), anchored to the Rust SDK's train so a binding can serve that notice on top of the native library (see [Stage 2](#stage-2-grace-period)). Everything else in this policy – the requirement that a replacement exist first, the content of the notice, the migration guide, and the communication channels – applies uniformly to every project.
 
 ## Versioning and stability guarantees
 
