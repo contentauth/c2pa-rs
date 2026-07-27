@@ -120,7 +120,7 @@ pub struct SoftBindingTimespan {
 // A parsed C2PA soft binding algorithm registry.
 // Use this to parse a list of soft binding algorithms from a JSON string and
 // to build a list of soft binding algorithms.  Use this function to parse the official C2PA
-//soft binding algorithm registry from the JSON file at <https://github.com/c2pa-org/softbinding-algorithm-list/blob/main/softbinding-algorithm-list.json>
+// soft binding algorithm registry from the JSON file at <https://github.com/c2pa-org/softbinding-algorithm-list/blob/main/softbinding-algorithm-list.json>
 // to build a list of soft binding algorithms.  The list can be used to validate soft binding algorithms in C2PA assertions.
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 #[serde(transparent)]
