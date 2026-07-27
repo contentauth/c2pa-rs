@@ -409,10 +409,8 @@ pub fn add_thumbnail_format(label: &str, format: &str) -> String {
 mod tests {
     use super::*;
 
-    /// MIME types are case-insensitive (RFC 2045 section 5.1), so every
-    /// spelling produces the same label. Before this was handled, an uppercase
-    /// type missed every match arm and fell through to the '/'-joined fallback,
-    /// yielding "c2pa.thumbnail.claim/IMAGE/JPEG".
+    /// MIME types are case-insensitive (RFC 2045 section 5.1),
+    /// every spelling should produces the same label.
     #[test]
     fn test_add_thumbnail_format_case_insensitive() {
         // (label prefix, format, expected label)
