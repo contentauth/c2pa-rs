@@ -13,9 +13,10 @@
 # contact; a feature that stays broken is removed from the build per the
 # "Build and CI expectations" policy.
 #
-# The required tier suites (1A/1B/2) already exclude `unstable_` features; once
-# #2362 does the same for the remaining `--all-features` jobs (beta-preflight,
-# canary, docs.rs), this workflow becomes the only place they are exercised.
+# The required tier suites (1A/1B/2), the beta preflight, and the cross-repo
+# canary all exclude `unstable_` features, so this workflow is the only place
+# they are built and tested. (docs.rs still documents them by choice; see
+# docs/experimental-features.md.)
 
 name: Experimental features (non-blocking)
 
