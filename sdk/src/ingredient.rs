@@ -1485,7 +1485,12 @@ impl Ingredient {
             };
 
         // set validation status from result and log
-        ingredient.update_validation_status(result, Some(manifest_bytes), &validation_log, &context)?;
+        ingredient.update_validation_status(
+            result,
+            Some(manifest_bytes),
+            &validation_log,
+            &context,
+        )?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
