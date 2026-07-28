@@ -67,7 +67,9 @@ The closure must be `Send + Sync` on non-WASM targets. On WASM (single-threaded)
 
 ## Rust API
 
-### Setting a callback with the builder pattern
+### Setting a callback
+
+Example of setting a callback with the builder pattern:
 
 ```rust
 use c2pa::{Context, ProgressPhase};
@@ -90,7 +92,7 @@ let ctx = Context::new()
     });
 ```
 
-### Setting a callback with a mutable setter for FFI adapters
+Example of setting a callback with a mutable setter for FFI adapters:
 
 ```rust
 use c2pa::{Context, ProgressPhase};
@@ -102,7 +104,7 @@ ctx.set_progress_callback(|phase, step, total| {
 });
 ```
 
-### Out-of-band cancellation from another thread
+Example of out-of-band cancellation from another thread:
 
 ```rust
 use c2pa::Context;
@@ -115,10 +117,9 @@ let ctx_bg = ctx.clone();
 std::thread::spawn(move || {
     ctx_bg.cancel();
 });
-
-// The signing or reading operation using `ctx` will return
-// Err(Error::OperationCancelled) at the next safe checkpoint.
 ```
+
+The signing or reading operation using `ctx` will return `Err(Error::OperationCancelled)` at the next safe checkpoint.
 
 Both mechanisms can be combined: the callback can cancel based on phase or elapsed time, while the flag lets any thread cancel at any point.
 
