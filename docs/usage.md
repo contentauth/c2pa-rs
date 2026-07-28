@@ -95,11 +95,7 @@ URI schemes in a resource reference can have the following forms:
 - `http://` - Remote URI
 - `https://` - Remote secure URI
 
-Note that the `file:` and `app:` schemes are only used in the context of `ManifestStoreBuilder` and will never be in JUMBF data. This is a proposal; currently there is no implementation for file or app schemes, and we do not yet handle HTTP/HTTPS schemes this way.
-
-<!-- Is the above still true? "This is proposal, currently there is no implementation" -->
-
-When `file_io` is enabled, the library interprets the lack of a scheme as a `file:///` reference, otherwise as an `app:` reference.
+When `file_io` is enabled, and a URI is not a JUMBF reference nor a resource loaded from memory, then the library interprets the URI as a `file:///` reference.
 
 ## Source asset versus parent asset
 
