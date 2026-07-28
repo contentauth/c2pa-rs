@@ -31,7 +31,7 @@ use zip::ZipArchive;
 #[allow(deprecated)]
 use crate::assertions::{CreativeWork, Exif};
 use crate::{
-    assertion::{AssertionBase, AssertionDecodeError},
+    assertion::{Assertion, AssertionBase, AssertionDecodeError},
     assertions::{
         c2pa_action,
         labels::{self, parse_label},
@@ -844,11 +844,9 @@ impl Builder {
         if self.claim_version() >= 2 {
             let mut data = Vec::new();
             stream.read_to_end(&mut data)?;
-            let hu = self.add_assertion_with_ref(&EmbeddedData::new(
-                labels::CLAIM_THUMBNAIL,
-                format_to_mime(&format),
-                data,
-            ))?;
+            let embedded_data =
+                EmbeddedData::new(labels::CLAIM_THUMBNAIL, format_to_mime(&format), data);
+            let hu = self.ensure_pre_claim()?.add_assertion(&embedded_data)?;
             let alg = self.pre_claim.as_ref().map(|p| p.alg().to_string());
             self.resource_map.insert(
                 instance_id.clone(),
@@ -1308,21 +1306,99 @@ impl Builder {
             .ok_or_else(|| Error::BadParam("pre_claim".into()))
     }
 
-    /// Adds any assertion directly to the pre-claim and returns its [`HashedUri`].
+    /// Adds an assertion directly to the pre-claim from a label and any serializable data,
+    /// and returns its [`HashedUri`].
     ///
-    /// The returned URI and hash are stable — they will remain valid in the final signed
-    /// manifest. The caller may store the [`HashedUri`] and reference it from other
-    /// assertions before signing.
-    pub fn add_assertion_with_ref<A>(&mut self, assertion: &A) -> Result<HashedUri>
+    /// Mirrors [`Builder::add_assertion`] (same `label`/`data` shape), but writes directly to
+    /// the pre-claim instead of deferring to `to_claim()`, so the returned [`HashedUri`] is
+    /// stable and can be referenced from other assertions before signing.
+    ///
+    /// If `label` matches a known assertion type (e.g. [`labels::ACTIONS`],
+    /// [`labels::INGREDIENT`], [`BoxHash::LABEL`],
+    /// [`DataHash::LABEL`], [`BmffHash::LABEL`], `Metadata::LABEL`), `data` is decoded into
+    /// that concrete type so it's stored with its native schema. Otherwise `data` is wrapped
+    /// generically in a `UserCbor` assertion under `label`.
+    ///
+    /// Adds the assertion as *gathered* for Claims v2+ (mirroring `Claim::add_assertion`'s
+    /// default), except for hash assertions ([`BoxHash`], [`DataHash`], [`BmffHash`]), which
+    /// `Claim` always adds as *created* regardless of which method is called. Use
+    /// [`Builder::add_created_assertion_with_ref`] to add any other assertion as *created*
+    /// instead. Has no effect on Claims v1, which don't distinguish created from gathered.
+    pub fn add_assertion_with_ref<S, T>(&mut self, label: S, data: &T) -> Result<HashedUri>
     where
-        A: AssertionBase,
+        S: Into<String>,
+        T: Serialize,
     {
-        self.ensure_pre_claim()?.add_assertion(assertion)
+        self.add_assertion_with_ref_impl(label.into(), data, false)
+    }
+
+    /// Same as [`Builder::add_assertion_with_ref`], but adds the assertion as *created* rather
+    /// than *gathered* for Claims v2+ (mirroring `Claim::add_created_assertion`). Has no
+    /// effect on Claims v1, or on hash assertions ([`BoxHash`], [`DataHash`], [`BmffHash`]),
+    /// which are always created regardless — see [`Builder::add_assertion_with_ref`].
+    pub fn add_created_assertion_with_ref<S, T>(&mut self, label: S, data: &T) -> Result<HashedUri>
+    where
+        S: Into<String>,
+        T: Serialize,
+    {
+        self.add_assertion_with_ref_impl(label.into(), data, true)
+    }
+
+    /// Shared implementation for [`Builder::add_assertion_with_ref`] and
+    /// [`Builder::add_created_assertion_with_ref`].
+    fn add_assertion_with_ref_impl<T>(
+        &mut self,
+        label: String,
+        data: &T,
+        created: bool,
+    ) -> Result<HashedUri>
+    where
+        T: Serialize,
+    {
+        let (match_label, version, _instance) = parse_label(&label);
+        let definition = AssertionDefinition {
+            label: label.clone(),
+            data: AssertionData::Cbor(c2pa_cbor::value::to_value(data)?),
+            kind: None,
+            created,
+        };
+
+        let assertion: Assertion = match match_label {
+            Actions::LABEL => definition.to_assertion::<Actions>()?.to_assertion()?,
+            IngredientAssertion::LABEL => definition
+                .to_assertion::<IngredientAssertion>()?
+                .to_assertion()?,
+            BoxHash::LABEL => definition.to_assertion::<BoxHash>()?.to_assertion()?,
+            DataHash::LABEL => definition.to_assertion::<DataHash>()?.to_assertion()?,
+            BmffHash::LABEL => {
+                let mut bmff_hash: BmffHash = definition.to_assertion()?;
+                bmff_hash.set_bmff_version(version);
+                bmff_hash.to_assertion()?
+            }
+            Metadata::LABEL => {
+                // Metadata::to_assertion() always writes JSON (CBOR is only accepted when
+                // reading older files, for backward compatibility) — decode as JSON here too,
+                // rather than through the shared CBOR `definition` above.
+                let metadata: Metadata = serde_json::from_value(serde_json::to_value(data)?)?;
+                metadata.to_assertion()?
+            }
+            _ => {
+                let cbor_bytes = c2pa_cbor::to_vec(data)?;
+                UserCbor::new(&label, cbor_bytes).to_assertion()?
+            }
+        };
+
+        let claim = self.ensure_pre_claim()?;
+        if created {
+            claim.add_created_assertion(&assertion)
+        } else {
+            claim.add_assertion(&assertion)
+        }
     }
 
     /// Adds an [`EmbeddedData`] assertion from a stream and returns its [`HashedUri`].
     ///
-    /// Convenience wrapper over `add_assertion_with_ref` for binary resources.
+    /// Convenience wrapper for binary resources, writing directly to the pre-claim.
     /// `label` determines the assertion type (e.g. [`labels::EMBEDDED_DATA`] or
     /// [`labels::CLAIM_THUMBNAIL`]).
     ///
@@ -1336,7 +1412,8 @@ impl Builder {
     ) -> Result<HashedUri> {
         let mut data = Vec::new();
         stream.read_to_end(&mut data)?;
-        self.add_assertion_with_ref(&EmbeddedData::new(label, format_to_mime(format), data))
+        let embedded_data = EmbeddedData::new(label, format_to_mime(format), data);
+        self.ensure_pre_claim()?.add_assertion(&embedded_data)
     }
 
     /// Adds an ingredient assertion to the manifest from an [`IngredientAssertion`] and an
@@ -1402,7 +1479,7 @@ impl Builder {
         ));
         ing_assertion.validation_results = Some(validation_results);
 
-        self.add_assertion_with_ref(&ing_assertion)
+        self.ensure_pre_claim()?.add_assertion(&ing_assertion)
     }
 
     /// Adds a resource to the manifest.
@@ -10338,7 +10415,7 @@ mod tests {
             .set_thumbnail(Some(&ing_thumb_uri));
 
         let ing_uri = builder
-            .add_assertion_with_ref(&ing_assertion)
+            .add_assertion_with_ref(IngredientAssertion::LABEL, &ing_assertion)
             .expect("ingredient assertion");
 
         // Build Actions: software agent carries the icon; opened action references the ingredient.
@@ -10355,7 +10432,7 @@ mod tests {
         let actions = actions.add_action(action);
 
         builder
-            .add_assertion_with_ref(&actions)
+            .add_assertion_with_ref(Actions::LABEL, &actions)
             .expect("actions assertion");
 
         // Sign the asset.
@@ -10411,6 +10488,69 @@ mod tests {
             .first()
             .expect("software agent");
         assert_eq!(agent.icon(), Some(&UriOrResource::HashedUri(icon_uri)));
+    }
+
+    /// `add_assertion_with_ref()` should add a *gathered* assertion, and
+    /// `add_created_assertion_with_ref()` a *created* one — for Claims v2+.
+    #[test]
+    fn test_add_created_assertion_with_ref() {
+        use crate::assertions::{c2pa_action, Action, DigitalSourceType};
+
+        let format = "image/jpeg";
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+        let signer = test_signer(SigningAlg::Ps256);
+
+        let mut builder = Builder::default();
+        builder.definition.format = format.to_string();
+        builder.definition.title = Some("Test add_created_assertion_with_ref".to_string());
+
+        builder
+            .add_assertion_with_ref("org.test.gathered", &json!({"value": 1}))
+            .expect("gathered assertion");
+        builder
+            .add_created_assertion_with_ref("org.test.created", &json!({"value": 2}))
+            .expect("created assertion");
+        builder
+            .add_action(Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty))
+            .expect("add created action");
+
+        builder
+            .sign(signer.as_ref(), format, &mut source, &mut dest)
+            .expect("sign");
+
+        dest.rewind().unwrap();
+        let reader = Reader::default()
+            .with_stream(format, &mut dest)
+            .expect("read signed asset");
+
+        assert_ne!(
+            reader.validation_state(),
+            ValidationState::Invalid,
+            "manifest should be valid"
+        );
+
+        let manifest = reader.active_manifest().expect("active manifest");
+
+        let gathered = manifest
+            .assertions()
+            .iter()
+            .find(|a| a.label() == "org.test.gathered")
+            .expect("gathered assertion in manifest");
+        assert!(
+            !gathered.created(),
+            "add_assertion_with_ref should add a gathered assertion"
+        );
+
+        let created = manifest
+            .assertions()
+            .iter()
+            .find(|a| a.label() == "org.test.created")
+            .expect("created assertion in manifest");
+        assert!(
+            created.created(),
+            "add_created_assertion_with_ref should add a created assertion"
+        );
     }
 
     /// Tests `add_ingredient_with_reader()`: JSON text, a `serde_json::Value`, and a
@@ -10475,7 +10615,7 @@ mod tests {
             .add_ingredient_ref(ing_uri_from_owned_struct);
         let actions = Actions::new().add_action(action);
         builder
-            .add_assertion_with_ref(&actions)
+            .add_assertion_with_ref(Actions::LABEL, &actions)
             .expect("add actions assertion");
 
         let mut source = Cursor::new(TEST_IMAGE);
@@ -10550,7 +10690,7 @@ mod tests {
         let action = Action::new(c2pa_action::OPENED).add_ingredient_ref(ing_uri);
         let actions = Actions::new().add_action(action);
         builder
-            .add_assertion_with_ref(&actions)
+            .add_assertion_with_ref(Actions::LABEL, &actions)
             .expect("add actions assertion");
 
         let mut source = Cursor::new(TEST_IMAGE);
@@ -10616,7 +10756,7 @@ mod tests {
             Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty),
         );
         builder
-            .add_assertion_with_ref(&actions)
+            .add_assertion_with_ref(Actions::LABEL, &actions)
             .expect("actions assertion");
 
         let mut output = Cursor::new(Vec::new());
@@ -10662,7 +10802,7 @@ mod tests {
             Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty),
         );
         builder
-            .add_assertion_with_ref(&actions)
+            .add_assertion_with_ref(Actions::LABEL, &actions)
             .expect("actions assertion");
 
         builder
@@ -10726,7 +10866,7 @@ mod tests {
 
         let actions = Actions::new().add_action(Action::new(c2pa_action::OPENED));
         builder
-            .add_assertion_with_ref(&actions)
+            .add_assertion_with_ref(Actions::LABEL, &actions)
             .expect("actions assertion");
 
         let mut source = Cursor::new(TEST_IMAGE);

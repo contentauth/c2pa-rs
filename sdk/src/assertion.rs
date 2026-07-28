@@ -500,6 +500,20 @@ impl Assertion {
     }
 }
 
+/// A trivial passthrough, so an already-built [`Assertion`] can be handed anywhere an
+/// `impl AssertionBase` is expected (e.g. [`crate::claim::Claim::add_assertion`]/
+/// `add_created_assertion`), for callers that dispatch the concrete assertion type at runtime
+/// (by label) rather than at compile time.
+impl AssertionBase for Assertion {
+    fn to_assertion(&self) -> Result<Assertion> {
+        Ok(self.clone())
+    }
+
+    fn from_assertion(assertion: &Assertion) -> Result<Self> {
+        Ok(assertion.clone())
+    }
+}
+
 /// This error type is returned when an assertion can not be decoded.
 #[non_exhaustive]
 pub struct AssertionDecodeError {

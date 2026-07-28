@@ -106,7 +106,7 @@ impl Serialize for Ingredient {
     }
 }
 
-/// Deserializes the v3 ingredient assertion JSON schema (the shape produced by
+/// Deserializes the v3 ingredient assertion schema (the shape produced by
 /// `Ingredient::serialize_v3`) by re-encoding the input as CBOR and delegating to
 /// `Ingredient::from_assertion`.
 impl<'de> Deserialize<'de> for Ingredient {
@@ -114,7 +114,7 @@ impl<'de> Deserialize<'de> for Ingredient {
     where
         D: Deserializer<'de>,
     {
-        let value = serde_json::Value::deserialize(deserializer)?;
+        let value = c2pa_cbor::Value::deserialize(deserializer)?;
         let cbor_data = c2pa_cbor::to_vec(&value).map_err(serde::de::Error::custom)?;
         let assertion = Assertion::new(Self::LABEL, Some(3), AssertionData::Cbor(cbor_data));
         Ingredient::from_assertion(&assertion).map_err(serde::de::Error::custom)

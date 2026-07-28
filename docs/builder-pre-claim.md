@@ -14,9 +14,13 @@ Building the claim eagerly means each of these calls can return a real `HashedUr
 
 ## New API
 
-### `Builder::add_assertion_with_ref<A: AssertionBase>(&mut self, assertion: &A) -> Result<HashedUri>`
+### `Builder::add_assertion_with_ref<S: Into<String>, T: Serialize>(&mut self, label: S, data: &T) -> Result<HashedUri>`
 
-The core primitive. Adds any assertion directly to the pre-claim (creating it on first use) and returns its `HashedUri`. Store the result and pass it into another assertion's fields before signing.
+The core primitive. Mirrors `Builder::add_assertion` (same `label`/`data` shape), but writes directly to the pre-claim (creating it on first use) instead of deferring to `to_claim()`, and returns the assertion's `HashedUri`. Store the result and pass it into another assertion's fields before signing.
+
+If `label` matches a known assertion type (`c2pa.actions`, `c2pa.ingredient`, `BoxHash`, `DataHash`, `BmffHash`, `Metadata`), `data` is decoded into that concrete type so it's stored with its native schema (CBOR, except `Metadata` which is always JSON). Otherwise `data` is wrapped generically in a `UserCbor` assertion under `label`.
+
+Adds the assertion as *gathered* for Claims v2+ (`Claim::add_assertion`'s default), except hash assertions (`BoxHash`/`DataHash`/`BmffHash`), which `Claim` always adds as *created* regardless. Use `Builder::add_created_assertion_with_ref` (same signature) to add any other assertion as *created* instead. Has no effect on Claims v1.
 
 ### `Builder::add_embedded_data(&mut self, label: &str, format: &str, stream: &mut impl Read) -> Result<HashedUri>`
 
@@ -32,11 +36,15 @@ Adds an ingredient assertion built from an already-read/validated `Reader`, with
 
 `redactions` is a list of JUMBF URIs of assertions to strip from the ingredient's manifest chain as it's merged in — find the URI via the `Reader` (`reader.active_label()` + `jumbf::labels::to_assertion_uri(label, assertion_label)`), then pass it here. The caller is responsible for separately recording a `c2pa.redacted` action documenting why, same as the existing redaction pattern elsewhere in `Builder` — this method only does the mechanical redaction.
 
-For an ingredient with no manifest data of its own, skip this method: build the `IngredientAssertion` directly and add it with `add_assertion_with_ref`.
+For an ingredient with no manifest data of its own, skip this method: build the `IngredientAssertion` directly and add it with `add_assertion_with_ref(IngredientAssertion::LABEL, &ingredient_assertion)`.
 
 ### `Action::add_ingredient_ref(self, ingredient: HashedUri) -> Self`
 
 Adds an ingredient reference directly from a `HashedUri` (e.g. the one returned by `add_ingredient_with_reader`), instead of by id resolved later in `to_claim()`. Matches the existing `add_ingredient_id` incremental pattern — call it once per ingredient.
+
+### `Builder::add_created_assertion_with_ref`
+
+Same signature as `add_assertion_with_ref`, mirroring `Claim::add_created_assertion`: adds the assertion as *created* rather than *gathered* for Claims v2+. Has no effect on Claims v1, or on hash assertions (always created regardless of which method is called).
 
 ### `IngredientAssertion` is now a public type
 
@@ -76,7 +84,7 @@ let ing_uri = builder.add_ingredient_with_reader(
 
 // Reference the ingredient directly from an action via its HashedUri.
 let action = Action::new(c2pa_action::OPENED).add_ingredient_ref(ing_uri);
-builder.add_assertion_with_ref(&Actions::new().add_action(action))?;
+builder.add_assertion_with_ref(Actions::LABEL, &Actions::new().add_action(action))?;
 
 builder.sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)?;
 ```
