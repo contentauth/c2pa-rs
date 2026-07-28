@@ -781,7 +781,7 @@ impl Ingredient {
     /// Instance_id, document_id, and provenance will be overridden if found in the stream.
     /// Format will be overridden only if it is the default (application/octet-stream).
     #[async_generic]
-    pub(crate) fn with_stream<S: Into<String>>(
+    pub fn with_stream<S: Into<String>>(
         mut self,
         format: S,
         stream: &mut dyn CAIRead,
