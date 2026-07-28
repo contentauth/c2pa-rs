@@ -4,11 +4,11 @@
 
 Previously, `Builder` accumulated everything into `ManifestDefinition` (a JSON-serializable struct) and only built the actual `Claim` once, inside `to_claim()`, at signing time. This branch adds a `Claim` up front (`Builder::pre_claim: Option<Claim>`) and lets several methods write directly into it as they're called, instead of staging data in `definition` for later translation.
 
-`to_claim()` still runs the old translation logic for anything left in `definition` (JSON-set title/format, `definition.assertions`, `definition.ingredients`, `definition.thumbnail`, actions, etc.) — it clones `pre_claim` (if present) as its starting point, then does its usual pass over `definition`, skipping anything that's already been added directly. Both models coexist in the same `Builder`; nothing is removed.
+`to_claim()` still runs the old translation logic for anything left in `definition` (JSON-set title/format, `definition.assertions`, `definition.ingredients`, `definition.thumbnail`, actions, etc.). It clones `pre_claim` (if present) as its starting point, then does its usual pass over `definition`, skipping anything that's already been added directly. Both models coexist in the same `Builder`.
 
 ## Why
 
-Some assertions need to reference other assertions by hashed URI before the manifest is signed (this is an increasingly common pattern in the C2PA spec — e.g. an action referencing the ingredient it operated on). Under the old model, an assertion added via `add_assertion` doesn't have a knowable JUMBF URI/hash until `to_claim()` runs, so there was no way to embed such a reference directly; call sites either duplicated logic or referenced things positionally/by id, resolved later.
+Some assertions need to reference other assertions by hashed URI before the manifest is signed (e.g. an action referencing the ingredient it operated on). Under the previous model, an assertion added via `add_assertion` doesn't have a knowable JUMBF URI/hash until `to_claim()` runs, so there was no way to embed such a reference directly; call sites either duplicated logic or referenced things positionally/by id, resolved later.
 
 Building the claim eagerly means each of these calls can return a real `HashedUri` immediately, because the assertion has actually been placed at a stable claim position with its final hash computed at insertion time (not at signing time).
 
@@ -26,7 +26,7 @@ Adds the assertion as *gathered* for Claims v2+ (`Claim::add_assertion`'s defaul
 
 Convenience wrapper over `add_assertion_with_ref` for binary data (thumbnails, icons, arbitrary resources): wraps the bytes in an `EmbeddedData` assertion. `set_thumbnail`/`add_resource` now route through this for v2+ claims instead of the `ResourceStore`/`ResourceRef`-by-identifier path.
 
-### `Builder::add_ingredient_with_reader<T>(&mut self, ingredient_assertion: T, reader: &Reader, redactions: Option<Vec<String>>) -> Result<HashedUri>`
+### `Builder::add_ingredient_with_reader<T>(&mut self, ingredient_assertion: T, reader: &Reader, redactions: Vec<String>) -> Result<HashedUri>`
 
 Adds an ingredient assertion built from an already-read/validated `Reader`, without constructing a full `Ingredient`. It merges the reader's own manifest data into the pre-claim's ingredient store, fills in `activeManifest`/`claimSignature`/`validationResults` on the assertion, and returns the assertion's `HashedUri`.
 
@@ -34,7 +34,9 @@ Adds an ingredient assertion built from an already-read/validated `Reader`, with
 - an `IngredientAssertion` (owned) or `&IngredientAssertion`
 - JSON text (`&str`/`String`) or `serde_json::Value`, matching the assertion's own v3 JSON schema (`dc:title`, `dc:format`, `relationship`, `thumbnail`, etc.)
 
-`redactions` is a list of JUMBF URIs of assertions to strip from the ingredient's manifest chain as it's merged in — find the URI via the `Reader` (`reader.active_label()` + `jumbf::labels::to_assertion_uri(label, assertion_label)`), then pass it here. The caller is responsible for separately recording a `c2pa.redacted` action documenting why, same as the existing redaction pattern elsewhere in `Builder` — this method only does the mechanical redaction.
+`redactions` is a list of JUMBF URIs of assertions to strip from the ingredient's manifest chain as it's merged in (empty if none) — find the URI via the `Reader` (`reader.active_label()` + `jumbf::labels::to_assertion_uri(label, assertion_label)`), then pass it here.
+
+This method only performs the mechanical redaction; it deliberately does *not* auto-add the corresponding `c2pa.redacted` action. Each such action requires a `reason` (e.g. `C2paReason::PiiPresent`), which is caller-specific domain knowledge this method has no way to infer — so the caller is responsible for separately recording one action per redacted URI, same as the existing redaction pattern elsewhere in `Builder`.
 
 For an ingredient with no manifest data of its own, skip this method: build the `IngredientAssertion` directly and add it with `add_assertion_with_ref(IngredientAssertion::LABEL, &ingredient_assertion)`.
 
@@ -48,7 +50,7 @@ Same signature as `add_assertion_with_ref`, mirroring `Claim::add_created_assert
 
 ### `IngredientAssertion` is now a public type
 
-`assertions::Ingredient` (re-exported as `IngredientAssertion`) was previously `pub(crate)` only. It's now public, and gained `Clone`, plus `TryFrom<&str>` / `TryFrom<String>` / `TryFrom<&String>` / `TryFrom<serde_json::Value>` / a `Deserialize` impl for its v3 JSON schema (this re-encodes the input as CBOR and delegates to the existing `from_assertion` decoder, so there's one source of truth for the v3 field set).
+`assertions::Ingredient` (re-exported as `IngredientAssertion`) was previously `pub(crate)` only. It's now public, and gained `Clone`, plus `TryFrom<&str>` / `TryFrom<String>` / `TryFrom<&String>` / `TryFrom<serde_json::Value>` / a `Deserialize` impl for its v3 JSON schema. (This re-encodes the input as CBOR and delegates to the existing `from_assertion` decoder, so there's one source of truth for the v3 field set.)
 
 ### `Reader::assertion_refs`, `Reader::read_assertion`, `Reader::read_embedded_data_assertion`
 
@@ -101,7 +103,7 @@ let thumb_uri = builder.add_embedded_data(
 let ing_uri = builder.add_ingredient_with_reader(
     r#"{"relationship": "parentOf", "dc:title": "source.jpg", "dc:format": "image/jpeg"}"#,
     &ingredient_reader,
-    None, // redactions
+    vec![], // redactions
 )?;
 
 // Reference the ingredient directly from an action via its HashedUri.

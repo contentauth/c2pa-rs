@@ -1438,13 +1438,16 @@ impl Builder {
     ///   `validationResults` fields, if present, are overwritten with values derived from
     ///   `reader`.
     /// * `reader` - A [`Reader`] that has already read and validated the ingredient's own asset.
-    /// * `redactions` - JUMBF URIs of assertions to redact from the ingredient's manifest
-    ///   chain, if any.
+    /// * `redactions` - JUMBF URIs of assertions to redact from the ingredient's manifest chain
+    ///   (empty if none). This only performs the mechanical redaction; the caller is
+    ///   responsible for separately recording a `c2pa.redacted` action with the reason for each
+    ///   one (e.g. via [`crate::assertions::Action::set_reason`]), since the reason is
+    ///   caller-specific domain knowledge this method has no way to infer.
     pub fn add_ingredient_with_reader<T>(
         &mut self,
         ingredient_assertion: T,
         reader: &Reader,
-        redactions: Option<Vec<String>>,
+        redactions: Vec<String>,
     ) -> Result<HashedUri>
     where
         T: TryInto<IngredientAssertion>,
@@ -1477,6 +1480,7 @@ impl Builder {
         let ingredient_scope = Store::build_flat_ingredient_store(&reader.store, target_claim)?;
         let manifest_bytes = ingredient_scope.to_jumbf_internal(0)?;
 
+        let redactions = (!redactions.is_empty()).then_some(redactions);
         let context = self.context.clone();
         let claim = self.ensure_pre_claim()?;
         let ingredient_store =
@@ -10602,7 +10606,7 @@ mod tests {
             .add_ingredient_with_reader(
                 r#"{"relationship": "parentOf", "dc:title": "C.jpg", "dc:format": "image/jpeg"}"#,
                 &reader,
-                None,
+                vec![],
             )
             .expect("add ingredient with reader from json text");
 
@@ -10615,7 +10619,7 @@ mod tests {
                     "dc:format": "image/jpeg",
                 }),
                 &reader,
-                None,
+                vec![],
             )
             .expect("add ingredient with reader from json value");
 
@@ -10624,10 +10628,10 @@ mod tests {
             .set_title("C.jpg")
             .set_format(format);
         let ing_uri_from_struct = builder
-            .add_ingredient_with_reader(&struct_assertion, &reader, None)
+            .add_ingredient_with_reader(&struct_assertion, &reader, vec![])
             .expect("add ingredient with reader from &IngredientAssertion");
         let ing_uri_from_owned_struct = builder
-            .add_ingredient_with_reader(struct_assertion, &reader, None)
+            .add_ingredient_with_reader(struct_assertion, &reader, vec![])
             .expect("add ingredient with reader from owned IngredientAssertion");
 
         let action = Action::new(c2pa_action::OPENED)
@@ -10702,11 +10706,7 @@ mod tests {
             .set_title("C.jpg")
             .set_format(format);
         let ing_uri = builder
-            .add_ingredient_with_reader(
-                ing_assertion,
-                &ingredient_reader,
-                Some(vec![thumbnail_uri]),
-            )
+            .add_ingredient_with_reader(ing_assertion, &ingredient_reader, vec![thumbnail_uri])
             .expect("add ingredient with reader (redacted thumbnail)");
 
         let action = Action::new(c2pa_action::OPENED).add_ingredient_ref(ing_uri);
@@ -10775,7 +10775,7 @@ mod tests {
                     .set_title("C.jpg")
                     .set_format(format),
                 &ingredient_reader,
-                None,
+                vec![],
             )
             .expect("add ingredient to outer manifest");
         let action = Action::new(c2pa_action::OPENED).add_ingredient_ref(ing_uri);
@@ -10827,7 +10827,7 @@ mod tests {
         new_builder.definition.title = Some("Transferred ingredient".to_string());
 
         let new_ing_uri = new_builder
-            .add_ingredient_with_reader(decoded_ingredient, &outer_reader, None)
+            .add_ingredient_with_reader(decoded_ingredient, &outer_reader, vec![])
             .expect("transfer ingredient from outer reader");
         let action = Action::new(c2pa_action::OPENED).add_ingredient_ref(new_ing_uri);
         new_builder
