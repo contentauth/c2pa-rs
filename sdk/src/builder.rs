@@ -1452,8 +1452,30 @@ impl Builder {
     {
         let mut ing_assertion: IngredientAssertion = ingredient_assertion.try_into()?;
 
+        // If the ingredient assertion already carries a manifest link (e.g. it was decoded via
+        // `Reader::read_assertion` out of a larger store), scope to that specific claim rather
+        // than assuming `reader` is a single-ingredient reader.
+        let target_claim = match ing_assertion
+            .active_manifest
+            .as_ref()
+            .or(ing_assertion.c2pa_manifest.as_ref())
+        {
+            Some(uri) => {
+                let label = Store::manifest_label_from_path(&uri.url());
+                reader
+                    .store
+                    .get_claim(&label)
+                    .ok_or(Error::ClaimMissing { label })?
+            }
+            None => reader
+                .store
+                .provenance_claim()
+                .ok_or(Error::JumbfNotFound)?,
+        };
+
         let validation_results = reader.validation_results().cloned().unwrap_or_default();
-        let manifest_bytes = reader.store.to_jumbf_internal(0)?;
+        let ingredient_scope = Store::build_flat_ingredient_store(&reader.store, target_claim)?;
+        let manifest_bytes = ingredient_scope.to_jumbf_internal(0)?;
 
         let context = self.context.clone();
         let claim = self.ensure_pre_claim()?;
@@ -10718,6 +10740,121 @@ mod tests {
         assert!(
             ingredient_manifest.thumbnail_ref().is_none(),
             "thumbnail assertion should have been redacted"
+        );
+    }
+
+    /// A caller with a larger already-read `Reader` (more than just one ingredient's chain) can
+    /// pull one specific ingredient out of it — via `Reader::assertion_refs` +
+    /// `Reader::read_assertion::<IngredientAssertion>` — and transfer it into a fresh `Builder`,
+    /// without needing a dedicated single-ingredient `Reader`. This exercises
+    /// `add_ingredient_with_reader`'s claim-scoping via the decoded assertion's own
+    /// `active_manifest`, rather than the `provenance_claim()` fallback used for a
+    /// freshly-authored ingredient assertion with no manifest link yet.
+    #[test]
+    fn test_add_ingredient_with_reader_from_outer_store() {
+        use crate::{
+            assertions::{c2pa_action, Action, Actions, IngredientAssertion, Relationship},
+            utils::test::create_test_streams,
+        };
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let (format, mut ingredient_stream, _) = create_test_streams("C.jpg");
+
+        let ingredient_reader = Reader::default()
+            .with_stream(format, &mut ingredient_stream)
+            .expect("read ingredient asset");
+
+        // Build an outer manifest containing one parentOf ingredient.
+        let mut outer_builder = Builder::default();
+        outer_builder.definition.format = format.to_string();
+        outer_builder.definition.title = Some("Outer manifest".to_string());
+
+        let ing_uri = outer_builder
+            .add_ingredient_with_reader(
+                IngredientAssertion::new_v3(Relationship::ParentOf)
+                    .set_title("C.jpg")
+                    .set_format(format),
+                &ingredient_reader,
+                None,
+            )
+            .expect("add ingredient to outer manifest");
+        let action = Action::new(c2pa_action::OPENED).add_ingredient_ref(ing_uri);
+        outer_builder
+            .add_assertion_with_ref(Actions::LABEL, &Actions::new().add_action(action))
+            .expect("add actions assertion");
+
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+        outer_builder
+            .sign(signer.as_ref(), format, &mut source, &mut dest)
+            .expect("sign outer manifest");
+
+        dest.rewind().unwrap();
+        let outer_reader = Reader::default()
+            .with_stream(format, &mut dest)
+            .expect("read outer manifest");
+        assert_ne!(
+            outer_reader.validation_state(),
+            ValidationState::Invalid,
+            "outer manifest should be valid"
+        );
+
+        // Find the ingredient assertion in the outer reader and decode it — this already
+        // carries a populated active_manifest/claim_signature pointing at its own claim within
+        // outer_reader's store.
+        let outer_label = outer_reader
+            .active_label()
+            .expect("outer active label")
+            .to_owned();
+        let (_, ingredient_uri) = outer_reader
+            .assertion_refs(&outer_label)
+            .expect("assertion refs")
+            .into_iter()
+            .find(|(label, _)| label.starts_with(IngredientAssertion::LABEL))
+            .expect("ingredient assertion ref");
+        let decoded_ingredient: IngredientAssertion = outer_reader
+            .read_assertion(&ingredient_uri)
+            .expect("decode ingredient assertion");
+        assert!(
+            decoded_ingredient.active_manifest.is_some(),
+            "decoded ingredient assertion should carry its own manifest link"
+        );
+
+        // Transfer it into a brand-new Builder, passing the *outer* reader (which contains more
+        // than just this one ingredient's chain).
+        let mut new_builder = Builder::default();
+        new_builder.definition.format = format.to_string();
+        new_builder.definition.title = Some("Transferred ingredient".to_string());
+
+        let new_ing_uri = new_builder
+            .add_ingredient_with_reader(decoded_ingredient, &outer_reader, None)
+            .expect("transfer ingredient from outer reader");
+        let action = Action::new(c2pa_action::OPENED).add_ingredient_ref(new_ing_uri);
+        new_builder
+            .add_assertion_with_ref(Actions::LABEL, &Actions::new().add_action(action))
+            .expect("add actions assertion");
+
+        let mut source2 = Cursor::new(TEST_IMAGE);
+        let mut dest2 = Cursor::new(Vec::new());
+        new_builder
+            .sign(signer.as_ref(), format, &mut source2, &mut dest2)
+            .expect("sign new manifest");
+
+        dest2.rewind().unwrap();
+        let new_reader = Reader::default()
+            .with_stream(format, &mut dest2)
+            .expect("read transferred manifest");
+        assert_ne!(
+            new_reader.validation_state(),
+            ValidationState::Invalid,
+            "transferred manifest should be valid"
+        );
+
+        let manifest = new_reader.active_manifest().expect("active manifest");
+        assert_eq!(manifest.ingredients().len(), 1, "expected one ingredient");
+        assert!(
+            manifest.ingredients()[0].active_manifest().is_some(),
+            "transferred ingredient should resolve to its own embedded manifest"
         );
     }
 

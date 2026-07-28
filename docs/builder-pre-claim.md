@@ -50,6 +50,28 @@ Same signature as `add_assertion_with_ref`, mirroring `Claim::add_created_assert
 
 `assertions::Ingredient` (re-exported as `IngredientAssertion`) was previously `pub(crate)` only. It's now public, and gained `Clone`, plus `TryFrom<&str>` / `TryFrom<String>` / `TryFrom<&String>` / `TryFrom<serde_json::Value>` / a `Deserialize` impl for its v3 JSON schema (this re-encodes the input as CBOR and delegates to the existing `from_assertion` decoder, so there's one source of truth for the v3 field set).
 
+### `Reader::assertion_refs`, `Reader::read_assertion`, `Reader::read_embedded_data_assertion`
+
+Low-level "read" primitives, symmetric to the pre-claim "write" primitives above: given an
+already-read/validated `Reader`, manually pick which assertions/ingredients to carry over into a
+*new* `Builder`, one at a time — no automatic filtering, no reference rewriting.
+
+- `assertion_refs(manifest_label) -> Result<Vec<(String, HashedUri)>>` enumerates every assertion
+  in a manifest as `(label, HashedUri)`, each `HashedUri` already resolvable by the two methods
+  below.
+- `read_assertion::<T>(&uri) -> Result<T>` decodes an assertion into `T`, regardless of whether
+  it's stored as JSON or CBOR on the wire (e.g. `T = Actions`, `IngredientAssertion`, `Metadata`).
+- `read_embedded_data_assertion(&uri) -> Result<(String, Vec<u8>)>` returns `(content_type, bytes)`
+  for a binary/`EmbeddedData` assertion (thumbnails, icons).
+
+The caller re-adds whatever they choose via the `_with_ref` writers above. For ingredients
+specifically, `add_ingredient_with_reader` accepts an `IngredientAssertion` decoded this way
+directly: if it already carries a populated `active_manifest`/`c2pa_manifest` (true once it's been
+read out of an existing manifest), the method scopes to that specific claim within the passed
+`reader` rather than assuming the whole `reader` is a single-ingredient reader — so a caller can
+hand it a *larger* reader (with more than just this one ingredient's chain) and pull out just the
+one ingredient referenced by the decoded assertion.
+
 ### Deprecation
 
 `Builder::add_ingredient_from_reader` (the old `reader.to_ingredient()` → `definition.ingredients` path — carries forward an *existing* parent ingredient already recorded in the reader's own manifest) is deprecated in favor of `add_ingredient_from_archive`. It's unrelated to `add_ingredient_with_reader` (the name collision is coincidental — different semantics), but keeping both names live invited confusion.

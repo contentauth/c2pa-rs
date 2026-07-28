@@ -26,18 +26,23 @@ use async_generic::async_generic;
 use async_trait::async_trait;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 use serde_with::skip_serializing_none;
 
 #[cfg(feature = "file_io")]
 use crate::utils::io_utils::uri_to_path;
 use crate::{
+    assertion::{Assertion, AssertionData, AssertionDecodeError},
     assertions::Metadata,
+    claim::Claim,
     context::{Context, ProgressPhase},
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
-    jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
+    jumbf::labels::{
+        assertion_label_from_uri, manifest_label_from_uri, to_absolute_uri, to_assertion_uri,
+        to_relative_uri,
+    },
     jumbf_io, log_item,
     manifest::StoreOptions,
     manifest_store_report::ManifestStoreReport,
@@ -46,7 +51,7 @@ use crate::{
     utils::hash_utils::hash_to_b64,
     validation_results::{ValidationResults, ValidationState},
     validation_status::{ValidationStatus, ASSERTION_MISSING, ASSERTION_NOT_REDACTED},
-    Ingredient, Manifest, ManifestAssertion,
+    HashedUri, Ingredient, Manifest, ManifestAssertion,
 };
 
 /// MaybeSend allows for no Send bound on wasm32 targets
@@ -861,6 +866,104 @@ impl Reader {
     /// * `label` - The label of the requested [`Manifest`].
     pub fn get_manifest(&self, label: &str) -> Option<&Manifest> {
         self.manifests.get(label)
+    }
+
+    /// Returns `(label, HashedUri)` for every assertion in the claim labeled `manifest_label`.
+    ///
+    /// Each `HashedUri` is normalized to an absolute JUMBF URI, so it can be passed directly to
+    /// `read_assertion`/`read_embedded_data_assertion` (or to `Builder::add_ingredient_with_reader`
+    /// via a decoded `IngredientAssertion`) without the caller needing to separately track which
+    /// manifest it came from. Use this to enumerate what's available before selectively copying
+    /// assertions from this `Reader` into a new `Builder`.
+    pub fn assertion_refs(&self, manifest_label: &str) -> Result<Vec<(String, HashedUri)>> {
+        let claim = self
+            .store
+            .get_claim(manifest_label)
+            .ok_or_else(|| Error::ClaimMissing {
+                label: manifest_label.to_owned(),
+            })?;
+
+        // Build each `HashedUri` from the `ClaimAssertion`'s own label/hash/alg, rather than
+        // `claim.assertions()` (which isn't guaranteed index-parallel with
+        // `claim_assertion_store()` once a claim has been loaded back from JUMBF bytes).
+        Ok(claim
+            .claim_assertion_store()
+            .iter()
+            .map(|claim_assertion| {
+                let label = claim_assertion.label();
+                let url = to_assertion_uri(manifest_label, &label);
+                let uri = HashedUri::new(
+                    url,
+                    Some(claim_assertion.hash_alg().to_owned()),
+                    claim_assertion.hash(),
+                );
+                (label, uri)
+            })
+            .collect())
+    }
+
+    /// Resolve `uri` (as returned by `assertion_refs`) to its raw `Assertion`.
+    fn resolve_assertion(&self, uri: &HashedUri) -> Result<&Assertion> {
+        let url = uri.url();
+        let manifest_label = manifest_label_from_uri(&url)
+            .or_else(|| self.active_label().map(str::to_owned))
+            .ok_or_else(|| Error::ClaimMissing { label: url.clone() })?;
+        let assertion_label = assertion_label_from_uri(&url)
+            .ok_or_else(|| Error::AssertionMissing { url: url.clone() })?;
+
+        let claim = self
+            .store
+            .get_claim(&manifest_label)
+            .ok_or(Error::ClaimMissing {
+                label: manifest_label,
+            })?;
+
+        let (base_label, instance) = Claim::assertion_label_from_link(&assertion_label);
+        claim
+            .get_assertion(&base_label, instance)
+            .ok_or(Error::AssertionMissing { url })
+    }
+
+    /// Decode the assertion at `uri` into `T`, regardless of whether it's stored as JSON or CBOR
+    /// on the wire. Use e.g. `T = Actions`, `IngredientAssertion`, `Metadata`, `BoxHash`, or
+    /// `serde_json::Value`/`c2pa_cbor::Value` for a fully generic decode. Returns an error for a
+    /// binary/`EmbeddedData` assertion — use `read_embedded_data_assertion` for those instead.
+    pub fn read_assertion<T: DeserializeOwned>(&self, uri: &HashedUri) -> Result<T> {
+        let assertion = self.resolve_assertion(uri)?;
+        match assertion.decode_data() {
+            AssertionData::Json(json) => serde_json::from_str(json).map_err(|e| {
+                Error::AssertionDecoding(AssertionDecodeError::from_assertion_and_json_err(
+                    assertion, e,
+                ))
+            }),
+            AssertionData::Cbor(cbor) => c2pa_cbor::from_slice(cbor).map_err(|e| {
+                Error::AssertionDecoding(AssertionDecodeError::from_assertion_and_cbor_err(
+                    assertion, e,
+                ))
+            }),
+            other => Err(Error::AssertionDecoding(
+                AssertionDecodeError::from_assertion_unexpected_data_type(
+                    assertion,
+                    other,
+                    "json or cbor",
+                ),
+            )),
+        }
+    }
+
+    /// Return `(content_type, bytes)` for the binary/`EmbeddedData` assertion at `uri` (e.g. a
+    /// thumbnail or icon). Returns an error for a JSON/CBOR assertion — use `read_assertion`
+    /// for those instead.
+    pub fn read_embedded_data_assertion(&self, uri: &HashedUri) -> Result<(String, Vec<u8>)> {
+        let assertion = self.resolve_assertion(uri)?;
+        match assertion.decode_data() {
+            AssertionData::Binary(data) => Ok((assertion.content_type().to_owned(), data.clone())),
+            other => Err(Error::AssertionDecoding(
+                AssertionDecodeError::from_assertion_unexpected_data_type(
+                    assertion, other, "binary",
+                ),
+            )),
+        }
     }
 
     /// Write a resource identified by URI to the given stream.
@@ -1831,6 +1934,126 @@ pub mod tests {
                 "no bytes should be written to the stream on error for uri {bad_uri:?}"
             );
         }
+
+        Ok(())
+    }
+
+    /// `assertion_refs` should enumerate every assertion in a manifest as an absolute,
+    /// resolvable `HashedUri`, and `read_assertion` should decode each one regardless of
+    /// whether it's stored as JSON (`Metadata`) or CBOR (`Actions`) on the wire.
+    #[test]
+    fn test_assertion_refs_and_read_assertion() -> Result<()> {
+        use crate::{
+            assertion::AssertionBase,
+            assertions::{c2pa_action, labels, Action, Actions, Metadata},
+        };
+
+        let format = "image/jpeg";
+        let signer = test_signer(SigningAlg::Ps256);
+
+        let mut builder = Builder::default().with_definition(r#"{"title": "Test Image"}"#)?;
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+
+        let metadata = Metadata::new(
+            labels::METADATA,
+            r#"{"@context": {"dc": "http://purl.org/dc/elements/1.1/"}, "dc:identifier": "hello"}"#,
+        )
+        .expect("build metadata");
+        builder
+            .add_assertion_with_ref(Metadata::LABEL, &metadata)
+            .expect("add metadata assertion");
+
+        let actions = Actions::new().add_action(
+            Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty),
+        );
+        builder
+            .add_assertion_with_ref(Actions::LABEL, &actions)
+            .expect("add actions assertion");
+
+        let mut source = Cursor::new(include_bytes!("../tests/fixtures/C.jpg").as_slice());
+        let mut dest = Cursor::new(Vec::new());
+        builder.sign(&signer, format, &mut source, &mut dest)?;
+
+        dest.set_position(0);
+        let reader = Reader::default().with_stream(format, &mut dest)?;
+        let label = reader.active_label().expect("active label").to_owned();
+
+        let refs = reader.assertion_refs(&label)?;
+        let (_, metadata_uri) = refs
+            .iter()
+            .find(|(l, _)| l == labels::METADATA)
+            .expect("metadata assertion ref");
+        let (_, actions_uri) = refs
+            .iter()
+            .find(|(l, _)| l.starts_with(Actions::LABEL))
+            .expect("actions assertion ref");
+        assert!(
+            metadata_uri.url().contains(&label),
+            "assertion_refs should return absolute uris"
+        );
+
+        let decoded_metadata: Metadata = reader.read_assertion(metadata_uri)?;
+        assert_eq!(
+            decoded_metadata.value.get("dc:identifier"),
+            Some(&serde_json::json!("hello"))
+        );
+
+        let decoded_actions: Actions = reader.read_assertion(actions_uri)?;
+        assert_eq!(decoded_actions.actions().len(), 1);
+        assert_eq!(decoded_actions.actions()[0].action(), c2pa_action::CREATED);
+
+        Ok(())
+    }
+
+    /// `read_embedded_data_assertion` should round-trip a binary/`EmbeddedData` assertion (here,
+    /// the claim thumbnail), and each read method should reject the other's assertion kind.
+    #[test]
+    fn test_read_embedded_data_assertion() -> Result<()> {
+        use crate::assertions::labels;
+
+        let format = "image/jpeg";
+        let signer = test_signer(SigningAlg::Ps256);
+        let thumbnail = b"the super real thumbnail";
+
+        let mut builder = Builder::default().with_definition(r#"{"title": "Test Image"}"#)?;
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+        let thumb_uri = builder
+            .add_embedded_data(
+                labels::CLAIM_THUMBNAIL,
+                "image/jpeg",
+                &mut Cursor::new(thumbnail.as_slice()),
+            )
+            .expect("add claim thumbnail");
+
+        let mut source = Cursor::new(include_bytes!("../tests/fixtures/C.jpg").as_slice());
+        let mut dest = Cursor::new(Vec::new());
+        builder.sign(&signer, format, &mut source, &mut dest)?;
+
+        dest.set_position(0);
+        let reader = Reader::default().with_stream(format, &mut dest)?;
+
+        let (content_type, bytes) = reader.read_embedded_data_assertion(&thumb_uri)?;
+        assert_eq!(content_type, "image/jpeg");
+        assert_eq!(bytes, thumbnail);
+
+        // Wrong accessor for each assertion kind should error rather than silently decode.
+        assert!(
+            reader
+                .read_assertion::<serde_json::Value>(&thumb_uri)
+                .is_err(),
+            "read_assertion should reject a binary assertion"
+        );
+
+        let label = reader.active_label().expect("active label").to_owned();
+        let (_, actions_uri) = reader
+            .assertion_refs(&label)?
+            .into_iter()
+            .find(|(l, _)| l.starts_with("c2pa.actions"))
+            .expect("actions assertion ref");
+        assert!(
+            reader.read_embedded_data_assertion(&actions_uri).is_err(),
+            "read_embedded_data_assertion should reject a non-binary assertion"
+        );
 
         Ok(())
     }
