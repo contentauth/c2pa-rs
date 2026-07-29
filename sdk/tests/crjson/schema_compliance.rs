@@ -296,12 +296,16 @@ fn test_hash_fields_are_base64_strings() -> Result<()> {
                             "'{child_path}' must be a b64'-prefixed string, not an integer array"
                         );
                         if let Some(s) = v.as_str() {
-                            // Must start with "b64'" prefix.
+                            // Must be delimited by a "b64'" prefix and a closing "'".
                             assert!(
                                 s.starts_with("b64'"),
                                 "'{child_path}' value must start with \"b64'\" prefix, got: {s:?}"
                             );
-                            let payload = &s["b64'".len()..];
+                            assert!(
+                                s.len() > "b64'".len() && s.ends_with('\''),
+                                "'{child_path}' value must end with a closing \"'\", got: {s:?}"
+                            );
+                            let payload = &s["b64'".len()..s.len() - 1];
                             // Payload must be valid base64 if non-empty.
                             if !payload.is_empty() {
                                 use std::collections::HashSet;

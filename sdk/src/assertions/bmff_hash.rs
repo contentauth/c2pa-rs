@@ -1198,7 +1198,17 @@ impl BmffHash {
                     }
                     // check that the subsets do not overlap
                     for i in 0..subsets.len() - 1 {
-                        if subsets[i].offset + subsets[i].length > subsets[i + 1].offset {
+                        // `offset` and `length` are attacker-controlled u64s from
+                        // CBOR; a sum that overflows u64 cannot fit the addressing
+                        // space, so treat it as malformed rather than panicking on
+                        // the add (overflow-checked builds abort otherwise).
+                        let subset_end = subsets[i]
+                            .offset
+                            .checked_add(subsets[i].length)
+                            .ok_or_else(|| {
+                                Error::C2PAValidation(ASSERTION_BMFFHASH_MALFORMED.to_string())
+                            })?;
+                        if subset_end > subsets[i + 1].offset {
                             return Err(Error::C2PAValidation(
                                 ASSERTION_BMFFHASH_MALFORMED.to_string(),
                             ));
@@ -1466,18 +1476,31 @@ impl BmffHash {
                                 e.insert(hasher_enum);
                             }
 
-                            if let Ok(Some(sample)) = &mp4.read_sample(track_id, sample_id) {
-                                let h = chunk_hash_map.get_mut(&chunk_id).ok_or(
-                                    Error::HashMismatch(
-                                        "Bad Merkle tree sample mapping".to_string(),
-                                    ),
-                                )?;
-                                // add sample data to hash
-                                h.update(&sample.bytes);
-                            } else {
-                                return Err(Error::HashMismatch(
-                                    "Merle location not found".to_owned(),
-                                ));
+                            match mp4.read_sample(track_id, sample_id) {
+                                Ok(Some(sample)) => {
+                                    let h = chunk_hash_map.get_mut(&chunk_id).ok_or(
+                                        Error::HashMismatch(
+                                            "Bad Merkle tree sample mapping".to_string(),
+                                        ),
+                                    )?;
+                                    // add sample data to hash
+                                    h.update(&sample.bytes);
+                                }
+                                // The sample's tables place it outside the asset:
+                                // a genuine Merkle location miss.
+                                Ok(None) => {
+                                    return Err(Error::HashMismatch(
+                                        "Merkle location not found".to_owned(),
+                                    ));
+                                }
+                                // A read/parse failure is distinct from a missing
+                                // sample and is reported as a malformed asset rather
+                                // than masqueraded as a location miss.
+                                Err(e) => {
+                                    return Err(Error::InvalidAsset(format!(
+                                        "BMFF sample read failed: {e}"
+                                    )));
+                                }
                             }
                         }
 
@@ -1515,6 +1538,13 @@ impl BmffHash {
                                 return Err(Error::HashMismatch("Fragment not valid".to_string()));
                             }
                         }
+                    } else {
+                        // A timed-media Merkle map can only be verified against a
+                        // track. A moov that carries Merkle boxes but exposes no
+                        // readable track must fail rather than silently pass.
+                        return Err(Error::HashMismatch(
+                            "BMFF has no tracks for timed-media Merkle verification".to_owned(),
+                        ));
                     }
                 }
             } else {
@@ -2472,6 +2502,7 @@ fn stsc_index(track: &Mp4Track, sample_id: u32) -> crate::Result<usize> {
 
 #[cfg(test)]
 mod bmff_hash_tests {
+    #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
     use std::io::Cursor;
@@ -2519,6 +2550,81 @@ mod bmff_hash_tests {
             &box_info,
             &mut merkle_map,
         );
+    }
+
+    fn bmff_hash_with_subsets(subsets: Vec<SubsetMap>) -> BmffHash {
+        let mut bmff_hash = BmffHash::new("test", "sha256", None);
+        let mut exclusion = ExclusionsMap::new("/mdat".to_owned());
+        exclusion.subset = Some(subsets);
+        bmff_hash.add_exclusions(&mut vec![exclusion]);
+        bmff_hash
+    }
+
+    /// Regression: `offset` and `length` are attacker-controlled `u64`s from
+    /// CBOR. When `offset + length` overflows `u64`, `verify_self` used to panic
+    /// with "attempt to add with overflow" (process abort, exit 101) while
+    /// validating a crafted BmffHash assertion — no valid signature required.
+    /// It must now surface a validation error instead of crashing.
+    #[test]
+    fn verify_self_rejects_subset_offset_length_overflow() {
+        let bmff_hash = bmff_hash_with_subsets(vec![
+            // offset + length overflows u64
+            SubsetMap {
+                offset: 100,
+                length: u64::MAX,
+            },
+            SubsetMap {
+                offset: 200,
+                length: 0,
+            },
+        ]);
+
+        assert!(
+            matches!(bmff_hash.verify_self(), Err(Error::C2PAValidation(_))),
+            "overflowing subset must be rejected as malformed, not panic",
+        );
+    }
+
+    /// A genuine (non-overflowing) overlap must still be rejected — the fix must
+    /// not weaken the existing overlap check.
+    #[test]
+    fn verify_self_rejects_overlapping_subsets() {
+        let bmff_hash = bmff_hash_with_subsets(vec![
+            // ends at 30, past the next subset's offset (20) → overlap
+            SubsetMap {
+                offset: 0,
+                length: 30,
+            },
+            SubsetMap {
+                offset: 20,
+                length: 5,
+            },
+        ]);
+
+        assert!(matches!(
+            bmff_hash.verify_self(),
+            Err(Error::C2PAValidation(_))
+        ));
+    }
+
+    /// Positive: valid ordered, non-overlapping subsets must still pass — the fix
+    /// must not over-reject legitimate assertions.
+    #[test]
+    fn verify_self_accepts_valid_non_overlapping_subsets() {
+        let bmff_hash = bmff_hash_with_subsets(vec![
+            SubsetMap {
+                offset: 0,
+                length: 10,
+            },
+            SubsetMap {
+                offset: 20,
+                length: 5,
+            },
+        ]);
+
+        bmff_hash
+            .verify_self()
+            .expect("valid non-overlapping subsets must pass verify_self");
     }
 
     fn make_bmff_merkle_entries(count: usize) -> Vec<BmffMerkleMap> {

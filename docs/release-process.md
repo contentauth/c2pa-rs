@@ -167,6 +167,8 @@ As a backstop to the proactive check above, a scheduled job, [`reconciliation.ym
 
 [`semver-checks.yml`](../.github/workflows/semver-checks.yml) runs [`cargo-semver-checks`](https://github.com/obi1kenobi/cargo-semver-checks) on every PR targeting a release-line branch (including backport PRs), baselining against the latest crates.io release. It catches a change that would be an accidental break shipping as an additive release. It does **not** run on `-rc` branches — the train is the intended place for breaking changes.
 
+By default, `cargo-semver-checks` ignores features named `unstable`, `nightly`, `bench`, or `no_std`, and any feature whose name begins with `_`, `unstable-`, or `unstable_`. We rely on this: [experimental features](experimental-features.md) are gated behind `unstable_<name>` flags precisely so that changes confined to them are exempt from breaking-change detection and never force a version bump. An experimental API is free to change at will, as long as the change doesn't touch the public/stable API surface.
+
 ### Patch-dependency guard
 
 [`check-no-patch-deps.yml`](../.github/workflows/check-no-patch-deps.yml) fails if a `[patch]` section or a git dependency is present. It runs on release-branch PRs and as a required prerequisite of `release.yml`, so a `[patch]` left over from co-developing an extracted crate can never leak into a publish.
@@ -184,6 +186,10 @@ The first build (`-rc.1`) is cut automatically when the train is cut. A maintain
 ### Cross-repo canary
 
 [`canary-extracted-crates.yml`](../.github/workflows/canary-extracted-crates.yml) builds `c2pa-rs` `main` against the `main` of each extracted crate via a throwaway `[patch]`, and files an issue on failure. The `[patch]` exists only inside the runner; the patch-dependency guard guarantees it can never reach a release.
+
+### Experimental features build
+
+[`experimental-features.yml`](../.github/workflows/experimental-features.yml) builds, lints, and tests the SDK with every `unstable_` feature enabled, on PRs and daily. It is **non-blocking by design** (`continue-on-error`, and not a required check): [experimental features](experimental-features.md) are community-supported and outside the CAI team's maintenance commitments, so `main` is never gated on their health. A persistent failure is grounds for disabling the feature, not for holding up the SDK. The required tier suites (1A/1B/2), the beta preflight, and the cross-repo canary all exclude `unstable_` features from their build/test/lint jobs – the Tier 1A `docs.rs` preflight is the one deliberate exception, since experimental APIs are intentionally published to docs.rs.
 
 ### Label sync
 
@@ -219,7 +225,9 @@ The `type` must be one of (bold = preferred in most cases):
 * **`docs`**: documentation.
 * `build`, `ci`, `perf`, `refactor`, `revert`, `style`, `test`, `update` (the last used by Dependabot).
 
-`scope` is optional; if present it must be one of `c2patool`, `export_schema`, `make_test_images`, `sdk`, or `c2pa_c_ffi`. If omitted, drop the parentheses too. `description` is a short sentence, capitalized, no trailing period, preferably under 70 characters.
+`scope` is optional; if present it must be one of `c2patool`, `export_schema`, `make_test_images`, `sdk`, `c2pa_c_ffi`, or `experimental`. If omitted, drop the parentheses too. `description` is a short sentence, capitalized, no trailing period, preferably under 70 characters.
+
+Use the `experimental` scope for any change confined to an [experimental feature](experimental-features.md) (for example `feat(experimental): add widget export`). It routes the change into a dedicated **Experimental** section of the changelog and keeps it from driving a minor/breaking bump – the change may still ride an ordinary patch release, but experimental APIs are outside semver, so never combine it with the breaking (`!`) marker.
 
 > MAINTENANCE NOTE: if these rules change, keep [`.github/workflows/pr_title.yml`](../.github/workflows/pr_title.yml) and [`.commitlintrc.yml`](../.commitlintrc.yml) in sync.
 

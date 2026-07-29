@@ -39,6 +39,14 @@ async fn read_manifest_no_trust<R: std::io::Read + std::io::Seek + Send>(
         .with_value("verify.verify_trust", false)
         .unwrap()
         .with_value("core.decode_identity_assertions", false)
+        .unwrap()
+        .with_value(
+            "soft_binding.soft_binding_algorithms",
+            [
+                "com.adobe.trustmark.P".to_string(),
+                "com.adobe.icn.dense".to_string(),
+            ],
+        )
         .unwrap();
     let context = Context::new()
         .with_settings(settings)

@@ -34,3 +34,19 @@
 - name: canary
   color: "b60205"
   description: "Cross-repo canary detected drift with an upstream crate we maintain (e.g. c2pa_cbor)"
+
+- name: accepted
+  color: "0e8a16"
+  description: "Triaged and accepted for work"
+
+- name: bug
+  color: "b60205"
+  description: "Something isn't working"
+
+- name: feature
+  color: "fbca04"
+  description: "New capability or enhancement"
+
+- name: task
+  color: "1d76db"
+  description: "General work item or chore"

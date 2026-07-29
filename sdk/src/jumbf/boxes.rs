@@ -2118,7 +2118,9 @@ impl BoxReader {
         let sig = if togs[0] & 0x08 == 0x08 {
             let mut sigbuf: [u8; 32] = [0; 32];
             reader.read_exact(&mut sigbuf)?;
-            bytes_left -= 32;
+            bytes_left = bytes_left
+                .checked_sub(32)
+                .ok_or(JumbfParseError::InvalidDescriptionBox)?;
             Some(sigbuf)
         } else {
             None
@@ -2131,7 +2133,7 @@ impl BoxReader {
             if header.size == 0 {
                 // bad read,
                 return Err(JumbfParseError::InvalidBoxHeader);
-            } else if header.size != bytes_left - HEADER_SIZE {
+            } else if bytes_left.checked_sub(HEADER_SIZE) != Some(header.size) {
                 // this means that we started w/o the header...
                 unread_bytes(reader, HEADER_SIZE)?;
             }
@@ -2145,7 +2147,9 @@ impl BoxReader {
                     .read_to_vec(data_len)
                     .map_err(|_| JumbfParseError::InvalidBoxHeader)?;
 
-                bytes_left -= header.size;
+                bytes_left = bytes_left
+                    .checked_sub(header.size)
+                    .ok_or(JumbfParseError::InvalidBoxHeader)?;
 
                 Some(CAISaltContentBox::new(buf))
             } else {
@@ -3040,6 +3044,56 @@ pub mod tests {
         assert!(matches!(
             BoxReader::read_desc_box(&mut reader, 17),
             Err(JumbfParseError::InvalidDescriptionBox)
+        ));
+    }
+
+    #[test]
+    fn desc_box_reader_rejects_jumd_signature_underflow() {
+        let mut stream = Vec::new();
+        stream.extend_from_slice(&[0u8; 16]); // UUID
+        stream.push(0x0f); // toggles: requestable+labeled+box_id+signature
+        stream.push(0x00); // empty label (null terminator)
+        stream.extend_from_slice(&[0u8; 4]); // box_id
+        stream.extend_from_slice(&[0u8; 32]); // signature
+
+        let mut reader = Cursor::new(&stream);
+        assert!(matches!(
+            BoxReader::read_desc_box(&mut reader, 26),
+            Err(JumbfParseError::InvalidDescriptionBox)
+        ));
+    }
+
+    #[test]
+    fn desc_box_reader_rejects_jumd_private_box_size_check_underflow() {
+        let mut stream = Vec::new();
+        stream.extend_from_slice(&[0u8; 16]); // UUID
+        stream.push(0x17); // toggles: requestable+labeled+box_id+private
+        stream.push(0x00); // empty label (null terminator)
+        stream.extend_from_slice(&[0u8; 4]); // box_id
+        stream.extend_from_slice(&[0x00, 0x00, 0x00, 0x05]); // private box header: size=5
+        stream.extend_from_slice(b"TEST"); // private box header: type (not SaltHash)
+
+        let mut reader = Cursor::new(&stream);
+        assert!(matches!(
+            BoxReader::read_desc_box(&mut reader, 26),
+            Err(JumbfParseError::InvalidBoxHeader)
+        ));
+    }
+
+    #[test]
+    fn desc_box_reader_rejects_jumd_private_box_bytes_left_underflow() {
+        let mut stream = Vec::new();
+        stream.extend_from_slice(&[0u8; 16]); // UUID
+        stream.push(0x17); // toggles: requestable+labeled+box_id+private
+        stream.push(0x00); // empty label (null terminator)
+        stream.extend_from_slice(&[0u8; 4]); // box_id
+        stream.extend_from_slice(&[0x00, 0x00, 0x00, 0x0c]); // private box header: size=12
+        stream.extend_from_slice(&[0x63, 0x32, 0x73, 0x68]); // private box header: type = SaltHash ("c2sh")
+
+        let mut reader = Cursor::new(&stream);
+        assert!(matches!(
+            BoxReader::read_desc_box(&mut reader, 26),
+            Err(JumbfParseError::InvalidBoxHeader)
         ));
     }
 

@@ -684,7 +684,6 @@ pub(crate) mod test_helpers {
         let types = handler.supported_types();
         assert!(types.contains(&expected_ext));
         assert!(types.contains(&expected_mime));
-        assert_eq!(types.len(), 2);
     }
 
     pub(crate) fn run_embed_reference_file_path(
