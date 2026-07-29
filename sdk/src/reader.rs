@@ -1238,7 +1238,10 @@ impl Reader {
                 }
                 for assertion in manifest.assertions.iter() {
                     // Archive bookkeeping, not part of the manifest being edited.
-                    if assertion.label().starts_with(crate::assertions::labels::ARCHIVE_METADATA) {
+                    if assertion
+                        .label()
+                        .starts_with(crate::assertions::labels::ARCHIVE_METADATA)
+                    {
                         continue;
                     }
                     builder.add_assertion(assertion.label(), assertion.value()?)?;
