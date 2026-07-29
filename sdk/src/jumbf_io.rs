@@ -100,13 +100,19 @@ pub(crate) fn is_bmff_format(asset_type: &str) -> bool {
     container_from_format(asset_type) == container_from_format("avif")
 }
 
+/// Normalizes a caller-supplied format string (extension or MIME type) into the
+/// canonical key (lower-case, whitespace padding trimmed).
+fn normalize_format(format: &str) -> String {
+    format.trim().to_lowercase()
+}
+
 /// Returns the container ID for a given format string (extension or MIME type), if known.
 ///
 /// The container ID is the first format registered by the matching I/O handler. It can be
 /// used to check whether two format strings belong to the same container family without
 /// needing a separate enum: `container_from_format("dng") == container_from_format("tif")`.
 fn container_from_format(format: &str) -> Option<&'static str> {
-    CONTAINER_MAP.get(format.to_lowercase().as_str()).copied()
+    CONTAINER_MAP.get(normalize_format(format).as_str()).copied()
 }
 
 /// Detects the [`ContainerType`] of a stream by inspecting its leading bytes.
@@ -286,19 +292,19 @@ pub(crate) fn get_assetio_handler_from_path(asset_path: &Path) -> Option<&dyn As
 }
 
 pub(crate) fn get_assetio_handler(ext: &str) -> Option<&dyn AssetIO> {
-    let ext = ext.to_lowercase();
+    let ext = normalize_format(ext);
 
     CAI_READERS.get(&ext).map(|h| h.as_ref())
 }
 
 pub(crate) fn get_cailoader_handler(asset_type: &str) -> Option<&dyn CAIReader> {
-    let asset_type = asset_type.to_lowercase();
+    let asset_type = normalize_format(asset_type);
 
     CAI_READERS.get(&asset_type).map(|h| h.get_reader())
 }
 
 pub(crate) fn get_caiwriter_handler(asset_type: &str) -> Option<&dyn CAIWriter> {
-    let asset_type = asset_type.to_lowercase();
+    let asset_type = normalize_format(asset_type);
 
     CAI_WRITERS.get(&asset_type).map(|h| h.as_ref())
 }
@@ -584,6 +590,19 @@ pub mod tests {
                 assert!(get_caiwriter_handler(tiff_type).is_none());
             }
         }
+    }
+
+    /// Padded format strings (e.g. from an FFI boundary) must resolve to the
+    /// same handler as the unpadded form for reads, writes, and container lookup.
+    #[test]
+    fn test_handlers_trim_padded_format() {
+        assert!(get_cailoader_handler("  image/jpeg  ").is_some());
+        assert!(get_caiwriter_handler("\timage/jpeg\n").is_some());
+        assert!(get_assetio_handler("  image/png  ").is_some());
+        assert_eq!(
+            container_from_format("  image/jpeg  "),
+            container_from_format("image/jpeg")
+        );
     }
 
     #[test]
