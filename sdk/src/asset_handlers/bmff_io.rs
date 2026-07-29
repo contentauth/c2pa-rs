@@ -2893,17 +2893,21 @@ impl SampleTrack {
             return Err(Error::InvalidAsset("BMFF has no stsc entries".to_string()));
         }
 
+        // The runs are ordered by `first_sample`, so the governing run is the
+        // last one whose `first_sample <= sample_id`. Tracking the running match
+        // (rather than indexing `i - 1`/`len - 1`) keeps this free of any
+        // subtraction that could underflow.
+        let mut governing = None;
         for (i, run) in self.stsc.iter().enumerate() {
-            if sample_id < run.first_sample {
-                return if i == 0 {
-                    Err(Error::InvalidAsset("BMFF no sample not found".to_string()))
-                } else {
-                    Ok(i - 1)
-                };
+            if run.first_sample <= sample_id {
+                governing = Some(i);
+            } else {
+                break;
             }
         }
 
-        Ok(self.stsc.len() - 1)
+        governing
+            .ok_or_else(|| Error::InvalidAsset("BMFF sample precedes first stsc entry".to_string()))
     }
 
     /// Returns the size in bytes of `sample_id` (1-based).
@@ -3031,6 +3035,16 @@ impl BmffSampleReader {
                 let (name, content_start, box_end) = read_child(reader, pos, moov_end)?;
                 if name == BoxType::TrakBox {
                     if let Some(track) = parse_trak(reader, content_start, box_end)? {
+                        // A track cannot contain more samples than the stream has
+                        // bytes. This bounds the `stsz` sample_count (which the
+                        // fixed-size branch does not otherwise cap) so a crafted
+                        // value cannot drive an enormous sample-iteration loop.
+                        if track.sample_count as u64 > stream_len {
+                            return Err(Error::InvalidAsset(
+                                "BMFF stsz sample count exceeds stream length".to_string(),
+                            ));
+                        }
+
                         tracks.insert(track.track_id, track);
                     }
                 }
@@ -3104,8 +3118,15 @@ fn find_box<R: Read + Seek + ?Sized>(
 }
 
 /// Parses a `trak` box (children in `[start, end)`) into a [`SampleTrack`].
-/// Returns `Ok(None)` if the track lacks the sample tables required to read
-/// samples.
+///
+/// The `Ok(None)` vs `Err` distinction is deliberate: `Ok(None)` means this trak
+/// is not a readable sample track (a required box such as `tkhd`/`mdia`/`minf`/
+/// `stbl`/`stsc`/`stsz` or a chunk-offset table is simply absent), so it is
+/// skipped rather than failing the whole parse — real files carry hint/metadata
+/// tracks without full sample tables. A box that is *present but malformed*
+/// yields `Err` from the corresponding `parse_*` helper. A caller that needs a
+/// specific track therefore sees a missing one as "not found" (its `local_id`
+/// won't be in the map) and a corrupt one as a hard error.
 fn parse_trak<R: Read + Seek + ?Sized>(
     reader: &mut R,
     start: u64,
@@ -3196,6 +3217,14 @@ fn bounded_entry_count(
     end: u64,
     entry_size: u64,
 ) -> Result<usize> {
+    // Callers pass a fixed, non-zero entry size, but guard the division anyway so
+    // this helper can never divide by zero.
+    if entry_size == 0 {
+        return Err(Error::InvalidAsset(
+            "BMFF sample-table entry size must be non-zero".to_string(),
+        ));
+    }
+
     let available = end.saturating_sub(entries_start);
     let max_entries = available / entry_size;
 
@@ -3686,5 +3715,46 @@ pub mod tests {
         let mut cursor = Cursor::new(Vec::<u8>::new());
         let big_neg: i64 = (i32::MIN as i64) - 1;
         adjust_known_offsets(&mut cursor, &arena, &map, big_neg).unwrap();
+    }
+
+    /// The native sample reader must parse our real MP4/MOV fixtures (which carry
+    /// full sample tables, multiple tracks, and codec sample entries) and read a
+    /// sample, so the parser's strict bounds don't reject legitimate assets.
+    #[test]
+    fn native_reader_parses_real_assets() {
+        for name in ["video1.mp4", "c.mov", "BigBuckBunny_320x180.mp4"] {
+            let bytes = std::fs::read(fixture_path(name))
+                .unwrap_or_else(|e| panic!("cannot read fixture {name}: {e}"));
+            let mut reader = Cursor::new(bytes);
+
+            let media = BmffSampleReader::from_stream(&mut reader)
+                .unwrap_or_else(|e| panic!("native reader failed to parse {name}: {e}"));
+            assert!(
+                !media.tracks().is_empty(),
+                "{name} should expose at least one track"
+            );
+
+            // Read sample 1 of the first track that has samples; it must succeed
+            // and return non-empty bytes.
+            let mut read_any = false;
+            for (track_id, track) in media.tracks() {
+                if track.sample_count() > 0 {
+                    let sample = media
+                        .read_sample(&mut reader, *track_id, 1)
+                        .unwrap_or_else(|e| panic!("{name} read_sample failed: {e}"))
+                        .unwrap_or_else(|| panic!("{name} track {track_id} sample 1 missing"));
+                    assert!(!sample.is_empty(), "{name} sample 1 should be non-empty");
+                    read_any = true;
+                    break;
+                }
+            }
+            assert!(read_any, "{name} should have a track with samples");
+        }
+    }
+
+    /// A zero entry size must not divide-by-zero; it is rejected instead.
+    #[test]
+    fn bounded_entry_count_rejects_zero_entry_size() {
+        assert!(bounded_entry_count(1, 0, 100, 0).is_err());
     }
 }

@@ -1023,3 +1023,42 @@ fn oversized_stco_entry_count_is_rejected() {
         "expected a clean rejection, got: {err:?}"
     );
 }
+
+/// A fixed-size `stsz` declaring more samples than the stream has bytes must be
+/// rejected at parse time, so a crafted `sample_count` cannot drive an enormous
+/// sample-iteration loop (the fixed-size branch doesn't otherwise bound it).
+#[test]
+fn oversized_stsz_sample_count_is_rejected() {
+    let track = TrackSpec {
+        track_id: 1,
+        stsc: vec![StscEntry {
+            first_chunk: 1,
+            samples_per_chunk: 1,
+            sample_description_index: 1,
+        }],
+        sample_sizes: SampleSizes::Fixed(4),
+        use_co64: false,
+    };
+    let (mut file, roots) = build_single_track_asset(track, &[b"data"]);
+
+    // Overwrite the stsz sample_count (second u32 of the fixed-size stsz body)
+    // with a value far larger than the file.
+    let pos = file
+        .windows(4)
+        .position(|w| w == b"stsz")
+        .expect("stsz box present");
+    // fourcc -> version/flags(4) -> sample_size(4) -> sample_count(4)
+    let sc = pos + 4 + 4 + 4;
+    file[sc..sc + 4].copy_from_slice(&0xffff_ffffu32.to_be_bytes());
+
+    let bmff_hash = track_merkle_assertion(1, &roots);
+    let mut reader = Cursor::new(file);
+    let err = bmff_hash
+        .verify_stream_hash(&mut reader, Some("sha256"))
+        .expect_err("an oversized stsz sample_count must be rejected");
+    // Rejected during parse ("Could not parse BMFF" wraps the reader error).
+    assert!(
+        matches!(err, c2pa::Error::InvalidAsset(_)),
+        "expected a clean parse rejection, got: {err:?}"
+    );
+}

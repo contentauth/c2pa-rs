@@ -14,7 +14,7 @@
 use std::{
     collections::{hash_map::Entry::Vacant, BTreeMap, HashMap},
     fmt,
-    io::{Cursor, Read, Seek},
+    io::{BufReader, Cursor, Read, Seek},
     ops::Deref,
 };
 
@@ -1403,7 +1403,11 @@ impl BmffHash {
                 let track_to_bmff_merkle_map = self.split_bmff_merkle_map(bmff_merkle.clone())?;
 
                 reader.rewind()?;
-                let media = BmffSampleReader::from_stream(reader)
+                // Buffer the reader so the many small header/table reads during
+                // parsing (and the per-sample reads below) don't each hit the
+                // underlying stream, matching the previous reader's behavior.
+                let mut buf_reader = BufReader::new(reader);
+                let media = BmffSampleReader::from_stream(&mut buf_reader)
                     .map_err(|_e| Error::InvalidAsset("Could not parse BMFF".to_string()))?;
                 let track_count = media.tracks().len();
 
@@ -1470,7 +1474,7 @@ impl BmffHash {
                                 e.insert(hasher_enum);
                             }
 
-                            match media.read_sample(reader, track_id, sample_id) {
+                            match media.read_sample(&mut buf_reader, track_id, sample_id) {
                                 Ok(Some(sample)) => {
                                     let h = chunk_hash_map.get_mut(&chunk_id).ok_or(
                                         Error::HashMismatch(
