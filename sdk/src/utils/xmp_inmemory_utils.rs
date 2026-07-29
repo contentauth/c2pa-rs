@@ -296,19 +296,21 @@ fn remove_xmp_key(xmp: &str, key: &str) -> Result<String> {
 
 // Test-only call counter so tests can assert `remove_provenance` was (or wasn't) invoked,
 // e.g. to verify callers skip the XMP rewrite entirely when there's no stale provenance to
-// clear. Thread-local because cargo runs each test on its own thread, so counts don't leak
-// across tests even when run in parallel.
+// clear. A plain (non-thread-local) counter -- callers must hold `REMOVE_PROVENANCE_CALLS_LOCK`
+// for the reset/exercise/assert sequence so concurrently-running tests don't interleave.
 #[cfg(test)]
-thread_local! {
-    pub(crate) static REMOVE_PROVENANCE_CALLS: std::cell::Cell<usize> = std::cell::Cell::new(0);
-}
+pub(crate) static REMOVE_PROVENANCE_CALLS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+pub(crate) static REMOVE_PROVENANCE_CALLS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Remove the dc:provenance value from xmp, if present. This is used to clear a stale
 /// remote-manifest reference left over from a previous signing when re-signing an asset
 /// without a new remote manifest. No-op if the key isn't present.
 pub fn remove_provenance(xmp: &str) -> Result<String> {
     #[cfg(test)]
-    REMOVE_PROVENANCE_CALLS.with(|c| c.set(c.get() + 1));
+    REMOVE_PROVENANCE_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
     remove_xmp_key(xmp, "dcterms:provenance")
 }

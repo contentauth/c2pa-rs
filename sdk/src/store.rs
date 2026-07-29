@@ -7671,7 +7671,15 @@ pub mod tests {
         configure: impl FnOnce(&mut Claim),
         expect_called: bool,
     ) {
-        use crate::utils::xmp_inmemory_utils::REMOVE_PROVENANCE_CALLS;
+        use crate::utils::xmp_inmemory_utils::{
+            REMOVE_PROVENANCE_CALLS, REMOVE_PROVENANCE_CALLS_LOCK,
+        };
+
+        // Hold the lock for the whole reset/exercise/assert sequence: the counter is a plain
+        // (non-thread-local) static, so concurrently-running tests must not interleave with it.
+        let _guard = REMOVE_PROVENANCE_CALLS_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         let context = crate::context::Context::new();
         let mut store = Store::from_context(&context);
@@ -7689,7 +7697,7 @@ pub mod tests {
         let mut output_stream = std::io::Cursor::new(Vec::new());
         let signer = test_signer(SigningAlg::Ps256);
 
-        REMOVE_PROVENANCE_CALLS.with(|c| c.set(0));
+        REMOVE_PROVENANCE_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
         store
             .save_to_stream(
                 "image/png",
@@ -7699,7 +7707,7 @@ pub mod tests {
                 &context,
             )
             .unwrap();
-        let calls = REMOVE_PROVENANCE_CALLS.with(|c| c.get());
+        let calls = REMOVE_PROVENANCE_CALLS.load(std::sync::atomic::Ordering::SeqCst);
 
         if expect_called {
             assert_eq!(
@@ -7735,7 +7743,11 @@ pub mod tests {
     fn test_remove_provenance_not_called_embed_with_remote_without_prior_provenance() {
         assert_remove_provenance_called(
             false,
-            |claim| claim.set_embed_remote_manifest("http://my_remote_url").unwrap(),
+            |claim| {
+                claim
+                    .set_embed_remote_manifest("http://my_remote_url")
+                    .unwrap()
+            },
             false,
         );
     }
@@ -7744,7 +7756,11 @@ pub mod tests {
     fn test_remove_provenance_not_called_embed_with_remote_with_prior_provenance() {
         assert_remove_provenance_called(
             true,
-            |claim| claim.set_embed_remote_manifest("http://my_remote_url").unwrap(),
+            |claim| {
+                claim
+                    .set_embed_remote_manifest("http://my_remote_url")
+                    .unwrap()
+            },
             false,
         );
     }

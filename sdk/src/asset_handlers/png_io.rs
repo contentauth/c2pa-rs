@@ -970,11 +970,9 @@ pub mod tests {
 
         with_provenance_stream.rewind().unwrap();
         let xmp = png_io.read_xmp(&mut with_provenance_stream).unwrap();
-        assert!(
-            crate::utils::xmp_inmemory_utils::extract_provenance(&xmp)
-                .unwrap()
-                .contains("stale-manifest")
-        );
+        assert!(crate::utils::xmp_inmemory_utils::extract_provenance(&xmp)
+            .unwrap()
+            .contains("stale-manifest"));
 
         // re-sign without a remote manifest: the stale provenance must be cleared
         let cleared = temp_dir_path(&temp_dir, "cleared.png");
@@ -1169,6 +1167,31 @@ pub mod tests {
         }
     }
 
+    // `Read + Seek` wrapper that counts how many times it's rewound to the start.
+    // Used to pin the "asset is touched only once per pass" contract of
+    // `remove_cai_store_and_reference_from_stream` -- see
+    // https://github.com/contentauth/c2pa-rs/issues/1532. `CAIRead` is blanket-implemented
+    // for any `Read + Seek + MaybeSend` type, so no manual `CAIRead` impl is needed here.
+    struct RewindCountingStream {
+        inner: Cursor<Vec<u8>>,
+        rewinds: usize,
+    }
+
+    impl std::io::Read for RewindCountingStream {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.inner.read(buf)
+        }
+    }
+
+    impl std::io::Seek for RewindCountingStream {
+        fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+            if pos == SeekFrom::Start(0) {
+                self.rewinds += 1;
+            }
+            self.inner.seek(pos)
+        }
+    }
+
     #[test]
     fn test_remove_cai_store_and_reference_from_stream() {
         use crate::utils::xmp_inmemory_utils::extract_provenance;
@@ -1213,14 +1236,32 @@ pub mod tests {
         // remove_reference = true: both the CAI store and the stale XMP provenance are
         // cleared in a single pass
         let mut output_with_reference = Cursor::new(Vec::new());
-        with_stale_provenance.set_position(0);
+        let mut counting_input = RewindCountingStream {
+            inner: Cursor::new(with_stale_provenance.get_ref().clone()),
+            rewinds: 0,
+        };
         png_writer
             .remove_cai_store_and_reference_from_stream(
-                &mut with_stale_provenance,
+                &mut counting_input,
                 &mut output_with_reference,
                 true,
             )
             .unwrap();
+
+        // Regression guard for https://github.com/contentauth/c2pa-rs/issues/1532: the old
+        // implementation called separate `remove_cai_store_from_stream` +
+        // `remove_reference_to_stream` methods, each independently rewinding and re-scanning
+        // the asset. The combined method rewinds the input 4 times: once inside
+        // `get_png_chunk_positions`'s chunk-position scan, once explicitly before the patch
+        // pass, and twice more inside `patch_stream_multi` (its own leading rewind, plus
+        // `stream_len`'s position-restore seek back to 0). More than that means an extra
+        // scan/copy pass crept back in.
+        assert!(
+            counting_input.rewinds <= 4,
+            "expected at most 4 rewinds (chunk-position scan + patch pass, including its \
+             internal stream_len position restore), got {}",
+            counting_input.rewinds
+        );
 
         match png_io.get_reader().read_cai(&mut output_with_reference) {
             Err(Error::JumbfNotFound) => (),
