@@ -267,49 +267,29 @@ pub struct CawgTrust {
 
 impl Default for CawgTrust {
     fn default() -> Self {
-        // load test config store for unit tests
-        #[cfg(test)]
-        {
-            let mut trust = Self {
-                verify_trust_list: true,
-                user_anchors: None,
-                trust_anchors: None,
-                trust_config: None,
-                allowed_list: None,
-                // Trust the ICA issuer DIDs used by the bundled CAWG test
-                // fixtures so the existing ICA validation tests continue to
-                // produce `cawg.ica.credential_valid`.
-                trusted_ica_issuers: Some(vec![
-                    "did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9".to_string(),
-                    "did:web:connected-identities.identity-stage.adobe.com".to_string(),
-                ]),
-            };
-
-            trust.trust_config = Some(
-                String::from_utf8_lossy(include_bytes!(
-                    "../../tests/fixtures/certs/trust/store.cfg"
-                ))
-                .into_owned(),
-            );
-            trust.user_anchors = Some(
-                String::from_utf8_lossy(include_bytes!(
-                    "../../tests/fixtures/certs/trust/test_cert_root_bundle.pem"
-                ))
-                .into_owned(),
-            );
-
-            trust
-        }
-        #[cfg(not(test))]
-        {
-            Self {
-                verify_trust_list: true,
-                user_anchors: None,
-                trust_anchors: None,
-                trust_config: None,
-                allowed_list: None,
-                trusted_ica_issuers: None,
-            }
+        Self {
+            verify_trust_list: true,
+            // The X.509 trust lists are empty by default, exactly as in
+            // production. The CAWG X.509 unit tests validate against
+            // `CertificateTrustPolicy::default()`, which already bundles the
+            // test credential suite, so no trust fixtures need to be seeded
+            // here (and none of the bundled C2PA trust fixtures belong on the
+            // CAWG trust configuration).
+            user_anchors: None,
+            trust_anchors: None,
+            trust_config: None,
+            allowed_list: None,
+            // In unit tests, trust the ICA issuer DIDs used by the bundled CAWG
+            // ICA fixtures so the existing ICA validation tests continue to
+            // produce `cawg.ica.credential_valid`. In production the allow-list
+            // is empty (no ICA issuer is trusted unless explicitly configured).
+            #[cfg(test)]
+            trusted_ica_issuers: Some(vec![
+                "did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9".to_string(),
+                "did:web:connected-identities.identity-stage.adobe.com".to_string(),
+            ]),
+            #[cfg(not(test))]
+            trusted_ica_issuers: None,
         }
     }
 }
