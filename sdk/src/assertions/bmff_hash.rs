@@ -1470,20 +1470,31 @@ impl BmffHash {
                                 e.insert(hasher_enum);
                             }
 
-                            if let Ok(Some(sample)) =
-                                &media.read_sample(reader, track_id, sample_id)
-                            {
-                                let h = chunk_hash_map.get_mut(&chunk_id).ok_or(
-                                    Error::HashMismatch(
-                                        "Bad Merkle tree sample mapping".to_string(),
-                                    ),
-                                )?;
-                                // add sample data to hash
-                                h.update(sample);
-                            } else {
-                                return Err(Error::HashMismatch(
-                                    "Merle location not found".to_owned(),
-                                ));
+                            match media.read_sample(reader, track_id, sample_id) {
+                                Ok(Some(sample)) => {
+                                    let h = chunk_hash_map.get_mut(&chunk_id).ok_or(
+                                        Error::HashMismatch(
+                                            "Bad Merkle tree sample mapping".to_string(),
+                                        ),
+                                    )?;
+                                    // add sample data to hash
+                                    h.update(&sample);
+                                }
+                                // The sample's tables place it outside the asset:
+                                // a genuine Merkle location miss.
+                                Ok(None) => {
+                                    return Err(Error::HashMismatch(
+                                        "Merkle location not found".to_owned(),
+                                    ));
+                                }
+                                // A read/parse failure is distinct from a missing
+                                // sample and is reported as a malformed asset rather
+                                // than masqueraded as a location miss.
+                                Err(e) => {
+                                    return Err(Error::InvalidAsset(format!(
+                                        "BMFF sample read failed: {e}"
+                                    )));
+                                }
                             }
                         }
 
@@ -1521,6 +1532,13 @@ impl BmffHash {
                                 return Err(Error::HashMismatch("Fragment not valid".to_string()));
                             }
                         }
+                    } else {
+                        // A timed-media Merkle map can only be verified against a
+                        // track. A moov that carries Merkle boxes but exposes no
+                        // readable track must fail rather than silently pass.
+                        return Err(Error::HashMismatch(
+                            "BMFF has no tracks for timed-media Merkle verification".to_owned(),
+                        ));
                     }
                 }
             } else {

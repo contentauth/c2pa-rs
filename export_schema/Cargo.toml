@@ -8,6 +8,11 @@ rust-version = "1.88.0"
 
 [dependencies]
 anyhow = "1.0.103"
-c2pa = { workspace = true, features = ["openssl", "json_schema"] }
+c2pa = { workspace = true, features = ["json_schema"] }
 schemars = "1.2.1"
 serde_json = "1.0.150"
+
+[features]
+default = ["openssl"]
+openssl = ["c2pa/openssl"]
+rust_native_crypto = ["c2pa/rust_native_crypto"]

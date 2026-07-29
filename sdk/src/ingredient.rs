@@ -266,13 +266,13 @@ impl Ingredient {
     ///
     /// <div class="warning">
     ///
-    /// **Experimental.** This method is available only with the `experimental_builder_filter`
+    /// **Experimental.** This method is available only with the `unstable_builder_filter`
     /// feature enabled. It is exempt from this crate's usual semantic-versioning stability
     /// guarantees and may change in a backward-incompatible way, or be removed entirely, in any
     /// release.
     ///
     /// </div>
-    #[cfg(feature = "experimental_builder_filter")]
+    #[cfg(feature = "unstable_builder_filter")]
     pub fn effective_id(&self) -> String {
         self.effective_id_internal()
     }
