@@ -95,7 +95,7 @@ URI schemes in a resource reference can have the following forms:
 - `http://` - Remote URI
 - `https://` - Remote secure URI
 
-When `file_io` is enabled, and a URI is not a JUMBF reference nor a resource loaded from memory, then the library interprets the URI as a `file:///` reference.
+When `file_io` is enabled, and a URI is not a JUMBF reference nor a resource loaded from memory, then the library interprets the URI as a file path.
 
 ## Source asset versus parent asset
 
