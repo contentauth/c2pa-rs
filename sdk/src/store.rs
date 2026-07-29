@@ -3087,16 +3087,12 @@ impl Store {
                 let manifest_writer = io_handler
                     .get_writer(format)
                     .ok_or(Error::UnsupportedType)?;
-                let external_ref_writer = io_handler
-                    .remote_ref_writer_ref()
-                    .ok_or(Error::XmpNotSupported)?;
 
-                let mut tmp_stream = io_utils::stream_with_fs_fallback(threshold, input_len)?;
-                manifest_writer.remove_cai_store_from_stream(input_stream, &mut tmp_stream)?;
-
-                tmp_stream.rewind()?;
-                external_ref_writer
-                    .remove_reference_to_stream(&mut tmp_stream, &mut intermediate_stream)?;
+                manifest_writer.remove_cai_store_and_reference_from_stream(
+                    input_stream,
+                    &mut intermediate_stream,
+                    true,
+                )?;
             } else if remove_manifests {
                 let manifest_writer = io_handler
                     .get_writer(format)

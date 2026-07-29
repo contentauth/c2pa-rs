@@ -106,6 +106,44 @@ pub(crate) fn patch_stream<R: Read + Seek + ?Sized, W: Write + ?Sized>(
     Ok(())
 }
 
+// Like `patch_stream`, but applies multiple non-overlapping replacements in a single
+// linear pass over `source`. `patches` must be sorted by `start_location` and
+// non-overlapping (each region's `start_location + replace_len` must not exceed the
+// next region's `start_location`).
+#[allow(dead_code)]
+pub(crate) fn patch_stream_multi<R: Read + Seek + ?Sized, W: Write + ?Sized>(
+    mut source: &mut R,
+    dest: &mut W,
+    patches: &[(u64, u64, Vec<u8>)],
+) -> Result<()> {
+    source.rewind()?;
+    let source_len = stream_len(source)?;
+
+    let mut pos = 0u64;
+    for (start_location, replace_len, data) in patches {
+        let (start_location, replace_len) = (*start_location, *replace_len);
+
+        if start_location < pos || start_location + replace_len > source_len {
+            return Err(Error::BadParam(
+                "invalid or out-of-order patch region".into(),
+            ));
+        }
+
+        let mut before_handle = source.take(start_location - pos);
+        std::io::copy(&mut before_handle, dest)?;
+
+        dest.write_all(data)?;
+
+        source = before_handle.into_inner();
+        source.seek(SeekFrom::Start(start_location + replace_len))?;
+        pos = start_location + replace_len;
+    }
+
+    std::io::copy(source, dest)?;
+
+    Ok(())
+}
+
 // Returns length of the stream, stream position is preserved
 #[allow(dead_code)]
 pub(crate) fn stream_len<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<u64> {
@@ -398,6 +436,44 @@ mod tests {
             10,
             29,
             &[],
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_patch_stream_multi() {
+        let source = "this is a very very good test";
+
+        // no patches: passthrough
+        let mut output = Vec::new();
+        patch_stream_multi(&mut Cursor::new(source.as_bytes()), &mut output, &[]).unwrap();
+        assert_eq!(&output, source.as_bytes());
+
+        // two non-adjacent, non-overlapping patches applied in a single pass
+        let mut output = Vec::new();
+        patch_stream_multi(
+            &mut Cursor::new(source.as_bytes()),
+            &mut output,
+            &[(10, 5, Vec::new()), (20, 4, b"GOOD".to_vec())],
+        )
+        .unwrap();
+        assert_eq!(&output, "this is a very GOOD test".as_bytes());
+
+        // out-of-order/overlapping patch regions are rejected
+        let mut output = Vec::new();
+        assert!(patch_stream_multi(
+            &mut Cursor::new(source.as_bytes()),
+            &mut output,
+            &[(20, 4, Vec::new()), (10, 5, Vec::new())],
+        )
+        .is_err());
+
+        // patch region reading past the end of the stream is rejected
+        let mut output = Vec::new();
+        assert!(patch_stream_multi(
+            &mut Cursor::new(source.as_bytes()),
+            &mut output,
+            &[(10, 100, Vec::new())],
         )
         .is_err());
     }

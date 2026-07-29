@@ -139,6 +139,22 @@ pub trait CAIWriter: Sync + Send {
         input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
     ) -> Result<()>;
+
+    /// Like [`Self::remove_cai_store_from_stream`], but when `remove_reference` is
+    /// true, also clears any stale remote reference (e.g. XMP `dcterms:provenance`)
+    /// in the same pass, if this handler supports it (see
+    /// [`crate::asset_io::RemoteRefEmbed::supports_remove_reference`]). Default
+    /// implementation ignores the flag and just removes the manifest store;
+    /// override to actually honor `true`.
+    fn remove_cai_store_and_reference_from_stream(
+        &self,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        remove_reference: bool,
+    ) -> Result<()> {
+        let _ = remove_reference;
+        self.remove_cai_store_from_stream(input_stream, output_stream)
+    }
 }
 
 #[allow(dead_code)]
