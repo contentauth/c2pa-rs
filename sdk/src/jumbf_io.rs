@@ -34,6 +34,7 @@ use crate::{
     asset_io::{AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions},
     error::{Error, Result},
     maybe_send_sync::MaybeSend,
+    utils::mime::normalize_format,
 };
 
 // One prototype instance per handler family. All three lookup maps are derived from
@@ -98,12 +99,6 @@ lazy_static! {
 
 pub(crate) fn is_bmff_format(asset_type: &str) -> bool {
     container_from_format(asset_type) == container_from_format("avif")
-}
-
-/// Normalizes a format string (extension or MIME type) into
-/// a canonical key (lower-case, whitespace padding trimmed).
-fn normalize_format(format: &str) -> String {
-    format.trim().to_lowercase()
 }
 
 /// Returns the container ID for a given format string (extension or MIME type), if known.
