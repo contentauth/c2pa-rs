@@ -100,8 +100,8 @@ pub(crate) fn is_bmff_format(asset_type: &str) -> bool {
     container_from_format(asset_type) == container_from_format("avif")
 }
 
-/// Normalizes a caller-supplied format string (extension or MIME type) into the
-/// canonical key (lower-case, whitespace padding trimmed).
+/// Normalizes a format string (extension or MIME type) into
+/// a canonical key (lower-case, whitespace padding trimmed).
 fn normalize_format(format: &str) -> String {
     format.trim().to_lowercase()
 }
