@@ -1,0 +1,228 @@
+name: Promote release candidate
+
+# Promotes a baked release-candidate branch (`0.N.0-rc`) onto the `stable`
+# release line -- the deliberate, manual final step of a breaking train's bake
+# (see docs/release-process.md, "Track 2 -- The breaking train").
+#
+# WHY THIS EXISTS
+#
+# Promotion used to be a hand-run `git merge` of the RC branch into `stable`.
+# That merge carried the candidate's *prerelease* version (`0.N.0-rc.M`) onto
+# `stable`, and release-plz then aborted its `release-pr` run with:
+#
+#     local package `c2pa` has a greater version (0.90.0-rc.3) with respect to
+#     the registry package (0.89.3), but the git tag c2pa-v0.90.0-rc.3 exists.
+#
+# release-plz's guard matches a git tag against the EXACT local version, and
+# `release-rc.yml` had already created `c2pa-v0.90.0-rc.3` for the prerelease
+# binaries. So the RC tag looked to release-plz like a botched publish, and the
+# release line was stuck every train.
+#
+# Stripping `-rc.N` to the final `0.N.0` BEFORE it reaches `stable` avoids the
+# collision entirely -- release-plz then looks for `c2pa-v0.N.0`, which does not
+# exist -- WITHOUT deleting any RC tags.
+#
+# WHAT IT DOES
+#
+#   1. Snapshots the outgoing `stable` as a `v0.<old>` branch, so the retiring
+#      line stays available for backports.
+#   2. Cuts a promotion branch from the RC branch and strips `-rc.N` -> final
+#      versions (`cargo set-version`, which also fixes intra-workspace deps).
+#   3. Generates the final-version changelog with release-plz (see the changelog
+#      step for how it works around release-plz's quirks).
+#   4. Opens a PR from the promotion branch into `stable`, labeled `release`.
+#
+# Merging that PR is what publishes: the push to `stable` triggers release.yml
+# (`release-plz release`), which publishes the crates, creates the real
+# `c2pa-v0.N.0` / `c2patool-v0.M.0` tags, and drives the binary builds. Because
+# the promotion PR already carries BOTH the final versions and the changelog,
+# publishing is a reviewed, deliberate PR merge -- not a side effect of a raw
+# branch merge, and the in-repo changelog is never skipped.
+#
+# The `release` label matters twice: it exempts the PR from the upstream-first
+# check (the version bump legitimately originates on the release line), and it
+# is the label release-plz already recognizes for release PRs.
+
+permissions:
+  contents: write
+  pull-requests: write
+
+on:
+  workflow_dispatch:
+
+jobs:
+  promote:
+    name: Promote release candidate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse to run outside a release-candidate branch
+        run: |
+          # An RC branch is named `<version>-rc` (no numeric suffix). Guard
+          # against dispatching against main / stable / a v0.x line.
+          case "${{ github.ref_name }}" in
+            *-rc) echo "Promoting RC branch ${{ github.ref_name }}." ;;
+            *)
+              echo "::error::release-promote must be dispatched on a *-rc branch, not '${{ github.ref_name }}'."
+              exit 1
+              ;;
+          esac
+
+      - name: Checkout RC branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
+
+      # `cargo set-version` (cargo-edit) keeps intra-workspace dependency
+      # requirements in sync when it bumps a crate (e.g. c2patool's dep on c2pa).
+      - name: Install cargo-edit
+        uses: baptiste0928/cargo-install@f204293d9709061b7bc1756fec3ec4e2cd57dec0 # v3.4.0
+        with:
+          crate: cargo-edit
+          version: "0.13.6"
+
+      # Pin to the same release-plz the release workflows use, so the changelog
+      # this produces matches what release.yml would have written.
+      - name: Install release-plz
+        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2.82.9
+        with:
+          tool: release-plz@0.3.158
+
+      - name: Compute promotion versions
+        id: ver
+        run: |
+          set -euo pipefail
+          meta() { cargo metadata --format-version=1 --no-deps | jq -r ".packages[]|select(.name==\"$1\")|.version"; }
+
+          # Current (candidate) versions on the RC branch, e.g. 0.90.0-rc.3.
+          RC_C2PA=$(meta c2pa); RC_TOOL=$(meta c2patool)
+
+          # Final release versions: strip the `-rc.N` prerelease suffix.
+          base() { echo "${1%-rc.*}"; }
+          FIN_C2PA=$(base "$RC_C2PA"); FIN_TOOL=$(base "$RC_TOOL")
+          case "$FIN_C2PA" in *-rc*|*-dev*) echo "::error::c2pa version '$RC_C2PA' did not reduce to a clean release version (got '$FIN_C2PA')."; exit 1;; esac
+
+          # The outgoing `stable` versions == what is on crates.io (stable tracks
+          # the latest published release). We need these both to name the
+          # snapshot branch and as the baseline for changelog generation below.
+          git fetch origin stable
+          OLD_C2PA=$(git show origin/stable:Cargo.toml | sed -n 's/^version = "\(.*\)"/\1/p' | head -1)
+          OLD_TOOL=$(git show origin/stable:cli/Cargo.toml | sed -n 's/^version = "\(.*\)"/\1/p' | head -1)
+          OLD_LINE="v$(echo "$OLD_C2PA" | cut -d. -f1,2)"   # e.g. 0.89.3 -> v0.89
+
+          {
+            echo "rc_c2pa=$RC_C2PA"
+            echo "fin_c2pa=$FIN_C2PA"
+            echo "fin_tool=$FIN_TOOL"
+            echo "old_c2pa=$OLD_C2PA"
+            echo "old_tool=$OLD_TOOL"
+            echo "old_line=$OLD_LINE"
+            echo "promote_branch=promote/${FIN_C2PA}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Promoting ${{ github.ref_name }} ($RC_C2PA) -> stable as c2pa $FIN_C2PA / c2patool $FIN_TOOL."
+          echo "Outgoing stable line $OLD_LINE (c2pa $OLD_C2PA / c2patool $OLD_TOOL)."
+
+      - name: Snapshot outgoing stable line
+        run: |
+          set -euo pipefail
+          LINE="${{ steps.ver.outputs.old_line }}"
+          if git ls-remote --exit-code --heads origin "$LINE" >/dev/null 2>&1; then
+            echo "Snapshot branch $LINE already exists; leaving it as-is."
+          else
+            # Point the retiring line at the current tip of stable so critical
+            # backports to the old release can still target it.
+            git push origin "refs/remotes/origin/stable:refs/heads/$LINE"
+            echo "Created snapshot branch $LINE from stable."
+          fi
+
+      - name: Strip -rc suffix to final versions
+        run: |
+          set -euo pipefail
+          # `-p c2pa` also moves c2pa-c-ffi, which shares the workspace version.
+          cargo set-version -p c2pa "${{ steps.ver.outputs.fin_c2pa }}"
+          cargo set-version -p c2patool "${{ steps.ver.outputs.fin_tool }}"
+
+      - name: Generate final-version changelog
+        run: |
+          set -euo pipefail
+          # release-plz will not write a changelog for a version that is already
+          # manually set ahead of the registry ("the local package has already a
+          # different version ... will not update it"), and it baselines the
+          # changelog against the highest matching git tag -- which would be a
+          # prerelease build tag (`c2pa-v0.N.0-rc.M`), truncating the range to
+          # just the bake bugfixes. Work around both, non-destructively:
+          #
+          #   a) Delete the `-rc.N` tags from THIS ephemeral checkout only. They
+          #      are never pushed, so the remote tags (and their binary GitHub
+          #      releases) are untouched. release-plz then baselines against the
+          #      last real release tag and covers the whole train.
+          #   b) Put the versions back to the last published release so
+          #      release-plz will run, generate the changelog, and compute a
+          #      bump; then restore the final (forced) versions afterward.
+          git tag -l '*-rc.*' | xargs -r git tag -d
+
+          # Record each changelog's current top version so we can later tell
+          # whether release-plz added a new section (robust even when a crate's
+          # changelog is behind its published version, e.g. c2pa-c-ffi).
+          pretop() { grep -oE '^## \[[^]]+\]' "$1" | sed -n '2s/^## \[\(.*\)\]$/\1/p'; }
+          PRE_C2PA=$(pretop CHANGELOG.md)
+          PRE_FFI=$(pretop c2pa_c_ffi/CHANGELOG.md)
+          PRE_TOOL=$(pretop cli/CHANGELOG.md)
+
+          cargo set-version -p c2pa "${{ steps.ver.outputs.old_c2pa }}"
+          cargo set-version -p c2patool "${{ steps.ver.outputs.old_tool }}"
+
+          release-plz update --repo-url "https://github.com/${GITHUB_REPOSITORY}"
+
+          # Restore the forced final versions (release-plz's computed numbers do
+          # not know the train's forced-minor / lockstep policy).
+          cargo set-version -p c2pa "${{ steps.ver.outputs.fin_c2pa }}"
+          cargo set-version -p c2patool "${{ steps.ver.outputs.fin_tool }}"
+
+          # Normalize each published crate's newest changelog section so its
+          # header version matches the forced final version (rewriting the
+          # header release-plz just wrote, or inserting a header-only section if
+          # release-plz found nothing releasable for that crate).
+          python3 .github/scripts/normalize_promotion_changelog.py \
+            "CHANGELOG.md:c2pa:${{ steps.ver.outputs.old_c2pa }}:${{ steps.ver.outputs.fin_c2pa }}:${PRE_C2PA}" \
+            "c2pa_c_ffi/CHANGELOG.md:c2pa-c-ffi:${{ steps.ver.outputs.old_c2pa }}:${{ steps.ver.outputs.fin_c2pa }}:${PRE_FFI}" \
+            "cli/CHANGELOG.md:c2patool:${{ steps.ver.outputs.old_tool }}:${{ steps.ver.outputs.fin_tool }}:${PRE_TOOL}"
+
+      - name: Open promotion pull request
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+        run: |
+          set -euo pipefail
+          BRANCH="${{ steps.ver.outputs.promote_branch }}"
+          FIN_C2PA="${{ steps.ver.outputs.fin_c2pa }}"
+          FIN_TOOL="${{ steps.ver.outputs.fin_tool }}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git commit -am "chore: promote ${{ github.ref_name }} to c2pa ${FIN_C2PA} / c2patool ${FIN_TOOL}"
+          git push -f origin "$BRANCH"
+
+          gh pr create \
+            --base stable \
+            --head "$BRANCH" \
+            --label release \
+            --title "chore: release c2pa ${FIN_C2PA} / c2patool ${FIN_TOOL}" \
+            --body "$(cat <<EOF
+          Promotion of release-candidate branch \`${{ github.ref_name }}\` (candidate \`${{ steps.ver.outputs.rc_c2pa }}\`) onto \`stable\`.
+
+          - Versions stripped to the final **c2pa ${FIN_C2PA}** / **c2patool ${FIN_TOOL}** (c2pa-c-ffi shares the c2pa version).
+          - Changelog generated by release-plz for this release.
+          - Outgoing \`stable\` snapshotted as \`${{ steps.ver.outputs.old_line }}\` for backports.
+
+          **Merging this PR publishes to crates.io** (via \`release.yml\`) and creates the \`c2pa-v${FIN_C2PA}\` / \`c2patool-v${FIN_TOOL}\` tags, which drive the binary builds.
+
+          Before merging, please review the generated changelog sections -- release-plz cannot know the train's forced-minor / lockstep versioning, so a crate with no commits of its own (often \`c2patool\`) gets a header-only entry that you may want to annotate.
+          EOF
+          )"
