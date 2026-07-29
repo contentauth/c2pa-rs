@@ -11,8 +11,6 @@ The callback receives the current phase, a step counter, and an optional total. 
 
 You can also request cancellation externally (from a different thread) by calling `Context::cancel()` without going through the callback at all.
 
-For the C API version of this interface, see the [C2PA C API README](../c2pa_c_ffi/README.md#progress-and-cancellation).
-
 > [!WARNING]
 > Do not use this API for time-remaining estimates. A raw step count does not reliably translate into elapsed or remaining time.
 
