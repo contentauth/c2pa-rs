@@ -112,7 +112,9 @@ fn normalize_format(format: &str) -> String {
 /// used to check whether two format strings belong to the same container family without
 /// needing a separate enum: `container_from_format("dng") == container_from_format("tif")`.
 fn container_from_format(format: &str) -> Option<&'static str> {
-    CONTAINER_MAP.get(normalize_format(format).as_str()).copied()
+    CONTAINER_MAP
+        .get(normalize_format(format).as_str())
+        .copied()
 }
 
 /// Detects the [`ContainerType`] of a stream by inspecting its leading bytes.
