@@ -405,7 +405,9 @@ pub fn instance(label: &str) -> usize {
 /// );
 /// ```
 pub fn add_thumbnail_format(label: &str, format: &str) -> String {
-    match format {
+    // mimetypes are case-insensitive (RFC 2045 section 5.1).
+    let format = format.to_lowercase();
+    match format.as_str() {
         "image/jpeg" | "jpeg" | "jpg" => format!("{label}.jpeg"),
         "image/png" | "png" => format!("{label}.png"),
         "image/svg+xml" | "svg" => format!("{label}.svg"),
@@ -423,6 +425,26 @@ pub fn add_thumbnail_format(label: &str, format: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// MIME types are case-insensitive (RFC 2045 section 5.1),
+    /// every spelling should produces the same label.
+    #[test]
+    fn test_add_thumbnail_format_case_insensitive() {
+        // (label prefix, format, expected label)
+        let cases = [
+            (CLAIM_THUMBNAIL, "image/jpeg", JPEG_CLAIM_THUMBNAIL),
+            (CLAIM_THUMBNAIL, "IMAGE/JPEG", JPEG_CLAIM_THUMBNAIL),
+            (CLAIM_THUMBNAIL, "Image/Jpeg", JPEG_CLAIM_THUMBNAIL),
+            (CLAIM_THUMBNAIL, "JPG", JPEG_CLAIM_THUMBNAIL),
+            (INGREDIENT_THUMBNAIL, "image/png", PNG_INGREDIENT_THUMBNAIL),
+            (INGREDIENT_THUMBNAIL, "IMAGE/PNG", PNG_INGREDIENT_THUMBNAIL),
+            (CLAIM_THUMBNAIL, "IMAGE/SVG+XML", SVG_CLAIM_THUMBNAIL),
+        ];
+
+        for (label, format, expected) in cases {
+            assert_eq!(add_thumbnail_format(label, format), expected);
+        }
+    }
 
     /// Regression tests for usize underflow in `parse_label` when the input
     /// is a bare version token with no base label (e.g. "v1").
