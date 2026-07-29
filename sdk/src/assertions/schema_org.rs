@@ -126,7 +126,7 @@ impl Default for SchemaDotOrg {
 impl AssertionJson for SchemaDotOrg {}
 
 impl AssertionBase for SchemaDotOrg {
-    const LABEL: &'static str = labels::SCHEMA_ORG;
+    const LABEL: &'static str = labels::SCHEMA_ORG_INTERNAL;
     const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
 
     fn to_assertion(&self) -> Result<Assertion> {
