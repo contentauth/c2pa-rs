@@ -89,7 +89,7 @@ In the final stage, the item is actually removed from the API.
 After the grace period:
 
 - **Post-1.0:** the deprecated item is removed in the next major release.
-- **Pre-1.0:** the removal is a breaking change, so it ships on the next scheduled breaking [release train](release-process.md#track-2--the-breaking-train-0x0), a bump of the middle version number (`0.x.0`). (This is the pre-1.0 analogue of "the next major release.") The same applies to an item that was only ever made public via a non-default feature/build configuration.
+- **Pre-1.0:** the removal is a breaking change, so it ships on the next scheduled breaking [release train](release-process.md#track-2-the-breaking-train), a bump of the middle version number (`0.x.0`). (This is the pre-1.0 analogue of "the next major release.") The same applies to an item that was only ever made public via a non-default feature/build configuration.
 - The full [migration guide](#migration-guides) is provided and reflects the removal as permanent.
 
 ## Language-specific deprecation annotations
