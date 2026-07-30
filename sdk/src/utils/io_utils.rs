@@ -83,27 +83,18 @@ pub(crate) fn patch_stream<R: Read + Seek + ?Sized, W: Write + ?Sized>(
     replace_len: u64,
     data: &[u8],
 ) -> Result<()> {
-    source.rewind()?;
-    let source_len = stream_len(source)?;
+    let patch = PatchItem {
+        start: start_location,
+        len: replace_len,
+        bytes: data,
+    };
+    patch_stream_multi(source, dest, &[patch])
+}
 
-    if start_location + replace_len > source_len {
-        return Err(Error::BadParam("read past end of source stream".into()));
-    }
-
-    let mut before_handle = source.take(start_location);
-
-    // copy data before start location
-    std::io::copy(&mut before_handle, dest)?;
-
-    // write out new data
-    dest.write_all(data)?;
-
-    // write out the rest of the source skipping the bytes we wanted to replace
-    let source = before_handle.into_inner();
-    source.seek(SeekFrom::Start(start_location + replace_len))?;
-    std::io::copy(source, dest)?;
-
-    Ok(())
+pub(crate) struct PatchItem<'a> {
+    pub start: u64,
+    pub len: u64,
+    pub bytes: &'a [u8],
 }
 
 // Like `patch_stream`, but applies multiple non-overlapping replacements in a single
@@ -114,14 +105,14 @@ pub(crate) fn patch_stream<R: Read + Seek + ?Sized, W: Write + ?Sized>(
 pub(crate) fn patch_stream_multi<R: Read + Seek + ?Sized, W: Write + ?Sized>(
     mut source: &mut R,
     dest: &mut W,
-    patches: &[(u64, u64, Vec<u8>)],
+    patches: &[PatchItem],
 ) -> Result<()> {
     source.rewind()?;
     let source_len = stream_len(source)?;
 
     let mut pos = 0u64;
-    for (start_location, replace_len, data) in patches {
-        let (start_location, replace_len) = (*start_location, *replace_len);
+    for patch in patches {
+        let (start_location, replace_len) = (patch.start, patch.len);
 
         if start_location < pos || start_location + replace_len > source_len {
             return Err(Error::BadParam(
@@ -132,7 +123,7 @@ pub(crate) fn patch_stream_multi<R: Read + Seek + ?Sized, W: Write + ?Sized>(
         let mut before_handle = source.take(start_location - pos);
         std::io::copy(&mut before_handle, dest)?;
 
-        dest.write_all(data)?;
+        dest.write_all(patch.bytes)?;
 
         source = before_handle.into_inner();
         source.seek(SeekFrom::Start(start_location + replace_len))?;
@@ -451,30 +442,90 @@ mod tests {
 
         // two non-adjacent, non-overlapping patches applied in a single pass
         let mut output = Vec::new();
+        let empty = Vec::new();
+        let good = b"GOOD".to_vec();
         patch_stream_multi(
             &mut Cursor::new(source.as_bytes()),
             &mut output,
-            &[(10, 5, Vec::new()), (20, 4, b"GOOD".to_vec())],
+            &[
+                PatchItem {
+                    start: 10,
+                    len: 5,
+                    bytes: &empty,
+                },
+                PatchItem {
+                    start: 20,
+                    len: 4,
+                    bytes: &good,
+                },
+            ],
         )
         .unwrap();
         assert_eq!(&output, "this is a very GOOD test".as_bytes());
 
-        // out-of-order/overlapping patch regions are rejected
+        // out-of-order patch regions are rejected
         let mut output = Vec::new();
-        assert!(patch_stream_multi(
+        let empty = Vec::new();
+        let err = patch_stream_multi(
             &mut Cursor::new(source.as_bytes()),
             &mut output,
-            &[(20, 4, Vec::new()), (10, 5, Vec::new())],
+            &[
+                PatchItem {
+                    start: 20,
+                    len: 4,
+                    bytes: &empty,
+                },
+                PatchItem {
+                    start: 10,
+                    len: 5,
+                    bytes: &empty,
+                },
+            ],
         )
-        .is_err());
+        .unwrap_err();
+        assert!(
+            matches!(err, Error::BadParam(ref msg) if msg == "invalid or out-of-order patch region")
+        );
+
+        // sorted but overlapping patch regions are rejected
+        let mut output = Vec::new();
+        let empty = Vec::new();
+        let err = patch_stream_multi(
+            &mut Cursor::new(source.as_bytes()),
+            &mut output,
+            &[
+                PatchItem {
+                    start: 10,
+                    len: 5,
+                    bytes: &empty,
+                },
+                PatchItem {
+                    start: 12,
+                    len: 4,
+                    bytes: &empty,
+                },
+            ],
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, Error::BadParam(ref msg) if msg == "invalid or out-of-order patch region")
+        );
 
         // patch region reading past the end of the stream is rejected
         let mut output = Vec::new();
-        assert!(patch_stream_multi(
+        let empty = Vec::new();
+        let err = patch_stream_multi(
             &mut Cursor::new(source.as_bytes()),
             &mut output,
-            &[(10, 100, Vec::new())],
+            &[PatchItem {
+                start: 10,
+                len: 100,
+                bytes: &empty,
+            }],
         )
-        .is_err());
+        .unwrap_err();
+        assert!(
+            matches!(err, Error::BadParam(ref msg) if msg == "invalid or out-of-order patch region")
+        );
     }
 }

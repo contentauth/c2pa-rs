@@ -12,6 +12,7 @@
 // each license.
 
 use std::{
+    cmp::Ordering::{Equal, Greater, Less},
     fs::File,
     io::{self, Cursor, Read, Seek, SeekFrom},
     path::Path,
@@ -30,7 +31,7 @@ use crate::{
     },
     error::{Error, Result},
     utils::{
-        io_utils::{patch_stream, patch_stream_multi, tempfile_builder, ReaderUtils},
+        io_utils::{patch_stream, patch_stream_multi, tempfile_builder, PatchItem, ReaderUtils},
         xmp_inmemory_utils::{add_provenance, extract_provenance, remove_provenance, MIN_XMP},
     },
 };
@@ -361,21 +362,37 @@ impl CAIWriter for PngIO {
         let cai_region = ps
             .iter()
             .find(|pcp| pcp.name == CAI_CHUNK)
-            .map(|c2pa| (c2pa.start, c2pa.end() - c2pa.start, Vec::new()));
+            .map(|c2pa| (c2pa.start, c2pa.end() - c2pa.start));
+
+        let empty_bytes: Vec<u8> = Vec::new();
 
         let mut xmp_region = None;
+        let mut xmp_bytes: Vec<u8> = Vec::new();
         if remove_reference {
             if let Some((pcp, xmp)) = find_xmp_chunk(input_stream, &ps) {
                 if extract_provenance(&xmp).is_some() {
                     let updated_xmp = remove_provenance(&xmp)?;
-                    let chunk_bytes = encode_xmp_chunk(&updated_xmp)?;
-                    xmp_region = Some((pcp.start, pcp.end() - pcp.start, chunk_bytes));
+                    xmp_bytes = encode_xmp_chunk(&updated_xmp)?;
+                    xmp_region = Some((pcp.start, pcp.end() - pcp.start));
                 }
             }
         }
 
-        let mut patches: Vec<(u64, u64, Vec<u8>)> =
-            [cai_region, xmp_region].into_iter().flatten().collect();
+        let mut patches: Vec<PatchItem> = Vec::new();
+        if let Some((start, len)) = cai_region {
+            patches.push(PatchItem {
+                start,
+                len,
+                bytes: &empty_bytes,
+            });
+        }
+        if let Some((start, len)) = xmp_region {
+            patches.push(PatchItem {
+                start,
+                len,
+                bytes: &xmp_bytes,
+            });
+        }
 
         input_stream.rewind()?;
         output_stream.rewind()?;
@@ -386,7 +403,17 @@ impl CAIWriter for PngIO {
         }
 
         // regions can appear in either order in the file (CAI before or after XMP)
-        patches.sort_by_key(|(start, _, _)| *start);
+        patches.sort_by(
+            |patch1: &PatchItem, patch2: &PatchItem| {
+                if patch1.start > patch2.start {
+                    Greater
+                } else if patch1.start == patch2.start {
+                    Equal
+                } else {
+                    Less
+                }
+            },
+        );
 
         patch_stream_multi(input_stream, output_stream, &patches)
     }
