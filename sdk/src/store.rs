@@ -1264,9 +1264,12 @@ impl Store {
             let cai_store_box = store_box.super_box();
             let cai_store_desc_box = cai_store_box.desc_box();
 
-            // ignore unknown boxes per the spec
+            // ignore unknown boxes per the spec. A c2md manifest is a standard
+            // manifest that consumers shall accept (C2PA spec 11.2.2), so it is
+            // read the same as a c2ma manifest.
             if cai_store_desc_box.uuid() != CAI_UPDATE_MANIFEST_UUID
                 && cai_store_desc_box.uuid() != CAI_MANIFEST_UUID
+                && cai_store_desc_box.uuid() != CAI_MANIFEST_C2MD_UUID
             {
                 continue;
             }
@@ -5825,6 +5828,39 @@ pub mod tests {
         );
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_from_jumbf_reads_c2md_standard_manifest() {
+        use crate::{
+            jumbf::boxes::{CAI_MANIFEST_C2MD_UUID, CAI_MANIFEST_UUID},
+            utils::test::create_test_store,
+        };
+
+        // Per C2PA spec 11.2.2, a manifest using the c2md JUMBF type UUID is a
+        // standard manifest that consumers shall accept. Build a normal (c2ma)
+        // manifest, rewrite its superbox type UUID to c2md, and confirm the
+        // store still reads the manifest instead of silently skipping it.
+        let store = create_test_store().unwrap();
+        let jumbf = store.to_jumbf_internal(0).unwrap();
+
+        // Flip the manifest superbox type UUID from c2ma to c2md in place.
+        let c2ma = hex::decode(CAI_MANIFEST_UUID).unwrap();
+        let c2md = hex::decode(CAI_MANIFEST_C2MD_UUID).unwrap();
+        let pos = jumbf
+            .windows(c2ma.len())
+            .position(|w| w == c2ma.as_slice())
+            .expect("manifest c2ma UUID present");
+        let mut patched = jumbf.clone();
+        patched[pos..pos + c2md.len()].copy_from_slice(&c2md);
+
+        let mut log = StatusTracker::default();
+        let restored = Store::from_jumbf(&patched, &mut log).expect("c2md manifest should be read");
+        assert_eq!(
+            restored.claims().len(),
+            store.claims().len(),
+            "c2md manifest should be read as a standard manifest"
+        );
     }
 
     #[test]
