@@ -170,4 +170,4 @@ A redaction URI can target any manifest in an ingredient's claim chain, not just
 
 ## Complete example
 
-See [`examples/redaction.rs`](../sdk/examples/redaction.rs) for a complete, runnable example.
+See [`examples/redaction.rs`](https://github.com/contentauth/c2pa-rs/blob/main/sdk/examples/redaction.rs) for a complete, runnable example.

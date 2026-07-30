@@ -7,7 +7,7 @@ The C2PA Rust library has been tested on:
 * Windows (Intel only)
 * MacOS (Intel and Apple silicon)
 * Ubuntu Linux (64-bit Intel and ARM v8)
-* WebAssembly (Wasm); see [Building for WebAssembly](project-contributions.md#building-for-webassembly) for details.
+* WebAssembly (Wasm); see [Building for WebAssembly](https://github.com/contentauth/c2pa-rs/blob/main/docs/project-contributions.md) for details.
 
 ## Requirements
 
