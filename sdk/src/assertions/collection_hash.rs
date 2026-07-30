@@ -11,6 +11,7 @@ use zip::ZipArchive;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::{labels::COLLECTION_HASH, AssetType},
+    asset_handlers::zip_io::{CENTRAL_DIRECTORY_CRC_OFFSET, CRC_LEN, MANIFEST_PATH},
     hash_stream_by_alg,
     hash_utils::verify_stream_by_alg,
     Error, HashRange, Result,
@@ -47,7 +48,7 @@ pub struct CollectionHash {
     pub zip_central_directory_hash: Option<Vec<u8>>,
 
     #[serde(skip)]
-    zip_central_directory_hash_range: Option<HashRange>,
+    zip_central_directory_hash_range: Option<Vec<HashRange>>,
 }
 
 /// Information about a file in a [`CollectionHash`][CollectionHash].
@@ -198,7 +199,7 @@ impl CollectionHash {
         let zip_central_directory_hash = hash_stream_by_alg(
             &alg,
             stream,
-            Some(vec![zip_central_directory_inclusions.clone()]),
+            Some(zip_central_directory_inclusions.clone()),
             false,
         )?;
         if zip_central_directory_hash.is_empty() {
@@ -244,7 +245,7 @@ impl CollectionHash {
             stream,
             // If zip_central_directory_hash exists (we checked above), then this must exist.
             #[allow(clippy::unwrap_used)]
-            Some(vec![self.zip_central_directory_hash_range.clone().unwrap()]),
+            Some(self.zip_central_directory_hash_range.clone().unwrap()),
             false,
         ) {
             return Err(Error::HashMismatch(
@@ -379,17 +380,30 @@ impl AssertionBase for CollectionHash {
 
 impl AssertionCbor for CollectionHash {}
 
-pub fn zip_central_directory_range<R>(reader: &mut R) -> Result<HashRange>
+pub fn zip_central_directory_range<R>(reader: &mut R) -> Result<Vec<HashRange>>
 where
     R: Read + Seek + ?Sized,
 {
     let length = reader.seek(SeekFrom::End(0))?;
-    let reader = ZipArchive::new(reader).map_err(|_| Error::JumbfNotFound)?;
+    let mut reader = ZipArchive::new(reader).map_err(|_| Error::JumbfNotFound)?;
 
     let start = reader.central_directory_start();
-    let length = length - start;
 
-    Ok(HashRange::new(start, length))
+    let crc_start = match reader.index_for_path(Path::new(MANIFEST_PATH)) {
+        Some(index) => {
+            let file = reader.by_index(index).map_err(|_| Error::JumbfNotFound)?;
+            Some(file.central_header_start() + CENTRAL_DIRECTORY_CRC_OFFSET)
+        }
+        None => None,
+    };
+
+    Ok(match crc_start {
+        Some(crc_start) => vec![
+            HashRange::new(start, crc_start - start),
+            HashRange::new(crc_start + CRC_LEN, length - (crc_start + CRC_LEN)),
+        ],
+        None => vec![HashRange::new(start, length - start)],
+    })
 }
 
 pub fn zip_uri_ranges<R>(stream: &mut R) -> Result<HashMap<PathBuf, UriHashedDataMap>>
@@ -408,7 +422,7 @@ where
         if !file.is_dir() {
             match file.enclosed_name() {
                 Some(path) => {
-                    if path != Path::new("META-INF/content_credential.c2pa") {
+                    if path != Path::new(MANIFEST_PATH) {
                         let header_start = file.header_start();
                         let data_start = file.data_start().ok_or(Error::JumbfNotFound)?;
                         let len = (data_start + file.compressed_size()) - header_start;
@@ -468,7 +482,7 @@ mod tests {
         );
         assert_eq!(
             collection.zip_central_directory_hash_range,
-            Some(HashRange::new(369, 727))
+            Some(vec![HashRange::new(369, 727)])
         );
 
         assert_eq!(

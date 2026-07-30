@@ -20,6 +20,11 @@ use crate::{
     Error,
 };
 
+pub(crate) const MANIFEST_PATH: &str = "META-INF/content_credential.c2pa";
+
+pub(crate) const CENTRAL_DIRECTORY_CRC_OFFSET: u64 = 16;
+pub(crate) const CRC_LEN: u64 = 4;
+
 pub struct ZipIO {}
 
 impl CAIWriter for ZipIO {
@@ -40,14 +45,14 @@ impl CAIWriter for ZipIO {
         }
 
         match writer.start_file_from_path(
-            Path::new("META-INF/content_credential.c2pa"),
+            Path::new(MANIFEST_PATH),
             SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
         ) {
             Err(ZipError::InvalidArchive(err)) if err.starts_with("Duplicate filename") => {
                 writer.abort_file().map_err(|_| Error::EmbeddingError)?;
                 writer
                     .start_file_from_path(
-                        Path::new("META-INF/content_credential.c2pa"),
+                        Path::new(MANIFEST_PATH),
                         SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
                     )
                     .map_err(|_| Error::EmbeddingError)?;
@@ -79,10 +84,7 @@ impl CAIWriter for ZipIO {
             .writer(input_stream, output_stream)
             .map_err(|_| Error::EmbeddingError)?;
 
-        match writer.start_file_from_path(
-            Path::new("META-INF/content_credential.c2pa"),
-            SimpleFileOptions::default(),
-        ) {
+        match writer.start_file_from_path(Path::new(MANIFEST_PATH), SimpleFileOptions::default()) {
             Err(ZipError::InvalidArchive(err)) if err.starts_with("Duplicate filename") => {}
             Err(_) => return Err(Error::EmbeddingError),
             _ => {}
@@ -101,7 +103,7 @@ impl CAIReader for ZipIO {
             .map_err(|_| Error::JumbfNotFound)?;
 
         let index = reader
-            .index_for_path(Path::new("META-INF/content_credential.c2pa"))
+            .index_for_path(Path::new(MANIFEST_PATH))
             .ok_or(Error::JumbfNotFound)?;
         let mut file = reader.by_index(index).map_err(|_| Error::JumbfNotFound)?;
 
