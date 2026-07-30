@@ -62,7 +62,7 @@ Breaking changes and larger refactors are batched onto a scheduled train:
 
 ### Cadence: scheduled, but not forced
 
-* **Default rhythm: every two months**, on the **second Monday of each odd-numbered month at 16:00 UTC** (when [`release-train-cut.yml`](../.github/workflows/release-train-cut.yml) cuts the candidate), published in advance so users can plan migrations. (We deliberately avoid a faster cadence: pre-1.0, breaking users frequently is too much churn.)
+* **Default rhythm: every two months**, on the **second Monday of each odd-numbered month at 16:00 UTC** (when [`release-train-cut.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/release-train-cut.yml) cuts the candidate), published in advance so users can plan migrations. (We deliberately avoid a faster cadence: pre-1.0, breaking users frequently is too much churn.)
 * **Skip if empty.** If the date arrives with no breaking changes queued, we skip the train. A major bump that breaks everyone for no new value is pure cost, and it's safe to skip because Track 1 is already delivering value on the current release train.
 * **Don't hold the train.** If breaking changes are queued, the candidate is cut on the date regardless. An almost-finished breaking feature waits for the *next* train. This is what turns "we have a cadence" into "we have predictability."
 * **Anchor on the cut date,** not the release date, so the bake window absorbs slippage.
@@ -95,7 +95,7 @@ The model only works if we stay disciplined about keeping the fast lane non-brea
 
 * **Review norm:** "Can this ship additively? If yes, it goes out now. If it requires a break, it waits for the next train."
 * **Forward-compatible tools:** prefer `#[non_exhaustive]` (enums/structs), sealed traits, and default trait methods so future additions stay compatible.
-* **Deprecate-then-remove:** when we must break, add the replacement API additively now and mark the old one `#[deprecated]`. Removal of the old API rides a later train, after the deprecation window elapses. See the [deprecation policy](deprecation-policy.md). Users get the improvement immediately and a window to migrate.
+* **Deprecate-then-remove:** when we must break, add the replacement API additively now and mark the old one `#[deprecated]`. Removal of the old API rides a later train, after the deprecation window elapses. See the [deprecation policy](https://github.com/contentauth/c2pa-rs/blob/main/docs/deprecation-policy.md). Users get the improvement immediately and a window to migrate.
 * **Extract-with-re-export:** moving code into a separate crate is additive as long as the public paths are preserved by re-exporting (`pub use`). See [extracted crates](#extracted-crates-multi-repo).
 
 ## Extracted crates: multi-repo
@@ -125,15 +125,15 @@ Cutting a release is mostly a CI action rather than manual toil. The pieces:
 
 ### release-plz
 
-We use [`release-plz`](https://release-plz.dev) (via the [GitHub Action wrapper](https://github.com/release-plz/action)), configured by [`release-plz.toml`](../release-plz.toml). Its two responsibilities are split across two workflows, both of which run on the **release-line and release-candidate branches**, never on `main`:
+We use [`release-plz`](https://release-plz.dev) (via the [GitHub Action wrapper](https://github.com/release-plz/action)), configured by [`release-plz.toml`](https://github.com/contentauth/c2pa-rs/blob/main/release-plz.toml). Its two responsibilities are split across two workflows, both of which run on the **release-line and release-candidate branches**, never on `main`:
 
-* [`release-pr.yml`](../.github/workflows/release-pr.yml) runs `release-plz release-pr`: for each published crate it inspects commits since the last tag and opens/updates a **release PR** that bumps the version and updates the changelog. Because that PR targets a release-line branch, it runs the full Tier 1A + 1B + 2 suite (see [validation gating](#validation-gating)).
-* [`release.yml`](../.github/workflows/release.yml) runs `release-plz release`: when a release PR merges (a push to the release-line branch), it publishes the changed crates to crates.io, creates GitHub releases, and tags them `(crate-name)-v(version)`. Those tags then drive the binary builds ([`library-release.yml`](../.github/workflows/library-release.yml) on `c2pa-v*`, [`c2patool-release.yml`](../.github/workflows/c2patool-release.yml) on `c2patool-v*`): `release.yml` no longer builds binaries itself, which is what lets release-candidate builds produce the same binaries from the same tags (see [RC builds](#release-candidate-builds)). A push whose ref contains `-rc` never publishes to crates.io.
+* [`release-pr.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/release-pr.yml) runs `release-plz release-pr`: for each published crate it inspects commits since the last tag and opens/updates a **release PR** that bumps the version and updates the changelog. Because that PR targets a release-line branch, it runs the full Tier 1A + 1B + 2 suite (see [validation gating](#validation-gating)).
+* [`release.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/release.yml) runs `release-plz release`: when a release PR merges (a push to the release-line branch), it publishes the changed crates to crates.io, creates GitHub releases, and tags them `(crate-name)-v(version)`. Those tags then drive the binary builds ([`library-release.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/library-release.yml) on `c2pa-v*`, [`c2patool-release.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/c2patool-release.yml) on `c2patool-v*`): `release.yml` no longer builds binaries itself, which is what lets release-candidate builds produce the same binaries from the same tags (see [RC builds](#release-candidate-builds)). A push whose ref contains `-rc` never publishes to crates.io.
 
 Binary builds are therefore entirely **tag-driven**, independent of how a tag was created:
 
-* [`library-release.yml`](../.github/workflows/library-release.yml) builds the `c2pa` / `c2pa-c-ffi` native libraries for every supported target on any `c2pa-v*` tag.
-* [`c2patool-release.yml`](../.github/workflows/c2patool-release.yml) builds the `c2patool` CLI binaries and SBOMs on any `c2patool-v*` tag.
+* [`library-release.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/library-release.yml) builds the `c2pa` / `c2pa-c-ffi` native libraries for every supported target on any `c2pa-v*` tag.
+* [`c2patool-release.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/c2patool-release.yml) builds the `c2patool` CLI binaries and SBOMs on any `c2patool-v*` tag.
 
 A tag whose name contains `-rc.` yields a **prerelease** GitHub release; nothing on either path publishes to crates.io.
 
@@ -143,56 +143,56 @@ How `release-plz` chooses a version, per crate:
 * If API additions or breaking changes are detected, bump the middle number (`x`). (Pre-1.0, Cargo treats a middle-number bump as incompatible; this becomes the major-number bump after 1.0.)
 * For library crates, `release-plz` also downloads the most recent crates.io release and compares the API surface, taking the larger of (commit-implied, surface-implied) bumps.
 
-The set of commit types that trigger a release is configured by `release_commits` in [`release-plz.toml`](../release-plz.toml) (chore commits are ignored). Commit/PR titles must follow [Conventional Commit syntax](https://www.conventionalcommits.org/en/v1.0.0/#summary); see [Commit lint](#commit-lint-used-for-pr-title-enforcement).
+The set of commit types that trigger a release is configured by `release_commits` in [`release-plz.toml`](https://github.com/contentauth/c2pa-rs/blob/main/release-plz.toml) (chore commits are ignored). Commit/PR titles must follow [Conventional Commit syntax](https://www.conventionalcommits.org/en/v1.0.0/#summary); see [Commit lint](#commit-lint-used-for-pr-title-enforcement).
 
 > [!IMPORTANT]
 > You may manually edit a proposed changelog in the release PR, but those edits will be overwritten if another update is triggered: `release-plz` force-pushes to update an existing release PR.
 
 ### Backport bot
 
-To bring a merged `main` PR onto a release line, add a `backport-<branch>` label to it (e.g. `backport-stable`). On merge, [`backport.yml`](../.github/workflows/backport.yml) (using [`korthout/backport-action`](https://github.com/korthout/backport-action)) cherry-picks the change and opens a PR against that branch. Because that PR targets a release-line branch, it must pass the full Tier 1A + 1B + 2 suite plus `cargo-semver-checks` before it can merge (see [validation gating](#validation-gating)).
+To bring a merged `main` PR onto a release line, add a `backport-<branch>` label to it (e.g. `backport-stable`). On merge, [`backport.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/backport.yml) (using [`korthout/backport-action`](https://github.com/korthout/backport-action)) cherry-picks the change and opens a PR against that branch. Because that PR targets a release-line branch, it must pass the full Tier 1A + 1B + 2 suite plus `cargo-semver-checks` before it can merge (see [validation gating](#validation-gating)).
 
 > We use a self-contained GitHub Action rather than an external service. [Mergify](https://mergify.com) is a documented alternative if we ever need richer conflict handling or merge queues.
 
 ### Upstream-first check: proactive
 
-[`upstream-first-check.yml`](../.github/workflows/upstream-first-check.yml) runs on every PR targeting a release-line or release-candidate branch and **blocks the merge** if the PR introduces a commit whose change is not already on `main` (compared by patch id via `git cherry`). This prevents drift rather than merely detecting it after the fact. Combined with [branch protection](#branch-protection) that requires PRs on these branches, it makes "nothing originates on a release branch" enforceable.
+[`upstream-first-check.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/upstream-first-check.yml) runs on every PR targeting a release-line or release-candidate branch and **blocks the merge** if the PR introduces a commit whose change is not already on `main` (compared by patch id via `git cherry`). This prevents drift rather than merely detecting it after the fact. Combined with [branch protection](#branch-protection) that requires PRs on these branches, it makes "nothing originates on a release branch" enforceable.
 
 Two exemptions keep it practical: the `release-plz` release PR (labeled `release`) may legitimately originate version-bump/changelog commits on the release branch, and a maintainer can add the `upstream-first-verified` label to a PR whose cherry-pick had to be adapted to compile on the target branch (so its patch id no longer matches `main`).
 
 ### Reconciliation check: reactive
 
-As a backstop to the proactive check above, a scheduled job, [`reconciliation.yml`](../.github/workflows/reconciliation.yml), runs `git cherry main <release-branch>`; anything present on the release branch but **not** on `main` (for example, from a direct push that bypassed a PR) means something originated on a release branch, violating upstream-first. The job opens (or updates) an issue so the change can be forward-ported and isn't lost across a major bump. We deliberately do **not** auto-merge a release branch back into `main`, since merging into the actively-refactored `main` is the conflict-prone direction.
+As a backstop to the proactive check above, a scheduled job, [`reconciliation.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/reconciliation.yml), runs `git cherry main <release-branch>`; anything present on the release branch but **not** on `main` (for example, from a direct push that bypassed a PR) means something originated on a release branch, violating upstream-first. The job opens (or updates) an issue so the change can be forward-ported and isn't lost across a major bump. We deliberately do **not** auto-merge a release branch back into `main`, since merging into the actively-refactored `main` is the conflict-prone direction.
 
 ### Semver checks
 
-[`semver-checks.yml`](../.github/workflows/semver-checks.yml) runs [`cargo-semver-checks`](https://github.com/obi1kenobi/cargo-semver-checks) on every PR targeting a release-line branch (including backport PRs), baselining against the latest crates.io release. It catches a change that would be an accidental break shipping as an additive release. It does **not** run on `-rc` branches: the train is the intended place for breaking changes.
+[`semver-checks.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/semver-checks.yml) runs [`cargo-semver-checks`](https://github.com/obi1kenobi/cargo-semver-checks) on every PR targeting a release-line branch (including backport PRs), baselining against the latest crates.io release. It catches a change that would be an accidental break shipping as an additive release. It does **not** run on `-rc` branches: the train is the intended place for breaking changes.
 
 ### Patch-dependency guard
 
-[`check-no-patch-deps.yml`](../.github/workflows/check-no-patch-deps.yml) fails if a `[patch]` section or a git dependency is present. It runs on release-branch PRs and as a required prerequisite of `release.yml`, so a `[patch]` left over from co-developing an extracted crate can never leak into a publish.
+[`check-no-patch-deps.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/check-no-patch-deps.yml) fails if a `[patch]` section or a git dependency is present. It runs on release-branch PRs and as a required prerequisite of `release.yml`, so a `[patch]` left over from co-developing an extracted crate can never leak into a publish.
 
 ### Release-train cut
 
-[`release-train-cut.yml`](../.github/workflows/release-train-cut.yml) runs every Monday and gates on a date check so it only acts on the second Monday of an odd-numbered month (or when dispatched manually with `force: true`). When it fires it computes the next breaking version, applies skip-if-empty, and, if there's breaking work to ship, pushes a new `0.(x+1).0-rc` candidate branch from `main`, kicks off its first build by dispatching [`release-rc.yml`](#release-candidate-builds), **advances `main` to the next `0.(x+2).0-dev` cycle** (committed directly, no PR), and opens a `release-train` tracking issue describing the bake and the manual-promotion step. The `main` bump happens after the RC branch is cut, so the candidate is taken from pre-bump `main`. (Committing to `main` directly requires the `RELEASE_PLZ_TOKEN` to be allowed to bypass `main`'s pull-request rule; see [branch protection](#branch-protection).)
+[`release-train-cut.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/release-train-cut.yml) runs every Monday and gates on a date check so it only acts on the second Monday of an odd-numbered month (or when dispatched manually with `force: true`). When it fires it computes the next breaking version, applies skip-if-empty, and, if there's breaking work to ship, pushes a new `0.(x+1).0-rc` candidate branch from `main`, kicks off its first build by dispatching [`release-rc.yml`](#release-candidate-builds), **advances `main` to the next `0.(x+2).0-dev` cycle** (committed directly, no PR), and opens a `release-train` tracking issue describing the bake and the manual-promotion step. The `main` bump happens after the RC branch is cut, so the candidate is taken from pre-bump `main`. (Committing to `main` directly requires the `RELEASE_PLZ_TOKEN` to be allowed to bypass `main`'s pull-request rule; see [branch protection](#branch-protection).)
 
 ### Release-candidate builds
 
-[`release-rc.yml`](../.github/workflows/release-rc.yml) cuts a numbered candidate **build** (`-rc.1`, `-rc.2`, …) from a candidate **branch** (`0.N.0-rc`). It sets the `-rc.N` versions on the branch (bumping `c2pa`/`c2pa-c-ffi` and `c2patool` in lockstep on the build number), commits, and pushes the `c2pa-v…-rc.N` and `c2patool-v…-rc.N` tags. Those tags trigger the tag-driven binary workflows above, which publish **prerelease** GitHub releases with binaries. Nothing here reaches crates.io: the build exists so downstream projects that consume pre-built binaries (rather than building from source) can validate the candidate during its bake.
+[`release-rc.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/release-rc.yml) cuts a numbered candidate **build** (`-rc.1`, `-rc.2`, …) from a candidate **branch** (`0.N.0-rc`). It sets the `-rc.N` versions on the branch (bumping `c2pa`/`c2pa-c-ffi` and `c2patool` in lockstep on the build number), commits, and pushes the `c2pa-v…-rc.N` and `c2patool-v…-rc.N` tags. Those tags trigger the tag-driven binary workflows above, which publish **prerelease** GitHub releases with binaries. Nothing here reaches crates.io: the build exists so downstream projects that consume pre-built binaries (rather than building from source) can validate the candidate during its bake.
 
 The first build (`-rc.1`) is cut automatically when the train is cut. A maintainer re-runs this workflow (via `workflow_dispatch` on the RC branch) to cut a fresh build after bugfixes have been cherry-picked onto the branch during the bake. Tags are pushed with a PAT (`RELEASE_PLZ_TOKEN`) so the tag-driven binary workflows actually run: pushes made with the default `GITHUB_TOKEN` do not cascade into other workflows.
 
 ### Cross-repo canary
 
-[`canary-extracted-crates.yml`](../.github/workflows/canary-extracted-crates.yml) builds `c2pa-rs` `main` against the `main` of each extracted crate via a throwaway `[patch]`, and files an issue on failure. The `[patch]` exists only inside the runner; the patch-dependency guard guarantees it can never reach a release.
+[`canary-extracted-crates.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/canary-extracted-crates.yml) builds `c2pa-rs` `main` against the `main` of each extracted crate via a throwaway `[patch]`, and files an issue on failure. The `[patch]` exists only inside the runner; the patch-dependency guard guarantees it can never reach a release.
 
 ### Label sync
 
-Labels the process depends on are version-controlled in [`.github/labels.yml`](../.github/labels.yml) and synced by [`labels.yml`](../.github/workflows/labels.yml).
+Labels the process depends on are version-controlled in [`.github/labels.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/labels.yml) and synced by [`labels.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/labels.yml).
 
 ## Validation gating
 
-The [support tiers](support-tiers.md) map directly onto the branching model:
+The [support tiers](https://github.com/contentauth/c2pa-rs/blob/main/docs/support-tiers.md) map directly onto the branching model:
 
 * **Merging to `main`** requires **Tier 1A**: the merge gate for everyday development.
 * **Any PR targeting a release-line (`stable`, `v0.x`) or release-candidate (`*-rc*`) branch** must pass the **full Tier 1A + 1B + 2 suite** before it can merge. This includes **backport PRs**, RC bake bugfix PRs, and the `release-plz` release PR: anything headed for a published (or soon-to-be-published) artifact gets the most thorough validation we have. PRs targeting release lines additionally run [`cargo-semver-checks`](#semver-checks).
@@ -200,11 +200,11 @@ The [support tiers](support-tiers.md) map directly onto the branching model:
 * **All three tiers also run against `main` on a daily schedule** (a nightly run), catching regressions that only appear under the heavier Tier 1B/2 configurations even when no release-targeting PR is open.
 * On a `main` PR you can opt into the full suite on demand by adding the `check-release` label (useful to assess release-readiness before a change is backported).
 
-See [docs/support-tiers.md](support-tiers.md) for what each tier covers and why a configuration lands in a given tier.
+See [docs/support-tiers.md](https://github.com/contentauth/c2pa-rs/blob/main/docs/support-tiers.md) for what each tier covers and why a configuration lands in a given tier.
 
 ## Commit lint used for PR title enforcement
 
-Because `release-plz` uses [Conventional Commit syntax](https://www.conventionalcommits.org/en/v1.0.0/#summary) to generate changelogs, all commits to long-lived branches must follow it. We [squash-merge](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/configuring-commit-squashing-for-pull-requests) PRs, and [`pr_title.yml`](../.github/workflows/pr_title.yml) checks that each PR title conforms, as configured by [`.commitlintrc.yml`](../.commitlintrc.yml) (the definitive specification).
+Because `release-plz` uses [Conventional Commit syntax](https://www.conventionalcommits.org/en/v1.0.0/#summary) to generate changelogs, all commits to long-lived branches must follow it. We [squash-merge](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/configuring-commit-squashing-for-pull-requests) PRs, and [`pr_title.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/pr_title.yml) checks that each PR title conforms, as configured by [`.commitlintrc.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.commitlintrc.yml) (the definitive specification).
 
 A quick, non-authoritative summary: the PR title must have this exact format:
 
@@ -223,7 +223,7 @@ The `type` must be one of (bold = preferred in most cases):
 `scope` is optional; if present it must be one of `c2patool`, `export_schema`, `make_test_images`, `sdk`, or `c2pa_c_ffi`. If omitted, drop the parentheses too. `description` is a short sentence, capitalized, no trailing period, preferably under 70 characters.
 
 > [!NOTE]
-> If these rules change, keep [`.github/workflows/pr_title.yml`](../.github/workflows/pr_title.yml) and [`.commitlintrc.yml`](../.commitlintrc.yml) in sync.
+> If these rules change, keep [`.github/workflows/pr_title.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/pr_title.yml) and [`.commitlintrc.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.commitlintrc.yml) in sync.
 
 ## Known issues
 
@@ -233,7 +233,7 @@ In repos that host multiple crates, an earlier crate in the dependency chain can
 
 ### Left-behind release branches
 
-`release-plz` sometimes creates a new release branch + PR instead of updating the existing one, leaving the old branch behind. To reduce noise, [`release-pr.yml`](../.github/workflows/release-pr.yml) deletes stale `release-plz-*` branches. Tracked in [#2299](https://github.com/contentauth/c2pa-rs/issues/2299); remove this note once resolved.
+`release-plz` sometimes creates a new release branch + PR instead of updating the existing one, leaving the old branch behind. To reduce noise, [`release-pr.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/release-pr.yml) deletes stale `release-plz-*` branches. Tracked in [#2299](https://github.com/contentauth/c2pa-rs/issues/2299); remove this note once resolved.
 
 ### c2pa crate accidentally published a 1.0.0 release
 
