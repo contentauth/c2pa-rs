@@ -9,8 +9,13 @@
 .cargo/config.toml
 
 .vscode
+.claude
 
 /semver-checks/target/
+sdk/target/
 
 # Unit test output lands here. TO DO: Fix
 cli/target
+.cursor/rules/manifest.json
+.cursor/rules/security-global/*
+.cursor/rules/security-lang/*

@@ -23,7 +23,6 @@ use wasm_bindgen_test::wasm_bindgen_test;
 use crate::{
     identity::{x509::X509SignatureVerifier, IdentityAssertion},
     status_tracker::{ErrorBehavior, LogKind, StatusTracker},
-    Reader,
 };
 
 /// An identity assertion MUST contain a valid CBOR data structure that contains
@@ -40,7 +39,7 @@ async fn malformed_cbor() {
     let mut test_image = Cursor::new(test_image);
 
     // Initial read with default `Reader` should pass without issues.
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = super::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     // Re-parse with identity assertion code should find malformed CBOR error.
@@ -61,7 +60,7 @@ async fn malformed_cbor() {
     assert!(log.label.ends_with("/c2pa.assertions/cawg.identity"));
     assert_eq!(log.description, "invalid CBOR");
     assert_eq!(
-        log.validation_status.as_ref().unwrap().as_ref(),
+        log.validation_status.as_ref().unwrap().as_ref() as &str,
         "cawg.identity.cbor.invalid"
     );
 }
@@ -80,7 +79,7 @@ async fn extra_fields() {
     let mut test_image = Cursor::new(test_image);
 
     // Initial read with default `Reader` should pass without issues.
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = super::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     // Re-parse with identity assertion code should find malformed CBOR error.
@@ -135,7 +134,7 @@ async fn assertion_not_in_claim_v1() {
     let mut test_image = Cursor::new(test_image);
 
     // Initial read with default `Reader` should pass without issues.
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = super::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     // Re-parse with identity assertion code should find extra assertion error.
@@ -185,7 +184,7 @@ async fn assertion_not_in_claim_v1() {
     assert_eq!(log.description, "referenced assertion not in claim");
 
     assert_eq!(
-        log.validation_status.as_ref().unwrap().as_ref(),
+        log.validation_status.as_ref().unwrap().as_ref() as &str,
         "cawg.identity.assertion.mismatch"
     );
 
@@ -221,7 +220,7 @@ async fn duplicate_assertion_reference() {
     let mut test_image = Cursor::new(test_image);
 
     // Initial read with default `Reader` should pass without issues.
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = super::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     // Re-parse with identity assertion code should find extra assertion error.
@@ -271,7 +270,7 @@ async fn duplicate_assertion_reference() {
     assert_eq!(log.description, "multiple references to same assertion");
 
     assert_eq!(
-        log.validation_status.as_ref().unwrap().as_ref(),
+        log.validation_status.as_ref().unwrap().as_ref() as &str,
         "cawg.identity.assertion.duplicate"
     );
 
@@ -297,7 +296,7 @@ async fn no_hard_binding() {
     let mut test_image = Cursor::new(test_image);
 
     // Initial read with default `Reader` should pass without issues.
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = super::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     // Re-parse with identity assertion code should find extra assertion error.
@@ -338,7 +337,7 @@ async fn no_hard_binding() {
 
     assert_eq!(log.description, "no hard binding assertion");
     assert_eq!(
-        log.validation_status.as_ref().unwrap().as_ref(),
+        log.validation_status.as_ref().unwrap().as_ref() as &str,
         "cawg.identity.hard_binding_missing"
     );
 
@@ -364,6 +363,7 @@ mod invalid_sig_type {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::{
+        context::Context,
         identity::{
             claim_aggregation::IcaSignatureVerifier, x509::X509SignatureVerifier, IdentityAssertion,
         },
@@ -384,7 +384,9 @@ mod invalid_sig_type {
         let mut test_image = Cursor::new(test_image);
 
         // Initial read with default `Reader` should pass without issues.
-        let reader = Reader::from_stream(format, &mut test_image).unwrap();
+        let reader = Reader::default()
+            .with_stream(format, &mut test_image)
+            .unwrap();
         assert_eq!(reader.validation_status(), None);
 
         // Re-parse with identity assertion code should find extra assertion error.
@@ -441,7 +443,7 @@ mod invalid_sig_type {
         assert_eq!(log.description, "unsupported signature type");
 
         assert_eq!(
-            log.validation_status.as_ref().unwrap().as_ref(),
+            log.validation_status.as_ref().unwrap().as_ref() as &str,
             "cawg.identity.sig_type.unknown"
         );
     }
@@ -459,7 +461,9 @@ mod invalid_sig_type {
         let mut test_image = Cursor::new(test_image);
 
         // Initial read with default `Reader` should pass without issues.
-        let reader = Reader::from_stream(format, &mut test_image).unwrap();
+        let reader = Reader::default()
+            .with_stream(format, &mut test_image)
+            .unwrap();
         assert_eq!(reader.validation_status(), None);
 
         // Re-parse with identity assertion code should find extra assertion error.
@@ -487,7 +491,8 @@ mod invalid_sig_type {
         assert_eq!(sp.sig_type, "INVALID.identity.naive_credential".to_owned());
 
         // Intentionally not using NaiveSignatureVerifier here.
-        let ica_verifier = IcaSignatureVerifier {};
+        let context = Context::new();
+        let ica_verifier = IcaSignatureVerifier::new(&context);
         let err = ia
             .validate(
                 reader.active_manifest().unwrap(),
@@ -516,7 +521,7 @@ mod invalid_sig_type {
         assert_eq!(log.description, "unsupported signature type");
 
         assert_eq!(
-            log.validation_status.as_ref().unwrap().as_ref(),
+            log.validation_status.as_ref().unwrap().as_ref() as &str,
             "cawg.identity.sig_type.unknown"
         );
     }
@@ -537,7 +542,7 @@ async fn pad1_invalid() {
     let mut test_image = Cursor::new(test_image);
 
     // Initial read with default `Reader` should pass without issues.
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = super::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     // Re-parse with identity assertion code should find invalid pad error.
@@ -582,7 +587,7 @@ async fn pad1_invalid() {
 
     assert_eq!(log.description, "invalid value in pad fields");
     assert_eq!(
-        log.validation_status.as_ref().unwrap().as_ref(),
+        log.validation_status.as_ref().unwrap().as_ref() as &str,
         "cawg.identity.pad.invalid"
     );
 
@@ -601,7 +606,7 @@ async fn pad2_invalid() {
     let mut test_image = Cursor::new(test_image);
 
     // Initial read with default `Reader` should pass without issues.
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = super::read_manifest(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     // Re-parse with identity assertion code should find invalid pad error.
@@ -650,7 +655,7 @@ async fn pad2_invalid() {
     assert_eq!(log.description, "invalid value in pad fields");
 
     assert_eq!(
-        log.validation_status.as_ref().unwrap().as_ref(),
+        log.validation_status.as_ref().unwrap().as_ref() as &str,
         "cawg.identity.pad.invalid"
     );
 

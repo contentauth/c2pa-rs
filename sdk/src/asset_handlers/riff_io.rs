@@ -49,6 +49,8 @@ static SUPPORTED_TYPES: [&str; 12] = [
     "video/x-msvideo",
 ];
 
+const MAX_DEPTH: usize = 32; // max depth to search for VP8/VP8L chunks
+
 pub struct RiffIO {
     #[allow(dead_code)]
     riff_format: String, // can be used for specialized RIFF cases
@@ -74,7 +76,20 @@ const XMP_CHUNK_ID: ChunkId = ChunkId {
     value: [0x58, 0x4d, 0x50, 0x20],
 }; // XMP
 
+const AVIX_ID: ChunkId = ChunkId {
+    value: [0x41, 0x56, 0x49, 0x58],
+}; // AVIX - AVI extended for files > 1GB
+
 const XMP_FLAG: u32 = 4;
+
+/// Returns the byte offset one past the end of `chunk`'s data
+/// (`chunk.offset() + 8 header bytes + chunk.len() data bytes`), or `None` on overflow.
+fn chunk_data_end(chunk: &Chunk) -> Option<u64> {
+    chunk
+        .offset()
+        .checked_add(8)?
+        .checked_add(chunk.len() as u64)
+}
 
 fn get_height_and_width(chunk_contents: &[ChunkContents]) -> Result<(u16, u16)> {
     if let Some(ChunkContents::Data(_id, chunk_data)) = chunk_contents.iter().find(|c| match c {
@@ -117,6 +132,7 @@ fn inject_c2pa<T>(
     data: &[u8],
     xmp_data: Option<&[u8]>,
     format: &str,
+    depth: usize,
 ) -> Result<ChunkContents>
 where
     T: Seek + std::io::Read,
@@ -124,6 +140,12 @@ where
     let id = chunk.id();
     let is_riff_chunk: bool = id == RIFF_ID;
     stream.rewind()?;
+
+    if depth > MAX_DEPTH {
+        return Err(Error::InvalidAsset(
+            "RIFF chunk nesting too deep".to_string(),
+        ));
+    }
 
     if is_riff_chunk || id == LIST_ID {
         let chunk_type = chunk.read_type(stream).map_err(|_| {
@@ -147,7 +169,14 @@ where
 
         // duplicate all top level children
         for child in children {
-            children_contents.push(inject_c2pa(&child, stream, data, xmp_data, format)?);
+            children_contents.push(inject_c2pa(
+                &child,
+                stream,
+                data,
+                xmp_data,
+                format,
+                depth + 1,
+            )?);
         }
 
         // add XMP if needed
@@ -223,11 +252,26 @@ where
         let mut children_contents: Vec<ChunkContents> = Vec::new();
 
         for child in children {
-            children_contents.push(inject_c2pa(&child, stream, data, xmp_data, format)?);
+            children_contents.push(inject_c2pa(
+                &child,
+                stream,
+                data,
+                xmp_data,
+                format,
+                depth + 1,
+            )?);
         }
 
         Ok(ChunkContents::ChildrenNoType(id, children_contents))
     } else {
+        let stream_end = stream.seek(SeekFrom::End(0))?;
+        let chunk_end = chunk_data_end(chunk)
+            .ok_or_else(|| Error::InvalidAsset("RIFF chunk size overflow".to_string()))?;
+        if chunk_end > stream_end {
+            return Err(Error::InvalidAsset(
+                "RIFF chunk declared size exceeds file size".to_string(),
+            ));
+        }
         let contents = chunk
             .read_contents(stream)
             .map_err(|_| Error::InvalidAsset("RIFF handler could not parse file".to_string()))?;
@@ -236,11 +280,8 @@ where
 }
 
 fn get_manifest_pos(reader: &mut dyn CAIRead) -> Option<(u64, u32)> {
-    let mut asset: Vec<u8> = Vec::new();
     reader.rewind().ok()?;
-    reader.read_to_end(&mut asset).ok()?;
-
-    let mut chunk_reader = Cursor::new(asset);
+    let mut chunk_reader = CAIReadWrapper { reader };
 
     let top_level_chunks = Chunk::read(&mut chunk_reader, 0).ok()?;
 
@@ -257,14 +298,23 @@ fn get_manifest_pos(reader: &mut dyn CAIRead) -> Option<(u64, u32)> {
 
 impl CAIReader for RiffIO {
     fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
+        let file_len = stream_len(input_stream)?;
         let mut chunk_reader = CAIReadWrapper {
             reader: input_stream,
         };
 
         let top_level_chunks = Chunk::read(&mut chunk_reader, 0)?;
 
+        // Assume C2PA data will be in the first chunk, even for multiple RIFF/AVIX chunk files.
         if top_level_chunks.id() != RIFF_ID {
-            return Err(Error::InvalidAsset("Invalid RIFF format".to_string()));
+            return Err(RiffError::InvalidFileSignature {
+                reason: format!(
+                    "invalid header: expected \"{}\", got \"{}\"",
+                    String::from_utf8_lossy(&RIFF_ID.value),
+                    String::from_utf8_lossy(&top_level_chunks.id().value),
+                ),
+            }
+            .into());
         }
 
         for result in top_level_chunks.iter(&mut chunk_reader) {
@@ -272,6 +322,13 @@ impl CAIReader for RiffIO {
                 result.map_err(|_| Error::InvalidAsset("Invalid RIFF format".to_string()))?;
 
             if chunk.id() == C2PA_CHUNK_ID {
+                let chunk_end = chunk_data_end(&chunk)
+                    .ok_or_else(|| Error::InvalidAsset("RIFF chunk size overflow".to_string()))?;
+                if chunk_end > file_len {
+                    return Err(Error::InvalidAsset(
+                        "RIFF chunk declared size exceeds file size".to_string(),
+                    ));
+                }
                 return Ok(chunk.read_contents(&mut chunk_reader)?);
             }
         }
@@ -281,6 +338,7 @@ impl CAIReader for RiffIO {
 
     // Get XMP block
     fn read_xmp(&self, input_stream: &mut dyn CAIRead) -> Option<String> {
+        let file_len = stream_len(input_stream).ok()?;
         let top_level_chunks = {
             let mut reader = CAIReadWrapper {
                 reader: input_stream,
@@ -299,34 +357,16 @@ impl CAIReader for RiffIO {
         for chunk in top_level_chunks.iter(&mut chunk_reader) {
             let chunk = chunk.ok()?;
             if chunk.id() == XMP_CHUNK_ID {
+                let chunk_end = chunk_data_end(&chunk)?;
+                if chunk_end > file_len {
+                    return None;
+                }
                 let output = chunk.read_contents(&mut chunk_reader).ok()?;
                 return Some(String::from_utf8_lossy(&output).to_string());
             }
         }
 
         None
-    }
-}
-
-fn add_required_chunks(
-    asset_type: &str,
-    input_stream: &mut dyn CAIRead,
-    output_stream: &mut dyn CAIReadWrite,
-) -> Result<()> {
-    let aio = RiffIO::new(asset_type);
-
-    match aio.read_cai(input_stream) {
-        Ok(_) => {
-            // just clone
-            input_stream.rewind()?;
-            output_stream.rewind()?;
-            std::io::copy(input_stream, output_stream)?;
-            Ok(())
-        }
-        Err(_) => {
-            input_stream.rewind()?;
-            aio.write_cai(input_stream, output_stream, &[1, 2, 3, 4]) // save arbitrary data
-        }
     }
 }
 
@@ -406,6 +446,8 @@ impl CAIWriter for RiffIO {
             return Err(Error::InvalidAsset("Invalid RIFF format".to_string()));
         }
 
+        let first_chunk_size = top_level_chunks.len();
+
         let mut reader = CAIReadWrapper {
             reader: input_stream,
         };
@@ -417,6 +459,7 @@ impl CAIWriter for RiffIO {
             store_bytes,
             None,
             &self.riff_format,
+            0,
         )?;
 
         let mut writer = CAIReadWriteWrapper {
@@ -427,6 +470,63 @@ impl CAIWriter for RiffIO {
         new_contents
             .write(&mut writer)
             .map_err(|_e| Error::EmbeddingError)?;
+
+        // Copy additional RIFF/AVIX chunks for large AVI files
+        if self.riff_format == "avi" || self.riff_format == "video/avi" {
+            // Ensure input_stream is positioned right after the first chunk
+            // Position = 8 bytes (chunk ID + size) + chunk data size
+            let position_after_first_chunk = 8 + first_chunk_size as u64;
+            input_stream.seek(SeekFrom::Start(position_after_first_chunk))?;
+
+            loop {
+                // Check if we're at EOF
+                let current_pos = input_stream.stream_position()?;
+                let file_size = input_stream.seek(SeekFrom::End(0))?;
+                input_stream.seek(SeekFrom::Start(current_pos))?;
+
+                if current_pos >= file_size {
+                    break;
+                }
+
+                // Manually read chunk header (8 bytes: 4-byte ID + 4-byte size)
+                let mut chunk_header = [0u8; 8];
+                if input_stream.read_exact(&mut chunk_header).is_err() {
+                    break; // EOF
+                }
+
+                let chunk_id = ChunkId {
+                    value: chunk_header[0..4]
+                        .try_into()
+                        .map_err(|_e| Error::EmbeddingError)?,
+                };
+                let chunk_size = u32::from_le_bytes(
+                    chunk_header[4..8]
+                        .try_into()
+                        .map_err(|_e| Error::EmbeddingError)?,
+                ) as u64;
+
+                if chunk_id != RIFF_ID && chunk_id != AVIX_ID {
+                    break;
+                }
+
+                // Write the chunk header
+                writer.reader_writer.write_all(&chunk_id.value)?;
+                writer
+                    .reader_writer
+                    .write_all(&(chunk_size as u32).to_le_bytes())?;
+
+                // Copy the chunk data in 1MB chunks
+                let mut remaining = chunk_size;
+                let mut buffer = vec![0u8; 1024 * 1024];
+                while remaining > 0 {
+                    let to_read = remaining.min(buffer.len() as u64) as usize;
+                    input_stream.read_exact(&mut buffer[..to_read])?;
+                    writer.reader_writer.write_all(&buffer[..to_read])?;
+                    remaining -= to_read as u64;
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -434,15 +534,20 @@ impl CAIWriter for RiffIO {
         &self,
         input_stream: &mut dyn CAIRead,
     ) -> Result<Vec<HashObjectPositions>> {
-        let output_buf: Vec<u8> = Vec::new();
-        let mut output_stream = Cursor::new(output_buf);
-
-        add_required_chunks(&self.riff_format, input_stream, &mut output_stream)?;
-
         let mut positions: Vec<HashObjectPositions> = Vec::new();
 
-        let (manifest_pos, manifest_len) =
-            get_manifest_pos(&mut output_stream).ok_or(Error::EmbeddingError)?;
+        let (manifest_pos, manifest_len, file_end) =
+            if let Some((position, len)) = get_manifest_pos(input_stream) {
+                let file_end = stream_len(input_stream)?;
+                (position, len, file_end)
+            } else {
+                let mut output_stream = Cursor::new(Vec::new());
+                self.write_cai(input_stream, &mut output_stream, &[1, 2, 3, 4])?;
+                let (position, len) =
+                    get_manifest_pos(&mut output_stream).ok_or(Error::EmbeddingError)?;
+                let file_end = output_stream.seek(SeekFrom::End(0))?;
+                (position, len, file_end)
+            };
 
         positions.push(HashObjectPositions {
             offset: usize::try_from(manifest_pos)
@@ -464,8 +569,6 @@ impl CAIWriter for RiffIO {
         let Some(end) = u64::checked_add(manifest_pos, manifest_len as u64) else {
             return Err(Error::InvalidAsset("value out of range".to_string()));
         };
-
-        let file_end = stream_len(&mut output_stream)?;
         positions.push(HashObjectPositions {
             offset: usize::try_from(end)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?, // len of cai
@@ -560,6 +663,7 @@ impl RemoteRefEmbed for RiffIO {
                         &[],
                         Some(new_xmp.as_bytes()),
                         &self.riff_format,
+                        0,
                     )?;
 
                     // save contents
@@ -600,6 +704,7 @@ impl RemoteRefEmbed for RiffIO {
                         &[],
                         Some(new_xmp.as_bytes()),
                         &self.riff_format,
+                        0,
                     )?;
 
                     // save contents
@@ -617,6 +722,12 @@ impl RemoteRefEmbed for RiffIO {
             RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
         }
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum RiffError {
+    #[error("invalid file signature: {reason}")]
+    InvalidFileSignature { reason: String },
 }
 
 #[cfg(test)]
@@ -659,6 +770,44 @@ pub mod tests {
     }
 
     #[test]
+    fn test_read_cai_forged_c2pa_chunk_size_returns_error() {
+        // A 20-byte RIFF file where the C2PA chunk claims 4 GB of data.
+        // Without the fix this causes a process abort from OOM (exit 134).
+        let mut data = Vec::new();
+        data.extend_from_slice(b"RIFF");
+        data.extend_from_slice(&12u32.to_le_bytes()); // RIFF data size (covers type + chunk hdr)
+        data.extend_from_slice(b"WAVE");
+        data.extend_from_slice(b"C2PA");
+        data.extend_from_slice(&u32::MAX.to_le_bytes()); // forged 4 GB declared size
+
+        let riff_io = RiffIO::new("wav");
+        let mut source = Cursor::new(data);
+        assert!(matches!(
+            riff_io.read_cai(&mut source),
+            Err(Error::InvalidAsset(_))
+        ));
+    }
+
+    #[test]
+    fn test_write_cai_forged_chunk_size_returns_error() {
+        // Same forged file fed to write_cai, which calls inject_c2pa internally.
+        let mut data = Vec::new();
+        data.extend_from_slice(b"RIFF");
+        data.extend_from_slice(&12u32.to_le_bytes());
+        data.extend_from_slice(b"WAVE");
+        data.extend_from_slice(b"DATA");
+        data.extend_from_slice(&u32::MAX.to_le_bytes()); // forged 4 GB declared size
+
+        let riff_io = RiffIO::new("wav");
+        let mut source = Cursor::new(data);
+        let mut dest = Cursor::new(Vec::new());
+        assert!(matches!(
+            riff_io.write_cai(&mut source, &mut dest, b"manifest"),
+            Err(Error::InvalidAsset(_))
+        ));
+    }
+
+    #[test]
     fn test_read_cai_with_incorrect_header_size_does_not_panic() {
         let riff_io = RiffIO::new("wav");
 
@@ -671,6 +820,27 @@ pub mod tests {
         });
 
         assert!(panic_result.is_ok());
+    }
+
+    #[test]
+    fn test_write_cai_with_large_recursion_does_not_panic() {
+        let more_data = "some more test data".as_bytes();
+
+        let riff_io = RiffIO::new("wav");
+        if let Ok(temp_dir) = tempdirectory() {
+            let output = temp_dir_path(&temp_dir, "sample1-wav.wav");
+
+            let panic_result = panic::catch_unwind(|| {
+                let mut output_stream = File::create(&output).unwrap();
+                let mut source = File::open(fixture_path("riff_bomb_1000.wav")).unwrap();
+                assert!(matches!(
+                    riff_io.write_cai(&mut source, &mut output_stream, more_data),
+                    Err(Error::InvalidAsset(_))
+                ));
+            });
+
+            assert!(panic_result.is_ok());
+        }
     }
 
     #[test]
@@ -861,5 +1031,174 @@ pub mod tests {
             }
         }
         assert!(success)
+    }
+
+    #[test]
+    fn test_avi_support() {
+        // Test basic AVI file support
+        let source = fixture_path("test.avi");
+        let mut f = File::open(source).unwrap();
+        let riff_io = RiffIO::new("avi");
+
+        // Should work even though file doesn't have C2PA yet
+        assert!(matches!(
+            riff_io.read_cai(&mut f),
+            Err(Error::JumbfNotFound)
+        ));
+    }
+
+    #[test]
+    #[ignore] // Large file test - requires ~4.4GB AVI file
+    fn test_large_avi_avix_support() {
+        // This test verifies that large AVI files with AVIX chunks work correctly
+        // Run with: cargo test test_large_avi_avix_support -- --ignored --nocapture
+
+        use std::{
+            io::{BufReader, Write},
+            sync::{
+                atomic::{AtomicBool, Ordering},
+                Arc,
+            },
+            thread,
+            time::Duration,
+        };
+
+        use tempfile::NamedTempFile;
+
+        let test_file = "tests/fixtures/bigbunny-3.avi";
+        let source_size = std::fs::metadata(test_file).unwrap().len();
+
+        let mut source = File::open(test_file).unwrap();
+        let mut dest = NamedTempFile::new().unwrap();
+
+        let riff_io = RiffIO::new("avi");
+        let test_data = b"C2PA test data for large AVIX file";
+
+        eprintln!("Writing C2PA data to large AVI...");
+        let start = std::time::Instant::now();
+
+        // Set up timeout - fail if write takes more than 15 seconds
+        let timeout_flag = Arc::new(AtomicBool::new(false));
+        let timeout_flag_clone = timeout_flag.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_secs(15));
+            timeout_flag_clone.store(true, Ordering::SeqCst);
+        });
+
+        let write_result = riff_io.write_cai(&mut source, &mut dest, test_data);
+        let write_duration = start.elapsed();
+
+        assert!(
+            !timeout_flag.load(Ordering::SeqCst),
+            "Test timed out after 15 seconds"
+        );
+
+        if let Err(e) = write_result {
+            panic!("write_cai failed: {e:?}");
+        }
+
+        eprintln!("Write completed in {write_duration:?}");
+
+        // Verify output size
+        dest.flush().unwrap();
+        let dest_size = dest.as_file().metadata().unwrap().len();
+
+        // Output should be similar size to input (plus C2PA data)
+        assert!(
+            dest_size > source_size,
+            "Output should be larger than source"
+        );
+        assert!(
+            dest_size < source_size + 1_000_000,
+            "Output shouldn't be much larger than source"
+        );
+
+        // Read back the C2PA data
+        eprintln!("Reading C2PA data back...");
+        dest.rewind().unwrap();
+        let mut buffered_dest = BufReader::new(dest.as_file());
+        let read_data = riff_io.read_cai(&mut buffered_dest).unwrap();
+        assert_eq!(read_data, test_data);
+        eprintln!("✓ Successfully read C2PA data from large AVI file");
+    }
+
+    #[test]
+    #[ignore] // Large file test - run manually
+    fn test_large_avi_write_cai() {
+        // This test requires a large AVI file (>1GB with AVIX chunks)
+        // Run with: cargo test test_large_avi_write_cai -- --ignored
+        use std::io::Cursor;
+
+        let test_file = "tests/fixtures/large_test.avi";
+        if !std::path::Path::new(test_file).exists() {
+            println!("Skipping test - {test_file} not found");
+            return;
+        }
+
+        let mut source = File::open(test_file).unwrap();
+        let mut dest = Cursor::new(Vec::new());
+
+        let riff_io = RiffIO::new("avi");
+        let test_data = b"test C2PA data for large AVI";
+
+        // Write C2PA data
+        riff_io
+            .write_cai(&mut source, &mut dest, test_data)
+            .unwrap();
+
+        // Verify output size is reasonable (should be close to source + C2PA data)
+        let source_size = std::fs::metadata(test_file).unwrap().len();
+        let dest_size = dest.get_ref().len() as u64;
+
+        println!("Source: {source_size} bytes, Dest: {dest_size} bytes");
+        assert!(dest_size > source_size); // Should be larger with C2PA
+        assert!(dest_size < source_size + 100_000); // But not too much larger
+
+        // Try to read it back
+        dest.set_position(0);
+        let read_data = riff_io.read_cai(&mut dest).unwrap();
+        assert_eq!(read_data, test_data);
+    }
+
+    #[test]
+    #[ignore] // Large file test - run manually
+    fn test_large_avi_builder_sign() {
+        // Test Builder.sign() with large AVI file
+        // Run with: cargo test test_large_avi_builder_sign -- --ignored
+        use std::io::Cursor;
+
+        use crate::{utils::test_signer::test_signer, Builder, SigningAlg};
+
+        let test_file = "tests/fixtures/bigbunny-3.avi";
+
+        let manifest_json = r#"{
+            "claim_generator": "test_app/1.0",
+            "title": "Large AVI Test"
+        }"#;
+
+        let mut builder = Builder::default().with_definition(manifest_json).unwrap();
+        let mut source = File::open(test_file).unwrap();
+        let mut dest = Cursor::new(Vec::new());
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // This should complete without hanging
+        let start = std::time::Instant::now();
+        builder
+            .sign(signer.as_ref(), "video/avi", &mut source, &mut dest)
+            .unwrap();
+        let duration = start.elapsed();
+
+        println!("Signing took {duration:?}");
+
+        // Verify we got output
+        assert!(!dest.get_ref().is_empty());
+
+        // Verify the output size
+        let source_size = std::fs::metadata(test_file).unwrap().len();
+        let dest_size = dest.get_ref().len() as u64;
+        println!("Source: {source_size} bytes, Dest: {dest_size} bytes");
+        assert!(dest_size > source_size); // Should be larger with C2PA
+        assert!(dest_size < source_size + 100_000); // But not too much larger
     }
 }

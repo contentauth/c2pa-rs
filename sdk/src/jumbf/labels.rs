@@ -15,7 +15,7 @@
 
 //! Labels for JUMBF boxes as defined in C2PA Specification.
 //!
-//! See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_c2pa_box_details>.
+//! See [C2PA box details - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_c2pa_box_details).
 
 use std::fmt::Display;
 
@@ -24,37 +24,37 @@ use std::fmt::Display;
 /// This value should be used when possible, since it may contain a version suffix
 /// when needed to support a future version of the spec.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_c2pa_box_details>.
+/// See [C2PA box details - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_c2pa_box_details).
 pub const MANIFEST_STORE: &str = "c2pa";
 
 /// Label for the C2PA assertion store box.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_c2pa_box_details>.
+/// See [C2PA box details - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_c2pa_box_details).
 pub const ASSERTIONS: &str = "c2pa.assertions";
 
 /// Label for the C2PA claim box.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_c2pa_box_details>.
+/// See [C2PA box details - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_c2pa_box_details).
 pub const CLAIM: &str = "c2pa.claim";
 
 /// Label for the C2PA claim signature box.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_c2pa_box_details>.
+/// See [C2PA box details - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_c2pa_box_details).
 pub const SIGNATURE: &str = "c2pa.signature";
 
 /// Label for the credentials store box.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_credential_storage>.
+/// See [Private credential_storage - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_private_credential_storage).
 pub const CREDENTIALS: &str = "c2pa.credentials";
 
 /// Label for the DataBox box.
 ///
-/// See <https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_data_boxes>.
+/// See [Data boxes - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#__data_boxes).
 pub const DATABOX: &str = "c2pa.data";
 
 /// Label for the DataBox store box.
 ///
-/// See <https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_data_storage>.
+/// See [Data storage - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#__data_storage).
 pub const DATABOXES: &str = "c2pa.databoxes";
 
 const JUMBF_PREFIX: &str = "self#jumbf";
@@ -163,9 +163,15 @@ pub(crate) fn manifest_label_from_uri(uri: &str) -> Option<String> {
 pub(crate) fn assertion_label_from_uri(uri: &str) -> Option<String> {
     let raw_uri = to_normalized_uri(uri);
     let parts: Vec<&str> = raw_uri.split('/').collect();
-    if parts.len() > 4 && parts[1] == MANIFEST_STORE && parts[3] == ASSERTIONS {
+    if parts.len() > 4
+        && parts[1] == MANIFEST_STORE
+        && (parts[3] == ASSERTIONS || parts[3] == DATABOXES)
+    {
         Some(parts[4].to_string())
-    } else if parts[0] == ASSERTIONS {
+    } else if parts.len() > 1 && parts[0] == ASSERTIONS {
+        // Guard: require at least 2 parts so parts[1] (the assertion label) exists.
+        // A bare "c2pa.assertions" with no slash yields parts.len() == 1, causing
+        // parts[1] to panic. Consistent with the len > 4 guard on the first branch.
         Some(parts[1].to_string())
     } else {
         None
@@ -178,6 +184,43 @@ pub(crate) fn box_name_from_uri(uri: &str) -> Option<String> {
     let parts: Vec<&str> = raw_uri.split('/').collect();
 
     parts.last().map(|b| b.to_string())
+}
+
+// Returns the trailing label segment of a JUMBF URI as a slice of the input, e.g.
+// `self#jumbf=c2pa.assertions/c2pa.ingredient.v3__2` -> `c2pa.ingredient.v3__2`.
+// When the URI has no path separator, the whole string is treated as the label.
+//
+// Sibling of `box_name_from_uri` (which returns an owned, normalized `String`) and
+// `assertion_label_from_uri` (which additionally validates the assertion structure). This variant
+// exists because it borrows a slice of the original `uri`, so callers can compute the label's byte
+// offset within `uri` and rebuild the prefix. Where only the label value is needed, prefer
+// `assertion_label_from_uri`.
+//
+// Only the experimental `Builder` filtering API needs this, so it is gated to avoid an unused-item
+// warning when that feature is off.
+#[cfg(feature = "unstable_builder_filter")]
+pub(crate) fn label_segment_from_uri(uri: &str) -> &str {
+    uri.rsplit('/').next().unwrap_or(uri)
+}
+
+// Splits a positional label into its base and `__N` instance index, e.g.
+// `c2pa.ingredient.v3__2` -> (`c2pa.ingredient.v3`, 2); `c2pa.ingredient.v3` -> (label, 0).
+//
+// Sibling of `parse_label`, which returns `(base, version, instance)` and strips BOTH the `.vN`
+// version and the `__N` instance off the base. This variant strips only the instance and keeps the
+// version in the returned base, so the base round-trips through `Claim::label_with_instance` to
+// rebuild the exact positional label. Prefer `parse_label` when the version is wanted separately.
+//
+// Only the experimental `Builder` filtering API needs this, so it is gated to avoid an unused-item
+// warning when that feature is off.
+#[cfg(feature = "unstable_builder_filter")]
+pub(crate) fn parse_positional_label(label: &str) -> (&str, usize) {
+    if let Some(pos) = label.rfind("__") {
+        if let Ok(n) = label[pos + 2..].parse::<usize>() {
+            return (&label[..pos], n);
+        }
+    }
+    (label, 0)
 }
 
 // Struct deconstructed manifest label
@@ -194,10 +237,10 @@ impl Display for ManifestParts {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.is_v1 {
             if let Some(vendor) = &self.cgi {
-                let mp = format!("{}:urn:uuid:{}", vendor, &self.guid);
+                let mp = format!("{}:urn:uuid:{}", vendor, self.guid);
                 write!(f, "{mp}")
             } else {
-                let mp = format!("urn:uuid:{}", &self.guid);
+                let mp = format!("urn:uuid:{}", self.guid);
                 write!(f, "{mp}")
             }
         } else {
@@ -242,6 +285,11 @@ pub(crate) fn manifest_label_to_parts(uri: &str) -> Option<ManifestParts> {
     if parts[0] == "urn" || parts[1] == "urn" {
         if parts[0] == "urn" {
             is_v1 = parts[1] == "uuid";
+
+            // if > v1 it must be c2pa namespace
+            if !is_v1 && parts[1] != "c2pa" {
+                return None;
+            }
 
             guid = parts[2].to_owned();
 
@@ -395,6 +443,34 @@ pub mod tests {
         );
     }
 
+    /// Regression test: `assertion_label_from_uri` must not panic when the URI is a bare
+    /// `"c2pa.assertions"` segment with no trailing slash or assertion name.
+    ///
+    /// Before the fix, `parts[1]` was accessed without a length guard. Splitting
+    /// `"c2pa.assertions"` on '/' yields `["c2pa.assertions"]` (len == 1), so
+    /// `parts[1]` caused an index-out-of-bounds panic (exit code 101).
+    /// The function must return `None` for all such incomplete URIs.
+    #[test]
+    fn test_assertion_label_from_uri_bare_assertions_segment_does_not_panic() {
+        // Bare segment — no slash, no assertion name.
+        assert_eq!(assertion_label_from_uri(ASSERTIONS), None);
+
+        // With jumbf prefix but still no assertion name after the segment.
+        assert_eq!(
+            assertion_label_from_uri(&format!("{JUMBF_PREFIX}={ASSERTIONS}")),
+            None
+        );
+
+        // Empty string must not panic either.
+        assert_eq!(assertion_label_from_uri(""), None);
+
+        // Normal relative URI (one slash, assertion label present) still works.
+        assert_eq!(
+            assertion_label_from_uri(&format!("{ASSERTIONS}/c2pa.actions")),
+            Some("c2pa.actions".to_string())
+        );
+    }
+
     #[test]
     fn test_manifest_parts() {
         let l1 = to_manifest_uri("urn:c2pa:F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4");
@@ -479,6 +555,39 @@ pub mod tests {
         assert_eq!(
             &l6_mp.to_string(),
             "acme:urn:uuid:F9168C5E-CEB2-4FAA-B6BF-329BF39FA1E4"
+        );
+    }
+
+    #[cfg(feature = "unstable_builder_filter")]
+    #[test]
+    fn test_label_segment_from_uri() {
+        assert_eq!(
+            label_segment_from_uri("self#jumbf=c2pa.assertions/c2pa.ingredient.v3__2"),
+            "c2pa.ingredient.v3__2"
+        );
+        // No path separator: the whole string is treated as the label.
+        assert_eq!(
+            label_segment_from_uri("c2pa.ingredient.v3"),
+            "c2pa.ingredient.v3"
+        );
+    }
+
+    #[cfg(feature = "unstable_builder_filter")]
+    #[test]
+    fn test_parse_positional_label() {
+        assert_eq!(
+            parse_positional_label("c2pa.ingredient.v3__2"),
+            ("c2pa.ingredient.v3", 2)
+        );
+        // No instance suffix.
+        assert_eq!(
+            parse_positional_label("c2pa.ingredient.v3"),
+            ("c2pa.ingredient.v3", 0)
+        );
+        // A non-numeric `__` suffix is not an instance index.
+        assert_eq!(
+            parse_positional_label("c2pa.foo__bar"),
+            ("c2pa.foo__bar", 0)
         );
     }
 }

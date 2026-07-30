@@ -12,14 +12,12 @@
 // each license.
 
 use async_trait::async_trait;
+use c2pa_raw_crypto::RawSignatureValidationError;
 use coset::CoseSign1;
 use serde::Serialize;
 
 use crate::{
-    crypto::{
-        cose::{parse_cose_sign1, CertificateInfo, CoseError, Verifier},
-        raw_signature::RawSignatureValidationError,
-    },
+    crypto::cose::{parse_cose_sign1, CertificateInfo, CoseError, Verifier},
     identity::{
         identity_assertion::signature_verifier::ToCredentialSummary, SignatureVerifier,
         SignerPayload, ValidationError,
@@ -46,7 +44,7 @@ impl SignatureVerifier for X509SignatureVerifier<'_> {
     type Error = CoseError;
     type Output = X509SignatureInfo;
 
-    async fn check_signature(
+    fn check_signature(
         &self,
         signer_payload: &SignerPayload,
         signature: &[u8],
@@ -69,7 +67,53 @@ impl SignatureVerifier for X509SignatureVerifier<'_> {
         }
 
         let mut signer_payload_cbor: Vec<u8> = vec![];
-        ciborium::into_writer(signer_payload, &mut signer_payload_cbor)
+        c2pa_cbor::to_writer(&mut signer_payload_cbor, signer_payload)
+            .map_err(|_| ValidationError::InternalError("CBOR serialization error".to_string()))?;
+
+        let cose_sign1 = parse_cose_sign1(signature, &signer_payload_cbor, status_tracker)?;
+
+        let cert_info = self
+            .cose_verifier
+            .verify_signature(signature, &signer_payload_cbor, &[], None, status_tracker)
+            .map_err(|e| match e {
+                CoseError::RawSignatureValidationError(
+                    RawSignatureValidationError::SignatureMismatch,
+                ) => ValidationError::SignatureMismatch,
+
+                e => ValidationError::SignatureError(e),
+            })?;
+
+        Ok(X509SignatureInfo {
+            signer_payload: signer_payload.clone(),
+            cose_sign1,
+            cert_info,
+        })
+    }
+
+    async fn check_signature_async(
+        &self,
+        signer_payload: &SignerPayload,
+        signature: &[u8],
+        status_tracker: &mut StatusTracker,
+    ) -> Result<Self::Output, ValidationError<Self::Error>> {
+        if signer_payload.sig_type != super::CAWG_X509_SIG_TYPE {
+            log_current_item!(
+                "unsupported signature type",
+                "X509SignatureVerifier::check_signature_async"
+            )
+            .validation_status("cawg.identity.sig_type.unknown")
+            .failure_no_throw(
+                status_tracker,
+                ValidationError::<CoseError>::UnknownSignatureType(signer_payload.sig_type.clone()),
+            );
+
+            return Err(ValidationError::UnknownSignatureType(
+                signer_payload.sig_type.clone(),
+            ));
+        }
+
+        let mut signer_payload_cbor: Vec<u8> = vec![];
+        c2pa_cbor::to_writer(&mut signer_payload_cbor, signer_payload)
             .map_err(|_| ValidationError::InternalError("CBOR serialization error".to_string()))?;
 
         let cose_sign1 = parse_cose_sign1(signature, &signer_payload_cbor, status_tracker)?;
@@ -161,18 +205,18 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::{
-        crypto::{
-            cose::{CertificateTrustPolicy, Verifier},
-            raw_signature,
-        },
+        crypto::cose::{CertificateTrustPolicy, Verifier},
         identity::{
             builder::{IdentityAssertionBuilder, IdentityAssertionSigner},
-            tests::fixtures::{cert_chain_and_private_key_for_alg, manifest_json, parent_json},
+            tests::{
+                fixtures::{cert_chain_and_private_key_for_alg, manifest_json, parent_json},
+                read_manifest,
+            },
             x509::{X509CredentialHolder, X509SignatureVerifier},
             IdentityAssertion,
         },
         status_tracker::{LogKind, StatusTracker},
-        Builder, Reader, SigningAlg,
+        Builder, SigningAlg,
     };
 
     const TEST_IMAGE: &[u8] = include_bytes!("../../../tests/fixtures/CA.jpg");
@@ -186,7 +230,7 @@ mod tests {
         let mut source = Cursor::new(TEST_IMAGE);
         let mut dest = Cursor::new(Vec::new());
 
-        let mut builder = Builder::from_json(&manifest_json()).unwrap();
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
         builder
             .add_ingredient_from_stream(parent_json(), format, &mut source)
             .unwrap();
@@ -200,15 +244,14 @@ mod tests {
         let (cawg_cert_chain, cawg_private_key) =
             cert_chain_and_private_key_for_alg(SigningAlg::Ed25519);
 
-        let cawg_raw_signer = raw_signature::signer_from_cert_chain_and_private_key(
-            &cawg_cert_chain,
-            &cawg_private_key,
-            SigningAlg::Ed25519,
-            None,
-        )
-        .unwrap();
+        let cawg_raw_signer =
+            c2pa_raw_crypto::signer_from_private_key(&cawg_private_key, SigningAlg::Ed25519)
+                .unwrap();
 
-        let x509_holder = X509CredentialHolder::from_raw_signer(cawg_raw_signer);
+        let x509_holder = X509CredentialHolder::from_raw_signer(
+            cawg_raw_signer,
+            crate::crypto::cert_chain_pem_to_der(&cawg_cert_chain).unwrap(),
+        );
         let iab = IdentityAssertionBuilder::for_credential_holder(x509_holder);
         c2pa_signer.add_identity_assertion(iab);
 
@@ -219,7 +262,7 @@ mod tests {
         // Read back the Manifest that was generated.
         dest.rewind().unwrap();
 
-        let manifest_store = Reader::from_stream(format, &mut dest).unwrap();
+        let manifest_store = read_manifest(format, &mut dest).await;
         assert_eq!(manifest_store.validation_status(), None);
 
         let manifest = manifest_store.active_manifest().unwrap();
@@ -257,7 +300,7 @@ mod tests {
         assert_eq!(log.description, "signing certificate untrusted");
 
         assert_eq!(
-            log.validation_status.as_ref().unwrap().as_ref(),
+            log.validation_status.as_ref().unwrap().as_ref() as &str,
             "signingCredential.untrusted"
         );
     }

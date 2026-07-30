@@ -24,7 +24,7 @@ use crate::{
     error::{Error, Result},
 };
 
-static SUPPORTED_TYPES: [&str; 3] = [
+pub(crate) static SUPPORTED_TYPES: [&str; 3] = [
     "c2pa",
     "application/c2pa",
     "application/x-c2pa-manifest-store",
@@ -35,6 +35,8 @@ pub struct C2paIO {}
 
 impl CAIReader for C2paIO {
     fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
+        asset_reader.rewind()?;
+
         let mut cai_data = Vec::new();
         // read the whole file
         asset_reader.read_to_end(&mut cai_data)?;
@@ -175,8 +177,6 @@ pub mod tests {
 
     use super::{AssetIO, C2paIO, CAIReader, CAIWriter};
     use crate::{
-        crypto::raw_signature::SigningAlg,
-        settings::Settings,
         status_tracker::{ErrorBehavior, StatusTracker},
         store::Store,
         utils::{
@@ -184,11 +184,12 @@ pub mod tests {
             test::{fixture_path, temp_dir_path},
             test_signer::test_signer,
         },
+        SigningAlg,
     };
 
     #[test]
     fn c2pa_io_parse() {
-        let settings = Settings::default();
+        let context = crate::context::Context::new();
 
         let path = fixture_path("C.jpg");
 
@@ -211,15 +212,16 @@ pub mod tests {
             &manifest,
             "image/jpeg",
             &stream,
-            true,
             &mut StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError),
-            &settings,
+            &context,
         )
         .expect("loading store");
 
         let signer = test_signer(SigningAlg::Ps256);
 
-        let manifest2 = store.to_jumbf(signer.as_ref()).expect("to_jumbf");
+        let manifest2 = store
+            .to_jumbf_internal(signer.reserve_size())
+            .expect("to_jumbf");
         assert_eq!(&manifest, &manifest2);
     }
 

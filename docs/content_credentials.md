@@ -52,14 +52,6 @@ For Builder archives - Sign and save a manifest, either embedded or sidecar.  If
 - Add a captured .c2pa archived ingredient using add_ingredient_from_stream. This will use the parent ingredient in the archive as the ingredient added.
 
 
-
-
-### Questions
-
-- Should we allow any Reader to be converted to a Builder, or only those with the same claim_generator? Maybe there is some other flag.
-
-- Can we save a .c2pa file that does not need to validate against an asset? This should probably be an option, but lets think about it.
-
 ### Test cases
 
 1) Validate an ingredient without a manifest, store in Builder and save.

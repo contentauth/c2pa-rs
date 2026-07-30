@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+mod common;
+
 /// Complete functional integration test with parent and ingredients.
 // Isolate from wasm by wrapping in module.
 #[cfg(feature = "file_io")]
@@ -19,11 +21,13 @@ mod integration_1 {
 
     use c2pa::{
         assertions::{c2pa_action, Action, Actions, AssetReference, Metadata},
-        settings::Settings,
-        Builder, Ingredient, Reader, Result,
+        Builder, Context, Reader, Result, Settings,
     };
+    use c2pa_macros::c2pa_test_async;
     #[allow(unused)] // different code path for WASI
     use tempfile::{tempdir, TempDir};
+
+    use super::common::test_context;
 
     /// Returns the path to a fixture file.
     fn fixture_path(file_name: &str) -> PathBuf {
@@ -50,7 +54,7 @@ mod integration_1 {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_embed_manifest() -> Result<()> {
-        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+        let context = test_context().into_shared();
 
         // set up parent and destination paths
         let temp_dir = tempdirectory()?;
@@ -60,20 +64,17 @@ mod integration_1 {
 
         // let generator = ClaimGeneratorInfo::new("app");
         // create a new Manifest
-        let mut builder = Builder::new();
+        let mut builder = Builder::from_shared_context(&context);
 
         // allocate actions so we can add them
         let mut actions = Actions::new();
 
-        // add a parent ingredient
-        // let mut parent = Ingredient::from_file(&parent_path)?;
-        // parent.set_is_parent();
         // add an action assertion stating that we imported this file
         actions = actions.add_action(
             Action::new(c2pa_action::OPENED)
                 .set_when("2015-06-26T16:43:23+0200")
                 .set_parameter("name".to_owned(), "import")?
-                .set_parameter("org.cai.ingredientIds", ["apollo17"])?,
+                .add_ingredient_id("apollo17")?,
         );
 
         let ingredient_json = serde_json::json!({
@@ -94,26 +95,25 @@ mod integration_1 {
             Action::new("c2pa.edit").set_parameter("name".to_owned(), "brightnesscontrast")?,
         );
 
-        // add an ingredient
-        let ingredient = Ingredient::from_file(&ingredient_path)?;
-
         // add an action assertion stating that we imported this file
         actions = actions.add_action(
             Action::new(c2pa_action::EDITED)
                 .set_parameter("name".to_owned(), "import")?
-                .set_parameter("org.cai.ingredientIds", ["apollo17"])?,
+                .add_ingredient_id("apollo17")?,
         );
 
-        builder.add_ingredient(ingredient);
+        let mut ingredient_file = std::fs::File::open(&ingredient_path)?;
+        builder.add_ingredient_from_stream("{}", "image/png", &mut ingredient_file)?;
 
         builder.add_assertion(Actions::LABEL, &actions)?;
 
         // sign and embed into the target file
-        let signer = Settings::signer()?;
-        builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
+        let signer = context.signer()?;
+        builder.sign_file(signer, &parent_path, &output_path)?;
 
         // read our new file with embedded manifest
-        let reader = Reader::from_file(&output_path)?;
+        let mut file = std::fs::File::open(&output_path)?;
+        let reader = Reader::from_shared_context(&context).with_stream("image/jpeg", &mut file)?;
 
         println!("{reader}");
 
@@ -130,7 +130,7 @@ mod integration_1 {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_embed_json_manifest() -> Result<()> {
-        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+        let context = test_context().into_shared();
 
         // set up parent and destination paths
         let temp_dir = tempdirectory()?;
@@ -141,15 +141,15 @@ mod integration_1 {
 
         let json = std::fs::read_to_string(manifest_path)?;
 
-        let mut builder = Builder::from_json(&json)?;
+        let mut builder = Builder::from_shared_context(&context).with_definition(&json)?;
         builder.set_base_path(fixture_path(""));
 
         // sign and embed into the target file
-        let signer = Settings::signer()?;
-        builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
+        let signer = context.signer()?;
+        builder.sign_file(signer, &parent_path, &output_path)?;
 
         // read our new file with embedded manifest
-        let reader = Reader::from_file(&output_path)?;
+        let reader = Reader::from_shared_context(&context).with_file(&output_path)?;
 
         println!("{reader}");
         // std::fs::copy(&output_path, "test_file.jpg")?; // for debugging to get copy of the file
@@ -167,7 +167,7 @@ mod integration_1 {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_embed_bmff_manifest() -> Result<()> {
-        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+        let context = test_context().into_shared();
 
         // set up parent and destination paths
         let temp_dir = tempdirectory()?;
@@ -175,14 +175,16 @@ mod integration_1 {
 
         let parent_path = fixture_path("sample1.heic");
 
-        let mut builder = Builder::new();
+        let mut builder = Builder::from_shared_context(&context);
 
         // sign and embed into the target file
-        let signer = Settings::signer()?;
-        builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
+        let context_clone = builder.context().clone();
+        let signer = context_clone.signer()?;
+        builder.sign_file(signer, &parent_path, &output_path)?;
 
         // read our new file with embedded manifest
-        let reader = Reader::from_file(&output_path)?;
+        let mut file = std::fs::File::open(&output_path)?;
+        let reader = Reader::from_shared_context(&context).with_stream("image/heic", &mut file)?;
 
         println!("{reader}");
         // std::fs::copy(&output_path, "test_file.jpg")?; // for debugging to get copy of the file
@@ -200,14 +202,15 @@ mod integration_1 {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_asset_reference_assertion() -> Result<()> {
-        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+        let context = test_context().into_shared();
+
         // set up parent and destination paths
         let temp_dir = tempdirectory()?;
         let output_path = temp_dir.path().join("test_file.jpg");
         let parent_path = fixture_path("earth_apollo17.jpg");
 
         // create a new Manifest
-        let mut builder = Builder::new();
+        let mut builder = Builder::from_shared_context(&context);
 
         // allocate references
         let references = AssetReference::new(
@@ -220,11 +223,11 @@ mod integration_1 {
         builder.add_assertion(AssetReference::LABEL, &references)?;
 
         // sign and embed into the target file
-        let signer = Settings::signer()?;
-        builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
+        let signer = context.signer()?;
+        builder.sign_file(signer, &parent_path, &output_path)?;
 
         // read our new file with embedded manifest
-        let reader = Reader::from_file(&output_path)?;
+        let reader = Reader::from_shared_context(&context).with_file(&output_path)?;
 
         println!("{reader}");
 
@@ -243,14 +246,15 @@ mod integration_1 {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_metadata_assertion() -> Result<()> {
-        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+        let context = test_context().into_shared();
+
         // set up parent and destination paths
         let temp_dir = tempdirectory()?;
         let output_path = temp_dir.path().join("test_file.jpg");
         let parent_path = fixture_path("earth_apollo17.jpg");
 
         // create a new Manifest
-        let mut builder = Builder::new();
+        let mut builder = Builder::from_shared_context(&context);
 
         // allocate references
         const C2PA_METADATA: &str = r#"{
@@ -289,24 +293,25 @@ mod integration_1 {
         )?;
 
         // sign and embed into the target file
-        let signer = Settings::signer()?;
-        builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
+        let signer = context.signer()?;
+        builder.sign_file(signer, &parent_path, &output_path)?;
 
         // read our new file with embedded manifest
-        let reader = Reader::from_file(&output_path)?;
+        let mut file = std::fs::File::open(&output_path)?;
+        let reader = Reader::from_shared_context(&context).with_stream("image/jpeg", &mut file)?;
 
         println!("{reader}");
 
         Ok(())
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
     #[cfg(feature = "file_io")]
-    #[tokio::test]
+    #[c2pa_test_async]
     async fn test_cawg_signing_via_settings() -> Result<()> {
-        Settings::from_toml(include_str!(
+        let settings = Settings::new().with_toml(include_str!(
             "../tests/fixtures/test_settings_with_cawg_signing.toml"
         ))?;
+        let context = Context::new().with_settings(settings)?.into_shared();
 
         // Set up parent and destination paths.
         let temp_dir = tempdirectory()?;
@@ -314,21 +319,15 @@ mod integration_1 {
         let parent_path = fixture_path("earth_apollo17.jpg");
 
         // Create a new Manifest.
-        let mut builder = Builder::new();
+        let mut builder = Builder::from_shared_context(&context);
 
         // Sign and embed into the target file.
-        let signer = Settings::signer()?;
-        builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
+        let signer = context.signer()?;
+        builder.sign_file(signer, &parent_path, &output_path)?;
 
         // Read back the new file with embedded manifest.
-        let mut reader = Reader::from_file(&output_path)?;
-
-        reader
-            .post_validate_async(&c2pa::identity::validator::CawgValidator {})
-            .await
-            .unwrap();
-
-        dbg!(&reader);
+        let mut file = std::fs::File::open(&output_path)?;
+        let reader = Reader::from_shared_context(&context).with_stream("image/jpeg", &mut file)?;
 
         // The test credentials are currently flagged as untrusted.
         // This will be fixed when https://github.com/contentauth/c2pa-rs/pull/1356
@@ -349,44 +348,50 @@ mod integration_1 {
         Ok(())
     }
 
-    #[test]
-    #[cfg(feature = "file_io")]
-    fn test_certificate_status() -> Result<()> {
-        use c2pa::ValidationState;
+    /*
+    This test is currently invalid.  It is using C2PA 2.2 assertions in 1.4 claims
+    This needs to be rewritten in a way that does not require network calls, or mock
+    them correctly.  Tracking issue: https://github.com/contentauth/c2pa-rs/issues/1581
 
-        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
-        Settings::from_toml(
-            &toml::toml! {
-                [builder]
-                certificate_status_fetch = "all"
-                certificate_status_should_override = true
-            }
-            .to_string(),
-        )?;
+        #[test]
+        #[cfg(feature = "file_io")]
+        fn test_certificate_status() -> Result<()> {
+            use c2pa::ValidationState;
 
-        // set up parent and destination paths
-        let temp_dir = tempdirectory()?;
-        let output_path = temp_dir.path().join("test_file.jpg");
-        let parent_path = fixture_path("ocsp.jpg");
+            Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
+            Settings::from_toml(
+                &toml::toml! {
+                    [builder]
+                    certificate_status_fetch = "all"
+                    certificate_status_should_override = true
+                }
+                .to_string(),
+            )?;
 
-        // create a new Manifest
-        let mut builder = Builder::new();
-        builder.set_intent(c2pa::BuilderIntent::Update);
+            // set up parent and destination paths
+            let temp_dir = tempdirectory()?;
+            let output_path = temp_dir.path().join("test_file.jpg");
+            let parent_path = fixture_path("ocsp.jpg");
 
-        // sign and embed into the target file
-        let signer = Settings::signer()?;
-        builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
+            // create a new Manifest
+            let mut builder = Builder::new();
+            builder.set_intent(c2pa::BuilderIntent::Update);
 
-        // std::fs::copy(&output_path, "cert_status.jpg")?;
+            // sign and embed into the target file
+            let signer = Settings::signer()?;
+            builder.sign_file(signer.as_ref(), &parent_path, &output_path)?;
 
-        // read our new file with embedded manifest
-        let reader = Reader::from_file(&output_path)?;
-        let reader_json = reader.json();
-        //println!("{reader}");
-        // ensure certificate status assertion was created
-        //assert!(reader_json.contains(r#"label": "c2pa.certificate-status"#));
-        assert_eq!(reader.validation_state(), ValidationState::Trusted);
-        assert!(reader_json.contains("signingCredential.ocsp.notRevoked"));
-        Ok(())
-    }
+            // std::fs::copy(&output_path, "cert_status.jpg")?;
+
+            // read our new file with embedded manifest
+            let reader = Reader::from_file(&output_path)?;
+            let reader_json = reader.json();
+            //println!("{reader}");
+            // ensure certificate status assertion was created
+            //assert!(reader_json.contains(r#"label": "c2pa.certificate-status"#));
+            assert_eq!(reader.validation_state(), ValidationState::Trusted);
+            assert!(reader_json.contains("signingCredential.ocsp.notRevoked"));
+            Ok(())
+        }
+    */
 }

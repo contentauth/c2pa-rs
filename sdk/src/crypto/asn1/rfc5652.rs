@@ -20,14 +20,172 @@ use std::{
 };
 
 use bcder::{
-    decode::{Constructed, DecodeError, Source},
+    decode::{Constructed, DecodeError, Primitive, Source},
     encode,
     encode::{PrimitiveContent, Values},
     BitString, Captured, ConstOid, Integer, Mode, OctetString, Oid, Tag,
 };
-use x509_certificate::{asn1time::*, rfc3280::*, rfc5280::*, rfc5652::*};
+use der::Decode;
 
+// Re-use common types from parent module
+use super::{AlgorithmIdentifier, GeneralizedTime};
 use crate::crypto::asn1::rfc3281::AttributeCertificate;
+
+// Define local bcder-compatible types to replace x509_certificate imports
+
+/// UTC time compatible with bcder - hybrid approach using der crate
+#[derive(Clone, Debug)]
+pub struct UtcTime {
+    // Store the der type for proper time parsing (handles Y2K correctly)
+    der_time: der::asn1::UtcTime,
+    // Cache the DER encoding for bcder compatibility
+    der_bytes: Vec<u8>,
+}
+
+impl PartialEq for UtcTime {
+    fn eq(&self, other: &Self) -> bool {
+        self.der_time == other.der_time
+    }
+}
+
+impl Eq for UtcTime {}
+
+impl UtcTime {
+    pub fn from_primitive<S: Source>(
+        prim: &mut Primitive<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
+        // Get the raw bytes (without tag/length)
+        let bytes = prim.take_all()?;
+        // Reconstruct DER encoding using helper (tag 0x17 = UTC_TIME)
+        let der_bytes = super::reconstruct_der_bytes(0x17, bytes.as_ref())
+            .map_err(|_| DecodeError::content("failed to reconstruct DER bytes", prim.pos()))?;
+        // Parse with der crate - it handles Y2K correctly and validates format
+        let der_time = der::asn1::UtcTime::from_der(&der_bytes)
+            .map_err(|_| DecodeError::content("invalid UtcTime", prim.pos()))?;
+        Ok(UtcTime {
+            der_time,
+            der_bytes,
+        })
+    }
+
+    /// Convert to chrono DateTime
+    pub fn to_datetime(&self) -> chrono::DateTime<chrono::Utc> {
+        // Convert der's time to SystemTime, then to chrono
+        let system_time = self.der_time.to_system_time();
+        system_time.into()
+    }
+}
+
+impl Values for UtcTime {
+    fn encoded_len(&self, _mode: Mode) -> usize {
+        self.der_bytes.len()
+    }
+
+    fn write_encoded<W: Write>(&self, _mode: Mode, target: &mut W) -> Result<(), std::io::Error> {
+        target.write_all(&self.der_bytes)
+    }
+}
+
+/// Name type (opaque - just captures the DER encoding)
+#[derive(Clone, Debug)]
+pub struct Name(Captured);
+
+impl PartialEq for Name {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.as_slice() == other.0.as_slice()
+    }
+}
+
+impl Eq for Name {}
+
+impl Name {
+    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
+        cons.capture_one().map(Name)
+    }
+
+    pub fn encode_ref(&self) -> impl Values + '_ {
+        &self.0
+    }
+}
+
+/// Certificate type (opaque - just captures the DER encoding)
+#[derive(Clone, Debug)]
+pub struct Certificate(Captured);
+
+impl PartialEq for Certificate {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.as_slice() == other.0.as_slice()
+    }
+}
+
+impl Eq for Certificate {}
+
+impl Certificate {
+    pub fn from_sequence<S: Source>(
+        cons: &mut Constructed<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
+        cons.capture_all().map(Certificate)
+    }
+
+    pub fn encode_ref(&self) -> impl Values + '_ {
+        &self.0
+    }
+}
+
+/// Attribute type with type and values fields
+#[derive(Clone, Debug)]
+pub struct Attribute {
+    pub typ: Oid,
+    pub values: Captured,
+}
+
+impl PartialEq for Attribute {
+    fn eq(&self, other: &Self) -> bool {
+        self.typ == other.typ && self.values.as_slice() == other.values.as_slice()
+    }
+}
+
+impl Eq for Attribute {}
+
+impl Attribute {
+    pub fn take_opt_from<S: Source>(
+        cons: &mut Constructed<S>,
+    ) -> Result<Option<Self>, DecodeError<S::Error>> {
+        cons.take_opt_sequence(|cons| {
+            let typ = Oid::take_from(cons)?;
+            let values = cons.capture_all()?;
+            Ok(Attribute { typ, values })
+        })
+    }
+
+    pub fn encode_ref(&self) -> impl Values + '_ {
+        encode::sequence((self.typ.encode_ref(), &self.values))
+    }
+}
+
+impl PrimitiveContent for Attribute {
+    const TAG: Tag = Tag::SEQUENCE;
+
+    fn encoded_len(&self, mode: Mode) -> usize {
+        self.encode_ref().encoded_len(mode)
+    }
+
+    fn write_encoded<W: Write>(&self, mode: Mode, target: &mut W) -> Result<(), std::io::Error> {
+        self.encode_ref().write_encoded(mode, target)
+    }
+}
+
+/// Certificate list type (opaque - just captures the DER encoding)
+#[derive(Clone, Debug)]
+pub struct CertificateList(Captured);
+
+impl PartialEq for CertificateList {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.as_slice() == other.0.as_slice()
+    }
+}
+
+impl Eq for CertificateList {}
 
 /// The signed-data content type.
 ///
@@ -1310,7 +1468,7 @@ impl Time {
 impl From<Time> for chrono::DateTime<chrono::Utc> {
     fn from(t: Time) -> Self {
         match t {
-            Time::UtcTime(utc) => *utc,
+            Time::UtcTime(utc) => utc.to_datetime(),
             Time::GeneralizedTime(gt) => gt.into(),
         }
     }

@@ -1,0 +1,11 @@
+name: 💡 Feature request
+description: Suggest an idea for improvement
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: Describe your idea
+      description: What would make the project better? What is the target platform for this feature?
+      placeholder: Describe your feature request here.
+    validations:
+      required: true

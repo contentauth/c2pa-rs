@@ -14,12 +14,15 @@
 //! Example App that generates a manifest store listing for a given file
 
 use anyhow::Result;
+
 #[cfg(target_arch = "wasm32")]
 fn main() -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+// TODO: use SyncGenericResolver when we export public API for it to support wasi
+//       https://github.com/contentauth/c2pa-rs/issues/1366
+#[cfg(all(not(target_arch = "wasm32"), feature = "http_ureq"))]
 fn main() -> Result<()> {
     use std::io::Read;
 
@@ -31,21 +34,21 @@ fn main() -> Result<()> {
         let format = format_from_path(&path).ok_or(Error::UnsupportedType)?;
         let mut file = std::fs::File::open(&path)?;
 
-        let reader = match Reader::from_stream(&format, &mut file) {
+        let reader = match Reader::default().with_stream(&format, &mut file) {
             Ok(reader) => Ok(reader),
             Err(Error::RemoteManifestUrl(url)) => {
                 println!("Fetching remote manifest from {url}");
                 let mut c2pa_data = Vec::new();
                 let resp = ureq::get(&url).call()?;
                 resp.into_body().into_reader().read_to_end(&mut c2pa_data)?;
-                Reader::from_manifest_data_and_stream(&c2pa_data, &format, &mut file)
+                Reader::default().with_manifest_data_and_stream(&c2pa_data, &format, &mut file)
             }
             Err(Error::JumbfNotFound) => {
                 // if not embedded or cloud, check for sidecar first and load if it exists
                 let potential_sidecar_path = path.with_extension("c2pa");
                 if potential_sidecar_path.exists() {
                     let manifest_data = std::fs::read(potential_sidecar_path)?;
-                    Ok(Reader::from_manifest_data_and_stream(
+                    Ok(Reader::default().with_manifest_data_and_stream(
                         &manifest_data,
                         &format,
                         &mut file,

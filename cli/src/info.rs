@@ -10,20 +10,22 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::path::Path;
+use std::{io::Seek, path::Path};
 
 use anyhow::Result;
-use c2pa::{IngredientOptions, Reader};
+use c2pa::{format_from_path, Builder, Context, Reader, Settings};
 
 /// Display additional C2PA information about the asset (not JSON formatted).
 pub fn info(path: &Path) -> Result<()> {
-    struct Options {}
-    impl IngredientOptions for Options {
-        fn thumbnail(&self, _path: &Path) -> Option<(String, Vec<u8>)> {
-            None
-        }
-    }
-    let ingredient = c2pa::Ingredient::from_file_with_options(path, &Options {})?;
+    let mut stream = std::fs::File::open(path)
+        .map_err(|_| c2pa::Error::FileNotFound(path.to_string_lossy().to_string()))?;
+    let format = format_from_path(path).unwrap_or_default();
+
+    // Disable thumbnail generation for info command to speed up processing
+    let settings = Settings::new().with_value("builder.thumbnail.enabled", false)?;
+    let mut builder = Builder::from_context(Context::new().with_settings(settings)?);
+    let ingredient = builder.add_ingredient_from_stream("{}", &format, &mut stream)?;
+
     println!("Information for {}", ingredient.title().unwrap_or_default());
     let mut is_cloud_manifest = false;
     //println!("instanceID = {}", ingredient.instance_id());
@@ -60,7 +62,9 @@ pub fn info(path: &Path) -> Result<()> {
         } else {
             println!("Validated");
         }
-        let reader = Reader::from_file(path)?;
+
+        stream.rewind()?;
+        let reader = Reader::default().with_stream(&format, &mut stream)?;
 
         let manifests: Vec<_> = reader.iter_manifests().collect();
         match manifests.len() {

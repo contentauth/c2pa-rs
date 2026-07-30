@@ -25,7 +25,7 @@ use crate::{
     builder::BuilderIntent,
     cbor_types::DateT,
     resource_store::UriOrResource,
-    settings::SettingsValidate,
+    settings::{deserialize_case_insensitive, deserialize_case_insensitive_opt, SettingsValidate},
     ClaimGeneratorInfo, Error, ResourceRef, Result,
 };
 
@@ -93,7 +93,11 @@ pub struct ThumbnailSettings {
     /// input format.
     ///
     /// The default value is None.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "deserialize_case_insensitive_opt"
+    )]
     pub format: Option<ThumbnailFormat>,
     /// Whether or not to prefer a smaller sized media format for the thumbnail.
     ///
@@ -112,6 +116,7 @@ pub struct ThumbnailSettings {
     /// algorithms for various formats.
     ///
     /// The default value is [`ThumbnailQuality::Medium`].
+    #[serde(deserialize_with = "deserialize_case_insensitive")]
     pub quality: ThumbnailQuality,
 }
 
@@ -222,6 +227,38 @@ impl TryFrom<ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
     }
 }
 
+impl TryFrom<&ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
+    type Error = Error;
+
+    fn try_from(value: &ClaimGeneratorInfoSettings) -> Result<Self> {
+        Ok(ClaimGeneratorInfo {
+            name: value.name.clone(),
+            version: value.version.clone(),
+            icon: value
+                .icon
+                .as_ref()
+                .map(|icon| UriOrResource::ResourceRef(icon.clone())),
+            operating_system: {
+                value.operating_system.as_ref().map(|os| match os {
+                    ClaimGeneratorInfoOperatingSystem::Auto => {
+                        format!("{}-unknown-{}", consts::ARCH, consts::OS)
+                    }
+                    ClaimGeneratorInfoOperatingSystem::Other(name) => name.clone(),
+                })
+            },
+            other: value
+                .other
+                .iter()
+                .map(|(key, value)| {
+                    serde_json::to_value(value)
+                        .map(|value| (key.clone(), value))
+                        .map_err(|err| err.into())
+                })
+                .collect::<Result<HashMap<String, serde_json::Value>>>()?,
+        })
+    }
+}
+
 /// Settings for an action template.
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -270,11 +307,11 @@ impl TryFrom<ActionTemplateSettings> for ActionTemplate {
                     template_parameters
                         .into_iter()
                         .map(|(key, value)| {
-                            serde_cbor::value::to_value(value)
+                            c2pa_cbor::value::to_value(value)
                                 .map(|value| (key, value))
                                 .map_err(|err| err.into())
                         })
-                        .collect::<Result<HashMap<String, serde_cbor::Value>>>()
+                        .collect::<Result<HashMap<String, c2pa_cbor::Value>>>()
                 })
                 .transpose()?,
         })
@@ -360,25 +397,25 @@ pub struct ActionsSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) templates: Option<Vec<ActionTemplateSettings>>,
     /// Actions to be added to the [Actions::actions][crate::assertions::Actions::actions] field.
-    // TODO: ActionSettings indirectly depends on ActionParameters which contains a serde_cbor::Value and
+    // TODO: ActionSettings indirectly depends on ActionParameters which contains a c2pa_cbor::Value and
     // schemars can't generate a schema for cbor values. It also doesn't feel right to change our API for
     // the sake of json schemas.
     #[cfg_attr(feature = "json_schema", schemars(skip))]
     pub(crate) actions: Option<Vec<ActionSettings>>,
     /// Whether to automatically generate a c2pa.created [Action] assertion or error that it doesn't already exist.
     ///
-    /// For more information about the mandatory conditions for a c2pa.created action assertion, see here:
-    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion>
+    /// For more information about the mandatory conditions for a c2pa.created action assertion, see the
+    /// [C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion).
     pub auto_created_action: AutoActionSettings,
     /// Whether to automatically generate a c2pa.opened [Action] assertion or error that it doesn't already exist.
     ///
-    /// For more information about the mandatory conditions for a c2pa.opened action assertion, see here:
-    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion>
+    /// For more information about the mandatory conditions for a c2pa.opened action assertion, see the
+    /// [C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion).
     pub auto_opened_action: AutoActionSettings,
     /// Whether to automatically generate a c2pa.placed [Action] assertion or error that it doesn't already exist.
     ///
-    /// For more information about the mandatory conditions for a c2pa.placed action assertion, see:
-    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_relationship>
+    /// For more information about the mandatory conditions for a c2pa.placed action assertion, see
+    /// [Relationship - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_relationship)
     pub auto_placed_action: AutoActionSettings,
 }
 
@@ -389,15 +426,15 @@ impl Default for ActionsSettings {
             templates: None,
             actions: None,
             auto_created_action: AutoActionSettings {
-                enabled: true,
-                source_type: Some(DigitalSourceType::Empty),
+                enabled: false,
+                source_type: None, // Some(DigitalSourceType::Empty),
             },
             auto_opened_action: AutoActionSettings {
-                enabled: true,
+                enabled: false,
                 source_type: None,
             },
             auto_placed_action: AutoActionSettings {
-                enabled: true,
+                enabled: false,
                 source_type: None,
             },
         }
@@ -413,15 +450,78 @@ impl SettingsValidate for ActionsSettings {
     }
 }
 
+/// The scope of manifests to fetch timestamps for.
+///
+/// See [`TimeStampSettings`] for more information.
+#[derive(Copy, Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum TimeStampFetchScope {
+    /// Fetch timestamps for only the parent manifest.
+    Parent,
+    /// Fetch timestmaps for all manifests in the manifest store.
+    All,
+}
+
+/// Settings for configuring auto-generation of the [`TimeStamp`] assertion.
+///
+/// Useful when a manifest was signed offline and you want to attach a trusted timestamp to it later.
+///
+/// [`TimeStamp`]: crate::assertions::TimeStamp
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct TimeStampSettings {
+    /// Whether to auto-generate a [`TimeStamp`] assertion for the [`TimeStampSettings::fetch_scope`].
+    ///
+    /// Note that for this setting to take effect, a timestamping authority URL must be set in the
+    /// [`Signer::time_authority_url`]. If the signer is acquired from settings via [`Settings::signer`],
+    /// the URL can be set in [`SignerSettings`].
+    ///
+    /// The default value is false.
+    ///
+    /// [`TimeStamp`]: crate::assertions::TimeStamp
+    /// [`Signer::time_authority_url`]: crate::Signer::time_authority_url
+    /// [`Settings::signer`]: crate::settings::signer
+    /// [`SignerSettings`]: crate::settings::signer::SignerSettings
+    pub enabled: bool,
+    /// Whether to skip fetching timestamps for manifests that already have one.
+    ///
+    /// This setting will account for both existing [`TimeStamp`] assertions and timestamps embedded
+    /// in the claim.
+    ///
+    /// The default value is true.
+    ///
+    /// [`TimeStamp`]: crate::assertions::TimeStamp
+    pub skip_existing: bool,
+    /// Which manifests to fetch timestamps for.
+    ///
+    /// The default value is [`TimeStampFetchScope::All`].
+    #[serde(deserialize_with = "deserialize_case_insensitive")]
+    pub fetch_scope: TimeStampFetchScope,
+}
+
+impl Default for TimeStampSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            skip_existing: true,
+            fetch_scope: TimeStampFetchScope::All,
+        }
+    }
+}
+
 // TODO: do more validation on URL fields, cert fields, etc.
 /// Settings for the [Builder][crate::Builder].
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize, Default)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct BuilderSettings {
-    /// Claim generator info that is automatically added to the builder.
-    ///
-    /// Note that this information will prepend any claim generator info
-    /// provided explicitly to the builder.
+    /// The name of the vendor creating the content credential.
+    pub vendor: Option<String>,
+
+    /// When set, used as [`ClaimGeneratorInfo`] when
+    /// [`ManifestDefinition::claim_generator_info`](crate::builder::ManifestDefinition) is empty
+    /// (e.g. key omitted in JSON or an empty array). If `None` or when the definition lists at
+    /// least one generator, that path does not use this value.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub claim_generator_info: Option<ClaimGeneratorInfoSettings>,
     /// Various settings for configuring automatic thumbnail generation.
@@ -437,10 +537,10 @@ pub struct BuilderSettings {
     ///
     /// The default is to not fetch them at all.
     ///
-    /// See more information in the spec here:
-    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#certificate_status_assertion>
+    /// For more information, see [Certificate status assertion - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#certificate_status_assertion).
     ///
     /// [`CertificateStatus`]: crate::assertions::CertificateStatus
+    #[serde(default, deserialize_with = "deserialize_case_insensitive_opt")]
     pub(crate) certificate_status_fetch: Option<OcspFetchScope>,
     // TODO: this setting affects fetching and generation of the assertion; needs clarification
     /// Whether to only use [`CertificateStatus`] assertions to check certificate revocation status. If there
@@ -458,6 +558,7 @@ pub struct BuilderSettings {
     ///
     /// [`BuilderIntent`]: crate::BuilderIntent
     /// [`Builder`]: crate::Builder
+    #[serde(default, deserialize_with = "deserialize_case_insensitive_opt")]
     pub intent: Option<BuilderIntent>,
     /// Assertions with a base label included in this list will be automatically marked as a created assertion.
     /// Assertions not in this list will be automatically marked as gathered.
@@ -465,12 +566,49 @@ pub struct BuilderSettings {
     /// Note that the label should be a **base label**, not including the assertion version nor instance.
     ///
     /// See more information on the difference between created vs gathered assertions in the spec here:
-    /// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_fields>
+    /// [fields - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_fields)
     pub created_assertion_labels: Option<Vec<String>>,
-
+    /// When `true`, use [`BoxHash`] instead of [`crate::assertions::DataHash`] for formats
+    /// that support it (JPEG, PNG, GIF, etc.) when no explicit hard binding assertion has
+    /// been set.
+    ///
+    /// Formats that support `BoxHash` can embed the C2PA manifest as a new chunk/segment
+    /// without shifting existing byte offsets, so a placeholder is never required.
+    /// Setting this to `true` enables the direct workflow (`Builder::sign_embeddable`
+    /// Mode 2) for those formats and makes `Builder::needs_placeholder` return `false`.
+    ///
+    /// Defaults to `false` to preserve existing behaviour until `BoxHash` support is
+    /// more widely tested.  Set to `true` (or configure it per-[`Context`]) whenever
+    /// you are ready to prefer box-based hashing for supported formats.
+    ///
+    /// [`BoxHash`]: crate::assertions::BoxHash
+    /// [`Context`]: crate::Context
+    pub prefer_box_hash: bool,
     /// Whether to generate a C2PA archive (instead of zip) when writing the manifest builder.
-    /// This will eventually become the default behavior.
+    /// Now always defaults to true - the ability to disable it will be removed in the future.
     pub generate_c2pa_archive: Option<bool>,
+    /// Settings for configuring auto-generation of the [`TimeStamp`] assertion.
+    ///
+    /// [`TimeStamp`]: crate::assertions::TimeStamp
+    pub auto_timestamp_assertion: TimeStampSettings,
+}
+
+impl Default for BuilderSettings {
+    fn default() -> Self {
+        BuilderSettings {
+            vendor: None,
+            claim_generator_info: None,
+            thumbnail: ThumbnailSettings::default(),
+            actions: ActionsSettings::default(),
+            certificate_status_fetch: None,
+            certificate_status_should_override: None,
+            intent: None,
+            created_assertion_labels: None,
+            prefer_box_hash: false,
+            generate_c2pa_archive: Some(true),
+            auto_timestamp_assertion: TimeStampSettings::default(),
+        }
+    }
 }
 
 /// The scope of which manifests to fetch for OCSP.
@@ -522,5 +660,181 @@ pub mod tests {
         };
 
         assert!(actions_settings.validate().is_ok());
+    }
+
+    #[test]
+    fn test_claim_generator_info_try_from() {
+        // Test basic conversion
+        let settings = ClaimGeneratorInfoSettings {
+            name: "Test Generator".to_string(),
+            version: Some("1.0.0".to_string()),
+            icon: None,
+            operating_system: None,
+            other: HashMap::new(),
+        };
+        let info = ClaimGeneratorInfo::try_from(settings).unwrap();
+        assert_eq!(info.name, "Test Generator");
+        assert_eq!(info.version, Some("1.0.0".to_string()));
+
+        // Test with auto OS detection
+        let settings = ClaimGeneratorInfoSettings {
+            name: "Test Generator".to_string(),
+            version: None,
+            icon: None,
+            operating_system: Some(ClaimGeneratorInfoOperatingSystem::Auto),
+            other: HashMap::new(),
+        };
+        let info = ClaimGeneratorInfo::try_from(settings).unwrap();
+        let os = info.operating_system.unwrap();
+        assert!(os.contains(consts::ARCH) && os.contains(consts::OS));
+
+        // Test with custom OS, icon, and other fields
+        let icon_ref = ResourceRef::new("image/png".to_string(), "icon.png".to_string());
+        let mut other = HashMap::new();
+        other.insert("custom".to_string(), serde_json::json!("value"));
+        let settings = ClaimGeneratorInfoSettings {
+            name: "Test Generator".to_string(),
+            version: Some("2.0.0".to_string()),
+            icon: Some(icon_ref.clone()),
+            operating_system: Some(ClaimGeneratorInfoOperatingSystem::Other(
+                "x86_64-pc-windows-msvc".to_string(),
+            )),
+            other,
+        };
+        let info = ClaimGeneratorInfo::try_from(settings).unwrap();
+        assert_eq!(
+            info.operating_system,
+            Some("x86_64-pc-windows-msvc".to_string())
+        );
+        assert!(matches!(info.icon, Some(UriOrResource::ResourceRef(_))));
+        assert_eq!(info.other.len(), 1);
+
+        // Test reference conversion
+        let settings = ClaimGeneratorInfoSettings {
+            name: "Test Generator".to_string(),
+            version: Some("1.5.0".to_string()),
+            icon: None,
+            operating_system: None,
+            other: HashMap::new(),
+        };
+        let info = ClaimGeneratorInfo::try_from(&settings).unwrap();
+        assert_eq!(info.name, "Test Generator");
+        assert_eq!(settings.name, "Test Generator"); // Original still valid
+    }
+
+    #[test]
+    fn test_action_template_try_from() {
+        // Test basic conversion
+        let settings = ActionTemplateSettings {
+            action: "c2pa.created".to_string(),
+            software_agent: None,
+            software_agent_index: None,
+            source_type: None,
+            icon: None,
+            description: None,
+            template_parameters: None,
+        };
+        let template = ActionTemplate::try_from(settings).unwrap();
+        assert_eq!(template.action, "c2pa.created");
+        assert!(template.software_agent.is_none());
+
+        // Test with software agent and parameters
+        let mut params = HashMap::new();
+        params.insert("param1".to_string(), serde_json::json!("value1"));
+        let software_agent = ClaimGeneratorInfoSettings {
+            name: "Test Agent".to_string(),
+            version: Some("1.0.0".to_string()),
+            icon: None,
+            operating_system: None,
+            other: HashMap::new(),
+        };
+        let settings = ActionTemplateSettings {
+            action: "c2pa.edited".to_string(),
+            software_agent: Some(software_agent),
+            software_agent_index: Some(0),
+            source_type: Some(DigitalSourceType::TrainedAlgorithmicMedia),
+            icon: None,
+            description: Some("Test template".to_string()),
+            template_parameters: Some(params),
+        };
+        let template = ActionTemplate::try_from(settings).unwrap();
+        assert_eq!(template.action, "c2pa.edited");
+        assert!(template.software_agent.is_some());
+        assert!(template.template_parameters.is_some());
+    }
+
+    #[test]
+    fn test_action_try_from() {
+        // Test basic conversion
+        let settings = ActionSettings {
+            action: "c2pa.opened".to_string(),
+            when: None,
+            software_agent: None,
+            software_agent_index: None,
+            changes: None,
+            parameters: None,
+            source_type: None,
+            related: None,
+            reason: None,
+            description: None,
+        };
+        let action = Action::try_from(settings).unwrap();
+        assert_eq!(action.action, "c2pa.opened");
+        assert!(action.software_agent.is_none());
+
+        // Test with software agent and other fields
+        let software_agent = ClaimGeneratorInfoSettings {
+            name: "Editor Pro".to_string(),
+            version: Some("2.0.0".to_string()),
+            icon: None,
+            operating_system: Some(ClaimGeneratorInfoOperatingSystem::Auto),
+            other: HashMap::new(),
+        };
+        let settings = ActionSettings {
+            action: "c2pa.edited".to_string(),
+            when: None,
+            software_agent: Some(software_agent),
+            software_agent_index: None,
+            changes: None,
+            parameters: None,
+            source_type: Some(DigitalSourceType::CompositeWithTrainedAlgorithmicMedia),
+            related: None,
+            reason: Some("Privacy concerns".to_string()),
+            description: Some("Edited with filters".to_string()),
+        };
+        let action = Action::try_from(settings).unwrap();
+        assert_eq!(action.action, "c2pa.edited");
+        assert!(matches!(
+            action.software_agent,
+            Some(SoftwareAgent::ClaimGeneratorInfo(_))
+        ));
+        assert_eq!(action.reason, Some("Privacy concerns".to_string()));
+    }
+
+    // For backwards compatibility with the `config` crate.
+    #[test]
+    fn test_case_insensitive_enum_deserialization() {
+        use crate::settings::Settings;
+
+        let settings = Settings::new()
+            .with_json(r#"{"builder": {"thumbnail": {"format": "PNG", "quality": "HIGH"}, "intent": "EDIT"}}"#)
+            .unwrap();
+        assert_eq!(
+            settings.builder.thumbnail.format,
+            Some(ThumbnailFormat::Png)
+        );
+        assert_eq!(settings.builder.thumbnail.quality, ThumbnailQuality::High);
+        assert_eq!(settings.builder.intent, Some(BuilderIntent::Edit));
+
+        let settings = Settings::new()
+            .with_json(r#"{"builder": {"intent": {"create": "empty"}}}"#)
+            .unwrap();
+        assert_eq!(
+            settings.builder.intent,
+            Some(BuilderIntent::Create(DigitalSourceType::Empty))
+        );
+
+        let result = Settings::new().with_json(r#"{"builder": {"intent": {"Create": "empty"}}}"#);
+        assert!(result.is_err());
     }
 }

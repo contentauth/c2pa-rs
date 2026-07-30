@@ -13,7 +13,7 @@
 
 //! Implements validation status for specific parts of a manifest.
 //!
-//! See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_existing_manifests>.
+//! See [Existing Manifests - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_existing_manifests).
 
 #![deny(missing_docs)]
 
@@ -32,7 +32,7 @@ use crate::{
 /// A `ValidationStatus` struct describes the validation status of a
 /// specific part of a manifest.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_existing_manifests>.
+/// See [Existing Manifests - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_existing_manifests).
 #[derive(Clone, Debug, Deserialize, Serialize, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct ValidationStatus {
@@ -79,7 +79,7 @@ impl ValidationStatus {
     /// Returns the validation status code.
     ///
     /// Validation status codes are the labels from the "Value"
-    /// column in <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_existing_manifests>.
+    /// column in [Existing Manifests - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_existing_manifests).
     ///
     /// These are also defined as constants in the
     /// [`validation_status`](crate::validation_status) mod.
@@ -142,7 +142,7 @@ impl ValidationStatus {
             "ClaimMissing" => CLAIM_MISSING,
             e if e.starts_with("AssertionMissing") => ASSERTION_MISSING,
             e if e.starts_with("AssertionDecoding") => ASSERTION_REQUIRED_MISSING,
-            e if e.starts_with("HashMismatch") => ASSERTION_DATAHASH_MATCH,
+            e if e.starts_with("HashMismatch") => ASSERTION_DATAHASH_MISMATCH,
             e if e.starts_with("RemoteManifestFetch") => MANIFEST_INACCESSIBLE,
             e if e.starts_with("PrereleaseError") => STATUS_PRERELEASE,
             _ => GENERAL_ERROR,
@@ -155,7 +155,7 @@ impl ValidationStatus {
             Error::ClaimMissing { .. } => CLAIM_MISSING,
             Error::AssertionMissing { .. } => ASSERTION_MISSING,
             Error::AssertionDecoding(_code) => ASSERTION_REQUIRED_MISSING, /* todo detect json/cbor errors */
-            Error::HashMismatch(_) => ASSERTION_DATAHASH_MATCH,
+            Error::HashMismatch(_) => ASSERTION_DATAHASH_MISMATCH,
             Error::RemoteManifestFetch(_) => MANIFEST_INACCESSIBLE,
             Error::PrereleaseError => STATUS_PRERELEASE,
             _ => GENERAL_ERROR,
@@ -215,3 +215,37 @@ impl PartialEq for ValidationStatus {
 // -- unofficial status code --
 
 pub(crate) const STATUS_PRERELEASE: &str = "com.adobe.prerelease";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hash_mismatch_error_maps_to_mismatch_code() {
+        // Error::HashMismatch must produce the failure code, not the success code.
+        assert_eq!(
+            ValidationStatus::code_from_error(&Error::HashMismatch("digest differs".to_string())),
+            ASSERTION_DATAHASH_MISMATCH,
+        );
+    }
+
+    #[test]
+    fn hash_mismatch_error_str_maps_to_mismatch_code() {
+        // The string-based path (used when mapping log items without a typed error) must
+        // also produce the failure code.
+        assert_eq!(
+            ValidationStatus::code_from_error_str("HashMismatch(digest differs)"),
+            ASSERTION_DATAHASH_MISMATCH,
+        );
+    }
+
+    #[test]
+    fn hash_mismatch_from_error_is_failure_status() {
+        let status = ValidationStatus::from_error(&Error::HashMismatch("bad hash".to_string()));
+        assert_eq!(status.code(), ASSERTION_DATAHASH_MISMATCH);
+        assert!(
+            !status.passed(),
+            "hash mismatch must not be a passing status"
+        );
+    }
+}

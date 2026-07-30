@@ -285,10 +285,7 @@ mod tests {
 
     use std::borrow::Cow;
 
-    use crate::{
-        log_item,
-        status_tracker::{LogItem, LogKind, StatusTracker},
-    };
+    use crate::status_tracker::{LogItem, LogKind, StatusTracker};
 
     #[test]
     fn r#macro() {

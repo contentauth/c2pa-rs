@@ -11,8 +11,13 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{fs::File, io::Cursor, path::*};
+use std::{
+    fs::File,
+    io::{Cursor, Read, Seek, SeekFrom},
+    path::*,
+};
 
+use extfmt::Hexlify;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
@@ -21,7 +26,12 @@ use crate::{
     assertions::labels,
     asset_io::{AssetBoxHash, CAIRead},
     error::{Error, Result},
-    utils::hash_utils::{hash_stream_by_alg, verify_stream_by_alg, HashRange},
+    hash_utils::hash_by_alg,
+    maybe_send_sync::MaybeSend,
+    utils::{
+        hash_utils::{hash_stream_by_alg_with_progress, vec_compare, HashRange},
+        io_utils::ReaderUtils,
+    },
     validation_results::validation_codes::ASSERTION_BOXHASH_UNKNOWN_BOX,
 };
 
@@ -29,7 +39,7 @@ const ASSERTION_CREATION_VERSION: usize = 1;
 
 pub const C2PA_BOXHASH: &str = "C2PA";
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+#[derive(Serialize, Default, Deserialize, Debug, PartialEq, Eq)]
 pub struct BoxMap {
     pub names: Vec<String>,
 
@@ -48,6 +58,24 @@ pub struct BoxMap {
 
     #[serde(skip)]
     pub range_len: u64,
+}
+
+impl BoxMap {
+    // diagnostic tool to show hashes for boxes
+    pub fn dump_box(&self, mut reader: &mut dyn CAIRead, alg: &str) -> Result<()> {
+        print!("box names: ");
+        for name in &self.names {
+            print!("{name}, ");
+        }
+
+        // get the hash
+        reader.seek(SeekFrom::Start(self.range_start))?;
+        let to_be_hashed = reader.read_to_vec(self.range_len)?;
+        let (hash, len) = (hash_by_alg(alg, &to_be_hashed, None), to_be_hashed.len());
+
+        println!("data len: {}, hash: {}", len, Hexlify(&hash));
+        Ok(())
+    }
 }
 
 /// Helper class to create BoxHash assertion
@@ -87,61 +115,74 @@ impl BoxHash {
         alg: Option<&str>,
         bhp: &dyn AssetBoxHash,
     ) -> Result<()> {
-        // it is a failure if no hashes are listed
+        self.verify_stream_hash_with_progress(reader, alg, bhp, &mut |_, _| Ok(()))
+    }
+
+    /// Like [`verify_stream_hash`] but fires `progress(step, total)` once per hashed
+    /// box so callers with a [`Context`] can report `ProgressPhase::VerifyingAssetHash`
+    /// ticks and support cancellation.
+    pub(crate) fn verify_stream_hash_with_progress<F>(
+        &self,
+        reader: &mut dyn CAIRead,
+        alg: Option<&str>,
+        bhp: &dyn AssetBoxHash,
+        progress: &mut F,
+    ) -> Result<()>
+    where
+        F: FnMut(u32, u32) -> Result<()>,
+    {
         if self.boxes.is_empty() {
             return Err(Error::HashMismatch("No box hash found".to_string()));
         }
 
-        // get source box list, the source list is returned expanded
-        // to show each box as an individual entry
         let source_bms = bhp.get_box_map(reader)?;
         let mut source_index = 0;
 
-        // check to see we source index starts at PNGh and skip if not included in the hash list
         if let Some(first_expected_bms) = source_bms.get(source_index) {
-            if first_expected_bms.names[0] == "PNGh" && self.boxes[0].names[0] != "PNGh" {
+            if first_expected_bms
+                .names
+                .first()
+                .is_some_and(|name| name == "PNGh")
+                && self.boxes[0]
+                    .names
+                    .first()
+                    .is_some_and(|name| name != "PNGh")
+            {
                 source_index += 1;
             }
         } else {
             return Err(Error::HashMismatch("No data boxes found".to_string()));
-        }
+        };
 
         for bm in &self.boxes {
             let mut inclusions = Vec::new();
 
-            // build up current inclusion, consuming all names in this BoxMap
             let mut skip_c2pa = false;
             let mut inclusion = HashRange::new(0u64, 0u64);
             for name in &bm.names {
                 match source_bms.get(source_index) {
-                    Some(next_source_bm) => {
-                        if name == &next_source_bm.names[0] {
-                            if inclusion.length() == 0 {
-                                // this is a new item
-                                inclusion.set_start(next_source_bm.range_start);
-                                inclusion.set_length(next_source_bm.range_len);
+                    Some(next_source_bm) if name == &next_source_bm.names[0] => {
+                        if inclusion.length() == 0 {
+                            inclusion.set_start(next_source_bm.range_start);
+                            inclusion.set_length(next_source_bm.range_len);
 
-                                if name == C2PA_BOXHASH {
-                                    // there should only be 1 collapsed C2PA range
-                                    if bm.names.len() != 1 {
-                                        return Err(Error::HashMismatch(
-                                            "Malformed C2PA box hash".to_owned(),
-                                        ));
-                                    }
-                                    skip_c2pa = true;
+                            if name == C2PA_BOXHASH {
+                                if bm.names.len() != 1 {
+                                    return Err(Error::HashMismatch(
+                                        "Malformed C2PA box hash".to_owned(),
+                                    ));
                                 }
-                            } else {
-                                // count any unknown data between named segments
-                                let len_to_this_seg =
-                                    next_source_bm.range_start - inclusion.start();
-                                // update item
-                                inclusion.set_length(len_to_this_seg + next_source_bm.range_len);
+                                skip_c2pa = true;
                             }
                         } else {
-                            return Err(Error::HashMismatch(
-                                ASSERTION_BOXHASH_UNKNOWN_BOX.to_owned(),
-                            ));
+                            let len_to_this_seg = next_source_bm.range_start - inclusion.start();
+                            inclusion.set_length(len_to_this_seg + next_source_bm.range_len);
                         }
+                    }
+                    Some(_) => {
+                        return Err(Error::HashMismatch(
+                            ASSERTION_BOXHASH_UNKNOWN_BOX.to_owned(),
+                        ));
                     }
                     None => {
                         return Err(Error::HashMismatch(
@@ -152,8 +193,6 @@ impl BoxHash {
                 source_index += 1;
             }
 
-            // C2PA chunks are skipped for hashing purposes
-            // or if the box is explicitly excluded
             let exclude = bm.excluded.unwrap_or(false);
             if skip_c2pa || exclude {
                 continue;
@@ -169,7 +208,15 @@ impl BoxHash {
                 },
             };
 
-            if !verify_stream_by_alg(&curr_alg, &bm.hash, reader, Some(inclusions), false) {
+            let computed = hash_stream_by_alg_with_progress(
+                &curr_alg,
+                reader,
+                Some(inclusions),
+                false,
+                progress,
+            )?;
+
+            if !vec_compare(&bm.hash, &computed) {
                 return Err(Error::HashMismatch("Hashes do not match".to_owned()));
             }
         }
@@ -177,14 +224,36 @@ impl BoxHash {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    pub fn generate_box_hash_from_stream(
+    pub fn generate_box_hash_from_stream<R>(
         &mut self,
-        reader: &mut dyn CAIRead,
+        reader: &mut R,
         alg: &str,
         bhp: &dyn AssetBoxHash,
         minimal_form: bool,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        R: Read + Seek + MaybeSend,
+    {
+        self.generate_box_hash_from_stream_with_progress(reader, alg, bhp, minimal_form, |_, _| {
+            Ok(())
+        })
+    }
+
+    /// Like [`generate_box_hash_from_stream`] but fires `progress(step, total)` once
+    /// per hashed box so callers with a [`Context`] can report `ProgressPhase::Hashing`
+    /// ticks and support cancellation.
+    pub(crate) fn generate_box_hash_from_stream_with_progress<R, F>(
+        &mut self,
+        reader: &mut R,
+        alg: &str,
+        bhp: &dyn AssetBoxHash,
+        minimal_form: bool,
+        mut progress: F,
+    ) -> Result<()>
+    where
+        R: Read + Seek + MaybeSend,
+        F: FnMut(u32, u32) -> Result<()>,
+    {
         // get source box list
         let source_bms = bhp.get_box_map(reader)?;
 
@@ -277,12 +346,14 @@ impl BoxHash {
                     continue;
                 }
 
-                let mut inclusions = Vec::new();
-
-                let inclusion = HashRange::new(bm.range_start, bm.range_len);
-                inclusions.push(inclusion);
-
-                bm.hash = ByteBuf::from(hash_stream_by_alg(alg, reader, Some(inclusions), false)?);
+                let inclusions = vec![HashRange::new(bm.range_start, bm.range_len)];
+                bm.hash = ByteBuf::from(hash_stream_by_alg_with_progress(
+                    alg,
+                    reader,
+                    Some(inclusions),
+                    false,
+                    &mut progress,
+                )?);
             }
         } else {
             for mut bm in source_bms {
@@ -297,16 +368,16 @@ impl BoxHash {
                     continue;
                 }
 
-                // this is a new item
-                let mut inclusions = Vec::new();
-
-                let inclusion = HashRange::new(bm.range_start, bm.range_len);
-                inclusions.push(inclusion);
-
+                let inclusions = vec![HashRange::new(bm.range_start, bm.range_len)];
                 bm.alg = Some(alg.to_string());
-                bm.hash = ByteBuf::from(hash_stream_by_alg(alg, reader, Some(inclusions), false)?);
+                bm.hash = ByteBuf::from(hash_stream_by_alg_with_progress(
+                    alg,
+                    reader,
+                    Some(inclusions),
+                    false,
+                    &mut progress,
+                )?);
                 bm.pad = ByteBuf::from(vec![]);
-
                 self.boxes.push(bm);
             }
         }
@@ -646,5 +717,30 @@ mod tests {
         assert_eq!(bh.boxes[0].names[0], "test");
         assert_eq!(bh.boxes[1].names[0], "C2PA");
         assert_eq!(bh.boxes[2].names[0], "test1");
+    }
+
+    #[test]
+    fn test_verify_stream_hash_with_empty_names() {
+        let ap = fixture_path("libpng-test.png");
+        let bhp = get_assetio_handler_from_path(&ap)
+            .unwrap()
+            .asset_box_hash_ref()
+            .unwrap();
+        let mut input = File::open(&ap).unwrap();
+
+        let malicious_bh = BoxHash {
+            boxes: vec![BoxMap {
+                names: vec![],
+                alg: Some("sha256".to_string()),
+                hash: ByteBuf::from(vec![0]),
+                excluded: None,
+                pad: ByteBuf::from(vec![]),
+                range_start: 0,
+                range_len: 0,
+            }],
+        };
+
+        // This shouldn't crash.
+        let _ = malicious_bh.verify_stream_hash(&mut input, Some("sha256"), bhp);
     }
 }

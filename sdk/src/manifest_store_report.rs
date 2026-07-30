@@ -129,8 +129,15 @@ impl ManifestReport {
             },
             None => SignatureReport::default(),
         };
+        let mut claim_value = serde_json::to_value(claim)?; // todo:  this will lose tagging info
+        if let Value::Object(map) = &mut claim_value {
+            map.insert(
+                "claim_version".to_string(),
+                serde_json::to_value(claim.version())?,
+            );
+        }
         Ok(Self {
-            claim: serde_json::to_value(claim)?, // todo:  this will lose tagging info
+            claim: claim_value,
             assertion_store,
             credential_store: if !credential_store.is_empty() {
                 Some(credential_store)

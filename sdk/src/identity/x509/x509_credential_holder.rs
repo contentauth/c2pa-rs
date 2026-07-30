@@ -11,11 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use c2pa_raw_crypto::RawSigner;
+
 use crate::{
-    crypto::{
-        cose::{sign, TimeStampStorage},
-        raw_signature::RawSigner,
-    },
+    crypto::cose::{cose_reserve_size, sign, RawSignerCoseSigner, TimeStampStorage},
     identity::{
         builder::{CredentialHolder, IdentityBuilderError},
         SignerPayload,
@@ -28,18 +27,22 @@ use crate::{
 ///
 /// [`SignatureVerifier`]: crate::identity::SignatureVerifier
 /// [§8.2, X.509 certificates and COSE signatures]: https://cawg.io/identity/1.1-draft/#_x_509_certificates_and_cose_signatures
-pub struct X509CredentialHolder(Box<dyn RawSigner + Sync + Send + 'static>);
+pub struct X509CredentialHolder {
+    signer: Box<dyn RawSigner + Sync + Send + 'static>,
+    cert_chain: Vec<Vec<u8>>,
+}
 
 impl X509CredentialHolder {
     /// Create an `X509CredentialHolder` instance by wrapping an instance of
-    /// [`RawSigner`].
+    /// [`RawSigner`] together with its signing certificate chain (each
+    /// certificate in DER form, end-entity first).
     ///
-    /// The [`RawSigner`] implementation actually holds (or has access to)
-    /// the relevant certificates and private key material.
-    ///
-    /// [`RawSigner`]: crate::crypto::raw_signature::RawSigner
-    pub fn from_raw_signer(signer: Box<dyn RawSigner + Sync + Send + 'static>) -> Self {
-        Self(signer)
+    /// [`RawSigner`]: crate::RawSigner
+    pub fn from_raw_signer(
+        signer: Box<dyn RawSigner + Sync + Send + 'static>,
+        cert_chain: Vec<Vec<u8>>,
+    ) -> Self {
+        Self { signer, cert_chain }
     }
 }
 
@@ -49,18 +52,23 @@ impl CredentialHolder for X509CredentialHolder {
     }
 
     fn reserve_size(&self) -> usize {
-        self.0.reserve_size()
+        cose_reserve_size(
+            self.signer.max_signature_size(),
+            &self.cert_chain,
+            false,
+            None,
+        )
     }
 
     fn sign(&self, signer_payload: &SignerPayload) -> Result<Vec<u8>, IdentityBuilderError> {
         // TO DO: Check signing cert (see signing_cert_valid in c2pa-rs's cose_sign).
 
         let mut sp_cbor: Vec<u8> = vec![];
-        ciborium::into_writer(signer_payload, &mut sp_cbor)
+        c2pa_cbor::to_writer(&mut sp_cbor, signer_payload)
             .map_err(|e| IdentityBuilderError::CborGenerationError(e.to_string()))?;
 
         sign(
-            self.0.as_ref(),
+            &RawSignerCoseSigner::new(self.signer.as_ref(), &self.cert_chain),
             &sp_cbor,
             None,
             TimeStampStorage::V2_sigTst2_CTT,
@@ -81,14 +89,13 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::{
-        crypto::{cose::Verifier, raw_signature},
+        crypto::cose::Verifier,
         identity::{
             builder::{IdentityAssertionBuilder, IdentityAssertionSigner},
             tests::fixtures::{cert_chain_and_private_key_for_alg, manifest_json, parent_json},
             x509::{X509CredentialHolder, X509SignatureVerifier},
             IdentityAssertion,
         },
-        settings::set_settings_value,
         status_tracker::StatusTracker,
         Builder, Reader, SigningAlg,
     };
@@ -98,16 +105,23 @@ mod tests {
 
     #[c2pa_test_async]
     async fn simple_case() {
-        let settings = crate::settings::get_settings().unwrap_or_default();
-        let old_decode_identity_assertions = settings.core.decode_identity_assertions;
-
-        set_settings_value("core.decode_identity_assertions", false).unwrap();
+        // Create a context with decode_identity_assertions disabled
+        let settings = crate::settings::Settings::default()
+            .with_value("core.decode_identity_assertions", false)
+            .unwrap();
+        let context = crate::Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .into_shared();
 
         let format = "image/jpeg";
         let mut source = Cursor::new(TEST_IMAGE);
         let mut dest = Cursor::new(Vec::new());
 
-        let mut builder = Builder::from_json(&manifest_json()).unwrap();
+        // Use the context when creating the Builder
+        let mut builder = Builder::from_shared_context(&context)
+            .with_definition(manifest_json())
+            .unwrap();
         builder
             .add_ingredient_from_stream(parent_json(), format, &mut source)
             .unwrap();
@@ -121,15 +135,14 @@ mod tests {
         let (cawg_cert_chain, cawg_private_key) =
             cert_chain_and_private_key_for_alg(SigningAlg::Ed25519);
 
-        let cawg_raw_signer = raw_signature::signer_from_cert_chain_and_private_key(
-            &cawg_cert_chain,
-            &cawg_private_key,
-            SigningAlg::Ed25519,
-            None,
-        )
-        .unwrap();
+        let cawg_raw_signer =
+            c2pa_raw_crypto::signer_from_private_key(&cawg_private_key, SigningAlg::Ed25519)
+                .unwrap();
 
-        let x509_holder = X509CredentialHolder::from_raw_signer(cawg_raw_signer);
+        let cawg_cert_chain_der = crate::crypto::cert_chain_pem_to_der(&cawg_cert_chain).unwrap();
+
+        let x509_holder =
+            X509CredentialHolder::from_raw_signer(cawg_raw_signer, cawg_cert_chain_der);
         let iab = IdentityAssertionBuilder::for_credential_holder(x509_holder);
         c2pa_signer.add_identity_assertion(iab);
 
@@ -137,10 +150,12 @@ mod tests {
             .sign(&c2pa_signer, format, &mut source, &mut dest)
             .unwrap();
 
-        // Read back the Manifest that was generated.
+        // Read back the Manifest that was generated using the same context
         dest.rewind().unwrap();
 
-        let manifest_store = Reader::from_stream(format, &mut dest).unwrap();
+        let manifest_store = Reader::from_shared_context(&context)
+            .with_stream(format, &mut dest)
+            .unwrap();
         assert_eq!(manifest_store.validation_status(), None);
 
         let manifest = manifest_store.active_manifest().unwrap();
@@ -169,12 +184,6 @@ mod tests {
             "C2PA Test Signing Cert"
         );
 
-        // TO DO: Not sure what to check from COSE_Sign1.
-
-        set_settings_value(
-            "core.decode_identity_assertions",
-            old_decode_identity_assertions,
-        )
-        .unwrap();
+        // No need to restore settings - we never modified global state!
     }
 }

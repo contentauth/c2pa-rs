@@ -17,8 +17,11 @@ To use the library, add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-c2pa = "0.45.2"
+c2pa = "0.72.0"
 ```
+
+> [!NOTE]
+> The version above is just a placeholder. Find the latest version at https://crates.io/crates/c2pa.
 
 To read or write a manifest file, add the `file_io` dependency to your `Cargo.toml`.
 
@@ -27,24 +30,48 @@ To read or write a manifest file, add the `file_io` dependency to your `Cargo.to
 Add the `add_thumbnails` dependency to generate thumbnails for JPEG and PNG files. For example:
 
 ```
-c2pa = { version = "0.45.2", features = ["file_io", "add_thumbnails"] }
+c2pa = { version = "0.72.0", features = ["file_io", "add_thumbnails"] }
 ```
+
+## Example code
+
+The [sdk/examples](https://github.com/contentauth/c2pa-rs/tree/main/sdk/examples) directory contains some minimal example code.  The [client/client.rs](https://github.com/contentauth/c2pa-rs/blob/main/sdk/examples/client/client.rs) is the most instructive and provides an example of reading the contents of a manifest store, recursively displaying nested manifests.
 
 ## Features
 
-You can enable any of the following features:
+The crate provides numerous features that you can enable.
 
-- **openssl** *(enabled by default)*: Use the vendored `openssl` implementation for cryptography.
-- **rust_native_crypto**: Use Rust native cryptography.
-- **add_thumbnails**: Adds the [`image`](https://github.com/image-rs/image) crate to enable auto-generated thumbnails, if possible and enabled in settings.
-- **fetch_remote_manifests**: Fetches remote manifests over the network when no embedded manifest is present and that option is enabled in settings.
-- **file_io**: Enables APIs that use filesystem I/O.
-- **json_schema**: Adds the [`schemars`](https://github.com/GREsau/schemars) crate to derive JSON schemas for JSON-compatible structs.
-- **pdf**: Enables basic PDF read support.
+These features are enabled by default:
+
+- **default_http**: Enables default HTTP features for sync and async HTTP resolvers (`http_req`, `http_reqwest`, `http_wasi`, and `http_std`).
+- **openssl**: Use the vendored `openssl` implementation for cryptography.
+
 
 > [!NOTE]
-> If both `rust_native_crypto` and `openssl` are enabled, then only `rust_native_crypto` will be enabled.
+> One of `openssl` or `rust_native_crypto` must be enabled. If both are enabled, `rust_native_crypto` is used.
 > To avoid including `openssl` as a dependency, disable default features when using `rust_native_crypto`.
+
+Other features:
+
+- **add_thumbnails**: Adds the [`image`](https://github.com/image-rs/image) crate to enable auto-generated thumbnails, if possible and enabled in settings.
+- **fetch_remote_manifests**: Fetches remote manifests over the network when no embedded manifest is present and that option is enabled in settings.
+- **file_io**: Enables APIs that use file system I/O.
+- **json_schema**: Adds the [`schemars`](https://github.com/GREsau/schemars) crate to derive JSON schemas for JSON-compatible structs.
+- **pdf**: Enables basic PDF read support.
+- **rust_native_crypto**: Use Rust native cryptography.
+
+### HTTP features
+
+> [!WARNING]
+> These features are for advanced users. Most people can ignore them.
+
+These features toggle compilation with different HTTP libraries, depending on the one you use. Some are async-only and others are sync-only. Disabling all of them will disable HTTP, speed up compilation, and decrease build size.
+
+- **http_ureq**: Enables `ureq` for sync HTTP requests.
+- **http_reqwest**: Enables `reqwest` for async HTTP requests.
+- **http_reqwest_blocking**: Enables the `blocking` feature of `reqwest` for sync HTTP requests.
+- **http_wasi**: Enables `wasi` for sync HTTP requests on WASI.
+- **http_wstd**: Enables `wstd` for async HTTP requests on WASI.
 
 ### Features no longer supported
 
@@ -53,7 +80,7 @@ The following features are no longer supported:
 * **v1_api**. The old API that this enabled has been removed.
 * **serialize_thumbnails**. Thumbnails can be serialized by accessing resources directly.
 
-### Resource references
+## Resource references
 
 A resource reference is a superset of a `HashedUri`, which the C2PA specification refers to as both `hashed-uri-map` and  `hashed-ext-uri-map`. In some cases either can be used.
 
@@ -77,7 +104,7 @@ Note that the `file:` and `app:` schemes are only used in the context of `Manife
 
 When `file_io` is enabled, the lack of a scheme will be interpreted as a `file:///` reference, otherwise as an `app:` reference.
 
-### Source asset versus parent asset
+## Source asset versus parent asset
 
 The source asset isn't always the parent asset: The source asset is the asset that is hashed and signed. It can be the output from an editing application that has not preserved the manifest store from the parent. In that case, the application should have extracted a parent ingredient from the parent asset and added that to the manifest definition.
 
@@ -88,7 +115,7 @@ The source asset isn't always the parent asset: The source asset is the asset th
 
 If there is no parent ingredient defined, and the source has a manifest store, the sdk will generate a parent ingredient from the parent.
 
-### Remote URLs and embedding
+## Remote URLs and embedding
 
 The default operation of C2PA signing is to embed a C2PA manifest store into an asset. The library also returns the C2PA manifest store so that it can be written to a sidecar or uploaded to a remote service.
 
@@ -101,6 +128,3 @@ The default operation of C2PA signing is to embed a C2PA manifest store into an 
 - The remote URL can be set with `builder.remote_url`.
 - If embedding is not needed, set the `builder.no_embed` flag to `true`.
 
-## Example code
-
-The [sdk/examples](https://github.com/contentauth/c2pa-rs/tree/main/sdk/examples) directory contains some minimal example code.  The [client/client.rs](https://github.com/contentauth/c2pa-rs/blob/main/sdk/examples/client/client.rs) is the most instructive and provides and example of reading the contents of a manifest store, recursively displaying nested manifests.

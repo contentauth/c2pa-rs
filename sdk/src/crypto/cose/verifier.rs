@@ -15,6 +15,7 @@ use std::{borrow::Cow, io::Write};
 
 use asn1_rs::FromDer;
 use async_generic::async_generic;
+use c2pa_raw_crypto::{ec_utils::parse_ec_der_sig, validator_for_signing_alg, SigningAlg};
 use coset::CoseSign1;
 use x509_parser::prelude::X509Certificate;
 
@@ -27,8 +28,6 @@ use crate::{
             signing_alg_from_sign1, CertificateInfo, CertificateTrustPolicy, CoseError,
             TrustAnchorType,
         },
-        ec_utils::parse_ec_der_sig,
-        raw_signature::{validator_for_signing_alg, SigningAlg},
     },
     log_item,
     status_tracker::StatusTracker,
@@ -84,23 +83,19 @@ impl Verifier<'_> {
             return Err(CoseError::UnsupportedSigningAlgorithm);
         };
 
-        match alg {
-            SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => {
-                if parse_ec_der_sig(&sign1.signature).is_ok() {
-                    // Should have been in P1363 format, not DER.
-                    log_item!(
-                        "Cose_Sign1",
-                        "unsupported signature format (EC signature should be in P1363 r|s format)",
-                        "verify_cose"
-                    )
-                    .validation_status(SIGNING_CREDENTIAL_INVALID)
-                    .failure_no_throw(validation_log, CoseError::InvalidEcdsaSignature);
+        if let (SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512, true) =
+            (alg, parse_ec_der_sig(&sign1.signature).is_some())
+        {
+            // Should have been in P1363 format, not DER.
+            log_item!(
+                "Cose_Sign1",
+                "unsupported signature format (EC signature should be in P1363 r|s format)",
+                "verify_cose"
+            )
+            .validation_status(SIGNING_CREDENTIAL_INVALID)
+            .failure_no_throw(validation_log, CoseError::InvalidEcdsaSignature);
 
-                    // validation_log.log(log_item, CoseError::InvalidEcdsaSignature)?;
-                    return Err(CoseError::InvalidEcdsaSignature);
-                }
-            }
-            _ => (),
+            return Err(CoseError::InvalidEcdsaSignature);
         }
 
         if _sync {
@@ -132,33 +127,14 @@ impl Verifier<'_> {
         let pk = sign_cert.public_key();
         let pk_der = pk.raw;
 
-        #[allow(unused_mut)] // never written to in the _sync case
-        let mut validated = false;
+        // The built-in validators are pure-Rust and synchronous on every target
+        // (including WASM), so the synchronous validator is used directly even on
+        // the async path.
+        let Some(validator) = validator_for_signing_alg(alg) else {
+            return Err(CoseError::UnsupportedSigningAlgorithm);
+        };
 
-        if _async {
-            // This awkward configuration is necessary because we only have async validator
-            // implementations for _some_ algorithms, but we also can't easily wrap the sync
-            // implementations due to the joys of `Send`. So we have to fall back to the
-            // synchronous implementation, even on WASM, for some algorithms.
-            #[cfg(target_arch = "wasm32")]
-            if let Some(validator) =
-                crate::crypto::raw_signature::async_validator_for_signing_alg(alg)
-            {
-                validator
-                    .validate_async(&sign1.signature, &tbs, pk_der)
-                    .await?;
-
-                validated = true;
-            }
-        }
-
-        if !validated {
-            let Some(validator) = validator_for_signing_alg(alg) else {
-                return Err(CoseError::UnsupportedSigningAlgorithm);
-            };
-
-            validator.validate(&sign1.signature, &tbs, pk_der)?;
-        }
+        validator.validate(&sign1.signature, &tbs, pk_der)?;
 
         let subject = sign_cert
             .subject()

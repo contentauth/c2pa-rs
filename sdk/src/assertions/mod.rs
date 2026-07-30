@@ -14,9 +14,11 @@
 //! Assertion helpers to build, validate, and parse assertions.
 
 mod actions;
+#[allow(deprecated)]
+pub use actions::c2pa_reason;
 pub(crate) use actions::V2_DEPRECATED_ACTIONS;
 pub use actions::{
-    c2pa_action, Action, ActionParameters, ActionTemplate, Actions, DigitalSourceType,
+    c2pa_action, Action, ActionParameters, ActionTemplate, Actions, C2paReason, DigitalSourceType,
     SoftwareAgent,
 };
 
@@ -48,6 +50,7 @@ mod creative_work;
 pub use creative_work::CreativeWork;
 
 mod exif;
+#[allow(deprecated)]
 pub use exif::Exif;
 
 #[allow(dead_code)] // will become public later
@@ -73,7 +76,7 @@ mod thumbnail;
 pub(crate) use thumbnail::Thumbnail;
 
 mod timestamp;
-pub(crate) use timestamp::TimeStamp;
+pub use timestamp::TimeStamp;
 
 mod user;
 pub(crate) use user::User;
@@ -91,4 +94,7 @@ pub use embedded_data::EmbeddedData;
 pub mod region_of_interest;
 
 mod soft_binding;
-pub use soft_binding::{SoftBinding, SoftBindingBlock, SoftBindingScope, SoftBindingTimespan};
+pub use soft_binding::{SoftBinding, SoftBindingBlock, SoftBindingScope};
+
+mod cloud_data;
+pub use cloud_data::{CloudData, HashedExtUri};

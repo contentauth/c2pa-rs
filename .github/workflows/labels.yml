@@ -1,0 +1,34 @@
+name: Sync labels
+
+# Keeps the repository's GitHub labels in sync with .github/labels.yml so the
+# labels the release process depends on are version-controlled rather than
+# hand-managed in the UI.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/labels.yml
+      - .github/workflows/labels.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  labeler:
+    name: Sync labels from .github/labels.yml
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Sync labels
+        uses: crazy-max/ghaction-github-labeler@24d110aa46a59976b8a7f35518cb7f14f434c916 # v5
+        with:
+          yaml_file: .github/labels.yml
+          # Do not delete labels that are not listed here (e.g. issue-status
+          # labels managed elsewhere, or on-demand backport-v0.<N> labels).
+          skip_delete: true

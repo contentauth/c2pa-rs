@@ -9,6 +9,8 @@ updates:
       interval: "daily"
     commit-message:
       prefix: "update"
+    cooldown:
+      default-days: 7
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -16,3 +18,5 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "chore"
+    cooldown:
+      default-days: 7

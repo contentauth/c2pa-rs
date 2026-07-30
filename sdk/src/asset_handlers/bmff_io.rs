@@ -26,7 +26,7 @@ use crate::{
     assertions::{BmffMerkleMap, ExclusionsMap},
     asset_io::{
         rename_or_move, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
-        HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        ComposedManifestRef, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
     status_tracker::{ErrorBehavior, StatusTracker},
@@ -43,6 +43,8 @@ pub struct BmffIO {
     #[allow(dead_code)]
     bmff_format: String, // can be used for specialized BMFF cases
 }
+
+const MAX_BOX_DEPTH: usize = 32; // reasonable BMFF box depth, to prevent stack overflow
 
 const HEADER_SIZE: u64 = 8; // 4 byte type + 4 byte size
 const HEADER_SIZE_LARGE: u64 = 16; // 4 byte type + 4 byte size + 8 byte large size
@@ -294,11 +296,96 @@ impl BoxInfoLite {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct FourCC {
+    pub value: [u8; 4],
+}
+
+impl From<u32> for FourCC {
+    fn from(number: u32) -> Self {
+        FourCC {
+            value: number.to_be_bytes(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct FileTypeBox {
+    pub major_brand: FourCC,
+    pub minor_version: u32,
+    pub compatible_brands: Vec<FourCC>,
+}
+
+fn read_ftyp_box<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<FileTypeBox> {
+    let start = reader.stream_position()?;
+
+    let header = BoxHeaderLite::read(reader)
+        .map_err(|err| Error::InvalidAsset(format!("Bad BMFF {err}")))?;
+
+    if header.name != BoxType::FtypBox {
+        // when no ftyp is present ISOBMFF parsers typically treat the file as if it had an ftyp box with major_brand of 'mp41' and minor_version of 0, so we will do the same for our purposes
+        return Ok(FileTypeBox {
+            major_brand: From::from(0x6d703431), // 'mp41'
+            minor_version: 0,
+            compatible_brands: Vec::new(),
+        });
+    }
+
+    let size = header.size;
+
+    if size < 16 || size % 4 != 0 {
+        return Err(Error::InvalidAsset(
+            "ftyp size too small or not aligned".to_string(),
+        ));
+    }
+
+    let brand_count = (size - 16) / 4; // header + major + minor
+    let major = reader.read_u32::<BigEndian>()?;
+    let minor = reader.read_u32::<BigEndian>()?;
+
+    let mut brands = Vec::new();
+    for _ in 0..brand_count {
+        let b = reader.read_u32::<BigEndian>()?;
+        brands.push(From::from(b));
+    }
+
+    skip_bytes_to(reader, start + size)?;
+
+    Ok(FileTypeBox {
+        major_brand: From::from(major),
+        minor_version: minor,
+        compatible_brands: brands,
+    })
+}
+
 fn read_box_header_ext<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<(u8, u32)> {
     let version = reader.read_u8()?;
     let flags = reader.read_u24::<BigEndian>()?;
     Ok((version, flags))
 }
+
+/// Detect whether a `meta` box omits the FullBox version/flags header.
+///
+/// Per ISO 14496-12 §8.11.1, `meta` is a FullBox whose first child must
+/// be `hdlr`. However, Apple QuickTime (and iOS AVAssetWriter even with
+/// `isom` brand) writes `meta` as a plain Box without the 4-byte
+/// version+flags field. We detect this by peeking at the next 8 bytes:
+/// if bytes 4..8 are `hdlr`, the data is already a child box header so
+/// no FullBox header is present. This matches the approach used by FFmpeg
+/// and Bento4.
+fn meta_box_lacks_fullbox_header<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<bool> {
+    let pos = reader.stream_position()?;
+    let mut buf = [0u8; 8];
+    let ok = reader.read_exact(&mut buf).is_ok();
+    reader.seek(SeekFrom::Start(pos))?;
+
+    if !ok {
+        return Ok(false);
+    }
+
+    Ok(&buf[4..8] == b"hdlr")
+}
+
 fn write_box_header_ext<W: Write>(w: &mut W, v: u8, f: u32) -> Result<u64> {
     w.write_u8(v)?;
     w.write_u24::<BigEndian>(f)?;
@@ -314,7 +401,15 @@ fn box_start<R: Read + Seek + ?Sized>(reader: &mut R, is_large: bool) -> Result<
 }
 
 fn _skip_bytes<R: Read + Seek + ?Sized>(reader: &mut R, size: u64) -> Result<()> {
-    reader.seek(SeekFrom::Current(size as i64))?;
+    // `size as i64` on a value greater than i64::MAX wraps to a negative
+    // number, which would seek *backward* rather than skip forward. Compute
+    // the absolute target with checked_add on u64 and seek to it via
+    // `SeekFrom::Start`, which takes a u64 directly.
+    let current = reader.stream_position()?;
+    let target = current
+        .checked_add(size)
+        .ok_or_else(|| Error::InvalidAsset("BMFF skip past u64::MAX".to_string()))?;
+    reader.seek(SeekFrom::Start(target))?;
     Ok(())
 }
 
@@ -369,7 +464,7 @@ pub(crate) fn write_c2pa_box<W: Write>(
 }
 
 fn write_xmp_box<W: Write>(w: &mut W, data: &[u8]) -> Result<()> {
-    let size = 8 + 16 + 4 + data.len(); // header + UUID + data
+    let size = 8 + 16 + data.len(); // header + UUID + data
     let bh = BoxHeaderLite::new(BoxType::UuidBox, size as u64, "uuid");
 
     // write out header
@@ -384,7 +479,8 @@ fn write_xmp_box<W: Write>(w: &mut W, data: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn _write_free_box<W: Write>(w: &mut W, size: usize) -> Result<()> {
+#[allow(unused_imports)]
+fn write_free_box<W: Write>(w: &mut W, size: usize) -> Result<()> {
     if size < 8 {
         return Err(Error::BadParam("cannot adjust free space".to_string()));
     }
@@ -480,6 +576,9 @@ where
     let size = stream_len(reader)?;
     reader.rewind()?;
 
+    let ftyp = read_ftyp_box(reader)?;
+    reader.rewind()?;
+
     // create root node
     let root_box = BoxInfo {
         path: "".to_string(),
@@ -496,7 +595,16 @@ where
     let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
     // build layout of the BMFF structure
-    build_bmff_tree(reader, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
+    let mut rl = 0usize;
+    build_bmff_tree(
+        reader,
+        size,
+        &mut bmff_tree,
+        &root_token,
+        &mut bmff_map,
+        &mut rl,
+        &ftyp,
+    )?;
 
     // get top level box offsets
     let mut tl_offsets = get_top_level_box_offsets(&bmff_tree, &bmff_map);
@@ -565,8 +673,14 @@ where
 
                     for data_map in data_map_vec {
                         // move to the start of exclusion
-                        skip_bytes_to(reader, box_start + data_map.offset)?;
-
+                        skip_bytes_to(
+                            reader,
+                            box_start
+                                .checked_add(data_map.offset)
+                                .ok_or(Error::InvalidAsset(
+                                    "BMFF data map offset overflow".to_string(),
+                                ))?,
+                        )?;
                         // match the data
                         let buf = reader.read_to_vec(data_map.value.len() as u64)?;
 
@@ -635,7 +749,7 @@ fn adjust_known_offsets<W: Write + CAIRead + ?Sized>(
     mut output: &mut W,
     bmff_tree: &Arena<BoxInfo>,
     bmff_path_map: &HashMap<String, Vec<Token>>,
-    adjust: i32,
+    adjust: i64,
 ) -> Result<()> {
     let start_pos = output.stream_position()?; // save starting point
 
@@ -1172,25 +1286,55 @@ fn adjust_known_offsets<W: Write + CAIRead + ?Sized>(
     Ok(())
 }
 
+#[allow(clippy::only_used_in_recursion)]
 pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
     reader: &mut R,
     end: u64,
     bmff_tree: &mut Arena<BoxInfo>,
     current_node: &Token,
     bmff_path_map: &mut HashMap<String, Vec<Token>>,
+    recursion_level: &mut usize,
+    ftyp: &FileTypeBox,
 ) -> Result<()> {
-    let start = reader.stream_position()?;
+    *recursion_level += 1;
+    if *recursion_level > MAX_BOX_DEPTH {
+        return Err(Error::InvalidAsset(
+            "Boxes are too deply nested, unsupported asset".to_string(),
+        ));
+    }
 
+    let start = reader.stream_position()?;
     let mut current = start;
     while current < end {
         // Get box header.
-        let header = BoxHeaderLite::read(reader)
-            .map_err(|err| Error::InvalidAsset(format!("Bad BMFF {err}")))?;
+        let header = match BoxHeaderLite::read(reader) {
+            Ok(h) => h,
+            Err(_) => {
+                // if we can't read a header, just return what we have so far since some files have trailing data after the last box
+                skip_bytes_to(reader, end)?;
+                break;
+            }
+        };
 
         // Break if size zero BoxHeader
-        let s = header.size;
+        let mut s = header.size;
         if s == 0 {
             break;
+        }
+
+        let box_end = current
+            .checked_add(s)
+            .ok_or_else(|| Error::InvalidAsset("BMFF box size overflow".to_string()))?;
+        if box_end > end {
+            if BoxType::MdatBox == header.name {
+                // for mdat boxes that extend beyond the end of the file we will just set the size to the remaining bytes in the file since
+                // some files have malformed mdat sizes but we can still hash the content by treating it as a truncated box
+                s = end - current;
+            } else {
+                return Err(Error::InvalidAsset(
+                    "Box size extends beyond asset bounds".to_string(),
+                ));
+            }
         }
 
         // Match and parse the supported atom boxes.
@@ -1201,7 +1345,13 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
                 let mut extended_type = [0u8; 16]; // 16 bytes of UUID
                 reader.read_exact(&mut extended_type)?;
 
-                let (version, flags) = read_box_header_ext(reader)?;
+                // if this is a C2PA ContentProvenanceBox it is a FullBox so it has version and flags
+                let (version, flags) = if extended_type == C2PA_UUID {
+                    let (v, f) = read_box_header_ext(reader)?;
+                    (Some(v), Some(f))
+                } else {
+                    (None, None)
+                };
 
                 let b = BoxInfo {
                     path: header.fourcc.clone(),
@@ -1210,8 +1360,8 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
                     box_type: BoxType::UuidBox,
                     parent: Some(*current_node),
                     user_type: Some(extended_type.to_vec()),
-                    version: Some(version),
-                    flags: Some(flags),
+                    version,
+                    flags,
                 };
 
                 let new_token = current_node.append(bmff_tree, b);
@@ -1242,7 +1392,19 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
                 let start = box_start(reader, header.large_size)?;
 
                 let b = if FULL_BOX_TYPES.contains(&header.fourcc.as_str()) {
-                    let (version, flags) = read_box_header_ext(reader)?; // box extensions
+                    // FullBox has version and flags after the header, but for some boxes like QT "meta"
+                    // the version and flags are not present even though it is technically a full box,
+                    // so we need to conditionally read the extended header based on the box type and in
+                    // the case of "meta" we peek at the data to detect the QuickTime exception.
+                    let (version, flags) = if BoxType::MetaBox == header.name
+                        && meta_box_lacks_fullbox_header(reader)?
+                    {
+                        (None, None)
+                    } else {
+                        let (v, f) = read_box_header_ext(reader)?;
+                        (Some(v), Some(f))
+                    };
+
                     BoxInfo {
                         path: header.fourcc.clone(),
                         offset: start,
@@ -1250,8 +1412,8 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
                         box_type: header.name,
                         parent: Some(*current_node),
                         user_type: None,
-                        version: Some(version),
-                        flags: Some(flags),
+                        version,
+                        flags,
                     }
                 } else {
                     BoxInfo {
@@ -1278,7 +1440,15 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
                 let mut current = reader.stream_position()?;
                 let end = start + s;
                 while current < end {
-                    build_bmff_tree(reader, end, bmff_tree, &new_token, bmff_path_map)?;
+                    build_bmff_tree(
+                        reader,
+                        end,
+                        bmff_tree,
+                        &new_token,
+                        bmff_path_map,
+                        recursion_level,
+                        ftyp,
+                    )?;
                     current = reader.stream_position()?;
                 }
 
@@ -1325,14 +1495,69 @@ pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
         current = reader.stream_position()?;
     }
 
+    *recursion_level -= 1;
+
     Ok(())
 }
 
+fn get_uuid_box_purpose<R: Read + Seek + ?Sized>(
+    reader: &mut R,
+    box_info: &atree::Node<BoxInfo>,
+) -> Result<(String, u64)> {
+    if box_info.data.box_type == BoxType::UuidBox {
+        let mut data_len = box_info
+            .data
+            .size
+            .checked_sub(HEADER_SIZE)
+            .and_then(|n| n.checked_sub(16))
+            .ok_or_else(|| Error::InvalidAsset("UUID box too small".to_string()))?;
+
+        // set reader to start of box contents
+        skip_bytes_to(reader, box_info.data.offset + HEADER_SIZE + 16)?;
+
+        // Fullbox => 8 bits for version 24 bits for flags
+        let (_version, _flags) = read_box_header_ext(reader)?;
+        data_len = data_len.checked_sub(4).ok_or_else(|| {
+            Error::InvalidAsset("UUID box too small for FullBox header".to_string())
+        })?;
+
+        // get the purpose (null-terminated string bounded by the box)
+        let mut purpose_bytes = Vec::with_capacity(64);
+        loop {
+            // Guard prevents reading past the box boundary, which would cause
+            // data_len to underflow (wrapping to u64::MAX) and the caller to
+            // attempt a u64::MAX-byte allocation.
+            if data_len == 0 {
+                return Err(Error::InvalidAsset(
+                    "UUID box purpose field missing null terminator".to_string(),
+                ));
+            }
+            let mut buf = [0; 1];
+            reader.read_exact(&mut buf)?;
+            data_len -= 1;
+            if buf[0] == 0x00 {
+                break;
+            }
+            purpose_bytes.push(buf[0]);
+        }
+
+        let purpose = String::from_utf8_lossy(&purpose_bytes);
+
+        return Ok((purpose.to_string(), data_len));
+    }
+
+    Err(Error::C2PAValidation(
+        "C2PA UUID box does not contain a purpose".to_string(),
+    ))
+}
+
 fn get_uuid_token(
+    reader: &mut dyn CAIRead,
     bmff_tree: &Arena<BoxInfo>,
     bmff_map: &HashMap<String, Vec<Token>>,
     uuid: &[u8; 16],
-) -> Option<Token> {
+    purpose: Option<&[&str]>,
+) -> Result<Token> {
     if let Some(uuid_list) = bmff_map.get("/uuid") {
         for uuid_token in uuid_list {
             let box_info = &bmff_tree[*uuid_token];
@@ -1342,13 +1567,27 @@ fn get_uuid_token(
                 if let Some(found_uuid) = &box_info.data.user_type {
                     // make sure uuids match
                     if vec_compare(uuid, found_uuid) {
-                        return Some(*uuid_token);
+                        // if C2PA_UUID also check against purpose if present
+                        if vec_compare(&C2PA_UUID, uuid) {
+                            let (box_purpose, _) = get_uuid_box_purpose(reader, box_info)?;
+
+                            // if there is a purpose, match it
+                            if let Some(target_purposes) = purpose {
+                                for target_purpose in target_purposes {
+                                    if box_purpose == *target_purpose {
+                                        return Ok(*uuid_token);
+                                    }
+                                }
+                                continue;
+                            }
+                        }
+                        return Ok(*uuid_token);
                     }
                 }
             }
         }
     }
-    None
+    Err(Error::NotFound)
 }
 
 #[allow(dead_code)]
@@ -1365,6 +1604,8 @@ pub(crate) struct C2PABmffBoxes {
     pub manifest_box_offset: Option<u64>,
     pub update_box_offset: Option<u64>,
     pub first_aux_uuid_offset: u64,
+    pub xmp_box_offset: u64,
+    pub xmp_box_size: u64,
 }
 
 fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
@@ -1383,6 +1624,8 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
     let mut first_aux_uuid_offset = 0u64;
     let mut merkle_boxes: Vec<BmffMerkleMap> = Vec::new();
     let mut merkle_box_infos: Vec<BoxInfoLite> = Vec::new();
+    let mut xmp_box_offset = 0;
+    let mut xmp_box_size = 0;
 
     // grab top level (for now) C2PA box
     if let Some(uuid_list) = bmff_map.get("/uuid") {
@@ -1397,37 +1640,18 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
                 if let Some(uuid) = &box_info.data.user_type {
                     // make sure it is a C2PA ContentProvenanceBox box
                     if vec_compare(&C2PA_UUID, uuid) {
-                        let mut data_len = box_info.data.size - HEADER_SIZE - 16 /*UUID*/;
-
-                        // set reader to start of box contents
-                        skip_bytes_to(reader, box_info.data.offset + HEADER_SIZE + 16)?;
-
-                        // Fullbox => 8 bits for version 24 bits for flags
-                        let (_version, _flags) = read_box_header_ext(reader)?;
-                        data_len -= 4;
-
-                        // get the purpose
-                        let mut purpose = Vec::with_capacity(64);
-                        loop {
-                            let mut buf = [0; 1];
-                            reader.read_exact(&mut buf)?;
-                            data_len -= 1;
-                            if buf[0] == 0x00 {
-                                break;
-                            } else {
-                                purpose.push(buf[0]);
-                            }
-                        }
+                        let (purpose, mut data_len) = get_uuid_box_purpose(reader, box_info)?;
 
                         // is the purpose manifest?
-                        if vec_compare(&purpose, MANIFEST.as_bytes())
-                            || vec_compare(&purpose, ORIGINAL.as_bytes())
-                            || vec_compare(&purpose, UPDATE.as_bytes())
-                        {
+                        if purpose == MANIFEST || purpose == ORIGINAL || purpose == UPDATE {
                             // offset to first aux uuid with purpose merkle
                             let mut buf = [0u8; 8];
                             reader.read_exact(&mut buf)?;
-                            data_len -= 8;
+                            data_len = data_len.checked_sub(8).ok_or_else(|| {
+                                Error::InvalidAsset(
+                                    "UUID box too small for merkle offset field".to_string(),
+                                )
+                            })?;
 
                             // read the manifest box contents
                             let manifest = reader.read_to_vec(data_len)?;
@@ -1436,21 +1660,21 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
                             skip_bytes_to(reader, box_info.data.offset)?;
                             let box_bytes = Some(reader.read_to_vec(box_info.data.size)?);
 
-                            if purpose == MANIFEST.as_bytes() {
+                            if purpose == MANIFEST {
                                 manifest_bytes = Some(manifest);
                                 manifest_box_offset = Some(box_info.data.offset);
                                 manifest_box_bytes = box_bytes;
                                 manifest_store_cnt += 1;
                                 // offset to first aux uuid
                                 first_aux_uuid_offset = u64::from_be_bytes(buf);
-                            } else if purpose == ORIGINAL.as_bytes() {
+                            } else if purpose == ORIGINAL {
                                 original_bytes = Some(manifest);
                                 manifest_box_offset = Some(box_info.data.offset);
                                 manifest_box_bytes = box_bytes;
                                 manifest_store_cnt += 1;
                                 // offset to first aux uuid
                                 first_aux_uuid_offset = u64::from_be_bytes(buf);
-                            } else if purpose == UPDATE.as_bytes() {
+                            } else if purpose == UPDATE {
                                 update_bytes = Some(manifest);
                                 update_box_offset = Some(box_info.data.offset);
                                 update_box_bytes = box_bytes;
@@ -1460,12 +1684,11 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
                             if manifest_store_cnt > 1 || update_store_cnt > 1 {
                                 return Err(Error::TooManyManifestStores);
                             }
-                        } else if vec_compare(&purpose, MERKLE.as_bytes()) {
+                        } else if purpose == MERKLE {
                             let merkle = reader.read_to_vec(data_len)?;
 
                             // use this method since it will strip trailing zeros padding if there
-                            let mut deserializer =
-                                serde_cbor::de::Deserializer::from_slice(&merkle);
+                            let mut deserializer = c2pa_cbor::de::Deserializer::from_slice(&merkle);
                             let mm: BmffMerkleMap =
                                 serde::Deserialize::deserialize(&mut deserializer)?;
                             merkle_boxes.push(mm);
@@ -1476,7 +1699,14 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
                             });
                         }
                     } else if vec_compare(&XMP_UUID, uuid) {
-                        let data_len = box_info.data.size - HEADER_SIZE - 16 /*UUID*/;
+                        let data_len = box_info
+                            .data
+                            .size
+                            .checked_sub(HEADER_SIZE)
+                            .and_then(|n| n.checked_sub(16))
+                            .ok_or_else(|| {
+                                Error::InvalidAsset("XMP UUID box too small".to_string())
+                            })?;
 
                         // set reader to start of box contents
                         skip_bytes_to(reader, box_info.data.offset + HEADER_SIZE + 16)?;
@@ -1484,6 +1714,8 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
                         let xmp_vec = reader.read_to_vec(data_len)?;
                         if let Ok(xmp_string) = String::from_utf8(xmp_vec) {
                             xmp = Some(xmp_string);
+                            xmp_box_offset = box_info.data.offset;
+                            xmp_box_size = box_info.data.size;
                         }
                     }
                 }
@@ -1493,7 +1725,7 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
 
     // get position ordered list of boxes
     let mut box_infos: Vec<BoxInfoLite> = get_top_level_boxes(bmff_tree, bmff_map);
-    box_infos.sort_by(|a, b| a.offset.cmp(&b.offset));
+    box_infos.sort_by_key(|a| a.offset);
 
     Ok(C2PABmffBoxes {
         manifest_bytes,
@@ -1508,11 +1740,18 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
         manifest_box_offset,
         update_box_offset,
         first_aux_uuid_offset,
+        xmp_box_offset,
+        xmp_box_size,
     })
 }
 
-pub(crate) fn read_bmff_c2pa_boxes(reader: &mut dyn CAIRead) -> Result<C2PABmffBoxes> {
+pub(crate) fn read_bmff_c2pa_boxes<R: Read + Seek + ?Sized>(
+    reader: &mut R,
+) -> Result<C2PABmffBoxes> {
     let size = stream_len(reader)?;
+    reader.rewind()?;
+
+    let ftyp = read_ftyp_box(reader)?;
     reader.rewind()?;
 
     // create root node
@@ -1531,12 +1770,36 @@ pub(crate) fn read_bmff_c2pa_boxes(reader: &mut dyn CAIRead) -> Result<C2PABmffB
     let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
     // build layout of the BMFF structure
-    build_bmff_tree(reader, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
+    let mut rl = 0usize;
+    build_bmff_tree(
+        reader,
+        size,
+        &mut bmff_tree,
+        &root_token,
+        &mut bmff_map,
+        &mut rl,
+        &ftyp,
+    )?;
     c2pa_boxes_from_tree_and_map(reader, &bmff_tree, &bmff_map)
 }
 
 impl CAIReader for BmffIO {
     fn read_cai(&self, reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
+        reader.seek(SeekFrom::Start(4))?;
+
+        let mut header = [0u8; 4];
+        reader.read_exact(&mut header)?;
+
+        if header[..4] != *b"ftyp" {
+            return Err(BmffError::InvalidFileSignature {
+                reason: format!(
+                    "invalid BMFF structure: expected box type \"ftyp\" at offset 4, found {}",
+                    String::from_utf8_lossy(&header[..4])
+                ),
+            }
+            .into());
+        }
+
         let c2pa_boxes = read_bmff_c2pa_boxes(reader)?;
 
         // is this an update manifest?
@@ -1637,6 +1900,10 @@ impl AssetIO for BmffIO {
         Some(self)
     }
 
+    fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
+        Some(self)
+    }
+
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
@@ -1650,6 +1917,9 @@ impl CAIWriter for BmffIO {
         store_bytes: &[u8],
     ) -> Result<()> {
         let size = stream_len(input_stream)?;
+        input_stream.rewind()?;
+
+        let ftyp = read_ftyp_box(input_stream)?;
         input_stream.rewind()?;
 
         // create root node
@@ -1668,12 +1938,15 @@ impl CAIWriter for BmffIO {
         let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
         // build layout of the BMFF structure
+        let mut rl = 0usize;
         build_bmff_tree(
             input_stream,
             size,
             &mut bmff_tree,
             &root_token,
             &mut bmff_map,
+            &mut rl,
+            &ftyp,
         )?;
 
         // figure out what state we are in
@@ -1796,15 +2069,22 @@ impl CAIWriter for BmffIO {
         let ftyp_offset = ftyp_info.offset;
         let ftyp_size = ftyp_info.size;
 
-        // get position to insert c2pa
-        let (c2pa_start, c2pa_length) =
-            if let Some(c2pa_token) = get_uuid_token(&bmff_tree, &bmff_map, &C2PA_UUID) {
+        // get position to insert c2pa primary manifest store
+        let (c2pa_start, c2pa_length) = match get_uuid_token(
+            input_stream,
+            &bmff_tree,
+            &bmff_map,
+            &C2PA_UUID,
+            Some(&[MANIFEST, ORIGINAL]),
+        ) {
+            Ok(c2pa_token) => {
                 let uuid_info = &bmff_tree[c2pa_token].data;
 
                 (uuid_info.offset, Some(uuid_info.size))
-            } else {
-                ((ftyp_offset + ftyp_size), None)
-            };
+            }
+            Err(Error::NotFound) => ((ftyp_offset + ftyp_size), None),
+            Err(e) => return Err(e),
+        };
 
         let mut new_c2pa_box: Vec<u8> = Vec::with_capacity(store_bytes.len() * 2);
         let merkle_data: &[u8] = &[]; // not yet supported
@@ -1835,14 +2115,18 @@ impl CAIWriter for BmffIO {
         // write ContentProvenanceBox
         output_stream.write_all(&new_c2pa_box)?;
 
-        // calc offset adjustments
-        let offset_adjust: i32 = if end == 0 {
-            new_c2pa_box_size as i32
+        // calc offset adjustments. Use i64 so a box larger than i32::MAX
+        // (2 GiB) does not silently truncate and corrupt embedded offsets.
+        let new_c2pa_box_size_i64 = i64::try_from(new_c2pa_box_size)
+            .map_err(|_| Error::InvalidAsset("C2PA box too large".to_string()))?;
+        let offset_adjust: i64 = if end == 0 {
+            new_c2pa_box_size_i64
         } else {
             // value could be negative if box is truncated
             let existing_c2pa_box_size = end - start;
-            let pad_size: i32 = new_c2pa_box_size as i32 - existing_c2pa_box_size as i32;
-            pad_size
+            let existing_i64 = i64::try_from(existing_c2pa_box_size)
+                .map_err(|_| Error::InvalidAsset("existing C2PA box too large".to_string()))?;
+            new_c2pa_box_size_i64 - existing_i64
         };
 
         // write content after ContentProvenanceBox
@@ -1880,12 +2164,15 @@ impl CAIWriter for BmffIO {
 
             let size = stream_len(output_stream)?;
             output_stream.rewind()?;
+            let mut rl = 0usize;
             build_bmff_tree(
                 output_stream,
                 size,
                 &mut output_bmff_tree,
                 &root_token,
                 &mut output_bmff_map,
+                &mut rl,
+                &ftyp,
             )?;
 
             // adjust offsets based on current layout
@@ -1917,6 +2204,9 @@ impl CAIWriter for BmffIO {
         let size = stream_len(input_stream)?;
         input_stream.rewind()?;
 
+        let ftyp = read_ftyp_box(input_stream)?;
+        input_stream.rewind()?;
+
         // create root node
         let root_box = BoxInfo {
             path: "".to_string(),
@@ -1933,24 +2223,31 @@ impl CAIWriter for BmffIO {
         let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
         // build layout of the BMFF structure
+        let mut rl = 0usize;
         build_bmff_tree(
             input_stream,
             size,
             &mut bmff_tree,
             &root_token,
             &mut bmff_map,
+            &mut rl,
+            &ftyp,
         )?;
 
         // get position of c2pa manifest
         let (c2pa_start, c2pa_length) =
-            if let Some(c2pa_token) = get_uuid_token(&bmff_tree, &bmff_map, &C2PA_UUID) {
-                let uuid_info = &bmff_tree[c2pa_token].data;
+            match get_uuid_token(input_stream, &bmff_tree, &bmff_map, &C2PA_UUID, None) {
+                Ok(c2pa_token) => {
+                    let uuid_info = &bmff_tree[c2pa_token].data;
 
-                (uuid_info.offset, Some(uuid_info.size))
-            } else {
-                input_stream.rewind()?;
-                std::io::copy(input_stream, output_stream)?;
-                return Ok(()); // no box to remove, propagate source to output
+                    (uuid_info.offset, Some(uuid_info.size))
+                }
+                Err(Error::NotFound) => {
+                    input_stream.rewind()?;
+                    std::io::copy(input_stream, output_stream)?;
+                    return Ok(()); // no box to remove, propagate source to output
+                }
+                Err(e) => return Err(e),
             };
 
         let (start, end) = if let Some(c2pa_length) = c2pa_length {
@@ -1970,11 +2267,12 @@ impl CAIWriter for BmffIO {
         let mut before_manifest = input_stream.take(start as u64);
         std::io::copy(&mut before_manifest, output_stream)?;
 
-        // calc offset adjustments
-        // value will be negative since the box is truncated
-        let new_c2pa_box_size: i32 = 0;
+        // calc offset adjustments — value will be negative since the box is
+        // being truncated. Use i64 so boxes larger than i32::MAX (2 GiB) do
+        // not truncate and shift `stco`/`co64`/`iloc` offsets to garbage.
         let existing_c2pa_box_size = end - start;
-        let offset_adjust = new_c2pa_box_size - existing_c2pa_box_size as i32;
+        let offset_adjust: i64 = -i64::try_from(existing_c2pa_box_size)
+            .map_err(|_| Error::InvalidAsset("existing C2PA box too large".to_string()))?;
 
         // write content after ContentProvenanceBox
         input_stream.seek(SeekFrom::Start(end as u64))?;
@@ -2000,12 +2298,15 @@ impl CAIWriter for BmffIO {
 
         let size = stream_len(output_stream)?;
         output_stream.rewind()?;
+        let mut rl = 0usize;
         build_bmff_tree(
             output_stream,
             size,
             &mut output_bmff_tree,
             &root_token,
             &mut output_bmff_map,
+            &mut rl,
+            &ftyp,
         )?;
 
         // adjust offsets based on current layout
@@ -2029,6 +2330,9 @@ impl AssetPatch for BmffIO {
         let size = stream_len(&mut asset)?;
         asset.rewind()?;
 
+        let ftyp = read_ftyp_box(&mut asset)?;
+        asset.rewind()?;
+
         // create root node
         let root_box = BoxInfo {
             path: "".to_string(),
@@ -2045,7 +2349,16 @@ impl AssetPatch for BmffIO {
         let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
         // build layout of the BMFF structure
-        build_bmff_tree(&mut asset, size, &mut bmff_tree, &root_token, &mut bmff_map)?;
+        let mut rl = 0usize;
+        build_bmff_tree(
+            &mut asset,
+            size,
+            &mut bmff_tree,
+            &root_token,
+            &mut bmff_map,
+            &mut rl,
+            &ftyp,
+        )?;
 
         // get position to insert c2pa
         let (c2pa_start, c2pa_length) = if let Some(uuid_tokens) = bmff_map.get("/uuid") {
@@ -2093,6 +2406,14 @@ impl AssetPatch for BmffIO {
     }
 }
 
+impl ComposedManifestRef for BmffIO {
+    fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>> {
+        let mut new_c2pa_box: Vec<u8> = Vec::with_capacity(manifest_data.len() * 2);
+        write_c2pa_box(&mut new_c2pa_box, manifest_data, MANIFEST, &[], 0)?;
+        Ok(new_c2pa_box)
+    }
+}
+
 impl RemoteRefEmbed for BmffIO {
     #[allow(unused_variables)]
     fn embed_reference(
@@ -2133,15 +2454,10 @@ impl RemoteRefEmbed for BmffIO {
     ) -> Result<()> {
         match embed_ref {
             crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
-                let xmp = match self.get_reader().read_xmp(input_stream) {
-                    Some(xmp) => add_provenance(&xmp, &manifest_uri)?,
-                    None => {
-                        let xmp = MIN_XMP.to_string();
-                        add_provenance(&xmp, &manifest_uri)?
-                    }
-                };
-
                 let size = stream_len(input_stream)?;
+                input_stream.rewind()?;
+
+                let ftyp = read_ftyp_box(input_stream)?;
                 input_stream.rewind()?;
 
                 // create root node
@@ -2160,30 +2476,41 @@ impl RemoteRefEmbed for BmffIO {
                 let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
                 // build layout of the BMFF structure
+                let mut rl = 0usize;
                 build_bmff_tree(
                     input_stream,
                     size,
                     &mut bmff_tree,
                     &root_token,
                     &mut bmff_map,
+                    &mut rl,
+                    &ftyp,
                 )?;
 
-                // get ftyp location
-                // start after ftyp
-                let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
-                let ftyp_info = &bmff_tree[ftyp_token[0]].data;
-                let ftyp_offset = ftyp_info.offset;
-                let ftyp_size = ftyp_info.size;
+                let c2pa_boxes = c2pa_boxes_from_tree_and_map(input_stream, &bmff_tree, &bmff_map)?;
+
+                let xmp = match &c2pa_boxes.xmp {
+                    Some(xmp) => add_provenance(xmp, &manifest_uri)?,
+                    None => {
+                        let xmp = MIN_XMP.to_string();
+                        add_provenance(&xmp, &manifest_uri)?
+                    }
+                };
 
                 // get position to insert xmp
-                let (xmp_start, xmp_length) =
-                    if let Some(c2pa_token) = get_uuid_token(&bmff_tree, &bmff_map, &XMP_UUID) {
-                        let uuid_info = &bmff_tree[c2pa_token].data;
+                let (xmp_start, xmp_length) = match &c2pa_boxes.xmp {
+                    Some(_xmp) => (c2pa_boxes.xmp_box_offset, Some(c2pa_boxes.xmp_box_size)),
+                    None => {
+                        // get ftyp location
+                        // start after ftyp
+                        let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
+                        let ftyp_info = &bmff_tree[ftyp_token[0]].data;
+                        let ftyp_offset = ftyp_info.offset;
+                        let ftyp_size = ftyp_info.size;
 
-                        (uuid_info.offset, Some(uuid_info.size))
-                    } else {
                         ((ftyp_offset + ftyp_size), None)
-                    };
+                    }
+                };
 
                 let mut new_xmp_box: Vec<u8> = Vec::with_capacity(xmp.len() * 2);
                 write_xmp_box(&mut new_xmp_box, xmp.as_bytes())?;
@@ -2207,20 +2534,25 @@ impl RemoteRefEmbed for BmffIO {
 
                 // write content before XMP box
                 input_stream.rewind()?;
-                let mut before_manifest = input_stream.take(start as u64);
-                std::io::copy(&mut before_manifest, output_stream)?;
+                let mut before_xmp = input_stream.take(start as u64);
+                std::io::copy(&mut before_xmp, output_stream)?;
 
                 // write ContentProvenanceBox
                 output_stream.write_all(&new_xmp_box)?;
 
-                // calc offset adjustments
-                let offset_adjust: i32 = if end == 0 {
-                    new_xmp_box_size as i32
+                // calc offset adjustments. Use i64 so XMP boxes larger than
+                // i32::MAX (2 GiB) do not silently truncate.
+                let new_xmp_box_size_i64 = i64::try_from(new_xmp_box_size)
+                    .map_err(|_| Error::InvalidAsset("XMP box too large".to_string()))?;
+                let offset_adjust: i64 = if end == 0 {
+                    new_xmp_box_size_i64
                 } else {
                     // value could be negative if box is truncated
                     let existing_xmp_box_size = end - start;
-                    let pad_size: i32 = new_xmp_box_size as i32 - existing_xmp_box_size as i32;
-                    pad_size
+                    let existing_i64 = i64::try_from(existing_xmp_box_size).map_err(|_| {
+                        Error::InvalidAsset("existing XMP box too large".to_string())
+                    })?;
+                    new_xmp_box_size_i64 - existing_i64
                 };
 
                 // write content after XMP box
@@ -2247,12 +2579,15 @@ impl RemoteRefEmbed for BmffIO {
 
                 let size = stream_len(output_stream)?;
                 output_stream.rewind()?;
+                let mut rl = 0usize;
                 build_bmff_tree(
                     output_stream,
                     size,
                     &mut output_bmff_tree,
                     &root_token,
                     &mut output_bmff_map,
+                    &mut rl,
+                    &ftyp,
                 )?;
 
                 // adjust offsets based on current layout
@@ -2271,6 +2606,234 @@ impl RemoteRefEmbed for BmffIO {
     }
 }
 
+// inject a placeholder free box of free_size at the end of the ftyp box. This is used to reserve
+// space for a manifest box when one does not already exist in the file.
+// Returns the location of the injected placeholder box.  This function assumes the file does not have
+// an existing manifest store and that the placeholder box will be replaced with the manifest store during the first update pass.
+#[allow(dead_code)]
+pub(crate) fn inject_placeholder(
+    input_stream: &mut dyn CAIRead,
+    output_stream: &mut dyn CAIReadWrite,
+    free_size: usize,
+) -> Result<u64> {
+    let size = stream_len(input_stream)?;
+    input_stream.rewind()?;
+
+    let ftyp = read_ftyp_box(input_stream)?;
+    input_stream.rewind()?;
+
+    // create root node
+    let root_box = BoxInfo {
+        path: "".to_string(),
+        offset: 0,
+        size,
+        box_type: BoxType::Empty,
+        parent: None,
+        user_type: None,
+        version: None,
+        flags: None,
+    };
+
+    let (mut bmff_tree, root_token) = Arena::with_data(root_box);
+    let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+
+    // build layout of the BMFF structure
+    let mut rl = 0usize;
+    build_bmff_tree(
+        input_stream,
+        size,
+        &mut bmff_tree,
+        &root_token,
+        &mut bmff_map,
+        &mut rl,
+        &ftyp,
+    )?;
+
+    // figure out what state we are in
+    let c2pa_boxes = c2pa_boxes_from_tree_and_map(input_stream, &bmff_tree, &bmff_map)?;
+    let has_manifest = c2pa_boxes.manifest_bytes.is_some();
+    let has_original = c2pa_boxes.original_bytes.is_some();
+    let has_update = c2pa_boxes.update_bytes.is_some();
+
+    if has_manifest || has_original || has_update {
+        return Err(Error::InvalidAsset(
+            "inject_placeholder should only be called on files without existing manifest stores"
+                .to_string(),
+        ));
+    }
+
+    // since we reached this point we must have an ordinary manifest store so we may need to truncate off
+    // the update manifest
+    // get ftyp location
+    // start after ftyp
+    let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
+    let ftyp_info = &bmff_tree[ftyp_token[0]].data;
+    let ftyp_offset = ftyp_info.offset;
+    let ftyp_size = ftyp_info.size;
+
+    // create free box bytes
+    let mut free_box_bytes = Vec::with_capacity(free_size + 8);
+    write_free_box(&mut free_box_bytes, free_size)?;
+
+    // insertion point
+    let start = ftyp_offset + ftyp_size;
+
+    // write content before free box
+    input_stream.rewind()?;
+    let mut before_free = input_stream.take(start);
+    std::io::copy(&mut before_free, output_stream)?;
+
+    // write free box
+    output_stream.write_all(&free_box_bytes)?;
+
+    // write content after free box
+    std::io::copy(input_stream, output_stream)?;
+
+    // calc offset adjustments — use i64 so a placeholder larger than
+    // i32::MAX (2 GiB) does not truncate.
+    let offset_adjust: i64 = i64::try_from(free_box_bytes.len())
+        .map_err(|_| Error::InvalidAsset("placeholder box too large".to_string()))?;
+
+    // Manipulating the free box means we may need some patch offsets if they are file absolute offsets.
+    if offset_adjust != 0 {
+        // create root node
+        let root_box = BoxInfo {
+            path: "".to_string(),
+            offset: 0,
+            size,
+            box_type: BoxType::Empty,
+            parent: None,
+            user_type: None,
+            version: None,
+            flags: None,
+        };
+
+        // map box layout of current output file
+        let (mut output_bmff_tree, root_token) = Arena::with_data(root_box);
+        let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+
+        let size = stream_len(output_stream)?;
+        output_stream.rewind()?;
+        let mut rl = 0usize;
+        build_bmff_tree(
+            output_stream,
+            size,
+            &mut output_bmff_tree,
+            &root_token,
+            &mut output_bmff_map,
+            &mut rl,
+            &ftyp,
+        )?;
+
+        // adjust offsets based on current layout
+        output_stream.rewind()?;
+        adjust_known_offsets(
+            output_stream,
+            &output_bmff_tree,
+            &output_bmff_map,
+            offset_adjust,
+        )?;
+    }
+
+    Ok(start)
+}
+
+// write manifest into free box location.  Used inconjunction with inject_placeholder to first
+// inject a free box to reserve space for the manifest and then write the manifest into the
+// free box during the first update pass. This function assumes the manifest box will be the
+// same size or smaller than the placeholder free box. If the manifest box is smaller than the
+// placeholder free box then the remaining free space will be converted to a smaller free box.
+// If the manifest box is larger than the placeholder free box then an error will be returned.
+// manifest_bytes should be the bytes of the manifest box including the header. free_box_start is
+// the file offset of the beginning of the free box to be replaced by the manifest box.
+#[allow(dead_code)]
+pub(crate) fn inject_manifest_into_free_box(
+    stream: &mut dyn CAIReadWrite,
+    manifest_bytes: &[u8],
+    free_box_start: u64,
+) -> Result<()> {
+    let size = stream_len(stream)?;
+    stream.rewind()?;
+
+    let ftyp = read_ftyp_box(stream)?;
+    stream.rewind()?;
+
+    // create root node
+    let root_box = BoxInfo {
+        path: "".to_string(),
+        offset: 0,
+        size,
+        box_type: BoxType::Empty,
+        parent: None,
+        user_type: None,
+        version: None,
+        flags: None,
+    };
+
+    let (mut bmff_tree, root_token) = Arena::with_data(root_box);
+    let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+
+    // build layout of the BMFF structure
+    let mut rl = 0usize;
+    build_bmff_tree(
+        stream,
+        size,
+        &mut bmff_tree,
+        &root_token,
+        &mut bmff_map,
+        &mut rl,
+        &ftyp,
+    )?;
+
+    // get the matching free box
+    let free_tokens = bmff_map.get("/free").ok_or(Error::BadParam(
+        "Did not find free box to inject manifest".to_string(),
+    ))?;
+
+    // find the free box that starts at the expected location
+    let free_token = free_tokens
+        .iter()
+        .find(|token| {
+            let free_info = &bmff_tree[**token].data;
+            free_info.offset == free_box_start
+        })
+        .ok_or(Error::BadParam(
+            "Did not find free box to inject manifest at expected location".to_string(),
+        ))?;
+
+    let free_info = &bmff_tree[*free_token].data;
+
+    if manifest_bytes.len() as u64 > free_info.size {
+        return Err(Error::BadParam(
+            "Manifest size is larger than free box".to_string(),
+        ));
+    }
+
+    // write manifest into free box location
+    stream.seek(SeekFrom::Start(free_info.offset))?;
+    stream.write_all(manifest_bytes)?;
+
+    // convert remaining free space to a smaller free box if needed
+    let remaining_free_space = free_info.size - manifest_bytes.len() as u64;
+    if remaining_free_space > 8 {
+        // need at least 8 bytes to write another free box
+        let mut new_free_box = Vec::with_capacity(remaining_free_space as usize);
+        write_free_box(&mut new_free_box, remaining_free_space as usize)?;
+        stream.write_all(&new_free_box)?;
+    } else {
+        Err(Error::BadParam(
+            "Not enough space to create new free box".to_string(),
+        ))?;
+    }
+    Ok(())
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum BmffError {
+    #[error("invalid file signature: {reason}")]
+    InvalidFileSignature { reason: String },
+}
+
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::expect_used)]
@@ -2282,6 +2845,19 @@ pub mod tests {
         io_utils::tempdirectory,
         test::{fixture_path, temp_dir_path},
     };
+
+    #[test]
+    fn test_read_deep_nesting() {
+        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+
+        let ap = fixture_path("nested_moov_1000.mp4");
+        let mut input_stream = std::fs::File::open(&ap).unwrap();
+
+        let bmff = BmffIO::new("mp4");
+        let cai = bmff.read_cai(&mut input_stream);
+
+        assert!(cai.is_err());
+    }
 
     #[test]
     fn test_read_mp4() {
@@ -2417,5 +2993,215 @@ pub mod tests {
             Err(Error::JumbfNotFound) => (),
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn test_bmff_large_size_overflow_does_not_panic() {
+        // Craft a 32-byte MP4: 16-byte ftyp box followed by a 16-byte large-size box
+        // that claims 0xFFFFFFFFFFFFFFF0 bytes. When current=16 (after ftyp), the
+        // unchecked addition 16 + 0xFFFFFFFFFFFFFFF0 overflows u64 in debug mode
+        // (panic exit 101) and silently wraps to bypass the bounds check in release mode.
+        let mut data: Vec<u8> = Vec::new();
+        // ftyp box (16 bytes): size=16, type='ftyp', major_brand='mp41', minor_version=0
+        data.extend_from_slice(&16u32.to_be_bytes());
+        data.extend_from_slice(b"ftyp");
+        data.extend_from_slice(b"mp41");
+        data.extend_from_slice(&0u32.to_be_bytes());
+        // large-size box (16 bytes): size=1 signals largesize, type='mdat', largesize=MAX-15
+        data.extend_from_slice(&1u32.to_be_bytes());
+        data.extend_from_slice(b"mdat");
+        data.extend_from_slice(&0xfffffffffffffff0u64.to_be_bytes());
+
+        let bmff_io = BmffIO::new("mp4");
+        let mut source = Cursor::new(data);
+        assert!(matches!(
+            bmff_io.read_cai(&mut source),
+            Err(Error::InvalidAsset(_))
+        ));
+    }
+
+    #[test]
+    fn test_bmff_datamap_offset_overflow_returns_error() {
+        // A crafted C2PA manifest can embed a DataMap.offset of u64::MAX, which when
+        // added to any non-zero box_start overflows u64 and panics. Verify that
+        // bmff_to_jumbf_exclusions returns Err instead of panicking.
+        let mut data: Vec<u8> = Vec::new();
+        // ftyp box (16 bytes): size=16, type='ftyp', major_brand='mp41', minor_version=0
+        data.extend_from_slice(&16u32.to_be_bytes());
+        data.extend_from_slice(b"ftyp");
+        data.extend_from_slice(b"mp41");
+        data.extend_from_slice(&0u32.to_be_bytes());
+        // mdat box (8 bytes): size=8, type='mdat'
+        data.extend_from_slice(&8u32.to_be_bytes());
+        data.extend_from_slice(b"mdat");
+
+        let mut exclusion = ExclusionsMap::new("/mdat".to_string());
+        exclusion.data = Some(vec![crate::assertions::DataMap {
+            offset: u64::MAX,
+            value: vec![0],
+        }]);
+
+        let mut reader = Cursor::new(data);
+        assert!(matches!(
+            bmff_to_jumbf_exclusions(&mut reader, &[exclusion], false),
+            Err(Error::InvalidAsset(_))
+        ));
+    }
+
+    // Regression tests for the UUID box purpose field u64 underflow vulnerability.
+    // Without the data_len == 0 guard, reading past the end of the box would decrement
+    // data_len from 0 to u64::MAX (wrapping), causing the caller to attempt a
+    // u64::MAX-byte allocation (OOM crash).
+
+    #[test]
+    fn test_uuid_purpose_missing_null_terminator_rejected() {
+        // Box layout: HEADER(8) + UUID(16) + FullBox(4) + payload(8) = 36 bytes total.
+        // Payload is 8 non-null bytes — no null terminator — so the parser must hit
+        // data_len == 0 and return an error instead of underflowing.
+        let size: u64 = 36;
+        let (arena, token) = Arena::with_data(BoxInfo {
+            path: "/uuid".to_string(),
+            parent: None,
+            offset: 0,
+            size,
+            box_type: BoxType::UuidBox,
+            user_type: Some(C2PA_UUID.to_vec()),
+            version: None,
+            flags: None,
+        });
+        let node = &arena[token];
+
+        // Reader bytes starting at offset 0:
+        //   [0..7]   HEADER (8 bytes) — skipped by skip_bytes_to(offset + 8 + 16)
+        //   [8..23]  UUID extension (16 bytes)
+        //   [24..27] FullBox version(1)+flags(3) = 0x00000000
+        //   [28..35] purpose bytes — 8 non-null bytes, no terminator
+        let mut bytes = vec![0u8; 8 + 16]; // header + UUID
+        bytes.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // FullBox
+        bytes.extend_from_slice(b"manifest"); // 8 bytes, no null terminator
+
+        let mut reader = Cursor::new(bytes);
+        assert!(matches!(
+            get_uuid_box_purpose(&mut reader, node),
+            Err(Error::InvalidAsset(_))
+        ));
+    }
+
+    #[test]
+    fn test_uuid_purpose_box_too_small_rejected() {
+        // size = 20 < HEADER_SIZE(8) + UUID(16) = 24; the checked_sub chain must return
+        // Err(InvalidAsset) before any read occurs.
+        let (arena, token) = Arena::with_data(BoxInfo {
+            path: "/uuid".to_string(),
+            parent: None,
+            offset: 0,
+            size: 20,
+            box_type: BoxType::UuidBox,
+            user_type: Some(C2PA_UUID.to_vec()),
+            version: None,
+            flags: None,
+        });
+        let node = &arena[token];
+
+        let mut reader = Cursor::new(vec![0u8; 20]);
+        assert!(matches!(
+            get_uuid_box_purpose(&mut reader, node),
+            Err(Error::InvalidAsset(_))
+        ));
+    }
+
+    // Regression: `_skip_bytes(reader, size)` used `size as i64`, which wraps
+    // a u64 > i64::MAX to a negative i64 and would seek *backward* instead of
+    // forward. The fix routes through the current position + checked_add +
+    // SeekFrom::Start so the seek direction is always forward for any u64
+    // that fits inside the file, and any value that would overflow u64
+    // surfaces as InvalidAsset.
+    #[test]
+    fn test_skip_bytes_large_u64_does_not_seek_backward() {
+        // A small in-memory buffer where we can't actually seek that far
+        // forward — we only care that the function does not produce a
+        // *backward* seek and that its result is a well-formed forward seek
+        // to a position >= the starting position (or a controlled error).
+        let mut buf = vec![0u8; 32];
+        let mut reader = Cursor::new(&mut buf);
+        reader.seek(SeekFrom::Start(4)).unwrap();
+
+        // Size just above i64::MAX — the pre-fix `size as i64` cast would
+        // wrap this to a negative value. `SeekFrom::Start(u64)` handles the
+        // large target correctly; the actual stream_position after such a
+        // seek is well-defined (some backends allow seeking past EOF).
+        // The security property under test is *no backward seek*.
+        let before = reader.stream_position().unwrap();
+        let _ = _skip_bytes(&mut reader, (i64::MAX as u64) + 1);
+        let after = reader.stream_position().unwrap();
+        assert!(
+            after >= before,
+            "skip_bytes must never seek backward — before={before}, after={after}",
+        );
+    }
+
+    #[test]
+    fn test_skip_bytes_u64_max_returns_error_not_backward_seek() {
+        // A skip that would push the target past u64::MAX must surface as an
+        // `InvalidAsset` error, not wrap into a backward seek.
+        let mut buf = vec![0u8; 16];
+        let mut reader = Cursor::new(&mut buf);
+        reader.seek(SeekFrom::Start(8)).unwrap();
+
+        let result = _skip_bytes(&mut reader, u64::MAX);
+        assert!(
+            matches!(result, Err(Error::InvalidAsset(_))),
+            "expected InvalidAsset for skip past u64::MAX, got {result:?}",
+        );
+    }
+
+    // Regression: `offset_adjust` used to be an `i32` that received a
+    // `usize as i32` cast. For a C2PA / free box larger than i32::MAX
+    // (2 GiB), the cast truncated to a bogus value (potentially negative),
+    // corrupting every stco/co64/iloc offset patched via
+    // `adjust_known_offsets`. Widening `adjust_known_offsets` to accept `i64`
+    // and guarding every producer with `i64::try_from(usize)` makes the
+    // adjustment either faithful or a clean `InvalidAsset` error.
+    #[test]
+    fn test_adjust_known_offsets_accepts_over_i32_max_positive() {
+        // Empty tree / path map → adjust_known_offsets should not touch
+        // anything, and must accept an i64 far beyond i32::MAX without a
+        // truncation panic or an integer overflow.
+        let (arena, _root) = Arena::with_data(BoxInfo {
+            path: "".to_string(),
+            offset: 0,
+            size: 0,
+            box_type: BoxType::Empty,
+            parent: None,
+            user_type: None,
+            version: None,
+            flags: None,
+        });
+        let map: HashMap<String, Vec<Token>> = HashMap::new();
+        let mut cursor = Cursor::new(Vec::<u8>::new());
+        let big_adjust: i64 = (i32::MAX as i64) + 1;
+        adjust_known_offsets(&mut cursor, &arena, &map, big_adjust).unwrap();
+    }
+
+    #[test]
+    fn test_adjust_known_offsets_accepts_below_neg_i32_min_negative() {
+        // Same invariant on the negative side — the pre-fix i32 signature
+        // could not represent a shrink adjustment for a box larger than
+        // 2 GiB (its magnitude); the i64 signature can, and empty maps keep
+        // the function a no-op.
+        let (arena, _root) = Arena::with_data(BoxInfo {
+            path: "".to_string(),
+            offset: 0,
+            size: 0,
+            box_type: BoxType::Empty,
+            parent: None,
+            user_type: None,
+            version: None,
+            flags: None,
+        });
+        let map: HashMap<String, Vec<Token>> = HashMap::new();
+        let mut cursor = Cursor::new(Vec::<u8>::new());
+        let big_neg: i64 = (i32::MIN as i64) - 1;
+        adjust_known_offsets(&mut cursor, &arena, &map, big_neg).unwrap();
     }
 }

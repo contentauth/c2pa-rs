@@ -12,7 +12,8 @@ cargo install c2patool
 
 To build the tool on a Windows machine, you need to install the [7zip](https://www.7-zip.org/) tool.
 
-NOTE: If you encounter errors installing, you may need to update your Rust installation by entering this command:
+> [!NOTE]
+> If you encounter errors installing, you may need to update your Rust installation by entering this command:
 
 ```
 rustup update

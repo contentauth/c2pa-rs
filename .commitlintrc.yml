@@ -24,7 +24,12 @@ rules:
       - c2patool
       - export_schema
       - make_test_images
+      - c2pa_c_ffi
       - sdk
+      # Use for any change confined to an experimental (`unstable_`) feature.
+      # Routes the commit into the "Experimental" changelog section and keeps
+      # it from driving a minor/breaking bump. See docs/experimental-features.md.
+      - experimental
 
   # Subject line should exist
   subject-empty:

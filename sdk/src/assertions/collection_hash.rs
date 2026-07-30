@@ -409,8 +409,9 @@ where
             match file.enclosed_name() {
                 Some(path) => {
                     if path != Path::new("META-INF/content_credential.c2pa") {
-                        let start = file.header_start();
-                        let len = (file.data_start() + file.compressed_size()) - start;
+                        let header_start = file.header_start();
+                        let data_start = file.data_start().ok_or(Error::JumbfNotFound)?;
+                        let len = (data_start + file.compressed_size()) - header_start;
                         let format = crate::format_from_path(&path);
                         uri_map.insert(
                             path,
@@ -419,7 +420,7 @@ where
                                 size: Some(len),
                                 dc_format: format,
                                 data_types: None,
-                                zip_hash_range: Some(HashRange::new(start, len)),
+                                zip_hash_range: Some(HashRange::new(header_start, len)),
                             },
                         );
                     }

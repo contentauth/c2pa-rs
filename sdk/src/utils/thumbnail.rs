@@ -21,7 +21,7 @@ use image::{
         jpeg::JpegEncoder,
         png::{CompressionType, FilterType, PngEncoder},
     },
-    DynamicImage, ImageDecoder, ImageFormat, ImageReader,
+    DynamicImage, ImageDecoder, ImageFormat, ImageReader, Limits,
 };
 
 use crate::{
@@ -36,9 +36,12 @@ impl ThumbnailFormat {
     /// Create a new [ThumbnailFormat] from the given format extension or mime type.
     ///
     /// If the format is unsupported, this function will return `None`.
+    /// `from_extension` lowercases internally but `from_mime_type` does not, so
+    /// normalize first to accept uppercase MIME types (RFC 2045 section 5.1).
     pub fn new(format: &str) -> Option<ThumbnailFormat> {
-        ImageFormat::from_extension(format)
-            .or_else(|| ImageFormat::from_mime_type(format))
+        let format = format.to_lowercase();
+        ImageFormat::from_extension(&format)
+            .or_else(|| ImageFormat::from_mime_type(&format))
             .and_then(|format| ThumbnailFormat::try_from(format).ok())
     }
 }
@@ -69,19 +72,6 @@ impl From<ThumbnailFormat> for ImageFormat {
             ThumbnailFormat::WebP => ImageFormat::WebP,
             ThumbnailFormat::Tiff => ImageFormat::Tiff,
         }
-    }
-}
-
-impl From<ThumbnailFormat> for config::ValueKind {
-    fn from(value: ThumbnailFormat) -> Self {
-        let variant = match value {
-            ThumbnailFormat::Png => "png",
-            ThumbnailFormat::Jpeg => "jpeg",
-            ThumbnailFormat::Gif => "gif",
-            ThumbnailFormat::WebP => "webp",
-            ThumbnailFormat::Tiff => "tiff",
-        };
-        config::ValueKind::String(variant.to_owned())
     }
 }
 
@@ -142,8 +132,25 @@ where
     R: BufRead + Seek,
     W: Write + Seek,
 {
-    let mut decoder = ImageReader::with_format(input, input_format.into()).into_decoder()?;
+    // Apply the image crate's own `Limits` (default `max_alloc` = 512 MiB) so
+    // decoders that honor them reject crafted inputs internally.
+    let mut reader = ImageReader::with_format(input, input_format.into());
+    reader.limits(Limits::default());
+    let mut decoder = reader.into_decoder()?;
     let orientation = decoder.orientation()?;
+
+    // Defense-in-depth against decompression bombs: `DynamicImage::from_decoder`
+    // allocates the pixel buffer directly via `vec![0u8; total_bytes]`, which
+    // bypasses `Limits::max_alloc`. Reject decoded sizes over 512 MiB ourselves
+    // before that allocation runs. 512 MiB covers all legitimate inputs incl.
+    // 16-bit 50 MP professional images (~302 MB) and matches `Limits::default`.
+    const MAX_IMAGE_BYTES: u64 = 512 * 1024 * 1024;
+    let total_bytes = decoder.total_bytes();
+    if total_bytes > MAX_IMAGE_BYTES {
+        return Err(Error::InvalidAsset(format!(
+            "image decoded size ({total_bytes} bytes) exceeds the maximum allowed (512 MiB)"
+        )));
+    }
 
     let mut image = DynamicImage::from_decoder(decoder)?;
     image.apply_orientation(orientation);
@@ -215,6 +222,8 @@ where
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::unwrap_used)]
+    #![allow(clippy::expect_used)]
+    #![allow(clippy::panic)]
 
     use image::GenericImageView;
 
@@ -407,26 +416,21 @@ pub mod tests {
 
     #[test]
     fn test_make_thumbnail_bytes_from_stream() {
-        #[cfg(target_os = "wasi")]
-        Settings::reset().unwrap();
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [builder.thumbnail]
+                    prefer_smallest_format = false
+                    ignore_errors = false
+                }
+                .to_string(),
+            )
+            .unwrap();
 
-        Settings::from_toml(
-            &toml::toml! {
-                [builder.thumbnail]
-                prefer_smallest_format = false
-                ignore_errors = false
-            }
-            .to_string(),
-        )
-        .unwrap();
-
-        let (format, bytes) = make_thumbnail_bytes_from_stream(
-            "image/jpeg",
-            Cursor::new(TEST_JPEG),
-            &Settings::default(),
-        )
-        .unwrap()
-        .unwrap();
+        let (format, bytes) =
+            make_thumbnail_bytes_from_stream("image/jpeg", Cursor::new(TEST_JPEG), &settings)
+                .unwrap()
+                .unwrap();
 
         assert!(matches!(format, ThumbnailFormat::Jpeg));
 
@@ -435,28 +439,67 @@ pub mod tests {
             .unwrap();
     }
 
+    /// Formats are matched as mimetypes with case-insensitively.
+    ///
+    /// `ignore_errors` is disabled so an unresolved format surfaces as an `Err`
+    /// rather than the silent `Ok(None)` the default settings produce.
+    #[test]
+    fn test_make_thumbnail_bytes_from_stream_format_case_insensitive() {
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [builder.thumbnail]
+                    prefer_smallest_format = false
+                    ignore_errors = false
+                }
+                .to_string(),
+            )
+            .expect("settings should build");
+
+        // (format, source image, expected resolved format)
+        let cases = [
+            ("image/jpeg", TEST_JPEG, ThumbnailFormat::Jpeg),
+            ("IMAGE/JPEG", TEST_JPEG, ThumbnailFormat::Jpeg),
+            ("Image/Jpeg", TEST_JPEG, ThumbnailFormat::Jpeg),
+            ("image/png", TEST_PNG, ThumbnailFormat::Png),
+            ("IMAGE/PNG", TEST_PNG, ThumbnailFormat::Png),
+            // Extensions already resolve case-insensitively via
+            // `ImageFormat::from_extension`; pin that so it cannot regress.
+            ("jpg", TEST_JPEG, ThumbnailFormat::Jpeg),
+            ("JPG", TEST_JPEG, ThumbnailFormat::Jpeg),
+        ];
+
+        for (input, source, expected) in cases {
+            let (format, bytes) =
+                make_thumbnail_bytes_from_stream(input, Cursor::new(source), &settings)
+                    .unwrap_or_else(|err| panic!("{input} should be a supported format: {err}"))
+                    .unwrap_or_else(|| panic!("{input} should produce a thumbnail"));
+
+            assert_eq!(format, expected, "wrong format resolved for {input}");
+
+            ImageReader::with_format(Cursor::new(bytes), format.into())
+                .decode()
+                .unwrap_or_else(|err| panic!("{input} thumbnail should decode: {err}"));
+        }
+    }
+
     #[test]
     fn test_make_thumbnail_with_prefer_smallest_format() {
-        #[cfg(target_os = "wasi")]
-        Settings::reset().unwrap();
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [builder.thumbnail]
+                    prefer_smallest_format = true
+                    ignore_errors = false
+                }
+                .to_string(),
+            )
+            .unwrap();
 
-        Settings::from_toml(
-            &toml::toml! {
-                [builder.thumbnail]
-                prefer_smallest_format = true
-                ignore_errors = false
-            }
-            .to_string(),
-        )
-        .unwrap();
-
-        let (format, bytes) = make_thumbnail_bytes_from_stream(
-            "image/png",
-            Cursor::new(TEST_PNG),
-            &Settings::default(),
-        )
-        .unwrap()
-        .unwrap();
+        let (format, bytes) =
+            make_thumbnail_bytes_from_stream("image/png", Cursor::new(TEST_PNG), &settings)
+                .unwrap()
+                .unwrap();
 
         assert!(matches!(format, ThumbnailFormat::Jpeg));
 
@@ -502,26 +545,63 @@ pub mod tests {
         assert!(image.width() == 100 || image.height() == 100);
     }
 
+    /// Regression test for decompression bomb via oversized PNG dimensions.
+    ///
+    /// A malicious PNG can claim 16384×16384 RGBA dimensions (1 GB decoded)
+    /// while compressing to ~65 bytes. Before the fix, `DynamicImage::from_decoder`
+    /// would attempt the full 1 GB allocation. After the fix, we explicitly
+    /// check `decoder.total_bytes()` against 512 MiB before that allocation
+    /// runs and return `Error::InvalidAsset`.
+    #[test]
+    fn test_make_thumbnail_rejects_decompression_bomb() {
+        // Minimal valid PNG: IHDR declares 16384×16384 RGBA (total_bytes = 1 GB).
+        // Signature + IHDR + minimal IDAT + IEND; CRC values are correct.
+        let bomb_png: &[u8] = &[
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, // PNG signature
+            0x00, 0x00, 0x00, 0x0d, // IHDR length = 13
+            0x49, 0x48, 0x44, 0x52, // "IHDR"
+            0x00, 0x00, 0x40, 0x00, // width  = 16384
+            0x00, 0x00, 0x40, 0x00, // height = 16384
+            0x08, 0x06, 0x00, 0x00, 0x00, // 8-bit RGBA, no interlace
+            0xa9, 0xc8, 0x10, 0x84, // IHDR CRC
+            0x00, 0x00, 0x00, 0x08, // IDAT length = 8
+            0x49, 0x44, 0x41, 0x54, // "IDAT"
+            0x78, 0x9c, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01, // minimal zlib-compressed data
+            0x48, 0x06, 0x89, 0xd2, // IDAT CRC
+            0x00, 0x00, 0x00, 0x00, // IEND length = 0
+            0x49, 0x45, 0x4e, 0x44, // "IEND"
+            0xae, 0x42, 0x60, 0x82, // IEND CRC
+        ];
+
+        let mut settings = Settings::default();
+        settings.builder.thumbnail.ignore_errors = false;
+        let result =
+            make_thumbnail_bytes_from_stream("image/png", Cursor::new(bomb_png), &settings);
+
+        // Before the fix: attempts to allocate 1 GB, crashing containers.
+        // After the fix: total_bytes check returns Err(InvalidAsset) before
+        // any large allocation occurs.
+        assert!(
+            matches!(result, Err(Error::InvalidAsset(_))),
+            "expected Err(InvalidAsset), got: {result:?}"
+        );
+    }
+
     #[test]
     fn test_make_thumbnail_and_ignore_errors() {
-        #[cfg(target_os = "wasi")]
-        Settings::reset().unwrap();
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [builder.thumbnail]
+                    ignore_errors = true
+                }
+                .to_string(),
+            )
+            .unwrap();
 
-        Settings::from_toml(
-            &toml::toml! {
-                [builder.thumbnail]
-                ignore_errors = true
-            }
-            .to_string(),
-        )
-        .unwrap();
-
-        let thumbnail = make_thumbnail_bytes_from_stream(
-            "image/png",
-            Cursor::new(Vec::new()),
-            &Settings::default(),
-        )
-        .unwrap();
+        let thumbnail =
+            make_thumbnail_bytes_from_stream("image/png", Cursor::new(Vec::new()), &settings)
+                .unwrap();
         assert!(thumbnail.is_none());
     }
 }

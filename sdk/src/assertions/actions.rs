@@ -13,15 +13,15 @@
 
 use std::{collections::HashMap, fmt};
 
+use c2pa_cbor::Value;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_cbor::Value;
 
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::{labels, region_of_interest::RegionOfInterest, Actor, AssertionMetadata},
-    error::Result,
+    error::{Error, Result},
     resource_store::UriOrResource,
     utils::cbor_types::DateT,
     ClaimGeneratorInfo, HashedUri,
@@ -32,9 +32,7 @@ pub const INGREDIENT_IDS: &str = "ingredientIds";
 
 /// Description of the source of an asset.
 ///
-/// The full list of possible digital source types are found below:
-/// <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_digital_source_type>
-/// <https://cv.iptc.org/newscodes/digitalsourcetype>
+/// The digital source type must be either a value from the [IPTC Digital Source Types](https://cv.iptc.org/newscodes/digitalsourcetype) or a C2PA-specific value as given in [the C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_digital_source_type).
 #[non_exhaustive]
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
@@ -43,7 +41,7 @@ pub enum DigitalSourceType {
     #[serde(alias = "empty", rename = "http://c2pa.org/digitalsourcetype/empty")]
     Empty,
     /// Data that is the result of algorithmically using a model derived from sampled content and data.
-    /// Differs from <http://cv.iptc.org/newscodes/digitalsourcetype/>trainedAlgorithmicMedia in that
+    /// Differs from [IPTC Digital Source Type](http://cv.iptc.org/newscodes/digitalsourcetype/) `trainedAlgorithmicMedia` in that
     /// the result isn’t a media type (e.g., image or video) but is a data format (e.g., CSV, pickle).
     #[serde(
         alias = "trainedAlgorithmicData",
@@ -251,6 +249,111 @@ pub mod c2pa_action {
     pub const UNKNOWN: &str = "c2pa.unknown";
 }
 
+/// Deprecated string constants for C2PA action reasons.
+///
+/// Use [`C2paReason`] enum variants instead.
+#[deprecated(since = "0.80.3", note = "Use `C2paReason` enum variants instead")]
+pub mod c2pa_reason {
+    /// Personally identifiable information is present.
+    #[deprecated(since = "0.80.3", note = "Use `C2paReason::PiiPresent`")]
+    pub const PII_PRESENT: &str = "c2pa.PII.present";
+
+    /// The data is invalid.
+    #[deprecated(since = "0.80.3", note = "Use `C2paReason::InvalidData`")]
+    pub const INVALID_DATA: &str = "c2pa.invalid.data";
+
+    /// Trade secret information is present.
+    #[deprecated(since = "0.80.3", note = "Use `C2paReason::TradeSecretPresent`")]
+    pub const TRADE_SECRET_PRESENT: &str = "c2pa.trade-secret.present";
+
+    /// Government classified or confidential information is present.
+    #[deprecated(since = "0.80.3", note = "Use `C2paReason::GovernmentConfidential`")]
+    pub const GOVERNMENT_CONFIDENTIAL: &str = "c2pa.government.confidential";
+}
+
+/// Predefined reason values for the `reason` field on [`Action`].
+///
+/// The C2PA specification defines these standard values for use with
+/// `c2pa.redacted` actions. Custom values must follow entity-specific
+/// namespace syntax (e.g., `com.example.my-reason`).
+///
+/// New variants may be added in future releases.
+///
+/// See [Reason - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_reason).
+#[non_exhaustive]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+pub enum C2paReason {
+    /// Personally identifiable information is present.
+    #[serde(rename = "c2pa.PII.present")]
+    PiiPresent,
+
+    /// The data is invalid.
+    #[serde(rename = "c2pa.invalid.data")]
+    InvalidData,
+
+    /// Trade secret information is present.
+    #[serde(rename = "c2pa.trade-secret.present")]
+    TradeSecretPresent,
+
+    /// Government classified or confidential information is present.
+    #[serde(rename = "c2pa.government.confidential")]
+    GovernmentConfidential,
+
+    /// An unknown or custom reason value.
+    #[serde(untagged)]
+    Other(String),
+}
+
+impl C2paReason {
+    /// Returns the string representation of this reason without allocating.
+    pub fn as_str(&self) -> &str {
+        match self {
+            C2paReason::PiiPresent => "c2pa.PII.present",
+            C2paReason::InvalidData => "c2pa.invalid.data",
+            C2paReason::TradeSecretPresent => "c2pa.trade-secret.present",
+            C2paReason::GovernmentConfidential => "c2pa.government.confidential",
+            C2paReason::Other(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for C2paReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<C2paReason> for String {
+    fn from(r: C2paReason) -> Self {
+        r.as_str().to_owned()
+    }
+}
+
+impl PartialEq<str> for C2paReason {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<&str> for C2paReason {
+    fn eq(&self, other: &&str) -> bool {
+        self == *other
+    }
+}
+
+impl PartialEq<C2paReason> for str {
+    fn eq(&self, other: &C2paReason) -> bool {
+        other == self
+    }
+}
+
+impl PartialEq<C2paReason> for &str {
+    fn eq(&self, other: &C2paReason) -> bool {
+        other == *self
+    }
+}
+
 pub static V2_DEPRECATED_ACTIONS: [&str; 7] = [
     "c2pa.copied",
     "c2pa.formatted",
@@ -326,7 +429,7 @@ pub struct ActionParameters {
 /// along with possible other information such as what software performed
 /// the action.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_actions>.
+/// See [Action - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_actions).
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 #[derive(Deserialize, Serialize, Clone, Debug, Default, PartialEq)]
 pub struct Action {
@@ -382,6 +485,7 @@ pub struct Action {
 
     // The reason why this action was performed, required when the action is `c2pa.redacted`
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "json_schema", schemars(with = "Option<C2paReason>"))]
     pub(crate) reason: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -458,22 +562,22 @@ impl Action {
             // This is for backwards compatibility purposes.
             Some(parameters) => {
                 let value = match key {
-                    "ingredient" => serde_cbor::value::to_value(&parameters.ingredient).ok(),
-                    "description" => serde_cbor::value::to_value(&parameters.description).ok(),
-                    "redacted" => serde_cbor::value::to_value(&parameters.redacted).ok(),
-                    "ingredients" => serde_cbor::value::to_value(&parameters.ingredients).ok(),
+                    "ingredient" => c2pa_cbor::value::to_value(&parameters.ingredient).ok(),
+                    "description" => c2pa_cbor::value::to_value(&parameters.description).ok(),
+                    "redacted" => c2pa_cbor::value::to_value(&parameters.redacted).ok(),
+                    "ingredients" => c2pa_cbor::value::to_value(&parameters.ingredients).ok(),
                     "source_language" => {
-                        serde_cbor::value::to_value(&parameters.source_language).ok()
+                        c2pa_cbor::value::to_value(&parameters.source_language).ok()
                     }
                     "target_language" => {
-                        serde_cbor::value::to_value(&parameters.target_language).ok()
+                        c2pa_cbor::value::to_value(&parameters.target_language).ok()
                     }
                     "multiple_instances" => {
-                        serde_cbor::value::to_value(parameters.multiple_instances).ok()
+                        c2pa_cbor::value::to_value(parameters.multiple_instances).ok()
                     }
                     _ => parameters.common.get(key).cloned(),
                 };
-                value.and_then(|value| serde_cbor::value::from_value(value).ok())
+                value.and_then(|value| c2pa_cbor::value::from_value(value).ok())
             }
             None => None,
         }
@@ -493,7 +597,7 @@ impl Action {
     /// Returns the list of related actions.
     ///
     /// This is only present in C2PA v2.
-    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_related_actions>.
+    /// See [Related actions - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_related_actions).
     pub fn related(&self) -> Option<&[Action]> {
         self.related.as_deref()
     }
@@ -501,7 +605,7 @@ impl Action {
     /// Returns the reason why this action was performed.
     ///
     /// This is only present in C2PA v2.
-    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_reason>.
+    /// See [Reason - C2PA Technical Specificaiton](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_reason).
     pub fn reason(&self) -> Option<&str> {
         self.reason.as_deref()
     }
@@ -543,32 +647,32 @@ impl Action {
         key: S,
         value: T,
     ) -> Result<Self> {
-        let value = serde_cbor::value::to_value(value)?;
+        let value = c2pa_cbor::value::to_value(value)?;
 
         let parameters = self.parameters.get_or_insert_default();
 
         // This is for backwards compatibility purposes.
         match key.into().as_str() {
             "ingredient" => {
-                parameters.ingredient = serde_cbor::value::from_value(value)?;
+                parameters.ingredient = c2pa_cbor::value::from_value(value)?;
             }
             "description" => {
-                parameters.description = serde_cbor::value::from_value(value)?;
+                parameters.description = c2pa_cbor::value::from_value(value)?;
             }
             "redacted" => {
-                parameters.redacted = serde_cbor::value::from_value(value)?;
+                parameters.redacted = c2pa_cbor::value::from_value(value)?;
             }
             "ingredients" => {
-                parameters.ingredients = serde_cbor::value::from_value(value)?;
+                parameters.ingredients = c2pa_cbor::value::from_value(value)?;
             }
             "source_language" => {
-                parameters.source_language = serde_cbor::value::from_value(value)?;
+                parameters.source_language = c2pa_cbor::value::from_value(value)?;
             }
             "target_language" => {
-                parameters.target_language = serde_cbor::value::from_value(value)?;
+                parameters.target_language = c2pa_cbor::value::from_value(value)?;
             }
             "multiple_instances" => {
-                parameters.multiple_instances = serde_cbor::value::from_value(value)?;
+                parameters.multiple_instances = c2pa_cbor::value::from_value(value)?;
             }
             key => {
                 parameters.common.insert(key.to_owned(), value);
@@ -588,8 +692,8 @@ impl Action {
         key: S,
         value: T,
     ) -> Result<&mut Self> {
-        let value_bytes = serde_cbor::ser::to_vec(&value)?;
-        let value = serde_cbor::from_slice(&value_bytes)?;
+        let value_bytes = c2pa_cbor::ser::to_vec(&value)?;
+        let value = c2pa_cbor::from_slice(&value_bytes)?;
 
         let parameters = self.parameters.get_or_insert_default();
         parameters.common.insert(key.into(), value);
@@ -606,13 +710,13 @@ impl Action {
     /// Sets the description of the action.
     ///
     /// This is only present in the v2 actions assertion.
-    /// See <https://spec.c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_actions>
+    /// See [Actions - C2PA Technical Specification](ttps://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_actions).
     pub fn set_description<S: Into<String>>(mut self, description: S) -> Self {
         self.description = Some(description.into());
         self
     }
 
-    /// Set a digitalSourceType URI as defined at <https://cv.iptc.org/newscodes/digitalsourcetype/>.
+    /// Set a digitalSourceType URI as defined at [Digital Source Type - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_digital_source_type).
     pub fn set_source_type<T: Into<DigitalSourceType>>(mut self, source_type: T) -> Self {
         self.source_type = Some(source_type.into());
         self
@@ -621,7 +725,7 @@ impl Action {
     /// Sets the list of related actions.
     ///
     /// This is only present in C2PA v2.
-    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_related_actions>.
+    /// See [Related actions - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_related_actions).
     pub fn set_related(mut self, related: Option<&Vec<Action>>) -> Self {
         self.related = related.cloned();
         self
@@ -629,8 +733,11 @@ impl Action {
 
     /// Sets the reason why this action was performed.
     ///
-    /// This is only present in C2PA v2.
-    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_reason>.
+    /// Required for `c2pa.redacted` actions. The value should be one of
+    /// the variants in [`C2paReason`] or a custom value following
+    /// entity-specific namespace syntax (e.g., `com.example.my-reason`).
+    ///
+    /// See [Reason - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_reason).
     pub fn set_reason<S: Into<String>>(mut self, reason: S) -> Self {
         self.reason = Some(reason.into());
         self
@@ -660,43 +767,64 @@ impl Action {
         Ok(self)
     }
 
-    /// Extracts ingredient IDs from the action
-    /// There are many deprecated ways to specify ingredient IDs
-    /// priority: parameters.ingredientIds, parameters.org.cai.ingredientIds, parameters.instanceId, instanceId.
-    /// This is used to map actions to their associated ingredients.
-    /// We don't want any of these fields in the final CBOR, so we remove them after extracting.
-    pub(crate) fn extract_ingredient_ids(&mut self) -> Option<Vec<String>> {
-        let ingredient_ids = self.remove_parameter(INGREDIENT_IDS);
-        let cai_ingredient_ids = self.remove_parameter("org.cai.ingredientIds");
-        let param_instance_id = self.remove_parameter("instanceId");
-        #[allow(deprecated)]
-        let instance_id = self.instance_id.take();
-        let mut ids: Vec<String> = Vec::new();
-
-        let mut convert_ids = |val: Option<serde_cbor::Value>| {
-            if let Some(val) = val {
-                match val {
-                    serde_cbor::Value::Array(arr) => {
-                        for v in arr {
-                            if let serde_cbor::Value::Text(s) = v {
-                                ids.push(s);
-                            }
-                        }
-                    }
-                    serde_cbor::Value::Text(s) => ids.push(s),
-                    _ => {}
-                }
+    /// Reads the ingredient IDs an action references, without mutating the action.
+    ///
+    /// There are many deprecated ways to specify ingredient IDs; this checks every linking
+    /// mechanism in priority order: `parameters.ingredientIds`, `parameters.org.cai.ingredientIds`,
+    /// `parameters.instanceId`, then the deprecated `instanceId` field (only when none of the
+    /// parameters are present). Used to map actions to their associated ingredients.
+    ///
+    /// This is the read-only counterpart of [`Self::extract_ingredient_ids`], which additionally
+    /// removes the parameters it reads. Use this when the action must stay intact (e.g. computing
+    /// which ingredients are referenced during a prune).
+    pub(crate) fn ingredient_ids(&self) -> Vec<String> {
+        let convert = |val: Option<c2pa_cbor::Value>| -> Vec<String> {
+            match val {
+                Some(c2pa_cbor::Value::Array(arr)) => arr
+                    .into_iter()
+                    .filter_map(|v| match v {
+                        c2pa_cbor::Value::Text(s) => Some(s),
+                        _ => None,
+                    })
+                    .collect(),
+                Some(c2pa_cbor::Value::Text(s)) => vec![s],
+                _ => vec![],
             }
         };
 
-        convert_ids(ingredient_ids);
-        convert_ids(cai_ingredient_ids);
-        convert_ids(param_instance_id);
+        let mut ids = Vec::new();
+        ids.extend(convert(self.get_parameter(INGREDIENT_IDS)));
+        ids.extend(convert(self.get_parameter("org.cai.ingredientIds")));
+        ids.extend(convert(self.get_parameter("instanceId")));
+        if ids.is_empty() {
+            #[allow(deprecated)]
+            if let Some(id) = self.instance_id.as_deref() {
+                ids.push(id.to_owned());
+            }
+        }
+        ids
+    }
 
-        if !ids.is_empty() {
-            Some(ids)
+    /// Extracts ingredient IDs from the action, removing the parameters it reads.
+    ///
+    /// Reads the same links as [`Self::ingredient_ids`], then removes the temporary
+    /// `ingredientIds` / `org.cai.ingredientIds` / `instanceId` parameters and the deprecated
+    /// `instanceId` field, because we don't want any of them in the final CBOR.
+    pub(crate) fn extract_ingredient_ids(&mut self) -> Option<Vec<String>> {
+        let ids = self.ingredient_ids();
+
+        self.remove_parameter(INGREDIENT_IDS);
+        self.remove_parameter("org.cai.ingredientIds");
+        self.remove_parameter("instanceId");
+        #[allow(deprecated)]
+        {
+            self.instance_id = None;
+        }
+
+        if ids.is_empty() {
+            None
         } else {
-            instance_id.map(|s| vec![s])
+            Some(ids)
         }
     }
 }
@@ -746,7 +874,7 @@ impl ActionTemplate {
 /// what took place on the asset, when it took place, along with possible
 /// other information such as what software performed the action.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_actions>.
+/// See [Actions - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_actions)
 #[derive(Deserialize, Serialize, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct Actions {
@@ -773,8 +901,9 @@ pub struct Actions {
 impl Actions {
     /// Label prefix for an [`Actions`] assertion.
     ///
-    /// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_actions>.
+    /// See [Actions - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_actions)
     pub const LABEL: &'static str = labels::ACTIONS;
+    pub const LABEL_VERSIONED: &'static str = "c2pa.actions.v2";
     pub const VERSION: Option<usize> = Some(ASSERTION_CREATION_VERSION);
 
     /// Creates a new [`Actions`] assertion struct.
@@ -850,6 +979,34 @@ impl Actions {
         self
     }
 
+    /// Adds an [`Action`] to this assertion's list of actions.
+    pub fn add_action_checked(mut self, action: Action) -> Result<Self> {
+        let action_name = action.action();
+        if action_name.is_empty() {
+            return Err(Error::AssertionSpecificError(
+                "Action must have a non-empty action label".to_string(),
+            ));
+        }
+        if V2_DEPRECATED_ACTIONS.contains(&action_name) {
+            return Err(Error::VersionCompatibility(format!(
+                "Action '{action_name}' is deprecated in C2PA v2"
+            )));
+        }
+        if action_name == c2pa_action::OPENED || action_name == c2pa_action::CREATED {
+            let existing_action = self.actions.iter().find(|a| a.action() == action_name);
+            if existing_action.is_some() {
+                return Err(Error::AssertionSpecificError(format!(
+                    "Only one '{action_name}' action is allowed"
+                )));
+            }
+            // always insert as first action
+            self.actions.insert(0, action);
+            return Ok(self);
+        }
+        self.actions.push(action);
+        Ok(self)
+    }
+
     /// Sets [`AssertionMetadata`] for the action.
     pub fn add_metadata(mut self, metadata: AssertionMetadata) -> Self {
         self.metadata = Some(metadata);
@@ -861,12 +1018,12 @@ impl Actions {
         let buf: Vec<u8> = Vec::new();
         let json_str = json.to_string();
         let mut from = serde_json::Deserializer::from_str(&json_str);
-        let mut to = serde_cbor::Serializer::new(buf);
+        let mut to = c2pa_cbor::Serializer::new(buf);
 
         serde_transcode::transcode(&mut from, &mut to)?;
         let buf2 = to.into_inner();
 
-        let actions: Actions = serde_cbor::from_slice(&buf2)?;
+        let actions: Actions = c2pa_cbor::from_slice(&buf2)?;
         Ok(actions)
     }
 }
@@ -882,7 +1039,7 @@ impl AssertionBase for Actions {
     }
 
     fn label(&self) -> &str {
-        "c2pa.actions.v2"
+        Self::LABEL_VERSIONED
     }
 
     fn to_assertion(&self) -> Result<Assertion> {

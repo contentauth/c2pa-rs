@@ -1,0 +1,622 @@
+# Enforce Tier 1A support tier.
+
+# See tier-1b.yml for a more complete suite of tests.
+# You can add the label "check-release" to any PR to invoke that
+# larger set of tests.
+
+# If you change the supported platforms in this workflow, please also
+# update docs/support-tiers.md to match the changes you're making.
+
+name: Tier 1A
+
+on:
+  workflow_dispatch:
+  # Daily full-suite run against main (nightly). Scheduled runs use the default
+  # branch (main). See docs/support-tiers.md.
+  schedule:
+    - cron: '0 8 * * *'
+  pull_request:
+    branches:
+      - main
+      - stable
+      - 'v0.*'
+      - '*-rc*'
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+  push:
+    branches:
+      - main
+      - stable
+      - 'v0.*'
+      - '*-rc*'
+
+jobs:
+  # Decide once whether this run is trusted, and expose the result to every
+  # other job. A run is trusted when it is not a pull request (push, schedule,
+  # or manual dispatch), when the PR branch lives in this repository, or when a
+  # maintainer has applied the `safe to test` or `check-release` label to a
+  # fork PR.
+  #
+  # We key trust off the PR's head repository rather than `author_association`
+  # because GitHub only reports `MEMBER`/`COLLABORATOR` for public org members
+  # and direct collaborators. A private org member with team-granted write
+  # access shows up as `CONTRIBUTOR` and would otherwise be denied CI even
+  # though they can push branches here. Pushing a branch to this repository
+  # already requires write access, so "the branch is in this repo" is an
+  # accurate, maintenance-free proxy for "the author is a trusted team member".
+  authorize:
+    name: Authorize CI run
+    runs-on: ubuntu-latest
+    outputs:
+      # Full trust: run the entire CI suite.
+      trusted: ${{ steps.decide.outputs.trusted }}
+
+      # Run originates from this repository (not a fork), so repository secrets
+      # (e.g. the Codecov token) are available. Fork PRs never receive secrets,
+      # even when labeled `safe to test`, so secret-dependent steps must gate on
+      # this rather than on `trusted`.
+      same-repo: ${{ steps.decide.outputs.same-repo }}
+    steps:
+      - name: Determine trust level
+        id: decide
+        run: |
+          {
+            echo "same-repo=${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}"
+            echo "trusted=${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository || contains(github.event.pull_request.labels.*.name, 'safe to test') || contains(github.event.pull_request.labels.*.name, 'check-release') }}"
+          } >> "$GITHUB_OUTPUT"
+
+  get-features:
+    name: Get features
+    runs-on: ubuntu-latest
+    outputs:
+      features: ${{ steps.get-features.outputs.features }}
+      rust-native-features: ${{ steps.get-features.outputs.rust-native-features }}
+      openssl-features: ${{ steps.get-features.outputs.openssl-features }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
+
+      - name: Get all features
+        id: get-features
+        run: |
+          # Experimental (`unstable_`) features are deliberately excluded from
+          # the required suite: they sit outside the SDK's normal support
+          # commitments and must not gate main or the release branches. They are
+          # exercised separately by the non-blocking experimental-features.yml.
+          # See docs/experimental-features.md.
+          FEATURES=$(cargo metadata --format-version=1 | jq -r '[.packages[] | select(.name=="c2pa") | .features | keys | map(select(. != "default" and (startswith("unstable_") | not))) | .[]] | unique | join(" ")')
+
+          RUST_NATIVE_FEATURES=$(echo $FEATURES | sed 's/openssl//g')
+          OPENSSL_FEATURES=$(echo $FEATURES | sed 's/rust_native_crypto//g')
+          echo "features=$FEATURES" >> "$GITHUB_OUTPUT"
+          echo "rust-native-features=$RUST_NATIVE_FEATURES" >> "$GITHUB_OUTPUT"
+          echo "openssl-features=$OPENSSL_FEATURES" >> "$GITHUB_OUTPUT"
+
+  tests-openssl:
+    name: Unit tests (OpenSSL installed)
+    needs: [authorize, get-features]
+    if: needs.authorize.outputs.trusted == 'true'
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2.82.9
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Generate code coverage for OpenSSL
+        env:
+          RUST_BACKTRACE: "1"
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
+        run: |
+          cargo llvm-cov --lib --features "$FEATURES" --lcov --output-path lcov-openssl.info
+
+      - name: Filter out tests
+        uses: scouten/uncover-tests@af7baaca5bf5189b968573d5f14627c2e1ea0704 # v1.1.0
+        with:
+          input-file: lcov-openssl.info
+          output-file: lcov-openssl.filtered.info
+
+      # Tokens aren't available for PRs originating from forks,
+      # so we don't attempt to upload code coverage in that case.
+      - name: Upload code coverage results
+        if: needs.authorize.outputs.same-repo == 'true'
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
+          verbose: true
+          files: ./lcov-openssl.filtered.info,./lcov-rust_native_crypto.filtered.info
+
+  tests-rust-native-crypto:
+    name: Unit tests (Rust native crypto installed)
+    needs: [authorize, get-features]
+    if: needs.authorize.outputs.trusted == 'true'
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2.82.9
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Generate code coverage for rust_native_crypto
+        env:
+          RUST_BACKTRACE: "1"
+          FEATURES: ${{needs.get-features.outputs.rust-native-features}}
+        run: |
+          cargo llvm-cov -p c2pa --no-default-features --features "$FEATURES" --lcov --output-path lcov-rust_native_crypto.info
+
+      - name: Filter out tests
+        uses: scouten/uncover-tests@af7baaca5bf5189b968573d5f14627c2e1ea0704 # v1.1.0
+        with:
+          input-file: lcov-rust_native_crypto.info
+          output-file: lcov-rust_native_crypto.filtered.info
+
+      # Tokens aren't available for PRs originating from forks,
+      # so we don't attempt to upload code coverage in that case.
+      - name: Upload code coverage results
+        if: needs.authorize.outputs.same-repo == 'true'
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
+          verbose: true
+          files: ./lcov-openssl.filtered.info,./lcov-rust_native_crypto.filtered.info
+
+  tests-cli:
+    name: Unit tests (c2patool)
+    needs: [authorize, get-features]
+    if: needs.authorize.outputs.trusted == 'true'
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2.82.9
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Generate code coverage
+        env:
+          RUST_BACKTRACE: "1"
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
+        run: |
+          cargo llvm-cov --bins --features "$FEATURES" --lcov --output-path lcov.info
+
+      # Tokens aren't available for PRs originating from forks,
+      # so we don't attempt to upload code coverage in that case.
+      - name: Upload code coverage results
+        if: needs.authorize.outputs.same-repo == 'true'
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: true
+          verbose: true
+          files: ./lcov-openssl.info,./lcov-rust_native_crypto.info
+
+  tests-windows-arm-openssl:
+    name: Unit tests (Windows ARM, OpenSSL)
+    needs: [authorize, get-features]
+    if: needs.authorize.outputs.trusted == 'true'
+
+    runs-on: windows-11-arm
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Run tests
+        env:
+          RUST_BACKTRACE: "1"
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
+        run: |
+          cargo test --features "$env:FEATURES"
+
+  tests-windows-arm-rust-native-crypto:
+    name: Unit tests (Windows ARM, Rust native crypto)
+    needs: [authorize, get-features]
+    if: needs.authorize.outputs.trusted == 'true'
+
+    runs-on: windows-11-arm
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Run tests
+        env:
+          RUST_BACKTRACE: "1"
+          FEATURES: ${{needs.get-features.outputs.rust-native-features}}
+        run: |
+          cargo test --no-default-features --features "$env:FEATURES"
+
+  docs_rs:
+    name: Preflight docs.rs build
+    needs: authorize
+    runs-on: ubuntu-latest
+
+    if: needs.authorize.outputs.trusted == 'true'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          # Pinned to the nightly docs.rs itself runs (see the version string
+          # at https://docs.rs/about/builds). Pinning decouples this preflight
+          # from the Rust team's daily nightly churn; refresh periodically
+          # (e.g. at release time) to track what docs.rs is actually using.
+          toolchain: nightly-2026-07-12
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Install cargo-docs-rs
+        uses: baptiste0928/cargo-install@f204293d9709061b7bc1756fec3ec4e2cd57dec0 # v3.4.0
+        with:
+          crate: cargo-docs-rs
+          version: "1.0.4"
+
+      # This job only verifies that the docs.rs build itself succeeds under the
+      # docs.rs environment (`--cfg docsrs`). We deliberately do not deny any
+      # warnings here: docs.rs does not build with `-Dwarnings`, and warning
+      # enforcement is handled on the predictable stable toolchain in the
+      # `docs_stable` job below.
+      - name: Preflight c2pa-rs docs.rs
+        run: cargo docs-rs -p c2pa
+
+      - name: Preflight c2pa-c-ffi docs.rs
+        run: cargo docs-rs -p c2pa-c-ffi
+
+  docs_stable:
+    name: Doc build (stable, warnings denied)
+    needs: [authorize, get-features]
+    runs-on: ubuntu-latest
+
+    if: needs.authorize.outputs.trusted == 'true'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      # Blanket `-Dwarnings` enforcement on the predictable stable toolchain
+      # (advances every ~6 weeks, not daily). These builds use plain `cargo
+      # doc` and omit `--cfg docsrs`, so the nightly-only `doc_cfg` feature in
+      # sdk/src/lib.rs stays inert and stable can compile the docs.
+      # Experimental (`unstable_`) features are excluded from this required doc
+      # build; the non-blocking experimental-features.yml covers them.
+      - name: c2pa docs
+        env:
+          RUSTDOCFLAGS: -Dwarnings
+        run: cargo doc -p c2pa --no-deps --features "${{ needs.get-features.outputs.features }}"
+
+      - name: c2pa-c-ffi docs
+        env:
+          RUSTDOCFLAGS: -Dwarnings
+        run: cargo doc -p c2pa-c-ffi --no-deps --all-features
+
+      - name: c2patool docs
+        env:
+          RUSTDOCFLAGS: -Dwarnings
+        run: cargo doc -p c2patool --no-deps --all-features
+
+  doc-tests:
+    name: Doc tests (requires nightly Rust)
+    needs: [authorize, get-features]
+    # TODO: Remove this once cargo-llvm-cov can run doc tests and generate
+    # coverage. (This requires a bug fix that is only available in nightly Rust.)
+    # Watch https://github.com/taiki-e/cargo-llvm-cov/issues/2
+    # for progress.
+
+    if: needs.authorize.outputs.trusted == 'true'
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2.82.9
+        with:
+          tool: cargo-llvm-cov
+
+      # Disabling code coverage for doc tests due to a new bug in Rust nightly
+      # as of 2025-01-08. Will investigate later to see if there's a repro case.
+      # Meanwhile, simply run the tests so we know if there are any failing
+      # doc tests.
+
+      - name: Run doc tests (COVERAGE DISABLED)
+        env:
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
+        run: |
+          cargo test --workspace --features "$FEATURES" --doc
+
+      # - name: Generate code coverage
+      #   env:
+      #     RUST_BACKTRACE: "1"
+      #     FEATURES: ${{needs.get-features.outputs.openssl-features}}
+      #   run: |
+      #   cargo llvm-cov --workspace --features "$FEATURES" --lcov --doctests --output-path lcov.info
+
+      # Tokens aren't available for PRs originating from forks,
+      # so we don't attempt to upload code coverage in that case.
+      # - name: Upload code coverage results
+      #   if: needs.authorize.outputs.same-repo == 'true'
+      #   uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+      #   with:
+      #     token: ${{ secrets.CODECOV_TOKEN }}
+      #     fail_ci_if_error: true
+      #     verbose: true
+
+  cargo-check:
+    name: Default features build
+    needs: authorize
+    if: needs.authorize.outputs.trusted == 'true'
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: "`cargo check` with default features"
+        run: cargo check
+
+  cargo-lock:
+    name: Cargo.lock is up to date
+    needs: authorize
+    if: needs.authorize.outputs.trusted == 'true'
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
+
+      - name: Check that Cargo.lock is up to date
+        run: cargo check --locked
+
+  tests-wasm:
+    name: Unit tests (Wasm)
+    needs: [authorize, get-features]
+    if: needs.authorize.outputs.trusted == 'true'
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
+
+      - name: Add wasm web target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
+
+      - name: Extract wasm-bindgen version from Cargo.lock
+        id: wasm-bindgen-version
+        run: |
+          VERSION=$(cargo metadata --format-version 1 | jq -r '.packages[] | select(.name == "wasm-bindgen") | .version')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Using wasm-bindgen version: $VERSION"
+
+      - name: Install wasm-bindgen-cli
+        run: cargo binstall -y wasm-bindgen-cli --version ${{ steps.wasm-bindgen-version.outputs.version }}
+
+      - name: Run Wasm tests
+        run: cargo test -p c2pa --no-default-features --features rust_native_crypto,fetch_remote_manifests,http_reqwest --target wasm32-unknown-unknown
+        env:
+          CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+          GECKODRIVER: geckodriver
+          WASM_BINDGEN_TEST_TIMEOUT: 60
+
+  tests-wasi:
+    name: Unit tests (WASI)
+    needs: [authorize, get-features]
+    if: needs.authorize.outputs.trusted == 'true'
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+        # Nightly required for testing until this issue is resolved:
+        # wasip2 target should not conditionally feature gate stdlib APIs rust-lang/rust#130323 https://github.com/rust-lang/rust/issues/130323
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: nightly-2026-01-16
+
+      - name: Install wasmtime
+        run: |
+          curl https://wasmtime.dev/install.sh -sSf | bash
+          echo "$HOME/.wasmtime/bin" >> $GITHUB_PATH
+
+      - name: Install clang
+        run: |
+          # The runner image ships with Microsoft's apt repositories, which
+          # intermittently serve an invalid InRelease file and make
+          # `apt-get update` fail. We don't need them here, so remove them first.
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list \
+                     /etc/apt/sources.list.d/azure-cli.list \
+                     /etc/apt/sources.list.d/azure-cli.sources
+          sudo apt-get update
+          sudo apt-get install -y clang
+
+      - name: Add wasm32-wasip2 target
+        run: rustup target add --toolchain nightly-2026-01-16 wasm32-wasip2
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Run WASI tests (c2pa-rs)
+        env:
+          CARGO_TARGET_WASM32_WASIP2_RUNNER: "wasmtime -S cli -S http --dir . --env GITHUB_ACTIONS=${GITHUB_ACTIONS}"
+          CC: clang
+          RUST_MIN_STACK: 16777216
+          FEATURES: ${{needs.get-features.outputs.rust-native-features}}
+        run: |
+          cargo +nightly-2026-01-16 test --target wasm32-wasip2 -p c2pa --features "$FEATURES" --no-default-features -- --no-capture
+
+  clippy_check:
+    name: Clippy
+    needs: [authorize, get-features]
+    if: needs.authorize.outputs.trusted == 'true'
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Run Clippy
+        env:
+          FEATURES: ${{needs.get-features.outputs.openssl-features}}
+        run: |
+          cargo clippy --features "$FEATURES" --all-targets -- -Dwarnings
+
+  cargo_fmt:
+    name: Enforce Rust code format
+    needs: authorize
+    if: needs.authorize.outputs.trusted == 'true'
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install nightly toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: nightly-2026-01-16
+          components: rustfmt
+
+      - name: Check format
+        run: cargo +nightly-2026-01-16 fmt --all -- --check
+
+  cargo-deny:
+    name: License / vulnerability audit
+    needs: authorize
+    if: needs.authorize.outputs.trusted == 'true'
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Audit crate dependencies
+        uses: EmbarkStudios/cargo-deny-action@bb137d7af7e4fb67e5f82a49c4fce4fad40782fe # v2.0.20
+        with:
+          command: check advisories bans licenses sources

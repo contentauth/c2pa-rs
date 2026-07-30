@@ -11,12 +11,8 @@ use bcder::{
     encode::{self, PrimitiveContent, Values},
     ConstOid, Integer, OctetString, Oid, Tag,
 };
-use x509_certificate::{
-    asn1time::GeneralizedTime,
-    rfc3280::GeneralName,
-    rfc5280::{AlgorithmIdentifier, Extensions},
-};
 
+use super::{AlgorithmIdentifier, Extensions, GeneralName, GeneralizedTime};
 use crate::crypto::asn1::{rfc4210::PkiFreeText, rfc5652::ContentInfo};
 
 /// Content-Type for Time-Stamp Token Info.
@@ -57,8 +53,8 @@ impl TimeStampReq {
             let nonce =
                 cons.take_opt_primitive_if(Tag::INTEGER, |prim| Integer::from_primitive(prim))?;
             let cert_req = cons.take_opt_bool()?;
-            let extensions =
-                cons.take_opt_constructed_if(Tag::CTX_0, |cons| Extensions::take_from(cons))?;
+            let extensions = cons
+                .take_opt_constructed_if(Tag::CTX_0, |cons| Extensions::from_constructed(cons))?;
 
             Ok(Self {
                 version,
@@ -379,8 +375,8 @@ impl TstInfo {
                 cons.take_opt_primitive_if(Tag::INTEGER, |prim| Integer::from_primitive(prim))?;
             let tsa =
                 cons.take_opt_constructed_if(Tag::CTX_0, |cons| GeneralName::take_from(cons))?;
-            let extensions =
-                cons.take_opt_constructed_if(Tag::CTX_1, |cons| Extensions::take_from(cons))?;
+            let extensions = cons
+                .take_opt_constructed_if(Tag::CTX_1, |cons| Extensions::from_constructed(cons))?;
 
             Ok(Self {
                 version,

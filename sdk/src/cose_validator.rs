@@ -14,6 +14,7 @@
 use std::{borrow::Cow, io::Write};
 
 use async_generic::async_generic;
+use c2pa_raw_crypto::SigningAlg;
 use coset::CoseSign1;
 use x509_parser::{num_bigint::BigUint, prelude::*};
 
@@ -26,7 +27,6 @@ use crate::{
             signing_time_from_sign1, signing_time_from_sign1_async, validate_cose_tst_info,
             validate_cose_tst_info_async, CertificateInfo, CertificateTrustPolicy, Verifier,
         },
-        raw_signature::SigningAlg,
     },
     error::{Error, Result},
     settings::Settings,
@@ -76,11 +76,24 @@ pub(crate) fn verify_cose(
         Some(tst_info) => Some(tst_info.clone()),
         None => {
             if _sync {
-                validate_cose_tst_info(&sign1, data, ctp, validation_log, settings).ok()
+                validate_cose_tst_info(
+                    &sign1,
+                    data,
+                    ctp,
+                    validation_log,
+                    settings.verify.verify_timestamp_trust,
+                )
+                .ok()
             } else {
-                validate_cose_tst_info_async(&sign1, data, ctp, validation_log, settings)
-                    .await
-                    .ok()
+                validate_cose_tst_info_async(
+                    &sign1,
+                    data,
+                    ctp,
+                    validation_log,
+                    settings.verify.verify_timestamp_trust,
+                )
+                .await
+                .ok()
             }
         }
     };
@@ -183,7 +196,7 @@ pub(crate) fn get_signing_info(
     cose_bytes: &[u8],
     data: &[u8],
     validation_log: &mut StatusTracker,
-    settings: &Settings,
+    verify_trust: bool,
 ) -> CertificateInfo {
     let mut date = None;
     let mut issuer_org = None;
@@ -198,9 +211,9 @@ pub(crate) fn get_signing_info(
                 Ok(der_bytes) => {
                     if let Ok((_rem, signcert)) = X509Certificate::from_der(&der_bytes) {
                         date = if _sync {
-                            signing_time_from_sign1(&sign1, data, settings)
+                            signing_time_from_sign1(&sign1, data, verify_trust)
                         } else {
-                            signing_time_from_sign1_async(&sign1, data, settings).await
+                            signing_time_from_sign1_async(&sign1, data, verify_trust).await
                         };
                         issuer_org = extract_subject_from_cert(&signcert);
                         cert_serial_number = Some(extract_serial_from_cert(&signcert));
@@ -243,16 +256,13 @@ pub(crate) fn get_signing_info(
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
 pub mod tests {
-    use ciborium::Value;
-    use coset::Label;
-    #[allow(deprecated)]
-    use sha2::digest::generic_array::sequence::Shorten;
+    use coset::{cbor::value::Value, Label};
     use x509_parser::{certificate::X509Certificate, pem::Pem};
 
     use super::*;
     use crate::{
-        crypto::raw_signature::SigningAlg, settings::Settings, status_tracker::StatusTracker,
-        utils::test_signer::test_signer, Signer,
+        settings::Settings, status_tracker::StatusTracker, utils::test_signer::test_signer, Signer,
+        SigningAlg,
     };
 
     #[test]
@@ -277,16 +287,19 @@ pub mod tests {
 
         let cose_sign1 = parse_cose_sign1(&cose_bytes, &claim_bytes, &mut validation_log).unwrap();
 
-        let signing_time = signing_time_from_sign1(&cose_sign1, &claim_bytes, &settings);
+        let signing_time = signing_time_from_sign1(
+            &cose_sign1,
+            &claim_bytes,
+            settings.verify.verify_timestamp_trust,
+        );
 
         assert_eq!(signing_time, None);
     }
     #[test]
     fn test_stapled_ocsp() {
-        use crate::crypto::{
-            raw_signature::{signer_from_cert_chain_and_private_key, RawSigner, RawSignerError},
-            time_stamp::{TimeStampError, TimeStampProvider},
-        };
+        use c2pa_raw_crypto::{signer_from_private_key, RawSigner};
+
+        use crate::crypto::{cert_chain_pem_to_der, cose::cose_reserve_size};
 
         let mut settings = Settings::default();
         settings.verify.verify_trust = false;
@@ -302,13 +315,13 @@ pub mod tests {
         let pem_key = include_bytes!("../tests/fixtures/certs/ps256.pem").to_vec();
         let ocsp_rsp_data = include_bytes!("../tests/fixtures/ocsp_good.data");
 
-        let raw_signer =
-            signer_from_cert_chain_and_private_key(&sign_cert, &pem_key, SigningAlg::Ps256, None)
-                .unwrap();
+        let raw_signer = signer_from_private_key(&pem_key, SigningAlg::Ps256).unwrap();
+        let cert_chain = cert_chain_pem_to_der(&sign_cert).unwrap();
 
         // create a test signer that supports stapling
         struct OcspSigner {
             pub raw_signer: Box<dyn RawSigner>,
+            pub cert_chain: Vec<Vec<u8>>,
             pub ocsp_rsp: Vec<u8>,
         }
 
@@ -322,11 +335,16 @@ pub mod tests {
             }
 
             fn certs(&self) -> Result<Vec<Vec<u8>>> {
-                Ok(self.raw_signer.cert_chain()?)
+                Ok(self.cert_chain.clone())
             }
 
             fn reserve_size(&self) -> usize {
-                self.raw_signer.reserve_size()
+                cose_reserve_size(
+                    self.raw_signer.max_signature_size(),
+                    &self.cert_chain,
+                    false,
+                    Some(&self.ocsp_rsp),
+                )
             }
 
             fn ocsp_val(&self) -> Option<Vec<u8>> {
@@ -336,6 +354,7 @@ pub mod tests {
 
         let ocsp_signer = OcspSigner {
             raw_signer,
+            cert_chain,
             ocsp_rsp: ocsp_rsp_data.to_vec(),
         };
 
@@ -376,7 +395,7 @@ pub mod tests {
                             x.1.as_array()
                                 .and_then(|ocsp_rsp_val| ocsp_rsp_val.first())
                                 .and_then(Value::as_bytes)
-                                .cloned()
+                                .map(|b| b.to_vec())
                         } else {
                             None
                         }

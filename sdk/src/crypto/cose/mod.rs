@@ -18,6 +18,11 @@
 mod certificate_info;
 pub use certificate_info::CertificateInfo;
 
+mod certificate_trust;
+
+mod cose_signer;
+pub(crate) use cose_signer::{AsyncCoseSigner, CoseSigner, RawSignerCoseSigner};
+
 mod certificate_trust_policy;
 pub use certificate_trust_policy::{
     CertificateTrustError, CertificateTrustPolicy, InvalidCertificateError, TrustAnchorType,
@@ -36,7 +41,8 @@ pub use ocsp::{check_ocsp_status, check_ocsp_status_async, get_ocsp_der, OcspFet
 pub(crate) use ocsp::{fetch_and_check_ocsp_response, fetch_and_check_ocsp_response_async};
 
 mod sign;
-pub use sign::{sign, sign_async, sign_v2_embedded, sign_v2_embedded_async, CosePayload};
+pub use sign::CosePayload;
+pub(crate) use sign::{cose_reserve_size, sign, sign_async};
 
 mod sign1;
 pub use sign1::{
@@ -45,10 +51,9 @@ pub use sign1::{
 };
 
 mod sigtst;
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) use sigtst::timestamptoken_from_timestamprsp;
 pub(crate) use sigtst::{
-    add_sigtst_header, add_sigtst_header_async, validate_cose_tst_info,
+    add_sigtst_header, add_sigtst_header_async, get_cose_tst_info,
+    timestamp_token_bytes_from_sign1, timestamptoken_from_timestamprsp, validate_cose_tst_info,
     validate_cose_tst_info_async,
 };
 

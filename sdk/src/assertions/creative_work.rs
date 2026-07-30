@@ -42,9 +42,9 @@ const CW_AUTHOR: &str = "author";
 pub struct CreativeWork(SchemaDotOrg);
 
 impl CreativeWork {
-    /// Label prefix for a creative work assertion.
+    /// Label prefix for a creative work assertion. NOTE: This is deprecated.
     ///
-    /// See <https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_creative_work>.
+    /// See [Creative_work assertion - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_creative_work). NOTE: This is an old version of the spec.
     pub const LABEL: &'static str = labels::CREATIVE_WORK;
 
     pub fn new() -> CreativeWork {
@@ -128,7 +128,7 @@ pub mod tests {
     const IDENTITY_URI: &str = "https://some_identity/service/";
 
     // example CreativeWork from
-    // https://c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_claim_review
+    // https://spec.c2pa.org/specifications/specifications/1.0/specs/C2PA_Specification.html#_claim_review
     const SAMPLE_CREATIVE_WORK: &str = r#"{
         "@context": [
           "http://schema.org/",

@@ -19,13 +19,14 @@ use std::{
 
 use tempfile::NamedTempFile;
 
-use crate::{assertions::BoxMap, error::Result};
+use crate::{assertions::BoxMap, error::Result, maybe_send_sync::MaybeSend};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HashBlockObjectType {
     Cai,
     Xmp,
     Other,
+    OtherExclusion,
 }
 
 impl fmt::Display for HashBlockObjectType {
@@ -40,15 +41,9 @@ pub struct HashObjectPositions {
     pub htype: HashBlockObjectType, // type of hash block object
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub trait CAIRead: Read + Seek + Send {}
-#[cfg(target_arch = "wasm32")]
-pub trait CAIRead: Read + Seek {}
+pub trait CAIRead: Read + Seek + MaybeSend {}
 
-#[cfg(not(target_arch = "wasm32"))]
-impl<T> CAIRead for T where T: Read + Seek + Send {}
-#[cfg(target_arch = "wasm32")]
-impl<T> CAIRead for T where T: Read + Seek {}
+impl<T> CAIRead for T where T: Read + Seek + MaybeSend {}
 
 impl From<String> for Box<dyn CAIRead> {
     fn from(val: String) -> Self {
@@ -228,7 +223,9 @@ pub trait AssetBoxHash {
     // Returns Vec containing all BoxMap level objects in the asset in the order
     // they occur in the asset.  The hashes do not need to be calculated, only the
     // name and the positional information.  The list should be flat with each BoxMap
-    // representing a single entry.
+    // representing a single entry.  If the C2PA manifest is not present we still
+    // as a placeholder BoxMap at the location in the Vec where it would appear in
+    // the final output when generating the file.
     fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>>;
 }
 
@@ -260,7 +257,7 @@ pub trait RemoteRefEmbed {
 
 /// `ComposedManifestRefEmbed` is used to generate a C2PA manifest.  The
 /// returned `Vec<u8>` contains data preformatted to be directly compatible
-/// with the type specified in `format`.  
+/// with the type specified in `format`.
 pub trait ComposedManifestRef {
     // Return entire CAI block as Vec<u8>
     fn compose_manifest(&self, manifest_data: &[u8], format: &str) -> Result<Vec<u8>>;

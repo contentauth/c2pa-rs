@@ -12,10 +12,11 @@
 
 /// This module exports a C2PA library
 mod c2pa_stream;
+#[macro_use]
+mod cimpl;
 mod c_api;
 mod error;
-#[cfg(feature = "file_io")]
-mod json_api;
+mod maybe_send_sync;
 mod signer_info;
 
 pub use c2pa::{
@@ -23,5 +24,9 @@ pub use c2pa::{
 };
 pub use c2pa_stream::*;
 pub use c_api::*;
+// Re-export for macro use
+#[doc(hidden)]
+pub use cimpl::cimpl_error::CimplError;
+pub use cimpl::*;
 pub use error::{Error, Result};
 pub use signer_info::SignerInfo;

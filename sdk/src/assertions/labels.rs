@@ -17,171 +17,181 @@
 //!
 //! These constants do not include version suffixes.
 //!
-//! See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_c2pa_standard_assertions>.
+//! See [C2PA Standard assertions - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_c2pa_standard_assertions).
 use std::sync::LazyLock;
 
 use regex::Regex;
 
 /// Label prefix for a claim assertion.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_overview_4>.
+/// See [Claims- C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_claims).
 pub const CLAIM: &str = "c2pa.claim";
 
 /// Label prefix for an assertion metadata assertion.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_metadata_about_assertions>.
+/// See [Metadata about assertions - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_metadata_about_assertions).
 pub const ASSERTION_METADATA: &str = "c2pa.assertion.metadata";
 
 /// Label prefix for a data hash assertion.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_data_hash>.
+/// See [Data hash - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_data_hash).
 pub const DATA_HASH: &str = "c2pa.hash.data";
 
 /// Label prefix for a box hash assertion.
 ///
-/// See <https://c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_general_boxes_hash>.
+/// See [General boxes hash - C2PA Technical Specification](https://spec.c2pa.org/specifications/C2PA_Specification.html#_general_boxes_hash).
 pub const BOX_HASH: &str = "c2pa.hash.boxes";
-
-/// Label prefix for a collection hash assertion.
-///
-/// See <https://c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_collection_data_hash>.
-pub const COLLECTION_HASH: &str = "c2pa.hash.collection.data";
 
 /// Label prefix for a BMFF-based hash assertion.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_bmff_based_hash>.
+/// See [BMFF-based hash - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_bmff_based_hash).
 pub const BMFF_HASH: &str = "c2pa.hash.bmff";
+
+/// Label prefix for a collection hash assertion.
+///
+/// See [Collection data hash - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_collection_data_hash).
+pub const COLLECTION_HASH: &str = "c2pa.hash.collection.data";
 
 /// Label prefix for a soft binding assertion.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_soft_binding_2>.
+/// See [Soft binding - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_soft_binding_2).
 pub const SOFT_BINDING: &str = "c2pa.soft-binding";
 
 /// Label prefix for a cloud data assertion.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_cloud_data>.
+/// See [Cloud data - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_cloud_data).
 pub const CLOUD_DATA: &str = "c2pa.cloud-data";
 
 /// Label prefix for a thumbnail assertion.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_thumbnail>.
+/// See [Thumbnail - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_thumbnail).
 pub const THUMBNAIL: &str = "c2pa.thumbnail";
 
 /// Label prefix for a claim thumbnail assertion.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_thumbnail>.
+/// See [Thumbnail - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_thumbnail).
 pub const CLAIM_THUMBNAIL: &str = "c2pa.thumbnail.claim";
 
 /// Label prefix for an ingredient thumbnail assertion.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_thumbnail>.
+/// See [Thumbnail - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_thumbnail).
 pub const INGREDIENT_THUMBNAIL: &str = "c2pa.thumbnail.ingredient";
 
 /// Label prefix for a JPEG claim thumbnail assertion.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_thumbnail>.
+/// See [Thumbnail - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_thumbnail).
 pub const JPEG_CLAIM_THUMBNAIL: &str = "c2pa.thumbnail.claim.jpeg";
 
 /// Label prefix for a JPEG ingredient thumbnail assertion.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_thumbnail>.
+/// See [Thumbnail - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_thumbnail).
 pub const JPEG_INGREDIENT_THUMBNAIL: &str = "c2pa.thumbnail.ingredient.jpeg";
 
 /// Label prefix for a PNG claim thumbnail assertion.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_thumbnail>.
+/// See [Thumbnail - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_thumbnail).
 pub const PNG_CLAIM_THUMBNAIL: &str = "c2pa.thumbnail.claim.png";
 
 /// Label prefix for a PNG ingredient thumbnail assertion.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_thumbnail>.
+/// See [Thumbnail - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_thumbnail).
 pub const PNG_INGREDIENT_THUMBNAIL: &str = "c2pa.thumbnail.ingredient.png";
 
 /// Label prefix for a SVG claim thumbnail assertion.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_thumbnail>.
+/// See [Thumbnail - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_thumbnail).
 pub const SVG_CLAIM_THUMBNAIL: &str = "c2pa.thumbnail.claim.svg";
 
 /// Label prefix for a SVG ingredient thumbnail assertion.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_thumbnail>.
+/// See [Thumbnail - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_thumbnail).
 pub const SVG_INGREDIENT_THUMBNAIL: &str = "c2pa.thumbnail.ingredient.svg";
 
 /// Label prefix for an actions assertion.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_actions>.
+/// See [Actions - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_actions).
 pub const ACTIONS: &str = "c2pa.actions";
 
 /// Label prefix for an ingredient assertion.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_ingredient>.
+/// See [Ingredient - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_ingredient).
 pub const INGREDIENT: &str = "c2pa.ingredient";
 
 /// Label prefix for a depthmap assertion.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_depthmap>.
+/// See [Depthmap - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_depthmap).
 pub const DEPTHMAP: &str = "c2pa.depthmap";
 
 /// Label prefix for a asset type assertion.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.1/specs/C2PA_Specification.html#_asset_type>.
+/// See [Asset type - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_asset_type).
 pub const ASSET_TYPE: &str = "c2pa.asset-type";
 
 /// Label prefix for a embedded data assertion.
 ///
-/// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_embedded_data>.
+/// See [Embedded data - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_embedded_data).
 pub const EMBEDDED_DATA: &str = "c2pa.embedded-data";
 
 /// Label prefix for a Icon assertion.
 ///
-/// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_generator_info_map>.
+/// See [Generator info map - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_generator_info_map).
 pub const ICON: &str = "c2pa.icon";
 
 /// Label prefix for a GDepth assertion.
 /// Label prefix for a GDepth depthmap assertion.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_gdepth_depthmap>.
+/// See [GDepth Depthmap - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_gdepth_depthmap).
 pub const DEPTHMAP_GDEPTH: &str = "c2pa.depthmap.GDepth";
 
 /// Label prefix for an EXIF information assertion.
 /// Hidden because it's now part of standard metadata assertions.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_exif_information>.
+/// See [EXIF information - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_exif_information).
 #[doc(hidden)]
 pub const EXIF: &str = "stds.exif";
 
 /// Label prefix for an IPTC photo metadata assertion.
 /// Hidden because it's now part of standard metadata assertions.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_iptc_photo_metadata>.
+/// See [IPTC photo metadata - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_iptc_photo_metadata).
 #[doc(hidden)]
 pub const IPTC_PHOTO_METADATA: &str = "stds.iptc.photo-metadata";
 
 /// Label prefix for any assertion based on a schema.org grammar.
 /// Hidden because it's now part of standard metadata assertions.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_use_of_schema_org>.
+/// See [Use of Schema.org - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_use_of_schema_org).
 #[doc(hidden)]
+#[deprecated(
+    since = "0.91.0",
+    note = "This attribute is deprecated from C2PA spec version 2.0. Will be deleted on or after 2026-11-09."
+)]
 pub const SCHEMA_ORG: &str = "schema.org";
 
-/// Label prefix for a claim review assertion.
-///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_claim_review>.
+pub(crate) const SCHEMA_ORG_INTERNAL: &str = "schema.org";
+
+/// Label prefix for a Claim Review assertion. Deprecated since C2PA 2.0 spec.
+#[deprecated(
+    since = "0.91.0",
+    note = "This attribute is deprecated from C2PA spec version 2.0. Will be deleted on or after 2026-11-09."
+)]
 pub const CLAIM_REVIEW: &str = "stds.schema-org.ClaimReview";
 
-/// Label prefix for a creative work assertion.
-///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_creative_work>.
+/// Label prefix for a Creative Work assertion. Deprecated in C2PA 2.0 spec.
+#[deprecated(
+    since = "0.91.0",
+    note = "This attribute is deprecated from C2PA spec version 2.0. Will be deleted on or after 2026-11-09."
+)]
 pub const CREATIVE_WORK: &str = "stds.schema-org.CreativeWork";
 
 /// Label prefix for a timestamp assertion.
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#timestamp_assertion>.
+/// See [Timestamp assertion - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#timestamp_assertion).
 pub const TIMESTAMP: &str = "c2pa.time-stamp";
 
 /// Label prefix for a certificate status assertion.
 ///
-/// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#certificate_status_assertion>.
+/// See [Certificate status assertion - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#certificate_status_assertion).
 pub const CERTIFICATE_STATUS: &str = "c2pa.certificate-status";
 
 // Assertion store label
@@ -192,32 +202,44 @@ pub(crate) const DATABOX_STORE: &str = "c2pa.databoxes";
 
 /// Label prefix for asset reference assertion.
 ///
-/// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_asset_reference>.
+/// See [Asset reference - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_asset_reference).
 pub const ASSET_REFERENCE: &str = "c2pa.asset-ref";
 
 /// extension to indicate a multipart hash
 ///
-/// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_multi_asset_hash>.
+/// See [Multi asset hash - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_multi_asset_hash).
 pub const PART: &str = ".part";
+
+/// Label for multi asset hashes
+///
+/// See [Multi asset hash - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_multi_asset_hash).
+pub const MULTI_ASSET_HASH: &str = "c2pa.hash.multi-asset";
 
 /// Label prefix for a C2PA metadata assertion.
 ///
-/// A C2PA metadata assertion can only be used for [specific metadata fields]
+/// A [metadata assertion](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_metadata)
+/// can only be used for [specific metadata fields](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#metadata_annex)
 /// as described in the C2PA Technical Specification and only if those fields
 /// are generated from a hardware or software source.
-///
-/// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_metadata>.
-///
-/// [specific metadata fields]: https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#metadata_annex
 pub const METADATA: &str = "c2pa.metadata";
 
-/// Label prefix for a [CAWG metadata assertion].
+/// Label prefix for a [CAWG metadata assertion](https://cawg.io/metadata/).
 ///
-/// The CAWG metadata assertion is intended for human-generated metadata
+/// The [CAWG metadata assertion](https://cawg.io/metadata/) is intended for human-generated metadata
 /// and may contain metadata from any documented schema.
-///
-/// [CAWG metadata assertion]: https://cawg.io/metadata/
 pub const CAWG_METADATA: &str = "cawg.metadata";
+
+/// Label for working-store archive metadata (JSON-LD), including `archive:type`.
+///
+/// Used by [`Builder::to_archive`](crate::Builder::to_archive),
+/// [`Builder::write_ingredient_archive`](crate::Builder::write_ingredient_archive), and related APIs.
+pub const ARCHIVE_METADATA: &str = "org.contentauth.archive.metadata";
+
+/// `archive:type` value for a full manifest [`Builder`](crate::Builder) working-store archive (JUMBF).
+pub const ARCHIVE_TYPE_BUILDER: &str = "builder";
+
+/// `archive:type` value for a single-ingredient working-store archive from [`Builder::write_ingredient_archive`](crate::Builder::write_ingredient_archive).
+pub const ARCHIVE_TYPE_INGREDIENT: &str = "ingredient";
 
 /// Array of all hash labels because they have special treatment
 pub const HASH_LABELS: [&str; 4] = [DATA_HASH, BOX_HASH, BMFF_HASH, COLLECTION_HASH];
@@ -273,8 +295,21 @@ pub fn parse_label(label: &str) -> (&str, usize, usize) {
     if let Some(last) = components.last() {
         if VERSION_RE.is_match(last) {
             if let Ok(version) = last[1..].parse::<usize>() {
-                let base_end = without_instance.len() - last.len() - 1;
-                return (&without_instance[..base_end], version, instance);
+                // A version suffix is only strippable when a base label exists before
+                // it, i.e. there is a '.' separator. That requires
+                // without_instance.len() > last.len() (at minimum one byte for the
+                // separator plus one byte for the base). When they are equal the
+                // entire string is the version token with no base (e.g. "v1"), so
+                // subtracting last.len() + 1 would underflow usize — panicking in
+                // debug builds and wrapping in release builds.
+                //
+                // When no base exists we fall through to the default return below,
+                // yielding (without_instance, 1, instance): the full string is
+                // treated as the label name and the version defaults to 1.
+                if without_instance.len() > last.len() {
+                    let base_end = without_instance.len() - last.len() - 1;
+                    return (&without_instance[..base_end], version, instance);
+                }
             }
         }
     }
@@ -310,7 +345,7 @@ pub fn base(label: &str) -> &str {
 /// Returns the version number, or 1 if no version suffix is present
 /// (since version 1 is the default and never explicitly included).
 ///
-/// See <https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_versioning>.
+/// See [versioning - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_versioning).
 ///
 /// # Examples
 ///
@@ -370,7 +405,9 @@ pub fn instance(label: &str) -> usize {
 /// );
 /// ```
 pub fn add_thumbnail_format(label: &str, format: &str) -> String {
-    match format {
+    // mimetypes are case-insensitive (RFC 2045 section 5.1).
+    let format = format.to_lowercase();
+    match format.as_str() {
         "image/jpeg" | "jpeg" | "jpg" => format!("{label}.jpeg"),
         "image/png" | "png" => format!("{label}.png"),
         "image/svg+xml" | "svg" => format!("{label}.svg"),
@@ -382,5 +419,81 @@ pub fn add_thumbnail_format(label: &str, format: &str) -> String {
                 format!("{label}/{format}")
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// MIME types are case-insensitive (RFC 2045 section 5.1),
+    /// every spelling should produces the same label.
+    #[test]
+    fn test_add_thumbnail_format_case_insensitive() {
+        // (label prefix, format, expected label)
+        let cases = [
+            (CLAIM_THUMBNAIL, "image/jpeg", JPEG_CLAIM_THUMBNAIL),
+            (CLAIM_THUMBNAIL, "IMAGE/JPEG", JPEG_CLAIM_THUMBNAIL),
+            (CLAIM_THUMBNAIL, "Image/Jpeg", JPEG_CLAIM_THUMBNAIL),
+            (CLAIM_THUMBNAIL, "JPG", JPEG_CLAIM_THUMBNAIL),
+            (INGREDIENT_THUMBNAIL, "image/png", PNG_INGREDIENT_THUMBNAIL),
+            (INGREDIENT_THUMBNAIL, "IMAGE/PNG", PNG_INGREDIENT_THUMBNAIL),
+            (CLAIM_THUMBNAIL, "IMAGE/SVG+XML", SVG_CLAIM_THUMBNAIL),
+        ];
+
+        for (label, format, expected) in cases {
+            assert_eq!(add_thumbnail_format(label, format), expected);
+        }
+    }
+
+    /// Regression tests for usize underflow in `parse_label` when the input
+    /// is a bare version token with no base label (e.g. "v1").
+    ///
+    /// Before the fix, `without_instance.len() - last.len() - 1` underflowed
+    /// when `without_instance == last` (no '.' separator exists), panicking in
+    /// debug builds (exit code 101) and wrapping to `usize::MAX` in release
+    /// builds.  The fix guards on `without_instance.len() > last.len()` and
+    /// falls through to the default return when no base exists.
+    #[test]
+    fn test_parse_label_bare_version_does_not_panic() {
+        // "v1": entire string is the version token; no base, no instance.
+        // Expected: the string is returned as-is (label name), version = 1 (default).
+        assert_eq!(parse_label("v1"), ("v1", 1, 0));
+
+        // "v2": same pattern with a different digit.
+        assert_eq!(parse_label("v2"), ("v2", 1, 0));
+
+        // "v999": large version number, still bare.
+        assert_eq!(parse_label("v999"), ("v999", 1, 0));
+
+        // "v1__2": bare version with an instance suffix.
+        // without_instance = "v1", instance = 2 — still no base label.
+        assert_eq!(parse_label("v1__2"), ("v1", 1, 2));
+    }
+
+    /// Verify that the normal versioned-label code path still works correctly
+    /// after the guard was added.
+    #[test]
+    fn test_parse_label_normal_cases_unaffected() {
+        // No version, no instance.
+        assert_eq!(parse_label("c2pa.ingredient"), ("c2pa.ingredient", 1, 0));
+
+        // Version suffix stripped correctly.
+        assert_eq!(parse_label("c2pa.ingredient.v3"), ("c2pa.ingredient", 3, 0));
+
+        // Instance suffix only.
+        assert_eq!(parse_label("c2pa.actions__2"), ("c2pa.actions", 1, 2));
+
+        // Both version and instance.
+        assert_eq!(
+            parse_label("c2pa.ingredient.v3__2"),
+            ("c2pa.ingredient", 3, 2)
+        );
+
+        // Upper-case 'V' is not matched by the regex — returned as-is.
+        assert_eq!(
+            parse_label("c2pa.ingredient.V2"),
+            ("c2pa.ingredient.V2", 1, 0)
+        );
     }
 }

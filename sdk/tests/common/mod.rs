@@ -20,12 +20,33 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use c2pa::{format_from_path, Reader, Result};
+use c2pa::{format_from_path, Context, Reader, Result, Settings};
 pub use compare_readers::compare_readers;
 #[allow(unused)] // different code path for WASI
 use tempfile::{tempdir, TempDir};
 #[allow(unused)]
 pub use test_signer::test_signer;
+
+/// Returns a [`Settings`] instance loaded from the standard test fixture TOML.
+///
+/// Use this instead of `Settings::new().with_toml(include_str!(...))` in test code.
+#[allow(unused, clippy::expect_used)]
+pub fn test_settings() -> Settings {
+    Settings::new()
+        .with_toml(include_str!("../fixtures/test_settings.toml"))
+        .expect("built-in test_settings.toml should be valid")
+}
+
+/// Returns a [`Context`] configured with the standard test settings.
+///
+/// Use this instead of manually constructing `Settings` + `Context` in test code.
+/// Call `.into_shared()` on the result if you need an `Arc<Context>`.
+#[allow(unused, clippy::expect_used)]
+pub fn test_context() -> Context {
+    Context::new()
+        .with_settings(test_settings())
+        .expect("test_settings should always be valid")
+}
 
 #[allow(unused_macros)]
 macro_rules! assert_err {
@@ -50,7 +71,7 @@ pub fn known_good_path<P: AsRef<Path>>(file_name: P) -> std::path::PathBuf {
 /// get a file from path without requiring file_io feature enabled in the c2pa crate
 pub fn reader_from_file<P: AsRef<Path>>(path: P) -> Result<Reader> {
     let format = format_from_path(&path).ok_or(c2pa::Error::UnsupportedType)?;
-    Reader::from_stream(&format, &mut fs::File::open(&path)?)
+    Reader::default().with_stream(&format, &mut fs::File::open(&path)?)
 }
 
 #[allow(unused)]
@@ -85,7 +106,7 @@ pub fn compare_stream_to_known_good<P: AsRef<Path>, S: Read + Seek + Send>(
 ) -> Result<()> {
     let known = read_known_good(&known_file)?;
     let reader1 = Reader::from_json(&known)?;
-    let reader2 = Reader::from_stream(format, stream)?;
+    let reader2 = Reader::default().with_stream(format, stream)?;
     let result = compare_readers(&reader1, &reader2)?;
     assert!(result.is_empty(), "{}", result.join("\n"));
     Ok(())

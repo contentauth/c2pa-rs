@@ -12,12 +12,11 @@
 // each license.
 
 use async_trait::async_trait;
+use c2pa_raw_crypto::{RawSigner, SigningAlg};
 
 use crate::{
-    crypto::raw_signature::{AsyncRawSigner, SigningAlg},
-    dynamic_assertion::AsyncDynamicAssertion,
-    identity::builder::AsyncIdentityAssertionBuilder,
-    AsyncSigner, Result,
+    crypto::cose::cose_reserve_size, dynamic_assertion::AsyncDynamicAssertion,
+    identity::builder::AsyncIdentityAssertionBuilder, AsyncSigner, Result,
 };
 
 /// An `AsyncIdentityAssertionSigner` extends the [`AsyncSigner`] interface to
@@ -28,36 +27,38 @@ use crate::{
 /// [`Manifest`]: crate::Manifest
 pub struct AsyncIdentityAssertionSigner {
     #[cfg(not(target_arch = "wasm32"))]
-    signer: Box<dyn AsyncRawSigner + Sync + Send>,
+    signer: Box<dyn RawSigner + Sync + Send>,
 
     #[cfg(target_arch = "wasm32")]
-    signer: Box<dyn AsyncRawSigner>,
+    signer: Box<dyn RawSigner>,
 
-    #[cfg(not(target_arch = "wasm32"))]
+    cert_chain: Vec<Vec<u8>>,
+
     identity_assertions: std::sync::RwLock<Vec<AsyncIdentityAssertionBuilder>>,
-
-    #[cfg(target_arch = "wasm32")]
-    identity_assertions: std::cell::RefCell<Vec<AsyncIdentityAssertionBuilder>>,
 }
 
 impl AsyncIdentityAssertionSigner {
     /// Create an `AsyncIdentityAssertionSigner` wrapping the provided
-    /// [`AsyncRawSigner`] instance.
+    /// [`RawSigner`] instance and its signing certificate chain (each
+    /// certificate in DER form, end-entity first).
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn new(signer: Box<dyn AsyncRawSigner + Sync + Send>) -> Self {
+    pub fn new(signer: Box<dyn RawSigner + Sync + Send>, cert_chain: Vec<Vec<u8>>) -> Self {
         Self {
             signer,
-            identity_assertions: Self::ia_default(),
+            cert_chain,
+            identity_assertions: std::sync::RwLock::new(vec![]),
         }
     }
 
     /// Create an `AsyncIdentityAssertionSigner` wrapping the provided
-    /// [`AsyncRawSigner`] instance.
+    /// [`RawSigner`] instance and its signing certificate chain (each
+    /// certificate in DER form, end-entity first).
     #[cfg(target_arch = "wasm32")]
-    pub fn new(signer: Box<dyn AsyncRawSigner>) -> Self {
+    pub fn new(signer: Box<dyn RawSigner>, cert_chain: Vec<Vec<u8>>) -> Self {
         Self {
             signer,
-            identity_assertions: Self::ia_default(),
+            cert_chain,
+            identity_assertions: std::sync::RwLock::new(vec![]),
         }
     }
 
@@ -65,8 +66,10 @@ impl AsyncIdentityAssertionSigner {
     /// using test credentials for a particular algorithm.
     #[cfg(test)]
     pub(crate) fn from_test_credentials(alg: SigningAlg) -> Self {
+        use c2pa_raw_crypto::signer_from_private_key;
+
         use crate::{
-            crypto::raw_signature::async_signer_from_cert_chain_and_private_key,
+            crypto::cert_chain_pem_to_der,
             identity::tests::fixtures::cert_chain_and_private_key_for_alg,
         };
 
@@ -74,25 +77,10 @@ impl AsyncIdentityAssertionSigner {
 
         #[allow(clippy::unwrap_used)]
         Self {
-            signer: async_signer_from_cert_chain_and_private_key(
-                &cert_chain,
-                &private_key,
-                alg,
-                None,
-            )
-            .unwrap(),
-            identity_assertions: Self::ia_default(),
+            signer: signer_from_private_key(&private_key, alg).unwrap(),
+            cert_chain: cert_chain_pem_to_der(&cert_chain).unwrap(),
+            identity_assertions: std::sync::RwLock::new(vec![]),
         }
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn ia_default() -> std::sync::RwLock<Vec<AsyncIdentityAssertionBuilder>> {
-        std::sync::RwLock::new(vec![])
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn ia_default() -> std::cell::RefCell<Vec<AsyncIdentityAssertionBuilder>> {
-        std::cell::RefCell::new(vec![])
     }
 
     /// Add an [`AsyncIdentityAssertionBuilder`] to be used when signing the
@@ -104,21 +92,10 @@ impl AsyncIdentityAssertionSigner {
     /// [`Manifest`]: crate::Manifest
     /// [`sign()`]: Self::sign
     pub fn add_identity_assertion(&mut self, iab: AsyncIdentityAssertionBuilder) {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            #[allow(clippy::unwrap_used)]
-            let mut identity_assertions = self.identity_assertions.write().unwrap();
-            // TO DO: Replace with error handling in the very unlikely case of a panic here.
-            identity_assertions.push(iab);
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            #[allow(clippy::unwrap_used)]
-            let mut identity_assertions = self.identity_assertions.try_borrow_mut().unwrap();
-            // TO DO: Replace with error handling in the very unlikely case of a panic here.
-            identity_assertions.push(iab);
-        }
+        #[allow(clippy::unwrap_used)]
+        let mut identity_assertions = self.identity_assertions.write().unwrap();
+        // TO DO: Replace with error handling in the very unlikely case of a panic here.
+        identity_assertions.push(iab);
     }
 }
 
@@ -126,7 +103,8 @@ impl AsyncIdentityAssertionSigner {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl AsyncSigner for AsyncIdentityAssertionSigner {
     async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>> {
-        self.signer.sign(data).await.map_err(|e| e.into())
+        // Raw signing is synchronous (CPU-bound).
+        self.signer.sign(&data).map_err(|e| e.into())
     }
 
     fn alg(&self) -> SigningAlg {
@@ -134,73 +112,30 @@ impl AsyncSigner for AsyncIdentityAssertionSigner {
     }
 
     fn certs(&self) -> Result<Vec<Vec<u8>>> {
-        self.signer.cert_chain().map_err(|e| e.into())
+        Ok(self.cert_chain.clone())
     }
 
     fn reserve_size(&self) -> usize {
-        self.signer.reserve_size()
-    }
-
-    async fn ocsp_val(&self) -> Option<Vec<u8>> {
-        self.signer.ocsp_response().await
-    }
-
-    fn time_authority_url(&self) -> Option<String> {
-        self.signer.time_stamp_service_url()
-    }
-
-    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
-        self.signer.time_stamp_request_headers()
-    }
-
-    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
-        self.signer
-            .time_stamp_request_body(message)
-            .map_err(|e| e.into())
-    }
-
-    async fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
-        self.signer
-            .send_time_stamp_request(message)
-            .await
-            .map(|r| r.map_err(|e| e.into()))
-    }
-
-    fn async_raw_signer(&self) -> Option<Box<&dyn AsyncRawSigner>> {
-        Some(Box::new(&*self.signer))
+        cose_reserve_size(
+            self.signer.max_signature_size(),
+            &self.cert_chain,
+            false,
+            None,
+        )
     }
 
     fn dynamic_assertions(&self) -> Vec<Box<dyn AsyncDynamicAssertion>> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            #[allow(clippy::unwrap_used)]
-            let mut identity_assertions = self.identity_assertions.write().unwrap();
-            // TO DO: Replace with error handling in the very unlikely case of a panic here.
+        #[allow(clippy::unwrap_used)]
+        let mut identity_assertions = self.identity_assertions.write().unwrap();
+        // TO DO: Replace with error handling in the very unlikely case of a panic here.
 
-            let ia_clone = identity_assertions.split_off(0);
-            let mut dynamic_assertions: Vec<Box<dyn AsyncDynamicAssertion>> = vec![];
+        let ia_clone = identity_assertions.split_off(0);
+        let mut dynamic_assertions: Vec<Box<dyn AsyncDynamicAssertion>> = vec![];
 
-            for ia in ia_clone.into_iter() {
-                dynamic_assertions.push(Box::new(ia));
-            }
-
-            dynamic_assertions
+        for ia in ia_clone.into_iter() {
+            dynamic_assertions.push(Box::new(ia));
         }
 
-        #[cfg(target_arch = "wasm32")]
-        {
-            #[allow(clippy::unwrap_used)]
-            let mut identity_assertions = self.identity_assertions.try_borrow_mut().unwrap();
-            // TO DO: Replace with error handling in the very unlikely case of a panic here.
-
-            let ia_clone = identity_assertions.split_off(0);
-            let mut dynamic_assertions: Vec<Box<dyn AsyncDynamicAssertion>> = vec![];
-
-            for ia in ia_clone.into_iter() {
-                dynamic_assertions.push(Box::new(ia));
-            }
-
-            dynamic_assertions
-        }
+        dynamic_assertions
     }
 }
