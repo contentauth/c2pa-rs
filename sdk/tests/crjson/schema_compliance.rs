@@ -455,12 +455,13 @@ fn test_claim_v2_required_fields() -> Result<()> {
                 "claim.v2.gathered_assertions must be an array"
             );
         }
-        if let Some(redacted) = obj.get("redacted_assertions") {
-            assert!(
-                redacted.is_array(),
-                "claim.v2.redacted_assertions must be an array"
-            );
-        }
+        // crJSON 3.5.1: absent redactions are still serialised, as an empty array.
+        assert!(
+            obj.get("redacted_assertions")
+                .map(|v| v.is_array())
+                .unwrap_or(false),
+            "claim.v2.redacted_assertions must be present as an array"
+        );
     }
     Ok(())
 }
