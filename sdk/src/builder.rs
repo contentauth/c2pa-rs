@@ -969,7 +969,9 @@ impl Builder {
     ///
     /// This does not touch ingredients. Call [`Builder::filter_ingredients`]
     /// (`filter_ingredients(|_| false)` to drop all orphans) afterwards if you also want to drop
-    /// ingredients now orphaned by the removed actions.
+    /// ingredients now orphaned by the removed actions. If you want to rescue an ingredient (and
+    /// keep the action referencing it, even when `keep` alone would drop it), use
+    /// [`Builder::filter_actions_and_ingredients`] instead.
     ///
     /// # Arguments
     /// * `keep` - A predicate; the action is retained when it returns true.
@@ -1067,7 +1069,10 @@ impl Builder {
     /// of interest, so retain the whole ingredient (and its nested chain)"; the closure may inspect
     /// the ingredient's [`manifest_data`](Ingredient::manifest_data) to decide. Prune all orphans
     /// with `filter_ingredients(|_| false)`. Call [`Builder::filter_actions`] first if you are also
-    /// removing actions: the keep-set is computed from whatever actions currently remain.
+    /// removing actions: the keep-set is computed from whatever actions currently remain. If a
+    /// rescued ingredient's action was already removed by a prior `filter_actions` call, that
+    /// action stays removed — use [`Builder::filter_actions_and_ingredients`] instead if you need
+    /// the rescue decision to also keep the referencing action.
     ///
     /// # Arguments
     /// * `rescue` - A predicate that can rescue an otherwise-orphaned ingredient by returning true.
@@ -1118,8 +1123,6 @@ impl Builder {
         for pos in actions_positions {
             let actions: Actions = self.definition.assertions[pos].to_assertion()?;
             for action in &actions.actions {
-                // Relationship-agnostic: any referenced ingredient is kept whatever its
-                // relationship (e.g. `c2pa.edited` -> `inputTo`).
                 keep_set.extend(action_ingredient_ref_ids(action, &pre_filter_ids));
             }
             decoded.push((pos, actions));
@@ -1155,14 +1158,13 @@ impl Builder {
         Ok(self)
     }
 
-    /// Retains actions and ingredients together in one atomic step.
+    /// Retains actions and ingredients together in one call.
     ///
-    /// Calling [`Builder::filter_actions`] then [`Builder::filter_ingredients`] separately can
-    /// drop an action (e.g. `c2pa.edited`) before its ingredient ever gets a chance to be rescued
-    /// by `rescue_ingredient`, orphaning the link between the edit and the ingredient it produced.
-    /// This method closes that gap: `rescue_ingredient` is evaluated for every ingredient first,
-    /// and any action referencing an ingredient it would rescue is force-kept regardless of
-    /// `keep_action`.
+    /// Calling [`Builder::filter_actions`] then [`Builder::filter_ingredients`] separately is
+    /// order-dependent: the action filter can drop an action (e.g. `c2pa.edited`) before its
+    /// ingredient gets a chance to be rescued, orphaning the link. This method removes that
+    /// ordering concern by deciding rescues up front, so a rescued ingredient's action is force-
+    /// kept too.
     ///
     /// An action is kept if `keep_action` returns true, it is the inception action
     /// (`c2pa.created`/`c2pa.opened`), or it references an ingredient `rescue_ingredient` would
@@ -1198,24 +1200,21 @@ impl Builder {
         FA: FnMut(&Action) -> bool,
         FI: FnMut(&Ingredient) -> bool,
     {
-        // Positional order matters for resolving `parameters.ingredients` positional refs; this
-        // must be snapshotted before any pruning happens.
-        let pre_filter_ids: Vec<String> = self
-            .definition
-            .ingredients
-            .iter()
-            .map(Ingredient::effective_id_internal)
-            .collect();
-
-        // Evaluate `rescue_ingredient` up front, exactly once per ingredient, so an action
+        // Single pass over ingredients: snapshot positional order (`pre_filter_ids`) and evaluate
+        // `rescue_ingredient` up front, exactly once per ingredient (`rescued_ids`), so an action
         // referencing a to-be-rescued ingredient can be protected before any action is dropped.
-        let rescued_ids: HashSet<String> = self
-            .definition
-            .ingredients
-            .iter()
-            .filter(|ing| rescue_ingredient(ing))
-            .map(Ingredient::effective_id_internal)
-            .collect();
+        let mut pre_filter_ids: Vec<String> = Vec::with_capacity(self.definition.ingredients.len());
+        let mut rescued_by_index: Vec<bool> = Vec::with_capacity(self.definition.ingredients.len());
+        let mut rescued_ids: HashSet<String> = HashSet::new();
+        for ing in &self.definition.ingredients {
+            let id = ing.effective_id_internal();
+            let rescued = rescue_ingredient(ing);
+            if rescued {
+                rescued_ids.insert(id.clone());
+            }
+            rescued_by_index.push(rescued);
+            pre_filter_ids.push(id);
+        }
 
         self.filter_actions(|a| {
             keep_action(a)
@@ -1224,7 +1223,14 @@ impl Builder {
                     .any(|id| rescued_ids.contains(id))
         })?;
 
-        self.filter_ingredients(|ing| rescued_ids.contains(&ing.effective_id_internal()))
+        // `filter_actions` never touches `self.definition.ingredients`, so this still iterates in
+        // the same positional order as the snapshot above.
+        let mut next_index = 0usize;
+        self.filter_ingredients(|_ing| {
+            let rescued = rescued_by_index[next_index];
+            next_index += 1;
+            rescued
+        })
     }
 
     /// Request a trusted timestamp for manifests with the given label.
@@ -10774,6 +10780,33 @@ mod tests {
                 .actions
                 .iter()
                 .any(|a| a.action() == "c2pa.edited"));
+        }
+
+        // Two ingredients with neither a `label` nor an `instance_id` both fall back to the same
+        // `effective_id_internal() == "None"`. Rescue decisions must be tracked positionally, not
+        // by that id, or rescuing one would incorrectly rescue the other too.
+        #[test]
+        fn filter_actions_and_ingredients_no_id_collision() {
+            let def = json!({
+                "ingredients": [
+                    { "title": "no_id_1", "format": "image/jpeg", "relationship": "componentOf" },
+                    { "title": "no_id_2", "format": "image/jpeg", "relationship": "componentOf" },
+                ],
+                "assertions": [{ "label": "c2pa.actions.v2", "data": { "actions": [
+                    created_action(),
+                ]}}]
+            });
+            let mut b = removal_builder(def);
+            b.filter_actions_and_ingredients(|_| true, |ing| ing.title() == Some("no_id_1"))
+                .unwrap();
+
+            let titles: Vec<_> = b
+                .definition
+                .ingredients
+                .iter()
+                .map(|i| i.title().unwrap().to_string())
+                .collect();
+            assert_eq!(titles, vec!["no_id_1"]);
         }
 
         // a parentOf ingredient at a non-zero index survives and its opened link re-indexes.
