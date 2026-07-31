@@ -3769,4 +3769,242 @@ pub mod tests {
     fn bounded_entry_count_rejects_zero_entry_size() {
         assert!(bounded_entry_count(1, 0, 100, 0).is_err());
     }
+
+    // --- Direct SampleTrack unit tests -------------------------------------
+    //
+    // These exercise the offset/size arithmetic and its defensive guards
+    // directly, including branches that the public verify path cannot reach
+    // (e.g. a degenerate `stsc` that the parser's `first_sample` derivation
+    // never actually produces).
+
+    fn one_run_track(
+        first_chunk: u32,
+        samples_per_chunk: u32,
+        chunk_offsets: Vec<u64>,
+        fixed_sample_size: u32,
+        sample_sizes: Vec<u32>,
+        sample_count: u32,
+    ) -> SampleTrack {
+        SampleTrack {
+            track_id: 1,
+            stsc: vec![StscRun {
+                first_chunk,
+                samples_per_chunk,
+                first_sample: 1,
+            }],
+            chunk_offsets,
+            fixed_sample_size,
+            sample_sizes,
+            sample_count,
+        }
+    }
+
+    #[test]
+    fn read_sample_out_of_range_is_none() {
+        let track = one_run_track(1, 1, vec![0], 4, vec![], 2);
+        let mut reader = Cursor::new(vec![0u8; 64]);
+        // sample_id 0 and sample_id > sample_count both yield Ok(None).
+        assert!(track.read_sample(&mut reader, 0, 64).unwrap().is_none());
+        assert!(track.read_sample(&mut reader, 3, 64).unwrap().is_none());
+    }
+
+    #[test]
+    fn read_sample_zero_samples_per_chunk_errs() {
+        let track = one_run_track(1, 0, vec![0], 4, vec![], 1);
+        let mut reader = Cursor::new(vec![0u8; 64]);
+        assert!(track.read_sample(&mut reader, 1, 64).is_err());
+    }
+
+    #[test]
+    fn read_sample_zero_first_chunk_errs() {
+        // first_chunk 0 makes chunk_id 0, which has no valid 0-based index.
+        let track = one_run_track(0, 1, vec![0], 4, vec![], 1);
+        let mut reader = Cursor::new(vec![0u8; 64]);
+        let err = track.read_sample(&mut reader, 1, 64).unwrap_err();
+        assert!(matches!(err, Error::InvalidAsset(ref m) if m.contains("chunk_id is zero")));
+    }
+
+    #[test]
+    fn read_sample_missing_chunk_offset_is_none() {
+        // stsc references chunk 1 but the offset table is empty.
+        let track = one_run_track(1, 1, vec![], 4, vec![], 1);
+        let mut reader = Cursor::new(vec![0u8; 64]);
+        assert!(track.read_sample(&mut reader, 1, 64).unwrap().is_none());
+    }
+
+    #[test]
+    fn read_sample_beyond_eof_errs() {
+        // Fixed size 4, chunk offset 60, stream len 62 -> read of [60,64) exceeds.
+        let track = one_run_track(1, 1, vec![60], 4, vec![], 1);
+        let mut reader = Cursor::new(vec![0u8; 62]);
+        let err = track.read_sample(&mut reader, 1, 62).unwrap_err();
+        assert!(matches!(err, Error::InvalidAsset(ref m) if m.contains("beyond end of stream")));
+    }
+
+    #[test]
+    fn read_sample_fixed_size_reads_correct_bytes() {
+        // Two 4-byte samples in one chunk at offset 8; sample 2 is bytes [12,16).
+        let mut data = vec![0u8; 8];
+        data.extend_from_slice(b"AAAABBBB");
+        let track = one_run_track(1, 2, vec![8], 4, vec![], 2);
+        let mut reader = Cursor::new(data);
+        assert_eq!(track.read_sample(&mut reader, 1, 16).unwrap().unwrap(), b"AAAA");
+        assert_eq!(track.read_sample(&mut reader, 2, 16).unwrap().unwrap(), b"BBBB");
+    }
+
+    #[test]
+    fn read_sample_variable_size_reads_correct_bytes() {
+        // Variable sizes [3, 5] in one chunk at offset 4; sample 2 is bytes [7,12).
+        let mut data = vec![0u8; 4];
+        data.extend_from_slice(b"aaabbbbb");
+        let track = one_run_track(1, 2, vec![4], 0, vec![3, 5], 2);
+        let mut reader = Cursor::new(data);
+        assert_eq!(track.read_sample(&mut reader, 1, 12).unwrap().unwrap(), b"aaa");
+        assert_eq!(track.read_sample(&mut reader, 2, 12).unwrap().unwrap(), b"bbbbb");
+    }
+
+    #[test]
+    fn stsc_index_empty_errs() {
+        let track = SampleTrack {
+            track_id: 1,
+            stsc: vec![],
+            chunk_offsets: vec![],
+            fixed_sample_size: 4,
+            sample_sizes: vec![],
+            sample_count: 0,
+        };
+        let err = track.stsc_index(1).unwrap_err();
+        assert!(matches!(err, Error::InvalidAsset(ref m) if m == "BMFF has no stsc entries"));
+    }
+
+    #[test]
+    fn stsc_index_precedes_first_entry_errs() {
+        // A degenerate run whose first_sample is greater than the queried id.
+        let track = SampleTrack {
+            track_id: 1,
+            stsc: vec![StscRun {
+                first_chunk: 1,
+                samples_per_chunk: 1,
+                first_sample: 5,
+            }],
+            chunk_offsets: vec![0],
+            fixed_sample_size: 4,
+            sample_sizes: vec![],
+            sample_count: 10,
+        };
+        let err = track.stsc_index(2).unwrap_err();
+        assert!(matches!(err, Error::InvalidAsset(ref m) if m.contains("precedes first stsc entry")));
+    }
+
+    #[test]
+    fn stsc_index_selects_governing_run() {
+        let track = SampleTrack {
+            track_id: 1,
+            stsc: vec![
+                StscRun {
+                    first_chunk: 1,
+                    samples_per_chunk: 2,
+                    first_sample: 1,
+                },
+                StscRun {
+                    first_chunk: 3,
+                    samples_per_chunk: 1,
+                    first_sample: 5,
+                },
+            ],
+            chunk_offsets: vec![0, 0, 0],
+            fixed_sample_size: 4,
+            sample_sizes: vec![],
+            sample_count: 10,
+        };
+        assert_eq!(track.stsc_index(1).unwrap(), 0);
+        assert_eq!(track.stsc_index(4).unwrap(), 0);
+        assert_eq!(track.stsc_index(5).unwrap(), 1);
+        assert_eq!(track.stsc_index(9).unwrap(), 1);
+    }
+
+    #[test]
+    fn sample_size_variable_out_of_range_errs() {
+        let track = one_run_track(1, 1, vec![0], 0, vec![4], 1);
+        // sample_id 2 has no stsz entry.
+        assert!(track.sample_size(2).is_err());
+        // sample_id 0 underflows the 1-based index.
+        assert!(track.sample_size(0).is_err());
+    }
+
+    #[test]
+    fn parse_tkhd_track_id_version_1() {
+        // FullBox header (version 1), then 16 bytes of times, then track_id.
+        let mut b = vec![1u8, 0, 0, 0]; // version=1, flags=0
+        b.extend_from_slice(&[0u8; 16]); // creation+modification (64-bit each)
+        b.extend_from_slice(&42u32.to_be_bytes()); // track_id
+        let mut reader = Cursor::new(b);
+        let id = parse_tkhd_track_id(&mut reader, 0, 24).unwrap();
+        assert_eq!(id, 42);
+    }
+
+    #[test]
+    fn parse_tkhd_track_id_too_small_errs() {
+        let mut b = vec![0u8, 0, 0, 0]; // version=0, flags=0
+        b.extend_from_slice(&[0u8; 4]); // truncated before track_id
+        let mut reader = Cursor::new(b);
+        assert!(parse_tkhd_track_id(&mut reader, 0, 8).is_err());
+    }
+
+    #[test]
+    fn read_sample_end_overflow_errs() {
+        // A chunk offset at u64::MAX makes offset + size overflow.
+        let track = one_run_track(1, 1, vec![u64::MAX], 4, vec![], 1);
+        let mut reader = Cursor::new(vec![0u8; 16]);
+        let err = track.read_sample(&mut reader, 1, 16).unwrap_err();
+        assert!(matches!(err, Error::InvalidAsset(ref m) if m.contains("overflow")));
+    }
+
+    #[test]
+    fn read_sample_offset_overflow_errs() {
+        // chunk_offset near u64::MAX plus a preceding variable sample overflows
+        // the intra-chunk addition into the base offset.
+        let track = one_run_track(1, 2, vec![u64::MAX], 0, vec![1, 1], 2);
+        let mut reader = Cursor::new(vec![0u8; 16]);
+        let err = track.read_sample(&mut reader, 2, 16).unwrap_err();
+        assert!(matches!(err, Error::InvalidAsset(ref m) if m.contains("overflow")));
+    }
+
+    #[test]
+    fn parse_stsz_variable_count_exceeds_box_errs() {
+        // version/flags(4) + sample_size=0(4) + sample_count=1000(4); box ends
+        // right after the header, so 1000 entries cannot fit.
+        let mut b = vec![0u8; 4];
+        b.extend_from_slice(&0u32.to_be_bytes()); // sample_size = 0 (variable)
+        b.extend_from_slice(&1000u32.to_be_bytes()); // sample_count
+        let end = b.len() as u64;
+        let mut reader = Cursor::new(b);
+        assert!(parse_stsz(&mut reader, 0, end).is_err());
+    }
+
+    #[test]
+    fn read_child_rejects_box_extending_past_parent() {
+        // A box header claiming size 1000 inside a 20-byte parent range.
+        let mut b = 1000u32.to_be_bytes().to_vec();
+        b.extend_from_slice(b"free");
+        b.extend_from_slice(&[0u8; 12]);
+        let mut reader = Cursor::new(b);
+        assert!(read_child(&mut reader, 0, 20).is_err());
+    }
+
+    #[test]
+    fn from_stream_without_moov_has_no_tracks() {
+        // Just an ftyp box, no moov: parses to an empty track set.
+        let ftyp = {
+            let payload = b"isom\x00\x00\x00\x00isom";
+            let size = (8 + payload.len()) as u32;
+            let mut v = size.to_be_bytes().to_vec();
+            v.extend_from_slice(b"ftyp");
+            v.extend_from_slice(payload);
+            v
+        };
+        let mut reader = Cursor::new(ftyp);
+        let media = BmffSampleReader::from_stream(&mut reader).unwrap();
+        assert!(media.tracks().is_empty());
+    }
 }
