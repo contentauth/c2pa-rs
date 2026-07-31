@@ -1062,3 +1062,52 @@ fn oversized_stsz_sample_count_is_rejected() {
         "expected a clean parse rejection, got: {err:?}"
     );
 }
+
+/// A track missing a required sample-table box is skipped (`parse_trak` returns
+/// `Ok(None)`), so it is not added to the track set. With the only track
+/// dropped, a referencing Merkle map has no track to verify against. Renaming a
+/// box's fourcc makes `find_box` miss it while leaving the byte layout intact.
+fn assert_dropped_track_rejected(fourcc: &[u8; 4]) {
+    let track = TrackSpec {
+        track_id: 1,
+        stsc: vec![StscEntry {
+            first_chunk: 1,
+            samples_per_chunk: 1,
+            sample_description_index: 1,
+        }],
+        sample_sizes: SampleSizes::Variable(vec![4]),
+        use_co64: false,
+    };
+    let (mut file, roots) = build_single_track_asset(track, &[b"data"]);
+
+    let pos = file
+        .windows(4)
+        .position(|w| w == fourcc)
+        .unwrap_or_else(|| panic!("{} box present", String::from_utf8_lossy(fourcc)));
+    file[pos..pos + 4].copy_from_slice(b"xxxx");
+
+    let bmff_hash = track_merkle_assertion(1, &roots);
+    let mut reader = Cursor::new(file);
+    let err = bmff_hash
+        .verify_stream_hash(&mut reader, Some("sha256"))
+        .expect_err("a dropped track must not verify");
+    assert!(
+        matches!(err, c2pa::Error::HashMismatch(ref m) if m == "BMFF has no tracks for timed-media Merkle verification"),
+        "expected the no-tracks rejection, got: {err:?}"
+    );
+}
+
+#[test]
+fn track_without_mdia_is_skipped() {
+    assert_dropped_track_rejected(b"mdia");
+}
+
+#[test]
+fn track_without_chunk_offsets_is_skipped() {
+    assert_dropped_track_rejected(b"stco");
+}
+
+#[test]
+fn track_without_stsz_is_skipped() {
+    assert_dropped_track_rejected(b"stsz");
+}
