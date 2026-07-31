@@ -9496,6 +9496,30 @@ mod tests {
     }
 
     #[test]
+    fn test_with_archive_drops_archive_metadata_assertion() -> Result<()> {
+        let settings = Settings::new().with_value("builder.generate_c2pa_archive", true)?;
+        let context = Context::new().with_settings(settings)?;
+        let builder = Builder::from_context(context)
+            .with_definition(r#"{"title": "Test Archive Metadata"}"#)?;
+
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive)?;
+        archive.rewind()?;
+
+        let loaded = Builder::default().with_archive(archive)?;
+        assert!(
+            !loaded
+                .definition
+                .assertions
+                .iter()
+                .any(|a| a.label == crate::assertions::labels::ARCHIVE_METADATA),
+            "archive bookkeeping assertion should not survive into the reconstructed builder"
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn test_archive_self_signed_ed25519_signature() -> Result<()> {
         let settings = Settings::new().with_value("builder.generate_c2pa_archive", true)?;
 
