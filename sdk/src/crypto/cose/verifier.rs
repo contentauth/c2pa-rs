@@ -223,16 +223,17 @@ impl Verifier<'_> {
         };
 
         match verify_result {
-            Ok(tat) => {
+            Ok((tat, trust_uri)) => {
                 log_item!(
                     "",
                     format!(
-                        "signing certificate trusted, found in {:?} trust anchors",
-                        tat
+                        "signing certificate trusted, found in [{}] trust anchors",
+                        &trust_uri
                     ),
                     "verify_cose"
                 )
                 .validation_status(SIGNING_CREDENTIAL_TRUSTED)
+                .set_trust_list_uri(trust_uri)
                 .success(validation_log);
 
                 Ok(tat)

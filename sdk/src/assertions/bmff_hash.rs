@@ -384,6 +384,9 @@ pub struct BmffHash {
     #[serde(skip_serializing)]
     url: Option<UriT>, // deprecated in V2 and not to be used
 
+    #[serde(rename = "sequenceNumber", skip_serializing_if = "Option::is_none")]
+    sequence_number: Option<u64>,
+
     #[serde(skip)]
     pub(crate) merkle_uuid_boxes: Option<Vec<u8>>, // flattened list of UUID boxes
 
@@ -408,6 +411,7 @@ impl BmffHash {
             merkle: None,
             name: Some(name.to_string()),
             url,
+            sequence_number: None,
             merkle_uuid_boxes: None,
             merkle_uuid_boxes_insertion_point: 0,
             merkle_replacement_range: 0,

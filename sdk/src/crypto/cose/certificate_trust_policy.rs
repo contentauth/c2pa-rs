@@ -23,13 +23,17 @@ use x509_parser::{extensions::ExtendedKeyUsage, pem::Pem};
 use crate::crypto::{base64, hash::sha256};
 
 /// Enum to describe the type of trust anchor that validated the certificate.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum TrustAnchorType {
     /// Trust anchors provided by sanctioned authority.
-    System,
+    #[default]
+    Signer,
 
-    /// User provided trust anchor.
-    User,
+    /// Time Stamping Authority (TSA) provided trust anchor.
+    TSA,
+
+    /// CAWG provided trust anchor.
+    CAWG,
 
     /// End-entity certificate.
     EndEntity,
@@ -38,16 +42,23 @@ pub enum TrustAnchorType {
     NoCheck,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct TrustAnchor {
+    /// Trust anchors (root X.509 certificates) in DER format.
+    pub trust_anchor_ders: Vec<Vec<u8>>,
+    /// URI of the trust list
+    pub trust_anchor_uri: String,
+    /// Kind of trust list
+    pub trust_anchor_type: TrustAnchorType,
+}
+
 /// A `CertificateTrustPolicy` is configured with information about trust
 /// anchors, privately-accepted end-entity certificates, and allowed EKUs. It
 /// can be used to evaluate a signing certificate against those policies.
 #[derive(Clone, Debug)]
 pub struct CertificateTrustPolicy {
-    /// Trust anchors (root X.509 certificates) in DER format.
-    trust_anchor_ders: Vec<Vec<u8>>,
-
-    // User provided trust anchors in DER format.
-    user_trust_anchor_ders: Vec<Vec<u8>>,
+    /// Anchors Map
+    trust_anchors: Vec<TrustAnchor>,
 
     /// Base-64 encoded SHA-256 hash of end-entity certificates (root X.509
     /// certificates) in DER format.
@@ -58,20 +69,15 @@ pub struct CertificateTrustPolicy {
 
     /// passthrough mode
     passthrough: bool,
-
-    /// Use only system trust for this check
-    trust_anchors_only: bool,
 }
 
 impl Default for CertificateTrustPolicy {
     fn default() -> Self {
         let mut this = CertificateTrustPolicy {
-            trust_anchor_ders: vec![],
-            user_trust_anchor_ders: vec![],
+            trust_anchors: Vec::default(),
             end_entity_cert_set: HashSet::default(),
             additional_ekus: HashSet::default(),
             passthrough: false,
-            trust_anchors_only: false,
         };
 
         this.add_valid_ekus(include_bytes!("./valid_eku_oids.cfg"));
@@ -79,9 +85,13 @@ impl Default for CertificateTrustPolicy {
         // In testing configs, also add debug/trust anchors.
         #[cfg(test)]
         {
-            let _ = this.add_user_trust_anchors(include_bytes!(
-                "../../../tests/fixtures/crypto/raw_signature/test_cert_root_bundle.pem"
-            ));
+            let _ = this.add_trust_anchors(
+                include_bytes!(
+                    "../../../tests/fixtures/crypto/raw_signature/test_cert_root_bundle.pem"
+                ),
+                "https://cai.org/unknown_tl",
+                TrustAnchorType::Signer,
+            );
         }
 
         this
@@ -97,33 +107,54 @@ impl CertificateTrustPolicy {
     /// [`default()`]: Self::default()
     pub fn new() -> Self {
         CertificateTrustPolicy {
-            trust_anchor_ders: vec![],
-            user_trust_anchor_ders: vec![],
+            trust_anchors: Vec::default(),
             end_entity_cert_set: HashSet::default(),
             additional_ekus: HashSet::default(),
             passthrough: false,
-            trust_anchors_only: false,
         }
     }
 
     /// Creates a passthrough policy checker for cases when trust checks should not be performed
     pub fn passthrough() -> Self {
         Self {
-            trust_anchor_ders: vec![],
-            user_trust_anchor_ders: vec![],
+            trust_anchors: Vec::default(),
             end_entity_cert_set: HashSet::default(),
             additional_ekus: HashSet::default(),
             passthrough: true,
-            trust_anchors_only: false,
         }
+    }
+
+    /// Returns trust anchors whose trust_anchor_type is `Signing`
+    pub fn signing_trust_anchors(&self) -> Vec<&TrustAnchor> {
+        self.trust_anchors
+            .iter()
+            .filter(|a| a.trust_anchor_type == TrustAnchorType::Signer)
+            .collect::<Vec<_>>()
+    }
+
+    /// Returns trust anchors whose trust_anchor_type is `TSA'
+    pub fn tsa_trust_anchors(&self) -> Vec<&TrustAnchor> {
+        self.trust_anchors
+            .iter()
+            .filter(|a| a.trust_anchor_type == TrustAnchorType::TSA)
+            .collect::<Vec<_>>()
+    }
+
+    /// Returns trust anchors whose trust_anchor_type is `CAWG`
+    pub fn cawg_trust_anchors(&self) -> Vec<&TrustAnchor> {
+        self.trust_anchors
+            .iter()
+            .filter(|a| a.trust_anchor_type == TrustAnchorType::CAWG)
+            .collect::<Vec<_>>()
     }
 
     /// Evaluate a certificate against the trust policy described by this
     /// struct.
     ///
-    /// Returns `Ok(TrustAnchorType)` if the certificate appears on the end-entity
+    /// Returns `Ok((TrustAnchorType, String))` if the certificate appears on the end-entity
     /// certificate list or has a valid chain to one of the trust anchors that
-    /// was provided and that it has a valid extended key usage (EKU).
+    /// was provided and that it has a valid extended key usage (EKU).  The return String contains
+    /// the C2PA trustListUri of the trust anchor.
     ///
     /// If `signing_time_epoch` is provided, evaluates the signing time (which
     /// must be in Unix seconds since the epoch) against the certificate's
@@ -135,16 +166,16 @@ impl CertificateTrustPolicy {
         chain_der: &[Vec<u8>],
         end_entity_cert_der: &[u8],
         signing_time_epoch: Option<i64>,
-    ) -> Result<TrustAnchorType, CertificateTrustError> {
+    ) -> Result<(TrustAnchorType, String), CertificateTrustError> {
         if self.passthrough {
-            return Ok(TrustAnchorType::NoCheck);
+            return Ok((TrustAnchorType::NoCheck, String::new()));
         }
 
         // First check to see if the certificate appears in the allowed set of
         // end-entity certificates.
         let cert_hash = base64_sha256_cert_der(end_entity_cert_der);
         if self.end_entity_cert_set.contains(&cert_hash) {
-            return Ok(TrustAnchorType::EndEntity);
+            return Ok((TrustAnchorType::EndEntity, String::new()));
         }
 
         #[cfg(any(feature = "rust_native_crypto", target_arch = "wasm32"))]
@@ -207,40 +238,31 @@ impl CertificateTrustPolicy {
     pub fn add_trust_anchors(
         &mut self,
         trust_anchor_pems: &[u8],
+        trust_list_uri: &str,
+        trust_anchor_type: TrustAnchorType,
     ) -> Result<(), InvalidCertificateError> {
         // allow for JSON-encoded PEMs with \n
+        let mut trust_anchor_ders = Vec::new();
         let trust_anchor_pems = String::from_utf8_lossy(trust_anchor_pems)
             .replace("\\n", "\n")
             .into_bytes();
+
         for maybe_pem in Pem::iter_from_buffer(&trust_anchor_pems) {
             // NOTE: The `x509_parser::pem::Pem` struct's `contents` field contains the
             // decoded PEM content, which is expected to be in DER format.
             match maybe_pem {
-                Ok(pem) => self.trust_anchor_ders.push(pem.contents),
+                Ok(pem) => trust_anchor_ders.push(pem.contents),
                 Err(e) => {
                     return Err(InvalidCertificateError(e.to_string()));
                 }
             }
         }
 
-        Ok(())
-    }
-
-    /// Add user provided trust anchors that shall be accepted when verifying COSE signatures.
-    /// These anchors are distinct from the C2PA trust anchors and are used to validate certificates
-    /// that are not part of the C2PA trust anchors.
-    pub fn add_user_trust_anchors(
-        &mut self,
-        trust_anchor_pems: &[u8],
-    ) -> Result<(), InvalidCertificateError> {
-        for maybe_pem in Pem::iter_from_buffer(trust_anchor_pems) {
-            match maybe_pem {
-                Ok(pem) => self.user_trust_anchor_ders.push(pem.contents),
-                Err(e) => {
-                    return Err(InvalidCertificateError(e.to_string()));
-                }
-            }
-        }
+        self.trust_anchors.push(TrustAnchor {
+            trust_anchor_ders,
+            trust_anchor_uri: trust_list_uri.to_string(),
+            trust_anchor_type,
+        });
 
         Ok(())
     }
@@ -357,39 +379,19 @@ impl CertificateTrustPolicy {
         self.additional_ekus.clear();
     }
 
-    /// Set whether we only want to use system trust_achors and ignores user_anchors,
-    /// returns last trust_anchors_value
-    pub fn set_trust_anchors_only(&mut self, trust_anchors_only: bool) -> bool {
-        let val = self.trust_anchors_only;
-        self.trust_anchors_only = trust_anchors_only;
-        val
-    }
-
-    /// Get whether we only want to use system trust_achors and ignores user_anchors
-    pub fn trust_anchors_only(&self) -> bool {
-        self.trust_anchors_only
-    }
-
     /// Remove all trust anchors, private credentials, and EKUs previously
     /// configured.
     pub fn clear(&mut self) {
-        self.trust_anchor_ders.clear();
+        self.trust_anchors.clear();
         self.end_entity_cert_set.clear();
         self.additional_ekus.clear();
     }
 
-    /// Return an iterator over the trust anchors.
+    /// Return an iterator over the trust anchor sets.
     ///
-    /// Each anchor will be returned in DER format.
-    pub(crate) fn trust_anchor_ders(&self) -> impl Iterator<Item = &'_ Vec<u8>> {
-        self.trust_anchor_ders.iter()
-    }
-
-    /// Return an iterator over the user trust anchors.
-    ///
-    /// Each anchor will be returned in DER format.
-    pub(crate) fn user_trust_anchor_ders(&self) -> impl Iterator<Item = &'_ Vec<u8>> {
-        self.user_trust_anchor_ders.iter()
+    /// Each TrustAnchor will be returned.
+    pub(crate) fn anchor_sets(&self) -> impl Iterator<Item = &'_ TrustAnchor> {
+        self.trust_anchors.iter()
     }
 
     /// Return `true` if the EKU OID is allowed.
@@ -435,7 +437,7 @@ pub enum CertificateTrustError {
     ///
     /// A certificate can be approved either by adding one or more trust anchors
     /// via a call to [`CertificateTrustPolicy::add_trust_anchors`] or
-    /// [`CertificateTrustPolicy::add_user_trust_anchors`] or by
+    /// [`CertificateTrustPolicy::add_trust_anchors`] or by
     /// adding one or more end-entity certificates via
     /// [`CertificateTrustPolicy::add_end_entity_credentials`].
     ///
@@ -673,7 +675,9 @@ mod tests {
     )]
     fn add_trust_anchors_err_bad_pem() {
         let mut ctp = CertificateTrustPolicy::new();
-        assert!(ctp.add_trust_anchors(BAD_PEM.as_bytes()).is_err());
+        assert!(ctp
+            .add_trust_anchors(BAD_PEM.as_bytes(), "", TrustAnchorType::Signer)
+            .is_err());
     }
 
     #[test]
@@ -786,9 +790,13 @@ zGxQnM2hCA==
     #[test]
     fn test_system_trust_store() {
         let mut ctp = CertificateTrustPolicy::new();
-        ctp.add_trust_anchors(include_bytes!(
-            "../../../tests/fixtures/crypto/raw_signature/test_cert_root_bundle.pem"
-        ))
+        ctp.add_trust_anchors(
+            include_bytes!(
+                "../../../tests/fixtures/crypto/raw_signature/test_cert_root_bundle.pem"
+            ),
+            "",
+            TrustAnchorType::Signer,
+        )
         .unwrap();
 
         let ps256 = test_cert_chain(SigningAlg::Ps256);
@@ -810,37 +818,44 @@ zGxQnM2hCA==
         assert!(
             ctp.check_certificate_trust(&ps256_certs[1..], &ps256_certs[0], None)
                 .unwrap()
-                == TrustAnchorType::System
+                .0
+                == TrustAnchorType::Signer
         );
         assert!(
             ctp.check_certificate_trust(&ps384_certs[1..], &ps384_certs[0], None)
                 .unwrap()
-                == TrustAnchorType::System
+                .0
+                == TrustAnchorType::Signer
         );
         assert!(
             ctp.check_certificate_trust(&ps512_certs[1..], &ps512_certs[0], None)
                 .unwrap()
-                == TrustAnchorType::System
+                .0
+                == TrustAnchorType::Signer
         );
         assert!(
             ctp.check_certificate_trust(&es256_certs[1..], &es256_certs[0], None)
                 .unwrap()
-                == TrustAnchorType::System
+                .0
+                == TrustAnchorType::Signer
         );
         assert!(
             ctp.check_certificate_trust(&es384_certs[1..], &es384_certs[0], None)
                 .unwrap()
-                == TrustAnchorType::System
+                .0
+                == TrustAnchorType::Signer
         );
         assert!(
             ctp.check_certificate_trust(&es512_certs[1..], &es512_certs[0], None)
                 .unwrap()
-                == TrustAnchorType::System
+                .0
+                == TrustAnchorType::Signer
         );
         assert!(
             ctp.check_certificate_trust(&ed25519_certs[1..], &ed25519_certs[0], None)
                 .unwrap()
-                == TrustAnchorType::System
+                .0
+                == TrustAnchorType::Signer
         );
     }
 
@@ -867,37 +882,44 @@ zGxQnM2hCA==
         assert!(
             ctp.check_certificate_trust(&ps256_certs[1..], &ps256_certs[0], None)
                 .unwrap()
-                == TrustAnchorType::User
+                .0
+                == TrustAnchorType::Signer
         );
         assert!(
             ctp.check_certificate_trust(&ps384_certs[1..], &ps384_certs[0], None)
                 .unwrap()
-                == TrustAnchorType::User
+                .0
+                == TrustAnchorType::Signer
         );
         assert!(
             ctp.check_certificate_trust(&ps512_certs[1..], &ps512_certs[0], None)
                 .unwrap()
-                == TrustAnchorType::User
+                .0
+                == TrustAnchorType::Signer
         );
         assert!(
             ctp.check_certificate_trust(&es256_certs[1..], &es256_certs[0], None)
                 .unwrap()
-                == TrustAnchorType::User
+                .0
+                == TrustAnchorType::Signer
         );
         assert!(
             ctp.check_certificate_trust(&es384_certs[1..], &es384_certs[0], None)
                 .unwrap()
-                == TrustAnchorType::User
+                .0
+                == TrustAnchorType::Signer
         );
         assert!(
             ctp.check_certificate_trust(&es512_certs[1..], &es512_certs[0], None)
                 .unwrap()
-                == TrustAnchorType::User
+                .0
+                == TrustAnchorType::Signer
         );
         assert!(
             ctp.check_certificate_trust(&ed25519_certs[1..], &ed25519_certs[0], None)
                 .unwrap()
-                == TrustAnchorType::User
+                .0
+                == TrustAnchorType::Signer
         );
     }
 

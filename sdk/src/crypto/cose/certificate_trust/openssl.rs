@@ -24,70 +24,53 @@ pub(crate) fn check_certificate_trust(
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
     signing_time_epoch: Option<i64>,
-) -> Result<TrustAnchorType, CertificateTrustError> {
+) -> Result<(TrustAnchorType, String), CertificateTrustError> {
     let _openssl = OpenSslMutex::acquire()?;
 
-    if ctp.trust_anchor_ders().count() == 0 && ctp.user_trust_anchor_ders().count() == 0 {
+    if ctp.anchor_sets().count() == 0 {
         return Err(CertificateTrustError::CertificateNotTrusted);
     }
 
-    let mut cert_chain = Stack::new()?;
-    for cert_der in chain_der {
-        let x509_cert = X509::from_der(cert_der)?;
-        cert_chain.push(x509_cert)?;
-    }
+    for anchor_set in ctp.anchor_sets() {
+        // Process each anchor set
 
-    let cert = X509::from_der(cert_der)?;
+        let mut cert_chain = Stack::new()?;
+        for cert_der in chain_der {
+            let x509_cert = X509::from_der(cert_der)?;
+            cert_chain.push(x509_cert)?;
+        }
 
-    let mut builder = openssl::x509::store::X509StoreBuilder::new()?;
-    builder.set_flags(X509VerifyFlags::X509_STRICT)?;
+        let cert = X509::from_der(cert_der)?;
 
-    let mut verify_param = openssl::x509::verify::X509VerifyParam::new()?;
-    verify_param.set_flags(X509VerifyFlags::X509_STRICT)?;
-    verify_param.set_flags(X509VerifyFlags::PARTIAL_CHAIN)?; // allow intermediates to be on anchor list
-
-    if let Some(st) = signing_time_epoch {
-        verify_param.set_time(st);
-    } else {
-        verify_param.set_flags(X509VerifyFlags::NO_CHECK_TIME)?;
-    }
-
-    builder.set_param(&verify_param)?;
-
-    // add trust anchors.
-    for der in ctp.trust_anchor_ders() {
-        let root_cert = X509::from_der(der)?;
-        builder.add_cert(root_cert)?;
-    }
-
-    let store = builder.build();
-
-    // try system trust anchors
-    let mut store_ctx = X509StoreContext::new()?;
-    if store_ctx.init(&store, cert.as_ref(), &cert_chain, |f| f.verify_cert())? {
-        Ok(TrustAnchorType::System)
-    } else if !ctp.trust_anchors_only() {
-        // try the user trust anchors
         let mut builder = openssl::x509::store::X509StoreBuilder::new()?;
         builder.set_flags(X509VerifyFlags::X509_STRICT)?;
 
+        let mut verify_param = openssl::x509::verify::X509VerifyParam::new()?;
+        verify_param.set_flags(X509VerifyFlags::X509_STRICT)?;
+        verify_param.set_flags(X509VerifyFlags::PARTIAL_CHAIN)?; // allow intermediates to be on anchor list
+
+        if let Some(st) = signing_time_epoch {
+            verify_param.set_time(st);
+        } else {
+            verify_param.set_flags(X509VerifyFlags::NO_CHECK_TIME)?;
+        }
+
         builder.set_param(&verify_param)?;
 
-        // add user trust anchors.
-        for der in ctp.user_trust_anchor_ders() {
+        // add trust anchors.
+        for der in &anchor_set.trust_anchor_ders {
             let root_cert = X509::from_der(der)?;
             builder.add_cert(root_cert)?;
         }
 
         let store = builder.build();
 
+        // try trust anchors
         let mut store_ctx = X509StoreContext::new()?;
         if store_ctx.init(&store, cert.as_ref(), &cert_chain, |f| f.verify_cert())? {
-            Ok(TrustAnchorType::User)
-        } else {
-            Err(CertificateTrustError::CertificateNotTrusted)
+            return Ok((TrustAnchorType::Signer, anchor_set.trust_anchor_uri.clone()));
         }
-    } else {
-        Err(CertificateTrustError::CertificateNotTrusted)
     }
+
+    Err(CertificateTrustError::CertificateNotTrusted)
 }
