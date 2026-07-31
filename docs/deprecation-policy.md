@@ -4,7 +4,7 @@ The Content Authenticity Initiative SDK is an evolving project. Prior to our 1.0
 
 This policy applies to the Rust library and all language bindings (JavaScript, Node.js, C, C++, Swift, Kotlin, and Python).
 
-The **removal schedule** differs by project. The Rust SDK (`c2pa-rs`) runs on a formal [release-process](release-process.md) cadence, so its deprecation and removal timeline is expressed in terms of release trains rather than calendar days (see below). The language bindings do not (yet) run on a release-train cadence, so they continue to follow a calendar-based grace period (nominally 60 days pre-1.0), anchored to the Rust SDK's train so a binding can serve that notice on top of the native library (see [Stage 2](#stage-2-grace-period)). Everything else in this policy – the requirement that a replacement exist first, the content of the notice, the migration guide, and the communication channels – applies uniformly to every project.
+The **removal schedule** differs by project. The Rust SDK (`c2pa-rs`) runs on a formal [release-process](release-process.md) cadence, so its deprecation and removal timeline is expressed in terms of release trains rather than calendar days (see below). The language bindings do not (yet) run on a release-train cadence, so they continue to follow a calendar-based grace period (nominally 60 days pre-1.0), anchored to the Rust SDK's train so a binding can serve that notice on top of the native library (see [Stage 2](#stage-2-grace-period)). Everything else in this policy applies uniformly to every project: the requirement that a replacement exist first, the content of the notice, the migration guide, and the communication channels.
 
 ## Versioning and stability guarantees
 
@@ -16,21 +16,21 @@ We follow [Semantic Versioning (SemVer)](https://semver.org/). Version 1.0.0 wil
 
 **Before 1.0:** Major version zero (`0.y.z`) is for initial development: Anything may change at any time, and the public API should not be considered stable. In the Rust/Cargo ecosystem, this means that a change from `0.2.3` to `0.3.0` may include incompatible API changes. We will, however, make a good-faith effort to follow the deprecation process below even before 1.0, so that users have advance warning before breakage occurs.
 
-Pre-1.0, the Rust SDK aligns this with our two-track [release process](release-process.md). Both the deprecation notice and the eventual removal are made **on `main` only – never backported** to the active release line, and both surface to users on the scheduled breaking "train" (a bump of the middle number, `0.x.0`):
+Pre-1.0, the Rust SDK aligns this with our two-track [release process](release-process.md). Both the deprecation notice and the eventual removal are made **on `main` only, never backported** to the active release line, and both surface to users on the scheduled breaking "train" (a bump of the middle number, `0.x.0`):
 
 - A **deprecation** is authored on `main` and becomes published when the **next** scheduled train is cut. Its replacement API is available by that train at the latest (a purely additive replacement may land earlier on the current line), so that train is the first release in which users see the deprecation warning alongside a supported alternative.
-- The **removal** is scheduled for the **second** scheduled train after the deprecation was authored, which is the deletion-eligibility milestone recorded in the deprecation notice. Immediately after each train is cut, we delete every currently-deprecated API on `main` – again `main`-only, with no backport – and that deletion becomes official when the following train ships.
+- The **removal** is scheduled for the **second** scheduled train after the deprecation was authored, which is the deletion-eligibility milestone recorded in the deprecation notice. Immediately after each train is cut, we delete every currently-deprecated API on `main`, again `main`-only with no backport, and that deletion becomes official when the following train ships.
 
-Users therefore get one full published train – at least 60 days, matching the downstream bindings' grace period – in which the API is present but marked deprecated, with a known date on which it disappears. This lets a binding adopt that train and serve its own deprecation notice before the native API is removed; see [Stage 2](#stage-2-grace-period).
+Users therefore get one full published train in which the API is present but marked deprecated, with a known date on which it disappears. That window is at least 60 days, matching the downstream bindings' grace period, so a binding can adopt that train and serve its own deprecation notice before the native API is removed; see [Stage 2](#stage-2-grace-period).
 
 The following worked example illustrates the lifecycle of a single deprecated API. The version numbers and dates are illustrative, reflecting the trains scheduled as of this writing (mid-2026); the normative rule is always stated relative to trains, not fixed versions or dates.
 
 | Step | Where / version | Example date | What users see |
 | -- | -- | -- | -- |
-| Deprecation authored | `main` (`0.91.0-dev`) | August 2026 | Nothing yet – the change is on `main` only, not backported. |
+| Deprecation authored | `main` (`0.91.0-dev`) | August 2026 | Nothing yet: the change is on `main` only, not backported. |
 | **Deprecation published** | train `0.91` | mid-September 2026 | The `#[deprecated]` API and its replacement ship together; the grace-period clock starts. |
 | Removal swept onto `main` | `main` (`0.92.0-dev`) | right after the `0.91` cut | The API is deleted on `main`, but is still present in the published `0.91` line. |
-| **Removal published** | train `0.92` | mid-November 2026 | The API is gone – at least 60 days after the train that published the deprecation. |
+| **Removal published** | train `0.92` | mid-November 2026 | The API is gone, at least 60 days after the train that published the deprecation. |
 
 > [!IMPORTANT]
 > We deprecate an API **only once its replacement is available**. A deprecation notice must always point users to a supported alternative, so there is never a window in which the recommended path is "stop using this, and wait." (If an API is dangerous enough that we want to steer people away before a replacement exists, that is a documentation/advisory matter, or, for a security issue, the [security exception](#security-and-bug-fix-exceptions), not a routine deprecation.)
@@ -102,7 +102,7 @@ During the grace period, the deprecated API remains operational without function
 | Pre-1.0 | 60 days (nominal) |
 | Post-1.0 | 90 days (nominal) |
 
-**Reconciling bindings with the train.** The bindings wrap `c2pa-rs`, so a deprecated native API must stay available long enough for a binding to serve its own grace period on top of it. A binding cannot start that clock until it adopts the c2pa-rs train that publishes the deprecation, so bindings adopt each train promptly and anchor their own removal to the train that removes the native API. To keep the two cadences in step, a binding's 60-day window may be **shortened slightly** where needed to land on the next anticipated c2pa-rs release train – the goal is that bindings track the native library without skipping a release or propping up an API the native library has already removed.
+**Reconciling bindings with the train.** The bindings wrap `c2pa-rs`, so a deprecated native API must stay available long enough for a binding to serve its own grace period on top of it. A binding cannot start that clock until it adopts the c2pa-rs train that publishes the deprecation, so bindings adopt each train promptly and anchor their own removal to the train that removes the native API. To keep the two cadences in step, a binding's 60-day window may be **shortened slightly** where needed to land on the next anticipated c2pa-rs release train. The goal is that bindings track the native library without skipping a release or propping up an API the native library has already removed.
 
 **Exception:** We may remove deprecated APIs before this window (or before the scheduled train) expires if needed to address serious security issues or vulnerabilities.
 
@@ -110,7 +110,7 @@ During the grace period, the deprecated API remains operational without function
 
 In the final stage, the item is actually removed from the API.
 
-**Rust SDK (`c2pa-rs`), pre-1.0.** Immediately after a train is cut, we delete every currently-deprecated API on `main`. Because every deprecation is published by the train that immediately precedes this sweep, each API removed this way has had exactly one published train of deprecation warning first. The deletion is made on `main` only and is **not** backported; it becomes official – visible to users – when the following [breaking train](release-process.md#track-2-the-breaking-train) ships (the deprecation's second train). The same applies to an item that was only ever made public via a non-default feature/build configuration.
+**Rust SDK (`c2pa-rs`), pre-1.0.** Immediately after a train is cut, we delete every currently-deprecated API on `main`. Because every deprecation is published by the train that immediately precedes this sweep, each API removed this way has had exactly one published train of deprecation warning first. The deletion is made on `main` only and is **not** backported; it becomes official, visible to users, when the following [breaking train](release-process.md#track-2-the-breaking-train) ships (the deprecation's second train). The same applies to an item that was only ever made public via a non-default feature/build configuration.
 
 **Post-1.0:** the deprecated item is removed in the next major release.
 
