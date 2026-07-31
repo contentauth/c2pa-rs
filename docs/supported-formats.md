@@ -2,6 +2,12 @@
 
 The following table summarizes the supported media (asset) file formats. This information is based on what the Rust library supports; other libraries in the SDK support the same formats unless noted otherwise.
 
+> [!NOTE]
+> When reading an asset, the SDK first looks at the file name extension to determine the asset type.  If the file has no extension, then the SDK uses the specified MIME type (if any).
+> When the internal header/MIME disagrees with the extension, the SDK uses the extension, not the internal MIME/metadata.
+> If there is no file extension nor MIME type, then the SDK "sniffs the bytes" of the asset using [`infer`](https://docs.rs/infer/latest/infer/) to determine the asset type.
+
+
 | Extensions      | MIME type                                                                      |
 | --------------- | ------------------------------------------------------------------------------- |
 | `avi`           | `video/msvideo`, `video/x-msvideo`, `video/avi`, `application/x-troff-msvideo`  |
