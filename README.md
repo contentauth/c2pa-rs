@@ -4,7 +4,7 @@
 
 For information on support tiers for CI tests, see [Support tiers for C2PA Rust SDK products](https://github.com/contentauth/c2pa-rs/blob/main/docs/support-tiers.md)
 
-<div style={{display: 'none'}}>
+<div class="github-only">
 
 The **[Coalition for Content Provenance and Authenticity](https://c2pa.org)** (C2PA) addresses the prevalence of misleading information online through the development of technical standards for certifying the source and history (or provenance) of media content. The C2PA Rust library is part of the [Content Authenticity Initiative](https://contentauthenticity.org) open-source SDK.
 
@@ -42,7 +42,7 @@ The [`c2pa` crate](https://crates.io/crates/c2pa) implements a subset of the [C2
 
 The library enables a desktop, mobile, or embedded application to:
 * Create and sign C2PA [claims](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_claims) and [manifests](https://c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_manifests).
-* Create, sign, and validate [CAWG identity assertions](https://cawg.io/identity) in C2PA manifests.  See [Using the CAWG identity assertion](docs/cawg-id.md) for more information.
+* Create, sign, and validate [CAWG identity assertions](https://cawg.io/identity) in C2PA manifests.  See [Using the CAWG identity assertion](docs/cawg-identity.md) for more information.
 * Embed manifests in [supported file formats](docs/supported-formats.md).
 * Parse and validate manifests found in [supported file formats](docs/supported-formats.md).
 * Share configuration efficiently across multiple operations and threads through contexts using `Arc<Context>`.
