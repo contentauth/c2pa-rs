@@ -403,17 +403,15 @@ impl CAIWriter for PngIO {
         }
 
         // regions can appear in either order in the file (CAI before or after XMP)
-        patches.sort_by(
-            |patch1: &PatchItem, patch2: &PatchItem| {
-                if patch1.start > patch2.start {
-                    Greater
-                } else if patch1.start == patch2.start {
-                    Equal
-                } else {
-                    Less
-                }
-            },
-        );
+        patches.sort_by(|patch1: &PatchItem, patch2: &PatchItem| {
+            if patch1.start > patch2.start {
+                Greater
+            } else if patch1.start == patch2.start {
+                Equal
+            } else {
+                Less
+            }
+        });
 
         patch_stream_multi(input_stream, output_stream, &patches)
     }
