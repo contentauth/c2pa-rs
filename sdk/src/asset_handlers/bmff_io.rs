@@ -3848,8 +3848,14 @@ pub mod tests {
         data.extend_from_slice(b"AAAABBBB");
         let track = one_run_track(1, 2, vec![8], 4, vec![], 2);
         let mut reader = Cursor::new(data);
-        assert_eq!(track.read_sample(&mut reader, 1, 16).unwrap().unwrap(), b"AAAA");
-        assert_eq!(track.read_sample(&mut reader, 2, 16).unwrap().unwrap(), b"BBBB");
+        assert_eq!(
+            track.read_sample(&mut reader, 1, 16).unwrap().unwrap(),
+            b"AAAA"
+        );
+        assert_eq!(
+            track.read_sample(&mut reader, 2, 16).unwrap().unwrap(),
+            b"BBBB"
+        );
     }
 
     #[test]
@@ -3859,8 +3865,14 @@ pub mod tests {
         data.extend_from_slice(b"aaabbbbb");
         let track = one_run_track(1, 2, vec![4], 0, vec![3, 5], 2);
         let mut reader = Cursor::new(data);
-        assert_eq!(track.read_sample(&mut reader, 1, 12).unwrap().unwrap(), b"aaa");
-        assert_eq!(track.read_sample(&mut reader, 2, 12).unwrap().unwrap(), b"bbbbb");
+        assert_eq!(
+            track.read_sample(&mut reader, 1, 12).unwrap().unwrap(),
+            b"aaa"
+        );
+        assert_eq!(
+            track.read_sample(&mut reader, 2, 12).unwrap().unwrap(),
+            b"bbbbb"
+        );
     }
 
     #[test]
@@ -3893,7 +3905,9 @@ pub mod tests {
             sample_count: 10,
         };
         let err = track.stsc_index(2).unwrap_err();
-        assert!(matches!(err, Error::InvalidAsset(ref m) if m.contains("precedes first stsc entry")));
+        assert!(
+            matches!(err, Error::InvalidAsset(ref m) if m.contains("precedes first stsc entry"))
+        );
     }
 
     #[test]
