@@ -2977,13 +2977,25 @@ impl SampleTrack {
                 .ok_or_else(|| Error::InvalidAsset("BMFF stsc underflow".to_string()))?
                 % run.samples_per_chunk;
 
-        let mut intra_chunk_offset: u64 = 0;
-        for i in first_sample_in_chunk..sample_id {
-            intra_chunk_offset = intra_chunk_offset
-                .checked_add(self.sample_size(i)? as u64)
-                .ok_or_else(|| {
-                    Error::InvalidAsset("BMFF intra-chunk offset overflow".to_string())
-                })?;
+        // Offset of this sample within its chunk = total size of the samples
+        // preceding it. For fixed-size samples that is a single product; only the
+        // variable-size case needs to walk the entries (and the stsz box size
+        // bounds that walk). This keeps read_sample O(1) for the common
+        // fixed-size case instead of O(samples-per-chunk), which would make the
+        // caller's per-sample loop quadratic over a single-chunk track.
+        let preceding_samples = sample_id - first_sample_in_chunk;
+        let mut intra_chunk_offset = (preceding_samples as u64)
+            .checked_mul(self.fixed_sample_size as u64)
+            .ok_or_else(|| Error::InvalidAsset("BMFF intra-chunk offset overflow".to_string()))?;
+
+        if self.fixed_sample_size == 0 {
+            for i in first_sample_in_chunk..sample_id {
+                intra_chunk_offset = intra_chunk_offset
+                    .checked_add(self.sample_size(i)? as u64)
+                    .ok_or_else(|| {
+                        Error::InvalidAsset("BMFF intra-chunk offset overflow".to_string())
+                    })?;
+            }
         }
 
         let sample_size = self.sample_size(sample_id)?;
