@@ -21,7 +21,7 @@ Pre-1.0, the Rust SDK aligns this with our two-track [release process](release-p
 - A **deprecation** is authored on `main` and becomes published when the **next** scheduled train is cut. Its replacement API is available by that train at the latest (a purely additive replacement may land earlier on the current line), so that train is the first release in which users see the deprecation warning alongside a supported alternative.
 - The **removal** is scheduled for the **second** scheduled train after the deprecation was authored, which is the deletion-eligibility milestone recorded in the deprecation notice. Immediately after each train is cut, we delete every currently-deprecated API on `main`, again `main`-only with no backport, and that deletion becomes official when the following train ships.
 
-Users therefore get one full published train in which the API is present but marked deprecated, with a known date on which it disappears. That window is at least 60 days, matching the downstream bindings' grace period, so a binding can adopt that train and serve its own deprecation notice before the native API is removed; see [Stage 2](#stage-2-grace-period).
+Users therefore get one full published train in which the API is present but marked deprecated, with a known date on which it disappears. That window is approximately two months, comfortably covering the downstream bindings' 60-day grace period, so a binding can adopt that train and serve its own deprecation notice before the native API is removed; see [Stage 2](#stage-2-grace-period).
 
 The following worked example illustrates the lifecycle of a single deprecated API. The version numbers and dates are illustrative, reflecting the trains scheduled as of this writing (mid-2026); the normative rule is always stated relative to trains, not fixed versions or dates.
 
@@ -30,7 +30,7 @@ The following worked example illustrates the lifecycle of a single deprecated AP
 | Deprecation authored | `main` (`0.91.0-dev`) | August 2026 | Nothing yet: the change is on `main` only, not backported. |
 | **Deprecation published** | train `0.91` | mid-September 2026 | The `#[deprecated]` API and its replacement ship together; the grace-period clock starts. |
 | Removal swept onto `main` | `main` (`0.92.0-dev`) | right after the `0.91` cut | The API is deleted on `main`, but is still present in the published `0.91` line. |
-| **Removal published** | train `0.92` | mid-November 2026 | The API is gone, at least 60 days after the train that published the deprecation. |
+| **Removal published** | train `0.92` | mid-November 2026 | The API is gone, approximately two months after the train that published the deprecation. |
 
 > [!IMPORTANT]
 > We deprecate an API **only once its replacement is available**. A deprecation notice must always point users to a supported alternative, so there is never a window in which the recommended path is "stop using this, and wait." (If an API is dangerous enough that we want to steer people away before a replacement exists, that is a documentation/advisory matter, or, for a security issue, the [security exception](#security-and-bug-fix-exceptions), not a routine deprecation.)
