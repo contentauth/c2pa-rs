@@ -66,8 +66,8 @@ use crate::{
         labels::{
             assertion_label_from_uri, box_name_from_uri, manifest_label_from_uri,
             manifest_label_to_parts, to_absolute_uri, to_assertion_uri, to_databox_uri,
-            to_manifest_uri, to_signature_uri, ASSERTIONS, CLAIM, CREDENTIALS, DATABOX, DATABOXES,
-            SIGNATURE,
+            to_manifest_uri, to_normalized_uri, to_signature_uri, ASSERTIONS, CLAIM, CREDENTIALS,
+            DATABOX, DATABOXES, SIGNATURE,
         },
     },
     jumbf_io::get_assetio_handler,
@@ -1811,27 +1811,41 @@ impl Claim {
     fn redact_assertion(&mut self, assertion_uri: &str) -> Result<()> {
         // cannot redact action assertions per the spec
         // cannot redact hash bindings
-        let (label, _instance) = Claim::assertion_label_from_link(assertion_uri);
+        let (label, instance) = Claim::assertion_label_from_link(assertion_uri);
         if label.starts_with(assertions::labels::ACTIONS) || label.starts_with("c2pa.hash.") {
             return Err(Error::AssertionInvalidRedaction);
         }
 
-        // delete assertion or databox
+        // A redaction URI may only target this claim.
+        if let Some(manifest) = manifest_label_from_uri(assertion_uri) {
+            if manifest != self.label() {
+                return Err(Error::AssertionRedactionNotFound);
+            }
+        }
+
+        // Delete assertion or databox
         if assertion_uri.contains(ASSERTION_STORE) {
-            if let Some(index) = self.assertion_store.iter().position(|x| {
-                assertion_uri.ends_with(&Claim::label_with_instance(&x.label_raw(), x.instance()))
-            }) {
+            // Compare the assertion label strictly.
+            // `assertion_label_from_link` splits the `__N` instance off the label, so
+            // rebuild the full positional label before comparing.
+            let target = Claim::label_with_instance(&label, instance);
+            if let Some(index) = self
+                .assertion_store
+                .iter()
+                .position(|x| Claim::label_with_instance(&x.label_raw(), x.instance()) == target)
+            {
                 self.assertion_store.remove(index);
                 return Ok(());
             }
         } else if assertion_uri.contains(DATABOX_STORE) {
-            // Match the databox by its exact box name.
-            // A substring check would let a URI ending in `c2pa.data__1` match the `c2pa.data` databox and remove the wrong box.
-            let target = box_name_from_uri(assertion_uri);
+            // Normalize to a full databox URI.
+            let box_name =
+                box_name_from_uri(assertion_uri).ok_or(Error::AssertionRedactionNotFound)?;
+            let target = to_normalized_uri(&to_databox_uri(self.label(), &box_name));
             if let Some(index) = self
                 .databoxes()
                 .iter()
-                .position(|(x, _d)| box_name_from_uri(&x.url()) == target)
+                .position(|(x, _d)| to_normalized_uri(&x.url()) == target)
             {
                 self.data_boxes.remove(index);
                 return Ok(());
