@@ -3462,7 +3462,7 @@ impl Claim {
                         Error::ValidationRule("soft binding missing algorithm".into()),
                     )?;
                 }
-                Some(alg) if soft_binding_algs.iter().find(|&a| a == alg).is_none() => {
+                Some(alg) if !soft_binding_algs.iter().any(|a| a == alg) => {
                     log_item!(
                         label.clone(),
                         format!("soft binding algorithm '{alg}' is not in the C2PA soft binding algorithm registry"),
