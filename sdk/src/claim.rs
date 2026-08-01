@@ -4610,7 +4610,7 @@ pub mod tests {
     fn test_redact_databox_exact_label_match_with_shared_prefix() {
         let mut claim = Claim::new("unit test", Some("test"), 2);
 
-        // Add two databoxes — index 0 is labeled `c2pa.data`, index 1 gets the `__1` suffix.
+        // Add two databoxes to force multiple URIs
         let uri0 = claim
             .add_databox("application/octet-stream", vec![0u8; 4], None)
             .expect("add databox 0");
@@ -4625,8 +4625,8 @@ pub mod tests {
         assert!(has_databox(&claim, &uri0), "databox 0 should exist");
         assert!(has_databox(&claim, &uri1), "databox 1 should exist");
 
-        // Order is important here: redact the `__1` URI first. A substring match
-        // would remove the shared-prefix `c2pa.data` box instead.
+        // Order is important here in our test.
+        // redact the `__1` URI first, to make sure we exact-match.
         claim
             .redact_assertion(&uri1.url())
             .expect("redact databox 1 should succeed");
@@ -4635,12 +4635,9 @@ pub mod tests {
             has_databox(&claim, &uri0),
             "databox 0 must still exist after redacting databox 1"
         );
-        assert!(
-            !has_databox(&claim, &uri1),
-            "databox 1 should be gone"
-        );
+        assert!(!has_databox(&claim, &uri1), "databox 1 should be gone");
 
-        // Now redact the base.
+        // Now redact the base (which should be still here, since the other exact-matched).
         claim
             .redact_assertion(&uri0.url())
             .expect("redact databox 0 should succeed");
