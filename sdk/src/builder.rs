@@ -8137,6 +8137,133 @@ mod tests {
         );
     }
 
+    /// Diamond graph: a base manifest `A` carrying two databoxes is reached by two
+    /// independent paths (`B` and `C`), which are then combined in `D`. When `D` signs,
+    /// `add_ingredient_data` receives `A` twice over plus `B` and `C`, so the redaction
+    /// URI must still resolve to the exact databox in the exact manifest.
+    #[test]
+    fn test_redact_databox_diamond_graph_shared_base() {
+        let context = test_context();
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // Base `A`: a v1 manifest with two ingredient thumbnails, so it holds two
+        // databoxes labeled `c2pa.data` and `c2pa.data__1`.
+        let mut a_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(1),
+                title: Some("A base".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        // Exactly one parent; the second is a component, since two parents is invalid.
+        for (title, relationship) in [("ing one", "parentOf"), ("ing two", "componentOf")] {
+            let mut src = Cursor::new(TEST_IMAGE);
+            let mut ing = Ingredient::from_json(
+                &json!({ "title": title, "relationship": relationship }).to_string(),
+            )
+            .unwrap();
+            ing = ing.with_stream("image/jpeg", &mut src, &context).unwrap();
+            ing.set_thumbnail("image/jpeg", TEST_THUMBNAIL.to_vec())
+                .unwrap();
+            a_builder.add_ingredient(ing);
+        }
+        let mut a_source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut a_out = Cursor::new(Vec::new());
+        a_builder
+            .sign(signer.as_ref(), "image/jpeg", &mut a_source, &mut a_out)
+            .expect("sign A");
+
+        a_out.set_position(0);
+        let a_reader = Reader::from_context(test_context())
+            .with_stream("image/jpeg", &mut a_out)
+            .expect("read A");
+        let a_label = a_reader.active_label().unwrap().to_string();
+
+        // Two edits of the same base, `B` and `C`, forming the two sides of the diamond.
+        let mut branch_outputs = Vec::new();
+        for title in ["B edit", "C edit"] {
+            let mut b_builder = Builder {
+                definition: ManifestDefinition {
+                    claim_version: Some(1),
+                    title: Some(title.to_string()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            b_builder.set_intent(BuilderIntent::Edit);
+            a_out.set_position(0);
+            let mut out = Cursor::new(Vec::new());
+            b_builder
+                .sign(signer.as_ref(), "image/jpeg", &mut a_out, &mut out)
+                .unwrap_or_else(|e| panic!("sign {title}: {e:?}"));
+            branch_outputs.push(out);
+        }
+
+        // `D` ingests both branches, so `A` is reachable by two paths. Redact the
+        // `__1` databox of `A` specifically.
+        let redacted_uri = crate::jumbf::labels::to_databox_uri(&a_label, "c2pa.data__1");
+        let mut d_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(1),
+                title: Some("D combiner".to_string()),
+                redactions: Some(vec![redacted_uri.clone()]),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        d_builder.set_intent(BuilderIntent::Edit);
+        for (i, out) in branch_outputs.iter_mut().enumerate() {
+            out.set_position(0);
+            d_builder
+                .add_ingredient_from_stream(
+                    json!({ "title": format!("branch {i}"), "relationship": "componentOf" })
+                        .to_string(),
+                    "image/jpeg",
+                    out,
+                )
+                .unwrap_or_else(|e| panic!("add branch {i}: {e:?}"));
+        }
+
+        let mut d_source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut d_out = Cursor::new(Vec::new());
+        let result = d_builder.sign(signer.as_ref(), "image/jpeg", &mut d_source, &mut d_out);
+
+        // The redaction must resolve, not fail with AssertionRedactionNotFound.
+        assert!(
+            result.is_ok(),
+            "diamond redaction should resolve, got {result:?}"
+        );
+
+        // `A`'s other databox must survive: only `c2pa.data__1` was redacted.
+        d_out.set_position(0);
+        let d_reader = Reader::from_context(test_context())
+            .with_stream("image/jpeg", &mut d_out)
+            .expect("read D");
+        // Only `c2pa.data__1` was redacted; the shared `c2pa.data` prefix must not have
+        // dragged the wrong box out with it. `A` keeps exactly one resolvable databox.
+        let a_manifest = d_reader
+            .manifests()
+            .get(&a_label)
+            .expect("A should still be in the store");
+        let thumbnails: Vec<String> = a_manifest
+            .ingredients()
+            .iter()
+            .filter_map(|i| i.thumbnail_ref().map(|t| t.identifier.clone()))
+            .filter(|id| id.contains("c2pa.databoxes"))
+            .collect();
+
+        assert!(
+            !thumbnails.iter().any(|id| *id == redacted_uri),
+            "redacted databox `c2pa.data__1` should not resolve, saw {thumbnails:?}"
+        );
+        assert_eq!(
+            thumbnails.len(),
+            1,
+            "`c2pa.data` must survive redaction of `c2pa.data__1`, saw {thumbnails:?}"
+        );
+    }
+
     #[test]
     fn test_redact_data_hash_returns_invalid_redaction() {
         let mut input = Cursor::new(TEST_IMAGE);
