@@ -66,8 +66,8 @@ use crate::{
         labels::{
             assertion_label_from_uri, box_name_from_uri, manifest_label_from_uri,
             manifest_label_to_parts, to_absolute_uri, to_assertion_uri, to_databox_uri,
-            to_manifest_uri, to_signature_uri, ASSERTIONS, CLAIM, CREDENTIALS, DATABOX, DATABOXES,
-            SIGNATURE,
+            to_manifest_uri, to_normalized_uri, to_signature_uri, ASSERTIONS, CLAIM, CREDENTIALS,
+            DATABOX, DATABOXES, SIGNATURE,
         },
     },
     jumbf_io::get_assetio_handler,
@@ -1811,27 +1811,42 @@ impl Claim {
     fn redact_assertion(&mut self, assertion_uri: &str) -> Result<()> {
         // cannot redact action assertions per the spec
         // cannot redact hash bindings
-        let (label, _instance) = Claim::assertion_label_from_link(assertion_uri);
+        let (label, instance) = Claim::assertion_label_from_link(assertion_uri);
         if label.starts_with(assertions::labels::ACTIONS) || label.starts_with("c2pa.hash.") {
             return Err(Error::AssertionInvalidRedaction);
         }
 
-        // delete assertion or databox
+        // A redaction URI may only target this claim.
+        if let Some(manifest) = manifest_label_from_uri(assertion_uri) {
+            if manifest != self.label() {
+                return Err(Error::AssertionRedactionNotFound);
+            }
+        }
+
+        // Delete assertion or databox
         if assertion_uri.contains(ASSERTION_STORE) {
-            if let Some(index) = self.assertion_store.iter().position(|x| {
-                assertion_uri.ends_with(&Claim::label_with_instance(&x.label_raw(), x.instance()))
-            }) {
+            // Compare the assertion label strictly.
+            // `assertion_label_from_link` splits the `__N` instance off the label, so
+            // rebuild the full positional label before comparing.
+            let target = Claim::label_with_instance(&label, instance);
+            if let Some(index) = self
+                .assertion_store
+                .iter()
+                .position(|x| Claim::label_with_instance(&x.label_raw(), x.instance()) == target)
+            {
                 self.assertion_store.remove(index);
                 return Ok(());
             }
         } else if assertion_uri.contains(DATABOX_STORE) {
-            // Match the databox by its exact final label segment.
-            // A substring check would let a URI ending in `c2pa.data__1` match the `c2pa.data` databox and remove the wrong box.
-            let target = assertion_uri.rsplit('/').next().unwrap_or_default();
-            if let Some(index) = self.databoxes().iter().position(|(x, _d)| {
-                let url = x.url();
-                url.rsplit('/').next() == Some(target)
-            }) {
+            // Normalize to a full databox URI.
+            let box_name =
+                box_name_from_uri(assertion_uri).ok_or(Error::AssertionRedactionNotFound)?;
+            let target = to_normalized_uri(&to_databox_uri(self.label(), &box_name));
+            if let Some(index) = self
+                .databoxes()
+                .iter()
+                .position(|(x, _d)| to_normalized_uri(&x.url()) == target)
+            {
                 self.data_boxes.remove(index);
                 return Ok(());
             }
@@ -3447,7 +3462,7 @@ impl Claim {
                         Error::ValidationRule("soft binding missing algorithm".into()),
                     )?;
                 }
-                Some(alg) if soft_binding_algs.iter().find(|&a| a == alg).is_none() => {
+                Some(alg) if !soft_binding_algs.iter().any(|a| a == alg) => {
                     log_item!(
                         label.clone(),
                         format!("soft binding algorithm '{alg}' is not in the C2PA soft binding algorithm registry"),
@@ -4625,6 +4640,18 @@ pub mod tests {
         assert!(has_databox(&claim, &uri0), "databox 0 should exist");
         assert!(has_databox(&claim, &uri1), "databox 1 should exist");
 
+        // Check labels
+        assert!(
+            uri0.url().ends_with("/c2pa.data"),
+            "expected databox 0 to be labeled `c2pa.data`, got {}",
+            uri0.url()
+        );
+        assert!(
+            uri1.url().ends_with("/c2pa.data__1"),
+            "expected databox 1 to be labeled `c2pa.data__1`, got {}",
+            uri1.url()
+        );
+
         // Order is important here in our test.
         // redact the `__1` URI first, to make sure we exact-match.
         claim
@@ -4644,6 +4671,36 @@ pub mod tests {
 
         assert!(!has_databox(&claim, &uri0), "databox 0 should be gone");
         assert!(!has_databox(&claim, &uri1), "databox 1 should be gone");
+    }
+
+    #[test]
+    fn test_redact_databox_from_other_manifest_returns_not_found() {
+        use crate::jumbf::labels::to_databox_uri;
+
+        let mut claim = Claim::new("unit test", Some("test"), 2);
+
+        let uri0 = claim
+            .add_databox("application/octet-stream", vec![0u8; 4], None)
+            .expect("add databox 0");
+
+        // Same databox label, different manifest.
+        let foreign_uri =
+            to_databox_uri("urn:uuid:00000000-0000-0000-0000-000000000000", "c2pa.data");
+        assert_ne!(foreign_uri, uri0.url(), "test setup: URIs must differ");
+
+        let result = claim.redact_assertion(&foreign_uri);
+        assert!(
+            matches!(result, Err(Error::AssertionRedactionNotFound)),
+            "cross-manifest redaction must fail, got {result:?}"
+        );
+
+        assert!(
+            claim
+                .databoxes()
+                .iter()
+                .any(|(x, _d)| x.url() == uri0.url()),
+            "databox 0 must survive a redaction aimed at another manifest"
+        );
     }
 
     fn make_soft_binding(alg: Option<&str>) -> assertions::SoftBinding {
