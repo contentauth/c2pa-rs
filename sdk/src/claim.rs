@@ -1825,11 +1825,13 @@ impl Claim {
                 return Ok(());
             }
         } else if assertion_uri.contains(DATABOX_STORE) {
-            if let Some(index) = self
-                .databoxes()
-                .iter()
-                .position(|(x, _d)| assertion_uri.contains(&x.url()))
-            {
+            // Match the databox by its exact final label segment.
+            // A substring check would let a URI ending in `c2pa.data__1` match the `c2pa.data` databox and remove the wrong box.
+            let target = assertion_uri.rsplit('/').next().unwrap_or_default();
+            if let Some(index) = self.databoxes().iter().position(|(x, _d)| {
+                let url = x.url();
+                url.rsplit('/').next() == Some(target)
+            }) {
                 self.data_boxes.remove(index);
                 return Ok(());
             }
@@ -4603,6 +4605,50 @@ pub mod tests {
             "instance 1 should be gone"
         );
     }
+
+    #[test]
+    fn test_redact_databox_exact_label_match_with_shared_prefix() {
+        let mut claim = Claim::new("unit test", Some("test"), 2);
+
+        // Add two databoxes — index 0 is labeled `c2pa.data`, index 1 gets the `__1` suffix.
+        let uri0 = claim
+            .add_databox("application/octet-stream", vec![0u8; 4], None)
+            .expect("add databox 0");
+        let uri1 = claim
+            .add_databox("application/octet-stream", vec![1u8; 4], None)
+            .expect("add databox 1");
+
+        let has_databox = |claim: &Claim, uri: &HashedUri| {
+            claim.databoxes().iter().any(|(x, _d)| x.url() == uri.url())
+        };
+
+        assert!(has_databox(&claim, &uri0), "databox 0 should exist");
+        assert!(has_databox(&claim, &uri1), "databox 1 should exist");
+
+        // Order is important here: redact the `__1` URI first. A substring match
+        // would remove the shared-prefix `c2pa.data` box instead.
+        claim
+            .redact_assertion(&uri1.url())
+            .expect("redact databox 1 should succeed");
+
+        assert!(
+            has_databox(&claim, &uri0),
+            "databox 0 must still exist after redacting databox 1"
+        );
+        assert!(
+            !has_databox(&claim, &uri1),
+            "databox 1 should be gone"
+        );
+
+        // Now redact the base.
+        claim
+            .redact_assertion(&uri0.url())
+            .expect("redact databox 0 should succeed");
+
+        assert!(!has_databox(&claim, &uri0), "databox 0 should be gone");
+        assert!(!has_databox(&claim, &uri1), "databox 1 should be gone");
+    }
+
     fn make_soft_binding(alg: Option<&str>) -> assertions::SoftBinding {
         use crate::assertions::{SoftBindingBlock, SoftBindingScope};
         let mut sb = assertions::SoftBinding::default();
