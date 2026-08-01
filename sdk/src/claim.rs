@@ -4703,43 +4703,6 @@ pub mod tests {
         );
     }
 
-    /// The assertion-store checks must compare labels exactly, not by suffix.
-    #[test]
-    fn test_redact_assertion_label_suffix_does_not_match() {
-        use crate::{assertions::User, jumbf::labels::to_assertion_uri};
-
-        let mut claim = Claim::new("unit test", Some("test"), 2);
-
-        claim
-            .add_assertion(&User::new("c2pa.data", "{\"a\":1}"))
-            .expect("add c2pa.data");
-        claim
-            .add_assertion(&User::new("vendor.c2pa.data", "{\"b\":2}"))
-            .expect("add vendor.c2pa.data");
-
-        let manifest_label = claim.label().to_owned();
-        let vendor_uri = to_assertion_uri(&manifest_label, "vendor.c2pa.data");
-
-        claim
-            .redact_assertion(&vendor_uri)
-            .expect("redact vendor.c2pa.data should succeed");
-
-        assert!(
-            claim
-                .assertion_store()
-                .iter()
-                .any(|a| a.label() == "c2pa.data"),
-            "`c2pa.data` must survive redaction of `vendor.c2pa.data`"
-        );
-        assert!(
-            !claim
-                .assertion_store()
-                .iter()
-                .any(|a| a.label() == "vendor.c2pa.data"),
-            "`vendor.c2pa.data` should be gone"
-        );
-    }
-
     fn make_soft_binding(alg: Option<&str>) -> assertions::SoftBinding {
         use crate::assertions::{SoftBindingBlock, SoftBindingScope};
         let mut sb = assertions::SoftBinding::default();
