@@ -126,7 +126,7 @@ ed25519-dalek = { version = "2.2.0", features = [
 ] }
 hex = "0.4.3"
 http = "1.4.1"
-id3 = "1.17.0"
+id3 = "1.17.1"
 img-parts = "0.4.0"
 iref = { version = "3.2.2", features = ["serde"] }
 jfifdump = "0.6.0"
