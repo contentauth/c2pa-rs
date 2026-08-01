@@ -4683,7 +4683,6 @@ pub mod tests {
             .add_databox("application/octet-stream", vec![0u8; 4], None)
             .expect("add databox 0");
 
-        // Same databox label, different manifest.
         let foreign_uri =
             to_databox_uri("urn:uuid:00000000-0000-0000-0000-000000000000", "c2pa.data");
         assert_ne!(foreign_uri, uri0.url(), "test setup: URIs must differ");
@@ -4691,7 +4690,7 @@ pub mod tests {
         let result = claim.redact_assertion(&foreign_uri);
         assert!(
             matches!(result, Err(Error::AssertionRedactionNotFound)),
-            "cross-manifest redaction must fail, got {result:?}"
+            "cross-manifest redaction should fail, got {result:?}"
         );
 
         assert!(
@@ -4699,7 +4698,7 @@ pub mod tests {
                 .databoxes()
                 .iter()
                 .any(|(x, _d)| x.url() == uri0.url()),
-            "databox 0 must survive a redaction aimed at another manifest"
+            "databox 0 should have survived a redaction targeting another manifest"
         );
     }
 
