@@ -1825,11 +1825,13 @@ impl Claim {
                 return Ok(());
             }
         } else if assertion_uri.contains(DATABOX_STORE) {
-            if let Some(index) = self
-                .databoxes()
-                .iter()
-                .position(|(x, _d)| assertion_uri.contains(&x.url()))
-            {
+            // Match the databox by its exact final label segment.
+            // A substring check would let a URI ending in `c2pa.data__1` match the `c2pa.data` databox and remove the wrong box.
+            let target = assertion_uri.rsplit('/').next().unwrap_or_default();
+            if let Some(index) = self.databoxes().iter().position(|(x, _d)| {
+                let url = x.url();
+                url.rsplit('/').next() == Some(target)
+            }) {
                 self.data_boxes.remove(index);
                 return Ok(());
             }
