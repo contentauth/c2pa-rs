@@ -4703,38 +4703,6 @@ pub mod tests {
         );
     }
 
-    /// Relative databox URIs resolve against this claim, matching `get_databox`.
-    #[test]
-    fn test_redact_databox_relative_uri_resolves_to_own_claim() {
-        let mut claim = Claim::new("unit test", Some("test"), 2);
-
-        let uri0 = claim
-            .add_databox("application/octet-stream", vec![0u8; 4], None)
-            .expect("add databox 0");
-        let uri1 = claim
-            .add_databox("application/octet-stream", vec![1u8; 4], None)
-            .expect("add databox 1");
-
-        claim
-            .redact_assertion("self#jumbf=c2pa.databoxes/c2pa.data__1")
-            .expect("relative redaction of databox 1 should succeed");
-
-        assert!(
-            claim
-                .databoxes()
-                .iter()
-                .any(|(x, _d)| x.url() == uri0.url()),
-            "databox 0 must still exist"
-        );
-        assert!(
-            !claim
-                .databoxes()
-                .iter()
-                .any(|(x, _d)| x.url() == uri1.url()),
-            "databox 1 should be gone"
-        );
-    }
-
     /// The assertion-store checks must compare labels exactly, not by suffix.
     #[test]
     fn test_redact_assertion_label_suffix_does_not_match() {

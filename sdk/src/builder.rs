@@ -8137,17 +8137,16 @@ mod tests {
         );
     }
 
-    /// Diamond graph: a base manifest `A` carrying two databoxes is reached by two
-    /// independent paths (`B` and `C`), which are then combined in `D`. When `D` signs,
-    /// `add_ingredient_data` receives `A` twice over plus `B` and `C`, so the redaction
-    /// URI must still resolve to the exact databox in the exact manifest.
+    /// A base manifest `A` carrying two databoxes is reached by two independent paths,
+    // which are then combined in `D`.
+    // When `D` signs,`add_ingredient_data` receives `A` twice over plus `B` and `C`.
+    /// The redaction URI must still resolve to the exact databox in the exact manifest.
     #[test]
     fn test_redact_databox_diamond_graph_shared_base() {
         let context = test_context();
         let signer = test_signer(SigningAlg::Ps256);
 
-        // Base `A`: a v1 manifest with two ingredient thumbnails, so it holds two
-        // databoxes labeled `c2pa.data` and `c2pa.data__1`.
+        // Base `A`: a v1 manifest with two ingredient thumbnails
         let mut a_builder = Builder {
             definition: ManifestDefinition {
                 claim_version: Some(1),
@@ -8156,7 +8155,7 @@ mod tests {
             },
             ..Default::default()
         };
-        // Exactly one parent; the second is a component, since two parents is invalid.
+
         for (title, relationship) in [("ing one", "parentOf"), ("ing two", "componentOf")] {
             let mut src = Cursor::new(TEST_IMAGE);
             let mut ing = Ingredient::from_json(
@@ -8180,7 +8179,7 @@ mod tests {
             .expect("read A");
         let a_label = a_reader.active_label().unwrap().to_string();
 
-        // Two edits of the same base, `B` and `C`, forming the two sides of the diamond.
+        // Two edits of the same base...
         let mut branch_outputs = Vec::new();
         for title in ["B edit", "C edit"] {
             let mut b_builder = Builder {
@@ -8200,8 +8199,7 @@ mod tests {
             branch_outputs.push(out);
         }
 
-        // `D` ingests both branches, so `A` is reachable by two paths. Redact the
-        // `__1` databox of `A` specifically.
+        // `D` has provenance from both, so `A` is reachable by two paths.
         let redacted_uri = crate::jumbf::labels::to_databox_uri(&a_label, "c2pa.data__1");
         let mut d_builder = Builder {
             definition: ManifestDefinition {
@@ -8229,7 +8227,7 @@ mod tests {
         let mut d_out = Cursor::new(Vec::new());
         let result = d_builder.sign(signer.as_ref(), "image/jpeg", &mut d_source, &mut d_out);
 
-        // The redaction must resolve, not fail with AssertionRedactionNotFound.
+        // The redaction must resolve.
         assert!(
             result.is_ok(),
             "diamond redaction should resolve, got {result:?}"
@@ -8240,8 +8238,7 @@ mod tests {
         let d_reader = Reader::from_context(test_context())
             .with_stream("image/jpeg", &mut d_out)
             .expect("read D");
-        // Only `c2pa.data__1` was redacted; the shared `c2pa.data` prefix must not have
-        // dragged the wrong box out with it. `A` keeps exactly one resolvable databox.
+        // Only `c2pa.data__1` was redacted. `A` keeps exactly one resolvable databox.
         let a_manifest = d_reader
             .manifests()
             .get(&a_label)
