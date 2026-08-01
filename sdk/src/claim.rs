@@ -1825,9 +1825,7 @@ impl Claim {
 
         // Delete assertion or databox
         if assertion_uri.contains(ASSERTION_STORE) {
-            // Compare the assertion label strictly.
-            // `assertion_label_from_link` splits the `__N` instance off the label, so
-            // rebuild the full positional label before comparing.
+            // Compare the assertion label strictly using label and instance.
             let target = Claim::label_with_instance(&label, instance);
             if let Some(index) = self
                 .assertion_store
@@ -1838,7 +1836,7 @@ impl Claim {
                 return Ok(());
             }
         } else if assertion_uri.contains(DATABOX_STORE) {
-            // Normalize to a full databox URI.
+            // Normalize to a (full) databox URI.
             let box_name =
                 box_name_from_uri(assertion_uri).ok_or(Error::AssertionRedactionNotFound)?;
             let target = to_normalized_uri(&to_databox_uri(self.label(), &box_name));
