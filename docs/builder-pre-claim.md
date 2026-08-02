@@ -84,6 +84,7 @@ one ingredient referenced by the decoded assertion.
 - Because of that, there's no resource/identifier indirection to manage for anything added this way — no `ResourceRef`, no id lookup at `to_claim()` time. You get the real `HashedUri` back synchronously and use it immediately.
 - This also aligns the in-memory model with the crJSON report format: ingredients are assertions, and binary resources are `EmbeddedData` assertions — not a separate "resource" concept bolted on the side.
 - Archives work fine since they preserve data in the claim.
+- **Claims v2+ only.** The pre-claim path errors with `Error::ClaimVersion` on a v1 claim (`claim_version = 1`). A v1 claim's `claim_generator` string is computed from `ClaimGeneratorInfo` at `to_claim()` time, so there's no correct value to seed a v1 pre-claim with up front — rather than silently sign with an empty/incorrect string, `ensure_pre_claim()` rejects the v1 case outright.
 
 ## Example: manifest with an ingredient, built directly
 

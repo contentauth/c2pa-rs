@@ -1282,8 +1282,15 @@ impl Builder {
     }
 
     /// Returns `&mut Claim` for the pre-populated claim, initializing it on first use.
+    ///
+    /// Only supported for Claims v2+: a v1 claim's `claim_generator` string is computed from
+    /// `ClaimGeneratorInfo` at `to_claim()` time, which happens after (and independently of) any
+    /// pre-claim is created, so there's no correct value to seed a v1 pre-claim with up front.
     fn ensure_pre_claim(&mut self) -> Result<&mut Claim> {
         if self.pre_claim.is_none() {
+            if self.claim_version() < 2 {
+                return Err(Error::ClaimVersion);
+            }
             if self.definition.label.is_none() {
                 let version = self.claim_version();
                 let temp = Claim::new("", self.definition.vendor.as_deref(), version.into());
@@ -10576,6 +10583,25 @@ mod tests {
         assert!(
             created.created(),
             "add_created_assertion_with_ref should add a created assertion"
+        );
+    }
+
+    /// Pre-claim APIs require Claims v2+: a v1 claim's `claim_generator` string is computed
+    /// from `ClaimGeneratorInfo` at `to_claim()` time, so there's no correct value to seed a v1
+    /// pre-claim with up front. Regression test for a bug where a v1 `Builder` using
+    /// `add_assertion_with_ref` would silently sign with an empty `claim_generator` string
+    /// instead of erroring.
+    #[test]
+    fn test_add_assertion_with_ref_rejects_v1_claim() {
+        let mut builder = Builder::default();
+        builder.definition.claim_version = Some(1);
+        builder.definition.format = "image/jpeg".to_string();
+        builder.definition.title = Some("Test v1 rejection".to_string());
+
+        let result = builder.add_assertion_with_ref("org.test.thing", &json!({"value": 1}));
+        assert!(
+            matches!(result, Err(Error::ClaimVersion)),
+            "expected ClaimVersion error for a v1 claim, got {result:?}"
         );
     }
 
