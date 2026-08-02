@@ -18,7 +18,6 @@ use std::{
     ops::Deref,
 };
 
-use mp4::*;
 use serde::{
     de::{SeqAccess, Visitor},
     ser::SerializeSeq,
@@ -61,7 +60,8 @@ use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
     asset_handlers::bmff_io::{
-        bmff_to_jumbf_exclusions, read_bmff_c2pa_boxes, BoxInfoLite, C2PABmffBoxes,
+        bmff_to_jumbf_exclusions, read_bmff_c2pa_boxes, BmffSampleReader, BoxInfoLite,
+        C2PABmffBoxes,
     },
     asset_io::CAIRead,
     cbor_types::UriT,
@@ -749,7 +749,10 @@ impl BmffHash {
     }
 
     // get regions to hash based on the list of top level boxes in file order
-    pub fn box_list_to_user_exclusions(&self, _box_paths: &[String]) -> Result<Vec<UserHashInfo>> {
+    pub fn box_list_to_user_exclusions(
+        &self,
+        _box_paths: &[String],
+    ) -> crate::Result<Vec<UserHashInfo>> {
         let uhis = Vec::new();
 
         Ok(uhis)
@@ -1400,10 +1403,13 @@ impl BmffHash {
                 let track_to_bmff_merkle_map = self.split_bmff_merkle_map(bmff_merkle.clone())?;
 
                 reader.rewind()?;
-                let buf_reader = BufReader::new(reader);
-                let mut mp4 = mp4::Mp4Reader::read_header(buf_reader, size)
+                // Buffer the reader so the many small header/table reads during
+                // parsing (and the per-sample reads below) don't each hit the
+                // underlying stream, matching the previous reader's behavior.
+                let mut buf_reader = BufReader::new(reader);
+                let media = BmffSampleReader::from_stream(&mut buf_reader)
                     .map_err(|_e| Error::InvalidAsset("Could not parse BMFF".to_string()))?;
-                let track_count = mp4.tracks().len();
+                let track_count = media.tracks().len();
 
                 for mm in mm_vec {
                     let alg = match &mm.alg {
@@ -1415,18 +1421,10 @@ impl BmffHash {
 
                     if track_count > 0 {
                         // timed media case
-                        let track = {
-                            // clone so we can borrow later
-                            let tt = mp4.tracks().get(&(mm.local_id as u32)).ok_or(
-                                Error::HashMismatch("Merkle location not found".to_owned()),
-                            )?;
-
-                            Mp4Track {
-                                trak: tt.trak.clone(),
-                                trafs: tt.trafs.clone(),
-                                default_sample_duration: tt.default_sample_duration,
-                            }
-                        };
+                        let track = media
+                            .tracks()
+                            .get(&(mm.local_id as u32))
+                            .ok_or(Error::HashMismatch("Merkle location not found".to_owned()))?;
 
                         let sample_cnt = track.sample_count();
                         if sample_cnt == 0 {
@@ -1440,11 +1438,11 @@ impl BmffHash {
                         // create sample to chunk mapping
                         // create the Merkle tree per samples in a chunk
                         let mut chunk_hash_map: HashMap<u32, Hasher> = HashMap::new();
-                        let stsc = &track.trak.mdia.minf.stbl.stsc;
+                        let stsc = track.stsc_runs();
                         for sample_id in 1..=sample_cnt {
-                            let stsc_idx = stsc_index(&track, sample_id)?;
+                            let stsc_idx = track.stsc_index(sample_id)?;
 
-                            let stsc_entry = &stsc.entries[stsc_idx];
+                            let stsc_entry = &stsc[stsc_idx];
 
                             let first_chunk = stsc_entry.first_chunk;
                             let first_sample = stsc_entry.first_sample;
@@ -1476,7 +1474,7 @@ impl BmffHash {
                                 e.insert(hasher_enum);
                             }
 
-                            match mp4.read_sample(track_id, sample_id) {
+                            match media.read_sample(&mut buf_reader, track_id, sample_id) {
                                 Ok(Some(sample)) => {
                                     let h = chunk_hash_map.get_mut(&chunk_id).ok_or(
                                         Error::HashMismatch(
@@ -1484,7 +1482,7 @@ impl BmffHash {
                                         ),
                                     )?;
                                     // add sample data to hash
-                                    h.update(&sample.bytes);
+                                    h.update(&sample);
                                 }
                                 // The sample's tables place it outside the asset:
                                 // a genuine Merkle location miss.
@@ -2484,22 +2482,6 @@ impl AssertionBase for BmffHash {
     }
 }
 
-fn stsc_index(track: &Mp4Track, sample_id: u32) -> crate::Result<usize> {
-    if track.trak.mdia.minf.stbl.stsc.entries.is_empty() {
-        return Err(Error::InvalidAsset("BMFF has no stsc entries".to_string()));
-    }
-    for (i, entry) in track.trak.mdia.minf.stbl.stsc.entries.iter().enumerate() {
-        if sample_id < entry.first_sample {
-            return if i == 0 {
-                Err(Error::InvalidAsset("BMFF no sample not found".to_string()))
-            } else {
-                Ok(i - 1)
-            };
-        }
-    }
-    Ok(track.trak.mdia.minf.stbl.stsc.entries.len() - 1)
-}
-
 #[cfg(test)]
 mod bmff_hash_tests {
     #![allow(clippy::expect_used)]
@@ -2901,6 +2883,188 @@ mod bmff_hash_tests {
         assert!(
             matches!(result, Err(Error::InvalidAsset(_))),
             "expected Err(InvalidAsset) for oversized variable_block_sizes in create_merkle_tree"
+        );
+    }
+
+    // --- Lib-level coverage for the timed-media, track-based Merkle verify path.
+    //
+    // The integration suite in sdk/tests/bmff_timed_media_merkle.rs exercises
+    // this end-to-end, but CI measures coverage with `cargo llvm-cov --lib`, so
+    // these in-crate tests are what register the verify path. They drive
+    // `verify_stream_hash` through the native sample reader with a compact
+    // hand-built single-track, single-sample asset.
+
+    fn tm_box(fourcc: &[u8; 4], payload: &[u8]) -> Vec<u8> {
+        let s = (8 + payload.len()) as u32;
+        [&s.to_be_bytes()[..], fourcc.as_slice(), payload].concat()
+    }
+
+    fn tm_fullbox(fourcc: &[u8; 4], payload: &[u8]) -> Vec<u8> {
+        // version 0, flags 0.
+        let s = (12 + payload.len()) as u32;
+        [&s.to_be_bytes()[..], fourcc.as_slice(), &[0u8; 4], payload].concat()
+    }
+
+    /// Builds a minimal single-track, single-sample timed-media MP4 and returns
+    /// it with the SHA-256 root over the sample. With `with_track == false` the
+    /// moov has no trak, exercising the no-tracks rejection.
+    fn build_timed_media(sample: &[u8], with_track: bool) -> (Vec<u8>, Vec<u8>) {
+        let ftyp = tm_box(b"ftyp", b"isom\x00\x00\x00\x00isom");
+
+        // C2PA merkle uuid box: uuid(16) + version/flags(4) + "merkle\0" + CBOR
+        // { uniqueId: 0, localId: 1, location: 0 }.
+        const C2PA_UUID: [u8; 16] = [
+            0xd8, 0xfe, 0xc3, 0xd6, 0x1b, 0x0e, 0x48, 0x3c, 0x92, 0x97, 0x58, 0x28, 0x87, 0x7e,
+            0xc4, 0x81,
+        ];
+        let cbor: Vec<u8> = vec![
+            0xa3, 0x68, b'u', b'n', b'i', b'q', b'u', b'e', b'I', b'd', 0x00, 0x67, b'l', b'o',
+            b'c', b'a', b'l', b'I', b'd', 0x01, 0x68, b'l', b'o', b'c', b'a', b't', b'i', b'o',
+            b'n', 0x00,
+        ];
+        let mut up = Vec::new();
+        up.extend_from_slice(&C2PA_UUID);
+        up.extend_from_slice(&[0u8; 4]);
+        up.extend_from_slice(b"merkle\x00");
+        up.extend_from_slice(&cbor);
+        let uuid = tm_box(b"uuid", &up);
+
+        let build_moov = |stco_offset: u32| -> Vec<u8> {
+            let sample_entry = tm_box(b"c2pv", &[0u8; 8]);
+            let mut stsd_p = 1u32.to_be_bytes().to_vec();
+            stsd_p.extend_from_slice(&sample_entry);
+            let stsd = tm_fullbox(b"stsd", &stsd_p);
+
+            let mut stts_p = 1u32.to_be_bytes().to_vec();
+            stts_p.extend_from_slice(&1u32.to_be_bytes());
+            stts_p.extend_from_slice(&1000u32.to_be_bytes());
+            let stts = tm_fullbox(b"stts", &stts_p);
+
+            let mut stsc_p = 1u32.to_be_bytes().to_vec();
+            stsc_p.extend_from_slice(&1u32.to_be_bytes()); // first_chunk
+            stsc_p.extend_from_slice(&1u32.to_be_bytes()); // samples_per_chunk
+            stsc_p.extend_from_slice(&1u32.to_be_bytes()); // sample_description_index
+            let stsc = tm_fullbox(b"stsc", &stsc_p);
+
+            let mut stsz_p = 0u32.to_be_bytes().to_vec(); // sample_size 0 => per-sample table
+            stsz_p.extend_from_slice(&1u32.to_be_bytes()); // sample_count
+            stsz_p.extend_from_slice(&(sample.len() as u32).to_be_bytes());
+            let stsz = tm_fullbox(b"stsz", &stsz_p);
+
+            let mut stco_p = 1u32.to_be_bytes().to_vec();
+            stco_p.extend_from_slice(&stco_offset.to_be_bytes());
+            let stco = tm_fullbox(b"stco", &stco_p);
+
+            let stbl = tm_box(b"stbl", &[stsd, stts, stsc, stsz, stco].concat());
+            let vmhd = tm_fullbox(b"vmhd", &[0u8; 8]);
+            let url = tm_fullbox(b"url ", &[]);
+            let mut dref_p = 1u32.to_be_bytes().to_vec();
+            dref_p.extend_from_slice(&url);
+            let dref = tm_fullbox(b"dref", &dref_p);
+            let dinf = tm_box(b"dinf", &dref);
+            let minf = tm_box(b"minf", &[vmhd, dinf, stbl].concat());
+
+            let mut mdhd_p = vec![0u8; 8];
+            mdhd_p.extend_from_slice(&1000u32.to_be_bytes());
+            mdhd_p.extend_from_slice(&0u32.to_be_bytes());
+            mdhd_p.extend_from_slice(&0x55c4u16.to_be_bytes());
+            mdhd_p.extend_from_slice(&0u16.to_be_bytes());
+            let mdhd = tm_fullbox(b"mdhd", &mdhd_p);
+
+            let mut hdlr_p = vec![0u8; 4];
+            hdlr_p.extend_from_slice(b"vide");
+            hdlr_p.extend_from_slice(&[0u8; 13]);
+            let hdlr = tm_fullbox(b"hdlr", &hdlr_p);
+
+            let mdia = tm_box(b"mdia", &[mdhd, hdlr, minf].concat());
+
+            let mut tkhd_p = vec![0u8; 8];
+            tkhd_p.extend_from_slice(&1u32.to_be_bytes()); // track_id
+            tkhd_p.extend_from_slice(&[0u8; 60]);
+            let tkhd = tm_fullbox(b"tkhd", &tkhd_p);
+
+            let mvhd = tm_fullbox(b"mvhd", &[0u8; 96]);
+            if with_track {
+                let trak = tm_box(b"trak", &[tkhd, mdia].concat());
+                tm_box(b"moov", &[mvhd, trak].concat())
+            } else {
+                tm_box(b"moov", &mvhd)
+            }
+        };
+
+        // Two-pass: learn moov length (stco width is fixed), then set the real
+        // sample offset.
+        let moov_len = build_moov(0).len();
+        let sample_offset = (ftyp.len() + uuid.len() + moov_len + 8) as u32;
+        let moov = build_moov(sample_offset);
+
+        let mut file = Vec::new();
+        file.extend_from_slice(&ftyp);
+        file.extend_from_slice(&uuid);
+        file.extend_from_slice(&moov);
+        file.extend_from_slice(&tm_box(b"mdat", sample));
+
+        let root = {
+            let mut h = Sha256::new();
+            h.update(sample);
+            h.finalize().to_vec()
+        };
+        (file, root)
+    }
+
+    fn tm_assertion(root: Vec<u8>, local_id: usize) -> BmffHash {
+        let mut bmff_hash = BmffHash::new("test", "sha256", None);
+        bmff_hash.add_exclusions(&mut vec![ExclusionsMap::new("/uuid".to_owned())]);
+        bmff_hash.set_merkle(vec![MerkleMap {
+            unique_id: 0,
+            local_id,
+            count: 1,
+            alg: Some("sha256".into()),
+            init_hash: None,
+            hashes: VecByteBuf(vec![ByteBuf::from(root)]),
+            fixed_block_size: None,
+            variable_block_sizes: None,
+        }]);
+        bmff_hash
+    }
+
+    #[test]
+    fn timed_media_track_merkle_verifies() {
+        let (file, root) = build_timed_media(b"hello sample data", true);
+        let bmff_hash = tm_assertion(root, 1);
+        let mut reader = Cursor::new(file);
+        bmff_hash
+            .verify_stream_hash(&mut reader, Some("sha256"))
+            .expect("valid timed-media asset should verify");
+    }
+
+    #[test]
+    fn timed_media_no_tracks_rejected() {
+        let (file, root) = build_timed_media(b"hello sample data", false);
+        let bmff_hash = tm_assertion(root, 1);
+        let mut reader = Cursor::new(file);
+        let err = bmff_hash
+            .verify_stream_hash(&mut reader, Some("sha256"))
+            .expect_err("a Merkle map with no readable track must not pass");
+        assert!(
+            matches!(err, Error::HashMismatch(ref m) if m == "BMFF has no tracks for timed-media Merkle verification"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn timed_media_hash_mismatch_rejected() {
+        let (mut file, root) = build_timed_media(b"hello sample data", true);
+        // Tamper the last sample byte after computing the root.
+        *file.last_mut().unwrap() ^= 0xff;
+        let bmff_hash = tm_assertion(root, 1);
+        let mut reader = Cursor::new(file);
+        let err = bmff_hash
+            .verify_stream_hash(&mut reader, Some("sha256"))
+            .expect_err("a tampered sample must not verify");
+        assert!(
+            matches!(err, Error::HashMismatch(_)),
+            "unexpected error: {err:?}"
         );
     }
 }
