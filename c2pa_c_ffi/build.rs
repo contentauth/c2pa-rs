@@ -68,9 +68,7 @@ fn main() {
         |error| match error {
             cbindgen::Error::ParseSyntaxError { .. } => {
                 // `cargo:warning=` surfaces in normal build output; `eprintln!` does not.
-                println!(
-                    "cargo:warning=cbindgen ParseSyntaxError: c2pa.h was NOT generated"
-                );
+                println!("cargo:warning=cbindgen ParseSyntaxError: c2pa.h was NOT generated");
             }
             e => panic!("{e:?}"),
         },
