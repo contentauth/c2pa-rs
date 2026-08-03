@@ -1826,6 +1826,10 @@ impl Claim {
         // Delete assertion or databox
         if assertion_uri.contains(ASSERTION_STORE) {
             // Compare the assertion label strictly using label and instance.
+            // Both sides of this comparison are normalized (to be compareable).
+            // `label`/`instance` come from `assertion_label_from_link`.
+            // The stored side is normalized because every claim coming to here has been
+            // parsed by `Store::from_jumbf_with_context`.
             let target = Claim::label_with_instance(&label, instance);
             if let Some(index) = self
                 .assertion_store
@@ -4698,6 +4702,139 @@ pub mod tests {
                 .any(|(x, _d)| x.url() == uri0.url()),
             "databox 0 should have survived a redaction targeting another manifest"
         );
+    }
+
+    #[test]
+    fn test_redact_assertion_instance_labels_are_exact() {
+        use crate::{assertions::UserCbor, jumbf::labels::to_assertion_uri};
+
+        const LABEL: &str = "com.example.a";
+
+        let mut claim = Claim::new("unit test", Some("test"), 2);
+        for n in 0..3 {
+            claim
+                .add_assertion(&UserCbor::new(
+                    LABEL,
+                    c2pa_cbor::to_vec(&format!("payload {n}")).unwrap(),
+                ))
+                .expect("add assertion");
+        }
+
+        let stored = |claim: &Claim| -> Vec<String> {
+            claim
+                .claim_assertion_store()
+                .iter()
+                .map(|x| Claim::label_with_instance(&x.label_raw(), x.instance()))
+                .collect()
+        };
+
+        assert_eq!(
+            stored(&claim),
+            vec!["com.example.a", "com.example.a__1", "com.example.a__2"],
+            "test setup: three instances of the same label"
+        );
+
+        // Redact `__2` first: the `__1` and base labels share its prefix and must survive.
+        claim
+            .redact_assertion(&to_assertion_uri(claim.label(), "com.example.a__2"))
+            .expect("redact instance 2");
+        assert_eq!(
+            stored(&claim),
+            vec!["com.example.a", "com.example.a__1"],
+            "only instance 2 should have been removed"
+        );
+
+        claim
+            .redact_assertion(&to_assertion_uri(claim.label(), "com.example.a__1"))
+            .expect("redact instance 1");
+        assert_eq!(
+            stored(&claim),
+            vec!["com.example.a"],
+            "only instance 1 should have been removed"
+        );
+
+        claim
+            .redact_assertion(&to_assertion_uri(claim.label(), LABEL))
+            .expect("redact base instance");
+        assert!(claim.claim_assertion_store().is_empty());
+    }
+
+    /// `com.example.meta` is a prefix of `com.example.metadata` but is not the same
+    /// assertion, so redacting it must not match.
+    #[test]
+    fn test_redact_assertion_prefix_is_not_a_match() {
+        use crate::{assertions::UserCbor, jumbf::labels::to_assertion_uri};
+
+        let mut claim = Claim::new("unit test", Some("test"), 2);
+        claim
+            .add_assertion(&UserCbor::new(
+                "com.example.metadata",
+                c2pa_cbor::to_vec(&"payload").unwrap(),
+            ))
+            .expect("add assertion");
+
+        let uri = to_assertion_uri(claim.label(), "com.example.meta");
+        let result = claim.redact_assertion(&uri);
+        assert!(
+            matches!(result, Err(Error::AssertionRedactionNotFound)),
+            "a prefix of a stored label must not match, got {result:?}"
+        );
+        assert_eq!(
+            claim.claim_assertion_store().len(),
+            1,
+            "the assertion must survive a non-matching redaction"
+        );
+    }
+
+    #[test]
+    fn test_redact_assertion_suffix_label_is_not_a_match() {
+        use crate::{assertions::UserCbor, jumbf::labels::to_assertion_uri};
+
+        let mut claim = Claim::new("unit test", Some("test"), 2);
+        for label in ["example.a", "org.example.a"] {
+            claim
+                .add_assertion(&UserCbor::new(
+                    label,
+                    c2pa_cbor::to_vec(&"payload").unwrap(),
+                ))
+                .expect("add assertion");
+        }
+
+        claim
+            .redact_assertion(&to_assertion_uri(claim.label(), "org.example.a"))
+            .expect("redact org.example.a");
+
+        let remaining: Vec<String> = claim
+            .claim_assertion_store()
+            .iter()
+            .map(|x| Claim::label_with_instance(&x.label_raw(), x.instance()))
+            .collect();
+        assert_eq!(
+            remaining,
+            vec!["example.a"],
+            "redacting `org.example.a` must not remove the `example.a` assertion"
+        );
+    }
+
+    /// Verify comparison conditions.
+    #[test]
+    fn test_redact_assertion_label_from_link_round_trip() {
+        for label in [
+            "com.example.a",
+            "com.example.a__1",
+            "c2pa.thumbnail.ingredient__3.jpeg",
+            "c2pa.thumbnail.claim.jpeg__1",
+            "stds.schema-org.CreativeWork__2",
+            "c2pa.data",
+            "c2pa.data__1",
+        ] {
+            let (parsed, instance) = Claim::assertion_label_from_link(label);
+            assert_eq!(
+                Claim::label_with_instance(&parsed, instance),
+                label,
+                "label normalization must round-trip for {label}"
+            );
+        }
     }
 
     fn make_soft_binding(alg: Option<&str>) -> assertions::SoftBinding {
