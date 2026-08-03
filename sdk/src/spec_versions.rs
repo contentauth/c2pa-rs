@@ -18,7 +18,7 @@ pub const C2PA_VALIDATOR_VERSION: &str = "2.3.0";
 
 // C2PA TSA Trust URI
 #[allow(dead_code)]
-pub const C2PA_TSA_TRUST_URI: &str = "https://c2pa.org//trustlist-tsa";
+pub const C2PA_TSA_TRUST_URI: &str = "https://c2pa.org/trustlist-tsa";
 /// C2PA Trust URI
 #[allow(dead_code)]
-pub const C2PA_TRUST_URI: &str = "https://c2pa.org//trustlist";
+pub const C2PA_TRUST_URI: &str = "https://c2pa.org/trustlist";
