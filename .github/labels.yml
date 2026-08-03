@@ -19,6 +19,10 @@
   color: "5319e7"
   description: "Cherry-pick this merged main PR onto the stable release line"
 
+- name: do-not-backport
+  color: "6a737d"
+  description: "Deliberately not backported onto stable (e.g. incompatible behavior change)"
+
 - name: release-train
   color: "fbca04"
   description: "Tracking issue for an active breaking-change release train bake"
