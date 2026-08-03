@@ -734,6 +734,7 @@ mod tests {
     }
 
     /// Encode a single certificate DER as PEM (CERTIFICATE block).
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn der_to_pem(der: &[u8]) -> String {
         pem::Pem::new("CERTIFICATE", der.to_vec()).to_string()
     }

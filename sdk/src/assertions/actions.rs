@@ -245,6 +245,13 @@ pub mod c2pa_action {
     /// Does not include any adjustments that would affect the "editorial" meaning of the content.
     pub const TRANSCODED: &str = "c2pa.transcoded";
 
+    /// Changes to the language of the content.
+    ///
+    /// Per the C2PA spec (18.15.4.7, Parameters), a `c2pa.translated` action's
+    /// `parameters` object shall contain `sourceLanguage` and `targetLanguage`
+    /// BCP-47 (RFC 5646) language codes.
+    pub const TRANSLATED: &str = "c2pa.translated";
+
     /// Something happened, but the claim_generator cannot specify what.
     pub const UNKNOWN: &str = "c2pa.unknown";
 }
