@@ -1806,8 +1806,8 @@ impl Claim {
         )
     }
 
-    /// Redact an assertion from a prior claim.
-    /// This will remove the assertion from the JUMBF
+    /// Redact an assertion from a given claim.
+    /// This will remove the assertion from the JUMBF.
     fn redact_assertion(&mut self, assertion_uri: &str) -> Result<()> {
         // cannot redact action assertions per the spec
         // cannot redact hash bindings
