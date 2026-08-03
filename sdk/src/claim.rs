@@ -1826,6 +1826,14 @@ impl Claim {
         // Delete assertion or databox
         if assertion_uri.contains(ASSERTION_STORE) {
             // Compare the assertion label strictly using label and instance.
+            //
+            // Both sides of this comparison are normalized. `label`/`instance` come from
+            // `assertion_label_from_link` above; the stored side is normalized too because
+            // every claim reaching here has been parsed by `Store::from_jumbf_with_context`
+            // (see `add_ingredient_data`, the only caller), and both
+            // `Store::get_assertion_from_jumbf_store` and `Assertion::from_assertion_data`
+            // run the box label through `assertion_label_from_link` -> `label_with_instance`.
+            // Comparing a raw URI segment against `label_raw()` would break that symmetry.
             let target = Claim::label_with_instance(&label, instance);
             if let Some(index) = self
                 .assertion_store
@@ -4698,6 +4706,183 @@ pub mod tests {
                 .any(|(x, _d)| x.url() == uri0.url()),
             "databox 0 should have survived a redaction targeting another manifest"
         );
+    }
+
+    #[test]
+    fn test_redact_assertion_instance_labels_are_exact() {
+        use crate::{assertions::UserCbor, jumbf::labels::to_assertion_uri};
+
+        const LABEL: &str = "com.example.a";
+
+        let mut claim = Claim::new("unit test", Some("test"), 2);
+        for n in 0..3 {
+            claim
+                .add_assertion(&UserCbor::new(
+                    LABEL,
+                    c2pa_cbor::to_vec(&format!("payload {n}")).unwrap(),
+                ))
+                .expect("add assertion");
+        }
+
+        let stored = |claim: &Claim| -> Vec<String> {
+            claim
+                .claim_assertion_store()
+                .iter()
+                .map(|x| Claim::label_with_instance(&x.label_raw(), x.instance()))
+                .collect()
+        };
+
+        assert_eq!(
+            stored(&claim),
+            vec!["com.example.a", "com.example.a__1", "com.example.a__2"],
+            "test setup: three instances of the same label"
+        );
+
+        // Redact `__2` first: the `__1` and base labels share its prefix and must survive.
+        claim
+            .redact_assertion(&to_assertion_uri(claim.label(), "com.example.a__2"))
+            .expect("redact instance 2");
+        assert_eq!(
+            stored(&claim),
+            vec!["com.example.a", "com.example.a__1"],
+            "only instance 2 should have been removed"
+        );
+
+        claim
+            .redact_assertion(&to_assertion_uri(claim.label(), "com.example.a__1"))
+            .expect("redact instance 1");
+        assert_eq!(
+            stored(&claim),
+            vec!["com.example.a"],
+            "only instance 1 should have been removed"
+        );
+
+        claim
+            .redact_assertion(&to_assertion_uri(claim.label(), LABEL))
+            .expect("redact base instance");
+        assert!(claim.claim_assertion_store().is_empty());
+    }
+
+    /// `com.example.meta` is a prefix of `com.example.metadata` but is not the same
+    /// assertion, so redacting it must not match.
+    #[test]
+    fn test_redact_assertion_prefix_is_not_a_match() {
+        use crate::{assertions::UserCbor, jumbf::labels::to_assertion_uri};
+
+        let mut claim = Claim::new("unit test", Some("test"), 2);
+        claim
+            .add_assertion(&UserCbor::new(
+                "com.example.metadata",
+                c2pa_cbor::to_vec(&"payload").unwrap(),
+            ))
+            .expect("add assertion");
+
+        let uri = to_assertion_uri(claim.label(), "com.example.meta");
+        let result = claim.redact_assertion(&uri);
+        assert!(
+            matches!(result, Err(Error::AssertionRedactionNotFound)),
+            "a prefix of a stored label must not match, got {result:?}"
+        );
+        assert_eq!(
+            claim.claim_assertion_store().len(),
+            1,
+            "the assertion must survive a non-matching redaction"
+        );
+    }
+
+    /// One stored label (`example.a`) is a *suffix* of another (`org.example.a`). Matching the
+    /// redaction URI with `ends_with` against each stored label picks whichever comes first,
+    /// which is the wrong assertion here. Only an exact label+instance comparison distinguishes
+    /// them.
+    #[test]
+    fn test_redact_assertion_suffix_label_is_not_a_match() {
+        use crate::{assertions::UserCbor, jumbf::labels::to_assertion_uri};
+
+        let mut claim = Claim::new("unit test", Some("test"), 2);
+        for label in ["example.a", "org.example.a"] {
+            claim
+                .add_assertion(&UserCbor::new(
+                    label,
+                    c2pa_cbor::to_vec(&"payload").unwrap(),
+                ))
+                .expect("add assertion");
+        }
+
+        claim
+            .redact_assertion(&to_assertion_uri(claim.label(), "org.example.a"))
+            .expect("redact org.example.a");
+
+        let remaining: Vec<String> = claim
+            .claim_assertion_store()
+            .iter()
+            .map(|x| Claim::label_with_instance(&x.label_raw(), x.instance()))
+            .collect();
+        assert_eq!(
+            remaining,
+            vec!["example.a"],
+            "redacting `org.example.a` must not remove the `example.a` assertion"
+        );
+    }
+
+    /// `redact_assertion` compares `label_with_instance(assertion_label_from_link(uri))`
+    /// against `label_with_instance(label_raw(), instance())` of each stored assertion.
+    /// That is only an exact comparison if the normalization round-trips, so pin it for
+    /// every label form the SDK emits.
+    #[test]
+    fn test_redact_assertion_label_from_link_round_trip() {
+        for label in [
+            "com.example.a",
+            "com.example.a__1",
+            "c2pa.thumbnail.ingredient__3.jpeg",
+            "c2pa.thumbnail.claim.jpeg__1",
+            "stds.schema-org.CreativeWork__2",
+            "c2pa.data",
+            "c2pa.data__1",
+        ] {
+            let (parsed, instance) = Claim::assertion_label_from_link(label);
+            assert_eq!(
+                Claim::label_with_instance(&parsed, instance),
+                label,
+                "label normalization must round-trip for {label}"
+            );
+        }
+    }
+
+    /// Labels whose `__` suffix is not a number do not round-trip: `assertion_label_from_link`
+    /// truncates them, while `add_assertion` stores them verbatim. This asymmetry is why such a
+    /// label cannot be signed at all — see `test_lossy_labels_are_rejected_at_signing` in
+    /// builder.rs, which is what keeps them out of `redact_assertion` entirely.
+    #[test]
+    fn test_lossy_label_normalization_is_the_reason() {
+        use crate::assertions::UserCbor;
+
+        for (label, truncated) in [
+            ("com.example.a__b", "com.example.a"),
+            ("com.example.my__cool__box", "com.example.my"),
+        ] {
+            let (parsed, instance) = Claim::assertion_label_from_link(label);
+            assert_eq!(parsed, truncated, "{label} should truncate to {truncated}");
+            assert_eq!(instance, 0, "{label} has no numeric instance");
+            assert_ne!(
+                Claim::label_with_instance(&parsed, instance),
+                label,
+                "{label} must not round-trip"
+            );
+
+            // The in-memory store keeps the label verbatim, so the two disagree.
+            let mut claim = Claim::new("unit test", Some("test"), 2);
+            claim
+                .add_assertion(&UserCbor::new(
+                    label,
+                    c2pa_cbor::to_vec(&"payload").unwrap(),
+                ))
+                .expect("add assertion");
+            assert_eq!(
+                claim.claim_assertion_store()[0].label_raw(),
+                label,
+                "add_assertion stores {label} raw, while lookups normalize it"
+            );
+        }
     }
 
     fn make_soft_binding(alg: Option<&str>) -> assertions::SoftBinding {

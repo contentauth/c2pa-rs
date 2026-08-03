@@ -8340,6 +8340,181 @@ mod tests {
         assert!(matches!(result, Err(Error::AssertionRedactionNotFound)));
     }
 
+    /// End-to-end redaction against a claim that really went through sign -> load, so the
+    /// assertion store is the loader-normalized one that `redact_assertion` sees in production.
+    ///
+    /// Runs both directions against an ingredient holding `stds.schema-org.CreativeWork` and
+    /// `stds.schema-org.CreativeWork__1`:
+    ///   1. redacting the `__1` URI must leave the base assertion, and
+    ///   2. redacting the un-suffixed URI must leave the `__1` assertion.
+    ///
+    /// Direction 2 covers the case for a redaction URI whose final segment carries no instance
+    /// suffix while the store also holds a `__1` sibling; direction 1 is the shared-prefix case
+    /// that a `ends_with` comparison got wrong.
+    #[test]
+    fn test_redact_assertion_instance_label_end_to_end() {
+        setup_logger();
+        let context = test_context().into_shared();
+
+        const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // Sign an ingredient with two CreativeWork assertions, so the second is stored as `__1`.
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut ingredient_stream = Cursor::new(Vec::new());
+        let mut ingredient_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Two Assertions".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        ingredient_builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
+        ingredient_builder
+            .add_assertion_json(
+                ASSERTION_LABEL,
+                &serde_json::json!({"@context": "https://schema.org", "@type": "CreativeWork", "n": 1}),
+            )
+            .unwrap();
+        ingredient_builder
+            .add_assertion_json(
+                ASSERTION_LABEL,
+                &serde_json::json!({"@context": "https://schema.org", "@type": "CreativeWork", "n": 2}),
+            )
+            .unwrap();
+        ingredient_builder
+            .sign(
+                signer.as_ref(),
+                "image/jpeg",
+                &mut source,
+                &mut ingredient_stream,
+            )
+            .expect("sign ingredient");
+
+        ingredient_stream.set_position(0);
+        let ingredient_reader = Reader::from_shared_context(&context)
+            .with_stream("image/jpeg", &mut ingredient_stream)
+            .expect("read ingredient");
+        let ingredient_label = ingredient_reader.active_label().unwrap().to_string();
+        assert_eq!(
+            ingredient_reader
+                .active_manifest()
+                .unwrap()
+                .assertions()
+                .iter()
+                .filter(|a| a.label() == ASSERTION_LABEL)
+                .count(),
+            2,
+            "test setup: ingredient should carry two CreativeWork assertions"
+        );
+
+        // (redacted label, label expected to survive)
+        for (redacted_label, surviving_n) in [
+            (format!("{ASSERTION_LABEL}__1"), 1),
+            (ASSERTION_LABEL.to_string(), 2),
+        ] {
+            let redacted_uri =
+                crate::jumbf::labels::to_assertion_uri(&ingredient_label, &redacted_label);
+
+            ingredient_stream.set_position(0);
+            let mut final_input = Cursor::new(TEST_IMAGE_CLEAN);
+            let mut final_output = Cursor::new(Vec::new());
+            let mut final_builder = Builder {
+                definition: ManifestDefinition {
+                    claim_version: Some(2),
+                    title: Some("Final".to_string()),
+                    redactions: Some(vec![redacted_uri.clone()]),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            final_builder.set_intent(BuilderIntent::Edit);
+            let mut parent = Ingredient::from_json(&parent_json()).unwrap();
+            parent = parent
+                .with_stream("image/jpeg", &mut ingredient_stream, &context)
+                .unwrap();
+            final_builder.add_ingredient(parent);
+            let sign_result = final_builder.sign(
+                signer.as_ref(),
+                "image/jpeg",
+                &mut final_input,
+                &mut final_output,
+            );
+            assert!(
+                sign_result.is_ok(),
+                "signing with redaction of {redacted_label} failed: {:?}",
+                sign_result.err()
+            );
+
+            final_output.set_position(0);
+            let reader = Reader::from_shared_context(&context)
+                .with_stream("image/jpeg", &mut final_output)
+                .expect("read redacted output");
+
+            let ingredient_manifest = reader
+                .get_manifest(&ingredient_label)
+                .expect("ingredient manifest should still be present");
+            let remaining: Vec<_> = ingredient_manifest
+                .assertions()
+                .iter()
+                .filter(|a| a.label() == ASSERTION_LABEL)
+                .collect();
+
+            assert_eq!(
+                remaining.len(),
+                1,
+                "redacting {redacted_label} should remove exactly one CreativeWork assertion"
+            );
+            assert_eq!(
+                remaining[0].to_assertion::<serde_json::Value>().unwrap()["n"],
+                serde_json::json!(surviving_n),
+                "redacting {redacted_label} removed the wrong instance"
+            );
+        }
+    }
+
+    /// A label whose `__` suffix is not a number (or which carries more than one `__`) does not
+    /// survive label normalization: `add_assertion` stores it verbatim while lookups normalize
+    /// it, so signing fails with `AssertionMissing` before such a label can ever be written.
+    ///
+    /// This is a write-path defect tracked separately, asserted here because it is what keeps
+    /// non-round-tripping labels out of `Claim::redact_assertion` entirely. If the write path is
+    /// ever fixed to accept these labels, this test fails, and the redaction comparison in
+    /// `claim.rs` must be revisited rather than silently relying on an assumption that no
+    /// longer holds.
+    #[test]
+    fn test_lossy_labels_are_rejected_at_signing() {
+        setup_logger();
+
+        let signer = test_signer(SigningAlg::Ps256);
+
+        for label in ["com.example.a__b", "com.example.my__cool__box"] {
+            let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+            let mut dest = Cursor::new(Vec::new());
+            let mut builder = Builder {
+                definition: ManifestDefinition {
+                    claim_version: Some(2),
+                    title: Some("Lossy Label".to_string()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
+            builder
+                .add_assertion_json(label, &serde_json::json!({"x": 1}))
+                .unwrap();
+
+            let result = builder.sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest);
+            assert!(
+                matches!(&result, Err(Error::AssertionMissing { url }) if url == label),
+                "expected AssertionMissing({label}), got {:?}",
+                result.err()
+            );
+        }
+    }
+
     #[test]
     fn test_redact_duplicate_uri_in_redactions() {
         // Documents behavior when same URI appears twice in `redactions`.
