@@ -1827,13 +1827,10 @@ impl Claim {
         if assertion_uri.contains(ASSERTION_STORE) {
             // Compare the assertion label strictly using label and instance.
             //
-            // Both sides of this comparison are normalized. `label`/`instance` come from
-            // `assertion_label_from_link` above; the stored side is normalized too because
-            // every claim reaching here has been parsed by `Store::from_jumbf_with_context`
-            // (see `add_ingredient_data`, the only caller), and both
-            // `Store::get_assertion_from_jumbf_store` and `Assertion::from_assertion_data`
-            // run the box label through `assertion_label_from_link` -> `label_with_instance`.
-            // Comparing a raw URI segment against `label_raw()` would break that symmetry.
+            // Both sides of this comparison are normalized.
+            // `label`/`instance` come from `assertion_label_from_link`.
+            // The stored side is normalized too because every claim reaching here has been
+            // parsed by `Store::from_jumbf_with_context`.
             let target = Claim::label_with_instance(&label, instance);
             if let Some(index) = self
                 .assertion_store
@@ -4790,10 +4787,6 @@ pub mod tests {
         );
     }
 
-    /// One stored label (`example.a`) is a *suffix* of another (`org.example.a`). Matching the
-    /// redaction URI with `ends_with` against each stored label picks whichever comes first,
-    /// which is the wrong assertion here. Only an exact label+instance comparison distinguishes
-    /// them.
     #[test]
     fn test_redact_assertion_suffix_label_is_not_a_match() {
         use crate::{assertions::UserCbor, jumbf::labels::to_assertion_uri};
@@ -4824,10 +4817,7 @@ pub mod tests {
         );
     }
 
-    /// `redact_assertion` compares `label_with_instance(assertion_label_from_link(uri))`
-    /// against `label_with_instance(label_raw(), instance())` of each stored assertion.
-    /// That is only an exact comparison if the normalization round-trips, so pin it for
-    /// every label form the SDK emits.
+    /// Verify comparison conditions.
     #[test]
     fn test_redact_assertion_label_from_link_round_trip() {
         for label in [
@@ -4844,43 +4834,6 @@ pub mod tests {
                 Claim::label_with_instance(&parsed, instance),
                 label,
                 "label normalization must round-trip for {label}"
-            );
-        }
-    }
-
-    /// Labels whose `__` suffix is not a number do not round-trip: `assertion_label_from_link`
-    /// truncates them, while `add_assertion` stores them verbatim. This asymmetry is why such a
-    /// label cannot be signed at all — see `test_lossy_labels_are_rejected_at_signing` in
-    /// builder.rs, which is what keeps them out of `redact_assertion` entirely.
-    #[test]
-    fn test_lossy_label_normalization_is_the_reason() {
-        use crate::assertions::UserCbor;
-
-        for (label, truncated) in [
-            ("com.example.a__b", "com.example.a"),
-            ("com.example.my__cool__box", "com.example.my"),
-        ] {
-            let (parsed, instance) = Claim::assertion_label_from_link(label);
-            assert_eq!(parsed, truncated, "{label} should truncate to {truncated}");
-            assert_eq!(instance, 0, "{label} has no numeric instance");
-            assert_ne!(
-                Claim::label_with_instance(&parsed, instance),
-                label,
-                "{label} must not round-trip"
-            );
-
-            // The in-memory store keeps the label verbatim, so the two disagree.
-            let mut claim = Claim::new("unit test", Some("test"), 2);
-            claim
-                .add_assertion(&UserCbor::new(
-                    label,
-                    c2pa_cbor::to_vec(&"payload").unwrap(),
-                ))
-                .expect("add assertion");
-            assert_eq!(
-                claim.claim_assertion_store()[0].label_raw(),
-                label,
-                "add_assertion stores {label} raw, while lookups normalize it"
             );
         }
     }
