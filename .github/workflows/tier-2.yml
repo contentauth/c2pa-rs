@@ -94,14 +94,6 @@ jobs:
           echo "CARGO_TARGET_DIR=${{ github.workspace }}/target-${{ matrix.target }}" >> $GITHUB_ENV
           echo "TARGET_DIR=${{ github.workspace }}/target-${{ matrix.target }}" >> $GITHUB_ENV
 
-      # Isolate the nightly / -Z build-std emscripten artifacts from a cache
-      # written by differently-configured builds.
-      - name: Set CARGO_TARGET_DIR for Emscripten
-        if: matrix.target == 'wasm32-unknown-emscripten'
-        run: |
-          echo "CARGO_TARGET_DIR=${{ github.workspace }}/target-${{ matrix.target }}" >> $GITHUB_ENV
-          echo "TARGET_DIR=${{ github.workspace }}/target-${{ matrix.target }}" >> $GITHUB_ENV
-
       - name: Install Rust nightly toolchain for Emscripten
         if: matrix.target == 'wasm32-unknown-emscripten'
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30

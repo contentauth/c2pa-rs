@@ -60,8 +60,7 @@ fn main() {
     cbindgen::generate_with_config(&crate_dir, config).map_or_else(
         |error| match error {
             cbindgen::Error::ParseSyntaxError { .. } => {
-                // `cargo:warning=` surfaces in normal build output; `eprintln!` does not.
-                println!("cargo:warning=cbindgen ParseSyntaxError: c2pa.h was NOT generated");
+                eprintln!("Warning: ParseSyntaxError encountered while generating bindings");
             }
             e => panic!("{e:?}"),
         },

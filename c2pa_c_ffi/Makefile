@@ -62,9 +62,7 @@ define make_zip_emscripten
 	mkdir -p $(TARGET_DIR)/artifacts $(1)/include $(1)/lib; \
 	cp $(1)/c2pa.h $(1)/include/; \
 	cp $(1)/libc2pa_c.a $(1)/lib/; \
-	WASM=$$(find $(1) $(1)/deps -maxdepth 1 -name 'c2pa_c*.wasm' -print -quit 2>/dev/null || true); \
-	if [ -n "$$WASM" ]; then cp "$$WASM" $(1)/lib/c2pa_c.wasm; \
-	else echo "NOTE: no .wasm emitted for cdylib; shipping staticlib only"; fi; \
+	cp $(1)/c2pa_c.wasm $(1)/lib/ 2>/dev/null || true; \
 	(cd $(1) && zip -9 -r ../../artifacts/c2pa-v$${VERSION}-$(2).zip include lib); \
 	echo "Zip file created: $(TARGET_DIR)/artifacts/c2pa-v$${VERSION}-$(2).zip"
 endef
