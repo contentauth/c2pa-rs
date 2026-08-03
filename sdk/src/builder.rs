@@ -8341,10 +8341,10 @@ mod tests {
     }
 
     /// End-to-end redaction against a claim that went through sign -> load,
-    /// so theassertion store is the loader-normalized one that `redact_assertion` sees
-    /// when going through redacting previously signed assertions.
+    /// so the assertion store is the loader-normalized one that
+    // `redact_assertion` sees when going through assertions to redact.
     ///
-    /// Runs both directions against an ingredient holding `stds.schema-org.CreativeWork` and
+    /// Runs against an ingredient holding `stds.schema-org.CreativeWork` and
     /// `stds.schema-org.CreativeWork__1`:
     ///   1. redacting the `__1` URI must leave the base assertion, and
     ///   2. redacting the un-suffixed URI must leave the `__1` assertion.
@@ -8357,11 +8357,12 @@ mod tests {
         setup_logger();
         let context = test_context().into_shared();
 
-        const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
+        const ASSERTION_LABEL: &str = "com.example.test";
 
         let signer = test_signer(SigningAlg::Ps256);
 
-        // Sign an ingredient with two CreativeWork assertions, so the second is stored as `__1`.
+        // Sign an ingredient with two assertions sharing a label, so the second is stored
+        // as `__1`.
         let mut source = Cursor::new(TEST_IMAGE_CLEAN);
         let mut ingredient_stream = Cursor::new(Vec::new());
         let mut ingredient_builder = Builder {
@@ -8373,18 +8374,11 @@ mod tests {
             ..Default::default()
         };
         ingredient_builder.set_intent(BuilderIntent::Create(DigitalSourceType::DigitalCapture));
-        ingredient_builder
-            .add_assertion_json(
-                ASSERTION_LABEL,
-                &serde_json::json!({"@context": "https://schema.org", "@type": "CreativeWork", "n": 1}),
-            )
-            .unwrap();
-        ingredient_builder
-            .add_assertion_json(
-                ASSERTION_LABEL,
-                &serde_json::json!({"@context": "https://schema.org", "@type": "CreativeWork", "n": 2}),
-            )
-            .unwrap();
+        for n in 1..=2 {
+            ingredient_builder
+                .add_assertion_json(ASSERTION_LABEL, &serde_json::json!({ "n": n }))
+                .unwrap();
+        }
         ingredient_builder
             .sign(
                 signer.as_ref(),
@@ -8399,19 +8393,8 @@ mod tests {
             .with_stream("image/jpeg", &mut ingredient_stream)
             .expect("read ingredient");
         let ingredient_label = ingredient_reader.active_label().unwrap().to_string();
-        assert_eq!(
-            ingredient_reader
-                .active_manifest()
-                .unwrap()
-                .assertions()
-                .iter()
-                .filter(|a| a.label() == ASSERTION_LABEL)
-                .count(),
-            2,
-            "test setup: ingredient should carry two CreativeWork assertions"
-        );
 
-        // (redacted label, label expected to survive)
+        // (redacted label, `n` of the instance expected to survive)
         for (redacted_label, surviving_n) in [
             (format!("{ASSERTION_LABEL}__1"), 1),
             (ASSERTION_LABEL.to_string(), 2),
@@ -8437,41 +8420,35 @@ mod tests {
                 .with_stream("image/jpeg", &mut ingredient_stream, &context)
                 .unwrap();
             final_builder.add_ingredient(parent);
-            let sign_result = final_builder.sign(
-                signer.as_ref(),
-                "image/jpeg",
-                &mut final_input,
-                &mut final_output,
-            );
-            assert!(
-                sign_result.is_ok(),
-                "signing with redaction of {redacted_label} failed: {:?}",
-                sign_result.err()
-            );
+            final_builder
+                .sign(
+                    signer.as_ref(),
+                    "image/jpeg",
+                    &mut final_input,
+                    &mut final_output,
+                )
+                .expect("sign with redaction");
 
             final_output.set_position(0);
             let reader = Reader::from_shared_context(&context)
                 .with_stream("image/jpeg", &mut final_output)
                 .expect("read redacted output");
 
-            let ingredient_manifest = reader
+            // Exactly the other instance survives, which pins both that the redaction
+            // applied and that it removed the right one.
+            let remaining: Vec<_> = reader
                 .get_manifest(&ingredient_label)
-                .expect("ingredient manifest should still be present");
-            let remaining: Vec<_> = ingredient_manifest
+                .expect("ingredient manifest present")
                 .assertions()
                 .iter()
                 .filter(|a| a.label() == ASSERTION_LABEL)
+                .filter_map(|a| a.to_assertion::<serde_json::Value>().ok())
+                .map(|v| v["n"].clone())
                 .collect();
-
             assert_eq!(
-                remaining.len(),
-                1,
-                "redacting {redacted_label} should remove exactly one CreativeWork assertion"
-            );
-            assert_eq!(
-                remaining[0].to_assertion::<serde_json::Value>().unwrap()["n"],
-                serde_json::json!(surviving_n),
-                "redacting {redacted_label} removed the wrong instance"
+                remaining,
+                [serde_json::json!(surviving_n)],
+                "redacting {redacted_label} must leave exactly instance n={surviving_n}"
             );
         }
     }

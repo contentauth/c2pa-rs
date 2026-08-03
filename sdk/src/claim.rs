@@ -1826,10 +1826,9 @@ impl Claim {
         // Delete assertion or databox
         if assertion_uri.contains(ASSERTION_STORE) {
             // Compare the assertion label strictly using label and instance.
-            //
-            // Both sides of this comparison are normalized.
+            // Both sides of this comparison are normalized (to be compareable).
             // `label`/`instance` come from `assertion_label_from_link`.
-            // The stored side is normalized too because every claim reaching here has been
+            // The stored side is normalized because every claim coming to here has been
             // parsed by `Store::from_jumbf_with_context`.
             let target = Claim::label_with_instance(&label, instance);
             if let Some(index) = self
