@@ -27,9 +27,9 @@ fn main() {
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR environment variable not set");
     println!("Running c2pa_c_ffi folder build script: {out_dir:?}");
 
-    // Prefer an explicitly declared header directory over deriving it from
-    // OUT_DIR, whose layout shifts across targets/toolchains (e.g. emscripten
-    // with -Z build-std).
+    // Prefer an explicitly declared header directory over deriving it from OUT_DIR,
+    // whose layout seems to be able to shift across targets/toolchains and tooling updates...
+    // (e.g. emscripten with -Z build-std).
     let header_dir = match env::var("C2PA_HEADER_DIR") {
         Ok(dir) => PathBuf::from(dir),
         Err(_) => Path::new(&out_dir)
