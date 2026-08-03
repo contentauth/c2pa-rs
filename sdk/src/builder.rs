@@ -9116,6 +9116,47 @@ mod tests {
         assert!(reader_json.contains("thumbnail.ingredient"));
     }
 
+    /// `set_thumbnail` stores the format verbatim, bypassing `format_to_mime`.
+    #[test]
+    fn test_set_thumbnail_uppercase_mime_v1_claim() {
+        let definition = ManifestDefinition {
+            claim_version: Some(1),
+            claim_generator_info: [ClaimGeneratorInfo::default()].to_vec(),
+            format: "image/jpeg".to_string(),
+            title: Some("Test_Manifest".to_string()),
+            ..Default::default()
+        };
+
+        let mut builder = Builder {
+            definition,
+            ..Default::default()
+        };
+
+        let mut thumbnail = Cursor::new(TEST_THUMBNAIL);
+        builder
+            .set_thumbnail("IMAGE/JPEG", &mut thumbnail)
+            .expect("thumbnail should be set");
+
+        let claim = builder.to_claim().expect("claim should build");
+        let labels: Vec<String> = claim
+            .claim_assertion_store()
+            .iter()
+            .map(|a| a.label_raw())
+            .collect();
+
+        assert!(
+            labels
+                .iter()
+                .any(|l| l.contains(labels::JPEG_CLAIM_THUMBNAIL)),
+            "expected a {} assertion, got: {labels:?}",
+            labels::JPEG_CLAIM_THUMBNAIL
+        );
+        assert!(
+            !labels.iter().any(|l| l.contains("IMAGE/JPEG")),
+            "uppercase format leaked into an assertion label: {labels:?}"
+        );
+    }
+
     #[test]
     fn test_with_archive() -> Result<()> {
         let builder = Builder::default().with_definition(r#"{"title": "Test Image"}"#)?;
@@ -9533,6 +9574,30 @@ mod tests {
         assert_eq!(
             loaded_old.definition.title,
             Some("Test Old Format".to_string())
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_with_archive_drops_archive_metadata_assertion() -> Result<()> {
+        let settings = Settings::new().with_value("builder.generate_c2pa_archive", true)?;
+        let context = Context::new().with_settings(settings)?;
+        let builder = Builder::from_context(context)
+            .with_definition(r#"{"title": "Test Archive Metadata"}"#)?;
+
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive)?;
+        archive.rewind()?;
+
+        let loaded = Builder::default().with_archive(archive)?;
+        assert!(
+            !loaded
+                .definition
+                .assertions
+                .iter()
+                .any(|a| a.label == crate::assertions::labels::ARCHIVE_METADATA),
+            "archive bookkeeping assertion should not survive into the reconstructed builder"
         );
 
         Ok(())
