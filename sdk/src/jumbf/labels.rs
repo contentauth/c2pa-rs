@@ -198,7 +198,7 @@ pub(crate) fn box_name_from_uri(uri: &str) -> Option<String> {
 //
 // Only the experimental `Builder` filtering API needs this, so it is gated to avoid an unused-item
 // warning when that feature is off.
-#[cfg(feature = "experimental_builder_filter")]
+#[cfg(feature = "unstable_builder_filter")]
 pub(crate) fn label_segment_from_uri(uri: &str) -> &str {
     uri.rsplit('/').next().unwrap_or(uri)
 }
@@ -213,7 +213,7 @@ pub(crate) fn label_segment_from_uri(uri: &str) -> &str {
 //
 // Only the experimental `Builder` filtering API needs this, so it is gated to avoid an unused-item
 // warning when that feature is off.
-#[cfg(feature = "experimental_builder_filter")]
+#[cfg(feature = "unstable_builder_filter")]
 pub(crate) fn parse_positional_label(label: &str) -> (&str, usize) {
     if let Some(pos) = label.rfind("__") {
         if let Ok(n) = label[pos + 2..].parse::<usize>() {
@@ -558,7 +558,7 @@ pub mod tests {
         );
     }
 
-    #[cfg(feature = "experimental_builder_filter")]
+    #[cfg(feature = "unstable_builder_filter")]
     #[test]
     fn test_label_segment_from_uri() {
         assert_eq!(
@@ -572,7 +572,7 @@ pub mod tests {
         );
     }
 
-    #[cfg(feature = "experimental_builder_filter")]
+    #[cfg(feature = "unstable_builder_filter")]
     #[test]
     fn test_parse_positional_label() {
         assert_eq!(
