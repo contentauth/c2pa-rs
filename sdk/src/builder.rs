@@ -8608,7 +8608,7 @@ mod tests {
     /// Tests label normalization,
     /// which redaction relies on when looking for redaction URIs.
     #[test]
-    fn test_lossy_labels_are_rejected_at_signing() {
+    fn test_signing_label_normalization() {
         setup_logger();
 
         let signer = test_signer(SigningAlg::Ps256);
