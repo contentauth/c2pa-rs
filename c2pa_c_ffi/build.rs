@@ -14,9 +14,19 @@
 //! This creates the c2pa.h header file and the c2pa_version.txt file
 //! in the target directory. It is intended to be run as part of the build process.
 //! The crate version is added to the header file.
-use std::{env, path::Path};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 fn main() {
+    // A `rerun-if-*` directive replaces cargo's default "rerun when any package
+    // file changed" rule, so every input the header depends on must be listed.
+    println!("cargo:rerun-if-env-changed=C2PA_HEADER_DIR");
+    println!("cargo:rerun-if-changed=src");
+    println!("cargo:rerun-if-changed=cbindgen.toml");
+    println!("cargo:rerun-if-changed=build.rs");
+
     // Get the version from the environment variable set by Cargo.
     let version = env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION is not set");
 
@@ -24,10 +34,19 @@ fn main() {
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR environment variable not set");
     println!("Running c2pa_c_ffi folder build script: {out_dir:?}");
 
-    let workspace_target_dir = Path::new(&out_dir)
-        .ancestors()
-        .nth(3)
-        .expect("Invalid OUT_DIR structure");
+    // Prefer an explicitly declared header directory over deriving it from
+    // OUT_DIR, whose layout shifts across targets/toolchains (e.g. emscripten
+    // with -Z build-std).
+    let header_dir = match env::var("C2PA_HEADER_DIR") {
+        Ok(dir) => PathBuf::from(dir),
+        Err(_) => Path::new(&out_dir)
+            .ancestors()
+            .nth(3)
+            .expect("Invalid OUT_DIR structure")
+            .to_path_buf(),
+    };
+    fs::create_dir_all(&header_dir).expect("could not create header output directory");
+    let workspace_target_dir = header_dir.as_path();
 
     // Generate the bindings using cbindgen.
     let crate_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
@@ -48,7 +67,10 @@ fn main() {
     cbindgen::generate_with_config(&crate_dir, config).map_or_else(
         |error| match error {
             cbindgen::Error::ParseSyntaxError { .. } => {
-                eprintln!("Warning: ParseSyntaxError encountered while generating bindings");
+                // `cargo:warning=` surfaces in normal build output; `eprintln!` does not.
+                println!(
+                    "cargo:warning=cbindgen ParseSyntaxError: c2pa.h was NOT generated"
+                );
             }
             e => panic!("{e:?}"),
         },

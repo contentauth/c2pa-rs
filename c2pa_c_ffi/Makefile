@@ -62,9 +62,28 @@ define make_zip_emscripten
 	mkdir -p $(TARGET_DIR)/artifacts $(1)/include $(1)/lib; \
 	cp $(1)/c2pa.h $(1)/include/; \
 	cp $(1)/libc2pa_c.a $(1)/lib/; \
-	cp $(1)/c2pa_c.wasm $(1)/lib/ 2>/dev/null || true; \
+	WASM=$$(find $(1) $(1)/deps -maxdepth 1 -name 'c2pa_c*.wasm' -print -quit 2>/dev/null || true); \
+	if [ -n "$$WASM" ]; then cp "$$WASM" $(1)/lib/c2pa_c.wasm; \
+	else echo "NOTE: no .wasm emitted for cdylib; shipping staticlib only"; fi; \
 	(cd $(1) && zip -9 -r ../../artifacts/c2pa-v$${VERSION}-$(2).zip include lib); \
 	echo "Zip file created: $(TARGET_DIR)/artifacts/c2pa-v$${VERSION}-$(2).zip"
+endef
+
+# Fail early (with diagnostics) if the cbindgen-generated header is missing,
+# self-healing a build-script skip caused by cargo freshness.
+define require_header
+	set -e; \
+	if [ ! -f $(1)/c2pa.h ]; then \
+		echo "c2pa.h missing in $(1) -- forcing cbindgen rerun"; \
+		touch build.rs; \
+		C2PA_HEADER_DIR="$(abspath $(1))" \
+			cargo +nightly build -Z build-std=std,panic_abort --target=wasm32-unknown-emscripten $(CARGO_BUILD_FLAGS_EMSCRIPTEN); \
+	fi; \
+	if [ ! -f $(1)/c2pa.h ]; then \
+		echo "ERROR: c2pa.h still missing in $(1). Found instead:"; \
+		find $(TARGET_DIR) -maxdepth 4 -name c2pa.h -print; \
+		exit 1; \
+	fi
 endef
 
 check-format:
@@ -204,7 +223,9 @@ release-emscripten:
 	rustup target add --toolchain nightly wasm32-unknown-emscripten
 	EMCC_CFLAGS="-fwasm-exceptions -pthread" \
 	RUSTFLAGS="-C target-feature=+atomics,+bulk-memory,+mutable-globals" \
+	C2PA_HEADER_DIR="$(abspath $(TARGET_DIR)/wasm32-unknown-emscripten/release)" \
 		cargo +nightly build -Z build-std=std,panic_abort --target=wasm32-unknown-emscripten $(CARGO_BUILD_FLAGS_EMSCRIPTEN)
+	@$(call require_header,$(TARGET_DIR)/wasm32-unknown-emscripten/release)
 	@$(call make_zip_emscripten,$(TARGET_DIR)/wasm32-unknown-emscripten/release,wasm32-unknown-emscripten)
 
 # make release

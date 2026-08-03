@@ -77,6 +77,14 @@ jobs:
           echo "CARGO_TARGET_DIR=${{ github.workspace }}/target-${{ matrix.target }}" >> $GITHUB_ENV
           echo "TARGET_DIR=${{ github.workspace }}/target-${{ matrix.target }}" >> $GITHUB_ENV
 
+      # Isolate the nightly / -Z build-std emscripten artifacts from a cache
+      # written by differently-configured builds.
+      - name: Set CARGO_TARGET_DIR for Emscripten
+        if: matrix.target == 'wasm32-unknown-emscripten'
+        run: |
+          echo "CARGO_TARGET_DIR=${{ github.workspace }}/target-${{ matrix.target }}" >> $GITHUB_ENV
+          echo "TARGET_DIR=${{ github.workspace }}/target-${{ matrix.target }}" >> $GITHUB_ENV
+
       - name: Set up Emscripten
         if: matrix.target == 'wasm32-unknown-emscripten'
         run: |
@@ -123,15 +131,15 @@ jobs:
         if: matrix.os != 'windows-latest' && matrix.os != 'windows-11-arm' && matrix.target != 'wasm32-unknown-emscripten'
         run: make release TARGET=${{ matrix.target }}
 
-      - name: Upload build artifacts (Android)
-        if: contains(matrix.target, 'android')
+      - name: Upload build artifacts (separate target dir)
+        if: contains(matrix.target, 'android') || matrix.target == 'wasm32-unknown-emscripten'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-artifacts-${{ matrix.os }}-${{ matrix.target }}
           path: target-${{ matrix.target }}/artifacts/
 
-      - name: Upload build artifacts (Non-Android)
-        if: "!contains(matrix.target, 'android')"
+      - name: Upload build artifacts (default target dir)
+        if: "!contains(matrix.target, 'android') && matrix.target != 'wasm32-unknown-emscripten'"
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-artifacts-${{ matrix.os }}-${{ matrix.target }}
