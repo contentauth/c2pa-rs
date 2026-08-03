@@ -172,7 +172,7 @@ impl Store {
                     Some(uri) => uri.to_string(),
                     None => format!(
                         "https://cai.org/unknown_trust_list_{}",
-                        &extfmt::Hexlify(&hash_by_alg(
+                        extfmt::Hexlify(&hash_by_alg(
                             "sha256",
                             anchor.trust_anchors.as_bytes(),
                             None
