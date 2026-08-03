@@ -224,6 +224,10 @@ pub mod jumbf_io;
 /// The settings module provides a way to configure the C2PA SDK.
 pub mod settings;
 
+/// The `soft_binding` module supports the C2PA soft binding algorithm list registry
+/// and the [Soft Binding Resolution API](https://spec.c2pa.org/specifications/specifications/2.2/softbinding/Decoupled.html).
+pub mod soft_binding;
+
 /// Supports status tracking as defined in the C2PA Technical Specification.
 #[doc(hidden)]
 pub mod status_tracker;

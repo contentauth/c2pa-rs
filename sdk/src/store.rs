@@ -3458,7 +3458,7 @@ impl Store {
 
     /// Handles remote manifests when file_io/fetch_remote_manifests feature is enabled
     #[async_generic]
-    fn handle_remote_manifest(ext_ref: &str, _context: &Context) -> Result<Vec<u8>> {
+    pub(crate) fn handle_remote_manifest(ext_ref: &str, _context: &Context) -> Result<Vec<u8>> {
         // verify provenance path is remote url
         if Store::is_valid_remote_url(ext_ref) {
             #[cfg(feature = "fetch_remote_manifests")]

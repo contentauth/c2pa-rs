@@ -168,6 +168,9 @@ pub enum Error {
     #[error("must fetch remote manifests from url {0}")]
     RemoteManifestUrl(String),
 
+    #[error("soft binding resolution API request failed: {0}")]
+    SoftBindingResolutionFetch(String),
+
     #[error("failed to remotely sign data")]
     FailedToRemoteSign,
 

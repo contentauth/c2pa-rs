@@ -1173,6 +1173,51 @@ pub unsafe extern "C" fn c2pa_reader_with_manifest_data_and_stream(
     box_tracked!(reader)
 }
 
+/// Resolves and validates a manifest for `stream` using a soft binding value the caller
+/// has already obtained (e.g. via a proprietary local watermark/fingerprint decoder).
+///
+/// This implements the caller-driven half of the C2PA "Decoupled" soft binding resolution
+/// flow: it looks up `alg` in the configured soft binding algorithm registry, queries its
+/// resolution API endpoint(s), and validates the best matching manifest against `stream`.
+/// This method consumes the original Reader and returns a new configured Reader. The
+/// original Reader pointer becomes invalid after this call and should not be reused.
+///
+/// # Safety
+///
+/// * `reader` must be a valid pointer to a configured C2paReader
+///   (usually with a Context).
+/// * `alg` must be a valid null-terminated string with the soft binding algorithm identifier.
+/// * `value` must be a valid pointer to the soft binding value bytes.
+/// * `value_size` must be the length of the `value` buffer.
+/// * `format` must be a valid null-terminated string with the MIME type.
+/// * `stream` must be a valid pointer to a C2paStream.
+/// * After calling this function, the `reader` pointer becomes invalid.
+///
+/// # Returns
+///
+/// A pointer to a newly configured C2paReader, or NULL on error.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_reader_with_soft_binding(
+    reader: *mut C2paReader,
+    alg: *const c_char,
+    value: *const c_uchar,
+    value_size: usize,
+    format: *const c_char,
+    stream: *mut C2paStream,
+) -> *mut C2paReader {
+    // Take ownership of `reader` first so every early return below (ours or
+    // `with_soft_binding`'s) drops it uniformly via scope-exit `Drop`.
+    let reader = untrack_or_return_null!(reader, C2paReader);
+
+    let alg = cstr_or_return_null!(alg);
+    let value = bytes_or_return_null!(value, value_size, "value");
+    let format = cstr_or_return_null!(format);
+    let stream = deref_mut_or_return_null!(stream, C2paStream);
+
+    let reader = ok_or_return_null!(reader.with_soft_binding(&alg, value, &format, stream));
+    box_tracked!(reader)
+}
+
 /// Configures an existing reader with a fragment stream.
 ///
 /// This is used for fragmented BMFF media formats where manifests are stored
@@ -3486,6 +3531,64 @@ mod tests {
             c2pa_free(builder as *const c_void);
             c2pa_free(signer as *const c_void);
             c2pa_free(context as *const c_void);
+        }
+    }
+
+    #[test]
+    fn test_c2pa_reader_with_soft_binding_null_alg() {
+        let reader = unsafe { c2pa_reader_new() };
+        assert!(!reader.is_null());
+
+        let mut stream = TestStream::new(Vec::new());
+        let format = CString::new("image/jpeg").unwrap();
+        let value = [1u8, 2, 3];
+
+        let result = unsafe {
+            c2pa_reader_with_soft_binding(
+                reader,
+                std::ptr::null(),
+                value.as_ptr(),
+                value.len(),
+                format.as_ptr(),
+                stream.as_ptr(),
+            )
+        };
+        assert!(result.is_null());
+        let error = unsafe { c2pa_error() };
+        let error_str = unsafe { CString::from_raw(error) };
+        assert_eq!(error_str.to_str().unwrap(), "NullParameter: alg");
+    }
+
+    #[test]
+    fn test_c2pa_reader_with_soft_binding_no_registry_is_noop() {
+        let context = unsafe { c2pa_context_new() };
+        assert!(!context.is_null());
+
+        let reader = unsafe { c2pa_reader_from_context(context) };
+        assert!(!reader.is_null());
+
+        let source_image = include_bytes!(fixture_path!("CA.jpg"));
+        let mut stream = TestStream::new(source_image.to_vec());
+        let format = CString::new("image/jpeg").unwrap();
+        let alg = CString::new("com.example.watermark").unwrap();
+        let value = [1u8, 2, 3];
+
+        // No `soft_binding.algorithm_registry` configured: this should be a no-op that
+        // still returns a valid (unchanged) reader, not an error.
+        let configured_reader = unsafe {
+            c2pa_reader_with_soft_binding(
+                reader,
+                alg.as_ptr(),
+                value.as_ptr(),
+                value.len(),
+                format.as_ptr(),
+                stream.as_ptr(),
+            )
+        };
+        assert!(!configured_reader.is_null());
+
+        unsafe {
+            c2pa_free(configured_reader as *const c_void);
         }
     }
 
