@@ -32,7 +32,7 @@ use std::io::Cursor;
 
 use c2pa::assertions::{BmffHash, ExclusionsMap, MerkleMap, VecByteBuf};
 use serde_bytes::ByteBuf;
-use sha2::{Digest, Sha256};
+use sha2::{Digest, Sha256, Sha512};
 
 const C2PA_UUID: [u8; 16] = [
     0xd8, 0xfe, 0xc3, 0xd6, 0x1b, 0x0e, 0x48, 0x3c, 0x92, 0x97, 0x58, 0x28, 0x87, 0x7e, 0xc4, 0x81,
@@ -419,13 +419,18 @@ fn build_single_track_asset_padded(
 
 /// Builds a `BmffHash` assertion with a single track-based Merkle map.
 fn track_merkle_assertion(local_id: usize, roots: &[Vec<u8>]) -> BmffHash {
-    let mut bmff_hash = BmffHash::new("test", "sha256", None);
+    track_merkle_assertion_alg(local_id, roots, "sha256")
+}
+
+/// Like [`track_merkle_assertion`] but with a caller-chosen hash algorithm.
+fn track_merkle_assertion_alg(local_id: usize, roots: &[Vec<u8>], alg: &str) -> BmffHash {
+    let mut bmff_hash = BmffHash::new("test", alg, None);
     bmff_hash.add_exclusions(&mut vec![ExclusionsMap::new("/uuid".to_owned())]);
     bmff_hash.set_merkle(vec![MerkleMap {
         unique_id: 0,
         local_id,
         count: roots.len(),
-        alg: Some("sha256".into()),
+        alg: Some(alg.into()),
         init_hash: None,
         hashes: VecByteBuf(roots.iter().map(|r| ByteBuf::from(r.clone())).collect()),
         fixed_block_size: None,
@@ -745,4 +750,135 @@ fn zero_samples_per_chunk_is_rejected() {
         matches!(err, c2pa::Error::InvalidAsset(ref m) if m == "stsc samples_per_chunk must be non-zero"),
         "unexpected error: {err:?}"
     );
+}
+
+// --- Verification-semantics characterization (fixes locked in ahead of the
+//     native-reader swap) ---------------------------------------------------
+
+/// A moov that carries a C2PA Merkle box but exposes no readable track must be
+/// rejected. Previously this silently *passed* verification (the per-track loop
+/// was gated on `track_count > 0` with no else), which let a Merkle-claimed
+/// asset with no tracks slip through.
+#[test]
+fn no_tracks_with_merkle_map_is_rejected() {
+    let ftyp = build_box(b"ftyp", b"isom\x00\x00\x00\x00isom");
+    // localId 1 references a track that does not exist.
+    let uuid = build_merkle_uuid_box(0, 1, 0);
+    // moov with mvhd only: no trak boxes, so track_count == 0.
+    let moov = build_box(b"moov", &build_mvhd());
+    let mdat = build_box(b"mdat", &[0u8; 8]);
+    let file = [ftyp, uuid, moov, mdat].concat();
+
+    let bmff_hash = track_merkle_assertion(1, &[vec![0u8; 32]]);
+    let mut reader = Cursor::new(file);
+    let err = bmff_hash
+        .verify_stream_hash(&mut reader, Some("sha256"))
+        .expect_err("a Merkle map with no readable track must not pass");
+    assert!(
+        matches!(err, c2pa::Error::HashMismatch(ref m) if m == "BMFF has no tracks for timed-media Merkle verification"),
+        "expected the no-tracks rejection, got: {err:?}"
+    );
+}
+
+/// A sample whose chunk is absent from the offset table (`stco` with zero
+/// entries) is a genuine location miss and must report as such — distinct from
+/// a read failure.
+#[test]
+fn missing_chunk_offset_reports_location_miss() {
+    let track = TrackSpec {
+        track_id: 1,
+        stsc: vec![StscEntry {
+            first_chunk: 1,
+            samples_per_chunk: 1,
+            sample_description_index: 1,
+        }],
+        sample_sizes: SampleSizes::Variable(vec![4]),
+        use_co64: false,
+    };
+    let (mut file, roots) = build_single_track_asset(track, &[b"data"]);
+
+    // Zero the stco entry_count (4 bytes after the fullbox header) so chunk 1 has
+    // no offset entry.
+    let pos = file
+        .windows(4)
+        .position(|w| w == b"stco")
+        .expect("stco box present");
+    let ec = pos + 4 + 4; // fourcc -> past fourcc -> version/flags
+    file[ec..ec + 4].copy_from_slice(&0u32.to_be_bytes());
+
+    let bmff_hash = track_merkle_assertion(1, &roots);
+    let mut reader = Cursor::new(file);
+    let err = bmff_hash
+        .verify_stream_hash(&mut reader, Some("sha256"))
+        .expect_err("missing chunk offset must be rejected");
+    assert!(
+        matches!(err, c2pa::Error::HashMismatch(ref m) if m == "Merkle location not found"),
+        "expected a location miss, got: {err:?}"
+    );
+}
+
+/// A sample whose chunk offset points past the end of the stream cannot be read;
+/// this read failure must surface as a distinct (malformed-asset) error rather
+/// than be masqueraded as a location miss.
+#[test]
+fn unreadable_sample_reports_read_error() {
+    let track = TrackSpec {
+        track_id: 1,
+        stsc: vec![StscEntry {
+            first_chunk: 1,
+            samples_per_chunk: 1,
+            sample_description_index: 1,
+        }],
+        sample_sizes: SampleSizes::Variable(vec![4]),
+        use_co64: false,
+    };
+    let (mut file, roots) = build_single_track_asset(track, &[b"data"]);
+
+    // Point the first stco offset far past EOF so the sample read fails.
+    let pos = file
+        .windows(4)
+        .position(|w| w == b"stco")
+        .expect("stco box present");
+    let entry0 = pos + 4 + 4 + 4; // fourcc -> version/flags -> entry_count -> first entry
+    file[entry0..entry0 + 4].copy_from_slice(&0xffff_ff00u32.to_be_bytes());
+
+    let bmff_hash = track_merkle_assertion(1, &roots);
+    let mut reader = Cursor::new(file);
+    let err = bmff_hash
+        .verify_stream_hash(&mut reader, Some("sha256"))
+        .expect_err("an unreadable sample must be rejected");
+    assert!(
+        matches!(err, c2pa::Error::InvalidAsset(ref m) if m.contains("sample read failed")),
+        "expected a read failure, got: {err:?}"
+    );
+}
+
+/// Coverage for the SHA-512 branch of the per-chunk hasher selection.
+#[test]
+fn valid_sha512_verifies() {
+    let track = TrackSpec {
+        track_id: 1,
+        stsc: vec![StscEntry {
+            first_chunk: 1,
+            samples_per_chunk: 1,
+            sample_description_index: 1,
+        }],
+        sample_sizes: SampleSizes::Variable(vec![11]),
+        use_co64: false,
+    };
+    let sample: &[u8] = b"sha512 data";
+    // The asset bytes are independent of the Merkle hash algorithm; only the
+    // stored root depends on it, so recompute the root with SHA-512.
+    let (file, _sha256_roots) = build_single_track_asset(track, &[sample]);
+    let root = {
+        let mut h = Sha512::new();
+        h.update(sample);
+        h.finalize().to_vec()
+    };
+
+    let bmff_hash = track_merkle_assertion_alg(1, &[root], "sha512");
+    let mut reader = Cursor::new(file);
+    bmff_hash
+        .verify_stream_hash(&mut reader, Some("sha512"))
+        .expect("sha512 timed-media asset should verify");
 }
