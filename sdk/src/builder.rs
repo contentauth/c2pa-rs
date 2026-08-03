@@ -32,7 +32,7 @@ use zip::ZipArchive;
 use crate::assertions::{CreativeWork, Exif};
 // Only the experimental filtering API resolves ingredient references by positional assertion
 // label, so these helpers are needed only when that feature is enabled.
-#[cfg(feature = "experimental_builder_filter")]
+#[cfg(feature = "unstable_builder_filter")]
 use crate::jumbf::labels::{
     assertion_label_from_uri, label_segment_from_uri, parse_positional_label,
 };
@@ -982,13 +982,13 @@ impl Builder {
     ///
     /// <div class="warning">
     ///
-    /// **Experimental.** This method is available only with the `experimental_builder_filter`
+    /// **Experimental.** This method is available only with the `unstable_builder_filter`
     /// feature enabled. It is exempt from this crate's usual semantic-versioning stability
     /// guarantees and may change in a backward-incompatible way, or be removed entirely, in any
     /// release.
     ///
     /// </div>
-    #[cfg(feature = "experimental_builder_filter")]
+    #[cfg(feature = "unstable_builder_filter")]
     pub fn filter_actions<F>(&mut self, mut keep: F) -> Result<&mut Self>
     where
         F: FnMut(&Action) -> bool,
@@ -1083,13 +1083,13 @@ impl Builder {
     ///
     /// <div class="warning">
     ///
-    /// **Experimental.** This method is available only with the `experimental_builder_filter`
+    /// **Experimental.** This method is available only with the `unstable_builder_filter`
     /// feature enabled. It is exempt from this crate's usual semantic-versioning stability
     /// guarantees and may change in a backward-incompatible way, or be removed entirely, in any
     /// release.
     ///
     /// </div>
-    #[cfg(feature = "experimental_builder_filter")]
+    #[cfg(feature = "unstable_builder_filter")]
     pub fn filter_ingredients<F>(&mut self, mut rescue: F) -> Result<&mut Self>
     where
         F: FnMut(&Ingredient) -> bool,
@@ -3654,7 +3654,7 @@ impl std::fmt::Display for Builder {
 }
 
 /// Outcome of rewriting one positional ingredient reference after pruning.
-#[cfg(feature = "experimental_builder_filter")]
+#[cfg(feature = "unstable_builder_filter")]
 enum UriRewrite {
     /// Already points at the correct index (or is not a tracked positional ref); leave as-is.
     Unchanged,
@@ -3685,7 +3685,7 @@ fn action_ingredient_ref_ids(action: &Action, pre_filter_ids: &[String]) -> Vec<
 
 /// Rewrites a single `HashedUri` whose URL ends in a positional ingredient label so it points at
 /// the ingredient's new position after pruning.
-#[cfg(feature = "experimental_builder_filter")]
+#[cfg(feature = "unstable_builder_filter")]
 fn rewrite_one_ingredient_uri(
     hu: &HashedUri,
     pre_filter_ids: &[String],
@@ -3719,7 +3719,7 @@ fn rewrite_one_ingredient_uri(
 ///
 /// Required after any ingredient is pruned: `to_claim` re-emits the surviving ingredients
 /// positionally at sign time, so any stale `__N` reference would otherwise dangle.
-#[cfg(feature = "experimental_builder_filter")]
+#[cfg(feature = "unstable_builder_filter")]
 fn rewrite_action_ingredient_urls(
     actions: &mut Actions,
     pre_filter_ids: &[String],
@@ -10105,7 +10105,7 @@ mod tests {
 
     // Tests for the experimental `filter_actions` / `filter_ingredients` API. Kept in a
     // feature-gated submodule so the whole suite compiles only when the feature is enabled.
-    #[cfg(feature = "experimental_builder_filter")]
+    #[cfg(feature = "unstable_builder_filter")]
     mod filter_tests {
         use super::*;
 
