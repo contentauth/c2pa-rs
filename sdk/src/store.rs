@@ -73,7 +73,7 @@ use crate::{
     manifest_store_report::ManifestStoreReport,
     maybe_send_sync::MaybeSend,
     settings::{
-        builder::OcspFetchScope, get_thread_local_settings, Settings, TrustKind, MAX_ASSERTIONS,
+        builder::OcspFetchScope, get_thread_local_settings, Settings, TrustListKind, MAX_ASSERTIONS,
     },
     status_tracker::{ErrorBehavior, StatusTracker},
     utils::{
@@ -181,9 +181,9 @@ impl Store {
                 };
 
                 let trust_list_type = match anchor.trust_kind {
-                    TrustKind::Signer => TrustAnchorType::Signer,
-                    TrustKind::TSA => TrustAnchorType::TSA,
-                    TrustKind::CAWG => TrustAnchorType::CAWG,
+                    TrustListKind::Signer => TrustAnchorType::Signer,
+                    TrustListKind::TSA => TrustAnchorType::TSA,
+                    TrustListKind::CAWG => TrustAnchorType::CAWG,
                 };
 
                 // Anchors are pre-validated when loading the settings

@@ -23,26 +23,15 @@ use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
 use crate::{
-    context::Context,
-    crypto::cose::{parse_cose_sign1, CertificateTrustPolicy, CoseError, Verifier},
-    dynamic_assertion::PartialClaim,
-    identity::{
-        claim_aggregation::IcaSignatureVerifier,
-        identity_assertion::{
+    Manifest, Reader, context::Context, crypto::cose::{CertificateTrustPolicy, CoseError, TrustAnchorType, Verifier, parse_cose_sign1}, dynamic_assertion::PartialClaim, identity::{
+        SignatureVerifier, ToCredentialSummary, ValidationError, claim_aggregation::IcaSignatureVerifier, identity_assertion::{
             report::{
                 IdentityAssertionReport, IdentityAssertionsForManifest,
                 IdentityAssertionsForManifestStore, SignerPayloadReport,
             },
             signer_payload::SignerPayload,
-        },
-        internal::debug_byte_slice::DebugByteSlice,
-        x509::X509SignatureInfo,
-        SignatureVerifier, ToCredentialSummary, ValidationError,
-    },
-    jumbf::labels::to_assertion_uri,
-    log_current_item, log_item,
-    status_tracker::StatusTracker,
-    Manifest, Reader,
+        }, internal::debug_byte_slice::DebugByteSlice, x509::X509SignatureInfo,
+    }, jumbf::labels::to_assertion_uri, log_current_item, log_item, status_tracker::StatusTracker,
 };
 
 /// This struct represents the raw content of the identity assertion.
@@ -325,7 +314,7 @@ impl IdentityAssertion {
                         let _ = ctp.add_trust_anchors(
                             anchor.trust_anchors.as_bytes(),
                             anchor.trust_uri.as_deref().unwrap_or(""),
-                            crate::crypto::cose::TrustAnchorType::CAWG,
+                            TrustAnchorType::CAWG,
                         );
                     }
                 }

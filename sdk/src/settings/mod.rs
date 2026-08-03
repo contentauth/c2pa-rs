@@ -60,7 +60,7 @@ pub(crate) trait SettingsValidate {
 #[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum TrustKind {
+pub enum TrustListKind {
     // Certificate signing trust list
     Signer,
     // Time Stamping Authority trust list
@@ -84,7 +84,7 @@ pub struct TrustAnchor {
     /// URI identifier for the trust list.
     pub trust_uri: Option<String>,
     /// Kind of trust list.  This is used to determine the trust purpose
-    pub trust_kind: TrustKind,
+    pub trust_kind: TrustListKind,
 }
 
 impl Default for TrustAnchor {
@@ -92,7 +92,7 @@ impl Default for TrustAnchor {
         Self {
             trust_anchors: "".into(),
             trust_uri: None,
-            trust_kind: TrustKind::Signer,
+            trust_kind: TrustListKind::Signer,
         }
     }
 }
@@ -227,7 +227,7 @@ impl Default for Trust {
                 ))
                 .into_owned(),
                 trust_uri: Some("https://cai.org/unknown_tl".to_string()),
-                trust_kind: TrustKind::Signer,
+                trust_kind: TrustListKind::Signer,
             }]);
 
             trust

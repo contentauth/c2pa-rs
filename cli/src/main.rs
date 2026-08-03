@@ -30,7 +30,7 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use c2pa::{
     create_signer, format_from_path,
-    settings::{Settings, TrustAnchor, TrustKind},
+    settings::{Settings, TrustAnchor, TrustListKind},
     BoxedSigner, Builder, BuilderIntent, CallbackSigner, ClaimGeneratorInfo,
     Context as C2paContext, DigitalSourceType, Error, Ingredient, ManifestDefinition, Reader,
     Signer, SigningAlg,
@@ -815,7 +815,7 @@ fn configure_sdk(args: &CliArgs) -> Result<Settings> {
                 let ta = TrustAnchor {
                     trust_anchors: data,
                     trust_uri: trust_list_uri.clone(),
-                    trust_kind: TrustKind::Signer,
+                    trust_kind: TrustListKind::Signer,
                 };
 
                 if let Some(anchors) = &mut settings.trust.anchors {

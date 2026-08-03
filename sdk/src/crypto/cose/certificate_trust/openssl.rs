@@ -68,7 +68,7 @@ pub(crate) fn check_certificate_trust(
         // try trust anchors
         let mut store_ctx = X509StoreContext::new()?;
         if store_ctx.init(&store, cert.as_ref(), &cert_chain, |f| f.verify_cert())? {
-            return Ok((TrustAnchorType::Signer, anchor_set.trust_anchor_uri.clone()));
+            return Ok((anchor_set.trust_anchor_type, anchor_set.trust_anchor_uri.clone()));
         }
     }
 
