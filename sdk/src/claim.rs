@@ -1825,11 +1825,12 @@ impl Claim {
 
         // Delete assertion or databox
         if assertion_uri.contains(ASSERTION_STORE) {
-            // Compare the assertion label strictly using label and instance.
-            // Both sides of this comparison are normalized (to be compareable).
-            // `label`/`instance` come from `assertion_label_from_link`.
-            // The stored side is normalized because every claim coming to here has been
-            // parsed by `Store::from_jumbf_with_context`.
+            // Compare the assertion label strictly using label and instance, with both sides
+            // normalized so they are comparable.
+            // `assertion_label_from_link` truncates the URI's label at `__`,
+            // so a URI naming `com.example.a__b` resolves to `com.example.a`.
+            // Currently, the stored side is always normalized on ingest, and signing rejects
+            // a non-numeric `__` suffix, so no manifest we read here can hold such a label.
             let target = Claim::label_with_instance(&label, instance);
             if let Some(index) = self
                 .assertion_store
