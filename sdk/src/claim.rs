@@ -2428,6 +2428,35 @@ impl Claim {
                     );
                 }
 
+                // c2pa.translated must have sourceLanguage and targetLanguage parameters.
+                // Per the C2PA spec (18.15.4.7, Parameters): "When using a c2pa.translated
+                // action, the sourceLanguage and targetLanguage fields in the parameters
+                // object shall contain RFC 5646, BCP 47 language codes."
+                if action.action() == c2pa_action::TRANSLATED {
+                    let params = action.parameters();
+                    let source_language = params
+                        .and_then(|p| p.source_language.as_deref())
+                        .unwrap_or("");
+                    let target_language = params
+                        .and_then(|p| p.target_language.as_deref())
+                        .unwrap_or("");
+
+                    if source_language.is_empty() || target_language.is_empty() {
+                        log_item!(
+                            label.clone(),
+                            "c2pa.translated action must have sourceLanguage and targetLanguage parameters",
+                            "verify_actions"
+                        )
+                        .validation_status(validation_status::ASSERTION_ACTION_MALFORMED)
+                        .failure_no_throw(
+                            validation_log,
+                            Error::ValidationRule(
+                                "c2pa.translated action must have sourceLanguage and targetLanguage parameters".into(),
+                            ),
+                        );
+                    }
+                }
+
                 // 2.c if ingredient is present it must be a valid parentOf reference
                 if action.action() == c2pa_action::TRANSCODED
                     || action.action() == c2pa_action::REPACKAGED
@@ -4365,6 +4394,75 @@ pub mod tests {
                 .get_assertion(labels::INGREDIENT_THUMBNAIL, 1)
                 .is_none(),
             "instance 1 should be gone"
+        );
+    }
+
+    // Builds a v2 claim whose created assertions contain a valid c2pa.created
+    // action followed by the given c2pa.translated action, runs verify_actions,
+    // and returns the validation log for status-code checks.
+    fn verify_translated_action(translated: Action) -> StatusTracker {
+        use crate::assertions::DigitalSourceType;
+
+        // A valid first action (created + digitalSourceType) keeps the claim
+        // otherwise clean, so the only possible malformed status comes from the
+        // c2pa.translated action under test.
+        let mut claim = Claim::new("test", Some("test"), 2);
+        let actions = Actions::new()
+            .add_action(
+                Action::new(c2pa_action::CREATED)
+                    .set_source_type(DigitalSourceType::AlgorithmicMedia),
+            )
+            .add_action(translated);
+        claim.add_assertion(&actions).expect("add actions");
+
+        let svi = StoreValidationInfo::default();
+        let settings = Settings::default();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+        Claim::verify_actions(&claim, &svi, &mut validation_log, &settings)
+            .expect("verify_actions should not throw");
+        validation_log
+    }
+
+    // Regression: per C2PA spec 18.15.4.7, a c2pa.translated action's parameters
+    // must contain sourceLanguage and targetLanguage. An action with empty
+    // parameters must be reported as assertion.action.malformed.
+    #[test]
+    fn test_verify_translated_action_missing_languages() {
+        let log = verify_translated_action(Action::new(c2pa_action::TRANSLATED));
+        assert!(
+            log.has_status(validation_status::ASSERTION_ACTION_MALFORMED),
+            "c2pa.translated without sourceLanguage/targetLanguage should be malformed"
+        );
+    }
+
+    // A c2pa.translated action with only one of the two language codes is still
+    // malformed.
+    #[test]
+    fn test_verify_translated_action_partial_languages() {
+        let translated = Action::new(c2pa_action::TRANSLATED)
+            .set_parameter("source_language", "en-US")
+            .expect("set source_language");
+        let log = verify_translated_action(translated);
+        assert!(
+            log.has_status(validation_status::ASSERTION_ACTION_MALFORMED),
+            "c2pa.translated with only sourceLanguage should be malformed"
+        );
+    }
+
+    // Positive: a c2pa.translated action with both BCP-47 language codes present
+    // must not be reported as malformed.
+    #[test]
+    fn test_verify_translated_action_with_languages_valid() {
+        let translated = Action::new(c2pa_action::TRANSLATED)
+            .set_parameter("source_language", "en-US")
+            .expect("set source_language")
+            .set_parameter("target_language", "fr-FR")
+            .expect("set target_language");
+        let log = verify_translated_action(translated);
+        assert!(
+            !log.has_status(validation_status::ASSERTION_ACTION_MALFORMED),
+            "c2pa.translated with both languages should not be malformed"
         );
     }
 }
