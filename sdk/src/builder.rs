@@ -8342,16 +8342,11 @@ mod tests {
 
     /// End-to-end redaction against a claim that went through sign -> load,
     /// so the assertion store is the loader-normalized one that
-    // `redact_assertion` sees when going through assertions to redact.
+    /// `redact_assertion` sees when looking for assertions to redact.
     ///
-    /// Runs against an ingredient holding `stds.schema-org.CreativeWork` and
-    /// `stds.schema-org.CreativeWork__1`:
+    /// Runs against an ingredient holding `com.example.test` and `com.example.test__1`:
     ///   1. redacting the `__1` URI must leave the base assertion, and
     ///   2. redacting the un-suffixed URI must leave the `__1` assertion.
-    ///
-    /// Direction 2 covers the case for a redaction URI whose final segment carries no instance
-    /// suffix while the store also holds a `__1` sibling; direction 1 is the shared-prefix case
-    /// that a `ends_with` comparison got wrong.
     #[test]
     fn test_redact_assertion_instance_label_end_to_end() {
         setup_logger();
