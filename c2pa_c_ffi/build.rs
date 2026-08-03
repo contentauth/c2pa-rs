@@ -20,13 +20,6 @@ use std::{
 };
 
 fn main() {
-    // A `rerun-if-*` directive replaces cargo's default "rerun when any package
-    // file changed" rule, so every input the header depends on must be listed.
-    println!("cargo:rerun-if-env-changed=C2PA_HEADER_DIR");
-    println!("cargo:rerun-if-changed=src");
-    println!("cargo:rerun-if-changed=cbindgen.toml");
-    println!("cargo:rerun-if-changed=build.rs");
-
     // Get the version from the environment variable set by Cargo.
     let version = env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION is not set");
 
