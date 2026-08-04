@@ -414,6 +414,12 @@ pub trait AssetIO: Sync + Send {
     fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
         None
     }
+
+    /// Returns this handler's [`WriteUpdates`] implementation, if it supports
+    /// applying a combined batch of CAI-store/XMP updates in a single pass.
+    fn write_updates_ref(&self) -> Option<&dyn WriteUpdates> {
+        None
+    }
 }
 
 /// Optimizes manifest updates for handlers that can patch an existing manifest
@@ -502,10 +508,7 @@ impl<T: WriteXmp + CAIReader> RemoteManifestUrl for T {
         output_stream: &mut dyn CAIReadWrite,
         remote_manifest_url: &str,
     ) -> Result<()> {
-        let current_xmp = self
-            .read_xmp(input_stream)
-            .unwrap_or_else(|| MIN_XMP.to_string());
-        let updated_xmp = add_provenance(&current_xmp, remote_manifest_url)?;
+        let updated_xmp = merge_remote_manifest_url_xmp(self, input_stream, remote_manifest_url)?;
         self.write_xmp(input_stream, output_stream, &updated_xmp)
     }
 
@@ -514,6 +517,66 @@ impl<T: WriteXmp + CAIReader> RemoteManifestUrl for T {
             .as_deref()
             .and_then(extract_provenance)
     }
+}
+
+/// Reads the current XMP from `input_stream` (or starts from a minimal empty
+/// packet if there is none) and merges in `remote_manifest_url` as the
+/// `dcterms:provenance` reference, returning the resulting XMP string.
+///
+/// Shared by the [`RemoteManifestUrl`] blanket impl above and by
+/// [`Store`](crate::store::Store)'s combined-update path, so both compute the
+/// same "read current XMP, merge in the URL" step the same way.
+pub(crate) fn merge_remote_manifest_url_xmp(
+    reader: &dyn CAIReader,
+    input_stream: &mut dyn CAIRead,
+    remote_manifest_url: &str,
+) -> Result<String> {
+    let current_xmp = reader
+        .read_xmp(input_stream)
+        .unwrap_or_else(|| MIN_XMP.to_string());
+    add_provenance(&current_xmp, remote_manifest_url)
+}
+
+/// What should happen to one field (the C2PA manifest store, or XMP) as part
+/// of a combined [`AssetUpdates`] batch.
+#[derive(Debug, Clone, Default)]
+pub enum FieldUpdate<T> {
+    /// Leave the field exactly as it is in the input asset.
+    #[default]
+    Keep,
+    /// Remove the field entirely, if present.
+    Remove,
+    /// Replace (or add) the field with this value.
+    Set(T),
+}
+
+/// A batch of field-level updates to apply to an asset in one pass.
+#[derive(Debug, Clone, Default)]
+pub struct AssetUpdates {
+    /// What to do with the C2PA manifest store.
+    pub cai_store: FieldUpdate<Vec<u8>>,
+    /// What to do with the XMP packet.
+    pub xmp: FieldUpdate<String>,
+}
+
+/// Applies a batch of [`AssetUpdates`] to an asset stream, ideally in a single
+/// parse/modify/write pass rather than one pass per field.
+///
+/// Optional capability, accessed via [`AssetIO::write_updates_ref`]. Deliberately
+/// not derived from (and does not derive) [`CAIWriter`] or [`WriteXmp`]:
+/// `CAIWriter::get_object_locations_from_stream` is a pure query with no
+/// "apply an edit" counterpart, so a blanket impl in either direction isn't
+/// possible, and every built-in handler already has its own hand-written
+/// `impl CAIWriter`, which a blanket impl would conflict with.
+pub trait WriteUpdates: Sync + Send {
+    /// Applies `updates` to the asset read from `input_stream`, producing
+    /// `output_stream`.
+    fn write_updates(
+        &self,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        updates: &AssetUpdates,
+    ) -> Result<()>;
 }
 
 /// Generates a pre-composed C2PA manifest ready for direct insertion into an

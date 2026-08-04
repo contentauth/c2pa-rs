@@ -30,7 +30,10 @@ use crate::{
         BmffHash, BoxHash, CertificateStatus, DataBox, DataHash, Ingredient, Relationship,
         TimeStamp, User, UserCbor,
     },
-    asset_io::{CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions},
+    asset_io::{
+        merge_remote_manifest_url_xmp, AssetUpdates, CAIRead, CAIReadWrite, FieldUpdate,
+        HashBlockObjectType, HashObjectPositions,
+    },
     claim::{
         check_ocsp_status, check_ocsp_status_async, Claim, ClaimAssertion, ClaimAssetData,
         RemoteManifest,
@@ -3036,20 +3039,43 @@ impl Store {
                     .ok_or(Error::XmpNotSupported)?;
 
                 if remove_manifests {
-                    let manifest_writer = io_handler
-                        .get_writer(format)
-                        .ok_or(Error::UnsupportedType)?;
+                    if let Some(updates_writer) = io_handler.write_updates_ref() {
+                        // single-pass: remove the CAI store and merge the remote
+                        // manifest URL into XMP in one parse/modify/write pass,
+                        // instead of two full passes through a temp stream.
+                        let merged_xmp = merge_remote_manifest_url_xmp(
+                            io_handler.get_reader(),
+                            input_stream,
+                            &url,
+                        )?;
+                        input_stream.rewind()?;
+                        let updates = AssetUpdates {
+                            cai_store: FieldUpdate::Remove,
+                            xmp: FieldUpdate::Set(merged_xmp),
+                        };
+                        updates_writer.write_updates(
+                            input_stream,
+                            &mut intermediate_stream,
+                            &updates,
+                        )?;
+                    } else {
+                        let manifest_writer = io_handler
+                            .get_writer(format)
+                            .ok_or(Error::UnsupportedType)?;
 
-                    let mut tmp_stream = io_utils::stream_with_fs_fallback(threshold, input_len)?;
-                    manifest_writer.remove_cai_store_from_stream(input_stream, &mut tmp_stream)?;
+                        let mut tmp_stream =
+                            io_utils::stream_with_fs_fallback(threshold, input_len)?;
+                        manifest_writer
+                            .remove_cai_store_from_stream(input_stream, &mut tmp_stream)?;
 
-                    // add external ref if possible
-                    tmp_stream.rewind()?;
-                    external_ref_writer.write_remote_manifest_url(
-                        &mut tmp_stream,
-                        &mut intermediate_stream,
-                        &url,
-                    )?;
+                        // add external ref if possible
+                        tmp_stream.rewind()?;
+                        external_ref_writer.write_remote_manifest_url(
+                            &mut tmp_stream,
+                            &mut intermediate_stream,
+                            &url,
+                        )?;
+                    }
                 } else {
                     // add external ref if possible
                     external_ref_writer.write_remote_manifest_url(

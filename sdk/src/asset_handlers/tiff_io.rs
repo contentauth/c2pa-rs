@@ -24,8 +24,9 @@ use byteordered::{with_order, ByteOrdered, Endianness};
 
 use crate::{
     asset_io::{
-        AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
-        HashBlockObjectType, HashObjectPositions, RemoteManifestUrl, WriteXmp,
+        AssetIO, AssetPatch, AssetUpdates, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
+        ComposedManifestRef, FieldUpdate, HashBlockObjectType, HashObjectPositions,
+        RemoteManifestUrl, WriteUpdates, WriteXmp,
     },
     error::{Error, Result},
     utils::io_utils::{safe_vec, stream_len, ReaderUtils},
@@ -1797,6 +1798,10 @@ impl AssetIO for TiffIO {
         Some(self)
     }
 
+    fn write_updates_ref(&self) -> Option<&dyn WriteUpdates> {
+        Some(self)
+    }
+
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
@@ -1972,6 +1977,56 @@ impl WriteXmp for TiffIO {
             value_bytes: xmp.as_bytes().to_vec(),
         };
         tiff_clone_with_tags(output_stream, input_stream, vec![entry])
+    }
+}
+
+impl WriteUpdates for TiffIO {
+    fn write_updates(
+        &self,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        updates: &AssetUpdates,
+    ) -> Result<()> {
+        if matches!(updates.xmp, FieldUpdate::Remove) {
+            return Err(Error::NotImplemented(
+                "TIFF does not support removing XMP".to_string(),
+            ));
+        }
+
+        let (mut ifds, page_tokens, e, big_tiff) = map_tiff(input_stream)?;
+        let last_page = page_tokens
+            .last()
+            .ok_or(Error::InvalidAsset("no IFD found".to_string()))?;
+
+        if matches!(updates.cai_store, FieldUpdate::Remove) {
+            ifds[*last_page].data.entries.remove(&C2PA_TAG);
+        }
+
+        let mut bo = ByteOrdered::new(output_stream, e);
+        let mut tc = TiffCloner::new(e, big_tiff, &mut bo)?;
+
+        if let FieldUpdate::Set(bytes) = &updates.cai_store {
+            let l = u64::try_from(bytes.len())
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+            tc.add_target_tag(IfdClonedEntry {
+                entry_tag: C2PA_TAG,
+                entry_type: C2PA_FIELD_TYPE,
+                value_count: l,
+                value_bytes: bytes.clone(),
+            });
+        }
+        if let FieldUpdate::Set(xmp) = &updates.xmp {
+            let l = u64::try_from(xmp.len())
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+            tc.add_target_tag(IfdClonedEntry {
+                entry_tag: XMP_TAG,
+                entry_type: IFDEntryType::Byte as u16,
+                value_count: l,
+                value_bytes: xmp.as_bytes().to_vec(),
+            });
+        }
+
+        tc.clone_tiff(&mut ifds, &page_tokens, input_stream)
     }
 }
 
@@ -2208,6 +2263,183 @@ pub mod tests {
             Err(Error::JumbfNotFound) => (),
             _ => panic!("should be no C2PA store"),
         }
+    }
+
+    /// Perf spike: compares today's two-pass remove-CAI + write-remote-URL
+    /// sequence (as done in `store.rs` before `WriteUpdates` existed) against
+    /// the new single-pass `write_updates` call, on a large (~35MB) DNG.
+    /// Not run by default; run explicitly with `--release --ignored --nocapture`
+    /// to get meaningful timings.
+    #[test]
+    #[ignore]
+    fn test_write_updates_benchmark() {
+        use std::time::Instant;
+
+        use crate::asset_io::merge_remote_manifest_url_xmp;
+
+        let source = crate::utils::test::fixture_path("Foo.dng");
+        let tiff_io = TiffIO {};
+
+        // start from a large asset that already has a CAI store, so "remove"
+        // has real work to do, matching the store.rs remove_manifests scenario.
+        let cai_data = vec![0u8; 5_000];
+        let mut original_stream = Cursor::new(std::fs::read(&source).unwrap());
+        let mut with_cai = Cursor::new(Vec::new());
+        tiff_io
+            .write_cai(&mut original_stream, &mut with_cai, &cai_data)
+            .unwrap();
+        let with_cai_bytes = with_cai.into_inner();
+
+        let remote_url = "http://example.com/manifest.c2pa";
+
+        // today's two-pass sequence: remove_cai_store_from_stream into a temp
+        // buffer, then write_remote_manifest_url from that buffer.
+        let two_pass_input = with_cai_bytes.clone();
+        let two_pass_start = Instant::now();
+        {
+            let mut input_stream = Cursor::new(two_pass_input);
+            let mut tmp_stream = Cursor::new(Vec::new());
+            tiff_io
+                .remove_cai_store_from_stream(&mut input_stream, &mut tmp_stream)
+                .unwrap();
+            tmp_stream.rewind().unwrap();
+
+            let external_ref_writer = tiff_io.remote_manifest_url_ref().unwrap();
+            let mut output_stream = Cursor::new(Vec::new());
+            external_ref_writer
+                .write_remote_manifest_url(&mut tmp_stream, &mut output_stream, remote_url)
+                .unwrap();
+        }
+        let two_pass_elapsed = two_pass_start.elapsed();
+
+        // new single-pass write_updates call.
+        let single_pass_input = with_cai_bytes;
+        let single_pass_start = Instant::now();
+        {
+            let mut input_stream = Cursor::new(single_pass_input);
+            let merged_xmp =
+                merge_remote_manifest_url_xmp(&tiff_io, &mut input_stream, remote_url).unwrap();
+            input_stream.rewind().unwrap();
+
+            let updates = AssetUpdates {
+                cai_store: FieldUpdate::Remove,
+                xmp: FieldUpdate::Set(merged_xmp),
+            };
+            let mut output_stream = Cursor::new(Vec::new());
+            tiff_io
+                .write_updates(&mut input_stream, &mut output_stream, &updates)
+                .unwrap();
+        }
+        let single_pass_elapsed = single_pass_start.elapsed();
+
+        println!("two-pass:    {two_pass_elapsed:?}");
+        println!("single-pass: {single_pass_elapsed:?}");
+        println!(
+            "speedup: {:.2}x",
+            two_pass_elapsed.as_secs_f64() / single_pass_elapsed.as_secs_f64()
+        );
+    }
+
+    #[test]
+    fn test_write_updates_set_both_in_one_pass() {
+        let cai_data = b"some c2pa data";
+        let xmp_data = "some xmp data";
+
+        let source = crate::utils::test::fixture_path("TUSCANY.TIF");
+        let tiff_io = TiffIO {};
+
+        let mut input_stream = std::fs::File::open(&source).unwrap();
+        let mut output_stream = Cursor::new(Vec::new());
+        let updates = AssetUpdates {
+            cai_store: FieldUpdate::Set(cai_data.to_vec()),
+            xmp: FieldUpdate::Set(xmp_data.to_string()),
+        };
+        tiff_io
+            .write_updates(&mut input_stream, &mut output_stream, &updates)
+            .unwrap();
+
+        output_stream.rewind().unwrap();
+        let loaded_cai = tiff_io.read_cai(&mut output_stream).unwrap();
+        assert_eq!(&loaded_cai, cai_data);
+
+        output_stream.rewind().unwrap();
+        let loaded_xmp = tiff_io.read_xmp(&mut output_stream).unwrap();
+        assert_eq!(&loaded_xmp, xmp_data);
+    }
+
+    #[test]
+    fn test_write_updates_remove_cai_and_set_xmp_in_one_pass() {
+        let cai_data = b"some c2pa data";
+        let xmp_data = "some xmp data";
+
+        let source = crate::utils::test::fixture_path("TUSCANY.TIF");
+        let tiff_io = TiffIO {};
+
+        // start from a file that already has a CAI store
+        let mut input_stream = std::fs::File::open(&source).unwrap();
+        let mut with_cai = Cursor::new(Vec::new());
+        tiff_io
+            .write_cai(&mut input_stream, &mut with_cai, cai_data)
+            .unwrap();
+
+        with_cai.rewind().unwrap();
+        let mut output_stream = Cursor::new(Vec::new());
+        let updates = AssetUpdates {
+            cai_store: FieldUpdate::Remove,
+            xmp: FieldUpdate::Set(xmp_data.to_string()),
+        };
+        tiff_io
+            .write_updates(&mut with_cai, &mut output_stream, &updates)
+            .unwrap();
+
+        output_stream.rewind().unwrap();
+        match tiff_io.read_cai(&mut output_stream) {
+            Err(Error::JumbfNotFound) => (),
+            other => panic!("expected no C2PA store, got {other:?}"),
+        }
+
+        output_stream.rewind().unwrap();
+        let loaded_xmp = tiff_io.read_xmp(&mut output_stream).unwrap();
+        assert_eq!(&loaded_xmp, xmp_data);
+    }
+
+    #[test]
+    fn test_write_updates_keep_both_preserves_existing_fields() {
+        let cai_data = b"some c2pa data";
+        let xmp_data = "some xmp data";
+
+        let source = crate::utils::test::fixture_path("TUSCANY.TIF");
+        let tiff_io = TiffIO {};
+
+        // start from a file that already has a CAI store and XMP
+        let mut input_stream = std::fs::File::open(&source).unwrap();
+        let mut with_cai = Cursor::new(Vec::new());
+        tiff_io
+            .write_cai(&mut input_stream, &mut with_cai, cai_data)
+            .unwrap();
+        with_cai.rewind().unwrap();
+        let mut with_cai_and_xmp = Cursor::new(Vec::new());
+        tiff_io
+            .write_xmp(&mut with_cai, &mut with_cai_and_xmp, xmp_data)
+            .unwrap();
+
+        with_cai_and_xmp.rewind().unwrap();
+        let mut output_stream = Cursor::new(Vec::new());
+        tiff_io
+            .write_updates(
+                &mut with_cai_and_xmp,
+                &mut output_stream,
+                &AssetUpdates::default(),
+            )
+            .unwrap();
+
+        output_stream.rewind().unwrap();
+        let loaded_cai = tiff_io.read_cai(&mut output_stream).unwrap();
+        assert_eq!(&loaded_cai, cai_data);
+
+        output_stream.rewind().unwrap();
+        let loaded_xmp = tiff_io.read_xmp(&mut output_stream).unwrap();
+        assert_eq!(&loaded_xmp, xmp_data);
     }
 
     #[test]
