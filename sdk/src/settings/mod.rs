@@ -115,8 +115,10 @@ pub struct Trust {
     /// Verifying trust is REQUIRED by the CAWG spec. This option should only be used for development or testing.
     /// </div>
     pub(crate) verify_trust_list: bool,
-    /// This option contains the trust anchors found here:
+
+    /// This option contains the set of trust anchors used to validate certificates.
     pub anchors: Option<Vec<TrustAnchor>>,
+
     /// List of allowed extended key usage (EKU) object identifiers (OID) that
     /// certificates must have.
     pub trust_config: Option<String>,
