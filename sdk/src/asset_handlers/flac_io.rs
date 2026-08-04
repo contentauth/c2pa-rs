@@ -154,10 +154,6 @@ impl CAIReader for FlacIO {
 }
 
 impl RemoteRefEmbed for FlacIO {
-    fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()> {
-        id3_helper::embed_xmp_reference(self, asset_path, embed_ref)
-    }
-
     fn embed_reference_to_stream(
         &self,
         source_stream: &mut dyn CAIRead,
@@ -178,7 +174,6 @@ impl RemoteRefEmbed for FlacIO {
                     current_xmp,
                 )
             }
-            _ => Err(Error::UnsupportedType),
         }
     }
 }
@@ -204,22 +199,6 @@ impl AssetIO for FlacIO {
 
     fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
         Some(self)
-    }
-
-    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
-        id3_helper::read_cai_store_from_path(self, asset_path)
-    }
-
-    fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
-        id3_helper::save_cai_store_to_path(self, asset_path, store_bytes)
-    }
-
-    fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>> {
-        id3_helper::get_object_locations_from_path(self, asset_path)
-    }
-
-    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
-        self.save_cai_store(asset_path, &[])
     }
 
     fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
@@ -276,7 +255,7 @@ mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use std::{io::Cursor, path::Path};
+    use std::io::Cursor;
 
     use super::*;
     use crate::{
@@ -354,12 +333,6 @@ mod tests {
         let temp = tempdirectory().unwrap();
         let out = crate::utils::test::temp_dir_path(&temp, "empty_write.flac");
         test_helpers::run_write_cai_empty_removes(&handler, &fixture(), &out);
-    }
-
-    #[test]
-    fn test_embed_reference_to_stream_unsupported_type() {
-        let handler = FlacIO::new("flac");
-        test_helpers::run_embed_reference_unsupported(&handler, &fixture());
     }
 
     #[test]
@@ -447,15 +420,5 @@ mod tests {
             other => panic!("unexpected: {:?}", other),
         }
         assert!(handler.supported_types().contains(&"audio/flac"));
-    }
-
-    #[test]
-    fn test_read_cai_store_file_not_found() {
-        let flac_io = FlacIO::new("flac");
-        let path = Path::new("/nonexistent/sample.flac");
-        match flac_io.read_cai_store(path) {
-            Err(Error::IoError(_)) => {}
-            other => panic!("expected IoError for missing file, got {:?}", other),
-        }
     }
 }

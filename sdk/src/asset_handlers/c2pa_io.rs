@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{fs::File, path::Path};
+use std::path::Path;
 
 use serde_bytes::ByteBuf;
 
@@ -19,7 +19,7 @@ use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
         AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
-        HashBlockObjectType, HashObjectPositions,
+        HashObjectPositions,
     },
     error::{Error, Result},
 };
@@ -80,30 +80,12 @@ impl CAIWriter for C2paIO {
 }
 
 impl AssetIO for C2paIO {
-    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
-        let mut f = File::open(asset_path)?;
-        self.read_cai(&mut f)
-    }
-
     fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
         // just save the data in a file
         std::fs::write(asset_path, store_bytes)
             .map_err(|_err| Error::BadParam("C2PA write error".to_owned()))?;
 
         Ok(())
-    }
-
-    fn get_object_locations(
-        &self,
-        _asset_path: &std::path::Path,
-    ) -> Result<Vec<HashObjectPositions>> {
-        let hop = HashObjectPositions {
-            offset: 0,
-            length: 0,
-            htype: HashBlockObjectType::Cai,
-        };
-
-        Ok(vec![hop])
     }
 
     fn remove_cai_store(&self, _asset_path: &Path) -> Result<()> {

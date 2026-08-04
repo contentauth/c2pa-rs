@@ -197,6 +197,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The `assertions` module contains the definitions for the assertions that are part of the C2PA specification.
 pub mod assertions;
 
+pub mod asset_io;
+
 /// The `cose_sign` module contains the definitions for the COSE signing algorithms.
 pub mod cose_sign;
 
@@ -242,6 +244,7 @@ pub mod validation_status;
 pub use assertions::DigitalSourceType;
 #[doc(inline)]
 pub use assertions::Relationship;
+pub use asset_io::AssetIO;
 pub use builder::{Builder, BuilderIntent, HashType, ManifestDefinition};
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
@@ -269,7 +272,6 @@ pub use validation_results::{ValidationResults, ValidationState};
 // Internal modules
 pub(crate) mod assertion;
 pub(crate) mod asset_handlers;
-pub(crate) mod asset_io;
 pub(crate) mod builder;
 pub(crate) mod callback_signer;
 pub(crate) mod claim;

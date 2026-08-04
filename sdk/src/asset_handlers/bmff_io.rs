@@ -14,9 +14,8 @@
 use std::{
     cmp::min,
     collections::HashMap,
-    fs::{File, OpenOptions},
-    io::{Cursor, Read, Seek, SeekFrom, Write},
-    path::Path,
+    fs::OpenOptions,
+    io::{Read, Seek, SeekFrom, Write},
 };
 
 use atree::{Arena, Token};
@@ -25,15 +24,15 @@ use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use crate::{
     assertions::{BmffMerkleMap, ExclusionsMap},
     asset_io::{
-        rename_or_move, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
-        ComposedManifestRef, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
+        HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
     status_tracker::{ErrorBehavior, StatusTracker},
     store::Store,
     utils::{
         hash_utils::{vec_compare, HashRange},
-        io_utils::{patch_stream, stream_len, tempfile_builder, ReaderUtils},
+        io_utils::{patch_stream, stream_len, ReaderUtils},
         patch::patch_bytes,
         xmp_inmemory_utils::{add_provenance, MIN_XMP},
     },
@@ -1823,44 +1822,6 @@ impl AssetIO for BmffIO {
         Some(self)
     }
 
-    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
-        let mut f = File::open(asset_path)?;
-        self.read_cai(&mut f)
-    }
-
-    fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
-        let mut input_stream = std::fs::OpenOptions::new()
-            .read(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        let mut temp_file = tempfile_builder("c2pa_temp")?;
-
-        self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
-
-        // copy temp file to asset
-        rename_or_move(temp_file, asset_path)
-    }
-
-    fn get_object_locations(
-        &self,
-        _asset_path: &std::path::Path,
-    ) -> Result<Vec<HashObjectPositions>> {
-        let vec: Vec<HashObjectPositions> = Vec::new();
-        Ok(vec)
-    }
-
-    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
-        let mut input_file = std::fs::File::open(asset_path)?;
-
-        let mut temp_file = tempfile_builder("c2pa_temp")?;
-
-        self.remove_cai_store_from_stream(&mut input_file, &mut temp_file)?;
-
-        // copy temp file to asset
-        rename_or_move(temp_file, asset_path)
-    }
-
     fn new(asset_type: &str) -> Self
     where
         Self: Sized,
@@ -2396,37 +2357,6 @@ impl ComposedManifestRef for BmffIO {
 }
 
 impl RemoteRefEmbed for BmffIO {
-    #[allow(unused_variables)]
-    fn embed_reference(
-        &self,
-        asset_path: &Path,
-        embed_ref: crate::asset_io::RemoteRefEmbedType,
-    ) -> Result<()> {
-        match embed_ref {
-            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
-                let output_buf = Vec::new();
-                let mut output_stream = Cursor::new(output_buf);
-
-                // block so that source file is closed after embed
-                {
-                    let mut source_stream = std::fs::File::open(asset_path)?;
-                    self.embed_reference_to_stream(
-                        &mut source_stream,
-                        &mut output_stream,
-                        RemoteRefEmbedType::Xmp(manifest_uri),
-                    )?;
-                }
-
-                // write will replace exisiting contents
-                std::fs::write(asset_path, output_stream.into_inner())?;
-                Ok(())
-            }
-            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
-        }
-    }
-
     fn embed_reference_to_stream(
         &self,
         input_stream: &mut dyn CAIRead,
@@ -2575,9 +2505,6 @@ impl RemoteRefEmbed for BmffIO {
                     offset_adjust,
                 )
             }
-            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
         }
     }
 }
@@ -2814,11 +2741,19 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
+    use std::{io::Cursor, path::Path};
+
     use super::*;
     use crate::utils::{
         io_utils::tempdirectory,
         test::{fixture_path, temp_dir_path},
     };
+
+    // test-only equivalent of the removed `AssetIO::read_cai_store`
+    fn read_cai_store(handler: &BmffIO, path: &Path) -> Result<Vec<u8>> {
+        let mut f = std::fs::File::open(path).map_err(Error::IoError)?;
+        handler.read_cai(&mut f)
+    }
 
     #[test]
     fn test_read_deep_nesting() {
@@ -2860,8 +2795,15 @@ pub mod tests {
 
         let eh = bmff.remote_ref_writer_ref().unwrap();
 
-        eh.embed_reference(&output, RemoteRefEmbedType::Xmp(data.to_string()))
-            .unwrap();
+        let mut input_stream = std::fs::File::open(&output).unwrap();
+        let mut embed_stream = Cursor::new(Vec::new());
+        eh.embed_reference_to_stream(
+            &mut input_stream,
+            &mut embed_stream,
+            RemoteRefEmbedType::Xmp(data.to_string()),
+        )
+        .unwrap();
+        std::fs::write(&output, embed_stream.into_inner()).unwrap();
 
         let mut output_stream = std::fs::File::open(&output).unwrap();
         let xmp = bmff.get_reader().read_xmp(&mut output_stream).unwrap();
@@ -2883,9 +2825,9 @@ pub mod tests {
             if let Ok(_size) = std::fs::copy(source, &output) {
                 let bmff = BmffIO::new("mp4");
 
-                //let test_data =  bmff.read_cai_store(&source).unwrap();
+                //let test_data =  read_cai_store(&bmff, &source).unwrap();
                 if let Ok(()) = bmff.save_cai_store(&output, test_data) {
-                    if let Ok(read_test_data) = bmff.read_cai_store(&output) {
+                    if let Ok(read_test_data) = read_cai_store(&bmff, &output) {
                         assert!(vec_compare(test_data, &read_test_data));
                         success = true;
                     }
@@ -2907,10 +2849,10 @@ pub mod tests {
             if let Ok(_size) = std::fs::copy(&source, &output) {
                 let bmff = BmffIO::new("mp4");
 
-                if let Ok(mut test_data) = bmff.read_cai_store(&source) {
+                if let Ok(mut test_data) = read_cai_store(&bmff, &source) {
                     test_data.append(&mut more_data);
                     if let Ok(()) = bmff.save_cai_store(&output, &test_data) {
-                        if let Ok(read_test_data) = bmff.read_cai_store(&output) {
+                        if let Ok(read_test_data) = read_cai_store(&bmff, &output) {
                             assert!(vec_compare(&test_data, &read_test_data));
                             success = true;
                         }
@@ -2933,13 +2875,13 @@ pub mod tests {
             if let Ok(_size) = std::fs::copy(source, &output) {
                 let bmff = BmffIO::new("mp4");
 
-                if let Ok(source_data) = bmff.read_cai_store(&output) {
+                if let Ok(source_data) = read_cai_store(&bmff, &output) {
                     // create replacement data of same size
                     let mut new_data = vec![0u8; source_data.len()];
                     new_data[..test_data.len()].copy_from_slice(test_data);
                     bmff.patch_cai_store(&output, &new_data).unwrap();
 
-                    let replaced = bmff.read_cai_store(&output).unwrap();
+                    let replaced = read_cai_store(&bmff, &output).unwrap();
 
                     assert_eq!(new_data, replaced);
 
@@ -2963,7 +2905,7 @@ pub mod tests {
         bmff_io.remove_cai_store(&output).unwrap();
 
         // read back in asset, JumbfNotFound is expected since it was removed
-        match bmff_io.read_cai_store(&output) {
+        match read_cai_store(&bmff_io, &output) {
             Err(Error::JumbfNotFound) => (),
             _ => unreachable!(),
         }

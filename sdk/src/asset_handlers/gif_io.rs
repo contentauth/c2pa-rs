@@ -12,20 +12,19 @@
 // each license.
 
 use std::{
-    fs::{self, File},
-    io::{self, Cursor, Read, SeekFrom},
+    fs,
+    io::{self, Read, SeekFrom},
     path::Path,
     str,
 };
 
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use serde_bytes::ByteBuf;
-use tempfile::Builder;
 
 use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        self, AssetBoxHash, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
+        AssetBoxHash, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
         ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
         RemoteRefEmbedType,
     },
@@ -191,19 +190,6 @@ impl AssetPatch for GifIO {
 }
 
 impl RemoteRefEmbed for GifIO {
-    fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()> {
-        match &embed_ref {
-            RemoteRefEmbedType::Xmp(_) => {
-                let mut input_stream = File::open(asset_path)?;
-                let mut output_stream = Cursor::new(Vec::new());
-                self.embed_reference_to_stream(&mut input_stream, &mut output_stream, embed_ref)?;
-                fs::write(asset_path, output_stream.into_inner())?;
-                Ok(())
-            }
-            _ => Err(Error::UnsupportedType),
-        }
-    }
-
     fn embed_reference_to_stream(
         &self,
         source_stream: &mut dyn CAIRead,
@@ -233,7 +219,6 @@ impl RemoteRefEmbed for GifIO {
                     None => self.insert_block(source_stream, output_stream, &new_block.into()),
                 }
             }
-            _ => Err(Error::UnsupportedType),
         }
     }
 }
@@ -342,48 +327,6 @@ impl AssetIO for GifIO {
 
     fn asset_box_hash_ref(&self) -> Option<&dyn AssetBoxHash> {
         Some(self)
-    }
-
-    fn read_cai_store(&self, asset_path: &Path) -> crate::Result<Vec<u8>> {
-        let mut f = File::open(asset_path)?;
-        self.read_cai(&mut f)
-    }
-
-    fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> crate::Result<()> {
-        let mut stream = fs::OpenOptions::new()
-            .read(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        let mut temp_file = Builder::new()
-            .prefix("c2pa_temp")
-            .rand_bytes(5)
-            .tempfile()?;
-
-        self.write_cai(&mut stream, &mut temp_file, store_bytes)?;
-
-        asset_io::rename_or_move(temp_file, asset_path)
-    }
-
-    fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>> {
-        let mut f = std::fs::File::open(asset_path).map_err(|_err| Error::EmbeddingError)?;
-        self.get_object_locations_from_stream(&mut f)
-    }
-
-    fn remove_cai_store(&self, asset_path: &Path) -> crate::Result<()> {
-        let mut stream = fs::OpenOptions::new()
-            .read(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        let mut temp_file = Builder::new()
-            .prefix("c2pa_temp")
-            .rand_bytes(5)
-            .tempfile()?;
-
-        self.remove_cai_store_from_stream(&mut stream, &mut temp_file)?;
-
-        asset_io::rename_or_move(temp_file, asset_path)
     }
 
     fn supported_types(&self) -> &[&str] {

@@ -11,11 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{
-    fs::File,
-    io::{self, Cursor, Read, Seek, SeekFrom},
-    path::Path,
-};
+use std::io::{self, Read, Seek, SeekFrom};
 
 use byteorder::{BigEndian, ReadBytesExt};
 use png_pong::chunk::InternationalText;
@@ -24,13 +20,12 @@ use serde_bytes::ByteBuf;
 use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        rename_or_move, AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
-        ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
-        RemoteRefEmbedType,
+        AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
+        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
     utils::{
-        io_utils::{patch_stream, tempfile_builder, ReaderUtils},
+        io_utils::{patch_stream, ReaderUtils},
         xmp_inmemory_utils::{add_provenance, MIN_XMP},
     },
 };
@@ -434,75 +429,6 @@ impl CAIWriter for PngIO {
 }
 
 impl AssetIO for PngIO {
-    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
-        let mut f = File::open(asset_path)?;
-        self.read_cai(&mut f)
-    }
-
-    fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
-        let mut stream = std::fs::OpenOptions::new()
-            .read(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        let mut temp_file = tempfile_builder("c2pa_temp")?;
-
-        self.write_cai(&mut stream, &mut temp_file, store_bytes)?;
-
-        // copy temp file to asset
-        rename_or_move(temp_file, asset_path)
-    }
-
-    fn get_object_locations(
-        &self,
-        asset_path: &std::path::Path,
-    ) -> Result<Vec<HashObjectPositions>> {
-        let mut file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        self.get_object_locations_from_stream(&mut file)
-    }
-
-    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
-        // get png byte
-        let mut png_buf = std::fs::read(asset_path).map_err(|_err| Error::EmbeddingError)?;
-
-        let mut cursor = Cursor::new(png_buf);
-        let ps = get_png_chunk_positions(&mut cursor)?;
-
-        // get back buffer
-        png_buf = cursor.into_inner();
-
-        /*  splice in new chunk.  Each PNG chunk has the following format:
-                chunk data length (4 bytes big endian)
-                chunk identifier (4 byte character sequence)
-                chunk data (0 - n bytes of chunk data)
-                chunk crc (4 bytes in crc in format defined in PNG spec)
-        */
-
-        // erase existing
-        let empty_buf = Vec::new();
-        let mut iter = ps.into_iter();
-        if let Some(existing_cai) = iter.find(|pcp| pcp.name == CAI_CHUNK) {
-            // replace existing CAI
-            let start = usize::try_from(existing_cai.start)
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
-
-            let end = usize::try_from(existing_cai.end())
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-
-            png_buf.splice(start..end, empty_buf.iter().cloned());
-        }
-
-        // save png data
-        std::fs::write(asset_path, png_buf)?;
-
-        Ok(())
-    }
-
     fn new(_asset_type: &str) -> Self
     where
         Self: Sized,
@@ -578,32 +504,6 @@ fn get_xmp_insertion_point(asset_reader: &mut dyn CAIRead) -> Option<(u64, u32)>
     }
 }
 impl RemoteRefEmbed for PngIO {
-    fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()> {
-        match embed_ref {
-            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
-                let output_buf = Vec::new();
-                let mut output_stream = Cursor::new(output_buf);
-
-                // do here so source file is closed after update
-                {
-                    let mut source_stream = std::fs::File::open(asset_path)?;
-                    self.embed_reference_to_stream(
-                        &mut source_stream,
-                        &mut output_stream,
-                        RemoteRefEmbedType::Xmp(manifest_uri),
-                    )?;
-                }
-
-                std::fs::write(asset_path, output_stream.into_inner())?;
-
-                Ok(())
-            }
-            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
-        }
-    }
-
     fn embed_reference_to_stream(
         &self,
         source_stream: &mut dyn CAIRead,
@@ -652,9 +552,6 @@ impl RemoteRefEmbed for PngIO {
                     Err(Error::EmbeddingError)
                 }
             }
-            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
         }
     }
 }
@@ -765,7 +662,7 @@ pub enum PngError {
 #[allow(clippy::panic)]
 #[allow(clippy::unwrap_used)]
 pub mod tests {
-    use std::io::Write;
+    use std::io::{Cursor, Write};
 
     use memchr::memmem;
 
@@ -969,7 +866,8 @@ pub mod tests {
         png_io.remove_cai_store(&output).unwrap();
 
         // read back in asset, JumbfNotFound is expected since it was removed
-        match png_io.read_cai_store(&output) {
+        let mut file_reader = std::fs::File::open(&output).unwrap();
+        match png_io.read_cai(&mut file_reader) {
             Err(Error::JumbfNotFound) => (),
             _ => unreachable!(),
         }
@@ -1032,13 +930,16 @@ pub mod tests {
 
         let source = crate::utils::test::fixture_path("exp-test1.png");
 
-        let ol = png_io.get_object_locations(&source).unwrap();
+        let mut source_reader = std::fs::File::open(&source).unwrap();
+        let ol = png_io
+            .get_object_locations_from_stream(&mut source_reader)
+            .unwrap();
 
         let cai_loc = ol
             .iter()
             .find(|o| o.htype == HashBlockObjectType::Cai)
             .unwrap();
-        let curr_manifest = png_io.read_cai_store(&source).unwrap();
+        let curr_manifest = png_io.read_cai(&mut source_reader).unwrap();
 
         let temp_dir = tempdirectory().unwrap();
         let output = crate::utils::test::temp_dir_path(&temp_dir, "exp-test1-out.png");

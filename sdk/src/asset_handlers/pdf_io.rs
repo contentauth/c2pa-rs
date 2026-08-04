@@ -11,11 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{fs::File, path::Path};
+use std::path::Path;
 
 use crate::{
     asset_handlers::pdf::{C2paPdf, Pdf},
-    asset_io::{AssetIO, CAIRead, CAIReader, CAIWriter, ComposedManifestRef, HashObjectPositions},
+    asset_io::{AssetIO, CAIRead, CAIReader, CAIWriter, ComposedManifestRef},
     Error::{self, JumbfNotFound, NotImplemented, PdfReadError},
 };
 
@@ -88,16 +88,7 @@ impl AssetIO for PdfIO {
         None
     }
 
-    fn read_cai_store(&self, asset_path: &Path) -> crate::Result<Vec<u8>> {
-        let mut f = File::open(asset_path)?;
-        self.read_cai(&mut f)
-    }
-
     fn save_cai_store(&self, _asset_path: &Path, _store_bytes: &[u8]) -> crate::Result<()> {
-        Err(NotImplemented(WRITE_NOT_IMPLEMENTED.into()))
-    }
-
-    fn get_object_locations(&self, _asset_path: &Path) -> crate::Result<Vec<HashObjectPositions>> {
         Err(NotImplemented(WRITE_NOT_IMPLEMENTED.into()))
     }
 
@@ -221,9 +212,10 @@ pub mod tests {
     fn test_cai_read_finds_no_manifest() {
         let source = crate::utils::test::fixture_path("basic.pdf");
         let pdf_io = PdfIO::new("pdf");
+        let mut f = std::fs::File::open(&source).unwrap();
 
         assert!(matches!(
-            pdf_io.read_cai_store(&source),
+            pdf_io.read_cai(&mut f),
             Err(crate::Error::JumbfNotFound)
         ));
     }

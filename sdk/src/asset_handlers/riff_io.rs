@@ -12,7 +12,7 @@
 // each license.
 
 use std::{
-    fs::{File, OpenOptions},
+    fs::OpenOptions,
     io::{Cursor, Seek, SeekFrom, Write},
     path::Path,
     result,
@@ -23,13 +23,12 @@ use riff::*;
 
 use crate::{
     asset_io::{
-        rename_or_move, AssetIO, AssetPatch, CAIRead, CAIReadWrapper, CAIReadWrite,
-        CAIReadWriteWrapper, CAIReader, CAIWriter, HashBlockObjectType, HashObjectPositions,
-        RemoteRefEmbed, RemoteRefEmbedType,
+        AssetIO, AssetPatch, CAIRead, CAIReadWrapper, CAIReadWrite, CAIReadWriteWrapper, CAIReader,
+        CAIWriter, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
     utils::{
-        io_utils::{stream_len, tempfile_builder},
+        io_utils::stream_len,
         xmp_inmemory_utils::{add_provenance, MIN_XMP},
     },
 };
@@ -393,32 +392,6 @@ impl AssetIO for RiffIO {
         Some(self)
     }
 
-    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
-        let mut f = File::open(asset_path)?;
-        self.read_cai(&mut f)
-    }
-
-    fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
-        let mut input_stream = File::open(asset_path)?;
-
-        let mut temp_file = tempfile_builder("c2pa_temp")?;
-
-        self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
-
-        // copy temp file to asset
-        rename_or_move(temp_file, asset_path)
-    }
-
-    fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>> {
-        let mut f = File::open(asset_path).map_err(|_err| Error::EmbeddingError)?;
-
-        self.get_object_locations_from_stream(&mut f)
-    }
-
-    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
-        self.save_cai_store(asset_path, &[])
-    }
-
     fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
         Some(self)
     }
@@ -613,19 +586,6 @@ impl AssetPatch for RiffIO {
 }
 
 impl RemoteRefEmbed for RiffIO {
-    #[allow(unused_variables)]
-    fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()> {
-        let mut input_stream = File::open(asset_path)?;
-
-        let mut output_stream = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        self.embed_reference_to_stream(&mut input_stream, &mut output_stream, embed_ref)
-    }
-
     fn embed_reference_to_stream(
         &self,
         input_stream: &mut dyn CAIRead,
@@ -717,9 +677,6 @@ impl RemoteRefEmbed for RiffIO {
                     Ok(())
                 }
             }
-            RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
-            RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
-            RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
         }
     }
 }
@@ -736,7 +693,7 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use std::panic;
+    use std::{fs::File, panic};
 
     use super::*;
     use crate::utils::{
@@ -745,6 +702,24 @@ pub mod tests {
         test::{fixture_path, temp_dir_path},
         xmp_inmemory_utils::extract_provenance,
     };
+
+    // test-only equivalent of the removed `AssetIO::read_cai_store`
+    fn read_cai_store(handler: &RiffIO, path: &Path) -> Result<Vec<u8>> {
+        let mut f = File::open(path).map_err(Error::IoError)?;
+        handler.read_cai(&mut f)
+    }
+
+    // test-only equivalent of the removed `RemoteRefEmbed::embed_reference`
+    fn embed_reference(
+        handler: &dyn RemoteRefEmbed,
+        path: &Path,
+        embed_ref: RemoteRefEmbedType,
+    ) -> Result<()> {
+        let mut input_stream = File::open(path).map_err(Error::IoError)?;
+        let mut output_stream = Cursor::new(Vec::new());
+        handler.embed_reference_to_stream(&mut input_stream, &mut output_stream, embed_ref)?;
+        std::fs::write(path, output_stream.into_inner()).map_err(Error::IoError)
+    }
 
     #[test]
     fn test_write_wav() {
@@ -759,7 +734,7 @@ pub mod tests {
                 let riff_io = RiffIO::new("wav");
 
                 if let Ok(()) = riff_io.save_cai_store(&output, more_data) {
-                    if let Ok(read_test_data) = riff_io.read_cai_store(&output) {
+                    if let Ok(read_test_data) = read_cai_store(&riff_io, &output) {
                         assert!(vec_compare(more_data, &read_test_data));
                         success = true;
                     }
@@ -877,13 +852,13 @@ pub mod tests {
                 let riff_io = RiffIO::new("wav");
 
                 if let Ok(()) = riff_io.save_cai_store(&output, test_data) {
-                    if let Ok(source_data) = riff_io.read_cai_store(&output) {
+                    if let Ok(source_data) = read_cai_store(&riff_io, &output) {
                         // create replacement data of same size
                         let mut new_data = vec![0u8; source_data.len()];
                         new_data[..test_data.len()].copy_from_slice(test_data);
                         riff_io.patch_cai_store(&output, &new_data).unwrap();
 
-                        let replaced = riff_io.read_cai_store(&output).unwrap();
+                        let replaced = read_cai_store(&riff_io, &output).unwrap();
 
                         assert_eq!(new_data, replaced);
 
@@ -908,7 +883,7 @@ pub mod tests {
         riff_io.remove_cai_store(&output).unwrap();
 
         // read back in asset, JumbfNotFound is expected since it was removed
-        match riff_io.read_cai_store(&output) {
+        match read_cai_store(&riff_io, &output) {
             Err(Error::JumbfNotFound) => (),
             _ => unreachable!(),
         }
@@ -939,7 +914,8 @@ pub mod tests {
             let riff_io = RiffIO::new("webp");
 
             if let Some(embed_handler) = riff_io.remote_ref_writer_ref() {
-                if let Ok(()) = embed_handler.embed_reference(
+                if let Ok(()) = embed_reference(
+                    embed_handler,
                     output.as_path(),
                     RemoteRefEmbedType::Xmp(more_data.to_string()),
                 ) {
@@ -975,7 +951,8 @@ pub mod tests {
             let riff_io = RiffIO::new("webp");
 
             if let Some(embed_handler) = riff_io.remote_ref_writer_ref() {
-                if let Ok(()) = embed_handler.embed_reference(
+                if let Ok(()) = embed_reference(
+                    embed_handler,
                     output.as_path(),
                     RemoteRefEmbedType::Xmp(more_data.to_string()),
                 ) {
@@ -1011,7 +988,8 @@ pub mod tests {
             let riff_io = RiffIO::new("webp");
 
             if let Some(embed_handler) = riff_io.remote_ref_writer_ref() {
-                if let Ok(()) = embed_handler.embed_reference(
+                if let Ok(()) = embed_reference(
+                    embed_handler,
                     output.as_path(),
                     RemoteRefEmbedType::Xmp(more_data.to_string()),
                 ) {

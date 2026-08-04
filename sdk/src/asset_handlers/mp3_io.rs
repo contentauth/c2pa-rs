@@ -106,10 +106,6 @@ impl CAIReader for Mp3IO {
 }
 
 impl RemoteRefEmbed for Mp3IO {
-    fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()> {
-        id3_helper::embed_xmp_reference(self, asset_path, embed_ref)
-    }
-
     fn embed_reference_to_stream(
         &self,
         source_stream: &mut dyn CAIRead,
@@ -130,7 +126,6 @@ impl RemoteRefEmbed for Mp3IO {
                     current_xmp,
                 )
             }
-            _ => Err(Error::UnsupportedType),
         }
     }
 }
@@ -156,22 +151,6 @@ impl AssetIO for Mp3IO {
 
     fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
         Some(self)
-    }
-
-    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
-        id3_helper::read_cai_store_from_path(self, asset_path)
-    }
-
-    fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
-        id3_helper::save_cai_store_to_path(self, asset_path, store_bytes)
-    }
-
-    fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>> {
-        id3_helper::get_object_locations_from_path(self, asset_path)
-    }
-
-    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
-        self.save_cai_store(asset_path, &[])
     }
 
     fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
@@ -231,7 +210,7 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use std::{io::Cursor, path::Path};
+    use std::io::Cursor;
 
     use super::*;
     use crate::{
@@ -309,12 +288,6 @@ pub mod tests {
     }
 
     #[test]
-    fn test_embed_reference_unsupported() {
-        let handler = Mp3IO::new("mp3");
-        test_helpers::run_embed_reference_unsupported(&handler, &fixture());
-    }
-
-    #[test]
     fn test_supported_types() {
         let handler = Mp3IO::new("mp3");
         test_helpers::run_supported_types(&handler, "mp3", "audio/mpeg");
@@ -356,15 +329,6 @@ pub mod tests {
             ),
         }
         assert!(handler.supported_types().contains(&"audio/mpeg"));
-    }
-
-    #[test]
-    fn test_read_cai_store_file_not_found() {
-        let mp3_io = Mp3IO::new("mp3");
-        match mp3_io.read_cai_store(Path::new("/nonexistent/sample.mp3")) {
-            Err(Error::IoError(_)) => {}
-            other => panic!("expected IoError for missing file, got {:?}", other),
-        }
     }
 
     // ── MP3-specific tests ───────────────────────────────────────────────────

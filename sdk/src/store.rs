@@ -7811,7 +7811,12 @@ pub mod tests {
 
         // insert manifest into output asset
         let jpeg_io = get_assetio_handler_from_path(&ap).unwrap();
-        let ol = jpeg_io.get_object_locations(&ap).unwrap();
+        let mut input_file = std::fs::File::open(&ap).unwrap();
+        let ol = jpeg_io
+            .get_writer("jpg")
+            .unwrap()
+            .get_object_locations_from_stream(&mut input_file)
+            .unwrap();
 
         let cai_loc = ol
             .iter()
@@ -7819,12 +7824,12 @@ pub mod tests {
             .unwrap();
 
         // remove any existing manifest
-        jpeg_io.read_cai_store(&ap).unwrap();
+        jpeg_io.get_reader().read_cai(&mut input_file).unwrap();
 
         // build new asset in memory inserting new manifest
         let outbuf = Vec::new();
         let mut out_stream = Cursor::new(outbuf);
-        let mut input_file = std::fs::File::open(&ap).unwrap();
+        input_file.rewind().unwrap();
 
         // write before
         let mut before = vec![0u8; cai_loc.offset];
@@ -7886,7 +7891,12 @@ pub mod tests {
 
         // insert manifest into output asset
         let jpeg_io = get_assetio_handler_from_path(&ap).unwrap();
-        let ol = jpeg_io.get_object_locations(&ap).unwrap();
+        let mut input_file = std::fs::File::open(&ap).unwrap();
+        let ol = jpeg_io
+            .get_writer("jpg")
+            .unwrap()
+            .get_object_locations_from_stream(&mut input_file)
+            .unwrap();
 
         let cai_loc = ol
             .iter()
@@ -7894,12 +7904,12 @@ pub mod tests {
             .unwrap();
 
         // remove any existing manifest
-        jpeg_io.read_cai_store(&ap).unwrap();
+        jpeg_io.get_reader().read_cai(&mut input_file).unwrap();
 
         // build new asset in memory inserting new manifest
         let outbuf = Vec::new();
         let mut out_stream = Cursor::new(outbuf);
-        let mut input_file = std::fs::File::open(&ap).unwrap();
+        input_file.rewind().unwrap();
 
         // write before
         let mut before = vec![0u8; cai_loc.offset];

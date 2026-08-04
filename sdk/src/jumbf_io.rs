@@ -418,7 +418,10 @@ pub fn load_jumbf_from_file<P: AsRef<Path>>(in_path: P) -> Result<Vec<u8>> {
     let ext = get_file_extension(in_path.as_ref()).ok_or(Error::UnsupportedType)?;
 
     match get_assetio_handler(&ext) {
-        Some(asset_handler) => asset_handler.read_cai_store(in_path.as_ref()),
+        Some(asset_handler) => {
+            let mut file = std::fs::File::open(in_path.as_ref()).map_err(Error::IoError)?;
+            asset_handler.get_reader().read_cai(&mut file)
+        }
         _ => Err(Error::UnsupportedType),
     }
 }
@@ -466,6 +469,9 @@ where
 /// path - path to file to be updated
 /// returns Unsupported type or errors from remove_cai_store
 #[cfg(feature = "file_io")]
+#[deprecated(
+    note = "unused within the SDK and has no known callers; will be removed in a future release"
+)]
 pub fn remove_jumbf_from_file<P: AsRef<Path>>(path: P) -> Result<()> {
     let ext = get_file_extension(path.as_ref()).ok_or(Error::UnsupportedType)?;
     match get_assetio_handler(&ext) {

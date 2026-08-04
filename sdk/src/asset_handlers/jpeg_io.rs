@@ -13,9 +13,7 @@
 
 use std::{
     collections::HashMap,
-    fs::File,
     io::{BufReader, Cursor, Write},
-    path::*,
 };
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
@@ -31,15 +29,11 @@ use serde_bytes::ByteBuf;
 use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        rename_or_move, AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
-        ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
-        RemoteRefEmbedType,
+        AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
+        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
-    utils::{
-        io_utils::tempfile_builder,
-        xmp_inmemory_utils::{add_provenance, MIN_XMP},
-    },
+    utils::xmp_inmemory_utils::{add_provenance, MIN_XMP},
 };
 
 static SUPPORTED_TYPES: [&str; 3] = ["jpg", "jpeg", "image/jpeg"];
@@ -485,60 +479,6 @@ impl CAIWriter for JpegIO {
 }
 
 impl AssetIO for JpegIO {
-    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
-        let mut f = File::open(asset_path)?;
-
-        self.read_cai(&mut f)
-    }
-
-    fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
-        let mut input_stream = std::fs::OpenOptions::new()
-            .read(true)
-            //.truncate(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        let mut temp_file = tempfile_builder("c2pa_temp")?;
-
-        self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
-
-        // copy temp file to asset
-        rename_or_move(temp_file, asset_path)
-    }
-
-    fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>> {
-        let mut file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        self.get_object_locations_from_stream(&mut file)
-    }
-
-    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
-        let input = std::fs::read(asset_path).map_err(Error::IoError)?;
-
-        let mut jpeg = Jpeg::from_bytes(input.into()).map_err(|_err| Error::EmbeddingError)?;
-
-        // remove existing CAI segments
-        delete_cai_segments(&mut jpeg)?;
-
-        // save updated file
-        let output = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .truncate(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        jpeg.encoder()
-            .write_to(output)
-            .map_err(|_err| Error::InvalidAsset("JPEG write error".to_owned()))?;
-
-        Ok(())
-    }
-
     fn new(_asset_type: &str) -> Self
     where
         Self: Sized,
@@ -576,33 +516,6 @@ impl AssetIO for JpegIO {
 }
 
 impl RemoteRefEmbed for JpegIO {
-    #[allow(unused_variables)]
-    fn embed_reference(
-        &self,
-        asset_path: &Path,
-        embed_ref: crate::asset_io::RemoteRefEmbedType,
-    ) -> Result<()> {
-        match &embed_ref {
-            crate::asset_io::RemoteRefEmbedType::Xmp(_manifest_uri) => {
-                let mut file = std::fs::File::open(asset_path)?;
-                let mut temp = Cursor::new(Vec::new());
-                self.embed_reference_to_stream(&mut file, &mut temp, embed_ref)?;
-                let mut output = std::fs::OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .truncate(true)
-                    .open(asset_path)
-                    .map_err(Error::IoError)?;
-                temp.set_position(0);
-                std::io::copy(&mut temp, &mut output).map_err(Error::IoError)?;
-                Ok(())
-            }
-            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
-        }
-    }
-
     fn embed_reference_to_stream(
         &self,
         source_stream: &mut dyn CAIRead,
@@ -648,9 +561,6 @@ impl RemoteRefEmbed for JpegIO {
                     .map_err(|_err| Error::InvalidAsset("JPEG write error".to_owned()))?;
                 Ok(())
             }
-            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
         }
     }
 }
@@ -1240,7 +1150,8 @@ pub mod tests {
         jpeg_io.remove_cai_store(&output).unwrap();
 
         // read back in asset, JumbfNotFound is expected since it was removed
-        match jpeg_io.read_cai_store(&output) {
+        let mut file_reader = std::fs::File::open(&output).unwrap();
+        match jpeg_io.read_cai(&mut file_reader) {
             Err(Error::JumbfNotFound) => (),
             _ => unreachable!(),
         }
@@ -1288,9 +1199,16 @@ pub mod tests {
 
         let remote_ref_handler = assetio_handler.remote_ref_writer_ref().unwrap();
 
+        let mut input_stream = std::fs::File::open(&output).unwrap();
+        let mut output_stream = Cursor::new(Vec::new());
         remote_ref_handler
-            .embed_reference(&output, RemoteRefEmbedType::Xmp(test_msg.to_string()))
+            .embed_reference_to_stream(
+                &mut input_stream,
+                &mut output_stream,
+                RemoteRefEmbedType::Xmp(test_msg.to_string()),
+            )
             .unwrap();
+        std::fs::write(&output, output_stream.into_inner()).unwrap();
 
         // read back in XMP
         let mut file_reader = std::fs::File::open(&output).unwrap();
@@ -1344,13 +1262,16 @@ pub mod tests {
 
         let source = crate::utils::test::fixture_path("CA.jpg");
 
-        let ol = jpeg_io.get_object_locations(&source).unwrap();
+        let mut source_reader = std::fs::File::open(&source).unwrap();
+        let ol = jpeg_io
+            .get_object_locations_from_stream(&mut source_reader)
+            .unwrap();
 
         let cai_loc = ol
             .iter()
             .find(|o| o.htype == HashBlockObjectType::Cai)
             .unwrap();
-        let curr_manifest = jpeg_io.read_cai_store(&source).unwrap();
+        let curr_manifest = jpeg_io.read_cai(&mut source_reader).unwrap();
 
         let temp_dir = tempdirectory().unwrap();
         let output = crate::utils::test::temp_dir_path(&temp_dir, "CA_test.jpg");

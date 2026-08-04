@@ -33,11 +33,7 @@
 //! `jumb` boxes. Only `brob`-wrapped `xml` (XMP) boxes are decompressed, as XMP is treated
 //! as opaque metadata.
 
-use std::{
-    fs::File,
-    io::{Cursor, Read, SeekFrom},
-    path::Path,
-};
+use std::io::{Cursor, Read, SeekFrom};
 
 use byteorder::{BigEndian, ReadBytesExt};
 use serde_bytes::ByteBuf;
@@ -45,13 +41,12 @@ use serde_bytes::ByteBuf;
 use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        rename_or_move, AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
-        ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
-        RemoteRefEmbedType,
+        AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
+        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
     utils::{
-        io_utils::{patch_stream, safe_vec, stream_len, tempfile_builder, BoundedVecWriter},
+        io_utils::{patch_stream, safe_vec, stream_len, BoundedVecWriter},
         xmp_inmemory_utils::{add_provenance, MIN_XMP},
     },
 };
@@ -694,44 +689,6 @@ impl AssetIO for JpegXlIO {
         Some(Box::new(JpegXlIO::new(asset_type)))
     }
 
-    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
-        let mut f = File::open(asset_path)?;
-        self.read_cai(&mut f)
-    }
-
-    fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
-        let mut input_stream = std::fs::OpenOptions::new()
-            .read(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        let mut temp_file = tempfile_builder("c2pa_temp")?;
-
-        self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
-
-        rename_or_move(temp_file, asset_path)
-    }
-
-    fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>> {
-        let mut file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        self.get_object_locations_from_stream(&mut file)
-    }
-
-    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
-        let mut input_stream = File::open(asset_path).map_err(Error::IoError)?;
-
-        let mut temp_file = tempfile_builder("c2pa_temp")?;
-
-        remove_c2pa_jumb_box(&mut input_stream, &mut temp_file)?;
-
-        rename_or_move(temp_file, asset_path)
-    }
-
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
@@ -750,22 +707,6 @@ impl AssetIO for JpegXlIO {
 }
 
 impl RemoteRefEmbed for JpegXlIO {
-    #[allow(unused_variables)]
-    fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()> {
-        match &embed_ref {
-            RemoteRefEmbedType::Xmp(_) => {
-                let mut file = File::open(asset_path)?;
-                let mut temp = Cursor::new(Vec::new());
-                self.embed_reference_to_stream(&mut file, &mut temp, embed_ref)?;
-                std::fs::write(asset_path, temp.into_inner()).map_err(Error::IoError)?;
-                Ok(())
-            }
-            RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
-            RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
-            RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
-        }
-    }
-
     fn embed_reference_to_stream(
         &self,
         source_stream: &mut dyn CAIRead,
@@ -805,9 +746,6 @@ impl RemoteRefEmbed for JpegXlIO {
 
                 Ok(())
             }
-            RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
-            RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
-            RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
         }
     }
 }
@@ -1778,21 +1716,6 @@ pub mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_embed_stego_unsupported() {
-        let container = build_minimal_jxl_container();
-        let mut input = Cursor::new(container);
-        let mut output = Cursor::new(Vec::new());
-
-        let jpegxl_io = JpegXlIO {};
-        let result = jpegxl_io.embed_reference_to_stream(
-            &mut input,
-            &mut output,
-            RemoteRefEmbedType::StegoS("test".to_string()),
-        );
-        assert!(matches!(result, Err(Error::UnsupportedType)));
-    }
-
     // ─── Composed manifest tests ───
 
     #[test]
@@ -2002,7 +1925,8 @@ pub mod tests {
         let store_bytes = c2pa_store(b"file_based_manifest_store");
         jpegxl_io.save_cai_store(&test_path, &store_bytes).unwrap();
 
-        let read_back = jpegxl_io.read_cai_store(&test_path).unwrap();
+        let mut f = std::fs::File::open(&test_path).unwrap();
+        let read_back = jpegxl_io.read_cai(&mut f).unwrap();
         assert_eq!(read_back, store_bytes);
     }
 
@@ -2021,7 +1945,8 @@ pub mod tests {
 
         jpegxl_io.remove_cai_store(&test_path).unwrap();
 
-        let result = jpegxl_io.read_cai_store(&test_path);
+        let mut f = std::fs::File::open(&test_path).unwrap();
+        let result = jpegxl_io.read_cai(&mut f);
         assert!(matches!(result, Err(Error::JumbfNotFound)));
     }
 
@@ -2038,7 +1963,8 @@ pub mod tests {
             .save_cai_store(&test_path, &c2pa_store(b"manifest_for_locations"))
             .unwrap();
 
-        let locations = jpegxl_io.get_object_locations(&test_path).unwrap();
+        let mut f = std::fs::File::open(&test_path).unwrap();
+        let locations = jpegxl_io.get_object_locations_from_stream(&mut f).unwrap();
         assert!(locations
             .iter()
             .any(|l| l.htype == HashBlockObjectType::Cai));

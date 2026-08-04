@@ -1484,9 +1484,7 @@ mod tests {
 
     #[test]
     fn test_custom_io_handler_overrides_builtin() {
-        use std::path::Path;
-
-        use crate::asset_io::{AssetIO, CAIRead, CAIReader, HashObjectPositions};
+        use crate::asset_io::{AssetIO, CAIRead, CAIReader};
 
         struct NoopReader;
         impl CAIReader for NoopReader {
@@ -1515,22 +1513,6 @@ mod tests {
 
             fn supported_types(&self) -> &[&str] {
                 &["image/jpeg"]
-            }
-
-            fn read_cai_store(&self, _: &Path) -> crate::Result<Vec<u8>> {
-                Ok(vec![])
-            }
-
-            fn save_cai_store(&self, _: &Path, _: &[u8]) -> crate::Result<()> {
-                Ok(())
-            }
-
-            fn get_object_locations(&self, _: &Path) -> crate::Result<Vec<HashObjectPositions>> {
-                Ok(vec![])
-            }
-
-            fn remove_cai_store(&self, _: &Path) -> crate::Result<()> {
-                Ok(())
             }
         }
 
@@ -1564,9 +1546,7 @@ mod tests {
 
     #[test]
     fn test_last_registered_custom_handler_wins() {
-        use std::path::Path;
-
-        use crate::asset_io::{AssetIO, CAIRead, CAIReader, HashObjectPositions};
+        use crate::asset_io::{AssetIO, CAIRead, CAIReader};
 
         struct HandlerA;
         struct ReaderA;
@@ -1594,22 +1574,6 @@ mod tests {
 
             fn supported_types(&self) -> &[&str] {
                 &["x-custom/test"]
-            }
-
-            fn read_cai_store(&self, _: &Path) -> crate::Result<Vec<u8>> {
-                Ok(vec![])
-            }
-
-            fn save_cai_store(&self, _: &Path, _: &[u8]) -> crate::Result<()> {
-                Ok(())
-            }
-
-            fn get_object_locations(&self, _: &Path) -> crate::Result<Vec<HashObjectPositions>> {
-                Ok(vec![])
-            }
-
-            fn remove_cai_store(&self, _: &Path) -> crate::Result<()> {
-                Ok(())
             }
         }
 
@@ -1639,22 +1603,6 @@ mod tests {
 
             fn supported_types(&self) -> &[&str] {
                 &["x-custom/test"]
-            }
-
-            fn read_cai_store(&self, _: &Path) -> crate::Result<Vec<u8>> {
-                Ok(vec![])
-            }
-
-            fn save_cai_store(&self, _: &Path, _: &[u8]) -> crate::Result<()> {
-                Ok(())
-            }
-
-            fn get_object_locations(&self, _: &Path) -> crate::Result<Vec<HashObjectPositions>> {
-                Ok(vec![])
-            }
-
-            fn remove_cai_store(&self, _: &Path) -> crate::Result<()> {
-                Ok(())
             }
         }
 

@@ -13,9 +13,8 @@
 
 use std::{
     borrow::Cow,
-    fs::{self, File, OpenOptions},
+    fs::OpenOptions,
     io::{BufReader, Cursor, Seek, SeekFrom, Write},
-    path::Path,
 };
 
 use quick_xml::{
@@ -23,25 +22,15 @@ use quick_xml::{
     Reader, Writer,
 };
 
-use crate::crypto::base64;
 use crate::{
     asset_io::{
-        rename_or_move,
-        AssetIO,
-        AssetPatch,
-        CAIRead,
-        CAIReadWrite,
-        CAIReader,
-        CAIWriter, //RemoteRefEmbedType,
-        HashBlockObjectType,
-        //HashBlockObjectType,
-        HashObjectPositions,
-        RemoteRefEmbed,
-        RemoteRefEmbedType,
+        AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashBlockObjectType,
+        HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
+    crypto::base64,
     error::{Error, Result},
     utils::{
-        io_utils::{patch_stream, stream_len, tempfile_builder, ReaderUtils},
+        io_utils::{patch_stream, stream_len, ReaderUtils},
         xmp_inmemory_utils::{self, MIN_XMP},
     },
 };
@@ -110,46 +99,6 @@ impl AssetIO for SvgIO {
 
     fn get_writer(&self, asset_type: &str) -> Option<Box<dyn CAIWriter>> {
         Some(Box::new(SvgIO::new(asset_type)))
-    }
-
-    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
-        let mut f = File::open(asset_path)?;
-        self.read_cai(&mut f)
-    }
-
-    fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
-        let mut input_stream = std::fs::OpenOptions::new()
-            .read(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        let mut temp_file = tempfile_builder("c2pa_temp")?;
-
-        self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
-
-        // copy temp file to asset
-        rename_or_move(temp_file, asset_path)
-    }
-
-    fn get_object_locations(
-        &self,
-        asset_path: &std::path::Path,
-    ) -> Result<Vec<HashObjectPositions>> {
-        let mut input_stream =
-            std::fs::File::open(asset_path).map_err(|_err| Error::EmbeddingError)?;
-
-        self.get_object_locations_from_stream(&mut input_stream)
-    }
-
-    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
-        let mut input_file = File::open(asset_path)?;
-
-        let mut temp_file = tempfile_builder("c2pa_temp")?;
-
-        self.remove_cai_store_from_stream(&mut input_file, &mut temp_file)?;
-
-        // copy temp file to asset
-        rename_or_move(temp_file, asset_path)
     }
 
     fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
@@ -701,19 +650,6 @@ impl AssetPatch for SvgIO {
 }
 
 impl RemoteRefEmbed for SvgIO {
-    fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()> {
-        match &embed_ref {
-            RemoteRefEmbedType::Xmp(_) => {
-                let mut input_stream = File::open(asset_path)?;
-                let mut output_stream = Cursor::new(Vec::new());
-                self.embed_reference_to_stream(&mut input_stream, &mut output_stream, embed_ref)?;
-                fs::write(asset_path, output_stream.into_inner())?;
-                Ok(())
-            }
-            _ => Err(Error::UnsupportedType),
-        }
-    }
-
     fn embed_reference_to_stream(
         &self,
         source_stream: &mut dyn CAIRead,
@@ -767,7 +703,6 @@ impl RemoteRefEmbed for SvgIO {
                     }
                 }
             }
-            _ => Err(Error::UnsupportedType),
         }
     }
 }
@@ -784,7 +719,7 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use std::io::Read;
+    use std::{fs::File, io::Read, path::Path};
 
     use xmp_inmemory_utils::extract_provenance;
 
@@ -794,6 +729,12 @@ pub mod tests {
         io_utils::tempdirectory,
         test::{fixture_path, temp_dir_path},
     };
+
+    // test-only equivalent of the removed `AssetIO::read_cai_store`
+    fn read_cai_store(handler: &SvgIO, path: &Path) -> Result<Vec<u8>> {
+        let mut f = File::open(path).map_err(Error::IoError)?;
+        handler.read_cai(&mut f)
+    }
 
     fn assert_c2pa_namespace_on_svg_root(xml: &str) {
         let svg_idx = xml.find("<svg").expect("SVG root tag missing");
@@ -837,7 +778,7 @@ pub mod tests {
                     let xml = std::fs::read_to_string(&output).unwrap();
                     assert_c2pa_namespace_on_svg_root(&xml);
                     assert_no_c2pa_namespace_on_manifest(&xml);
-                    if let Ok(read_test_data) = svg_io.read_cai_store(&output) {
+                    if let Ok(read_test_data) = read_cai_store(&svg_io, &output) {
                         assert!(vec_compare(more_data, &read_test_data));
                         success = true;
                     }
@@ -863,7 +804,7 @@ pub mod tests {
                     let xml = std::fs::read_to_string(&output).unwrap();
                     assert_c2pa_namespace_on_svg_root(&xml);
                     assert_no_c2pa_namespace_on_manifest(&xml);
-                    if let Ok(read_test_data) = svg_io.read_cai_store(&output) {
+                    if let Ok(read_test_data) = read_cai_store(&svg_io, &output) {
                         assert!(vec_compare(more_data, &read_test_data));
                         success = true;
                     }
@@ -891,7 +832,7 @@ pub mod tests {
                     // sample3's <c2pa:manifest> has inline xmlns:c2pa from a prior
                     // signing. By design we don't strip it on resign.
                     // This test intentionally omits the assert_no_c2pa_namespace_on_manifest check.
-                    if let Ok(read_test_data) = svg_io.read_cai_store(&output) {
+                    if let Ok(read_test_data) = read_cai_store(&svg_io, &output) {
                         assert!(vec_compare(more_data, &read_test_data));
                         success = true;
                     }
@@ -917,7 +858,7 @@ pub mod tests {
                     let xml = std::fs::read_to_string(&output).unwrap();
                     assert_c2pa_namespace_on_svg_root(&xml);
                     assert_no_c2pa_namespace_on_manifest(&xml);
-                    if let Ok(read_test_data) = svg_io.read_cai_store(&output) {
+                    if let Ok(read_test_data) = read_cai_store(&svg_io, &output) {
                         assert!(vec_compare(more_data, &read_test_data));
                         success = true;
                     }
@@ -956,7 +897,7 @@ pub mod tests {
                             "expected xmlns:c2pa exactly once on <svg> root, got {count}: {svg_open_tag}"
                         );
 
-                        if let Ok(read_test_data) = svg_io.read_cai_store(&output) {
+                        if let Ok(read_test_data) = read_cai_store(&svg_io, &output) {
                             assert!(vec_compare(new_manifest_data, &read_test_data));
                             success = true;
                         }
@@ -980,13 +921,13 @@ pub mod tests {
                 let svg_io = SvgIO::new("svg");
 
                 if let Ok(()) = svg_io.save_cai_store(&output, test_data) {
-                    if let Ok(source_data) = svg_io.read_cai_store(&output) {
+                    if let Ok(source_data) = read_cai_store(&svg_io, &output) {
                         // create replacement data of same size
                         let mut new_data = vec![0u8; source_data.len()];
                         new_data[..test_data.len()].copy_from_slice(test_data);
                         svg_io.patch_cai_store(&output, &new_data).unwrap();
 
-                        let replaced = svg_io.read_cai_store(&output).unwrap();
+                        let replaced = read_cai_store(&svg_io, &output).unwrap();
 
                         assert_eq!(new_data, replaced);
 
@@ -1011,7 +952,7 @@ pub mod tests {
         svg_io.remove_cai_store(&output).unwrap();
 
         // read back in asset, JumbfNotFound is expected since it was removed
-        match svg_io.read_cai_store(&output) {
+        match read_cai_store(&svg_io, &output) {
             Err(Error::JumbfNotFound) => (),
             _ => unreachable!(),
         }
@@ -1030,7 +971,10 @@ pub mod tests {
                 let svg_io = SvgIO::new("svg");
 
                 if let Ok(()) = svg_io.save_cai_store(&output, more_data) {
-                    if let Ok(locations) = svg_io.get_object_locations(&output) {
+                    let mut output_reader = File::open(&output).unwrap();
+                    if let Ok(locations) =
+                        svg_io.get_object_locations_from_stream(&mut output_reader)
+                    {
                         for op in locations {
                             if op.htype == HashBlockObjectType::Cai {
                                 let mut of = File::open(&output).unwrap();

@@ -19,7 +19,7 @@
 //! validation, FLAC stream verification, …).
 
 use std::{
-    fs::{File, OpenOptions},
+    fs::OpenOptions,
     io::{Cursor, Seek, SeekFrom, Write},
     path::Path,
 };
@@ -33,12 +33,12 @@ use memchr::memmem;
 
 use crate::{
     asset_io::{
-        rename_or_move, CAIRead, CAIReadWrapper, CAIReadWrite, CAIReadWriteWrapper, CAIReader,
-        CAIWriter, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        CAIRead, CAIReadWrapper, CAIReadWrite, CAIReadWriteWrapper, HashBlockObjectType,
+        HashObjectPositions,
     },
     error::{Error, Result},
     utils::{
-        io_utils::{stream_len, tempfile_builder, ReaderUtils},
+        io_utils::{stream_len, ReaderUtils},
         xmp_inmemory_utils::{self, MIN_XMP},
     },
 };
@@ -327,66 +327,6 @@ pub(crate) fn patch_cai_in_id3_asset(asset_path: &Path, store_bytes: &[u8]) -> R
     }
 }
 
-/// Embeds an XMP remote reference into an ID3-tagged asset file in place.
-///
-/// Opens the file at `asset_path`, delegates to
-/// [`RemoteRefEmbed::embed_reference_to_stream`], then writes the result back.
-/// Only [`RemoteRefEmbedType::Xmp`] is supported; all other variants return
-/// [`Error::UnsupportedType`].
-#[allow(unused)]
-pub(crate) fn embed_xmp_reference(
-    embed: &dyn RemoteRefEmbed,
-    asset_path: &std::path::Path,
-    embed_ref: RemoteRefEmbedType,
-) -> Result<()> {
-    match &embed_ref {
-        RemoteRefEmbedType::Xmp(_) => {
-            let mut input_stream = File::open(asset_path)?;
-            let mut output_stream = Cursor::new(Vec::new());
-            embed.embed_reference_to_stream(&mut input_stream, &mut output_stream, embed_ref)?;
-            std::fs::write(asset_path, output_stream.into_inner())?;
-            Ok(())
-        }
-        _ => Err(Error::UnsupportedType),
-    }
-}
-
-/// Reads the CAI store from a file on disk via a [`CAIReader`].
-pub(crate) fn read_cai_store_from_path(
-    reader: &dyn CAIReader,
-    asset_path: &Path,
-) -> Result<Vec<u8>> {
-    let mut f = File::open(asset_path)?;
-    reader.read_cai(&mut f)
-}
-
-/// Writes `store_bytes` into an ID3-tagged asset file via a [`CAIWriter`],
-/// replacing any existing C2PA manifest.
-pub(crate) fn save_cai_store_to_path(
-    writer: &dyn CAIWriter,
-    asset_path: &Path,
-    store_bytes: &[u8],
-) -> Result<()> {
-    let mut input_stream = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(asset_path)
-        .map_err(Error::IoError)?;
-    let mut temp_file = tempfile_builder("c2pa_temp")?;
-    writer.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
-    rename_or_move(temp_file, asset_path)
-}
-
-/// Returns the [`HashObjectPositions`] for a file on disk via a [`CAIWriter`].
-#[allow(unused)]
-pub(crate) fn get_object_locations_from_path(
-    writer: &dyn CAIWriter,
-    asset_path: &Path,
-) -> Result<Vec<HashObjectPositions>> {
-    let mut f = File::open(asset_path).map_err(|_| Error::EmbeddingError)?;
-    writer.get_object_locations_from_stream(&mut f)
-}
-
 // ── Shared test helpers ─────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -407,7 +347,7 @@ pub(crate) mod test_helpers {
 
     use crate::{
         asset_io::{AssetIO, HashBlockObjectType, RemoteRefEmbed, RemoteRefEmbedType},
-        error::Error,
+        error::{Error, Result},
         utils::{hash_utils::vec_compare, xmp_inmemory_utils::extract_provenance},
     };
 
@@ -507,11 +447,17 @@ pub(crate) mod test_helpers {
     }
 
     /// Write arbitrary data then read it back and verify round-trip equality.
+    // test-only equivalent of the removed `AssetIO::read_cai_store`
+    fn read_cai_store(handler: &dyn AssetIO, path: &Path) -> Result<Vec<u8>> {
+        let mut f = std::fs::File::open(path).map_err(Error::IoError)?;
+        handler.get_reader().read_cai(&mut f)
+    }
+
     pub(crate) fn run_write_read_roundtrip(handler: &dyn AssetIO, fixture: &Path, tmp: &Path) {
         let data = b"some more test data";
         std::fs::copy(fixture, tmp).unwrap();
         handler.save_cai_store(tmp, data).unwrap();
-        let read_back = handler.read_cai_store(tmp).unwrap();
+        let read_back = read_cai_store(handler, tmp).unwrap();
         assert!(vec_compare(data, &read_back));
     }
 
@@ -520,7 +466,7 @@ pub(crate) mod test_helpers {
         let test_data = b"some test data";
         std::fs::copy(fixture, tmp).unwrap();
         handler.save_cai_store(tmp, test_data).unwrap();
-        let source_data = handler.read_cai_store(tmp).unwrap();
+        let source_data = read_cai_store(handler, tmp).unwrap();
         let mut new_data = vec![0u8; source_data.len()];
         new_data[..test_data.len()].copy_from_slice(test_data);
         handler
@@ -528,7 +474,7 @@ pub(crate) mod test_helpers {
             .unwrap()
             .patch_cai_store(tmp, &new_data)
             .unwrap();
-        let replaced = handler.read_cai_store(tmp).unwrap();
+        let replaced = read_cai_store(handler, tmp).unwrap();
         assert_eq!(new_data, replaced);
     }
 
@@ -552,7 +498,7 @@ pub(crate) mod test_helpers {
         std::fs::copy(fixture, tmp).unwrap();
         handler.save_cai_store(tmp, &[1, 2, 3]).unwrap();
         handler.remove_cai_store(tmp).unwrap();
-        match handler.read_cai_store(tmp) {
+        match read_cai_store(handler, tmp) {
             Err(Error::JumbfNotFound) => {}
             _ => unreachable!(),
         }
@@ -591,7 +537,12 @@ pub(crate) mod test_helpers {
     ) {
         std::fs::copy(fixture, tmp).unwrap();
         handler.save_cai_store(tmp, &[1, 2, 3, 4, 5]).unwrap();
-        let positions = handler.get_object_locations(tmp).unwrap();
+        let mut f = std::fs::File::open(tmp).unwrap();
+        let positions = handler
+            .get_writer("")
+            .unwrap()
+            .get_object_locations_from_stream(&mut f)
+            .unwrap();
         assert_eq!(positions.len(), 3, "expected [Cai, Other, Other]");
         let file_len = std::fs::metadata(tmp).unwrap().len() as usize;
         let sum_len: usize = positions.iter().map(|p| p.length).sum();
@@ -649,20 +600,6 @@ pub(crate) mod test_helpers {
         }
     }
 
-    /// Embedding an unsupported reference type must return `UnsupportedType`.
-    pub(crate) fn run_embed_reference_unsupported(embed: &dyn RemoteRefEmbed, fixture: &Path) {
-        let mut stream = std::fs::File::open(fixture).unwrap();
-        let mut output = Cursor::new(Vec::new());
-        match embed.embed_reference_to_stream(
-            &mut stream,
-            &mut output,
-            RemoteRefEmbedType::StegoS("x".to_string()),
-        ) {
-            Err(Error::UnsupportedType) => {}
-            other => panic!("expected UnsupportedType for StegoS, got {:?}", other),
-        }
-    }
-
     /// Save data, read back, verify.
     pub(crate) fn run_read_cai_success_with_manifest(
         handler: &dyn AssetIO,
@@ -672,7 +609,7 @@ pub(crate) mod test_helpers {
         let payload = b"c2pa manifest payload";
         std::fs::copy(fixture, tmp).unwrap();
         handler.save_cai_store(tmp, payload).unwrap();
-        let read = handler.read_cai_store(tmp).unwrap();
+        let read = read_cai_store(handler, tmp).unwrap();
         assert!(vec_compare(payload, &read));
     }
 
@@ -694,12 +631,17 @@ pub(crate) mod test_helpers {
         tmp: &Path,
     ) {
         std::fs::copy(fixture, tmp).unwrap();
+        let mut input_stream = std::fs::File::open(tmp).unwrap();
+        let mut output_stream = Cursor::new(Vec::new());
         embed
-            .embed_reference(
-                tmp,
+            .embed_reference_to_stream(
+                &mut input_stream,
+                &mut output_stream,
                 RemoteRefEmbedType::Xmp("https://example.com/ref".to_string()),
             )
             .unwrap();
+        std::fs::write(tmp, output_stream.into_inner()).unwrap();
+
         let mut f = std::fs::File::open(tmp).unwrap();
         let xmp = handler.get_reader().read_xmp(&mut f).expect("xmp present");
         let p = extract_provenance(&xmp).unwrap();

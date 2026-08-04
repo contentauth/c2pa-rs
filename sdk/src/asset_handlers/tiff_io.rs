@@ -15,7 +15,6 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fs::OpenOptions,
     io::{Cursor, Read, Seek, SeekFrom, Write},
-    path::Path,
     vec,
 };
 
@@ -25,13 +24,12 @@ use byteordered::{with_order, ByteOrdered, Endianness};
 
 use crate::{
     asset_io::{
-        rename_or_move, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
-        ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
-        RemoteRefEmbedType,
+        AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
+        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
     },
     error::{Error, Result},
     utils::{
-        io_utils::{safe_vec, stream_len, tempfile_builder, ReaderUtils},
+        io_utils::{safe_vec, stream_len, ReaderUtils},
         xmp_inmemory_utils::{add_provenance, MIN_XMP},
     },
 };
@@ -1771,47 +1769,6 @@ impl AssetIO for TiffIO {
         Some(self)
     }
 
-    fn read_cai_store(&self, asset_path: &std::path::Path) -> Result<Vec<u8>> {
-        let mut reader = std::fs::File::open(asset_path)?;
-
-        self.read_cai(&mut reader)
-    }
-
-    fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
-        let mut input_stream = std::fs::OpenOptions::new()
-            .read(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        let mut temp_file = tempfile_builder("c2pa_temp")?;
-
-        self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
-
-        // copy temp file to asset
-        rename_or_move(temp_file, asset_path)
-    }
-
-    fn get_object_locations(
-        &self,
-        asset_path: &std::path::Path,
-    ) -> Result<Vec<crate::asset_io::HashObjectPositions>> {
-        let mut input_stream =
-            std::fs::File::open(asset_path).map_err(|_err| Error::EmbeddingError)?;
-
-        self.get_object_locations_from_stream(&mut input_stream)
-    }
-
-    fn remove_cai_store(&self, asset_path: &std::path::Path) -> Result<()> {
-        let mut input_file = std::fs::File::open(asset_path)?;
-
-        let mut temp_file = tempfile_builder("c2pa_temp")?;
-
-        self.remove_cai_store_from_stream(&mut input_file, &mut temp_file)?;
-
-        // copy temp file to asset
-        rename_or_move(temp_file, asset_path)
-    }
-
     fn new(_asset_type: &str) -> Self
     where
         Self: Sized,
@@ -2002,38 +1959,6 @@ impl AssetPatch for TiffIO {
 }
 
 impl RemoteRefEmbed for TiffIO {
-    #[allow(unused_variables)]
-    fn embed_reference(
-        &self,
-        asset_path: &Path,
-        embed_ref: crate::asset_io::RemoteRefEmbedType,
-    ) -> Result<()> {
-        match embed_ref {
-            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
-                let output_buf = Vec::new();
-                let mut output_stream = Cursor::new(output_buf);
-
-                // block so that source file is closed after embed
-                {
-                    let mut source_stream = std::fs::File::open(asset_path)?;
-                    self.embed_reference_to_stream(
-                        &mut source_stream,
-                        &mut output_stream,
-                        RemoteRefEmbedType::Xmp(manifest_uri),
-                    )?;
-                }
-
-                // write will replace exisiting contents
-                output_stream.rewind()?;
-                std::fs::write(asset_path, output_stream.into_inner())?;
-                Ok(())
-            }
-            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
-        }
-    }
-
     fn embed_reference_to_stream(
         &self,
         source_stream: &mut dyn CAIRead,
@@ -2061,9 +1986,6 @@ impl RemoteRefEmbed for TiffIO {
                 };
                 tiff_clone_with_tags(output_stream, source_stream, vec![entry])
             }
-            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
         }
     }
 }
@@ -2091,6 +2013,12 @@ pub mod tests {
     use super::*;
     use crate::utils::{io_utils::tempdirectory, test::temp_dir_path};
 
+    // test-only equivalent of the removed `AssetIO::read_cai_store`
+    fn read_cai_store(handler: &TiffIO, path: &std::path::Path) -> Result<Vec<u8>> {
+        let mut f = std::fs::File::open(path).map_err(Error::IoError)?;
+        handler.read_cai(&mut f)
+    }
+
     #[test]
     fn test_multipage_read_write_manifest() {
         let data = "some data";
@@ -2109,7 +2037,7 @@ pub mod tests {
         tiff_io.save_cai_store(&output, data.as_bytes()).unwrap();
 
         // read data back
-        let loaded = tiff_io.read_cai_store(&output).unwrap();
+        let loaded = read_cai_store(&tiff_io, &output).unwrap();
 
         assert_eq!(&loaded, data.as_bytes());
 
@@ -2117,7 +2045,7 @@ pub mod tests {
         tiff_io.save_cai_store(&output, data2.as_bytes()).unwrap();
 
         // read data back
-        let loaded = tiff_io.read_cai_store(&output).unwrap();
+        let loaded = read_cai_store(&tiff_io, &output).unwrap();
 
         assert_eq!(&loaded, data2.as_bytes());
     }
@@ -2187,7 +2115,7 @@ pub mod tests {
         tiff_io.save_cai_store(&output, data.as_bytes()).unwrap();
 
         // read data back
-        let loaded = tiff_io.read_cai_store(&output).unwrap();
+        let loaded = read_cai_store(&tiff_io, &output).unwrap();
 
         assert_eq!(&loaded, data.as_bytes());
     }
@@ -2209,7 +2137,7 @@ pub mod tests {
         tiff_io.save_cai_store(&output, data.as_bytes()).unwrap();
 
         // read data back
-        let loaded = tiff_io.read_cai_store(&output).unwrap();
+        let loaded = read_cai_store(&tiff_io, &output).unwrap();
 
         assert_eq!(&loaded, data.as_bytes());
     }
@@ -2231,7 +2159,7 @@ pub mod tests {
         tiff_io.save_cai_store(&output, data.as_bytes()).unwrap();
 
         // read data back
-        let loaded = tiff_io.read_cai_store(&output).unwrap();
+        let loaded = read_cai_store(&tiff_io, &output).unwrap();
 
         assert_eq!(&loaded, data.as_bytes());
     }
@@ -2251,8 +2179,15 @@ pub mod tests {
 
         // save data to tiff
         let eh = tiff_io.remote_ref_writer_ref().unwrap();
-        eh.embed_reference(&output, RemoteRefEmbedType::Xmp(data.to_string()))
-            .unwrap();
+        let mut input_stream = std::fs::File::open(&output).unwrap();
+        let mut embed_stream = Cursor::new(Vec::new());
+        eh.embed_reference_to_stream(
+            &mut input_stream,
+            &mut embed_stream,
+            RemoteRefEmbedType::Xmp(data.to_string()),
+        )
+        .unwrap();
+        std::fs::write(&output, embed_stream.into_inner()).unwrap();
 
         // read data back
         let mut output_stream = std::fs::File::open(&output).unwrap();
@@ -2282,13 +2217,13 @@ pub mod tests {
         tiff_io.save_cai_store(&output, data.as_bytes()).unwrap();
 
         // read data back
-        let loaded = tiff_io.read_cai_store(&output).unwrap();
+        let loaded = read_cai_store(&tiff_io, &output).unwrap();
 
         assert_eq!(&loaded, data.as_bytes());
 
         tiff_io.remove_cai_store(&output).unwrap();
 
-        match tiff_io.read_cai_store(&output) {
+        match read_cai_store(&tiff_io, &output) {
             Err(Error::JumbfNotFound) => (),
             _ => panic!("should be no C2PA store"),
         }
@@ -2311,12 +2246,13 @@ pub mod tests {
         tiff_io.save_cai_store(&output, data.as_bytes()).unwrap();
 
         // read data back
-        let loaded = tiff_io.read_cai_store(&output).unwrap();
+        let loaded = read_cai_store(&tiff_io, &output).unwrap();
 
         assert_eq!(&loaded, data.as_bytes());
 
         let mut success = false;
-        if let Ok(locations) = tiff_io.get_object_locations(&output) {
+        let mut output_reader = std::fs::File::open(&output).unwrap();
+        if let Ok(locations) = tiff_io.get_object_locations_from_stream(&mut output_reader) {
             for op in locations {
                 if op.htype == HashBlockObjectType::Cai {
                     let mut of = std::fs::File::open(&output).unwrap();
@@ -2512,7 +2448,7 @@ pub mod tests {
 
         // read data back
         println!("Reading TIFF");
-        let loaded = tiff_io.read_cai_store(&output).unwrap();
+        let loaded = read_cai_store(&tiff_io, &output).unwrap();
 
         assert_eq!(&loaded, data.as_bytes());
     }
