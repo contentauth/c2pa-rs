@@ -30,10 +30,9 @@ use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
         AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
-        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, WriteXmp,
     },
     error::{Error, Result},
-    utils::xmp_inmemory_utils::{add_provenance, MIN_XMP},
 };
 
 static SUPPORTED_TYPES: [&str; 3] = ["jpg", "jpeg", "image/jpeg"];
@@ -515,53 +514,40 @@ impl AssetIO for JpegIO {
     }
 }
 
-impl RemoteRefEmbed for JpegIO {
-    fn embed_reference_to_stream(
+impl WriteXmp for JpegIO {
+    fn write_xmp(
         &self,
         source_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
-        embed_ref: RemoteRefEmbedType,
+        xmp: &str,
     ) -> Result<()> {
-        match embed_ref {
-            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
-                let mut buf = Vec::new();
-                // read the whole asset
-                source_stream.rewind()?;
-                source_stream
-                    .read_to_end(&mut buf)
-                    .map_err(Error::IoError)?;
-                let mut jpeg =
-                    Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
+        let mut buf = Vec::new();
+        // read the whole asset
+        source_stream.rewind()?;
+        source_stream
+            .read_to_end(&mut buf)
+            .map_err(Error::IoError)?;
+        let mut jpeg = Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
 
-                // find any existing XMP segment and remember where it was
-                let segments = jpeg.segments_mut();
-                let (xmp_index, xmp) = segments
-                    .iter()
-                    .enumerate()
-                    .find_map(|(i, seg)| {
-                        if seg.marker() == markers::APP1 {
-                            Some((Some(i), extract_xmp(seg)?))
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or((None, MIN_XMP));
+        // find any existing XMP segment to replace
+        let segments = jpeg.segments_mut();
+        let xmp_index = segments
+            .iter()
+            .position(|seg| seg.marker() == markers::APP1 && extract_xmp(seg).is_some());
 
-                // add provenance and JPEG XMP prefix
-                let xmp = format!("{XMP_SIGNATURE}\0{}", add_provenance(xmp, &manifest_uri)?);
-                let segment = JpegSegment::new_with_contents(markers::APP1, Bytes::from(xmp));
-                // insert or add the segment
-                match xmp_index {
-                    Some(i) => segments[i] = segment,
-                    None => segments.insert(1, segment),
-                }
-
-                jpeg.encoder()
-                    .write_to(output_stream)
-                    .map_err(|_err| Error::InvalidAsset("JPEG write error".to_owned()))?;
-                Ok(())
-            }
+        // add the JPEG XMP signature prefix
+        let xmp = format!("{XMP_SIGNATURE}\0{xmp}");
+        let segment = JpegSegment::new_with_contents(markers::APP1, Bytes::from(xmp));
+        // insert or replace the segment
+        match xmp_index {
+            Some(i) => segments[i] = segment,
+            None => segments.insert(1, segment),
         }
+
+        jpeg.encoder()
+            .write_to(output_stream)
+            .map_err(|_err| Error::InvalidAsset("JPEG write error".to_owned()))?;
+        Ok(())
     }
 }
 
@@ -1113,7 +1099,10 @@ pub mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
-    use crate::utils::io_utils::{safe_vec, tempdirectory};
+    use crate::{
+        asset_io::RemoteRefEmbedType,
+        utils::io_utils::{safe_vec, tempdirectory},
+    };
     #[test]
     fn test_extract_xmp() {
         let contents = Bytes::from_static(b"http://ns.adobe.com/xap/1.0/\0stuff");

@@ -21,13 +21,10 @@ use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
         AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
-        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, WriteXmp,
     },
     error::{Error, Result},
-    utils::{
-        io_utils::{patch_stream, ReaderUtils},
-        xmp_inmemory_utils::{add_provenance, MIN_XMP},
-    },
+    utils::io_utils::{patch_stream, ReaderUtils},
 };
 
 const PNG_ID: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
@@ -503,55 +500,43 @@ fn get_xmp_insertion_point(asset_reader: &mut dyn CAIRead) -> Option<(u64, u32)>
             .map(|img_hdr| (img_hdr.end(), 0))
     }
 }
-impl RemoteRefEmbed for PngIO {
-    fn embed_reference_to_stream(
+impl WriteXmp for PngIO {
+    fn write_xmp(
         &self,
         source_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
-        embed_ref: RemoteRefEmbedType,
+        xmp: &str,
     ) -> Result<()> {
-        match embed_ref {
-            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
-                source_stream.rewind()?;
+        source_stream.rewind()?;
 
-                let xmp = match self.read_xmp(source_stream) {
-                    Some(s) => s,
-                    None => MIN_XMP.to_string(),
-                };
+        // make XMP chunk
+        let mut xmp_data = Vec::new();
+        let mut xmp_encoder = png_pong::Encoder::new(&mut xmp_data).into_chunk_enc();
 
-                // update XMP
-                let updated_xmp = add_provenance(&xmp, &manifest_uri)?;
+        let mut xmp_chunk = png_pong::chunk::Chunk::InternationalText(InternationalText {
+            key: XMP_KEY.to_string(),
+            langtag: "".to_string(),
+            transkey: "".to_string(),
+            val: xmp.to_string(),
+            compressed: false,
+        });
+        xmp_encoder
+            .encode(&mut xmp_chunk)
+            .map_err(|_| Error::EmbeddingError)?;
 
-                // make XMP chunk
-                let mut xmp_data = Vec::new();
-                let mut xmp_encoder = png_pong::Encoder::new(&mut xmp_data).into_chunk_enc();
+        if let Some((xmp_start, xmp_len)) = get_xmp_insertion_point(source_stream) {
+            output_stream.rewind()?;
+            patch_stream(
+                source_stream,
+                output_stream,
+                xmp_start,
+                xmp_len as u64,
+                &xmp_data,
+            )?;
 
-                let mut xmp_chunk = png_pong::chunk::Chunk::InternationalText(InternationalText {
-                    key: XMP_KEY.to_string(),
-                    langtag: "".to_string(),
-                    transkey: "".to_string(),
-                    val: updated_xmp,
-                    compressed: false,
-                });
-                xmp_encoder
-                    .encode(&mut xmp_chunk)
-                    .map_err(|_| Error::EmbeddingError)?;
-
-                if let Some((xmp_start, xmp_len)) = get_xmp_insertion_point(source_stream) {
-                    output_stream.rewind()?;
-                    patch_stream(
-                        source_stream,
-                        output_stream,
-                        xmp_start,
-                        xmp_len as u64,
-                        &xmp_data,
-                    )?;
-
-                    Ok(())
-                } else {
-                    Err(Error::EmbeddingError)
-                }
-            }
+            Ok(())
+        } else {
+            Err(Error::EmbeddingError)
         }
     }
 }
@@ -667,9 +652,12 @@ pub mod tests {
     use memchr::memmem;
 
     use super::*;
-    use crate::utils::{
-        io_utils::tempdirectory,
-        test::{self, temp_dir_path},
+    use crate::{
+        asset_io::RemoteRefEmbedType,
+        utils::{
+            io_utils::tempdirectory,
+            test::{self, temp_dir_path},
+        },
     };
 
     #[test]

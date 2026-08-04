@@ -37,10 +37,7 @@ use crate::{
         HashObjectPositions,
     },
     error::{Error, Result},
-    utils::{
-        io_utils::{stream_len, ReaderUtils},
-        xmp_inmemory_utils::{self, MIN_XMP},
-    },
+    utils::io_utils::{stream_len, ReaderUtils},
 };
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -212,19 +209,17 @@ pub(crate) fn write_cai_with_id3(
     Ok(())
 }
 
-/// Embeds an XMP remote reference into the ID3 tag then copies the audio
-/// payload unchanged.
+/// Writes `xmp` (a complete XMP packet, already final) into a PRIV frame in the
+/// ID3 tag, replacing any existing XMP PRIV frame, then appends the non-ID3
+/// payload from `source_stream` verbatim.
 ///
 /// `id3_end` — byte offset where the audio payload starts (see
 /// [`write_cai_with_id3`]).
-/// `current_xmp` — the existing XMP string, if any, used as the base for
-/// [`xmp_inmemory_utils::add_provenance`].
-pub(crate) fn embed_xmp_to_id3_stream(
+pub(crate) fn write_xmp_to_id3_stream(
     source_stream: &mut dyn CAIRead,
     output_stream: &mut dyn CAIReadWrite,
-    url: String,
+    xmp: &str,
     id3_end: u64,
-    current_xmp: Option<String>,
 ) -> Result<()> {
     source_stream.rewind()?;
     let mut out_tag = Tag::new();
@@ -245,15 +240,11 @@ pub(crate) fn embed_xmp_to_id3_stream(
             }
         }
     }
-    let xmp = xmp_inmemory_utils::add_provenance(
-        &current_xmp.unwrap_or_else(|| MIN_XMP.to_string()),
-        &url,
-    )?;
     let frame = Frame::with_content(
         "PRIV",
         Content::Private(Private {
             owner_identifier: "XMP".to_owned(),
-            private_data: xmp.into_bytes(),
+            private_data: xmp.as_bytes().to_vec(),
         }),
     );
     let _ = out_tag.add_frame(frame);

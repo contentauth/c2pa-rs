@@ -19,7 +19,7 @@ use crate::{
     asset_handlers::id3_helper::{self, ID3V2Header},
     asset_io::{
         AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions,
-        RemoteRefEmbed, RemoteRefEmbedType,
+        RemoteRefEmbed, WriteXmp,
     },
     error::{Error, Result},
 };
@@ -105,28 +105,17 @@ impl CAIReader for Mp3IO {
     }
 }
 
-impl RemoteRefEmbed for Mp3IO {
-    fn embed_reference_to_stream(
+impl WriteXmp for Mp3IO {
+    fn write_xmp(
         &self,
         source_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
-        embed_ref: RemoteRefEmbedType,
+        xmp: &str,
     ) -> Result<()> {
-        match embed_ref {
-            RemoteRefEmbedType::Xmp(url) => {
-                source_stream.rewind()?;
-                let header = read_header(source_stream)?;
-                let id3_end = header.map_or(0, |h| h.get_size()) as u64;
-                let current_xmp = self.read_xmp(source_stream);
-                id3_helper::embed_xmp_to_id3_stream(
-                    source_stream,
-                    output_stream,
-                    url,
-                    id3_end,
-                    current_xmp,
-                )
-            }
-        }
+        source_stream.rewind()?;
+        let header = read_header(source_stream)?;
+        let id3_end = header.map_or(0, |h| h.get_size()) as u64;
+        id3_helper::write_xmp_to_id3_stream(source_stream, output_stream, xmp, id3_end)
     }
 }
 

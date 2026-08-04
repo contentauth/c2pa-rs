@@ -25,14 +25,11 @@ use quick_xml::{
 use crate::{
     asset_io::{
         AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashBlockObjectType,
-        HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        HashObjectPositions, RemoteRefEmbed, WriteXmp,
     },
     crypto::base64,
     error::{Error, Result},
-    utils::{
-        io_utils::{patch_stream, stream_len, ReaderUtils},
-        xmp_inmemory_utils::{self, MIN_XMP},
-    },
+    utils::io_utils::{patch_stream, stream_len, ReaderUtils},
 };
 
 static SUPPORTED_TYPES: [&str; 8] = [
@@ -649,59 +646,50 @@ impl AssetPatch for SvgIO {
     }
 }
 
-impl RemoteRefEmbed for SvgIO {
-    fn embed_reference_to_stream(
+impl WriteXmp for SvgIO {
+    fn write_xmp(
         &self,
         source_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
-        embed_ref: RemoteRefEmbedType,
+        xmp: &str,
     ) -> Result<()> {
-        match embed_ref {
-            RemoteRefEmbedType::Xmp(url) => {
-                source_stream.rewind()?;
+        source_stream.rewind()?;
 
-                let (raw_xmp, dtd, insertion_pt) = read_xmp(source_stream)?;
+        let (raw_xmp, dtd, insertion_pt) = read_xmp(source_stream)?;
 
-                let xmp = xmp_inmemory_utils::add_provenance(
-                    &raw_xmp.clone().unwrap_or_else(|| MIN_XMP.to_string()),
-                    &url,
-                )?;
-
-                if let Some(raw_xmp) = raw_xmp {
-                    // replace existing
+        if let Some(raw_xmp) = raw_xmp {
+            // replace existing
+            patch_stream(
+                source_stream,
+                output_stream,
+                insertion_pt as u64,
+                raw_xmp.len() as u64,
+                xmp.as_bytes(),
+            )
+        } else {
+            // insert at location and level
+            match dtd {
+                DetectedTagsDepth::Metadata => patch_stream(
+                    source_stream,
+                    output_stream,
+                    insertion_pt as u64,
+                    0,
+                    xmp.as_bytes(),
+                ),
+                DetectedTagsDepth::Empty => {
+                    // we have to add metadata tag
+                    let new_xmp = format!("<metadata>{xmp}</metadata>");
                     patch_stream(
                         source_stream,
                         output_stream,
                         insertion_pt as u64,
-                        raw_xmp.len() as u64,
-                        xmp.as_bytes(),
+                        0,
+                        new_xmp.as_bytes(),
                     )
-                } else {
-                    // insert at location and level
-                    match dtd {
-                        DetectedTagsDepth::Metadata => patch_stream(
-                            source_stream,
-                            output_stream,
-                            insertion_pt as u64,
-                            0,
-                            xmp.as_bytes(),
-                        ),
-                        DetectedTagsDepth::Empty => {
-                            // we have to add metadata tag
-                            let new_xmp = format!("<metadata>{xmp}</metadata>");
-                            patch_stream(
-                                source_stream,
-                                output_stream,
-                                insertion_pt as u64,
-                                0,
-                                new_xmp.as_bytes(),
-                            )
-                        }
-                        _ => Err(Error::OtherError(
-                            "could not determine XML insertion point".into(),
-                        )),
-                    }
                 }
+                _ => Err(Error::OtherError(
+                    "could not determine XML insertion point".into(),
+                )),
             }
         }
     }
@@ -721,13 +709,15 @@ pub mod tests {
 
     use std::{fs::File, io::Read, path::Path};
 
-    use xmp_inmemory_utils::extract_provenance;
-
     use super::*;
-    use crate::utils::{
-        hash_utils::vec_compare,
-        io_utils::tempdirectory,
-        test::{fixture_path, temp_dir_path},
+    use crate::{
+        asset_io::RemoteRefEmbedType,
+        utils::{
+            hash_utils::vec_compare,
+            io_utils::tempdirectory,
+            test::{fixture_path, temp_dir_path},
+            xmp_inmemory_utils::extract_provenance,
+        },
     };
 
     // test-only equivalent of the removed `AssetIO::read_cai_store`

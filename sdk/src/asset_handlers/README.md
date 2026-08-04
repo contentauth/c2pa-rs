@@ -163,7 +163,7 @@ it and its default will be removed together in a future release.
 The optional traits are:
 
 - [AssetPatch](#assetpatch) 
-- [RemoteRefEmbed](#remoterefembed-) 
+- [RemoteRefEmbed / WriteXmp](#remoterefembed--writexmp) 
 - [AssetBoxHash](#assetboxhash) 
 - [ComposedManifestRef](#composedmanifestref)
 
@@ -179,7 +179,7 @@ pub trait AssetPatch {
 
 It optimizes manifest updates by patching bytes in-place without rewriting the whole file. Only works when the new store is the same size as the existing one. This is a performance optimization.
 
-#### RemoteRefEmbed 
+#### RemoteRefEmbed / WriteXmp
 
 Use `RemoteRefEmbed` for remote manifest reference embedding:
 
@@ -200,6 +200,33 @@ It embeds a remote manifest reference URL into the asset's XMP metadata.
 removed (none were ever constructed in production code); callers needing file-path
 semantics should open the file, call `embed_reference_to_stream`, and write the result
 back.
+
+**Don't implement `RemoteRefEmbed` directly.** Since embedding a remote reference is
+always "merge a manifest URL into XMP, then write XMP", implement `WriteXmp` instead —
+`RemoteRefEmbed` has a blanket impl for any type that implements `WriteXmp` (and
+`CAIReader`, for reading the current XMP):
+
+```rust
+pub trait WriteXmp {
+    fn write_xmp(
+        &self,
+        source_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        xmp: &str,
+    ) -> Result<()>;
+}
+```
+
+The blanket impl reads the current XMP via `CAIReader::read_xmp` (falling back to
+`MIN_XMP` if there is none), merges in the manifest URL with
+`xmp_inmemory_utils::add_provenance`, and calls `write_xmp` with the finished string —
+every built-in handler that supports `RemoteRefEmbed` implements `WriteXmp`, not
+`RemoteRefEmbed`, and none of them call `add_provenance` themselves anymore. A
+`write_xmp` impl only needs the format-specific insertion logic (find/replace the
+existing XMP block or chunk, or pick an insertion point if there isn't one yet); one
+exception is `SvgIO`, which needs a bit more than the plain XMP string to know *where*
+in the XML tree to splice — it re-parses the asset internally via a private helper
+rather than relying solely on the string handed to it.
 
 #### AssetBoxHash
 
@@ -404,7 +431,7 @@ flowchart TB
         end
         subgraph optional["Optional"]
             t4["<b>AssetPatch</b>:<br>In-place patching"]
-            t5["<b>RemoteRefEmbed</b>:<br>XMP remote references"]
+            t5["<b>RemoteRefEmbed</b> (via <b>WriteXmp</b>):<br>XMP remote references"]
             t6["<b>AssetBoxHash</b>:<br>Box map for c2pa.hash.boxes"]
             t7["<b>ComposedManifestRef</b>:<br>Pre-composed wrapping"]
         end

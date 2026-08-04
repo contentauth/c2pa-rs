@@ -25,7 +25,7 @@ use crate::{
     assertions::{BmffMerkleMap, ExclusionsMap},
     asset_io::{
         AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
-        HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        HashObjectPositions, RemoteRefEmbed, WriteXmp,
     },
     error::{Error, Result},
     status_tracker::{ErrorBehavior, StatusTracker},
@@ -34,7 +34,6 @@ use crate::{
         hash_utils::{vec_compare, HashRange},
         io_utils::{patch_stream, stream_len, ReaderUtils},
         patch::patch_bytes,
-        xmp_inmemory_utils::{add_provenance, MIN_XMP},
     },
 };
 
@@ -2356,156 +2355,144 @@ impl ComposedManifestRef for BmffIO {
     }
 }
 
-impl RemoteRefEmbed for BmffIO {
-    fn embed_reference_to_stream(
+impl WriteXmp for BmffIO {
+    fn write_xmp(
         &self,
         input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
-        embed_ref: RemoteRefEmbedType,
+        xmp: &str,
     ) -> Result<()> {
-        match embed_ref {
-            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
-                let size = stream_len(input_stream)?;
-                input_stream.rewind()?;
+        let size = stream_len(input_stream)?;
+        input_stream.rewind()?;
 
-                let ftyp = read_ftyp_box(input_stream)?;
-                input_stream.rewind()?;
+        let ftyp = read_ftyp_box(input_stream)?;
+        input_stream.rewind()?;
 
-                // create root node
-                let root_box = BoxInfo {
-                    path: "".to_string(),
-                    offset: 0,
-                    size,
-                    box_type: BoxType::Empty,
-                    parent: None,
-                    user_type: None,
-                    version: None,
-                    flags: None,
-                };
+        // create root node
+        let root_box = BoxInfo {
+            path: "".to_string(),
+            offset: 0,
+            size,
+            box_type: BoxType::Empty,
+            parent: None,
+            user_type: None,
+            version: None,
+            flags: None,
+        };
 
-                let (mut bmff_tree, root_token) = Arena::with_data(root_box);
-                let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+        let (mut bmff_tree, root_token) = Arena::with_data(root_box);
+        let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
 
-                // build layout of the BMFF structure
-                let mut rl = 0usize;
-                build_bmff_tree(
-                    input_stream,
-                    size,
-                    &mut bmff_tree,
-                    &root_token,
-                    &mut bmff_map,
-                    &mut rl,
-                    &ftyp,
-                )?;
+        // build layout of the BMFF structure
+        let mut rl = 0usize;
+        build_bmff_tree(
+            input_stream,
+            size,
+            &mut bmff_tree,
+            &root_token,
+            &mut bmff_map,
+            &mut rl,
+            &ftyp,
+        )?;
 
-                let c2pa_boxes = c2pa_boxes_from_tree_and_map(input_stream, &bmff_tree, &bmff_map)?;
+        let c2pa_boxes = c2pa_boxes_from_tree_and_map(input_stream, &bmff_tree, &bmff_map)?;
 
-                let xmp = match &c2pa_boxes.xmp {
-                    Some(xmp) => add_provenance(xmp, &manifest_uri)?,
-                    None => {
-                        let xmp = MIN_XMP.to_string();
-                        add_provenance(&xmp, &manifest_uri)?
-                    }
-                };
+        // get position to insert xmp
+        let (xmp_start, xmp_length) = match &c2pa_boxes.xmp {
+            Some(_xmp) => (c2pa_boxes.xmp_box_offset, Some(c2pa_boxes.xmp_box_size)),
+            None => {
+                // get ftyp location
+                // start after ftyp
+                let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
+                let ftyp_info = &bmff_tree[ftyp_token[0]].data;
+                let ftyp_offset = ftyp_info.offset;
+                let ftyp_size = ftyp_info.size;
 
-                // get position to insert xmp
-                let (xmp_start, xmp_length) = match &c2pa_boxes.xmp {
-                    Some(_xmp) => (c2pa_boxes.xmp_box_offset, Some(c2pa_boxes.xmp_box_size)),
-                    None => {
-                        // get ftyp location
-                        // start after ftyp
-                        let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
-                        let ftyp_info = &bmff_tree[ftyp_token[0]].data;
-                        let ftyp_offset = ftyp_info.offset;
-                        let ftyp_size = ftyp_info.size;
-
-                        ((ftyp_offset + ftyp_size), None)
-                    }
-                };
-
-                let mut new_xmp_box: Vec<u8> = Vec::with_capacity(xmp.len() * 2);
-                write_xmp_box(&mut new_xmp_box, xmp.as_bytes())?;
-                let new_xmp_box_size = new_xmp_box.len();
-
-                let (start, end) = if let Some(xmp_length) = xmp_length {
-                    let start = usize::try_from(xmp_start)
-                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
-
-                    let end = usize::try_from(xmp_start + xmp_length)
-                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-
-                    (start, end)
-                } else {
-                    // insert new c2pa
-                    let end = usize::try_from(xmp_start)
-                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-
-                    (end, end)
-                };
-
-                // write content before XMP box
-                input_stream.rewind()?;
-                let mut before_xmp = input_stream.take(start as u64);
-                std::io::copy(&mut before_xmp, output_stream)?;
-
-                // write ContentProvenanceBox
-                output_stream.write_all(&new_xmp_box)?;
-
-                // calc offset adjustments
-                let offset_adjust: i32 = if end == 0 {
-                    new_xmp_box_size as i32
-                } else {
-                    // value could be negative if box is truncated
-                    let existing_xmp_box_size = end - start;
-                    let pad_size: i32 = new_xmp_box_size as i32 - existing_xmp_box_size as i32;
-                    pad_size
-                };
-
-                // write content after XMP box
-                input_stream.seek(SeekFrom::Start(end as u64))?;
-                std::io::copy(input_stream, output_stream)?;
-
-                // Manipulating the UUID box means we may need some patch offsets if they are file absolute offsets.
-
-                // create root node
-                let root_box = BoxInfo {
-                    path: "".to_string(),
-                    offset: 0,
-                    size,
-                    box_type: BoxType::Empty,
-                    parent: None,
-                    user_type: None,
-                    version: None,
-                    flags: None,
-                };
-
-                // map box layout of current output file
-                let (mut output_bmff_tree, root_token) = Arena::with_data(root_box);
-                let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
-
-                let size = stream_len(output_stream)?;
-                output_stream.rewind()?;
-                let mut rl = 0usize;
-                build_bmff_tree(
-                    output_stream,
-                    size,
-                    &mut output_bmff_tree,
-                    &root_token,
-                    &mut output_bmff_map,
-                    &mut rl,
-                    &ftyp,
-                )?;
-
-                // adjust offsets based on current layout
-                output_stream.rewind()?;
-                adjust_known_offsets(
-                    output_stream,
-                    &output_bmff_tree,
-                    &output_bmff_map,
-                    offset_adjust,
-                )
+                ((ftyp_offset + ftyp_size), None)
             }
-        }
+        };
+
+        let mut new_xmp_box: Vec<u8> = Vec::with_capacity(xmp.len() * 2);
+        write_xmp_box(&mut new_xmp_box, xmp.as_bytes())?;
+        let new_xmp_box_size = new_xmp_box.len();
+
+        let (start, end) = if let Some(xmp_length) = xmp_length {
+            let start = usize::try_from(xmp_start)
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
+
+            let end = usize::try_from(xmp_start + xmp_length)
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+            (start, end)
+        } else {
+            // insert new c2pa
+            let end = usize::try_from(xmp_start)
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+            (end, end)
+        };
+
+        // write content before XMP box
+        input_stream.rewind()?;
+        let mut before_xmp = input_stream.take(start as u64);
+        std::io::copy(&mut before_xmp, output_stream)?;
+
+        // write ContentProvenanceBox
+        output_stream.write_all(&new_xmp_box)?;
+
+        // calc offset adjustments
+        let offset_adjust: i32 = if end == 0 {
+            new_xmp_box_size as i32
+        } else {
+            // value could be negative if box is truncated
+            let existing_xmp_box_size = end - start;
+            let pad_size: i32 = new_xmp_box_size as i32 - existing_xmp_box_size as i32;
+            pad_size
+        };
+
+        // write content after XMP box
+        input_stream.seek(SeekFrom::Start(end as u64))?;
+        std::io::copy(input_stream, output_stream)?;
+
+        // Manipulating the UUID box means we may need some patch offsets if they are file absolute offsets.
+
+        // create root node
+        let root_box = BoxInfo {
+            path: "".to_string(),
+            offset: 0,
+            size,
+            box_type: BoxType::Empty,
+            parent: None,
+            user_type: None,
+            version: None,
+            flags: None,
+        };
+
+        // map box layout of current output file
+        let (mut output_bmff_tree, root_token) = Arena::with_data(root_box);
+        let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+
+        let size = stream_len(output_stream)?;
+        output_stream.rewind()?;
+        let mut rl = 0usize;
+        build_bmff_tree(
+            output_stream,
+            size,
+            &mut output_bmff_tree,
+            &root_token,
+            &mut output_bmff_map,
+            &mut rl,
+            &ftyp,
+        )?;
+
+        // adjust offsets based on current layout
+        output_stream.rewind()?;
+        adjust_known_offsets(
+            output_stream,
+            &output_bmff_tree,
+            &output_bmff_map,
+            offset_adjust,
+        )
     }
 }
 
@@ -2744,9 +2731,12 @@ pub mod tests {
     use std::{io::Cursor, path::Path};
 
     use super::*;
-    use crate::utils::{
-        io_utils::tempdirectory,
-        test::{fixture_path, temp_dir_path},
+    use crate::{
+        asset_io::RemoteRefEmbedType,
+        utils::{
+            io_utils::tempdirectory,
+            test::{fixture_path, temp_dir_path},
+        },
     };
 
     // test-only equivalent of the removed `AssetIO::read_cai_store`

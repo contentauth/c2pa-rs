@@ -42,13 +42,10 @@ use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
         AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
-        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, WriteXmp,
     },
     error::{Error, Result},
-    utils::{
-        io_utils::{patch_stream, safe_vec, stream_len, BoundedVecWriter},
-        xmp_inmemory_utils::{add_provenance, MIN_XMP},
-    },
+    utils::io_utils::{patch_stream, safe_vec, stream_len, BoundedVecWriter},
 };
 
 // JPEG XL container signature (ISO/IEC 18181-2:2024, Clause 4.1)
@@ -706,47 +703,40 @@ impl AssetIO for JpegXlIO {
     }
 }
 
-impl RemoteRefEmbed for JpegXlIO {
-    fn embed_reference_to_stream(
+impl WriteXmp for JpegXlIO {
+    fn write_xmp(
         &self,
         source_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
-        embed_ref: RemoteRefEmbedType,
+        xmp: &str,
     ) -> Result<()> {
-        match embed_ref {
-            RemoteRefEmbedType::Xmp(manifest_uri) => {
-                let file_len = stream_len(source_stream)?;
+        let file_len = stream_len(source_stream)?;
 
-                if !is_jxl_container(source_stream)? {
-                    return Err(Error::InvalidAsset(
-                        "Not a valid JPEG XL container".to_string(),
-                    ));
-                }
-
-                // Parse only box headers — no full file read required.
-                let boxes = parse_all_boxes(source_stream)?;
-
-                let xmp = find_xmp_data(source_stream).unwrap_or_else(|| MIN_XMP.to_string());
-                let updated_xmp = add_provenance(&xmp, &manifest_uri)?;
-
-                let (xmp_offset, xmp_len, was_compressed) =
-                    find_xmp_box_info(source_stream, &boxes, file_len)?;
-
-                // Preserve the source file's compression state: if the original XMP
-                // was Brotli-compressed (brob-wrapped), write it back compressed.
-                let xmp_box = if was_compressed {
-                    compress_brob_box(&BOX_XML, updated_xmp.as_bytes())?
-                } else {
-                    build_box(&BOX_XML, updated_xmp.as_bytes())
-                };
-
-                // Use patch_stream to stream data directly without loading the entire
-                // file into memory.
-                patch_stream(source_stream, output_stream, xmp_offset, xmp_len, &xmp_box)?;
-
-                Ok(())
-            }
+        if !is_jxl_container(source_stream)? {
+            return Err(Error::InvalidAsset(
+                "Not a valid JPEG XL container".to_string(),
+            ));
         }
+
+        // Parse only box headers — no full file read required.
+        let boxes = parse_all_boxes(source_stream)?;
+
+        let (xmp_offset, xmp_len, was_compressed) =
+            find_xmp_box_info(source_stream, &boxes, file_len)?;
+
+        // Preserve the source file's compression state: if the original XMP
+        // was Brotli-compressed (brob-wrapped), write it back compressed.
+        let xmp_box = if was_compressed {
+            compress_brob_box(&BOX_XML, xmp.as_bytes())?
+        } else {
+            build_box(&BOX_XML, xmp.as_bytes())
+        };
+
+        // Use patch_stream to stream data directly without loading the entire
+        // file into memory.
+        patch_stream(source_stream, output_stream, xmp_offset, xmp_len, &xmp_box)?;
+
+        Ok(())
     }
 }
 
@@ -953,7 +943,8 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        utils::{io_utils::tempdirectory, test::test_context},
+        asset_io::RemoteRefEmbedType,
+        utils::{io_utils::tempdirectory, test::test_context, xmp_inmemory_utils::MIN_XMP},
         Builder, CallbackSigner, Reader, SigningAlg,
     };
 

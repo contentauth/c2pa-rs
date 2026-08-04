@@ -25,13 +25,10 @@ use byteordered::{with_order, ByteOrdered, Endianness};
 use crate::{
     asset_io::{
         AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
-        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, WriteXmp,
     },
     error::{Error, Result},
-    utils::{
-        io_utils::{safe_vec, stream_len, ReaderUtils},
-        xmp_inmemory_utils::{add_provenance, MIN_XMP},
-    },
+    utils::io_utils::{safe_vec, stream_len, ReaderUtils},
 };
 
 const II: [u8; 2] = *b"II";
@@ -1958,35 +1955,23 @@ impl AssetPatch for TiffIO {
     }
 }
 
-impl RemoteRefEmbed for TiffIO {
-    fn embed_reference_to_stream(
+impl WriteXmp for TiffIO {
+    fn write_xmp(
         &self,
         source_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
-        embed_ref: RemoteRefEmbedType,
+        xmp: &str,
     ) -> Result<()> {
-        match embed_ref {
-            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
-                let xmp = match self.get_reader().read_xmp(source_stream) {
-                    Some(xmp) => add_provenance(&xmp, &manifest_uri)?,
-                    None => {
-                        let xmp = MIN_XMP.to_string();
-                        add_provenance(&xmp, &manifest_uri)?
-                    }
-                };
+        let l = u64::try_from(xmp.len())
+            .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
-                let l = u64::try_from(xmp.len())
-                    .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-
-                let entry = IfdClonedEntry {
-                    entry_tag: XMP_TAG,
-                    entry_type: IFDEntryType::Byte as u16,
-                    value_count: l,
-                    value_bytes: xmp.as_bytes().to_vec(),
-                };
-                tiff_clone_with_tags(output_stream, source_stream, vec![entry])
-            }
-        }
+        let entry = IfdClonedEntry {
+            entry_tag: XMP_TAG,
+            entry_type: IFDEntryType::Byte as u16,
+            value_count: l,
+            value_bytes: xmp.as_bytes().to_vec(),
+        };
+        tiff_clone_with_tags(output_stream, source_stream, vec![entry])
     }
 }
 
@@ -2011,7 +1996,10 @@ pub mod tests {
     use core::panic;
 
     use super::*;
-    use crate::utils::{io_utils::tempdirectory, test::temp_dir_path};
+    use crate::{
+        asset_io::RemoteRefEmbedType,
+        utils::{io_utils::tempdirectory, test::temp_dir_path},
+    };
 
     // test-only equivalent of the removed `AssetIO::read_cai_store`
     fn read_cai_store(handler: &TiffIO, path: &std::path::Path) -> Result<Vec<u8>> {

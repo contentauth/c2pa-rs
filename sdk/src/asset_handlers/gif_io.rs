@@ -25,14 +25,10 @@ use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
         AssetBoxHash, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
-        ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
-        RemoteRefEmbedType,
+        ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, WriteXmp,
     },
     error::Result,
-    utils::{
-        io_utils::stream_len,
-        xmp_inmemory_utils::{self, MIN_XMP},
-    },
+    utils::io_utils::stream_len,
     Error,
 };
 
@@ -189,36 +185,24 @@ impl AssetPatch for GifIO {
     }
 }
 
-impl RemoteRefEmbed for GifIO {
-    fn embed_reference_to_stream(
+impl WriteXmp for GifIO {
+    fn write_xmp(
         &self,
         source_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
-        embed_ref: RemoteRefEmbedType,
+        xmp: &str,
     ) -> Result<()> {
-        match embed_ref {
-            RemoteRefEmbedType::Xmp(url) => {
-                let xmp = xmp_inmemory_utils::add_provenance(
-                    // TODO: we read xmp here, then search for it again after, we can cache it
-                    &self
-                        .read_xmp(source_stream)
-                        .unwrap_or_else(|| MIN_XMP.to_string()),
-                    &url,
-                )?;
+        let old_block_marker = self.find_xmp_block(source_stream)?;
+        let new_block = ApplicationExtension::new_xmp(xmp.as_bytes().to_vec())?;
 
-                let old_block_marker = self.find_xmp_block(source_stream)?;
-                let new_block = ApplicationExtension::new_xmp(xmp.into_bytes())?;
-
-                match old_block_marker {
-                    Some(old_block_marker) => self.replace_block(
-                        source_stream,
-                        output_stream,
-                        &old_block_marker.into(),
-                        &new_block.into(),
-                    ),
-                    None => self.insert_block(source_stream, output_stream, &new_block.into()),
-                }
-            }
+        match old_block_marker {
+            Some(old_block_marker) => self.replace_block(
+                source_stream,
+                output_stream,
+                &old_block_marker.into(),
+                &new_block.into(),
+            ),
+            None => self.insert_block(source_stream, output_stream, &new_block.into()),
         }
     }
 }
@@ -1118,9 +1102,9 @@ pub enum GifError {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use io::{Cursor, Seek};
-    use xmp_inmemory_utils::extract_provenance;
 
     use super::*;
+    use crate::{asset_io::RemoteRefEmbedType, utils::xmp_inmemory_utils::extract_provenance};
 
     const SAMPLE1: &[u8] = include_bytes!("../../tests/fixtures/sample1.gif");
 
