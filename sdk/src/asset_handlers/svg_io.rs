@@ -25,7 +25,7 @@ use quick_xml::{
 use crate::{
     asset_io::{
         AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashBlockObjectType,
-        HashObjectPositions, RemoteRefEmbed, WriteXmp,
+        HashObjectPositions, RemoteManifestUrl, WriteXmp,
     },
     crypto::base64,
     error::{Error, Result},
@@ -54,9 +54,9 @@ const XMP_ID: &str = "W5M0MpCehiHzreSzNTczkc9d";
 pub struct SvgIO {}
 
 impl CAIReader for SvgIO {
-    fn read_cai(&self, reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
+    fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
         let (decoded_manifest_opt, _detected_tag_location, _insertion_point) =
-            detect_manifest_location(reader)?;
+            detect_manifest_location(input_stream)?;
 
         match decoded_manifest_opt {
             Some(decoded_manifest) => {
@@ -71,8 +71,8 @@ impl CAIReader for SvgIO {
     }
 
     // Get XMP block
-    fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String> {
-        let (xmp, _dtd, _insertion_pt) = read_xmp(asset_reader).ok()?;
+    fn read_xmp(&self, input_stream: &mut dyn CAIRead) -> Option<String> {
+        let (xmp, _dtd, _insertion_pt) = read_xmp(input_stream).ok()?;
         xmp
     }
 }
@@ -98,7 +98,7 @@ impl AssetIO for SvgIO {
         Some(Box::new(SvgIO::new(asset_type)))
     }
 
-    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+    fn remote_manifest_url_ref(&self) -> Option<&dyn RemoteManifestUrl> {
         Some(self)
     }
 
@@ -649,18 +649,18 @@ impl AssetPatch for SvgIO {
 impl WriteXmp for SvgIO {
     fn write_xmp(
         &self,
-        source_stream: &mut dyn CAIRead,
+        input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
         xmp: &str,
     ) -> Result<()> {
-        source_stream.rewind()?;
+        input_stream.rewind()?;
 
-        let (raw_xmp, dtd, insertion_pt) = read_xmp(source_stream)?;
+        let (raw_xmp, dtd, insertion_pt) = read_xmp(input_stream)?;
 
         if let Some(raw_xmp) = raw_xmp {
             // replace existing
             patch_stream(
-                source_stream,
+                input_stream,
                 output_stream,
                 insertion_pt as u64,
                 raw_xmp.len() as u64,
@@ -670,7 +670,7 @@ impl WriteXmp for SvgIO {
             // insert at location and level
             match dtd {
                 DetectedTagsDepth::Metadata => patch_stream(
-                    source_stream,
+                    input_stream,
                     output_stream,
                     insertion_pt as u64,
                     0,
@@ -680,7 +680,7 @@ impl WriteXmp for SvgIO {
                     // we have to add metadata tag
                     let new_xmp = format!("<metadata>{xmp}</metadata>");
                     patch_stream(
-                        source_stream,
+                        input_stream,
                         output_stream,
                         insertion_pt as u64,
                         0,
@@ -710,14 +710,11 @@ pub mod tests {
     use std::{fs::File, io::Read, path::Path};
 
     use super::*;
-    use crate::{
-        asset_io::RemoteRefEmbedType,
-        utils::{
-            hash_utils::vec_compare,
-            io_utils::tempdirectory,
-            test::{fixture_path, temp_dir_path},
-            xmp_inmemory_utils::extract_provenance,
-        },
+    use crate::utils::{
+        hash_utils::vec_compare,
+        io_utils::tempdirectory,
+        test::{fixture_path, temp_dir_path},
+        xmp_inmemory_utils::extract_provenance,
     };
 
     // test-only equivalent of the removed `AssetIO::read_cai_store`
@@ -1009,13 +1006,9 @@ pub mod tests {
 
         let svg_io = SvgIO::new("svg");
 
-        let ref_writer = svg_io.remote_ref_writer_ref().unwrap();
+        let ref_writer = svg_io.remote_manifest_url_ref().unwrap();
         ref_writer
-            .embed_reference_to_stream(
-                &mut stream,
-                &mut output_stream,
-                RemoteRefEmbedType::Xmp(test_data.to_string()),
-            )
+            .write_remote_manifest_url(&mut stream, &mut output_stream, test_data)
             .unwrap();
 
         output_stream.rewind().unwrap();
@@ -1036,13 +1029,9 @@ pub mod tests {
 
         let svg_io = SvgIO::new("svg");
 
-        let ref_writer = svg_io.remote_ref_writer_ref().unwrap();
+        let ref_writer = svg_io.remote_manifest_url_ref().unwrap();
         ref_writer
-            .embed_reference_to_stream(
-                &mut stream,
-                &mut output_stream,
-                RemoteRefEmbedType::Xmp(test_data.to_string()),
-            )
+            .write_remote_manifest_url(&mut stream, &mut output_stream, test_data)
             .unwrap();
 
         output_stream.rewind().unwrap();
@@ -1063,13 +1052,9 @@ pub mod tests {
 
         let svg_io = SvgIO::new("svg");
 
-        let ref_writer = svg_io.remote_ref_writer_ref().unwrap();
+        let ref_writer = svg_io.remote_manifest_url_ref().unwrap();
         ref_writer
-            .embed_reference_to_stream(
-                &mut stream,
-                &mut output_stream,
-                RemoteRefEmbedType::Xmp(test_data.to_string()),
-            )
+            .write_remote_manifest_url(&mut stream, &mut output_stream, test_data)
             .unwrap();
 
         output_stream.rewind().unwrap();

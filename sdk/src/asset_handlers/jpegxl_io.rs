@@ -42,7 +42,7 @@ use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
         AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
-        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, WriteXmp,
+        HashBlockObjectType, HashObjectPositions, RemoteManifestUrl, WriteXmp,
     },
     error::{Error, Result},
     utils::io_utils::{patch_stream, safe_vec, stream_len, BoundedVecWriter},
@@ -499,12 +499,12 @@ fn find_xmp_box_info(
 pub struct JpegXlIO {}
 
 impl CAIReader for JpegXlIO {
-    fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
-        find_jumb_data(asset_reader)
+    fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
+        find_jumb_data(input_stream)
     }
 
-    fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String> {
-        find_xmp_data(asset_reader)
+    fn read_xmp(&self, input_stream: &mut dyn CAIRead) -> Option<String> {
+        find_xmp_data(input_stream)
     }
 }
 
@@ -690,7 +690,7 @@ impl AssetIO for JpegXlIO {
         &SUPPORTED_TYPES
     }
 
-    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+    fn remote_manifest_url_ref(&self) -> Option<&dyn RemoteManifestUrl> {
         Some(self)
     }
 
@@ -706,23 +706,23 @@ impl AssetIO for JpegXlIO {
 impl WriteXmp for JpegXlIO {
     fn write_xmp(
         &self,
-        source_stream: &mut dyn CAIRead,
+        input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
         xmp: &str,
     ) -> Result<()> {
-        let file_len = stream_len(source_stream)?;
+        let file_len = stream_len(input_stream)?;
 
-        if !is_jxl_container(source_stream)? {
+        if !is_jxl_container(input_stream)? {
             return Err(Error::InvalidAsset(
                 "Not a valid JPEG XL container".to_string(),
             ));
         }
 
         // Parse only box headers — no full file read required.
-        let boxes = parse_all_boxes(source_stream)?;
+        let boxes = parse_all_boxes(input_stream)?;
 
         let (xmp_offset, xmp_len, was_compressed) =
-            find_xmp_box_info(source_stream, &boxes, file_len)?;
+            find_xmp_box_info(input_stream, &boxes, file_len)?;
 
         // Preserve the source file's compression state: if the original XMP
         // was Brotli-compressed (brob-wrapped), write it back compressed.
@@ -734,7 +734,7 @@ impl WriteXmp for JpegXlIO {
 
         // Use patch_stream to stream data directly without loading the entire
         // file into memory.
-        patch_stream(source_stream, output_stream, xmp_offset, xmp_len, &xmp_box)?;
+        patch_stream(input_stream, output_stream, xmp_offset, xmp_len, &xmp_box)?;
 
         Ok(())
     }
@@ -943,7 +943,6 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        asset_io::RemoteRefEmbedType,
         utils::{io_utils::tempdirectory, test::test_context, xmp_inmemory_utils::MIN_XMP},
         Builder, CallbackSigner, Reader, SigningAlg,
     };
@@ -1632,11 +1631,7 @@ pub mod tests {
 
         let jpegxl_io = JpegXlIO {};
         jpegxl_io
-            .embed_reference_to_stream(
-                &mut input,
-                &mut output,
-                RemoteRefEmbedType::Xmp("https://example.com/manifest".to_string()),
-            )
+            .write_remote_manifest_url(&mut input, &mut output, "https://example.com/manifest")
             .unwrap();
 
         // Read back XMP
@@ -1654,11 +1649,7 @@ pub mod tests {
 
         let jpegxl_io = JpegXlIO {};
         jpegxl_io
-            .embed_reference_to_stream(
-                &mut input,
-                &mut output,
-                RemoteRefEmbedType::Xmp("https://example.com/updated".to_string()),
-            )
+            .write_remote_manifest_url(&mut input, &mut output, "https://example.com/updated")
             .unwrap();
 
         output.rewind().unwrap();
@@ -1677,10 +1668,10 @@ pub mod tests {
 
         let jpegxl_io = JpegXlIO {};
         jpegxl_io
-            .embed_reference_to_stream(
+            .write_remote_manifest_url(
                 &mut input,
                 &mut output,
-                RemoteRefEmbedType::Xmp("https://example.com/brob-preserved".to_string()),
+                "https://example.com/brob-preserved",
             )
             .unwrap();
 
@@ -1768,7 +1759,7 @@ pub mod tests {
     #[test]
     fn test_handler_provides_remote_ref() {
         let jpegxl_io = JpegXlIO {};
-        assert!(jpegxl_io.remote_ref_writer_ref().is_some());
+        assert!(jpegxl_io.remote_manifest_url_ref().is_some());
     }
 
     #[test]

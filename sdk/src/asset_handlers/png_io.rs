@@ -21,7 +21,7 @@ use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
         AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
-        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, WriteXmp,
+        HashBlockObjectType, HashObjectPositions, RemoteManifestUrl, WriteXmp,
     },
     error::{Error, Result},
     utils::io_utils::{patch_stream, ReaderUtils},
@@ -158,26 +158,26 @@ fn read_string(asset_reader: &mut dyn CAIRead, max_read: u32) -> Result<String> 
 pub struct PngIO {}
 
 impl CAIReader for PngIO {
-    fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
-        let cai_data = get_cai_data(asset_reader)?;
+    fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
+        let cai_data = get_cai_data(input_stream)?;
         Ok(cai_data)
     }
 
     // Get XMP block
-    fn read_xmp(&self, mut asset_reader: &mut dyn CAIRead) -> Option<String> {
-        let ps = get_png_chunk_positions(asset_reader).ok()?;
+    fn read_xmp(&self, mut input_stream: &mut dyn CAIRead) -> Option<String> {
+        let ps = get_png_chunk_positions(input_stream).ok()?;
         let mut xmp_str: Option<String> = None;
 
         ps.iter().find(|pcp| {
             if pcp.name == ITXT_CHUNK {
                 // seek to start of chunk
-                if asset_reader.seek(SeekFrom::Start(pcp.start + 8)).is_err() {
+                if input_stream.seek(SeekFrom::Start(pcp.start + 8)).is_err() {
                     // move +8 to get past header
                     return false;
                 }
 
                 // parse the iTxt block
-                if let Ok(key) = read_string(asset_reader, pcp.length) {
+                if let Ok(key) = read_string(input_stream, pcp.length) {
                     if key.is_empty() || key.len() > 79 {
                         return false;
                     }
@@ -188,28 +188,28 @@ impl CAIReader for PngIO {
                     }
 
                     // parse rest of iTxt to get the xmp value
-                    let compressed = match asset_reader.read_u8() {
+                    let compressed = match input_stream.read_u8() {
                         Ok(c) => c != 0,
                         Err(_) => return false,
                     };
 
-                    let _compression_method = match asset_reader.read_u8() {
+                    let _compression_method = match input_stream.read_u8() {
                         Ok(c) => c != 0,
                         Err(_) => return false,
                     };
 
-                    let _langtag = match read_string(asset_reader, pcp.length) {
+                    let _langtag = match read_string(input_stream, pcp.length) {
                         Ok(s) => s,
                         Err(_) => return false,
                     };
 
-                    let _transkey = match read_string(asset_reader, pcp.length) {
+                    let _transkey = match read_string(input_stream, pcp.length) {
                         Ok(s) => s,
                         Err(_) => return false,
                     };
 
                     // read iTxt data
-                    let data = match asset_reader.read_to_vec(
+                    let data = match input_stream.read_to_vec(
                         pcp.length as u64
                             - (key.len() + _langtag.len() + _transkey.len() + 5) as u64,
                     ) {
@@ -445,7 +445,7 @@ impl AssetIO for PngIO {
         Some(Box::new(PngIO::new(asset_type)))
     }
 
-    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+    fn remote_manifest_url_ref(&self) -> Option<&dyn RemoteManifestUrl> {
         Some(self)
     }
 
@@ -503,11 +503,11 @@ fn get_xmp_insertion_point(asset_reader: &mut dyn CAIRead) -> Option<(u64, u32)>
 impl WriteXmp for PngIO {
     fn write_xmp(
         &self,
-        source_stream: &mut dyn CAIRead,
+        input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
         xmp: &str,
     ) -> Result<()> {
-        source_stream.rewind()?;
+        input_stream.rewind()?;
 
         // make XMP chunk
         let mut xmp_data = Vec::new();
@@ -524,10 +524,10 @@ impl WriteXmp for PngIO {
             .encode(&mut xmp_chunk)
             .map_err(|_| Error::EmbeddingError)?;
 
-        if let Some((xmp_start, xmp_len)) = get_xmp_insertion_point(source_stream) {
+        if let Some((xmp_start, xmp_len)) = get_xmp_insertion_point(input_stream) {
             output_stream.rewind()?;
             patch_stream(
-                source_stream,
+                input_stream,
                 output_stream,
                 xmp_start,
                 xmp_len as u64,
@@ -652,12 +652,9 @@ pub mod tests {
     use memchr::memmem;
 
     use super::*;
-    use crate::{
-        asset_io::RemoteRefEmbedType,
-        utils::{
-            io_utils::tempdirectory,
-            test::{self, temp_dir_path},
-        },
+    use crate::utils::{
+        io_utils::tempdirectory,
+        test::{self, temp_dir_path},
     };
 
     #[test]
@@ -696,13 +693,9 @@ pub mod tests {
         //    .unwrap();
 
         // change the xmp
-        let eh = png_io.remote_ref_writer_ref().unwrap();
-        eh.embed_reference_to_stream(
-            &mut source_stream,
-            &mut output_stream,
-            RemoteRefEmbedType::Xmp("some test data".to_string()),
-        )
-        .unwrap();
+        let eh = png_io.remote_manifest_url_ref().unwrap();
+        eh.write_remote_manifest_url(&mut source_stream, &mut output_stream, "some test data")
+            .unwrap();
 
         output_stream.rewind().unwrap();
         let new_xmp = png_io.read_xmp(&mut output_stream).unwrap();

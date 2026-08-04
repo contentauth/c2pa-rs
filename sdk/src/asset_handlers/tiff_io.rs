@@ -25,7 +25,7 @@ use byteordered::{with_order, ByteOrdered, Endianness};
 use crate::{
     asset_io::{
         AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
-        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, WriteXmp,
+        HashBlockObjectType, HashObjectPositions, RemoteManifestUrl, WriteXmp,
     },
     error::{Error, Result},
     utils::io_utils::{safe_vec, stream_len, ReaderUtils},
@@ -1750,13 +1750,13 @@ fn fast_update<R: Read + Seek + ?Sized, W: Read + Write + Seek + ?Sized>(
 pub struct TiffIO {}
 
 impl CAIReader for TiffIO {
-    fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
-        let cai_data = get_cai_data(asset_reader)?;
+    fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
+        let cai_data = get_cai_data(input_stream)?;
         Ok(cai_data)
     }
 
-    fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String> {
-        let xmp_data = get_xmp_data(asset_reader)?;
+    fn read_xmp(&self, input_stream: &mut dyn CAIRead) -> Option<String> {
+        let xmp_data = get_xmp_data(input_stream)?;
         String::from_utf8(xmp_data).ok()
     }
 }
@@ -1789,7 +1789,7 @@ impl AssetIO for TiffIO {
         }
     }
 
-    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+    fn remote_manifest_url_ref(&self) -> Option<&dyn RemoteManifestUrl> {
         Some(self)
     }
 
@@ -1958,7 +1958,7 @@ impl AssetPatch for TiffIO {
 impl WriteXmp for TiffIO {
     fn write_xmp(
         &self,
-        source_stream: &mut dyn CAIRead,
+        input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
         xmp: &str,
     ) -> Result<()> {
@@ -1971,7 +1971,7 @@ impl WriteXmp for TiffIO {
             value_count: l,
             value_bytes: xmp.as_bytes().to_vec(),
         };
-        tiff_clone_with_tags(output_stream, source_stream, vec![entry])
+        tiff_clone_with_tags(output_stream, input_stream, vec![entry])
     }
 }
 
@@ -1996,10 +1996,7 @@ pub mod tests {
     use core::panic;
 
     use super::*;
-    use crate::{
-        asset_io::RemoteRefEmbedType,
-        utils::{io_utils::tempdirectory, test::temp_dir_path},
-    };
+    use crate::utils::{io_utils::tempdirectory, test::temp_dir_path};
 
     // test-only equivalent of the removed `AssetIO::read_cai_store`
     fn read_cai_store(handler: &TiffIO, path: &std::path::Path) -> Result<Vec<u8>> {
@@ -2166,15 +2163,11 @@ pub mod tests {
         let tiff_io = TiffIO {};
 
         // save data to tiff
-        let eh = tiff_io.remote_ref_writer_ref().unwrap();
+        let eh = tiff_io.remote_manifest_url_ref().unwrap();
         let mut input_stream = std::fs::File::open(&output).unwrap();
         let mut embed_stream = Cursor::new(Vec::new());
-        eh.embed_reference_to_stream(
-            &mut input_stream,
-            &mut embed_stream,
-            RemoteRefEmbedType::Xmp(data.to_string()),
-        )
-        .unwrap();
+        eh.write_remote_manifest_url(&mut input_stream, &mut embed_stream, data)
+            .unwrap();
         std::fs::write(&output, embed_stream.into_inner()).unwrap();
 
         // read data back

@@ -25,7 +25,7 @@ use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
         AssetBoxHash, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
-        ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, WriteXmp,
+        ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteManifestUrl, WriteXmp,
     },
     error::Result,
     utils::io_utils::stream_len,
@@ -39,15 +39,15 @@ const XMP_MAGIC_TRAILER_LEN: usize = 257;
 pub struct GifIO {}
 
 impl CAIReader for GifIO {
-    fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
-        self.find_c2pa_block(asset_reader)?
+    fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
+        self.find_c2pa_block(input_stream)?
             .map(|marker| marker.block.data_sub_blocks.to_decoded_bytes())
             .ok_or(Error::JumbfNotFound)
     }
 
-    fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String> {
+    fn read_xmp(&self, input_stream: &mut dyn CAIRead) -> Option<String> {
         let mut bytes = self
-            .find_xmp_block(asset_reader)
+            .find_xmp_block(input_stream)
             .ok()?
             .map(|marker| marker.block.data_sub_blocks.to_decoded_bytes())?;
 
@@ -188,21 +188,21 @@ impl AssetPatch for GifIO {
 impl WriteXmp for GifIO {
     fn write_xmp(
         &self,
-        source_stream: &mut dyn CAIRead,
+        input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
         xmp: &str,
     ) -> Result<()> {
-        let old_block_marker = self.find_xmp_block(source_stream)?;
+        let old_block_marker = self.find_xmp_block(input_stream)?;
         let new_block = ApplicationExtension::new_xmp(xmp.as_bytes().to_vec())?;
 
         match old_block_marker {
             Some(old_block_marker) => self.replace_block(
-                source_stream,
+                input_stream,
                 output_stream,
                 &old_block_marker.into(),
                 &new_block.into(),
             ),
-            None => self.insert_block(source_stream, output_stream, &new_block.into()),
+            None => self.insert_block(input_stream, output_stream, &new_block.into()),
         }
     }
 }
@@ -301,7 +301,7 @@ impl AssetIO for GifIO {
         Some(self)
     }
 
-    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+    fn remote_manifest_url_ref(&self) -> Option<&dyn RemoteManifestUrl> {
         Some(self)
     }
 
@@ -1104,7 +1104,7 @@ mod tests {
     use io::{Cursor, Seek};
 
     use super::*;
-    use crate::{asset_io::RemoteRefEmbedType, utils::xmp_inmemory_utils::extract_provenance};
+    use crate::utils::xmp_inmemory_utils::extract_provenance;
 
     const SAMPLE1: &[u8] = include_bytes!("../../tests/fixtures/sample1.gif");
 
@@ -1468,11 +1468,7 @@ mod tests {
         assert_eq!(gif_io.read_xmp(&mut stream), None);
 
         let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len()));
-        gif_io.embed_reference_to_stream(
-            &mut stream,
-            &mut output_stream1,
-            RemoteRefEmbedType::Xmp("Test".to_owned()),
-        )?;
+        gif_io.write_remote_manifest_url(&mut stream, &mut output_stream1, "Test")?;
 
         let xmp = gif_io.read_xmp(&mut output_stream1).unwrap();
         let p = extract_provenance(&xmp).unwrap();

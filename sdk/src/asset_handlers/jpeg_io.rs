@@ -30,7 +30,7 @@ use crate::{
     assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
         AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
-        HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, WriteXmp,
+        HashBlockObjectType, HashObjectPositions, RemoteManifestUrl, WriteXmp,
     },
     error::{Error, Result},
 };
@@ -138,7 +138,7 @@ fn delete_cai_segments(jpeg: &mut img_parts::jpeg::Jpeg) -> Result<Option<usize>
 pub struct JpegIO {}
 
 impl CAIReader for JpegIO {
-    fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
+    fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
         let mut buffer: Vec<u8> = Vec::new();
 
         let mut manifest_store_cnt = 0;
@@ -146,8 +146,8 @@ impl CAIReader for JpegIO {
         // load the bytes
         let mut buf: Vec<u8> = Vec::new();
 
-        asset_reader.rewind()?;
-        asset_reader.read_to_end(&mut buf).map_err(Error::IoError)?;
+        input_stream.rewind()?;
+        input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
 
         let dimg_opt = DynImage::from_bytes(buf.into()).map_err(|err| match err {
             img_parts::Error::WrongSignature => JpegError::InvalidFileSignature {
@@ -230,10 +230,10 @@ impl CAIReader for JpegIO {
     }
 
     // Get XMP block
-    fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String> {
+    fn read_xmp(&self, input_stream: &mut dyn CAIRead) -> Option<String> {
         // load the bytes
         let mut buf: Vec<u8> = Vec::new();
-        match asset_reader.read_to_end(&mut buf) {
+        match input_stream.read_to_end(&mut buf) {
             Ok(_) => xmp_from_bytes(&buf),
             Err(_) => None,
         }
@@ -497,7 +497,7 @@ impl AssetIO for JpegIO {
         Some(Box::new(JpegIO::new(asset_type)))
     }
 
-    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+    fn remote_manifest_url_ref(&self) -> Option<&dyn RemoteManifestUrl> {
         Some(self)
     }
 
@@ -517,16 +517,14 @@ impl AssetIO for JpegIO {
 impl WriteXmp for JpegIO {
     fn write_xmp(
         &self,
-        source_stream: &mut dyn CAIRead,
+        input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
         xmp: &str,
     ) -> Result<()> {
         let mut buf = Vec::new();
         // read the whole asset
-        source_stream.rewind()?;
-        source_stream
-            .read_to_end(&mut buf)
-            .map_err(Error::IoError)?;
+        input_stream.rewind()?;
+        input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
         let mut jpeg = Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
 
         // find any existing XMP segment to replace
@@ -1099,10 +1097,7 @@ pub mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
-    use crate::{
-        asset_io::RemoteRefEmbedType,
-        utils::io_utils::{safe_vec, tempdirectory},
-    };
+    use crate::utils::io_utils::{safe_vec, tempdirectory};
     #[test]
     fn test_extract_xmp() {
         let contents = Bytes::from_static(b"http://ns.adobe.com/xap/1.0/\0stuff");
@@ -1186,16 +1181,12 @@ pub mod tests {
         // write xmp
         let assetio_handler = handler.get_handler("jpg");
 
-        let remote_ref_handler = assetio_handler.remote_ref_writer_ref().unwrap();
+        let remote_ref_handler = assetio_handler.remote_manifest_url_ref().unwrap();
 
         let mut input_stream = std::fs::File::open(&output).unwrap();
         let mut output_stream = Cursor::new(Vec::new());
         remote_ref_handler
-            .embed_reference_to_stream(
-                &mut input_stream,
-                &mut output_stream,
-                RemoteRefEmbedType::Xmp(test_msg.to_string()),
-            )
+            .write_remote_manifest_url(&mut input_stream, &mut output_stream, test_msg)
             .unwrap();
         std::fs::write(&output, output_stream.into_inner()).unwrap();
 
@@ -1218,16 +1209,12 @@ pub mod tests {
 
         let assetio_handler = handler.get_handler("jpg");
 
-        let remote_ref_handler = assetio_handler.remote_ref_writer_ref().unwrap();
+        let remote_ref_handler = assetio_handler.remote_manifest_url_ref().unwrap();
 
         let mut source_stream = Cursor::new(source_bytes.to_vec());
         let mut output_stream = Cursor::new(Vec::new());
         remote_ref_handler
-            .embed_reference_to_stream(
-                &mut source_stream,
-                &mut output_stream,
-                RemoteRefEmbedType::Xmp(test_msg.to_string()),
-            )
+            .write_remote_manifest_url(&mut source_stream, &mut output_stream, test_msg)
             .unwrap();
 
         output_stream.set_position(0);

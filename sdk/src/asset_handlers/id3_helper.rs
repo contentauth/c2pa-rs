@@ -337,7 +337,7 @@ pub(crate) mod test_helpers {
     };
 
     use crate::{
-        asset_io::{AssetIO, HashBlockObjectType, RemoteRefEmbed, RemoteRefEmbedType},
+        asset_io::{AssetIO, HashBlockObjectType, RemoteManifestUrl},
         error::{Error, Result},
         utils::{hash_utils::vec_compare, xmp_inmemory_utils::extract_provenance},
     };
@@ -495,10 +495,10 @@ pub(crate) mod test_helpers {
         }
     }
 
-    /// Embed an XMP URL, then verify it can be read back.
+    /// Write a remote manifest URL, then verify it can be read back.
     pub(crate) fn run_remote_ref_xmp(
         handler: &dyn AssetIO,
-        embed: &dyn RemoteRefEmbed,
+        embed: &dyn RemoteManifestUrl,
         fixture: &Path,
     ) {
         let reader = handler.get_reader();
@@ -508,11 +508,7 @@ pub(crate) mod test_helpers {
 
         let mut output = Cursor::new(Vec::new());
         embed
-            .embed_reference_to_stream(
-                &mut stream,
-                &mut output,
-                RemoteRefEmbedType::Xmp("Test".to_owned()),
-            )
+            .write_remote_manifest_url(&mut stream, &mut output, "Test")
             .unwrap();
         output.rewind().unwrap();
         let xmp = reader.read_xmp(&mut output).unwrap();
@@ -617,7 +613,7 @@ pub(crate) mod test_helpers {
 
     pub(crate) fn run_embed_reference_file_path(
         handler: &dyn AssetIO,
-        embed: &dyn RemoteRefEmbed,
+        embed: &dyn RemoteManifestUrl,
         fixture: &Path,
         tmp: &Path,
     ) {
@@ -625,10 +621,10 @@ pub(crate) mod test_helpers {
         let mut input_stream = std::fs::File::open(tmp).unwrap();
         let mut output_stream = Cursor::new(Vec::new());
         embed
-            .embed_reference_to_stream(
+            .write_remote_manifest_url(
                 &mut input_stream,
                 &mut output_stream,
-                RemoteRefEmbedType::Xmp("https://example.com/ref".to_string()),
+                "https://example.com/ref",
             )
             .unwrap();
         std::fs::write(tmp, output_stream.into_inner()).unwrap();

@@ -25,7 +25,7 @@ use crate::{
     assertions::{BmffMerkleMap, ExclusionsMap},
     asset_io::{
         AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
-        HashObjectPositions, RemoteRefEmbed, WriteXmp,
+        HashObjectPositions, RemoteManifestUrl, WriteXmp,
     },
     error::{Error, Result},
     status_tracker::{ErrorBehavior, StatusTracker},
@@ -1768,11 +1768,11 @@ pub(crate) fn read_bmff_c2pa_boxes<R: Read + Seek + ?Sized>(
 }
 
 impl CAIReader for BmffIO {
-    fn read_cai(&self, reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
-        reader.seek(SeekFrom::Start(4))?;
+    fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
+        input_stream.seek(SeekFrom::Start(4))?;
 
         let mut header = [0u8; 4];
-        reader.read_exact(&mut header)?;
+        input_stream.read_exact(&mut header)?;
 
         if header[..4] != *b"ftyp" {
             return Err(BmffError::InvalidFileSignature {
@@ -1784,7 +1784,7 @@ impl CAIReader for BmffIO {
             .into());
         }
 
-        let c2pa_boxes = read_bmff_c2pa_boxes(reader)?;
+        let c2pa_boxes = read_bmff_c2pa_boxes(input_stream)?;
 
         // is this an update manifest?
         if let Some(original_bytes) = c2pa_boxes.original_bytes {
@@ -1809,8 +1809,8 @@ impl CAIReader for BmffIO {
     }
 
     // Get XMP block
-    fn read_xmp(&self, reader: &mut dyn CAIRead) -> Option<String> {
-        let c2pa_boxes = read_bmff_c2pa_boxes(reader).ok()?;
+    fn read_xmp(&self, input_stream: &mut dyn CAIRead) -> Option<String> {
+        let c2pa_boxes = read_bmff_c2pa_boxes(input_stream).ok()?;
 
         c2pa_boxes.xmp
     }
@@ -1842,7 +1842,7 @@ impl AssetIO for BmffIO {
         Some(Box::new(BmffIO::new(asset_type)))
     }
 
-    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+    fn remote_manifest_url_ref(&self) -> Option<&dyn RemoteManifestUrl> {
         Some(self)
     }
 
@@ -2731,12 +2731,9 @@ pub mod tests {
     use std::{io::Cursor, path::Path};
 
     use super::*;
-    use crate::{
-        asset_io::RemoteRefEmbedType,
-        utils::{
-            io_utils::tempdirectory,
-            test::{fixture_path, temp_dir_path},
-        },
+    use crate::utils::{
+        io_utils::tempdirectory,
+        test::{fixture_path, temp_dir_path},
     };
 
     // test-only equivalent of the removed `AssetIO::read_cai_store`
@@ -2783,16 +2780,12 @@ pub mod tests {
 
         let bmff = BmffIO::new("mp4");
 
-        let eh = bmff.remote_ref_writer_ref().unwrap();
+        let eh = bmff.remote_manifest_url_ref().unwrap();
 
         let mut input_stream = std::fs::File::open(&output).unwrap();
         let mut embed_stream = Cursor::new(Vec::new());
-        eh.embed_reference_to_stream(
-            &mut input_stream,
-            &mut embed_stream,
-            RemoteRefEmbedType::Xmp(data.to_string()),
-        )
-        .unwrap();
+        eh.write_remote_manifest_url(&mut input_stream, &mut embed_stream, data)
+            .unwrap();
         std::fs::write(&output, embed_stream.into_inner()).unwrap();
 
         let mut output_stream = std::fs::File::open(&output).unwrap();

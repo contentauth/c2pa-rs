@@ -25,19 +25,19 @@ static WRITE_NOT_IMPLEMENTED: &str = "PDF write functionality will be added in a
 pub struct PdfIO {}
 
 impl CAIReader for PdfIO {
-    fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> crate::Result<Vec<u8>> {
-        asset_reader.rewind()?;
+    fn read_cai(&self, input_stream: &mut dyn CAIRead) -> crate::Result<Vec<u8>> {
+        input_stream.rewind()?;
 
-        let pdf = Pdf::from_reader(asset_reader).map_err(|e| Error::InvalidAsset(e.to_string()))?;
+        let pdf = Pdf::from_reader(input_stream).map_err(|e| Error::InvalidAsset(e.to_string()))?;
         self.read_manifest_bytes(pdf)
     }
 
-    fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String> {
-        if asset_reader.rewind().is_err() {
+    fn read_xmp(&self, input_stream: &mut dyn CAIRead) -> Option<String> {
+        if input_stream.rewind().is_err() {
             return None;
         }
 
-        let Ok(pdf) = Pdf::from_reader(asset_reader) else {
+        let Ok(pdf) = Pdf::from_reader(input_stream) else {
             return None;
         };
 

@@ -24,7 +24,7 @@ use riff::*;
 use crate::{
     asset_io::{
         AssetIO, AssetPatch, CAIRead, CAIReadWrapper, CAIReadWrite, CAIReadWriteWrapper, CAIReader,
-        CAIWriter, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, WriteXmp,
+        CAIWriter, HashBlockObjectType, HashObjectPositions, RemoteManifestUrl, WriteXmp,
     },
     error::{Error, Result},
     utils::io_utils::stream_len,
@@ -389,7 +389,7 @@ impl AssetIO for RiffIO {
         Some(self)
     }
 
-    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+    fn remote_manifest_url_ref(&self) -> Option<&dyn RemoteManifestUrl> {
         Some(self)
     }
 
@@ -585,7 +585,7 @@ impl AssetPatch for RiffIO {
 impl WriteXmp for RiffIO {
     fn write_xmp(
         &self,
-        source_stream: &mut dyn CAIRead,
+        input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
         xmp: &str,
     ) -> Result<()> {
@@ -597,7 +597,7 @@ impl WriteXmp for RiffIO {
 
         let top_level_chunks = {
             let mut reader = CAIReadWrapper {
-                reader: source_stream,
+                reader: input_stream,
             };
             Chunk::read(&mut reader, 0)?
         };
@@ -607,7 +607,7 @@ impl WriteXmp for RiffIO {
         }
 
         let mut reader = CAIReadWrapper {
-            reader: source_stream,
+            reader: input_stream,
         };
 
         // replace/add manifest in memory
@@ -646,14 +646,11 @@ pub mod tests {
     use std::{fs::File, panic};
 
     use super::*;
-    use crate::{
-        asset_io::RemoteRefEmbedType,
-        utils::{
-            hash_utils::vec_compare,
-            io_utils::tempdirectory,
-            test::{fixture_path, temp_dir_path},
-            xmp_inmemory_utils::extract_provenance,
-        },
+    use crate::utils::{
+        hash_utils::vec_compare,
+        io_utils::tempdirectory,
+        test::{fixture_path, temp_dir_path},
+        xmp_inmemory_utils::extract_provenance,
     };
 
     // test-only equivalent of the removed `AssetIO::read_cai_store`
@@ -662,15 +659,19 @@ pub mod tests {
         handler.read_cai(&mut f)
     }
 
-    // test-only equivalent of the removed `RemoteRefEmbed::embed_reference`
-    fn embed_reference(
-        handler: &dyn RemoteRefEmbed,
+    // test-only equivalent of the removed file-`Path`-based embed method
+    fn write_remote_manifest_url(
+        handler: &dyn RemoteManifestUrl,
         path: &Path,
-        embed_ref: RemoteRefEmbedType,
+        remote_manifest_url: &str,
     ) -> Result<()> {
         let mut input_stream = File::open(path).map_err(Error::IoError)?;
         let mut output_stream = Cursor::new(Vec::new());
-        handler.embed_reference_to_stream(&mut input_stream, &mut output_stream, embed_ref)?;
+        handler.write_remote_manifest_url(
+            &mut input_stream,
+            &mut output_stream,
+            remote_manifest_url,
+        )?;
         std::fs::write(path, output_stream.into_inner()).map_err(Error::IoError)
     }
 
@@ -866,12 +867,10 @@ pub mod tests {
 
             let riff_io = RiffIO::new("webp");
 
-            if let Some(embed_handler) = riff_io.remote_ref_writer_ref() {
-                if let Ok(()) = embed_reference(
-                    embed_handler,
-                    output.as_path(),
-                    RemoteRefEmbedType::Xmp(more_data.to_string()),
-                ) {
+            if let Some(embed_handler) = riff_io.remote_manifest_url_ref() {
+                if let Ok(()) =
+                    write_remote_manifest_url(embed_handler, output.as_path(), more_data)
+                {
                     let mut output_stream = File::open(&output).unwrap();
 
                     // check the xmp
@@ -903,12 +902,10 @@ pub mod tests {
 
             let riff_io = RiffIO::new("webp");
 
-            if let Some(embed_handler) = riff_io.remote_ref_writer_ref() {
-                if let Ok(()) = embed_reference(
-                    embed_handler,
-                    output.as_path(),
-                    RemoteRefEmbedType::Xmp(more_data.to_string()),
-                ) {
+            if let Some(embed_handler) = riff_io.remote_manifest_url_ref() {
+                if let Ok(()) =
+                    write_remote_manifest_url(embed_handler, output.as_path(), more_data)
+                {
                     let mut output_stream = File::open(&output).unwrap();
 
                     // check the xmp
@@ -940,12 +937,10 @@ pub mod tests {
 
             let riff_io = RiffIO::new("webp");
 
-            if let Some(embed_handler) = riff_io.remote_ref_writer_ref() {
-                if let Ok(()) = embed_reference(
-                    embed_handler,
-                    output.as_path(),
-                    RemoteRefEmbedType::Xmp(more_data.to_string()),
-                ) {
+            if let Some(embed_handler) = riff_io.remote_manifest_url_ref() {
+                if let Ok(()) =
+                    write_remote_manifest_url(embed_handler, output.as_path(), more_data)
+                {
                     let mut output_stream = File::open(&output).unwrap();
 
                     // check the xmp

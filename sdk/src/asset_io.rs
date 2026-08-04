@@ -26,11 +26,11 @@
 //!   set of supported file extensions and MIME types.
 //!
 //! Everything else in this module — [`AssetPatch`], [`AssetBoxHash`],
-//! [`ComposedManifestRef`], and [`RemoteRefEmbed`] — is optional. Most custom
-//! handlers only need [`RemoteRefEmbed`], and only if they want to support
-//! embedding a remote manifest URL into the asset's XMP metadata. Implement
-//! [`WriteXmp`] rather than `RemoteRefEmbed` directly — a blanket impl derives
-//! `RemoteRefEmbed` from it.
+//! [`ComposedManifestRef`], and [`RemoteManifestUrl`] — is optional. Most custom
+//! handlers only need [`RemoteManifestUrl`], and only if they want to support
+//! writing a remote manifest URL into the asset's XMP metadata. Implement
+//! [`WriteXmp`] rather than `RemoteManifestUrl` directly — a blanket impl derives
+//! `RemoteManifestUrl` from it.
 //!
 //! # Example
 //!
@@ -48,12 +48,12 @@
 //! struct MyFormatReader;
 //!
 //! impl CAIReader for MyFormatReader {
-//!     fn read_cai(&self, _asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
+//!     fn read_cai(&self, _input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
 //!         // Locate and return the C2PA manifest store bytes.
 //!         todo!()
 //!     }
 //!
-//!     fn read_xmp(&self, _asset_reader: &mut dyn CAIRead) -> Option<String> {
+//!     fn read_xmp(&self, _input_stream: &mut dyn CAIRead) -> Option<String> {
 //!         None
 //!     }
 //! }
@@ -244,17 +244,17 @@ impl Seek for CAIReadWriteWrapper<'_> {
 
 /// Reads the C2PA manifest store and XMP metadata from an asset stream.
 pub trait CAIReader: Sync + Send {
-    /// Returns the raw C2PA JUMBF manifest store bytes from `asset_reader`.
+    /// Returns the raw C2PA JUMBF manifest store bytes from `input_stream`.
     ///
     /// Returns [`Error::JumbfNotFound`] if no manifest
     /// store is present, or
     /// [`Error::TooManyManifestStores`] if
     /// more than one is detected.
-    fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>>;
+    fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>>;
 
     /// Returns the asset's XMP metadata as a string, or `None` if the format
     /// doesn't carry XMP or none is present.
-    fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String>;
+    fn read_xmp(&self, input_stream: &mut dyn CAIRead) -> Option<String>;
 }
 
 /// Writes, locates, and removes the C2PA manifest store in an asset stream.
@@ -387,7 +387,7 @@ pub trait AssetIO: Sync + Send {
     // -- Advanced / optional capabilities --
     //
     // These four accessors all default to `None`. Most custom handlers only need
-    // `remote_ref_writer_ref` (to support embedding a remote manifest URL into XMP);
+    // `remote_manifest_url_ref` (to support writing a remote manifest URL into XMP);
     // the rest are spec-specific or performance features used only by a subset of
     // the SDK's built-in handlers.
 
@@ -397,9 +397,9 @@ pub trait AssetIO: Sync + Send {
         None
     }
 
-    /// Returns this handler's [`RemoteRefEmbed`] implementation, if it supports
-    /// embedding a remote manifest reference (e.g. into XMP).
-    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+    /// Returns this handler's [`RemoteManifestUrl`] implementation, if it supports
+    /// writing a remote manifest URL (e.g. into XMP).
+    fn remote_manifest_url_ref(&self) -> Option<&dyn RemoteManifestUrl> {
         None
     }
 
@@ -442,64 +442,61 @@ pub trait AssetBoxHash {
     fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>>;
 }
 
-/// The type of remote reference to embed into an asset.
+/// Writes a remote manifest URL into an asset, so a reader can find the manifest
+/// even though it isn't stored in the asset itself.
 ///
-/// Currently the only supported technique is embedding a manifest URL into XMP.
-pub enum RemoteRefEmbedType {
-    /// Embed `manifest_uri` as the `dcterms:provenance` value in the asset's XMP.
-    Xmp(String),
-}
-
-/// Embeds a remote reference to an external manifest into an asset.
+/// Note the direction: this is for a *remote* manifest (referenced by URL, not
+/// present in the asset) — unrelated to *embedding* a manifest store, which is what
+/// [`CAIWriter::write_cai`] does.
 ///
-/// Implement [`WriteXmp`] instead of this trait directly — nearly every format
-/// embeds its remote reference by merging a manifest URL into XMP and writing the
-/// result back, and there's a blanket impl of `RemoteRefEmbed` for any type that
-/// implements [`WriteXmp`] and [`CAIReader`] that does exactly that.
-pub trait RemoteRefEmbed {
-    /// Embeds `embed_ref` into the asset read from `source_stream`, writing the
-    /// result to `output_stream`.
-    fn embed_reference_to_stream(
+/// Implement [`WriteXmp`] instead of this trait directly — every format writes the
+/// remote manifest URL the same way (merge it into XMP, then write XMP back), and
+/// there's a blanket impl of `RemoteManifestUrl` for any type that implements
+/// [`WriteXmp`] and [`CAIReader`] that does exactly that.
+///
+/// This is deliberately narrow: it only covers "point a reader at a manifest hosted
+/// elsewhere." A future non-XMP technique (e.g. a watermark) would be its own
+/// separate trait, not folded into this one.
+pub trait RemoteManifestUrl {
+    /// Writes `remote_manifest_url` into the asset read from `input_stream`,
+    /// producing `output_stream`.
+    fn write_remote_manifest_url(
         &self,
-        source_stream: &mut dyn CAIRead,
+        input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
-        embed_ref: RemoteRefEmbedType,
+        remote_manifest_url: &str,
     ) -> Result<()>;
 }
 
 /// Writes a complete XMP packet into an asset stream, replacing any existing XMP.
 ///
-/// This is the format-specific half of [`RemoteRefEmbed`]: given the final XMP
-/// string to write (already merged with any manifest URL), insert it into the
-/// asset's container format. Implement this instead of `RemoteRefEmbed` directly —
-/// a blanket impl derives `RemoteRefEmbed` from it, handling the "read current XMP,
-/// merge in the manifest URL" part common to every format.
+/// This is the format-specific half of [`RemoteManifestUrl`]: given the final XMP
+/// string to write (already merged with the remote manifest URL), insert it into
+/// the asset's container format. Implement this instead of `RemoteManifestUrl`
+/// directly — a blanket impl derives `RemoteManifestUrl` from it, handling the
+/// "read current XMP, merge in the URL" part common to every format.
 pub trait WriteXmp {
-    /// Writes `xmp` into `source_stream`, producing `output_stream`.
+    /// Writes `xmp` into `input_stream`, producing `output_stream`.
     fn write_xmp(
         &self,
-        source_stream: &mut dyn CAIRead,
+        input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
         xmp: &str,
     ) -> Result<()>;
 }
 
-impl<T: WriteXmp + CAIReader> RemoteRefEmbed for T {
-    fn embed_reference_to_stream(
+impl<T: WriteXmp + CAIReader> RemoteManifestUrl for T {
+    fn write_remote_manifest_url(
         &self,
-        source_stream: &mut dyn CAIRead,
+        input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
-        embed_ref: RemoteRefEmbedType,
+        remote_manifest_url: &str,
     ) -> Result<()> {
-        match embed_ref {
-            RemoteRefEmbedType::Xmp(manifest_uri) => {
-                let current_xmp = self
-                    .read_xmp(source_stream)
-                    .unwrap_or_else(|| MIN_XMP.to_string());
-                let updated_xmp = add_provenance(&current_xmp, &manifest_uri)?;
-                self.write_xmp(source_stream, output_stream, &updated_xmp)
-            }
-        }
+        let current_xmp = self
+            .read_xmp(input_stream)
+            .unwrap_or_else(|| MIN_XMP.to_string());
+        let updated_xmp = add_provenance(&current_xmp, remote_manifest_url)?;
+        self.write_xmp(input_stream, output_stream, &updated_xmp)
     }
 }
 

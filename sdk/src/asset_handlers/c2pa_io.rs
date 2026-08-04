@@ -34,17 +34,17 @@ pub(crate) static SUPPORTED_TYPES: [&str; 3] = [
 pub struct C2paIO {}
 
 impl CAIReader for C2paIO {
-    fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
-        asset_reader.rewind()?;
+    fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
+        input_stream.rewind()?;
 
         let mut cai_data = Vec::new();
         // read the whole file
-        asset_reader.read_to_end(&mut cai_data)?;
+        input_stream.read_to_end(&mut cai_data)?;
         Ok(cai_data)
     }
 
     // C2PA files have no xmp data
-    fn read_xmp(&self, _asset_reader: &mut dyn CAIRead) -> Option<String> {
+    fn read_xmp(&self, _input_stream: &mut dyn CAIRead) -> Option<String> {
         None
     }
 }

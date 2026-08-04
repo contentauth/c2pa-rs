@@ -30,9 +30,7 @@ use crate::{
         BmffHash, BoxHash, CertificateStatus, DataBox, DataHash, Ingredient, Relationship,
         TimeStamp, User, UserCbor,
     },
-    asset_io::{
-        CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
-    },
+    asset_io::{CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions},
     claim::{
         check_ocsp_status, check_ocsp_status_async, Claim, ClaimAssertion, ClaimAssetData,
         RemoteManifest,
@@ -3034,7 +3032,7 @@ impl Store {
             // Do not assume the handler supports XMP or removing manifests unless we need it to
             if let Some(url) = url {
                 let external_ref_writer = io_handler
-                    .remote_ref_writer_ref()
+                    .remote_manifest_url_ref()
                     .ok_or(Error::XmpNotSupported)?;
 
                 if remove_manifests {
@@ -3047,17 +3045,17 @@ impl Store {
 
                     // add external ref if possible
                     tmp_stream.rewind()?;
-                    external_ref_writer.embed_reference_to_stream(
+                    external_ref_writer.write_remote_manifest_url(
                         &mut tmp_stream,
                         &mut intermediate_stream,
-                        RemoteRefEmbedType::Xmp(url),
+                        &url,
                     )?;
                 } else {
                     // add external ref if possible
-                    external_ref_writer.embed_reference_to_stream(
+                    external_ref_writer.write_remote_manifest_url(
                         input_stream,
                         &mut intermediate_stream,
-                        RemoteRefEmbedType::Xmp(url),
+                        &url,
                     )?;
                 }
             } else if remove_manifests {

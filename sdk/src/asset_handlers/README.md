@@ -126,7 +126,7 @@ pub trait AssetIO: Sync + Send {
 
     // Optional capability accessors (all default to None)
     fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> { None }
-    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> { None }
+    fn remote_manifest_url_ref(&self) -> Option<&dyn RemoteManifestUrl> { None }
     fn asset_box_hash_ref(&self) -> Option<&dyn AssetBoxHash> { None }
     fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> { None }
 }
@@ -163,7 +163,7 @@ it and its default will be removed together in a future release.
 The optional traits are:
 
 - [AssetPatch](#assetpatch) 
-- [RemoteRefEmbed / WriteXmp](#remoterefembed--writexmp) 
+- [RemoteManifestUrl / WriteXmp](#remotemanifesturl--writexmp) 
 - [AssetBoxHash](#assetboxhash) 
 - [ComposedManifestRef](#composedmanifestref)
 
@@ -179,31 +179,36 @@ pub trait AssetPatch {
 
 It optimizes manifest updates by patching bytes in-place without rewriting the whole file. Only works when the new store is the same size as the existing one. This is a performance optimization.
 
-#### RemoteRefEmbed / WriteXmp
+#### RemoteManifestUrl / WriteXmp
 
-Use `RemoteRefEmbed` for remote manifest reference embedding:
+Use `RemoteManifestUrl` for writing a remote manifest URL into an asset (the C2PA spec
+calls this a remote manifest URI — the SDK's `Builder`/`Claim` layers call the same
+concept `remote_url`/`remote_manifest`; this trait is the asset-level mechanics
+underneath all of them):
 
 ```rust
-pub trait RemoteRefEmbed {
-    fn embed_reference_to_stream(
+pub trait RemoteManifestUrl {
+    fn write_remote_manifest_url(
         &self,
         source_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
-        embed_ref: RemoteRefEmbedType,
+        remote_manifest_url: &str,
     ) -> Result<()>;
 }
 ```
 
-It embeds a remote manifest reference URL into the asset's XMP metadata.
-`RemoteRefEmbedType` has a single variant, `Xmp(String)` — the file-`Path`-based
-`embed_reference` method and the speculative `StegoS`/`StegoB`/`Watermark` variants were
-removed (none were ever constructed in production code); callers needing file-path
-semantics should open the file, call `embed_reference_to_stream`, and write the result
-back.
+Note the direction: this is for a *remote* manifest (referenced by URL, not present in
+the asset) — unrelated to *embedding* a manifest store, which is what `CAIWriter::write_cai`
+does. It's deliberately narrow: it only covers "point a reader at a manifest hosted
+elsewhere." A future non-XMP technique (e.g. a watermark) would be its own separate
+trait, not another variant or parameter here — which is also why the old
+`RemoteRefEmbedType` enum (and its unused `StegoS`/`StegoB`/`Watermark` variants, plus
+the file-`Path`-based `embed_reference` method) is gone; the method just takes the URL
+directly.
 
-**Don't implement `RemoteRefEmbed` directly.** Since embedding a remote reference is
-always "merge a manifest URL into XMP, then write XMP", implement `WriteXmp` instead —
-`RemoteRefEmbed` has a blanket impl for any type that implements `WriteXmp` (and
+**Don't implement `RemoteManifestUrl` directly.** Since writing a remote manifest URL is
+always "merge it into XMP, then write XMP", implement `WriteXmp` instead —
+`RemoteManifestUrl` has a blanket impl for any type that implements `WriteXmp` (and
 `CAIReader`, for reading the current XMP):
 
 ```rust
@@ -218,15 +223,14 @@ pub trait WriteXmp {
 ```
 
 The blanket impl reads the current XMP via `CAIReader::read_xmp` (falling back to
-`MIN_XMP` if there is none), merges in the manifest URL with
-`xmp_inmemory_utils::add_provenance`, and calls `write_xmp` with the finished string —
-every built-in handler that supports `RemoteRefEmbed` implements `WriteXmp`, not
-`RemoteRefEmbed`, and none of them call `add_provenance` themselves anymore. A
-`write_xmp` impl only needs the format-specific insertion logic (find/replace the
-existing XMP block or chunk, or pick an insertion point if there isn't one yet); one
-exception is `SvgIO`, which needs a bit more than the plain XMP string to know *where*
-in the XML tree to splice — it re-parses the asset internally via a private helper
-rather than relying solely on the string handed to it.
+`MIN_XMP` if there is none), merges in the URL with `xmp_inmemory_utils::add_provenance`,
+and calls `write_xmp` with the finished string — every built-in handler that supports
+`RemoteManifestUrl` implements `WriteXmp`, not `RemoteManifestUrl`, and none of them call
+`add_provenance` themselves anymore. A `write_xmp` impl only needs the format-specific
+insertion logic (find/replace the existing XMP block or chunk, or pick an insertion
+point if there isn't one yet); one exception is `SvgIO`, which needs a bit more than the
+plain XMP string to know *where* in the XML tree to splice — it re-parses the asset
+internally via a private helper rather than relying solely on the string handed to it.
 
 #### AssetBoxHash
 
@@ -353,7 +357,7 @@ All traits require `Sync + Send`. Handlers must be **stateless structs** with no
 
 ## Trait implementation matrix
 
-| Handler | CAIReader | CAIWriter | AssetIO | RemoteRefEmbed | AssetBoxHash | ComposedManifestRef | AssetPatch |
+| Handler | CAIReader | CAIWriter | AssetIO | RemoteManifestUrl | AssetBoxHash | ComposedManifestRef | AssetPatch |
 |---------|:---------:|:---------:|:-------:|:--------------:|:------------:|:-------------------:|:----------:|
 | **BmffIO** (MP4, HEIF, AVIF, MOV) | Y | Y | Y | Y | -- | -- | Y |
 | **JpegIO** (JPG, JPEG) | Y | Y | Y | Y | Y | Y | -- |
@@ -391,9 +395,9 @@ Verifies the full round-trip:
 
 ### test_remote_ref
 
-Verifies remote reference embedding (only applicable if the handler supports `RemoteRefEmbed`):
-1. Get the `RemoteRefEmbed` from the handler
-2. Embed an XMP remote URL into the asset if supported
+Verifies remote manifest URL writing (only applicable if the handler supports `RemoteManifestUrl`):
+1. Get the `RemoteManifestUrl` from the handler
+2. Write a remote manifest URL into the asset's XMP if supported
 3. Read XMP back from the output if supported
 4. Extract provenance URL from the XMP
 5. Assert it matches the original URL
@@ -431,7 +435,7 @@ flowchart TB
         end
         subgraph optional["Optional"]
             t4["<b>AssetPatch</b>:<br>In-place patching"]
-            t5["<b>RemoteRefEmbed</b> (via <b>WriteXmp</b>):<br>XMP remote references"]
+            t5["<b>RemoteManifestUrl</b> (via <b>WriteXmp</b>):<br>Remote manifest URL"]
             t6["<b>AssetBoxHash</b>:<br>Box map for c2pa.hash.boxes"]
             t7["<b>ComposedManifestRef</b>:<br>Pre-composed wrapping"]
         end

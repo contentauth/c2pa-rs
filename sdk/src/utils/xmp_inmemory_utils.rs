@@ -263,10 +263,7 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::*;
-    use crate::{
-        asset_handlers::jpeg_io::JpegIO,
-        asset_io::{AssetIO, RemoteRefEmbedType},
-    };
+    use crate::{asset_handlers::jpeg_io::JpegIO, asset_io::AssetIO};
 
     const XMP_DATA: &str = r#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
     <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="contentauth">
@@ -329,7 +326,7 @@ mod tests {
 
         let assetio_handler = handler.get_handler("jpg");
 
-        let remote_ref_handler = assetio_handler.remote_ref_writer_ref().unwrap();
+        let remote_ref_handler = assetio_handler.remote_manifest_url_ref().unwrap();
 
         let mut source_stream = Cursor::new(source_bytes.to_vec());
         let mut output_stream = Cursor::new(Vec::new());
@@ -342,11 +339,7 @@ mod tests {
         source_stream.set_position(0);
 
         remote_ref_handler
-            .embed_reference_to_stream(
-                &mut source_stream,
-                &mut output_stream,
-                RemoteRefEmbedType::Xmp(test_msg.to_string()),
-            )
+            .write_remote_manifest_url(&mut source_stream, &mut output_stream, test_msg)
             .unwrap();
 
         output_stream.set_position(0);

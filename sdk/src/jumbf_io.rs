@@ -494,7 +494,6 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        asset_io::RemoteRefEmbedType,
         crypto::raw_signature::SigningAlg,
         utils::{test::create_test_store, test_signer::test_signer},
     };
@@ -647,11 +646,10 @@ pub mod tests {
     fn test_remote_ref(asset_type: &str, reader: &mut dyn CAIRead) {
         const REMOTE_URL: &str = "https://example.com/remote_manifest";
         let asset_handler = get_assetio_handler(asset_type).unwrap();
-        let remote_ref_writer = asset_handler.remote_ref_writer_ref().unwrap();
+        let remote_ref_writer = asset_handler.remote_manifest_url_ref().unwrap();
         let mut writer = Cursor::new(Vec::new());
-        let embed_ref = RemoteRefEmbedType::Xmp(REMOTE_URL.to_string());
         remote_ref_writer
-            .embed_reference_to_stream(reader, &mut writer, embed_ref)
+            .write_remote_manifest_url(reader, &mut writer, REMOTE_URL)
             .unwrap();
         writer.set_position(0);
         let xmp = asset_handler.get_reader().read_xmp(&mut writer).unwrap();
