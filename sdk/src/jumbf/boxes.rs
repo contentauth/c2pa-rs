@@ -3051,7 +3051,7 @@ pub mod tests {
     fn desc_box_reader_rejects_jumd_signature_underflow() {
         let mut stream = Vec::new();
         stream.extend_from_slice(&[0u8; 16]); // UUID
-        stream.push(0x0F); // toggles: requestable+labeled+box_id+signature
+        stream.push(0x0f); // toggles: requestable+labeled+box_id+signature
         stream.push(0x00); // empty label (null terminator)
         stream.extend_from_slice(&[0u8; 4]); // box_id
         stream.extend_from_slice(&[0u8; 32]); // signature
@@ -3087,7 +3087,7 @@ pub mod tests {
         stream.push(0x17); // toggles: requestable+labeled+box_id+private
         stream.push(0x00); // empty label (null terminator)
         stream.extend_from_slice(&[0u8; 4]); // box_id
-        stream.extend_from_slice(&[0x00, 0x00, 0x00, 0x0C]); // private box header: size=12
+        stream.extend_from_slice(&[0x00, 0x00, 0x00, 0x0c]); // private box header: size=12
         stream.extend_from_slice(&[0x63, 0x32, 0x73, 0x68]); // private box header: type = SaltHash ("c2sh")
 
         let mut reader = Cursor::new(&stream);
