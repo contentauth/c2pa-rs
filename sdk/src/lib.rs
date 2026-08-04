@@ -249,7 +249,6 @@ pub use claim_generator_info::ClaimGeneratorInfo;
 pub use context::{Context, ProgressCallbackFunc, ProgressPhase};
 pub use crypto::raw_signature::SigningAlg;
 pub use error::{Error, Result};
-
 #[doc(hidden)]
 pub use external_manifest::ManifestPatchCallback;
 pub use hash_utils::{hash_stream_by_alg, HashRange};
