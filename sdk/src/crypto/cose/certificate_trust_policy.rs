@@ -1375,7 +1375,7 @@ zGxQnM2hCA==
     #[test]
     fn test_multiple_trust_list_fetch() {
         let settings = Settings::default();
-        let ta = settings.trust.anchors.unwrap().get(0).unwrap().clone();
+        let ta = settings.trust.anchors.unwrap().first().unwrap().clone();
 
         let mut ctp = CertificateTrustPolicy::new();
         ctp.add_trust_anchors(
