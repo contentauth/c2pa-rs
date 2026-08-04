@@ -127,7 +127,7 @@ use crate::{
     maybe_send_sync::MaybeSend,
     utils::{
         io_utils::tempfile_builder,
-        xmp_inmemory_utils::{add_provenance, MIN_XMP},
+        xmp_inmemory_utils::{add_provenance, extract_provenance, MIN_XMP},
     },
     Error,
 };
@@ -466,6 +466,16 @@ pub trait RemoteManifestUrl {
         output_stream: &mut dyn CAIReadWrite,
         remote_manifest_url: &str,
     ) -> Result<()>;
+
+    /// Reads the remote manifest URL from the asset in `input_stream`, if any.
+    ///
+    /// The default implementation returns `None`. The blanket impl for
+    /// [`WriteXmp`] overrides this to extract the URL from XMP, since that's
+    /// where `write_remote_manifest_url` puts it. Implement this directly if
+    /// your format stores the remote manifest URL somewhere other than XMP.
+    fn read_manifest_url(&self, _input_stream: &mut dyn CAIRead) -> Option<String> {
+        None
+    }
 }
 
 /// Writes a complete XMP packet into an asset stream, replacing any existing XMP.
@@ -497,6 +507,12 @@ impl<T: WriteXmp + CAIReader> RemoteManifestUrl for T {
             .unwrap_or_else(|| MIN_XMP.to_string());
         let updated_xmp = add_provenance(&current_xmp, remote_manifest_url)?;
         self.write_xmp(input_stream, output_stream, &updated_xmp)
+    }
+
+    fn read_manifest_url(&self, input_stream: &mut dyn CAIRead) -> Option<String> {
+        self.read_xmp(input_stream)
+            .as_deref()
+            .and_then(extract_provenance)
     }
 }
 

@@ -655,6 +655,10 @@ pub mod tests {
         let xmp = asset_handler.get_reader().read_xmp(&mut writer).unwrap();
         let loaded = crate::utils::xmp_inmemory_utils::extract_provenance(&xmp).unwrap();
         assert_eq!(loaded, REMOTE_URL.to_string());
+
+        writer.set_position(0);
+        let loaded = remote_ref_writer.read_manifest_url(&mut writer).unwrap();
+        assert_eq!(loaded, REMOTE_URL.to_string());
     }
 
     #[test]
