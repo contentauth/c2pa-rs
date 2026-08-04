@@ -513,8 +513,11 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
     use x509_parser::{extensions::ExtendedKeyUsage, pem::Pem};
 
-    use crate::crypto::cose::{
-        CertificateTrustError, CertificateTrustPolicy, InvalidCertificateError, TrustAnchorType,
+    use crate::{
+        crypto::cose::{
+            CertificateTrustError, CertificateTrustPolicy, InvalidCertificateError, TrustAnchorType,
+        },
+        Settings,
     };
 
     /// Returns the DER certificate chain from the bundled test credentials for
@@ -1367,5 +1370,30 @@ zGxQnM2hCA==
         Pem::iter_from_buffer(cert_chain)
             .map(|r| r.unwrap().contents)
             .collect()
+    }
+
+    #[test]
+    fn test_multiple_trust_list_fetch() {
+        let settings = Settings::default();
+        let ta = settings.trust.anchors.unwrap().get(0).unwrap().clone();
+
+        let mut ctp = CertificateTrustPolicy::new();
+        ctp.add_trust_anchors(
+            ta.trust_anchors.as_bytes(),
+            "https://example.com/tsa",
+            TrustAnchorType::TSA,
+        )
+        .unwrap();
+        ctp.add_trust_anchors(
+            ta.trust_anchors.as_bytes(),
+            "https://example.com/cawg",
+            TrustAnchorType::CAWG,
+        )
+        .unwrap();
+
+        assert!(!ctp.tsa_trust_anchors().is_empty());
+        assert!(!ctp.cawg_trust_anchors().is_empty());
+        // we did not add any signing trust anchors
+        assert!(ctp.signing_trust_anchors().is_empty());
     }
 }
