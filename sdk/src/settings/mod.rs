@@ -1479,6 +1479,14 @@ pub mod tests {
         // Test that test_settings loads correctly
         let settings = test_settings();
 
+        // Make sure TrustAnchor has default values
+        let ta = TrustAnchor {
+            trust_anchors: "".to_string(),
+            trust_uri: None,
+            trust_kind: TrustListKind::Signer,
+        };
+        assert_eq!(ta, TrustAnchor::default());
+
         // Verify it has trust anchors (test fixture includes multiple root CAs)
         assert!(
             settings.trust.anchors.is_some(),

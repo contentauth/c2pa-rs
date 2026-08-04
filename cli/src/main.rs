@@ -55,10 +55,12 @@ mod signer;
 /// Official C2PA conformance trust list (PEM bundle).
 const TRUST_LIST_OFFICIAL_URL: &str =
     "https://raw.githubusercontent.com/c2pa-org/conformance-public/refs/heads/main/trust-list/C2PA-TRUST-LIST.pem";
+const TRUST_LIST_OFFICIAL_URI: &str = "https://c2pa.org/trustlist";
 /// Legacy interim trust anchors (PEM), fetched only with `init trust --legacy`.
 const TRUST_LIST_LEGACY_ANCHORS_URL: &str = "https://contentcredentials.org/trust/anchors.pem";
 const TRUST_LEGACY_STORE_CFG_URL: &str = "https://contentcredentials.org/trust/store.cfg";
 const TRUST_LEGACY_ALLOWED_URL: &str = "https://contentcredentials.org/trust/allowed.sha256.txt";
+const TRUST_LIST_LEGACY_ANCHORS_URI: &str = "https://contentcredentials.org/trustlist";
 
 /// Sidecar trust files stored next to the settings file (`--settings` parent directory).
 const SIDECAR_TRUST_LIST_PEM: &str = "c2pa-trust-list.pem";
@@ -675,6 +677,7 @@ fn apply_trust_sidecars(settings: &mut Settings, settings_path: &Path) -> Result
                 [[trust.anchors]]
                 trust_anchors = data
                 trust_kind = "signer"
+                trust_uri = TRUST_LIST_OFFICIAL_URI
             }
             .to_string(),
             "toml",
@@ -691,6 +694,7 @@ fn apply_trust_sidecars(settings: &mut Settings, settings_path: &Path) -> Result
                 [[trust.anchors]]
                 trust_anchors = data
                 trust_kind = "signer"
+                trust_uri = TRUST_LIST_LEGACY_ANCHORS_URI
             }
             .to_string(),
             "toml",
