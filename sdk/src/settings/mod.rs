@@ -80,10 +80,11 @@ pub struct TrustAnchor {
     ///
     /// Normally this option contains the official C2PA-recognized trust anchors found here:
     /// <https://github.com/c2pa-org/conformance-public/tree/main/trust-list>
+    /// or a user supplied trust list.  This format is a PEM string of certificates.
     pub trust_anchors: String,
-    /// URI identifier for the trust list.
+    /// URI identifier for the trust list.  If not is present a unique identifier will be generated.
     pub trust_uri: Option<String>,
-    /// Kind of trust list.  This is used to determine the trust purpose
+    /// Kind of trust list.  This is used to determine the trust purpose, default is Signer.
     pub trust_kind: TrustListKind,
 }
 
