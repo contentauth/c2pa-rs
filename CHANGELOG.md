@@ -9,7 +9,7 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
-## [0.91.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.3...c2pa-v0.91.0)
+## [0.90.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.3...c2pa-v0.90.4)
 _04 August 2026_
 
 ### Added
@@ -22,7 +22,6 @@ _04 August 2026_
 
 ### Fixed
 
-* No-op change to re-trigger release PR
 * Make URI checks for (data)boxes when going through redactions mo… ([#2404](https://github.com/contentauth/c2pa-rs/pull/2404))
 * Remove archive assertions when constructing builder from archive (backport #2374) ([#2408](https://github.com/contentauth/c2pa-rs/pull/2408))
 * Thumbnails silently dropped when format string has uppercase mimetype (backport #2365) ([#2407](https://github.com/contentauth/c2pa-rs/pull/2407))
@@ -31,6 +30,10 @@ _04 August 2026_
 * Reject timed-media BMFF Merkle maps that verify against no track (backport #2369) ([#2400](https://github.com/contentauth/c2pa-rs/pull/2400))
 * Validate c2pa.translated action for source and target languages params (backport #2378) ([#2393](https://github.com/contentauth/c2pa-rs/pull/2393))
 * Harden against integer underflow attacks in  ID3 v2.3 frame decoder (backport #2284) ([#2389](https://github.com/contentauth/c2pa-rs/pull/2389))
+
+### Other
+
+**IMPORTANT:** An experimental feature was renamed from `experimental_builder_filter` to `unstable_builder_filter`. Strictly speaking in Rust SemVer, this is a breaking change, but since it was previously expressed that experimental features were exempt from SemVer, we decided not to bump the version.
 
 ## [0.90.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.2...c2pa-v0.90.3)
 _24 July 2026_
