@@ -7,7 +7,7 @@ This guide shows you how to configure the C2PA Rust library using the `Context` 
 The `Context` structure encapsulates configuration for:
 
 - **Settings**: Configuration options for verification, signing, network policies, builder behavior, etc.
-- **HTTP Resolvers**: Customizable sync and async HTTP clients for fetching remote manifests
+- **HTTP resolvers**: Customizable sync and async HTTP clients for fetching remote manifests
 - **Signers**: Cryptographic signers used to sign manifests (created automatically from settings)
 
 `Context` is thread-safe and can be shared with `Arc<Context>`, allowing multiple configurations in one application. It replaces the older thread-local `Settings` pattern with explicit dependencies and better testability.
@@ -144,7 +144,7 @@ When the manifest JSON omits `claim_generator_info` (or uses `[]`), `Builder` re
 
 ## Settings definition
 
-The Settings definition has the following top-level structure:
+The `Settings` definition has the following top-level structure:
 
 ```json
 {
@@ -164,22 +164,22 @@ The Settings definition has the following top-level structure:
 > - If you specify a value of `null`, then the property will be set to `null`, not the default.
 > - Do not quote Boolean property values (for example, use `true` not `"true"`).
 
-For a complete reference to all the Settings properties, see the [SDK object reference - Settings](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema).
+For a complete reference to all the `Settings` properties, see the [SDK object reference: Settings](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema).
 
 | Property | Description |
 |----------|-------------|
 | `version` | Settings format version (integer). The default and only supported value is 1. |
 | [`builder`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#buildersettings) | Configuration for [Builder](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html). |
-| [`cawg_trust`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#trust) | Configuration CAWG trust lists. |
+| [`cawg_trust`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#trust) | Configuration for CAWG trust lists. |
 | [`cawg_x509_signer`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#signersettings) | Configuration for the [CAWG x.509 signer](https://docs.rs/c2pa/latest/c2pa/struct.Settings.html#structfield.signer). |
 | [`core`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#core) | Configuration for core features. |
-| [`signer`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#signersettings) | Configuration for the base [C2PA signer](https://docs.rs/c2pa/latest/c2pa/struct.Settings.html#structfield.signer) |
+| [`signer`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#signersettings) | Configuration for the base [C2PA signer](https://docs.rs/c2pa/latest/c2pa/struct.Settings.html#structfield.signer). |
 | [`trust`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#trust) | Configuration for C2PA trust lists. |
 | [`verify`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#verify) | Configuration for verification (validation). |
 
 ### Default configuration
 
-Here's the Settings JSON with all default values:
+Here's the `Settings` JSON with all default values:
 
 ```json
 {
@@ -370,9 +370,9 @@ Here's the Settings JSON with all default values:
 
 **In most cases, you don't need to explicitly set a signer on the `Context`**. Instead, configure signer settings in your configuration, and `Context` will create the signer automatically when you call `save_to_stream()` or `save_to_file()`.
 
-### From settings (recommended)
+### From settings
 
-Configure signer settings in the settings file, for example in JSON:
+This is the recommended approach. Configure signer settings in the settings file, for example in JSON:
 
 ```json
 {
@@ -387,7 +387,7 @@ Configure signer settings in the settings file, for example in JSON:
 }
 ```
 
-Then use it with Builder:
+Then use it with `Builder`:
 
 ```rust
 use c2pa::{Context, Builder, Result};
@@ -410,7 +410,7 @@ fn main() -> Result<()> {
 }
 ```
 
-### Custom signer (advanced)
+### Custom signer
 
 For advanced use cases like HSMs or custom signing logic, you can create and set a custom signer:
 
@@ -440,7 +440,7 @@ fn main() -> Result<()> {
 
 The `signer` field in `Settings` supports two types: `local` and `remote`.
 
-**Local Signer** - for local certificate and private key.
+**Local signer**: for local certificate and private key.
 
 > [!NOTE]
 > Using a local signer is suitable primarily for development and testing, not production because values for `sign_cert` and `private_key` must be inline PEM strings.
@@ -458,7 +458,7 @@ The `signer` field in `Settings` supports two types: `local` and `remote`.
 ...
 ```
 
-**Remote Signer** - for remote signing services.
+**Remote signer**: for remote signing services.
 
 ```json
   "signer": {
@@ -505,6 +505,7 @@ let reader = Reader::from_context(Context::new().with_settings(config)?);
 ```
 
 **Use shared Context (with Arc):**
+
 - Multi-threaded operations
 - Multiple builders or readers using the same configuration
 - Signing and reading with the same settings
@@ -521,18 +522,18 @@ let builder2 = Builder::from_shared_context(&ctx);
 
 ## Migration from thread-local Settings
 
-The Context API replaces the older thread-local `Settings` pattern. If you're migrating existing code, this section explains how the two approaches differ.
+The `Context` API replaces the older thread-local `Settings` pattern. If you're migrating existing code, this section explains how the two approaches differ.
 
 ### Backwards compatibility
 
-**Settings still works:** The `Settings` type and its configuration format remain unchanged. All your existing settings files (JSON or TOML) work with Context without modification.
+**Settings still works:** The `Settings` type and its configuration format remain unchanged. All your existing settings files (JSON or TOML) work with `Context` without modification.
 
 **Key differences:**
 
 | Aspect | Old Thread-Local Settings | New Context API |
 |--------|---------------------|-----------------|
 | Scope | Global, affects all operations | Per-operation, explicitly passed |
-| Thread Safety | Not thread-safe | Thread-safe, shareable with Arc |
+| Thread Safety | Not thread-safe | Thread-safe, shareable with `Arc` |
 | Configuration | Set once per thread | Can have multiple configurations |
 | Testability | Difficult (thread-local state) | Easy (isolated contexts) |
 
@@ -547,7 +548,7 @@ Settings::from_toml(include_str!("settings.toml"))?;
 let reader = Reader::from_stream("image/jpeg", stream)?;
 ```
 
-**New approach with Context:**
+**New approach with `Context`:**
 ```rust
 use c2pa::{Context, Reader};
 
@@ -575,14 +576,14 @@ let prod_builder = Builder::from_context(prod_ctx);
 
 ### How Context uses Settings internally
 
-Context wraps a `Settings` instance and uses it to:
+`Context` wraps a `Settings` instance and uses it to:
 
-1. **Create signers automatically** - When you call `context.signer()` or `builder.save_to_stream()`, the Context creates a signer from the `signer` field in `Settings` (if present).
+1. **Create signers automatically**: When you call `context.signer()` or `builder.save_to_stream()`, the `Context` creates a signer from the `signer` field in `Settings` (if present).
 
-2. **Configure HTTP resolvers** - The Context creates default HTTP resolvers (for fetching remote manifests) and applies the `core.allowed_network_hosts` setting from `Settings`.
+2. **Configure HTTP resolvers**: The `Context` creates default HTTP resolvers (for fetching remote manifests) and applies the `core.allowed_network_hosts` setting from `Settings`.
 
-3. **Control verification** - The `verify` settings control how manifests are validated.
+3. **Control verification**: The `verify` settings control how manifests are validated.
 
-4. **Configure builder behavior** - The `builder` settings control thumbnail generation, actions, and other manifest creation options.
+4. **Configure builder behavior**: The `builder` settings control thumbnail generation, actions, and other manifest creation options.
 
 The `Settings` format hasn't changed; only how you provide those settings has changed.
