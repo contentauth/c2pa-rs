@@ -19,6 +19,10 @@
   color: "5319e7"
   description: "Cherry-pick this merged main PR onto the stable release line"
 
+- name: do-not-backport
+  color: "6a737d"
+  description: "Deliberately not backported onto stable (e.g. incompatible behavior change)"
+
 - name: release-train
   color: "fbca04"
   description: "Tracking issue for an active breaking-change release train bake"
@@ -50,3 +54,51 @@
 - name: task
   color: "1d76db"
   description: "General work item or chore"
+
+- name: "status: todo"
+  color: "ededed"
+  description: "Not yet started"
+
+- name: "status: wip"
+  color: "ededed"
+  description: "Work in progress"
+
+- name: "status: in progress"
+  color: "ededed"
+  description: "Actively being worked on"
+
+- name: "status: in test"
+  color: "ededed"
+  description: "Undergoing testing"
+
+- name: "status: not prioritized"
+  color: "ededed"
+  description: "Not yet prioritized for work"
+
+- name: "status: blocked"
+  color: "ededed"
+  description: "Blocked on another issue or dependency"
+
+- name: "status: api review"
+  color: "ededed"
+  description: "Awaiting API review"
+
+- name: "status: code review"
+  color: "ededed"
+  description: "Awaiting code review"
+
+- name: "status: design review"
+  color: "ededed"
+  description: "Awaiting design review"
+
+- name: "status: code complete"
+  color: "ededed"
+  description: "Code complete, pending remaining checks"
+
+- name: "status: ready"
+  color: "ededed"
+  description: "Ready to be worked on"
+
+- name: "status: done"
+  color: "ededed"
+  description: "Completed"
