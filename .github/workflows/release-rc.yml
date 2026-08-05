@@ -51,7 +51,7 @@ jobs:
         with:
           ref: ${{ github.ref_name }}
           fetch-depth: 0
-          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          token: ${{ secrets.RELEASE_PLZ_ORG_TOKEN }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
@@ -120,7 +120,7 @@ jobs:
           git commit -am "chore: set ${{ github.ref_name }} to ${{ steps.ver.outputs.rc_c2pa }}"
           # Push the commit and the build tags. The tags trigger the binary
           # builds (library-release.yml / c2patool-release.yml). Pushing with a
-          # PAT (RELEASE_PLZ_TOKEN) is required so those tag-triggered workflows
+          # PAT (RELEASE_PLZ_ORG_TOKEN) is required so those tag-triggered workflows
           # actually run -- pushes made with the default GITHUB_TOKEN do not
           # cascade into other workflows.
           git tag "${{ steps.ver.outputs.tag_c2pa }}"
