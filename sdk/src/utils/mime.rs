@@ -48,13 +48,19 @@ pub fn extension_to_mime(extension: &str) -> Option<&'static str> {
     })
 }
 
+/// Normalizes a format string (extension or MIME type) into a canonical
+/// lookup key: surrounding whitespace is trimmed and the value is lowercased.
+pub(crate) fn normalize_format(format: &str) -> String {
+    format.trim().to_lowercase()
+}
+
 /// Convert a format to a MIME type
 /// formats can be passed in as extensions, e.g. "jpg" or "jpeg"
 /// or as MIME types, e.g. "image/jpeg"
 /// MIME types are case-insensitive (RFC 2045 section 5.1), so the format is
-/// lowercased before matching.
+/// trimmed to remove surrounding whitespaces and lowercased before matching.
 pub fn format_to_mime(format: &str) -> String {
-    let format = format.to_lowercase();
+    let format = normalize_format(format);
     match extension_to_mime(&format) {
         Some(mime) => mime.to_string(),
         None => format,
@@ -125,5 +131,13 @@ mod tests {
         assert_eq!(format_to_mime("image/jpeg"), "image/jpeg");
         assert_eq!(format_to_mime("jpg"), "image/jpeg");
         assert_eq!(format_to_mime("image/svg+xml"), "image/svg+xml");
+    }
+
+    #[test]
+    fn test_format_to_mime_trims_whitespace() {
+        assert_eq!(format_to_mime("  image/jpeg  "), "image/jpeg");
+        assert_eq!(format_to_mime("\timage/png\n"), "image/png");
+        assert_eq!(format_to_mime("  JPG  "), "image/jpeg");
+        assert_eq!(format_to_mime("  image/svg+xml  "), "image/svg+xml");
     }
 }

@@ -2,9 +2,9 @@
 
 The CAI Rust library includes an implementation of the [Creator Assertions Working Group (CAWG) identity assertion specification](https://cawg.io/identity/1.1-draft).
 
-## Trusting identity claims aggregation (ICA) issuers
+## Trusting identity claims aggregation issuers
 
-An identity claims aggregation credential is signed by an issuer identified by a DID (for example a `did:web` or `did:jwk`). A valid signature only proves that the credential was signed by whoever controls that DID — it does **not**, on its own, establish that the issuer is trustworthy. In particular, a self-issued `did:jwk` can be minted by anyone, so accepting it as trusted would let an attacker assert any identity.
+An identity claims aggregation (ICA) credential is signed by an issuer identified by a DID (for example a `did:web` or `did:jwk`). A valid signature only proves that the credential was signed by whoever controls that DID: it does **not**, on its own, establish that the issuer is trustworthy. In particular, a self-issued `did:jwk` can be minted by anyone, so accepting it as trusted would let an attacker assert any identity.
 
 For this reason, the library treats ICA issuers as untrusted unless they appear on an explicit allow-list. Configure the allow-list through the `cawg_trust.trusted_ica_issuers` setting, which is a list of exact DID strings (any DID method):
 
@@ -38,7 +38,7 @@ The library does not currently support the following optional fields from the CA
 
 ## Example
 
-The code in [`sdk/examples/cawg.rs`](https://github.com/contentauth/c2pa-rs/blob/main/sdk/examples/cawg.rs) provides a minimal example of signing and verifying a claim including a CAWG identity assertion.  Run it by entering the command:
+The code in [`sdk/examples/cawg.rs`](https://github.com/contentauth/c2pa-rs/blob/main/sdk/examples/cawg.rs) provides a minimal example of signing and verifying a claim including a CAWG identity assertion. Run it by entering the command:
 
 ```sh
 cargo run --example cawg -- <SOURCE_FILE> <OUTPUT_FILE>
