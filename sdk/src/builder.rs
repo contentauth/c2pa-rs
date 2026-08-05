@@ -9392,6 +9392,34 @@ mod tests {
         assert!(reader_json.contains("thumbnail.ingredient"));
     }
 
+    // An ingredient that references a manifest whose bytes are unavailable (e.g. a cloud-only
+    // manifest that was never fetched, or an ingredient reloaded without its resource store) must
+    // be treated as if it had no manifest, rather than failing archiving/signing with a
+    // "resource not found" error. `manifest_data_ref()` returns the dangling reference while
+    // `manifest_data()` already returns `None`.
+    #[test]
+    fn test_to_archive_tolerates_unreachable_ingredient_manifest() {
+        let mut builder = Builder::default()
+            .with_definition(simple_manifest_json())
+            .unwrap();
+
+        let mut ingredient = Ingredient::new_v2("cloud-parent", "image/jpeg");
+        ingredient.set_relationship(Relationship::ParentOf);
+        ingredient.set_active_manifest("urn:c2pa:cloud-manifest");
+        ingredient
+            .set_manifest_data_ref(ResourceRef::new("application/c2pa", "cloud_manifest.c2pa"))
+            .unwrap();
+        assert!(ingredient.manifest_data_ref().is_some());
+        assert!(ingredient.manifest_data().is_none());
+        builder.add_ingredient(ingredient);
+
+        // Previously failed with Error::ResourceNotFound; the unreachable manifest is now dropped.
+        let mut archive = Cursor::new(Vec::new());
+        builder
+            .to_archive(&mut archive)
+            .expect("archive should tolerate an unreachable ingredient manifest");
+    }
+
     /// `set_thumbnail` stores the format verbatim, bypassing `format_to_mime`.
     #[test]
     fn test_set_thumbnail_uppercase_mime_v1_claim() {

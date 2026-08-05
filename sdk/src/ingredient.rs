@@ -1155,12 +1155,24 @@ impl Ingredient {
             .collect();
 
         // add the ingredient manifest_data to the claim
-        // this is how any existing claims are added to the new store
-        let (active_manifest, claim_signature) = match self.manifest_data_ref() {
-            Some(resource_ref) => {
-                // get the c2pa manifest bytes
-                let manifest_data = get_resource(&resource_ref.identifier)?;
-
+        // this is how any existing claims are added to the new store.
+        //
+        // A `manifest_data` reference whose bytes cannot be resolved (e.g. a cloud/remote manifest
+        // that was never fetched, or an ingredient reloaded without its resource store) is treated
+        // as if the ingredient had no manifest, mirroring `Ingredient::manifest_data`, rather than
+        // failing claim generation.
+        let manifest_data = self.manifest_data_ref().and_then(|resource_ref| {
+            get_resource(&resource_ref.identifier)
+                .inspect_err(|_| {
+                    debug!(
+                        "ingredient '{}' references a manifest whose bytes are unavailable; treating it as having no manifest",
+                        self.instance_id()
+                    );
+                })
+                .ok()
+        });
+        let (active_manifest, claim_signature) = match manifest_data {
+            Some(manifest_data) => {
                 // have Store check and load ingredients and add them to a claim
                 let ingredient_store =
                     Store::load_ingredient_to_claim(claim, &manifest_data, redactions, context)?;
