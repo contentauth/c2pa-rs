@@ -44,16 +44,30 @@ pub fn extension_to_mime(extension: &str) -> Option<&'static str> {
         "arw" => "image/x-sony-arw",
         "nef" => "image/x-nikon-nef",
         "c2pa" | "application/x-c2pa-manifest-store" | "application/c2pa" => "application/c2pa",
+        // Text formats handled by the experimental structured-text asset handler. Gated so a
+        // default build (feature disabled) resolves these extensions exactly as before, with no
+        // handler registered for them. See docs/experimental-features.md.
+        #[cfg(feature = "unstable_structured_text")]
         "md" | "markdown" => "text/markdown",
+        #[cfg(feature = "unstable_structured_text")]
         "yaml" | "yml" => "application/yaml",
+        #[cfg(feature = "unstable_structured_text")]
         "toml" => "application/toml",
+        #[cfg(feature = "unstable_structured_text")]
         "css" => "text/css",
+        #[cfg(feature = "unstable_structured_text")]
         "js" | "mjs" => "text/javascript",
+        #[cfg(feature = "unstable_structured_text")]
         "py" => "text/x-python",
+        #[cfg(feature = "unstable_structured_text")]
         "sql" => "application/sql",
+        #[cfg(feature = "unstable_structured_text")]
         "tex" => "application/x-tex",
+        #[cfg(feature = "unstable_structured_text")]
         "vtt" => "text/vtt",
+        #[cfg(feature = "unstable_structured_text")]
         "rss" => "application/rss+xml",
+        #[cfg(feature = "unstable_structured_text")]
         "atom" => "application/atom+xml",
         _ => return None,
     })
