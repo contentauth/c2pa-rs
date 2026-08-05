@@ -9,6 +9,14 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.90.5](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.4...c2pa-v0.90.5)
+_05 August 2026_
+
+### Fixed
+
+* Make sure the closure variables are evaluated at the right time in filter_ingredients (unstable_builder_filter) (backport #2413) ([#2415](https://github.com/contentauth/c2pa-rs/pull/2415))
+* Integer underflow panic in read_desc_box via JUMD toggle-driven field size mismatch (backport #2334) ([#2385](https://github.com/contentauth/c2pa-rs/pull/2385))
+
 ## [0.90.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.3...c2pa-v0.90.4)
 _04 August 2026_
 
