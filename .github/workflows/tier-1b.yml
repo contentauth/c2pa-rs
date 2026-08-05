@@ -226,7 +226,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
-          toolchain: nightly-2025-12-06
+          toolchain: nightly-2026-07-12
           # Pinning to specific nightly build for now. More recent versions
           # introduce a lifetime check that creates a whole slew of build
           # errors.
@@ -235,7 +235,7 @@ jobs:
         uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
 
       - name: Install cargo-udeps
-        run: cargo binstall --no-confirm cargo-udeps
+        run: cargo binstall --no-confirm cargo-udeps@0.1.61
 
       # Experimental (`unstable_`) features are excluded (see get-features); an
       # unstable-only optional dependency stays unactivated and so is never
