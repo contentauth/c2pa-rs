@@ -2293,27 +2293,14 @@ impl Store {
             ));
         };
 
-        // Write dynamic assertions when the caller reserved placeholder slots for
-        // them (via `add_dynamic_assertion_placeholders`). If a signer exposes
-        // dynamic assertions but no placeholders were reserved, fail loudly rather
-        // than silently dropping them (see issue #2055).
+        // Write any dynamic assertions exposed by the signer. The caller
+        // (`Builder::sign_embeddable`) reserves matching placeholder slots via
+        // `add_dynamic_assertion_placeholders` before calling this, so the assertion
+        // content replaces those slots in place. This must reuse the same
+        // `dynamic_assertions()` result across the whole operation – draining it on an
+        // earlier call is what silently dropped identity assertions in issue #2055.
         let dynamic_assertions = signer.dynamic_assertions();
         if !dynamic_assertions.is_empty() {
-            // Check if placeholders exist for these dynamic assertions
-            let has_placeholders = {
-                dynamic_assertions
-                    .iter()
-                    .all(|da| pc.assertion_hashed_uri_from_label(&da.label()).is_some())
-            };
-
-            if !has_placeholders {
-                return Err(Error::BadParam(
-                    "signer has dynamic assertions (e.g. CAWG identity) but no placeholder \
-                     slots were reserved for them"
-                        .to_string(),
-                ));
-            }
-
             let mut preliminary_claim = PartialClaim::default();
             {
                 for assertion in pc.assertions() {
@@ -2430,45 +2417,18 @@ impl Store {
     ) -> Result<Vec<u8>> {
         self.prep_embeddable_store(dh, asset_reader, context)?;
 
-        // Write dynamic assertions only if placeholders were added during placeholder generation.
-        // We check if the dynamic assertion labels exist in the claim - if not, placeholders
-        // weren't added and this workflow cannot represent them.
-        let dynamic_assertions = signer.dynamic_assertions();
-        if !dynamic_assertions.is_empty() {
-            // Check if placeholders exist for these dynamic assertions
-            let has_placeholders = {
-                let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-                dynamic_assertions
-                    .iter()
-                    .all(|da| pc.assertion_hashed_uri_from_label(&da.label()).is_some())
-            };
-
-            // The data-hashed placeholder (`get_data_hashed_manifest_placeholder`) does
-            // not reserve space for dynamic assertions, so there is no way to embed them
-            // here without breaking the size contract the caller already committed to.
-            // Fail loudly rather than silently dropping the assertions (see issue #2055).
-            if !has_placeholders {
-                return Err(Error::BadParam(
-                    "signer has dynamic assertions (e.g. CAWG identity) that the data-hashed \
-                     embeddable workflow cannot represent; use Builder::placeholder() followed \
-                     by Builder::sign_embeddable() instead"
-                        .to_string(),
-                ));
-            }
-
-            let mut preliminary_claim = PartialClaim::default();
-            {
-                let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-                for assertion in pc.assertions() {
-                    preliminary_claim.add_assertion(assertion);
-                }
-            }
-            if _sync {
-                self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
-            } else {
-                self.write_dynamic_assertions_async(&dynamic_assertions, &mut preliminary_claim)
-                    .await?;
-            }
+        // The data-hashed placeholder (`get_data_hashed_manifest_placeholder`) does not
+        // reserve space for dynamic assertions, so there is no way to embed them here
+        // without breaking the size contract the caller already committed to. Fail loudly
+        // rather than silently dropping the assertions (see issue #2055); callers that need
+        // dynamic assertions should use Builder::placeholder() + Builder::sign_embeddable().
+        if !signer.dynamic_assertions().is_empty() {
+            return Err(Error::BadParam(
+                "signer has dynamic assertions (e.g. CAWG identity) that the data-hashed \
+                 embeddable workflow cannot represent; use Builder::placeholder() followed \
+                 by Builder::sign_embeddable() instead"
+                    .to_string(),
+            ));
         }
 
         context.check_progress(ProgressPhase::Signing, 1, 1)?;
