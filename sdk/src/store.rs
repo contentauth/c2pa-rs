@@ -2293,9 +2293,10 @@ impl Store {
             ));
         };
 
-        // Write dynamic assertions only if placeholders were added during placeholder generation.
-        // We check if the dynamic assertion labels exist in the claim - if not, placeholders
-        // weren't added and we should skip writing to avoid size mismatches.
+        // Write dynamic assertions when the caller reserved placeholder slots for
+        // them (via `add_dynamic_assertion_placeholders`). If a signer exposes
+        // dynamic assertions but no placeholders were reserved, fail loudly rather
+        // than silently dropping them (see issue #2055).
         let dynamic_assertions = signer.dynamic_assertions();
         if !dynamic_assertions.is_empty() {
             // Check if placeholders exist for these dynamic assertions
@@ -2305,35 +2306,41 @@ impl Store {
                     .all(|da| pc.assertion_hashed_uri_from_label(&da.label()).is_some())
             };
 
-            if has_placeholders {
-                let mut preliminary_claim = PartialClaim::default();
-                {
-                    for assertion in pc.assertions() {
-                        preliminary_claim.add_assertion(assertion);
-                    }
-                }
-
-                // Drop pc before calling write_dynamic_assertions
-                let _ = pc;
-
-                let _modified =
-                    self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
-
-                // Get pc again
-                let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-                let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
-
-                let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-                pc.set_signature_val(sig);
-
-                let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
-
-                if context.settings().verify.verify_after_sign {
-                    self.verify_store_strict(None, context)?;
-                }
-
-                return Ok(jumbf_bytes);
+            if !has_placeholders {
+                return Err(Error::BadParam(
+                    "signer has dynamic assertions (e.g. CAWG identity) but no placeholder \
+                     slots were reserved for them"
+                        .to_string(),
+                ));
             }
+
+            let mut preliminary_claim = PartialClaim::default();
+            {
+                for assertion in pc.assertions() {
+                    preliminary_claim.add_assertion(assertion);
+                }
+            }
+
+            // Drop pc before calling write_dynamic_assertions
+            let _ = pc;
+
+            let _modified =
+                self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
+
+            // Get pc again
+            let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+            let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
+
+            let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+            pc.set_signature_val(sig);
+
+            let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+
+            if context.settings().verify.verify_after_sign {
+                self.verify_store_strict(None, context)?;
+            }
+
+            return Ok(jumbf_bytes);
         }
 
         context.check_progress(ProgressPhase::Signing, 1, 1)?;
@@ -2425,7 +2432,7 @@ impl Store {
 
         // Write dynamic assertions only if placeholders were added during placeholder generation.
         // We check if the dynamic assertion labels exist in the claim - if not, placeholders
-        // weren't added and we should skip writing to avoid size mismatches.
+        // weren't added and this workflow cannot represent them.
         let dynamic_assertions = signer.dynamic_assertions();
         if !dynamic_assertions.is_empty() {
             // Check if placeholders exist for these dynamic assertions
@@ -2436,23 +2443,31 @@ impl Store {
                     .all(|da| pc.assertion_hashed_uri_from_label(&da.label()).is_some())
             };
 
-            if has_placeholders {
-                let mut preliminary_claim = PartialClaim::default();
-                {
-                    let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-                    for assertion in pc.assertions() {
-                        preliminary_claim.add_assertion(assertion);
-                    }
+            // The data-hashed placeholder (`get_data_hashed_manifest_placeholder`) does
+            // not reserve space for dynamic assertions, so there is no way to embed them
+            // here without breaking the size contract the caller already committed to.
+            // Fail loudly rather than silently dropping the assertions (see issue #2055).
+            if !has_placeholders {
+                return Err(Error::BadParam(
+                    "signer has dynamic assertions (e.g. CAWG identity) that the data-hashed \
+                     embeddable workflow cannot represent; use Builder::placeholder() followed \
+                     by Builder::sign_embeddable() instead"
+                        .to_string(),
+                ));
+            }
+
+            let mut preliminary_claim = PartialClaim::default();
+            {
+                let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+                for assertion in pc.assertions() {
+                    preliminary_claim.add_assertion(assertion);
                 }
-                if _sync {
-                    self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
-                } else {
-                    self.write_dynamic_assertions_async(
-                        &dynamic_assertions,
-                        &mut preliminary_claim,
-                    )
+            }
+            if _sync {
+                self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
+            } else {
+                self.write_dynamic_assertions_async(&dynamic_assertions, &mut preliminary_claim)
                     .await?;
-                }
             }
         }
 
