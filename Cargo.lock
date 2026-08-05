@@ -93,9 +93,9 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "android_system_properties"
-version = "0.1.5"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "819e7219dbd41043ac279b19830f2efc897156490d7fd6ea916720117ee66311"
+checksum = "ae221649c9976a6f6c56ae1facf410f3ddb33cc661c4b7b61020a912d4237fbc"
 dependencies = [
  "libc",
 ]
@@ -542,7 +542,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa"
-version = "0.90.4"
+version = "0.90.5"
 dependencies = [
  "anyhow",
  "asn1-rs",
@@ -646,7 +646,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa-c-ffi"
-version = "0.90.4"
+version = "0.90.5"
 dependencies = [
  "c2pa",
  "cbindgen",
@@ -671,7 +671,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa_macros"
-version = "0.90.4"
+version = "0.90.5"
 dependencies = [
  "quote",
  "syn 2.0.119",
@@ -679,7 +679,7 @@ dependencies = [
 
 [[package]]
 name = "c2patool"
-version = "0.27.4"
+version = "0.27.5"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1507,7 +1507,7 @@ dependencies = [
 
 [[package]]
 name = "export_schema"
-version = "0.90.4"
+version = "0.90.5"
 dependencies = [
  "anyhow",
  "c2pa",
@@ -2598,7 +2598,7 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "make_test_images"
-version = "0.90.4"
+version = "0.90.5"
 dependencies = [
  "anyhow",
  "c2pa",
@@ -3718,9 +3718,9 @@ dependencies = [
 
 [[package]]
 name = "regex-automata"
-version = "0.4.16"
+version = "0.4.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fcfdb36bda0c880c5931cdc7a2bcdc8ba4556847b9d912bca70bc94708711ad"
+checksum = "ad8553b9b26413251cbf30e620595c7a41b3887f03da04579c0e6b0d6a06b4b2"
 dependencies = [
  "aho-corasick",
  "memchr",
