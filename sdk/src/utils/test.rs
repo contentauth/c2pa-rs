@@ -33,7 +33,7 @@ use crate::{
     asset_io::CAIReadWrite,
     claim::Claim,
     context::Context,
-    crypto::cose::CertificateTrustPolicy,
+    crypto::cose::{CertificateTrustPolicy, TrustAnchorType},
     hash_utils::Hasher,
     jumbf_io::get_assetio_handler,
     resource_store::UriOrResource,
@@ -654,9 +654,11 @@ pub fn temp_signer_file() -> Box<dyn crate::Signer> {
 /// [`CertificateTrustPolicy`]: crate::crypto::cose::CertificateTrustPolicy
 pub fn test_certificate_acceptance_policy() -> CertificateTrustPolicy {
     let mut ctp = CertificateTrustPolicy::default();
-    ctp.add_trust_anchors(include_bytes!(
-        "../../tests/fixtures/certs/trust/test_cert_root_bundle.pem"
-    ))
+    ctp.add_trust_anchors(
+        include_bytes!("../../tests/fixtures/certs/trust/test_cert_root_bundle.pem"),
+        "https://cai.org/unknown_tl",
+        TrustAnchorType::Signer,
+    )
     .unwrap();
     ctp
 }

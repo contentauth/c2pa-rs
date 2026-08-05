@@ -321,7 +321,7 @@ pub enum Error {
     C2PAValidation(String),
 
     #[error("manifest failed validation with: {}", .0.failure_summary())]
-    InvalidManifest(ValidationResults),
+    InvalidManifest(Box<ValidationResults>),
 
     #[error("error parsing BMFF: {0}")]
     BmffError(#[from] BmffError),

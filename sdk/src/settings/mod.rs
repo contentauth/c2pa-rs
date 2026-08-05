@@ -56,6 +56,48 @@ pub(crate) trait SettingsValidate {
     }
 }
 
+// Kind of Trust list represented
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TrustListKind {
+    // Certificate signing trust list
+    Signer,
+    // Time Stamping Authority trust list
+    TSA,
+    // Certificate Authority Working Group trust list
+    CAWG,
+}
+
+#[cfg_attr(
+    feature = "json_schema",
+    derive(schemars::JsonSchema),
+    schemars(default)
+)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct TrustAnchor {
+    /// Specifies the details of a specific trust list.  
+    ///
+    /// Normally this option contains the official C2PA-recognized trust anchors found here:
+    /// <https://github.com/c2pa-org/conformance-public/tree/main/trust-list>
+    /// or a user supplied trust list.  This format is a PEM string of certificates.
+    pub trust_anchors: String,
+    /// URI identifier for the trust list.  If not is present a unique identifier will be generated.
+    pub trust_uri: Option<String>,
+    /// Kind of trust list.  This is used to determine the trust purpose, default is Signer.
+    pub trust_kind: TrustListKind,
+}
+
+impl Default for TrustAnchor {
+    fn default() -> Self {
+        Self {
+            trust_anchors: "".into(),
+            trust_uri: None,
+            trust_kind: TrustListKind::Signer,
+        }
+    }
+}
+
 /// Settings to configure the trust list.
 #[cfg_attr(
     feature = "json_schema",
@@ -73,16 +115,14 @@ pub struct Trust {
     /// Verifying trust is REQUIRED by the CAWG spec. This option should only be used for development or testing.
     /// </div>
     pub(crate) verify_trust_list: bool,
-    /// List of additional user-provided trust anchor root certificates as a PEM bundle.
-    pub user_anchors: Option<String>,
-    /// List of default trust anchor root certificates as a PEM bundle.
-    ///
-    /// Normally this option contains the official C2PA-recognized trust anchors found here:
-    /// <https://github.com/c2pa-org/conformance-public/tree/main/trust-list>
-    pub trust_anchors: Option<String>,
+
+    /// This option contains the set of trust anchors used to validate certificates.
+    pub anchors: Option<Vec<TrustAnchor>>,
+
     /// List of allowed extended key usage (EKU) object identifiers (OID) that
     /// certificates must have.
     pub trust_config: Option<String>,
+
     /// List of explicitly allowed certificates as a PEM bundle.
     pub allowed_list: Option<String>,
     /// Exact-match allow-list of trusted CAWG identity claims aggregation (ICA)
@@ -165,8 +205,7 @@ impl Default for Trust {
         {
             let mut trust = Self {
                 verify_trust_list: true,
-                user_anchors: None,
-                trust_anchors: None,
+                anchors: None,
                 trust_config: None,
                 allowed_list: None,
                 // Trust the ICA issuer DIDs used by the bundled CAWG test
@@ -184,12 +223,15 @@ impl Default for Trust {
                 ))
                 .into_owned(),
             );
-            trust.user_anchors = Some(
-                String::from_utf8_lossy(include_bytes!(
+
+            trust.anchors = Some(vec![TrustAnchor {
+                trust_anchors: String::from_utf8_lossy(include_bytes!(
                     "../../tests/fixtures/certs/trust/test_cert_root_bundle.pem"
                 ))
                 .into_owned(),
-            );
+                trust_uri: Some("https://cai.org/unknown_tl".to_string()),
+                trust_kind: TrustListKind::Signer,
+            }]);
 
             trust
         }
@@ -197,8 +239,7 @@ impl Default for Trust {
         {
             Self {
                 verify_trust_list: true,
-                user_anchors: None,
-                trust_anchors: None,
+                anchors: None,
                 trust_config: None,
                 allowed_list: None,
                 trusted_ica_issuers: None,
@@ -209,12 +250,10 @@ impl Default for Trust {
 
 impl SettingsValidate for Trust {
     fn validate(&self) -> Result<()> {
-        if let Some(ta) = &self.trust_anchors {
-            self.test_load_trust(ta.as_bytes())?;
-        }
-
-        if let Some(pa) = &self.user_anchors {
-            self.test_load_trust(pa.as_bytes())?;
+        if let Some(anchors) = &self.anchors {
+            for anchor in anchors {
+                self.test_load_trust(anchor.trust_anchors.as_bytes())?;
+            }
         }
 
         if let Some(al) = &self.allowed_list {
@@ -1443,13 +1482,21 @@ pub mod tests {
         // Test that test_settings loads correctly
         let settings = test_settings();
 
+        // Make sure TrustAnchor has default values
+        let ta = TrustAnchor {
+            trust_anchors: "".to_string(),
+            trust_uri: None,
+            trust_kind: TrustListKind::Signer,
+        };
+        assert_eq!(ta, TrustAnchor::default());
+
         // Verify it has trust anchors (test fixture includes multiple root CAs)
         assert!(
-            settings.trust.trust_anchors.is_some(),
+            settings.trust.anchors.is_some(),
             "test_settings should include trust anchors"
         );
         assert!(
-            !settings.trust.trust_anchors.as_ref().unwrap().is_empty(),
+            !settings.trust.anchors.as_ref().unwrap().is_empty(),
             "test_settings trust_anchors should not be empty"
         );
 

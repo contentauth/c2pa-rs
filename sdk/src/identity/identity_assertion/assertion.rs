@@ -24,7 +24,9 @@ use serde_bytes::ByteBuf;
 
 use crate::{
     context::Context,
-    crypto::cose::{parse_cose_sign1, CertificateTrustPolicy, CoseError, Verifier},
+    crypto::cose::{
+        parse_cose_sign1, CertificateTrustPolicy, CoseError, TrustAnchorType, Verifier,
+    },
     dynamic_assertion::PartialClaim,
     identity::{
         claim_aggregation::IcaSignatureVerifier,
@@ -320,12 +322,14 @@ impl IdentityAssertion {
             // are checked during setting generation.
 
             let cose_verifier = if settings.cawg_trust.verify_trust_list {
-                if let Some(ta) = &settings.cawg_trust.trust_anchors {
-                    let _ = ctp.add_trust_anchors(ta.as_bytes());
-                }
-
-                if let Some(pa) = &settings.cawg_trust.user_anchors {
-                    let _ = ctp.add_user_trust_anchors(pa.as_bytes());
+                if let Some(ta) = &settings.cawg_trust.anchors {
+                    for anchor in ta {
+                        let _ = ctp.add_trust_anchors(
+                            anchor.trust_anchors.as_bytes(),
+                            anchor.trust_uri.as_deref().unwrap_or(""),
+                            TrustAnchorType::CAWG,
+                        );
+                    }
                 }
 
                 if let Some(tc) = &settings.cawg_trust.trust_config {
