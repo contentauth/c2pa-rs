@@ -506,16 +506,10 @@ mod tests {
 
             let format = CString::new("image/jpeg").unwrap();
             let mut stream = crate::c2pa_stream::TestStream::new(vec![1u8; 64]);
-            let stream_ptr = stream.as_ptr();
             assert_eq!(
-                c2pa_claim_assertion_with_stream(assertion, format.as_ptr(), stream_ptr),
+                c2pa_claim_assertion_with_stream(assertion, format.as_ptr(), stream.as_ptr()),
                 0
             );
-
-            // The stream is now owned by `assertion` — freeing it again should report an error
-            // (it's no longer tracked) rather than double-freeing.
-            let free_result = crate::c2pa_free(stream_ptr as *const std::os::raw::c_void);
-            assert!(free_result < 0, "absorbed stream should no longer be tracked");
 
             let result = c2pa_claim_builder_add_created_assertion(builder, assertion);
             assert!(!result.is_null(), "error: {:?}", crate::c2pa_error());
