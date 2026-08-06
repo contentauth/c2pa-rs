@@ -4,7 +4,7 @@ use super::labels;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::region_of_interest::RegionOfInterest,
-    cbor_types::{DateT, UriT},
+    cbor_types::UriT,
     Result,
 };
 
@@ -117,174 +117,36 @@ pub struct SoftBindingTimespan {
     pub end: u64,
 }
 
-// A parsed C2PA soft binding algorithm registry.
-// Use this to parse a list of soft binding algorithms from a JSON string and
-// to build a list of soft binding algorithms.  Use this function to parse the official C2PA
-// soft binding algorithm registry from the JSON file at <https://github.com/c2pa-org/softbinding-algorithm-list/blob/main/softbinding-algorithm-list.json>
-// to build a list of soft binding algorithms.  The list can be used to validate soft binding algorithms in C2PA assertions.
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
-#[serde(transparent)]
-#[allow(unused)]
-struct SoftBindingList(pub Vec<SoftBindingAlgorithm>);
-
-#[allow(unused)]
-impl SoftBindingList {
-    /// Parse a JSON string containing a soft binding algorithm list.
-    pub fn from_json_str(json: &str) -> Result<Self> {
-        let list: Self = serde_json::from_str(json)?;
-        list.validate()?;
-        Ok(list)
-    }
-
-    fn validate(&self) -> Result<()> {
-        for algorithm in &self.0 {
-            algorithm.validate()?;
-        }
-        Ok(())
-    }
-
-    /// Returns a list of soft binding algorithms strings from a vector of `SoftBindingAlgorithm` entries using the `alg` field.
-    pub fn algorithm_strings(&self) -> Vec<String> {
-        self.0.iter().map(|alg| alg.alg.clone()).collect()
-    }
-}
-
-// A single soft binding algorithm entry.
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
-#[allow(unused)]
-struct SoftBindingAlgorithm {
-    pub identifier: u16,
-
-    #[serde(default)]
-    pub deprecated: bool,
-
-    pub alg: String,
-
-    #[serde(rename = "type")]
-    pub alg_type: SoftBindingAlgorithmType,
-
-    #[serde(rename = "decodedMediaTypes", skip_serializing_if = "Option::is_none")]
-    pub decoded_media_types: Option<Vec<SoftBindingMediaType>>,
-
-    #[serde(rename = "encodedMediaTypes", skip_serializing_if = "Option::is_none")]
-    pub encoded_media_types: Option<Vec<String>>,
-
-    #[serde(rename = "entryMetadata")]
-    pub entry_metadata: SoftBindingEntryMetadata,
-
-    #[serde(
-        rename = "softBindingResolutionApis",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub soft_binding_resolution_apis: Option<Vec<UriT>>,
-}
-
-#[allow(unused)]
-impl SoftBindingAlgorithm {
-    fn validate(&self) -> Result<()> {
-        if self
-            .decoded_media_types
-            .as_ref()
-            .map(Vec::is_empty)
-            .unwrap_or(false)
-        {
-            return Err(crate::error::Error::ValidationRule(
-                "decodedMediaTypes must be a non-empty array when present".to_owned(),
-            ));
-        }
-
-        if self
-            .encoded_media_types
-            .as_ref()
-            .map(Vec::is_empty)
-            .unwrap_or(false)
-        {
-            return Err(crate::error::Error::ValidationRule(
-                "encodedMediaTypes must be a non-empty array when present".to_owned(),
-            ));
-        }
-
-        if self.decoded_media_types.is_none() && self.encoded_media_types.is_none() {
-            return Err(crate::error::Error::ValidationRule(
-                "soft binding algorithm entry must include decodedMediaTypes or encodedMediaTypes"
-                    .to_owned(),
-            ));
-        }
-
-        if let Some(apis) = &self.soft_binding_resolution_apis {
-            if apis.is_empty() {
-                return Err(crate::error::Error::ValidationRule(
-                    "softBindingResolutionApis must be a non-empty array when present".to_owned(),
-                ));
-            }
-            for api in apis {
-                url::Url::parse(api.as_ref()).map_err(|_| {
-                    crate::error::Error::ValidationRule(format!(
-                        "softBindingResolutionApis contains invalid URI: {}",
-                        api.as_ref()
-                    ))
-                })?;
-            }
-        }
-
-        self.entry_metadata.validate()
-    }
-}
-
-/// Metadata for a soft binding algorithm entry.
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
-#[allow(unused)]
-struct SoftBindingEntryMetadata {
-    pub description: String,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub categories: Option<Vec<String>>,
-
-    #[serde(rename = "dateEntered")]
-    pub date_entered: DateT,
-
-    pub contact: String,
-
-    #[serde(rename = "informationalUrl")]
-    pub informational_url: UriT,
-}
-
-impl SoftBindingEntryMetadata {
-    fn validate(&self) -> Result<()> {
-        url::Url::parse(self.informational_url.as_ref()).map_err(|_| {
-            crate::error::Error::ValidationRule(format!(
-                "entryMetadata.informationalUrl is not a valid URI: {}",
-                self.informational_url.as_ref()
-            ))
-        })?;
-        Ok(())
-    }
-}
-
-// The type of soft binding algorithm.
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
-#[serde(rename_all = "lowercase")]
-#[allow(unused)]
-enum SoftBindingAlgorithmType {
-    Watermark,
-    Fingerprint,
-}
-
-// Target media types for soft binding algorithms.
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
-#[serde(rename_all = "lowercase")]
-#[allow(unused)]
-enum SoftBindingMediaType {
-    Application,
-    Audio,
-    Image,
-    Model,
-    Text,
-    Video,
-}
-
 impl SoftBinding {
     pub const LABEL: &'static str = labels::SOFT_BINDING;
+
+    /// Create a new [`SoftBinding`] with the given algorithm identifier and blocks.
+    ///
+    /// `alg` should be a value from the
+    /// [C2PA soft binding algorithm list](https://github.com/c2pa-org/softbinding-algorithm-list).
+    /// Optional fields (`name`, `alg_params`) can be set directly on the returned value,
+    /// since both are public.
+    pub fn new(alg: impl Into<String>, blocks: Vec<SoftBindingBlock>) -> Self {
+        SoftBinding {
+            alg: Some(alg.into()),
+            blocks,
+            name: None,
+            alg_params: None,
+            pad: Vec::new(),
+            pad2: None,
+            url: None, // deprecated
+        }
+    }
+
+    /// Set a human-readable description of what this soft binding covers.
+    pub fn set_name(&mut self, name: impl Into<String>) {
+        self.name = Some(name.into());
+    }
+
+    /// Set a string describing parameters of the soft binding algorithm.
+    pub fn set_alg_params(&mut self, alg_params: impl Into<String>) {
+        self.alg_params = Some(alg_params.into());
+    }
 }
 
 impl AssertionBase for SoftBinding {
@@ -347,38 +209,21 @@ pub mod tests {
     }
 
     #[test]
-    fn test_soft_binding_list_json_parse() {
-        let json = r#"[
-            {
-                "identifier": 1,
-                "alg": "com.example.watermark.alg1",
-                "type": "watermark",
-                "decodedMediaTypes": ["image"],
-                "entryMetadata": {
-                    "description": "Example watermarking algorithm",
-                    "dateEntered": "2025-01-01T00:00:00Z",
-                    "contact": "contact@example.com",
-                    "informationalUrl": "https://example.com/softbinding/alg1"
-                }
-            }
-        ]"#;
+    fn test_new() {
+        let block = SoftBindingBlock {
+            scope: SoftBindingScope::default(),
+            value: b"some value".to_vec(),
+        };
+        let soft_binding = SoftBinding::new("com.example.watermark", vec![block]);
 
-        let list = SoftBindingList::from_json_str(json).unwrap();
-        assert_eq!(list.0.len(), 1);
-        let algorithm = &list.0[0];
-        assert_eq!(algorithm.identifier, 1);
-        assert_eq!(algorithm.alg, "com.example.watermark.alg1");
-        assert!(matches!(
-            algorithm.alg_type,
-            SoftBindingAlgorithmType::Watermark
-        ));
-        assert_eq!(
-            algorithm.decoded_media_types.as_ref().unwrap(),
-            &[SoftBindingMediaType::Image]
-        );
+        assert_eq!(soft_binding.alg.as_deref(), Some("com.example.watermark"));
+        assert_eq!(soft_binding.blocks.len(), 1);
+        assert_eq!(soft_binding.name, None);
+        assert_eq!(soft_binding.alg_params, None);
 
-        // get the algorithm strings
-        let alg_strings = list.algorithm_strings();
-        assert_eq!(alg_strings, vec!["com.example.watermark.alg1"]);
+        // Round-trips through CBOR like a normal assertion.
+        let assertion = soft_binding.to_assertion().unwrap();
+        let result = SoftBinding::from_assertion(&assertion).unwrap();
+        assert_eq!(result, soft_binding);
     }
 }
