@@ -460,9 +460,14 @@ impl Context {
                             .set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
                         Arc::new(resolver)
                     } else {
-                        // For backwards compatibility, we enable redirects in the default case.
-                        // Source: https://github.com/contentauth/c2pa-rs/pull/1907
-                        Arc::new(SyncGenericResolver::with_redirects().unwrap_or_default())
+                        // Even with no allowed-host list configured, the default resolver must not
+                        // follow HTTP redirects. `SyncGenericResolver::new` disables them
+                        // (`max_redirects(0)`), which prevents an attacker-controlled remote
+                        // manifest URL from bouncing the SDK to an internal or cloud-metadata
+                        // endpoint via a 3xx response (SSRF – CAI-12574). Redirect following was
+                        // previously enabled here for backwards compatibility (PR #1907); it is
+                        // now disabled because the SDK cannot inspect intermediate redirect hops.
+                        Arc::new(SyncGenericResolver::new())
                     }
                 })
                 .clone(),
@@ -484,9 +489,14 @@ impl Context {
                             .set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
                         Arc::new(resolver)
                     } else {
-                        // For backwards compatibility, we enable redirects in the default case.
-                        // Source: https://github.com/contentauth/c2pa-rs/pull/1907
-                        Arc::new(AsyncGenericResolver::with_redirects().unwrap_or_default())
+                        // Even with no allowed-host list configured, the default resolver must not
+                        // follow HTTP redirects. `AsyncGenericResolver::new` disables them
+                        // (`redirect::Policy::none()`), which prevents an attacker-controlled
+                        // remote manifest URL from bouncing the SDK to an internal or cloud-metadata
+                        // endpoint via a 3xx response (SSRF – CAI-12574). Redirect following was
+                        // previously enabled here for backwards compatibility (PR #1907); it is
+                        // now disabled because the SDK cannot inspect intermediate redirect hops.
+                        Arc::new(AsyncGenericResolver::new())
                     }
                 })
                 .clone(),
@@ -1070,6 +1080,87 @@ mod tests {
     fn test_default_async_resolver() {
         let context = Context::new();
         let _resolver = context.resolver_async();
+    }
+
+    // The default resolver (no `allowed_network_hosts` configured) must not follow HTTP
+    // redirects. A malicious remote manifest URL could otherwise return a 302 pointing at an
+    // internal or cloud-metadata endpoint, resulting in SSRF (CAI-12574).
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_default_sync_resolver_does_not_follow_redirects() {
+        use std::io::Read;
+
+        use http::Request;
+        use httpmock::MockServer;
+
+        use crate::http::SyncHttpResolver;
+
+        let server = MockServer::start();
+        let redirect = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/redirect");
+            then.status(302)
+                .header("Location", "http://169.254.169.254/latest/meta-data/");
+        });
+        let canary = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/canary");
+            then.status(200).body([1, 2, 3]);
+        });
+
+        let context = Context::new();
+        let resolver = context.resolver();
+
+        let request = Request::get(format!("{}/redirect", server.base_url()))
+            .body(vec![])
+            .unwrap();
+
+        let response = resolver.http_resolve(request).unwrap();
+
+        // The resolver returns the 302 itself rather than following it.
+        assert_eq!(response.status(), 302);
+        let mut body = Vec::new();
+        response.into_body().read_to_end(&mut body).unwrap();
+
+        redirect.assert_calls(1);
+        canary.assert_calls(0);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn test_default_async_resolver_does_not_follow_redirects() {
+        use std::io::Read;
+
+        use http::Request;
+        use httpmock::MockServer;
+
+        use crate::http::AsyncHttpResolver;
+
+        let server = MockServer::start();
+        let redirect = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/redirect");
+            then.status(302)
+                .header("Location", "http://169.254.169.254/latest/meta-data/");
+        });
+        let canary = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/canary");
+            then.status(200).body([1, 2, 3]);
+        });
+
+        let context = Context::new();
+        let resolver = context.resolver_async();
+
+        let request = Request::get(format!("{}/redirect", server.base_url()))
+            .body(vec![])
+            .unwrap();
+
+        let response = resolver.http_resolve_async(request).await.unwrap();
+
+        // The resolver returns the 302 itself rather than following it.
+        assert_eq!(response.status(), 302);
+        let mut body = Vec::new();
+        response.into_body().read_to_end(&mut body).unwrap();
+
+        redirect.assert_calls(1);
+        canary.assert_calls(0);
     }
 
     #[test]
