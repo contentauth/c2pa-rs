@@ -40,7 +40,10 @@
 //! ["Features"]: crate#features
 //! [`Core::allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
 
-use std::io::Read;
+use std::{
+    io::Read,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+};
 
 use async_trait::async_trait;
 use http::{Request, Response, Uri};
@@ -279,6 +282,127 @@ pub(crate) fn is_uri_allowed(patterns: &[HostPattern], uri: &Uri) -> bool {
     }
 
     false
+}
+
+/// Resolver wrapper that enforces the SDK's default (no allow-list) SSRF policy.
+///
+/// When [`Core::allowed_network_hosts`] is not configured, the SDK still must not connect to
+/// internal addresses on the operator's behalf. This wrapper rejects any request whose host is a
+/// non-globally-routable IP literal – loopback, private (RFC1918), link-local (including the
+/// `169.254.169.254` cloud-metadata address), unique-local, CGNAT/shared, documentation, or
+/// multicast – or an obvious loopback host name such as `localhost`. Rejected requests return
+/// [`HttpResolverError::UriDisallowed`].
+///
+/// This check runs on the request URI. The default resolver does not follow HTTP redirects (see
+/// [`Context::resolver`]), so the URI inspected here is the only host contacted. Filtering based on
+/// the *resolved* IP (to defeat DNS names that point at internal addresses, i.e. DNS rebinding) is
+/// tracked separately in <https://github.com/contentauth/c2pa-rs/issues/2430>.
+///
+/// [`Core::allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
+/// [`Context::resolver`]: crate::Context::resolver
+#[derive(Debug)]
+pub(crate) struct DefaultNetworkGuard<T> {
+    inner: T,
+}
+
+impl<T> DefaultNetworkGuard<T> {
+    /// Wraps `inner` with the default SSRF host policy.
+    pub(crate) fn new(inner: T) -> Self {
+        Self { inner }
+    }
+}
+
+impl<T: SyncHttpResolver> SyncHttpResolver for DefaultNetworkGuard<T> {
+    fn http_resolve(
+        &self,
+        request: Request<Vec<u8>>,
+    ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+        if host_denied_by_default_policy(request.uri()) {
+            return Err(HttpResolverError::UriDisallowed {
+                uri: request.uri().to_string(),
+            });
+        }
+        self.inner.http_resolve(request)
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl<T: AsyncHttpResolver + Sync> AsyncHttpResolver for DefaultNetworkGuard<T> {
+    async fn http_resolve_async(
+        &self,
+        request: Request<Vec<u8>>,
+    ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+        if host_denied_by_default_policy(request.uri()) {
+            return Err(HttpResolverError::UriDisallowed {
+                uri: request.uri().to_string(),
+            });
+        }
+        self.inner.http_resolve_async(request).await
+    }
+}
+
+/// Returns true if `uri`'s host must be blocked under the default (no allow-list) network policy.
+///
+/// See [`DefaultNetworkGuard`] for the rationale and the DNS-rebinding caveat.
+pub(crate) fn host_denied_by_default_policy(uri: &Uri) -> bool {
+    let Some(host) = uri.host() else {
+        return false;
+    };
+
+    // `Uri::host()` may surround an IPv6 literal with brackets; strip them before parsing.
+    let host = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
+
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return ip_is_non_global(ip);
+    }
+
+    // Not an IP literal. Block the loopback host name; DNS names that resolve to internal
+    // addresses are handled by resolved-IP filtering (see the `DefaultNetworkGuard` docs).
+    let host = host.to_ascii_lowercase();
+
+    host == "localhost" || host.ends_with(".localhost")
+}
+
+/// Returns true if `ip` is not a globally routable unicast address and should therefore be blocked
+/// by the default network policy.
+fn ip_is_non_global(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => ipv4_is_non_global(v4),
+        IpAddr::V6(v6) => ipv6_is_non_global(v6),
+    }
+}
+
+fn ipv4_is_non_global(ip: Ipv4Addr) -> bool {
+    let [a, b, ..] = ip.octets();
+
+    ip.is_unspecified()          // 0.0.0.0
+        || a == 0                // 0.0.0.0/8 "this network"
+        || ip.is_loopback()      // 127.0.0.0/8
+        || ip.is_private()       // 10/8, 172.16/12, 192.168/16
+        || ip.is_link_local()    // 169.254.0.0/16 (includes 169.254.169.254)
+        || ip.is_broadcast()     // 255.255.255.255
+        || ip.is_documentation() // 192.0.2/24, 198.51.100/24, 203.0.113/24
+        || ip.is_multicast()     // 224.0.0.0/4
+        || (a == 100 && (b & 0xc0) == 64) // 100.64.0.0/10 CGNAT / shared address space
+}
+
+fn ipv6_is_non_global(ip: Ipv6Addr) -> bool {
+    // Unwrap IPv4-mapped addresses (e.g. ::ffff:169.254.169.254) and apply the IPv4 rules.
+    if let Some(v4) = ip.to_ipv4_mapped() {
+        return ipv4_is_non_global(v4);
+    }
+
+    let segments = ip.segments();
+
+    ip.is_unspecified()                     // ::
+        || ip.is_loopback()                 // ::1
+        || ip.is_multicast()                // ff00::/8
+        || (segments[0] & 0xfe00) == 0xfc00 // fc00::/7 unique local
+        || (segments[0] & 0xffc0) == 0xfe80 // fe80::/10 link local
 }
 
 #[cfg(test)]
@@ -566,5 +690,45 @@ mod test {
             result,
             Err(HttpResolverError::UriDisallowed { .. })
         ));
+    }
+
+    #[test]
+    fn default_policy_blocks_non_global_hosts() {
+        for uri in [
+            "http://169.254.169.254/latest/meta-data/", // link-local / cloud metadata
+            "http://127.0.0.1/",                        // IPv4 loopback
+            "http://127.1.2.3/",                        // IPv4 loopback (whole /8)
+            "http://10.0.0.1/",                         // RFC1918
+            "http://172.16.5.4/",                       // RFC1918
+            "http://192.168.1.1/",                      // RFC1918
+            "http://100.64.0.1/",                       // CGNAT / shared
+            "http://0.0.0.0/",                          // unspecified
+            "http://[::1]/",                            // IPv6 loopback
+            "http://[fe80::1]/",                        // IPv6 link-local
+            "http://[fc00::1]/",                        // IPv6 unique-local
+            "http://[::ffff:169.254.169.254]/",         // IPv4-mapped link-local
+            "http://localhost/",                        // loopback host name
+            "http://api.localhost/",                    // loopback host name suffix
+        ] {
+            assert!(
+                host_denied_by_default_policy(&Uri::from_static(uri)),
+                "expected {uri} to be denied"
+            );
+        }
+    }
+
+    #[test]
+    fn default_policy_allows_global_hosts() {
+        for uri in [
+            "http://93.184.216.34/",            // public IPv4 literal
+            "https://contentauthenticity.org/", // public host name
+            "https://sub.example.com/path",
+            "http://[2606:2800:220:1:248:1893:25c8:1946]/", // public IPv6 literal
+        ] {
+            assert!(
+                !host_denied_by_default_policy(&Uri::from_static(uri)),
+                "expected {uri} to be allowed"
+            );
+        }
     }
 }

@@ -114,19 +114,41 @@ mod tests {
             &server.url("/"),
         );
 
+        // The default resolver now blocks non-globally-routable hosts (SSRF hardening,
+        // CAI-12574). The proxy above points did:web resolution at this loopback mock server, so
+        // the host must be allow-listed for resolution to reach it. Callers that build their
+        // `Settings` from thread-local state pick this up; those that build a fresh `Settings`
+        // must add the host themselves via [`allowed_host_pattern`].
+        crate::settings::set_settings_value(
+            "core.allowed_network_hosts",
+            [allowed_host_pattern(&server)],
+        )
+        .unwrap();
+
         server
+    }
+
+    /// The `allowed_network_hosts` entry that permits requests to `server` (a loopback mock).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn allowed_host_pattern(server: &httpmock::MockServer) -> String {
+        format!("127.0.0.1:{}", server.port())
     }
 
     #[c2pa_test_async]
     async fn test_connected_identities_valid() {
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
+        // Start the mock server (registering its host in thread-local settings) before snapshotting
+        // settings into the context, so the allow-list entry reaches the CAWG validator.
         #[cfg(not(target_arch = "wasm32"))]
         let _did_server = mock_connected_identities_did();
 
+        let settings = crate::settings::get_thread_local_settings();
+        let context = crate::Context::new().with_settings(settings).unwrap();
+
         let mut stream = Cursor::new(CONNECTED_IDENTITIES_VALID);
 
-        let reader = Reader::default()
+        let reader = Reader::from_context(context)
             .with_stream_async("image/jpeg", &mut stream)
             .await
             .unwrap();
@@ -154,11 +176,13 @@ mod tests {
             ],
         )
         .unwrap();
-        let settings = crate::settings::get_thread_local_settings();
-        let context = crate::Context::new().with_settings(settings).unwrap();
-
+        // Start the mock server (and register its host in thread-local settings) before snapshotting
+        // settings, so the allow-list entry is carried into the context below.
         #[cfg(not(target_arch = "wasm32"))]
         let _did_server = mock_connected_identities_did();
+
+        let settings = crate::settings::get_thread_local_settings();
+        let context = crate::Context::new().with_settings(settings).unwrap();
 
         let mut stream = Cursor::new(MULTIPLE_IDENTITIES_VALID);
 
@@ -195,6 +219,13 @@ mod tests {
             .with_value("verify.verify_trust", false)
             .unwrap()
             .with_value("core.decode_identity_assertions", false)
+            .unwrap()
+            // This fresh `Settings` doesn't inherit thread-local state, so allow the loopback
+            // mock host explicitly (see `mock_connected_identities_did`).
+            .with_value(
+                "core.allowed_network_hosts",
+                [allowed_host_pattern(&_did_server)],
+            )
             .unwrap()
             .with_value("cawg_trust.trusted_ica_issuers", Vec::<String>::new())
             .unwrap()

@@ -492,4 +492,31 @@ pub mod tests {
         redirect.assert_calls(1);
         target.assert_calls(1);
     }
+
+    // A resolver built for the default (no allow-list) path must not follow redirects: it returns
+    // the 3xx response itself rather than fetching the redirect target. This is the SSRF hardening
+    // for CAI-12574 – the SDK cannot inspect intermediate redirect hops, so it never follows them.
+    #[async_generic(async_signature(resolver: impl AsyncHttpResolver))]
+    pub fn assert_http_resolver_no_redirects(resolver: impl SyncHttpResolver) {
+        use httpmock::MockServer;
+
+        let server = MockServer::start();
+        let redirect = redirect_mock_server(&server);
+        let target = mock_server(&server);
+
+        let request = Request::get(format!("{}/redirect", server.base_url()))
+            .body(vec![3, 2, 1])
+            .unwrap();
+
+        let response = if _sync {
+            resolver.http_resolve(request).unwrap()
+        } else {
+            resolver.http_resolve_async(request).await.unwrap()
+        };
+
+        // The redirect endpoint is hit exactly once and the target is never reached.
+        assert_eq!(response.status(), 302);
+        redirect.assert_calls(1);
+        target.assert_calls(0);
+    }
 }

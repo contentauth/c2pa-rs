@@ -18,8 +18,8 @@ use std::sync::{
 
 use crate::{
     http::{
-        restricted::RestrictedResolver, AsyncGenericResolver, AsyncHttpResolver,
-        SyncGenericResolver, SyncHttpResolver,
+        restricted::{DefaultNetworkGuard, RestrictedResolver},
+        AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver,
     },
     maybe_send_sync::{MaybeSend, MaybeSync},
     settings::Settings,
@@ -467,7 +467,11 @@ impl Context {
                         // endpoint via a 3xx response (SSRF – CAI-12574). Redirect following was
                         // previously enabled here for backwards compatibility (PR #1907); it is
                         // now disabled because the SDK cannot inspect intermediate redirect hops.
-                        Arc::new(SyncGenericResolver::new())
+                        //
+                        // `DefaultNetworkGuard` additionally blocks requests to non-globally-
+                        // routable IP literals (loopback, private, link-local/metadata, etc.) so
+                        // that a manifest URL naming an internal address directly is also rejected.
+                        Arc::new(DefaultNetworkGuard::new(SyncGenericResolver::new()))
                     }
                 })
                 .clone(),
@@ -496,7 +500,11 @@ impl Context {
                         // endpoint via a 3xx response (SSRF – CAI-12574). Redirect following was
                         // previously enabled here for backwards compatibility (PR #1907); it is
                         // now disabled because the SDK cannot inspect intermediate redirect hops.
-                        Arc::new(AsyncGenericResolver::new())
+                        //
+                        // `DefaultNetworkGuard` additionally blocks requests to non-globally-
+                        // routable IP literals (loopback, private, link-local/metadata, etc.) so
+                        // that a manifest URL naming an internal address directly is also rejected.
+                        Arc::new(DefaultNetworkGuard::new(AsyncGenericResolver::new()))
                     }
                 })
                 .clone(),
@@ -1082,85 +1090,62 @@ mod tests {
         let _resolver = context.resolver_async();
     }
 
-    // The default resolver (no `allowed_network_hosts` configured) must not follow HTTP
-    // redirects. A malicious remote manifest URL could otherwise return a 302 pointing at an
-    // internal or cloud-metadata endpoint, resulting in SSRF (CAI-12574).
+    // The default resolver (no `allowed_network_hosts` configured) must block requests to
+    // non-globally-routable hosts. Otherwise a malicious remote manifest URL naming an internal or
+    // cloud-metadata endpoint directly (or, before redirects were disabled, via a 302) results in
+    // SSRF (CAI-12574).
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn test_default_sync_resolver_does_not_follow_redirects() {
-        use std::io::Read;
-
+    fn test_default_sync_resolver_blocks_non_global_hosts() {
         use http::Request;
-        use httpmock::MockServer;
 
-        use crate::http::SyncHttpResolver;
-
-        let server = MockServer::start();
-        let redirect = server.mock(|when, then| {
-            when.method(httpmock::Method::GET).path("/redirect");
-            then.status(302)
-                .header("Location", "http://169.254.169.254/latest/meta-data/");
-        });
-        let canary = server.mock(|when, then| {
-            when.method(httpmock::Method::GET).path("/canary");
-            then.status(200).body([1, 2, 3]);
-        });
+        use crate::http::{HttpResolverError, SyncHttpResolver};
 
         let context = Context::new();
         let resolver = context.resolver();
 
-        let request = Request::get(format!("{}/redirect", server.base_url()))
-            .body(vec![])
-            .unwrap();
+        for uri in [
+            "http://169.254.169.254/latest/meta-data/",
+            "http://127.0.0.1/canary",
+            "http://10.0.0.1/",
+            "http://[::1]/",
+            "http://localhost/",
+        ] {
+            let request = Request::get(uri).body(vec![]).unwrap();
+            let result = resolver.http_resolve(request);
 
-        let response = resolver.http_resolve(request).unwrap();
-
-        // The resolver returns the 302 itself rather than following it.
-        assert_eq!(response.status(), 302);
-        let mut body = Vec::new();
-        response.into_body().read_to_end(&mut body).unwrap();
-
-        redirect.assert_calls(1);
-        canary.assert_calls(0);
+            assert!(
+                matches!(result, Err(HttpResolverError::UriDisallowed { .. })),
+                "expected {uri} to be blocked by the default network guard"
+            );
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
-    async fn test_default_async_resolver_does_not_follow_redirects() {
-        use std::io::Read;
-
+    async fn test_default_async_resolver_blocks_non_global_hosts() {
         use http::Request;
-        use httpmock::MockServer;
 
-        use crate::http::AsyncHttpResolver;
-
-        let server = MockServer::start();
-        let redirect = server.mock(|when, then| {
-            when.method(httpmock::Method::GET).path("/redirect");
-            then.status(302)
-                .header("Location", "http://169.254.169.254/latest/meta-data/");
-        });
-        let canary = server.mock(|when, then| {
-            when.method(httpmock::Method::GET).path("/canary");
-            then.status(200).body([1, 2, 3]);
-        });
+        use crate::http::{AsyncHttpResolver, HttpResolverError};
 
         let context = Context::new();
         let resolver = context.resolver_async();
 
-        let request = Request::get(format!("{}/redirect", server.base_url()))
-            .body(vec![])
-            .unwrap();
+        for uri in [
+            "http://169.254.169.254/latest/meta-data/",
+            "http://127.0.0.1/canary",
+            "http://10.0.0.1/",
+            "http://[::1]/",
+            "http://localhost/",
+        ] {
+            let request = Request::get(uri).body(vec![]).unwrap();
+            let result = resolver.http_resolve_async(request).await;
 
-        let response = resolver.http_resolve_async(request).await.unwrap();
-
-        // The resolver returns the 302 itself rather than following it.
-        assert_eq!(response.status(), 302);
-        let mut body = Vec::new();
-        response.into_body().read_to_end(&mut body).unwrap();
-
-        redirect.assert_calls(1);
-        canary.assert_calls(0);
+            assert!(
+                matches!(result, Err(HttpResolverError::UriDisallowed { .. })),
+                "expected {uri} to be blocked by the default network guard"
+            );
+        }
     }
 
     #[test]

@@ -60,7 +60,10 @@ pub mod sync_impl {
     pub mod tests {
         #![allow(clippy::unwrap_used)]
 
-        use crate::http::tests::{assert_http_resolver, assert_http_resolver_with_redirects};
+        use crate::http::tests::{
+            assert_http_resolver, assert_http_resolver_no_redirects,
+            assert_http_resolver_with_redirects,
+        };
 
         #[test]
         fn test_http_ureq() {
@@ -70,6 +73,11 @@ pub mod sync_impl {
         #[test]
         fn test_http_ureq_with_redirects() {
             assert_http_resolver_with_redirects(super::with_redirects().unwrap());
+        }
+
+        #[test]
+        fn test_http_ureq_no_redirects() {
+            assert_http_resolver_no_redirects(super::new());
         }
     }
 }
