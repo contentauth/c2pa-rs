@@ -9392,17 +9392,11 @@ mod tests {
         assert!(reader_json.contains("thumbnail.ingredient"));
     }
 
-    // An ingredient that references a manifest whose bytes are unavailable (e.g. a cloud-only
-    // manifest that was never fetched, or an ingredient reloaded without its resource store) must
-    // be treated as if it had no manifest, rather than failing archiving/signing with a
-    // "resource not found" error. `manifest_data_ref()` returns the dangling reference while
-    // `manifest_data()` already returns `None`.
-    #[test]
-    fn test_to_archive_tolerates_unreachable_ingredient_manifest() {
-        let mut builder = Builder::default()
-            .with_definition(simple_manifest_json())
-            .unwrap();
-
+    // Build an ingredient whose `manifest_data` reference points at bytes that are not present in
+    // any resource store: the dangling-reference scenario (a cloud-only manifest that was never
+    // fetched, or an ingredient reloaded without its resource store). `manifest_data_ref()` returns
+    // the dangling reference while `manifest_data()` already returns `None`.
+    fn unreachable_manifest_ingredient() -> Ingredient {
         let mut ingredient = Ingredient::new_v2("cloud-parent", "image/jpeg");
         ingredient.set_relationship(Relationship::ParentOf);
         ingredient.set_active_manifest("urn:c2pa:cloud-manifest");
@@ -9411,13 +9405,86 @@ mod tests {
             .unwrap();
         assert!(ingredient.manifest_data_ref().is_some());
         assert!(ingredient.manifest_data().is_none());
-        builder.add_ingredient(ingredient);
+        ingredient
+    }
+
+    // An ingredient that references a manifest whose bytes are unavailable must be treated as if it
+    // had no manifest, rather than failing archiving with a "resource not found" error.
+    #[test]
+    fn test_to_archive_tolerates_unreachable_ingredient_manifest() {
+        let mut builder = Builder::default()
+            .with_definition(simple_manifest_json())
+            .unwrap();
+        builder.add_ingredient(unreachable_manifest_ingredient());
 
         // Previously failed with Error::ResourceNotFound; the unreachable manifest is now dropped.
         let mut archive = Cursor::new(Vec::new());
         builder
             .to_archive(&mut archive)
             .expect("archive should tolerate an unreachable ingredient manifest");
+    }
+
+    // e2e: round-trip a builder that carries an unreachable ingredient manifest through an archive,
+    // then sign the reloaded builder. Signing must succeed, treating the dangling manifest as absent.
+    #[test]
+    fn test_sign_reloaded_archive_tolerates_unreachable_ingredient_manifest() {
+        let mut builder = Builder::default()
+            .with_definition(simple_manifest_json())
+            .unwrap();
+        builder.add_ingredient(unreachable_manifest_ingredient());
+
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive).unwrap();
+        archive.rewind().unwrap();
+
+        let mut restored = Builder::default().with_archive(&mut archive).unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut dest = Cursor::new(Vec::new());
+        restored
+            .sign(
+                signer.as_ref(),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+                &mut dest,
+            )
+            .expect(
+                "signing a reloaded archive should tolerate an unreachable ingredient manifest",
+            );
+    }
+
+    // e2e: add a builder archive that carries an unreachable ingredient manifest as an ingredient of
+    // a new builder, then sign. Signing must succeed, treating the dangling manifest as absent.
+    #[test]
+    fn test_sign_with_added_archive_ingredient_tolerates_unreachable_ingredient_manifest() {
+        let mut source_builder = Builder::default()
+            .with_definition(simple_manifest_json())
+            .unwrap();
+        source_builder.add_ingredient(unreachable_manifest_ingredient());
+
+        let mut archive = Cursor::new(Vec::new());
+        source_builder.to_archive(&mut archive).unwrap();
+        archive.rewind().unwrap();
+
+        let mut signing_builder = Builder::default()
+            .with_definition(simple_manifest_json())
+            .unwrap();
+        signing_builder
+            .add_ingredient_from_archive(&mut archive)
+            .unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut dest = Cursor::new(Vec::new());
+        signing_builder
+            .sign(
+                signer.as_ref(),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+                &mut dest,
+            )
+            .expect(
+                "signing with an added archive ingredient should tolerate an unreachable manifest",
+            );
     }
 
     /// `set_thumbnail` stores the format verbatim, bypassing `format_to_mime`.

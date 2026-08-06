@@ -1159,18 +1159,23 @@ impl Ingredient {
         //
         // A `manifest_data` reference whose bytes cannot be resolved (e.g. a cloud/remote manifest
         // that was never fetched, or an ingredient reloaded without its resource store) is treated
-        // as if the ingredient had no manifest, mirroring `Ingredient::manifest_data`, rather than
-        // failing claim generation.
-        let manifest_data = self.manifest_data_ref().and_then(|resource_ref| {
-            get_resource(&resource_ref.identifier)
-                .inspect_err(|_| {
+        // as if the ingredient had no manifest, like in `Ingredient::manifest_data`, rather than
+        // failing claim generation. Only "not found" errors are absorbed this way; any other error
+        // (e.g. from a resource resolver) still propagates.
+        let manifest_data = match self.manifest_data_ref() {
+            Some(resource_ref) => match get_resource(&resource_ref.identifier) {
+                Ok(manifest_data) => Some(manifest_data),
+                Err(Error::NotFound | Error::ResourceNotFound(_)) => {
                     debug!(
                         "ingredient '{}' references a manifest whose bytes are unavailable; treating it as having no manifest",
                         self.instance_id()
                     );
-                })
-                .ok()
-        });
+                    None
+                }
+                Err(e) => return Err(e),
+            },
+            None => None,
+        };
         let (active_manifest, claim_signature) = match manifest_data {
             Some(manifest_data) => {
                 // have Store check and load ingredients and add them to a claim
