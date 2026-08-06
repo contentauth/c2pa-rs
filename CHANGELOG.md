@@ -9,6 +9,14 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.90.6](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.5...c2pa-v0.90.6)
+_06 August 2026_
+
+### Fixed
+
+* *(sdk)* Reject did:web documents whose id doesn't match the requested DID (backport #2411) ([#2427](https://github.com/contentauth/c2pa-rs/pull/2427))
+* Upgrade lopdf to 0.44.0 and drop ttf-parser advisory exemption (backport #2417) ([#2418](https://github.com/contentauth/c2pa-rs/pull/2418))
+
 ## [0.90.5](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.4...c2pa-v0.90.5)
 _05 August 2026_
 
