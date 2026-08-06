@@ -2301,6 +2301,24 @@ impl Store {
         // earlier call is what silently dropped identity assertions in issue #2055.
         let dynamic_assertions = signer.dynamic_assertions();
         if !dynamic_assertions.is_empty() {
+            // Every dynamic assertion needs a reserved placeholder slot to replace.
+            // Surface any that are missing with an actionable message instead of
+            // letting `write_dynamic_assertions` fail later with an opaque
+            // `Error::NotFound`.
+            let missing: Vec<String> = dynamic_assertions
+                .iter()
+                .map(|da| da.label())
+                .filter(|label| pc.assertion_hashed_uri_from_label(label).is_none())
+                .collect();
+
+            if !missing.is_empty() {
+                return Err(Error::BadParam(format!(
+                    "no placeholder slots were reserved for dynamic assertions [{}]; \
+                     call add_dynamic_assertion_placeholders() before signing",
+                    missing.join(", ")
+                )));
+            }
+
             let mut preliminary_claim = PartialClaim::default();
             {
                 for assertion in pc.assertions() {
@@ -8115,6 +8133,79 @@ pub mod tests {
             Store::from_stream("image/jpeg", &mut output_file, &mut report, &context).unwrap();
 
         assert!(!report.has_any_error());
+    }
+
+    #[test]
+    fn test_sign_manifest_errors_when_dynamic_placeholders_missing() {
+        // A signer that advertises a dynamic assertion but whose placeholder slot is
+        // never reserved. `sign_manifest` must reject it with an actionable error that
+        // names the offending assertion, rather than the opaque `Error::NotFound` that
+        // `write_dynamic_assertions` would otherwise raise (see issue #2055 review).
+        #[derive(Debug)]
+        struct TestDynamicAssertion {}
+
+        impl DynamicAssertion for TestDynamicAssertion {
+            fn label(&self) -> String {
+                "com.mycompany.myassertion".to_string()
+            }
+
+            fn reserve_size(&self) -> Result<usize> {
+                Ok(64)
+            }
+
+            fn content(
+                &self,
+                _label: &str,
+                _size: Option<usize>,
+                _claim: &PartialClaim,
+            ) -> Result<DynamicAssertionContent> {
+                Ok(DynamicAssertionContent::Cbor(Vec::new()))
+            }
+        }
+
+        struct DynamicSigner(Box<dyn Signer>);
+
+        impl crate::Signer for DynamicSigner {
+            fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+                self.0.sign(data)
+            }
+
+            fn alg(&self) -> SigningAlg {
+                self.0.alg()
+            }
+
+            fn certs(&self) -> Result<Vec<Vec<u8>>> {
+                self.0.certs()
+            }
+
+            fn reserve_size(&self) -> usize {
+                self.0.reserve_size()
+            }
+
+            fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+                vec![Box::new(TestDynamicAssertion {})]
+            }
+        }
+
+        let context = crate::context::Context::new();
+        let signer = DynamicSigner(test_signer(SigningAlg::Ps256));
+
+        let mut store = Store::from_context(&context);
+        store.commit_claim(create_test_claim().unwrap()).unwrap();
+
+        // Reserve the hard-binding placeholder only – no dynamic-assertion slots.
+        store
+            .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg")
+            .unwrap();
+
+        let err = store.sign_manifest(&signer, &context).unwrap_err();
+        match err {
+            Error::BadParam(msg) => assert!(
+                msg.contains("com.mycompany.myassertion"),
+                "error should name the assertion missing a placeholder slot: {msg}"
+            ),
+            other => panic!("expected Error::BadParam, got {other:?}"),
+        }
     }
 
     #[test]
