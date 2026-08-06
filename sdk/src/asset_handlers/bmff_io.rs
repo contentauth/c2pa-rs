@@ -19,7 +19,7 @@ use std::{
     path::Path,
 };
 
-use atree::{Arena, Token};
+use atree::{Arena, Node, Token};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 
 use crate::{
@@ -88,6 +88,190 @@ static SUPPORTED_TYPES: [&str; 15] = [
     "video/quicktime",
     "video/x-m4v",
 ];
+
+pub(crate) trait XpathFetch {
+    fn fetch(&self, xpath: &str) -> Result<Option<Vec<Token>>>;
+}
+
+pub(crate) struct BMFFArena {
+    arena: Arena<BoxInfo>,
+    root_token: Token,
+}
+
+impl BMFFArena {
+    pub fn from_stream<R>(stream: &mut R) -> Result<(BMFFArena, HashMap<String, Vec<Token>>)>
+    where
+        R: Read + Seek + ?Sized,
+    {
+        let size = stream_len(stream)?;
+
+        // create root node
+        let root_box = BoxInfo {
+            path: "".to_string(),
+            offset: 0,
+            size,
+            box_type: BoxType::Empty,
+            parent: None,
+            user_type: None,
+            version: None,
+            flags: None,
+        };
+
+        let (arena, root_token) = Arena::with_data(root_box);
+
+        let mut bmff_arena = Self { arena, root_token };
+
+        let bmff_map = Self::build_bmff_tree(&mut bmff_arena, stream)?;
+
+        Ok((bmff_arena, bmff_map))
+    }
+
+    pub fn root_token(&self) -> Token {
+        self.root_token
+    }
+
+    pub fn get(&self, token: Token) -> Option<&Node<BoxInfo>> {
+        self.arena.get(token)
+    }
+
+    fn build_bmff_tree<R>(&mut self, reader: &mut R) -> Result<HashMap<String, Vec<Token>>>
+    where
+        R: Read + Seek + ?Sized,
+    {
+        let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
+
+        let size = stream_len(reader)?;
+        reader.rewind()?;
+
+        let ftyp = read_ftyp_box(reader)?;
+        reader.rewind()?;
+
+        // build layout of the BMFF structure
+        let mut rl = 0usize;
+        build_bmff_tree(
+            reader,
+            size,
+            &mut self.arena,
+            &self.root_token,
+            &mut bmff_map,
+            &mut rl,
+            &ftyp,
+        )?;
+
+        Ok(bmff_map)
+    }
+}
+
+impl AsRef<Arena<BoxInfo>> for BMFFArena {
+    fn as_ref(&self) -> &Arena<BoxInfo> {
+        &self.arena
+    }
+}
+
+impl AsMut<Arena<BoxInfo>> for BMFFArena {
+    fn as_mut(&mut self) -> &mut Arena<BoxInfo> {
+        &mut self.arena
+    }
+}
+
+impl XpathFetch for BMFFArena {
+    fn fetch(&self, xpath: &str) -> Result<Option<Vec<Token>>> {
+        let token_children = |t: Token| {
+            let mut c = Vec::new();
+            let mut child_tokens = t.children_tokens(&self.arena);
+            while let Some(child) = child_tokens.next() {
+                c.push(child);
+            }
+            c
+        };
+
+        let parts = xpath.trim_start_matches("/").split('/').collect::<Vec<_>>();
+
+        let mut part_children = token_children(self.root_token());
+        let mut current_part = Vec::new();
+
+        // Process each part of the xpath
+        for part in parts {
+            if part.len() < 4 {
+                return Err(Error::BadParam("malformed xpath".to_string()));
+            }
+
+            if part_children.is_empty() {
+                return Ok(None);
+            }
+
+            // check to see if the part has an index
+            if part.contains('[') {
+                // Process indexed part by extracting the index
+                let part_root = part
+                    .split('[')
+                    .nth(0)
+                    .ok_or(Error::BadParam("malformed xpath".to_string()))?;
+                let mut index = part
+                    .split('[')
+                    .nth(1)
+                    .and_then(|s| s.trim_end_matches(']').parse::<usize>().ok())
+                    .ok_or(Error::BadParam("malformed xpath".to_string()))?;
+
+                if part_root.len() < 4 || index == 0 {
+                    return Err(Error::BadParam("malformed xpath".to_string()));
+                }
+
+                index -= 1; // the internal representation is 0 based
+
+                // find the matching child nodes if any
+                part_children = part_children
+                    .iter()
+                    .filter_map(|child| {
+                        if self.arena[*child].data.path == part_root {
+                            Some(*child)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                if index >= part_children.len() {
+                    return Ok(None);
+                }
+
+                // save matching tokens
+                let child = part_children[index]; // selected token
+                current_part = vec![child];
+
+                // advance to selected tokens children
+                part_children = token_children(child).into_iter().collect();
+            } else {
+                // find the matching child nodes
+                part_children = part_children
+                    .iter()
+                    .filter_map(|child| {
+                        if self.arena[*child].data.path == part {
+                            Some(*child)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                // save the matching tokens
+                current_part = part_children.clone();
+
+                // get all the children of all part_children tokens
+                part_children = part_children
+                    .into_iter()
+                    .flat_map(|child| token_children(child).into_iter())
+                    .collect();
+            }
+        }
+
+        if current_part.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(current_part))
+        }
+    }
+}
 
 macro_rules! boxtype {
     ($( $name:ident => $value:expr ),*) => {
@@ -542,7 +726,7 @@ fn get_top_level_box_offsets(
 }
 
 fn get_top_level_boxes(
-    bmff_tree: &Arena<BoxInfo>,
+    bmff_tree: &BMFFArena,
     bmff_path_map: &HashMap<String, Vec<Token>>,
 ) -> Vec<BoxInfoLite> {
     let mut tl_boxes = Vec::new();
@@ -573,49 +757,18 @@ pub fn bmff_to_jumbf_exclusions<R>(
 where
     R: Read + Seek + ?Sized,
 {
-    let size = stream_len(reader)?;
-    reader.rewind()?;
-
-    let ftyp = read_ftyp_box(reader)?;
-    reader.rewind()?;
-
-    // create root node
-    let root_box = BoxInfo {
-        path: "".to_string(),
-        offset: 0,
-        size,
-        box_type: BoxType::Empty,
-        parent: None,
-        user_type: None,
-        version: None,
-        flags: None,
-    };
-
-    let (mut bmff_tree, root_token) = Arena::with_data(root_box);
-    let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
-
-    // build layout of the BMFF structure
-    let mut rl = 0usize;
-    build_bmff_tree(
-        reader,
-        size,
-        &mut bmff_tree,
-        &root_token,
-        &mut bmff_map,
-        &mut rl,
-        &ftyp,
-    )?;
+    let (bmff_tree, bmff_map) = BMFFArena::from_stream(reader)?;
 
     // get top level box offsets
-    let mut tl_offsets = get_top_level_box_offsets(&bmff_tree, &bmff_map);
+    let mut tl_offsets = get_top_level_box_offsets(bmff_tree.as_ref(), &bmff_map);
     tl_offsets.sort();
 
     let mut exclusions = Vec::new();
 
     for bmff_exclusion in bmff_exclusions {
-        if let Some(box_token_list) = bmff_map.get(&bmff_exclusion.xpath) {
+        if let Ok(Some(box_token_list)) = bmff_tree.fetch(&bmff_exclusion.xpath) {
             for box_token in box_token_list {
-                let box_info = &bmff_tree[*box_token].data;
+                let box_info = &bmff_tree.as_ref()[box_token].data;
 
                 let box_start = box_info.offset;
                 let box_length = box_info.size;
@@ -1287,7 +1440,7 @@ fn adjust_known_offsets<W: Write + CAIRead + ?Sized>(
 }
 
 #[allow(clippy::only_used_in_recursion)]
-pub(crate) fn build_bmff_tree<R: Read + Seek + ?Sized>(
+fn build_bmff_tree<R: Read + Seek + ?Sized>(
     reader: &mut R,
     end: u64,
     bmff_tree: &mut Arena<BoxInfo>,
@@ -1553,14 +1706,13 @@ fn get_uuid_box_purpose<R: Read + Seek + ?Sized>(
 
 fn get_uuid_token(
     reader: &mut dyn CAIRead,
-    bmff_tree: &Arena<BoxInfo>,
-    bmff_map: &HashMap<String, Vec<Token>>,
+    bmff_tree: &BMFFArena,
     uuid: &[u8; 16],
     purpose: Option<&[&str]>,
 ) -> Result<Token> {
-    if let Some(uuid_list) = bmff_map.get("/uuid") {
+    if let Ok(Some(uuid_list)) = bmff_tree.fetch("/uuid") {
         for uuid_token in uuid_list {
-            let box_info = &bmff_tree[*uuid_token];
+            let box_info = &bmff_tree.as_ref()[uuid_token];
 
             // make sure it is UUID box
             if box_info.data.box_type == BoxType::UuidBox {
@@ -1575,13 +1727,13 @@ fn get_uuid_token(
                             if let Some(target_purposes) = purpose {
                                 for target_purpose in target_purposes {
                                     if box_purpose == *target_purpose {
-                                        return Ok(*uuid_token);
+                                        return Ok(uuid_token);
                                     }
                                 }
                                 continue;
                             }
                         }
-                        return Ok(*uuid_token);
+                        return Ok(uuid_token);
                     }
                 }
             }
@@ -1610,7 +1762,7 @@ pub(crate) struct C2PABmffBoxes {
 
 fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
     mut reader: &mut R,
-    bmff_tree: &Arena<BoxInfo>,
+    bmff_tree: &BMFFArena,
     bmff_map: &HashMap<String, Vec<Token>>,
 ) -> Result<C2PABmffBoxes> {
     let mut manifest_bytes: Option<Vec<u8>> = None;
@@ -1628,12 +1780,12 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
     let mut xmp_box_size = 0;
 
     // grab top level (for now) C2PA box
-    if let Some(uuid_list) = bmff_map.get("/uuid") {
+    if let Ok(Some(uuid_list)) = bmff_tree.fetch("/uuid") {
         let mut manifest_store_cnt = 0;
         let mut update_store_cnt = 0;
 
         for uuid_token in uuid_list {
-            let box_info = &bmff_tree[*uuid_token];
+            let box_info = &bmff_tree.as_ref()[uuid_token];
 
             // make sure it is UUID box
             if box_info.data.box_type == BoxType::UuidBox {
@@ -1748,38 +1900,10 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
 pub(crate) fn read_bmff_c2pa_boxes<R: Read + Seek + ?Sized>(
     reader: &mut R,
 ) -> Result<C2PABmffBoxes> {
-    let size = stream_len(reader)?;
+    let (bmff_tree, bmff_map) = BMFFArena::from_stream(reader)?;
+
     reader.rewind()?;
 
-    let ftyp = read_ftyp_box(reader)?;
-    reader.rewind()?;
-
-    // create root node
-    let root_box = BoxInfo {
-        path: "".to_string(),
-        offset: 0,
-        size,
-        box_type: BoxType::Empty,
-        parent: None,
-        user_type: None,
-        version: None,
-        flags: None,
-    };
-
-    let (mut bmff_tree, root_token) = Arena::with_data(root_box);
-    let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
-
-    // build layout of the BMFF structure
-    let mut rl = 0usize;
-    build_bmff_tree(
-        reader,
-        size,
-        &mut bmff_tree,
-        &root_token,
-        &mut bmff_map,
-        &mut rl,
-        &ftyp,
-    )?;
     c2pa_boxes_from_tree_and_map(reader, &bmff_tree, &bmff_map)
 }
 
@@ -1916,38 +2040,7 @@ impl CAIWriter for BmffIO {
         output_stream: &mut dyn CAIReadWrite,
         store_bytes: &[u8],
     ) -> Result<()> {
-        let size = stream_len(input_stream)?;
-        input_stream.rewind()?;
-
-        let ftyp = read_ftyp_box(input_stream)?;
-        input_stream.rewind()?;
-
-        // create root node
-        let root_box = BoxInfo {
-            path: "".to_string(),
-            offset: 0,
-            size,
-            box_type: BoxType::Empty,
-            parent: None,
-            user_type: None,
-            version: None,
-            flags: None,
-        };
-
-        let (mut bmff_tree, root_token) = Arena::with_data(root_box);
-        let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
-
-        // build layout of the BMFF structure
-        let mut rl = 0usize;
-        build_bmff_tree(
-            input_stream,
-            size,
-            &mut bmff_tree,
-            &root_token,
-            &mut bmff_map,
-            &mut rl,
-            &ftyp,
-        )?;
+        let (bmff_tree, bmff_map) = BMFFArena::from_stream(input_stream)?;
 
         // figure out what state we are in
         let c2pa_boxes = c2pa_boxes_from_tree_and_map(input_stream, &bmff_tree, &bmff_map)?;
@@ -2065,7 +2158,7 @@ impl CAIWriter for BmffIO {
         // get ftyp location
         // start after ftyp
         let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
-        let ftyp_info = &bmff_tree[ftyp_token[0]].data;
+        let ftyp_info = &bmff_tree.as_ref()[ftyp_token[0]].data;
         let ftyp_offset = ftyp_info.offset;
         let ftyp_size = ftyp_info.size;
 
@@ -2073,12 +2166,11 @@ impl CAIWriter for BmffIO {
         let (c2pa_start, c2pa_length) = match get_uuid_token(
             input_stream,
             &bmff_tree,
-            &bmff_map,
             &C2PA_UUID,
             Some(&[MANIFEST, ORIGINAL]),
         ) {
             Ok(c2pa_token) => {
-                let uuid_info = &bmff_tree[c2pa_token].data;
+                let uuid_info = &bmff_tree.as_ref()[c2pa_token].data;
 
                 (uuid_info.offset, Some(uuid_info.size))
             }
@@ -2146,40 +2238,14 @@ impl CAIWriter for BmffIO {
 
         // Manipulating the UUID box means we may need some patch offsets if they are file absolute offsets.
         if offset_adjust != 0 {
-            // create root node
-            let root_box = BoxInfo {
-                path: "".to_string(),
-                offset: 0,
-                size,
-                box_type: BoxType::Empty,
-                parent: None,
-                user_type: None,
-                version: None,
-                flags: None,
-            };
-
             // map box layout of current output file
-            let (mut output_bmff_tree, root_token) = Arena::with_data(root_box);
-            let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
-
-            let size = stream_len(output_stream)?;
-            output_stream.rewind()?;
-            let mut rl = 0usize;
-            build_bmff_tree(
-                output_stream,
-                size,
-                &mut output_bmff_tree,
-                &root_token,
-                &mut output_bmff_map,
-                &mut rl,
-                &ftyp,
-            )?;
+            let (output_bmff_tree, output_bmff_map) = BMFFArena::from_stream(output_stream)?;
 
             // adjust offsets based on current layout
             output_stream.rewind()?;
             adjust_known_offsets(
                 output_stream,
-                &output_bmff_tree,
+                output_bmff_tree.as_ref(),
                 &output_bmff_map,
                 offset_adjust,
             )?;
@@ -2201,44 +2267,14 @@ impl CAIWriter for BmffIO {
         input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
     ) -> Result<()> {
-        let size = stream_len(input_stream)?;
+        let (bmff_tree, _bmff_map) = BMFFArena::from_stream(input_stream)?;
         input_stream.rewind()?;
-
-        let ftyp = read_ftyp_box(input_stream)?;
-        input_stream.rewind()?;
-
-        // create root node
-        let root_box = BoxInfo {
-            path: "".to_string(),
-            offset: 0,
-            size,
-            box_type: BoxType::Empty,
-            parent: None,
-            user_type: None,
-            version: None,
-            flags: None,
-        };
-
-        let (mut bmff_tree, root_token) = Arena::with_data(root_box);
-        let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
-
-        // build layout of the BMFF structure
-        let mut rl = 0usize;
-        build_bmff_tree(
-            input_stream,
-            size,
-            &mut bmff_tree,
-            &root_token,
-            &mut bmff_map,
-            &mut rl,
-            &ftyp,
-        )?;
 
         // get position of c2pa manifest
         let (c2pa_start, c2pa_length) =
-            match get_uuid_token(input_stream, &bmff_tree, &bmff_map, &C2PA_UUID, None) {
+            match get_uuid_token(input_stream, &bmff_tree, &C2PA_UUID, None) {
                 Ok(c2pa_token) => {
-                    let uuid_info = &bmff_tree[c2pa_token].data;
+                    let uuid_info = &bmff_tree.as_ref()[c2pa_token].data;
 
                     (uuid_info.offset, Some(uuid_info.size))
                 }
@@ -2280,40 +2316,15 @@ impl CAIWriter for BmffIO {
 
         // Manipulating the UUID box means we may need some patch offsets if they are file absolute offsets.
 
-        // create root node
-        let root_box = BoxInfo {
-            path: "".to_string(),
-            offset: 0,
-            size,
-            box_type: BoxType::Empty,
-            parent: None,
-            user_type: None,
-            version: None,
-            flags: None,
-        };
-
         // map box layout of current output file
-        let (mut output_bmff_tree, root_token) = Arena::with_data(root_box);
-        let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
-
-        let size = stream_len(output_stream)?;
         output_stream.rewind()?;
-        let mut rl = 0usize;
-        build_bmff_tree(
-            output_stream,
-            size,
-            &mut output_bmff_tree,
-            &root_token,
-            &mut output_bmff_map,
-            &mut rl,
-            &ftyp,
-        )?;
+        let (output_bmff_tree, output_bmff_map) = BMFFArena::from_stream(output_stream)?;
 
         // adjust offsets based on current layout
         output_stream.rewind()?;
         adjust_known_offsets(
             output_stream,
-            &output_bmff_tree,
+            output_bmff_tree.as_ref(),
             &output_bmff_map,
             offset_adjust,
         )
@@ -2327,56 +2338,19 @@ impl AssetPatch for BmffIO {
             .read(true)
             .create(false)
             .open(asset_path)?;
-        let size = stream_len(&mut asset)?;
+
+        let (bmff_tree, _bmff_map) = BMFFArena::from_stream(&mut asset)?;
         asset.rewind()?;
-
-        let ftyp = read_ftyp_box(&mut asset)?;
-        asset.rewind()?;
-
-        // create root node
-        let root_box = BoxInfo {
-            path: "".to_string(),
-            offset: 0,
-            size,
-            box_type: BoxType::Empty,
-            parent: None,
-            user_type: None,
-            version: None,
-            flags: None,
-        };
-
-        let (mut bmff_tree, root_token) = Arena::with_data(root_box);
-        let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
-
-        // build layout of the BMFF structure
-        let mut rl = 0usize;
-        build_bmff_tree(
-            &mut asset,
-            size,
-            &mut bmff_tree,
-            &root_token,
-            &mut bmff_map,
-            &mut rl,
-            &ftyp,
-        )?;
 
         // get position to insert c2pa
-        let (c2pa_start, c2pa_length) = if let Some(uuid_tokens) = bmff_map.get("/uuid") {
-            let uuid_info = &bmff_tree[uuid_tokens[0]].data;
-
-            // is this a C2PA manifest
-            let is_c2pa = if let Some(uuid) = &uuid_info.user_type {
-                // make sure it is a C2PA box
-                vec_compare(&C2PA_UUID, uuid)
-            } else {
-                false
-            };
-
-            if is_c2pa {
-                (uuid_info.offset, Some(uuid_info.size))
-            } else {
-                (0, None)
-            }
+        let (c2pa_start, c2pa_length) = if let Ok(uuid_token) = get_uuid_token(
+            &mut asset,
+            &bmff_tree,
+            &C2PA_UUID,
+            Some(&[MANIFEST, ORIGINAL]),
+        ) {
+            let uuid_info = &bmff_tree.as_ref()[uuid_token].data;
+            (uuid_info.offset, Some(uuid_info.size))
         } else {
             return Err(Error::InvalidAsset(
                 "patch_cai_store found no manifest store to patch.".to_string(),
@@ -2454,38 +2428,8 @@ impl RemoteRefEmbed for BmffIO {
     ) -> Result<()> {
         match embed_ref {
             crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
-                let size = stream_len(input_stream)?;
+                let (bmff_tree, bmff_map) = BMFFArena::from_stream(input_stream)?;
                 input_stream.rewind()?;
-
-                let ftyp = read_ftyp_box(input_stream)?;
-                input_stream.rewind()?;
-
-                // create root node
-                let root_box = BoxInfo {
-                    path: "".to_string(),
-                    offset: 0,
-                    size,
-                    box_type: BoxType::Empty,
-                    parent: None,
-                    user_type: None,
-                    version: None,
-                    flags: None,
-                };
-
-                let (mut bmff_tree, root_token) = Arena::with_data(root_box);
-                let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
-
-                // build layout of the BMFF structure
-                let mut rl = 0usize;
-                build_bmff_tree(
-                    input_stream,
-                    size,
-                    &mut bmff_tree,
-                    &root_token,
-                    &mut bmff_map,
-                    &mut rl,
-                    &ftyp,
-                )?;
 
                 let c2pa_boxes = c2pa_boxes_from_tree_and_map(input_stream, &bmff_tree, &bmff_map)?;
 
@@ -2504,7 +2448,7 @@ impl RemoteRefEmbed for BmffIO {
                         // get ftyp location
                         // start after ftyp
                         let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
-                        let ftyp_info = &bmff_tree[ftyp_token[0]].data;
+                        let ftyp_info = &bmff_tree.as_ref()[ftyp_token[0]].data;
                         let ftyp_offset = ftyp_info.offset;
                         let ftyp_size = ftyp_info.size;
 
@@ -2561,40 +2505,15 @@ impl RemoteRefEmbed for BmffIO {
 
                 // Manipulating the UUID box means we may need some patch offsets if they are file absolute offsets.
 
-                // create root node
-                let root_box = BoxInfo {
-                    path: "".to_string(),
-                    offset: 0,
-                    size,
-                    box_type: BoxType::Empty,
-                    parent: None,
-                    user_type: None,
-                    version: None,
-                    flags: None,
-                };
-
                 // map box layout of current output file
-                let (mut output_bmff_tree, root_token) = Arena::with_data(root_box);
-                let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
-
-                let size = stream_len(output_stream)?;
                 output_stream.rewind()?;
-                let mut rl = 0usize;
-                build_bmff_tree(
-                    output_stream,
-                    size,
-                    &mut output_bmff_tree,
-                    &root_token,
-                    &mut output_bmff_map,
-                    &mut rl,
-                    &ftyp,
-                )?;
+                let (output_bmff_tree, output_bmff_map) = BMFFArena::from_stream(output_stream)?;
 
                 // adjust offsets based on current layout
                 output_stream.rewind()?;
                 adjust_known_offsets(
                     output_stream,
-                    &output_bmff_tree,
+                    output_bmff_tree.as_ref(),
                     &output_bmff_map,
                     offset_adjust,
                 )
@@ -2616,38 +2535,8 @@ pub(crate) fn inject_placeholder(
     output_stream: &mut dyn CAIReadWrite,
     free_size: usize,
 ) -> Result<u64> {
-    let size = stream_len(input_stream)?;
+    let (bmff_tree, bmff_map) = BMFFArena::from_stream(input_stream)?;
     input_stream.rewind()?;
-
-    let ftyp = read_ftyp_box(input_stream)?;
-    input_stream.rewind()?;
-
-    // create root node
-    let root_box = BoxInfo {
-        path: "".to_string(),
-        offset: 0,
-        size,
-        box_type: BoxType::Empty,
-        parent: None,
-        user_type: None,
-        version: None,
-        flags: None,
-    };
-
-    let (mut bmff_tree, root_token) = Arena::with_data(root_box);
-    let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
-
-    // build layout of the BMFF structure
-    let mut rl = 0usize;
-    build_bmff_tree(
-        input_stream,
-        size,
-        &mut bmff_tree,
-        &root_token,
-        &mut bmff_map,
-        &mut rl,
-        &ftyp,
-    )?;
 
     // figure out what state we are in
     let c2pa_boxes = c2pa_boxes_from_tree_and_map(input_stream, &bmff_tree, &bmff_map)?;
@@ -2667,7 +2556,7 @@ pub(crate) fn inject_placeholder(
     // get ftyp location
     // start after ftyp
     let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
-    let ftyp_info = &bmff_tree[ftyp_token[0]].data;
+    let ftyp_info = &bmff_tree.as_ref()[ftyp_token[0]].data;
     let ftyp_offset = ftyp_info.offset;
     let ftyp_size = ftyp_info.size;
 
@@ -2696,40 +2585,15 @@ pub(crate) fn inject_placeholder(
 
     // Manipulating the free box means we may need some patch offsets if they are file absolute offsets.
     if offset_adjust != 0 {
-        // create root node
-        let root_box = BoxInfo {
-            path: "".to_string(),
-            offset: 0,
-            size,
-            box_type: BoxType::Empty,
-            parent: None,
-            user_type: None,
-            version: None,
-            flags: None,
-        };
-
         // map box layout of current output file
-        let (mut output_bmff_tree, root_token) = Arena::with_data(root_box);
-        let mut output_bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
-
-        let size = stream_len(output_stream)?;
         output_stream.rewind()?;
-        let mut rl = 0usize;
-        build_bmff_tree(
-            output_stream,
-            size,
-            &mut output_bmff_tree,
-            &root_token,
-            &mut output_bmff_map,
-            &mut rl,
-            &ftyp,
-        )?;
+        let (output_bmff_tree, output_bmff_map) = BMFFArena::from_stream(output_stream)?;
 
         // adjust offsets based on current layout
         output_stream.rewind()?;
         adjust_known_offsets(
             output_stream,
-            &output_bmff_tree,
+            output_bmff_tree.as_ref(),
             &output_bmff_map,
             offset_adjust,
         )?;
@@ -2752,38 +2616,8 @@ pub(crate) fn inject_manifest_into_free_box(
     manifest_bytes: &[u8],
     free_box_start: u64,
 ) -> Result<()> {
-    let size = stream_len(stream)?;
+    let (bmff_tree, bmff_map) = BMFFArena::from_stream(stream)?;
     stream.rewind()?;
-
-    let ftyp = read_ftyp_box(stream)?;
-    stream.rewind()?;
-
-    // create root node
-    let root_box = BoxInfo {
-        path: "".to_string(),
-        offset: 0,
-        size,
-        box_type: BoxType::Empty,
-        parent: None,
-        user_type: None,
-        version: None,
-        flags: None,
-    };
-
-    let (mut bmff_tree, root_token) = Arena::with_data(root_box);
-    let mut bmff_map: HashMap<String, Vec<Token>> = HashMap::new();
-
-    // build layout of the BMFF structure
-    let mut rl = 0usize;
-    build_bmff_tree(
-        stream,
-        size,
-        &mut bmff_tree,
-        &root_token,
-        &mut bmff_map,
-        &mut rl,
-        &ftyp,
-    )?;
 
     // get the matching free box
     let free_tokens = bmff_map.get("/free").ok_or(Error::BadParam(
@@ -2794,14 +2628,14 @@ pub(crate) fn inject_manifest_into_free_box(
     let free_token = free_tokens
         .iter()
         .find(|token| {
-            let free_info = &bmff_tree[**token].data;
+            let free_info = &bmff_tree.as_ref()[**token].data;
             free_info.offset == free_box_start
         })
         .ok_or(Error::BadParam(
             "Did not find free box to inject manifest at expected location".to_string(),
         ))?;
 
-    let free_info = &bmff_tree[*free_token].data;
+    let free_info = &bmff_tree.as_ref()[*free_token].data;
 
     if manifest_bytes.len() as u64 > free_info.size {
         return Err(Error::BadParam(
@@ -4020,5 +3854,55 @@ pub mod tests {
         let mut reader = Cursor::new(ftyp);
         let media = BmffSampleReader::from_stream(&mut reader).unwrap();
         assert!(media.tracks().is_empty());
+    }
+
+    #[test]
+    fn test_xpath_fetch() {
+        // for these tests note that xpath indices are 1 based while internal maps are 0 based
+
+        let ap = fixture_path("video1.mp4");
+        let mut input_stream = std::fs::File::open(&ap).unwrap();
+
+        let (bmff_arena, bmff_map) = BMFFArena::from_stream(&mut input_stream).unwrap();
+
+        let uuids = bmff_arena.fetch("/uuid").unwrap().unwrap();
+        assert_eq!(uuids.len(), 2);
+        assert_eq!(uuids, *bmff_map.get("/uuid").unwrap());
+        assert_eq!(bmff_arena.as_ref()[uuids[0]].data.path, "uuid");
+        assert_eq!(bmff_arena.as_ref()[uuids[1]].data.path, "uuid");
+
+        let tracks = bmff_arena.fetch("/moov/trak").unwrap().unwrap();
+        assert_eq!(tracks.len(), 2);
+        assert_eq!(tracks, *bmff_map.get("/moov/trak").unwrap());
+        assert_eq!(bmff_arena.as_ref()[tracks[0]].data.path, "trak");
+        assert_eq!(bmff_arena.as_ref()[tracks[1]].data.path, "trak");
+
+        let tracks2 = bmff_arena.fetch("/moov/trak[2]").unwrap().unwrap();
+        assert_eq!(tracks2, vec![bmff_map.get("/moov/trak").unwrap()[1]]);
+
+        let edts1 = bmff_arena.fetch("/moov/trak[1]/edts").unwrap().unwrap();
+        let edts2 = bmff_arena.fetch("/moov/trak[2]/edts").unwrap().unwrap();
+        let edts = bmff_map.get("/moov/trak/edts").unwrap();
+        assert_eq!(edts1, vec![edts[0]]);
+        assert_eq!(edts2, vec![edts[1]]);
+
+        // check out of range
+        let track_none = bmff_arena.fetch("/moov/trak[3]").unwrap();
+        assert!(track_none.is_none());
+
+        let track_zero = bmff_arena.fetch("/moov/trak[0]");
+        assert!(track_zero.is_err());
+
+        // check bad FourCC value
+        let track_name_bad = bmff_arena.fetch("/moov/tra[2]");
+        assert!(track_name_bad.is_err());
+
+        // check malformed path
+        let path_bad = bmff_arena.fetch("/moov/trak[[3]]");
+        assert!(path_bad.is_err());
+
+        // check not parsable index
+        let path_bad2 = bmff_arena.fetch("/moov/trak[abcd]");
+        assert!(path_bad2.is_err());
     }
 }
