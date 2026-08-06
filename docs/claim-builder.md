@@ -9,6 +9,12 @@ at a stable claim position immediately and returns the assertion's real `HashedU
 staging data for later translation. It has no `ManifestDefinition`/`ResourceStore` — the two
 models don't mix, so there's no dedup bookkeeping to keep them from double-adding the same data.
 
+Every assertion is described by a [`ClaimAssertion`](#claimassertion) — a small builder that
+carries whatever a label needs (structured data, a stream, hard-binding exclusions, an
+ingredient's sidecar manifest data) — so `ClaimBuilder` itself only needs two writer methods:
+[`add_gathered_assertion`](#claimbuilderadd_gathered_assertionadd_created_assertion)/
+`add_created_assertion`.
+
 ## Why
 
 Some assertions need to reference other assertions by hashed URI before the manifest is signed
@@ -30,30 +36,51 @@ final hash computed at insertion time (not at signing time).
 - **Interactive only.** Once you've added something, it's live in the claim. You can't
   serialize a `ClaimBuilder` to JSON mid-way and resume from a different process/session the way
   you can with a `ManifestDefinition`. Everything happens in one build-then-sign call sequence.
-- **Asset input is limited to two places:** reading an already-validated ingredient `Reader`
-  (`add_gathered_ingredient`/`add_created_ingredient`), and generating a hard-binding assertion
-  from an asset stream (`HardBinding`). Everything else is caller-supplied in-memory data.
 - **No placeholder management.** `ClaimBuilder` never reserves space for, or embeds, a manifest
-  placeholder itself — the caller is expected to have already done that externally before
-  calling `set_hard_binding`/`update_hard_binding`/`sign`. `ClaimBuilder::sign` is always the
-  equivalent of `Builder::sign_embeddable`'s Mode 2 (direct/no-placeholder) path.
+  placeholder itself — the caller is expected to have already done that externally before adding
+  a hard-binding assertion or calling `sign`. `ClaimBuilder::sign` is always the equivalent of
+  `Builder::sign_embeddable`'s Mode 2 (direct/no-placeholder) path.
+- **Streams live on `ClaimAssertion`, not on `ClaimBuilder`.** `ClaimBuilder`'s own methods never
+  take a stream — every stream a label needs (an asset to hash, an ingredient to extract
+  provenance from, raw binary content) is attached to the `ClaimAssertion` via `with_stream`
+  before it's handed to `ClaimBuilder`, and is read using `ClaimBuilder`'s own `Context` only once
+  `add_gathered_assertion`/`add_created_assertion` runs.
 
 ## Naming: gathered vs. created
 
 Every writer comes in a *gathered* and *created* pair, mirroring `Claim::add_assertion`
 (gathered, the default) vs. `Claim::add_created_assertion`:
 
-- `add_gathered_assertion` / `add_created_assertion`
-- `add_gathered_data` / `add_created_data`
-- `add_gathered_ingredient` / `add_created_ingredient`
+- `ClaimBuilder::add_gathered_assertion` / `add_created_assertion`
 
 Hash assertions (`BoxHash`/`DataHash`/`BmffHash`) are always stored as *created* by `Claim`
-regardless of which method adds them — this doesn't apply to them at all, which is why
-`set_hard_binding`/`update_hard_binding` have no gathered/created split.
+regardless of which method adds them.
 
-## API
+## `ClaimAssertion`
 
-### `ClaimBuilder::new(context: Arc<Context>) -> Self`
+`ClaimAssertion` is a builder: start with `ClaimAssertion::new(label)`, then attach whichever of
+`with_json`/`with_stream`/`with_c2pa_data`/`with_exclusions` that `label` needs. Nothing is
+validated or converted until the assertion is handed to `ClaimBuilder::add_gathered_assertion`/
+`add_created_assertion`.
+
+Which `with_*` calls are valid depends on `label`:
+
+- **`DataHash::LABEL`/`BmffHash::LABEL`/`BoxHash::LABEL`** (i.e. the binding type you want, picked
+  directly by the caller instead of inferred from the asset format) — require `with_stream` (the
+  finished asset, with the manifest placeholder already embedded, to hash) and accept
+  `with_exclusions` (`DataHash` only — the placeholder region to exclude from hashing).
+- **`IngredientAssertion::LABEL`** — requires `with_json` (the ingredient's own metadata: e.g.
+  `dc:title`/`dc:format`/`relationship`/`thumbnail`, matching the assertion's own v3 JSON schema)
+  and accepts `with_stream` (the ingredient's own asset, to extract its provenance) plus
+  `with_c2pa_data` (the ingredient's manifest store as JUMBF bytes, supplied directly instead of
+  extracted from the stream in-band — for a sidecar or remote manifest; `with_c2pa_data` requires
+  `with_stream` too, since the stream is still what's validated against).
+- **Everything else** — takes `with_json` (structured data: if `label` matches a known assertion
+  type such as `c2pa.actions`/`Metadata`, it's decoded into that concrete type so it's stored with
+  its native schema; otherwise it's wrapped generically in a `UserCbor` assertion under `label`)
+  or `with_stream` (binary data, e.g. a thumbnail — wrapped in an `EmbeddedData` assertion).
+
+## `ClaimBuilder::new(context: Arc<Context>) -> Self`
 
 Creates a claim with an auto-generated label, and a single default `ClaimGeneratorInfo` entry
 (pulled from `Context` settings' `builder.claim_generator_info` if configured, else
@@ -63,7 +90,7 @@ Creates a claim with an auto-generated label, and a single default `ClaimGenerat
 `ClaimBuilder::with_label(context, label)` is the same, but with a caller-supplied claim label
 instead of an auto-generated UUID (`label` must already be a valid C2PA v2 manifest label).
 
-### `ClaimBuilder::update(self) -> Self`
+## `ClaimBuilder::update(self) -> Self`
 
 Marks this as an update manifest — `sign()` then calls `Store::commit_update_manifest()` instead
 of `Store::commit_claim()`. Chains off `new()`: `ClaimBuilder::new(context).update()`.
@@ -71,82 +98,44 @@ of `Store::commit_claim()`. Chains off `new()`: `ClaimBuilder::new(context).upda
 `Builder`'s auto-thumbnail/auto-parent/auto-action automation, none of which `ClaimBuilder` does,
 since everything here is added explicitly by the caller.
 
-### `set_title` / `set_instance_id` / `set_hash_alg`
+## `set_title` / `set_instance_id` / `set_hash_alg`
 
 Claim struct fields that `Builder` sources from `ManifestDefinition` (`title`/`instance_id`/
 `hash_alg`) — `ClaimBuilder` has no definition, and none of these are settings-driven, so they
 need direct setters.
 
-### `ClaimBuilder::add_gathered_assertion<S: Into<String>, T: Serialize>(&mut self, label: S, data: &T) -> Result<HashedUri>`
+## `ClaimBuilder::add_redaction(&mut self, uri: impl Into<String>) -> &mut Self`
 
-The core primitive. If `label` matches a known assertion type (`c2pa.actions`,
-`c2pa.ingredient`, `BoxHash`, `DataHash`, `BmffHash`, `Metadata`), `data` is decoded into that
-concrete type so it's stored with its native schema (CBOR, except `Metadata` which is always
-JSON). Otherwise `data` is wrapped generically in a `UserCbor` assertion under `label`.
-`add_created_assertion` is the *created* counterpart.
+Records a JUMBF URI to redact the next time an ingredient's manifest chain is merged in via a
+`ClaimAssertion` under `IngredientAssertion::LABEL` (with a stream attached). Applies to every
+ingredient added afterward — a URI that isn't present in a given ingredient's chain is simply not
+found there and has no effect, so accumulating redactions across several ingredients is safe.
+This only performs the mechanical redaction; the caller is responsible for separately recording a
+`c2pa.redacted` action with a reason for each one, since the reason is caller-specific domain
+knowledge this method has no way to infer.
 
-### `ClaimBuilder::add_gathered_data(&mut self, label: &str, format: &str, stream: &mut impl Read) -> Result<HashedUri>`
+## `ClaimBuilder::add_gathered_assertion(&mut self, assertion: ClaimAssertion) -> Result<HashedUri>`
 
-Convenience wrapper over `add_gathered_assertion` for binary data (thumbnails, icons, arbitrary
-resources): wraps the bytes in an `EmbeddedData` assertion. `add_created_data` is the *created*
-counterpart.
+The only writer. Interprets `assertion` according to its label (see [`ClaimAssertion`](#claimassertion)
+above) using this `ClaimBuilder`'s own `Context`, places it at a stable claim position, and
+returns its real `HashedUri`. `add_created_assertion` is the *created* counterpart — see
+[Naming: gathered vs. created](#naming-gathered-vs-created).
 
-### `ClaimBuilder::add_gathered_ingredient<T>(&mut self, ingredient_assertion: T, reader: Option<&Reader>, redactions: Vec<String>) -> Result<HashedUri>`
+Hard-binding labels (`DataHash`/`BmffHash`/`BoxHash`) are handled specially: the first one added
+becomes the claim's hard binding; every one added after that must be the same kind and no larger
+than the existing one — the claim's byte layout must not grow — and replaces it. A `DataHash`
+replacement that's smaller is padded back up to match exactly; `BmffHash`/`BoxHash` have no
+padding field, so a smaller replacement is accepted as-is (the container tolerates the resulting
+slack; see `Builder::placeholder`'s note on converting extra reserved space to a "free" box).
+There can only be one hard binding per claim.
 
-`T` accepts, via `TryInto<IngredientAssertion>`: an `IngredientAssertion` (owned) or
-`&IngredientAssertion`, JSON text (`&str`/`String`) or `serde_json::Value`, matching the
-assertion's own v3 JSON schema (`dc:title`, `dc:format`, `relationship`, `thumbnail`, etc.).
-
-- `reader = Some(r)` — `r` has already read and validated the ingredient's own asset. Its
-  manifest data is merged into this claim's ingredient store, and
-  `active_manifest`/`claim_signature`/`validation_results` on the assertion are filled in from
-  it. `redactions` is a list of JUMBF URIs of assertions to strip from the ingredient's manifest
-  chain as it's merged in (empty if none) — this only performs the mechanical redaction; the
-  caller is responsible for separately recording a `c2pa.redacted` action with a reason for each
-  one, since the reason is caller-specific domain knowledge this method has no way to infer.
-- `reader = None` — the ingredient has no provenance of its own to merge in (no manifest chain,
-  no redactions): the assertion is added as-is, exactly like `add_gathered_assertion` would.
-
-`add_created_ingredient` is the *created* counterpart.
-
-### `Action::add_ingredient_ref(self, ingredient: HashedUri) -> Self`
+## `Action::add_ingredient_ref(self, ingredient: HashedUri) -> Self`
 
 Adds an ingredient reference directly from a `HashedUri` (e.g. the one returned by
-`add_gathered_ingredient`), instead of by id resolved later. Matches the existing
+`add_gathered_assertion` for an ingredient), instead of by id resolved later. Matches the existing
 `add_ingredient_id` pattern — call it once per ingredient.
 
-### `HardBinding`
-
-A `Claim`-agnostic component (shared with `Builder` internally) that computes a hard-binding
-assertion (`DataHash`, `BmffHash`, or `BoxHash`) directly from an asset stream:
-
-```rust
-let mut hard_binding = HardBinding::new(format, &context); // resolves Data/Bmff/Box dispatch, same rules as Builder::hash_type
-hard_binding.set_exclusions(exclusions); // DataHash path only — the region where you embedded the placeholder
-let binding = hard_binding.generate(&context, &mut stream)?; // HardBindingAssertion
-```
-
-BMFF Merkle/mdat chunk streaming is also available: `set_fixed_leaf_size`/`hash_mdat_chunk`
-before calling `generate`, mirroring `Builder::set_bmff_hash_fixed_leaf_size`/
-`hash_bmff_mdat_bytes`.
-
-### `ClaimBuilder::set_hard_binding` / `update_hard_binding`
-
-First-time add, then replace:
-
-- `set_hard_binding(&mut self, binding: HardBindingAssertion) -> Result<HashedUri>` — the first
-  hard binding for this claim. Typically a placeholder-shaped value the caller constructs
-  directly (correct type/size, dummy hash) before they've embedded anything into the real asset.
-  Errors if a hard binding already exists.
-- `update_hard_binding(&mut self, binding: HardBindingAssertion) -> Result<HashedUri>` —
-  replaces it, once the caller has embedded the placeholder into the real asset and computed the
-  real value (typically via `HardBinding::generate` reading that finished asset). For a
-  `DataHash` replacement, the new value is padded to match the existing one's encoded byte length
-  exactly (so the claim's byte layout doesn't shift), erroring only if the new value is already
-  larger than that. Errors if there is no existing hard binding, or if the replacement's variant
-  (Data/Bmff/Box) differs from the existing one.
-
-### `ClaimBuilder::sign(&self) -> Result<Vec<u8>>`
+## `ClaimBuilder::sign(&self) -> Result<Vec<u8>>`
 
 Signs using the signer configured on this `ClaimBuilder`'s `Context` (`Context::with_signer`/the
 `signer` settings key) and returns the raw signed JUMBF bytes. Builds a `Store` directly from
@@ -164,36 +153,47 @@ binding.
 - No way to add more than one `ClaimGeneratorInfo` entry.
 - No TSA timestamp-fetching convenience (`Builder`'s `timestamp_manifest_labels`) — build a
   `TimeStamp` assertion yourself and add it via `add_created_assertion`.
+- No configurable hard-binding hash algorithm yet — always `sha256`, independent of
+  `ClaimBuilder::set_hash_alg` (which only affects the claim's own default).
+- No BMFF Merkle/fixed-leaf-size mdat chunk streaming yet (`Builder`'s
+  `set_bmff_hash_fixed_leaf_size`/`hash_bmff_mdat_bytes` equivalents) — a `BmffHash` `with_stream`
+  always reads and hashes the whole asset in one pass.
 - No async signing yet (`Builder`'s `#[async_generic]` sync/async pairing).
 
 ## Example: manifest with an ingredient, built directly
 
 ```rust
-let ingredient_reader = Reader::default().with_stream("image/jpeg", &mut ingredient_stream)?;
-
 let mut claim_builder = ClaimBuilder::new(context.clone());
 
 // Ingredient thumbnail as a binary EmbeddedData assertion — returns a HashedUri.
-let thumb_uri = claim_builder.add_gathered_data(
-    labels::INGREDIENT_THUMBNAIL,
-    "image/jpeg",
-    &mut thumbnail_stream,
+let thumb_uri = claim_builder.add_gathered_assertion(
+    ClaimAssertion::new(labels::INGREDIENT_THUMBNAIL)
+        .with_stream("image/jpeg", &mut thumbnail_stream),
 )?;
 
-// Ingredient assertion from JSON text, merged with the reader's manifest data.
-let ing_uri = claim_builder.add_gathered_ingredient(
-    r#"{"relationship": "parentOf", "dc:title": "source.jpg", "dc:format": "image/jpeg"}"#,
-    Some(&ingredient_reader),
-    vec![], // redactions
+// Ingredient assertion from JSON, with its own asset stream to extract provenance from.
+let ing_uri = claim_builder.add_gathered_assertion(
+    ClaimAssertion::new(IngredientAssertion::LABEL)
+        .with_json(&serde_json::json!({
+            "relationship": "parentOf",
+            "dc:title": "source.jpg",
+            "dc:format": "image/jpeg",
+            "thumbnail": thumb_uri,
+        }))?
+        .with_stream("image/jpeg", &mut ingredient_stream),
 )?;
 
 // Reference the ingredient directly from an action via its HashedUri.
 let action = Action::new(c2pa_action::OPENED).add_ingredient_ref(ing_uri);
-claim_builder.add_gathered_assertion(Actions::LABEL, &Actions::new().add_action(action))?;
+claim_builder.add_gathered_assertion(
+    ClaimAssertion::new(Actions::LABEL).with_json(&Actions::new().add_action(action))?,
+)?;
 
-// Hard binding — the caller already embedded a placeholder into `source` before this point.
-let binding = HardBinding::new("image/jpeg", &context).generate(&context, &mut source)?;
-claim_builder.set_hard_binding(binding)?;
+// Hard binding — picks BoxHash directly by label; the caller already embedded a placeholder
+// into `source` before this point (or, as here, prefer_box_hash needs no placeholder at all).
+claim_builder.add_gathered_assertion(
+    ClaimAssertion::new(BoxHash::LABEL).with_stream("image/jpeg", &mut source),
+)?;
 
 let jumbf = claim_builder.sign()?; // uses the signer configured on `context`
 let manifest_bytes = Store::get_composed_manifest(&jumbf, "image/jpeg")?;

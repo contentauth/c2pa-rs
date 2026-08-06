@@ -245,6 +245,7 @@ pub use assertions::Relationship;
 pub use builder::{Builder, BuilderIntent, HashType, ManifestDefinition};
 pub use c2pa_raw_crypto::{RawSignatureValidationError, RawSigner, RawSignerError, SigningAlg};
 pub use callback_signer::{CallbackFunc, CallbackSigner};
+pub use claim_assertion::ClaimAssertion;
 pub use claim_builder::ClaimBuilder;
 pub use claim_generator_info::ClaimGeneratorInfo;
 #[doc(inline)]
@@ -271,7 +272,6 @@ pub(crate) enum SigningAlgSchema {
 pub use error::{Error, Result};
 #[doc(hidden)]
 pub use external_manifest::ManifestPatchCallback;
-pub use hard_binding::{HardBinding, HardBindingAssertion};
 pub use hash_utils::{hash_stream_by_alg, HashRange};
 pub use hashed_uri::HashedUri;
 pub use ingredient::Ingredient;
@@ -294,6 +294,7 @@ pub(crate) mod asset_io;
 pub(crate) mod builder;
 pub(crate) mod callback_signer;
 pub(crate) mod claim;
+pub(crate) mod claim_assertion;
 pub(crate) mod claim_builder;
 pub(crate) mod claim_generator_info;
 pub(crate) mod context;

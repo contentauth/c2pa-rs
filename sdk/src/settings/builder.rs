@@ -518,6 +518,10 @@ pub struct BuilderSettings {
     /// The name of the vendor creating the content credential.
     pub vendor: Option<String>,
 
+    /// The hash algorithm to use for the manifest. If not set, the default is SHA-256.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hash_alg: Option<String>,
+
     /// When set, used as [`ClaimGeneratorInfo`] when
     /// [`ManifestDefinition::claim_generator_info`](crate::builder::ManifestDefinition) is empty
     /// (e.g. key omitted in JSON or an empty array). If `None` or when the definition lists at
@@ -597,6 +601,7 @@ impl Default for BuilderSettings {
     fn default() -> Self {
         BuilderSettings {
             vendor: None,
+            hash_alg: None,
             claim_generator_info: None,
             thumbnail: ThumbnailSettings::default(),
             actions: ActionsSettings::default(),

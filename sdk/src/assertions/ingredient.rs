@@ -121,8 +121,7 @@ impl<'de> Deserialize<'de> for Ingredient {
     }
 }
 
-/// Clone by value, so `&Ingredient` can be used anywhere an owned value is expected (e.g.
-/// [`crate::ClaimBuilder::add_gathered_ingredient`]).
+/// Clone by value, so `&Ingredient` can be used anywhere an owned value is expected.
 impl From<&Ingredient> for Ingredient {
     fn from(value: &Ingredient) -> Self {
         value.clone()
