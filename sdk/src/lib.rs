@@ -302,7 +302,6 @@ pub(crate) mod cose_validator;
 pub(crate) mod crjson;
 pub(crate) mod error;
 pub(crate) mod external_manifest;
-pub(crate) mod hard_binding;
 pub(crate) mod hashed_uri;
 pub(crate) mod ingredient;
 

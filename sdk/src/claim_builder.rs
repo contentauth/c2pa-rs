@@ -36,15 +36,16 @@ use crate::{
         labels::parse_label, Actions, BmffHash, BoxHash, DataHash, EmbeddedData,
         IngredientAssertion, Metadata, UserCbor,
     },
+    asset_io::{CAIRead, CAIReadWrapper},
     claim::Claim,
     claim_assertion::ClaimAssertion,
-    context::Context,
+    context::{Context, ProgressPhase},
     error::{Error, Result},
-    hard_binding::{generate_hard_binding, HardBindingAssertion},
     jumbf::labels::{to_assertion_uri, to_manifest_uri, to_signature_uri},
+    jumbf_io,
     store::Store,
     utils::mime::format_to_mime,
-    HashType, HashedUri, Reader,
+    HashRange, HashType, HashedUri, Reader,
 };
 
 /// Builds a `Claim` directly and eagerly. See the module documentation for the model this
@@ -61,6 +62,9 @@ impl ClaimBuilder {
     /// be computed once every `ClaimGeneratorInfo` is known, which has no equivalent here, so
     /// there's no v1 code path to opt into in the first place.
     const CLAIM_VERSION: usize = 2;
+    /// Fixed hash algorithm used for hard-binding generation (independent of
+    /// `ClaimBuilder::set_hash_alg`, which only affects the claim's own default).
+    const HARD_BINDING_ALG: &'static str = "sha256";
 
     /// Creates a new claim with an auto-generated label.
     pub fn new(context: Arc<Context>) -> Self {
@@ -193,7 +197,7 @@ impl ClaimBuilder {
         label: &str,
         match_label: &str,
         value: Option<c2pa_cbor::Value>,
-        stream: Option<(String, &mut dyn crate::asset_io::CAIRead)>,
+        stream: Option<(String, &mut dyn CAIRead)>,
         created: bool,
     ) -> Result<HashedUri> {
         if let Some((format, stream)) = stream {
@@ -240,7 +244,7 @@ impl ClaimBuilder {
     fn insert_ingredient(
         &mut self,
         value: Option<c2pa_cbor::Value>,
-        stream: Option<(String, &mut dyn crate::asset_io::CAIRead)>,
+        stream: Option<(String, &mut dyn CAIRead)>,
         c2pa_data: Option<Vec<u8>>,
         created: bool,
     ) -> Result<HashedUri> {
@@ -354,99 +358,209 @@ impl ClaimBuilder {
             })
     }
 
-    /// Generates a hard-binding assertion of the kind named by `label` (`DataHash`/`BmffHash`/
-    /// `BoxHash`) from `stream`, then adds it as the claim's hard binding (first add) or
-    /// replaces the existing one (every add after the first) — there can only be one per claim.
-    ///
-    /// A replacement must be the same kind as the existing one and no larger — the claim's byte
-    /// layout must not grow. A `DataHash` replacement that's smaller is padded back up to match
-    /// exactly; `BmffHash`/`BoxHash` have no padding field, so a smaller replacement is accepted
-    /// as-is (the container tolerates the resulting slack).
+    /// Dispatches a hard-binding label (`DataHash`/`BmffHash`/`BoxHash`) to its own generator and
+    /// insertion logic — see [`ClaimBuilder::insert_data_hash`]/[`ClaimBuilder::insert_bmff_hash`]/
+    /// [`ClaimBuilder::insert_box_hash`].
     fn insert_hard_binding(
         &mut self,
         label: &str,
         version: usize,
-        stream: Option<(String, &mut dyn crate::asset_io::CAIRead)>,
-        exclusions: Option<Vec<crate::HashRange>>,
+        stream: Option<(String, &mut dyn CAIRead)>,
+        exclusions: Option<Vec<HashRange>>,
     ) -> Result<HashedUri> {
-        let hash_type = match label {
-            DataHash::LABEL => HashType::Data,
-            BmffHash::LABEL => HashType::Bmff,
-            BoxHash::LABEL => HashType::Box,
-            _ => unreachable!("insert_hard_binding only called for hard-binding labels"),
-        };
-
-        if hash_type != HashType::Data && exclusions.is_some() {
-            return Err(Error::BadParam(format!(
-                "with_exclusions is only valid for '{}'",
-                DataHash::LABEL
-            )));
-        }
-
         let Some((format, stream)) = stream else {
             return Err(Error::BadParam(format!(
                 "'{label}' requires with_stream (the asset to hash)"
             )));
         };
 
-        let binding = generate_hard_binding(
-            hash_type,
-            &format,
-            exclusions.unwrap_or_default(),
-            &self.context,
+        match label {
+            DataHash::LABEL => self.insert_data_hash(exclusions.unwrap_or_default(), stream),
+            BmffHash::LABEL => {
+                Self::reject_exclusions(exclusions, BmffHash::LABEL)?;
+                self.insert_bmff_hash(version, stream)
+            }
+            BoxHash::LABEL => {
+                Self::reject_exclusions(exclusions, BoxHash::LABEL)?;
+                self.insert_box_hash(&format, stream)
+            }
+            _ => unreachable!("insert_hard_binding only called for hard-binding labels"),
+        }
+    }
+
+    /// `with_exclusions` is only meaningful for `DataHash` — reject it for any other hard-binding
+    /// label instead of silently ignoring it.
+    fn reject_exclusions(exclusions: Option<Vec<HashRange>>, label: &str) -> Result<()> {
+        if exclusions.is_some() {
+            return Err(Error::BadParam(format!(
+                "with_exclusions is only valid for '{}', not '{label}'",
+                DataHash::LABEL
+            )));
+        }
+        Ok(())
+    }
+
+    /// Reads `stream` (the finished asset, with the manifest placeholder already embedded) and
+    /// computes a `DataHash` over it, excluding `exclusions` (the placeholder region).
+    fn generate_data_hash(
+        &self,
+        exclusions: Vec<HashRange>,
+        stream: &mut dyn CAIRead,
+    ) -> Result<DataHash> {
+        let exclusion_arg = if exclusions.is_empty() {
+            None
+        } else {
+            Some(exclusions.clone())
+        };
+        let mut cb = |step, total| {
+            self.context
+                .check_progress(ProgressPhase::Hashing, step, total)
+        };
+        let hash = crate::utils::hash_utils::hash_stream_by_alg_with_progress(
+            Self::HARD_BINDING_ALG,
             stream,
+            exclusion_arg,
+            true,
+            &mut cb,
         )?;
 
+        let mut dh = DataHash::new("jumbf manifest", Self::HARD_BINDING_ALG);
+        for exclusion in exclusions {
+            dh.add_exclusion(exclusion);
+        }
+        dh.set_hash(hash);
+
+        Ok(dh)
+    }
+
+    /// First-time add or replace of a `DataHash` hard binding. A replacement is padded back up to
+    /// match the existing one's encoded byte length exactly (`update_data_hash` handles this),
+    /// erroring only if the new value is already larger than that.
+    fn insert_data_hash(
+        &mut self,
+        exclusions: Vec<HashRange>,
+        stream: &mut dyn CAIRead,
+    ) -> Result<HashedUri> {
+        let dh = self.generate_data_hash(exclusions, stream)?;
+
         match self.existing_hard_binding() {
-            None => match binding {
-                HardBindingAssertion::Data(dh) => self.insert_assertion(&dh, true),
-                HardBindingAssertion::Bmff(mut bh) => {
-                    bh.set_bmff_version(version);
-                    self.insert_assertion(&bh, true)
-                }
-                HardBindingAssertion::Box(bh) => self.insert_assertion(&bh, true),
-            },
-            Some((existing_type, existing_len)) => {
-                if binding.hash_type() != existing_type {
-                    return Err(Error::BadParam(format!(
-                        "Hard binding kind mismatch: existing is {existing_type:?}, replacement \
-                         is {:?}. There can only be one hard binding per claim.",
-                        binding.hash_type()
-                    )));
-                }
-
-                match binding {
-                    // update_data_hash() already pads to match existing_len exactly, erroring
-                    // if larger.
-                    HardBindingAssertion::Data(dh) => self.claim.update_data_hash(dh)?,
-                    HardBindingAssertion::Bmff(mut bh) => {
-                        bh.set_bmff_version(version);
-                        let assertion = bh.to_assertion()?;
-                        if assertion.data().len() > existing_len {
-                            return Err(Error::BadParam(
-                                "Replacement BmffHash is larger than the existing one — the \
-                                 claim's byte layout must not grow."
-                                    .to_string(),
-                            ));
-                        }
-                        self.claim.update_bmff_hash(bh)?
-                    }
-                    HardBindingAssertion::Box(bh) => {
-                        let assertion = bh.to_assertion()?;
-                        if assertion.data().len() > existing_len {
-                            return Err(Error::BadParam(
-                                "Replacement BoxHash is larger than the existing one — the \
-                                 claim's byte layout must not grow."
-                                    .to_string(),
-                            ));
-                        }
-                        self.claim.replace_assertion(assertion)?
-                    }
-                };
-
-                self.find_hard_binding_uri(label).ok_or(Error::NotFound)
+            None => self.insert_assertion(&dh, true),
+            Some((HashType::Data, _)) => {
+                self.claim.update_data_hash(dh)?;
+                self.find_hard_binding_uri(DataHash::LABEL)
+                    .ok_or(Error::NotFound)
+            }
+            Some((existing_type, _)) => {
+                Err(Self::hard_binding_mismatch(existing_type, HashType::Data))
             }
         }
+    }
+
+    /// Reads `stream` (the finished asset, with the manifest placeholder already embedded) and
+    /// computes a `BmffHash` over it. Exclusions are derived automatically from the BMFF
+    /// structure.
+    fn generate_bmff_hash(&self, stream: &mut dyn CAIRead) -> Result<BmffHash> {
+        let mut bmff_hash = BmffHash::new("jumbf manifest", Self::HARD_BINDING_ALG, None);
+        bmff_hash.set_default_exclusions();
+
+        let mut cb = |step, total| {
+            self.context
+                .check_progress(ProgressPhase::Hashing, step, total)
+        };
+        bmff_hash.gen_hash_from_stream_with_progress(stream, &mut cb)?;
+
+        Ok(bmff_hash)
+    }
+
+    /// First-time add or replace of a `BmffHash` hard binding. A replacement must not be larger
+    /// than the existing one's encoded byte length — the claim's byte layout must not grow, and
+    /// `BmffHash` has no padding field to absorb a smaller replacement's slack.
+    fn insert_bmff_hash(&mut self, version: usize, stream: &mut dyn CAIRead) -> Result<HashedUri> {
+        let mut bh = self.generate_bmff_hash(stream)?;
+        bh.set_bmff_version(version);
+
+        match self.existing_hard_binding() {
+            None => self.insert_assertion(&bh, true),
+            Some((HashType::Bmff, existing_len)) => {
+                let assertion = bh.to_assertion()?;
+                if assertion.data().len() > existing_len {
+                    return Err(Self::hard_binding_too_large("BmffHash"));
+                }
+                self.claim.update_bmff_hash(bh)?;
+                self.find_hard_binding_uri(BmffHash::LABEL)
+                    .ok_or(Error::NotFound)
+            }
+            Some((existing_type, _)) => {
+                Err(Self::hard_binding_mismatch(existing_type, HashType::Bmff))
+            }
+        }
+    }
+
+    /// Reads `stream` (the finished asset, with the manifest placeholder already embedded) and
+    /// computes a `BoxHash` over it. `format` must support box hashing (see
+    /// `AssetIOHandler::asset_box_hash_ref`).
+    fn generate_box_hash(&self, format: &str, stream: &mut dyn CAIRead) -> Result<BoxHash> {
+        let handler = jumbf_io::get_assetio_handler(format).ok_or(Error::UnsupportedType)?;
+        let bhp = handler.asset_box_hash_ref().ok_or_else(|| {
+            Error::BadParam(format!("Format '{format}' does not support BoxHash"))
+        })?;
+
+        let mut bh = BoxHash { boxes: Vec::new() };
+        // minimal_form=false: hash each structural box independently rather than summing ranges
+        // (see Builder::update_hash_from_stream for why).
+        let cb: Box<dyn FnMut(u32, u32) -> Result<()>> = Box::new(|step, total| {
+            self.context
+                .check_progress(ProgressPhase::Hashing, step, total)
+        });
+        // generate_box_hash_from_stream_with_progress requires a Sized stream type;
+        // CAIReadWrapper gives `dyn CAIRead` a concrete Sized wrapper to satisfy that.
+        let mut wrapper = CAIReadWrapper { reader: stream };
+        bh.generate_box_hash_from_stream_with_progress(
+            &mut wrapper,
+            Self::HARD_BINDING_ALG,
+            bhp,
+            false,
+            cb,
+        )?;
+
+        Ok(bh)
+    }
+
+    /// First-time add or replace of a `BoxHash` hard binding. A replacement must not be larger
+    /// than the existing one's encoded byte length — the claim's byte layout must not grow (the
+    /// container tolerates a smaller replacement's resulting slack).
+    fn insert_box_hash(&mut self, format: &str, stream: &mut dyn CAIRead) -> Result<HashedUri> {
+        let bh = self.generate_box_hash(format, stream)?;
+
+        match self.existing_hard_binding() {
+            None => self.insert_assertion(&bh, true),
+            Some((HashType::Box, existing_len)) => {
+                let assertion = bh.to_assertion()?;
+                if assertion.data().len() > existing_len {
+                    return Err(Self::hard_binding_too_large("BoxHash"));
+                }
+                self.claim.replace_assertion(assertion)?;
+                self.find_hard_binding_uri(BoxHash::LABEL)
+                    .ok_or(Error::NotFound)
+            }
+            Some((existing_type, _)) => {
+                Err(Self::hard_binding_mismatch(existing_type, HashType::Box))
+            }
+        }
+    }
+
+    fn hard_binding_mismatch(existing: HashType, replacement: HashType) -> Error {
+        Error::BadParam(format!(
+            "Hard binding kind mismatch: existing is {existing:?}, replacement is \
+             {replacement:?}. There can only be one hard binding per claim."
+        ))
+    }
+
+    fn hard_binding_too_large(kind: &str) -> Error {
+        Error::BadParam(format!(
+            "Replacement {kind} is larger than the existing one — the claim's byte layout must \
+             not grow."
+        ))
     }
 
     /// Signs the manifest and returns the raw signed JUMBF bytes, using the signer configured on
@@ -532,6 +646,59 @@ mod tests {
         jumbf_io::save_jumbf_to_stream("image/jpeg", stream, &mut output, &jumbf)
             .expect("save jumbf to stream");
         output.into_inner()
+    }
+
+    #[test]
+    fn test_generate_data_hash() {
+        let claim_builder = ClaimBuilder::new(Arc::new(test_context()));
+        let mut stream = Cursor::new(b"arbitrary asset bytes, not a real jpeg".to_vec());
+
+        let dh = claim_builder
+            .generate_data_hash(vec![], &mut stream)
+            .expect("generate DataHash");
+        assert!(!dh.hash.is_empty(), "hash should be computed");
+    }
+
+    #[test]
+    fn test_generate_data_hash_with_exclusions() {
+        let claim_builder = ClaimBuilder::new(Arc::new(test_context()));
+        let mut stream = Cursor::new(vec![0u8; 100]);
+
+        let dh = claim_builder
+            .generate_data_hash(vec![HashRange::new(0, 10)], &mut stream)
+            .expect("generate DataHash with exclusions");
+        assert_eq!(dh.exclusions.as_ref().map(|e| e.len()), Some(1));
+    }
+
+    #[test]
+    fn test_generate_box_hash() {
+        let claim_builder = ClaimBuilder::new(Arc::new(test_context()));
+        let mut stream = Cursor::new(TEST_IMAGE_CLEAN);
+
+        let bh = claim_builder
+            .generate_box_hash("image/jpeg", &mut stream)
+            .expect("generate BoxHash");
+        assert!(!bh.boxes.is_empty(), "BoxHash must have at least one box");
+        assert!(
+            bh.boxes.iter().any(|bm| !bm.hash.is_empty()),
+            "at least one box should have a computed hash"
+        );
+    }
+
+    #[test]
+    fn test_generate_bmff_hash() {
+        let claim_builder = ClaimBuilder::new(Arc::new(test_context()));
+        // A minimal-enough stream: BmffHash's own default exclusions/hashing don't require a
+        // structurally valid BMFF file for this codepath (no mdat exclusions were registered).
+        let mut stream = Cursor::new(vec![0u8; 64]);
+
+        let bh = claim_builder
+            .generate_bmff_hash(&mut stream)
+            .expect("generate BmffHash");
+        assert!(
+            !bh.exclusions().is_empty(),
+            "default exclusions should be set"
+        );
     }
 
     #[test]
