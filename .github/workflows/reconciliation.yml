@@ -1,0 +1,132 @@
+name: Release-branch reconciliation
+
+# Reactive backstop for the upstream-first rule. The proactive guard is
+# upstream-first-check.yml, which blocks a PR to a release branch that isn't
+# already on `main`; this job catches anything that still slips through (e.g. a
+# direct push that bypassed a PR). Everything is supposed to land on `main`
+# first and only be cherry-picked onto release-line branches. This job detects
+# the opposite -- a commit that exists on a release-line branch but not on
+# `main` -- and opens an issue so the change can be forward-ported and isn't
+# lost across a future major bump.
+#
+# It deliberately does NOT merge a release-line branch back into `main`:
+# merging into the actively-refactored `main` is the conflict-prone direction
+# and risks resurrecting code a refactor removed.
+#
+# Release-ceremony commits are excluded. A release line carries version/
+# changelog bookkeeping commits that are native to the release process and
+# must NOT be forward-ported -- RC version bumps (release-rc.yml), the final
+# release-prep commit, etc. `main` owns its own versions (release-plz plus the
+# dev-cycle bump in release-train-cut.yml), so replaying these onto `main`
+# would only cause conflicts. They are identified structurally -- by a diff
+# confined entirely to bookkeeping paths (Cargo.toml, Cargo.lock, CHANGELOG.md)
+# -- rather than by author or commit message, both of which vary (some bumps
+# are made by github-actions[bot], some by a maintainer by hand). Any commit
+# that touches a non-bookkeeping file is real work and is still reported.
+
+on:
+  schedule:
+    - cron: '0 13 * * 1-5' # weekday mornings (UTC)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  reconcile:
+    name: Detect drift from main
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Extend with active v0.* lines as they are created.
+        branch: [stable]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+
+      - name: Find commits on release branch missing from main
+        id: drift
+        run: |
+          if ! git ls-remote --exit-code --heads origin "${{ matrix.branch }}" >/dev/null 2>&1; then
+            echo "Branch ${{ matrix.branch }} does not exist yet; nothing to reconcile."
+            echo "missing=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch origin main "${{ matrix.branch }}"
+          # `git cherry` marks with `+` the commits on the release branch whose
+          # change is NOT present (as an equivalent patch) on main. Cherry-picks
+          # already on main are patch-equivalent and are NOT marked, so the `+`
+          # set is exactly the commits native to the release line.
+          CANDIDATES=$(git cherry origin/main "origin/${{ matrix.branch }}" | sed -n 's/^+ //p')
+
+          # Drop release-ceremony commits: those whose entire diff is confined
+          # to version/changelog bookkeeping files (see header comment). A
+          # commit touching any other path is real work and is reported.
+          MISSING=""
+          for sha in $CANDIDATES; do
+            files=$(git diff-tree --no-commit-id --name-only -r "$sha")
+            # -vE prints paths that are NOT bookkeeping; `|| true` keeps the
+            # step alive under `set -e` when grep matches nothing (all files
+            # are bookkeeping, i.e. a ceremony commit).
+            non_bookkeeping=$(printf '%s\n' "$files" \
+              | grep -vE '(^|/)Cargo\.toml$|^Cargo\.lock$|(^|/)CHANGELOG\.md$' || true)
+            if [ -n "$files" ] && [ -z "$non_bookkeeping" ]; then
+              echo "Skipping release-ceremony commit $sha (version/changelog bookkeeping only)."
+            else
+              MISSING="${MISSING}+ ${sha}"$'\n'
+            fi
+          done
+          MISSING=$(printf '%s' "$MISSING" | sed '/^$/d')
+
+          {
+            echo "missing<<EOF"
+            echo "$MISSING"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open or update reconciliation issue
+        if: steps.drift.outputs.missing != ''
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const branch = '${{ matrix.branch }}';
+            const missing = `${{ steps.drift.outputs.missing }}`;
+            const title = `Reconciliation: \`${branch}\` has commits missing from \`main\``;
+            const body = [
+              `The following commits are on \`${branch}\` but not on \`main\` (an upstream-first violation):`,
+              '',
+              '```',
+              missing,
+              '```',
+              '',
+              'Please forward-port these to `main`. This branch is intentionally **not** auto-merged back into `main`.',
+            ].join('\n');
+
+            // Avoid opening a duplicate every run: update an existing open issue.
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'reconciliation',
+            });
+            const match = existing.data.find(i => i.title === title);
+            if (match) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: match.number,
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                labels: ['reconciliation'],
+                body,
+              });
+            }

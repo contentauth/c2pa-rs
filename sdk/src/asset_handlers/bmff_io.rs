@@ -401,7 +401,15 @@ fn box_start<R: Read + Seek + ?Sized>(reader: &mut R, is_large: bool) -> Result<
 }
 
 fn _skip_bytes<R: Read + Seek + ?Sized>(reader: &mut R, size: u64) -> Result<()> {
-    reader.seek(SeekFrom::Current(size as i64))?;
+    // `size as i64` on a value greater than i64::MAX wraps to a negative
+    // number, which would seek *backward* rather than skip forward. Compute
+    // the absolute target with checked_add on u64 and seek to it via
+    // `SeekFrom::Start`, which takes a u64 directly.
+    let current = reader.stream_position()?;
+    let target = current
+        .checked_add(size)
+        .ok_or_else(|| Error::InvalidAsset("BMFF skip past u64::MAX".to_string()))?;
+    reader.seek(SeekFrom::Start(target))?;
     Ok(())
 }
 
@@ -665,8 +673,14 @@ where
 
                     for data_map in data_map_vec {
                         // move to the start of exclusion
-                        skip_bytes_to(reader, box_start + data_map.offset)?;
-
+                        skip_bytes_to(
+                            reader,
+                            box_start
+                                .checked_add(data_map.offset)
+                                .ok_or(Error::InvalidAsset(
+                                    "BMFF data map offset overflow".to_string(),
+                                ))?,
+                        )?;
                         // match the data
                         let buf = reader.read_to_vec(data_map.value.len() as u64)?;
 
@@ -735,7 +749,7 @@ fn adjust_known_offsets<W: Write + CAIRead + ?Sized>(
     mut output: &mut W,
     bmff_tree: &Arena<BoxInfo>,
     bmff_path_map: &HashMap<String, Vec<Token>>,
-    adjust: i32,
+    adjust: i64,
 ) -> Result<()> {
     let start_pos = output.stream_position()?; // save starting point
 
@@ -2101,14 +2115,18 @@ impl CAIWriter for BmffIO {
         // write ContentProvenanceBox
         output_stream.write_all(&new_c2pa_box)?;
 
-        // calc offset adjustments
-        let offset_adjust: i32 = if end == 0 {
-            new_c2pa_box_size as i32
+        // calc offset adjustments. Use i64 so a box larger than i32::MAX
+        // (2 GiB) does not silently truncate and corrupt embedded offsets.
+        let new_c2pa_box_size_i64 = i64::try_from(new_c2pa_box_size)
+            .map_err(|_| Error::InvalidAsset("C2PA box too large".to_string()))?;
+        let offset_adjust: i64 = if end == 0 {
+            new_c2pa_box_size_i64
         } else {
             // value could be negative if box is truncated
             let existing_c2pa_box_size = end - start;
-            let pad_size: i32 = new_c2pa_box_size as i32 - existing_c2pa_box_size as i32;
-            pad_size
+            let existing_i64 = i64::try_from(existing_c2pa_box_size)
+                .map_err(|_| Error::InvalidAsset("existing C2PA box too large".to_string()))?;
+            new_c2pa_box_size_i64 - existing_i64
         };
 
         // write content after ContentProvenanceBox
@@ -2249,11 +2267,12 @@ impl CAIWriter for BmffIO {
         let mut before_manifest = input_stream.take(start as u64);
         std::io::copy(&mut before_manifest, output_stream)?;
 
-        // calc offset adjustments
-        // value will be negative since the box is truncated
-        let new_c2pa_box_size: i32 = 0;
+        // calc offset adjustments — value will be negative since the box is
+        // being truncated. Use i64 so boxes larger than i32::MAX (2 GiB) do
+        // not truncate and shift `stco`/`co64`/`iloc` offsets to garbage.
         let existing_c2pa_box_size = end - start;
-        let offset_adjust = new_c2pa_box_size - existing_c2pa_box_size as i32;
+        let offset_adjust: i64 = -i64::try_from(existing_c2pa_box_size)
+            .map_err(|_| Error::InvalidAsset("existing C2PA box too large".to_string()))?;
 
         // write content after ContentProvenanceBox
         input_stream.seek(SeekFrom::Start(end as u64))?;
@@ -2521,14 +2540,19 @@ impl RemoteRefEmbed for BmffIO {
                 // write ContentProvenanceBox
                 output_stream.write_all(&new_xmp_box)?;
 
-                // calc offset adjustments
-                let offset_adjust: i32 = if end == 0 {
-                    new_xmp_box_size as i32
+                // calc offset adjustments. Use i64 so XMP boxes larger than
+                // i32::MAX (2 GiB) do not silently truncate.
+                let new_xmp_box_size_i64 = i64::try_from(new_xmp_box_size)
+                    .map_err(|_| Error::InvalidAsset("XMP box too large".to_string()))?;
+                let offset_adjust: i64 = if end == 0 {
+                    new_xmp_box_size_i64
                 } else {
                     // value could be negative if box is truncated
                     let existing_xmp_box_size = end - start;
-                    let pad_size: i32 = new_xmp_box_size as i32 - existing_xmp_box_size as i32;
-                    pad_size
+                    let existing_i64 = i64::try_from(existing_xmp_box_size).map_err(|_| {
+                        Error::InvalidAsset("existing XMP box too large".to_string())
+                    })?;
+                    new_xmp_box_size_i64 - existing_i64
                 };
 
                 // write content after XMP box
@@ -2665,8 +2689,10 @@ pub(crate) fn inject_placeholder(
     // write content after free box
     std::io::copy(input_stream, output_stream)?;
 
-    // calc offset adjustments
-    let offset_adjust: i32 = free_box_bytes.len() as i32;
+    // calc offset adjustments — use i64 so a placeholder larger than
+    // i32::MAX (2 GiB) does not truncate.
+    let offset_adjust: i64 = i64::try_from(free_box_bytes.len())
+        .map_err(|_| Error::InvalidAsset("placeholder box too large".to_string()))?;
 
     // Manipulating the free box means we may need some patch offsets if they are file absolute offsets.
     if offset_adjust != 0 {
@@ -2806,6 +2832,530 @@ pub(crate) fn inject_manifest_into_free_box(
 pub enum BmffError {
     #[error("invalid file signature: {reason}")]
     InvalidFileSignature { reason: String },
+}
+
+// ---------------------------------------------------------------------------
+// Native BMFF sample reader.
+//
+// This is a small, hardened reimplementation of the narrow slice of the `mp4`
+// crate that `BmffHash` verification relies on for the timed-media, track-based
+// Merkle path: enumerate a file's tracks and read the bytes of an individual
+// sample. It parses only the sample-table boxes needed to map a sample id to a
+// byte range (`stsc`, `stco`/`co64`, `stsz`) plus `tkhd` for the track id, and
+// every offset/size computation is checked so a crafted asset yields an
+// `InvalidAsset` error rather than a panic. It intentionally does not touch the
+// `emsg`, `stts`, `ctts`, or `stsd` boxes, which is where the `mp4` crate's
+// panics lived.
+// ---------------------------------------------------------------------------
+
+/// One `stsc` run, with the 1-based `first_sample` derived at parse time (it is
+/// not stored on disk).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct StscRun {
+    pub first_chunk: u32,
+    pub samples_per_chunk: u32,
+    pub first_sample: u32,
+}
+
+/// The parsed sample tables for a single track, sufficient to locate and read
+/// any sample's bytes.
+#[derive(Debug)]
+pub(crate) struct SampleTrack {
+    track_id: u32,
+    stsc: Vec<StscRun>,
+    chunk_offsets: Vec<u64>,
+    // `stsz.sample_size`: when non-zero every sample has this fixed size and
+    // `sample_sizes` is empty; when zero, `sample_sizes` holds one entry per
+    // sample.
+    fixed_sample_size: u32,
+    sample_sizes: Vec<u32>,
+    sample_count: u32,
+}
+
+impl SampleTrack {
+    pub(crate) fn track_id(&self) -> u32 {
+        self.track_id
+    }
+
+    pub(crate) fn sample_count(&self) -> u32 {
+        self.sample_count
+    }
+
+    pub(crate) fn stsc_runs(&self) -> &[StscRun] {
+        &self.stsc
+    }
+
+    /// Returns the index of the `stsc` run governing `sample_id` (the last run
+    /// whose `first_sample <= sample_id`). Mirrors the historical behavior of
+    /// the `mp4` crate's `stsc_index`.
+    pub(crate) fn stsc_index(&self, sample_id: u32) -> Result<usize> {
+        if self.stsc.is_empty() {
+            return Err(Error::InvalidAsset("BMFF has no stsc entries".to_string()));
+        }
+
+        // The runs are ordered by `first_sample`, so the governing run is the
+        // last one whose `first_sample <= sample_id`. Tracking the running match
+        // (rather than indexing `i - 1`/`len - 1`) keeps this free of any
+        // subtraction that could underflow.
+        let mut governing = None;
+        for (i, run) in self.stsc.iter().enumerate() {
+            if run.first_sample <= sample_id {
+                governing = Some(i);
+            } else {
+                break;
+            }
+        }
+
+        governing
+            .ok_or_else(|| Error::InvalidAsset("BMFF sample precedes first stsc entry".to_string()))
+    }
+
+    /// Returns the size in bytes of `sample_id` (1-based).
+    fn sample_size(&self, sample_id: u32) -> Result<u32> {
+        if self.fixed_sample_size > 0 {
+            return Ok(self.fixed_sample_size);
+        }
+
+        let index = (sample_id as usize)
+            .checked_sub(1)
+            .ok_or_else(|| Error::InvalidAsset("BMFF sample id must be non-zero".to_string()))?;
+
+        self.sample_sizes
+            .get(index)
+            .copied()
+            .ok_or_else(|| Error::InvalidAsset("BMFF stsz entry not found".to_string()))
+    }
+
+    /// Reads the bytes of `sample_id` (1-based) from `reader`. Returns
+    /// `Ok(None)` when the sample or its chunk is not present in the sample
+    /// tables (matching the `mp4` crate, which the caller treats as a Merkle
+    /// location miss); returns `Err(InvalidAsset)` for malformed tables or a
+    /// sample that would read past the end of the stream.
+    fn read_sample<R: Read + Seek + ?Sized>(
+        &self,
+        reader: &mut R,
+        sample_id: u32,
+        stream_len: u64,
+    ) -> Result<Option<Vec<u8>>> {
+        if sample_id == 0 || sample_id > self.sample_count {
+            return Ok(None);
+        }
+
+        let run = &self.stsc[self.stsc_index(sample_id)?];
+
+        if run.samples_per_chunk == 0 {
+            return Err(Error::InvalidAsset(
+                "stsc samples_per_chunk must be non-zero".to_string(),
+            ));
+        }
+
+        // chunk_id (1-based) = (sample_id - first_sample) / samples_per_chunk + first_chunk.
+        let chunk_id = sample_id
+            .checked_sub(run.first_sample)
+            .map(|n| n / run.samples_per_chunk)
+            .and_then(|n| n.checked_add(run.first_chunk))
+            .ok_or_else(|| Error::InvalidAsset("BMFF stsc chunk_id overflow".to_string()))?;
+
+        let chunk_index = match (chunk_id as usize).checked_sub(1) {
+            Some(i) => i,
+            None => {
+                return Err(Error::InvalidAsset(
+                    "BMFF stsc chunk_id is zero".to_string(),
+                ))
+            }
+        };
+
+        let chunk_offset = match self.chunk_offsets.get(chunk_index) {
+            Some(o) => *o,
+            None => return Ok(None),
+        };
+
+        // Sum the sizes of the samples preceding this one within its chunk.
+        let first_sample_in_chunk = sample_id
+            - sample_id
+                .checked_sub(run.first_sample)
+                .ok_or_else(|| Error::InvalidAsset("BMFF stsc underflow".to_string()))?
+                % run.samples_per_chunk;
+
+        // Offset of this sample within its chunk = total size of the samples
+        // preceding it. For fixed-size samples that is a single product; only the
+        // variable-size case needs to walk the entries (and the stsz box size
+        // bounds that walk). This keeps read_sample O(1) for the common
+        // fixed-size case instead of O(samples-per-chunk), which would make the
+        // caller's per-sample loop quadratic over a single-chunk track.
+        let preceding_samples = sample_id - first_sample_in_chunk;
+        let mut intra_chunk_offset = (preceding_samples as u64)
+            .checked_mul(self.fixed_sample_size as u64)
+            .ok_or_else(|| Error::InvalidAsset("BMFF intra-chunk offset overflow".to_string()))?;
+
+        if self.fixed_sample_size == 0 {
+            for i in first_sample_in_chunk..sample_id {
+                intra_chunk_offset = intra_chunk_offset
+                    .checked_add(self.sample_size(i)? as u64)
+                    .ok_or_else(|| {
+                        Error::InvalidAsset("BMFF intra-chunk offset overflow".to_string())
+                    })?;
+            }
+        }
+
+        let sample_size = self.sample_size(sample_id)?;
+        let offset = chunk_offset
+            .checked_add(intra_chunk_offset)
+            .ok_or_else(|| Error::InvalidAsset("BMFF sample offset overflow".to_string()))?;
+
+        // Bound the read against the stream before allocating, so a crafted size
+        // cannot drive an unbounded allocation (memory amplification).
+        let end = offset
+            .checked_add(sample_size as u64)
+            .ok_or_else(|| Error::InvalidAsset("BMFF sample end overflow".to_string()))?;
+
+        if end > stream_len {
+            return Err(Error::InvalidAsset(
+                "BMFF sample extends beyond end of stream".to_string(),
+            ));
+        }
+
+        reader.seek(SeekFrom::Start(offset))?;
+        let mut buf = vec![0u8; sample_size as usize];
+        reader.read_exact(&mut buf)?;
+
+        Ok(Some(buf))
+    }
+}
+
+/// A parsed BMFF file exposing its tracks' sample tables, and the ability to
+/// read individual samples. Replaces the `mp4` crate for the timed-media
+/// Merkle-verification path.
+#[derive(Debug)]
+pub(crate) struct BmffSampleReader {
+    tracks: HashMap<u32, SampleTrack>,
+    stream_len: u64,
+}
+
+impl BmffSampleReader {
+    /// Parses `reader`, extracting the sample tables of every track under
+    /// `moov`. Does not retain the reader; sample bytes are read on demand via
+    /// [`BmffSampleReader::read_sample`] using a caller-supplied reader.
+    pub(crate) fn from_stream<R: Read + Seek + ?Sized>(reader: &mut R) -> Result<Self> {
+        let stream_len = stream_len(reader)?;
+
+        let mut tracks = HashMap::new();
+
+        if let Some((moov_start, moov_end)) = find_box(reader, 0, stream_len, BoxType::MoovBox)? {
+            let mut pos = moov_start;
+            while pos < moov_end {
+                let (name, content_start, box_end) = read_child(reader, pos, moov_end)?;
+                if name == BoxType::TrakBox {
+                    if let Some(track) = parse_trak(reader, content_start, box_end)? {
+                        // A track cannot contain more samples than the stream has
+                        // bytes. This bounds the `stsz` sample_count (which the
+                        // fixed-size branch does not otherwise cap) so a crafted
+                        // value cannot drive an enormous sample-iteration loop.
+                        if track.sample_count as u64 > stream_len {
+                            return Err(Error::InvalidAsset(
+                                "BMFF stsz sample count exceeds stream length".to_string(),
+                            ));
+                        }
+
+                        tracks.insert(track.track_id, track);
+                    }
+                }
+                pos = box_end;
+            }
+        }
+
+        Ok(Self { tracks, stream_len })
+    }
+
+    pub(crate) fn tracks(&self) -> &HashMap<u32, SampleTrack> {
+        &self.tracks
+    }
+
+    /// Reads sample `sample_id` (1-based) of `track_id` from `reader`. `reader`
+    /// must be the same stream the tables were parsed from.
+    pub(crate) fn read_sample<R: Read + Seek + ?Sized>(
+        &self,
+        reader: &mut R,
+        track_id: u32,
+        sample_id: u32,
+    ) -> Result<Option<Vec<u8>>> {
+        match self.tracks.get(&track_id) {
+            Some(track) => track.read_sample(reader, sample_id, self.stream_len),
+            None => Ok(None),
+        }
+    }
+}
+
+/// Reads the box header at `pos` and returns `(name, content_start, box_end)`,
+/// validating that the box lies within `[pos, end)` and is at least header-sized.
+fn read_child<R: Read + Seek + ?Sized>(
+    reader: &mut R,
+    pos: u64,
+    end: u64,
+) -> Result<(BoxType, u64, u64)> {
+    reader.seek(SeekFrom::Start(pos))?;
+    let header = BoxHeaderLite::read(reader)?;
+    let content_start = reader.stream_position()?;
+
+    let box_end = pos
+        .checked_add(header.size)
+        .ok_or_else(|| Error::InvalidAsset("BMFF box size overflow".to_string()))?;
+
+    if box_end > end || box_end < content_start {
+        return Err(Error::InvalidAsset(
+            "BMFF box size out of bounds".to_string(),
+        ));
+    }
+
+    Ok((header.name, content_start, box_end))
+}
+
+/// Scans the children in `[start, end)` for the first box of `target`, returning
+/// its `(content_start, box_end)`.
+fn find_box<R: Read + Seek + ?Sized>(
+    reader: &mut R,
+    start: u64,
+    end: u64,
+    target: BoxType,
+) -> Result<Option<(u64, u64)>> {
+    let mut pos = start;
+    while pos < end {
+        let (name, content_start, box_end) = read_child(reader, pos, end)?;
+        if name == target {
+            return Ok(Some((content_start, box_end)));
+        }
+        pos = box_end;
+    }
+    Ok(None)
+}
+
+/// Parses a `trak` box (children in `[start, end)`) into a [`SampleTrack`].
+///
+/// The `Ok(None)` vs `Err` distinction is deliberate: `Ok(None)` means this trak
+/// is not a readable sample track (a required box such as `tkhd`/`mdia`/`minf`/
+/// `stbl`/`stsc`/`stsz` or a chunk-offset table is simply absent), so it is
+/// skipped rather than failing the whole parse — real files carry hint/metadata
+/// tracks without full sample tables. A box that is *present but malformed*
+/// yields `Err` from the corresponding `parse_*` helper. A caller that needs a
+/// specific track therefore sees a missing one as "not found" (its `local_id`
+/// won't be in the map) and a corrupt one as a hard error.
+fn parse_trak<R: Read + Seek + ?Sized>(
+    reader: &mut R,
+    start: u64,
+    end: u64,
+) -> Result<Option<SampleTrack>> {
+    let (tkhd_start, tkhd_end) = match find_box(reader, start, end, BoxType::TkhdBox)? {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+    let track_id = parse_tkhd_track_id(reader, tkhd_start, tkhd_end)?;
+
+    // Descend moov/trak/mdia/minf/stbl.
+    let (mdia_start, mdia_end) = match find_box(reader, start, end, BoxType::MdiaBox)? {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+    let (minf_start, minf_end) = match find_box(reader, mdia_start, mdia_end, BoxType::MinfBox)? {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+    let (stbl_start, stbl_end) = match find_box(reader, minf_start, minf_end, BoxType::StblBox)? {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+
+    let (stsc_start, stsc_end) = match find_box(reader, stbl_start, stbl_end, BoxType::StscBox)? {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+    let stsc = parse_stsc(reader, stsc_start, stsc_end)?;
+
+    let chunk_offsets =
+        if let Some((s, e)) = find_box(reader, stbl_start, stbl_end, BoxType::StcoBox)? {
+            parse_stco(reader, s, e)?
+        } else if let Some((s, e)) = find_box(reader, stbl_start, stbl_end, BoxType::Co64Box)? {
+            parse_co64(reader, s, e)?
+        } else {
+            return Ok(None);
+        };
+
+    let (stsz_start, stsz_end) = match find_box(reader, stbl_start, stbl_end, BoxType::StszBox)? {
+        Some(r) => r,
+        None => return Ok(None),
+    };
+    let (fixed_sample_size, sample_sizes, sample_count) = parse_stsz(reader, stsz_start, stsz_end)?;
+
+    Ok(Some(SampleTrack {
+        track_id,
+        stsc,
+        chunk_offsets,
+        fixed_sample_size,
+        sample_sizes,
+        sample_count,
+    }))
+}
+
+/// Reads the `track_id` field of a `tkhd` box (its content spans
+/// `[start, end)`), honoring the version-dependent field layout.
+fn parse_tkhd_track_id<R: Read + Seek + ?Sized>(
+    reader: &mut R,
+    start: u64,
+    end: u64,
+) -> Result<u32> {
+    reader.seek(SeekFrom::Start(start))?;
+    let (version, _flags) = read_box_header_ext(reader)?;
+
+    // Skip creation_time + modification_time: 8 bytes for v0, 16 for v1.
+    let skip = if version == 1 { 16u64 } else { 8u64 };
+    let track_id_pos = reader
+        .stream_position()?
+        .checked_add(skip)
+        .ok_or_else(|| Error::InvalidAsset("BMFF tkhd overflow".to_string()))?;
+
+    if track_id_pos.checked_add(4).map(|p| p > end).unwrap_or(true) {
+        return Err(Error::InvalidAsset("BMFF tkhd too small".to_string()));
+    }
+
+    reader.seek(SeekFrom::Start(track_id_pos))?;
+    Ok(reader.read_u32::<BigEndian>()?)
+}
+
+/// Rejects a declared entry count whose `entry_size`-byte entries, starting at
+/// `entries_start`, would read past `end` (guards against memory-amplification),
+/// returning the count as a `usize` when it fits.
+fn bounded_entry_count(
+    declared: u32,
+    entries_start: u64,
+    end: u64,
+    entry_size: u64,
+) -> Result<usize> {
+    // Callers pass a fixed, non-zero entry size, but guard the division anyway so
+    // this helper can never divide by zero.
+    if entry_size == 0 {
+        return Err(Error::InvalidAsset(
+            "BMFF sample-table entry size must be non-zero".to_string(),
+        ));
+    }
+
+    let available = end.saturating_sub(entries_start);
+    let max_entries = available / entry_size;
+
+    if declared as u64 > max_entries {
+        return Err(Error::InvalidAsset(
+            "BMFF sample-table entry count exceeds box size".to_string(),
+        ));
+    }
+
+    Ok(declared as usize)
+}
+
+fn parse_stsc<R: Read + Seek + ?Sized>(
+    reader: &mut R,
+    start: u64,
+    end: u64,
+) -> Result<Vec<StscRun>> {
+    reader.seek(SeekFrom::Start(start))?;
+    let (_version, _flags) = read_box_header_ext(reader)?;
+    let entry_count = reader.read_u32::<BigEndian>()?;
+
+    // Each stsc entry is 12 bytes: first_chunk, samples_per_chunk, sample_description_index.
+    let count = bounded_entry_count(entry_count, reader.stream_position()?, end, 12)?;
+
+    let mut raw = Vec::with_capacity(count);
+    for _ in 0..count {
+        let first_chunk = reader.read_u32::<BigEndian>()?;
+        let samples_per_chunk = reader.read_u32::<BigEndian>()?;
+        let _sample_description_index = reader.read_u32::<BigEndian>()?;
+        raw.push((first_chunk, samples_per_chunk));
+    }
+
+    // Derive the 1-based first_sample for each run: run i covers
+    // (next.first_chunk - this.first_chunk) * this.samples_per_chunk samples.
+    let mut runs = Vec::with_capacity(raw.len());
+    let mut first_sample: u32 = 1;
+    for i in 0..raw.len() {
+        let (first_chunk, samples_per_chunk) = raw[i];
+        runs.push(StscRun {
+            first_chunk,
+            samples_per_chunk,
+            first_sample,
+        });
+
+        if i + 1 < raw.len() {
+            let next_first_chunk = raw[i + 1].0;
+            first_sample = next_first_chunk
+                .checked_sub(first_chunk)
+                .and_then(|n| n.checked_mul(samples_per_chunk))
+                .and_then(|n| n.checked_add(first_sample))
+                .ok_or_else(|| {
+                    Error::InvalidAsset("BMFF stsc first_sample overflow".to_string())
+                })?;
+        }
+    }
+
+    Ok(runs)
+}
+
+fn parse_stco<R: Read + Seek + ?Sized>(reader: &mut R, start: u64, end: u64) -> Result<Vec<u64>> {
+    reader.seek(SeekFrom::Start(start))?;
+    let (_version, _flags) = read_box_header_ext(reader)?;
+    let entry_count = reader.read_u32::<BigEndian>()?;
+    let count = bounded_entry_count(entry_count, reader.stream_position()?, end, 4)?;
+
+    let mut offsets = Vec::with_capacity(count);
+    for _ in 0..count {
+        offsets.push(reader.read_u32::<BigEndian>()? as u64);
+    }
+    Ok(offsets)
+}
+
+fn parse_co64<R: Read + Seek + ?Sized>(reader: &mut R, start: u64, end: u64) -> Result<Vec<u64>> {
+    reader.seek(SeekFrom::Start(start))?;
+    let (_version, _flags) = read_box_header_ext(reader)?;
+    let entry_count = reader.read_u32::<BigEndian>()?;
+    let count = bounded_entry_count(entry_count, reader.stream_position()?, end, 8)?;
+
+    let mut offsets = Vec::with_capacity(count);
+    for _ in 0..count {
+        offsets.push(reader.read_u64::<BigEndian>()?);
+    }
+    Ok(offsets)
+}
+
+/// Returns `(fixed_sample_size, sample_sizes, sample_count)`.
+fn parse_stsz<R: Read + Seek + ?Sized>(
+    reader: &mut R,
+    start: u64,
+    end: u64,
+) -> Result<(u32, Vec<u32>, u32)> {
+    reader.seek(SeekFrom::Start(start))?;
+    let (_version, _flags) = read_box_header_ext(reader)?;
+    let sample_size = reader.read_u32::<BigEndian>()?;
+    let sample_count = reader.read_u32::<BigEndian>()?;
+
+    if sample_size > 0 {
+        // Fixed size: no per-sample table follows.
+        return Ok((sample_size, Vec::new(), sample_count));
+    }
+
+    // Variable sizes: `sample_count` u32 entries follow the two u32 header fields.
+    let entries_start = start
+        .checked_add(4 + 4 + 4)
+        .ok_or_else(|| Error::InvalidAsset("BMFF stsz overflow".to_string()))?;
+    let available = end.saturating_sub(entries_start);
+
+    if sample_count as u64 > available / 4 {
+        return Err(Error::InvalidAsset(
+            "BMFF stsz sample count exceeds box size".to_string(),
+        ));
+    }
+
+    let mut sizes = Vec::with_capacity(sample_count as usize);
+    for _ in 0..sample_count {
+        sizes.push(reader.read_u32::<BigEndian>()?);
+    }
+
+    Ok((0, sizes, sample_count))
 }
 
 #[cfg(test)]
@@ -2994,6 +3544,34 @@ pub mod tests {
         ));
     }
 
+    #[test]
+    fn test_bmff_datamap_offset_overflow_returns_error() {
+        // A crafted C2PA manifest can embed a DataMap.offset of u64::MAX, which when
+        // added to any non-zero box_start overflows u64 and panics. Verify that
+        // bmff_to_jumbf_exclusions returns Err instead of panicking.
+        let mut data: Vec<u8> = Vec::new();
+        // ftyp box (16 bytes): size=16, type='ftyp', major_brand='mp41', minor_version=0
+        data.extend_from_slice(&16u32.to_be_bytes());
+        data.extend_from_slice(b"ftyp");
+        data.extend_from_slice(b"mp41");
+        data.extend_from_slice(&0u32.to_be_bytes());
+        // mdat box (8 bytes): size=8, type='mdat'
+        data.extend_from_slice(&8u32.to_be_bytes());
+        data.extend_from_slice(b"mdat");
+
+        let mut exclusion = ExclusionsMap::new("/mdat".to_string());
+        exclusion.data = Some(vec![crate::assertions::DataMap {
+            offset: u64::MAX,
+            value: vec![0],
+        }]);
+
+        let mut reader = Cursor::new(data);
+        assert!(matches!(
+            bmff_to_jumbf_exclusions(&mut reader, &[exclusion], false),
+            Err(Error::InvalidAsset(_))
+        ));
+    }
+
     // Regression tests for the UUID box purpose field u64 underflow vulnerability.
     // Without the data_len == 0 guard, reading past the end of the box would decrement
     // data_len from 0 to u64::MAX (wrapping), causing the caller to attempt a
@@ -3054,5 +3632,393 @@ pub mod tests {
             get_uuid_box_purpose(&mut reader, node),
             Err(Error::InvalidAsset(_))
         ));
+    }
+
+    // Regression: `_skip_bytes(reader, size)` used `size as i64`, which wraps
+    // a u64 > i64::MAX to a negative i64 and would seek *backward* instead of
+    // forward. The fix routes through the current position + checked_add +
+    // SeekFrom::Start so the seek direction is always forward for any u64
+    // that fits inside the file, and any value that would overflow u64
+    // surfaces as InvalidAsset.
+    #[test]
+    fn test_skip_bytes_large_u64_does_not_seek_backward() {
+        // A small in-memory buffer where we can't actually seek that far
+        // forward — we only care that the function does not produce a
+        // *backward* seek and that its result is a well-formed forward seek
+        // to a position >= the starting position (or a controlled error).
+        let mut buf = vec![0u8; 32];
+        let mut reader = Cursor::new(&mut buf);
+        reader.seek(SeekFrom::Start(4)).unwrap();
+
+        // Size just above i64::MAX — the pre-fix `size as i64` cast would
+        // wrap this to a negative value. `SeekFrom::Start(u64)` handles the
+        // large target correctly; the actual stream_position after such a
+        // seek is well-defined (some backends allow seeking past EOF).
+        // The security property under test is *no backward seek*.
+        let before = reader.stream_position().unwrap();
+        let _ = _skip_bytes(&mut reader, (i64::MAX as u64) + 1);
+        let after = reader.stream_position().unwrap();
+        assert!(
+            after >= before,
+            "skip_bytes must never seek backward — before={before}, after={after}",
+        );
+    }
+
+    #[test]
+    fn test_skip_bytes_u64_max_returns_error_not_backward_seek() {
+        // A skip that would push the target past u64::MAX must surface as an
+        // `InvalidAsset` error, not wrap into a backward seek.
+        let mut buf = vec![0u8; 16];
+        let mut reader = Cursor::new(&mut buf);
+        reader.seek(SeekFrom::Start(8)).unwrap();
+
+        let result = _skip_bytes(&mut reader, u64::MAX);
+        assert!(
+            matches!(result, Err(Error::InvalidAsset(_))),
+            "expected InvalidAsset for skip past u64::MAX, got {result:?}",
+        );
+    }
+
+    // Regression: `offset_adjust` used to be an `i32` that received a
+    // `usize as i32` cast. For a C2PA / free box larger than i32::MAX
+    // (2 GiB), the cast truncated to a bogus value (potentially negative),
+    // corrupting every stco/co64/iloc offset patched via
+    // `adjust_known_offsets`. Widening `adjust_known_offsets` to accept `i64`
+    // and guarding every producer with `i64::try_from(usize)` makes the
+    // adjustment either faithful or a clean `InvalidAsset` error.
+    #[test]
+    fn test_adjust_known_offsets_accepts_over_i32_max_positive() {
+        // Empty tree / path map → adjust_known_offsets should not touch
+        // anything, and must accept an i64 far beyond i32::MAX without a
+        // truncation panic or an integer overflow.
+        let (arena, _root) = Arena::with_data(BoxInfo {
+            path: "".to_string(),
+            offset: 0,
+            size: 0,
+            box_type: BoxType::Empty,
+            parent: None,
+            user_type: None,
+            version: None,
+            flags: None,
+        });
+        let map: HashMap<String, Vec<Token>> = HashMap::new();
+        let mut cursor = Cursor::new(Vec::<u8>::new());
+        let big_adjust: i64 = (i32::MAX as i64) + 1;
+        adjust_known_offsets(&mut cursor, &arena, &map, big_adjust).unwrap();
+    }
+
+    #[test]
+    fn test_adjust_known_offsets_accepts_below_neg_i32_min_negative() {
+        // Same invariant on the negative side — the pre-fix i32 signature
+        // could not represent a shrink adjustment for a box larger than
+        // 2 GiB (its magnitude); the i64 signature can, and empty maps keep
+        // the function a no-op.
+        let (arena, _root) = Arena::with_data(BoxInfo {
+            path: "".to_string(),
+            offset: 0,
+            size: 0,
+            box_type: BoxType::Empty,
+            parent: None,
+            user_type: None,
+            version: None,
+            flags: None,
+        });
+        let map: HashMap<String, Vec<Token>> = HashMap::new();
+        let mut cursor = Cursor::new(Vec::<u8>::new());
+        let big_neg: i64 = (i32::MIN as i64) - 1;
+        adjust_known_offsets(&mut cursor, &arena, &map, big_neg).unwrap();
+    }
+
+    /// The native sample reader must parse our real MP4/MOV fixtures (which carry
+    /// full sample tables, multiple tracks, and codec sample entries) and read a
+    /// sample, so the parser's strict bounds don't reject legitimate assets.
+    #[test]
+    fn native_reader_parses_real_assets() {
+        for name in ["video1.mp4", "c.mov", "BigBuckBunny_320x180.mp4"] {
+            let bytes = std::fs::read(fixture_path(name))
+                .unwrap_or_else(|e| panic!("cannot read fixture {name}: {e}"));
+            let mut reader = Cursor::new(bytes);
+
+            let media = BmffSampleReader::from_stream(&mut reader)
+                .unwrap_or_else(|e| panic!("native reader failed to parse {name}: {e}"));
+            assert!(
+                !media.tracks().is_empty(),
+                "{name} should expose at least one track"
+            );
+
+            // Read sample 1 of the first track that has samples; it must succeed
+            // and return non-empty bytes.
+            let mut read_any = false;
+            for (track_id, track) in media.tracks() {
+                if track.sample_count() > 0 {
+                    let sample = media
+                        .read_sample(&mut reader, *track_id, 1)
+                        .unwrap_or_else(|e| panic!("{name} read_sample failed: {e}"))
+                        .unwrap_or_else(|| panic!("{name} track {track_id} sample 1 missing"));
+                    assert!(!sample.is_empty(), "{name} sample 1 should be non-empty");
+                    read_any = true;
+                    break;
+                }
+            }
+            assert!(read_any, "{name} should have a track with samples");
+        }
+    }
+
+    /// A zero entry size must not divide-by-zero; it is rejected instead.
+    #[test]
+    fn bounded_entry_count_rejects_zero_entry_size() {
+        assert!(bounded_entry_count(1, 0, 100, 0).is_err());
+    }
+
+    // --- Direct SampleTrack unit tests -------------------------------------
+    //
+    // These exercise the offset/size arithmetic and its defensive guards
+    // directly, including branches that the public verify path cannot reach
+    // (e.g. a degenerate `stsc` that the parser's `first_sample` derivation
+    // never actually produces).
+
+    fn one_run_track(
+        first_chunk: u32,
+        samples_per_chunk: u32,
+        chunk_offsets: Vec<u64>,
+        fixed_sample_size: u32,
+        sample_sizes: Vec<u32>,
+        sample_count: u32,
+    ) -> SampleTrack {
+        SampleTrack {
+            track_id: 1,
+            stsc: vec![StscRun {
+                first_chunk,
+                samples_per_chunk,
+                first_sample: 1,
+            }],
+            chunk_offsets,
+            fixed_sample_size,
+            sample_sizes,
+            sample_count,
+        }
+    }
+
+    #[test]
+    fn read_sample_out_of_range_is_none() {
+        let track = one_run_track(1, 1, vec![0], 4, vec![], 2);
+        let mut reader = Cursor::new(vec![0u8; 64]);
+        // sample_id 0 and sample_id > sample_count both yield Ok(None).
+        assert!(track.read_sample(&mut reader, 0, 64).unwrap().is_none());
+        assert!(track.read_sample(&mut reader, 3, 64).unwrap().is_none());
+    }
+
+    #[test]
+    fn read_sample_zero_samples_per_chunk_errs() {
+        let track = one_run_track(1, 0, vec![0], 4, vec![], 1);
+        let mut reader = Cursor::new(vec![0u8; 64]);
+        assert!(track.read_sample(&mut reader, 1, 64).is_err());
+    }
+
+    #[test]
+    fn read_sample_zero_first_chunk_errs() {
+        // first_chunk 0 makes chunk_id 0, which has no valid 0-based index.
+        let track = one_run_track(0, 1, vec![0], 4, vec![], 1);
+        let mut reader = Cursor::new(vec![0u8; 64]);
+        let err = track.read_sample(&mut reader, 1, 64).unwrap_err();
+        assert!(matches!(err, Error::InvalidAsset(ref m) if m.contains("chunk_id is zero")));
+    }
+
+    #[test]
+    fn read_sample_missing_chunk_offset_is_none() {
+        // stsc references chunk 1 but the offset table is empty.
+        let track = one_run_track(1, 1, vec![], 4, vec![], 1);
+        let mut reader = Cursor::new(vec![0u8; 64]);
+        assert!(track.read_sample(&mut reader, 1, 64).unwrap().is_none());
+    }
+
+    #[test]
+    fn read_sample_beyond_eof_errs() {
+        // Fixed size 4, chunk offset 60, stream len 62 -> read of [60,64) exceeds.
+        let track = one_run_track(1, 1, vec![60], 4, vec![], 1);
+        let mut reader = Cursor::new(vec![0u8; 62]);
+        let err = track.read_sample(&mut reader, 1, 62).unwrap_err();
+        assert!(matches!(err, Error::InvalidAsset(ref m) if m.contains("beyond end of stream")));
+    }
+
+    #[test]
+    fn read_sample_fixed_size_reads_correct_bytes() {
+        // Two 4-byte samples in one chunk at offset 8; sample 2 is bytes [12,16).
+        let mut data = vec![0u8; 8];
+        data.extend_from_slice(b"AAAABBBB");
+        let track = one_run_track(1, 2, vec![8], 4, vec![], 2);
+        let mut reader = Cursor::new(data);
+        assert_eq!(
+            track.read_sample(&mut reader, 1, 16).unwrap().unwrap(),
+            b"AAAA"
+        );
+        assert_eq!(
+            track.read_sample(&mut reader, 2, 16).unwrap().unwrap(),
+            b"BBBB"
+        );
+    }
+
+    #[test]
+    fn read_sample_variable_size_reads_correct_bytes() {
+        // Variable sizes [3, 5] in one chunk at offset 4; sample 2 is bytes [7,12).
+        let mut data = vec![0u8; 4];
+        data.extend_from_slice(b"aaabbbbb");
+        let track = one_run_track(1, 2, vec![4], 0, vec![3, 5], 2);
+        let mut reader = Cursor::new(data);
+        assert_eq!(
+            track.read_sample(&mut reader, 1, 12).unwrap().unwrap(),
+            b"aaa"
+        );
+        assert_eq!(
+            track.read_sample(&mut reader, 2, 12).unwrap().unwrap(),
+            b"bbbbb"
+        );
+    }
+
+    #[test]
+    fn stsc_index_empty_errs() {
+        let track = SampleTrack {
+            track_id: 1,
+            stsc: vec![],
+            chunk_offsets: vec![],
+            fixed_sample_size: 4,
+            sample_sizes: vec![],
+            sample_count: 0,
+        };
+        let err = track.stsc_index(1).unwrap_err();
+        assert!(matches!(err, Error::InvalidAsset(ref m) if m == "BMFF has no stsc entries"));
+    }
+
+    #[test]
+    fn stsc_index_precedes_first_entry_errs() {
+        // A degenerate run whose first_sample is greater than the queried id.
+        let track = SampleTrack {
+            track_id: 1,
+            stsc: vec![StscRun {
+                first_chunk: 1,
+                samples_per_chunk: 1,
+                first_sample: 5,
+            }],
+            chunk_offsets: vec![0],
+            fixed_sample_size: 4,
+            sample_sizes: vec![],
+            sample_count: 10,
+        };
+        let err = track.stsc_index(2).unwrap_err();
+        assert!(
+            matches!(err, Error::InvalidAsset(ref m) if m.contains("precedes first stsc entry"))
+        );
+    }
+
+    #[test]
+    fn stsc_index_selects_governing_run() {
+        let track = SampleTrack {
+            track_id: 1,
+            stsc: vec![
+                StscRun {
+                    first_chunk: 1,
+                    samples_per_chunk: 2,
+                    first_sample: 1,
+                },
+                StscRun {
+                    first_chunk: 3,
+                    samples_per_chunk: 1,
+                    first_sample: 5,
+                },
+            ],
+            chunk_offsets: vec![0, 0, 0],
+            fixed_sample_size: 4,
+            sample_sizes: vec![],
+            sample_count: 10,
+        };
+        assert_eq!(track.stsc_index(1).unwrap(), 0);
+        assert_eq!(track.stsc_index(4).unwrap(), 0);
+        assert_eq!(track.stsc_index(5).unwrap(), 1);
+        assert_eq!(track.stsc_index(9).unwrap(), 1);
+    }
+
+    #[test]
+    fn sample_size_variable_out_of_range_errs() {
+        let track = one_run_track(1, 1, vec![0], 0, vec![4], 1);
+        // sample_id 2 has no stsz entry.
+        assert!(track.sample_size(2).is_err());
+        // sample_id 0 underflows the 1-based index.
+        assert!(track.sample_size(0).is_err());
+    }
+
+    #[test]
+    fn parse_tkhd_track_id_version_1() {
+        // FullBox header (version 1), then 16 bytes of times, then track_id.
+        let mut b = vec![1u8, 0, 0, 0]; // version=1, flags=0
+        b.extend_from_slice(&[0u8; 16]); // creation+modification (64-bit each)
+        b.extend_from_slice(&42u32.to_be_bytes()); // track_id
+        let mut reader = Cursor::new(b);
+        let id = parse_tkhd_track_id(&mut reader, 0, 24).unwrap();
+        assert_eq!(id, 42);
+    }
+
+    #[test]
+    fn parse_tkhd_track_id_too_small_errs() {
+        let mut b = vec![0u8, 0, 0, 0]; // version=0, flags=0
+        b.extend_from_slice(&[0u8; 4]); // truncated before track_id
+        let mut reader = Cursor::new(b);
+        assert!(parse_tkhd_track_id(&mut reader, 0, 8).is_err());
+    }
+
+    #[test]
+    fn read_sample_end_overflow_errs() {
+        // A chunk offset at u64::MAX makes offset + size overflow.
+        let track = one_run_track(1, 1, vec![u64::MAX], 4, vec![], 1);
+        let mut reader = Cursor::new(vec![0u8; 16]);
+        let err = track.read_sample(&mut reader, 1, 16).unwrap_err();
+        assert!(matches!(err, Error::InvalidAsset(ref m) if m.contains("overflow")));
+    }
+
+    #[test]
+    fn read_sample_offset_overflow_errs() {
+        // chunk_offset near u64::MAX plus a preceding variable sample overflows
+        // the intra-chunk addition into the base offset.
+        let track = one_run_track(1, 2, vec![u64::MAX], 0, vec![1, 1], 2);
+        let mut reader = Cursor::new(vec![0u8; 16]);
+        let err = track.read_sample(&mut reader, 2, 16).unwrap_err();
+        assert!(matches!(err, Error::InvalidAsset(ref m) if m.contains("overflow")));
+    }
+
+    #[test]
+    fn parse_stsz_variable_count_exceeds_box_errs() {
+        // version/flags(4) + sample_size=0(4) + sample_count=1000(4); box ends
+        // right after the header, so 1000 entries cannot fit.
+        let mut b = vec![0u8; 4];
+        b.extend_from_slice(&0u32.to_be_bytes()); // sample_size = 0 (variable)
+        b.extend_from_slice(&1000u32.to_be_bytes()); // sample_count
+        let end = b.len() as u64;
+        let mut reader = Cursor::new(b);
+        assert!(parse_stsz(&mut reader, 0, end).is_err());
+    }
+
+    #[test]
+    fn read_child_rejects_box_extending_past_parent() {
+        // A box header claiming size 1000 inside a 20-byte parent range.
+        let mut b = 1000u32.to_be_bytes().to_vec();
+        b.extend_from_slice(b"free");
+        b.extend_from_slice(&[0u8; 12]);
+        let mut reader = Cursor::new(b);
+        assert!(read_child(&mut reader, 0, 20).is_err());
+    }
+
+    #[test]
+    fn from_stream_without_moov_has_no_tracks() {
+        // Just an ftyp box, no moov: parses to an empty track set.
+        let ftyp = {
+            let payload = b"isom\x00\x00\x00\x00isom";
+            let size = (8 + payload.len()) as u32;
+            let mut v = size.to_be_bytes().to_vec();
+            v.extend_from_slice(b"ftyp");
+            v.extend_from_slice(payload);
+            v
+        };
+        let mut reader = Cursor::new(ftyp);
+        let media = BmffSampleReader::from_stream(&mut reader).unwrap();
+        assert!(media.tracks().is_empty());
     }
 }

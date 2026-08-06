@@ -18,14 +18,13 @@ use std::{
 };
 
 use async_generic::async_generic;
+use c2pa_raw_crypto::RawSignatureValidationError;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
 use crate::{
-    crypto::{
-        cose::{parse_cose_sign1, CertificateTrustPolicy, CoseError, Verifier},
-        raw_signature::RawSignatureValidationError,
-    },
+    context::Context,
+    crypto::cose::{parse_cose_sign1, CertificateTrustPolicy, CoseError, Verifier},
     dynamic_assertion::PartialClaim,
     identity::{
         claim_aggregation::IcaSignatureVerifier,
@@ -43,7 +42,7 @@ use crate::{
     jumbf::labels::to_assertion_uri,
     log_current_item, log_item,
     status_tracker::StatusTracker,
-    Context, Manifest, Reader,
+    Manifest, Reader,
 };
 
 /// This struct represents the raw content of the identity assertion.
@@ -306,7 +305,7 @@ impl IdentityAssertion {
         status_tracker: &mut StatusTracker,
         context: &Context,
     ) -> Result<serde_json::Value, ValidationError<String>> {
-        let settings = Context::new().settings().clone();
+        let settings = context.settings();
         self.check_padding(status_tracker)?;
 
         self.signer_payload
@@ -411,12 +410,11 @@ impl IdentityAssertion {
                     .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
             }?;
 
-            log_current_item!(
-                "CAWG identity_claims_aggregation signature valid",
-                "validate_partial_claim"
-            )
-            .validation_status("cawg.ica.credential_valid")
-            .success(status_tracker);
+            // NOTE: The `cawg.ica.credential_valid` success code is issued by
+            // `IcaSignatureVerifier::check_signature` itself, and only when the
+            // credential is valid and its issuer is trusted (i.e. no
+            // `cawg.ica.untrusted_issuer` notice was generated). We must not issue
+            // it again here, or an untrusted issuer would be reported as valid.
 
             serde_json::to_value(result)
                 .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))

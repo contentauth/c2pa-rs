@@ -18,7 +18,7 @@
 
 use async_trait::async_trait;
 
-use crate::{crypto::raw_signature::SigningAlg, AsyncSigner, Error, Result, Signer};
+use crate::{AsyncSigner, Error, Result, Signer, SigningAlg};
 
 /// Defines a callback function interface for a [`CallbackSigner`].
 ///

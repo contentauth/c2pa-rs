@@ -121,7 +121,7 @@ impl StatusTracker {
 
     /// Returns `true` if the validation log contains a specific error.
     pub fn has_error<E: Debug>(&self, err: E) -> bool {
-        let err_type = format!("{:?}", &err);
+        let err_type = format!("{:?}", err);
         self.logged_items().iter().any(|vi| {
             if let Some(e) = &vi.err_val {
                 e == &err_type
