@@ -1241,6 +1241,25 @@ pub mod tests {
     }
 
     #[test]
+    fn test_validation_results_without_active_manifest() {
+        let ingredient = Ingredient {
+            validation_results: Some(ValidationResults::default()),
+            ..Ingredient::new_v3(Relationship::ParentOf)
+        };
+        assert!(ingredient.to_assertion().is_ok());
+
+        let ingredient = Ingredient {
+            active_manifest: Some(HashedUri::new(
+                "self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(),
+                Some("sha256".to_owned()),
+                &[1, 2, 3, 4, 5, 6, 7, 8, 9, 0],
+            )),
+            ..Ingredient::new_v3(Relationship::ParentOf)
+        };
+        assert!(ingredient.to_assertion().is_err());
+    }
+
+    #[test]
     fn test_from_stream() {
         use std::io::Cursor;
 
