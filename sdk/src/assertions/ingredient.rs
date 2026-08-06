@@ -434,11 +434,9 @@ impl Ingredient {
         */
 
         // check rules
-        if self.active_manifest.is_none() && self.validation_results.is_some()
-            || self.active_manifest.is_some() && self.validation_results.is_none()
-        {
+        if self.active_manifest.is_some() && self.validation_results.is_none() {
             return Err(serde::ser::Error::custom(
-                "Ingredient v3 activeManifest and validationResults must both be present or absent",
+                "Ingredient v3 activeManifest requires validationResults to be present",
             ));
         }
 
