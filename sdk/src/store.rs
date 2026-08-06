@@ -2300,47 +2300,59 @@ impl Store {
             ));
         };
 
-        // Write dynamic assertions only if placeholders were added during placeholder generation.
-        // We check if the dynamic assertion labels exist in the claim - if not, placeholders
-        // weren't added and we should skip writing to avoid size mismatches.
+        // Write any dynamic assertions exposed by the signer. The caller
+        // (`Builder::sign_embeddable`) reserves matching placeholder slots via
+        // `add_dynamic_assertion_placeholders` before calling this, so the assertion
+        // content replaces those slots in place. This must reuse the same
+        // `dynamic_assertions()` result across the whole operation – draining it on an
+        // earlier call is what silently dropped identity assertions in issue #2055.
         let dynamic_assertions = signer.dynamic_assertions();
         if !dynamic_assertions.is_empty() {
-            // Check if placeholders exist for these dynamic assertions
-            let has_placeholders = {
-                dynamic_assertions
-                    .iter()
-                    .all(|da| pc.assertion_hashed_uri_from_label(&da.label()).is_some())
-            };
+            // Every dynamic assertion needs a reserved placeholder slot to replace.
+            // Surface any that are missing with an actionable message instead of
+            // letting `write_dynamic_assertions` fail later with an opaque
+            // `Error::NotFound`.
+            let missing: Vec<String> = dynamic_assertions
+                .iter()
+                .map(|da| da.label())
+                .filter(|label| pc.assertion_hashed_uri_from_label(label).is_none())
+                .collect();
 
-            if has_placeholders {
-                let mut preliminary_claim = PartialClaim::default();
-                {
-                    for assertion in pc.assertions() {
-                        preliminary_claim.add_assertion(assertion);
-                    }
-                }
-
-                // Drop pc before calling write_dynamic_assertions
-                let _ = pc;
-
-                let _modified =
-                    self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
-
-                // Get pc again
-                let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-                let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
-
-                let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-                pc.set_signature_val(sig);
-
-                let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
-
-                if context.settings().verify.verify_after_sign {
-                    self.verify_store_strict(None, context)?;
-                }
-
-                return Ok(jumbf_bytes);
+            if !missing.is_empty() {
+                return Err(Error::BadParam(format!(
+                    "no placeholder slots were reserved for dynamic assertions [{}]; \
+                     call add_dynamic_assertion_placeholders() before signing",
+                    missing.join(", ")
+                )));
             }
+
+            let mut preliminary_claim = PartialClaim::default();
+            {
+                for assertion in pc.assertions() {
+                    preliminary_claim.add_assertion(assertion);
+                }
+            }
+
+            // Drop pc before calling write_dynamic_assertions
+            let _ = pc;
+
+            let _modified =
+                self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
+
+            // Get pc again
+            let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+            let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
+
+            let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+            pc.set_signature_val(sig);
+
+            let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+
+            if context.settings().verify.verify_after_sign {
+                self.verify_store_strict(None, context)?;
+            }
+
+            return Ok(jumbf_bytes);
         }
 
         context.check_progress(ProgressPhase::Signing, 1, 1)?;
@@ -2430,37 +2442,18 @@ impl Store {
     ) -> Result<Vec<u8>> {
         self.prep_embeddable_store(dh, asset_reader, context)?;
 
-        // Write dynamic assertions only if placeholders were added during placeholder generation.
-        // We check if the dynamic assertion labels exist in the claim - if not, placeholders
-        // weren't added and we should skip writing to avoid size mismatches.
-        let dynamic_assertions = signer.dynamic_assertions();
-        if !dynamic_assertions.is_empty() {
-            // Check if placeholders exist for these dynamic assertions
-            let has_placeholders = {
-                let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-                dynamic_assertions
-                    .iter()
-                    .all(|da| pc.assertion_hashed_uri_from_label(&da.label()).is_some())
-            };
-
-            if has_placeholders {
-                let mut preliminary_claim = PartialClaim::default();
-                {
-                    let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-                    for assertion in pc.assertions() {
-                        preliminary_claim.add_assertion(assertion);
-                    }
-                }
-                if _sync {
-                    self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
-                } else {
-                    self.write_dynamic_assertions_async(
-                        &dynamic_assertions,
-                        &mut preliminary_claim,
-                    )
-                    .await?;
-                }
-            }
+        // The data-hashed placeholder (`get_data_hashed_manifest_placeholder`) does not
+        // reserve space for dynamic assertions, so there is no way to embed them here
+        // without breaking the size contract the caller already committed to. Fail loudly
+        // rather than silently dropping the assertions (see issue #2055); callers that need
+        // dynamic assertions should use Builder::placeholder() + Builder::sign_embeddable().
+        if !signer.dynamic_assertions().is_empty() {
+            return Err(Error::BadParam(
+                "signer has dynamic assertions (e.g. CAWG identity) that the data-hashed \
+                 embeddable workflow cannot represent; use Builder::placeholder() followed \
+                 by Builder::sign_embeddable() instead"
+                    .to_string(),
+            ));
         }
 
         context.check_progress(ProgressPhase::Signing, 1, 1)?;
@@ -8172,6 +8165,79 @@ pub mod tests {
             Store::from_stream("image/jpeg", &mut output_file, &mut report, &context).unwrap();
 
         assert!(!report.has_any_error());
+    }
+
+    #[test]
+    fn test_sign_manifest_errors_when_dynamic_placeholders_missing() {
+        // A signer that advertises a dynamic assertion but whose placeholder slot is
+        // never reserved. `sign_manifest` must reject it with an actionable error that
+        // names the offending assertion, rather than the opaque `Error::NotFound` that
+        // `write_dynamic_assertions` would otherwise raise (see issue #2055 review).
+        #[derive(Debug)]
+        struct TestDynamicAssertion {}
+
+        impl DynamicAssertion for TestDynamicAssertion {
+            fn label(&self) -> String {
+                "com.mycompany.myassertion".to_string()
+            }
+
+            fn reserve_size(&self) -> Result<usize> {
+                Ok(64)
+            }
+
+            fn content(
+                &self,
+                _label: &str,
+                _size: Option<usize>,
+                _claim: &PartialClaim,
+            ) -> Result<DynamicAssertionContent> {
+                Ok(DynamicAssertionContent::Cbor(Vec::new()))
+            }
+        }
+
+        struct DynamicSigner(Box<dyn Signer>);
+
+        impl crate::Signer for DynamicSigner {
+            fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+                self.0.sign(data)
+            }
+
+            fn alg(&self) -> SigningAlg {
+                self.0.alg()
+            }
+
+            fn certs(&self) -> Result<Vec<Vec<u8>>> {
+                self.0.certs()
+            }
+
+            fn reserve_size(&self) -> usize {
+                self.0.reserve_size()
+            }
+
+            fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+                vec![Box::new(TestDynamicAssertion {})]
+            }
+        }
+
+        let context = crate::context::Context::new();
+        let signer = DynamicSigner(test_signer(SigningAlg::Ps256));
+
+        let mut store = Store::from_context(&context);
+        store.commit_claim(create_test_claim().unwrap()).unwrap();
+
+        // Reserve the hard-binding placeholder only – no dynamic-assertion slots.
+        store
+            .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg")
+            .unwrap();
+
+        let err = store.sign_manifest(&signer, &context).unwrap_err();
+        match err {
+            Error::BadParam(msg) => assert!(
+                msg.contains("com.mycompany.myassertion"),
+                "error should name the assertion missing a placeholder slot: {msg}"
+            ),
+            other => panic!("expected Error::BadParam, got {other:?}"),
+        }
     }
 
     #[test]
