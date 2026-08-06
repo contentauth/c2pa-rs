@@ -27,10 +27,10 @@ use std::{io::Read, sync::Arc};
 use serde::Serialize;
 
 use crate::{
-    assertion::AssertionBase,
     assertions::{
-        labels::parse_label, Actions, BmffHash, BoxHash, DataHash, EmbeddedData,
-        IngredientAssertion, Metadata, UserCbor,
+        labels::{parse_label, ASSERTION_METADATA},
+        Actions, BmffHash, BoxHash, DataHash, EmbeddedData, IngredientAssertion, Metadata, User,
+        UserCbor,
     },
     asset_io::{CAIRead, CAIReadWrapper},
     context::{Context, ProgressPhase},
@@ -59,6 +59,7 @@ use crate::{
 pub struct ClaimAssertion<'a> {
     label: String,
     value: Option<c2pa_cbor::Value>,
+    json: bool,
     stream: Option<(String, &'a mut dyn CAIRead)>,
     c2pa_data: Option<Vec<u8>>,
     exclusions: Option<Vec<HashRange>>,
@@ -72,6 +73,7 @@ impl ClaimAssertion<'static> {
         Self {
             label: label.into(),
             value: None,
+            json: false,
             stream: None,
             c2pa_data: None,
             exclusions: None,
@@ -101,6 +103,7 @@ impl<'a> ClaimAssertion<'a> {
         ClaimAssertion {
             label: self.label,
             value: self.value,
+            json: self.json,
             stream: Some((format.into(), stream)),
             c2pa_data: self.c2pa_data,
             exclusions: self.exclusions,
@@ -122,6 +125,15 @@ impl<'a> ClaimAssertion<'a> {
         self
     }
 
+    /// Requests JSON encoding (instead of the default CBOR) for a custom assertion — one that
+    /// isn't `Actions` or a `.metadata`-suffixed label, which always use their own fixed
+    /// encoding regardless of this flag. Has no effect if [`ClaimAssertion::with_stream`] is
+    /// used instead of [`ClaimAssertion::with_json`] (binary content has its own MIME type).
+    pub fn as_json(mut self) -> Self {
+        self.json = true;
+        self
+    }
+
     /// Interprets this assertion according to its label, producing a concrete, ready-to-insert
     /// [`GeneratedAssertion`]. This is where every `with_*` field actually gets used: streams are
     /// read/hashed, `with_json` values are decoded into their native schema, and an ingredient's
@@ -130,6 +142,7 @@ impl<'a> ClaimAssertion<'a> {
         let ClaimAssertion {
             label,
             value,
+            json,
             stream,
             c2pa_data,
             exclusions,
@@ -156,7 +169,7 @@ impl<'a> ClaimAssertion<'a> {
                 Ok(GeneratedAssertion::BoxHash(bh))
             }
             IngredientAssertion::LABEL => generate_ingredient(value, stream, c2pa_data, context),
-            _ => generate_generic(&label, match_label, value, stream),
+            _ => generate_generic(&label, match_label, value, json, stream),
         }
     }
 }
@@ -168,6 +181,7 @@ pub(crate) enum GeneratedAssertion {
     Actions(Box<Actions>),
     Metadata(Metadata),
     UserCbor(UserCbor),
+    User(User),
     EmbeddedData(EmbeddedData),
     Ingredient {
         assertion: Box<IngredientAssertion>,
@@ -357,6 +371,7 @@ fn generate_generic(
     label: &str,
     match_label: &str,
     value: Option<c2pa_cbor::Value>,
+    json: bool,
     stream: Option<(String, &mut dyn CAIRead)>,
 ) -> Result<GeneratedAssertion> {
     if let Some((format, stream)) = stream {
@@ -375,13 +390,23 @@ fn generate_generic(
         )));
     };
 
+    // Any label ending in `.metadata` (other than `c2pa.assertion.metadata`, a distinct
+    // assertion type this doesn't build) is a `Metadata` assertion per spec, and `Metadata` is
+    // always JSON — see `Metadata::to_assertion`/`AssertionJson`. `Metadata::new` takes the
+    // label itself so it can tell a custom label apart from the standard `c2pa.metadata` one.
+    if match_label.ends_with(".metadata") && match_label != ASSERTION_METADATA {
+        let json = serde_json::to_string(&value)?;
+        return Ok(GeneratedAssertion::Metadata(Metadata::new(label, &json)?));
+    }
+
     match match_label {
         Actions::LABEL => Ok(GeneratedAssertion::Actions(Box::new(
             c2pa_cbor::value::from_value(value)?,
         ))),
-        Metadata::LABEL => Ok(GeneratedAssertion::Metadata(c2pa_cbor::value::from_value(
-            value,
-        )?)),
+        _ if json => {
+            let json = serde_json::to_string(&value)?;
+            Ok(GeneratedAssertion::User(User::new(label, &json)))
+        }
         _ => {
             let cbor_bytes = c2pa_cbor::to_vec(&value)?;
             Ok(GeneratedAssertion::UserCbor(UserCbor::new(
@@ -403,6 +428,72 @@ mod tests {
     use crate::utils::test::test_context;
 
     const TEST_IMAGE_CLEAN: &[u8] = include_bytes!("../tests/fixtures/IMG_0003.jpg");
+
+    #[test]
+    fn test_generate_generic_custom_metadata_label_is_json() {
+        let context = Arc::new(test_context());
+        let value = serde_json::json!({
+            "@context": {"ex": "https://example.com/"},
+            "ex:foo": "bar",
+        });
+
+        let generated = ClaimAssertion::new("org.contentauth.custom.metadata")
+            .with_json(&value)
+            .expect("with_json")
+            .generate(&context)
+            .expect("generate");
+
+        match generated {
+            GeneratedAssertion::Metadata(m) => {
+                assert_eq!(m.get_label(), "org.contentauth.custom.metadata");
+                assert_eq!(m.value.get("ex:foo").and_then(|v| v.as_str()), Some("bar"));
+            }
+            _ => panic!("expected Metadata, got a different variant"),
+        }
+    }
+
+    #[test]
+    fn test_generate_generic_assertion_metadata_label_is_not_metadata() {
+        let context = Arc::new(test_context());
+
+        let generated = ClaimAssertion::new(ASSERTION_METADATA)
+            .with_json(&serde_json::json!({"value": 1}))
+            .expect("with_json")
+            .generate(&context)
+            .expect("generate");
+
+        assert!(
+            matches!(generated, GeneratedAssertion::UserCbor(_)),
+            "c2pa.assertion.metadata is a distinct assertion type, not Metadata"
+        );
+    }
+
+    #[test]
+    fn test_generate_generic_as_json() {
+        let context = Arc::new(test_context());
+
+        let generated = ClaimAssertion::new("org.test.custom")
+            .with_json(&serde_json::json!({"value": 1}))
+            .expect("with_json")
+            .as_json()
+            .generate(&context)
+            .expect("generate");
+
+        assert!(matches!(generated, GeneratedAssertion::User(_)));
+    }
+
+    #[test]
+    fn test_generate_generic_defaults_to_cbor() {
+        let context = Arc::new(test_context());
+
+        let generated = ClaimAssertion::new("org.test.custom")
+            .with_json(&serde_json::json!({"value": 1}))
+            .expect("with_json")
+            .generate(&context)
+            .expect("generate");
+
+        assert!(matches!(generated, GeneratedAssertion::UserCbor(_)));
+    }
 
     #[test]
     fn test_generate_data_hash() {

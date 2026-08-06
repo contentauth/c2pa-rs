@@ -146,16 +146,17 @@ impl ClaimBuilder {
 
     /// Adds `assertion` to the claim as *gathered* (mirroring `Claim::add_assertion`'s default)
     /// and returns its [`HashedUri`]. See [`ClaimAssertion`] for what each label expects.
-    /// Hash assertions (`BoxHash`/`DataHash`/`BmffHash`) are always stored as *created* by
-    /// `Claim` regardless of which method adds them. Use [`ClaimBuilder::add_created_assertion`]
-    /// to add any other assertion as *created* instead.
+    /// Hash assertions (`BoxHash`/`DataHash`/`BmffHash`) must always be stored as *created* by
+    /// `Claim` — errors if `assertion` is one of these; use
+    /// [`ClaimBuilder::add_created_assertion`] for those instead.
     pub fn add_gathered_assertion(&mut self, assertion: ClaimAssertion) -> Result<HashedUri> {
         self.insert_claim_assertion(assertion, false)
     }
 
     /// Same as [`ClaimBuilder::add_gathered_assertion`], but adds the assertion as *created*
-    /// rather than *gathered* (mirroring `Claim::add_created_assertion`). Has no effect on hash
-    /// assertions ([`BoxHash`]/[`DataHash`]/[`BmffHash`]), which are always created regardless.
+    /// rather than *gathered* (mirroring `Claim::add_created_assertion`). Required for hash
+    /// assertions ([`BoxHash`]/[`DataHash`]/[`BmffHash`]), which `Claim` only ever stores as
+    /// created.
     pub fn add_created_assertion(&mut self, assertion: ClaimAssertion) -> Result<HashedUri> {
         self.insert_claim_assertion(assertion, true)
     }
@@ -174,14 +175,37 @@ impl ClaimBuilder {
             GeneratedAssertion::Actions(a) => self.insert_assertion(a.as_ref(), created),
             GeneratedAssertion::Metadata(a) => self.insert_assertion(&a, created),
             GeneratedAssertion::UserCbor(a) => self.insert_assertion(&a, created),
+            GeneratedAssertion::User(a) => self.insert_assertion(&a, created),
             GeneratedAssertion::EmbeddedData(a) => self.insert_assertion(&a, created),
             GeneratedAssertion::Ingredient { assertion, merge } => {
                 self.insert_ingredient(*assertion, merge, created)
             }
-            GeneratedAssertion::DataHash(dh) => self.insert_data_hash(dh),
-            GeneratedAssertion::BmffHash(bh) => self.insert_bmff_hash(bh),
-            GeneratedAssertion::BoxHash(bh) => self.insert_box_hash(bh),
+            GeneratedAssertion::DataHash(dh) => {
+                Self::require_created(created, DataHash::LABEL)?;
+                self.insert_data_hash(dh)
+            }
+            GeneratedAssertion::BmffHash(bh) => {
+                Self::require_created(created, BmffHash::LABEL)?;
+                self.insert_bmff_hash(bh)
+            }
+            GeneratedAssertion::BoxHash(bh) => {
+                Self::require_created(created, BoxHash::LABEL)?;
+                self.insert_box_hash(bh)
+            }
         }
+    }
+
+    /// Hash assertions are always stored as *created* by `Claim` (see
+    /// [`ClaimBuilder::add_gathered_assertion`]'s docs) — reject the mismatch explicitly rather
+    /// than silently treating a gathered hard binding as created.
+    fn require_created(created: bool, label: &str) -> Result<()> {
+        if !created {
+            return Err(Error::BadParam(format!(
+                "'{label}' is a hard binding and must be added via add_created_assertion, not \
+                 add_gathered_assertion."
+            )));
+        }
+        Ok(())
     }
 
     fn insert_assertion(
@@ -420,20 +444,6 @@ mod tests {
         )
     }
 
-    /// Signs `claim_builder` (which must already have a `BoxHash` hard binding matching
-    /// `stream`'s current content) and embeds the raw JUMBF into `stream` via
-    /// `jumbf_io::save_jumbf_to_stream` (which handles the format-specific box/segment
-    /// insertion itself), returning the embedded bytes.
-    fn sign_and_embed(claim_builder: &ClaimBuilder, stream: &mut Cursor<&[u8]>) -> Vec<u8> {
-        let jumbf = claim_builder.sign().expect("sign");
-
-        stream.set_position(0);
-        let mut output = Cursor::new(Vec::new());
-        jumbf_io::save_jumbf_to_stream("image/jpeg", stream, &mut output, &jumbf)
-            .expect("save jumbf to stream");
-        output.into_inner()
-    }
-
     #[test]
     fn test_claim_builder_end_to_end_ingredient_and_actions() {
         let mut stream = Cursor::new(TEST_IMAGE_CLEAN);
@@ -478,14 +488,18 @@ mod tests {
 
         // Hard binding — no placeholder step, generated directly from the (unmodified) asset.
         claim_builder
-            .add_gathered_assertion(
+            .add_created_assertion(
                 ClaimAssertion::new(BoxHash::LABEL).with_stream("image/jpeg", &mut stream),
             )
             .expect("set hard binding");
 
-        let embedded = sign_and_embed(&claim_builder, &mut stream);
+        let jumbf = claim_builder.sign().expect("sign");
 
-        let mut embedded_stream = Cursor::new(embedded);
+        let mut embedded_stream = Cursor::new(Vec::new());
+        jumbf_io::save_jumbf_to_stream("image/jpeg", &mut stream, &mut embedded_stream, &jumbf)
+            .expect("save jumbf to stream");
+        embedded_stream.set_position(0);
+
         let reader = Reader::default()
             .with_stream("image/jpeg", &mut embedded_stream)
             .expect("read signed asset");
@@ -546,13 +560,18 @@ mod tests {
             .expect("add actions assertion");
 
         claim_builder
-            .add_gathered_assertion(
+            .add_created_assertion(
                 ClaimAssertion::new(BoxHash::LABEL).with_stream("image/jpeg", &mut stream),
             )
             .expect("set hard binding");
 
-        let embedded = sign_and_embed(&claim_builder, &mut stream);
-        let mut embedded_stream = Cursor::new(embedded);
+        let jumbf = claim_builder.sign().expect("sign");
+
+        let mut embedded_stream = Cursor::new(Vec::new());
+        jumbf_io::save_jumbf_to_stream("image/jpeg", &mut stream, &mut embedded_stream, &jumbf)
+            .expect("save jumbf to stream");
+        embedded_stream.set_position(0);
+
         let reader = Reader::default()
             .with_stream("image/jpeg", &mut embedded_stream)
             .expect("read signed asset");
@@ -653,7 +672,7 @@ mod tests {
 
         let mut stream1 = Cursor::new(vec![1u8; 100]);
         claim_builder
-            .add_gathered_assertion(
+            .add_created_assertion(
                 ClaimAssertion::new(DataHash::LABEL).with_stream("image/jpeg", &mut stream1),
             )
             .expect("set hard binding");
@@ -661,7 +680,7 @@ mod tests {
         // A same-type replacement should succeed automatically (existing_hard_binding() found).
         let mut stream3 = Cursor::new(vec![3u8; 100]);
         claim_builder
-            .add_gathered_assertion(
+            .add_created_assertion(
                 ClaimAssertion::new(DataHash::LABEL).with_stream("image/jpeg", &mut stream3),
             )
             .expect("update hard binding");
@@ -670,7 +689,7 @@ mod tests {
         let mut stream4 = Cursor::new(vec![0u8; 64]);
         assert!(
             claim_builder
-                .add_gathered_assertion(
+                .add_created_assertion(
                     ClaimAssertion::new(BmffHash::LABEL).with_stream("video/mp4", &mut stream4),
                 )
                 .is_err(),
@@ -686,7 +705,7 @@ mod tests {
         // No exclusions — the smallest possible DataHash encoding.
         let mut stream1 = Cursor::new(vec![1u8; 100]);
         claim_builder
-            .add_gathered_assertion(
+            .add_created_assertion(
                 ClaimAssertion::new(DataHash::LABEL).with_stream("image/jpeg", &mut stream1),
             )
             .expect("set hard binding");
@@ -695,7 +714,7 @@ mod tests {
         let mut stream2 = Cursor::new(vec![2u8; 100]);
         assert!(
             claim_builder
-                .add_gathered_assertion(
+                .add_created_assertion(
                     ClaimAssertion::new(DataHash::LABEL)
                         .with_stream("image/jpeg", &mut stream2)
                         .with_exclusions(vec![HashRange::new(0, 10), HashRange::new(20, 10)]),
@@ -712,6 +731,21 @@ mod tests {
         assert!(
             matches!(result, Err(Error::BadParam(_))),
             "sign() without a hard binding should error, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_claim_builder_hard_binding_as_gathered_errors() {
+        let context = Arc::new(test_context());
+        let mut claim_builder = ClaimBuilder::new(context.clone());
+
+        let mut stream = Cursor::new(vec![1u8; 100]);
+        let result = claim_builder.add_gathered_assertion(
+            ClaimAssertion::new(DataHash::LABEL).with_stream("image/jpeg", &mut stream),
+        );
+        assert!(
+            matches!(result, Err(Error::BadParam(_))),
+            "a hard binding added via add_gathered_assertion should error, got {result:?}"
         );
     }
 }
