@@ -372,9 +372,15 @@ pub struct Core {
     /// is omitted, any scheme is allowed as long as the host matches.
     ///
     /// The behavior is as follows:
-    /// - `None` (default) no filtering enabled.
+    /// - `None` (default): no host allow-list is applied, but a built-in safety policy still
+    ///   rejects requests to non-globally-routable hosts (loopback, private, link-local/cloud-
+    ///   metadata, unique-local, CGNAT, etc.) and disables HTTP redirect following. This keeps the
+    ///   default configuration resistant to SSRF (CAI-12574). To reach an internal host on purpose,
+    ///   add it to the allow-list.
     /// - `Some(vec)` where `vec` is empty, all traffic is blocked.
-    /// - `Some(vec)` with at least one pattern, filtering enabled for only those patterns.
+    /// - `Some(vec)` with at least one pattern, filtering enabled for only those patterns. Redirect
+    ///   following is disabled in this mode as well; the allow-list is checked against the request
+    ///   URI, which the SDK cannot re-check across redirect hops.
     ///
     /// # Examples
     ///

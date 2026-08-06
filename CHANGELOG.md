@@ -9,6 +9,23 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+### Security
+
+* Harden the default HTTP resolver against SSRF via redirects and internal hosts (CAI-12574). The
+  default configuration (no `core.allowed_network_hosts`) now **no longer follows HTTP redirects**
+  and **rejects requests to non-globally-routable hosts** — loopback, private (RFC1918), link-local
+  and cloud-metadata (e.g. `169.254.169.254`), unique-local, CGNAT, documentation, and multicast
+  addresses, as well as the `localhost` host name. This closes a redirect-based SSRF in which a
+  remote-manifest URL could bounce the SDK to an internal endpoint.
+
+  **Behavioral change / upgrade note:** applications that intentionally fetch remote manifests,
+  `did:web` documents, or other resources from an internal or loopback host — or that rely on the
+  server following HTTP redirects — must now opt in by listing those hosts in
+  `core.allowed_network_hosts`. Setting an allow-list routes requests through the existing
+  `RestrictedResolver` (redirects remain disabled). Reaching an internal host by DNS name that
+  resolves to a private address (DNS rebinding) is not yet blocked; that is tracked in
+  [#2430](https://github.com/contentauth/c2pa-rs/issues/2430).
+
 ## [0.89.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.89.2...c2pa-v0.89.3)
 _13 July 2026_
 
