@@ -19,10 +19,10 @@
 //! assertion at a stable claim position immediately and returns the assertion's real
 //! [`HashedUri`], so it can be referenced from another assertion (e.g. an action referencing
 //! the ingredient it operated on) before signing. Every assertion is described by a
-//! [`ClaimAssertion`] — a small builder that carries whatever a label needs (structured data, a
-//! stream, hard-binding exclusions, an ingredient's sidecar manifest data) — and is interpreted
-//! using this `ClaimBuilder`'s own [`Context`] only once it's added via
-//! [`ClaimBuilder::add_gathered_assertion`]/[`ClaimBuilder::add_created_assertion`].
+//! [`ClaimAssertion`], which does its own generation ([`ClaimAssertion::generate`]) using this
+//! `ClaimBuilder`'s [`Context`] — `ClaimBuilder` itself just adds the concrete result to the
+//! claim (merging in an ingredient's provenance, which needs the claim directly, and checking a
+//! hard binding against whatever one is already there, are the two exceptions).
 //!
 //! `ClaimBuilder` never manages placeholder/reserve-space embedding itself — the caller is
 //! expected to have already reserved space for, and embedded, the manifest placeholder in the
@@ -32,20 +32,14 @@ use std::sync::Arc;
 
 use crate::{
     assertion::AssertionBase,
-    assertions::{
-        labels::parse_label, Actions, BmffHash, BoxHash, DataHash, EmbeddedData,
-        IngredientAssertion, Metadata, UserCbor,
-    },
-    asset_io::{CAIRead, CAIReadWrapper},
+    assertions::{BmffHash, BoxHash, DataHash, IngredientAssertion},
     claim::Claim,
-    claim_assertion::ClaimAssertion,
-    context::{Context, ProgressPhase},
+    claim_assertion::{ClaimAssertion, GeneratedAssertion, IngredientMerge},
+    context::Context,
     error::{Error, Result},
     jumbf::labels::{to_assertion_uri, to_manifest_uri, to_signature_uri},
-    jumbf_io,
     store::Store,
-    utils::mime::format_to_mime,
-    HashRange, HashType, HashedUri, Reader,
+    HashType, HashedUri,
 };
 
 /// Builds a `Claim` directly and eagerly. See the module documentation for the model this
@@ -62,9 +56,6 @@ impl ClaimBuilder {
     /// be computed once every `ClaimGeneratorInfo` is known, which has no equivalent here, so
     /// there's no v1 code path to opt into in the first place.
     const CLAIM_VERSION: usize = 2;
-    /// Fixed hash algorithm used for hard-binding generation (independent of
-    /// `ClaimBuilder::set_hash_alg`, which only affects the claim's own default).
-    const HARD_BINDING_ALG: &'static str = "sha256";
 
     /// Creates a new claim with an auto-generated label.
     pub fn new(context: Arc<Context>) -> Self {
@@ -169,63 +160,27 @@ impl ClaimBuilder {
         self.insert_claim_assertion(assertion, true)
     }
 
+    /// Generates the concrete assertion `assertion` describes (see [`ClaimAssertion::generate`])
+    /// and adds it to the claim. Everything but ingredient merging and hard-binding conflict
+    /// checking is a direct add from here — see [`ClaimBuilder::insert_ingredient`]/
+    /// [`ClaimBuilder::insert_data_hash`]/[`ClaimBuilder::insert_bmff_hash`]/
+    /// [`ClaimBuilder::insert_box_hash`].
     fn insert_claim_assertion(
         &mut self,
         assertion: ClaimAssertion,
         created: bool,
     ) -> Result<HashedUri> {
-        let ClaimAssertion {
-            label,
-            value,
-            stream,
-            c2pa_data,
-            exclusions,
-        } = assertion;
-        let (match_label, version, _instance) = parse_label(&label);
-
-        match match_label {
-            DataHash::LABEL | BmffHash::LABEL | BoxHash::LABEL => {
-                self.insert_hard_binding(match_label, version, stream, exclusions)
+        match assertion.generate(&self.context)? {
+            GeneratedAssertion::Actions(a) => self.insert_assertion(a.as_ref(), created),
+            GeneratedAssertion::Metadata(a) => self.insert_assertion(&a, created),
+            GeneratedAssertion::UserCbor(a) => self.insert_assertion(&a, created),
+            GeneratedAssertion::EmbeddedData(a) => self.insert_assertion(&a, created),
+            GeneratedAssertion::Ingredient { assertion, merge } => {
+                self.insert_ingredient(*assertion, merge, created)
             }
-            IngredientAssertion::LABEL => self.insert_ingredient(value, stream, c2pa_data, created),
-            _ => self.insert_generic(&label, match_label, value, stream, created),
-        }
-    }
-
-    fn insert_generic(
-        &mut self,
-        label: &str,
-        match_label: &str,
-        value: Option<c2pa_cbor::Value>,
-        stream: Option<(String, &mut dyn CAIRead)>,
-        created: bool,
-    ) -> Result<HashedUri> {
-        if let Some((format, stream)) = stream {
-            let mut data = Vec::new();
-            stream.read_to_end(&mut data)?;
-            let embedded_data = EmbeddedData::new(label, format_to_mime(&format), data);
-            return self.insert_assertion(&embedded_data, created);
-        }
-
-        let Some(value) = value else {
-            return Err(Error::BadParam(format!(
-                "assertion '{label}' requires with_json or with_stream"
-            )));
-        };
-
-        match match_label {
-            Actions::LABEL => {
-                let a: Actions = c2pa_cbor::value::from_value(value)?;
-                self.insert_assertion(&a, created)
-            }
-            Metadata::LABEL => {
-                let a: Metadata = c2pa_cbor::value::from_value(value)?;
-                self.insert_assertion(&a, created)
-            }
-            _ => {
-                let cbor_bytes = c2pa_cbor::to_vec(&value)?;
-                self.insert_assertion(&UserCbor::new(label, cbor_bytes), created)
-            }
+            GeneratedAssertion::DataHash(dh) => self.insert_data_hash(dh),
+            GeneratedAssertion::BmffHash(bh) => self.insert_bmff_hash(bh),
+            GeneratedAssertion::BoxHash(bh) => self.insert_box_hash(bh),
         }
     }
 
@@ -241,61 +196,24 @@ impl ClaimBuilder {
         }
     }
 
+    /// Adds `assertion` as-is if it has no provenance of its own to merge (`merge` is `None`).
+    /// Otherwise merges `merge.manifest_bytes` into this claim's ingredient store (the one step
+    /// that needs `ClaimBuilder`'s own claim and accumulated redactions, rather than something
+    /// [`ClaimAssertion::generate`] could do on its own) and fills in `assertion`'s
+    /// `active_manifest`/`claim_signature`/`validation_results` from the result before adding it.
     fn insert_ingredient(
         &mut self,
-        value: Option<c2pa_cbor::Value>,
-        stream: Option<(String, &mut dyn CAIRead)>,
-        c2pa_data: Option<Vec<u8>>,
+        mut assertion: IngredientAssertion,
+        merge: Option<IngredientMerge>,
         created: bool,
     ) -> Result<HashedUri> {
-        let Some(value) = value else {
-            return Err(Error::BadParam(format!(
-                "'{}' requires with_json (the ingredient's own metadata)",
-                IngredientAssertion::LABEL
-            )));
+        let Some(IngredientMerge {
+            manifest_bytes,
+            validation_results,
+        }) = merge
+        else {
+            return self.insert_assertion(&assertion, created);
         };
-        let mut ing_assertion: IngredientAssertion = c2pa_cbor::value::from_value(value)?;
-
-        let Some((format, stream)) = stream else {
-            if c2pa_data.is_some() {
-                return Err(Error::BadParam(format!(
-                    "with_c2pa_data requires with_stream on '{}'",
-                    IngredientAssertion::LABEL
-                )));
-            }
-            return self.insert_assertion(&ing_assertion, created);
-        };
-
-        let reader = match c2pa_data {
-            Some(data) => Reader::from_shared_context(&self.context)
-                .with_manifest_data_and_stream(&data, &format, stream)?,
-            None => Reader::from_shared_context(&self.context).with_stream(&format, stream)?,
-        };
-
-        // If the ingredient assertion already carries a manifest link (e.g. it was decoded via
-        // `Reader::read_assertion` out of a larger store), scope to that specific claim rather
-        // than assuming `reader` is a single-ingredient reader.
-        let target_claim = match ing_assertion
-            .active_manifest
-            .as_ref()
-            .or(ing_assertion.c2pa_manifest.as_ref())
-        {
-            Some(uri) => {
-                let label = Store::manifest_label_from_path(&uri.url());
-                reader
-                    .store
-                    .get_claim(&label)
-                    .ok_or(Error::ClaimMissing { label })?
-            }
-            None => reader
-                .store
-                .provenance_claim()
-                .ok_or(Error::JumbfNotFound)?,
-        };
-
-        let validation_results = reader.validation_results().cloned().unwrap_or_default();
-        let ingredient_scope = Store::build_flat_ingredient_store(&reader.store, target_claim)?;
-        let manifest_bytes = ingredient_scope.to_jumbf_internal(0)?;
 
         let redactions = (!self.redactions.is_empty()).then(|| self.redactions.clone());
         let ingredient_store = Store::load_ingredient_to_claim(
@@ -312,19 +230,19 @@ impl ClaimBuilder {
         let hashes = ingredient_store.get_manifest_box_hashes(ingredient_active_claim);
         let alg = Some(ingredient_active_claim.alg().to_owned());
 
-        ing_assertion.active_manifest = Some(HashedUri::new(
+        assertion.active_manifest = Some(HashedUri::new(
             to_manifest_uri(manifest_label),
             alg.clone(),
             hashes.manifest_box_hash.as_ref(),
         ));
-        ing_assertion.claim_signature = Some(HashedUri::new(
+        assertion.claim_signature = Some(HashedUri::new(
             to_signature_uri(manifest_label),
             alg,
             hashes.signature_box_hash.as_ref(),
         ));
-        ing_assertion.validation_results = Some(validation_results);
+        assertion.validation_results = Some(validation_results);
 
-        self.insert_assertion(&ing_assertion, created)
+        self.insert_assertion(&assertion, created)
     }
 
     /// Returns the kind and encoded byte length of the claim's current hard binding assertion,
@@ -358,91 +276,10 @@ impl ClaimBuilder {
             })
     }
 
-    /// Dispatches a hard-binding label (`DataHash`/`BmffHash`/`BoxHash`) to its own generator and
-    /// insertion logic — see [`ClaimBuilder::insert_data_hash`]/[`ClaimBuilder::insert_bmff_hash`]/
-    /// [`ClaimBuilder::insert_box_hash`].
-    fn insert_hard_binding(
-        &mut self,
-        label: &str,
-        version: usize,
-        stream: Option<(String, &mut dyn CAIRead)>,
-        exclusions: Option<Vec<HashRange>>,
-    ) -> Result<HashedUri> {
-        let Some((format, stream)) = stream else {
-            return Err(Error::BadParam(format!(
-                "'{label}' requires with_stream (the asset to hash)"
-            )));
-        };
-
-        match label {
-            DataHash::LABEL => self.insert_data_hash(exclusions.unwrap_or_default(), stream),
-            BmffHash::LABEL => {
-                Self::reject_exclusions(exclusions, BmffHash::LABEL)?;
-                self.insert_bmff_hash(version, stream)
-            }
-            BoxHash::LABEL => {
-                Self::reject_exclusions(exclusions, BoxHash::LABEL)?;
-                self.insert_box_hash(&format, stream)
-            }
-            _ => unreachable!("insert_hard_binding only called for hard-binding labels"),
-        }
-    }
-
-    /// `with_exclusions` is only meaningful for `DataHash` — reject it for any other hard-binding
-    /// label instead of silently ignoring it.
-    fn reject_exclusions(exclusions: Option<Vec<HashRange>>, label: &str) -> Result<()> {
-        if exclusions.is_some() {
-            return Err(Error::BadParam(format!(
-                "with_exclusions is only valid for '{}', not '{label}'",
-                DataHash::LABEL
-            )));
-        }
-        Ok(())
-    }
-
-    /// Reads `stream` (the finished asset, with the manifest placeholder already embedded) and
-    /// computes a `DataHash` over it, excluding `exclusions` (the placeholder region).
-    fn generate_data_hash(
-        &self,
-        exclusions: Vec<HashRange>,
-        stream: &mut dyn CAIRead,
-    ) -> Result<DataHash> {
-        let exclusion_arg = if exclusions.is_empty() {
-            None
-        } else {
-            Some(exclusions.clone())
-        };
-        let mut cb = |step, total| {
-            self.context
-                .check_progress(ProgressPhase::Hashing, step, total)
-        };
-        let hash = crate::utils::hash_utils::hash_stream_by_alg_with_progress(
-            Self::HARD_BINDING_ALG,
-            stream,
-            exclusion_arg,
-            true,
-            &mut cb,
-        )?;
-
-        let mut dh = DataHash::new("jumbf manifest", Self::HARD_BINDING_ALG);
-        for exclusion in exclusions {
-            dh.add_exclusion(exclusion);
-        }
-        dh.set_hash(hash);
-
-        Ok(dh)
-    }
-
     /// First-time add or replace of a `DataHash` hard binding. A replacement is padded back up to
     /// match the existing one's encoded byte length exactly (`update_data_hash` handles this),
     /// erroring only if the new value is already larger than that.
-    fn insert_data_hash(
-        &mut self,
-        exclusions: Vec<HashRange>,
-        stream: &mut dyn CAIRead,
-    ) -> Result<HashedUri> {
-        let dh = self.generate_data_hash(exclusions, stream)?;
-
+    fn insert_data_hash(&mut self, dh: DataHash) -> Result<HashedUri> {
         match self.existing_hard_binding() {
             None => self.insert_assertion(&dh, true),
             Some((HashType::Data, _)) => {
@@ -456,29 +293,10 @@ impl ClaimBuilder {
         }
     }
 
-    /// Reads `stream` (the finished asset, with the manifest placeholder already embedded) and
-    /// computes a `BmffHash` over it. Exclusions are derived automatically from the BMFF
-    /// structure.
-    fn generate_bmff_hash(&self, stream: &mut dyn CAIRead) -> Result<BmffHash> {
-        let mut bmff_hash = BmffHash::new("jumbf manifest", Self::HARD_BINDING_ALG, None);
-        bmff_hash.set_default_exclusions();
-
-        let mut cb = |step, total| {
-            self.context
-                .check_progress(ProgressPhase::Hashing, step, total)
-        };
-        bmff_hash.gen_hash_from_stream_with_progress(stream, &mut cb)?;
-
-        Ok(bmff_hash)
-    }
-
     /// First-time add or replace of a `BmffHash` hard binding. A replacement must not be larger
     /// than the existing one's encoded byte length — the claim's byte layout must not grow, and
     /// `BmffHash` has no padding field to absorb a smaller replacement's slack.
-    fn insert_bmff_hash(&mut self, version: usize, stream: &mut dyn CAIRead) -> Result<HashedUri> {
-        let mut bh = self.generate_bmff_hash(stream)?;
-        bh.set_bmff_version(version);
-
+    fn insert_bmff_hash(&mut self, bh: BmffHash) -> Result<HashedUri> {
         match self.existing_hard_binding() {
             None => self.insert_assertion(&bh, true),
             Some((HashType::Bmff, existing_len)) => {
@@ -496,42 +314,10 @@ impl ClaimBuilder {
         }
     }
 
-    /// Reads `stream` (the finished asset, with the manifest placeholder already embedded) and
-    /// computes a `BoxHash` over it. `format` must support box hashing (see
-    /// `AssetIOHandler::asset_box_hash_ref`).
-    fn generate_box_hash(&self, format: &str, stream: &mut dyn CAIRead) -> Result<BoxHash> {
-        let handler = jumbf_io::get_assetio_handler(format).ok_or(Error::UnsupportedType)?;
-        let bhp = handler.asset_box_hash_ref().ok_or_else(|| {
-            Error::BadParam(format!("Format '{format}' does not support BoxHash"))
-        })?;
-
-        let mut bh = BoxHash { boxes: Vec::new() };
-        // minimal_form=false: hash each structural box independently rather than summing ranges
-        // (see Builder::update_hash_from_stream for why).
-        let cb: Box<dyn FnMut(u32, u32) -> Result<()>> = Box::new(|step, total| {
-            self.context
-                .check_progress(ProgressPhase::Hashing, step, total)
-        });
-        // generate_box_hash_from_stream_with_progress requires a Sized stream type;
-        // CAIReadWrapper gives `dyn CAIRead` a concrete Sized wrapper to satisfy that.
-        let mut wrapper = CAIReadWrapper { reader: stream };
-        bh.generate_box_hash_from_stream_with_progress(
-            &mut wrapper,
-            Self::HARD_BINDING_ALG,
-            bhp,
-            false,
-            cb,
-        )?;
-
-        Ok(bh)
-    }
-
     /// First-time add or replace of a `BoxHash` hard binding. A replacement must not be larger
     /// than the existing one's encoded byte length — the claim's byte layout must not grow (the
     /// container tolerates a smaller replacement's resulting slack).
-    fn insert_box_hash(&mut self, format: &str, stream: &mut dyn CAIRead) -> Result<HashedUri> {
-        let bh = self.generate_box_hash(format, stream)?;
-
+    fn insert_box_hash(&mut self, bh: BoxHash) -> Result<HashedUri> {
         match self.existing_hard_binding() {
             None => self.insert_assertion(&bh, true),
             Some((HashType::Box, existing_len)) => {
@@ -616,7 +402,7 @@ mod tests {
             test::{create_test_streams, test_context},
             test_signer::test_signer,
         },
-        HashRange, SigningAlg, ValidationState,
+        HashRange, Reader, SigningAlg, ValidationState,
     };
 
     const TEST_IMAGE_CLEAN: &[u8] = include_bytes!("../tests/fixtures/IMG_0003.jpg");
@@ -646,59 +432,6 @@ mod tests {
         jumbf_io::save_jumbf_to_stream("image/jpeg", stream, &mut output, &jumbf)
             .expect("save jumbf to stream");
         output.into_inner()
-    }
-
-    #[test]
-    fn test_generate_data_hash() {
-        let claim_builder = ClaimBuilder::new(Arc::new(test_context()));
-        let mut stream = Cursor::new(b"arbitrary asset bytes, not a real jpeg".to_vec());
-
-        let dh = claim_builder
-            .generate_data_hash(vec![], &mut stream)
-            .expect("generate DataHash");
-        assert!(!dh.hash.is_empty(), "hash should be computed");
-    }
-
-    #[test]
-    fn test_generate_data_hash_with_exclusions() {
-        let claim_builder = ClaimBuilder::new(Arc::new(test_context()));
-        let mut stream = Cursor::new(vec![0u8; 100]);
-
-        let dh = claim_builder
-            .generate_data_hash(vec![HashRange::new(0, 10)], &mut stream)
-            .expect("generate DataHash with exclusions");
-        assert_eq!(dh.exclusions.as_ref().map(|e| e.len()), Some(1));
-    }
-
-    #[test]
-    fn test_generate_box_hash() {
-        let claim_builder = ClaimBuilder::new(Arc::new(test_context()));
-        let mut stream = Cursor::new(TEST_IMAGE_CLEAN);
-
-        let bh = claim_builder
-            .generate_box_hash("image/jpeg", &mut stream)
-            .expect("generate BoxHash");
-        assert!(!bh.boxes.is_empty(), "BoxHash must have at least one box");
-        assert!(
-            bh.boxes.iter().any(|bm| !bm.hash.is_empty()),
-            "at least one box should have a computed hash"
-        );
-    }
-
-    #[test]
-    fn test_generate_bmff_hash() {
-        let claim_builder = ClaimBuilder::new(Arc::new(test_context()));
-        // A minimal-enough stream: BmffHash's own default exclusions/hashing don't require a
-        // structurally valid BMFF file for this codepath (no mdat exclusions were registered).
-        let mut stream = Cursor::new(vec![0u8; 64]);
-
-        let bh = claim_builder
-            .generate_bmff_hash(&mut stream)
-            .expect("generate BmffHash");
-        assert!(
-            !bh.exclusions().is_empty(),
-            "default exclusions should be set"
-        );
     }
 
     #[test]
