@@ -17,7 +17,7 @@ use std::io::{Read, Seek};
 use schemars::JsonSchema;
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 
-use super::AssetType;
+use super::{AssetType, DigitalSourceType};
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionDecodeError, AssertionDecodeErrorCause},
     assertions::{labels, AssertionMetadata, ReviewRating},
@@ -81,6 +81,7 @@ pub struct Ingredient {
 
     pub validation_results: Option<ValidationResults>,
     pub active_manifest: Option<HashedUri>,
+    pub digital_source_type: Option<DigitalSourceType>,
     pub claim_signature: Option<HashedUri>,
 
     pub soft_bindings_matched: Option<bool>,
@@ -165,6 +166,7 @@ impl Ingredient {
             && self.validation_results.is_none() // V3 exclusive params
             && self.active_manifest.is_none()
             && self.claim_signature.is_none()
+            && self.digital_source_type.is_none()
     }
 
     /// determines if an ingredient is a v2 ingredient
@@ -174,6 +176,7 @@ impl Ingredient {
         && self.validation_results.is_none() // V3 exclusive params
         && self.active_manifest.is_none()
         && self.claim_signature.is_none()
+        && self.digital_source_type.is_none()
     }
 
     fn is_v3_compatible(&self) -> bool {
@@ -430,6 +433,7 @@ impl Ingredient {
             ? "informationalURI": tstr .size (1..max-tstr-length), ; URI to an informational page about the ingredient or its data
             ? "softBindingsMatched": bool, ; Whether soft bindings were matched
             ? "softBindingAlgorithmsMatched": [1* tstr] ; Array of algorithm names used for discovering the active manifest
+            ? "digitalSourceType": tstr .size (1..max-tstr-length), ; One of the source types defined at https://cv.iptc.org/newscodes/digitalsourcetype/ or in this specification. Cannot be combined with `activeManifest`.
             ? "metadata": $assertion-metadata-map ; additional information about the assertion
         */
 
@@ -439,6 +443,11 @@ impl Ingredient {
         {
             return Err(serde::ser::Error::custom(
                 "Ingredient v3 activeManifest and validationResults must both be present or absent",
+            ));
+        }
+        if self.active_manifest.is_some() && self.digital_source_type.is_some() {
+            return Err(serde::ser::Error::custom(
+                "Ingredient v3 digitalSourceType cannot be combined with activeManifest",
             ));
         }
 
@@ -462,6 +471,9 @@ impl Ingredient {
             ingredient_map_len += 1
         }
         if self.active_manifest.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.digital_source_type.is_some() {
             ingredient_map_len += 1
         }
         if self.claim_signature.is_some() {
@@ -512,6 +524,9 @@ impl Ingredient {
         }
         if let Some(am) = &self.active_manifest {
             ingredient_map.serialize_field("activeManifest", am)?;
+        }
+        if let Some(dst) = &self.digital_source_type {
+            ingredient_map.serialize_field("digitalSourceType", dst)?;
         }
         if let Some(cs) = &self.claim_signature {
             ingredient_map.serialize_field("claimSignature", cs)?;
@@ -708,7 +723,7 @@ impl AssertionBase for Ingredient {
             "metadata",
         ];
 
-        static V3_FIELDS: [&str; 15] = [
+        static V3_FIELDS: [&str; 16] = [
             "dc:title",
             "dc:format",
             "relationship",
@@ -717,6 +732,7 @@ impl AssertionBase for Ingredient {
             "data",
             "dataTypes",
             "activeManifest",
+            "digitalSourceType",
             "claimSignature",
             "thumbnail",
             "description",
@@ -901,6 +917,8 @@ impl AssertionBase for Ingredient {
                     map_cbor_to_type("dataTypes", &ingredient_value);
                 let active_manifest: Option<HashedUri> =
                     map_cbor_to_type("activeManifest", &ingredient_value);
+                let digital_source_type: Option<DigitalSourceType> =
+                    map_cbor_to_type("digitalSourceType", &ingredient_value);
                 let claim_signature: Option<HashedUri> =
                     map_cbor_to_type("claimSignature", &ingredient_value);
                 let thumbnail: Option<HashedUri> = map_cbor_to_type("thumbnail", &ingredient_value);
@@ -928,6 +946,7 @@ impl AssertionBase for Ingredient {
                     informational_uri,
                     data_types,
                     active_manifest,
+                    digital_source_type,
                     claim_signature,
                     soft_bindings_matched,
                     soft_binding_algorithms_matched,
@@ -1154,6 +1173,7 @@ pub mod tests {
             data_types: Some(data_types.clone()),
             validation_results: Some(validation_results.clone()),
             active_manifest: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
+            digital_source_type: None,
             claim_signature: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.signature".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
             soft_bindings_matched: Some(true),
             soft_binding_algorithms_matched: Some(vec!["alg1".to_owned(), "alg2".to_owned()]),
@@ -1240,6 +1260,44 @@ pub mod tests {
         assert!(!v3_decoded.is_v1_compatible());
         assert!(!v3_decoded.is_v2_compatible());
         assert!(v3_decoded.is_v3_compatible());
+    }
+
+    #[test]
+    fn test_digital_source_type_round_trip() {
+        let ingredient = Ingredient {
+            digital_source_type: Some(DigitalSourceType::TrainedAlgorithmicData),
+            relationship: Relationship::InputTo,
+            version: 3,
+            ..Default::default()
+        };
+
+        let assertion = ingredient.to_assertion().unwrap();
+        let decoded = Ingredient::from_assertion(&assertion).unwrap();
+        assert_eq!(ingredient.digital_source_type, decoded.digital_source_type);
+    }
+
+    #[test]
+    fn test_digital_source_type_conflicts_with_active_manifest() {
+        let ingredient = Ingredient {
+            digital_source_type: Some(DigitalSourceType::TrainedAlgorithmicData),
+            active_manifest: Some(HashedUri::new(
+                "self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(),
+                Some("sha256".to_owned()),
+                &[1, 2, 3, 4, 5, 6, 7, 8, 9, 0],
+            )),
+            validation_results: Some(ValidationResults::default()),
+            claim_signature: Some(HashedUri::new(
+                "self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.signature"
+                    .to_owned(),
+                Some("sha256".to_owned()),
+                &[1, 2, 3, 4, 5, 6, 7, 8, 9, 0],
+            )),
+            relationship: Relationship::InputTo,
+            version: 3,
+            ..Default::default()
+        };
+
+        assert!(ingredient.to_assertion().is_err());
     }
 
     #[test]
