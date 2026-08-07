@@ -265,6 +265,26 @@ pub fn save_jumbf_to_stream(
     }
 }
 
+/// reads an asset of asset_type from input_stream, removes the manifest store and writes the
+/// result to output_stream
+///
+/// This is the stream equivalent of `remove_jumbf_from_file`, and the only form available
+/// without the `file_io` feature.
+///
+/// returns Unsupported type or errors from remove_cai_store_from_stream
+pub fn remove_jumbf_from_stream(
+    asset_type: &str,
+    input_stream: &mut dyn CAIRead,
+    output_stream: &mut dyn CAIReadWrite,
+) -> Result<()> {
+    match get_caiwriter_handler(asset_type) {
+        Some(asset_handler) => {
+            asset_handler.remove_cai_store_from_stream(input_stream, output_stream)
+        }
+        None => Err(Error::UnsupportedType),
+    }
+}
+
 /// writes the jumbf data in store_bytes into an asset in data and returns the newly created asset
 pub fn save_jumbf_to_memory(asset_type: &str, data: &[u8], store_bytes: &[u8]) -> Result<Vec<u8>> {
     let mut input_stream = Cursor::new(data);
@@ -626,6 +646,16 @@ pub mod tests {
         assert!(supported.iter().any(|s| s == "jxl"));
     }
 
+    #[test]
+    fn test_remove_jumbf_from_stream_unsupported_type() {
+        let mut input = Cursor::new(Vec::new());
+        let mut output = Cursor::new(Vec::new());
+
+        let result = remove_jumbf_from_stream("badtype", &mut input, &mut output);
+
+        assert!(matches!(result.err().unwrap(), Error::UnsupportedType));
+    }
+
     fn test_jumbf(asset_type: &str, reader: &mut dyn CAIRead) {
         let mut writer = Cursor::new(Vec::new());
         let store = create_test_store().unwrap();
@@ -638,11 +668,8 @@ pub mod tests {
 
         // test removing cai store
         writer.set_position(0);
-        let handler = get_caiwriter_handler(asset_type).unwrap();
         let mut removed = Cursor::new(Vec::new());
-        handler
-            .remove_cai_store_from_stream(&mut writer, &mut removed)
-            .unwrap();
+        remove_jumbf_from_stream(asset_type, &mut writer, &mut removed).unwrap();
         removed.set_position(0);
         let result = load_jumbf_from_stream(asset_type, &mut removed);
         if (asset_type != "wav")
