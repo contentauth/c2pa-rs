@@ -1137,6 +1137,36 @@ pub mod tests {
     }
 
     #[test]
+    fn test_unknown_field_does_not_break_decoding() {
+        let ingredients = [
+            Ingredient::new("title", "image/jpeg", "instance_id", None),
+            Ingredient::new_v2("title", "image/jpeg"),
+            Ingredient::new_v3(Relationship::ParentOf),
+        ];
+
+        for ingredient in ingredients {
+            let version = ingredient.version;
+            let assertion = ingredient.to_assertion().unwrap();
+
+            let mut value: c2pa_cbor::Value = c2pa_cbor::from_slice(assertion.data()).unwrap();
+            if let c2pa_cbor::Value::Map(map) = &mut value {
+                map.insert(
+                    c2pa_cbor::Value::Text("someFutureField".to_owned()),
+                    c2pa_cbor::Value::Text("unrecognized".to_owned()),
+                );
+            } else {
+                panic!("expected a CBOR map");
+            }
+            let data = c2pa_cbor::to_vec(&value).unwrap();
+            let assertion_with_unknown_field =
+                Assertion::new(Ingredient::LABEL, Some(version), AssertionData::Cbor(data));
+
+            let decoded = Ingredient::from_assertion(&assertion_with_unknown_field).unwrap();
+            assert_eq!(decoded.version, version);
+        }
+    }
+
+    #[test]
     fn test_from_stream() {
         use std::io::Cursor;
 
