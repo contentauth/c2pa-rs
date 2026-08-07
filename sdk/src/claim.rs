@@ -2616,10 +2616,7 @@ impl Claim {
                 }
 
                 // 2.f if the action’s parameters field exists and contains a relatedAssertions field
-                if let Some(related_assertions) = action
-                    .parameters()
-                    .and_then(|parameters| parameters.related_assertions.as_ref())
-                {
+                if let Some(related_assertions) = action.related_assertions() {
                     // 2.f.i if the value of relatedAssertions is not an array with at least one element,
                     //       the claim shall be rejected with a failure code of assertion.action.malformed
                     if related_assertions.is_empty() {
