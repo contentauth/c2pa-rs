@@ -2651,13 +2651,13 @@ impl Claim {
                         } else {
                             manifest_label_from_uri(&url).as_deref() == Some(claim.label())
                         };
-                        let assertions = if in_current_manifest {
+                        let assertion = if in_current_manifest {
                             claim.get_claim_assertion(&target_label, instance)
                         } else {
                             None
                         };
 
-                        if assertions.is_none() {
+                        if assertion.is_none() {
                             log_item!(
                                 label.clone(),
                                 format!("relatedAssertions reference could not be resolved within the current manifest: {url}"),
