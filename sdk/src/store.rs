@@ -1635,6 +1635,25 @@ impl Store {
                 .failure_as_err(validation_log, e)
             })?;
 
+            // 15.11.3.2 if both an activeManifest and a digitalSourceType field are present,
+            //           the assertion shall be rejected with a failure code of assertion.ingredient.malformed
+            if ingredient_assertion.active_manifest.is_some()
+                && ingredient_assertion.digital_source_type.is_some()
+            {
+                log_item!(
+                    i.label().clone(),
+                    "ingredient assertion cannot have both activeManifest and digitalSourceType",
+                    "ingredient_checks"
+                )
+                .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
+                .failure(
+                    validation_log,
+                    Error::ValidationRule(
+                        "ingredient assertion cannot have both activeManifest and digitalSourceType".to_string(),
+                    ),
+                )?;
+            }
+
             // we don't care about InputTo ingredients
             if ingredient_assertion.relationship == Relationship::InputTo {
                 continue;
