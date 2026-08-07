@@ -28,7 +28,8 @@ use crate::Manifest;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionData},
     assertions::{
-        self, labels, AssertionMetadata, AssetType, CertificateStatus, EmbeddedData, Relationship,
+        self, labels, AssertionMetadata, AssetType, CertificateStatus, DigitalSourceType,
+        EmbeddedData, Relationship,
     },
     asset_io::CAIRead,
     claim::{Claim, ClaimAssetData},
@@ -107,6 +108,11 @@ pub struct Ingredient {
     /// [`ManifestStore`]: crate::ManifestStore
     #[serde(skip_serializing_if = "Option::is_none")]
     active_manifest: Option<String>,
+
+    /// One of the source types defined at <https://cv.iptc.org/newscodes/digitalsourcetype/>
+    /// or in this specification. Cannot be combined with `activeManifest`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    digital_source_type: Option<DigitalSourceType>,
 
     /// Validation status (Ingredient v1 & v2)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -350,6 +356,11 @@ impl Ingredient {
         self.active_manifest.as_deref()
     }
 
+    /// Returns the [`DigitalSourceType`] of this ingredient, if one exists.
+    pub fn digital_source_type(&self) -> Option<&DigitalSourceType> {
+        self.digital_source_type.as_ref()
+    }
+
     /// Returns a reference to C2PA manifest data if it exists.
     ///
     /// manifest_data is the binary form of a manifest store in .c2pa format.
@@ -485,6 +496,14 @@ impl Ingredient {
     /// Sets the label for the active manifest in the manifest data.
     pub fn set_active_manifest<S: Into<String>>(&mut self, label: S) -> &mut Self {
         self.active_manifest = Some(label.into());
+        self
+    }
+
+    /// Sets the [`DigitalSourceType`] for this ingredient.
+    ///
+    /// Cannot be combined with an active manifest.
+    pub fn set_digital_source_type(&mut self, digital_source_type: DigitalSourceType) -> &mut Self {
+        self.digital_source_type = Some(digital_source_type);
         self
     }
 
@@ -1029,6 +1048,7 @@ impl Ingredient {
             document_id: ingredient_assertion.document_id,
             relationship: ingredient_assertion.relationship,
             active_manifest,
+            digital_source_type: ingredient_assertion.digital_source_type,
             validation_results: ingredient_assertion.validation_results,
             metadata: ingredient_assertion.metadata,
             description: ingredient_assertion.description,
@@ -1371,6 +1391,7 @@ impl Ingredient {
                 ingredient_assertion.active_manifest = active_manifest;
                 ingredient_assertion.claim_signature = claim_signature;
                 ingredient_assertion.validation_results = self.validation_results.clone();
+                ingredient_assertion.digital_source_type = self.digital_source_type.clone();
             }
             _ => {}
         }
