@@ -2667,7 +2667,7 @@ impl Claim {
                             .failure_no_throw(
                                 validation_log,
                                 Error::ValidationRule(
-                                    "relatedAssertions reference could not be resolved within the current manifest".into(),
+                                format!("relatedAssertions reference could not be resolved within the current manifest: {url}"),
                                 ),
                             );
                         }
@@ -2687,7 +2687,7 @@ impl Claim {
                             .failure_no_throw(
                                 validation_log,
                                 Error::ValidationRule(
-                                    "relatedAssertions must not reference an actions or ingredient assertion".into(),
+                                format!("relatedAssertions must not reference an actions or ingredient assertion: {url}"),
                                 ),
                             );
                         }
