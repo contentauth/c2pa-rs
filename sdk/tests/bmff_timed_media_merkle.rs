@@ -1111,3 +1111,86 @@ fn track_without_chunk_offsets_is_skipped() {
 fn track_without_stsz_is_skipped() {
     assert_dropped_track_rejected(b"stsz");
 }
+
+// --- Regression: CAI-12939 / VULN-36963 -------------------------------------
+//
+// A crafted MP4 with a `moov/udta/meta/ilst/data` box declaring size = 12
+// (below the 16-byte minimum for header + data_type + reserved) drove an
+// integer underflow panic in the old third-party `mp4` crate's
+// `DataBox::read_box` (reached from `Mp4Reader::read_header`, called from this
+// same timed-media verification path). The native reader has no equivalent
+// `udta`/`meta`/`ilst` content parser at all: `BmffSampleReader::from_stream`
+// only recognizes direct `trak` children of `moov` and skips every other
+// child box by its declared size without inspecting its contents. So the same
+// crafted box must now be inert rather than reachable.
+
+/// Builds the `moov/udta/meta/ilst/data` box hierarchy from the ticket's
+/// proof-of-concept: a `meta` box with `hdlr` handler_type `"mdir"`, an `ilst`
+/// containing a `©nam` item, whose `data` box declares size = 12 (too small
+/// for the data_type + reserved fields that followed it in the old parser).
+fn build_malicious_ilst_udta() -> Vec<u8> {
+    let data_box = build_box(b"data", &1u32.to_be_bytes()); // total size 12
+
+    let nam_item = build_box(&[0xa9, b'n', b'a', b'm'], &data_box);
+    let ilst = build_box(b"ilst", &nam_item);
+
+    let mut hdlr_p = vec![0u8; 4]; // pre_defined
+    hdlr_p.extend_from_slice(b"mdir");
+    hdlr_p.extend_from_slice(&[0u8; 12]); // reserved
+    hdlr_p.push(0); // empty (null-terminated) name
+    let hdlr = build_fullbox(b"hdlr", 0, 0, &hdlr_p);
+
+    let meta = build_fullbox(b"meta", 0, 0, &[hdlr, ilst].concat());
+    build_box(b"udta", &meta)
+}
+
+/// The crafted `udta`/`ilst`/`data` box, embedded as a genuine child of `moov`
+/// alongside `mvhd` and `trak`, must not prevent (or otherwise disturb)
+/// verification of an otherwise-valid timed-media asset. (Before the native
+/// reader, reaching this box's contents panicked with an integer underflow.)
+#[test]
+fn crafted_ilst_data_box_does_not_panic() {
+    let malicious_udta = build_malicious_ilst_udta();
+
+    let track = TrackSpec {
+        track_id: 1,
+        stsc: vec![StscEntry {
+            first_chunk: 1,
+            samples_per_chunk: 1,
+            sample_description_index: 1,
+        }],
+        sample_sizes: SampleSizes::Variable(vec![23]),
+        use_co64: false,
+    };
+
+    let sample: &[u8] = b"hello world sample data";
+
+    // Reserve a `free` box of the same total length at the front of `moov`,
+    // then splice the malicious box in over it so `moov` gains a genuine
+    // `udta` child without disturbing any offset arithmetic elsewhere in the
+    // file (mirrors how `Padding::in_moov` is used elsewhere in this suite).
+    let (mut file, roots) = build_single_track_asset_padded(
+        track,
+        &[sample],
+        Padding {
+            in_moov: malicious_udta.len() - 8,
+            ..Default::default()
+        },
+    );
+
+    let splice_at = file
+        .windows(4)
+        .position(|w| w == b"free")
+        .expect("free placeholder box present")
+        - 4;
+    file[splice_at..splice_at + malicious_udta.len()].copy_from_slice(&malicious_udta);
+
+    let bmff_hash = track_merkle_assertion(1, &roots);
+    let mut reader = Cursor::new(file);
+
+    // Must not panic, and the malicious sibling box must not affect
+    // verification of the otherwise-valid asset.
+    bmff_hash
+        .verify_stream_hash(&mut reader, Some("sha256"))
+        .expect("crafted udta/ilst/data box must not disturb verification");
+}
