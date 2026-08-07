@@ -1755,9 +1755,37 @@ impl Builder {
             }
         }
 
+        // A manifest may carry more than one actions assertion
+        // (a created-list assertion (with inception action), and a gathered-list assertion)
+        // Auto-inception action must still be only added exactly once.
+        let actions_assertions = || {
+            definition
+                .assertions
+                .iter()
+                .enumerate()
+                .filter(|(_, a)| parse_label(a.label()).0.starts_with(Actions::LABEL))
+        };
+        let has_inception = actions_assertions().any(|(_, a)| {
+            let Ok(actions) = a.to_assertion::<Actions>() else {
+                return false;
+            };
+            actions
+                .actions()
+                .iter()
+                .any(|act| matches!(act.action(), c2pa_action::CREATED | c2pa_action::OPENED))
+        });
+        let inception_target_index = (!has_inception)
+            .then(|| {
+                actions_assertions()
+                    .find(|(_, a)| a.created())
+                    .or_else(|| actions_assertions().next())
+                    .map(|(index, _)| index)
+            })
+            .flatten();
+
         let mut found_actions = false;
         // add any additional assertions
-        for manifest_assertion in &definition.assertions {
+        for (assertion_index, manifest_assertion) in definition.assertions.iter().enumerate() {
             let (match_label, version, _instance) = parse_label(manifest_assertion.label());
             match match_label {
                 l if l.starts_with(Actions::LABEL) => {
@@ -1844,7 +1872,11 @@ impl Builder {
 
                     // Do this at the end of the preprocessing step to ensure all ingredient references
                     // are resolved to their hashed URIs.
-                    self.add_actions_assertion_settings(&ingredient_map, &mut actions)?;
+                    self.add_actions_assertion_settings(
+                        &ingredient_map,
+                        &mut actions,
+                        inception_target_index == Some(assertion_index),
+                    )?;
 
                     add_assertion(&mut claim, &actions, manifest_assertion.created())
                 }
@@ -1893,7 +1925,8 @@ impl Builder {
 
         if !found_actions {
             let mut actions = Actions::new();
-            self.add_actions_assertion_settings(&ingredient_map, &mut actions)?;
+            // No actions assertions exist, so there is nothing to conflict with.
+            self.add_actions_assertion_settings(&ingredient_map, &mut actions, true)?;
 
             if !actions.actions().is_empty() {
                 // todo: add setting for created added actions
@@ -1912,10 +1945,13 @@ impl Builder {
     /// * `builder.actions.templates`
     /// * `builder.actions.actions`
     /// * For more, see [Builder::add_auto_actions_assertions]
+    ///
+    /// `allow_inception` must be true for at most one actions assertion per manifest.
     fn add_actions_assertion_settings(
         &self,
         ingredient_map: &HashMap<String, (&Relationship, HashedUri)>,
         actions: &mut Actions,
+        allow_inception: bool,
     ) -> Result<()> {
         if actions.all_actions_included.is_none() {
             actions.all_actions_included =
@@ -1952,7 +1988,7 @@ impl Builder {
                 true => actions.actions = additional_actions,
             }
         }
-        self.add_auto_actions_assertions_settings(ingredient_map, actions)
+        self.add_auto_actions_assertions_settings(ingredient_map, actions, allow_inception)
     }
 
     /// Adds c2pa.created, c2pa.opened, and c2pa.placed actions for the specified [Actions][crate::assertions::Actions]
@@ -1962,17 +1998,22 @@ impl Builder {
     /// * `builder.actions.auto_created_action`
     /// * `builder.actions.auto_opened_action`
     /// * `builder.actions.auto_placed_action`
+    ///
+    /// A manifest may contain more than one actions assertion,
+    /// but only one of them may carry the inception (created/opened) action.
     fn add_auto_actions_assertions_settings(
         &self,
         ingredient_map: &HashMap<String, (&Relationship, HashedUri)>,
         actions: &mut Actions,
+        allow_inception: bool,
     ) -> Result<()> {
         let settings = self.context.settings();
         // https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
         let auto_created = settings.builder.actions.auto_created_action.enabled;
         let auto_opened = settings.builder.actions.auto_opened_action.enabled;
 
-        if (self.intent().is_some() || auto_created || auto_opened)
+        if allow_inception
+            && (self.intent().is_some() || auto_created || auto_opened)
             && !actions.actions.iter().any(|action| {
                 action.action() == c2pa_action::CREATED || action.action() == c2pa_action::OPENED
             })
@@ -4216,6 +4257,129 @@ mod tests {
             .filter(|action| action.action() == c2pa_action::PLACED)
             .count();
         assert_eq!(num_placed_actions, 2);
+    }
+
+    #[test]
+    fn test_auto_inception_only_added_to_created_actions_assertion() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let mut builder = Builder::from_context(test_context())
+            .with_definition(
+                json!({
+                    "assertions": [
+                        {
+                            "label": "c2pa.actions.v2",
+                            "created": true,
+                            "data": { "actions": [ { "action": "c2pa.color_adjustments" } ] }
+                        },
+                        {
+                            "label": "c2pa.actions.v2",
+                            "data": { "actions": [ { "action": "c2pa.cropped" } ] }
+                        }
+                    ]
+                })
+                .to_string(),
+            )
+            .unwrap();
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+
+        let claim = builder.to_claim().unwrap();
+
+        let action_assertions = claim.action_assertions();
+        assert_eq!(action_assertions.len(), 2);
+
+        let all_actions: Vec<Actions> = action_assertions
+            .iter()
+            .map(|aa| Actions::from_assertion(aa.assertion()).unwrap())
+            .collect();
+
+        // Exactly one inception across the entire manifest.
+        let inception_count = all_actions
+            .iter()
+            .flat_map(|actions| actions.actions().iter())
+            .filter(|action| {
+                action.action() == c2pa_action::CREATED || action.action() == c2pa_action::OPENED
+            })
+            .count();
+        assert_eq!(
+            inception_count, 1,
+            "expected exactly one inception action across all actions assertions"
+        );
+
+        // It lives at index 0 of the created-list assertion.
+        let created_assertions = claim.created_action_assertions();
+        assert_eq!(created_assertions.len(), 1);
+        let created_actions = Actions::from_assertion(created_assertions[0].assertion()).unwrap();
+        assert_eq!(
+            created_actions.actions().first().unwrap().action(),
+            c2pa_action::CREATED
+        );
+
+        // The gathered-list assertion is untouched.
+        let gathered_assertions = claim.gathered_action_assertions();
+        assert_eq!(gathered_assertions.len(), 1);
+        let gathered_actions = Actions::from_assertion(gathered_assertions[0].assertion()).unwrap();
+        assert_eq!(
+            gathered_actions
+                .actions()
+                .iter()
+                .map(|a| a.action())
+                .collect::<Vec<_>>(),
+            vec!["c2pa.cropped"]
+        );
+    }
+
+    /// A manifest with two actions assertions and an intent must sign and validate.
+    #[test]
+    fn test_auto_inception_multiple_actions_assertions_signs_and_validates() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let context = test_context().with_signer(test_signer(SigningAlg::Ps256));
+
+        let mut builder = Builder::from_context(context)
+            .with_definition(
+                json!({
+                    "assertions": [
+                        {
+                            "label": "c2pa.actions.v2",
+                            "created": true,
+                            "data": { "actions": [ { "action": "c2pa.color_adjustments" } ] }
+                        },
+                        {
+                            "label": "c2pa.actions.v2",
+                            "data": { "actions": [ { "action": "c2pa.cropped" } ] }
+                        }
+                    ]
+                })
+                .to_string(),
+            )
+            .unwrap();
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .save_to_stream("image/jpeg", &mut Cursor::new(TEST_IMAGE), &mut output)
+            .unwrap();
+
+        output.rewind().unwrap();
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .unwrap();
+
+        // The test signer is in the trust anchors, so this validates as Trusted.
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        let actions: Actions = reader
+            .active_manifest()
+            .unwrap()
+            .find_assertion("c2pa.actions.v2")
+            .unwrap();
+        assert_eq!(
+            actions.actions().first().unwrap().action(),
+            c2pa_action::CREATED
+        );
     }
 
     #[test]
