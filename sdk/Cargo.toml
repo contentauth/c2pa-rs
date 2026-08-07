@@ -122,7 +122,7 @@ img-parts = "0.4.0"
 iref = { version = "3.2.2", features = ["serde"] }
 jfifdump = "0.6.0"
 log = "0.4.30"
-lopdf = { version = "0.44.0", optional = true }
+lopdf = { version = "0.44.0", optional = true, default-features = false }
 lazy_static = "1.5.0"
 memchr = "2.8.1"
 nom = "7.1.3"
@@ -160,6 +160,10 @@ web-time = "1.1"
 x509-parser = "0.18.1"
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
 zip = { version = "8.6.0", default-features = false }
+
+# lopdf's rayon needs real threads: native always has them, WASM only with atomics.
+[target.'cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))'.dependencies]
+lopdf = { version = "0.44.0", optional = true }
 
 [target.'cfg(not(target_os = "wasi"))'.dependencies]
 reqwest = { version = "0.12.28", default-features = false, features = [

@@ -1288,6 +1288,7 @@ impl Builder {
 
         #[allow(unused_mut)]
         let mut ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
+        ingredient.chain_resolver_to(&mut self.resources);
 
         if format == "c2pa" || format == "application/c2pa" {
             let parent_ingredient = self.add_ingredient_from_archive(stream)?;
