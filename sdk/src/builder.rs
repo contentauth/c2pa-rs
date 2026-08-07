@@ -1755,37 +1755,13 @@ impl Builder {
             }
         }
 
-        // A manifest may carry more than one actions assertion
-        // (a created-list assertion (with inception action), and a gathered-list assertion)
-        // Auto-inception action must still be only added exactly once.
-        let actions_assertions = || {
-            definition
-                .assertions
-                .iter()
-                .enumerate()
-                .filter(|(_, a)| parse_label(a.label()).0.starts_with(Actions::LABEL))
-        };
-        let has_inception = actions_assertions().any(|(_, a)| {
-            let Ok(actions) = a.to_assertion::<Actions>() else {
-                return false;
-            };
-            actions
-                .actions()
-                .iter()
-                .any(|act| matches!(act.action(), c2pa_action::CREATED | c2pa_action::OPENED))
-        });
-        let inception_target_index = (!has_inception)
-            .then(|| {
-                actions_assertions()
-                    .find(|(_, a)| a.created())
-                    .or_else(|| actions_assertions().next())
-                    .map(|(index, _)| index)
-            })
-            .flatten();
-
         let mut found_actions = false;
+        // A manifest may carry more than one actions assertion (a created-list assertion, which
+        // holds the inception action, and a gathered-list assertion). Only the first one may
+        // carry an inception, so clear this once we have seen an actions assertion.
+        let mut allow_inception = true;
         // add any additional assertions
-        for (assertion_index, manifest_assertion) in definition.assertions.iter().enumerate() {
+        for manifest_assertion in &definition.assertions {
             let (match_label, version, _instance) = parse_label(manifest_assertion.label());
             match match_label {
                 l if l.starts_with(Actions::LABEL) => {
@@ -1875,8 +1851,9 @@ impl Builder {
                     self.add_actions_assertion_settings(
                         &ingredient_map,
                         &mut actions,
-                        inception_target_index == Some(assertion_index),
+                        allow_inception,
                     )?;
+                    allow_inception = false;
 
                     add_assertion(&mut claim, &actions, manifest_assertion.created())
                 }
@@ -1945,7 +1922,8 @@ impl Builder {
     /// * `builder.actions.actions`
     /// * For more, see [Builder::add_auto_actions_assertions]
     ///
-    /// `allow_inception` must be true for at most one actions assertion per manifest.
+    /// Only the first actions assertion of a manifest may carry an inception (created/opened)
+    /// action, so `allow_inception` must only be true for that assertion.
     fn add_actions_assertion_settings(
         &self,
         ingredient_map: &HashMap<String, (&Relationship, HashedUri)>,
@@ -1987,6 +1965,20 @@ impl Builder {
                 true => actions.actions = additional_actions,
             }
         }
+
+        // Check after the settings actions are merged in, since they may add an inception too.
+        if !allow_inception
+            && actions
+                .actions()
+                .iter()
+                .any(|a| matches!(a.action(), c2pa_action::CREATED | c2pa_action::OPENED))
+        {
+            return Err(Error::BadParam(
+                "Only the first actions assertion may contain a created or opened action"
+                    .to_string(),
+            ));
+        }
+
         self.add_auto_actions_assertions_settings(ingredient_map, actions, allow_inception)
     }
 
@@ -1998,8 +1990,8 @@ impl Builder {
     /// * `builder.actions.auto_opened_action`
     /// * `builder.actions.auto_placed_action`
     ///
-    /// A manifest may contain more than one actions assertion,
-    /// but only one of them may carry the inception (created/opened) action.
+    /// A manifest may contain more than one actions assertion, but only the first one may carry
+    /// the inception (created/opened) action, so `allow_inception` must only be true for it.
     fn add_auto_actions_assertions_settings(
         &self,
         ingredient_map: &HashMap<String, (&Relationship, HashedUri)>,
@@ -4256,6 +4248,97 @@ mod tests {
             .filter(|action| action.action() == c2pa_action::PLACED)
             .count();
         assert_eq!(num_placed_actions, 2);
+    }
+
+    #[test]
+    fn test_auto_inception_out_of_order_inception_errors() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let mut builder = Builder::from_context(test_context())
+            .with_definition(
+                json!({
+                    "assertions": [
+                        {
+                            "label": "c2pa.actions.v2",
+                            "data": { "actions": [ { "action": "c2pa.cropped" } ] }
+                        },
+                        {
+                            "label": "c2pa.actions.v2",
+                            "created": true,
+                            "data": { "actions": [
+                                {
+                                    "action": "c2pa.created",
+                                    "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
+                                },
+                                { "action": "c2pa.color_adjustments" }
+                            ]}
+                        }
+                    ]
+                })
+                .to_string(),
+            )
+            .unwrap();
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+
+        let err = builder.to_claim().unwrap_err();
+        assert!(
+            matches!(err, Error::BadParam(ref message)
+                if message.contains("first actions assertion")),
+            "expected a BadParam about the first actions assertion, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_auto_inception_not_duplicated_across_actions_assertions() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let mut builder = Builder::from_context(test_context())
+            .with_definition(
+                json!({
+                    "assertions": [
+                        {
+                            "label": "c2pa.actions.v2",
+                            "created": true,
+                            "data": { "actions": [ { "action": "c2pa.color_adjustments" } ] }
+                        },
+                        {
+                            "label": "c2pa.actions.v2",
+                            "data": { "actions": [ { "action": "c2pa.cropped" } ] }
+                        }
+                    ]
+                })
+                .to_string(),
+            )
+            .unwrap();
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+
+        let claim = builder.to_claim().unwrap();
+
+        let action_assertions = claim.action_assertions();
+        assert_eq!(action_assertions.len(), 2);
+
+        let all_actions: Vec<Actions> = action_assertions
+            .iter()
+            .map(|aa| Actions::from_assertion(aa.assertion()).unwrap())
+            .collect();
+
+        let inception_count = all_actions
+            .iter()
+            .flat_map(|actions| actions.actions().iter())
+            .filter(|action| matches!(action.action(), c2pa_action::CREATED | c2pa_action::OPENED))
+            .count();
+        assert_eq!(
+            inception_count, 1,
+            "expected exactly one inception action across all actions assertions"
+        );
+
+        // The inception belongs at the front of the first actions assertion.
+        assert_eq!(
+            all_actions[0].actions().first().unwrap().action(),
+            c2pa_action::CREATED
+        );
     }
 
     #[test]
