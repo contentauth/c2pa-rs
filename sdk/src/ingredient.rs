@@ -109,7 +109,7 @@ pub struct Ingredient {
     #[serde(skip_serializing_if = "Option::is_none")]
     active_manifest: Option<String>,
 
-    /// One of the source types defined at https://cv.iptc.org/newscodes/digitalsourcetype/
+    /// One of the source types defined at <https://cv.iptc.org/newscodes/digitalsourcetype/>
     /// or in this specification. Cannot be combined with `activeManifest`.
     #[serde(skip_serializing_if = "Option::is_none")]
     digital_source_type: Option<DigitalSourceType>,
