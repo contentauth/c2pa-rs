@@ -1925,7 +1925,6 @@ impl Builder {
 
         if !found_actions {
             let mut actions = Actions::new();
-            // No actions assertions exist, so there is nothing to conflict with.
             self.add_actions_assertion_settings(&ingredient_map, &mut actions, true)?;
 
             if !actions.actions().is_empty() {
