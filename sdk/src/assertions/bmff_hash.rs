@@ -1505,7 +1505,14 @@ impl BmffHash {
                         // finalize leaf hashes
                         let mut leaf_hashes = Vec::new();
                         for chunk_bmff_mm in &track_to_bmff_merkle_map[&(track_id as usize)] {
-                            match chunk_hash_map.remove(&(chunk_bmff_mm.location as u32 + 1)) {
+                            // `location` is attacker-controlled (deserialized from the
+                            // file's uuid merkle box), so both the u32 conversion and the
+                            // +1 must be checked rather than wrapping/panicking.
+                            let chunk_id = u32::try_from(chunk_bmff_mm.location)
+                                .ok()
+                                .and_then(|loc| loc.checked_add(1));
+
+                            match chunk_id.and_then(|id| chunk_hash_map.remove(&id)) {
                                 Some(h) => {
                                     let h = Hasher::finalize(h);
                                     leaf_hashes.push(h);
