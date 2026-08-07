@@ -9,6 +9,14 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.90.8](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.7...c2pa-v0.90.8)
+_07 August 2026_
+
+### Fixed
+
+* Ensure inception action is only auto-added once (backport #2438) ([#2444](https://github.com/contentauth/c2pa-rs/pull/2444))
+* Chain resources in `Builder::add_ingredient_from_stream` (backport #2432) ([#2442](https://github.com/contentauth/c2pa-rs/pull/2442))
+
 ## [0.90.7](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.6...c2pa-v0.90.7)
 _07 August 2026_
 
