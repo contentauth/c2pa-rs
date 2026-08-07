@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.90.7](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.6...c2pa-v0.90.7)
+_07 August 2026_
+
+### Fixed
+
+* Gate lopdf's rayon feature by real thread availability (backport #2428) ([#2439](https://github.com/contentauth/c2pa-rs/pull/2439))
+
 ## [0.90.6](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.5...c2pa-v0.90.6)
 _06 August 2026_
 
