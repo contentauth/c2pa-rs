@@ -372,9 +372,19 @@ pub struct Core {
     /// is omitted, any scheme is allowed as long as the host matches.
     ///
     /// The behavior is as follows:
-    /// - `None` (default) no filtering enabled.
+    /// - `None` (default): no host allow-list is applied. Host access is instead governed by
+    ///   [`network_security`]: the default policy still refuses to follow HTTP redirects (SSRF
+    ///   hardening, CAI-12574), and [`NetworkSecurity::Strict`] additionally blocks
+    ///   non-globally-routable hosts.
     /// - `Some(vec)` where `vec` is empty, all traffic is blocked.
     /// - `Some(vec)` with at least one pattern, filtering enabled for only those patterns.
+    ///
+    /// When an allow-list is set, redirect following is governed by [`network_security`] just as it
+    /// is for the default path. The allow-list is checked against the request URI; the SDK cannot
+    /// re-check it across redirect hops, which is why redirects are not followed unless
+    /// [`network_security`] is [`NetworkSecurity::Off`].
+    ///
+    /// [`network_security`]: Core::network_security
     ///
     /// # Examples
     ///
@@ -398,6 +408,18 @@ pub struct Core {
     /// When network requests occur depends on the operations being performed (reading manifests,
     /// validating credentials, timestamping, etc.).
     pub allowed_network_hosts: Option<Vec<HostPattern>>,
+    /// Built-in SSRF-hardening policy applied to the SDK's HTTP requests during reading and
+    /// validation (remote manifests, OCSP, timestamps, `did:web`).
+    ///
+    /// This is independent of [`allowed_network_hosts`]: an allow-list, when set, is always
+    /// enforced. `network_security` additionally governs whether HTTP redirects are followed and
+    /// whether requests to non-globally-routable hosts are rejected when no allow-list is
+    /// configured. See [`NetworkSecurity`] for the meaning of each level.
+    ///
+    /// The default is [`NetworkSecurity::Default`].
+    ///
+    /// [`allowed_network_hosts`]: Core::allowed_network_hosts
+    pub network_security: NetworkSecurity,
     /// Whether to prefer compressing manifests. This can reduce the size of the manifest. Compressed manifest
     /// are not always possible and will default back to uncompressed if the manifest contains features
     /// that are not compatible with compression.
@@ -422,6 +444,7 @@ impl Default for Core {
             backing_store_memory_threshold_in_mb: 512,
             decode_identity_assertions: true,
             allowed_network_hosts: None,
+            network_security: NetworkSecurity::default(),
             prefer_compress_manifests: false,
             max_decompressed_manifest_size_in_mb: 32,
         }
@@ -438,6 +461,55 @@ impl SettingsValidate for Core {
         }
         Ok(())
     }
+}
+
+/// The SDK's built-in network safety policy, configured via [`Core::network_security`].
+///
+/// The SDK issues HTTP requests while reading and validating content (fetching remote manifests,
+/// OCSP revocation checks, RFC 3161 timestamps, and `did:web` resolution). Because some of those
+/// URLs come from untrusted content, following HTTP redirects can be abused to reach internal or
+/// cloud-metadata endpoints (SSRF – CAI-12574). This policy controls that behavior.
+///
+/// This is orthogonal to [`Core::allowed_network_hosts`]: an allow-list, when configured, is always
+/// enforced regardless of the level below.
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NetworkSecurity {
+    /// No SDK-imposed network restrictions: HTTP redirects are followed and no host filtering is
+    /// applied beyond [`Core::allowed_network_hosts`].
+    ///
+    /// This restores the behavior from before the CAI-12574 hardening. Use it only if you require
+    /// redirect following and understand the SSRF risk (a redirect from untrusted content can be
+    /// pointed at an internal endpoint).
+    Off,
+
+    /// HTTP redirects are not followed: a redirect response is surfaced as
+    /// [`HttpResolverError::RedirectDisallowed`] rather than being chased to its target. No host
+    /// filtering is applied beyond [`Core::allowed_network_hosts`], so requests to internal hosts
+    /// named *directly* (for example an enterprise OCSP responder on a private address, or a
+    /// `localhost` development server) still succeed.
+    ///
+    /// This is the default. It closes the reported redirect-based SSRF while remaining compatible
+    /// with existing deployments that legitimately reach internal hosts.
+    ///
+    /// [`HttpResolverError::RedirectDisallowed`]: crate::http::HttpResolverError::RedirectDisallowed
+    #[default]
+    Default,
+
+    /// HTTP redirects are not followed (as in [`NetworkSecurity::Default`]) and, when no allow-list
+    /// is configured, requests to non-globally-routable hosts – loopback, private (RFC 1918),
+    /// link-local and cloud-metadata (e.g. `169.254.169.254`), unique-local, CGNAT, documentation,
+    /// and multicast addresses, plus the `localhost` host name – are rejected with
+    /// [`HttpResolverError::UriDisallowed`].
+    ///
+    /// Recommended for production services that process untrusted content. Note that this check is
+    /// applied to the request URI; filtering on the *resolved* IP address (to defeat DNS names that
+    /// point at internal addresses) is tracked in
+    /// <https://github.com/contentauth/c2pa-rs/issues/2430>.
+    ///
+    /// [`HttpResolverError::UriDisallowed`]: crate::http::HttpResolverError::UriDisallowed
+    Strict,
 }
 
 /// Settings to configure the verification process.

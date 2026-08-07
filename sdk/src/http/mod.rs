@@ -34,10 +34,47 @@
 //! Network requests may also be issued during the signing process, such as when
 //! [`SignerSettings::Remote`] is specified.
 //!
+//! # Network security policy (SSRF hardening)
+//!
+//! Because some request URLs come from untrusted content, the SDK applies a built-in policy to the
+//! requests above, configured via [`Core::network_security`]. By default the SDK does **not** follow
+//! HTTP redirects (a redirect from untrusted content could be pointed at an internal endpoint); a
+//! blocked redirect is reported as [`HttpResolverError::RedirectDisallowed`]. See
+//! [`NetworkSecurity`] for the `off` / `default` / `strict` levels, and
+//! [`Core::allowed_network_hosts`] for an explicit host allow-list.
+//!
+//! ## Local development and internal hosts
+//!
+//! The default policy still allows requests to directly-named internal hosts, so a `localhost`
+//! development server (for example a local `did:web` origin or manifest host) works out of the box —
+//! only redirect *following* is disabled. If you run under [`NetworkSecurity::Strict`] (which blocks
+//! non-globally-routable hosts) but need to reach a local or internal host during development, add
+//! it to [`Core::allowed_network_hosts`]:
+//!
+//! ```
+//! # use c2pa::{Context, Settings};
+//! # fn main() -> c2pa::Result<()> {
+//! // Allow a local dev server on 127.0.0.1:8080 even under the strict policy.
+//! let settings = Settings::new()
+//!     .with_value("core.network_security", "strict")?
+//!     .with_value("core.allowed_network_hosts", ["127.0.0.1:8080".to_string()])?;
+//! let context = Context::new().with_settings(settings)?;
+//! # let _ = context;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! If a request must follow redirects (for example a remote-manifest URL that legitimately 301s to
+//! a CDN), set `core.network_security = "off"` to restore redirect following.
+//!
 //! [`Reader`]: crate::Reader
 //! [`Builder`]: crate::Builder
 //! [`TimeStamp`]: crate::assertions::TimeStamp
 //! [`SignerSettings::Remote`]: crate::settings::signer::SignerSettings::Remote
+//! [`Core::network_security`]: crate::settings::Core::network_security
+//! [`Core::allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
+//! [`NetworkSecurity`]: crate::settings::NetworkSecurity
+//! [`NetworkSecurity::Strict`]: crate::settings::NetworkSecurity::Strict
 
 use std::{
     io::{self, Cursor, Read},
@@ -327,6 +364,29 @@ pub enum HttpResolverError {
     #[error("response body exceeded maximum allowed size")]
     ResponseTooLarge,
 
+    /// An HTTP redirect response was received, but redirect following is disabled by the current
+    /// [`network_security`] policy.
+    ///
+    /// This is expected when a remote-manifest, OCSP, timestamp, or `did:web` URL responds with a
+    /// 3xx redirect. Following redirects from untrusted content is an SSRF risk (CAI-12574), so the
+    /// SDK does not chase them by default. To opt back in, set `core.network_security = "off"`. If
+    /// the redirect target is a specific trusted host, you can instead add it to
+    /// [`allowed_network_hosts`] and request the final URL directly.
+    ///
+    /// [`network_security`]: crate::settings::Core::network_security
+    /// [`allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
+    #[error(
+        "HTTP redirect to \"{location}\" (from \"{uri}\") was not followed: the SDK does not follow \
+         redirects under the current network_security policy. Set core.network_security = \"off\" to \
+         allow redirects, or add the target host to core.allowed_network_hosts and request it directly."
+    )]
+    RedirectDisallowed {
+        /// The URI that returned the redirect response.
+        uri: String,
+        /// The redirect target from the response `Location` header (or `"(unknown)"` if absent).
+        location: String,
+    },
+
     /// An error occurred from the underlying HTTP resolver.
     #[error("an error occurred from the underlying http resolver: {0}")]
     Other(Box<dyn std::error::Error + Send + Sync>),
@@ -491,5 +551,32 @@ pub mod tests {
         assert_eq!(response.status(), 200);
         redirect.assert_calls(1);
         target.assert_calls(1);
+    }
+
+    // A resolver built for the default (no allow-list) path must not follow redirects: it returns
+    // the 3xx response itself rather than fetching the redirect target. This is the SSRF hardening
+    // for CAI-12574 – the SDK cannot inspect intermediate redirect hops, so it never follows them.
+    #[async_generic(async_signature(resolver: impl AsyncHttpResolver))]
+    pub fn assert_http_resolver_no_redirects(resolver: impl SyncHttpResolver) {
+        use httpmock::MockServer;
+
+        let server = MockServer::start();
+        let redirect = redirect_mock_server(&server);
+        let target = mock_server(&server);
+
+        let request = Request::get(format!("{}/redirect", server.base_url()))
+            .body(vec![3, 2, 1])
+            .unwrap();
+
+        let response = if _sync {
+            resolver.http_resolve(request).unwrap()
+        } else {
+            resolver.http_resolve_async(request).await.unwrap()
+        };
+
+        // The redirect endpoint is hit exactly once and the target is never reached.
+        assert_eq!(response.status(), 302);
+        redirect.assert_calls(1);
+        target.assert_calls(0);
     }
 }
