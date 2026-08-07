@@ -384,20 +384,6 @@ mod tests {
             },
         };
 
-        // The default context blocks requests to non-globally-routable hosts (SSRF hardening,
-        // CAI-12574). These hermetic tests point `set_proxy` at a loopback mock server, so they
-        // must explicitly allow that host – which is also how a deployment would reach an internal
-        // did:web host. Allowing a host also routes through `RestrictedResolver`, bypassing the
-        // default guard.
-        fn context_allowing(server: &MockServer) -> Context {
-            Context::new()
-                .with_settings(format!(
-                    "[core]\nallowed_network_hosts = [\"127.0.0.1:{}\"]\n",
-                    server.port()
-                ))
-                .unwrap()
-        }
-
         #[tokio::test]
         // #[cfg_attr(all(target_arch = "wasm32", not(target_os = "wasi")),
         // wasm_bindgen_test)] Can't test this on WASM until we find an httpmock
@@ -427,7 +413,7 @@ mod tests {
                     .body(DID_JSON);
             });
 
-            let context = context_allowing(&server);
+            let context = Context::new();
             let doc = did_web::resolve_async(&did("did:web:did-web-mock.test"), &context)
                 .await
                 .unwrap();
@@ -479,7 +465,7 @@ mod tests {
                     .body(ATTACKER_DID_JSON);
             });
 
-            let context = context_allowing(&server);
+            let context = Context::new();
 
             // Requested DID is the "trusted" one; the attacker's document (a
             // different subject `id`) must be rejected rather than returned.
@@ -510,7 +496,7 @@ mod tests {
                     .body(oversized_body);
             });
 
-            let context = context_allowing(&server);
+            let context = Context::new();
             let result = did_web::resolve_async(&did("did:web:did-web-mock.test"), &context).await;
 
             did_web::clear_proxies();
@@ -536,7 +522,7 @@ mod tests {
                     .body(oversized_body);
             });
 
-            let context = context_allowing(&server);
+            let context = Context::new();
             let result = did_web::resolve_async(&did("did:web:did-web-mock.test"), &context).await;
 
             did_web::clear_proxies();
