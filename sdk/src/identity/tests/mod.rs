@@ -16,6 +16,8 @@
 #![allow(clippy::unwrap_used)]
 
 mod claim_aggregation;
+#[cfg(not(target_arch = "wasm32"))]
+mod embeddable_signing;
 mod examples;
 pub(crate) mod fixtures;
 mod validation_method;
