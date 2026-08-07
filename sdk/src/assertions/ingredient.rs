@@ -434,11 +434,9 @@ impl Ingredient {
         */
 
         // check rules
-        if self.active_manifest.is_none() && self.validation_results.is_some()
-            || self.active_manifest.is_some() && self.validation_results.is_none()
-        {
+        if self.active_manifest.is_some() && self.validation_results.is_none() {
             return Err(serde::ser::Error::custom(
-                "Ingredient v3 activeManifest and validationResults must both be present or absent",
+                "Ingredient v3 activeManifest requires validationResults to be present",
             ));
         }
 
@@ -1240,6 +1238,25 @@ pub mod tests {
         assert!(!v3_decoded.is_v1_compatible());
         assert!(!v3_decoded.is_v2_compatible());
         assert!(v3_decoded.is_v3_compatible());
+    }
+
+    #[test]
+    fn test_validation_results_without_active_manifest() {
+        let ingredient = Ingredient {
+            validation_results: Some(ValidationResults::default()),
+            ..Ingredient::new_v3(Relationship::ParentOf)
+        };
+        assert!(ingredient.to_assertion().is_ok());
+
+        let ingredient = Ingredient {
+            active_manifest: Some(HashedUri::new(
+                "self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(),
+                Some("sha256".to_owned()),
+                &[1, 2, 3, 4, 5, 6, 7, 8, 9, 0],
+            )),
+            ..Ingredient::new_v3(Relationship::ParentOf)
+        };
+        assert!(ingredient.to_assertion().is_err());
     }
 
     #[test]
