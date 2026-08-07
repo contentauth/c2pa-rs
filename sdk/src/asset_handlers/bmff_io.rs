@@ -178,8 +178,8 @@ impl XpathFetch for BMFFArena {
     fn fetch(&self, xpath: &str) -> Result<Option<Vec<Token>>> {
         let token_children = |t: Token| {
             let mut c = Vec::new();
-            let mut child_tokens = t.children_tokens(&self.arena);
-            while let Some(child) = child_tokens.next() {
+            let child_tokens = t.children_tokens(&self.arena);
+            for child in child_tokens {
                 c.push(child);
             }
             c
