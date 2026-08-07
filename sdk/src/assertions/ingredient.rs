@@ -680,75 +680,9 @@ impl AssertionBase for Ingredient {
 
         let version = assertion.get_ver();
 
-        static V1_FIELDS: [&str; 9] = [
-            "dc:title",
-            "dc:format",
-            "documentID",
-            "instanceID",
-            "relationship",
-            "c2pa_manifest",
-            "thumbnail",
-            "validationStatus",
-            "metadata",
-        ];
-
-        static V2_FIELDS: [&str; 13] = [
-            "dc:title",
-            "dc:format",
-            "relationship",
-            "documentID",
-            "instanceID",
-            "data",
-            "data_types",
-            "c2pa_manifest",
-            "thumbnail",
-            "validationStatus",
-            "description",
-            "informational_URI",
-            "metadata",
-        ];
-
-        static V3_FIELDS: [&str; 15] = [
-            "dc:title",
-            "dc:format",
-            "relationship",
-            "validationResults",
-            "instanceID",
-            "data",
-            "dataTypes",
-            "activeManifest",
-            "claimSignature",
-            "thumbnail",
-            "description",
-            "informationalURI",
-            "softBindingsMatched",
-            "softBindingAlgorithmsMatched",
-            "metadata",
-        ];
-
-        // make sure decoded matches expected fields
+        // Only the fields required by the CDDL for each version are enforced.
         let decoded = match version {
             1 => {
-                // make sure only V1 fields are present
-                if let c2pa_cbor::Value::Map(m) = &ingredient_value {
-                    if !m.keys().all(|v| match v {
-                        c2pa_cbor::Value::Text(t) => V1_FIELDS.contains(&t.as_str()),
-                        _ => false,
-                    }) {
-                        return Err(to_decoding_err(
-                            &assertion.label(),
-                            assertion.get_ver(),
-                            "invalid field found in Ingredient assertion",
-                        ));
-                    }
-                } else {
-                    return Err(to_decoding_err(
-                        &assertion.label(),
-                        assertion.get_ver(),
-                        "invalid field found in Ingredient assertion",
-                    ));
-                }
-
                 // add mandatory field
                 let title: String = map_cbor_to_type("dc:title", &ingredient_value).ok_or(
                     to_decoding_err(&assertion.label(), assertion.get_ver(), "dc:title"),
@@ -791,26 +725,6 @@ impl AssertionBase for Ingredient {
                 }
             }
             2 => {
-                // make sure only V2 fields are present
-                if let c2pa_cbor::Value::Map(m) = &ingredient_value {
-                    if !m.keys().all(|v| match v {
-                        c2pa_cbor::Value::Text(t) => V2_FIELDS.contains(&t.as_str()),
-                        _ => false,
-                    }) {
-                        return Err(to_decoding_err(
-                            &assertion.label(),
-                            assertion.get_ver(),
-                            "invalid field found in Ingredient assertion",
-                        ));
-                    }
-                } else {
-                    return Err(to_decoding_err(
-                        &assertion.label(),
-                        assertion.get_ver(),
-                        "invalid field found in Ingredient assertion",
-                    ));
-                }
-
                 // add mandatory field
                 let title: String = map_cbor_to_type("dc:title", &ingredient_value).ok_or(
                     to_decoding_err(&assertion.label(), assertion.get_ver(), "dc:title"),
@@ -862,26 +776,6 @@ impl AssertionBase for Ingredient {
                 }
             }
             3 => {
-                // make sure only V3 fields are present
-                if let c2pa_cbor::Value::Map(m) = &ingredient_value {
-                    if !m.keys().all(|v| match v {
-                        c2pa_cbor::Value::Text(t) => V3_FIELDS.contains(&t.as_str()),
-                        _ => false,
-                    }) {
-                        return Err(to_decoding_err(
-                            &assertion.label(),
-                            assertion.get_ver(),
-                            "invalid field found in Ingredient assertion",
-                        ));
-                    }
-                } else {
-                    return Err(to_decoding_err(
-                        &assertion.label(),
-                        assertion.get_ver(),
-                        "invalid field found in Ingredient assertion",
-                    ));
-                }
-
                 // add mandatory field
                 let relationship: Relationship =
                     map_cbor_to_type("relationship", &ingredient_value).ok_or(to_decoding_err(
