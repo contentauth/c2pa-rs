@@ -168,12 +168,6 @@ impl AsRef<Arena<BoxInfo>> for BMFFArena {
     }
 }
 
-impl AsMut<Arena<BoxInfo>> for BMFFArena {
-    fn as_mut(&mut self) -> &mut Arena<BoxInfo> {
-        &mut self.arena
-    }
-}
-
 impl XpathFetch for BMFFArena {
     fn fetch(&self, xpath: &str) -> Result<Option<Vec<Token>>> {
         let token_children = |t: Token| {
@@ -3896,6 +3890,10 @@ pub mod tests {
         // check bad FourCC value
         let track_name_bad = bmff_arena.fetch("/moov/tra[2]");
         assert!(track_name_bad.is_err());
+
+        // check bad FourCC value
+        let track_name_bad2 = bmff_arena.fetch("/moo");
+        assert!(track_name_bad2.is_err());
 
         // check malformed path
         let path_bad = bmff_arena.fetch("/moov/trak[[3]]");
