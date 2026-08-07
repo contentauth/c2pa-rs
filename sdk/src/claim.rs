@@ -2615,6 +2615,85 @@ impl Claim {
                     }
                 }
 
+                // 2.f if the action’s parameters field exists and contains a relatedAssertions field
+                if let Some(related_assertions) = action
+                    .parameters()
+                    .and_then(|p| p.related_assertions.as_ref())
+                {
+                    // 2.f.i if the value of relatedAssertions is not an array with at least one element,
+                    //       the claim shall be rejected with a failure code of assertion.action.malformed
+                    if related_assertions.is_empty() {
+                        log_item!(
+                            label.clone(),
+                            "relatedAssertions must contain at least one entry",
+                            "verify_actions"
+                        )
+                        .validation_status(validation_status::ASSERTION_ACTION_MALFORMED)
+                        .failure_no_throw(
+                            validation_log,
+                            Error::ValidationRule(
+                                "relatedAssertions must contain at least one entry".into(),
+                            ),
+                        );
+                    }
+
+                    for related in related_assertions {
+                        let url = related.url();
+
+                        // 2.f.ii.B resolve the hashed URI to locate the referenced assertion
+                        let (target_label, instance) = Claim::assertion_label_from_link(&url);
+
+                        // 2.f.ii.C if the referenced assertion cannot be resolved, or does not
+                        //          resolve to an assertion within the current manifest, the claim
+                        //          shall be rejected with a failure code of assertion.action.malformed
+                        let in_current_manifest = if related.is_relative_url() {
+                            true
+                        } else {
+                            manifest_label_from_uri(&url).as_deref() == Some(claim.label())
+                        };
+                        let assertions = if in_current_manifest {
+                            claim.get_claim_assertion(&target_label, instance)
+                        } else {
+                            None
+                        };
+
+                        if assertions.is_none() {
+                            log_item!(
+                                label.clone(),
+                                format!("relatedAssertions reference could not be resolved within the current manifest: {url}"),
+                                "verify_actions"
+                            )
+                            .validation_status(validation_status::ASSERTION_ACTION_MALFORMED)
+                            .failure_no_throw(
+                                validation_log,
+                                Error::ValidationRule(
+                                    "relatedAssertions reference could not be resolved within the current manifest".into(),
+                                ),
+                            );
+                        }
+
+                        // 2.f.ii.D If the referenced assertion is of of type c2pa.ingredients,
+                        //          c2pa.ingredients.v2, c2pa.ingredients.v3, c2pa.actions, or
+                        //          c2pa.actions.v2, the claim shall be rejected with a failure
+                        //          code of assertion.action.malformed.
+                        let base = labels::base(&target_label);
+                        if base == labels::ACTIONS || base == labels::INGREDIENT {
+                            log_item!(
+                                label.clone(),
+                                format!("relatedAssertions must not reference an actions or ingredient assertion: {url}"),
+                                "verify_actions"
+                            )
+                            .validation_status(validation_status::ASSERTION_ACTION_MALFORMED)
+                            .failure_no_throw(
+                                validation_log,
+                                Error::ValidationRule(
+                                    "relatedAssertions must not reference an actions or ingredient assertion".into(),
+                                ),
+                            );
+                        }
+                    }
+                }
+
                 // 2.h check softwareAgent icons
                 let mut icons = Vec::new();
                 if let Some(assertions::SoftwareAgent::ClaimGeneratorInfo(cgi)) =
