@@ -4448,7 +4448,7 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::{resource_store::UriOrResource, utils::test::create_test_claim};
+    use crate::{resource_store::UriOrResource, utils::test::create_test_claim, DigitalSourceType};
 
     #[test]
     fn test_build_claim() {
@@ -5272,6 +5272,98 @@ pub mod tests {
         assert!(
             !log.has_status(validation_status::ASSERTION_ACTION_MALFORMED),
             "c2pa.translated with both languages should not be malformed"
+        );
+    }
+
+    fn verify_related_assertions(claim: &mut Claim, related: Vec<HashedUri>) -> StatusTracker {
+        let edited = Action::new(c2pa_action::EDITED)
+            .set_parameter("relatedAssertions", related)
+            .unwrap();
+        let actions = Actions::new()
+            .add_action(
+                Action::new(c2pa_action::CREATED)
+                    .set_source_type(DigitalSourceType::AlgorithmicMedia),
+            )
+            .add_action(edited);
+        claim.add_assertion(&actions).unwrap();
+
+        let svi = StoreValidationInfo::default();
+        let settings = Settings::default();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+        Claim::verify_actions(claim, &svi, &mut validation_log, &settings).unwrap();
+
+        validation_log
+    }
+
+    #[test]
+    fn test_verify_related_assertions_empty_rejected() {
+        let mut claim = Claim::new("test", Some("test"), 2);
+        let log = verify_related_assertions(&mut claim, vec![]);
+        assert!(
+            log.has_status(validation_status::ASSERTION_ACTION_MALFORMED),
+            "empty relatedAssertions should be malformed"
+        );
+    }
+
+    #[test]
+    fn test_verify_related_assertions_unresolvable_rejected() {
+        let mut claim = Claim::new("test", Some("test"), 2);
+        let uri = HashedUri::new(
+            to_assertion_uri(claim.label(), "com.example.missing"),
+            Some("sha256".to_string()),
+            b"hash",
+        );
+        let log = verify_related_assertions(&mut claim, vec![uri]);
+        assert!(
+            log.has_status(validation_status::ASSERTION_ACTION_MALFORMED),
+            "unresolvable relatedAssertions reference should be malformed"
+        );
+    }
+
+    #[test]
+    fn test_verify_related_assertions_references_actions_rejected() {
+        let mut claim = Claim::new("test", Some("test"), 2);
+        let uri = HashedUri::new(
+            to_assertion_uri(claim.label(), Actions::LABEL_VERSIONED),
+            Some("sha256".to_string()),
+            b"hash",
+        );
+        let log = verify_related_assertions(&mut claim, vec![uri]);
+        assert!(
+            log.has_status(validation_status::ASSERTION_ACTION_MALFORMED),
+            "relatedAssertions referencing an actions assertion should be malformed"
+        );
+    }
+
+    #[test]
+    fn test_verify_related_assertions_references_ingredient_rejected() {
+        let mut claim = Claim::new("test", Some("test"), 2);
+        let ingredient_uri = claim
+            .add_assertion(&Ingredient::new_v3(Relationship::ComponentOf))
+            .unwrap();
+        let log = verify_related_assertions(&mut claim, vec![ingredient_uri]);
+        assert!(
+            log.has_status(validation_status::ASSERTION_ACTION_MALFORMED),
+            "relatedAssertions referencing an ingredient assertion should be malformed"
+        );
+    }
+
+    #[test]
+    fn test_verify_related_assertions_valid() {
+        use crate::assertions::UserCbor;
+
+        let mut claim = Claim::new("test", Some("test"), 2);
+        let uri = claim
+            .add_assertion(&UserCbor::new(
+                "com.example.related",
+                c2pa_cbor::to_vec(&"related payload").unwrap(),
+            ))
+            .unwrap();
+        let log = verify_related_assertions(&mut claim, vec![uri]);
+        assert!(
+            !log.has_status(validation_status::ASSERTION_ACTION_MALFORMED),
+            "relatedAssertions referencing an allowed assertion should not be malformed"
         );
     }
 
