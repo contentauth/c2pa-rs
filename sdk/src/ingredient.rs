@@ -660,6 +660,7 @@ impl Ingredient {
         result: Result<Store>,
         manifest_bytes: Option<Vec<u8>>,
         validation_log: &StatusTracker,
+        context: &Context,
     ) -> Result<()> {
         match result {
             Ok(store) => {
@@ -715,6 +716,11 @@ impl Ingredient {
             | Err(Error::UnsupportedType) => Ok(()), // no claims but valid file
             Err(Error::BadParam(desc)) if desc == *"unrecognized file type" => Ok(()),
             Err(Error::RemoteManifestUrl(url)) | Err(Error::RemoteManifestFetch(url)) => {
+                if context.settings().builder.ignore_ingredient_errors {
+                    debug!("ignoring ingredient error: remote manifest not fetched: {url}");
+                    return Ok(());
+                }
+
                 let status =
                     ValidationStatus::new_failure(validation_status::MANIFEST_INACCESSIBLE)
                         .set_url(url)
@@ -726,6 +732,11 @@ impl Ingredient {
                 Ok(())
             }
             Err(e) => {
+                if context.settings().builder.ignore_ingredient_errors {
+                    debug!("ignoring ingredient error: {e:?}");
+                    return Ok(());
+                }
+
                 // we can ignore the error here because it should have a log entry corresponding to it
                 debug!("ingredient {e:?}");
 
@@ -892,7 +903,7 @@ impl Ingredient {
         }
 
         // set validation status from result and log
-        self.update_validation_status(result, manifest_bytes, &validation_log)?;
+        self.update_validation_status(result, manifest_bytes, &validation_log, context)?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
@@ -982,7 +993,7 @@ impl Ingredient {
             };
 
         // set validation status from result and log
-        ingredient.update_validation_status(result, manifest_bytes, &validation_log)?;
+        ingredient.update_validation_status(result, manifest_bytes, &validation_log, context)?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
@@ -1474,7 +1485,12 @@ impl Ingredient {
             };
 
         // set validation status from result and log
-        ingredient.update_validation_status(result, Some(manifest_bytes), &validation_log)?;
+        ingredient.update_validation_status(
+            result,
+            Some(manifest_bytes),
+            &validation_log,
+            &context,
+        )?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
