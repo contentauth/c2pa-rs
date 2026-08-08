@@ -78,6 +78,7 @@ pub struct Ingredient {
     pub description: Option<String>,
     pub informational_uri: Option<String>,
     pub data_types: Option<Vec<AssetType>>,
+    pub digital_source_type: Option<String>,
 
     pub validation_results: Option<ValidationResults>,
     pub active_manifest: Option<HashedUri>,
@@ -107,7 +108,7 @@ impl Serialize for Ingredient {
 impl Ingredient {
     /// Label prefix for an ingredient assertion.
     ///
-    /// See [ingredient_assertion - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#ingredient_assertion)
+    /// See [ingredient_assertion - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#ingredient_assertion)
     pub const LABEL: &'static str = labels::INGREDIENT;
 
     pub fn new(title: &str, format: &str, instance_id: &str, document_id: Option<&str>) -> Self {
@@ -177,12 +178,15 @@ impl Ingredient {
     }
 
     fn is_v3_compatible(&self) -> bool {
-        self.document_id.is_none()    // V3 restricted fields
+        self.document_id.is_none() // V3 restricted fields
             && self.validation_status.is_none()
             && self.c2pa_manifest.is_none()
-            && self.validation_results.is_some()
-            && self.active_manifest.is_some()
-            && self.claim_signature.is_some()
+            // activeManifest, claimSignature, and validationResults are present together
+            // (an ingredient with its own manifest) or all absent (a manifest-less ingredient)
+            && (self.active_manifest.is_some() == self.validation_results.is_some())
+            && (self.active_manifest.is_some() == self.claim_signature.is_some())
+            // activeManifest and digitalSourceType are mutually exclusive
+            && !(self.active_manifest.is_some() && self.digital_source_type.is_some())
     }
 
     pub fn set_title<S: Into<String>>(mut self, title: S) -> Self {
@@ -430,6 +434,7 @@ impl Ingredient {
             ? "informationalURI": tstr .size (1..max-tstr-length), ; URI to an informational page about the ingredient or its data
             ? "softBindingsMatched": bool, ; Whether soft bindings were matched
             ? "softBindingAlgorithmsMatched": [1* tstr] ; Array of algorithm names used for discovering the active manifest
+            ? "digitalSourceType": tstr .size (1..max-tstr-length), ; One of the source types defined at https://cv.iptc.org/newscodes/digitalsourcetype/ or in this specification. Cannot be combined with `activeManifest`.
             ? "metadata": $assertion-metadata-map ; additional information about the assertion
         */
 
@@ -439,6 +444,11 @@ impl Ingredient {
         {
             return Err(serde::ser::Error::custom(
                 "Ingredient v3 activeManifest and validationResults must both be present or absent",
+            ));
+        }
+        if self.active_manifest.is_some() && self.digital_source_type.is_some() {
+            return Err(serde::ser::Error::custom(
+                "Ingredient v3 shall not contain both activeManifest and digitalSourceType",
             ));
         }
 
@@ -483,6 +493,9 @@ impl Ingredient {
             ingredient_map_len += 1
         }
         if self.metadata.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.digital_source_type.is_some() {
             ingredient_map_len += 1
         }
 
@@ -533,6 +546,9 @@ impl Ingredient {
         }
         if let Some(md) = &self.metadata {
             ingredient_map.serialize_field("metadata", md)?;
+        }
+        if let Some(dst) = &self.digital_source_type {
+            ingredient_map.serialize_field("digitalSourceType", dst)?;
         }
 
         ingredient_map.end()
@@ -708,7 +724,7 @@ impl AssertionBase for Ingredient {
             "metadata",
         ];
 
-        static V3_FIELDS: [&str; 15] = [
+        static V3_FIELDS: [&str; 16] = [
             "dc:title",
             "dc:format",
             "relationship",
@@ -724,6 +740,7 @@ impl AssertionBase for Ingredient {
             "softBindingsMatched",
             "softBindingAlgorithmsMatched",
             "metadata",
+            "digitalSourceType",
         ];
 
         // make sure decoded matches expected fields
@@ -914,6 +931,17 @@ impl AssertionBase for Ingredient {
                     map_cbor_to_type("softBindingAlgorithmsMatched", &ingredient_value);
                 let metadata: Option<AssertionMetadata> =
                     map_cbor_to_type("metadata", &ingredient_value);
+                let digital_source_type: Option<String> =
+                    map_cbor_to_type("digitalSourceType", &ingredient_value);
+
+                // activeManifest and digitalSourceType are mutually exclusive
+                if active_manifest.is_some() && digital_source_type.is_some() {
+                    return Err(to_decoding_err(
+                        &assertion.label(),
+                        assertion.get_ver(),
+                        "ingredient shall not contain both activeManifest and digitalSourceType",
+                    ));
+                }
 
                 Ingredient {
                     title,
@@ -931,6 +959,7 @@ impl AssertionBase for Ingredient {
                     claim_signature,
                     soft_bindings_matched,
                     soft_binding_algorithms_matched,
+                    digital_source_type,
                     version,
                     ..Default::default()
                 }
@@ -1152,6 +1181,7 @@ pub mod tests {
             description: Some("Some ingredient description".to_owned()),
             informational_uri: Some("https://tfhub.dev/deepmind/bigbigan-resnet50/1".to_owned()),
             data_types: Some(data_types.clone()),
+            digital_source_type: None,
             validation_results: Some(validation_results.clone()),
             active_manifest: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
             claim_signature: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.signature".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
@@ -1240,6 +1270,42 @@ pub mod tests {
         assert!(!v3_decoded.is_v1_compatible());
         assert!(!v3_decoded.is_v2_compatible());
         assert!(v3_decoded.is_v3_compatible());
+    }
+
+    #[test]
+    fn test_digital_source_type_in_ingredient() {
+        // v3 round-trip with digital_source_type (no active_manifest)
+        let ingredient = Ingredient {
+            title: Some("test_title".to_owned()),
+            format: Some("image/jpeg".to_owned()),
+            instance_id: Some("67890".to_owned()),
+            relationship: Relationship::ParentOf,
+            digital_source_type: Some(
+                "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia".to_owned(),
+            ),
+            version: 3,
+            ..Default::default()
+        };
+
+        let assertion = ingredient.to_assertion().expect("to_assertion");
+        let decoded = Ingredient::from_assertion(&assertion).expect("from_assertion");
+        assert_eq!(decoded, ingredient);
+
+        // digital_source_type + active_manifest is mutually exclusive
+        let bad = Ingredient {
+            digital_source_type: Some(
+                "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia".to_owned(),
+            ),
+            active_manifest: Some(HashedUri::new(
+                "self#jumbf=c2pa/urn:c2pa:TEST".to_owned(),
+                Some("sha256".to_owned()),
+                &[1, 2, 3],
+            )),
+            validation_results: Some(ValidationResults::default()),
+            version: 3,
+            ..Default::default()
+        };
+        assert!(bad.to_assertion().is_err());
     }
 
     #[test]
