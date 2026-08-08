@@ -69,7 +69,7 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          token: ${{ secrets.RELEASE_PLZ_ORG_TOKEN }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
@@ -160,7 +160,7 @@ jobs:
       - name: Cut first release-candidate build (-rc.1)
         if: steps.exists.outputs.skip != 'true' && steps.empty.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_ORG_TOKEN }}
         run: |
           gh workflow run release-rc.yml --ref "${{ steps.ver.outputs.branch }}"
 
@@ -168,7 +168,7 @@ jobs:
       # numbered ahead of the line that's baking. This runs AFTER the RC branch
       # is cut, so the candidate is taken from pre-bump `main` and `main` then
       # moves forward. Committed directly to `main` (no PR) -- this requires the
-      # RELEASE_PLZ_TOKEN to be allowed to bypass `main`'s pull-request rule.
+      # RELEASE_PLZ_ORG_TOKEN to be allowed to bypass `main`'s pull-request rule.
       - name: Advance main to next dev cycle
         if: steps.exists.outputs.skip != 'true' && steps.empty.outputs.skip != 'true'
         run: |
