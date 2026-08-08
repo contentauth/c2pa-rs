@@ -3231,8 +3231,8 @@ impl Builder {
     /// This provides a simpler alternative to [`sign()`](Self::sign) when you want to use
     /// the context's configured signer rather than providing an explicit signer.
     ///
-    /// **Note**: This method is only available for synchronous signing. For async signing,
-    /// use [`sign_async()`](Self::sign_async) with an explicit async signer.
+    /// **Note**: An async signer must be set explicitly with [`Context::with_async_signer()`],
+    /// since async signers cannot currently be created automatically from settings.
     ///
     /// # Arguments
     /// * `format` - The format of the stream.
@@ -3273,6 +3273,7 @@ impl Builder {
     /// # Ok(())
     /// # }
     /// ```
+    #[async_generic()]
     pub fn save_to_stream<R, W>(
         &mut self,
         format: &str,
@@ -3283,30 +3284,16 @@ impl Builder {
         R: Read + Seek + Send,
         W: Write + Read + Seek + Send,
     {
-        let format = format_to_mime(format);
-        self.definition.format.clone_from(&format);
-        if let Some(instance_id) = XmpInfo::from_source(source, &format).instance_id {
-            self.definition.instance_id = instance_id;
+        // Clone the Arc (cheap) so the signer borrowed from it doesn't keep
+        // `self` immutably borrowed while `sign`/`sign_async` need `&mut self`.
+        let ctx = Arc::clone(&self.context);
+        if _sync {
+            let signer = ctx.signer()?;
+            self.sign(signer, format, source, dest)
+        } else {
+            let signer = ctx.async_signer()?;
+            self.sign_async(signer, format, source, dest).await
         }
-        source.rewind()?;
-
-        #[cfg(feature = "file_io")]
-        self.apply_resource_base_path();
-
-        self.maybe_add_parent(&format, source)?;
-
-        // generate thumbnail if we don't already have one
-        #[cfg(feature = "add_thumbnails")]
-        self.maybe_add_thumbnail(&format, source)?;
-
-        // convert the manifest to a store
-        let mut store = self.to_store()?;
-
-        // Get signer from context
-        let signer = self.context.signer()?;
-
-        // sign and write our store to to the output image file
-        store.save_to_stream(&format, source, dest, signer, &self.context)
     }
 
     #[cfg(feature = "file_io")]
