@@ -1,0 +1,99 @@
+name: Compatibility Check
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+      - v1_api
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+  push:
+    branches:
+      - main
+      - v1_api
+
+jobs:
+  compatibility:
+    name: ${{ matrix.direction.name }}
+    if: |
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.author_association == 'COLLABORATOR' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.user.login == 'dependabot[bot]' ||
+      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
+      contains(github.event.pull_request.labels.*.name, 'check-release')
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        direction:
+          - name: Forward compatibility
+            signer_dir: base
+            verifier_dir: pr
+            output_file: signed-forward.jpg
+          - name: Backward compatibility
+            signer_dir: pr
+            verifier_dir: base
+            output_file: signed-backward.jpg
+
+    steps:
+      - name: Checkout PR code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: pr
+
+      - name: Checkout base code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          path: base
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache PR Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: pr
+
+      - name: Cache base Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: base
+
+      - name: Build PR c2patool
+        working-directory: pr
+        run: cargo build --locked --release -p c2patool
+
+      - name: Build base c2patool
+        working-directory: base
+        run: cargo build --locked --release -p c2patool
+
+      - name: Run compatibility check
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p compat
+
+          "./${{ matrix.direction.signer_dir }}/target/release/c2patool" \
+            "./${{ matrix.direction.signer_dir }}/cli/sample/image.jpg" \
+            -m "./${{ matrix.direction.signer_dir }}/cli/sample/test.json" \
+            -o "./compat/${{ matrix.direction.output_file }}" \
+            -f
+
+          "./${{ matrix.direction.verifier_dir }}/target/release/c2patool" \
+            "./compat/${{ matrix.direction.output_file }}" \
+            --info
+
+          "./${{ matrix.direction.verifier_dir }}/target/release/c2patool" \
+            "./compat/${{ matrix.direction.output_file }}" \
+            > "./compat/report.json"
+
+          grep -q "My Title" "./compat/report.json"
