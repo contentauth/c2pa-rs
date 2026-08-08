@@ -715,20 +715,16 @@ impl Ingredient {
             | Err(Error::ProvenanceMissing)
             | Err(Error::UnsupportedType) => Ok(()), // no claims but valid file
             Err(Error::BadParam(desc)) if desc == *"unrecognized file type" => Ok(()),
+            // TODO: We cannot report `manifest.inaccessible` in `validation_results` because the spec requires
+            //       the ingredient fields `active_manifest` and `validation_results` to exist simultaneously,
+            //       which is impossible since there is no manifest!
+            //
+            //       See https://github.com/contentauth/c2pa-rs/issues/2327
             Err(Error::RemoteManifestUrl(url)) | Err(Error::RemoteManifestFetch(url)) => {
                 if context.settings().builder.ignore_ingredient_errors {
                     debug!("ignoring ingredient error: remote manifest not fetched: {url}");
                     return Ok(());
                 }
-
-                let status =
-                    ValidationStatus::new_failure(validation_status::MANIFEST_INACCESSIBLE)
-                        .set_url(url)
-                        .set_explanation("Remote manifest not fetched".to_string());
-                let mut validation_results = ValidationResults::default();
-                validation_results.add_status(status.clone());
-                self.validation_results = Some(validation_results);
-                self.validation_status = Some(vec![status]);
                 Ok(())
             }
             Err(e) => {
@@ -736,23 +732,6 @@ impl Ingredient {
                     debug!("ignoring ingredient error: {e:?}");
                     return Ok(());
                 }
-
-                // we can ignore the error here because it should have a log entry corresponding to it
-                debug!("ingredient {e:?}");
-
-                let mut results = ValidationResults::default();
-                // convert any other error to a validation status
-                let statuses: Vec<ValidationStatus> = validation_log
-                    .logged_items()
-                    .iter()
-                    .filter_map(ValidationStatus::from_log_item)
-                    .collect();
-
-                for status in statuses {
-                    results.add_status(status.clone());
-                }
-                self.validation_status = results.validation_errors();
-                self.validation_results = Some(results);
                 Ok(())
             }
         }
@@ -1904,6 +1883,8 @@ mod tests {
 
     #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory_and_bad_manifest() {
+        crate::settings::set_settings_value("builder.ignore_ingredient_errors", true).unwrap();
+
         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let bad_manifest_bytes = b"not a real c2pa manifest".to_vec();
         let format = "image/jpeg";
@@ -1916,7 +1897,7 @@ mod tests {
         .expect("ingredient should load even with a bad manifest");
 
         assert_eq!(ingredient.format(), Some(format));
-        assert!(ingredient.validation_status().is_some());
+        assert_eq!(ingredient.validation_status(), None);
     }
 
     #[test]
@@ -2077,20 +2058,8 @@ mod tests {
     #[cfg(all(feature = "file_io", feature = "add_thumbnails"))]
     fn test_jpg_prerelease() {
         const PRERELEASE_JPEG: &str = "prerelease.jpg";
-        let ingredient = load_ingredient(PRERELEASE_JPEG).expect("load_ingredient");
-        stats(&ingredient);
-
-        println!("ingredient = {ingredient}");
-        assert_eq!(ingredient.title(), Some(PRERELEASE_JPEG));
-        assert_eq!(ingredient.format(), Some("image/jpeg"));
-        test_thumbnail(&ingredient, "image/jpeg");
-        assert!(ingredient.provenance().is_some());
-        assert_eq!(ingredient.manifest_data(), None);
-        assert!(ingredient.validation_status().is_some());
-        assert_eq!(
-            ingredient.validation_status().unwrap()[0].code(),
-            validation_status::STATUS_PRERELEASE
-        );
+        let ingredient = load_ingredient(PRERELEASE_JPEG);
+        assert!(matches!(ingredient, Err(Error::PrereleaseError)));
     }
 
     #[test]
@@ -2105,13 +2074,11 @@ mod tests {
     #[test]
     #[cfg(feature = "fetch_remote_manifests")]
     fn test_jpg_cloud_failure() {
-        let ingredient = load_ingredient("cloudx.jpg").expect("load_ingredient");
-        println!("ingredient = {ingredient}");
-        assert!(ingredient.validation_status().is_some());
-        assert_eq!(
-            ingredient.validation_status().unwrap()[0].code(),
-            validation_status::MANIFEST_INACCESSIBLE
-        );
+        let result = load_ingredient("cloudx.jpg");
+        assert!(matches!(
+            result,
+            Err(Error::RemoteManifestFetch(_)) | Err(Error::RemoteManifestUrl(_))
+        ));
     }
 
     #[test]
