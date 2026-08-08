@@ -29,7 +29,7 @@ use crate::{
     asset_handlers::{
         bmff_io::BmffIO, c2pa_io::C2paIO, flac_io::FlacIO, gif_io::GifIO, jpeg_io::JpegIO,
         jpegxl_io::JpegXlIO, mp3_io::Mp3IO, png_io::PngIO, riff_io::RiffIO, svg_io::SvgIO,
-        tiff_io::TiffIO,
+        tiff_io::TiffIO, zip_io::ZipIO,
     },
     asset_io::{AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions},
     error::{Error, Result},
@@ -54,6 +54,7 @@ lazy_static! {
         Box::new(Mp3IO::new("")),
         Box::new(GifIO::new("")),
         Box::new(FlacIO::new("")),
+        Box::new(ZipIO::new("")),
     ];
 
     static ref CAI_READERS: HashMap<String, Box<dyn AssetIO>> = {
@@ -507,6 +508,7 @@ pub mod tests {
             Box::new(TiffIO::new("")),
             Box::new(SvgIO::new("")),
             Box::new(Mp3IO::new("")),
+            Box::new(ZipIO::new("")),
             Box::new(FlacIO::new("")),
         ];
 
@@ -533,6 +535,7 @@ pub mod tests {
             Box::new(TiffIO::new("")),
             Box::new(SvgIO::new("")),
             Box::new(Mp3IO::new("")),
+            Box::new(ZipIO::new("")),
             Box::new(FlacIO::new("")),
         ];
 
@@ -552,6 +555,7 @@ pub mod tests {
             Box::new(JpegXlIO::new("")),
             Box::new(PngIO::new("")),
             Box::new(Mp3IO::new("")),
+            Box::new(ZipIO::new("")),
             Box::new(FlacIO::new("")),
             Box::new(SvgIO::new("")),
             Box::new(RiffIO::new("")),
