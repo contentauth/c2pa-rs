@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.9](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.27.8...c2patool-v0.27.9)
+_10 August 2026_
+
 ## [0.27.8](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.27.7...c2patool-v0.27.8)
 _07 August 2026_
 
