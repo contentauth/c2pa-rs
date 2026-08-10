@@ -9283,8 +9283,8 @@ pub mod tests {
     /// Returns the asset mime format and the signed M2 bytes.
     fn build_asset_with_input_to_ingredient(corrupt_hash: bool) -> (&'static str, Vec<u8>) {
         use crate::{
-            hashed_uri::HashedUri, jumbf::labels::to_signature_uri,
-            utils::test::create_test_store, ClaimGeneratorInfo, ValidationResults,
+            hashed_uri::HashedUri, jumbf::labels::to_signature_uri, utils::test::create_test_store,
+            ClaimGeneratorInfo, ValidationResults,
         };
 
         let mut context = Context::new();
