@@ -2656,7 +2656,7 @@ impl Claim {
 
                         if assertion.is_none() {
                             log_item!(
-                                label.clone(),
+                                url.clone(),
                                 format!("relatedAssertions reference could not be resolved within the current manifest: {url}"),
                                 "verify_actions"
                             )
@@ -2676,7 +2676,7 @@ impl Claim {
                         let base = labels::base(&target_label);
                         if base == labels::ACTIONS || base == labels::INGREDIENT {
                             log_item!(
-                                label.clone(),
+                                url.clone(),
                                 format!("relatedAssertions must not reference an actions or ingredient assertion: {url}"),
                                 "verify_actions"
                             )
