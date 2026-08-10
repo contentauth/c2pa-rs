@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.90.9](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.8...c2pa-v0.90.9)
+_10 August 2026_
+
+### Added
+
+* *(sdk)* Read support for c2md (JUMBF data) manifests (backport #2380) ([#2461](https://github.com/contentauth/c2pa-rs/pull/2461))
+
 ## [0.90.8](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.7...c2pa-v0.90.8)
 _07 August 2026_
 
