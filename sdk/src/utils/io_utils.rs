@@ -22,7 +22,7 @@ use std::{
 #[allow(unused)] // different code path for WASI
 use tempfile::{tempdir, Builder, NamedTempFile, SpooledTempFile, TempDir};
 
-use crate::{asset_io::rename_or_move, Error, Result};
+use crate::{asset_io::rename_or_move, utils::path_utils::sanitize_archive_path, Error, Result};
 
 // Replace data at arbitrary location and len in a file.
 // start_location is where the replacement data will start
@@ -273,13 +273,19 @@ pub(crate) fn tempdirectory() -> Result<TempDir> {
 }
 
 /// Convert a URI to a file path using PathBuf for better path handling.
+///
+/// The URI may carry a JUMBF label taken directly from an untrusted asset
+/// (see callers in `Reader::to_folder`, which writes the resulting path to
+/// disk), so the derived path is passed through `sanitize_archive_path`
+/// before being returned - this rejects `..`, absolute paths, and backslash
+/// components rather than silently stripping them.
 #[cfg(feature = "file_io")]
-pub fn uri_to_path(uri: &str, manifest_label: Option<&str>) -> PathBuf {
+pub fn uri_to_path(uri: &str, manifest_label: Option<&str>) -> Result<PathBuf> {
     let mut path_str = uri.replace(':', "_");
     if let Some(stripped) = path_str.strip_prefix("self#jumbf=") {
         path_str = stripped.to_owned();
     } else {
-        return PathBuf::from(path_str);
+        return sanitize_archive_path(&path_str).map(PathBuf::from);
     }
 
     let mut path = PathBuf::from(path_str);
@@ -292,7 +298,10 @@ pub fn uri_to_path(uri: &str, manifest_label: Option<&str>) -> PathBuf {
         path = new_path;
     }
 
-    path
+    let path_str = path.to_str().ok_or_else(|| {
+        Error::BadParam(format!("Non-UTF-8 resource path derived from URI: {uri}"))
+    })?;
+    sanitize_archive_path(path_str).map(PathBuf::from)
 }
 
 #[cfg(test)]
@@ -308,9 +317,12 @@ mod tests {
         let uri = "self#jumbf=/c2pa/urn:uuid:b3386820-9994-4b58-926f-1c47b82504c4:contentauth/c2pa.assertions/c2pa.thumbnail.claim.jpeg";
         let expected_path = "urn_uuid_b3386820-9994-4b58-926f-1c47b82504c4_contentauth/c2pa.assertions/c2pa.thumbnail.claim.jpeg";
 
-        assert_eq!(uri_to_path(uri, None), PathBuf::from(expected_path));
         assert_eq!(
-            uri_to_path(expected_path, None),
+            uri_to_path(uri, None).unwrap(),
+            PathBuf::from(expected_path)
+        );
+        assert_eq!(
+            uri_to_path(expected_path, None).unwrap(),
             PathBuf::from(expected_path)
         );
 
@@ -319,11 +331,11 @@ mod tests {
         let expected_path = format!("{manifest_label}/c2pa.assertions/c2pa.thumbnail.claim");
 
         assert_eq!(
-            uri_to_path(uri, Some(manifest_label)),
+            uri_to_path(uri, Some(manifest_label)).unwrap(),
             PathBuf::from(&expected_path)
         );
         assert_eq!(
-            uri_to_path(&expected_path, Some(manifest_label)),
+            uri_to_path(&expected_path, Some(manifest_label)).unwrap(),
             PathBuf::from(expected_path)
         );
 
@@ -333,8 +345,40 @@ mod tests {
         let expected_path_with_colon = "urn_uuid_test_label/c2pa.assertions/c2pa.thumbnail.claim";
 
         assert_eq!(
-            uri_to_path(uri, Some(manifest_label_with_colon)),
+            uri_to_path(uri, Some(manifest_label_with_colon)).unwrap(),
             PathBuf::from(expected_path_with_colon)
+        );
+    }
+
+    /// `uri_to_path` builds a path that callers (`Reader::to_folder`) write
+    /// directly to disk from a URI that may embed an untrusted JUMBF label
+    /// (an assertion or databox label read straight from an attacker-crafted
+    /// asset). It must reject traversal wherever that label can land: in the
+    /// URI's own tail, and in the `manifest_label` prefix.
+    #[cfg(feature = "file_io")]
+    #[test]
+    fn test_uri_to_path_rejects_traversal() {
+        // `..` in the databox/assertion label itself (the URI tail).
+        let uri = "self#jumbf=/c2pa/test-manifest/c2pa.databoxes/../../../evil";
+        assert!(uri_to_path(uri, None).is_err());
+
+        // `..` in the manifest_label used to prefix a bare (no `/c2pa/`) URI.
+        let uri = "self#jumbf=c2pa.databoxes/evil";
+        assert!(uri_to_path(uri, Some("../../etc")).is_err());
+
+        // A bare (no `self#jumbf=` prefix) absolute path must also be rejected -
+        // this is the early-return branch, which skips straight to
+        // `sanitize_archive_path` on the raw string.
+        assert!(uri_to_path("/etc/passwd", None).is_err());
+
+        // Backslash (Windows-style traversal), same early-return branch.
+        assert!(uri_to_path("..\\..\\evil", None).is_err());
+
+        // Legitimate labels must still work (not over-blocked).
+        let uri = "self#jumbf=/c2pa/test-manifest/c2pa.databoxes/my-databox.bin";
+        assert_eq!(
+            uri_to_path(uri, None).unwrap(),
+            PathBuf::from("test-manifest/c2pa.databoxes/my-databox.bin")
         );
     }
 
