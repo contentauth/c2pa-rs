@@ -1245,28 +1245,16 @@ impl Reader {
                         continue;
                     }
                     // For archive roundtrip: keep created/gathered attribution and kind
-                    builder.check_assertion_limit()?;
-                    let (data, kind) = match assertion.kind() {
-                        ManifestAssertionKind::Json => (
-                            crate::builder::AssertionData::Json(assertion.value()?.clone()),
-                            Some(ManifestAssertionKind::Json),
-                        ),
-                        _ => (
-                            crate::builder::AssertionData::Cbor(c2pa_cbor::value::to_value(
-                                assertion.value()?,
-                            )?),
-                            None,
-                        ),
+                    let kind = match assertion.kind() {
+                        ManifestAssertionKind::Json => Some(ManifestAssertionKind::Json),
+                        _ => None,
                     };
-                    builder
-                        .definition
-                        .assertions
-                        .push(crate::builder::AssertionDefinition {
-                            label: assertion.label().to_string(),
-                            data,
-                            kind,
-                            created: assertion.created(),
-                        });
+                    builder.add_assertion_impl(
+                        assertion.label(),
+                        assertion.value()?,
+                        kind,
+                        assertion.created(),
+                    )?;
                 }
             }
         }
