@@ -268,6 +268,11 @@ pub struct Claim {
     // root of CAI store
     update_manifest: bool,
 
+    // true if this claim was read from a `c2md`-tagged superbox (C2PA spec
+    // 11.2.2) rather than an ordinary `c2ma` standard manifest. Preserved so
+    // the original tag survives round-trips (e.g. ingredient copies).
+    is_c2md: bool,
+
     // true if manifest is or will be stored compressed
     compressed: bool,
 
@@ -452,6 +457,7 @@ impl Claim {
             instance_id: "".to_string(),
 
             update_manifest: false,
+            is_c2md: false,
             compressed: false,
             data_boxes: Vec::new(),
             metadata: None,
@@ -552,6 +558,7 @@ impl Claim {
             instance_id: "".to_string(),
 
             update_manifest: false,
+            is_c2md: false,
             compressed: false,
             data_boxes: Vec::new(),
             metadata: None,
@@ -665,6 +672,7 @@ impl Claim {
             Ok(Claim {
                 remote_manifest: RemoteManifest::NoRemote,
                 update_manifest: false,
+                is_c2md: false,
                 compressed: false,
                 title,
                 format: Some(format),
@@ -774,6 +782,7 @@ impl Claim {
             Ok(Claim {
                 remote_manifest: RemoteManifest::NoRemote,
                 update_manifest: false,
+                is_c2md: false,
                 compressed: false,
                 title,
                 format: None,
@@ -1150,6 +1159,12 @@ impl Claim {
         self.update_manifest
     }
 
+    /// True if this claim was read from a `c2md`-tagged superbox (C2PA spec
+    /// 11.2.2) rather than an ordinary `c2ma` standard manifest.
+    pub fn is_c2md(&self) -> bool {
+        self.is_c2md
+    }
+
     // get version of the Claim
     pub fn version(&self) -> usize {
         self.claim_version
@@ -1196,6 +1211,10 @@ impl Claim {
 
     pub(crate) fn set_update_manifest(&mut self, is_update_manifest: bool) {
         self.update_manifest = is_update_manifest;
+    }
+
+    pub(crate) fn set_is_c2md(&mut self, is_c2md: bool) {
+        self.is_c2md = is_c2md;
     }
 
     /// Adds an action to the claim.
