@@ -844,13 +844,40 @@ impl Builder {
 
     /// Adds a CBOR assertion to the manifest.
     /// In most cases, use this function instead of `add_assertion_json`, unless the assertion must be stored in JSON format.
-    pub(crate) fn check_assertion_limit(&self) -> Result<()> {
+    fn check_assertion_limit(&self) -> Result<()> {
         if self.definition.assertions.len() >= MAX_ASSERTIONS {
             return Err(Error::TooManyAssertions {
                 max: MAX_ASSERTIONS,
             });
         }
         Ok(())
+    }
+
+    /// Adds an assertion to the manifest,
+    /// preserving its `kind` and `created`/`gathered` attribution.
+    pub(crate) fn add_assertion_impl<S, T>(
+        &mut self,
+        label: S,
+        data: &T,
+        kind: Option<ManifestAssertionKind>,
+        created: bool,
+    ) -> Result<&mut Self>
+    where
+        S: Into<String>,
+        T: Serialize,
+    {
+        self.check_assertion_limit()?;
+        let assertion_data = match kind {
+            Some(ManifestAssertionKind::Json) => AssertionData::Json(serde_json::to_value(data)?),
+            _ => AssertionData::Cbor(c2pa_cbor::value::to_value(data)?),
+        };
+        self.definition.assertions.push(AssertionDefinition {
+            label: label.into(),
+            data: assertion_data,
+            kind,
+            created,
+        });
+        Ok(self)
     }
 
     /// # Arguments
@@ -865,15 +892,7 @@ impl Builder {
         S: Into<String>,
         T: Serialize,
     {
-        self.check_assertion_limit()?;
-        let created = false;
-        self.definition.assertions.push(AssertionDefinition {
-            label: label.into(),
-            data: AssertionData::Cbor(c2pa_cbor::value::to_value(data)?),
-            kind: None, // defaults to cbor
-            created,
-        });
-        Ok(self)
+        self.add_assertion_impl(label, data, None, false)
     }
 
     /// Adds a JSON assertion to the manifest.
@@ -891,15 +910,7 @@ impl Builder {
         S: Into<String>,
         T: Serialize,
     {
-        self.check_assertion_limit()?;
-        let created = false;
-        self.definition.assertions.push(AssertionDefinition {
-            label: label.into(),
-            data: AssertionData::Json(serde_json::to_value(data)?),
-            kind: Some(ManifestAssertionKind::Json),
-            created,
-        });
-        Ok(self)
+        self.add_assertion_impl(label, data, Some(ManifestAssertionKind::Json), false)
     }
 
     /// Adds a single action to the manifest.
