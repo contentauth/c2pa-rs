@@ -302,13 +302,14 @@ impl<'a> CrJsonExporter<'a> {
             alg: Some(claim.alg().to_string()),
             alg_soft: claim.alg_soft().map(|s| s.to_string()),
             title: claim.title().map(|s| s.to_string()),
-            redacted_assertions: claim.redactions().and_then(|r| {
-                if r.is_empty() {
-                    None
-                } else {
-                    Some(r.to_vec())
-                }
-            }),
+            redacted_assertions: if is_v1 {
+                claim
+                    .redactions()
+                    .and_then(|r| if r.is_empty() { None } else { Some(r.to_vec()) })
+            } else {
+                // crJSON 3.5.1: absent redactions are still serialised, as an empty array.
+                Some(claim.redactions().map(|r| r.to_vec()).unwrap_or_default())
+            },
             metadata: claim.metadata().and_then(|m| {
                 if m.is_empty() {
                     None

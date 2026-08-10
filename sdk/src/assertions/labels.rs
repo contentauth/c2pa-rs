@@ -162,14 +162,26 @@ pub const IPTC_PHOTO_METADATA: &str = "stds.iptc.photo-metadata";
 ///
 /// See [Use of Schema.org - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_use_of_schema_org).
 #[doc(hidden)]
+#[deprecated(
+    since = "0.91.0",
+    note = "This attribute is deprecated from C2PA spec version 2.0. Will be deleted on or after 2026-11-09."
+)]
 pub const SCHEMA_ORG: &str = "schema.org";
 
-/// Label prefix for a claim review assertion.
-///
-/// See [Claim review - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_claim_review).
+pub(crate) const SCHEMA_ORG_INTERNAL: &str = "schema.org";
+
+/// Label prefix for a Claim Review assertion. Deprecated since C2PA 2.0 spec.
+#[deprecated(
+    since = "0.91.0",
+    note = "This attribute is deprecated from C2PA spec version 2.0. Will be deleted on or after 2026-11-09."
+)]
 pub const CLAIM_REVIEW: &str = "stds.schema-org.ClaimReview";
 
-/// Label prefix for a creative work assertion.  Deprecated.
+/// Label prefix for a Creative Work assertion. Deprecated in C2PA 2.0 spec.
+#[deprecated(
+    since = "0.91.0",
+    note = "This attribute is deprecated from C2PA spec version 2.0. Will be deleted on or after 2026-11-09."
+)]
 pub const CREATIVE_WORK: &str = "stds.schema-org.CreativeWork";
 
 /// Label prefix for a timestamp assertion.
@@ -197,6 +209,11 @@ pub const ASSET_REFERENCE: &str = "c2pa.asset-ref";
 ///
 /// See [Multi asset hash - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_multi_asset_hash).
 pub const PART: &str = ".part";
+
+/// Label for multi asset hashes
+///
+/// See [Multi asset hash - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_multi_asset_hash).
+pub const MULTI_ASSET_HASH: &str = "c2pa.hash.multi-asset";
 
 /// Label prefix for a C2PA metadata assertion.
 ///
@@ -388,7 +405,9 @@ pub fn instance(label: &str) -> usize {
 /// );
 /// ```
 pub fn add_thumbnail_format(label: &str, format: &str) -> String {
-    match format {
+    // mimetypes are case-insensitive (RFC 2045 section 5.1).
+    let format = format.to_lowercase();
+    match format.as_str() {
         "image/jpeg" | "jpeg" | "jpg" => format!("{label}.jpeg"),
         "image/png" | "png" => format!("{label}.png"),
         "image/svg+xml" | "svg" => format!("{label}.svg"),
@@ -406,6 +425,26 @@ pub fn add_thumbnail_format(label: &str, format: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// MIME types are case-insensitive (RFC 2045 section 5.1),
+    /// every spelling should produces the same label.
+    #[test]
+    fn test_add_thumbnail_format_case_insensitive() {
+        // (label prefix, format, expected label)
+        let cases = [
+            (CLAIM_THUMBNAIL, "image/jpeg", JPEG_CLAIM_THUMBNAIL),
+            (CLAIM_THUMBNAIL, "IMAGE/JPEG", JPEG_CLAIM_THUMBNAIL),
+            (CLAIM_THUMBNAIL, "Image/Jpeg", JPEG_CLAIM_THUMBNAIL),
+            (CLAIM_THUMBNAIL, "JPG", JPEG_CLAIM_THUMBNAIL),
+            (INGREDIENT_THUMBNAIL, "image/png", PNG_INGREDIENT_THUMBNAIL),
+            (INGREDIENT_THUMBNAIL, "IMAGE/PNG", PNG_INGREDIENT_THUMBNAIL),
+            (CLAIM_THUMBNAIL, "IMAGE/SVG+XML", SVG_CLAIM_THUMBNAIL),
+        ];
+
+        for (label, format, expected) in cases {
+            assert_eq!(add_thumbnail_format(label, format), expected);
+        }
+    }
 
     /// Regression tests for usize underflow in `parse_label` when the input
     /// is a bare version token with no base label (e.g. "v1").

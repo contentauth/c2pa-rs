@@ -46,8 +46,11 @@ jobs:
           #
           #    * sdk (The primary C2PA Rust SDK)
           #    * c2patool
+          #    * c2pa_c_ffi
           #    * export_schema
           #    * make_test_images
+          #    * experimental (a change confined to an experimental feature;
+          #      see docs/experimental-features.md)
           #
           # If `scope` is omitted, the parenthesis must also be omitted.
           #

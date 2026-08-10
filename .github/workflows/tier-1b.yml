@@ -54,6 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     if: needs.authorize.outputs.run-suite == 'true'
     outputs:
+      features: ${{ steps.get-features.outputs.features }}
       rust-native-features: ${{ steps.get-features.outputs.rust-native-features }}
       openssl-features: ${{ steps.get-features.outputs.openssl-features }}
     steps:
@@ -68,10 +69,16 @@ jobs:
       - name: Get all features
         id: get-features
         run: |
-          FEATURES=$(cargo metadata --format-version=1 | jq -r '[.packages[] | select(.name=="c2pa") | .features | keys | map(select(. != "default")) | .[]] | unique | join(" ")')
+          # Experimental (`unstable_`) features are deliberately excluded from
+          # the required suite: they sit outside the SDK's normal support
+          # commitments and must not gate main or the release branches. They are
+          # exercised separately by the non-blocking experimental-features.yml.
+          # See docs/experimental-features.md.
+          FEATURES=$(cargo metadata --format-version=1 | jq -r '[.packages[] | select(.name=="c2pa") | .features | keys | map(select(. != "default" and (startswith("unstable_") | not))) | .[]] | unique | join(" ")')
 
           RUST_NATIVE_FEATURES=$(echo $FEATURES | sed 's/openssl//g')
           OPENSSL_FEATURES=$(echo $FEATURES | sed 's/rust_native_crypto//g')
+          echo "features=$FEATURES" >> "$GITHUB_OUTPUT"
           echo "rust-native-features=$RUST_NATIVE_FEATURES" >> "$GITHUB_OUTPUT"
           echo "openssl-features=$OPENSSL_FEATURES" >> "$GITHUB_OUTPUT"
 
@@ -219,7 +226,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
-          toolchain: nightly-2025-12-06
+          toolchain: nightly-2026-07-12
           # Pinning to specific nightly build for now. More recent versions
           # introduce a lifetime check that creates a whole slew of build
           # errors.
@@ -228,7 +235,10 @@ jobs:
         uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
 
       - name: Install cargo-udeps
-        run: cargo binstall --no-confirm cargo-udeps
+        run: cargo binstall --no-confirm cargo-udeps@0.1.61
 
+      # Experimental (`unstable_`) features are excluded (see get-features); an
+      # unstable-only optional dependency stays unactivated and so is never
+      # miscounted as unused here.
       - name: Run cargo-udeps
-        run: cargo udeps --all-targets --all-features
+        run: cargo udeps --all-targets --features "${{ needs.get-features.outputs.features }}"
