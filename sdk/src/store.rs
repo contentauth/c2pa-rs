@@ -1049,6 +1049,8 @@ impl Store {
 
         let manifest_type = if claim.update_manifest() {
             ManifestType::UpdateManifest
+        } else if claim.is_c2md() {
+            ManifestType::C2md
         } else {
             ManifestType::Manifest
         };
@@ -1264,9 +1266,12 @@ impl Store {
             let cai_store_box = store_box.super_box();
             let cai_store_desc_box = cai_store_box.desc_box();
 
-            // ignore unknown boxes per the spec
+            // ignore unknown boxes per the spec. A c2md manifest is a standard
+            // manifest that consumers shall accept (C2PA spec 11.2.2), so it is
+            // read the same as a c2ma manifest.
             if cai_store_desc_box.uuid() != CAI_UPDATE_MANIFEST_UUID
                 && cai_store_desc_box.uuid() != CAI_MANIFEST_UUID
+                && cai_store_desc_box.uuid() != CAI_MANIFEST_C2MD_UUID
             {
                 continue;
             }
@@ -1319,6 +1324,7 @@ impl Store {
             }
 
             let is_update_manifest = cai_store_desc_box.uuid() == CAI_UPDATE_MANIFEST_UUID;
+            let is_c2md = cai_store_desc_box.uuid() == CAI_MANIFEST_C2MD_UUID;
 
             // get map of boxes in this manifest
             let manifest_boxes = Store::manifest_map(cai_store_box)?;
@@ -1447,6 +1453,7 @@ impl Store {
 
             // set the  type of manifest
             claim.set_update_manifest(is_update_manifest);
+            claim.set_is_c2md(is_c2md);
 
             // set order to process JUMBF boxes
             claim.set_box_order(box_order);
@@ -5837,6 +5844,88 @@ pub mod tests {
         );
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_from_jumbf_reads_c2md_standard_manifest() {
+        use crate::{
+            jumbf::boxes::{CAI_MANIFEST_C2MD_UUID, CAI_MANIFEST_UUID},
+            utils::test::create_test_store,
+        };
+
+        // Per C2PA spec 11.2.2, a manifest using the c2md JUMBF type UUID is a
+        // standard manifest that consumers shall accept. Build a normal (c2ma)
+        // manifest, rewrite its superbox type UUID to c2md, and confirm the
+        // store still reads the manifest instead of silently skipping it.
+        let store = create_test_store().unwrap();
+        let jumbf = store.to_jumbf_internal(0).unwrap();
+
+        // Flip the manifest superbox type UUID from c2ma to c2md in place.
+        let c2ma = hex::decode(CAI_MANIFEST_UUID).unwrap();
+        let c2md = hex::decode(CAI_MANIFEST_C2MD_UUID).unwrap();
+        let pos = jumbf
+            .windows(c2ma.len())
+            .position(|w| w == c2ma.as_slice())
+            .expect("manifest c2ma UUID present");
+        let mut patched = jumbf.clone();
+        patched[pos..pos + c2md.len()].copy_from_slice(&c2md);
+
+        let mut log = StatusTracker::default();
+        let restored = Store::from_jumbf(&patched, &mut log).expect("c2md manifest should be read");
+        assert_eq!(
+            restored.claims().len(),
+            store.claims().len(),
+            "c2md manifest should be read as a standard manifest"
+        );
+    }
+
+    #[test]
+    fn test_c2md_manifest_preserved_on_round_trip() {
+        use crate::{
+            jumbf::boxes::{CAI_MANIFEST_C2MD_UUID, CAI_MANIFEST_UUID},
+            utils::test::create_test_store,
+        };
+
+        // A c2md manifest must keep its c2md tag if the store is
+        // re-serialized (e.g. when it is copied as part of adding an update
+        // manifest or embedding it as an ingredient's manifest store) -
+        // claim generators must not synthesize new c2ma/c2um boxes for data
+        // that was never theirs to retag.
+        let store = create_test_store().unwrap();
+        let jumbf = store.to_jumbf_internal(0).unwrap();
+
+        let c2ma = hex::decode(CAI_MANIFEST_UUID).unwrap();
+        let c2md = hex::decode(CAI_MANIFEST_C2MD_UUID).unwrap();
+        let pos = jumbf
+            .windows(c2ma.len())
+            .position(|w| w == c2ma.as_slice())
+            .expect("manifest c2ma UUID present");
+        let mut patched = jumbf.clone();
+        patched[pos..pos + c2md.len()].copy_from_slice(&c2md);
+
+        let mut log = StatusTracker::default();
+        let restored = Store::from_jumbf(&patched, &mut log).expect("c2md manifest should be read");
+
+        // Re-serialize the store that was read from a c2md-tagged manifest.
+        let round_tripped = restored.to_jumbf_internal(0).unwrap();
+
+        let c2md_count = round_tripped
+            .windows(c2md.len())
+            .filter(|w| *w == c2md.as_slice())
+            .count();
+        let c2ma_count = round_tripped
+            .windows(c2ma.len())
+            .filter(|w| *w == c2ma.as_slice())
+            .count();
+
+        assert_eq!(
+            c2md_count, 1,
+            "c2md tag should survive re-serialization of the store"
+        );
+        assert_eq!(
+            c2ma_count, 0,
+            "a c2md manifest must not be rewritten as c2ma on round-trip"
+        );
     }
 
     #[test]
