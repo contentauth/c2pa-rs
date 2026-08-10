@@ -844,7 +844,7 @@ impl Builder {
 
     /// Adds a CBOR assertion to the manifest.
     /// In most cases, use this function instead of `add_assertion_json`, unless the assertion must be stored in JSON format.
-    fn check_assertion_limit(&self) -> Result<()> {
+    pub(crate) fn check_assertion_limit(&self) -> Result<()> {
         if self.definition.assertions.len() >= MAX_ASSERTIONS {
             return Err(Error::TooManyAssertions {
                 max: MAX_ASSERTIONS,
@@ -934,23 +934,24 @@ impl Builder {
 
         // if an actions assertion already exists, we will append to it
         // if not, we will create a new one
-        let (actions, original_label) = if let Some(pos) = self
+        match self
             .definition
             .assertions
             .iter()
             .position(|a| a.label().starts_with(Actions::LABEL))
         {
-            // Remove and use the existing actions assertion
-            let assertion_def = self.definition.assertions.remove(pos);
-            let original_label = assertion_def.label.clone();
-            (assertion_def.to_assertion()?, original_label)
-        } else {
-            (Actions::new(), Actions::LABEL_VERSIONED.to_string())
-        };
-
-        let actions = actions.add_action(action);
-
-        self.add_assertion(original_label, &actions)?;
+            Some(pos) => {
+                // In-place replacement/update
+                let actions: Actions = self.definition.assertions[pos].to_assertion()?;
+                let actions = actions.add_action(action);
+                self.definition.assertions[pos].data =
+                    AssertionData::Cbor(c2pa_cbor::value::to_value(&actions)?);
+            }
+            None => {
+                let actions = Actions::new().add_action(action);
+                self.add_assertion(Actions::LABEL_VERSIONED, &actions)?;
+            }
+        }
         Ok(self)
     }
 
@@ -9684,6 +9685,133 @@ mod tests {
         assert_eq!(
             loaded_builder.definition.title,
             Some("Test Image".to_string())
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_archive_round_trip_preserves_created_flag_and_kind() -> Result<()> {
+        let context = Context::new().into_shared();
+
+        let builder = Builder::from_shared_context(&context).with_definition(
+            json!({
+                // "claim_version": 2,
+                "format": "image/jpeg",
+                "assertions": [
+                    {
+                        "label": "c2pa.actions.v2",
+                        "created": true,
+                        "data": { "actions": [{
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
+                        }]}
+                    },
+                    {
+                        "label": "c2pa.actions.v2",
+                        "data": { "actions": [{ "action": "c2pa.color_adjustments" }] }
+                    },
+                    { "label": "org.test.created", "created": true, "data": { "value": "created" } },
+                    { "label": "org.test.gathered", "data": { "value": "gathered" } },
+                    { "label": "org.test.json", "kind": "Json", "data": { "value": "json" } }
+                ]
+            })
+            .to_string(),
+        )?;
+
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive)?;
+        archive.rewind()?;
+
+        let restored = Builder::from_shared_context(&context).with_archive(archive)?;
+
+        let created_of = |label: &str| -> Vec<bool> {
+            restored
+                .definition
+                .assertions
+                .iter()
+                .filter(|a| a.label == label)
+                .map(|a| a.created)
+                .collect()
+        };
+
+        // The created-list actions assertion is read back first, so the flags must be [true, false].
+        assert_eq!(
+            created_of("c2pa.actions.v2"),
+            vec![true, false],
+            "actions assertions must keep their created/gathered attribution"
+        );
+        assert_eq!(created_of("org.test.created"), vec![true]);
+        assert_eq!(created_of("org.test.gathered"), vec![false]);
+
+        // `kind` survive too.
+        let kind_of = |label: &str| {
+            restored
+                .definition
+                .assertions
+                .iter()
+                .find(|a| a.label == label)
+                .and_then(|a| a.kind.clone())
+        };
+        assert_eq!(kind_of("org.test.json"), Some(ManifestAssertionKind::Json));
+        assert_eq!(kind_of("org.test.gathered"), None); // None is the Cbor default
+
+        let claim = restored.to_claim()?;
+        assert_eq!(
+            claim.created_action_assertions().len(),
+            1,
+            "actions assertion must be in created_assertions after an archive round trip"
+        );
+        assert_eq!(
+            claim.gathered_action_assertions().len(),
+            1,
+            "gathered actions assertion must stay in gathered_assertions"
+        );
+        let actions = Actions::from_assertion(claim.created_action_assertions()[0].assertion())?;
+        assert_eq!(
+            actions.actions().first().unwrap().action(),
+            c2pa_action::CREATED
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_add_action_preserves_created_flag() -> Result<()> {
+        let mut builder = Builder::from_context(test_context()).with_definition(
+            json!({
+                "assertions": [{
+                    "label": "c2pa.actions.v2",
+                    "created": true,
+                    "data": { "actions": [{ "action": "c2pa.color_adjustments" }] }
+                }]
+            })
+            .to_string(),
+        )?;
+
+        builder.add_action(json!({ "action": "c2pa.cropped" }))?;
+
+        let actions_def = builder
+            .definition
+            .assertions
+            .iter()
+            .find(|a| a.label.starts_with(Actions::LABEL))
+            .expect("actions assertion should still be present");
+
+        assert!(
+            actions_def.created,
+            "add_action must not downgrade a created actions assertion to gathered"
+        );
+
+        let actions: Actions = actions_def.to_assertion()?;
+        assert_eq!(
+            actions
+                .actions()
+                .iter()
+                .map(|a| a.action())
+                .collect::<Vec<_>>(),
+            vec!["c2pa.color_adjustments", "c2pa.cropped"],
+            "the new action should be appended to the existing actions assertion"
         );
 
         Ok(())
