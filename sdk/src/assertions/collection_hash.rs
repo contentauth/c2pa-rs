@@ -11,7 +11,7 @@ use zip::ZipArchive;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::{labels::COLLECTION_HASH, AssetType},
-    asset_handlers::zip_io::{CENTRAL_DIRECTORY_CRC_OFFSET, CRC_LEN, MANIFEST_PATH},
+    asset_handlers::zip_io::{ZipError, CENTRAL_DIRECTORY_CRC_OFFSET, CRC_LEN, MANIFEST_PATH},
     hash_stream_by_alg,
     hash_utils::verify_stream_by_alg,
     Error, HashRange, Result,
@@ -31,8 +31,6 @@ pub struct CollectionHash {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alg: Option<String>,
 
-    // TODO: in c2patool, we need to redefine this field to also handle relative paths.
-    //
     /// This field represents the root directory where files must be contained within. If the path is a file, it
     /// will default to using the file's parent. For more information, read [`CollectionHash::new`][CollectionHash::new].
     ///
@@ -209,15 +207,11 @@ impl CollectionHash {
         self.zip_central_directory_hash = Some(zip_central_directory_hash);
 
         self.uris = zip_uri_ranges(stream)?;
-        for uri_map in self.uris.values_mut() {
-            let hash = hash_stream_by_alg(
-                &alg,
-                stream,
-                // We always generate the zip_hash_range in zip_uri_ranges.
-                #[allow(clippy::unwrap_used)]
-                Some(vec![uri_map.zip_hash_range.clone().unwrap()]),
-                false,
-            )?;
+        for (path, uri_map) in self.uris.iter_mut() {
+            let zip_hash_range = uri_map.zip_hash_range.clone().ok_or_else(|| {
+                Error::BadParam(format!("missing ZIP hash range for `{}`", path.display()))
+            })?;
+            let hash = hash_stream_by_alg(&alg, stream, Some(vec![zip_hash_range]), false)?;
             if hash.is_empty() {
                 return Err(Error::BadParam("could not generate data hash".to_string()));
             }
@@ -239,13 +233,17 @@ impl CollectionHash {
                 "Missing zip central directory hash".to_owned(),
             )),
         }?;
+        let zip_central_directory_hash_range = self
+            .zip_central_directory_hash_range
+            .clone()
+            .ok_or_else(|| {
+                Error::BadParam("missing ZIP central directory hash range".to_owned())
+            })?;
         if !verify_stream_by_alg(
             alg,
             zip_central_directory_hash,
             stream,
-            // If zip_central_directory_hash exists (we checked above), then this must exist.
-            #[allow(clippy::unwrap_used)]
-            Some(self.zip_central_directory_hash_range.clone().unwrap()),
+            Some(zip_central_directory_hash_range),
             false,
         ) {
             return Err(Error::HashMismatch(
@@ -256,15 +254,10 @@ impl CollectionHash {
         for (path, uri_map) in &self.uris {
             match &uri_map.hash {
                 Some(hash) => {
-                    if !verify_stream_by_alg(
-                        alg,
-                        hash,
-                        stream,
-                        // Same reason as above.
-                        #[allow(clippy::unwrap_used)]
-                        Some(vec![uri_map.zip_hash_range.clone().unwrap()]),
-                        false,
-                    ) {
+                    let zip_hash_range = uri_map.zip_hash_range.clone().ok_or_else(|| {
+                        Error::BadParam(format!("missing ZIP hash range for `{}`", path.display()))
+                    })?;
+                    if !verify_stream_by_alg(alg, hash, stream, Some(vec![zip_hash_range]), false) {
                         return Err(Error::HashMismatch(format!(
                             "hash for {} does not match",
                             path.display()
@@ -385,13 +378,13 @@ where
     R: Read + Seek + ?Sized,
 {
     let length = reader.seek(SeekFrom::End(0))?;
-    let mut reader = ZipArchive::new(reader).map_err(|_| Error::JumbfNotFound)?;
+    let mut reader = ZipArchive::new(reader).map_err(ZipError::Read)?;
 
     let start = reader.central_directory_start();
 
     let crc_start = match reader.index_for_path(Path::new(MANIFEST_PATH)) {
         Some(index) => {
-            let file = reader.by_index(index).map_err(|_| Error::JumbfNotFound)?;
+            let file = reader.by_index(index).map_err(ZipError::Read)?;
             Some(file.central_header_start() + CENTRAL_DIRECTORY_CRC_OFFSET)
         }
         None => None,
@@ -410,14 +403,12 @@ pub fn zip_uri_ranges<R>(stream: &mut R) -> Result<HashMap<PathBuf, UriHashedDat
 where
     R: Read + Seek + ?Sized,
 {
-    let mut reader = ZipArchive::new(stream).map_err(|_| Error::JumbfNotFound)?;
+    let mut reader = ZipArchive::new(stream).map_err(ZipError::Read)?;
 
     let mut uri_map = HashMap::new();
     let file_names: Vec<String> = reader.file_names().map(|n| n.to_owned()).collect();
     for file_name in file_names {
-        let file = reader
-            .by_name(&file_name)
-            .map_err(|_| Error::JumbfNotFound)?;
+        let file = reader.by_name(&file_name).map_err(ZipError::Read)?;
 
         if !file.is_dir() {
             match file.enclosed_name() {

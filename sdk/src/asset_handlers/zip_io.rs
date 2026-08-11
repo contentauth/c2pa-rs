@@ -5,11 +5,7 @@ use std::{
 };
 
 use tempfile::Builder;
-use zip::{
-    result::{ZipError, ZipResult},
-    write::SimpleFileOptions,
-    CompressionMethod, ZipArchive, ZipWriter,
-};
+use zip::{result::ZipResult, write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
 
 use crate::{
     asset_io::{
@@ -36,11 +32,12 @@ impl CAIWriter for ZipIO {
     ) -> Result<()> {
         let mut writer = self
             .writer(input_stream, output_stream)
-            .map_err(|_| Error::EmbeddingError)?;
+            .map_err(ZipError::Write)?;
 
         match writer.add_directory("META-INF", SimpleFileOptions::default()) {
-            Err(ZipError::InvalidArchive(err)) if err.starts_with("Duplicate filename") => {}
-            Err(_) => return Err(Error::EmbeddingError),
+            Err(zip::result::ZipError::InvalidArchive(err))
+                if err.starts_with("Duplicate filename") => {}
+            Err(source) => return Err(ZipError::Write(source).into()),
             _ => {}
         }
 
@@ -48,21 +45,23 @@ impl CAIWriter for ZipIO {
             Path::new(MANIFEST_PATH),
             SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
         ) {
-            Err(ZipError::InvalidArchive(err)) if err.starts_with("Duplicate filename") => {
-                writer.abort_file().map_err(|_| Error::EmbeddingError)?;
+            Err(zip::result::ZipError::InvalidArchive(err))
+                if err.starts_with("Duplicate filename") =>
+            {
+                writer.abort_file().map_err(ZipError::Write)?;
                 writer
                     .start_file_from_path(
                         Path::new(MANIFEST_PATH),
                         SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
                     )
-                    .map_err(|_| Error::EmbeddingError)?;
+                    .map_err(ZipError::Write)?;
             }
-            Err(_) => return Err(Error::EmbeddingError),
+            Err(source) => return Err(ZipError::Write(source).into()),
             _ => {}
         }
 
         io::copy(&mut store_bytes, &mut writer)?;
-        writer.finish().map_err(|_| Error::EmbeddingError)?;
+        writer.finish().map_err(ZipError::Write)?;
 
         Ok(())
     }
@@ -71,8 +70,7 @@ impl CAIWriter for ZipIO {
         &self,
         _input_stream: &mut dyn CAIRead,
     ) -> Result<Vec<HashObjectPositions>> {
-        // TODO: error since data hash isn't supported?
-        Ok(Vec::new())
+        Err(ZipError::ObjectLocationsUnsupported.into())
     }
 
     fn remove_cai_store_from_stream(
@@ -82,15 +80,16 @@ impl CAIWriter for ZipIO {
     ) -> Result<()> {
         let mut writer = self
             .writer(input_stream, output_stream)
-            .map_err(|_| Error::EmbeddingError)?;
+            .map_err(ZipError::Remove)?;
 
         match writer.start_file_from_path(Path::new(MANIFEST_PATH), SimpleFileOptions::default()) {
-            Err(ZipError::InvalidArchive(err)) if err.starts_with("Duplicate filename") => {}
-            Err(_) => return Err(Error::EmbeddingError),
+            Err(zip::result::ZipError::InvalidArchive(err))
+                if err.starts_with("Duplicate filename") => {}
+            Err(source) => return Err(ZipError::Remove(source).into()),
             _ => {}
         }
-        writer.abort_file().map_err(|_| Error::EmbeddingError)?;
-        writer.finish().map_err(|_| Error::EmbeddingError)?;
+        writer.abort_file().map_err(ZipError::Remove)?;
+        writer.finish().map_err(ZipError::Remove)?;
 
         Ok(())
     }
@@ -98,14 +97,12 @@ impl CAIWriter for ZipIO {
 
 impl CAIReader for ZipIO {
     fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
-        let mut reader = self
-            .reader(asset_reader)
-            .map_err(|_| Error::JumbfNotFound)?;
+        let mut reader = self.reader(asset_reader).map_err(ZipError::Read)?;
 
         let index = reader
             .index_for_path(Path::new(MANIFEST_PATH))
             .ok_or(Error::JumbfNotFound)?;
-        let mut file = reader.by_index(index).map_err(|_| Error::JumbfNotFound)?;
+        let mut file = reader.by_index(index).map_err(ZipError::Read)?;
 
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
@@ -159,9 +156,8 @@ impl AssetIO for ZipIO {
         asset_io::rename_or_move(temp_file, asset_path)
     }
 
-    fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>> {
-        let mut f = std::fs::File::open(asset_path).map_err(|_err| Error::EmbeddingError)?;
-        self.get_object_locations_from_stream(&mut f)
+    fn get_object_locations(&self, _asset_path: &Path) -> Result<Vec<HashObjectPositions>> {
+        Err(ZipError::ObjectLocationsUnsupported.into())
     }
 
     fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
@@ -247,6 +243,26 @@ impl ZipIO {
             reader_writer: output_stream,
         })
     }
+}
+
+/// Errors that can occur while handling C2PA data in a ZIP-based asset.
+#[derive(Debug, thiserror::Error)]
+pub enum ZipError {
+    /// The asset could not be read as a ZIP container.
+    #[error("could not read the ZIP")]
+    Read(#[source] zip::result::ZipError),
+
+    /// The C2PA manifest could not be embedded into the ZIP.
+    #[error("could not embed the C2PA manifest into the ZIP")]
+    Write(#[source] zip::result::ZipError),
+
+    /// The C2PA manifest could not be removed from the ZIP.
+    #[error("could not remove the C2PA manifest from the ZIP")]
+    Remove(#[source] zip::result::ZipError),
+
+    /// Data hashing (object locations) is not supported for ZIP.
+    #[error("data hashing is not supported for ZIP, use a collection hash instead")]
+    ObjectLocationsUnsupported,
 }
 
 #[cfg(test)]
