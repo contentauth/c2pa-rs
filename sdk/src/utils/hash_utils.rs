@@ -34,6 +34,24 @@ thread_local! {
     static MAX_HASH_BUF_OVERRIDE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
 }
 
+// Restores the previous value on drop.
+#[cfg(test)]
+struct MaxHashBufGuard(Option<usize>);
+
+#[cfg(test)]
+impl MaxHashBufGuard {
+    fn new(size: usize) -> Self {
+        MaxHashBufGuard(MAX_HASH_BUF_OVERRIDE.with(|o| o.replace(Some(size))))
+    }
+}
+
+#[cfg(test)]
+impl Drop for MaxHashBufGuard {
+    fn drop(&mut self) {
+        MAX_HASH_BUF_OVERRIDE.with(|o| o.set(self.0));
+    }
+}
+
 #[inline]
 fn max_hash_buf() -> usize {
     #[cfg(test)]
@@ -686,7 +704,7 @@ mod tests {
     // none for the final chunk regardless of whether it hashed inline.
     #[test]
     fn progress_sequence_multi_chunk() {
-        MAX_HASH_BUF_OVERRIDE.with(|o| o.set(Some(1024)));
+        let _guard = MaxHashBufGuard::new(1024);
         let data = vec![0u8; 3 * 1024]; // 3 chunks at the overridden buffer size
         let mut reader = Cursor::new(&data);
         let mut seen: Vec<(u32, u32)> = Vec::new();
@@ -706,7 +724,7 @@ mod tests {
     //   print(hashlib.sha256(d).hexdigest())"
     #[test]
     fn multi_chunk_digest_matches_known_value() {
-        MAX_HASH_BUF_OVERRIDE.with(|o| o.set(Some(1024)));
+        let _guard = MaxHashBufGuard::new(1024);
         let data: Vec<u8> = (0..3 * 1024).map(|i| (i % 251) as u8).collect();
         let mut reader = Cursor::new(&data);
         let hash = hash_stream_by_alg("sha256", &mut reader, None, true).unwrap();
@@ -724,7 +742,7 @@ mod tests {
     //   print(hashlib.sha256(d[:1000] + d[1100:]).hexdigest())"
     #[test]
     fn multi_chunk_digest_survives_range_splits() {
-        MAX_HASH_BUF_OVERRIDE.with(|o| o.set(Some(1024)));
+        let _guard = MaxHashBufGuard::new(1024);
         let data: Vec<u8> = (0..3 * 1024).map(|i| (i % 251) as u8).collect();
         let mut reader = Cursor::new(&data);
         let hr = vec![HashRange::new(1000, 100)];
@@ -736,4 +754,3 @@ mod tests {
         );
     }
 }
-
