@@ -26,7 +26,12 @@ use sha2::{Digest, Sha256, Sha384, Sha512};
 
 use crate::{crypto::base64::encode, utils::io_utils::stream_len, Error, Result};
 
+#[cfg(not(test))]
 const MAX_HASH_BUF: usize = 256 * 1024 * 1024; // cap memory usage to 256MB
+
+// Smaller for testing to hit the paths where it buffers.
+#[cfg(test)]
+const MAX_HASH_BUF: usize = 1024;
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 /// Defines a hash range to be used with `hash_stream_by_alg`
@@ -435,7 +440,10 @@ where
             }
         }
     } else {
-        // hash the data for ranges
+        // hash the data for ranges, reading the next chunk on this thread while
+        // the current one hashes on a worker.
+        // Only one worker hashes at a time since the Hasher moves through the channel,
+        // so this hides read latency (hash is still moving ahead sequentially).
         for r in ranges {
             step += 1;
             progress(step, total)?;
@@ -457,23 +465,23 @@ where
             data.read_exact(&mut chunk)?;
 
             loop {
-                let (tx, rx) = std::sync::mpsc::channel();
-
                 chunk_left -= chunk.len() as u64;
 
-                std::thread::spawn(move || {
-                    hasher_enum.update(&chunk);
-                    tx.send(hasher_enum).unwrap_or_default();
-                });
-
-                // are we done
+                // with no next chunk to read there is nothing to overlap, so hash inline.
                 if chunk_left == 0 {
-                    hasher_enum = match rx.recv() {
-                        Ok(hasher) => hasher,
-                        Err(_) => return Err(Error::ThreadReceiveError),
-                    };
+                    hasher_enum.update(&chunk);
                     break;
                 }
+
+                let (tx, rx) = std::sync::mpsc::channel();
+
+                std::thread::Builder::new()
+                    .name("c2pa-hash".to_string())
+                    .spawn(move || {
+                        hasher_enum.update(&chunk);
+                        tx.send(hasher_enum).unwrap_or_default();
+                    })
+                    .map_err(|_| Error::ThreadReceiveError)?;
 
                 // read next chunk while we wait for hash
                 let mut next_chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
@@ -660,5 +668,20 @@ mod tests {
             matches!(result, Err(Error::OperationCancelled)),
             "expected OperationCancelled, got {result:?}"
         );
+    }
+
+    // One tick per range before any read, one after each non-final chunk,
+    // none for the final chunk regardless of whether it hashed inline.
+    #[test]
+    fn progress_sequence_multi_chunk() {
+        let data = vec![0u8; 3 * 1024]; // 3 chunks at the test MAX_HASH_BUF
+        let mut reader = Cursor::new(&data);
+        let mut seen: Vec<(u32, u32)> = Vec::new();
+        let mut cb = |step, total| {
+            seen.push((step, total));
+            Ok(())
+        };
+        hash_stream_by_alg_with_progress("sha256", &mut reader, None, true, &mut cb).unwrap();
+        assert_eq!(seen, vec![(1, 3), (2, 3), (3, 3)]);
     }
 }
