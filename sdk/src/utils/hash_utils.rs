@@ -244,7 +244,7 @@ where
 }
 
 /// Make `hash_stream_by_alg_with_progress` configurable with `max_hash_buf`.
-/// Currently used only in tests to lower the `max_hash_buf` limit.
+/// e.g. makes it configurable in tests too.
 fn hash_stream_by_alg_with_progress_impl<R, F>(
     alg: &str,
     data: &mut R,
@@ -501,8 +501,7 @@ where
                     .spawn(move || {
                         hasher_enum.update(&chunk);
                         tx.send(hasher_enum).unwrap_or_default();
-                    })
-                    .map_err(|_| Error::ThreadReceiveError)?;
+                    })?;
 
                 // read next chunk while we wait for hash
                 let mut next_chunk = vec![0u8; std::cmp::min(chunk_left as usize, max_hash_buf)];
