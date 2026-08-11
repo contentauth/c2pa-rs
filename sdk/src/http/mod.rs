@@ -325,7 +325,11 @@ impl AsyncHttpResolver for AsyncGenericResolver {
 }
 
 /// An error that occurs during sync/async HTTP resolver resolution.
+///
+/// This enum is `#[non_exhaustive]`: match it with a wildcard (`_`) arm so that future error
+/// variants can be added without a breaking change.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum HttpResolverError {
     /// An error occurred in the [`http`] crate.
     #[error(transparent)]

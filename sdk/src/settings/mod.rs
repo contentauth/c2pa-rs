@@ -313,12 +313,17 @@ impl SettingsValidate for CawgTrust {
 }
 
 /// Settings to configure core features.
+///
+/// This struct is `#[non_exhaustive]`: construct it via [`Default`] (and the `with_*` builders on
+/// [`Settings`]) rather than a struct literal, so that future settings can be added without a
+/// breaking change.
 #[cfg_attr(
     feature = "json_schema",
     derive(schemars::JsonSchema),
     schemars(default)
 )]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[non_exhaustive]
 pub struct Core {
     /// Size of the [`BmffHash`] merkle tree chunks in kilobytes.
     ///
