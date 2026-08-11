@@ -36,45 +36,44 @@
 //!
 //! # Network security policy (SSRF hardening)
 //!
-//! Because some request URLs come from untrusted content, the SDK applies a built-in policy to the
-//! requests above, configured via [`Core::network_security`]. By default the SDK does **not** follow
-//! HTTP redirects (a redirect from untrusted content could be pointed at an internal endpoint); a
-//! blocked redirect is reported as [`HttpResolverError::RedirectDisallowed`]. See
-//! [`NetworkSecurity`] for the `off` / `default` / `strict` levels, and
-//! [`Core::allowed_network_hosts`] for an explicit host allow-list.
+//! Because some request URLs come from untrusted content, following HTTP redirects can be abused to
+//! reach internal or cloud-metadata endpoints (SSRF – CAI-12574). By default the SDK follows
+//! redirects **except** when a redirect target is a non-globally-routable (internal) address, which
+//! is rejected as [`HttpResolverError::RedirectTargetDisallowed`]. This is controlled by
+//! [`Core::allow_redirects`]; set it to `false` to refuse redirects entirely (reported as
+//! [`HttpResolverError::RedirectDisallowed`]). See [`Core::allowed_network_hosts`] for an explicit
+//! host allow-list.
 //!
 //! ## Local development and internal hosts
 //!
-//! The default policy still allows requests to directly-named internal hosts, so a `localhost`
-//! development server (for example a local `did:web` origin or manifest host) works out of the box —
-//! only redirect *following* is disabled. If you run under [`NetworkSecurity::Strict`] (which blocks
-//! non-globally-routable hosts) but need to reach a local or internal host during development, add
-//! it to [`Core::allowed_network_hosts`]:
+//! The redirect check applies to redirect *targets*, not the initial request, so a request that
+//! *directly* names an internal host — for example a `localhost` development server acting as a
+//! `did:web` origin or manifest host, or an enterprise OCSP responder on a private address — is
+//! fetched normally. Only being *redirected* to an internal address is blocked.
+//!
+//! To restrict which hosts the SDK may contact at all (including each redirect hop), use
+//! [`Core::allowed_network_hosts`]:
 //!
 //! ```
 //! # use c2pa::{Context, Settings};
 //! # fn main() -> c2pa::Result<()> {
-//! // Allow a local dev server on 127.0.0.1:8080 even under the strict policy.
-//! let settings = Settings::new()
-//!     .with_value("core.network_security", "strict")?
-//!     .with_value("core.allowed_network_hosts", ["127.0.0.1:8080".to_string()])?;
+//! // Only allow requests to a local dev server on 127.0.0.1:8080.
+//! let settings =
+//!     Settings::new().with_value("core.allowed_network_hosts", ["127.0.0.1:8080".to_string()])?;
 //! let context = Context::new().with_settings(settings)?;
 //! # let _ = context;
 //! # Ok(())
 //! # }
 //! ```
 //!
-//! If a request must follow redirects (for example a remote-manifest URL that legitimately 301s to
-//! a CDN), set `core.network_security = "off"` to restore redirect following.
-//!
 //! [`Reader`]: crate::Reader
 //! [`Builder`]: crate::Builder
 //! [`TimeStamp`]: crate::assertions::TimeStamp
 //! [`SignerSettings::Remote`]: crate::settings::signer::SignerSettings::Remote
-//! [`Core::network_security`]: crate::settings::Core::network_security
+//! [`HttpResolverError::RedirectTargetDisallowed`]: crate::http::HttpResolverError::RedirectTargetDisallowed
+//! [`HttpResolverError::RedirectDisallowed`]: crate::http::HttpResolverError::RedirectDisallowed
+//! [`Core::allow_redirects`]: crate::settings::Core::allow_redirects
 //! [`Core::allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
-//! [`NetworkSecurity`]: crate::settings::NetworkSecurity
-//! [`NetworkSecurity::Strict`]: crate::settings::NetworkSecurity::Strict
 
 use std::{
     io::{self, Cursor, Read},
@@ -364,27 +363,52 @@ pub enum HttpResolverError {
     #[error("response body exceeded maximum allowed size")]
     ResponseTooLarge,
 
-    /// An HTTP redirect response was received, but redirect following is disabled by the current
-    /// [`network_security`] policy.
+    /// An HTTP redirect response was received, but redirect following is disabled because
+    /// [`allow_redirects`] is `false`.
     ///
     /// This is expected when a remote-manifest, OCSP, timestamp, or `did:web` URL responds with a
-    /// 3xx redirect. Following redirects from untrusted content is an SSRF risk (CAI-12574), so the
-    /// SDK does not chase them by default. To opt back in, set `core.network_security = "off"`. If
-    /// the redirect target is a specific trusted host, you can instead add it to
-    /// [`allowed_network_hosts`] and request the final URL directly.
+    /// 3xx redirect and the caller has turned redirect following off. To follow redirects (to
+    /// public hosts) again, set `core.allow_redirects = true`.
     ///
-    /// [`network_security`]: crate::settings::Core::network_security
-    /// [`allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
+    /// [`allow_redirects`]: crate::settings::Core::allow_redirects
     #[error(
-        "HTTP redirect to \"{location}\" (from \"{uri}\") was not followed: the SDK does not follow \
-         redirects under the current network_security policy. Set core.network_security = \"off\" to \
-         allow redirects, or add the target host to core.allowed_network_hosts and request it directly."
+        "HTTP redirect to \"{location}\" (from \"{uri}\") was not followed because \
+         core.allow_redirects is false; set core.allow_redirects = true to follow redirects to \
+         public hosts."
     )]
     RedirectDisallowed {
         /// The URI that returned the redirect response.
         uri: String,
-        /// The redirect target from the response `Location` header (or `"(unknown)"` if absent).
+        /// The redirect target from the response `Location` header.
         location: String,
+    },
+
+    /// An HTTP redirect pointed at a non-globally-routable (internal) address and was rejected as
+    /// an SSRF risk (CAI-12574), even though [`allow_redirects`] is `true`.
+    ///
+    /// The redirect target is a loopback, private (RFC 1918), link-local / cloud-metadata,
+    /// IPv6 unique-local/link-local, or similar internal address. Redirects to public hosts are
+    /// followed normally; only internal targets are blocked. A URL that *directly* names an
+    /// internal host (rather than being redirected to one) is not affected by this and is still
+    /// fetched.
+    ///
+    /// [`allow_redirects`]: crate::settings::Core::allow_redirects
+    #[error(
+        "HTTP redirect to \"{location}\" (from \"{uri}\") was rejected: the target is a private or \
+         internal address, which is not allowed as a redirect destination (SSRF protection)."
+    )]
+    RedirectTargetDisallowed {
+        /// The URI that returned the redirect response.
+        uri: String,
+        /// The internal redirect target from the response `Location` header.
+        location: String,
+    },
+
+    /// The request exceeded the maximum number of HTTP redirects the SDK will follow.
+    #[error("too many HTTP redirects while resolving \"{uri}\"")]
+    TooManyRedirects {
+        /// The most recent URI in the redirect chain.
+        uri: String,
     },
 
     /// An error occurred from the underlying HTTP resolver.

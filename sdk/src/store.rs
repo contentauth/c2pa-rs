@@ -9371,73 +9371,66 @@ pub mod tests {
     // follow that redirect. These tests drive the actual `fetch_remote_manifest` path rather than
     // the resolver in isolation.
     //
-    // Under the DEFAULT policy (`network_security = "default"`), the initial (loopback, in this
-    // hermetic test) request is allowed, but the 302 is surfaced as a clear `RedirectDisallowed`
-    // error rather than being chased to the canary.
+    // Under the DEFAULT policy (`allow_redirects = true`), the initial (loopback, in this hermetic
+    // test) request is allowed, and the redirect is followed up to the point where its target is
+    // seen to be an internal address, which is then rejected as `RedirectTargetDisallowed`.
     #[cfg(all(not(target_arch = "wasm32"), feature = "fetch_remote_manifests"))]
     #[test]
-    fn test_remote_manifest_redirect_not_followed() {
+    fn test_remote_manifest_redirect_to_internal_blocked() {
         use httpmock::prelude::*;
 
         let server = MockServer::start();
 
         let redirect = server.mock(|when, then| {
             when.method(GET).path("/redirect-to-internal");
-            then.status(302).header("Location", server.url("/canary"));
-        });
-        let canary = server.mock(|when, then| {
-            when.method(GET).path("/canary");
-            then.status(200).body("SSRF_CONFIRMED");
+            then.status(302)
+                .header("Location", "http://169.254.169.254/latest/meta-data/");
         });
 
         let context = Context::new();
         let result = Store::fetch_remote_manifest(&server.url("/redirect-to-internal"), &context);
 
-        // The SDK sees the 302 rather than following it, so the fetch fails with a message that
-        // explains the redirect was blocked and how to opt back in.
-        let err = result.expect_err("the redirect must not be followed to the internal endpoint");
+        // The redirect to an internal address is rejected with an explanatory message.
+        let err = result.expect_err("the redirect to an internal address must be rejected");
         let msg = err.to_string();
         assert!(
-            msg.contains("redirect") && msg.contains("network_security"),
-            "error should explain the blocked redirect and how to opt in, got: {msg}"
+            msg.contains("redirect") && msg.contains("internal"),
+            "error should explain the blocked internal redirect, got: {msg}"
         );
 
         // The redirect endpoint is hit once; the internal target is never contacted.
         redirect.assert_calls(1);
-        canary.assert_calls(0);
     }
 
-    // The researcher's PoC runs entirely on loopback (both the attacker server and the "internal"
-    // canary are 127.0.0.1). Under `network_security = "strict"`, the host guard rejects the
-    // request outright, so the SDK never even contacts the attacker's server.
+    // With `allow_redirects = false`, the SDK refuses to follow any redirect at all.
     #[cfg(all(not(target_arch = "wasm32"), feature = "fetch_remote_manifests"))]
     #[test]
-    fn test_remote_manifest_strict_blocks_loopback() {
+    fn test_remote_manifest_redirects_disabled() {
         use httpmock::prelude::*;
 
         let server = MockServer::start();
 
         let redirect = server.mock(|when, then| {
-            when.method(GET).path("/redirect-to-internal");
-            then.status(302).header("Location", server.url("/canary"));
+            when.method(GET).path("/redirect");
+            then.status(302).header("Location", server.url("/target"));
         });
-        let canary = server.mock(|when, then| {
-            when.method(GET).path("/canary");
+        let target = server.mock(|when, then| {
+            when.method(GET).path("/target");
             then.status(200).body("SSRF_CONFIRMED");
         });
 
         let context = Context::new()
-            .with_settings("[core]\nnetwork_security = \"strict\"\n")
+            .with_settings("[core]\nallow_redirects = false\n")
             .unwrap();
-        let result = Store::fetch_remote_manifest(&server.url("/redirect-to-internal"), &context);
+        let result = Store::fetch_remote_manifest(&server.url("/redirect"), &context);
 
         assert!(
             result.is_err(),
-            "strict policy must block loopback remote-manifest URLs"
+            "allow_redirects = false must not follow the redirect"
         );
 
-        // Neither endpoint is contacted: the guard rejects the request before any HTTP call.
-        redirect.assert_calls(0);
-        canary.assert_calls(0);
+        // The redirect endpoint is hit once; the target is never contacted.
+        redirect.assert_calls(1);
+        target.assert_calls(0);
     }
 }

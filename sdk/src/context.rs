@@ -18,11 +18,11 @@ use std::sync::{
 
 use crate::{
     http::{
-        restricted::{NonGlobalHostGuard, RedirectGuard, RestrictedResolver},
+        restricted::{RedirectResolver, RestrictedResolver},
         AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver,
     },
     maybe_send_sync::{MaybeSend, MaybeSync},
-    settings::{NetworkSecurity, Settings},
+    settings::Settings,
     signer::{BoxedAsyncSigner, BoxedSigner},
     AsyncSigner, Error, Result, Signer,
 };
@@ -448,10 +448,9 @@ impl Context {
     /// Returns a reference to the sync resolver.
     ///
     /// When no custom resolver is set, the default resolver is assembled from the
-    /// [`network_security`] and [`allowed_network_hosts`] settings. See [`network_security`] for
-    /// the policy applied.
+    /// [`allow_redirects`] and [`allowed_network_hosts`] settings.
     ///
-    /// [`network_security`]: crate::settings::Core::network_security
+    /// [`allow_redirects`]: crate::settings::Core::allow_redirects
     /// [`allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
     pub fn resolver(&self) -> Arc<dyn SyncHttpResolver> {
         match &self.sync_resolver_state {
@@ -462,48 +461,37 @@ impl Context {
         }
     }
 
-    /// Builds the default sync resolver stack from the [`network_security`] and
+    /// Builds the default sync resolver stack from the [`allow_redirects`] and
     /// [`allowed_network_hosts`] settings.
     ///
-    /// The base HTTP client follows redirects only when [`NetworkSecurity::Off`] is configured.
-    /// Otherwise redirects are disabled at the client and a [`RedirectGuard`] converts a 3xx
-    /// response into a clear [`HttpResolverError::RedirectDisallowed`] error (SSRF hardening,
-    /// CAI-12574). Host filtering is then layered on: an explicit allow-list via
-    /// [`RestrictedResolver`], or – under [`NetworkSecurity::Strict`] with no allow-list – a
-    /// [`NonGlobalHostGuard`] that rejects non-globally-routable hosts.
+    /// The base HTTP client never auto-follows redirects; a [`RedirectResolver`] follows them at the
+    /// SDK layer so it can reject hops to internal addresses (SSRF hardening, CAI-12574). An explicit
+    /// allow-list, when configured, is applied *inside* the redirect follower via
+    /// [`RestrictedResolver`], so it is re-checked on every hop. Concrete wrapper types are used (no
+    /// intermediate `Arc<dyn ..>`) so the stack stays `Send`/`Sync` where required, including WASM.
     ///
-    /// [`network_security`]: crate::settings::Core::network_security
+    /// [`allow_redirects`]: crate::settings::Core::allow_redirects
     /// [`allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
-    /// [`HttpResolverError::RedirectDisallowed`]: crate::http::HttpResolverError::RedirectDisallowed
     fn build_default_sync_resolver(&self) -> Arc<dyn SyncHttpResolver> {
         let core = &self.settings.core;
-
-        let base: Arc<dyn SyncHttpResolver> = if core.network_security == NetworkSecurity::Off {
-            Arc::new(SyncGenericResolver::with_redirects().unwrap_or_default())
-        } else {
-            Arc::new(RedirectGuard::new(SyncGenericResolver::new()))
-        };
+        let client = SyncGenericResolver::new();
 
         if let Some(allowed_hosts) = core.allowed_network_hosts.clone() {
-            let mut resolver = RestrictedResolver::new(base);
-            resolver.set_allowed_hosts(Some(allowed_hosts));
-            Arc::new(resolver)
-        } else if core.network_security == NetworkSecurity::Strict {
-            Arc::new(NonGlobalHostGuard::new(base))
+            let mut restricted = RestrictedResolver::new(client);
+            restricted.set_allowed_hosts(Some(allowed_hosts));
+            Arc::new(RedirectResolver::new(restricted, core.allow_redirects))
         } else {
-            base
+            Arc::new(RedirectResolver::new(client, core.allow_redirects))
         }
     }
 
     /// Returns a reference to the async resolver.
     ///
     /// When no custom resolver is set, the default resolver is assembled from the
-    /// [`network_security`] and [`allowed_network_hosts`] settings. See
-    /// [`build_default_sync_resolver`] for the layering; the async stack mirrors it.
+    /// [`allow_redirects`] and [`allowed_network_hosts`] settings, mirroring the sync resolver.
     ///
-    /// [`network_security`]: crate::settings::Core::network_security
+    /// [`allow_redirects`]: crate::settings::Core::allow_redirects
     /// [`allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
-    /// [`build_default_sync_resolver`]: Context::build_default_sync_resolver
     pub fn resolver_async(&self) -> Arc<dyn AsyncHttpResolver> {
         match &self.async_resolver_state {
             AsyncResolverState::Custom(resolver) => resolver.clone(),
@@ -518,21 +506,14 @@ impl Context {
     /// [`build_default_sync_resolver`]: Context::build_default_sync_resolver
     fn build_default_async_resolver(&self) -> Arc<dyn AsyncHttpResolver> {
         let core = &self.settings.core;
-
-        let base: Arc<dyn AsyncHttpResolver> = if core.network_security == NetworkSecurity::Off {
-            Arc::new(AsyncGenericResolver::with_redirects().unwrap_or_default())
-        } else {
-            Arc::new(RedirectGuard::new(AsyncGenericResolver::new()))
-        };
+        let client = AsyncGenericResolver::new();
 
         if let Some(allowed_hosts) = core.allowed_network_hosts.clone() {
-            let mut resolver = RestrictedResolver::new(base);
-            resolver.set_allowed_hosts(Some(allowed_hosts));
-            Arc::new(resolver)
-        } else if core.network_security == NetworkSecurity::Strict {
-            Arc::new(NonGlobalHostGuard::new(base))
+            let mut restricted = RestrictedResolver::new(client);
+            restricted.set_allowed_hosts(Some(allowed_hosts));
+            Arc::new(RedirectResolver::new(restricted, core.allow_redirects))
         } else {
-            base
+            Arc::new(RedirectResolver::new(client, core.allow_redirects))
         }
     }
 
@@ -1115,77 +1096,13 @@ mod tests {
         let _resolver = context.resolver_async();
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    fn strict_context() -> Context {
-        Context::new()
-            .with_settings("[core]\nnetwork_security = \"strict\"\n")
-            .unwrap()
-    }
-
-    // Under `network_security = "strict"` (no `allowed_network_hosts` configured), the resolver must
-    // block requests to non-globally-routable hosts. Otherwise a malicious remote manifest URL
-    // naming an internal or cloud-metadata endpoint directly results in SSRF (CAI-12574).
+    // The default policy (`allow_redirects = true`) must NOT block direct requests to internal
+    // hosts – that would break enterprise OCSP/timestamp endpoints and local development. Only
+    // *redirects* to internal hosts are blocked. Here a loopback mock server (an internal host) is
+    // reached successfully under the default policy.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn test_strict_sync_resolver_blocks_non_global_hosts() {
-        use http::Request;
-
-        use crate::http::{HttpResolverError, SyncHttpResolver};
-
-        let context = strict_context();
-        let resolver = context.resolver();
-
-        for uri in [
-            "http://169.254.169.254/latest/meta-data/",
-            "http://127.0.0.1/canary",
-            "http://10.0.0.1/",
-            "http://[::1]/",
-            "http://localhost/",
-        ] {
-            let request = Request::get(uri).body(vec![]).unwrap();
-            let result = resolver.http_resolve(request);
-
-            assert!(
-                matches!(result, Err(HttpResolverError::UriDisallowed { .. })),
-                "expected {uri} to be blocked by the strict network guard"
-            );
-        }
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    #[tokio::test]
-    async fn test_strict_async_resolver_blocks_non_global_hosts() {
-        use http::Request;
-
-        use crate::http::{AsyncHttpResolver, HttpResolverError};
-
-        let context = strict_context();
-        let resolver = context.resolver_async();
-
-        for uri in [
-            "http://169.254.169.254/latest/meta-data/",
-            "http://127.0.0.1/canary",
-            "http://10.0.0.1/",
-            "http://[::1]/",
-            "http://localhost/",
-        ] {
-            let request = Request::get(uri).body(vec![]).unwrap();
-            let result = resolver.http_resolve_async(request).await;
-
-            assert!(
-                matches!(result, Err(HttpResolverError::UriDisallowed { .. })),
-                "expected {uri} to be blocked by the strict network guard"
-            );
-        }
-    }
-
-    // The default policy (`network_security = "default"`) must NOT block direct requests to internal
-    // hosts – that would break enterprise OCSP/timestamp endpoints and local development. It only
-    // stops redirect following. Here a loopback mock server (an internal host) is reached
-    // successfully under the default policy.
-    #[cfg(not(target_arch = "wasm32"))]
-    #[test]
-    fn test_default_sync_resolver_allows_direct_internal_host() {
+    fn test_default_allows_direct_internal_host() {
         use http::Request;
         use httpmock::MockServer;
 
@@ -1202,19 +1119,18 @@ mod tests {
         let request = Request::get(format!("{}/manifest", server.base_url()))
             .body(vec![])
             .unwrap();
-        let response = resolver
-            .http_resolve(request)
-            .expect("default policy must allow a directly-named internal (loopback) host");
+        let response = resolver.http_resolve(request).unwrap();
 
         assert_eq!(response.status(), 200);
         mock.assert_calls(1);
     }
 
-    // Under the default policy, a redirect is reported as a clear `RedirectDisallowed` error rather
-    // than being followed to its (here internal / cloud-metadata) target.
+    // Under the default policy, a redirect whose target is an internal / cloud-metadata address is
+    // rejected as `RedirectTargetDisallowed` rather than being followed (SSRF – CAI-12574). The
+    // initial (loopback) request is allowed; only the redirect hop is blocked.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn test_default_resolver_reports_redirect_disallowed() {
+    fn test_default_blocks_redirect_to_internal_host() {
         use http::Request;
         use httpmock::MockServer;
 
@@ -1234,21 +1150,23 @@ mod tests {
         let result = resolver.http_resolve(request);
 
         assert!(
-            matches!(result, Err(HttpResolverError::RedirectDisallowed { .. })),
-            "default policy must report a blocked redirect as RedirectDisallowed"
+            matches!(
+                result,
+                Err(HttpResolverError::RedirectTargetDisallowed { .. })
+            ),
+            "a redirect to an internal address must be rejected"
         );
         redirect.assert_calls(1);
     }
 
-    // `network_security = "off"` is the explicit escape hatch: redirects are followed again, as
-    // they were before the CAI-12574 hardening.
+    // `allow_redirects = false` refuses to follow any redirect, reporting `RedirectDisallowed`.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn test_off_resolver_follows_redirects() {
+    fn test_allow_redirects_false_refuses_redirect() {
         use http::Request;
         use httpmock::MockServer;
 
-        use crate::http::SyncHttpResolver;
+        use crate::http::{HttpResolverError, SyncHttpResolver};
 
         let server = MockServer::start();
         let redirect = server.mock(|when, then| {
@@ -1261,18 +1179,21 @@ mod tests {
         });
 
         let context = Context::new()
-            .with_settings("[core]\nnetwork_security = \"off\"\n")
+            .with_settings("[core]\nallow_redirects = false\n")
             .unwrap();
         let resolver = context.resolver();
 
         let request = Request::get(format!("{}/redirect", server.base_url()))
             .body(vec![])
             .unwrap();
-        let response = resolver.http_resolve(request).unwrap();
+        let result = resolver.http_resolve(request);
 
-        assert_eq!(response.status(), 200);
+        assert!(
+            matches!(result, Err(HttpResolverError::RedirectDisallowed { .. })),
+            "allow_redirects = false must refuse the redirect"
+        );
         redirect.assert_calls(1);
-        target.assert_calls(1);
+        target.assert_calls(0);
     }
 
     #[test]

@@ -284,136 +284,184 @@ pub(crate) fn is_uri_allowed(patterns: &[HostPattern], uri: &Uri) -> bool {
     false
 }
 
-/// Resolver wrapper that rejects requests to non-globally-routable hosts.
+/// Maximum number of HTTP redirects [`RedirectResolver`] will follow before giving up.
+const MAX_REDIRECTS: usize = 10;
+
+/// Resolver wrapper that follows HTTP redirects at the SDK layer, validating each hop.
 ///
-/// Used by [`NetworkSecurity::Strict`] when [`Core::allowed_network_hosts`] is not configured: the
-/// SDK still must not connect to internal addresses on the operator's behalf. This wrapper rejects
-/// any request whose host is a non-globally-routable IP literal – loopback, private (RFC1918),
-/// link-local (including the `169.254.169.254` cloud-metadata address), unique-local, CGNAT/shared,
-/// documentation, or multicast – an obfuscated/malformed numeric address, or an obvious loopback
-/// host name such as `localhost`. Rejected requests return [`HttpResolverError::UriDisallowed`].
+/// The underlying client is configured not to follow redirects on its own (`max_redirects(0)` /
+/// `redirect::Policy::none()`), so each 3xx surfaces here as a bare response. This wrapper then:
 ///
-/// This check runs on the request URI. Filtering based on the *resolved* IP (to defeat DNS names
-/// that point at internal addresses, i.e. DNS rebinding) is tracked separately in
-/// <https://github.com/contentauth/c2pa-rs/issues/2430>.
+/// - if `allow_redirects` is `false`, returns [`HttpResolverError::RedirectDisallowed`] rather than
+///   following;
+/// - otherwise resolves the `Location` (relative locations are resolved against the current URL)
+///   and, if the target is a non-globally-routable/internal address ([`host_is_non_global`]),
+///   returns [`HttpResolverError::RedirectTargetDisallowed`] (SSRF protection, CAI-12574);
+/// - otherwise re-issues the request to the target through the wrapped resolver, preserving the
+///   method and body, up to [`MAX_REDIRECTS`] hops.
 ///
-/// [`Core::allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
-/// [`NetworkSecurity::Strict`]: crate::settings::NetworkSecurity::Strict
+/// This wrapper sits *outside* [`RestrictedResolver`], so each re-issued hop passes back through the
+/// allow-list (when one is configured) as well as the internal-address check above.
 #[derive(Debug)]
-pub(crate) struct NonGlobalHostGuard<T> {
+pub(crate) struct RedirectResolver<T> {
     inner: T,
+    allow_redirects: bool,
 }
 
-impl<T> NonGlobalHostGuard<T> {
-    /// Wraps `inner` with the non-global-host rejection policy.
-    pub(crate) fn new(inner: T) -> Self {
-        Self { inner }
+impl<T> RedirectResolver<T> {
+    /// Wraps `inner`. If `allow_redirects` is false, no redirect is followed.
+    pub(crate) fn new(inner: T, allow_redirects: bool) -> Self {
+        Self {
+            inner,
+            allow_redirects,
+        }
+    }
+
+    /// Inspects a response and decides what to do next.
+    ///
+    /// Returns `Ok(None)` if the response is not a redirect (the caller returns it as-is), or
+    /// `Ok(Some(target))` with the validated redirect target to re-issue. Errors if redirects are
+    /// disabled or the target is disallowed.
+    fn redirect_target<B>(
+        &self,
+        from_uri: &Uri,
+        response: &Response<B>,
+    ) -> Result<Option<Uri>, HttpResolverError> {
+        let Some(location) = redirect_location(response) else {
+            return Ok(None);
+        };
+
+        if !self.allow_redirects {
+            return Err(HttpResolverError::RedirectDisallowed {
+                uri: from_uri.to_string(),
+                location,
+            });
+        }
+
+        let target = resolve_redirect_target(from_uri, &location)?;
+        if host_is_non_global(&target) {
+            return Err(HttpResolverError::RedirectTargetDisallowed {
+                uri: from_uri.to_string(),
+                location: target.to_string(),
+            });
+        }
+
+        Ok(Some(target))
     }
 }
 
-impl<T: SyncHttpResolver> SyncHttpResolver for NonGlobalHostGuard<T> {
+impl<T: SyncHttpResolver> SyncHttpResolver for RedirectResolver<T> {
     fn http_resolve(
         &self,
-        request: Request<Vec<u8>>,
+        mut request: Request<Vec<u8>>,
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
-        if host_is_non_global(request.uri()) {
-            return Err(HttpResolverError::UriDisallowed {
-                uri: request.uri().to_string(),
-            });
+        for _ in 0..=MAX_REDIRECTS {
+            let from_uri = request.uri().clone();
+            let method = request.method().clone();
+            let headers = request.headers().clone();
+            let body = request.body().clone();
+
+            let response = self.inner.http_resolve(request)?;
+
+            match self.redirect_target(&from_uri, &response)? {
+                None => return Ok(response),
+                Some(target) => {
+                    request = build_redirected_request(method, headers, body, target)?;
+                }
+            }
         }
-        self.inner.http_resolve(request)
+
+        Err(HttpResolverError::TooManyRedirects {
+            uri: request.uri().to_string(),
+        })
     }
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl<T: AsyncHttpResolver + Sync> AsyncHttpResolver for NonGlobalHostGuard<T> {
+impl<T: AsyncHttpResolver + Sync> AsyncHttpResolver for RedirectResolver<T> {
     async fn http_resolve_async(
         &self,
-        request: Request<Vec<u8>>,
+        mut request: Request<Vec<u8>>,
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
-        if host_is_non_global(request.uri()) {
-            return Err(HttpResolverError::UriDisallowed {
-                uri: request.uri().to_string(),
-            });
+        for _ in 0..=MAX_REDIRECTS {
+            let from_uri = request.uri().clone();
+            let method = request.method().clone();
+            let headers = request.headers().clone();
+            let body = request.body().clone();
+
+            let response = self.inner.http_resolve_async(request).await?;
+
+            match self.redirect_target(&from_uri, &response)? {
+                None => return Ok(response),
+                Some(target) => {
+                    request = build_redirected_request(method, headers, body, target)?;
+                }
+            }
         }
-        self.inner.http_resolve_async(request).await
+
+        Err(HttpResolverError::TooManyRedirects {
+            uri: request.uri().to_string(),
+        })
     }
 }
 
-/// Resolver wrapper that turns a blocked HTTP redirect into a clear, actionable error.
-///
-/// The underlying client is configured not to follow redirects (`max_redirects(0)` /
-/// `redirect::Policy::none()`), so a redirect surfaces as a bare 3xx response. Passing that through
-/// would give callers a confusing generic failure (e.g. "fetch failed: code 302"). Instead this
-/// wrapper detects a redirect response and returns [`HttpResolverError::RedirectDisallowed`], naming
-/// the blocked target and how to opt back in. Used by [`NetworkSecurity::Default`] and
-/// [`NetworkSecurity::Strict`].
-///
-/// [`NetworkSecurity::Default`]: crate::settings::NetworkSecurity::Default
-/// [`NetworkSecurity::Strict`]: crate::settings::NetworkSecurity::Strict
-#[derive(Debug)]
-pub(crate) struct RedirectGuard<T> {
-    inner: T,
-}
-
-impl<T> RedirectGuard<T> {
-    /// Wraps `inner` so that redirect responses are reported as errors rather than followed.
-    pub(crate) fn new(inner: T) -> Self {
-        Self { inner }
-    }
-}
-
-impl<T: SyncHttpResolver> SyncHttpResolver for RedirectGuard<T> {
-    fn http_resolve(
-        &self,
-        request: Request<Vec<u8>>,
-    ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
-        let uri = request.uri().to_string();
-        let response = self.inner.http_resolve(request)?;
-        redirect_error(&uri, &response).map_or(Ok(response), Err)
-    }
-}
-
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-impl<T: AsyncHttpResolver + Sync> AsyncHttpResolver for RedirectGuard<T> {
-    async fn http_resolve_async(
-        &self,
-        request: Request<Vec<u8>>,
-    ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
-        let uri = request.uri().to_string();
-        let response = self.inner.http_resolve_async(request).await?;
-        redirect_error(&uri, &response).map_or(Ok(response), Err)
-    }
-}
-
-/// Returns a [`HttpResolverError::RedirectDisallowed`] if `response` is an HTTP redirect (a 3xx
-/// status carrying a `Location` header), otherwise `None`.
-///
-/// A 3xx without a `Location` (e.g. `304 Not Modified`) is not a redirect and passes through.
-fn redirect_error<B>(uri: &str, response: &Response<B>) -> Option<HttpResolverError> {
+/// Returns the redirect target from a response's `Location` header if it is an HTTP redirect (a 3xx
+/// status carrying a `Location`), otherwise `None`. A 3xx without a `Location` (e.g.
+/// `304 Not Modified`) is not treated as a redirect.
+fn redirect_location<B>(response: &Response<B>) -> Option<String> {
     if !response.status().is_redirection() {
         return None;
     }
 
-    let location = response
+    response
         .headers()
         .get(http::header::LOCATION)
-        .and_then(|v| v.to_str().ok())?;
-
-    Some(HttpResolverError::RedirectDisallowed {
-        uri: uri.to_owned(),
-        location: location.to_owned(),
-    })
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_owned())
 }
 
-/// Returns true if `uri`'s host is not globally routable and must be blocked under
-/// [`NetworkSecurity::Strict`].
+/// Resolves a redirect `Location` (absolute or relative) against the request's current URI.
+fn resolve_redirect_target(base: &Uri, location: &str) -> Result<Uri, HttpResolverError> {
+    let base_url =
+        url::Url::parse(&base.to_string()).map_err(|e| HttpResolverError::Other(Box::new(e)))?;
+
+    let target = base_url
+        .join(location)
+        .map_err(|e| HttpResolverError::Other(Box::new(e)))?;
+
+    target
+        .as_str()
+        .parse::<Uri>()
+        .map_err(|e| HttpResolverError::Http(http::Error::from(e)))
+}
+
+/// Builds the follow-up request for a redirect, preserving the original method and body and copying
+/// headers other than `Host` (which the client recomputes for the new authority).
+fn build_redirected_request(
+    method: http::Method,
+    headers: http::HeaderMap,
+    body: Vec<u8>,
+    target: Uri,
+) -> Result<Request<Vec<u8>>, HttpResolverError> {
+    let mut builder = Request::builder().method(method).uri(target);
+
+    for (name, value) in headers.iter() {
+        if name != http::header::HOST {
+            builder = builder.header(name, value);
+        }
+    }
+
+    builder.body(body).map_err(HttpResolverError::Http)
+}
+
+/// Returns true if `uri`'s host is not globally routable (loopback, private, link-local /
+/// cloud-metadata, unique-local, CGNAT, etc.) and must therefore not be used as a redirect target.
 ///
-/// See [`NonGlobalHostGuard`] for the rationale and the DNS-rebinding caveat.
-///
-/// [`NetworkSecurity::Strict`]: crate::settings::NetworkSecurity::Strict
+/// This is a URI-string check: it normalizes the host and rejects obfuscated/malformed numeric
+/// forms. Filtering on the *resolved* IP address (to defeat DNS names that point at internal
+/// addresses, i.e. DNS rebinding) is tracked separately in
+/// <https://github.com/contentauth/c2pa-rs/issues/2430>.
 pub(crate) fn host_is_non_global(uri: &Uri) -> bool {
     let Some(host) = uri.host() else {
         // A request with no host is malformed; reject it under the strict policy.
@@ -787,7 +835,7 @@ mod test {
     }
 
     #[test]
-    fn strict_policy_blocks_non_global_hosts() {
+    fn non_global_hosts_are_rejected_as_redirect_targets() {
         for uri in [
             "http://169.254.169.254/latest/meta-data/", // link-local / cloud metadata
             "http://127.0.0.1/",                        // IPv4 loopback
@@ -817,7 +865,7 @@ mod test {
     }
 
     #[test]
-    fn strict_policy_allows_global_hosts() {
+    fn global_hosts_are_allowed_as_redirect_targets() {
         for uri in [
             "http://93.184.216.34/",            // public IPv4 literal
             "https://contentauthenticity.org/", // public host name
@@ -830,5 +878,101 @@ mod test {
                 "expected {uri} to be allowed"
             );
         }
+    }
+
+    // A scripted resolver used to exercise the `RedirectResolver` loop without real networking. It
+    // returns a canned response based on the request path.
+    struct ScriptedChain;
+
+    impl ScriptedChain {
+        fn response(uri: &str) -> Response<Box<dyn Read>> {
+            let empty = || Box::new(std::io::empty()) as Box<dyn Read>;
+            let redirect_to = |location: &str| {
+                Response::builder()
+                    .status(302)
+                    .header(http::header::LOCATION, location)
+                    .body(empty())
+                    .unwrap()
+            };
+
+            if uri.contains("/final") {
+                Response::builder().status(200).body(empty()).unwrap()
+            } else if uri.contains("/to-public") {
+                redirect_to("http://example.com/final")
+            } else if uri.contains("/to-internal") {
+                redirect_to("http://169.254.169.254/latest/meta-data/")
+            } else if uri.contains("/loop") {
+                redirect_to("http://example.com/loop")
+            } else {
+                Response::builder().status(404).body(empty()).unwrap()
+            }
+        }
+    }
+
+    impl SyncHttpResolver for ScriptedChain {
+        fn http_resolve(
+            &self,
+            request: Request<Vec<u8>>,
+        ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+            Ok(Self::response(&request.uri().to_string()))
+        }
+    }
+
+    fn scripted_get(
+        resolver: &impl SyncHttpResolver,
+        uri: &'static str,
+    ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+        resolver.http_resolve(
+            Request::get(Uri::from_static(uri))
+                .body(Vec::new())
+                .unwrap(),
+        )
+    }
+
+    #[test]
+    fn redirect_resolver_follows_redirect_to_public_host() {
+        let resolver = RedirectResolver::new(ScriptedChain, true);
+        let response = scripted_get(&resolver, "http://example.com/to-public").unwrap();
+        assert_eq!(response.status(), 200);
+    }
+
+    #[test]
+    fn redirect_resolver_blocks_redirect_to_internal_host() {
+        let resolver = RedirectResolver::new(ScriptedChain, true);
+        let result = scripted_get(&resolver, "http://example.com/to-internal");
+        assert!(matches!(
+            result,
+            Err(HttpResolverError::RedirectTargetDisallowed { .. })
+        ));
+    }
+
+    #[test]
+    fn redirect_resolver_refuses_redirect_when_disabled() {
+        let resolver = RedirectResolver::new(ScriptedChain, false);
+        let result = scripted_get(&resolver, "http://example.com/to-public");
+        assert!(matches!(
+            result,
+            Err(HttpResolverError::RedirectDisallowed { .. })
+        ));
+    }
+
+    #[test]
+    fn redirect_resolver_caps_redirect_chain() {
+        let resolver = RedirectResolver::new(ScriptedChain, true);
+        let result = scripted_get(&resolver, "http://example.com/loop");
+        assert!(matches!(
+            result,
+            Err(HttpResolverError::TooManyRedirects { .. })
+        ));
+    }
+
+    #[test]
+    fn resolve_redirect_target_handles_relative_locations() {
+        let base = Uri::from_static("https://example.com/a/b");
+        let target = resolve_redirect_target(&base, "/c/d").unwrap();
+        assert_eq!(target.to_string(), "https://example.com/c/d");
+
+        let target = resolve_redirect_target(&base, "https://other.example.org/x").unwrap();
+        assert_eq!(target.to_string(), "https://other.example.org/x");
     }
 }
