@@ -12,8 +12,11 @@
 
 //! crJSON format exporter for C2PA manifests.
 //!
-//! This module converts a [`Reader`]'s manifest store into crJSON format
-//! as described in the crJSON specification.
+//! This module converts a manifest store into crJSON format as described in the crJSON
+//! specification. The exporter itself ([`CrJsonExporter`]) works from a [`Store`] plus the
+//! active manifest label and [`ValidationResults`] — [`from_reader`] and [`from_store`] are thin
+//! entry points that pull those three pieces from a [`Reader`] or a
+//! [`crate::store_reader::StoreReader`], respectively.
 
 use std::collections::HashMap;
 
@@ -38,7 +41,8 @@ use crate::{
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_assertion_uri},
     reader::Reader,
     status_tracker::StatusTracker,
-    validation_results::{IngredientDeltaValidationResult, StatusCodes},
+    store::Store,
+    validation_results::{IngredientDeltaValidationResult, StatusCodes, ValidationResults},
     validation_status::ValidationStatus,
 };
 
@@ -203,22 +207,47 @@ struct CrJsonDocument {
     json_generator: JsonGenerator,
 }
 
-// ── Public entry point ──────────────────────────────────────────────────────
+// ── Public entry points ─────────────────────────────────────────────────────
 
-/// Convert a Reader's manifest store to crJSON format.
+/// Convert a [`Reader`]'s manifest store to crJSON format.
 pub fn from_reader(reader: &Reader) -> Result<Value> {
-    CrJsonExporter::new(reader).to_value()
+    from_store(
+        &reader.store,
+        reader.active_label(),
+        reader.validation_results(),
+    )
+}
+
+/// Convert a [`Store`] (plus its active manifest label and validation results) to crJSON
+/// format. Used directly by [`Reader`] (via [`from_reader`]) and by
+/// [`crate::store_reader::StoreReader`], which has no `Manifest` layer to go through.
+pub(crate) fn from_store(
+    store: &Store,
+    active_label: Option<&str>,
+    validation_results: Option<&ValidationResults>,
+) -> Result<Value> {
+    CrJsonExporter::new(store, active_label, validation_results).to_value()
 }
 
 // ── Exporter ────────────────────────────────────────────────────────────────
 
 struct CrJsonExporter<'a> {
-    reader: &'a Reader,
+    store: &'a Store,
+    active_label: Option<&'a str>,
+    validation_results: Option<&'a ValidationResults>,
 }
 
 impl<'a> CrJsonExporter<'a> {
-    fn new(reader: &'a Reader) -> Self {
-        Self { reader }
+    fn new(
+        store: &'a Store,
+        active_label: Option<&'a str>,
+        validation_results: Option<&'a ValidationResults>,
+    ) -> Self {
+        Self {
+            store,
+            active_label,
+            validation_results,
+        }
     }
 
     fn to_value(&self) -> Result<Value> {
@@ -227,9 +256,9 @@ impl<'a> CrJsonExporter<'a> {
     }
 
     fn build_document(&self) -> Result<CrJsonDocument> {
-        let active_label = self.reader.active_label();
+        let active_label = self.active_label;
         let validation_map = self.build_validation_results_per_manifest();
-        let claims = self.reader.store.claims();
+        let claims = self.store.claims();
 
         // Collect (store_index, manifest) so we can sort afterwards.
         let mut indexed: Vec<(usize, CrJsonManifest)> = Vec::with_capacity(claims.len());
@@ -369,7 +398,7 @@ impl<'a> CrJsonExporter<'a> {
                     continue;
                 }
                 let resolved = manifest_label_from_uri(&assertion_ref.url())
-                    .and_then(|src_label| self.reader.store.get_claim(&src_label))
+                    .and_then(|src_label| self.store.get_claim(&src_label))
                     .and_then(|src_claim| {
                         src_claim
                             .get_claim_assertion(&label, instance)
@@ -496,7 +525,7 @@ impl<'a> CrJsonExporter<'a> {
     /// `validation_time` falls back to the current UTC time when the reader supplies none.
     fn build_validation_results_per_manifest(&self) -> HashMap<String, (StatusCodes, String)> {
         let mut map: HashMap<String, (StatusCodes, String)> = HashMap::new();
-        let Some(vr) = self.reader.validation_results() else {
+        let Some(vr) = self.validation_results else {
             return map;
         };
         let validation_time = vr
@@ -504,7 +533,7 @@ impl<'a> CrJsonExporter<'a> {
             .map(String::from)
             .unwrap_or_else(|| Utc::now().to_rfc3339());
 
-        if let Some(active_label) = self.reader.active_label() {
+        if let Some(active_label) = self.active_label {
             let codes = vr.active_manifest().cloned().unwrap_or_default();
             map.insert(active_label.to_string(), (codes, validation_time.clone()));
         }
@@ -526,7 +555,7 @@ impl<'a> CrJsonExporter<'a> {
 
     fn ingredient_assertion_uri_to_manifest_label(&self, assertion_uri: &str) -> Option<String> {
         let parent_label = manifest_label_from_uri(assertion_uri)?;
-        let claim = self.reader.store.get_claim(&parent_label)?;
+        let claim = self.store.get_claim(&parent_label)?;
         for ing_ref in claim.ingredient_assertions() {
             let build_uri = to_assertion_uri(claim.label(), ing_ref.label().as_str());
             if build_uri == assertion_uri
@@ -544,7 +573,7 @@ impl<'a> CrJsonExporter<'a> {
         &self,
         label: &str,
     ) -> Option<Vec<IngredientDeltaValidationResult>> {
-        let validation_results = self.reader.validation_results()?;
+        let validation_results = self.validation_results?;
         let deltas = validation_results.ingredient_deltas()?;
         let for_manifest: Vec<IngredientDeltaValidationResult> = deltas
             .iter()

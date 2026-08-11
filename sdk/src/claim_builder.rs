@@ -19,7 +19,7 @@
 //! assertion at a stable claim position immediately and returns the assertion's real
 //! [`HashedUri`], so it can be referenced from another assertion (e.g. an action referencing
 //! the ingredient it operated on) before signing. Every assertion is described by a
-//! [`ClaimAssertion`], which does its own generation ([`ClaimAssertion::generate`]) using this
+//! [`ClaimAssertionBuilder`], which does its own generation ([`ClaimAssertionBuilder::generate`]) using this
 //! `ClaimBuilder`'s [`Context`] — `ClaimBuilder` itself just adds the concrete result to the
 //! claim (merging in an ingredient's provenance, which needs the claim directly, and checking a
 //! hard binding against whatever one is already there, are the two exceptions).
@@ -34,7 +34,7 @@ use crate::{
     assertion::AssertionBase,
     assertions::{BmffHash, BoxHash, DataHash, IngredientAssertion},
     claim::Claim,
-    claim_assertion::{ClaimAssertion, GeneratedAssertion, IngredientMerge},
+    claim_assertion::{ClaimAssertionBuilder, GeneratedAssertion, IngredientMerge},
     context::Context,
     error::{Error, Result},
     jumbf::labels::{to_assertion_uri, to_manifest_uri, to_signature_uri},
@@ -133,7 +133,7 @@ impl ClaimBuilder {
     }
 
     /// Records a JUMBF URI to redact from an ingredient's manifest chain the next time one is
-    /// merged in via a [`ClaimAssertion`] under [`IngredientAssertion::LABEL`] (with a stream
+    /// merged in via a [`ClaimAssertionBuilder`] under [`IngredientAssertion::LABEL`] (with a stream
     /// attached). Applies to every ingredient added afterward — URIs that aren't present in a
     /// given ingredient's chain are simply not found there and have no effect. This only
     /// performs the mechanical redaction; the caller is responsible for separately recording a
@@ -145,11 +145,14 @@ impl ClaimBuilder {
     }
 
     /// Adds `assertion` to the claim as *gathered* (mirroring `Claim::add_assertion`'s default)
-    /// and returns its [`HashedUri`]. See [`ClaimAssertion`] for what each label expects.
+    /// and returns its [`HashedUri`]. See [`ClaimAssertionBuilder`] for what each label expects.
     /// Hash assertions (`BoxHash`/`DataHash`/`BmffHash`) must always be stored as *created* by
     /// `Claim` — errors if `assertion` is one of these; use
     /// [`ClaimBuilder::add_created_assertion`] for those instead.
-    pub fn add_gathered_assertion(&mut self, assertion: ClaimAssertion) -> Result<HashedUri> {
+    pub fn add_gathered_assertion(
+        &mut self,
+        assertion: ClaimAssertionBuilder,
+    ) -> Result<HashedUri> {
         self.insert_claim_assertion(assertion, false)
     }
 
@@ -157,26 +160,22 @@ impl ClaimBuilder {
     /// rather than *gathered* (mirroring `Claim::add_created_assertion`). Required for hash
     /// assertions ([`BoxHash`]/[`DataHash`]/[`BmffHash`]), which `Claim` only ever stores as
     /// created.
-    pub fn add_created_assertion(&mut self, assertion: ClaimAssertion) -> Result<HashedUri> {
+    pub fn add_created_assertion(&mut self, assertion: ClaimAssertionBuilder) -> Result<HashedUri> {
         self.insert_claim_assertion(assertion, true)
     }
 
-    /// Generates the concrete assertion `assertion` describes (see [`ClaimAssertion::generate`])
+    /// Generates the concrete assertion `assertion` describes (see [`ClaimAssertionBuilder::generate`])
     /// and adds it to the claim. Everything but ingredient merging and hard-binding conflict
     /// checking is a direct add from here — see [`ClaimBuilder::insert_ingredient`]/
     /// [`ClaimBuilder::insert_data_hash`]/[`ClaimBuilder::insert_bmff_hash`]/
     /// [`ClaimBuilder::insert_box_hash`].
     fn insert_claim_assertion(
         &mut self,
-        assertion: ClaimAssertion,
+        assertion: ClaimAssertionBuilder,
         created: bool,
     ) -> Result<HashedUri> {
         match assertion.generate(&self.context)? {
-            GeneratedAssertion::Actions(a) => self.insert_assertion(a.as_ref(), created),
-            GeneratedAssertion::Metadata(a) => self.insert_assertion(&a, created),
-            GeneratedAssertion::UserCbor(a) => self.insert_assertion(&a, created),
-            GeneratedAssertion::User(a) => self.insert_assertion(&a, created),
-            GeneratedAssertion::EmbeddedData(a) => self.insert_assertion(&a, created),
+            GeneratedAssertion::Assertion(a) => self.claim.add_assertion_from(a, created),
             GeneratedAssertion::Ingredient { assertion, merge } => {
                 self.insert_ingredient(*assertion, merge, created)
             }
@@ -223,7 +222,7 @@ impl ClaimBuilder {
     /// Adds `assertion` as-is if it has no provenance of its own to merge (`merge` is `None`).
     /// Otherwise merges `merge.manifest_bytes` into this claim's ingredient store (the one step
     /// that needs `ClaimBuilder`'s own claim and accumulated redactions, rather than something
-    /// [`ClaimAssertion::generate`] could do on its own) and fills in `assertion`'s
+    /// [`ClaimAssertionBuilder::generate`] could do on its own) and fills in `assertion`'s
     /// `active_manifest`/`claim_signature`/`validation_results` from the result before adding it.
     fn insert_ingredient(
         &mut self,
@@ -382,7 +381,7 @@ impl ClaimBuilder {
     /// they own placeholder embedding: builds a `Store` directly from this claim (no
     /// `ManifestDefinition` translation), verifies a hard binding assertion is present, and
     /// signs. There is no Mode 1/placeholder concept on `ClaimBuilder` at all — the caller must
-    /// have already added a real hard binding via a `ClaimAssertion` under a hard-binding label.
+    /// have already added a real hard binding via a `ClaimAssertionBuilder` under a hard-binding label.
     pub fn sign(&self) -> Result<Vec<u8>> {
         if self.existing_hard_binding().is_none() {
             return Err(Error::BadParam(
@@ -455,10 +454,11 @@ mod tests {
         // Ingredient thumbnail as a binary EmbeddedData assertion — returns a HashedUri.
         let thumb_uri = claim_builder
             .add_gathered_assertion(
-                ClaimAssertion::new(crate::assertions::labels::INGREDIENT_THUMBNAIL).with_stream(
-                    "image/jpeg",
-                    &mut Cursor::new(b"thumbnail bytes".as_slice()),
-                ),
+                ClaimAssertionBuilder::new(crate::assertions::labels::INGREDIENT_THUMBNAIL)
+                    .with_stream(
+                        "image/jpeg",
+                        &mut Cursor::new(b"thumbnail bytes".as_slice()),
+                    ),
             )
             .expect("add ingredient thumbnail");
 
@@ -469,7 +469,7 @@ mod tests {
             .set_thumbnail(Some(&thumb_uri));
         let ing_uri = claim_builder
             .add_gathered_assertion(
-                ClaimAssertion::new(IngredientAssertion::LABEL)
+                ClaimAssertionBuilder::new(IngredientAssertion::LABEL)
                     .with_json(&ing_assertion)
                     .expect("with_json"),
             )
@@ -480,16 +480,16 @@ mod tests {
         let actions = Actions::new().add_action(action);
         claim_builder
             .add_gathered_assertion(
-                ClaimAssertion::new(Actions::LABEL)
-                    .with_json(&actions)
-                    .expect("with_json"),
+                ClaimAssertionBuilder::new(Actions::LABEL)
+                    .with_assertion(&actions)
+                    .expect("with_assertion"),
             )
             .expect("add actions assertion");
 
         // Hard binding — no placeholder step, generated directly from the (unmodified) asset.
         claim_builder
             .add_created_assertion(
-                ClaimAssertion::new(BoxHash::LABEL).with_stream("image/jpeg", &mut stream),
+                ClaimAssertionBuilder::new(BoxHash::LABEL).with_stream("image/jpeg", &mut stream),
             )
             .expect("set hard binding");
 
@@ -536,14 +536,14 @@ mod tests {
 
         claim_builder
             .add_gathered_assertion(
-                ClaimAssertion::new("org.test.gathered")
+                ClaimAssertionBuilder::new("org.test.gathered")
                     .with_json(&serde_json::json!({"value": 1}))
                     .expect("with_json"),
             )
             .expect("gathered assertion");
         claim_builder
             .add_created_assertion(
-                ClaimAssertion::new("org.test.created")
+                ClaimAssertionBuilder::new("org.test.created")
                     .with_json(&serde_json::json!({"value": 2}))
                     .expect("with_json"),
             )
@@ -553,15 +553,15 @@ mod tests {
         let action = Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty);
         claim_builder
             .add_gathered_assertion(
-                ClaimAssertion::new(Actions::LABEL)
-                    .with_json(&Actions::new().add_action(action))
-                    .expect("with_json"),
+                ClaimAssertionBuilder::new(Actions::LABEL)
+                    .with_assertion(&Actions::new().add_action(action))
+                    .expect("with_assertion"),
             )
             .expect("add actions assertion");
 
         claim_builder
             .add_created_assertion(
-                ClaimAssertion::new(BoxHash::LABEL).with_stream("image/jpeg", &mut stream),
+                ClaimAssertionBuilder::new(BoxHash::LABEL).with_stream("image/jpeg", &mut stream),
             )
             .expect("set hard binding");
 
@@ -602,7 +602,7 @@ mod tests {
 
         let ing_uri = claim_builder
             .add_gathered_assertion(
-                ClaimAssertion::new(IngredientAssertion::LABEL)
+                ClaimAssertionBuilder::new(IngredientAssertion::LABEL)
                     .with_json(&serde_json::json!({
                         "relationship": "parentOf", "dc:title": "C.jpg", "dc:format": "image/jpeg"
                     }))
@@ -614,9 +614,9 @@ mod tests {
         let action = Action::new(c2pa_action::OPENED).add_ingredient_ref(ing_uri.clone());
         claim_builder
             .add_gathered_assertion(
-                ClaimAssertion::new(Actions::LABEL)
-                    .with_json(&Actions::new().add_action(action))
-                    .expect("with_json"),
+                ClaimAssertionBuilder::new(Actions::LABEL)
+                    .with_assertion(&Actions::new().add_action(action))
+                    .expect("with_assertion"),
             )
             .expect("add actions assertion");
 
@@ -645,7 +645,7 @@ mod tests {
             .set_format("image/jpeg");
         claim_builder
             .add_gathered_assertion(
-                ClaimAssertion::new(IngredientAssertion::LABEL)
+                ClaimAssertionBuilder::new(IngredientAssertion::LABEL)
                     .with_json(&ing_assertion)
                     .expect("with_json"),
             )
@@ -673,7 +673,7 @@ mod tests {
         let mut stream1 = Cursor::new(vec![1u8; 100]);
         claim_builder
             .add_created_assertion(
-                ClaimAssertion::new(DataHash::LABEL).with_stream("image/jpeg", &mut stream1),
+                ClaimAssertionBuilder::new(DataHash::LABEL).with_stream("image/jpeg", &mut stream1),
             )
             .expect("set hard binding");
 
@@ -681,7 +681,7 @@ mod tests {
         let mut stream3 = Cursor::new(vec![3u8; 100]);
         claim_builder
             .add_created_assertion(
-                ClaimAssertion::new(DataHash::LABEL).with_stream("image/jpeg", &mut stream3),
+                ClaimAssertionBuilder::new(DataHash::LABEL).with_stream("image/jpeg", &mut stream3),
             )
             .expect("update hard binding");
 
@@ -690,7 +690,8 @@ mod tests {
         assert!(
             claim_builder
                 .add_created_assertion(
-                    ClaimAssertion::new(BmffHash::LABEL).with_stream("video/mp4", &mut stream4),
+                    ClaimAssertionBuilder::new(BmffHash::LABEL)
+                        .with_stream("video/mp4", &mut stream4),
                 )
                 .is_err(),
             "replacing with a different hard-binding kind should fail"
@@ -706,7 +707,7 @@ mod tests {
         let mut stream1 = Cursor::new(vec![1u8; 100]);
         claim_builder
             .add_created_assertion(
-                ClaimAssertion::new(DataHash::LABEL).with_stream("image/jpeg", &mut stream1),
+                ClaimAssertionBuilder::new(DataHash::LABEL).with_stream("image/jpeg", &mut stream1),
             )
             .expect("set hard binding");
 
@@ -715,7 +716,7 @@ mod tests {
         assert!(
             claim_builder
                 .add_created_assertion(
-                    ClaimAssertion::new(DataHash::LABEL)
+                    ClaimAssertionBuilder::new(DataHash::LABEL)
                         .with_stream("image/jpeg", &mut stream2)
                         .with_exclusions(vec![HashRange::new(0, 10), HashRange::new(20, 10)]),
                 )
@@ -741,7 +742,7 @@ mod tests {
 
         let mut stream = Cursor::new(vec![1u8; 100]);
         let result = claim_builder.add_gathered_assertion(
-            ClaimAssertion::new(DataHash::LABEL).with_stream("image/jpeg", &mut stream),
+            ClaimAssertionBuilder::new(DataHash::LABEL).with_stream("image/jpeg", &mut stream),
         );
         assert!(
             matches!(result, Err(Error::BadParam(_))),

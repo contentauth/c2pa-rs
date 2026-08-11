@@ -1354,7 +1354,11 @@ impl Claim {
         &mut self,
         assertion_builder: &impl AssertionBase,
     ) -> Result<C2PAAssertion> {
-        self.add_assertion_impl(assertion_builder, &DefaultSalt::default(), false)
+        self.add_assertion_impl(
+            assertion_builder.to_assertion()?,
+            &DefaultSalt::default(),
+            false,
+        )
     }
 
     /// Same as add_assertion but forces addition to created_assertions for Claims V2
@@ -1362,7 +1366,23 @@ impl Claim {
         &mut self,
         assertion_builder: &impl AssertionBase,
     ) -> Result<C2PAAssertion> {
-        self.add_assertion_impl(assertion_builder, &DefaultSalt::default(), true)
+        self.add_assertion_impl(
+            assertion_builder.to_assertion()?,
+            &DefaultSalt::default(),
+            true,
+        )
+    }
+
+    /// Same as [`Claim::add_assertion`]/[`Claim::add_created_assertion`], but for a caller that
+    /// already has an encoded [`Assertion`] in hand rather than an `impl AssertionBase` to encode
+    /// (e.g. [`crate::claim_assertion::ClaimAssertionBuilder::generate`], which produces one
+    /// generically for labels with no fixed Rust type).
+    pub(crate) fn add_assertion_from(
+        &mut self,
+        assertion: Assertion,
+        add_as_created_assertion: bool,
+    ) -> Result<C2PAAssertion> {
+        self.add_assertion_impl(assertion, &DefaultSalt::default(), add_as_created_assertion)
     }
 
     fn compatibility_checks(&self, assertion: &Assertion) -> Result<()> {
@@ -1439,7 +1459,7 @@ impl Claim {
     /// Allows setting the salt generator and whether to add as created assertion for Claims V2
     fn add_assertion_impl(
         &mut self,
-        assertion_builder: &impl AssertionBase,
+        assertion: Assertion,
         salt_generator: &impl SaltGenerator,
         add_as_created_assertion: bool,
     ) -> Result<C2PAAssertion> {
@@ -1451,8 +1471,6 @@ impl Claim {
             });
         }
 
-        // make sure the assertion is valid
-        let assertion = assertion_builder.to_assertion()?;
         let assertion_label = assertion.label();
 
         // Update label if there are multiple instances of the same claim type.

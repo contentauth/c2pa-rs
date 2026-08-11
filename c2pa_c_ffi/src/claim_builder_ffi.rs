@@ -17,14 +17,14 @@
 //! existing `cimpl`-based conventions (see `c_api.rs` for the `Builder`/`Reader`/
 //! `ContextBuilder` precedent).
 //!
-//! ## `ClaimAssertion`: owning the stream instead of borrowing it
+//! ## `ClaimAssertionBuilder`: owning the stream instead of borrowing it
 //!
-//! [`c2pa::ClaimAssertion`] is a Rust-side builder — `with_json`/`with_stream`/
+//! [`c2pa::ClaimAssertionBuilder`] is a Rust-side builder — `with_json`/`with_stream`/
 //! `with_c2pa_data`/`with_exclusions` — and `with_stream` *borrows* the caller's stream
-//! (`ClaimAssertion<'a>` -> `ClaimAssertion<'b>`). A borrow can't be split across separate FFI
+//! (`ClaimAssertionBuilder<'a>` -> `ClaimAssertionBuilder<'b>`). A borrow can't be split across separate FFI
 //! calls the way `C2paBuilder`'s methods are (`cimpl`'s pointer registry keys on `TypeId`, which
 //! requires `T: 'static` — see `track_box`'s bound in `cimpl/utils.rs` — so a non-`'static`
-//! `ClaimAssertion<'a>` can't even be tracked, let alone safely outlive one call).
+//! `ClaimAssertionBuilder<'a>` can't even be tracked, let alone safely outlive one call).
 //!
 //! The fix isn't to flatten everything into one call — it's to *own* the stream at the FFI
 //! layer instead, the same way [`crate::c_api::c2pa_context_builder_set_signer`] absorbs a
@@ -33,10 +33,10 @@
 //! runtime created it (Python, JS, ...), so taking ownership of the `C2paStream` value via
 //! `untrack_or_return_int!` (which does `*Box::from_raw(ptr)`) works regardless of which
 //! language built it. [`C2paClaimAssertion`] below is a plain, fully-owned, `'static` staging
-//! struct — *not* `c2pa::ClaimAssertion` itself — that collects each `with_*` call's data,
+//! struct — *not* `c2pa::ClaimAssertionBuilder` itself — that collects each `with_*` call's data,
 //! including an owned `C2paStream` once `with_stream` absorbs one. Only the terminal
 //! `add_gathered_assertion`/`add_created_assertion` call constructs a real
-//! `c2pa::ClaimAssertion` from those owned pieces; the short-lived borrow it needs never has to
+//! `c2pa::ClaimAssertionBuilder` from those owned pieces; the short-lived borrow it needs never has to
 //! survive past that one call, so there's no `unsafe` lifetime extension anywhere and no change
 //! needed to the `c2pa` crate itself. This also means `C2paClaimAssertion` behaves exactly like
 //! `C2paContextBuilder`/`C2paBuilder` from the C caller's side: build it up across as many calls
@@ -47,7 +47,7 @@ use std::{
     sync::Arc,
 };
 
-use c2pa::{ClaimAssertion, ClaimBuilder as C2paClaimBuilder, Context, HashRange};
+use c2pa::{ClaimAssertionBuilder, ClaimBuilder as C2paClaimBuilder, Context, HashRange};
 
 // Import macros and utilities from cimpl — same pattern (and same reason for the
 // `allow(unused_imports)`) as c_api.rs: `#[macro_use] mod cimpl;` in lib.rs already puts these
@@ -78,9 +78,9 @@ mod cbindgen_fix {
     pub struct C2paClaimAssertion;
 }
 
-/// FFI-side staging object for building a [`c2pa::ClaimAssertion`] across multiple calls — see
+/// FFI-side staging object for building a [`c2pa::ClaimAssertionBuilder`] across multiple calls — see
 /// the module doc for why this holds owned data (including an owned `C2paStream`) rather than
-/// being `c2pa::ClaimAssertion` itself.
+/// being `c2pa::ClaimAssertionBuilder` itself.
 pub(crate) struct C2paClaimAssertion {
     label: String,
     value: Option<serde_json::Value>,
@@ -119,7 +119,7 @@ pub unsafe extern "C" fn c2pa_claim_assertion_new(label: *const c_char) -> *mut 
 
 /// Sets structured data for this assertion. If `label` matches a known assertion type, `json`
 /// is decoded into that concrete type so it's stored with its native schema; otherwise it's
-/// wrapped generically. See [`ClaimAssertion::with_json`].
+/// wrapped generically. See [`ClaimAssertionBuilder::with_json`].
 ///
 /// # Safety
 /// Reads a NULL-terminated C string. Returns -1 if there were errors, otherwise 0.
@@ -136,7 +136,7 @@ pub unsafe extern "C" fn c2pa_claim_assertion_with_json(
 }
 
 /// Requests JSON encoding (instead of the default CBOR) for a custom assertion. See
-/// [`ClaimAssertion::as_json`].
+/// [`ClaimAssertionBuilder::as_json`].
 ///
 /// # Safety
 /// `assertion_ptr` must be a valid, non-null `C2paClaimAssertion` pointer.
@@ -151,7 +151,7 @@ pub unsafe extern "C" fn c2pa_claim_assertion_as_json(
 
 /// Attaches a stream to this assertion — the asset to hash (hard-binding labels), the asset to
 /// extract provenance from (`c2pa.ingredient`), or raw binary content (everything else). See
-/// [`ClaimAssertion::with_stream`].
+/// [`ClaimAssertionBuilder::with_stream`].
 ///
 /// This *absorbs* `stream_ptr` — exactly like `c2pa_context_builder_set_signer` absorbs a
 /// `C2paSigner` — untracking it and moving the owned `C2paStream` value into `assertion`. The C
@@ -176,7 +176,7 @@ pub unsafe extern "C" fn c2pa_claim_assertion_with_stream(
 
 /// Supplies the ingredient's manifest store directly (JUMBF bytes) instead of extracting it
 /// from the stream in-band — for a sidecar or remote manifest. See
-/// [`ClaimAssertion::with_c2pa_data`].
+/// [`ClaimAssertionBuilder::with_c2pa_data`].
 ///
 /// # Safety
 /// Reads a raw byte buffer of `len` bytes at `data`. Returns -1 if there were errors, otherwise
@@ -195,7 +195,7 @@ pub unsafe extern "C" fn c2pa_claim_assertion_with_c2pa_data(
 
 /// Sets the byte ranges to exclude when hashing — the region where the caller embedded the
 /// manifest placeholder. `exclusions_json` is a JSON array of `{"start": u64, "length": u64}`.
-/// See [`ClaimAssertion::with_exclusions`].
+/// See [`ClaimAssertionBuilder::with_exclusions`].
 ///
 /// # Safety
 /// Reads a NULL-terminated C string. Returns -1 if there were errors, otherwise 0.
@@ -324,7 +324,7 @@ pub unsafe extern "C" fn c2pa_claim_builder_add_redaction(
 }
 
 /// Adds `assertion` to the claim as *gathered*. Consumes `assertion_ptr` — builds the real
-/// `c2pa::ClaimAssertion` from its owned fields (see the module doc) and hands it to
+/// `c2pa::ClaimAssertionBuilder` from its owned fields (see the module doc) and hands it to
 /// [`c2pa::ClaimBuilder::add_gathered_assertion`].
 ///
 /// # Returns
@@ -360,7 +360,7 @@ pub unsafe extern "C" fn c2pa_claim_builder_add_created_assertion(
 
 /// Shared body for [`c2pa_claim_builder_add_gathered_assertion`]/
 /// [`c2pa_claim_builder_add_created_assertion`] — the only difference between the two is which
-/// `ClaimBuilder` method the reconstructed `ClaimAssertion` gets handed to.
+/// `ClaimBuilder` method the reconstructed `ClaimAssertionBuilder` gets handed to.
 unsafe fn add_claim_assertion(
     builder_ptr: *mut C2paClaimBuilder,
     assertion_ptr: *mut C2paClaimAssertion,
@@ -369,7 +369,7 @@ unsafe fn add_claim_assertion(
     let builder = deref_mut_or_return_null!(builder_ptr, C2paClaimBuilder);
     let state = untrack_or_return_null!(assertion_ptr, C2paClaimAssertion);
 
-    let mut assertion = ClaimAssertion::new(state.label);
+    let mut assertion = ClaimAssertionBuilder::new(state.label);
     if let Some(value) = state.value {
         assertion = ok_or_return_null!(assertion.with_json(&value));
     }

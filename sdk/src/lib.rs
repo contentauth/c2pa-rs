@@ -245,7 +245,7 @@ pub use assertions::Relationship;
 pub use builder::{Builder, BuilderIntent, HashType, ManifestDefinition};
 pub use c2pa_raw_crypto::{RawSignatureValidationError, RawSigner, RawSignerError, SigningAlg};
 pub use callback_signer::{CallbackFunc, CallbackSigner};
-pub use claim_assertion::ClaimAssertion;
+pub use claim_assertion::{Claim, ClaimAssertion, ClaimAssertionBuilder, ClaimAssertionKind};
 pub use claim_builder::ClaimBuilder;
 pub use claim_generator_info::ClaimGeneratorInfo;
 #[doc(inline)]
@@ -283,6 +283,7 @@ pub use resource_store::{ResourceRef, ResourceStore};
 #[doc(inline)]
 pub use settings::Settings;
 pub use signer::{AsyncSigner, BoxedAsyncSigner, BoxedSigner, Signer};
+pub use store_reader::StoreReader;
 pub use utils::{ephemeral_signer::EphemeralSigner, mime::format_from_path};
 #[doc(inline)]
 pub use validation_results::{ValidationResults, ValidationState};
@@ -318,6 +319,7 @@ pub(crate) mod resource_store;
 pub(crate) mod salt;
 pub(crate) mod signer;
 pub(crate) mod store;
+pub(crate) mod store_reader;
 
 pub(crate) mod utils;
 pub(crate) use utils::{cbor_types, hash_utils};
