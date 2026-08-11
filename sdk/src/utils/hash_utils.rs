@@ -214,8 +214,6 @@ pub fn hash_asset_by_alg_with_inclusions(
     to_be_hashed: [IIIIIXXXXXMIIIIIMXXXXXMXXXXIII...III]
 
     The data is again split into range sets breaking at the exclusion points and now also the markers.
-
-    // TODO: describe collection hash
 */
 /// Internal implementation of [`hash_stream_by_alg`] with an optional per-range
 /// progress/cancellation callback.  SDK internals that have a [`Context`] available
