@@ -178,7 +178,7 @@ impl CollectionHash {
                 }
                 None => {
                     return Err(Error::BadParam(
-                        "Must generate hashes before verifying".to_owned(),
+                        "must generate hashes before verifying".to_owned(),
                     ));
                 }
             }
@@ -230,7 +230,7 @@ impl CollectionHash {
         let zip_central_directory_hash = match &self.zip_central_directory_hash {
             Some(hash) => Ok(hash),
             None => Err(Error::BadParam(
-                "Missing zip central directory hash".to_owned(),
+                "missing ZIP central directory hash".to_owned(),
             )),
         }?;
         let zip_central_directory_hash_range = self
@@ -247,7 +247,7 @@ impl CollectionHash {
             false,
         ) {
             return Err(Error::HashMismatch(
-                "Hashes do not match for zip central directory".to_owned(),
+                "hashes do not match for zip central directory".to_owned(),
             ));
         }
 
@@ -266,7 +266,7 @@ impl CollectionHash {
                 }
                 None => {
                     return Err(Error::BadParam(
-                        "Must generate hashes before verifying".to_owned(),
+                        "must generate hashes before verifying".to_owned(),
                     ));
                 }
             }
@@ -314,14 +314,14 @@ impl CollectionHash {
                 true => match base_path.parent() {
                     Some(path) => Ok(path),
                     None => Err(Error::BadParam(
-                        "Base path must be a directory or a file with a parent directory"
+                        "base path must be a directory or a file with a parent directory"
                             .to_owned(),
                     )),
                 },
                 false => Ok(base_path),
             },
             None => Err(Error::BadParam(
-                "Must specify base path for collection hash".to_owned(),
+                "must specify base path for collection hash".to_owned(),
             )),
         }
     }
@@ -329,7 +329,7 @@ impl CollectionHash {
     fn validate_path(path: &Path) -> Result<()> {
         if !path.is_file() {
             return Err(Error::BadParam(format!(
-                "Collection hashes must only contain files; got `{}`",
+                "collection hashes must only contain files; got `{}`",
                 path.display()
             )));
         }
@@ -363,7 +363,7 @@ impl AssertionBase for CollectionHash {
     fn to_assertion(&self) -> Result<Assertion> {
         if self.uris.iter().any(|(_, uri_map)| uri_map.hash.is_none()) {
             return Err(Error::BadParam(
-                "No hash found, ensure gen_hash is called".to_string(),
+                "no hash found, ensure gen_hash is called".to_string(),
             ));
         }
 
