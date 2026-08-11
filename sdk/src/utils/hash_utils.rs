@@ -617,6 +617,8 @@ mod tests {
 
     use std::io::Cursor;
 
+    use hex_literal::hex;
+
     use super::*;
 
     // Attacker-controlled HashRange with start+length > u64::MAX must return Err,
@@ -683,5 +685,41 @@ mod tests {
         };
         hash_stream_by_alg_with_progress("sha256", &mut reader, None, true, &mut cb).unwrap();
         assert_eq!(seen, vec![(1, 3), (2, 3), (3, 3)]);
+    }
+
+    // 3 chunks at the test MAX_HASH_BUF, non-uniform.
+    // A reordered or dropped chunk changes the hash.
+    // Expected value computed with:
+    //   python3 -c "import hashlib
+    //   d = bytes((i % 251) for i in range(3*1024))
+    //   print(hashlib.sha256(d).hexdigest())"
+    #[test]
+    fn multi_chunk_digest_matches_known_value() {
+        let data: Vec<u8> = (0..3 * 1024).map(|i| (i % 251) as u8).collect();
+        let mut reader = Cursor::new(&data);
+        let hash = hash_stream_by_alg("sha256", &mut reader, None, true).unwrap();
+
+        assert_eq!(
+            hash,
+            hex!("5f24b2f16026ec7d0450a5a08283d3cfd47302fe859f579ed79fe7d2663b73f9")
+        );
+    }
+
+    // Exclusion splits this into a 1-chunk range and a 2-chunk range.
+    // Expected value computed with:
+    //   python3 -c "import hashlib
+    //   d = bytes((i % 251) for i in range(3*1024))
+    //   print(hashlib.sha256(d[:1000] + d[1100:]).hexdigest())"
+    #[test]
+    fn multi_chunk_digest_survives_range_splits() {
+        let data: Vec<u8> = (0..3 * 1024).map(|i| (i % 251) as u8).collect();
+        let mut reader = Cursor::new(&data);
+        let hr = vec![HashRange::new(1000, 100)];
+        let hash = hash_stream_by_alg("sha256", &mut reader, Some(hr), true).unwrap();
+
+        assert_eq!(
+            hash,
+            hex!("e3301ce38a42503098530b98cd1b652a10c5caf890735017dd0012ec319f04e5")
+        );
     }
 }
