@@ -759,6 +759,11 @@ where
 
     let mut exclusions = Vec::new();
 
+    // Exclusion ranges with no other integrity coverage - i.e. everything
+    // except `/mdat`, which is separately checked via a Merkle tree when
+    // Merkle hashing is used. Sample offset tables must never point here.
+    let mut unverified_exclusions = Vec::new();
+
     for bmff_exclusion in bmff_exclusions {
         if let Ok(Some(box_token_list)) = bmff_tree.fetch(&bmff_exclusion.xpath) {
             for box_token in box_token_list {
@@ -859,12 +864,18 @@ where
 
                         let exclusion = HashRange::new(new_start, new_length);
 
+                        if bmff_exclusion.xpath != "/mdat" {
+                            unverified_exclusions.push(exclusion.clone());
+                        }
                         exclusions.push(exclusion);
                     }
                 } else {
                     // exclude box in its entirty
                     let exclusion = HashRange::new(exclusion_start, exclusion_length);
 
+                    if bmff_exclusion.xpath != "/mdat" {
+                        unverified_exclusions.push(exclusion.clone());
+                    }
                     exclusions.push(exclusion);
 
                     // for BMFF V2 hashes we do not add hash offsets for top level boxes
@@ -876,6 +887,8 @@ where
             }
         }
     }
+
+    reject_chunk_offsets_in_unverified_exclusions(reader, &bmff_tree, &unverified_exclusions)?;
 
     // add remaining top level offsets to be included when generating BMFF V2 hashes
     // note: this is technically not an exclusion but a replacement with a new range of bytes to be hashed
@@ -889,6 +902,71 @@ where
     }
 
     Ok(exclusions)
+}
+
+/// Rejects a file where a `stco`/`co64` chunk offset points into an
+/// exclusion range that has no other integrity coverage (see
+/// `unverified_exclusions` above). Such an offset would let an attacker
+/// rewrite the referenced bytes after signing - a player that resolves
+/// samples via absolute chunk offsets renders the new content, while the
+/// BMFF hash (which never covered that range) still validates.
+fn reject_chunk_offsets_in_unverified_exclusions<R>(
+    reader: &mut R,
+    bmff_tree: &BMFFArena,
+    unverified_exclusions: &[HashRange],
+) -> Result<()>
+where
+    R: Read + Seek + ?Sized,
+{
+    if unverified_exclusions.is_empty() {
+        return Ok(());
+    }
+
+    let in_unverified_exclusion = |offset: u64| {
+        unverified_exclusions
+            .iter()
+            .any(|r| offset >= r.start() && offset < r.start() + r.length())
+    };
+
+    for xpath in [
+        "/moov/trak/mdia/minf/stbl/stco",
+        "/moov/trak/mdia/minf/stbl/co64",
+    ] {
+        if let Ok(Some(box_token_list)) = bmff_tree.fetch(xpath) {
+            for box_token in box_token_list {
+                let box_info = &bmff_tree.as_ref()[box_token].data;
+
+                // FullBox header (8-byte box header + 4-byte version/flags) followed
+                // by a 4-byte entry_count, then entry_count fixed-width offsets.
+                skip_bytes_to(reader, box_info.offset + 12)?;
+                let entry_count = reader.read_u32::<BigEndian>()?;
+                let is_co64 = xpath.ends_with("co64");
+                let entry_size = if is_co64 { 8 } else { 4 };
+                let count = bounded_entry_count(
+                    entry_count,
+                    reader.stream_position()?,
+                    box_info.offset + box_info.size,
+                    entry_size,
+                )?;
+
+                for _ in 0..count {
+                    let chunk_offset = if is_co64 {
+                        reader.read_u64::<BigEndian>()?
+                    } else {
+                        reader.read_u32::<BigEndian>()? as u64
+                    };
+
+                    if in_unverified_exclusion(chunk_offset) {
+                        return Err(Error::InvalidAsset(
+                            "BMFF chunk offset points into an unhashed exclusion".to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 // `iloc`, `stco`, `co64`, `mfro`, `saio`, `sidx`, `tdhd`, and `tfra` elements contain absolute file offsets so they need to be adjusted based on whether content was added or removed.
@@ -3398,6 +3476,122 @@ pub mod tests {
             bmff_to_jumbf_exclusions(&mut reader, &[exclusion], false),
             Err(Error::InvalidAsset(_))
         ));
+    }
+
+    /// Builds a minimal, single-chunk MP4: `ftyp` + `moov` (one track with a
+    /// single `stco` entry) + `free`(20 bytes) + `mdat`(some payload). Returns
+    /// the file bytes, the absolute byte offset of the `stco` entry to patch,
+    /// the absolute byte offset of `free`'s payload (an unhashed region a
+    /// legitimate chunk offset must never point into), and the absolute byte
+    /// offset of `mdat`'s payload (where a legitimate chunk offset belongs).
+    fn build_single_chunk_mp4() -> (Vec<u8>, usize, u32, u32) {
+        let mut stco = Vec::new();
+        stco.extend_from_slice(&20u32.to_be_bytes());
+        stco.extend_from_slice(b"stco");
+        stco.extend_from_slice(&[0u8; 4]); // version + flags
+        stco.extend_from_slice(&1u32.to_be_bytes()); // entry_count
+        let stco_entry_pos = stco.len();
+        stco.extend_from_slice(&0u32.to_be_bytes()); // chunk offset, patched below
+
+        let mut stbl = Vec::new();
+        stbl.extend_from_slice(&((8 + stco.len()) as u32).to_be_bytes());
+        stbl.extend_from_slice(b"stbl");
+        stbl.extend_from_slice(&stco);
+
+        let mut minf = Vec::new();
+        minf.extend_from_slice(&((8 + stbl.len()) as u32).to_be_bytes());
+        minf.extend_from_slice(b"minf");
+        minf.extend_from_slice(&stbl);
+
+        let mut mdia = Vec::new();
+        mdia.extend_from_slice(&((8 + minf.len()) as u32).to_be_bytes());
+        mdia.extend_from_slice(b"mdia");
+        mdia.extend_from_slice(&minf);
+
+        let mut trak = Vec::new();
+        trak.extend_from_slice(&((8 + mdia.len()) as u32).to_be_bytes());
+        trak.extend_from_slice(b"trak");
+        trak.extend_from_slice(&mdia);
+
+        let mut moov = Vec::new();
+        moov.extend_from_slice(&((8 + trak.len()) as u32).to_be_bytes());
+        moov.extend_from_slice(b"moov");
+        moov.extend_from_slice(&trak);
+
+        let mut ftyp = Vec::new();
+        ftyp.extend_from_slice(&16u32.to_be_bytes());
+        ftyp.extend_from_slice(b"ftyp");
+        ftyp.extend_from_slice(b"mp41");
+        ftyp.extend_from_slice(&0u32.to_be_bytes());
+
+        let mut free = Vec::new();
+        free.extend_from_slice(&28u32.to_be_bytes());
+        free.extend_from_slice(b"free");
+        free.extend_from_slice(&[0u8; 20]);
+
+        let mut mdat = Vec::new();
+        let mdat_payload = b"decoy mdat payload, unrelated to stco";
+        mdat.extend_from_slice(&((8 + mdat_payload.len()) as u32).to_be_bytes());
+        mdat.extend_from_slice(b"mdat");
+        mdat.extend_from_slice(mdat_payload);
+
+        let stco_entry_offset = ftyp.len() + 8 + 8 + 8 + 8 + 8 + stco_entry_pos; // moov/trak/mdia/minf/stbl headers
+        let free_payload_offset = (ftyp.len() + moov.len() + 8) as u32; // skip free's own header
+        let mdat_payload_offset = (ftyp.len() + moov.len() + free.len() + 8) as u32;
+
+        let mut file = Vec::new();
+        file.extend_from_slice(&ftyp);
+        file.extend_from_slice(&moov);
+        file.extend_from_slice(&free);
+        file.extend_from_slice(&mdat);
+
+        (
+            file,
+            stco_entry_offset,
+            free_payload_offset,
+            mdat_payload_offset,
+        )
+    }
+
+    /// If a `stco` chunk offset points into a `/free` box, an attacker could
+    /// rewrite that box's payload after signing (it's unconditionally excluded
+    /// from the hash) and a player that resolves samples via absolute chunk
+    /// offsets would render the new content, while the BMFF hash - which never
+    /// covered `/free` - would still validate. `bmff_to_jumbf_exclusions` must
+    /// reject such a file outright, for both signing and verification.
+    #[test]
+    fn stco_pointing_into_free_box_is_rejected() {
+        let (mut file, stco_entry_offset, free_payload_offset, _mdat_payload_offset) =
+            build_single_chunk_mp4();
+        file[stco_entry_offset..stco_entry_offset + 4]
+            .copy_from_slice(&free_payload_offset.to_be_bytes());
+
+        let mut bmff_hash = crate::assertions::BmffHash::new("test", "sha256", None);
+        bmff_hash.set_default_exclusions();
+        let exclusions = bmff_hash.exclusions().to_vec();
+
+        let mut reader = Cursor::new(file);
+        assert!(matches!(
+            bmff_to_jumbf_exclusions(&mut reader, &exclusions, false),
+            Err(Error::InvalidAsset(_))
+        ));
+    }
+
+    /// A `stco` chunk offset pointing at `mdat` (the legitimate case) must not
+    /// be affected by the new check - don't over-block ordinary assets.
+    #[test]
+    fn stco_pointing_into_mdat_is_accepted() {
+        let (mut file, stco_entry_offset, _free_payload_offset, mdat_payload_offset) =
+            build_single_chunk_mp4();
+        file[stco_entry_offset..stco_entry_offset + 4]
+            .copy_from_slice(&mdat_payload_offset.to_be_bytes());
+
+        let mut bmff_hash = crate::assertions::BmffHash::new("test", "sha256", None);
+        bmff_hash.set_default_exclusions();
+        let exclusions = bmff_hash.exclusions().to_vec();
+
+        let mut reader = Cursor::new(file);
+        assert!(bmff_to_jumbf_exclusions(&mut reader, &exclusions, false).is_ok());
     }
 
     // Regression tests for the UUID box purpose field u64 underflow vulnerability.

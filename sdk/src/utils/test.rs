@@ -719,13 +719,60 @@ where
     Ok(box_len)
 }
 
-/// Utility to create a BMFF (MP4) test asset with a placeholder for a manifest. Note
-/// that is not real.  Inserting a box this way will break the MP4 structure, but it
-/// is sufficient for testing.
+/// Adds `shift` to every `stco`/`co64` chunk offset found under `moov`, so
+/// sample tables stay correct after splicing `shift` bytes into the stream
+/// ahead of them.
+fn shift_bmff_chunk_offsets(buf: &mut [u8], shift: usize) {
+    fn walk(buf: &mut [u8], start: usize, end: usize, shift: usize) {
+        let mut off = start;
+        while off + 8 <= end {
+            let size = u32::from_be_bytes(buf[off..off + 4].try_into().unwrap()) as usize;
+            let fourcc = &buf[off + 4..off + 8];
+            if size < 8 || off + size > end {
+                break;
+            }
+            match fourcc {
+                b"moov" | b"trak" | b"mdia" | b"minf" | b"stbl" | b"udta" | b"meta" | b"edts" => {
+                    walk(buf, off + 8, off + size, shift);
+                }
+                b"stco" => {
+                    // FullBox header (8) + version/flags (4) + entry_count (4).
+                    let entry_count =
+                        u32::from_be_bytes(buf[off + 12..off + 16].try_into().unwrap()) as usize;
+                    for i in 0..entry_count {
+                        let entry_off = off + 16 + i * 4;
+                        let value =
+                            u32::from_be_bytes(buf[entry_off..entry_off + 4].try_into().unwrap());
+                        let new_value = value + shift as u32;
+                        buf[entry_off..entry_off + 4].copy_from_slice(&new_value.to_be_bytes());
+                    }
+                }
+                b"co64" => {
+                    let entry_count =
+                        u32::from_be_bytes(buf[off + 12..off + 16].try_into().unwrap()) as usize;
+                    for i in 0..entry_count {
+                        let entry_off = off + 16 + i * 8;
+                        let value =
+                            u64::from_be_bytes(buf[entry_off..entry_off + 8].try_into().unwrap());
+                        let new_value = value + shift as u64;
+                        buf[entry_off..entry_off + 8].copy_from_slice(&new_value.to_be_bytes());
+                    }
+                }
+                _ => {}
+            }
+            off += size;
+        }
+    }
+    walk(buf, 0, buf.len(), shift);
+}
+
+/// Utility to create a BMFF (MP4) test asset with a placeholder for a manifest.
 ///
 /// Inserts `placeholder` (a composed C2PA UUID box, as returned by
 /// `Builder::composed_manifest` for BMFF formats) immediately after the `ftyp`
-/// box, which is the standard C2PA insertion point in BMFF assets.
+/// box, which is the standard C2PA insertion point in BMFF assets, and shifts
+/// `moov`'s `stco`/`co64` chunk offsets so sample tables still point at the
+/// (now shifted) sample data.
 ///
 /// Returns the byte offset where the placeholder was inserted (i.e. the end of
 /// the `ftyp` box).
@@ -768,6 +815,8 @@ where
     let mut after_buf = Vec::new();
     input.read_to_end(&mut after_buf).unwrap();
     out_stream.write_all(&after_buf).unwrap();
+
+    shift_bmff_chunk_offsets(out_stream.get_mut(), placeholder.len());
 
     output_file.write_all(&out_stream.into_inner()).unwrap();
 
