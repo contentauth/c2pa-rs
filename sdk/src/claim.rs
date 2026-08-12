@@ -2983,10 +2983,9 @@ impl Claim {
                     let collection_hash =
                         CollectionHash::from_assertion(hash_binding_assertion.assertion())?;
 
-                    // only verify for ZIP-based assets because we do not support multiple
-                    // streams at once, at least not yet...
-                    if asset_data.format().as_deref().is_some_and(is_zip_format) {
-                        let hash_result = match asset_data {
+                    let verify_result = if asset_data.format().as_deref().is_some_and(is_zip_format)
+                    {
+                        match asset_data {
                             #[cfg(feature = "file_io")]
                             ClaimAssetData::Path(asset_path) => {
                                 let mut file = std::fs::File::open(asset_path)?;
@@ -3000,24 +2999,40 @@ impl Claim {
                             ClaimAssetData::Stream(stream_data, _) => collection_hash
                                 .verify_zip_stream_hash(*stream_data, Some(claim.alg())),
                             _ => return Err(Error::UnsupportedType),
-                        };
-
-                        match hash_result {
-                            Ok(_) => {
-                                log_item!(
-                                    claim.assertion_uri(&hash_binding_assertion.label()),
-                                    "collection hash valid",
-                                    "verify_internal"
-                                )
-                                .validation_status(
-                                    validation_status::ASSERTION_COLLECTIONHASH_MATCH,
-                                )
-                                .success(validation_log);
-
-                                continue;
+                        }
+                    } else {
+                        // we don't support multiple streams as input so the only option is paths for non-ZIP-based assets.
+                        match asset_data {
+                            #[cfg(feature = "file_io")]
+                            ClaimAssetData::Path(asset_path) => {
+                                collection_hash.verify_hash(asset_path.parent().unwrap_or(asset_path))
                             }
-                            Err(err) => {
-                                let err_str = match &err {
+                            _ => {
+                                return Err(Error::Unsupported(match asset_data.format() {
+                                    Some(format) => format!(
+                                        "collection data hash requires a ZIP-based asset or a file path, got: {format}"
+                                    ),
+                                    None => "collection data hash requires a ZIP-based asset or a file path"
+                                        .to_string(),
+                                }))
+                            }
+                        }
+                    };
+
+                    match verify_result {
+                        Ok(_) => {
+                            log_item!(
+                                claim.assertion_uri(&hash_binding_assertion.label()),
+                                "collection hash valid",
+                                "verify_internal"
+                            )
+                            .validation_status(validation_status::ASSERTION_COLLECTIONHASH_MATCH)
+                            .success(validation_log);
+
+                            continue;
+                        }
+                        Err(err) => {
+                            let err_str = match &err {
                                 Error::C2PAValidation(code)
                                     if code
                                         == validation_status::ASSERTION_COLLECTIONHASH_MALFORMED =>
@@ -3039,28 +3054,17 @@ impl Claim {
                                 _ => validation_status::ASSERTION_COLLECTIONHASH_MISMATCH,
                             };
 
-                                log_item!(
-                                    claim.assertion_uri(&hash_binding_assertion.label()),
-                                    format!("collection hash error: {err_str}"),
-                                    "verify_internal"
-                                )
-                                .validation_status(err_str)
-                                .failure(
-                                    validation_log,
-                                    Error::HashMismatch(format!("Asset hash failure: {err}")),
-                                )?;
-                            }
+                            log_item!(
+                                claim.assertion_uri(&hash_binding_assertion.label()),
+                                format!("collection hash error: {err_str}"),
+                                "verify_internal"
+                            )
+                            .validation_status(err_str)
+                            .failure(
+                                validation_log,
+                                Error::HashMismatch(format!("asset hash failure: {err}")),
+                            )?;
                         }
-                    } else {
-                        return Err(Error::Unsupported(match asset_data.format() {
-                            Some(format) => format!(
-                                "collection data hash is only supported for ZIP-based assets, got: {format}"
-                            ),
-                            None => {
-                                "collection data hash is only supported for ZIP-based assets"
-                                    .to_string()
-                            }
-                        }));
                     }
                 } else {
                     log_item!(
