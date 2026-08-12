@@ -9340,47 +9340,68 @@ pub mod tests {
         );
     }
 
-    /// Builds a `depth`-level chain of signed manifests where each level references the
-    /// previous level's manifest via TWO `inputTo` ingredient assertions pointing at the
-    /// same child. Without memoization in `ingredient_checks`, verifying the top manifest
-    /// re-walks each shared subtree once per path => 2^depth verifications (exponential).
-    fn build_deep_shared_input_to_asset(depth: usize) -> (&'static str, Vec<u8>) {
+    // Shared/deep inputTo provenance must be verified in linear time. `ingredient_checks`
+    // memoizes verified claims, so each shared subtree is walked once (O(V+E)); without
+    // that memoization the 2^DEPTH path count below makes the final verify hang.
+    #[test]
+    fn test_shared_input_to_graph_verified_once_no_exponential_blowup() {
         use crate::{
             hashed_uri::HashedUri, jumbf::labels::to_signature_uri, utils::test::create_test_store,
             ClaimGeneratorInfo, ValidationResults,
         };
 
-        let mut context = Context::new();
-        context.settings_mut().verify.verify_after_sign = false;
+        const DEPTH: usize = 25;
+
+        // Build with verification disabled so the build stays linear regardless of the fix;
+        // the exponential blowup is exercised only by the final verifying read below.
+        let mut build_context = Context::new();
+        build_context.settings_mut().verify.verify_after_sign = false;
+        build_context.settings_mut().verify.verify_after_reading = false;
         let signer = test_signer(SigningAlg::Ps256);
 
         // Leaf level: a standalone signed manifest.
         let (format, mut leaf_input, mut leaf_output) = create_test_streams("earth_apollo17.jpg");
         create_test_store()
             .unwrap()
-            .save_to_stream(format, &mut leaf_input, &mut leaf_output, signer.as_ref(), &context)
+            .save_to_stream(
+                format,
+                &mut leaf_input,
+                &mut leaf_output,
+                signer.as_ref(),
+                &build_context,
+            )
             .unwrap();
         leaf_output.rewind().unwrap();
         let mut prev_vec = leaf_output.get_ref().clone();
 
-        for level in 1..depth {
+        // Each level references the previous level's manifest via TWO inputTo ingredient
+        // assertions pointing at the same child, so verifying the top manifest re-walks each
+        // shared subtree once per path => 2^DEPTH verifications without memoization.
+        for level in 1..DEPTH {
             let mut prev_report = StatusTracker::default();
-            let prev_store =
-                Store::from_stream(format, Cursor::new(prev_vec.clone()), &mut prev_report, &context)
-                    .unwrap();
+            let prev_store = Store::from_stream(
+                format,
+                Cursor::new(prev_vec.clone()),
+                &mut prev_report,
+                &build_context,
+            )
+            .unwrap();
             let prev_pc = prev_store.provenance_claim().unwrap();
             let prev_hashes = prev_store.get_manifest_box_hashes(prev_pc);
 
             let mut claim = Claim::new("deep_shared", Some(&format!("m{level}")), 2);
             claim.add_claim_generator_info(ClaimGeneratorInfo::new("test"));
 
-            let (prev_jumbf, _) =
-                Store::load_jumbf_from_stream(format, &mut Cursor::new(prev_vec.clone()), &context)
-                    .unwrap();
+            let (prev_jumbf, _) = Store::load_jumbf_from_stream(
+                format,
+                &mut Cursor::new(prev_vec.clone()),
+                &build_context,
+            )
+            .unwrap();
             let mut store =
-                Store::load_ingredient_to_claim(&mut claim, &prev_jumbf, None, &context).unwrap();
+                Store::load_ingredient_to_claim(&mut claim, &prev_jumbf, None, &build_context)
+                    .unwrap();
 
-            // Two inputTo ingredient assertions, both referencing the same child manifest.
             for _ in 0..2 {
                 let parent_uri = HashedUri::new(
                     prev_store.provenance_path().unwrap(),
@@ -9421,24 +9442,15 @@ pub mod tests {
 
             let (_f, mut input, mut output) = create_test_streams("earth_apollo17.jpg");
             store
-                .save_to_stream(format, &mut input, &mut output, signer.as_ref(), &context)
+                .save_to_stream(format, &mut input, &mut output, signer.as_ref(), &build_context)
                 .unwrap();
             output.rewind().unwrap();
             prev_vec = output.get_ref().clone();
         }
 
-        (format, prev_vec)
-    }
-
-    // Shared/deep inputTo provenance must be verified in linear time. `ingredient_checks`
-    // memoizes verified claims, so each shared subtree is walked once (O(V+E)); without
-    // that memoization this store's 2^depth path count makes verification hang.
-    #[test]
-    fn test_shared_input_to_graph_verified_once_no_exponential_blowup() {
-        let (format, asset) = build_deep_shared_input_to_asset(25);
-        let context = Context::new();
+        // Verifying read (default context): without the memoization fix this never returns
+        // due to exponential re-verification of the shared inputTo subtrees.
         let mut report = StatusTracker::default();
-        // Without the memoization fix this call never returns (exponential re-verification).
-        Store::from_stream(format, Cursor::new(asset), &mut report, &context).unwrap();
+        Store::from_stream(format, Cursor::new(prev_vec), &mut report, &Context::new()).unwrap();
     }
 }
