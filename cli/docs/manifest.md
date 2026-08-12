@@ -61,7 +61,7 @@ The example below is a minimal manifest definition that uses a default testing c
 > [!NOTE]
 > When you don't specify a key or certificate in the manifest `private_key` and `sign_cert` fields, the tool will use the built-in key and cert. You'll see a warning message, since they are meant for development purposes only.
 
-For actual use, provide a permanent key and certificate in the manifest definition or environment variables; see [Signing assets](signing.md#settings-only-signing-testing-only). 
+For actual use, provide a permanent key and certificate in the manifest definition or environment variables; see [Signing assets](signing.md#signing-with-settings-only). 
 
 ```json
 {

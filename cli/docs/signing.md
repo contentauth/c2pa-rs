@@ -1,4 +1,4 @@
-# Signing assets with c2patool
+# Signing assets with C2PA Tool
 
 C2PA assets may carry two independent signatures:
 
@@ -7,9 +7,8 @@ C2PA assets may carry two independent signatures:
 
 Each signature is produced by a separate signer. Both signers are configured independently and may use different keys and certificates.
 
-> **Private keys in settings files are for development and testing only.** In production, use a subprocess signer or a remote signing service so that private key material never passes through c2patool.
-
----
+> [!IMPORTANT]
+> Private keys in settings files are for development and testing only. In production, use a subprocess signer or a remote signing service so that private key material never passes through C2PA Tool.
 
 ## Signing options
 
@@ -20,15 +19,13 @@ Each signature is produced by a separate signer. Both signers are configured ind
 | Settings with private key _(testing only)_ | `[signer.local]` in settings | `[cawg_x509_signer.local]` in settings |
 | Manifest fields _(testing only)_ | `sign_cert` + `private_key` in manifest JSON | — |
 
----
-
 ## Subprocess signer protocol
 
 A subprocess signer is any executable that implements two operations: **info** and **sign**. The same protocol applies to both `--signer-path` and `--identity-signer-path`.
 
-### Info query (`--signer-info`)
+### Info query
 
-Before signing, c2patool calls the subprocess with `--signer-info` to discover the signing certificate and algorithm. The subprocess must write a JSON object to stdout and exit 0:
+Before signing, C2PA Tool calls the subprocess with `--signer-info` to discover the signing certificate and algorithm. The subprocess must write a JSON object to stdout and exit 0:
 
 ```json
 {
@@ -45,29 +42,30 @@ Before signing, c2patool calls the subprocess with `--signer-info` to discover t
 | `tsa_url` | No | URL of a timestamp authority. |
 | `reserve_size` | No | Bytes to reserve in the asset for the signature. The signer knows its own maximum signature size. If absent, a default based on the certificate size is used. |
 
-If cert and algorithm are already configured in settings (see [Settings-only signing](#settings-only-signing-testing-only) below), the info query is skipped and those values are used directly.
+If cert and algorithm are already configured in settings (see [Signing with settings only](#signing-with-settings-only) below), the info query is skipped and those values are used directly.
 
 ### Signing
 
-When signing, c2patool writes the bytes to be signed to the subprocess's stdin. The subprocess must write the raw signature bytes to stdout and exit 0.
+When signing, C2PA Tool writes the bytes to be signed to the subprocess's stdin. The subprocess must write the raw signature bytes to stdout and exit 0.
 
 ### Error handling
 
-If the subprocess exits with a non-zero status, c2patool treats it as a signing failure and surfaces the subprocess's stderr output in the error message. c2patool does not retry.
+If the subprocess exits with a non-zero status, C2PA Tool treats it as a signing failure and surfaces the subprocess's stderr output in the error message. C2PA Tool does not retry.
 
-If the subprocess exits 0 but writes nothing to stdout, c2patool also returns an error.
+If the subprocess exits 0 but writes nothing to stdout, C2PA Tool also returns an error.
 
 ### Reserve size
 
-c2patool must reserve space in the asset file for the signature before calling the signer. The signer declares how much space it needs by returning `reserve_size` in the `--signer-info` response. If the field is absent, c2patool uses a default based on the certificate size.
+C2PA Tool must reserve space in the asset file for the signature before calling the signer. The signer declares how much space it needs by returning `reserve_size` in the `--signer-info` response. If the field is absent, C2PA Tool uses a default based on the certificate size.
 
-> **Deprecated:** When cert and algorithm are supplied via settings rather than `--signer-info`, c2pa tool passes `--alg` and `--reserve-size` to the subprocess for backwards compatibility. This behavior will be removed in a future release.
-
----
+> [!WARNING]
+> Deprecated: When cert and algorithm are supplied via settings rather than `--signer-info`, C2PA Tool passes `--alg` and `--reserve-size` to the subprocess for backwards compatibility. This behavior will be removed in a future release.
 
 ## Signing with a subprocess signer
 
-### C2PA claim signing (`--signer-path`)
+### C2PA claim signing
+
+Use `--signer-path` to configure a subprocess signer for the C2PA claim signature:
 
 ```sh
 c2patool image.jpg \
@@ -82,7 +80,9 @@ The value of `--signer-path` is a command string: a binary path optionally follo
 --signer-path "my-kms-wrapper --profile production"
 ```
 
-### CAWG identity signing (`--identity-signer-path`)
+### CAWG identity signing
+
+Use `--identity-signer-path` to also sign a CAWG identity assertion:
 
 ```sh
 c2patool image.jpg \
@@ -93,8 +93,6 @@ c2patool image.jpg \
 ```
 
 The C2PA and CAWG signers are independent. They may be the same executable or different ones.
-
----
 
 ## Signing with a remote service
 
@@ -110,11 +108,9 @@ sign_cert = """-----BEGIN CERTIFICATE-----
 """
 ```
 
-c2patool sends a POST request with the bytes to sign as the body and expects the raw signature bytes in the response.
+C2PA Tool sends a POST request with the bytes to sign as the body and expects the raw signature bytes in the response.
 
----
-
-## Settings-only signing (testing only)
+## Signing with settings only
 
 For development and testing, you can provide the private key directly in the settings file. **Do not use this in production.** The private key and signing certificate must be in PEM format. The certificate must contain a PEM certificate chain starting with the end-entity certificate used to sign the claim and ending with the intermediate certificate before the root CA certificate.
 
@@ -136,7 +132,7 @@ tsa_url = "https://timestamp.digicert.com"
 
 Alternatively, put `sign_cert`, `private_key`, and (optionally) `alg` as fields in the manifest JSON, or set the `C2PA_SIGN_CERT` and `C2PA_PRIVATE_KEY` environment variables.
 
-If no signer is configured at all, c2patool uses a built-in test certificate and key from the [c2patool repo sample folder](https://github.com/contentauth/c2pa-rs/tree/main/cli/sample). This is only suitable for development.
+If no signer is configured at all, C2PA Tool uses a built-in test certificate and key from the [`cli/sample` folder](https://github.com/contentauth/c2pa-rs/tree/main/cli/sample). This is only suitable for development.
 
 ### CAWG identity assertion
 
@@ -158,15 +154,13 @@ roles = ["creator"]
 
 If `[cawg_x509_signer]` is absent, no CAWG identity assertion is generated.
 
-An example settings file is in the [c2patool repo sample folder](https://github.com/contentauth/c2pa-rs/tree/main/cli/tests/fixtures/trust/cawg_sign_settings.toml).
-
----
+An example settings file is in the [`cli/tests/fixtures` folder](https://github.com/contentauth/c2pa-rs/tree/main/cli/tests/fixtures/trust/cawg_sign_settings.toml).
 
 ## Writing your own signer
 
 A signer is any executable that implements the two-operation protocol described above. It does not need to be written in Rust or have any knowledge of C2PA internals.
 
-A minimal signer in shell (for illustration only — not for production):
+A minimal signer in shell (for illustration only, not for production):
 
 ```sh
 #!/bin/sh
@@ -182,12 +176,10 @@ In practice, a production signer would:
 
 1. Implement `--signer-info` by fetching the certificate from the KMS/HSM/keychain.
 2. Implement signing by sending the stdin bytes to the KMS/HSM/keychain API and writing the returned signature to stdout.
-3. Handle its own authentication (API tokens, IAM roles, PIN prompts, etc.) internally — c2patool has no involvement in that.
+3. Handle its own authentication (API tokens, IAM roles, PIN prompts, etc.) internally. C2PA Tool has no involvement in that.
 4. Exit non-zero and write a diagnostic to stderr on failure.
 
-The signer is responsible for all key management. c2patool only sees the public certificate (from `--signer-info`) and the resulting signature bytes.
-
----
+The signer is responsible for all key management. C2PA Tool only sees the public certificate (from `--signer-info`) and the resulting signature bytes.
 
 ## Supported algorithms
 
