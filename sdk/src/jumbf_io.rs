@@ -102,6 +102,10 @@ pub(crate) fn is_bmff_format(asset_type: &str) -> bool {
     container_from_format(asset_type) == container_from_format("avif")
 }
 
+pub(crate) fn is_zip_format(asset_type: &str) -> bool {
+    container_from_format(asset_type) == container_from_format("zip")
+}
+
 /// Returns the container ID for a given format string (extension or MIME type), if known.
 ///
 /// The container ID is the first format registered by the matching I/O handler. It can be

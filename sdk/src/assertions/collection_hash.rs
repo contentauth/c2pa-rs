@@ -14,6 +14,10 @@ use crate::{
     asset_handlers::zip_io::{ZipError, CENTRAL_DIRECTORY_CRC_OFFSET, CRC_LEN, MANIFEST_PATH},
     hash_stream_by_alg,
     hash_utils::verify_stream_by_alg,
+    validation_status::{
+        ASSERTION_COLLECTIONHASH_INCORRECT_FILE_COUNT, ASSERTION_COLLECTIONHASH_INVALID_URI,
+        ASSERTION_COLLECTIONHASH_MALFORMED,
+    },
     Error, HashRange, Result,
 };
 
@@ -44,9 +48,6 @@ pub struct CollectionHash {
     /// This field only needs to be specified if the collection hash is for a ZIP file.
     #[serde(with = "serde_bytes", skip_serializing_if = "Option::is_none")]
     pub zip_central_directory_hash: Option<Vec<u8>>,
-
-    #[serde(skip)]
-    zip_central_directory_hash_range: Option<Vec<HashRange>>,
 }
 
 /// Information about a file in a [`CollectionHash`][CollectionHash].
@@ -73,9 +74,6 @@ pub struct UriHashedDataMap {
     /// Additional information about the type of data in the file.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data_types: Option<Vec<AssetType>>,
-
-    #[serde(skip)]
-    zip_hash_range: Option<HashRange>,
 }
 
 impl CollectionHash {
@@ -194,29 +192,30 @@ impl CollectionHash {
         let alg = self.alg().to_owned();
 
         let zip_central_directory_inclusions = zip_central_directory_range(stream)?;
-        let zip_central_directory_hash = hash_stream_by_alg(
-            &alg,
-            stream,
-            Some(zip_central_directory_inclusions.clone()),
-            false,
-        )?;
+        let zip_central_directory_hash =
+            hash_stream_by_alg(&alg, stream, Some(zip_central_directory_inclusions), false)?;
         if zip_central_directory_hash.is_empty() {
             return Err(Error::BadParam("could not generate data hash".to_string()));
         }
-        self.zip_central_directory_hash_range = Some(zip_central_directory_inclusions);
         self.zip_central_directory_hash = Some(zip_central_directory_hash);
 
-        self.uris = zip_uri_ranges(stream)?;
-        for (path, uri_map) in self.uris.iter_mut() {
-            let zip_hash_range = uri_map.zip_hash_range.clone().ok_or_else(|| {
-                Error::BadParam(format!("missing ZIP hash range for `{}`", path.display()))
-            })?;
-            let hash = hash_stream_by_alg(&alg, stream, Some(vec![zip_hash_range]), false)?;
+        self.uris = HashMap::new();
+        for (path, hash_range) in zip_uri_ranges(stream)? {
+            let hash = hash_stream_by_alg(&alg, stream, Some(vec![hash_range.clone()]), false)?;
             if hash.is_empty() {
                 return Err(Error::BadParam("could not generate data hash".to_string()));
             }
 
-            uri_map.hash = Some(hash);
+            let format = crate::format_from_path(&path);
+            self.uris.insert(
+                path,
+                UriHashedDataMap {
+                    hash: Some(hash),
+                    size: Some(hash_range.length()),
+                    dc_format: format,
+                    data_types: None,
+                },
+            );
         }
 
         Ok(())
@@ -227,18 +226,13 @@ impl CollectionHash {
         R: Read + Seek + ?Sized,
     {
         let alg = alg.unwrap_or_else(|| self.alg());
-        let zip_central_directory_hash = match &self.zip_central_directory_hash {
-            Some(hash) => Ok(hash),
-            None => Err(Error::BadParam(
-                "missing ZIP central directory hash".to_owned(),
-            )),
-        }?;
-        let zip_central_directory_hash_range = self
-            .zip_central_directory_hash_range
-            .clone()
-            .ok_or_else(|| {
-                Error::BadParam("missing ZIP central directory hash range".to_owned())
-            })?;
+
+        let zip_central_directory_hash = self
+            .zip_central_directory_hash
+            .as_ref()
+            .ok_or_else(|| Error::C2PAValidation(ASSERTION_COLLECTIONHASH_MALFORMED.to_string()))?;
+
+        let zip_central_directory_hash_range = zip_central_directory_range(stream)?;
         if !verify_stream_by_alg(
             alg,
             zip_central_directory_hash,
@@ -251,24 +245,29 @@ impl CollectionHash {
             ));
         }
 
+        let uri_ranges = zip_uri_ranges(stream)?;
         for (path, uri_map) in &self.uris {
-            match &uri_map.hash {
-                Some(hash) => {
-                    let zip_hash_range = uri_map.zip_hash_range.clone().ok_or_else(|| {
-                        Error::BadParam(format!("missing ZIP hash range for `{}`", path.display()))
-                    })?;
-                    if !verify_stream_by_alg(alg, hash, stream, Some(vec![zip_hash_range]), false) {
-                        return Err(Error::HashMismatch(format!(
-                            "hash for {} does not match",
-                            path.display()
-                        )));
-                    }
-                }
-                None => {
-                    return Err(Error::BadParam(
-                        "must generate hashes before verifying".to_owned(),
-                    ));
-                }
+            if path
+                .components()
+                .any(|component| matches!(component, Component::CurDir | Component::ParentDir))
+            {
+                return Err(Error::C2PAValidation(
+                    ASSERTION_COLLECTIONHASH_INVALID_URI.to_string(),
+                ));
+            }
+
+            let hash = uri_map.hash.as_ref().ok_or_else(|| {
+                Error::C2PAValidation(ASSERTION_COLLECTIONHASH_MALFORMED.to_string())
+            })?;
+            let hash_range = uri_ranges.get(path).cloned().ok_or_else(|| {
+                Error::C2PAValidation(ASSERTION_COLLECTIONHASH_INCORRECT_FILE_COUNT.to_string())
+            })?;
+
+            if !verify_stream_by_alg(alg, hash, stream, Some(vec![hash_range]), false) {
+                return Err(Error::HashMismatch(format!(
+                    "hash for {} does not match",
+                    path.display()
+                )));
             }
         }
 
@@ -281,7 +280,6 @@ impl CollectionHash {
             alg,
             base_path: Some(base_path),
             zip_central_directory_hash: None,
-            zip_central_directory_hash_range: None,
         })
     }
 
@@ -297,7 +295,6 @@ impl CollectionHash {
                 size: Some(metadata.len()),
                 dc_format: format,
                 data_types,
-                zip_hash_range: None,
             },
         );
 
@@ -399,13 +396,13 @@ where
     })
 }
 
-pub fn zip_uri_ranges<R>(stream: &mut R) -> Result<HashMap<PathBuf, UriHashedDataMap>>
+pub fn zip_uri_ranges<R>(stream: &mut R) -> Result<HashMap<PathBuf, HashRange>>
 where
     R: Read + Seek + ?Sized,
 {
     let mut reader = ZipArchive::new(stream).map_err(ZipError::Read)?;
 
-    let mut uri_map = HashMap::new();
+    let mut ranges = HashMap::new();
     let file_names: Vec<String> = reader.file_names().map(|n| n.to_owned()).collect();
     for file_name in file_names {
         let file = reader.by_name(&file_name).map_err(ZipError::Read)?;
@@ -417,17 +414,7 @@ where
                         let header_start = file.header_start();
                         let data_start = file.data_start().ok_or(Error::JumbfNotFound)?;
                         let len = (data_start + file.compressed_size()) - header_start;
-                        let format = crate::format_from_path(&path);
-                        uri_map.insert(
-                            path,
-                            UriHashedDataMap {
-                                hash: Some(Vec::new()),
-                                size: Some(len),
-                                dc_format: format,
-                                data_types: None,
-                                zip_hash_range: Some(HashRange::new(header_start, len)),
-                            },
-                        );
+                        ranges.insert(path, HashRange::new(header_start, len));
                     }
                 }
                 None => {
@@ -440,7 +427,7 @@ where
         }
     }
 
-    Ok(uri_map)
+    Ok(ranges)
 }
 
 #[cfg(test)]
@@ -460,7 +447,6 @@ mod tests {
             alg: None,
             zip_central_directory_hash: None,
             base_path: None,
-            zip_central_directory_hash_range: None,
         };
         collection.gen_hash_from_zip_stream(&mut stream)?;
 
@@ -470,10 +456,6 @@ mod tests {
                 103, 27, 141, 219, 82, 200, 254, 44, 155, 221, 183, 146, 193, 94, 154, 77, 133, 93,
                 148, 88, 160, 123, 224, 170, 61, 140, 13, 2, 153, 86, 225, 231
             ])
-        );
-        assert_eq!(
-            collection.zip_central_directory_hash_range,
-            Some(vec![HashRange::new(369, 727)])
         );
 
         assert_eq!(
@@ -486,7 +468,6 @@ mod tests {
                 size: Some(47),
                 dc_format: Some("txt".to_string()),
                 data_types: None,
-                zip_hash_range: Some(HashRange::new(44, 47))
             })
         );
         assert_eq!(
@@ -499,7 +480,6 @@ mod tests {
                 size: Some(57),
                 dc_format: Some("txt".to_string()),
                 data_types: None,
-                zip_hash_range: Some(HashRange::new(91, 57))
             })
         );
         assert_eq!(
@@ -512,7 +492,6 @@ mod tests {
                 size: Some(53),
                 dc_format: Some("txt".to_string()),
                 data_types: None,
-                zip_hash_range: Some(HashRange::new(148, 53))
             })
         );
         assert_eq!(
@@ -525,7 +504,6 @@ mod tests {
                 size: Some(68),
                 dc_format: Some("txt".to_string()),
                 data_types: None,
-                zip_hash_range: Some(HashRange::new(201, 68))
             })
         );
         assert_eq!(
@@ -538,7 +516,6 @@ mod tests {
                 size: Some(56),
                 dc_format: Some("txt".to_string()),
                 data_types: None,
-                zip_hash_range: Some(HashRange::new(313, 56))
             })
         );
         assert_eq!(collection.uris.len(), 5);

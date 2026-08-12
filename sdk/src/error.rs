@@ -177,6 +177,9 @@ pub enum Error {
     #[error("type is unsupported")]
     UnsupportedType,
 
+    #[error("unsupported: {0}")]
+    Unsupported(String),
+
     #[error("thumbnail format {0} is unsupported")]
     UnsupportedThumbnailFormat(String),
 
