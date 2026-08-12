@@ -23,13 +23,10 @@
 //! not be considered trusted in the C2PA conformance sense.
 
 use asn1_rs::FromDer;
+use c2pa_raw_crypto::{signer_from_private_key, RawSigner, SigningAlg};
 use x509_parser::prelude::X509Certificate;
 
-use crate::{
-    crypto::raw_signature::{signer_from_cert_chain_and_private_key, RawSigner, SigningAlg},
-    utils::ephemeral_cert,
-    Error, Result, Signer,
-};
+use crate::{crypto::cose::cose_reserve_size, utils::ephemeral_cert, Error, Result, Signer};
 
 /// A [`Signer`](crate::Signer) that holds an ephemeral CA + end-entity
 /// certificate chain.
@@ -94,47 +91,9 @@ impl EphemeralSigner {
 
         // PEM chain and key for the raw signer (newline between certs so both are
         // parsed).
-        let cert_chain_pem = format!(
-            "{}\n{}",
-            ephemeral_cert::der_to_pem(&chain.ee_der),
-            ephemeral_cert::der_to_pem(&chain.ca_der)
-        );
-
-        let raw_signer = signer_from_cert_chain_and_private_key(
-            cert_chain_pem.as_bytes(),
-            chain.ee_private_key_pem.as_bytes(),
-            SigningAlg::Ed25519,
-            None,
-        )
-        .map_err(|e| Error::OtherError(Box::new(e)))?;
-
-        // Ensure the raw signer's chain matches our DER chain (PEM decode must equal
-        // our DER).
-        let raw_chain = raw_signer
-            .cert_chain()
-            .map_err(|e| Error::OtherError(Box::new(e)))?;
-
-        if raw_chain.len() != cert_chain_der.len() {
-            return Err(Error::OtherError(Box::new(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "ephemeral cert chain length mismatch: raw_signer has {}, cert_chain_der has {}",
-                    raw_chain.len(),
-                    cert_chain_der.len()
-                ),
-            ))));
-        }
-
-        for (i, (a, b)) in raw_chain.iter().zip(cert_chain_der.iter()).enumerate() {
-            if a != b {
-                return Err(Error::OtherError(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!(
-                        "ephemeral cert chain entry {i} differs between raw_signer and cert_chain_der (PEM decode vs our DER)"
-                    ),
-                ))));
-            }
-        }
+        let raw_signer =
+            signer_from_private_key(chain.ee_private_key_pem.as_bytes(), SigningAlg::Ed25519)
+                .map_err(|e| Error::OtherError(Box::new(e)))?;
 
         Ok(EphemeralSigner {
             raw_signer,
@@ -157,31 +116,12 @@ impl Signer for EphemeralSigner {
     }
 
     fn reserve_size(&self) -> usize {
-        self.raw_signer.reserve_size()
-    }
-
-    fn ocsp_val(&self) -> Option<Vec<u8>> {
-        self.raw_signer.ocsp_response()
-    }
-
-    fn time_authority_url(&self) -> Option<String> {
-        self.raw_signer.time_stamp_service_url()
-    }
-
-    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
-        self.raw_signer.time_stamp_request_headers()
-    }
-
-    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
-        self.raw_signer
-            .time_stamp_request_body(message)
-            .map_err(|e| e.into())
-    }
-
-    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
-        self.raw_signer
-            .send_time_stamp_request(message)
-            .map(|r| r.map_err(|e| e.into()))
+        cose_reserve_size(
+            self.raw_signer.max_signature_size(),
+            &self.cert_chain_der,
+            false,
+            None,
+        )
     }
 }
 

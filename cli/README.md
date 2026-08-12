@@ -10,7 +10,7 @@ Use the tool on a file in one of the [supported formats](https://github.com/cont
 
 For a simple example of calling c2patool from a Node.js server application, see the [c2patool-service-example](https://github.com/contentauth/c2patool-service-example) repository.
 
-<div style={{display: 'none'}}>
+<div class="github-only">
 
 **Additional documentation**:
 
@@ -54,7 +54,7 @@ NOTE: You also may want to get some of the example files provided in the reposit
 
 ### Installing from source
 
-Instead of installing a prebuilt binary, you can [build the project from source](docs/project-contributions.md#building-from-source).
+Instead of installing a prebuilt binary, you can [build the project from source](https://github.com/contentauth/c2pa-rs/blob/main/cli/docs/project-contributions.md#building-from-source).
 
 ### Upgrading
 

@@ -653,12 +653,6 @@ pub mod tests {
         xmp_inmemory_utils::extract_provenance,
     };
 
-    // test-only equivalent of the removed `AssetIO::read_cai_store`
-    fn read_cai_store(handler: &RiffIO, path: &Path) -> Result<Vec<u8>> {
-        let mut f = File::open(path).map_err(Error::IoError)?;
-        handler.read_cai(&mut f)
-    }
-
     // test-only equivalent of the removed file-`Path`-based embed method
     fn write_remote_manifest_url(
         handler: &dyn RemoteManifestUrl,
@@ -688,7 +682,7 @@ pub mod tests {
                 let riff_io = RiffIO::new("wav");
 
                 if let Ok(()) = riff_io.save_cai_store(&output, more_data) {
-                    if let Ok(read_test_data) = read_cai_store(&riff_io, &output) {
+                    if let Ok(read_test_data) = riff_io.read_cai_store(&output) {
                         assert!(vec_compare(more_data, &read_test_data));
                         success = true;
                     }
@@ -806,13 +800,13 @@ pub mod tests {
                 let riff_io = RiffIO::new("wav");
 
                 if let Ok(()) = riff_io.save_cai_store(&output, test_data) {
-                    if let Ok(source_data) = read_cai_store(&riff_io, &output) {
+                    if let Ok(source_data) = riff_io.read_cai_store(&output) {
                         // create replacement data of same size
                         let mut new_data = vec![0u8; source_data.len()];
                         new_data[..test_data.len()].copy_from_slice(test_data);
                         riff_io.patch_cai_store(&output, &new_data).unwrap();
 
-                        let replaced = read_cai_store(&riff_io, &output).unwrap();
+                        let replaced = riff_io.read_cai_store(&output).unwrap();
 
                         assert_eq!(new_data, replaced);
 
@@ -837,7 +831,7 @@ pub mod tests {
         riff_io.remove_cai_store(&output).unwrap();
 
         // read back in asset, JumbfNotFound is expected since it was removed
-        match read_cai_store(&riff_io, &output) {
+        match riff_io.read_cai_store(&output) {
             Err(Error::JumbfNotFound) => (),
             _ => unreachable!(),
         }

@@ -326,6 +326,19 @@ pub trait AssetIO: Sync + Send {
 
     // -- File-based operations --
 
+    /// Reads the C2PA manifest store from the file at `asset_path`.
+    ///
+    /// The default implementation opens `asset_path` and delegates to
+    /// [`get_reader`](AssetIO::get_reader)'s [`CAIReader::read_cai`].
+    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
+        let mut input_stream = fs::OpenOptions::new()
+            .read(true)
+            .open(asset_path)
+            .map_err(Error::IoError)?;
+
+        self.get_reader().read_cai(&mut input_stream)
+    }
+
     /// Writes `store_bytes` as the C2PA manifest store in the file at `asset_path`.
     ///
     /// The default implementation opens `asset_path`, calls

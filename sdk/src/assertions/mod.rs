@@ -47,6 +47,7 @@ mod creative_work;
 pub use creative_work::CreativeWork;
 
 mod exif;
+#[allow(deprecated)]
 pub use exif::Exif;
 
 #[allow(dead_code)] // will become public later
@@ -90,4 +91,7 @@ pub use embedded_data::EmbeddedData;
 pub mod region_of_interest;
 
 mod soft_binding;
-pub use soft_binding::{SoftBinding, SoftBindingBlock, SoftBindingScope, SoftBindingTimespan};
+pub use soft_binding::{SoftBinding, SoftBindingBlock, SoftBindingScope};
+
+mod cloud_data;
+pub use cloud_data::{CloudData, HashedExtUri};

@@ -128,7 +128,7 @@ pub struct TextSelector {
     pub end: Option<i32>,
 }
 
-/// One or two [`TextSelector`][TextSelector] identifiying the range to select.
+/// One or two [`TextSelector`] identifiying the range to select.
 #[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]

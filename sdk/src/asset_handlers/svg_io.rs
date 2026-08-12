@@ -32,16 +32,7 @@ use crate::{
     utils::io_utils::{patch_stream, stream_len, ReaderUtils},
 };
 
-static SUPPORTED_TYPES: [&str; 8] = [
-    "svg",
-    "application/svg+xml",
-    "xhtml",
-    "xml",
-    "application/xhtml+xml",
-    "application/xml",
-    "image/svg+xml",
-    "text/xml",
-];
+static SUPPORTED_TYPES: [&str; 3] = ["svg", "application/svg+xml", "image/svg+xml"];
 
 const SVG: &str = "svg";
 const METADATA: &str = "metadata";
@@ -707,7 +698,7 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use std::{fs::File, io::Read, path::Path};
+    use std::{fs::File, io::Read};
 
     use super::*;
     use crate::utils::{
@@ -716,12 +707,6 @@ pub mod tests {
         test::{fixture_path, temp_dir_path},
         xmp_inmemory_utils::extract_provenance,
     };
-
-    // test-only equivalent of the removed `AssetIO::read_cai_store`
-    fn read_cai_store(handler: &SvgIO, path: &Path) -> Result<Vec<u8>> {
-        let mut f = File::open(path).map_err(Error::IoError)?;
-        handler.read_cai(&mut f)
-    }
 
     fn assert_c2pa_namespace_on_svg_root(xml: &str) {
         let svg_idx = xml.find("<svg").expect("SVG root tag missing");
@@ -765,7 +750,7 @@ pub mod tests {
                     let xml = std::fs::read_to_string(&output).unwrap();
                     assert_c2pa_namespace_on_svg_root(&xml);
                     assert_no_c2pa_namespace_on_manifest(&xml);
-                    if let Ok(read_test_data) = read_cai_store(&svg_io, &output) {
+                    if let Ok(read_test_data) = svg_io.read_cai_store(&output) {
                         assert!(vec_compare(more_data, &read_test_data));
                         success = true;
                     }
@@ -791,7 +776,7 @@ pub mod tests {
                     let xml = std::fs::read_to_string(&output).unwrap();
                     assert_c2pa_namespace_on_svg_root(&xml);
                     assert_no_c2pa_namespace_on_manifest(&xml);
-                    if let Ok(read_test_data) = read_cai_store(&svg_io, &output) {
+                    if let Ok(read_test_data) = svg_io.read_cai_store(&output) {
                         assert!(vec_compare(more_data, &read_test_data));
                         success = true;
                     }
@@ -819,7 +804,7 @@ pub mod tests {
                     // sample3's <c2pa:manifest> has inline xmlns:c2pa from a prior
                     // signing. By design we don't strip it on resign.
                     // This test intentionally omits the assert_no_c2pa_namespace_on_manifest check.
-                    if let Ok(read_test_data) = read_cai_store(&svg_io, &output) {
+                    if let Ok(read_test_data) = svg_io.read_cai_store(&output) {
                         assert!(vec_compare(more_data, &read_test_data));
                         success = true;
                     }
@@ -845,7 +830,7 @@ pub mod tests {
                     let xml = std::fs::read_to_string(&output).unwrap();
                     assert_c2pa_namespace_on_svg_root(&xml);
                     assert_no_c2pa_namespace_on_manifest(&xml);
-                    if let Ok(read_test_data) = read_cai_store(&svg_io, &output) {
+                    if let Ok(read_test_data) = svg_io.read_cai_store(&output) {
                         assert!(vec_compare(more_data, &read_test_data));
                         success = true;
                     }
@@ -884,7 +869,7 @@ pub mod tests {
                             "expected xmlns:c2pa exactly once on <svg> root, got {count}: {svg_open_tag}"
                         );
 
-                        if let Ok(read_test_data) = read_cai_store(&svg_io, &output) {
+                        if let Ok(read_test_data) = svg_io.read_cai_store(&output) {
                             assert!(vec_compare(new_manifest_data, &read_test_data));
                             success = true;
                         }
@@ -908,13 +893,13 @@ pub mod tests {
                 let svg_io = SvgIO::new("svg");
 
                 if let Ok(()) = svg_io.save_cai_store(&output, test_data) {
-                    if let Ok(source_data) = read_cai_store(&svg_io, &output) {
+                    if let Ok(source_data) = svg_io.read_cai_store(&output) {
                         // create replacement data of same size
                         let mut new_data = vec![0u8; source_data.len()];
                         new_data[..test_data.len()].copy_from_slice(test_data);
                         svg_io.patch_cai_store(&output, &new_data).unwrap();
 
-                        let replaced = read_cai_store(&svg_io, &output).unwrap();
+                        let replaced = svg_io.read_cai_store(&output).unwrap();
 
                         assert_eq!(new_data, replaced);
 
@@ -939,7 +924,7 @@ pub mod tests {
         svg_io.remove_cai_store(&output).unwrap();
 
         // read back in asset, JumbfNotFound is expected since it was removed
-        match read_cai_store(&svg_io, &output) {
+        match svg_io.read_cai_store(&output) {
             Err(Error::JumbfNotFound) => (),
             _ => unreachable!(),
         }

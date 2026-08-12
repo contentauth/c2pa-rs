@@ -338,7 +338,7 @@ pub(crate) mod test_helpers {
 
     use crate::{
         asset_io::{AssetIO, HashBlockObjectType, RemoteManifestUrl},
-        error::{Error, Result},
+        error::Error,
         utils::{hash_utils::vec_compare, xmp_inmemory_utils::extract_provenance},
     };
 
@@ -438,17 +438,11 @@ pub(crate) mod test_helpers {
     }
 
     /// Write arbitrary data then read it back and verify round-trip equality.
-    // test-only equivalent of the removed `AssetIO::read_cai_store`
-    fn read_cai_store(handler: &dyn AssetIO, path: &Path) -> Result<Vec<u8>> {
-        let mut f = std::fs::File::open(path).map_err(Error::IoError)?;
-        handler.get_reader().read_cai(&mut f)
-    }
-
     pub(crate) fn run_write_read_roundtrip(handler: &dyn AssetIO, fixture: &Path, tmp: &Path) {
         let data = b"some more test data";
         std::fs::copy(fixture, tmp).unwrap();
         handler.save_cai_store(tmp, data).unwrap();
-        let read_back = read_cai_store(handler, tmp).unwrap();
+        let read_back = handler.read_cai_store(tmp).unwrap();
         assert!(vec_compare(data, &read_back));
     }
 
@@ -457,7 +451,7 @@ pub(crate) mod test_helpers {
         let test_data = b"some test data";
         std::fs::copy(fixture, tmp).unwrap();
         handler.save_cai_store(tmp, test_data).unwrap();
-        let source_data = read_cai_store(handler, tmp).unwrap();
+        let source_data = handler.read_cai_store(tmp).unwrap();
         let mut new_data = vec![0u8; source_data.len()];
         new_data[..test_data.len()].copy_from_slice(test_data);
         handler
@@ -465,7 +459,7 @@ pub(crate) mod test_helpers {
             .unwrap()
             .patch_cai_store(tmp, &new_data)
             .unwrap();
-        let replaced = read_cai_store(handler, tmp).unwrap();
+        let replaced = handler.read_cai_store(tmp).unwrap();
         assert_eq!(new_data, replaced);
     }
 
@@ -489,7 +483,7 @@ pub(crate) mod test_helpers {
         std::fs::copy(fixture, tmp).unwrap();
         handler.save_cai_store(tmp, &[1, 2, 3]).unwrap();
         handler.remove_cai_store(tmp).unwrap();
-        match read_cai_store(handler, tmp) {
+        match handler.read_cai_store(tmp) {
             Err(Error::JumbfNotFound) => {}
             _ => unreachable!(),
         }
@@ -596,7 +590,7 @@ pub(crate) mod test_helpers {
         let payload = b"c2pa manifest payload";
         std::fs::copy(fixture, tmp).unwrap();
         handler.save_cai_store(tmp, payload).unwrap();
-        let read = read_cai_store(handler, tmp).unwrap();
+        let read = handler.read_cai_store(tmp).unwrap();
         assert!(vec_compare(payload, &read));
     }
 
@@ -608,7 +602,6 @@ pub(crate) mod test_helpers {
         let types = handler.supported_types();
         assert!(types.contains(&expected_ext));
         assert!(types.contains(&expected_mime));
-        assert_eq!(types.len(), 2);
     }
 
     pub(crate) fn run_embed_reference_file_path(

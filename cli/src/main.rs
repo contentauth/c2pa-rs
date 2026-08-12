@@ -1130,6 +1130,9 @@ fn main() -> Result<()> {
             add_ingredient(&mut builder, &parent_path, true)?
         }
 
+        // Default to Edit intent unless --create/--update override it. If the manifest already
+        // declares its own c2pa.created or c2pa.opened action, Builder itself guards against
+        // auto-adding a conflicting parentOf ingredient or action.
         let intent = if let Some(source_type_str) = &args.create {
             let source_type: DigitalSourceType =
                 serde_json::from_value(serde_json::Value::String(source_type_str.clone()))
@@ -1359,7 +1362,7 @@ fn main() -> Result<()> {
             let report = ingredient.to_string();
 
             File::create(output.join("ingredient.json"))?.write_all(&report.into_bytes())?;
-            println!("Ingredient report written to the directory {:?}", &output);
+            println!("Ingredient report written to the directory {:?}", output);
         } else {
             let reader = Reader::from_shared_context(&context)
                 .with_file(path)
@@ -1373,7 +1376,7 @@ fn main() -> Result<()> {
                 File::create(output.join("detailed.json"))?.write_all(&detailed.into_bytes())?;
             }
             File::create(output.join("manifest_store.json"))?.write_all(&report.into_bytes())?;
-            println!("Manifest report written to the directory {:?}", &output);
+            println!("Manifest report written to the directory {:?}", output);
         }
     } else if args.ingredient {
         let mut builder = Builder::from_shared_context(&context);

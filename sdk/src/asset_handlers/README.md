@@ -52,7 +52,7 @@ The mandatory traits are:
 
 - [CAIReader](#caireader-) 
 - [CAIWriter](#caiwriter) 
-- [AssetIO](#assetio)
+- [AssetIO](#assetio--the-master-trait)
 
 #### CAIReader 
 
@@ -165,7 +165,7 @@ The optional traits are:
 - [AssetPatch](#assetpatch) 
 - [RemoteManifestUrl / WriteXmp](#remotemanifesturl--writexmp) 
 - [AssetBoxHash](#assetboxhash) 
-- [ComposedManifestRef](#composedmanifestref)
+- [ComposedManifestRef](#composedmanifestref-)
 
 #### AssetPatch
 

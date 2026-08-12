@@ -28,18 +28,18 @@ use tempfile::TempDir;
 use crate::{
     assertions::{
         labels, Action, Actions, DigitalSourceType, EmbeddedData, Ingredient, Relationship,
-        ReviewRating, SchemaDotOrg, Thumbnail, User,
+        ReviewRating, Thumbnail, User,
     },
     asset_io::CAIReadWrite,
     claim::Claim,
     context::Context,
-    crypto::{cose::CertificateTrustPolicy, raw_signature::SigningAlg},
+    crypto::cose::CertificateTrustPolicy,
     hash_utils::Hasher,
     jumbf_io::get_assetio_handler,
     resource_store::UriOrResource,
     store::Store,
     utils::{io_utils::tempdirectory, mime::extension_to_mime},
-    AsyncSigner, ClaimGeneratorInfo, Result,
+    AsyncSigner, ClaimGeneratorInfo, Result, SigningAlg,
 };
 
 pub const TEST_SMALL_JPEG: &str = "earth_apollo17.jpg";
@@ -343,7 +343,7 @@ pub fn create_test_claim_v1() -> Result<Claim> {
             "alternateName": "False"
         }
     }"#;
-    let claim_review = SchemaDotOrg::from_json_str(cr)?;
+    let claim_review = User::new("schema.org", cr);
     let thumbnail_claim = Thumbnail::new(labels::JPEG_CLAIM_THUMBNAIL, some_binary_data.clone());
     let thumbnail_ingred = Thumbnail::new(labels::JPEG_INGREDIENT_THUMBNAIL, some_binary_data);
     let user_assertion = User::new(TEST_USER_ASSERTION, user_assertion_data);
@@ -420,6 +420,7 @@ pub fn fixture_path(file_name: &str) -> PathBuf {
 
 /// Create in-memory test streams from a fixture file
 #[allow(clippy::expect_used)]
+#[allow(clippy::panic)]
 pub fn create_test_streams(
     fixture_name: &str,
 ) -> (
@@ -469,6 +470,7 @@ pub fn create_test_streams(
 /// Create a single in-memory input stream from a fixture file.
 /// Use this for read-only tests (e.g. format detection) that don't need an output stream.
 #[allow(clippy::expect_used)]
+#[allow(clippy::panic)]
 pub fn create_test_stream(fixture_name: &str) -> (&'static str, std::io::Cursor<Vec<u8>>) {
     if let Some(fixture) = get_registry().get(fixture_name) {
         return (fixture.1, std::io::Cursor::new(fixture.0.to_vec()));

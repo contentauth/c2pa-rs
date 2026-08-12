@@ -15,7 +15,7 @@
 use std::path::{Path, PathBuf};
 use std::{
     collections::{HashMap, HashSet},
-    io::{Cursor, Read, Seek, SeekFrom},
+    io::{Cursor, Read, Seek},
 };
 
 use async_generic::async_generic;
@@ -41,8 +41,9 @@ use crate::{
     crypto::{
         asn1::rfc3161::TstInfo,
         cose::{
-            fetch_and_check_ocsp_response, fetch_and_check_ocsp_response_async, parse_cose_sign1,
-            CertificateTrustPolicy, TimeStampStorage,
+            cert_chain_from_sign1, fetch_and_check_ocsp_response,
+            fetch_and_check_ocsp_response_async, parse_cose_sign1, CertificateTrustPolicy,
+            TimeStampStorage,
         },
         hash::sha256,
         ocsp::OcspResponse,
@@ -58,8 +59,8 @@ use crate::{
         self,
         boxes::*,
         labels::{
-            manifest_label_from_uri, manifest_label_to_parts, to_assertion_uri, to_manifest_uri,
-            ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE,
+            assertion_label_from_uri, manifest_label_from_uri, manifest_label_to_parts,
+            to_assertion_uri, to_manifest_uri, ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE,
         },
     },
     jumbf_io::{
@@ -1046,6 +1047,8 @@ impl Store {
 
         let manifest_type = if claim.update_manifest() {
             ManifestType::UpdateManifest
+        } else if claim.is_c2md() {
+            ManifestType::C2md
         } else {
             ManifestType::Manifest
         };
@@ -1261,9 +1264,12 @@ impl Store {
             let cai_store_box = store_box.super_box();
             let cai_store_desc_box = cai_store_box.desc_box();
 
-            // ignore unknown boxes per the spec
+            // ignore unknown boxes per the spec. A c2md manifest is a standard
+            // manifest that consumers shall accept (C2PA spec 11.2.2), so it is
+            // read the same as a c2ma manifest.
             if cai_store_desc_box.uuid() != CAI_UPDATE_MANIFEST_UUID
                 && cai_store_desc_box.uuid() != CAI_MANIFEST_UUID
+                && cai_store_desc_box.uuid() != CAI_MANIFEST_C2MD_UUID
             {
                 continue;
             }
@@ -1316,6 +1322,7 @@ impl Store {
             }
 
             let is_update_manifest = cai_store_desc_box.uuid() == CAI_UPDATE_MANIFEST_UUID;
+            let is_c2md = cai_store_desc_box.uuid() == CAI_MANIFEST_C2MD_UUID;
 
             // get map of boxes in this manifest
             let manifest_boxes = Store::manifest_map(cai_store_box)?;
@@ -1444,6 +1451,7 @@ impl Store {
 
             // set the  type of manifest
             claim.set_update_manifest(is_update_manifest);
+            claim.set_is_c2md(is_c2md);
 
             // set order to process JUMBF boxes
             claim.set_box_order(box_order);
@@ -1961,11 +1969,23 @@ impl Store {
                 let certificate_status_assertion =
                     CertificateStatus::from_assertion(csa.assertion())?;
 
+                // The certificate status assertion carries OCSP responses for
+                // this manifest's own signing certificate, so bind each
+                // response to that certificate's chain (RFC 6960 §4.1.1).
+                let signing_cert_chain = found_claim
+                    .cose_sign1()
+                    .ok()
+                    .and_then(|sign1| cert_chain_from_sign1(&sign1).ok())
+                    .unwrap_or_default();
+
                 // save the ocsp_ders stored in the StoreValidationInfo
                 for ocsp_der in certificate_status_assertion.as_ref() {
-                    if let Ok(response) =
-                        OcspResponse::from_der_checked(ocsp_der, None, validation_log)
-                    {
+                    if let Ok(response) = OcspResponse::from_der_checked(
+                        ocsp_der,
+                        &signing_cert_chain,
+                        None,
+                        validation_log,
+                    ) {
                         let ocsp_ders = svi
                             .certificate_statuses
                             .entry(response.certificate_serial_num)
@@ -2278,47 +2298,59 @@ impl Store {
             ));
         };
 
-        // Write dynamic assertions only if placeholders were added during placeholder generation.
-        // We check if the dynamic assertion labels exist in the claim - if not, placeholders
-        // weren't added and we should skip writing to avoid size mismatches.
+        // Write any dynamic assertions exposed by the signer. The caller
+        // (`Builder::sign_embeddable`) reserves matching placeholder slots via
+        // `add_dynamic_assertion_placeholders` before calling this, so the assertion
+        // content replaces those slots in place. This must reuse the same
+        // `dynamic_assertions()` result across the whole operation – draining it on an
+        // earlier call is what silently dropped identity assertions in issue #2055.
         let dynamic_assertions = signer.dynamic_assertions();
         if !dynamic_assertions.is_empty() {
-            // Check if placeholders exist for these dynamic assertions
-            let has_placeholders = {
-                dynamic_assertions
-                    .iter()
-                    .all(|da| pc.assertion_hashed_uri_from_label(&da.label()).is_some())
-            };
+            // Every dynamic assertion needs a reserved placeholder slot to replace.
+            // Surface any that are missing with an actionable message instead of
+            // letting `write_dynamic_assertions` fail later with an opaque
+            // `Error::NotFound`.
+            let missing: Vec<String> = dynamic_assertions
+                .iter()
+                .map(|da| da.label())
+                .filter(|label| pc.assertion_hashed_uri_from_label(label).is_none())
+                .collect();
 
-            if has_placeholders {
-                let mut preliminary_claim = PartialClaim::default();
-                {
-                    for assertion in pc.assertions() {
-                        preliminary_claim.add_assertion(assertion);
-                    }
-                }
-
-                // Drop pc before calling write_dynamic_assertions
-                let _ = pc;
-
-                let _modified =
-                    self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
-
-                // Get pc again
-                let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-                let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
-
-                let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-                pc.set_signature_val(sig);
-
-                let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
-
-                if context.settings().verify.verify_after_sign {
-                    self.verify_store_strict(None, context)?;
-                }
-
-                return Ok(jumbf_bytes);
+            if !missing.is_empty() {
+                return Err(Error::BadParam(format!(
+                    "no placeholder slots were reserved for dynamic assertions [{}]; \
+                     call add_dynamic_assertion_placeholders() before signing",
+                    missing.join(", ")
+                )));
             }
+
+            let mut preliminary_claim = PartialClaim::default();
+            {
+                for assertion in pc.assertions() {
+                    preliminary_claim.add_assertion(assertion);
+                }
+            }
+
+            // Drop pc before calling write_dynamic_assertions
+            let _ = pc;
+
+            let _modified =
+                self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
+
+            // Get pc again
+            let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+            let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
+
+            let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+            pc.set_signature_val(sig);
+
+            let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+
+            if context.settings().verify.verify_after_sign {
+                self.verify_store_strict(None, context)?;
+            }
+
+            return Ok(jumbf_bytes);
         }
 
         context.check_progress(ProgressPhase::Signing, 1, 1)?;
@@ -2408,37 +2440,18 @@ impl Store {
     ) -> Result<Vec<u8>> {
         self.prep_embeddable_store(dh, asset_reader, context)?;
 
-        // Write dynamic assertions only if placeholders were added during placeholder generation.
-        // We check if the dynamic assertion labels exist in the claim - if not, placeholders
-        // weren't added and we should skip writing to avoid size mismatches.
-        let dynamic_assertions = signer.dynamic_assertions();
-        if !dynamic_assertions.is_empty() {
-            // Check if placeholders exist for these dynamic assertions
-            let has_placeholders = {
-                let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-                dynamic_assertions
-                    .iter()
-                    .all(|da| pc.assertion_hashed_uri_from_label(&da.label()).is_some())
-            };
-
-            if has_placeholders {
-                let mut preliminary_claim = PartialClaim::default();
-                {
-                    let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-                    for assertion in pc.assertions() {
-                        preliminary_claim.add_assertion(assertion);
-                    }
-                }
-                if _sync {
-                    self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
-                } else {
-                    self.write_dynamic_assertions_async(
-                        &dynamic_assertions,
-                        &mut preliminary_claim,
-                    )
-                    .await?;
-                }
-            }
+        // The data-hashed placeholder (`get_data_hashed_manifest_placeholder`) does not
+        // reserve space for dynamic assertions, so there is no way to embed them here
+        // without breaking the size contract the caller already committed to. Fail loudly
+        // rather than silently dropping the assertions (see issue #2055); callers that need
+        // dynamic assertions should use Builder::placeholder() + Builder::sign_embeddable().
+        if !signer.dynamic_assertions().is_empty() {
+            return Err(Error::BadParam(
+                "signer has dynamic assertions (e.g. CAWG identity) that the data-hashed \
+                 embeddable workflow cannot represent; use Builder::placeholder() followed \
+                 by Builder::sign_embeddable() instead"
+                    .to_string(),
+            ));
         }
 
         context.check_progress(ProgressPhase::Signing, 1, 1)?;
@@ -2972,7 +2985,7 @@ impl Store {
                 context.check_progress(ProgressPhase::Embedding, 1, 1)?;
 
                 if context.settings().verify.verify_after_sign {
-                    let output_len = output_stream.seek(SeekFrom::End(0))?;
+                    let output_len = stream_len(output_stream)?;
                     let validate_hash = context.settings().verify.verify_after_sign_hash;
                     let mut asset_data = if output_len > 0 && validate_hash {
                         Some(ClaimAssetData::Stream(output_stream, format))
@@ -4077,6 +4090,64 @@ impl Store {
             }
         }
 
+        // For each redaction that targets an ingredient assertion, remove the corresponding
+        // entry from ingredient_references. If no other claim still references that ingredient
+        // claim, drop it from the incoming store entirely.
+        for redaction_uri in &final_redactions {
+            let assertion_label = match assertion_label_from_uri(redaction_uri) {
+                Some(l) => l,
+                None => continue,
+            };
+
+            // Only act on ingredient assertions.
+            if !assertion_label.starts_with(labels::INGREDIENT) {
+                continue;
+            }
+
+            // The redaction URI encodes which claim owns the assertion.
+            let claim_label = match manifest_label_from_uri(redaction_uri) {
+                Some(l) => l,
+                None => continue,
+            };
+
+            // Find the owning claim and then the specific assertion within it.
+            let Some(owning_claim) = i_store.get_claim(&claim_label) else {
+                continue;
+            };
+
+            let Some(ia) = owning_claim
+                .ingredient_assertions()
+                .into_iter()
+                .find(|a| a.label() == assertion_label)
+            else {
+                continue;
+            };
+
+            // Recover the referenced manifest URL from active_manifest or c2pa_manifest.
+            let Ok(ingredient_assertion) = Ingredient::from_assertion(ia.assertion()) else {
+                continue;
+            };
+
+            let Some(manifest_ref) = ingredient_assertion.c2pa_manifest() else {
+                continue;
+            };
+
+            let ingredient_label = Store::manifest_label_from_path(&manifest_ref.url());
+
+            let now_unreferenced =
+                if let Some(refs) = svi.ingredient_references.get_mut(&ingredient_label) {
+                    refs.remove(&claim_label);
+                    refs.is_empty()
+                } else {
+                    false
+                };
+
+            if now_unreferenced {
+                svi.ingredient_references.remove(&ingredient_label);
+                to_remove_from_incoming.push(ingredient_label);
+            }
+        }
+
         // remove the claims from the incoming store as to not overwrite the current claim
         for label in to_remove_from_incoming {
             i_store_mut.remove_claim(&label);
@@ -4174,7 +4245,7 @@ impl Store {
 impl std::fmt::Display for Store {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let report = &ManifestStoreReport::from_store(self).unwrap_or_default();
-        f.write_str(&format!("{}", &report))
+        f.write_str(&format!("{}", report))
     }
 }
 
@@ -4289,14 +4360,13 @@ pub mod tests {
     use crate::{
         assertions::{Action, Actions, Uuid},
         claim::AssertionStoreJsonFormat,
-        crypto::raw_signature::SigningAlg,
         status_tracker::{LogItem, StatusTracker},
         utils::{
             patch::patch_bytes,
             test::{create_test_claim, create_test_streams, fixture_path},
             test_signer::{async_test_signer, test_signer},
         },
-        ClaimGeneratorInfo, DigitalSourceType,
+        ClaimGeneratorInfo, DigitalSourceType, SigningAlg,
     };
 
     fn create_editing_claim(claim: &mut Claim) -> Result<&mut Claim> {
@@ -4644,7 +4714,7 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_sign_with_expired_cert() {
-        use crate::{create_signer, crypto::raw_signature::SigningAlg};
+        use crate::{create_signer, SigningAlg};
 
         let context = Context::new();
 
@@ -5756,6 +5826,88 @@ pub mod tests {
     }
 
     #[test]
+    fn test_from_jumbf_reads_c2md_standard_manifest() {
+        use crate::{
+            jumbf::boxes::{CAI_MANIFEST_C2MD_UUID, CAI_MANIFEST_UUID},
+            utils::test::create_test_store,
+        };
+
+        // Per C2PA spec 11.2.2, a manifest using the c2md JUMBF type UUID is a
+        // standard manifest that consumers shall accept. Build a normal (c2ma)
+        // manifest, rewrite its superbox type UUID to c2md, and confirm the
+        // store still reads the manifest instead of silently skipping it.
+        let store = create_test_store().unwrap();
+        let jumbf = store.to_jumbf_internal(0).unwrap();
+
+        // Flip the manifest superbox type UUID from c2ma to c2md in place.
+        let c2ma = hex::decode(CAI_MANIFEST_UUID).unwrap();
+        let c2md = hex::decode(CAI_MANIFEST_C2MD_UUID).unwrap();
+        let pos = jumbf
+            .windows(c2ma.len())
+            .position(|w| w == c2ma.as_slice())
+            .expect("manifest c2ma UUID present");
+        let mut patched = jumbf.clone();
+        patched[pos..pos + c2md.len()].copy_from_slice(&c2md);
+
+        let mut log = StatusTracker::default();
+        let restored = Store::from_jumbf(&patched, &mut log).expect("c2md manifest should be read");
+        assert_eq!(
+            restored.claims().len(),
+            store.claims().len(),
+            "c2md manifest should be read as a standard manifest"
+        );
+    }
+
+    #[test]
+    fn test_c2md_manifest_preserved_on_round_trip() {
+        use crate::{
+            jumbf::boxes::{CAI_MANIFEST_C2MD_UUID, CAI_MANIFEST_UUID},
+            utils::test::create_test_store,
+        };
+
+        // A c2md manifest must keep its c2md tag if the store is
+        // re-serialized (e.g. when it is copied as part of adding an update
+        // manifest or embedding it as an ingredient's manifest store) -
+        // claim generators must not synthesize new c2ma/c2um boxes for data
+        // that was never theirs to retag.
+        let store = create_test_store().unwrap();
+        let jumbf = store.to_jumbf_internal(0).unwrap();
+
+        let c2ma = hex::decode(CAI_MANIFEST_UUID).unwrap();
+        let c2md = hex::decode(CAI_MANIFEST_C2MD_UUID).unwrap();
+        let pos = jumbf
+            .windows(c2ma.len())
+            .position(|w| w == c2ma.as_slice())
+            .expect("manifest c2ma UUID present");
+        let mut patched = jumbf.clone();
+        patched[pos..pos + c2md.len()].copy_from_slice(&c2md);
+
+        let mut log = StatusTracker::default();
+        let restored = Store::from_jumbf(&patched, &mut log).expect("c2md manifest should be read");
+
+        // Re-serialize the store that was read from a c2md-tagged manifest.
+        let round_tripped = restored.to_jumbf_internal(0).unwrap();
+
+        let c2md_count = round_tripped
+            .windows(c2md.len())
+            .filter(|w| *w == c2md.as_slice())
+            .count();
+        let c2ma_count = round_tripped
+            .windows(c2ma.len())
+            .filter(|w| *w == c2ma.as_slice())
+            .count();
+
+        assert_eq!(
+            c2md_count, 1,
+            "c2md tag should survive re-serialization of the store"
+        );
+        assert_eq!(
+            c2ma_count, 0,
+            "a c2md manifest must not be rewritten as c2ma on round-trip"
+        );
+    }
+
+    #[test]
     fn test_bad_jumbf() {
         // test bad jumbf
         let (format, mut input_stream, _output_stream) = create_test_streams("prerelease.jpg");
@@ -6455,7 +6607,7 @@ pub mod tests {
         claim.add_claim_generator_info(cgi);
 
         // created redacted uri
-        let redacted_uri = to_assertion_uri(pc.label(), labels::SCHEMA_ORG);
+        let redacted_uri = to_assertion_uri(pc.label(), labels::SCHEMA_ORG_INTERNAL);
 
         let (manifest_bytes, _) = Store::load_jumbf_from_stream(
             format,
@@ -6621,7 +6773,7 @@ pub mod tests {
         // make sure the redaction stuck
         let redacted_claim = resolved_store.get_claim(pc.label()).unwrap();
         assert!(redacted_claim
-            .get_assertion(labels::SCHEMA_ORG, 0)
+            .get_assertion(labels::SCHEMA_ORG_INTERNAL, 0)
             .is_none());
     }
 
@@ -6674,7 +6826,7 @@ pub mod tests {
         claim.add_claim_generator_info(cgi);
 
         // created redacted uri
-        let redacted_uri = to_assertion_uri(pc.label(), labels::SCHEMA_ORG);
+        let redacted_uri = to_assertion_uri(pc.label(), labels::SCHEMA_ORG_INTERNAL);
 
         let (manifest_bytes, _) = Store::load_jumbf_from_stream(
             format,
@@ -6776,7 +6928,7 @@ pub mod tests {
         // the confict_store is adjusted to remove the conflicting claim
         let not_redacted_claim = new_claim.claim_ingredient(pc.label()).unwrap();
         assert!(not_redacted_claim
-            .get_assertion(labels::SCHEMA_ORG, 0)
+            .get_assertion(labels::SCHEMA_ORG_INTERNAL, 0)
             .is_some());
 
         // load ingredient with redaction
@@ -6790,7 +6942,7 @@ pub mod tests {
         // the confict_store is adjusted to remove the conflicting claim
         let redacted_claim = new_claim.claim_ingredient(pc.label()).unwrap();
         assert!(redacted_claim
-            .get_assertion(labels::SCHEMA_ORG, 0)
+            .get_assertion(labels::SCHEMA_ORG_INTERNAL, 0)
             .is_none());
     }
 
@@ -6841,7 +6993,7 @@ pub mod tests {
         claim.add_claim_generator_info(cgi.clone());
 
         // created redacted uri
-        let redacted_uri = to_assertion_uri(pc.label(), labels::SCHEMA_ORG);
+        let redacted_uri = to_assertion_uri(pc.label(), labels::SCHEMA_ORG_INTERNAL);
 
         output_stream.rewind().unwrap();
         let ingredient_vec = load_jumbf_from_stream(format, &mut output_stream).unwrap();
@@ -7021,7 +7173,7 @@ pub mod tests {
         // Check that both redactions are present
         let redacted_claim = new_claim.claim_ingredient(pc.label()).unwrap();
         assert!(redacted_claim
-            .get_assertion(labels::SCHEMA_ORG, 0)
+            .get_assertion(labels::SCHEMA_ORG_INTERNAL, 0)
             .is_none());
 
         assert!(redacted_claim
@@ -8081,6 +8233,79 @@ pub mod tests {
     }
 
     #[test]
+    fn test_sign_manifest_errors_when_dynamic_placeholders_missing() {
+        // A signer that advertises a dynamic assertion but whose placeholder slot is
+        // never reserved. `sign_manifest` must reject it with an actionable error that
+        // names the offending assertion, rather than the opaque `Error::NotFound` that
+        // `write_dynamic_assertions` would otherwise raise (see issue #2055 review).
+        #[derive(Debug)]
+        struct TestDynamicAssertion {}
+
+        impl DynamicAssertion for TestDynamicAssertion {
+            fn label(&self) -> String {
+                "com.mycompany.myassertion".to_string()
+            }
+
+            fn reserve_size(&self) -> Result<usize> {
+                Ok(64)
+            }
+
+            fn content(
+                &self,
+                _label: &str,
+                _size: Option<usize>,
+                _claim: &PartialClaim,
+            ) -> Result<DynamicAssertionContent> {
+                Ok(DynamicAssertionContent::Cbor(Vec::new()))
+            }
+        }
+
+        struct DynamicSigner(Box<dyn Signer>);
+
+        impl crate::Signer for DynamicSigner {
+            fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+                self.0.sign(data)
+            }
+
+            fn alg(&self) -> SigningAlg {
+                self.0.alg()
+            }
+
+            fn certs(&self) -> Result<Vec<Vec<u8>>> {
+                self.0.certs()
+            }
+
+            fn reserve_size(&self) -> usize {
+                self.0.reserve_size()
+            }
+
+            fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+                vec![Box::new(TestDynamicAssertion {})]
+            }
+        }
+
+        let context = crate::context::Context::new();
+        let signer = DynamicSigner(test_signer(SigningAlg::Ps256));
+
+        let mut store = Store::from_context(&context);
+        store.commit_claim(create_test_claim().unwrap()).unwrap();
+
+        // Reserve the hard-binding placeholder only – no dynamic-assertion slots.
+        store
+            .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg")
+            .unwrap();
+
+        let err = store.sign_manifest(&signer, &context).unwrap_err();
+        match err {
+            Error::BadParam(msg) => assert!(
+                msg.contains("com.mycompany.myassertion"),
+                "error should name the assertion missing a placeholder slot: {msg}"
+            ),
+            other => panic!("expected Error::BadParam, got {other:?}"),
+        }
+    }
+
+    #[test]
     #[cfg(feature = "file_io")]
     fn test_datahash_embeddable_manifest_user_hashed() {
         let context = crate::context::Context::new();
@@ -8448,7 +8673,7 @@ pub mod tests {
         store.commit_claim(claim).unwrap();
 
         // Do we generate JUMBF?
-        let signer = test_cawg_signer(SigningAlg::Ps256, &[labels::SCHEMA_ORG]).unwrap();
+        let signer = test_cawg_signer(SigningAlg::Ps256, &[labels::SCHEMA_ORG_INTERNAL]).unwrap();
 
         store
             .save_to_bmff_fragmented(
@@ -9000,6 +9225,149 @@ pub mod tests {
         assert!(
             matches!(result, Err(Error::InvalidAsset(_))),
             "expected Err(InvalidAsset) for depth >= MAX_INGREDIENT_DEPTH, got: {result:?}"
+        );
+    }
+
+    // Verify that when an ingredient assertion is included in final_redactions, the claim it
+    // referenced is removed from the incoming store and from svi.ingredient_references.
+    #[test]
+    fn test_redacted_ingredient_assertion_removes_claim() {
+        use crate::{
+            hashed_uri::HashedUri, jumbf::labels::to_signature_uri,
+            utils::test::create_test_store_v1, ClaimGeneratorInfo, ValidationResults,
+        };
+
+        let context = Context::new();
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // --- Build M1: a simple signed manifest with no sub-ingredients. ---
+        let (format, mut input_stream, mut m1_output) = create_test_streams("earth_apollo17.jpg");
+        let mut m1_store = create_test_store_v1().unwrap();
+        m1_store
+            .save_to_stream(
+                format,
+                &mut input_stream,
+                &mut m1_output,
+                signer.as_ref(),
+                &context,
+            )
+            .unwrap();
+
+        m1_output.rewind().unwrap();
+        let m1_vec = m1_output.get_ref().clone();
+        let mut m1_report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let m1_store_loaded = Store::from_stream(
+            format,
+            Cursor::new(m1_vec.clone()),
+            &mut m1_report,
+            &context,
+        )
+        .unwrap();
+        let m1_pc = m1_store_loaded.provenance_claim().unwrap();
+        let m1_label = m1_pc.label().to_owned();
+
+        // --- Build M2: an update manifest whose ingredient assertion points to M1. ---
+        let mut m2_claim = Claim::new("test", Some("m2_ingredient_redact"), 2);
+        m2_claim.add_claim_generator_info(ClaimGeneratorInfo::new("test"));
+
+        let (m1_jumbf, _) =
+            Store::load_jumbf_from_stream(format, &mut Cursor::new(m1_vec.clone()), &context)
+                .unwrap();
+        let mut m2_store =
+            Store::load_ingredient_to_claim(&mut m2_claim, &m1_jumbf, None, &context).unwrap();
+
+        let m1_hashes = m1_store_loaded.get_manifest_box_hashes(m1_pc);
+        let parent_uri = HashedUri::new(
+            m1_store_loaded.provenance_path().unwrap(),
+            Some(m1_pc.alg().to_string()),
+            &m1_hashes.manifest_box_hash,
+        );
+        let sig_uri = HashedUri::new(
+            to_signature_uri(m1_pc.label()),
+            Some(m1_pc.alg().to_string()),
+            &m1_hashes.signature_box_hash,
+        );
+
+        let m1_validation = ValidationResults::from_store(&m1_store_loaded, &m1_report);
+        let parent_ingredient = Ingredient::new_v3(Relationship::ParentOf)
+            .set_active_manifests_and_signature_from_hashed_uri(Some(parent_uri), Some(sig_uri))
+            .set_validation_results(Some(m1_validation));
+        m2_claim.add_assertion(&parent_ingredient).unwrap();
+
+        // An action referencing the ingredient is required by the update manifest schema.
+        let ia = m2_claim.ingredient_assertions()[0];
+        let ia_hashed_uri = HashedUri::new(
+            to_assertion_uri(m2_claim.label(), &ia.label()),
+            Some(m2_claim.alg().to_owned()),
+            ia.hash(),
+        );
+        let actions = Actions::new().add_action(
+            Action::new("c2pa.opened")
+                .set_parameter("ingredients", vec![ia_hashed_uri])
+                .unwrap(),
+        );
+        m2_claim.add_assertion(&actions).unwrap();
+
+        m2_store.commit_update_manifest(m2_claim).unwrap();
+        m1_output.rewind().unwrap();
+        let mut m2_output = Cursor::new(Vec::new());
+        m2_store
+            .save_to_stream(
+                format,
+                &mut m1_output,
+                &mut m2_output,
+                signer.as_ref(),
+                &context,
+            )
+            .unwrap();
+
+        // Load M2 back to discover the exact labels and ingredient assertion label.
+        m2_output.rewind().unwrap();
+        let m2_vec = m2_output.get_ref().clone();
+        let mut m2_report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let m2_store_loaded = Store::from_stream(
+            format,
+            Cursor::new(m2_vec.clone()),
+            &mut m2_report,
+            &context,
+        )
+        .unwrap();
+        let m2_pc = m2_store_loaded.provenance_claim().unwrap();
+        let m2_label = m2_pc.label().to_owned();
+
+        // Build a redaction URI targeting M2's ingredient assertion (which points to M1).
+        let m2_ingredient_assertions = m2_pc.ingredient_assertions();
+        assert!(
+            !m2_ingredient_assertions.is_empty(),
+            "M2 should have an ingredient assertion"
+        );
+        let ingredient_redaction_uri =
+            to_assertion_uri(m2_pc.label(), &m2_ingredient_assertions[0].label());
+
+        // --- Load M2 into M3 with the ingredient assertion redacted. ---
+        let mut m3_claim = Claim::new("test", Some("m3_ingredient_redact"), 2);
+        m3_claim.add_claim_generator_info(ClaimGeneratorInfo::new("test"));
+
+        let (m2_jumbf, _) =
+            Store::load_jumbf_from_stream(format, &mut Cursor::new(m2_vec), &context).unwrap();
+        Store::load_ingredient_to_claim(
+            &mut m3_claim,
+            &m2_jumbf,
+            Some(vec![ingredient_redaction_uri]),
+            &context,
+        )
+        .unwrap();
+
+        // M2 (the provenance claim of the incoming store) must still be present.
+        assert!(
+            m3_claim.claim_ingredient(&m2_label).is_some(),
+            "M2 should remain in M3's ingredients"
+        );
+
+        // M1 must have been removed: its only reference (M2's ingredient assertion) was redacted.
+        assert!(
+            m3_claim.claim_ingredient(&m1_label).is_none(),
+            "M1 should be removed because its only referencing assertion was redacted"
         );
     }
 }
