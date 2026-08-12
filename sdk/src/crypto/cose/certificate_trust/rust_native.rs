@@ -15,6 +15,7 @@ use asn1_rs::{Any, Class, FromDer, Header, Tag};
 use c2pa_raw_crypto::{
     oids::*, validator_for_sig_and_hash_algs, RawSignatureValidationError, SigningAlg,
 };
+use web_time::{SystemTime, UNIX_EPOCH};
 use x509_parser::{certificate::X509Certificate, x509::AlgorithmIdentifier};
 
 use crate::crypto::cose::{CertificateTrustError, CertificateTrustPolicy, TrustAnchorType};
@@ -61,6 +62,29 @@ pub(crate) fn check_certificate_trust(
     // Make sure chain is in the correct order and valid.
     check_chain_order(&full_chain)?;
 
+    // Make sure every cert in the chain was valid at signing time - as its
+    // own pass over the whole chain, independent of where a trust anchor
+    // match is found below. The trust-anchor search returns as soon as it
+    // finds a match, so a check placed inside that loop would only ever run
+    // for the certs from the anchor match onward, silently skipping every
+    // cert between that match and the leaf.
+    let check_time = match signing_time_epoch {
+        Some(t) => t,
+        None => SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| CertificateTrustError::InternalError("system time invalid".to_string()))?
+            .as_secs() as i64,
+    };
+    let check_time = x509_parser::time::ASN1Time::from_timestamp(check_time)
+        .map_err(|_| CertificateTrustError::CertificateNotTrusted)?;
+    for cert in &full_chain {
+        let (_, chain_cert) = X509Certificate::from_der(cert)
+            .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?;
+        if !chain_cert.validity().is_valid_at(check_time) {
+            return Err(CertificateTrustError::CertificateNotTrusted);
+        }
+    }
+
     // Build anchors and check against trust anchors.
     let anchors: Vec<(X509Certificate, &Vec<u8>)> = ctp
         .trust_anchor_ders()
@@ -84,19 +108,10 @@ pub(crate) fn check_certificate_trust(
         .collect();
 
     // Work back from last cert in chain against the trust anchors.
+    // (Validity was already checked for the whole chain above.)
     for cert in full_chain.iter().rev() {
         let (_, chain_cert) = X509Certificate::from_der(cert)
             .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?;
-
-        // Make sure the certificate was not expired.
-        if let Some(signing_time) = signing_time_epoch {
-            if !chain_cert.validity().is_valid_at(
-                x509_parser::time::ASN1Time::from_timestamp(signing_time)
-                    .map_err(|_| CertificateTrustError::CertificateNotTrusted)?,
-            ) {
-                return Err(CertificateTrustError::CertificateNotTrusted);
-            }
-        }
 
         // Check against C2PA trust anchors.
         for (anchor_cert, anchor_der) in &anchors {
