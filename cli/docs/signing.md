@@ -116,7 +116,7 @@ c2patool sends a POST request with the bytes to sign as the body and expects the
 
 ## Settings-only signing (testing only)
 
-For development and testing, you can provide the private key directly in the settings file. **Do not use this in production.**
+For development and testing, you can provide the private key directly in the settings file. **Do not use this in production.** The private key and signing certificate must be in PEM format. The certificate must contain a PEM certificate chain starting with the end-entity certificate used to sign the claim and ending with the intermediate certificate before the root CA certificate.
 
 ### C2PA claim
 
@@ -134,9 +134,9 @@ private_key = """-----BEGIN PRIVATE KEY-----
 tsa_url = "https://timestamp.digicert.com"
 ```
 
-Alternatively, put `sign_cert` and `private_key` as file paths in the manifest JSON, or set the `C2PA_SIGN_CERT` and `C2PA_PRIVATE_KEY` environment variables.
+Alternatively, put `sign_cert`, `private_key`, and (optionally) `alg` as fields in the manifest JSON, or set the `C2PA_SIGN_CERT` and `C2PA_PRIVATE_KEY` environment variables.
 
-If no signer is configured at all, c2patool uses a built-in test certificate and key. This is only suitable for development.
+If no signer is configured at all, c2patool uses a built-in test certificate and key from the [c2patool repo sample folder](https://github.com/contentauth/c2pa-rs/tree/main/cli/sample). This is only suitable for development.
 
 ### CAWG identity assertion
 
@@ -201,4 +201,4 @@ The signer is responsible for all key management. c2patool only sees the public 
 | `es512` | ECDSA with SHA-512 |
 | `ed25519` | EdDSA |
 
-The algorithm must be compatible with the private key and signing certificate. For more information, see [Signing manifests](https://opensource.contentauthenticity.org/docs/signing-manifests).
+The algorithm must be compatible with the private key and signing certificate. For more information, see [Signing and certificates](https://opensource.contentauthenticity.org/docs/signing/).
