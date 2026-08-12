@@ -1642,11 +1642,6 @@ impl Store {
                 .failure_as_err(validation_log, e)
             })?;
 
-            // we don't care about InputTo ingredients
-            if ingredient_assertion.relationship == Relationship::InputTo {
-                continue;
-            }
-
             validation_log
                 .push_ingredient_uri(jumbf::labels::to_assertion_uri(claim.label(), &i.label()));
 
@@ -1837,7 +1832,9 @@ impl Store {
                             Error::ClaimVerification(format!("ingredient: {label} is missing")),
                         )?;
                 }
-            } else {
+            } else if ingredient_assertion.relationship != Relationship::InputTo {
+                // Per C2PA spec 15.11.3.3, record an unknownProvenance code for an
+                // ingredient without provenance, unless its relationship is inputTo.
                 let title = ingredient_assertion.title.unwrap_or("no title".into());
                 let description = format!("{title}: ingredient does not have provenance");
                 log_item!(
@@ -9160,6 +9157,164 @@ pub mod tests {
         assert!(
             matches!(result, Err(Error::InvalidAsset(_))),
             "expected Err(InvalidAsset) for depth >= MAX_INGREDIENT_DEPTH, got: {result:?}"
+        );
+    }
+
+    /// Builds a signed regular manifest (M2) that references a separately-signed
+    /// manifest (M1) as an `inputTo` ingredient.
+    ///
+    /// When `corrupt_hash` is true, M2's ingredient assertion commits (under M2's
+    /// COSE signature) to a bogus `activeManifest` box hash, simulating an
+    /// `inputTo` ingredient whose manifest bytes were altered after signing.
+    /// `verify_after_sign` is disabled so the corrupt asset can be written and the
+    /// detection exercised on the read-back path.
+    ///
+    /// Returns the asset mime format and the signed M2 bytes.
+    fn build_asset_with_input_to_ingredient(corrupt_hash: bool) -> (&'static str, Vec<u8>) {
+        use crate::{
+            hashed_uri::HashedUri, jumbf::labels::to_signature_uri, utils::test::create_test_store,
+            ClaimGeneratorInfo, ValidationResults,
+        };
+
+        let mut context = Context::new();
+        context.settings_mut().verify.verify_after_sign = false;
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // --- M1: a standalone signed ingredient manifest. ---
+        let (format, mut m1_input, mut m1_output) = create_test_streams("earth_apollo17.jpg");
+        let mut m1_store = create_test_store().unwrap();
+        m1_store
+            .save_to_stream(
+                format,
+                &mut m1_input,
+                &mut m1_output,
+                signer.as_ref(),
+                &context,
+            )
+            .unwrap();
+        m1_output.rewind().unwrap();
+        let m1_vec = m1_output.get_ref().clone();
+
+        let mut m1_report = StatusTracker::default();
+        let m1_store_loaded = Store::from_stream(
+            format,
+            Cursor::new(m1_vec.clone()),
+            &mut m1_report,
+            &context,
+        )
+        .unwrap();
+        let m1_pc = m1_store_loaded.provenance_claim().unwrap();
+
+        // --- M2: a regular manifest referencing M1 as an inputTo ingredient. ---
+        let mut m2_claim = Claim::new("input_to_test", Some("m2_input_to"), 2);
+        m2_claim.add_claim_generator_info(ClaimGeneratorInfo::new("test"));
+
+        let (m1_jumbf, _) =
+            Store::load_jumbf_from_stream(format, &mut Cursor::new(m1_vec.clone()), &context)
+                .unwrap();
+        let mut m2_store =
+            Store::load_ingredient_to_claim(&mut m2_claim, &m1_jumbf, None, &context).unwrap();
+
+        let m1_hashes = m1_store_loaded.get_manifest_box_hashes(m1_pc);
+        let mut manifest_box_hash = m1_hashes.manifest_box_hash.clone();
+        if corrupt_hash {
+            // Flip a byte so the signed hash no longer matches M1's actual bytes.
+            manifest_box_hash[0] ^= 0xff;
+        }
+        let parent_uri = HashedUri::new(
+            m1_store_loaded.provenance_path().unwrap(),
+            Some(m1_pc.alg().to_string()),
+            &manifest_box_hash,
+        );
+        let sig_uri = HashedUri::new(
+            to_signature_uri(m1_pc.label()),
+            Some(m1_pc.alg().to_string()),
+            &m1_hashes.signature_box_hash,
+        );
+
+        let m1_validation = ValidationResults::from_store(&m1_store_loaded, &m1_report);
+        let input_to_ingredient = Ingredient::new_v3(Relationship::InputTo)
+            .set_active_manifests_and_signature_from_hashed_uri(Some(parent_uri), Some(sig_uri))
+            .set_validation_results(Some(m1_validation));
+        m2_claim.add_assertion(&input_to_ingredient).unwrap();
+
+        // A created action plus an edit that consumes the inputTo ingredient.
+        let ia = m2_claim.ingredient_assertions()[0];
+        let ia_hashed_uri = HashedUri::new(
+            to_assertion_uri(m2_claim.label(), &ia.label()),
+            Some(m2_claim.alg().to_owned()),
+            ia.hash(),
+        );
+        let actions = Actions::new()
+            .add_action(Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty))
+            .add_action(
+                Action::new("c2pa.edited")
+                    .set_parameter("ingredients", vec![ia_hashed_uri])
+                    .unwrap(),
+            );
+        m2_claim.add_assertion(&actions).unwrap();
+
+        m2_store.commit_claim(m2_claim).unwrap();
+
+        let (_f, mut m2_input, mut m2_output) = create_test_streams("earth_apollo17.jpg");
+        m2_store
+            .save_to_stream(
+                format,
+                &mut m2_input,
+                &mut m2_output,
+                signer.as_ref(),
+                &context,
+            )
+            .unwrap();
+        m2_output.rewind().unwrap();
+        (format, m2_output.get_ref().clone())
+    }
+
+    // A well-formed `inputTo` ingredient must actually be hash-validated, not
+    // skipped. Regression guard for the vuln where `ingredient_checks` did an
+    // unconditional `continue` for `Relationship::InputTo`, so the ingredient
+    // manifest was never checked against its signed hash. The success code
+    // `ingredient.manifest.validated` is only emitted when that check runs.
+    #[test]
+    fn test_input_to_ingredient_is_validated() {
+        let context = Context::new();
+        let (format, m2_vec) = build_asset_with_input_to_ingredient(false);
+
+        let mut report = StatusTracker::default();
+        Store::from_stream(format, Cursor::new(m2_vec), &mut report, &context).unwrap();
+
+        assert!(
+            !report.has_any_error(),
+            "valid inputTo ingredient should not produce errors: {:?}",
+            report.logged_items()
+        );
+        assert!(
+            report.has_status(validation_status::INGREDIENT_MANIFEST_VALIDATED),
+            "inputTo ingredient manifest must be hash-validated, got: {:?}",
+            report.logged_items()
+        );
+    }
+
+    // Tampering an `inputTo` ingredient's manifest (so its bytes no longer match
+    // the hash the active claim signed) must be caught. Before the fix this path
+    // was skipped entirely and the asset reported Valid, forging source
+    // attribution. It must now surface `ingredient.manifest.mismatch`.
+    #[test]
+    fn test_input_to_ingredient_hash_mismatch_detected() {
+        let context = Context::new();
+        let (format, m2_vec) = build_asset_with_input_to_ingredient(true);
+
+        let mut report = StatusTracker::default();
+        let _ = Store::from_stream(format, Cursor::new(m2_vec), &mut report, &context);
+
+        assert!(
+            report.has_status(validation_status::INGREDIENT_MANIFEST_MISMATCH),
+            "tampered inputTo ingredient must be detected as a manifest mismatch, got: {:?}",
+            report.logged_items()
+        );
+        assert!(
+            report.has_any_error(),
+            "tampered inputTo ingredient must fail validation"
         );
     }
 }
