@@ -1,7 +1,8 @@
 use std::{
+    collections::HashMap,
     fs::{self, File},
-    io::{self, Read},
-    path::Path,
+    io::{self, Read, Seek, SeekFrom},
+    path::{Path, PathBuf},
 };
 
 use tempfile::Builder;
@@ -13,7 +14,7 @@ use crate::{
         CAIWriter, HashObjectPositions,
     },
     error::Result,
-    Error,
+    Error, HashRange,
 };
 
 pub(crate) const MANIFEST_PATH: &str = "META-INF/content_credential.c2pa";
@@ -243,6 +244,68 @@ impl ZipIO {
             reader_writer: output_stream,
         })
     }
+}
+
+/// Computes the byte ranges for the ZIP central directory, skipping the manifest's checksum (if present).
+pub(crate) fn zip_central_directory_range<R>(reader: &mut R) -> Result<Vec<HashRange>>
+where
+    R: Read + Seek + ?Sized,
+{
+    let length = reader.seek(SeekFrom::End(0))?;
+    let mut reader = ZipArchive::new(reader).map_err(ZipError::Read)?;
+
+    let start = reader.central_directory_start();
+
+    let crc_start = match reader.index_for_path(Path::new(MANIFEST_PATH)) {
+        Some(index) => {
+            let file = reader.by_index(index).map_err(ZipError::Read)?;
+            Some(file.central_header_start() + CENTRAL_DIRECTORY_CRC_OFFSET)
+        }
+        None => None,
+    };
+
+    Ok(match crc_start {
+        Some(crc_start) => vec![
+            HashRange::new(start, crc_start - start),
+            HashRange::new(crc_start + CRC_LEN, length - (crc_start + CRC_LEN)),
+        ],
+        None => vec![HashRange::new(start, length - start)],
+    })
+}
+
+/// Computes the byte ranges for each file entry in a ZIP stream, from local header entry to end of data.
+pub(crate) fn zip_uri_ranges<R>(stream: &mut R) -> Result<HashMap<PathBuf, HashRange>>
+where
+    R: Read + Seek + ?Sized,
+{
+    let mut reader = ZipArchive::new(stream).map_err(ZipError::Read)?;
+
+    let mut ranges = HashMap::new();
+    let file_names: Vec<String> = reader.file_names().map(|n| n.to_owned()).collect();
+    for file_name in file_names {
+        let file = reader.by_name(&file_name).map_err(ZipError::Read)?;
+
+        if !file.is_dir() {
+            match file.enclosed_name() {
+                Some(path) => {
+                    if path != Path::new(MANIFEST_PATH) {
+                        let header_start = file.header_start();
+                        let data_start = file.data_start().ok_or(Error::JumbfNotFound)?;
+                        let len = (data_start + file.compressed_size()) - header_start;
+                        ranges.insert(path, HashRange::new(header_start, len));
+                    }
+                }
+                None => {
+                    return Err(Error::BadParam(format!(
+                        "Invalid stored path `{}` in zip file",
+                        file_name
+                    )))
+                }
+            }
+        }
+    }
+
+    Ok(ranges)
 }
 
 /// Errors that can occur while handling C2PA data in a ZIP-based asset.

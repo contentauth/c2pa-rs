@@ -1,17 +1,16 @@
 use std::{
     collections::HashMap,
     fs::{self, File},
-    io::{Read, Seek, SeekFrom},
+    io::{self, Read, Seek},
     path::{Component, Path, PathBuf},
 };
 
 use serde::{Deserialize, Serialize};
-use zip::ZipArchive;
 
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::{labels::COLLECTION_HASH, AssetType},
-    asset_handlers::zip_io::{ZipError, CENTRAL_DIRECTORY_CRC_OFFSET, CRC_LEN, MANIFEST_PATH},
+    asset_handlers::zip_io::{zip_central_directory_range, zip_uri_ranges},
     hash_stream_by_alg,
     hash_utils::verify_stream_by_alg,
     validation_status::{
@@ -32,16 +31,7 @@ pub struct CollectionHash {
     pub uris: HashMap<PathBuf, UriHashedDataMap>,
 
     /// Algorithm used to hash the files.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub alg: Option<String>,
-
-    /// This field represents the root directory where files must be contained within. If the path is a file, it
-    /// will default to using the file's parent. For more information, read [`CollectionHash::new`][CollectionHash::new].
-    ///
-    /// While this field is marked as optional (it is not serialized as part of the spec), it is required for computing
-    /// hashes and MUST be specified.
-    #[serde(skip_serializing)]
-    pub base_path: Option<PathBuf>,
+    pub alg: String,
 
     /// Hash of the ZIP central directory.
     ///
@@ -79,62 +69,82 @@ pub struct UriHashedDataMap {
 impl CollectionHash {
     pub const LABEL: &'static str = COLLECTION_HASH;
 
-    /// Create a new collection hash with the specified base path.
+    /// Create a new, empty collection hash that hashes with the given algorithm.
     ///
-    /// A base path means that any path added to the collection will use the base path as the root. If the
-    /// added path is outside the scope of the base path, hashing will immediately result in an error.
-    ///
-    /// The base path may either be a file or a directory. However, if it s a file, it will use the parent
-    /// directory as the root.
-    pub fn new(base_path: PathBuf) -> Result<Self> {
-        Self::new_raw(base_path, None)
-    }
-
-    /// Create a new collection hash with the specified algorithm.
-    ///
-    /// For more details on base_path, read [`CollectionHash::new`][CollectionHash::new].
-    pub fn with_alg(base_path: PathBuf, alg: String) -> Result<Self> {
-        Self::new_raw(base_path, Some(alg))
+    /// The base path (the root that URIs are resolved against when hashing) is supplied to
+    /// [`gen_hash`](Self::gen_hash) and [`verify_hash`](Self::verify_hash).
+    pub fn new(alg: String) -> Result<Self> {
+        Ok(Self {
+            uris: HashMap::new(),
+            alg,
+            zip_central_directory_hash: None,
+        })
     }
 
     /// Adds a new file to the collection hash.
     ///
-    /// Note that the specified path MUST be a file, not a directory. It must also be within the scope of the
-    /// base_path. Read more on base_path in [`CollectionHash::new`][CollectionHash::new].
+    /// The specified path MUST be a file, not a directory.
     pub fn add_file(&mut self, path: PathBuf) -> Result<()> {
-        self.add_file_raw(path, None)
-    }
+        if !path.is_file() {
+            return Err(Error::BadParam(format!(
+                "collection hashes must only contain files, got `{}`",
+                path.display()
+            )));
+        }
 
-    /// Add a file with the specified data types.
-    ///
-    /// Read more on the constraints of these parameters in [`CollectionHash::add_file`][CollectionHash::add_file].
-    pub fn add_file_with_data_types(
-        &mut self,
-        path: PathBuf,
-        data_types: Vec<AssetType>,
-    ) -> Result<()> {
-        self.add_file_raw(path, Some(data_types))
+        for component in path.components() {
+            match component {
+                Component::CurDir | Component::ParentDir => {
+                    return Err(Error::BadParam(format!(
+                        "URI `{}` must not contain relative components: `.` nor `..`",
+                        path.display()
+                    )));
+                }
+                _ => {}
+            }
+        }
+
+        let format = crate::format_from_path(&path);
+        let metadata = fs::metadata(&path)?;
+        self.uris.insert(
+            path,
+            UriHashedDataMap {
+                hash: None,
+                size: Some(metadata.len()),
+                dc_format: format,
+                data_types: None,
+            },
+        );
+
+        Ok(())
     }
 
     /// Generate the hashes for the files in the collection.
-    pub fn gen_hash<R>(&mut self) -> Result<()>
-    where
-        R: Read + Seek + ?Sized,
-    {
-        let alg = self.alg().to_owned();
-        let base_path = self.base_path()?.to_owned();
+    ///
+    /// The base path is the directory that each URI is resolved against.
+    pub fn gen_hash(&mut self, base_path: &Path) -> Result<()> {
+        if base_path.is_file() {
+            return Err(Error::BadParam(format!(
+                "base path must be a directory, got `{}`",
+                base_path.display()
+            )));
+        }
 
-        for (path, uri_map) in &mut self.uris {
-            let path = base_path.join(path);
-            Self::validate_path(&path)?;
+        for (uri, uri_map) in &mut self.uris {
+            Self::validate_uri(uri)?;
 
-            let mut file = File::open(&path)?;
+            let mut file = File::open(base_path.join(uri)).map_err(|err| match err.kind() {
+                io::ErrorKind::NotFound => {
+                    Error::C2PAValidation(ASSERTION_COLLECTIONHASH_INCORRECT_FILE_COUNT.to_string())
+                }
+                _ => Error::IoError(err),
+            })?;
             let file_len = match uri_map.size {
                 Some(file_len) => file_len,
                 None => file.metadata()?.len(),
             };
             uri_map.hash = Some(hash_stream_by_alg(
-                &alg,
+                &self.alg,
                 &mut file,
                 Some(vec![HashRange::new(0, file_len)]),
                 false,
@@ -145,66 +155,66 @@ impl CollectionHash {
     }
 
     /// Validate the hashes for the files in the collection.
-    pub fn verify_hash<R>(&self, alg: Option<&str>) -> Result<()>
-    where
-        R: Read + Seek + ?Sized,
-    {
-        let alg = alg.unwrap_or_else(|| self.alg());
-        let base_path = self.base_path()?;
+    ///
+    /// The base path is the directory that each URI is resolved against.
+    pub fn verify_hash(&self, base_path: &Path) -> Result<()> {
+        if base_path.is_file() {
+            return Err(Error::BadParam(format!(
+                "base path must be a directory, got `{}`",
+                base_path.display()
+            )));
+        }
 
-        for (path, uri_map) in &self.uris {
-            let path = base_path.join(path);
-            Self::validate_path(&path)?;
+        for (uri, uri_map) in &self.uris {
+            let hash = uri_map.hash.as_ref().ok_or_else(|| {
+                Error::C2PAValidation(ASSERTION_COLLECTIONHASH_MALFORMED.to_string())
+            })?;
 
-            let mut file = File::open(&path)?;
+            Self::validate_uri(uri)?;
+
+            let mut file = File::open(base_path.join(uri)).map_err(|err| match err.kind() {
+                io::ErrorKind::NotFound => {
+                    Error::C2PAValidation(ASSERTION_COLLECTIONHASH_INCORRECT_FILE_COUNT.to_string())
+                }
+                _ => Error::IoError(err),
+            })?;
             let file_len = file.metadata()?.len();
 
-            match &uri_map.hash {
-                Some(hash) => {
-                    if !verify_stream_by_alg(
-                        alg,
-                        hash,
-                        &mut file,
-                        Some(vec![HashRange::new(0, file_len)]),
-                        false,
-                    ) {
-                        return Err(Error::HashMismatch(format!(
-                            "hash for {} does not match",
-                            path.display()
-                        )));
-                    }
-                }
-                None => {
-                    return Err(Error::BadParam(
-                        "must generate hashes before verifying".to_owned(),
-                    ));
-                }
+            if !verify_stream_by_alg(
+                &self.alg,
+                hash,
+                &mut file,
+                Some(vec![HashRange::new(0, file_len)]),
+                false,
+            ) {
+                return Err(Error::HashMismatch(format!(
+                    "hash for {} does not match",
+                    uri.display()
+                )));
             }
         }
 
         Ok(())
     }
 
+    /// Generate the collection hash for a ZIP-based asset.
     pub fn gen_hash_from_zip_stream<R>(&mut self, stream: &mut R) -> Result<()>
     where
         R: Read + Seek + ?Sized,
     {
-        let alg = self.alg().to_owned();
-
         let zip_central_directory_inclusions = zip_central_directory_range(stream)?;
-        let zip_central_directory_hash =
-            hash_stream_by_alg(&alg, stream, Some(zip_central_directory_inclusions), false)?;
-        if zip_central_directory_hash.is_empty() {
-            return Err(Error::BadParam("could not generate data hash".to_string()));
-        }
+        let zip_central_directory_hash = hash_stream_by_alg(
+            &self.alg,
+            stream,
+            Some(zip_central_directory_inclusions),
+            false,
+        )?;
         self.zip_central_directory_hash = Some(zip_central_directory_hash);
 
         self.uris = HashMap::new();
         for (path, hash_range) in zip_uri_ranges(stream)? {
-            let hash = hash_stream_by_alg(&alg, stream, Some(vec![hash_range.clone()]), false)?;
-            if hash.is_empty() {
-                return Err(Error::BadParam("could not generate data hash".to_string()));
-            }
+            let hash =
+                hash_stream_by_alg(&self.alg, stream, Some(vec![hash_range.clone()]), false)?;
 
             let format = crate::format_from_path(&path);
             self.uris.insert(
@@ -221,11 +231,12 @@ impl CollectionHash {
         Ok(())
     }
 
+    /// Verify the collection hash for a ZIP-based asset.
     pub fn verify_zip_stream_hash<R>(&self, stream: &mut R, alg: Option<&str>) -> Result<()>
     where
         R: Read + Seek + ?Sized,
     {
-        let alg = alg.unwrap_or_else(|| self.alg());
+        let alg = alg.unwrap_or(self.alg.as_str());
 
         let zip_central_directory_hash = self
             .zip_central_directory_hash
@@ -241,7 +252,7 @@ impl CollectionHash {
             false,
         ) {
             return Err(Error::HashMismatch(
-                "hashes do not match for zip central directory".to_owned(),
+                "hashes do not match for ZIP central directory".to_owned(),
             ));
         }
 
@@ -274,73 +285,15 @@ impl CollectionHash {
         Ok(())
     }
 
-    fn new_raw(base_path: PathBuf, alg: Option<String>) -> Result<Self> {
-        Ok(Self {
-            uris: HashMap::new(),
-            alg,
-            base_path: Some(base_path),
-            zip_central_directory_hash: None,
-        })
-    }
-
-    fn add_file_raw(&mut self, path: PathBuf, data_types: Option<Vec<AssetType>>) -> Result<()> {
-        Self::validate_path(&path)?;
-
-        let format = crate::format_from_path(&path);
-        let metadata = fs::metadata(&path)?;
-        self.uris.insert(
-            path,
-            UriHashedDataMap {
-                hash: None,
-                size: Some(metadata.len()),
-                dc_format: format,
-                data_types,
-            },
-        );
-
-        Ok(())
-    }
-
-    fn alg(&self) -> &str {
-        self.alg.as_deref().unwrap_or("sha256")
-    }
-
-    fn base_path(&self) -> Result<&Path> {
-        match &self.base_path {
-            Some(base_path) => match base_path.is_file() {
-                true => match base_path.parent() {
-                    Some(path) => Ok(path),
-                    None => Err(Error::BadParam(
-                        "base path must be a directory or a file with a parent directory"
-                            .to_owned(),
-                    )),
-                },
-                false => Ok(base_path),
-            },
-            None => Err(Error::BadParam(
-                "must specify base path for collection hash".to_owned(),
-            )),
-        }
-    }
-
-    fn validate_path(path: &Path) -> Result<()> {
-        if !path.is_file() {
-            return Err(Error::BadParam(format!(
-                "collection hashes must only contain files; got `{}`",
-                path.display()
-            )));
-        }
-
-        for component in path.components() {
-            match component {
-                Component::CurDir | Component::ParentDir => {
-                    return Err(Error::BadParam(format!(
-                        "URI `{}` must not contain relative components: `.` nor `..`",
-                        path.display()
-                    )));
-                }
-                _ => {}
-            }
+    /// Validates a collection URI per the C2PA spec.
+    fn validate_uri(uri: &Path) -> Result<()> {
+        if uri
+            .components()
+            .any(|component| matches!(component, Component::CurDir | Component::ParentDir))
+        {
+            return Err(Error::C2PAValidation(
+                ASSERTION_COLLECTIONHASH_INVALID_URI.to_string(),
+            ));
         }
 
         Ok(())
@@ -355,8 +308,8 @@ impl AssertionBase for CollectionHash {
         Self::from_cbor_assertion(assertion)
     }
 
-    // We don't need to check if the zip_central_directory_hash exists, because if it is a zip
-    // and one of the uri maps hashes don't exist, then that means the central dir hash doesn't exist.
+    // we don't need to check if the zip_central_directory_hash exists, because if it is a zip
+    // and one of the uri maps hashes don't exist, then that means the central dir hash doesn't exist
     fn to_assertion(&self) -> Result<Assertion> {
         if self.uris.iter().any(|(_, uri_map)| uri_map.hash.is_none()) {
             return Err(Error::BadParam(
@@ -369,66 +322,6 @@ impl AssertionBase for CollectionHash {
 }
 
 impl AssertionCbor for CollectionHash {}
-
-pub fn zip_central_directory_range<R>(reader: &mut R) -> Result<Vec<HashRange>>
-where
-    R: Read + Seek + ?Sized,
-{
-    let length = reader.seek(SeekFrom::End(0))?;
-    let mut reader = ZipArchive::new(reader).map_err(ZipError::Read)?;
-
-    let start = reader.central_directory_start();
-
-    let crc_start = match reader.index_for_path(Path::new(MANIFEST_PATH)) {
-        Some(index) => {
-            let file = reader.by_index(index).map_err(ZipError::Read)?;
-            Some(file.central_header_start() + CENTRAL_DIRECTORY_CRC_OFFSET)
-        }
-        None => None,
-    };
-
-    Ok(match crc_start {
-        Some(crc_start) => vec![
-            HashRange::new(start, crc_start - start),
-            HashRange::new(crc_start + CRC_LEN, length - (crc_start + CRC_LEN)),
-        ],
-        None => vec![HashRange::new(start, length - start)],
-    })
-}
-
-pub fn zip_uri_ranges<R>(stream: &mut R) -> Result<HashMap<PathBuf, HashRange>>
-where
-    R: Read + Seek + ?Sized,
-{
-    let mut reader = ZipArchive::new(stream).map_err(ZipError::Read)?;
-
-    let mut ranges = HashMap::new();
-    let file_names: Vec<String> = reader.file_names().map(|n| n.to_owned()).collect();
-    for file_name in file_names {
-        let file = reader.by_name(&file_name).map_err(ZipError::Read)?;
-
-        if !file.is_dir() {
-            match file.enclosed_name() {
-                Some(path) => {
-                    if path != Path::new(MANIFEST_PATH) {
-                        let header_start = file.header_start();
-                        let data_start = file.data_start().ok_or(Error::JumbfNotFound)?;
-                        let len = (data_start + file.compressed_size()) - header_start;
-                        ranges.insert(path, HashRange::new(header_start, len));
-                    }
-                }
-                None => {
-                    return Err(Error::BadParam(format!(
-                        "Invalid stored path `{}` in zip file",
-                        file_name
-                    )))
-                }
-            }
-        }
-    }
-
-    Ok(ranges)
-}
 
 #[cfg(test)]
 mod tests {
@@ -444,9 +337,8 @@ mod tests {
 
         let mut collection = CollectionHash {
             uris: HashMap::new(),
-            alg: None,
+            alg: "sha256".to_owned(),
             zip_central_directory_hash: None,
-            base_path: None,
         };
         collection.gen_hash_from_zip_stream(&mut stream)?;
 
