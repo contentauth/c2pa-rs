@@ -75,9 +75,15 @@ pub enum SignerSettings {
 
 impl SignerSettings {
     // TODO: add async signer
-    /// Returns the constructed signer from the [Settings::signer] field.
+    /// Returns the constructed signer from the thread-local `signer` settings field.
     ///
     /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings].
+    ///
+    /// Configure the signer via a [`Context`](crate::Context) passed explicitly to
+    /// [`Builder::from_context`](crate::Builder::from_context) instead.
+    #[deprecated(
+        note = "Configure the signer via `Context` and pass it to `Builder::from_context` instead of using thread-local signer settings."
+    )]
     pub fn signer() -> Result<BoxedSigner> {
         let signer_info = match Settings::get_thread_local_value::<Option<SignerSettings>>("signer")
         {
