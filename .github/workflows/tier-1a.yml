@@ -130,7 +130,7 @@ jobs:
           RUST_BACKTRACE: "1"
           FEATURES: ${{needs.get-features.outputs.openssl-features}}
         run: |
-          cargo llvm-cov --lib --features "$FEATURES" --lcov --output-path lcov-openssl.info
+          cargo llvm-cov --tests --features "$FEATURES" --lcov --output-path lcov-openssl.info
 
       - name: Filter out tests
         uses: scouten/uncover-tests@af7baaca5bf5189b968573d5f14627c2e1ea0704 # v1.1.0
@@ -179,7 +179,7 @@ jobs:
           RUST_BACKTRACE: "1"
           FEATURES: ${{needs.get-features.outputs.rust-native-features}}
         run: |
-          cargo llvm-cov -p c2pa --no-default-features --features "$FEATURES" --lcov --output-path lcov-rust_native_crypto.info
+          cargo llvm-cov -p c2pa --tests --no-default-features --features "$FEATURES" --lcov --output-path lcov-rust_native_crypto.info
 
       - name: Filter out tests
         uses: scouten/uncover-tests@af7baaca5bf5189b968573d5f14627c2e1ea0704 # v1.1.0
