@@ -9,6 +9,19 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.90.12](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.11...c2pa-v0.90.12)
+_12 August 2026_
+
+### Fixed
+
+* Preserve identity assertions in split-signing paths (backport #2421) ([#2465](https://github.com/contentauth/c2pa-rs/pull/2465))
+* Avoid QoS runtime detection warning (backport #2467) ([#2482](https://github.com/contentauth/c2pa-rs/pull/2482))
+* *(sdk)* Validate inputTo ingredients against manifest tampering (#2… ([#2476](https://github.com/contentauth/c2pa-rs/pull/2476))
+
+### Updated dependencies
+
+* Bump sha1 from 0.10.7 to 0.11.0 (backport #2456) ([#2473](https://github.com/contentauth/c2pa-rs/pull/2473))
+
 ## [0.90.11](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.10...c2pa-v0.90.11)
 _12 August 2026_
 
