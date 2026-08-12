@@ -1098,8 +1098,10 @@ mod tests {
 
     // The default policy (`allow_redirects = true`) must NOT block direct requests to internal
     // hosts – that would break enterprise OCSP/timestamp endpoints and local development. Only
-    // *redirects* to internal hosts are blocked. Here a loopback mock server (an internal host) is
-    // reached successfully under the default policy.
+    // *redirects* to internal hosts are blocked. This is a deliberate, documented trade-off (an
+    // accepted risk – see the "Accepted risk" section in the `crate::http` module docs), not an
+    // oversight. Here a loopback mock server (an internal host) is reached successfully under the
+    // default policy.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_default_allows_direct_internal_host() {

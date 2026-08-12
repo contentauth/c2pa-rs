@@ -50,7 +50,7 @@ use http::{Request, Response, Uri};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
-    http::{AsyncHttpResolver, HttpResolverError, SyncHttpResolver},
+    http::{sanitize_for_log, AsyncHttpResolver, HttpResolverError, SyncHttpResolver},
     Result,
 };
 
@@ -110,7 +110,7 @@ impl<T: SyncHttpResolver> SyncHttpResolver for RestrictedResolver<T> {
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
         if !self.is_uri_allowed(request.uri()) {
             return Err(HttpResolverError::UriDisallowed {
-                uri: request.uri().to_string(),
+                uri: sanitize_for_log(&request.uri().to_string()),
             });
         }
         self.inner.http_resolve(request)
@@ -126,7 +126,7 @@ impl<T: AsyncHttpResolver + Sync> AsyncHttpResolver for RestrictedResolver<T> {
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
         if !self.is_uri_allowed(request.uri()) {
             return Err(HttpResolverError::UriDisallowed {
-                uri: request.uri().to_string(),
+                uri: sanitize_for_log(&request.uri().to_string()),
             });
         }
         self.inner.http_resolve_async(request).await
@@ -333,16 +333,16 @@ impl<T> RedirectResolver<T> {
 
         if !self.allow_redirects {
             return Err(HttpResolverError::RedirectDisallowed {
-                uri: from_uri.to_string(),
-                location,
+                uri: sanitize_for_log(&from_uri.to_string()),
+                location: sanitize_for_log(&location),
             });
         }
 
         let target = resolve_redirect_target(from_uri, &location)?;
         if host_is_non_global(&target) {
             return Err(HttpResolverError::RedirectTargetDisallowed {
-                uri: from_uri.to_string(),
-                location: target.to_string(),
+                uri: sanitize_for_log(&from_uri.to_string()),
+                location: sanitize_for_log(&target.to_string()),
             });
         }
 
@@ -372,7 +372,7 @@ impl<T: SyncHttpResolver> SyncHttpResolver for RedirectResolver<T> {
         }
 
         Err(HttpResolverError::TooManyRedirects {
-            uri: request.uri().to_string(),
+            uri: sanitize_for_log(&request.uri().to_string()),
         })
     }
 }
@@ -401,7 +401,7 @@ impl<T: AsyncHttpResolver + Sync> AsyncHttpResolver for RedirectResolver<T> {
         }
 
         Err(HttpResolverError::TooManyRedirects {
-            uri: request.uri().to_string(),
+            uri: sanitize_for_log(&request.uri().to_string()),
         })
     }
 }
@@ -436,8 +436,11 @@ fn resolve_redirect_target(base: &Uri, location: &str) -> Result<Uri, HttpResolv
         .map_err(|e| HttpResolverError::Http(http::Error::from(e)))
 }
 
-/// Builds the follow-up request for a redirect, preserving the original method and body and copying
-/// headers other than `Host` (which the client recomputes for the new authority).
+/// Builds the follow-up request for a redirect, preserving the original method and body.
+///
+/// `Host` is dropped so the client recomputes it for the new authority. Credential-bearing headers
+/// (`Authorization`, `Cookie`, `Proxy-Authorization`) are also dropped: a redirect can cross origins,
+/// and forwarding credentials to the redirect target would leak them to a different host.
 fn build_redirected_request(
     method: http::Method,
     headers: http::HeaderMap,
@@ -447,7 +450,11 @@ fn build_redirected_request(
     let mut builder = Request::builder().method(method).uri(target);
 
     for (name, value) in headers.iter() {
-        if name != http::header::HOST {
+        let drop = name == http::header::HOST
+            || name == http::header::AUTHORIZATION
+            || name == http::header::COOKIE
+            || name == http::header::PROXY_AUTHORIZATION;
+        if !drop {
             builder = builder.header(name, value);
         }
     }
@@ -974,5 +981,47 @@ mod test {
 
         let target = resolve_redirect_target(&base, "https://other.example.org/x").unwrap();
         assert_eq!(target.to_string(), "https://other.example.org/x");
+    }
+
+    #[test]
+    fn sanitize_for_log_escapes_control_chars_and_truncates() {
+        // CR/LF are escaped so a crafted URL can't inject lines into logs.
+        let out = sanitize_for_log("http://x/\r\nSet-Cookie: evil");
+        assert!(!out.contains('\n') && !out.contains('\r'));
+        assert!(out.contains("\\r") && out.contains("\\n"));
+
+        // Overlong values are truncated with an ellipsis marker.
+        let out = sanitize_for_log(&"a".repeat(1000));
+        assert!(out.ends_with('…'));
+        assert!(out.chars().count() <= 257);
+    }
+
+    #[test]
+    fn build_redirected_request_drops_credential_headers() {
+        use http::header;
+
+        let mut headers = http::HeaderMap::new();
+        headers.insert(header::AUTHORIZATION, "Bearer secret".parse().unwrap());
+        headers.insert(header::COOKIE, "sid=secret".parse().unwrap());
+        headers.insert(header::HOST, "old.example.com".parse().unwrap());
+        headers.insert(header::ACCEPT, "application/json".parse().unwrap());
+
+        let req = build_redirected_request(
+            http::Method::GET,
+            headers,
+            Vec::new(),
+            Uri::from_static("https://new.example.com/x"),
+        )
+        .unwrap();
+
+        // Credential-bearing and host headers are not forwarded across the redirect.
+        assert!(req.headers().get(header::AUTHORIZATION).is_none());
+        assert!(req.headers().get(header::COOKIE).is_none());
+        assert!(req.headers().get(header::HOST).is_none());
+        // Non-sensitive headers are preserved.
+        assert_eq!(
+            req.headers().get(header::ACCEPT).unwrap(),
+            "application/json"
+        );
     }
 }

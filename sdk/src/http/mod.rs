@@ -44,12 +44,25 @@
 //! [`HttpResolverError::RedirectDisallowed`]). See [`Core::allowed_network_hosts`] for an explicit
 //! host allow-list.
 //!
-//! ## Local development and internal hosts
+//! ## Scope: which requests this policy governs
 //!
-//! The redirect check applies to redirect *targets*, not the initial request, so a request that
-//! *directly* names an internal host — for example a `localhost` development server acting as a
-//! `did:web` origin or manifest host, or an enterprise OCSP responder on a private address — is
-//! fetched normally. Only being *redirected* to an internal address is blocked.
+//! The policy is applied by the SDK's HTTP *resolvers* ([`Context::resolver`] /
+//! [`Context::resolver_async`]) and therefore covers the requests listed above — remote-manifest
+//! fetches, OCSP, timestamps, and `did:web` resolution — on **both** the read/validate path and the
+//! parts of the signing path that go through those resolvers (e.g. fetching a timestamp or OCSP
+//! staple while building). It does **not** govern the remote-signer transport
+//! ([`SignerSettings::Remote`]), which issues its own request to an operator-configured URL and is
+//! outside this SSRF surface.
+//!
+//! ## Accepted risk: directly-named internal hosts are still reached
+//!
+//! **The redirect check applies to redirect *targets*, not the initial request.** A request that
+//! *directly* names an internal host — a raw IPv4/IPv6 URL such as `http://169.254.169.254/…`, a
+//! `localhost` development server acting as a `did:web` origin or manifest host, or an enterprise
+//! OCSP responder on a private address — **is fetched normally**. This is a deliberate trade-off:
+//! it keeps internal PKI and local development working, and the initial URL is visible to the
+//! operator (unlike a stealthy redirect). Only being *redirected* to an internal address is blocked.
+//! To constrain the initial host as well, configure [`Core::allowed_network_hosts`].
 //!
 //! To restrict which hosts the SDK may contact at all (including each redirect hop), use
 //! [`Core::allowed_network_hosts`]:
@@ -70,6 +83,8 @@
 //! [`Builder`]: crate::Builder
 //! [`TimeStamp`]: crate::assertions::TimeStamp
 //! [`SignerSettings::Remote`]: crate::settings::signer::SignerSettings::Remote
+//! [`Context::resolver`]: crate::Context::resolver
+//! [`Context::resolver_async`]: crate::Context::resolver_async
 //! [`HttpResolverError::RedirectTargetDisallowed`]: crate::http::HttpResolverError::RedirectTargetDisallowed
 //! [`HttpResolverError::RedirectDisallowed`]: crate::http::HttpResolverError::RedirectDisallowed
 //! [`Core::allow_redirects`]: crate::settings::Core::allow_redirects
@@ -324,10 +339,31 @@ impl AsyncHttpResolver for AsyncGenericResolver {
     }
 }
 
-/// An error that occurs during sync/async HTTP resolver resolution.
+/// Sanitizes a URI or other attacker-influenced string before it is embedded in an error message.
 ///
-/// This enum is `#[non_exhaustive]`: match it with a wildcard (`_`) arm so that future error
-/// variants can be added without a breaking change.
+/// Errors may be logged, and their `uri`/`location` fields come from untrusted content (manifest
+/// URLs, redirect targets). This escapes control characters (so a crafted value cannot inject
+/// newlines or terminal escape sequences into logs) and truncates to a bounded length.
+pub(crate) fn sanitize_for_log(value: &str) -> String {
+    const MAX_LEN: usize = 256;
+
+    let mut sanitized = String::new();
+    for ch in value.chars().take(MAX_LEN) {
+        if ch.is_control() {
+            sanitized.extend(ch.escape_default());
+        } else {
+            sanitized.push(ch);
+        }
+    }
+
+    if value.chars().nth(MAX_LEN).is_some() {
+        sanitized.push('…');
+    }
+
+    sanitized
+}
+
+/// An error that occurs during sync/async HTTP resolver resolution.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum HttpResolverError {
