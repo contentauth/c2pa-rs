@@ -1605,6 +1605,7 @@ impl Store {
         validation_log: &mut StatusTracker,
         depth: usize,
         context: &Context,
+        visited: &mut HashSet<String>,
     ) -> Result<()> {
         if depth >= MAX_INGREDIENT_DEPTH {
             return Err(Error::InvalidAsset(format!(
@@ -1803,26 +1804,32 @@ impl Store {
                         .await?;
                     }
 
-                    // recurse nested ingredients
-                    if _sync {
-                        Store::ingredient_checks(
-                            store,
-                            ingredient,
-                            svi,
-                            validation_log,
-                            depth.saturating_add(1),
-                            context,
-                        )?;
-                    } else {
-                        Box::pin(Store::ingredient_checks_async(
-                            store,
-                            ingredient,
-                            svi,
-                            validation_log,
-                            depth.saturating_add(1),
-                            context,
-                        ))
-                        .await?;
+                    // Verify each referenced ingredient manifest's subtree only once per store
+                    // verification; a shared or deep provenance graph would otherwise be re-walked
+                    // along every path, which is exponential.
+                    if visited.insert(ingredient.label().to_owned()) {
+                        if _sync {
+                            Store::ingredient_checks(
+                                store,
+                                ingredient,
+                                svi,
+                                validation_log,
+                                depth.saturating_add(1),
+                                context,
+                                visited,
+                            )?;
+                        } else {
+                            Box::pin(Store::ingredient_checks_async(
+                                store,
+                                ingredient,
+                                svi,
+                                validation_log,
+                                depth.saturating_add(1),
+                                context,
+                                visited,
+                            ))
+                            .await?;
+                        }
                     }
                 } else {
                     log_item!(label.clone(), "ingredient not found", "ingredient_checks")
@@ -2031,16 +2038,30 @@ impl Store {
         let svi =
             store.get_store_validation_info(claim, asset_data.as_deref_mut(), validation_log)?;
 
+        // Track ingredient manifests already verified so shared/deep provenance graphs are
+        // walked once rather than re-verified along every referencing path.
+        let mut visited = HashSet::new();
+        visited.insert(claim.label().to_owned());
+
         if _sync {
             // verify the provenance claim
             Claim::verify_claim(claim, &svi, true, &store.ctp, validation_log, context)?;
 
-            Store::ingredient_checks(store, claim, &svi, validation_log, 0, context)?;
+            Store::ingredient_checks(store, claim, &svi, validation_log, 0, context, &mut visited)?;
         } else {
             Claim::verify_claim_async(claim, &svi, true, &store.ctp, validation_log, context)
                 .await?;
 
-            Store::ingredient_checks_async(store, claim, &svi, validation_log, 0, context).await?;
+            Store::ingredient_checks_async(
+                store,
+                claim,
+                &svi,
+                validation_log,
+                0,
+                context,
+                &mut visited,
+            )
+            .await?;
         }
 
         // verify the asset hash binding once for the whole store, on the binding manifest
@@ -9152,6 +9173,7 @@ pub mod tests {
             &mut validation_log,
             MAX_INGREDIENT_DEPTH,
             &context,
+            &mut HashSet::new(),
         );
 
         assert!(
@@ -9316,5 +9338,107 @@ pub mod tests {
             report.has_any_error(),
             "tampered inputTo ingredient must fail validation"
         );
+    }
+
+    /// Builds a `depth`-level chain of signed manifests where each level references the
+    /// previous level's manifest via TWO `inputTo` ingredient assertions pointing at the
+    /// same child. Without memoization in `ingredient_checks`, verifying the top manifest
+    /// re-walks each shared subtree once per path => 2^depth verifications (exponential).
+    fn build_deep_shared_input_to_asset(depth: usize) -> (&'static str, Vec<u8>) {
+        use crate::{
+            hashed_uri::HashedUri, jumbf::labels::to_signature_uri, utils::test::create_test_store,
+            ClaimGeneratorInfo, ValidationResults,
+        };
+
+        let mut context = Context::new();
+        context.settings_mut().verify.verify_after_sign = false;
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // Leaf level: a standalone signed manifest.
+        let (format, mut leaf_input, mut leaf_output) = create_test_streams("earth_apollo17.jpg");
+        create_test_store()
+            .unwrap()
+            .save_to_stream(format, &mut leaf_input, &mut leaf_output, signer.as_ref(), &context)
+            .unwrap();
+        leaf_output.rewind().unwrap();
+        let mut prev_vec = leaf_output.get_ref().clone();
+
+        for level in 1..depth {
+            let mut prev_report = StatusTracker::default();
+            let prev_store =
+                Store::from_stream(format, Cursor::new(prev_vec.clone()), &mut prev_report, &context)
+                    .unwrap();
+            let prev_pc = prev_store.provenance_claim().unwrap();
+            let prev_hashes = prev_store.get_manifest_box_hashes(prev_pc);
+
+            let mut claim = Claim::new("deep_shared", Some(&format!("m{level}")), 2);
+            claim.add_claim_generator_info(ClaimGeneratorInfo::new("test"));
+
+            let (prev_jumbf, _) =
+                Store::load_jumbf_from_stream(format, &mut Cursor::new(prev_vec.clone()), &context)
+                    .unwrap();
+            let mut store =
+                Store::load_ingredient_to_claim(&mut claim, &prev_jumbf, None, &context).unwrap();
+
+            // Two inputTo ingredient assertions, both referencing the same child manifest.
+            for _ in 0..2 {
+                let parent_uri = HashedUri::new(
+                    prev_store.provenance_path().unwrap(),
+                    Some(prev_pc.alg().to_string()),
+                    &prev_hashes.manifest_box_hash,
+                );
+                let sig_uri = HashedUri::new(
+                    to_signature_uri(prev_pc.label()),
+                    Some(prev_pc.alg().to_string()),
+                    &prev_hashes.signature_box_hash,
+                );
+                let validation = ValidationResults::from_store(&prev_store, &prev_report);
+                let ingredient = Ingredient::new_v3(Relationship::InputTo)
+                    .set_active_manifests_and_signature_from_hashed_uri(
+                        Some(parent_uri),
+                        Some(sig_uri),
+                    )
+                    .set_validation_results(Some(validation));
+                claim.add_assertion(&ingredient).unwrap();
+            }
+
+            let mut actions = Actions::new()
+                .add_action(Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty));
+            for ia in claim.ingredient_assertions() {
+                let ia_hashed_uri = HashedUri::new(
+                    to_assertion_uri(claim.label(), &ia.label()),
+                    Some(claim.alg().to_owned()),
+                    ia.hash(),
+                );
+                actions = actions.add_action(
+                    Action::new("c2pa.edited")
+                        .set_parameter("ingredients", vec![ia_hashed_uri])
+                        .unwrap(),
+                );
+            }
+            claim.add_assertion(&actions).unwrap();
+            store.commit_claim(claim).unwrap();
+
+            let (_f, mut input, mut output) = create_test_streams("earth_apollo17.jpg");
+            store
+                .save_to_stream(format, &mut input, &mut output, signer.as_ref(), &context)
+                .unwrap();
+            output.rewind().unwrap();
+            prev_vec = output.get_ref().clone();
+        }
+
+        (format, prev_vec)
+    }
+
+    // Shared/deep inputTo provenance must be verified in linear time. `ingredient_checks`
+    // memoizes verified claims, so each shared subtree is walked once (O(V+E)); without
+    // that memoization this store's 2^depth path count makes verification hang.
+    #[test]
+    fn test_shared_input_to_graph_verified_once_no_exponential_blowup() {
+        let (format, asset) = build_deep_shared_input_to_asset(25);
+        let context = Context::new();
+        let mut report = StatusTracker::default();
+        // Without the memoization fix this call never returns (exponential re-verification).
+        Store::from_stream(format, Cursor::new(asset), &mut report, &context).unwrap();
     }
 }
