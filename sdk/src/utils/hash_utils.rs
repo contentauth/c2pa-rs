@@ -26,7 +26,15 @@ use sha2::{Digest, Sha256, Sha384, Sha512};
 
 use crate::{crypto::base64::encode, utils::io_utils::stream_len, Error, Result};
 
-const MAX_HASH_BUF: usize = 256 * 1024 * 1024; // cap memory usage to 256MB
+const MAX_HASH_BUF: u64 = 256 * 1024 * 1024; // cap memory usage to 256MB
+
+/// Size of the next chunk to read, given how much of the range is left.
+///
+/// Clamping in `u64` keeps a range of 4 GiB or more from truncating on a 32-bit target, where
+/// `usize` is 32 bits. The cap fits in every supported `usize`, so the clamped value converts.
+fn chunk_size(chunk_left: u64) -> usize {
+    usize::try_from(chunk_left.min(MAX_HASH_BUF)).unwrap_or(usize::MAX)
+}
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 /// Defines a hash range to be used with `hash_stream_by_alg`
@@ -387,13 +395,13 @@ where
         }
     };
 
-    // Total callbacks = one per 256 MB chunk across all ranges (BMFF V2 single-byte offsets
-    // each contribute exactly one tick regardless of MAX_HASH_BUF).
+    // Total callbacks = one per MAX_HASH_BUF chunk across all ranges (BMFF V2 single-byte
+    // offsets each contribute exactly one tick regardless of MAX_HASH_BUF).
     let total: u32 = ranges
         .iter()
         .map(|r| {
             let len = r.end() - r.start() + 1;
-            (len as usize).div_ceil(MAX_HASH_BUF) as u32
+            u32::try_from(len.div_ceil(MAX_HASH_BUF)).unwrap_or(u32::MAX)
         })
         .sum();
     let mut step: u32 = 0;
@@ -418,7 +426,7 @@ where
             data.seek(SeekFrom::Start(*start))?;
 
             loop {
-                let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
+                let mut chunk = vec![0u8; chunk_size(chunk_left)];
 
                 data.read_exact(&mut chunk)?;
 
@@ -453,7 +461,7 @@ where
             // move to start of range
             data.seek(SeekFrom::Start(*start))?;
 
-            let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
+            let mut chunk = vec![0u8; chunk_size(chunk_left)];
             data.read_exact(&mut chunk)?;
 
             loop {
@@ -476,7 +484,7 @@ where
                 }
 
                 // read next chunk while we wait for hash
-                let mut next_chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
+                let mut next_chunk = vec![0u8; chunk_size(chunk_left)];
                 data.read_exact(&mut next_chunk)?;
 
                 hasher_enum = match rx.recv() {
@@ -610,6 +618,20 @@ mod tests {
     use std::io::Cursor;
 
     use super::*;
+
+    #[test]
+    fn chunk_size_does_not_truncate_on_32_bit_targets() {
+        let cap = usize::try_from(MAX_HASH_BUF).unwrap();
+
+        assert_eq!(chunk_size(0), 0);
+        assert_eq!(chunk_size(1), 1);
+        assert_eq!(chunk_size(MAX_HASH_BUF), cap);
+        assert_eq!(chunk_size(MAX_HASH_BUF + 1), cap);
+        // 4 GiB exactly. `chunk_left as usize` is 0 here on a 32-bit target, which made the read
+        // loop ask for zero bytes on every iteration and never terminate.
+        assert_eq!(chunk_size(1 << 32), cap);
+        assert_eq!(chunk_size(u64::MAX), cap);
+    }
 
     // Attacker-controlled HashRange with start+length > u64::MAX must return Err,
     // not panic, in both the exclusion and inclusion paths.
