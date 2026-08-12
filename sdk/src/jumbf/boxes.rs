@@ -846,6 +846,7 @@ impl JUMBFUUIDContentBox {
 //---------------
 pub const CAI_BLOCK_UUID: &str = "6332706100110010800000AA00389B71"; // c2pa
 pub const CAI_MANIFEST_UUID: &str = "63326D6100110010800000AA00389B71"; // c2ma
+pub const CAI_MANIFEST_C2MD_UUID: &str = "63326D6400110010800000AA00389B71"; // c2md
 pub const CAI_COMPRESSED_MANIFEST_UUID: &str = "6332636D00110010800000AA00389B71"; // c2cm
 pub const CAI_UPDATE_MANIFEST_UUID: &str = "6332756D00110010800000AA00389B71"; // c2um
 pub const CAI_ASSERTION_STORE_UUID: &str = "6332617300110010800000AA00389B71"; // c2as
@@ -1438,6 +1439,10 @@ impl Default for CAIVerifiableCredentialStore {
 pub enum ManifestType {
     Manifest,
     UpdateManifest,
+    // A standard manifest read from a `c2md`-tagged superbox (C2PA spec
+    // 11.2.2). Consumers must accept these, but generators must not create
+    // them, so this variant is only ever produced by the read path.
+    C2md,
 }
 
 // ANCHOR CAI Store
@@ -1458,6 +1463,7 @@ impl BMFFBox for CAIManifest {
         match self.manifest_type {
             ManifestType::Manifest => CAI_MANIFEST_UUID,
             ManifestType::UpdateManifest => CAI_UPDATE_MANIFEST_UUID,
+            ManifestType::C2md => CAI_MANIFEST_C2MD_UUID,
         }
     }
 
@@ -1511,6 +1517,7 @@ impl CAIManifest {
         let id = match manifest_type {
             ManifestType::Manifest => Some(CAI_MANIFEST_UUID),
             ManifestType::UpdateManifest => Some(CAI_UPDATE_MANIFEST_UUID),
+            ManifestType::C2md => Some(CAI_MANIFEST_C2MD_UUID),
         };
 
         let sbox = JUMBFSuperBox::new(box_label, id);
@@ -1546,19 +1553,19 @@ impl CAIManifest {
             BoxReader::read_super_box(&mut stream)?
         };
 
-        if store_box.desc_box.box_uuid() == CAI_UPDATE_MANIFEST_UUID {
-            Ok(CAIManifest {
-                compressed_store,
-                manifest_type: ManifestType::UpdateManifest,
-                store: store_box,
-            })
+        let manifest_type = if store_box.desc_box.box_uuid() == CAI_UPDATE_MANIFEST_UUID {
+            ManifestType::UpdateManifest
+        } else if store_box.desc_box.box_uuid() == CAI_MANIFEST_C2MD_UUID {
+            ManifestType::C2md
         } else {
-            Ok(CAIManifest {
-                compressed_store,
-                manifest_type: ManifestType::Manifest,
-                store: store_box,
-            })
-        }
+            ManifestType::Manifest
+        };
+
+        Ok(CAIManifest {
+            compressed_store,
+            manifest_type,
+            store: store_box,
+        })
     }
 
     /// add a box (of various types) *WITHOUT* taking ownership of the box

@@ -25,7 +25,7 @@ const TEST_IMAGE: &[u8] = include_bytes!("fixtures/no_manifest.jpg");
 const FORMAT: &str = "image/jpeg";
 
 // Basic wrapper around a Signer to include a time authority URL.
-struct WrappedTsaSigner(Box<dyn Signer>);
+struct WrappedTsaSigner(Box<dyn Signer + Send + Sync>);
 
 impl Signer for WrappedTsaSigner {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
@@ -239,6 +239,61 @@ fn timestamp_assertion_explicit_builder() {
         .unwrap();
     assert!(timestamp_assertion
         .get_timestamp(child_manifest_label)
+        .is_some());
+}
+
+// Sign a manifest with a child ingredient using an explicit signer, then use `save_to_stream`
+// (which resolves the signer from the context instead of taking one explicitly) to sign the
+// parent manifest and confirm the timestamp assertion is still added.
+#[test]
+fn timestamp_assertion_save_to_stream() {
+    let settings = test_settings();
+    let context = Context::new().with_settings(settings).unwrap();
+
+    let mut child_image = Cursor::new(Vec::new());
+
+    let mut builder = Builder::from_context(context);
+    builder
+        .sign(
+            &WrappedTsaSigner(Box::new(common::test_signer())),
+            FORMAT,
+            &mut Cursor::new(TEST_IMAGE),
+            &mut child_image,
+        )
+        .unwrap();
+
+    child_image.rewind().unwrap();
+    let reader = Reader::default()
+        .with_stream(FORMAT, &mut child_image)
+        .unwrap();
+    let child_manifest_label = reader.active_label().unwrap().to_owned();
+    child_image.rewind().unwrap();
+
+    let parent_context = Context::new()
+        .with_settings(test_settings())
+        .unwrap()
+        .with_signer(WrappedTsaSigner(Box::new(common::test_signer())));
+
+    let mut builder = Builder::from_context(parent_context);
+    builder.set_intent(BuilderIntent::Update);
+    builder.add_timestamp(child_manifest_label.as_str());
+
+    let mut parent_image = Cursor::new(Vec::new());
+    builder
+        .save_to_stream(FORMAT, &mut child_image, &mut parent_image)
+        .unwrap();
+
+    parent_image.rewind().unwrap();
+
+    let reader = Reader::default().with_stream(FORMAT, parent_image).unwrap();
+    let timestamp_assertion: TimeStamp = reader
+        .active_manifest()
+        .unwrap()
+        .find_assertion(assertions::labels::TIMESTAMP)
+        .unwrap();
+
+    assert!(timestamp_assertion
+        .get_timestamp(&child_manifest_label)
         .is_some());
 }
 
