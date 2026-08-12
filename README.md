@@ -1,16 +1,16 @@
-# C2PA Rust library
+# CAI Rust library
 
 [![Tier 1A](https://github.com/contentauth/c2pa-rs/actions/workflows/tier-1a.yml/badge.svg)](https://github.com/contentauth/c2pa-rs/actions/workflows/tier-1a.yml) [![Tier 1B](https://github.com/contentauth/c2pa-rs/actions/workflows/tier-1b.yml/badge.svg)](https://github.com/contentauth/c2pa-rs/actions/workflows/tier-1b.yml) [![Tier 2](https://github.com/contentauth/c2pa-rs/actions/workflows/tier-2.yml/badge.svg)](https://github.com/contentauth/c2pa-rs/actions/workflows/tier-2.yml) [![Latest Version](https://img.shields.io/crates/v/c2pa.svg)](https://crates.io/crates/c2pa) [![docs.rs](https://img.shields.io/docsrs/c2pa)](https://docs.rs/c2pa/) [![codecov](https://codecov.io/gh/contentauth/c2pa-rs/branch/main/graph/badge.svg?token=YVHWI19EGN)](https://codecov.io/gh/contentauth/c2pa-rs)
 
-For information on support tiers for CI tests, see [Support tiers for C2PA Rust SDK products](https://github.com/contentauth/c2pa-rs/blob/main/docs/support-tiers.md)
+For information on support tiers for CI tests, see [Support tiers for the CAI Rust SDK](https://github.com/contentauth/c2pa-rs/blob/main/docs/support-tiers.md)
 
 <div class="github-only">
 
-The **[Coalition for Content Provenance and Authenticity](https://c2pa.org)** (C2PA) addresses the prevalence of misleading information online through the development of technical standards for certifying the source and history (or provenance) of media content. The C2PA Rust library is part of the [Content Authenticity Initiative](https://contentauthenticity.org) open-source SDK.
+The **[Coalition for Content Provenance and Authenticity](https://c2pa.org)** (C2PA) addresses the prevalence of misleading information online through the development of technical standards for certifying the source and history (or provenance) of media content. The CAI Rust library is part of the [Content Authenticity Initiative](https://contentauthenticity.org) open-source SDK.
 
-For the best experience, read the docs on the [CAI Open Source SDK documentation website](https://opensource.contentauthenticity.org/docs/rust-sdk/).  
+For the best experience, read the docs on the [CAI Open Source SDK documentation website](https://opensource.contentauthenticity.org/docs/rust-sdk/).
 
-Join the [Content Authenticity Initiative](https://contentauthenticity.org/membership) to connect with a global community advancing the movement for content transparency, get access to the latest ecosystem news, attend events, and access the CAI brand kit to share your involvement. 
+Join the [Content Authenticity Initiative](https://contentauthenticity.org/membership) to connect with a global community advancing the movement for content transparency, get access to the latest ecosystem news, attend events, and access the CAI brand kit to share your involvement.
 
 Join the [CAI Discord](https://discord.com/invite/CAI) to connect with other implementers, ask questions about the CAI open-source tools, and receive expert guidance on how to build with the C2PA standard.
 
@@ -18,11 +18,11 @@ You can also read the documentation directly in GitHub:
 
 - [Usage](https://github.com/contentauth/c2pa-rs/blob/main/docs/usage.md)
 - [Supported formats](https://github.com/contentauth/c2pa-rs/blob/main/docs/supported-formats.md)
-- [Using the CAWG identity assertion](https://github.com/contentauth/c2pa-rs/blob/main/docs/cawg-id.md)
+- [Using the CAWG identity assertion](https://github.com/contentauth/c2pa-rs/blob/main/docs/cawg-identity.md)
 - [Configuring SDK settings](https://github.com/contentauth/c2pa-rs/blob/main/docs/context-settings.md)
 - [Using intents](https://github.com/contentauth/c2pa-rs/blob/main/docs/intents.md)
 - [Using working stores and archives](https://github.com/contentauth/c2pa-rs/blob/main/docs/working-stores.md)
-- [Using the embeddable API](https://github.com/contentauth/c2pa-rs/blob/main/docs/embeddable-api.md) that provides explicit control over how a C2PA manifest is embedded into an asset. 
+- [Using the embeddable API](https://github.com/contentauth/c2pa-rs/blob/main/docs/embeddable-api.md) that provides explicit control over how a C2PA manifest is embedded into an asset.
 - [Progress and cancellation API](https://github.com/contentauth/c2pa-rs/blob/main/docs/progress_callbacks.md)
 - [Release notes](https://github.com/contentauth/c2pa-rs/blob/main/docs/release-notes.md)
 - [Contributing to the project](https://github.com/contentauth/c2pa-rs/blob/main/docs/project-contributions.md)
@@ -42,40 +42,40 @@ The [`c2pa` crate](https://crates.io/crates/c2pa) implements a subset of the [C2
 
 The library enables a desktop, mobile, or embedded application to:
 
-* Create and sign C2PA [claims](https://c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_claims) and [manifests](https://c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_manifests).
-* Create, sign, and validate [CAWG identity assertions](https://cawg.io/identity) in C2PA manifests.  See [Using the CAWG identity assertion](docs/cawg-identity.md) for more information.
-* Embed manifests in [supported file formats](docs/supported-formats.md).
-* Parse and validate manifests found in [supported file formats](docs/supported-formats.md).
-* Share configuration efficiently across multiple operations and threads through contexts using `Arc<Context>`.
+- Create and sign C2PA [claims](https://c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_claims) and [manifests](https://c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_manifests).
+- Create, sign, and validate [CAWG identity assertions](https://cawg.io/identity) in C2PA manifests. See [Using the CAWG identity assertion](docs/cawg-identity.md) for more information.
+- Embed manifests in [supported file formats](docs/supported-formats.md).
+- Parse and validate manifests found in [supported file formats](docs/supported-formats.md).
+- Share configuration efficiently across multiple operations and threads through contexts using `Arc<Context>`.
 
 The library supports several common C2PA [assertions](https://c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_c2pa_standard_assertions) and [hard bindings](https://c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_hard_bindings).
 
 For details on what you can do with the library, see [Using the Rust library](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/usage).
 
-This library also provides a [C API](https://github.com/contentauth/c2pa-rs/blob/main/c2pa_c_ffi/README.md)  that you can use to integrate with any application that uses C or interfaces with C libraries.
+This library also provides a [C API](https://github.com/contentauth/c2pa-rs/blob/main/c2pa_c_ffi/README.md) that you can use to integrate with any application that uses C or interfaces with C libraries.
 
 ## State of the project
 
 This is a beta release (version 0.x.x) of the project. We govern changes by whether they break compatibility, not by size:
 
-* **Additive changes** (new APIs, bug fixes) ship quickly on the current release train as patch releases (the `y` in `0.x.y`).
-* **Breaking changes** are batched onto a scheduled "release train" that runs roughly every two months and bumps the middle number (`0.x.0`). If no breaking changes are queued when a train is due, it is skipped — so a bump of the middle number is a reliable signal that something actually broke.
+- **Additive changes** (new APIs, bug fixes) ship quickly on the current release train as patch releases (the `y` in `0.x.y`).
+- **Breaking changes** are batched onto a scheduled "release train" that runs roughly every two months and bumps the middle number (`0.x.0`). If no breaking changes are queued when a train is due, it is skipped, so a bump of the middle number is a reliable signal that something actually broke.
 
 This lets us keep moving quickly before 1.0 while giving you a predictable schedule for migrations. For full details, see the [release process](docs/release-process.md) and [deprecation policy](https://github.com/contentauth/c2pa-rs/blob/main/docs/deprecation-policy.md).
 
 ### Which branch to use
 
-* **`main`** is the active development branch. It's always "green" (it compiles and passes CI), but its public API is **not** stable — it may contain unreleased or feature-gated work that changes at any time — and it is **never published to crates.io**. Build from `main` only if you want to preview upcoming work and can tolerate churn.
-* **`stable`** tracks the most recent crates.io release and is where published releases come from. Older `v0.x` branches are retained for retired release lines. **If you depend on `c2pa`, use a released version from [crates.io](https://crates.io/crates/c2pa)** (which comes from `stable`) rather than pinning to `main`.
+- **`main`** is the active development branch. It's always "green" (it compiles and passes CI), but its public API is **not** stable: it may contain unreleased or feature-gated work that changes at any time. It is also **never published to crates.io**. Build from `main` only if you want to preview upcoming work and can tolerate churn.
+- **`stable`** tracks the most recent crates.io release and is where published releases come from. Older `v0.x` branches are retained for retired release lines. **If you depend on `c2pa`, use a released version from [crates.io](https://crates.io/crates/c2pa)** (which comes from `stable`) rather than pinning to `main`.
 
 Every change lands on `main` first and is then brought onto `stable` for release, so `main` is always the superset of what has shipped.
 
 > [!NOTE]
-> The library supports [C2PA v2 claims](https://c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_claims) by default, and implementations should not generate deprecated v1 claims.  For details, see [C2PA v2 claims](docs/release-notes.md#c2pa-v2-claims).
+> The library supports [C2PA v2 claims](https://c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_claims) by default, and implementations should not generate deprecated v1 claims. For details, see [C2PA v2 claims](docs/release-notes.md#c2pa-v2-claims).
 
 ### New API
 
-The current release API replaces old methods of reading and writing C2PA data, which are deprecated.  See the [release notes](docs/release-notes.md) for more information.
+The current release API replaces old methods of reading and writing C2PA data, which are deprecated. See the [release notes](docs/release-notes.md) for more information.
 
 ### Context API for configuration
 
@@ -100,9 +100,9 @@ Minimal supported Rust version (MSRV): The `c2pa` crate requires Rust version 1.
 
 **Install C build tools**
 
-Install the C build tools for your development platoform"
+Install the C build tools for your development platform:
 
-- macOS: XCode with command-line tools
+- macOS: Xcode with command-line tools
 - Windows: Microsoft Visual C++ (MSVC)
 
 ### Build
@@ -111,13 +111,13 @@ The easiest way to build the library is by using the `Makefile`.
 
 To build unit tests, use this command:
 
-```
+```sh
 make test
 ```
 
 To build the binary libraries, use this command:
 
-```
+```sh
 make release
 ```
 
@@ -125,7 +125,7 @@ make release
 
 Add the following line to your `Cargo.toml`:
 
-```
+```toml
 c2pa = "<VERSION_NUMBER>"
 ```
 
@@ -133,7 +133,7 @@ Where `<VERSION_NUMBER>` is the [latest version of the crate as shown on crates.
 
 ## Contributions and feedback
 
-We welcome contributions to this project.  For information on contributing, providing feedback, and about ongoing work, see [Contributing](https://github.com/contentauth/c2pa-rs/blob/main/CONTRIBUTING.md).  For additional information on testing, see [Contributing to the project](https://github.com/contentauth/c2pa-rs/blob/main/docs/project-contributions.md).
+We welcome contributions to this project. For information on contributing, providing feedback, and about ongoing work, see [Contributing](https://github.com/contentauth/c2pa-rs/blob/main/CONTRIBUTING.md). For additional information on testing, see [Contributing to the project](https://github.com/contentauth/c2pa-rs/blob/main/docs/project-contributions.md).
 
 ## License
 
