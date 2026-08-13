@@ -395,4 +395,93 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_remove_cai_store() -> Result<()> {
+        for sample in SAMPLES {
+            let zip_io = ZipIO {};
+
+            let mut input = Cursor::new(sample);
+            let mut with_manifest = Cursor::new(Vec::new());
+            zip_io.write_cai(&mut input, &mut with_manifest, &[1, 2, 3])?;
+            assert_eq!(zip_io.read_cai(&mut with_manifest)?, [1, 2, 3]);
+
+            let mut removed = Cursor::new(Vec::new());
+            zip_io.remove_cai_store_from_stream(&mut with_manifest, &mut removed)?;
+
+            assert!(matches!(
+                zip_io.read_cai(&mut removed),
+                Err(Error::JumbfNotFound)
+            ));
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_read_cai_invalid_zip() {
+        let zip_io = ZipIO {};
+        let mut not_a_zip = Cursor::new(b"i am a zip".to_vec());
+
+        assert!(matches!(
+            zip_io.read_cai(&mut not_a_zip),
+            Err(Error::ZipError(ZipError::Read(_)))
+        ));
+    }
+
+    #[test]
+    fn test_object_locations_unsupported() {
+        let zip_io = ZipIO {};
+        let mut stream = Cursor::new(SAMPLES[0]);
+
+        assert!(matches!(
+            zip_io.get_object_locations_from_stream(&mut stream),
+            Err(Error::ZipError(ZipError::ObjectLocationsUnsupported))
+        ));
+    }
+
+    #[test]
+    fn test_zip_central_directory_range_no_manifest() -> Result<()> {
+        let mut stream = Cursor::new(SAMPLES[0]);
+        assert_eq!(
+            zip_central_directory_range(&mut stream)?,
+            vec![HashRange::new(369, 727)]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_zip_uri_ranges() -> Result<()> {
+        let mut stream = Cursor::new(SAMPLES[0]);
+        let ranges = zip_uri_ranges(&mut stream)?;
+
+        assert_eq!(ranges.len(), 5);
+        assert_eq!(
+            ranges.get(Path::new("sample1/test1.txt")),
+            Some(&HashRange::new(44, 47))
+        );
+        assert_eq!(
+            ranges.get(Path::new("sample1/test2.txt")),
+            Some(&HashRange::new(313, 56))
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_central_directory_range_skips_manifest_crc() -> Result<()> {
+        let zip_io = ZipIO {};
+        let mut input = Cursor::new(SAMPLES[0]);
+        let mut with_manifest = Cursor::new(Vec::new());
+        zip_io.write_cai(&mut input, &mut with_manifest, &[1, 2, 3])?;
+
+        let ranges = zip_central_directory_range(&mut with_manifest)?;
+        assert_eq!(ranges.len(), 2);
+
+        let uri_ranges = zip_uri_ranges(&mut with_manifest)?;
+        assert!(!uri_ranges.contains_key(Path::new(MANIFEST_PATH)));
+
+        Ok(())
+    }
 }
