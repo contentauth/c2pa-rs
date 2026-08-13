@@ -9505,7 +9505,7 @@ pub mod tests {
                 &[0u8; 32],
             );
 
-            // Here we just want an(y) ingredient to finish creating cycles
+            // Here we just want an(y) ingredient to finish creating cycles.
             let ingredient = Ingredient::new_v2("parent", "image/jpeg")
                 .set_parent()
                 .set_c2pa_manifest_from_hashed_uri(Some(parent_uri));
