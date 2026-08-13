@@ -391,6 +391,11 @@ impl TryFrom<ActionSettings> for Action {
 pub struct ActionsSettings {
     /// Whether or not to set the [Actions::all_actions_included][crate::assertions::Actions::all_actions_included]
     /// field.
+    ///
+    /// This is only a default: when a manifest's sole recorded action is `c2pa.opened` (the
+    /// asset was opened only to record that action and immediately re-saved without any other
+    /// changes), the builder sets the field to `true` regardless of this setting, per the
+    /// [C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_all_actions_included).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub all_actions_included: Option<bool>,
     /// Templates to be added to the [Actions::templates][crate::assertions::Actions::templates] field.

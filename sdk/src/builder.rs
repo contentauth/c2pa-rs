@@ -1933,20 +1933,24 @@ impl Builder {
     /// * `builder.actions.auto_opened_action`
     /// * `builder.actions.templates`
     /// * `builder.actions.actions`
+    /// * `builder.actions.all_actions_included`
     /// * For more, see [Builder::add_auto_actions_assertions]
     ///
     /// Only the first actions assertion of a manifest may carry an inception (created/opened)
     /// action, so `allow_inception` must only be true for that assertion.
+    ///
+    /// Per the C2PA spec's [All actions included](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_all_actions_included)
+    /// section, a claim generator that opens an asset strictly to record its `c2pa.opened`
+    /// action and immediately re-saves it without making any other changes shall set
+    /// `allActionsIncluded` to `true`. That determination can only be made once every action
+    /// has been merged in, so it happens at the end of this function rather than the start.
     fn add_actions_assertion_settings(
         &self,
         ingredient_map: &HashMap<String, (&Relationship, HashedUri)>,
         actions: &mut Actions,
         allow_inception: bool,
     ) -> Result<()> {
-        if actions.all_actions_included.is_none() {
-            actions.all_actions_included =
-                self.context.settings().builder.actions.all_actions_included;
-        }
+        let all_actions_included_explicit = actions.all_actions_included.is_some();
 
         let action_templates = &self.context.settings().builder.actions.templates;
 
@@ -1992,7 +1996,23 @@ impl Builder {
             ));
         }
 
-        self.add_auto_actions_assertions_settings(ingredient_map, actions, allow_inception)
+        self.add_auto_actions_assertions_settings(ingredient_map, actions, allow_inception)?;
+
+        if !all_actions_included_explicit {
+            // A sole `c2pa.opened` action means the asset was opened only to record that
+            // action and immediately re-saved with no other changes, so the spec requires
+            // `allActionsIncluded` to be `true` regardless of any configured default.
+            actions.all_actions_included = if allow_inception
+                && actions.actions.len() == 1
+                && actions.actions[0].action() == c2pa_action::OPENED
+            {
+                Some(true)
+            } else {
+                self.context.settings().builder.actions.all_actions_included
+            };
+        }
+
+        Ok(())
     }
 
     /// Adds c2pa.created, c2pa.opened, and c2pa.placed actions for the specified [Actions][crate::assertions::Actions]
@@ -4549,6 +4569,10 @@ mod tests {
         let action = actions.actions().first().unwrap();
         assert_eq!(action.action(), c2pa_action::OPENED);
 
+        // Opening an ingredient and re-saving without any other changes is the case the spec
+        // requires `allActionsIncluded` to be set to `true` for.
+        assert_eq!(actions.all_actions_included, Some(true));
+
         let ingredient_uris = action
             .parameters
             .as_ref()
@@ -4713,6 +4737,121 @@ mod tests {
             .unwrap();
 
         assert_eq!(actions.all_actions_included, Some(true));
+    }
+
+    // The C2PA spec requires `allActionsIncluded` to be forced to `true` only when the sole
+    // recorded action is `c2pa.opened`; an ingredient opened for editing with additional actions
+    // recorded is not "opened and immediately re-saved without making any other changes", so no
+    // value should be forced.
+    #[test]
+    fn test_all_actions_included_not_forced_when_other_actions_present() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [builder.actions.auto_opened_action]
+                    enabled = true
+                }
+                .to_string(),
+            )
+            .unwrap();
+
+        let context = Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .with_signer(test_signer(SigningAlg::Ps256));
+
+        let mut builder = Builder::from_context(context);
+        builder
+            .add_ingredient_from_stream(parent_json(), "image/jpeg", &mut Cursor::new(TEST_IMAGE))
+            .unwrap();
+        builder.add_action(Action::new("c2pa.cropped")).unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .save_to_stream("image/jpeg", &mut Cursor::new(TEST_IMAGE), &mut output)
+            .unwrap();
+
+        output.rewind().unwrap();
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .unwrap();
+
+        let actions: Actions = reader
+            .active_manifest()
+            .unwrap()
+            .find_assertion(Actions::LABEL)
+            .unwrap();
+
+        assert_eq!(actions.actions().len(), 2);
+        assert_eq!(actions.all_actions_included, None);
+    }
+
+    // A value the caller explicitly authored into the actions assertion data is a statement
+    // about that specific manifest, not a mere fallback default, so it must not be overridden
+    // even when the sole recorded action is `c2pa.opened`.
+    #[test]
+    fn test_all_actions_included_explicit_false_not_overridden() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let definition = json!({
+            "claim_generator_info": [
+                {
+                    "name": "c2pa_test",
+                    "version": "1.0.0"
+                }
+            ],
+            "title": "Test_Manifest",
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "allActionsIncluded": false,
+                        "actions": [
+                            {
+                                "action": "c2pa.opened",
+                                "parameters": {
+                                    "ingredientIds": ["CA.jpg"]
+                                },
+                            }
+                        ]
+                    }
+                }
+            ]
+        })
+        .to_string();
+
+        let mut builder = Builder::default().with_definition(definition).unwrap();
+        builder
+            .add_ingredient_from_stream(parent_json(), "image/jpeg", &mut Cursor::new(TEST_IMAGE))
+            .unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(
+                &test_signer(SigningAlg::Ps256),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+                &mut output,
+            )
+            .unwrap();
+
+        output.rewind().unwrap();
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .unwrap();
+
+        let actions: Actions = reader
+            .active_manifest()
+            .unwrap()
+            .find_assertion(Actions::LABEL)
+            .unwrap();
+
+        assert_eq!(actions.actions().len(), 1);
+        assert_eq!(actions.all_actions_included, Some(false));
     }
 
     #[test]
