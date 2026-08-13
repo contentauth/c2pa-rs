@@ -3004,18 +3004,9 @@ impl Claim {
                         // we don't support multiple streams as input so the only option is paths for non-ZIP-based assets.
                         match asset_data {
                             #[cfg(feature = "file_io")]
-                            ClaimAssetData::Path(asset_path) => {
-                                collection_hash.verify_hash(asset_path.parent().unwrap_or(asset_path))
-                            }
-                            _ => {
-                                return Err(Error::Unsupported(match asset_data.format() {
-                                    Some(format) => format!(
-                                        "collection data hash requires a ZIP-based asset or a file path, got: {format}"
-                                    ),
-                                    None => "collection data hash requires a ZIP-based asset or a file path"
-                                        .to_string(),
-                                }))
-                            }
+                            ClaimAssetData::Path(asset_path) => collection_hash
+                                .verify_hash(asset_path.parent().unwrap_or(asset_path)),
+                            _ => return Err(Error::UnsupportedType),
                         }
                     };
 
