@@ -400,8 +400,8 @@ pub struct ActionsSettings {
     /// [C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_all_actions_included).
     ///
     /// Disabled by default: the builder can only see changes that were recorded as an
-    /// [`Action`][crate::assertions::Action], so enabling this is an assertion by the caller
-    /// that every change made to the asset in this workflow is in fact tracked as an action.
+    /// [`Action`], so enabling this is an assertion by the caller that every change made to
+    /// the asset in this workflow is in fact tracked as an action.
     /// Takes priority over `all_actions_included` when it applies, but never overrides a value
     /// the caller explicitly set on the actions assertion data itself.
     pub auto_all_actions_included: bool,
