@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.90.15](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.14...c2pa-v0.90.15)
+_13 August 2026_
+
+### Fixed
+
+* Hardening against potential deep recursion in update manifests with parent cycles (backport #2493) ([#2501](https://github.com/contentauth/c2pa-rs/pull/2501))
+
 ## [0.90.14](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.13...c2pa-v0.90.14)
 _13 August 2026_
 
