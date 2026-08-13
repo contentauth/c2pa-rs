@@ -1,4 +1,4 @@
-# Support tiers for C2PA Rust SDK products
+# Support tiers for the CAI Rust SDK
 
 The CAI open-source projects define three levels of support for various build configurations.
 These levels of support are inspired by the Rust language project’s [Target Tier Policy](https://doc.rust-lang.org/rustc/target-tier-policy.html) and use similar language.
