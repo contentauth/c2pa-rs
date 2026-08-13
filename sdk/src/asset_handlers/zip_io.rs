@@ -256,21 +256,19 @@ where
 
     let start = reader.central_directory_start();
 
-    let crc_start = match reader.index_for_path(Path::new(MANIFEST_PATH)) {
+    let range = match reader.index_for_path(Path::new(MANIFEST_PATH)) {
         Some(index) => {
             let file = reader.by_index(index).map_err(ZipError::Read)?;
-            Some(file.central_header_start() + CENTRAL_DIRECTORY_CRC_OFFSET)
+            let crc_start = file.central_header_start() + CENTRAL_DIRECTORY_CRC_OFFSET;
+            vec![
+                HashRange::new(start, crc_start - start),
+                HashRange::new(crc_start + CRC_LEN, length - (crc_start + CRC_LEN)),
+            ]
         }
-        None => None,
+        None => vec![HashRange::new(start, length - start)],
     };
 
-    Ok(match crc_start {
-        Some(crc_start) => vec![
-            HashRange::new(start, crc_start - start),
-            HashRange::new(crc_start + CRC_LEN, length - (crc_start + CRC_LEN)),
-        ],
-        None => vec![HashRange::new(start, length - start)],
-    })
+    Ok(range)
 }
 
 /// Computes the byte ranges for each file entry in a ZIP stream, from local header entry to end of data.
