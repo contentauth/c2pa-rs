@@ -95,7 +95,7 @@ The model only works if we stay disciplined about keeping the fast lane non-brea
 
 * **Review norm:** "Can this ship additively? If yes, it goes out now. If it requires a break, it waits for the next train."
 * **Forward-compatible tools:** prefer `#[non_exhaustive]` (enums/structs), sealed traits, and default trait methods so future additions stay compatible.
-* **Deprecate-then-remove:** when we must break, add the replacement API additively now and mark the old one `#[deprecated]`. Removal of the old API rides a later train, after the deprecation window elapses. See the [deprecation policy](https://github.com/contentauth/c2pa-rs/blob/main/docs/deprecation-policy.md). Users get the improvement immediately and a window to migrate.
+* **Deprecate-then-remove:** when we must break, add the replacement API additively and mark the old one `#[deprecated]`. Per the [deprecation policy](https://github.com/contentauth/c2pa-rs/blob/main/docs/deprecation-policy.md), both the deprecation mark and the eventual removal are made on `main` only, never backported: the deprecation surfaces to users when the next train is cut, and the removal rides the following train. The additive replacement can still ship on the current line, so users get the new API right away and a full train's window to migrate before the old one disappears.
 * **Extract-with-re-export:** moving code into a separate crate is additive as long as the public paths are preserved by re-exporting (`pub use`). See [extracted crates](#extracted-crates-multi-repo).
 
 ## Extracted crates: multi-repo
@@ -190,7 +190,7 @@ The first build (`-rc.1`) is cut automatically when the train is cut. A maintain
 
 ### Experimental features build
 
-[`experimental-features.yml`](../.github/workflows/experimental-features.yml) builds, lints, and tests the SDK with every `unstable_` feature enabled, on PRs and daily. It is **non-blocking by design** (`continue-on-error`, and not a required check): [experimental features](https://github.com/contentauth/c2pa-rs/blob/main/docs/experimental-features.md) are community-supported and outside the CAI team's maintenance commitments, so `main` is never gated on their health. A persistent failure is grounds for disabling the feature, not for holding up the SDK. The required tier suites (1A/1B/2), the beta preflight, and the cross-repo canary all exclude `unstable_` features from their build/test/lint jobs – the Tier 1A `docs.rs` preflight is the one deliberate exception, since experimental APIs are intentionally published to docs.rs.
+[`experimental-features.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/experimental-features.yml) builds, lints, and tests the SDK with every `unstable_` feature enabled, on PRs and daily. It is **non-blocking by design** (`continue-on-error`, and not a required check): [experimental features](https://github.com/contentauth/c2pa-rs/blob/main/docs/experimental-features.md) are community-supported and outside the CAI team's maintenance commitments, so `main` is never gated on their health. A persistent failure is grounds for disabling the feature, not for holding up the SDK. The required tier suites (1A/1B/2), the beta preflight, and the cross-repo canary all exclude `unstable_` features from their build/test/lint jobs – the Tier 1A `docs.rs` preflight is the one deliberate exception, since experimental APIs are intentionally published to docs.rs.
 
 ### Label sync
 

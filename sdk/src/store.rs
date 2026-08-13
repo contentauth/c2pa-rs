@@ -95,6 +95,9 @@ const DEFAULT_MANIFEST_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 /// 8 MB thread stack, ~3 000 levels causes an unrecoverable stack overflow (exit 134).
 /// A limit of 200 uses only ~540 KB of stack, providing a large safety margin while
 /// accommodating any realistic provenance chain depth.
+///
+/// Bounds path length only: independent of the `visited` memoization in `ingredient_checks`.
+/// A shared-subtree DAG can have short paths yet exponentially many paths through it.
 const MAX_INGREDIENT_DEPTH: usize = 200;
 
 pub(crate) struct ManifestHashes {
@@ -1603,6 +1606,7 @@ impl Store {
         validation_log: &mut StatusTracker,
         depth: usize,
         context: &Context,
+        visited: &mut HashSet<String>,
     ) -> Result<()> {
         if depth >= MAX_INGREDIENT_DEPTH {
             return Err(Error::InvalidAsset(format!(
@@ -1639,11 +1643,6 @@ impl Store {
                 .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
                 .failure_as_err(validation_log, e)
             })?;
-
-            // we don't care about InputTo ingredients
-            if ingredient_assertion.relationship == Relationship::InputTo {
-                continue;
-            }
 
             validation_log
                 .push_ingredient_uri(jumbf::labels::to_assertion_uri(claim.label(), &i.label()));
@@ -1806,26 +1805,30 @@ impl Store {
                         .await?;
                     }
 
-                    // recurse nested ingredients
-                    if _sync {
-                        Store::ingredient_checks(
-                            store,
-                            ingredient,
-                            svi,
-                            validation_log,
-                            depth.saturating_add(1),
-                            context,
-                        )?;
-                    } else {
-                        Box::pin(Store::ingredient_checks_async(
-                            store,
-                            ingredient,
-                            svi,
-                            validation_log,
-                            depth.saturating_add(1),
-                            context,
-                        ))
-                        .await?;
+                    // Referenced ingredients (subgraphs) get verified once per store verify.
+                    if visited.insert(ingredient.label().to_owned()) {
+                        if _sync {
+                            Store::ingredient_checks(
+                                store,
+                                ingredient,
+                                svi,
+                                validation_log,
+                                depth.saturating_add(1),
+                                context,
+                                visited,
+                            )?;
+                        } else {
+                            Box::pin(Store::ingredient_checks_async(
+                                store,
+                                ingredient,
+                                svi,
+                                validation_log,
+                                depth.saturating_add(1),
+                                context,
+                                visited,
+                            ))
+                            .await?;
+                        }
                     }
                 } else {
                     log_item!(label.clone(), "ingredient not found", "ingredient_checks")
@@ -1835,7 +1838,9 @@ impl Store {
                             Error::ClaimVerification(format!("ingredient: {label} is missing")),
                         )?;
                 }
-            } else {
+            } else if ingredient_assertion.relationship != Relationship::InputTo {
+                // Per C2PA spec 15.11.3.3, record an unknownProvenance code for an
+                // ingredient without provenance, unless its relationship is inputTo.
                 let title = ingredient_assertion.title.unwrap_or("no title".into());
                 let description = format!("{title}: ingredient does not have provenance");
                 log_item!(
@@ -2032,16 +2037,29 @@ impl Store {
         let svi =
             store.get_store_validation_info(claim, asset_data.as_deref_mut(), validation_log)?;
 
+        // keep track of already verified ingredients
+        let mut visited = HashSet::new();
+        visited.insert(claim.label().to_owned());
+
         if _sync {
             // verify the provenance claim
             Claim::verify_claim(claim, &svi, true, &store.ctp, validation_log, context)?;
 
-            Store::ingredient_checks(store, claim, &svi, validation_log, 0, context)?;
+            Store::ingredient_checks(store, claim, &svi, validation_log, 0, context, &mut visited)?;
         } else {
             Claim::verify_claim_async(claim, &svi, true, &store.ctp, validation_log, context)
                 .await?;
 
-            Store::ingredient_checks_async(store, claim, &svi, validation_log, 0, context).await?;
+            Store::ingredient_checks_async(
+                store,
+                claim,
+                &svi,
+                validation_log,
+                0,
+                context,
+                &mut visited,
+            )
+            .await?;
         }
 
         // verify the asset hash binding once for the whole store, on the binding manifest
@@ -3708,6 +3726,20 @@ impl Store {
 
     // get the manifest that should be used for hash binding checks
     fn get_hash_binding_manifest(&self, claim: &Claim) -> Option<String> {
+        self.get_hash_binding_manifest_impl(claim, &mut HashSet::new())
+    }
+
+    fn get_hash_binding_manifest_impl(
+        &self,
+        claim: &Claim,
+        visited: &mut HashSet<String>,
+    ) -> Option<String> {
+        if !visited.insert(claim.label().to_owned()) {
+            // A cyclic chain has no binding manifest.
+            // None maps to a validation error in this case.
+            return None;
+        }
+
         // is this claim valid
         if !claim.update_manifest() && !claim.hash_assertions().is_empty() {
             return Some(claim.label().to_owned());
@@ -3722,7 +3754,7 @@ impl Store {
                     if let Some(parent) = self.get_claim(&parent_label) {
                         // recurse until we find
                         if parent.update_manifest() {
-                            return self.get_hash_binding_manifest(parent);
+                            return self.get_hash_binding_manifest_impl(parent, visited);
                         } else if !parent.hash_assertions().is_empty() {
                             return Some(parent.label().to_owned());
                         }
@@ -9220,6 +9252,7 @@ pub mod tests {
             &mut validation_log,
             MAX_INGREDIENT_DEPTH,
             &context,
+            &mut HashSet::new(),
         );
 
         assert!(
@@ -9368,6 +9401,339 @@ pub mod tests {
         assert!(
             m3_claim.claim_ingredient(&m1_label).is_none(),
             "M1 should be removed because its only referencing assertion was redacted"
+        );
+    }
+
+    /// Builds a signed regular manifest (M2) that references a separately-signed
+    /// manifest (M1) as an `inputTo` ingredient.
+    ///
+    /// When `corrupt_hash` is true, M2's ingredient assertion commits (under M2's
+    /// COSE signature) to a bogus `activeManifest` box hash, simulating an
+    /// `inputTo` ingredient whose manifest bytes were altered after signing.
+    /// `verify_after_sign` is disabled so the corrupt asset can be written and the
+    /// detection exercised on the read-back path.
+    ///
+    /// Returns the asset mime format and the signed M2 bytes.
+    fn build_asset_with_input_to_ingredient(corrupt_hash: bool) -> (&'static str, Vec<u8>) {
+        use crate::{
+            hashed_uri::HashedUri, jumbf::labels::to_signature_uri, utils::test::create_test_store,
+            ClaimGeneratorInfo, ValidationResults,
+        };
+
+        let mut context = Context::new();
+        context.settings_mut().verify.verify_after_sign = false;
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // --- M1: a standalone signed ingredient manifest. ---
+        let (format, mut m1_input, mut m1_output) = create_test_streams("earth_apollo17.jpg");
+        let mut m1_store = create_test_store().unwrap();
+        m1_store
+            .save_to_stream(
+                format,
+                &mut m1_input,
+                &mut m1_output,
+                signer.as_ref(),
+                &context,
+            )
+            .unwrap();
+        m1_output.rewind().unwrap();
+        let m1_vec = m1_output.get_ref().clone();
+
+        let mut m1_report = StatusTracker::default();
+        let m1_store_loaded = Store::from_stream(
+            format,
+            Cursor::new(m1_vec.clone()),
+            &mut m1_report,
+            &context,
+        )
+        .unwrap();
+        let m1_pc = m1_store_loaded.provenance_claim().unwrap();
+
+        // --- M2: a regular manifest referencing M1 as an inputTo ingredient. ---
+        let mut m2_claim = Claim::new("input_to_test", Some("m2_input_to"), 2);
+        m2_claim.add_claim_generator_info(ClaimGeneratorInfo::new("test"));
+
+        let (m1_jumbf, _) =
+            Store::load_jumbf_from_stream(format, &mut Cursor::new(m1_vec.clone()), &context)
+                .unwrap();
+        let mut m2_store =
+            Store::load_ingredient_to_claim(&mut m2_claim, &m1_jumbf, None, &context).unwrap();
+
+        let m1_hashes = m1_store_loaded.get_manifest_box_hashes(m1_pc);
+        let mut manifest_box_hash = m1_hashes.manifest_box_hash.clone();
+        if corrupt_hash {
+            // Flip a byte so the signed hash no longer matches M1's actual bytes.
+            manifest_box_hash[0] ^= 0xff;
+        }
+        let parent_uri = HashedUri::new(
+            m1_store_loaded.provenance_path().unwrap(),
+            Some(m1_pc.alg().to_string()),
+            &manifest_box_hash,
+        );
+        let sig_uri = HashedUri::new(
+            to_signature_uri(m1_pc.label()),
+            Some(m1_pc.alg().to_string()),
+            &m1_hashes.signature_box_hash,
+        );
+
+        let m1_validation = ValidationResults::from_store(&m1_store_loaded, &m1_report);
+        let input_to_ingredient = Ingredient::new_v3(Relationship::InputTo)
+            .set_active_manifests_and_signature_from_hashed_uri(Some(parent_uri), Some(sig_uri))
+            .set_validation_results(Some(m1_validation));
+        m2_claim.add_assertion(&input_to_ingredient).unwrap();
+
+        // A created action plus an edit that consumes the inputTo ingredient.
+        let ia = m2_claim.ingredient_assertions()[0];
+        let ia_hashed_uri = HashedUri::new(
+            to_assertion_uri(m2_claim.label(), &ia.label()),
+            Some(m2_claim.alg().to_owned()),
+            ia.hash(),
+        );
+        let actions = Actions::new()
+            .add_action(Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty))
+            .add_action(
+                Action::new("c2pa.edited")
+                    .set_parameter("ingredients", vec![ia_hashed_uri])
+                    .unwrap(),
+            );
+        m2_claim.add_assertion(&actions).unwrap();
+
+        m2_store.commit_claim(m2_claim).unwrap();
+
+        let (_f, mut m2_input, mut m2_output) = create_test_streams("earth_apollo17.jpg");
+        m2_store
+            .save_to_stream(
+                format,
+                &mut m2_input,
+                &mut m2_output,
+                signer.as_ref(),
+                &context,
+            )
+            .unwrap();
+        m2_output.rewind().unwrap();
+        (format, m2_output.get_ref().clone())
+    }
+
+    // A well-formed `inputTo` ingredient must actually be hash-validated, not
+    // skipped. Regression guard for the vuln where `ingredient_checks` did an
+    // unconditional `continue` for `Relationship::InputTo`, so the ingredient
+    // manifest was never checked against its signed hash. The success code
+    // `ingredient.manifest.validated` is only emitted when that check runs.
+    #[test]
+    fn test_input_to_ingredient_is_validated() {
+        let context = Context::new();
+        let (format, m2_vec) = build_asset_with_input_to_ingredient(false);
+
+        let mut report = StatusTracker::default();
+        Store::from_stream(format, Cursor::new(m2_vec), &mut report, &context).unwrap();
+
+        assert!(
+            !report.has_any_error(),
+            "valid inputTo ingredient should not produce errors: {:?}",
+            report.logged_items()
+        );
+        assert!(
+            report.has_status(validation_status::INGREDIENT_MANIFEST_VALIDATED),
+            "inputTo ingredient manifest must be hash-validated, got: {:?}",
+            report.logged_items()
+        );
+    }
+
+    // Tampering an `inputTo` ingredient's manifest (so its bytes no longer match
+    // the hash the active claim signed) must be caught. Before the fix this path
+    // was skipped entirely and the asset reported Valid, forging source
+    // attribution. It must now surface `ingredient.manifest.mismatch`.
+    #[test]
+    fn test_input_to_ingredient_hash_mismatch_detected() {
+        let context = Context::new();
+        let (format, m2_vec) = build_asset_with_input_to_ingredient(true);
+
+        let mut report = StatusTracker::default();
+        let _ = Store::from_stream(format, Cursor::new(m2_vec), &mut report, &context);
+
+        assert!(
+            report.has_status(validation_status::INGREDIENT_MANIFEST_MISMATCH),
+            "tampered inputTo ingredient must be detected as a manifest mismatch, got: {:?}",
+            report.logged_items()
+        );
+        assert!(
+            report.has_any_error(),
+            "tampered inputTo ingredient must fail validation"
+        );
+    }
+
+    // Cyclic `parentOf` chains also lead to going through cycles.
+    #[test]
+    fn test_hash_binding_manifest_parent_cycle_terminates() {
+        use crate::{hashed_uri::HashedUri, jumbf::labels::to_manifest_uri, ClaimGeneratorInfo};
+
+        let mut store = Store::new();
+
+        let mut claim_a = Claim::new("cycle_a", Some("contentauth"), 2);
+        let mut claim_b = Claim::new("cycle_b", Some("contentauth"), 2);
+        claim_a.add_claim_generator_info(ClaimGeneratorInfo::new("test"));
+        claim_b.add_claim_generator_info(ClaimGeneratorInfo::new("test"));
+        claim_a.set_update_manifest(true);
+        claim_b.set_update_manifest(true);
+
+        let label_a = claim_a.label().to_owned();
+        let label_b = claim_b.label().to_owned();
+
+        // Create the cycle:
+        // Point claims at each other, each as the other's parentOf.
+        for (claim, parent_label) in [(&mut claim_a, &label_b), (&mut claim_b, &label_a)] {
+            let parent_uri = HashedUri::new(
+                to_manifest_uri(parent_label),
+                Some(claim.alg().to_owned()),
+                &[0u8; 32],
+            );
+
+            // Here we just want an(y) ingredient to finish creating cycles.
+            let ingredient = Ingredient::new_v2("parent", "image/jpeg")
+                .set_parent()
+                .set_c2pa_manifest_from_hashed_uri(Some(parent_uri));
+            claim.add_assertion(&ingredient).unwrap();
+        }
+
+        store.insert_restored_claim(label_a.clone(), claim_a);
+        store.insert_restored_claim(label_b, claim_b);
+
+        // Called directly in the test to verify the scenario,
+        // otherwise currently call order of (more) public APIs prevents this.
+        let binding = store.get_hash_binding_manifest(store.get_claim(&label_a).unwrap());
+        assert!(
+            binding.is_none(),
+            "a parentOf cycle has no binding manifest and must terminate, got {binding:?}"
+        );
+    }
+
+    // Manifest stores with deep inputTo ingredients links shouldn't cause exponential recursive checks
+    // (when verify is on).
+    #[test]
+    fn test_shared_ingredient_inputto_graph_verified_once() {
+        use crate::{
+            hashed_uri::HashedUri, jumbf::labels::to_signature_uri, utils::test::create_test_store,
+            ClaimGeneratorInfo, ValidationResults,
+        };
+
+        const DEPTH: usize = 13;
+
+        let mut build_context = Context::new();
+        // Turn some settings off to allow building the test asset.
+        build_context.settings_mut().verify.verify_after_sign = false;
+        build_context.settings_mut().verify.verify_after_reading = false;
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // This is a leaf node...
+        let (format, mut leaf_input, mut leaf_output) = create_test_streams("earth_apollo17.jpg");
+        create_test_store()
+            .unwrap()
+            .save_to_stream(
+                format,
+                &mut leaf_input,
+                &mut leaf_output,
+                signer.as_ref(),
+                &build_context,
+            )
+            .unwrap();
+        leaf_output.rewind().unwrap();
+        let mut prev_vec = leaf_output.get_ref().clone();
+
+        // Each level references the previous level's manifest
+        // via 2 inputTo ingredient assertions pointing at the same child.
+        for level in 1..DEPTH {
+            let mut prev_report = StatusTracker::default();
+            let prev_store = Store::from_stream(
+                format,
+                Cursor::new(prev_vec.clone()),
+                &mut prev_report,
+                &build_context,
+            )
+            .unwrap();
+            let prev_pc = prev_store.provenance_claim().unwrap();
+            let prev_hashes = prev_store.get_manifest_box_hashes(prev_pc);
+
+            let mut claim = Claim::new("deep_shared", Some(&format!("m{level}")), 2);
+            claim.add_claim_generator_info(ClaimGeneratorInfo::new("test"));
+
+            let (prev_jumbf, _) =
+                Store::load_jumbf_from_stream(format, &mut Cursor::new(prev_vec), &build_context)
+                    .unwrap();
+            let mut store =
+                Store::load_ingredient_to_claim(&mut claim, &prev_jumbf, None, &build_context)
+                    .unwrap();
+
+            for _ in 0..2 {
+                let parent_uri = HashedUri::new(
+                    prev_store.provenance_path().unwrap(),
+                    Some(prev_pc.alg().to_string()),
+                    &prev_hashes.manifest_box_hash,
+                );
+                let sig_uri = HashedUri::new(
+                    to_signature_uri(prev_pc.label()),
+                    Some(prev_pc.alg().to_string()),
+                    &prev_hashes.signature_box_hash,
+                );
+                let validation = ValidationResults::from_store(&prev_store, &prev_report);
+                let ingredient = Ingredient::new_v3(Relationship::InputTo)
+                    .set_active_manifests_and_signature_from_hashed_uri(
+                        Some(parent_uri),
+                        Some(sig_uri),
+                    )
+                    .set_validation_results(Some(validation));
+                claim.add_assertion(&ingredient).unwrap();
+            }
+
+            let mut actions = Actions::new()
+                .add_action(Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty));
+            for ia in claim.ingredient_assertions() {
+                let ia_hashed_uri = HashedUri::new(
+                    to_assertion_uri(claim.label(), &ia.label()),
+                    Some(claim.alg().to_owned()),
+                    ia.hash(),
+                );
+                actions = actions.add_action(
+                    Action::new("c2pa.edited")
+                        .set_parameter("ingredients", vec![ia_hashed_uri])
+                        .unwrap(),
+                );
+            }
+            claim.add_assertion(&actions).unwrap();
+            store.commit_claim(claim).unwrap();
+
+            let (_f, mut input, mut output) = create_test_streams("earth_apollo17.jpg");
+            store
+                .save_to_stream(
+                    format,
+                    &mut input,
+                    &mut output,
+                    signer.as_ref(),
+                    &build_context,
+                )
+                .unwrap();
+            output.rewind().unwrap();
+            prev_vec = output.get_ref().clone();
+        }
+
+        // Starting verification from the top manifest will walk the graph we built.
+        // (Default context re-enables the verification settings).
+        let mut report = StatusTracker::default();
+        Store::from_stream(format, Cursor::new(prev_vec), &mut report, &Context::new()).unwrap();
+
+        // Memoization bounds validation steps...
+        let validated = report
+            .logged_items()
+            .iter()
+            .filter(|i| {
+                i.validation_status.as_deref()
+                    == Some(validation_status::INGREDIENT_MANIFEST_VALIDATED)
+            })
+            .count();
+
+        // ... so here we verify the validation count stayed below the bounds.
+        assert!(
+            validated <= 4 * DEPTH,
+            "shared ingredient subtrees must be verified only once"
         );
     }
 }
