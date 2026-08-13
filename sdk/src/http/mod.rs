@@ -617,9 +617,10 @@ pub mod tests {
         target.assert_calls(1);
     }
 
-    // A resolver built for the default (no allow-list) path must not follow redirects: it returns
-    // the 3xx response itself rather than fetching the redirect target. This is the SSRF hardening
-    // for CAI-12574 – the SDK cannot inspect intermediate redirect hops, so it never follows them.
+    // The underlying HTTP client (`new()`) must not auto-follow redirects on its own: it returns the
+    // 3xx response as-is. That is the precondition that lets the SDK-level `RedirectResolver` inspect
+    // and validate each redirect hop (SSRF hardening, CAI-12574) rather than the client silently
+    // chasing them.
     #[async_generic(async_signature(resolver: impl AsyncHttpResolver))]
     pub fn assert_http_resolver_no_redirects(resolver: impl SyncHttpResolver) {
         use httpmock::MockServer;

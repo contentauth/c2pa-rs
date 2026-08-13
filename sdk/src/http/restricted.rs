@@ -507,13 +507,24 @@ fn normalize_host(host: &str) -> String {
     host.to_ascii_lowercase()
 }
 
-/// Returns true if `host` looks like a numeric IPv4 address in a non-standard/obfuscated form (all
-/// digits and dots, or a `0x`/`0X` hex form). Standard addresses are handled by `IpAddr::parse`
-/// before this is called; this only catches forms that parse failed on.
+/// Returns true if `host` looks like a numeric IPv4 address in a non-standard/obfuscated form:
+/// all digits and dots (decimal / octal-looking forms such as `2130706433`, `127.1`, `0177.0.0.1`),
+/// or any dot-separated component in `0x`/`0X` hex form. The hex form may appear in *any* position,
+/// not just the first (e.g. `127.0x1` or `0x7f.0x0.0x0.0x1`). Standard addresses are handled by
+/// `IpAddr::parse` before this is called; this only catches forms that parse failed on.
 fn looks_like_obfuscated_ip(host: &str) -> bool {
-    let digits_and_dots = !host.is_empty() && host.bytes().all(|b| b.is_ascii_digit() || b == b'.');
+    if host.is_empty() {
+        return false;
+    }
 
-    digits_and_dots || host.starts_with("0x") || host.starts_with("0X")
+    // Purely decimal / dotted-decimal (and octal-looking) numeric forms.
+    if host.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
+        return true;
+    }
+
+    // A hex-form octet in any position.
+    host.split('.')
+        .any(|label| label.starts_with("0x") || label.starts_with("0X"))
 }
 
 /// Returns true if `ip` is not a globally routable unicast address and should therefore be blocked
@@ -862,6 +873,8 @@ mod test {
             "http://127.0.0.1./",                       // trailing-dot FQDN form of loopback
             "http://2130706433/",                       // obfuscated decimal 127.0.0.1
             "http://0x7f000001/",                       // obfuscated hex 127.0.0.1
+            "http://127.0x1/",                          // hex octet in a non-leading position
+            "http://0x7f.0x0.0x0.0x1/",                 // dotted all-hex form of 127.0.0.1
             "http://127.1/",                            // short-form IPv4 loopback
         ] {
             assert!(
