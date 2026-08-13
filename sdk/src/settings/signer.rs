@@ -75,6 +75,18 @@ pub enum SignerSettings {
     },
 }
 
+fn cert_chain_pem_to_der(cert_chain_pem: &[u8]) -> crate::Result<Vec<Vec<u8>>> {
+    let fixed = String::from_utf8_lossy(cert_chain_pem).replace("\\n", "\n");
+
+    x509_parser::pem::Pem::iter_from_buffer(fixed.as_bytes())
+        .map(|maybe_pem| {
+            maybe_pem
+                .map(|pem| pem.contents)
+                .map_err(|_| crate::Error::CoseInvalidCert)
+        })
+        .collect()
+}
+
 impl SignerSettings {
     // TODO: add async signer
     /// Returns the constructed signer from the [Settings::signer] field.
