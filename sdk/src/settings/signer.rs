@@ -407,7 +407,11 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
     #![allow(clippy::expect_used)]
 
-    use crate::{settings::Settings, utils::test_signer, Signer, SigningAlg};
+    use crate::{
+        settings::{signer::cert_chain_pem_to_der, Settings},
+        utils::test_signer,
+        Signer, SigningAlg,
+    };
 
     #[cfg(not(target_arch = "wasm32"))]
     fn remote_signer_mock_server<'a>(
@@ -575,7 +579,7 @@ pub mod tests {
         let der_certs = signer.certs().unwrap();
         assert!(!der_certs.is_empty());
         let pem_text = String::from_utf8(sign_cert.to_vec()).unwrap();
-        let expected_der = crate::crypto::cert_chain_pem_to_der(pem_text.as_bytes()).unwrap();
+        let expected_der = cert_chain_pem_to_der(pem_text.as_bytes()).unwrap();
         assert_eq!(der_certs, expected_der);
         for der in &der_certs {
             assert_ne!(der.as_slice(), pem_text.as_bytes());
@@ -622,7 +626,7 @@ pub mod tests {
 
         let der_certs = signer.certs().unwrap();
         assert!(!der_certs.is_empty());
-        let expected_der = crate::crypto::cert_chain_pem_to_der(pem_text.as_bytes()).unwrap();
+        let expected_der = cert_chain_pem_to_der(pem_text.as_bytes()).unwrap();
         assert_eq!(der_certs, expected_der);
 
         mock.assert();
