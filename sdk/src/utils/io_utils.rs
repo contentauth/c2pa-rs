@@ -278,7 +278,8 @@ pub(crate) fn tempdirectory() -> Result<TempDir> {
 /// (see callers in `Reader::to_folder`, which writes the resulting path to
 /// disk), so the derived path is passed through `sanitize_archive_path`
 /// before being returned - this rejects `..`, absolute paths, and backslash
-/// components rather than silently stripping them.
+/// components (harmless `.` components are silently dropped, same as any
+/// normal path normalization).
 #[cfg(feature = "file_io")]
 pub fn uri_to_path(uri: &str, manifest_label: Option<&str>) -> Result<PathBuf> {
     let mut path_str = uri.replace(':', "_");
@@ -288,20 +289,16 @@ pub fn uri_to_path(uri: &str, manifest_label: Option<&str>) -> Result<PathBuf> {
         return sanitize_archive_path(&path_str).map(PathBuf::from);
     }
 
-    let mut path = PathBuf::from(path_str);
-
-    if let Ok(stripped) = path.strip_prefix("/c2pa/") {
-        path = stripped.to_path_buf();
+    if let Some(stripped) = path_str.strip_prefix("/c2pa/") {
+        path_str = stripped.to_owned();
     } else if let Some(manifest_label) = manifest_label {
-        let mut new_path = PathBuf::from(manifest_label.replace(':', "_"));
-        new_path.push(path);
-        path = new_path;
+        // Joined with an explicit `/`, not `PathBuf::push`: on Windows, `push`
+        // inserts `\`, which would mix with the `/`-separated tail and get
+        // rejected below as if it were a backslash-traversal payload.
+        path_str = format!("{}/{path_str}", manifest_label.replace(':', "_"));
     }
 
-    let path_str = path.to_str().ok_or_else(|| {
-        Error::BadParam(format!("Non-UTF-8 resource path derived from URI: {uri}"))
-    })?;
-    sanitize_archive_path(path_str).map(PathBuf::from)
+    sanitize_archive_path(&path_str).map(PathBuf::from)
 }
 
 #[cfg(test)]
