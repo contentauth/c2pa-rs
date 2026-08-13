@@ -9493,12 +9493,12 @@ pub mod tests {
         claim_a.set_update_manifest(true);
         claim_b.set_update_manifest(true);
 
-        let label_a = a.label().to_owned();
-        let label_b = b.label().to_owned();
+        let label_a = claim_a.label().to_owned();
+        let label_b = claim_b.label().to_owned();
 
         // Create the cycle:
         // Point claims at each other, each as the other's parentOf.
-        for (claim, parent_label) in [(&mut a, &label_b), (&mut b, &label_a)] {
+        for (claim, parent_label) in [(&mut claim_a, &label_b), (&mut claim_b, &label_a)] {
             let parent_uri = HashedUri::new(
                 to_manifest_uri(parent_label),
                 Some(claim.alg().to_owned()),
@@ -9512,8 +9512,8 @@ pub mod tests {
             claim.add_assertion(&ingredient).unwrap();
         }
 
-        store.insert_restored_claim(label_a.clone(), a);
-        store.insert_restored_claim(label_b, b);
+        store.insert_restored_claim(label_a.clone(), claim_a);
+        store.insert_restored_claim(label_b, claim_b);
 
         // Called directly in the test to verify the scenario,
         // otherwise currently call order of (more) public APIs prevents this.
