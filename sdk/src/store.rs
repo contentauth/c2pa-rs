@@ -1605,6 +1605,7 @@ impl Store {
         validation_log: &mut StatusTracker,
         depth: usize,
         context: &Context,
+        visited: &mut HashSet<String>,
     ) -> Result<()> {
         if depth >= MAX_INGREDIENT_DEPTH {
             return Err(Error::InvalidAsset(format!(
@@ -1669,6 +1670,12 @@ impl Store {
                 let label = Store::manifest_label_from_path(&c2pa_manifest.url());
 
                 if let Some(ingredient) = store.get_claim(&label) {
+                    // Skip if we've already validated this ingredient (O(2^N) → O(N))
+                    if !visited.insert(label.clone()) {
+                        validation_log.pop_ingredient_uri();
+                        continue;
+                    }
+
                     let alg = match c2pa_manifest.alg() {
                         Some(a) => a,
                         None => ingredient.alg().to_owned(),
@@ -1812,6 +1819,7 @@ impl Store {
                             validation_log,
                             depth.saturating_add(1),
                             context,
+                            visited,
                         )?;
                     } else {
                         Box::pin(Store::ingredient_checks_async(
@@ -1821,6 +1829,7 @@ impl Store {
                             validation_log,
                             depth.saturating_add(1),
                             context,
+                            visited,
                         ))
                         .await?;
                     }
@@ -2035,12 +2044,29 @@ impl Store {
             // verify the provenance claim
             Claim::verify_claim(claim, &svi, true, &store.ctp, validation_log, context)?;
 
-            Store::ingredient_checks(store, claim, &svi, validation_log, 0, context)?;
+            Store::ingredient_checks(
+                store,
+                claim,
+                &svi,
+                validation_log,
+                0,
+                context,
+                &mut HashSet::new(),
+            )?;
         } else {
             Claim::verify_claim_async(claim, &svi, true, &store.ctp, validation_log, context)
                 .await?;
 
-            Store::ingredient_checks_async(store, claim, &svi, validation_log, 0, context).await?;
+            Store::ingredient_checks_async(
+                store,
+                claim,
+                &svi,
+                validation_log,
+                0,
+                context,
+                &mut HashSet::new(),
+            )
+            .await?;
         }
 
         // verify the asset hash binding once for the whole store, on the binding manifest
@@ -9209,6 +9235,7 @@ pub mod tests {
             &mut validation_log,
             MAX_INGREDIENT_DEPTH,
             &context,
+            &mut HashSet::new(),
         );
 
         assert!(
