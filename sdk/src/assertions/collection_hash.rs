@@ -36,7 +36,7 @@ pub struct CollectionHash {
     /// Hash of the ZIP central directory.
     ///
     /// This field only needs to be specified if the collection hash is for a ZIP file.
-    #[serde(with = "serde_bytes", skip_serializing_if = "Option::is_none")]
+    #[serde(with = "serde_bytes", default, skip_serializing_if = "Option::is_none")]
     pub zip_central_directory_hash: Option<Vec<u8>>,
 }
 
