@@ -7,6 +7,14 @@
 # If you change the supported platforms in this workflow, please also
 # update docs/support-tiers.md to match the changes you're making.
 
+# Fork-PR trust is handled by GitHub, not by this workflow: the repository's
+# "Fork pull request workflows from outside collaborators" Actions setting holds
+# a fork PR's workflows until a maintainer approves them, so by the time this
+# suite runs it is already authorized. Same-repo branches (which require write
+# access to push) always run. Secrets are still never exposed to fork PRs, so
+# the Codecov upload steps below additionally gate on the PR originating from
+# this repository.
+
 name: Tier 1A
 
 on:
@@ -25,7 +33,6 @@ on:
       - opened
       - reopened
       - synchronize
-      - labeled
   push:
     branches:
       - main
@@ -34,40 +41,6 @@ on:
       - '*-rc*'
 
 jobs:
-  # Decide once whether this run is trusted, and expose the result to every
-  # other job. A run is trusted when it is not a pull request (push, schedule,
-  # or manual dispatch), when the PR branch lives in this repository, or when a
-  # maintainer has applied the `safe to test` or `check-release` label to a
-  # fork PR.
-  #
-  # We key trust off the PR's head repository rather than `author_association`
-  # because GitHub only reports `MEMBER`/`COLLABORATOR` for public org members
-  # and direct collaborators. A private org member with team-granted write
-  # access shows up as `CONTRIBUTOR` and would otherwise be denied CI even
-  # though they can push branches here. Pushing a branch to this repository
-  # already requires write access, so "the branch is in this repo" is an
-  # accurate, maintenance-free proxy for "the author is a trusted team member".
-  authorize:
-    name: Authorize CI run
-    runs-on: ubuntu-latest
-    outputs:
-      # Full trust: run the entire CI suite.
-      trusted: ${{ steps.decide.outputs.trusted }}
-
-      # Run originates from this repository (not a fork), so repository secrets
-      # (e.g. the Codecov token) are available. Fork PRs never receive secrets,
-      # even when labeled `safe to test`, so secret-dependent steps must gate on
-      # this rather than on `trusted`.
-      same-repo: ${{ steps.decide.outputs.same-repo }}
-    steps:
-      - name: Determine trust level
-        id: decide
-        run: |
-          {
-            echo "same-repo=${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}"
-            echo "trusted=${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository || contains(github.event.pull_request.labels.*.name, 'safe to test') || contains(github.event.pull_request.labels.*.name, 'check-release') }}"
-          } >> "$GITHUB_OUTPUT"
-
   get-features:
     name: Get features
     runs-on: ubuntu-latest
@@ -102,8 +75,7 @@ jobs:
 
   tests-openssl:
     name: Unit tests (OpenSSL installed)
-    needs: [authorize, get-features]
-    if: needs.authorize.outputs.trusted == 'true'
+    needs: get-features
 
     runs-on: ubuntu-latest
 
@@ -130,7 +102,7 @@ jobs:
           RUST_BACKTRACE: "1"
           FEATURES: ${{needs.get-features.outputs.openssl-features}}
         run: |
-          cargo llvm-cov --lib --features "$FEATURES" --lcov --output-path lcov-openssl.info
+          cargo llvm-cov --tests --features "$FEATURES" --lcov --output-path lcov-openssl.info
 
       - name: Filter out tests
         uses: scouten/uncover-tests@af7baaca5bf5189b968573d5f14627c2e1ea0704 # v1.1.0
@@ -141,7 +113,7 @@ jobs:
       # Tokens aren't available for PRs originating from forks,
       # so we don't attempt to upload code coverage in that case.
       - name: Upload code coverage results
-        if: needs.authorize.outputs.same-repo == 'true'
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -151,8 +123,7 @@ jobs:
 
   tests-rust-native-crypto:
     name: Unit tests (Rust native crypto installed)
-    needs: [authorize, get-features]
-    if: needs.authorize.outputs.trusted == 'true'
+    needs: get-features
 
     runs-on: ubuntu-latest
 
@@ -179,7 +150,7 @@ jobs:
           RUST_BACKTRACE: "1"
           FEATURES: ${{needs.get-features.outputs.rust-native-features}}
         run: |
-          cargo llvm-cov -p c2pa --no-default-features --features "$FEATURES" --lcov --output-path lcov-rust_native_crypto.info
+          cargo llvm-cov -p c2pa --tests --no-default-features --features "$FEATURES" --lcov --output-path lcov-rust_native_crypto.info
 
       - name: Filter out tests
         uses: scouten/uncover-tests@af7baaca5bf5189b968573d5f14627c2e1ea0704 # v1.1.0
@@ -190,7 +161,7 @@ jobs:
       # Tokens aren't available for PRs originating from forks,
       # so we don't attempt to upload code coverage in that case.
       - name: Upload code coverage results
-        if: needs.authorize.outputs.same-repo == 'true'
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -200,8 +171,7 @@ jobs:
 
   tests-cli:
     name: Unit tests (c2patool)
-    needs: [authorize, get-features]
-    if: needs.authorize.outputs.trusted == 'true'
+    needs: get-features
 
     runs-on: ubuntu-latest
 
@@ -233,7 +203,7 @@ jobs:
       # Tokens aren't available for PRs originating from forks,
       # so we don't attempt to upload code coverage in that case.
       - name: Upload code coverage results
-        if: needs.authorize.outputs.same-repo == 'true'
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -243,8 +213,7 @@ jobs:
 
   tests-windows-arm-openssl:
     name: Unit tests (Windows ARM, OpenSSL)
-    needs: [authorize, get-features]
-    if: needs.authorize.outputs.trusted == 'true'
+    needs: get-features
 
     runs-on: windows-11-arm
 
@@ -269,8 +238,7 @@ jobs:
 
   tests-windows-arm-rust-native-crypto:
     name: Unit tests (Windows ARM, Rust native crypto)
-    needs: [authorize, get-features]
-    if: needs.authorize.outputs.trusted == 'true'
+    needs: get-features
 
     runs-on: windows-11-arm
 
@@ -295,10 +263,7 @@ jobs:
 
   docs_rs:
     name: Preflight docs.rs build
-    needs: authorize
     runs-on: ubuntu-latest
-
-    if: needs.authorize.outputs.trusted == 'true'
 
     steps:
       - name: Checkout repository
@@ -335,10 +300,8 @@ jobs:
 
   docs_stable:
     name: Doc build (stable, warnings denied)
-    needs: [authorize, get-features]
+    needs: get-features
     runs-on: ubuntu-latest
-
-    if: needs.authorize.outputs.trusted == 'true'
 
     steps:
       - name: Checkout repository
@@ -375,13 +338,11 @@ jobs:
 
   doc-tests:
     name: Doc tests (requires nightly Rust)
-    needs: [authorize, get-features]
+    needs: get-features
     # TODO: Remove this once cargo-llvm-cov can run doc tests and generate
     # coverage. (This requires a bug fix that is only available in nightly Rust.)
     # Watch https://github.com/taiki-e/cargo-llvm-cov/issues/2
     # for progress.
-
-    if: needs.authorize.outputs.trusted == 'true'
 
     runs-on: ubuntu-latest
 
@@ -423,7 +384,7 @@ jobs:
       # Tokens aren't available for PRs originating from forks,
       # so we don't attempt to upload code coverage in that case.
       # - name: Upload code coverage results
-      #   if: needs.authorize.outputs.same-repo == 'true'
+      #   if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
       #   uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
       #   with:
       #     token: ${{ secrets.CODECOV_TOKEN }}
@@ -432,8 +393,6 @@ jobs:
 
   cargo-check:
     name: Default features build
-    needs: authorize
-    if: needs.authorize.outputs.trusted == 'true'
 
     runs-on: ubuntu-latest
 
@@ -454,8 +413,6 @@ jobs:
 
   cargo-lock:
     name: Cargo.lock is up to date
-    needs: authorize
-    if: needs.authorize.outputs.trusted == 'true'
 
     runs-on: ubuntu-latest
 
@@ -473,8 +430,7 @@ jobs:
 
   tests-wasm:
     name: Unit tests (Wasm)
-    needs: [authorize, get-features]
-    if: needs.authorize.outputs.trusted == 'true'
+    needs: get-features
 
     runs-on: ubuntu-latest
 
@@ -512,8 +468,7 @@ jobs:
 
   tests-wasi:
     name: Unit tests (WASI)
-    needs: [authorize, get-features]
-    if: needs.authorize.outputs.trusted == 'true'
+    needs: get-features
 
     runs-on: ubuntu-latest
 
@@ -561,8 +516,7 @@ jobs:
 
   clippy_check:
     name: Clippy
-    needs: [authorize, get-features]
-    if: needs.authorize.outputs.trusted == 'true'
+    needs: get-features
 
     runs-on: ubuntu-latest
 
@@ -587,8 +541,6 @@ jobs:
 
   cargo_fmt:
     name: Enforce Rust code format
-    needs: authorize
-    if: needs.authorize.outputs.trusted == 'true'
 
     runs-on: ubuntu-latest
 
@@ -607,8 +559,6 @@ jobs:
 
   cargo-deny:
     name: License / vulnerability audit
-    needs: authorize
-    if: needs.authorize.outputs.trusted == 'true'
 
     runs-on: ubuntu-latest
 
