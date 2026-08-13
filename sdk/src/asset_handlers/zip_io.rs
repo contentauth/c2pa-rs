@@ -35,7 +35,7 @@ impl CAIWriter for ZipIO {
             .writer(input_stream, output_stream)
             .map_err(ZipError::Write)?;
 
-        match writer.add_directory("META-INF", SimpleFileOptions::default()) {
+        match writer.add_directory("META-INF", SimpleFileOptions::DEFAULT) {
             Err(zip::result::ZipError::InvalidArchive(err))
                 if err.starts_with("Duplicate filename") => {}
             Err(source) => return Err(ZipError::Write(source).into()),
@@ -44,7 +44,7 @@ impl CAIWriter for ZipIO {
 
         match writer.start_file_from_path(
             Path::new(MANIFEST_PATH),
-            SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
+            SimpleFileOptions::DEFAULT.compression_method(CompressionMethod::Stored),
         ) {
             Err(zip::result::ZipError::InvalidArchive(err))
                 if err.starts_with("Duplicate filename") =>
@@ -53,7 +53,7 @@ impl CAIWriter for ZipIO {
                 writer
                     .start_file_from_path(
                         Path::new(MANIFEST_PATH),
-                        SimpleFileOptions::default().compression_method(CompressionMethod::Stored),
+                        SimpleFileOptions::DEFAULT.compression_method(CompressionMethod::Stored),
                     )
                     .map_err(ZipError::Write)?;
             }
