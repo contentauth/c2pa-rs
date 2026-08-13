@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.90.13](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.12...c2pa-v0.90.13)
+_13 August 2026_
+
+### Fixed
+
+* *(sdk)* Parse PEM cert chain to DER for RemoteSigner (backport #2414) ([#2481](https://github.com/contentauth/c2pa-rs/pull/2481))
+
 ## [0.90.12](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.11...c2pa-v0.90.12)
 _12 August 2026_
 
