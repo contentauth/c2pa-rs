@@ -391,13 +391,20 @@ impl TryFrom<ActionSettings> for Action {
 pub struct ActionsSettings {
     /// Whether or not to set the [Actions::all_actions_included][crate::assertions::Actions::all_actions_included]
     /// field.
-    ///
-    /// This is only a default: when a manifest's sole recorded action is `c2pa.opened` (the
-    /// asset was opened only to record that action and immediately re-saved without any other
-    /// changes), the builder sets the field to `true` regardless of this setting, per the
-    /// [C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_all_actions_included).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub all_actions_included: Option<bool>,
+    /// Whether to automatically set [Actions::all_actions_included][crate::assertions::Actions::all_actions_included]
+    /// to `true` when the manifest's sole recorded action is `c2pa.opened` — i.e. the asset was
+    /// opened only to record that action and immediately re-saved without any other changes,
+    /// as required by the
+    /// [C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_all_actions_included).
+    ///
+    /// Disabled by default: the builder can only see changes that were recorded as an
+    /// [`Action`][crate::assertions::Action], so enabling this is an assertion by the caller
+    /// that every change made to the asset in this workflow is in fact tracked as an action.
+    /// Takes priority over `all_actions_included` when it applies, but never overrides a value
+    /// the caller explicitly set on the actions assertion data itself.
+    pub auto_all_actions_included: bool,
     /// Templates to be added to the [Actions::templates][crate::assertions::Actions::templates] field.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) templates: Option<Vec<ActionTemplateSettings>>,
@@ -428,6 +435,7 @@ impl Default for ActionsSettings {
     fn default() -> Self {
         ActionsSettings {
             all_actions_included: None,
+            auto_all_actions_included: false,
             templates: None,
             actions: None,
             auto_created_action: AutoActionSettings {
