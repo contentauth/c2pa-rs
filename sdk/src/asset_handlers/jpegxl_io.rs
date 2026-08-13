@@ -36,13 +36,12 @@
 use std::io::{Cursor, Read, SeekFrom};
 
 use byteorder::{BigEndian, ReadBytesExt};
-use serde_bytes::ByteBuf;
 
 use crate::{
-    assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
-        HashBlockObjectType, HashObjectPositions, RemoteManifestUrl, WriteXmp,
+        AssetBoxHash, AssetIO, BoxMap, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
+        ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteManifestUrl, WriteXmp,
+        C2PA_BOXHASH,
     },
     error::{Error, Result},
     utils::io_utils::{patch_stream, safe_vec, stream_len, BoundedVecWriter},
@@ -769,15 +768,7 @@ impl AssetBoxHash for JpegXlIO {
                 b.type_str()
             };
 
-            box_maps.push(BoxMap {
-                names: vec![name],
-                alg: None,
-                hash: ByteBuf::from(Vec::new()),
-                excluded: None,
-                pad: ByteBuf::from(Vec::new()),
-                range_start: b.offset,
-                range_len: total,
-            });
+            box_maps.push(BoxMap::new(vec![name], b.offset, total));
         }
 
         // If there is no C2PA jumb box, add a placeholder to the box map so the hashing layer
@@ -789,15 +780,8 @@ impl AssetBoxHash for JpegXlIO {
         {
             let range_start = find_jumb_insertion_offset(&boxes);
 
-            let c2pa_box = BoxMap {
-                names: vec![C2PA_BOXHASH.to_string()],
-                alg: None,
-                hash: ByteBuf::from(Vec::new()),
-                excluded: None,
-                pad: ByteBuf::from(Vec::new()),
-                range_start, // will be patched to correct offset by add_required_jumb_to_stream
-                range_len: 0,
-            };
+            // range_start will be patched to correct offset by add_required_jumb_to_stream
+            let c2pa_box = BoxMap::new(vec![C2PA_BOXHASH.to_string()], range_start, 0);
 
             // Insert the C2PA box after ftyp.
             let ftyp_string = String::from("ftyp");

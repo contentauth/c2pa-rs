@@ -15,13 +15,12 @@ use std::io::{self, Read, Seek, SeekFrom};
 
 use byteorder::{BigEndian, ReadBytesExt};
 use png_pong::chunk::InternationalText;
-use serde_bytes::ByteBuf;
 
 use crate::{
-    assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
-        HashBlockObjectType, HashObjectPositions, RemoteManifestUrl, WriteXmp,
+        AssetBoxHash, AssetIO, BoxMap, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
+        ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteManifestUrl, WriteXmp,
+        C2PA_BOXHASH,
     },
     error::{Error, Result},
     utils::io_utils::{patch_stream, ReaderUtils},
@@ -574,47 +573,28 @@ impl AssetBoxHash for PngIO {
         let mut box_maps = Vec::new();
 
         // add PNGh header
-        let pngh_bm = BoxMap {
-            names: vec!["PNGh".to_string()],
-            alg: None,
-            hash: ByteBuf::from(Vec::new()),
-            excluded: None,
-            pad: ByteBuf::from(Vec::new()),
-            range_start: 0,
-            range_len: 8,
-        };
-        box_maps.push(pngh_bm);
+        box_maps.push(BoxMap::new(vec!["PNGh".to_string()], 0, 8));
 
         // add the other boxes
         for pc in ps.into_iter() {
             // add special C2PA box
             if pc.name == CAI_CHUNK {
-                let c2pa_bm = BoxMap {
-                    names: vec![C2PA_BOXHASH.to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    pad: ByteBuf::from(Vec::new()),
-                    range_start: pc.start,
-                    range_len: pc.length as u64 + 12, // length(4) + name(4) + crc(4)
-                };
-                box_maps.push(c2pa_bm);
+                box_maps.push(BoxMap::new(
+                    vec![C2PA_BOXHASH.to_string()],
+                    pc.start,
+                    pc.length as u64 + 12, // length(4) + name(4) + crc(4)
+                ));
                 continue;
             }
 
             // all other chunks
             let chunk_end = pc.end(); // byte immediately after this chunk
             let is_ihdr = pc.name == IMG_HDR;
-            let bm = BoxMap {
-                names: vec![pc.name_str],
-                alg: None,
-                hash: ByteBuf::from(Vec::new()),
-                excluded: None,
-                pad: ByteBuf::from(Vec::new()),
-                range_start: pc.start,
-                range_len: pc.length as u64 + 12, // length(4) + name(4) + crc(4)
-            };
-            box_maps.push(bm);
+            box_maps.push(BoxMap::new(
+                vec![pc.name_str],
+                pc.start,
+                pc.length as u64 + 12, // length(4) + name(4) + crc(4)
+            ));
 
             // If no C2PA chunk exists, inject a synthetic excluded placeholder
             // immediately after IHDR (the mandatory first data chunk after the PNG
@@ -622,16 +602,7 @@ impl AssetBoxHash for PngIO {
             // position, so the box list will align with the embedded file during
             // verification.  When a real C2PA chunk is present this block is skipped.
             if !has_c2pa && is_ihdr {
-                let synthetic = BoxMap {
-                    names: vec![C2PA_BOXHASH.to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: Some(true),
-                    pad: ByteBuf::from(Vec::new()),
-                    range_start: chunk_end,
-                    range_len: 0,
-                };
-                box_maps.push(synthetic);
+                box_maps.push(BoxMap::new(vec![C2PA_BOXHASH.to_string()], chunk_end, 0).excluded());
             }
         }
 

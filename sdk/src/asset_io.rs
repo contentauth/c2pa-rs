@@ -114,21 +114,18 @@
 //! consulted before the SDK's built-in handlers for any format string it claims.
 
 use std::{
+    ffi::OsStr,
     fmt, fs,
     io::{Cursor, Read, Seek, Write},
     path::Path,
 };
 
-use tempfile::NamedTempFile;
+use tempfile::{Builder, NamedTempFile};
 
 use crate::{
-    assertions::BoxMap,
     error::Result,
     maybe_send_sync::MaybeSend,
-    utils::{
-        io_utils::tempfile_builder,
-        xmp_inmemory_utils::{add_provenance, extract_provenance, MIN_XMP},
-    },
+    utils::xmp_inmemory_utils::{add_provenance, extract_provenance, MIN_XMP},
     Error,
 };
 
@@ -442,6 +439,49 @@ pub trait AssetPatch {
     fn patch_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()>;
 }
 
+/// The well-known box/chunk name every format's C2PA manifest store is reported
+/// under in a [`BoxMap`], regardless of the format's native naming (e.g. PNG's
+/// `caBX` chunk, a BMFF `uuid` box, ...).
+pub const C2PA_BOXHASH: &str = "C2PA";
+
+/// Describes one hashable region ("box") in an asset's container format.
+///
+/// Returned by [`AssetBoxHash::get_box_map`] to describe the byte range and name
+/// of each box, in the order they occur. This only describes *where* the boxes
+/// are — computing and recording hashes over these regions is the job of the
+/// `c2pa.hash.boxes` assertion, not this type.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct BoxMap {
+    /// The box name(s) covered by this entry. More than one name means several
+    /// consecutive boxes were collapsed into a single hashable range.
+    pub names: Vec<String>,
+    /// Whether this region should be excluded from hashing — for example, a
+    /// placeholder for a C2PA box that doesn't exist in the asset yet.
+    pub excluded: Option<bool>,
+    /// Byte offset of the region within the asset.
+    pub range_start: u64,
+    /// Length in bytes of the region.
+    pub range_len: u64,
+}
+
+impl BoxMap {
+    /// Creates a new region entry, not excluded from hashing.
+    pub fn new(names: Vec<String>, range_start: u64, range_len: u64) -> Self {
+        BoxMap {
+            names,
+            excluded: None,
+            range_start,
+            range_len,
+        }
+    }
+
+    /// Marks this region as excluded from hashing.
+    pub fn excluded(mut self) -> Self {
+        self.excluded = Some(true);
+        self
+    }
+}
+
 /// Provides box-hash information for C2PA `c2pa.hash.boxes` assertions.
 ///
 /// Only implemented by handlers for formats that support box hashing.
@@ -535,6 +575,27 @@ pub trait ComposedManifestRef {
     /// Wraps `manifest_data` into the container structure expected by `format`
     /// (e.g. a JPEG APP11 segment, or a PNG `caBX` chunk).
     fn compose_manifest(&self, manifest_data: &[u8], format: &str) -> Result<Vec<u8>>;
+}
+
+fn tempfile_builder<T: AsRef<OsStr> + Sized>(prefix: T) -> Result<NamedTempFile> {
+    #[cfg(all(target_os = "wasi", target_env = "p1"))]
+    return Err(Error::NotImplemented(
+        "tempfile_builder requires wasip2 or later".to_string(),
+    ));
+
+    #[cfg(all(target_os = "wasi", not(target_env = "p1")))]
+    return Builder::new()
+        .prefix(&prefix)
+        .rand_bytes(5)
+        .tempfile_in("/")
+        .map_err(Error::IoError);
+
+    #[cfg(not(target_os = "wasi"))]
+    return Builder::new()
+        .prefix(&prefix)
+        .rand_bytes(5)
+        .tempfile()
+        .map_err(Error::IoError);
 }
 
 /// Renames a file or, if the provided paths are on separate mounting points, moves

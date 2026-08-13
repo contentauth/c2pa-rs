@@ -24,13 +24,12 @@ use img_parts::{
     },
     Bytes, DynImage,
 };
-use serde_bytes::ByteBuf;
 
 use crate::{
-    assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
-        HashBlockObjectType, HashObjectPositions, RemoteManifestUrl, WriteXmp,
+        AssetBoxHash, AssetIO, BoxMap, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
+        ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteManifestUrl, WriteXmp,
+        C2PA_BOXHASH,
     },
     error::{Error, Result},
 };
@@ -674,28 +673,12 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
     while let Ok(seg) = reader.next_segment() {
         match seg.kind {
             jfifdump::SegmentKind::Eoi => {
-                let bm = BoxMap {
-                    names: vec!["EOI".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position as u64,
-                    range_len: 0,
-                };
+                let bm = BoxMap::new(vec!["EOI".to_string()], seg.position as u64, 0);
 
                 box_maps.push(bm);
             }
             jfifdump::SegmentKind::Soi => {
-                let bm = BoxMap {
-                    names: vec!["SOI".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position as u64,
-                    range_len: 0,
-                };
+                let bm = BoxMap::new(vec!["SOI".to_string()], seg.position as u64, 0);
 
                 box_maps.push(bm);
             }
@@ -737,15 +720,11 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                             cai_seg_cnt = 1;
                             cai_en.clone_from(&en); // store the identifier
 
-                            let c2pa_bm = BoxMap {
-                                names: vec![C2PA_BOXHASH.to_string()],
-                                alg: None,
-                                hash: ByteBuf::from(Vec::new()),
-                                excluded: None,
-                                pad: ByteBuf::from(Vec::new()),
-                                range_start: seg.position as u64,
-                                range_len: (raw_bytes.len() + 4) as u64,
-                            };
+                            let c2pa_bm = BoxMap::new(
+                                vec![C2PA_BOXHASH.to_string()],
+                                seg.position as u64,
+                                (raw_bytes.len() + 4) as u64,
+                            );
 
                             box_maps.push(c2pa_bm);
                             cai_index = box_maps.len() - 1;
@@ -754,15 +733,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                                 .get(&nr)
                                 .ok_or(Error::InvalidAsset("Unknown segment marker".to_owned()))?;
 
-                            let bm = BoxMap {
-                                names: vec![name.to_string()],
-                                alg: None,
-                                hash: ByteBuf::from(Vec::new()),
-                                excluded: None,
-                                pad: ByteBuf::from(Vec::new()),
-                                range_start: seg.position as u64,
-                                range_len: 0,
-                            };
+                            let bm = BoxMap::new(vec![name.to_string()], seg.position as u64, 0);
 
                             box_maps.push(bm);
                         }
@@ -777,67 +748,27 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     .get(&nr)
                     .ok_or(Error::InvalidAsset("Unknown segment marker".to_owned()))?;
 
-                let bm = BoxMap {
-                    names: vec![name.to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position as u64,
-                    range_len: 0,
-                };
+                let bm = BoxMap::new(vec![name.to_string()], seg.position as u64, 0);
 
                 box_maps.push(bm);
             }
             jfifdump::SegmentKind::App0Jfif(_) => {
-                let bm = BoxMap {
-                    names: vec!["APP0".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position as u64,
-                    range_len: 0,
-                };
+                let bm = BoxMap::new(vec!["APP0".to_string()], seg.position as u64, 0);
 
                 box_maps.push(bm);
             }
             jfifdump::SegmentKind::Dqt(_) => {
-                let bm = BoxMap {
-                    names: vec!["DQT".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position as u64,
-                    range_len: 0,
-                };
+                let bm = BoxMap::new(vec!["DQT".to_string()], seg.position as u64, 0);
 
                 box_maps.push(bm);
             }
             jfifdump::SegmentKind::Dht(_) => {
-                let bm = BoxMap {
-                    names: vec!["DHT".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position as u64,
-                    range_len: 0,
-                };
+                let bm = BoxMap::new(vec!["DHT".to_string()], seg.position as u64, 0);
 
                 box_maps.push(bm);
             }
             jfifdump::SegmentKind::Dac(_) => {
-                let bm = BoxMap {
-                    names: vec!["DAC".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position as u64,
-                    range_len: 0,
-                };
+                let bm = BoxMap::new(vec!["DAC".to_string()], seg.position as u64, 0);
 
                 box_maps.push(bm);
             }
@@ -846,67 +777,27 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     .get(&f.sof)
                     .ok_or(Error::InvalidAsset("Unknown segment marker".to_owned()))?;
 
-                let bm = BoxMap {
-                    names: vec![name.to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position as u64,
-                    range_len: 0,
-                };
+                let bm = BoxMap::new(vec![name.to_string()], seg.position as u64, 0);
 
                 box_maps.push(bm);
             }
             jfifdump::SegmentKind::Scan(_s) => {
-                let bm = BoxMap {
-                    names: vec!["SOS".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position as u64,
-                    range_len: 0,
-                };
+                let bm = BoxMap::new(vec!["SOS".to_string()], seg.position as u64, 0);
 
                 box_maps.push(bm);
             }
             jfifdump::SegmentKind::Dri(_) => {
-                let bm = BoxMap {
-                    names: vec!["DRI".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position as u64,
-                    range_len: 0,
-                };
+                let bm = BoxMap::new(vec!["DRI".to_string()], seg.position as u64, 0);
 
                 box_maps.push(bm);
             }
             jfifdump::SegmentKind::Rst(r) => {
-                let bm = BoxMap {
-                    names: vec![format!("RST{}", r.nr)],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position as u64,
-                    range_len: 0,
-                };
+                let bm = BoxMap::new(vec![format!("RST{}", r.nr)], seg.position as u64, 0);
 
                 box_maps.push(bm);
             }
             jfifdump::SegmentKind::Comment(_) => {
-                let bm = BoxMap {
-                    names: vec!["COM".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position as u64,
-                    range_len: 0,
-                };
+                let bm = BoxMap::new(vec!["COM".to_string()], seg.position as u64, 0);
 
                 box_maps.push(bm);
             }
@@ -915,15 +806,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     .get(&marker)
                     .ok_or(Error::InvalidAsset("Unknown segment marker".to_owned()))?;
 
-                let bm = BoxMap {
-                    names: vec![name.to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position as u64,
-                    range_len: 0,
-                };
+                let bm = BoxMap::new(vec![name.to_string()], seg.position as u64, 0);
 
                 box_maps.push(bm);
             }
@@ -950,15 +833,7 @@ impl AssetBoxHash for JpegIO {
             .any(|bm| bm.names.first().is_some_and(|n| n == C2PA_BOXHASH));
 
         if !has_c2pa {
-            let mut c2pa_box = BoxMap {
-                names: vec![C2PA_BOXHASH.to_string()],
-                alg: None,
-                hash: ByteBuf::from(Vec::new()),
-                excluded: Some(true),
-                pad: ByteBuf::from(Vec::new()),
-                range_start: 0,
-                range_len: 0,
-            };
+            let mut c2pa_box = BoxMap::new(vec![C2PA_BOXHASH.to_string()], 0, 0).excluded();
             // SOI is always first; insert the C2PA box right after it or after APP0 if it exists.
             let app0_index = box_maps
                 .iter()

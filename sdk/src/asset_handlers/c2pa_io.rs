@@ -13,13 +13,10 @@
 
 use std::path::Path;
 
-use serde_bytes::ByteBuf;
-
 use crate::{
-    assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
-        HashObjectPositions,
+        AssetBoxHash, AssetIO, BoxMap, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
+        ComposedManifestRef, HashObjectPositions, C2PA_BOXHASH,
     },
     error::{Error, Result},
 };
@@ -128,19 +125,7 @@ impl AssetBoxHash for C2paIO {
     fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
         // creates a box map with only a C2PA box.
         input_stream.rewind()?;
-        let alg = "sha256";
-        let c2pa_box_map = BoxMap {
-            names: vec![C2PA_BOXHASH.to_string()],
-            alg: Some(alg.to_string()),
-            hash: ByteBuf::from(vec![]),
-            excluded: None,
-            pad: ByteBuf::from(vec![]),
-            range_start: 0,
-            range_len: 0,
-        };
-
-        let box_maps = vec![c2pa_box_map];
-        Ok(box_maps)
+        Ok(vec![BoxMap::new(vec![C2PA_BOXHASH.to_string()], 0, 0)])
     }
 }
 

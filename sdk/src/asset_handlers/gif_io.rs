@@ -19,13 +19,12 @@ use std::{
 };
 
 use byteorder::{ReadBytesExt, WriteBytesExt};
-use serde_bytes::ByteBuf;
 
 use crate::{
-    assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        AssetBoxHash, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
+        AssetBoxHash, AssetIO, AssetPatch, BoxMap, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
         ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteManifestUrl, WriteXmp,
+        C2PA_BOXHASH,
     },
     error::Result,
     utils::io_utils::stream_len,
@@ -568,15 +567,7 @@ impl BlockMarker<Block> {
             names.push(name.to_owned());
         }
 
-        Ok(BoxMap {
-            names,
-            alg: None,
-            hash: ByteBuf::from(Vec::new()),
-            excluded: None,
-            pad: ByteBuf::from(Vec::new()),
-            range_start: self.start(),
-            range_len: self.len(),
-        })
+        Ok(BoxMap::new(names, self.start(), self.len()))
     }
 }
 
@@ -1374,39 +1365,19 @@ mod tests {
         let box_map = gif_io.get_box_map(&mut stream)?;
         assert_eq!(
             box_map.first(),
-            Some(&BoxMap {
-                names: vec!["GIF89a".to_owned()],
-                alg: None,
-                hash: ByteBuf::from(Vec::new()),
-                excluded: None,
-                pad: ByteBuf::from(Vec::new()),
-                range_start: 0,
-                range_len: 6
-            })
+            Some(&BoxMap::new(vec!["GIF89a".to_owned()], 0, 6))
         );
         assert_eq!(
             box_map.get(box_map.len() / 2),
-            Some(&BoxMap {
-                names: vec!["2C".to_owned()],
-                alg: None,
-                hash: ByteBuf::from(Vec::new()),
-                excluded: None,
-                pad: ByteBuf::from(Vec::new()),
-                range_start: 368494,
-                range_len: 778
-            })
+            Some(&BoxMap::new(vec!["2C".to_owned()], 368494, 778))
         );
         assert_eq!(
             box_map.last(),
-            Some(&BoxMap {
-                names: vec!["3B".to_owned()],
-                alg: None,
-                hash: ByteBuf::from(Vec::new()),
-                excluded: None,
-                pad: ByteBuf::from(Vec::new()),
-                range_start: SAMPLE1.len() as u64 - 1,
-                range_len: 1
-            })
+            Some(&BoxMap::new(
+                vec!["3B".to_owned()],
+                SAMPLE1.len() as u64 - 1,
+                1
+            ))
         );
         assert_eq!(box_map.len(), 276);
 
