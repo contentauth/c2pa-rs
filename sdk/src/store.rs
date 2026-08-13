@@ -97,6 +97,9 @@ const DEFAULT_MANIFEST_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 /// 8 MB thread stack, ~3 000 levels causes an unrecoverable stack overflow (exit 134).
 /// A limit of 200 uses only ~540 KB of stack, providing a large safety margin while
 /// accommodating any realistic provenance chain depth.
+///
+/// Bounds path length only: independent of the `visited` memoization in `ingredient_checks`.
+/// A shared-subtree DAG can have short paths yet exponentially many paths through it.
 const MAX_INGREDIENT_DEPTH: usize = 200;
 
 pub(crate) struct ManifestHashes {
@@ -3728,6 +3731,20 @@ impl Store {
 
     // get the manifest that should be used for hash binding checks
     fn get_hash_binding_manifest(&self, claim: &Claim) -> Option<String> {
+        self.get_hash_binding_manifest_impl(claim, &mut HashSet::new())
+    }
+
+    fn get_hash_binding_manifest_impl(
+        &self,
+        claim: &Claim,
+        visited: &mut HashSet<String>,
+    ) -> Option<String> {
+        if !visited.insert(claim.label().to_owned()) {
+            // A cyclic chain has no binding manifest.
+            // None maps to a validation error in this case.
+            return None;
+        }
+
         // is this claim valid
         if !claim.update_manifest() && !claim.hash_assertions().is_empty() {
             return Some(claim.label().to_owned());
@@ -3742,7 +3759,7 @@ impl Store {
                     if let Some(parent) = self.get_claim(&parent_label) {
                         // recurse until we find
                         if parent.update_manifest() {
-                            return self.get_hash_binding_manifest(parent);
+                            return self.get_hash_binding_manifest_impl(parent, visited);
                         } else if !parent.hash_assertions().is_empty() {
                             return Some(parent.label().to_owned());
                         }
@@ -9340,26 +9357,23 @@ pub mod tests {
         );
     }
 
-    // Shared/deep inputTo provenance must be verified in linear time. `ingredient_checks`
-    // memoizes verified claims, so each shared subtree is walked once (O(V+E)); without
-    // that memoization the 2^DEPTH path count below makes the final verify hang.
+    // Manifest stores with deep inputTo ingredients links shouldn't cause exponential recursive checks
+    // (when verify is on).
     #[test]
-    fn test_shared_input_to_graph_verified_once_no_exponential_blowup() {
+    fn test_shared_ingredient_inputto_graph_verified_once() {
         use crate::{
             hashed_uri::HashedUri, jumbf::labels::to_signature_uri, utils::test::create_test_store,
             ClaimGeneratorInfo, ValidationResults,
         };
 
-        const DEPTH: usize = 25;
+        const DEPTH: usize = 13;
 
-        // Build with verification disabled so the build stays linear regardless of the fix;
-        // the exponential blowup is exercised only by the final verifying read below.
         let mut build_context = Context::new();
         build_context.settings_mut().verify.verify_after_sign = false;
         build_context.settings_mut().verify.verify_after_reading = false;
         let signer = test_signer(SigningAlg::Ps256);
 
-        // Leaf level: a standalone signed manifest.
+        // This is a leaf node...
         let (format, mut leaf_input, mut leaf_output) = create_test_streams("earth_apollo17.jpg");
         create_test_store()
             .unwrap()
@@ -9374,9 +9388,8 @@ pub mod tests {
         leaf_output.rewind().unwrap();
         let mut prev_vec = leaf_output.get_ref().clone();
 
-        // Each level references the previous level's manifest via TWO inputTo ingredient
-        // assertions pointing at the same child, so verifying the top manifest re-walks each
-        // shared subtree once per path => 2^DEPTH verifications without memoization.
+        // Each level references the previous level's manifest via 2 inputTo ingredient assertions
+        // who point at the same child. Verifying the top manifest here walks the graph.
         for level in 1..DEPTH {
             let mut prev_report = StatusTracker::default();
             let prev_store = Store::from_stream(
@@ -9392,12 +9405,9 @@ pub mod tests {
             let mut claim = Claim::new("deep_shared", Some(&format!("m{level}")), 2);
             claim.add_claim_generator_info(ClaimGeneratorInfo::new("test"));
 
-            let (prev_jumbf, _) = Store::load_jumbf_from_stream(
-                format,
-                &mut Cursor::new(prev_vec.clone()),
-                &build_context,
-            )
-            .unwrap();
+            let (prev_jumbf, _) =
+                Store::load_jumbf_from_stream(format, &mut Cursor::new(prev_vec), &build_context)
+                    .unwrap();
             let mut store =
                 Store::load_ingredient_to_claim(&mut claim, &prev_jumbf, None, &build_context)
                     .unwrap();
@@ -9448,9 +9458,69 @@ pub mod tests {
             prev_vec = output.get_ref().clone();
         }
 
-        // Verifying read (default context): without the memoization fix this never returns
-        // due to exponential re-verification of the shared inputTo subtrees.
+        // Verifying read with a default context (with verification enabled).
         let mut report = StatusTracker::default();
         Store::from_stream(format, Cursor::new(prev_vec), &mut report, &Context::new()).unwrap();
+
+        // Memoization bounds validation steps...
+        let validated = report
+            .logged_items()
+            .iter()
+            .filter(|i| {
+                i.validation_status.as_deref()
+                    == Some(validation_status::INGREDIENT_MANIFEST_VALIDATED)
+            })
+            .count();
+
+        // ... so here we verify the validation count stayed below the bounds.
+        assert!(
+            validated <= 4 * DEPTH,
+            "shared ingredient subtrees must be verified only once"
+        );
+    }
+
+    // Cyclic `parentOf` chains also lead to going through cycles.
+    #[test]
+    fn test_hash_binding_manifest_parent_cycle_terminates() {
+        use crate::{hashed_uri::HashedUri, jumbf::labels::to_manifest_uri, ClaimGeneratorInfo};
+
+        let mut store = Store::new();
+
+        let mut claim_a = Claim::new("cycle_a", Some("contentauth"), 2);
+        let mut claim_b = Claim::new("cycle_b", Some("contentauth"), 2);
+        claim_a.add_claim_generator_info(ClaimGeneratorInfo::new("test"));
+        claim_b.add_claim_generator_info(ClaimGeneratorInfo::new("test"));
+        claim_a.set_update_manifest(true);
+        claim_b.set_update_manifest(true);
+
+        let label_a = a.label().to_owned();
+        let label_b = b.label().to_owned();
+
+        // Create the cycle:
+        // Point claims at each other, each as the other's parentOf.
+        for (claim, parent_label) in [(&mut a, &label_b), (&mut b, &label_a)] {
+            let parent_uri = HashedUri::new(
+                to_manifest_uri(parent_label),
+                Some(claim.alg().to_owned()),
+                &[0u8; 32],
+            );
+
+            // Here we just want an(y) ingredient to finish creating cycles
+            let ingredient = Ingredient::new_v2("parent", "image/jpeg")
+                .set_parent()
+                .set_c2pa_manifest_from_hashed_uri(Some(parent_uri));
+            claim.add_assertion(&ingredient).unwrap();
+        }
+
+        store.insert_restored_claim(label_a.clone(), a);
+        store.insert_restored_claim(label_b, b);
+
+        // Called directly in the test to verify the scenario,
+        // otherwise currently call order of (more) public APIs prevents this.
+        let binding = store.get_hash_binding_manifest(store.get_claim(&label_a).unwrap());
+        assert!(
+            binding.is_none(),
+            "a parentOf cycle has no binding manifest and must terminate, got {binding:?}"
+        );
     }
 }
