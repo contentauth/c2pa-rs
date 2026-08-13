@@ -2039,7 +2039,7 @@ impl Store {
         let svi =
             store.get_store_validation_info(claim, asset_data.as_deref_mut(), validation_log)?;
 
-        // keep track of already verified infredients
+        // keep track of already verified ingredients
         let mut visited = HashSet::new();
         visited.insert(claim.label().to_owned());
 
@@ -9649,7 +9649,7 @@ pub mod tests {
         }
 
         // Starting verification from the top manifest will walk the graph we built.
-        // (Default context re-enables the verifixation settings).
+        // (Default context re-enables the verification settings).
         let mut report = StatusTracker::default();
         Store::from_stream(format, Cursor::new(prev_vec), &mut report, &Context::new()).unwrap();
 
