@@ -327,9 +327,195 @@ impl AssertionCbor for CollectionHash {}
 mod tests {
     use std::io::Cursor;
 
+    use tempfile::TempDir;
+
     use super::*;
 
     const ZIP_SAMPLE1: &[u8] = include_bytes!("../../tests/fixtures/sample1.zip");
+
+    fn gen_zip_collection_hash() -> Result<CollectionHash> {
+        let mut stream = Cursor::new(ZIP_SAMPLE1);
+        let mut collection = CollectionHash::new("sha256".to_owned())?;
+        collection.gen_hash_from_zip_stream(&mut stream)?;
+
+        Ok(collection)
+    }
+
+    fn gen_dir_collection_hash() -> Result<(TempDir, CollectionHash)> {
+        let dir = tempfile::tempdir()?;
+        fs::write(dir.path().join("a.txt"), b"hello")?;
+        fs::create_dir(dir.path().join("sub"))?;
+        fs::write(dir.path().join("sub").join("b.txt"), b"world")?;
+
+        let mut collection = CollectionHash::new("sha256".to_owned())?;
+        for uri in ["a.txt", "sub/b.txt"] {
+            collection.uris.insert(
+                PathBuf::from(uri),
+                UriHashedDataMap {
+                    hash: None,
+                    size: None,
+                    dc_format: None,
+                    data_types: None,
+                },
+            );
+        }
+        collection.gen_hash(dir.path())?;
+
+        Ok((dir, collection))
+    }
+
+    #[test]
+    fn test_verify_zip_stream_hash_roundtrip() -> Result<()> {
+        let collection = gen_zip_collection_hash()?;
+        let restored = CollectionHash::from_assertion(&collection.to_assertion()?)?;
+
+        let mut stream = Cursor::new(ZIP_SAMPLE1);
+        restored.verify_zip_stream_hash(&mut stream, None)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_verify_zip_stream_hash_mismatch() -> Result<()> {
+        let mut collection = gen_zip_collection_hash()?;
+        if let Some(entry) = collection.uris.values_mut().next() {
+            entry.hash = Some(vec![0; 32]);
+        }
+
+        let mut stream = Cursor::new(ZIP_SAMPLE1);
+        assert!(matches!(
+            collection.verify_zip_stream_hash(&mut stream, None),
+            Err(Error::HashMismatch(_))
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_verify_zip_missing_central_directory_hash_is_malformed() -> Result<()> {
+        let mut collection = gen_zip_collection_hash()?;
+        collection.zip_central_directory_hash = None;
+
+        let mut stream = Cursor::new(ZIP_SAMPLE1);
+        assert!(matches!(
+            collection.verify_zip_stream_hash(&mut stream, None),
+            Err(Error::C2PAValidation(code)) if code == ASSERTION_COLLECTIONHASH_MALFORMED
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_verify_zip_invalid_uri() -> Result<()> {
+        let mut collection = gen_zip_collection_hash()?;
+        collection.uris.insert(
+            PathBuf::from("../evil.txt"),
+            UriHashedDataMap {
+                hash: Some(vec![0; 32]),
+                size: Some(0),
+                dc_format: None,
+                data_types: None,
+            },
+        );
+
+        let mut stream = Cursor::new(ZIP_SAMPLE1);
+        assert!(matches!(
+            collection.verify_zip_stream_hash(&mut stream, None),
+            Err(Error::C2PAValidation(code)) if code == ASSERTION_COLLECTIONHASH_INVALID_URI
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_verify_zip_incorrect_file_count() -> Result<()> {
+        let mut collection = gen_zip_collection_hash()?;
+        collection.uris.insert(
+            PathBuf::from("sample1/not_in_zip.txt"),
+            UriHashedDataMap {
+                hash: Some(vec![0; 32]),
+                size: Some(0),
+                dc_format: None,
+                data_types: None,
+            },
+        );
+
+        let mut stream = Cursor::new(ZIP_SAMPLE1);
+        assert!(matches!(
+            collection.verify_zip_stream_hash(&mut stream, None),
+            Err(Error::C2PAValidation(code)) if code == ASSERTION_COLLECTIONHASH_INCORRECT_FILE_COUNT
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_directory_collection_roundtrip() -> Result<()> {
+        let (dir, collection) = gen_dir_collection_hash()?;
+        collection.verify_hash(dir.path())?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_directory_verify_mismatch() -> Result<()> {
+        let (dir, collection) = gen_dir_collection_hash()?;
+        fs::write(dir.path().join("a.txt"), b"tampered")?;
+
+        assert!(matches!(
+            collection.verify_hash(dir.path()),
+            Err(Error::HashMismatch(_))
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_directory_verify_incorrect_file_count() -> Result<()> {
+        let (dir, collection) = gen_dir_collection_hash()?;
+        fs::remove_file(dir.path().join("a.txt"))?;
+
+        assert!(matches!(
+            collection.verify_hash(dir.path()),
+            Err(Error::C2PAValidation(code)) if code == ASSERTION_COLLECTIONHASH_INCORRECT_FILE_COUNT
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_directory_verify_missing_hash_is_malformed() -> Result<()> {
+        let (dir, mut collection) = gen_dir_collection_hash()?;
+        if let Some(entry) = collection.uris.values_mut().next() {
+            entry.hash = None;
+        }
+
+        assert!(matches!(
+            collection.verify_hash(dir.path()),
+            Err(Error::C2PAValidation(code)) if code == ASSERTION_COLLECTIONHASH_MALFORMED
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_base_path_must_be_a_directory() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let file = dir.path().join("a.txt");
+        fs::write(&file, b"hello")?;
+
+        let mut collection = CollectionHash::new("sha256".to_owned())?;
+        assert!(matches!(
+            collection.gen_hash(&file),
+            Err(Error::BadParam(_))
+        ));
+        assert!(matches!(
+            collection.verify_hash(&file),
+            Err(Error::BadParam(_))
+        ));
+
+        Ok(())
+    }
 
     #[test]
     fn test_zip_hash() -> Result<()> {
