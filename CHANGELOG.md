@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.90.14](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.13...c2pa-v0.90.14)
+_13 August 2026_
+
+### Fixed
+
+* Diamond inputTo manifest exponential reverifications depending on ingredient paths reachability (backport #2492) ([#2498](https://github.com/contentauth/c2pa-rs/pull/2498))
+
 ## [0.90.13](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.12...c2pa-v0.90.13)
 _13 August 2026_
 
