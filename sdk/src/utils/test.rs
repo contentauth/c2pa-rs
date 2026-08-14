@@ -656,7 +656,7 @@ pub fn test_certificate_acceptance_policy() -> CertificateTrustPolicy {
     let mut ctp = CertificateTrustPolicy::default();
     ctp.add_trust_anchors(
         include_bytes!("../../tests/fixtures/certs/trust/test_cert_root_bundle.pem"),
-        "https://cai.org/unknown_tl",
+        "https://c2pa-rs/unknown_tl",
         TrustAnchorType::Manifest,
     )
     .unwrap();

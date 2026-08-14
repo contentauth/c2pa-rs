@@ -106,7 +106,7 @@ impl Default for CertificateTrustPolicy {
                 include_bytes!(
                     "../../../tests/fixtures/crypto/raw_signature/test_cert_root_bundle.pem"
                 ),
-                "https://cai.org/unknown_tl",
+                "https://c2pa-rs/unknown_tl",
                 TrustAnchorType::Manifest,
             );
         }

@@ -187,7 +187,7 @@ impl Default for TrustAnchor {
             ))
             .into_owned();
 
-            s.trust_uri = Some("https://cai.org/test_certs_trust_list".to_string());
+            s.trust_uri = Some("https://c2pa-rs/test_certs_trust_list".to_string());
 
             s
         }

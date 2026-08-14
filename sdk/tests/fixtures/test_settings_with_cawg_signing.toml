@@ -29,7 +29,7 @@ trust_config = """
 # allowed_list = ""
 
 [[trust.anchors]]
-trust_uri = "https://cai.org/unknown_tl"
+trust_uri = "https://c2pa-rs/unknown_tl"
 trust_kind = "manifest"
 trust_anchors = """-----BEGIN CERTIFICATE-----
 MIICEzCCAcWgAwIBAgIUW4fUnS38162x10PCnB8qFsrQuZgwBQYDK2VwMHcxCzAJ

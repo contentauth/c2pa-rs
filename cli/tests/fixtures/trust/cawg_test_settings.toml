@@ -2,7 +2,7 @@
 verify_trust = true
 
 [[trust.anchors]]
-trust_uri = "https://cai.org/test_cert_trust_list"
+trust_uri = "https://c2pa-rs/test_cert_trust_list"
 trust_kind = "manifest"
 trust_config = """
 //id-kp-emailProtection

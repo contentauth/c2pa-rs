@@ -368,7 +368,7 @@ Here's the `Settings` JSON with all default values:
             "trust_anchors": "-----BEGIN CERTIFICATE-----\n...",
             "trust_config": "1.3.6.1.5.5.7.3.4\n1.3.6.1.5.5.7.3.36",
             "trust_kind": "manifest",
-            "trust_uri": "https://cai.org/test_certs_trust_list",
+            "trust_uri": "https://c2pa-rs/test_cert_trust_list,
             "trusted_ica_issuers": ["did:jwk:eyJhbGciOiJFZERTQSIs..."]
           }
       ],

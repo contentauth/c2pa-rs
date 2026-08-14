@@ -11,7 +11,7 @@ version = 1
 # The trust_kind can be "signer", "tsa", "cawg" to specify the type of trust list.  The trust_uri is required for correct
 # C2PA reporting.  You can have as many trust anchor sets as you need.
 [[trust.anchors]]
-trust_uri = "https://cai.org/test_cert_trust_list"
+trust_uri = "https://c2pa-rs/test_cert_trust_list"
 trust_kind = "manifest"
 trust_config = """
 //id-kp-emailProtection
