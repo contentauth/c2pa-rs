@@ -500,7 +500,7 @@ pub fn verify_time_stamp(
 
             // make sure this is a timestamping EKU
             adjusted_ctp.clear_ekus();
-            adjusted_ctp.add_valid_ekus(TIMESTAMP_OID_STR.as_bytes()); // timestamp signing EKU
+            adjusted_ctp.add_mandatory_ekus(TIMESTAMP_OID_STR.as_bytes()); // timestamp signing EKU
             if check_end_entity_certificate_profile(
                 &ordered_cert_ders[0],
                 &adjusted_ctp,

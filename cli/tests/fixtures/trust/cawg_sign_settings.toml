@@ -4,7 +4,10 @@
 version = 1
 
 # Trust settings for certificate validation.
-[trust]
+[[trust.anchors]]
+trust_uri = "https://cai.org/test_cert_trust_list"
+trust_kind = "manifest"
+
 # String to user-provided trust anchors (PEM format).
 # user_anchors = ""
 # String to system trust anchors (PEM format).

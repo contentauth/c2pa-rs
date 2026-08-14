@@ -29,7 +29,7 @@ pub(crate) const ICA_FIXTURE_JWK_ISSUER: &str = "did:jwk:eyJhbGciOiJFZERTQSIsImt
 pub(crate) const ICA_FIXTURE_WEB_ISSUER: &str =
     "did:web:connected-identities.identity-stage.adobe.com";
 
-/// A [`Context`](crate::Context) whose `cawg_trust.trusted_ica_issuers`
+/// A [`Context`](crate::Context) whose `trust.trusted_ica_issuers`
 /// allow-list trusts the issuers used by the bundled CAWG ICA test fixtures.
 ///
 /// Tests that exercise a directly-constructed
@@ -40,15 +40,20 @@ pub(crate) const ICA_FIXTURE_WEB_ISSUER: &str =
 /// untrusted-issuer path, build a verifier from a context with a different (or
 /// empty) allow-list, such as `Context::new()`.
 pub(crate) fn ica_test_context() -> crate::Context {
-    let settings = crate::settings::Settings::default()
-        .with_value(
-            "cawg_trust.trusted_ica_issuers",
-            vec![
-                ICA_FIXTURE_JWK_ISSUER.to_string(),
-                ICA_FIXTURE_WEB_ISSUER.to_string(),
-            ],
-        )
-        .unwrap();
+    let mut settings = crate::settings::Settings::default();
+    if let Some(anchors) = &mut settings.trust.anchors {
+        // make sure there is a CAWG trust anchor with the ICA fixture issuers.
+        let mut cawg_anchor = anchors[0].clone();
+        cawg_anchor.trust_kind = crate::settings::TrustListKind::CAWG;
+        cawg_anchor.trusted_ica_issuers = Some(vec![
+            ICA_FIXTURE_JWK_ISSUER.to_string(),
+            ICA_FIXTURE_WEB_ISSUER.to_string(),
+        ]);
+        cawg_anchor.trust_uri = Some("cawg_trust".to_string());
+
+        anchors.push(cawg_anchor);
+    }
+
     crate::Context::new().with_settings(settings).unwrap()
 }
 

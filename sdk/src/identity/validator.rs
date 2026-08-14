@@ -28,7 +28,7 @@ use crate::{
 /// Validates a CAWG identity assertion.
 ///
 /// A `CawgValidator` carries the [`Context`] that governs CAWG validation,
-/// including the `cawg_trust.trusted_ica_issuers` allow-list. Construct one with
+/// including the `trust.trusted_ica_issuers` allow-list. Construct one with
 /// [`CawgValidator::new`] to validate under a specific [`Context`].
 pub struct CawgValidator<'a> {
     context: &'a Context,
@@ -120,18 +120,35 @@ mod tests {
     #[c2pa_test_async]
     async fn test_connected_identities_valid() {
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+        crate::settings::set_settings_value(
+            "soft_binding.soft_binding_algorithms",
+            [
+                "com.adobe.trustmark.P".to_string(),
+                "com.adobe.icn.dense".to_string(),
+            ],
+        )
+        .unwrap();
+        let mut settings = crate::settings::get_thread_local_settings();
+        // add a CAWG specific trust anchor set
+        let anchors = &mut settings.trust.anchors.unwrap();
+        let mut cawg_anchor: crate::settings::TrustAnchor = anchors[0].clone();
+        cawg_anchor.trust_kind = crate::settings::TrustListKind::CAWG;
+        cawg_anchor.trust_uri = Some("cawg_trust".to_string());
+        anchors.push(cawg_anchor);
+        settings.trust.anchors = Some(anchors.clone());
+        let context = crate::Context::new().with_settings(settings).unwrap();
 
         #[cfg(not(target_arch = "wasm32"))]
         let _did_server = mock_connected_identities_did();
 
         let mut stream = Cursor::new(CONNECTED_IDENTITIES_VALID);
 
-        let reader = Reader::default()
+        let reader = Reader::from_context(context)
             .with_stream_async("image/jpeg", &mut stream)
             .await
             .unwrap();
 
-        //println!("validation results: {}", reader);
+        // println!("validation results: {}", reader);
 
         assert!(reader
             .validation_results()

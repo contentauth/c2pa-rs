@@ -657,7 +657,7 @@ pub fn test_certificate_acceptance_policy() -> CertificateTrustPolicy {
     ctp.add_trust_anchors(
         include_bytes!("../../tests/fixtures/certs/trust/test_cert_root_bundle.pem"),
         "https://cai.org/unknown_tl",
-        TrustAnchorType::Signer,
+        TrustAnchorType::Manifest,
     )
     .unwrap();
     ctp

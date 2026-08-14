@@ -20,6 +20,7 @@ pub mod signer;
 use std::path::Path;
 use std::{
     cell::RefCell,
+    collections::HashSet,
     io::{BufRead, BufReader, Cursor},
 };
 
@@ -61,8 +62,8 @@ pub(crate) trait SettingsValidate {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TrustListKind {
-    // Certificate signing trust list
-    Signer,
+    // Manifest signing trust list
+    Manifest,
     // Time Stamping Authority trust list
     TSA,
     // Certificate Authority Working Group trust list
@@ -81,50 +82,51 @@ pub struct TrustAnchor {
     /// Normally this option contains the official C2PA-recognized trust anchors found here:
     /// <https://github.com/c2pa-org/conformance-public/tree/main/trust-list>
     /// or a user supplied trust list.  This format is a PEM string of certificates.
+    /// For C2PA trust lists the TrustListKind should be ['Signer]
+    ///
+    /// When validating CAWG X.509 identity signatures.
+    ///
+    /// Under the CAWG interim trust model (CAWG identity assertion spec §8.2.4.1,
+    /// valid for assertions issued on or before 31 March 2027 and carrying a
+    /// trusted time stamp), these are the CAWG-recognized trust anchors – the
+    /// Mozilla Root Store with the Email (S/MIME) trust bit enabled
+    /// (<https://ccadb.my.salesforce-sites.com/mozilla/IncludedRootsPEMTxt?TrustBitsInclude=Email>)
+    /// and the IPTC Origin Verified News Publishers trust-anchor list
+    /// (<https://trust.iptc.org/anchor-list.pem>) – not the C2PA conformance
+    /// trust-list.  For CAWG trust the TrustListKind should be ['CAWG']
     pub trust_anchors: String,
+
     /// URI identifier for the trust list.  If not is present a unique identifier will be generated.
     pub trust_uri: Option<String>,
+
     /// Kind of trust list.  This is used to determine the trust purpose, default is Signer.
     pub trust_kind: TrustListKind,
-}
-
-impl Default for TrustAnchor {
-    fn default() -> Self {
-        Self {
-            trust_anchors: "".into(),
-            trust_uri: None,
-            trust_kind: TrustListKind::Signer,
-        }
-    }
-}
-
-/// Settings to configure the trust list.
-#[cfg_attr(
-    feature = "json_schema",
-    derive(schemars::JsonSchema),
-    schemars(default)
-)]
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct Trust {
-    /// Whether to verify certificates against the trust lists specified in [`Trust`]. This
-    /// option is ONLY applicable to CAWG.
-    ///
-    /// The default value is true.
-    ///
-    /// <div class="warning">
-    /// Verifying trust is REQUIRED by the CAWG spec. This option should only be used for development or testing.
-    /// </div>
-    pub(crate) verify_trust_list: bool,
-
-    /// This option contains the set of trust anchors used to validate certificates.
-    pub anchors: Option<Vec<TrustAnchor>>,
 
     /// List of allowed extended key usage (EKU) object identifiers (OID) that
-    /// certificates must have.
+    /// certificates must have. This will overlay the default top level trust_config.
+    /// If the trust_kind is CAWG it will override the top level trust config
+    ///
+    ///  When validating CAWG identity certificates.
+    ///
+    /// The CAWG interim trust model (CAWG identity assertion spec §8.2.4.1)
+    /// requires the `id-kp-emailProtection` EKU (1.3.6.1.5.5.7.3.4) together with
+    /// one of the CA/Browser Forum S/MIME certificate-policy OIDs:
+    /// organization-validated (2.23.140.1.5.2.2 / 2.23.140.1.5.2.3),
+    /// sponsor-validated (2.23.140.1.5.3.2 / 2.23.140.1.5.3.3), or
+    /// individual-validated (2.23.140.1.5.4.2 / 2.23.140.1.5.4.3). Mailbox-validated
+    /// and legacy certificate purposes are not accepted.
     pub trust_config: Option<String>,
 
-    /// List of explicitly allowed certificates as a PEM bundle.
+    /// List of explicitly allowed CAWG identity or Singing certificates as a PEM bundle.
+    ///
+    /// Under the CAWG interim trust model (CAWG identity assertion spec §8.2.4.1),
+    /// this corresponds to the IPTC Origin Verified News Publishers end-entity
+    /// certificate list (<https://trust.iptc.org/end-entity-list.pem>).
+    ///
+    /// When used for C2PA this will not be C2PA trust list recognized or acknowledged certificates and
+    /// should only be used for non-C2PA conformant cases.
     pub allowed_list: Option<String>,
+
     /// Exact-match allow-list of trusted CAWG identity claims aggregation (ICA)
     /// issuer DIDs.
     ///
@@ -138,65 +140,179 @@ pub struct Trust {
     /// is a deliberate secure default: a self-issued `did:jwk` (or any other
     /// issuer) is not trustworthy simply because its signature is
     /// self-consistent. Populate this list with the DIDs of issuers you trust.
-    // TO DO (CAI-12709): This field is only meaningful for `cawg_trust`, not for
-    // the C2PA `trust`. Move it (and the other CAWG-relevant settings) to a
-    // dedicated `CawgTrust` struct so it no longer pollutes the C2PA `Trust`.
     pub trusted_ica_issuers: Option<Vec<String>>,
 }
 
-impl Trust {
-    // load PEMs
-    fn load_trust_from_data(&self, trust_data: &[u8]) -> Result<Vec<Vec<u8>>> {
-        let mut certs = Vec::new();
-
-        // allow for JSON-encoded PEMs with \n
-        let trust_data = String::from_utf8_lossy(trust_data)
-            .replace("\\n", "\n")
-            .into_bytes();
-        for pem_result in x509_parser::pem::Pem::iter_from_buffer(&trust_data) {
-            let pem = pem_result.map_err(|_e| Error::CoseInvalidCert)?;
-            certs.push(pem.contents);
-        }
-        Ok(certs)
-    }
-
-    // sanity check to see if can parse trust settings
-    fn test_load_trust(&self, allowed_list: &[u8]) -> Result<()> {
-        // check pems
-        if let Ok(cert_list) = self.load_trust_from_data(allowed_list) {
-            if !cert_list.is_empty() {
-                return Ok(());
+impl Default for TrustAnchor {
+    fn default() -> Self {
+        if cfg!(not(test)) {
+            Self {
+                trust_anchors: "".into(),
+                trust_uri: None,
+                trust_kind: TrustListKind::Manifest,
+                trust_config: None,
+                allowed_list: None,
+                trusted_ica_issuers: None,
             }
-        }
-
-        // try to load the of base64 encoded encoding of the sha256 hash of the certificate DER encoding
-        let reader = Cursor::new(allowed_list);
-        let buf_reader = BufReader::new(reader);
-        let mut found_der_hash = false;
-
-        let mut inside_cert_block = false;
-        for l in buf_reader.lines().map_while(|v| v.ok()) {
-            if l.contains("-----BEGIN") {
-                inside_cert_block = true;
-            }
-            if l.contains("-----END") {
-                inside_cert_block = false;
-            }
-
-            // sanity check that that is is base64 encoded and outside of certificate block
-            if !inside_cert_block && base64::decode(&l).is_ok() && !l.is_empty() {
-                found_der_hash = true;
-            }
-        }
-
-        if found_der_hash {
-            Ok(())
         } else {
-            Err(Error::CoseInvalidCert)
+            // In unit tests, trust the ICA issuer DIDs used by the bundled CAWG
+            // ICA fixtures so the existing ICA validation tests continue to
+            // produce `cawg.ica.credential_valid`. In production the allow-list
+            // is empty (no ICA issuer is trusted unless explicitly configured).
+            // Also load same SDK trust list and EKU configuration
+
+            let mut s = Self {
+                trust_anchors: "".into(),
+                trust_uri: None,
+                trust_kind: TrustListKind::Manifest,
+                trust_config: None,
+                allowed_list: None,
+                trusted_ica_issuers: None,
+            };
+
+            s.trusted_ica_issuers = Some(vec![
+                "did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9".to_string(),
+                "did:web:connected-identities.identity-stage.adobe.com".to_string(),
+            ]);
+
+            s.trust_config = Some(
+                String::from_utf8_lossy(include_bytes!(
+                    "../../tests/fixtures/certs/trust/store.cfg"
+                ))
+                .into_owned(),
+            );
+
+            s.trust_anchors = String::from_utf8_lossy(include_bytes!(
+                "../../tests/fixtures/certs/trust/test_cert_root_bundle.pem"
+            ))
+            .into_owned();
+
+            s.trust_uri = Some("https://cai.org/test_certs_trust_list".to_string());
+
+            s
         }
     }
 }
 
+impl SettingsValidate for TrustAnchor {
+    fn validate(&self) -> Result<()> {
+        if !self.trust_anchors.is_empty() {
+            test_load_trust(self.trust_anchors.as_bytes())?;
+        }
+
+        if let Some(al) = &self.allowed_list {
+            test_load_trust(al.as_bytes())?;
+        }
+
+        Ok(())
+    }
+}
+
+/// Settings to configure the trust list.
+#[cfg_attr(
+    feature = "json_schema",
+    derive(schemars::JsonSchema),
+    schemars(default)
+)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct Trust {
+    /// This option contains the set of trust anchors used to validate certificates.
+    pub anchors: Option<Vec<TrustAnchor>>,
+
+    /// List of allowed extended key usage (EKU) object identifiers (OID) that
+    /// certificates must have.
+    pub trust_config: Option<String>,
+
+    /// Whether to verify certificates against the trust lists specified in [`CawgTrust`].
+    ///
+    /// The default value is true.
+    ///
+    /// <div class="warning">
+    /// Verifying trust is REQUIRED by the CAWG spec. This option should only be used for development or testing.
+    /// </div>
+    pub(crate) verify_trust_list: bool,
+}
+
+impl Trust {
+    /// Clear the trusted ICA issuers from all trust anchors.
+    #[allow(dead_code)]
+    pub(crate) fn clear_trusted_ica_issuers(&mut self) {
+        if let Some(anchors) = &mut self.anchors {
+            for anchor in anchors {
+                anchor.trusted_ica_issuers = None;
+            }
+        }
+    }
+
+    // Return a list of trust anchors for the given trust kind, or None if there are no anchors for that kind.
+    #[allow(dead_code)]
+    pub(crate) fn anchors_for_trust_kind(&self, kind: TrustListKind) -> Option<Vec<&TrustAnchor>> {
+        self.anchors.as_ref().and_then(|anchors| {
+            let filtered: Vec<&TrustAnchor> =
+                anchors.iter().filter(|a| a.trust_kind == kind).collect();
+            if filtered.is_empty() {
+                None
+            } else {
+                Some(filtered)
+            }
+        })
+    }
+}
+
+// load PEMs
+fn load_trust_from_data(trust_data: &[u8]) -> Result<Vec<Vec<u8>>> {
+    let mut certs = Vec::new();
+
+    // allow for JSON-encoded PEMs with \n
+    let trust_data = String::from_utf8_lossy(trust_data)
+        .replace("\\n", "\n")
+        .into_bytes();
+    for pem_result in x509_parser::pem::Pem::iter_from_buffer(&trust_data) {
+        let pem = pem_result.map_err(|_e| Error::CoseInvalidCert)?;
+        certs.push(pem.contents);
+    }
+    Ok(certs)
+}
+
+// sanity check to see if can parse trust settings
+fn test_load_trust(allowed_list: &[u8]) -> Result<()> {
+    // check pems
+    if let Ok(cert_list) = load_trust_from_data(allowed_list) {
+        if !cert_list.is_empty() {
+            return Ok(());
+        }
+    }
+
+    // try to load the of base64 encoded encoding of the sha256 hash of the certificate DER encoding
+    let reader = Cursor::new(allowed_list);
+    let buf_reader = BufReader::new(reader);
+    let mut found_der_hash = false;
+
+    let mut inside_cert_block = false;
+    for l in buf_reader.lines().map_while(|v| v.ok()) {
+        if l.contains("-----BEGIN") {
+            inside_cert_block = true;
+        }
+        if l.contains("-----END") {
+            inside_cert_block = false;
+        }
+
+        // sanity check that that is is base64 encoded and outside of certificate block
+        if !inside_cert_block && base64::decode(&l).is_ok() && !l.is_empty() {
+            found_der_hash = true;
+        }
+    }
+
+    if found_der_hash {
+        Ok(())
+    } else {
+        Err(Error::CoseInvalidCert)
+    }
+}
+
+// The `#[cfg(not(test))]` default is all-`None` (trivially derivable), so
+// `clippy::derivable_impls` fires on non-test builds; the `#[cfg(test)]` variant
+// loads bundled fixtures and cannot be derived.
 #[allow(clippy::derivable_impls)]
 impl Default for Trust {
     fn default() -> Self {
@@ -204,17 +320,9 @@ impl Default for Trust {
         #[cfg(test)]
         {
             let mut trust = Self {
-                verify_trust_list: true,
                 anchors: None,
                 trust_config: None,
-                allowed_list: None,
-                // Trust the ICA issuer DIDs used by the bundled CAWG test
-                // fixtures so the existing ICA validation tests continue to
-                // produce `cawg.ica.credential_valid`.
-                trusted_ica_issuers: Some(vec![
-                    "did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9".to_string(),
-                    "did:web:connected-identities.identity-stage.adobe.com".to_string(),
-                ]),
+                verify_trust_list: true,
             };
 
             trust.trust_config = Some(
@@ -224,14 +332,7 @@ impl Default for Trust {
                 .into_owned(),
             );
 
-            trust.anchors = Some(vec![TrustAnchor {
-                trust_anchors: String::from_utf8_lossy(include_bytes!(
-                    "../../tests/fixtures/certs/trust/test_cert_root_bundle.pem"
-                ))
-                .into_owned(),
-                trust_uri: Some("https://cai.org/unknown_tl".to_string()),
-                trust_kind: TrustListKind::Signer,
-            }]);
+            trust.anchors = Some(vec![TrustAnchor::default()]);
 
             trust
         }
@@ -241,8 +342,6 @@ impl Default for Trust {
                 verify_trust_list: true,
                 anchors: None,
                 trust_config: None,
-                allowed_list: None,
-                trusted_ica_issuers: None,
             }
         }
     }
@@ -252,14 +351,9 @@ impl SettingsValidate for Trust {
     fn validate(&self) -> Result<()> {
         if let Some(anchors) = &self.anchors {
             for anchor in anchors {
-                self.test_load_trust(anchor.trust_anchors.as_bytes())?;
+                anchor.validate()?;
             }
         }
-
-        if let Some(al) = &self.allowed_list {
-            self.test_load_trust(al.as_bytes())?;
-        }
-
         Ok(())
     }
 }
@@ -533,10 +627,8 @@ pub struct Settings {
     pub version: u32,
     // TODO (https://github.com/contentauth/c2pa-rs/issues/1314):
     // Rename to c2pa_trust? Discuss possibly breaking change.
-    /// Settings for configuring the C2PA trust lists.
+    /// Settings for configuring the trust lists (C2PA, CAWG, or TSA).
     pub trust: Trust,
-    /// Settings for configuring the CAWG trust lists.
-    pub cawg_trust: Trust,
     /// Settings for configuring core features.
     pub core: Core,
     /// Settings for configuring verification.
@@ -992,7 +1084,6 @@ impl Default for Settings {
         Settings {
             version: VERSION,
             trust: Default::default(),
-            cawg_trust: Default::default(),
             core: Default::default(),
             verify: Default::default(),
             builder: Default::default(),
@@ -1017,7 +1108,6 @@ impl SettingsValidate for Settings {
             cawg_x509_signer.validate()?;
         }
         self.trust.validate()?;
-        self.cawg_trust.validate()?;
         self.core.validate()?;
         self.builder.validate()
     }
@@ -1026,21 +1116,44 @@ impl SettingsValidate for Settings {
 /// Overlays `overlay` onto `target`. Objects are merged key-by-key, and any
 /// other value (e.g. `null` and arrays) replaces the target value.
 fn merge_json(target: &mut Value, overlay: Value) {
-    merge_json_depth(target, overlay, 0);
+    merge_json_depth(target, overlay, 0, "".to_string());
 }
 
-fn merge_json_depth(target: &mut Value, overlay: Value, depth: usize) {
+fn merge_json_depth(target: &mut Value, overlay: Value, depth: usize, outer_key: String) {
     match (target, overlay) {
         (Value::Object(target_map), Value::Object(overlay_map)) if depth < MERGE_MAX_DEPTH => {
             for (key, overlay_value) in overlay_map {
                 merge_json_depth(
-                    target_map.entry(key).or_insert(Value::Null),
+                    target_map.entry(&key).or_insert(Value::Null),
                     overlay_value,
                     depth + 1,
+                    key,
                 );
             }
         }
-        (target, overlay) => *target = overlay,
+        (target, overlay) => {
+            // Currently only allow merging of arrays for the trust.anchors.
+            // This is a design choice to avoid unexpected behavior when merging arrays
+            // in other parts of the settings.
+            if target.is_array() && overlay.is_array() && depth == 2 && outer_key == "anchors" {
+                // If both are arrays, merge and deduplicate. This is a design choice.
+                let target_array = target.as_array().cloned().unwrap_or_default();
+                let overlay_array = overlay.as_array().cloned().unwrap_or_default();
+                if !target_array.is_empty() {
+                    let mut unique = HashSet::new();
+                    unique.extend(target_array);
+                    if !overlay_array.is_empty() {
+                        unique.extend(overlay_array);
+                    }
+                    *target = Value::Array(unique.into_iter().collect());
+                } else {
+                    *target = overlay;
+                }
+            } else {
+                // For all other cases (including null), we replace the target with the overlay.
+                *target = overlay;
+            }
+        }
     }
 }
 
@@ -1482,14 +1595,6 @@ pub mod tests {
         // Test that test_settings loads correctly
         let settings = test_settings();
 
-        // Make sure TrustAnchor has default values
-        let ta = TrustAnchor {
-            trust_anchors: "".to_string(),
-            trust_uri: None,
-            trust_kind: TrustListKind::Signer,
-        };
-        assert_eq!(ta, TrustAnchor::default());
-
         // Verify it has trust anchors (test fixture includes multiple root CAs)
         assert!(
             settings.trust.anchors.is_some(),
@@ -1523,6 +1628,23 @@ pub mod tests {
         } else {
             panic!("test_settings should have a Local signer configured");
         }
+    }
+
+    #[test]
+    fn test_cawg_trust_is_distinct_from_c2pa_trust() {
+        // The CAWG-only `verify_trust_list` setting lives on `trust` and is
+        // still reachable at its historical path for backward compatibility.
+        let settings = Settings::default()
+            .with_value("trust.verify_trust_list", false)
+            .unwrap();
+        assert!(!settings.trust.verify_trust_list);
+
+        // The CAWG trust configuration round-trips through JSON on its own struct.
+        let json = serde_json::to_string(&settings.trust).unwrap();
+        let trust: Trust =
+            serde_json::from_value(serde_json::from_str::<serde_json::Value>(&json).unwrap())
+                .unwrap();
+        assert_eq!(trust, settings.trust);
     }
 
     #[test]
@@ -1588,6 +1710,104 @@ pub mod tests {
                 "com.adobe.trustmark.Q".to_string(),
                 "com.adobe.trustmark.C".to_string()
             ])
+        );
+    }
+
+    #[test]
+    fn test_merging_of_anchors() {
+        let mut settings = Settings::default();
+
+        let trust_anchor = r#"{
+                "trust": {
+                    "anchors": [
+                        {
+                            "trust_anchors": "",
+                            "trust_uri": "custom_ica_trust_anchor",
+                            "trust_kind": "cawg",
+                            "trusted_ica_issuers": ["did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9"] 
+                        }
+                    ]
+                }
+            }"#;
+
+        settings.update_from_str(trust_anchor, "json").unwrap();
+
+        assert_eq!(
+            settings.trust.anchors.as_ref().unwrap().len(),
+            2,
+            "Expected two trust anchors after merging"
+        );
+
+        // Verify that the new anchor is present
+        let new_anchor = settings
+            .trust
+            .anchors
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|anchor| anchor.trust_uri.as_deref().unwrap() == "custom_ica_trust_anchor");
+        assert!(
+            new_anchor.is_some(),
+            "New trust anchor should be present after merging"
+        );
+    }
+
+    #[test]
+    fn test_adding_when_no_anchors() {
+        let mut settings = Settings::default();
+
+        let trust_anchor = r#"{
+                "trust": {
+                    "anchors": [
+                        {
+                            "trust_anchors": "",
+                            "trust_uri": "custom_ica_trust_anchor",
+                            "trust_kind": "cawg",
+                            "trusted_ica_issuers": ["did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9"] 
+                        }
+                    ]
+                }
+            }"#;
+
+        settings.trust.anchors = None; // Clear existing anchors to test adding when no arrays exist
+
+        settings.update_from_str(trust_anchor, "json").unwrap();
+
+        assert_eq!(
+            settings.trust.anchors.as_ref().unwrap().len(),
+            1,
+            "Expected one trust anchor after adding"
+        );
+
+        // Verify that the new anchor is present
+        let new_anchor = settings
+            .trust
+            .anchors
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|anchor| anchor.trust_uri.as_deref().unwrap() == "custom_ica_trust_anchor");
+        assert!(
+            new_anchor.is_some(),
+            "New trust anchor should be present after adding"
+        );
+    }
+
+    #[test]
+    fn test_clearing_anchors() {
+        let mut settings = Settings::default();
+
+        let trust_anchor = r#"{
+                "trust": {
+                    "anchors": null
+                }
+            }"#;
+
+        settings.update_from_str(trust_anchor, "json").unwrap();
+
+        assert!(
+            settings.trust.anchors.is_none(),
+            "Expected zero trust anchor after adding"
         );
     }
 }

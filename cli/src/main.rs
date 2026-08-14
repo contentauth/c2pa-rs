@@ -676,7 +676,7 @@ fn apply_trust_sidecars(settings: &mut Settings, settings_path: &Path) -> Result
             &toml::toml! {
                 [[trust.anchors]]
                 trust_anchors = data
-                trust_kind = "signer"
+                trust_kind = "manifest"
                 trust_uri = TRUST_LIST_OFFICIAL_URI
             }
             .to_string(),
@@ -693,7 +693,7 @@ fn apply_trust_sidecars(settings: &mut Settings, settings_path: &Path) -> Result
             &toml::toml! {
                 [[trust.anchors]]
                 trust_anchors = data
-                trust_kind = "signer"
+                trust_kind = "manifest"
                 trust_uri = TRUST_LIST_LEGACY_ANCHORS_URI
             }
             .to_string(),
@@ -819,7 +819,8 @@ fn configure_sdk(args: &CliArgs) -> Result<Settings> {
                 let ta = TrustAnchor {
                     trust_anchors: data,
                     trust_uri: trust_list_uri.clone(),
-                    trust_kind: TrustListKind::Signer,
+                    trust_kind: TrustListKind::Manifest,
+                    ..Default::default()
                 };
 
                 if let Some(anchors) = &mut settings.trust.anchors {

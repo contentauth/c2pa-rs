@@ -20,14 +20,17 @@ use async_generic::async_generic;
 use thiserror::Error;
 use x509_parser::{extensions::ExtendedKeyUsage, pem::Pem};
 
-use crate::crypto::{base64, hash::sha256};
+use crate::{
+    crypto::{base64, hash::sha256},
+    settings::TrustListKind,
+};
 
 /// Enum to describe the type of trust anchor that validated the certificate.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum TrustAnchorType {
-    /// Trust anchors provided by sanctioned authority.
+    /// Trust anchors provided by sanctioned authority to validate manifest signing certificates.
     #[default]
-    Signer,
+    Manifest,
 
     /// Time Stamping Authority (TSA) provided trust anchor.
     TSA,
@@ -40,6 +43,16 @@ pub enum TrustAnchorType {
 
     /// No check performed
     NoCheck,
+}
+
+impl From<TrustListKind> for TrustAnchorType {
+    fn from(kind: TrustListKind) -> Self {
+        match kind {
+            TrustListKind::Manifest => TrustAnchorType::Manifest,
+            TrustListKind::TSA => TrustAnchorType::TSA,
+            TrustListKind::CAWG => TrustAnchorType::CAWG,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -67,6 +80,9 @@ pub struct CertificateTrustPolicy {
     /// Additional extended key usage (EKU) OIDs.
     additional_ekus: HashSet<String>,
 
+    /// mandatory EKUs, if on this list they must be present in the certificate for it to be valid
+    mandatory_ekus: HashSet<String>,
+
     /// passthrough mode
     passthrough: bool,
 }
@@ -77,6 +93,7 @@ impl Default for CertificateTrustPolicy {
             trust_anchors: Vec::default(),
             end_entity_cert_set: HashSet::default(),
             additional_ekus: HashSet::default(),
+            mandatory_ekus: HashSet::default(),
             passthrough: false,
         };
 
@@ -90,7 +107,7 @@ impl Default for CertificateTrustPolicy {
                     "../../../tests/fixtures/crypto/raw_signature/test_cert_root_bundle.pem"
                 ),
                 "https://cai.org/unknown_tl",
-                TrustAnchorType::Signer,
+                TrustAnchorType::Manifest,
             );
         }
 
@@ -110,6 +127,7 @@ impl CertificateTrustPolicy {
             trust_anchors: Vec::default(),
             end_entity_cert_set: HashSet::default(),
             additional_ekus: HashSet::default(),
+            mandatory_ekus: HashSet::default(),
             passthrough: false,
         }
     }
@@ -120,6 +138,7 @@ impl CertificateTrustPolicy {
             trust_anchors: Vec::default(),
             end_entity_cert_set: HashSet::default(),
             additional_ekus: HashSet::default(),
+            mandatory_ekus: HashSet::default(),
             passthrough: true,
         }
     }
@@ -128,7 +147,7 @@ impl CertificateTrustPolicy {
     pub fn signing_trust_anchors(&self) -> Vec<&TrustAnchor> {
         self.trust_anchors
             .iter()
-            .filter(|a| a.trust_anchor_type == TrustAnchorType::Signer)
+            .filter(|a| a.trust_anchor_type == TrustAnchorType::Manifest)
             .collect::<Vec<_>>()
     }
 
@@ -374,9 +393,30 @@ impl CertificateTrustPolicy {
         }
     }
 
+    // does the CTP require any mandatory EKUs?  If so, the certificate must have at least one of them to be valid
+    pub(crate) fn has_mandatory_ekus(&self) -> bool {
+        !self.mandatory_ekus.is_empty()
+    }
+
+    /// Add mandatory extended key usage (EKU) values that shall be required when
+    /// verifying certificates.  If the EKU is not present in the certificate,
+    /// the certificate will be rejected.
+    pub fn add_mandatory_ekus(&mut self, eku_oids: &[u8]) {
+        let Ok(eku_oids) = std::str::from_utf8(eku_oids) else {
+            return;
+        };
+
+        for line in eku_oids.lines() {
+            if let Ok(_oid) = Oid::from_str(line) {
+                self.mandatory_ekus.insert(line.to_string());
+            }
+        }
+    }
+
     /// Remove the current EKUs
     pub fn clear_ekus(&mut self) {
         self.additional_ekus.clear();
+        self.mandatory_ekus.clear();
     }
 
     /// Remove all trust anchors, private credentials, and EKUs previously
@@ -392,6 +432,51 @@ impl CertificateTrustPolicy {
     /// Each TrustAnchor will be returned.
     pub(crate) fn anchor_sets(&self) -> impl Iterator<Item = &'_ TrustAnchor> {
         self.trust_anchors.iter()
+    }
+
+    // Returns true if all mandatory EKUs are present, false if any are missing.
+    pub(crate) fn verify_mandatory_ekus(&self, eku: &ExtendedKeyUsage) -> bool {
+        for mandatory_oid in self.mandatory_ekus.iter() {
+            let Ok(mandatory_oid) = Oid::from_str(mandatory_oid) else {
+                return false;
+            };
+            let mandatory_oid_str = mandatory_oid.to_string();
+
+            if mandatory_oid == EMAIL_PROTECTION_OID {
+                if !eku.email_protection {
+                    return false;
+                }
+                // was found, so continue to check any other mandatory EKUs
+                continue;
+            }
+
+            if mandatory_oid == TIMESTAMPING_OID {
+                if !eku.time_stamping {
+                    return false;
+                }
+                // was found, so continue to check any other mandatory EKUs
+                continue;
+            }
+
+            if mandatory_oid == OCSP_SIGNING_OID {
+                if !eku.ocsp_signing {
+                    return false;
+                }
+                // was found, so continue to check any other mandatory EKUs
+                continue;
+            }
+
+            // check any other EKUs that may be present in the certificate
+            let found = eku.other.iter().find(|extra_oid| {
+                let extra_oid_str = extra_oid.to_string();
+                extra_oid_str == mandatory_oid_str
+            });
+
+            if found.is_none() {
+                return false;
+            }
+        }
+        true
     }
 
     /// Return `true` if the EKU OID is allowed.
@@ -679,7 +764,7 @@ mod tests {
     fn add_trust_anchors_err_bad_pem() {
         let mut ctp = CertificateTrustPolicy::new();
         assert!(ctp
-            .add_trust_anchors(BAD_PEM.as_bytes(), "", TrustAnchorType::Signer)
+            .add_trust_anchors(BAD_PEM.as_bytes(), "", TrustAnchorType::Manifest)
             .is_err());
     }
 
@@ -798,7 +883,7 @@ zGxQnM2hCA==
                 "../../../tests/fixtures/crypto/raw_signature/test_cert_root_bundle.pem"
             ),
             "",
-            TrustAnchorType::Signer,
+            TrustAnchorType::Manifest,
         )
         .unwrap();
 
@@ -822,43 +907,43 @@ zGxQnM2hCA==
             ctp.check_certificate_trust(&ps256_certs[1..], &ps256_certs[0], None)
                 .unwrap()
                 .0
-                == TrustAnchorType::Signer
+                == TrustAnchorType::Manifest
         );
         assert!(
             ctp.check_certificate_trust(&ps384_certs[1..], &ps384_certs[0], None)
                 .unwrap()
                 .0
-                == TrustAnchorType::Signer
+                == TrustAnchorType::Manifest
         );
         assert!(
             ctp.check_certificate_trust(&ps512_certs[1..], &ps512_certs[0], None)
                 .unwrap()
                 .0
-                == TrustAnchorType::Signer
+                == TrustAnchorType::Manifest
         );
         assert!(
             ctp.check_certificate_trust(&es256_certs[1..], &es256_certs[0], None)
                 .unwrap()
                 .0
-                == TrustAnchorType::Signer
+                == TrustAnchorType::Manifest
         );
         assert!(
             ctp.check_certificate_trust(&es384_certs[1..], &es384_certs[0], None)
                 .unwrap()
                 .0
-                == TrustAnchorType::Signer
+                == TrustAnchorType::Manifest
         );
         assert!(
             ctp.check_certificate_trust(&es512_certs[1..], &es512_certs[0], None)
                 .unwrap()
                 .0
-                == TrustAnchorType::Signer
+                == TrustAnchorType::Manifest
         );
         assert!(
             ctp.check_certificate_trust(&ed25519_certs[1..], &ed25519_certs[0], None)
                 .unwrap()
                 .0
-                == TrustAnchorType::Signer
+                == TrustAnchorType::Manifest
         );
     }
 
@@ -886,43 +971,43 @@ zGxQnM2hCA==
             ctp.check_certificate_trust(&ps256_certs[1..], &ps256_certs[0], None)
                 .unwrap()
                 .0
-                == TrustAnchorType::Signer
+                == TrustAnchorType::Manifest
         );
         assert!(
             ctp.check_certificate_trust(&ps384_certs[1..], &ps384_certs[0], None)
                 .unwrap()
                 .0
-                == TrustAnchorType::Signer
+                == TrustAnchorType::Manifest
         );
         assert!(
             ctp.check_certificate_trust(&ps512_certs[1..], &ps512_certs[0], None)
                 .unwrap()
                 .0
-                == TrustAnchorType::Signer
+                == TrustAnchorType::Manifest
         );
         assert!(
             ctp.check_certificate_trust(&es256_certs[1..], &es256_certs[0], None)
                 .unwrap()
                 .0
-                == TrustAnchorType::Signer
+                == TrustAnchorType::Manifest
         );
         assert!(
             ctp.check_certificate_trust(&es384_certs[1..], &es384_certs[0], None)
                 .unwrap()
                 .0
-                == TrustAnchorType::Signer
+                == TrustAnchorType::Manifest
         );
         assert!(
             ctp.check_certificate_trust(&es512_certs[1..], &es512_certs[0], None)
                 .unwrap()
                 .0
-                == TrustAnchorType::Signer
+                == TrustAnchorType::Manifest
         );
         assert!(
             ctp.check_certificate_trust(&ed25519_certs[1..], &ed25519_certs[0], None)
                 .unwrap()
                 .0
-                == TrustAnchorType::Signer
+                == TrustAnchorType::Manifest
         );
     }
 
@@ -1395,5 +1480,99 @@ zGxQnM2hCA==
         assert!(!ctp.cawg_trust_anchors().is_empty());
         // we did not add any signing trust anchors
         assert!(ctp.signing_trust_anchors().is_empty());
+    }
+
+    #[test]
+    fn test_ctp_has_mandatory_eku() {
+        // load default EKUs
+        let mut ctp = CertificateTrustPolicy::default();
+
+        // no mandatory EKUs set, so all should return true
+        assert!(ctp.verify_mandatory_ekus(&email_eku()));
+        assert!(ctp.verify_mandatory_ekus(&document_signing_eku()));
+        assert!(ctp.verify_mandatory_ekus(&time_stamping_eku()));
+        assert!(ctp.verify_mandatory_ekus(&ocsp_signing_eku()));
+
+        ctp.clear_ekus();
+
+        ctp.add_mandatory_ekus(EMAIL_PROTECTION_OID.to_string().as_bytes());
+        assert!(ctp.verify_mandatory_ekus(&email_eku()));
+        assert!(!ctp.verify_mandatory_ekus(&document_signing_eku()));
+        assert!(!ctp.verify_mandatory_ekus(&time_stamping_eku()));
+        assert!(!ctp.verify_mandatory_ekus(&ocsp_signing_eku()));
+
+        // Verify permiatations making sure that all mandatory EKUs are present in the certificate EKU
+        let mandatory_ekus = format!("{}\n{}\n", DOCUMENT_SIGNING_OID, EMAIL_PROTECTION_OID);
+        let eku = ExtendedKeyUsage {
+            any: false,
+            server_auth: false,
+            client_auth: false,
+            code_signing: false,
+            email_protection: true,
+            time_stamping: false,
+            ocsp_signing: false,
+            other: vec![DOCUMENT_SIGNING_OID.clone()],
+        };
+        ctp.add_mandatory_ekus(mandatory_ekus.as_bytes());
+        assert!(!ctp.verify_mandatory_ekus(&email_eku()));
+        assert!(!ctp.verify_mandatory_ekus(&document_signing_eku()));
+        assert!(!ctp.verify_mandatory_ekus(&time_stamping_eku()));
+        assert!(!ctp.verify_mandatory_ekus(&ocsp_signing_eku()));
+        assert!(ctp.verify_mandatory_ekus(&eku));
+
+        let mandatory_ekus = format!(
+            "{}\n{}\n{}\n",
+            DOCUMENT_SIGNING_OID, EMAIL_PROTECTION_OID, TIME_STAMPING_OID
+        );
+        let eku = ExtendedKeyUsage {
+            any: false,
+            server_auth: false,
+            client_auth: false,
+            code_signing: false,
+            email_protection: true,
+            time_stamping: true,
+            ocsp_signing: false,
+            other: vec![DOCUMENT_SIGNING_OID.clone()],
+        };
+        ctp.add_mandatory_ekus(mandatory_ekus.as_bytes());
+        assert!(!ctp.verify_mandatory_ekus(&email_eku()));
+        assert!(!ctp.verify_mandatory_ekus(&document_signing_eku()));
+        assert!(!ctp.verify_mandatory_ekus(&time_stamping_eku()));
+        assert!(!ctp.verify_mandatory_ekus(&ocsp_signing_eku()));
+        assert!(ctp.verify_mandatory_ekus(&eku));
+
+        let mandatory_ekus = format!(
+            "{}\n{}\n{}\n{}\n",
+            DOCUMENT_SIGNING_OID, EMAIL_PROTECTION_OID, TIME_STAMPING_OID, OCSP_SIGNING_OID
+        );
+        let eku = ExtendedKeyUsage {
+            any: false,
+            server_auth: false,
+            client_auth: false,
+            code_signing: false,
+            email_protection: true,
+            time_stamping: true,
+            ocsp_signing: true,
+            other: vec![DOCUMENT_SIGNING_OID.clone()],
+        };
+        ctp.add_mandatory_ekus(mandatory_ekus.as_bytes());
+        assert!(!ctp.verify_mandatory_ekus(&email_eku()));
+        assert!(!ctp.verify_mandatory_ekus(&document_signing_eku()));
+        assert!(!ctp.verify_mandatory_ekus(&time_stamping_eku()));
+        assert!(!ctp.verify_mandatory_ekus(&ocsp_signing_eku()));
+        assert!(ctp.verify_mandatory_ekus(&eku));
+
+        // test with extra EKUs in the certificate EKU, should still pass
+        let eku = ExtendedKeyUsage {
+            any: false,
+            server_auth: true,
+            client_auth: true,
+            code_signing: true,
+            email_protection: true,
+            time_stamping: true,
+            ocsp_signing: true,
+            other: vec![DOCUMENT_SIGNING_OID.clone()],
+        };
+        assert!(ctp.verify_mandatory_ekus(&eku));
     }
 }

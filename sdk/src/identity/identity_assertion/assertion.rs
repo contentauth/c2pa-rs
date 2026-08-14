@@ -24,9 +24,7 @@ use serde_bytes::ByteBuf;
 
 use crate::{
     context::Context,
-    crypto::cose::{
-        parse_cose_sign1, CertificateTrustPolicy, CoseError, TrustAnchorType, Verifier,
-    },
+    crypto::cose::{parse_cose_sign1, CertificateTrustPolicy, CoseError, Verifier},
     dynamic_assertion::PartialClaim,
     identity::{
         claim_aggregation::IcaSignatureVerifier,
@@ -43,6 +41,7 @@ use crate::{
     },
     jumbf::labels::to_assertion_uri,
     log_current_item, log_item,
+    settings::TrustListKind,
     status_tracker::StatusTracker,
     Manifest, Reader,
 };
@@ -321,25 +320,26 @@ impl IdentityAssertion {
             // Load the trust handler settings. Don't worry about status as these
             // are checked during setting generation.
 
-            let cose_verifier = if settings.cawg_trust.verify_trust_list {
-                if let Some(ta) = &settings.cawg_trust.anchors {
-                    for anchor in ta {
+            let cose_verifier = if settings.trust.verify_trust_list {
+                if let Some(anchors) = &settings.trust.anchors_for_trust_kind(TrustListKind::CAWG) {
+                    for anchor in anchors {
                         let _ = ctp.add_trust_anchors(
                             anchor.trust_anchors.as_bytes(),
                             anchor.trust_uri.as_deref().unwrap_or(""),
-                            TrustAnchorType::CAWG,
+                            anchor.trust_kind.clone().into(),
                         );
+
+                        if let Some(tc) = &anchor.trust_config {
+                            // override default EKUs
+                            ctp.clear_ekus();
+                            ctp.add_valid_ekus(tc.as_bytes());
+                        }
+
+                        if let Some(al) = &anchor.allowed_list {
+                            let _ = ctp.add_end_entity_credentials(al.as_bytes());
+                        }
                     }
                 }
-
-                if let Some(tc) = &settings.cawg_trust.trust_config {
-                    ctp.add_valid_ekus(tc.as_bytes());
-                }
-
-                if let Some(al) = &settings.cawg_trust.allowed_list {
-                    let _ = ctp.add_end_entity_credentials(al.as_bytes());
-                }
-
                 Verifier::VerifyTrustPolicy(Cow::Owned(ctp))
             } else {
                 Verifier::IgnoreProfileAndTrustPolicy

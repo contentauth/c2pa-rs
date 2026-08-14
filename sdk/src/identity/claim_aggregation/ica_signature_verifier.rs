@@ -35,6 +35,7 @@ use crate::{
         SignatureVerifier, SignerPayload, ValidationError,
     },
     log_current_item,
+    settings::TrustListKind,
     status_tracker::StatusTracker,
     validation_status::{
         TIMESTAMP_MALFORMED, TIMESTAMP_MISMATCH, TIMESTAMP_TRUSTED, TIMESTAMP_VALIDATED,
@@ -606,9 +607,17 @@ impl<'a> IcaSignatureVerifier<'a> {
         let (primary_did, _fragment) = issuer_id.split_fragment();
         let primary_did: &str = &primary_did;
 
-        if let Some(trusted_issuers) = &self.context.settings().cawg_trust.trusted_ica_issuers {
-            if trusted_issuers.iter().any(|t| t.as_str() == primary_did) {
-                return Ok(());
+        if let Some(anchors) = &self.context.settings().trust.anchors {
+            for anchor in anchors
+                .iter()
+                .filter(|a| a.trust_kind == TrustListKind::CAWG)
+            {
+                // check the installed CAWG anchors
+                if let Some(trusted_issuers) = &anchor.trusted_ica_issuers {
+                    if trusted_issuers.iter().any(|t| t.as_str() == primary_did) {
+                        return Ok(());
+                    }
+                }
             }
         }
 

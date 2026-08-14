@@ -181,7 +181,7 @@ impl Store {
                 };
 
                 let trust_list_type = match anchor.trust_kind {
-                    TrustListKind::Signer => TrustAnchorType::Signer,
+                    TrustListKind::Manifest => TrustAnchorType::Manifest,
                     TrustListKind::TSA => TrustAnchorType::TSA,
                     TrustListKind::CAWG => TrustAnchorType::CAWG,
                 };
@@ -192,15 +192,15 @@ impl Store {
                     &trust_list_uri,
                     trust_list_type,
                 );
+
+                if let Some(al) = &anchor.allowed_list {
+                    let _v = store.add_trust_allowed_list(al.as_bytes());
+                }
             }
         }
 
         if let Some(tc) = &settings.trust.trust_config {
             let _v = store.add_trust_config(tc.as_bytes());
-        }
-
-        if let Some(al) = &settings.trust.allowed_list {
-            let _v = store.add_trust_allowed_list(al.as_bytes());
         }
 
         store

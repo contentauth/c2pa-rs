@@ -4,13 +4,15 @@
 version = 1
 
 # Trust settings for certificate validation.
-# [trust]
-# String to user-provided trust anchors (PEM format).
-# user_anchors = ""
-# String to system trust anchors (PEM format).
-# trust_anchors = ""
-[trust]
-# String to trust configuration.
+
+
+
+# Array of trust anchors.  For each anchor, specify the URL, kind, and certificate data in its own [[trust.anchors]] section.
+# The trust_kind can be "signer", "tsa", "cawg" to specify the type of trust list.  The trust_uri is required for correct
+# C2PA reporting.  You can have as many trust anchor sets as you need.
+[[trust.anchors]]
+trust_uri = "https://cai.org/test_cert_trust_list"
+trust_kind = "manifest"
 trust_config = """
 //id-kp-emailProtection
 1.3.6.1.5.5.7.3.4
@@ -25,16 +27,6 @@ trust_config = """
 // c2pa-kp-claimSigning
 1.3.6.1.4.1.62558.2.1
 """
-
-# # Path to allowed certificate list (PEM format).
-# allowed_list = ""
-
-# Array of trust anchors.  For each anchor, specify the URL, kind, and certificate data in its own [[trust.anchors]] section.
-# The trust_kind can be "signer", "tsa", "cawg" to specify the type of trust list.  The trust_uri is required for correct
-# C2PA reporting.  You can have as many trust anchor sets as you need.
-[[trust.anchors]]
-trust_uri = "https://cai.org/test_cert_trust_list"
-trust_kind = "signer"
 trust_anchors = """-----BEGIN CERTIFICATE-----
 MIICEzCCAcWgAwIBAgIUW4fUnS38162x10PCnB8qFsrQuZgwBQYDK2VwMHcxCzAJ
 BgNVBAYTAlVTMQswCQYDVQQIDAJDQTESMBAGA1UEBwwJU29tZXdoZXJlMRowGAYD
@@ -246,8 +238,12 @@ xPd7wFhjRZHfuWb2cs63xjAGjQ==
 """
 
 [[trust.anchors]]
-trust_uri = "https://digicert_tsa"
+trust_uri = "https://digicert.com/tsa_root"
 trust_kind = "tsa"
+trust_config = """
+//id-kp-timeStamping
+1.3.6.1.5.5.7.3.8
+"""
 trust_anchors = """-----BEGIN CERTIFICATE-----
 MIIGtDCCBJygAwIBAgIQDcesVwX/IZkuQEMiDDpJhjANBgkqhkiG9w0BAQsFADBi
 MQswCQYDVQQGEwJVUzEVMBMGA1UEChMMRGlnaUNlcnQgSW5jMRkwFwYDVQQLExB3

@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     assertion::AssertionBase,
     assertions::Ingredient,
-    jumbf::labels::manifest_label_from_uri,
+    jumbf::labels::{self, manifest_label_from_uri},
     spec_versions::C2PA_VALIDATOR_VERSION,
     status_tracker::{LogKind, StatusTracker},
     store::Store,
@@ -162,7 +162,12 @@ impl ValidationResults {
         for status in &statuses {
             if status.code() == validation_status::SIGNING_CREDENTIAL_TRUSTED {
                 if let Some(trust_list_uri) = status.trust_list_uri() {
-                    results.trust_list_uri = Some(trust_list_uri.into());
+                    if let Some(item_uri) = status.url() {
+                        // Filter out CAWG results
+                        if item_uri.ends_with(labels::SIGNATURE) {
+                            results.trust_list_uri = Some(trust_list_uri.into());
+                        }
+                    }
                 }
             }
 
