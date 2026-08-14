@@ -90,9 +90,9 @@ mod wrapper {
     /// (`U+FE00`-`U+FE0F`), 16-255 to the supplementary selectors (`U+E0100`-`U+E01EF`).
     pub(super) fn byte_to_vs(b: u8) -> char {
         let cp = if b <= 15 {
-            0xFE00 + b as u32
+            0xfe00 + b as u32
         } else {
-            0xE0100 + (b as u32 - 16)
+            0xe0100 + (b as u32 - 16)
         };
         // Both ranges (U+FE00-U+FE0F, U+E0100-U+E01EF) are valid, non-surrogate scalar
         // values for every input byte, so this fallback is unreachable; `unwrap_or` avoids
@@ -103,10 +103,10 @@ mod wrapper {
     /// The inverse of [`byte_to_vs`], or `None` if `c` is not a variation selector A.8 uses.
     fn vs_to_byte(c: char) -> Option<u8> {
         let cp = c as u32;
-        if (0xFE00..=0xFE0F).contains(&cp) {
-            Some((cp - 0xFE00) as u8)
-        } else if (0xE0100..=0xE01EF).contains(&cp) {
-            Some((cp - 0xE0100 + 16) as u8)
+        if (0xfe00..=0xfe0f).contains(&cp) {
+            Some((cp - 0xfe00) as u8)
+        } else if (0xe0100..=0xe01ef).contains(&cp) {
+            Some((cp - 0xe0100 + 16) as u8)
         } else {
             None
         }
@@ -284,7 +284,7 @@ mod wrapper {
         #[test]
         fn padded_wrapper_hits_the_deterministic_target() {
             for m in [0usize, 1, 16, 200] {
-                let payload = vec![0xABu8; m];
+                let payload = vec![0xabu8; m];
                 let padded = encode_padded(&payload).unwrap();
                 assert_eq!(padded.len(), target_length(m), "manifest of {m} bytes");
                 let w = extract(&format!("host{padded}")).unwrap();
