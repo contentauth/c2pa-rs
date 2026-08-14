@@ -99,6 +99,9 @@ const DEFAULT_MANIFEST_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 /// 8 MB thread stack, ~3 000 levels causes an unrecoverable stack overflow (exit 134).
 /// A limit of 200 uses only ~540 KB of stack, providing a large safety margin while
 /// accommodating any realistic provenance chain depth.
+///
+/// Bounds path length only: independent of the `visited` memoization in `ingredient_checks`.
+/// A shared-subtree DAG can have short paths yet exponentially many paths through it.
 const MAX_INGREDIENT_DEPTH: usize = 200;
 
 pub(crate) struct ManifestHashes {
@@ -1074,6 +1077,8 @@ impl Store {
 
         let manifest_type = if claim.update_manifest() {
             ManifestType::UpdateManifest
+        } else if claim.is_c2md() {
+            ManifestType::C2md
         } else {
             ManifestType::Manifest
         };
@@ -1289,9 +1294,12 @@ impl Store {
             let cai_store_box = store_box.super_box();
             let cai_store_desc_box = cai_store_box.desc_box();
 
-            // ignore unknown boxes per the spec
+            // ignore unknown boxes per the spec. A c2md manifest is a standard
+            // manifest that consumers shall accept (C2PA spec 11.2.2), so it is
+            // read the same as a c2ma manifest.
             if cai_store_desc_box.uuid() != CAI_UPDATE_MANIFEST_UUID
                 && cai_store_desc_box.uuid() != CAI_MANIFEST_UUID
+                && cai_store_desc_box.uuid() != CAI_MANIFEST_C2MD_UUID
             {
                 continue;
             }
@@ -1344,6 +1352,7 @@ impl Store {
             }
 
             let is_update_manifest = cai_store_desc_box.uuid() == CAI_UPDATE_MANIFEST_UUID;
+            let is_c2md = cai_store_desc_box.uuid() == CAI_MANIFEST_C2MD_UUID;
 
             // get map of boxes in this manifest
             let manifest_boxes = Store::manifest_map(cai_store_box)?;
@@ -1472,6 +1481,7 @@ impl Store {
 
             // set the  type of manifest
             claim.set_update_manifest(is_update_manifest);
+            claim.set_is_c2md(is_c2md);
 
             // set order to process JUMBF boxes
             claim.set_box_order(box_order);
@@ -1623,6 +1633,7 @@ impl Store {
         validation_log: &mut StatusTracker,
         depth: usize,
         context: &Context,
+        visited: &mut HashSet<String>,
     ) -> Result<()> {
         if depth >= MAX_INGREDIENT_DEPTH {
             return Err(Error::InvalidAsset(format!(
@@ -1659,11 +1670,6 @@ impl Store {
                 .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
                 .failure_as_err(validation_log, e)
             })?;
-
-            // we don't care about InputTo ingredients
-            if ingredient_assertion.relationship == Relationship::InputTo {
-                continue;
-            }
 
             validation_log
                 .push_ingredient_uri(jumbf::labels::to_assertion_uri(claim.label(), &i.label()));
@@ -1826,26 +1832,30 @@ impl Store {
                         .await?;
                     }
 
-                    // recurse nested ingredients
-                    if _sync {
-                        Store::ingredient_checks(
-                            store,
-                            ingredient,
-                            svi,
-                            validation_log,
-                            depth.saturating_add(1),
-                            context,
-                        )?;
-                    } else {
-                        Box::pin(Store::ingredient_checks_async(
-                            store,
-                            ingredient,
-                            svi,
-                            validation_log,
-                            depth.saturating_add(1),
-                            context,
-                        ))
-                        .await?;
+                    // Referenced ingredients (subgraphs) get verified once per store verify.
+                    if visited.insert(ingredient.label().to_owned()) {
+                        if _sync {
+                            Store::ingredient_checks(
+                                store,
+                                ingredient,
+                                svi,
+                                validation_log,
+                                depth.saturating_add(1),
+                                context,
+                                visited,
+                            )?;
+                        } else {
+                            Box::pin(Store::ingredient_checks_async(
+                                store,
+                                ingredient,
+                                svi,
+                                validation_log,
+                                depth.saturating_add(1),
+                                context,
+                                visited,
+                            ))
+                            .await?;
+                        }
                     }
                 } else {
                     log_item!(label.clone(), "ingredient not found", "ingredient_checks")
@@ -1855,7 +1865,9 @@ impl Store {
                             Error::ClaimVerification(format!("ingredient: {label} is missing")),
                         )?;
                 }
-            } else {
+            } else if ingredient_assertion.relationship != Relationship::InputTo {
+                // Per C2PA spec 15.11.3.3, record an unknownProvenance code for an
+                // ingredient without provenance, unless its relationship is inputTo.
                 let title = ingredient_assertion.title.unwrap_or("no title".into());
                 let description = format!("{title}: ingredient does not have provenance");
                 log_item!(
@@ -2052,16 +2064,29 @@ impl Store {
         let svi =
             store.get_store_validation_info(claim, asset_data.as_deref_mut(), validation_log)?;
 
+        // keep track of already verified ingredients
+        let mut visited = HashSet::new();
+        visited.insert(claim.label().to_owned());
+
         if _sync {
             // verify the provenance claim
             Claim::verify_claim(claim, &svi, true, &store.ctp, validation_log, context)?;
 
-            Store::ingredient_checks(store, claim, &svi, validation_log, 0, context)?;
+            Store::ingredient_checks(store, claim, &svi, validation_log, 0, context, &mut visited)?;
         } else {
             Claim::verify_claim_async(claim, &svi, true, &store.ctp, validation_log, context)
                 .await?;
 
-            Store::ingredient_checks_async(store, claim, &svi, validation_log, 0, context).await?;
+            Store::ingredient_checks_async(
+                store,
+                claim,
+                &svi,
+                validation_log,
+                0,
+                context,
+                &mut visited,
+            )
+            .await?;
         }
 
         // verify the asset hash binding once for the whole store, on the binding manifest
@@ -2318,47 +2343,59 @@ impl Store {
             ));
         };
 
-        // Write dynamic assertions only if placeholders were added during placeholder generation.
-        // We check if the dynamic assertion labels exist in the claim - if not, placeholders
-        // weren't added and we should skip writing to avoid size mismatches.
+        // Write any dynamic assertions exposed by the signer. The caller
+        // (`Builder::sign_embeddable`) reserves matching placeholder slots via
+        // `add_dynamic_assertion_placeholders` before calling this, so the assertion
+        // content replaces those slots in place. This must reuse the same
+        // `dynamic_assertions()` result across the whole operation – draining it on an
+        // earlier call is what silently dropped identity assertions in issue #2055.
         let dynamic_assertions = signer.dynamic_assertions();
         if !dynamic_assertions.is_empty() {
-            // Check if placeholders exist for these dynamic assertions
-            let has_placeholders = {
-                dynamic_assertions
-                    .iter()
-                    .all(|da| pc.assertion_hashed_uri_from_label(&da.label()).is_some())
-            };
+            // Every dynamic assertion needs a reserved placeholder slot to replace.
+            // Surface any that are missing with an actionable message instead of
+            // letting `write_dynamic_assertions` fail later with an opaque
+            // `Error::NotFound`.
+            let missing: Vec<String> = dynamic_assertions
+                .iter()
+                .map(|da| da.label())
+                .filter(|label| pc.assertion_hashed_uri_from_label(label).is_none())
+                .collect();
 
-            if has_placeholders {
-                let mut preliminary_claim = PartialClaim::default();
-                {
-                    for assertion in pc.assertions() {
-                        preliminary_claim.add_assertion(assertion);
-                    }
-                }
-
-                // Drop pc before calling write_dynamic_assertions
-                let _ = pc;
-
-                let _modified =
-                    self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
-
-                // Get pc again
-                let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-                let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
-
-                let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-                pc.set_signature_val(sig);
-
-                let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
-
-                if context.settings().verify.verify_after_sign {
-                    self.verify_store_strict(None, context)?;
-                }
-
-                return Ok(jumbf_bytes);
+            if !missing.is_empty() {
+                return Err(Error::BadParam(format!(
+                    "no placeholder slots were reserved for dynamic assertions [{}]; \
+                     call add_dynamic_assertion_placeholders() before signing",
+                    missing.join(", ")
+                )));
             }
+
+            let mut preliminary_claim = PartialClaim::default();
+            {
+                for assertion in pc.assertions() {
+                    preliminary_claim.add_assertion(assertion);
+                }
+            }
+
+            // Drop pc before calling write_dynamic_assertions
+            let _ = pc;
+
+            let _modified =
+                self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
+
+            // Get pc again
+            let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+            let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
+
+            let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+            pc.set_signature_val(sig);
+
+            let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+
+            if context.settings().verify.verify_after_sign {
+                self.verify_store_strict(None, context)?;
+            }
+
+            return Ok(jumbf_bytes);
         }
 
         context.check_progress(ProgressPhase::Signing, 1, 1)?;
@@ -2448,37 +2485,18 @@ impl Store {
     ) -> Result<Vec<u8>> {
         self.prep_embeddable_store(dh, asset_reader, context)?;
 
-        // Write dynamic assertions only if placeholders were added during placeholder generation.
-        // We check if the dynamic assertion labels exist in the claim - if not, placeholders
-        // weren't added and we should skip writing to avoid size mismatches.
-        let dynamic_assertions = signer.dynamic_assertions();
-        if !dynamic_assertions.is_empty() {
-            // Check if placeholders exist for these dynamic assertions
-            let has_placeholders = {
-                let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-                dynamic_assertions
-                    .iter()
-                    .all(|da| pc.assertion_hashed_uri_from_label(&da.label()).is_some())
-            };
-
-            if has_placeholders {
-                let mut preliminary_claim = PartialClaim::default();
-                {
-                    let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-                    for assertion in pc.assertions() {
-                        preliminary_claim.add_assertion(assertion);
-                    }
-                }
-                if _sync {
-                    self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
-                } else {
-                    self.write_dynamic_assertions_async(
-                        &dynamic_assertions,
-                        &mut preliminary_claim,
-                    )
-                    .await?;
-                }
-            }
+        // The data-hashed placeholder (`get_data_hashed_manifest_placeholder`) does not
+        // reserve space for dynamic assertions, so there is no way to embed them here
+        // without breaking the size contract the caller already committed to. Fail loudly
+        // rather than silently dropping the assertions (see issue #2055); callers that need
+        // dynamic assertions should use Builder::placeholder() + Builder::sign_embeddable().
+        if !signer.dynamic_assertions().is_empty() {
+            return Err(Error::BadParam(
+                "signer has dynamic assertions (e.g. CAWG identity) that the data-hashed \
+                 embeddable workflow cannot represent; use Builder::placeholder() followed \
+                 by Builder::sign_embeddable() instead"
+                    .to_string(),
+            ));
         }
 
         context.check_progress(ProgressPhase::Signing, 1, 1)?;
@@ -3735,6 +3753,20 @@ impl Store {
 
     // get the manifest that should be used for hash binding checks
     fn get_hash_binding_manifest(&self, claim: &Claim) -> Option<String> {
+        self.get_hash_binding_manifest_impl(claim, &mut HashSet::new())
+    }
+
+    fn get_hash_binding_manifest_impl(
+        &self,
+        claim: &Claim,
+        visited: &mut HashSet<String>,
+    ) -> Option<String> {
+        if !visited.insert(claim.label().to_owned()) {
+            // A cyclic chain has no binding manifest.
+            // None maps to a validation error in this case.
+            return None;
+        }
+
         // is this claim valid
         if !claim.update_manifest() && !claim.hash_assertions().is_empty() {
             return Some(claim.label().to_owned());
@@ -3749,7 +3781,7 @@ impl Store {
                     if let Some(parent) = self.get_claim(&parent_label) {
                         // recurse until we find
                         if parent.update_manifest() {
-                            return self.get_hash_binding_manifest(parent);
+                            return self.get_hash_binding_manifest_impl(parent, visited);
                         } else if !parent.hash_assertions().is_empty() {
                             return Some(parent.label().to_owned());
                         }
@@ -5850,6 +5882,88 @@ pub mod tests {
         );
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_from_jumbf_reads_c2md_standard_manifest() {
+        use crate::{
+            jumbf::boxes::{CAI_MANIFEST_C2MD_UUID, CAI_MANIFEST_UUID},
+            utils::test::create_test_store,
+        };
+
+        // Per C2PA spec 11.2.2, a manifest using the c2md JUMBF type UUID is a
+        // standard manifest that consumers shall accept. Build a normal (c2ma)
+        // manifest, rewrite its superbox type UUID to c2md, and confirm the
+        // store still reads the manifest instead of silently skipping it.
+        let store = create_test_store().unwrap();
+        let jumbf = store.to_jumbf_internal(0).unwrap();
+
+        // Flip the manifest superbox type UUID from c2ma to c2md in place.
+        let c2ma = hex::decode(CAI_MANIFEST_UUID).unwrap();
+        let c2md = hex::decode(CAI_MANIFEST_C2MD_UUID).unwrap();
+        let pos = jumbf
+            .windows(c2ma.len())
+            .position(|w| w == c2ma.as_slice())
+            .expect("manifest c2ma UUID present");
+        let mut patched = jumbf.clone();
+        patched[pos..pos + c2md.len()].copy_from_slice(&c2md);
+
+        let mut log = StatusTracker::default();
+        let restored = Store::from_jumbf(&patched, &mut log).expect("c2md manifest should be read");
+        assert_eq!(
+            restored.claims().len(),
+            store.claims().len(),
+            "c2md manifest should be read as a standard manifest"
+        );
+    }
+
+    #[test]
+    fn test_c2md_manifest_preserved_on_round_trip() {
+        use crate::{
+            jumbf::boxes::{CAI_MANIFEST_C2MD_UUID, CAI_MANIFEST_UUID},
+            utils::test::create_test_store,
+        };
+
+        // A c2md manifest must keep its c2md tag if the store is
+        // re-serialized (e.g. when it is copied as part of adding an update
+        // manifest or embedding it as an ingredient's manifest store) -
+        // claim generators must not synthesize new c2ma/c2um boxes for data
+        // that was never theirs to retag.
+        let store = create_test_store().unwrap();
+        let jumbf = store.to_jumbf_internal(0).unwrap();
+
+        let c2ma = hex::decode(CAI_MANIFEST_UUID).unwrap();
+        let c2md = hex::decode(CAI_MANIFEST_C2MD_UUID).unwrap();
+        let pos = jumbf
+            .windows(c2ma.len())
+            .position(|w| w == c2ma.as_slice())
+            .expect("manifest c2ma UUID present");
+        let mut patched = jumbf.clone();
+        patched[pos..pos + c2md.len()].copy_from_slice(&c2md);
+
+        let mut log = StatusTracker::default();
+        let restored = Store::from_jumbf(&patched, &mut log).expect("c2md manifest should be read");
+
+        // Re-serialize the store that was read from a c2md-tagged manifest.
+        let round_tripped = restored.to_jumbf_internal(0).unwrap();
+
+        let c2md_count = round_tripped
+            .windows(c2md.len())
+            .filter(|w| *w == c2md.as_slice())
+            .count();
+        let c2ma_count = round_tripped
+            .windows(c2ma.len())
+            .filter(|w| *w == c2ma.as_slice())
+            .count();
+
+        assert_eq!(
+            c2md_count, 1,
+            "c2md tag should survive re-serialization of the store"
+        );
+        assert_eq!(
+            c2ma_count, 0,
+            "a c2md manifest must not be rewritten as c2ma on round-trip"
+        );
     }
 
     #[test]
@@ -8168,6 +8282,79 @@ pub mod tests {
     }
 
     #[test]
+    fn test_sign_manifest_errors_when_dynamic_placeholders_missing() {
+        // A signer that advertises a dynamic assertion but whose placeholder slot is
+        // never reserved. `sign_manifest` must reject it with an actionable error that
+        // names the offending assertion, rather than the opaque `Error::NotFound` that
+        // `write_dynamic_assertions` would otherwise raise (see issue #2055 review).
+        #[derive(Debug)]
+        struct TestDynamicAssertion {}
+
+        impl DynamicAssertion for TestDynamicAssertion {
+            fn label(&self) -> String {
+                "com.mycompany.myassertion".to_string()
+            }
+
+            fn reserve_size(&self) -> Result<usize> {
+                Ok(64)
+            }
+
+            fn content(
+                &self,
+                _label: &str,
+                _size: Option<usize>,
+                _claim: &PartialClaim,
+            ) -> Result<DynamicAssertionContent> {
+                Ok(DynamicAssertionContent::Cbor(Vec::new()))
+            }
+        }
+
+        struct DynamicSigner(Box<dyn Signer>);
+
+        impl crate::Signer for DynamicSigner {
+            fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+                self.0.sign(data)
+            }
+
+            fn alg(&self) -> SigningAlg {
+                self.0.alg()
+            }
+
+            fn certs(&self) -> Result<Vec<Vec<u8>>> {
+                self.0.certs()
+            }
+
+            fn reserve_size(&self) -> usize {
+                self.0.reserve_size()
+            }
+
+            fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+                vec![Box::new(TestDynamicAssertion {})]
+            }
+        }
+
+        let context = crate::context::Context::new();
+        let signer = DynamicSigner(test_signer(SigningAlg::Ps256));
+
+        let mut store = Store::from_context(&context);
+        store.commit_claim(create_test_claim().unwrap()).unwrap();
+
+        // Reserve the hard-binding placeholder only – no dynamic-assertion slots.
+        store
+            .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg")
+            .unwrap();
+
+        let err = store.sign_manifest(&signer, &context).unwrap_err();
+        match err {
+            Error::BadParam(msg) => assert!(
+                msg.contains("com.mycompany.myassertion"),
+                "error should name the assertion missing a placeholder slot: {msg}"
+            ),
+            other => panic!("expected Error::BadParam, got {other:?}"),
+        }
+    }
+
+    #[test]
     #[cfg(feature = "file_io")]
     fn test_datahash_embeddable_manifest_user_hashed() {
         let context = crate::context::Context::new();
@@ -9082,6 +9269,7 @@ pub mod tests {
             &mut validation_log,
             MAX_INGREDIENT_DEPTH,
             &context,
+            &mut HashSet::new(),
         );
 
         assert!(
@@ -9230,6 +9418,339 @@ pub mod tests {
         assert!(
             m3_claim.claim_ingredient(&m1_label).is_none(),
             "M1 should be removed because its only referencing assertion was redacted"
+        );
+    }
+
+    /// Builds a signed regular manifest (M2) that references a separately-signed
+    /// manifest (M1) as an `inputTo` ingredient.
+    ///
+    /// When `corrupt_hash` is true, M2's ingredient assertion commits (under M2's
+    /// COSE signature) to a bogus `activeManifest` box hash, simulating an
+    /// `inputTo` ingredient whose manifest bytes were altered after signing.
+    /// `verify_after_sign` is disabled so the corrupt asset can be written and the
+    /// detection exercised on the read-back path.
+    ///
+    /// Returns the asset mime format and the signed M2 bytes.
+    fn build_asset_with_input_to_ingredient(corrupt_hash: bool) -> (&'static str, Vec<u8>) {
+        use crate::{
+            hashed_uri::HashedUri, jumbf::labels::to_signature_uri, utils::test::create_test_store,
+            ClaimGeneratorInfo, ValidationResults,
+        };
+
+        let mut context = Context::new();
+        context.settings_mut().verify.verify_after_sign = false;
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // --- M1: a standalone signed ingredient manifest. ---
+        let (format, mut m1_input, mut m1_output) = create_test_streams("earth_apollo17.jpg");
+        let mut m1_store = create_test_store().unwrap();
+        m1_store
+            .save_to_stream(
+                format,
+                &mut m1_input,
+                &mut m1_output,
+                signer.as_ref(),
+                &context,
+            )
+            .unwrap();
+        m1_output.rewind().unwrap();
+        let m1_vec = m1_output.get_ref().clone();
+
+        let mut m1_report = StatusTracker::default();
+        let m1_store_loaded = Store::from_stream(
+            format,
+            Cursor::new(m1_vec.clone()),
+            &mut m1_report,
+            &context,
+        )
+        .unwrap();
+        let m1_pc = m1_store_loaded.provenance_claim().unwrap();
+
+        // --- M2: a regular manifest referencing M1 as an inputTo ingredient. ---
+        let mut m2_claim = Claim::new("input_to_test", Some("m2_input_to"), 2);
+        m2_claim.add_claim_generator_info(ClaimGeneratorInfo::new("test"));
+
+        let (m1_jumbf, _) =
+            Store::load_jumbf_from_stream(format, &mut Cursor::new(m1_vec.clone()), &context)
+                .unwrap();
+        let mut m2_store =
+            Store::load_ingredient_to_claim(&mut m2_claim, &m1_jumbf, None, &context).unwrap();
+
+        let m1_hashes = m1_store_loaded.get_manifest_box_hashes(m1_pc);
+        let mut manifest_box_hash = m1_hashes.manifest_box_hash.clone();
+        if corrupt_hash {
+            // Flip a byte so the signed hash no longer matches M1's actual bytes.
+            manifest_box_hash[0] ^= 0xff;
+        }
+        let parent_uri = HashedUri::new(
+            m1_store_loaded.provenance_path().unwrap(),
+            Some(m1_pc.alg().to_string()),
+            &manifest_box_hash,
+        );
+        let sig_uri = HashedUri::new(
+            to_signature_uri(m1_pc.label()),
+            Some(m1_pc.alg().to_string()),
+            &m1_hashes.signature_box_hash,
+        );
+
+        let m1_validation = ValidationResults::from_store(&m1_store_loaded, &m1_report);
+        let input_to_ingredient = Ingredient::new_v3(Relationship::InputTo)
+            .set_active_manifests_and_signature_from_hashed_uri(Some(parent_uri), Some(sig_uri))
+            .set_validation_results(Some(m1_validation));
+        m2_claim.add_assertion(&input_to_ingredient).unwrap();
+
+        // A created action plus an edit that consumes the inputTo ingredient.
+        let ia = m2_claim.ingredient_assertions()[0];
+        let ia_hashed_uri = HashedUri::new(
+            to_assertion_uri(m2_claim.label(), &ia.label()),
+            Some(m2_claim.alg().to_owned()),
+            ia.hash(),
+        );
+        let actions = Actions::new()
+            .add_action(Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty))
+            .add_action(
+                Action::new("c2pa.edited")
+                    .set_parameter("ingredients", vec![ia_hashed_uri])
+                    .unwrap(),
+            );
+        m2_claim.add_assertion(&actions).unwrap();
+
+        m2_store.commit_claim(m2_claim).unwrap();
+
+        let (_f, mut m2_input, mut m2_output) = create_test_streams("earth_apollo17.jpg");
+        m2_store
+            .save_to_stream(
+                format,
+                &mut m2_input,
+                &mut m2_output,
+                signer.as_ref(),
+                &context,
+            )
+            .unwrap();
+        m2_output.rewind().unwrap();
+        (format, m2_output.get_ref().clone())
+    }
+
+    // A well-formed `inputTo` ingredient must actually be hash-validated, not
+    // skipped. Regression guard for the vuln where `ingredient_checks` did an
+    // unconditional `continue` for `Relationship::InputTo`, so the ingredient
+    // manifest was never checked against its signed hash. The success code
+    // `ingredient.manifest.validated` is only emitted when that check runs.
+    #[test]
+    fn test_input_to_ingredient_is_validated() {
+        let context = Context::new();
+        let (format, m2_vec) = build_asset_with_input_to_ingredient(false);
+
+        let mut report = StatusTracker::default();
+        Store::from_stream(format, Cursor::new(m2_vec), &mut report, &context).unwrap();
+
+        assert!(
+            !report.has_any_error(),
+            "valid inputTo ingredient should not produce errors: {:?}",
+            report.logged_items()
+        );
+        assert!(
+            report.has_status(validation_status::INGREDIENT_MANIFEST_VALIDATED),
+            "inputTo ingredient manifest must be hash-validated, got: {:?}",
+            report.logged_items()
+        );
+    }
+
+    // Tampering an `inputTo` ingredient's manifest (so its bytes no longer match
+    // the hash the active claim signed) must be caught. Before the fix this path
+    // was skipped entirely and the asset reported Valid, forging source
+    // attribution. It must now surface `ingredient.manifest.mismatch`.
+    #[test]
+    fn test_input_to_ingredient_hash_mismatch_detected() {
+        let context = Context::new();
+        let (format, m2_vec) = build_asset_with_input_to_ingredient(true);
+
+        let mut report = StatusTracker::default();
+        let _ = Store::from_stream(format, Cursor::new(m2_vec), &mut report, &context);
+
+        assert!(
+            report.has_status(validation_status::INGREDIENT_MANIFEST_MISMATCH),
+            "tampered inputTo ingredient must be detected as a manifest mismatch, got: {:?}",
+            report.logged_items()
+        );
+        assert!(
+            report.has_any_error(),
+            "tampered inputTo ingredient must fail validation"
+        );
+    }
+
+    // Cyclic `parentOf` chains also lead to going through cycles.
+    #[test]
+    fn test_hash_binding_manifest_parent_cycle_terminates() {
+        use crate::{hashed_uri::HashedUri, jumbf::labels::to_manifest_uri, ClaimGeneratorInfo};
+
+        let mut store = Store::new();
+
+        let mut claim_a = Claim::new("cycle_a", Some("contentauth"), 2);
+        let mut claim_b = Claim::new("cycle_b", Some("contentauth"), 2);
+        claim_a.add_claim_generator_info(ClaimGeneratorInfo::new("test"));
+        claim_b.add_claim_generator_info(ClaimGeneratorInfo::new("test"));
+        claim_a.set_update_manifest(true);
+        claim_b.set_update_manifest(true);
+
+        let label_a = claim_a.label().to_owned();
+        let label_b = claim_b.label().to_owned();
+
+        // Create the cycle:
+        // Point claims at each other, each as the other's parentOf.
+        for (claim, parent_label) in [(&mut claim_a, &label_b), (&mut claim_b, &label_a)] {
+            let parent_uri = HashedUri::new(
+                to_manifest_uri(parent_label),
+                Some(claim.alg().to_owned()),
+                &[0u8; 32],
+            );
+
+            // Here we just want an(y) ingredient to finish creating cycles.
+            let ingredient = Ingredient::new_v2("parent", "image/jpeg")
+                .set_parent()
+                .set_c2pa_manifest_from_hashed_uri(Some(parent_uri));
+            claim.add_assertion(&ingredient).unwrap();
+        }
+
+        store.insert_restored_claim(label_a.clone(), claim_a);
+        store.insert_restored_claim(label_b, claim_b);
+
+        // Called directly in the test to verify the scenario,
+        // otherwise currently call order of (more) public APIs prevents this.
+        let binding = store.get_hash_binding_manifest(store.get_claim(&label_a).unwrap());
+        assert!(
+            binding.is_none(),
+            "a parentOf cycle has no binding manifest and must terminate, got {binding:?}"
+        );
+    }
+
+    // Manifest stores with deep inputTo ingredients links shouldn't cause exponential recursive checks
+    // (when verify is on).
+    #[test]
+    fn test_shared_ingredient_inputto_graph_verified_once() {
+        use crate::{
+            hashed_uri::HashedUri, jumbf::labels::to_signature_uri, utils::test::create_test_store,
+            ClaimGeneratorInfo, ValidationResults,
+        };
+
+        const DEPTH: usize = 13;
+
+        let mut build_context = Context::new();
+        // Turn some settings off to allow building the test asset.
+        build_context.settings_mut().verify.verify_after_sign = false;
+        build_context.settings_mut().verify.verify_after_reading = false;
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // This is a leaf node...
+        let (format, mut leaf_input, mut leaf_output) = create_test_streams("earth_apollo17.jpg");
+        create_test_store()
+            .unwrap()
+            .save_to_stream(
+                format,
+                &mut leaf_input,
+                &mut leaf_output,
+                signer.as_ref(),
+                &build_context,
+            )
+            .unwrap();
+        leaf_output.rewind().unwrap();
+        let mut prev_vec = leaf_output.get_ref().clone();
+
+        // Each level references the previous level's manifest
+        // via 2 inputTo ingredient assertions pointing at the same child.
+        for level in 1..DEPTH {
+            let mut prev_report = StatusTracker::default();
+            let prev_store = Store::from_stream(
+                format,
+                Cursor::new(prev_vec.clone()),
+                &mut prev_report,
+                &build_context,
+            )
+            .unwrap();
+            let prev_pc = prev_store.provenance_claim().unwrap();
+            let prev_hashes = prev_store.get_manifest_box_hashes(prev_pc);
+
+            let mut claim = Claim::new("deep_shared", Some(&format!("m{level}")), 2);
+            claim.add_claim_generator_info(ClaimGeneratorInfo::new("test"));
+
+            let (prev_jumbf, _) =
+                Store::load_jumbf_from_stream(format, &mut Cursor::new(prev_vec), &build_context)
+                    .unwrap();
+            let mut store =
+                Store::load_ingredient_to_claim(&mut claim, &prev_jumbf, None, &build_context)
+                    .unwrap();
+
+            for _ in 0..2 {
+                let parent_uri = HashedUri::new(
+                    prev_store.provenance_path().unwrap(),
+                    Some(prev_pc.alg().to_string()),
+                    &prev_hashes.manifest_box_hash,
+                );
+                let sig_uri = HashedUri::new(
+                    to_signature_uri(prev_pc.label()),
+                    Some(prev_pc.alg().to_string()),
+                    &prev_hashes.signature_box_hash,
+                );
+                let validation = ValidationResults::from_store(&prev_store, &prev_report);
+                let ingredient = Ingredient::new_v3(Relationship::InputTo)
+                    .set_active_manifests_and_signature_from_hashed_uri(
+                        Some(parent_uri),
+                        Some(sig_uri),
+                    )
+                    .set_validation_results(Some(validation));
+                claim.add_assertion(&ingredient).unwrap();
+            }
+
+            let mut actions = Actions::new()
+                .add_action(Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty));
+            for ia in claim.ingredient_assertions() {
+                let ia_hashed_uri = HashedUri::new(
+                    to_assertion_uri(claim.label(), &ia.label()),
+                    Some(claim.alg().to_owned()),
+                    ia.hash(),
+                );
+                actions = actions.add_action(
+                    Action::new("c2pa.edited")
+                        .set_parameter("ingredients", vec![ia_hashed_uri])
+                        .unwrap(),
+                );
+            }
+            claim.add_assertion(&actions).unwrap();
+            store.commit_claim(claim).unwrap();
+
+            let (_f, mut input, mut output) = create_test_streams("earth_apollo17.jpg");
+            store
+                .save_to_stream(
+                    format,
+                    &mut input,
+                    &mut output,
+                    signer.as_ref(),
+                    &build_context,
+                )
+                .unwrap();
+            output.rewind().unwrap();
+            prev_vec = output.get_ref().clone();
+        }
+
+        // Starting verification from the top manifest will walk the graph we built.
+        // (Default context re-enables the verification settings).
+        let mut report = StatusTracker::default();
+        Store::from_stream(format, Cursor::new(prev_vec), &mut report, &Context::new()).unwrap();
+
+        // Memoization bounds validation steps...
+        let validated = report
+            .logged_items()
+            .iter()
+            .filter(|i| {
+                i.validation_status.as_deref()
+                    == Some(validation_status::INGREDIENT_MANIFEST_VALIDATED)
+            })
+            .count();
+
+        // ... so here we verify the validation count stayed below the bounds.
+        assert!(
+            validated <= 4 * DEPTH,
+            "shared ingredient subtrees must be verified only once"
         );
     }
 }

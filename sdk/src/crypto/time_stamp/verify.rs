@@ -211,8 +211,7 @@ pub fn verify_time_stamp(
                 if let Some(gt) = timestamp_to_generalized_time(signed_signing_time) {
                     // Use actual signed time.
                     signing_time = generalized_time_to_datetime(gt.clone()).timestamp();
-                    let dt: chrono::DateTime<chrono::Utc> = gt.into();
-                    tst.gen_time = dt.into();
+                    tst.gen_time = gt;
                 };
             }
 
@@ -638,7 +637,8 @@ fn generalized_time_to_datetime<T: Into<DateTime<Utc>>>(gt: T) -> DateTime<Utc> 
 
 fn timestamp_to_generalized_time(dt: i64) -> Option<crate::crypto::asn1::GeneralizedTime> {
     match Utc.timestamp_opt(dt, 0) {
-        LocalResult::Single(time) => Some(time.into()),
+        // try_into fails for dates outside der's supported 1970-9999 range
+        LocalResult::Single(time) => time.try_into().ok(),
         _ => None,
     }
 }
