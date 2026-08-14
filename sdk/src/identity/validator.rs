@@ -138,6 +138,9 @@ mod tests {
         settings.trust.anchors = Some(anchors.clone());
         let context = crate::Context::new().with_settings(settings).unwrap();
 
+        // The proxy above points did:web resolution at a loopback mock server. The default policy
+        // allows direct requests to internal hosts (it only blocks redirects to internal
+        // addresses), so no allow-list is required here.
         #[cfg(not(target_arch = "wasm32"))]
         let _did_server = mock_connected_identities_did();
 

@@ -9421,6 +9421,77 @@ pub mod tests {
         );
     }
 
+    // SSRF via HTTP redirect during remote-manifest fetch
+    // (CAI-12574 / HackerOne #3784091).
+    //
+    // The report's PoC embeds a remote-manifest URL that an attacker server answers with a 302
+    // redirect to an internal / cloud-metadata endpoint (e.g. 169.254.169.254). The SDK must not
+    // follow that redirect. These tests drive the actual `fetch_remote_manifest` path rather than
+    // the resolver in isolation.
+    //
+    // Under the DEFAULT policy (`allow_redirects = true`), the initial (loopback, in this hermetic
+    // test) request is allowed, and the redirect is followed up to the point where its target is
+    // seen to be an internal address, which is then rejected as `RedirectTargetDisallowed`.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "fetch_remote_manifests"))]
+    #[test]
+    fn test_remote_manifest_redirect_to_internal_blocked() {
+        use httpmock::prelude::*;
+
+        let server = MockServer::start();
+
+        let redirect = server.mock(|when, then| {
+            when.method(GET).path("/redirect-to-internal");
+            then.status(302)
+                .header("Location", "http://169.254.169.254/latest/meta-data/");
+        });
+
+        let context = Context::new();
+        let result = Store::fetch_remote_manifest(&server.url("/redirect-to-internal"), &context);
+
+        // The redirect to an internal address is rejected with an explanatory message.
+        let err = result.expect_err("the redirect to an internal address must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("redirect") && msg.contains("internal"),
+            "error should explain the blocked internal redirect, got: {msg}"
+        );
+
+        // The redirect endpoint is hit once; the internal target is never contacted.
+        redirect.assert_calls(1);
+    }
+
+    // With `allow_redirects = false`, the SDK refuses to follow any redirect at all.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "fetch_remote_manifests"))]
+    #[test]
+    fn test_remote_manifest_redirects_disabled() {
+        use httpmock::prelude::*;
+
+        let server = MockServer::start();
+
+        let redirect = server.mock(|when, then| {
+            when.method(GET).path("/redirect");
+            then.status(302).header("Location", server.url("/target"));
+        });
+        let target = server.mock(|when, then| {
+            when.method(GET).path("/target");
+            then.status(200).body("SSRF_CONFIRMED");
+        });
+
+        let context = Context::new()
+            .with_settings("[core]\nallow_redirects = false\n")
+            .unwrap();
+        let result = Store::fetch_remote_manifest(&server.url("/redirect"), &context);
+
+        assert!(
+            result.is_err(),
+            "allow_redirects = false must not follow the redirect"
+        );
+
+        // The redirect endpoint is hit once; the target is never contacted.
+        redirect.assert_calls(1);
+        target.assert_calls(0);
+    }
+
     /// Builds a signed regular manifest (M2) that references a separately-signed
     /// manifest (M1) as an `inputTo` ingredient.
     ///
