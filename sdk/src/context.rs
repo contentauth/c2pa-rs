@@ -17,7 +17,7 @@ use std::sync::{
 };
 
 use crate::{
-    asset_io::{AssetIO, CAIReader, CAIWriter},
+    asset_io::{AssetIO, HandlerRegistry},
     http::{
         restricted::RestrictedResolver, AsyncGenericResolver, AsyncHttpResolver,
         SyncGenericResolver, SyncHttpResolver,
@@ -276,9 +276,10 @@ pub struct Context {
     /// Embedded cancellation flag.  Any thread holding an `Arc<Context>` can call
     /// [`cancel()`](Context::cancel) without needing a separate token object.
     cancel_flag: AtomicBool,
-    /// Custom IO handlers provided by the caller.  Searched before the built-in
-    /// global registry; last-registered wins when two handlers claim the same format.
-    io_handlers: Vec<Arc<dyn AssetIO>>,
+    /// Custom IO handlers provided by the caller, plus the built-in registry as a fallback.
+    /// Custom handlers are searched first; last-registered wins when two handlers claim the
+    /// same format.
+    io: HandlerRegistry,
 }
 
 impl Default for Context {
@@ -296,7 +297,7 @@ impl Default for Context {
             async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
             progress_callback: None,
             cancel_flag: AtomicBool::new(false),
-            io_handlers: Vec::new(),
+            io: HandlerRegistry::with_fallback(crate::jumbf_io::default_handler_registry()),
         }
     }
 }
@@ -516,56 +517,23 @@ impl Context {
     /// let reader = c2pa::Reader::from_context(context);
     /// ```
     pub fn with_io_handler(mut self, handler: impl AssetIO + 'static) -> Self {
-        self.io_handlers.push(Arc::new(handler));
+        self.io.add_handler(handler);
         self
     }
 
     /// Register a custom IO handler on this Context (mutable variant).
     pub fn add_io_handler(&mut self, handler: impl AssetIO + 'static) {
-        self.io_handlers.push(Arc::new(handler));
+        self.io.add_handler(handler);
     }
 
-    /// Look up the full `AssetIO` handler for `format`, checking custom handlers first.
+    /// Returns this Context's [`HandlerRegistry`], for looking up asset I/O handlers and
+    /// their derived metadata (supported formats, MIME types, container families, ...).
     ///
     /// Custom handlers registered via [`with_io_handler`](Self::with_io_handler) are searched
     /// before the built-in global registry; last-registered wins when two handlers claim the
-    /// same format. Returns `None` if no handler supports the format.
-    pub fn get_assetio_handler<'a>(&'a self, format: &'a str) -> Option<&'a dyn AssetIO> {
-        let format_lc = format.to_lowercase();
-        // Search custom handlers in reverse so last-registered wins.
-        for handler in self.io_handlers.iter().rev() {
-            if handler.supported_types().contains(&format_lc.as_str()) {
-                return Some(handler.as_ref());
-            }
-        }
-        crate::jumbf_io::get_assetio_handler(format)
-    }
-
-    /// Look up the `CAIReader` for `format`, checking custom handlers first.
-    pub fn get_cailoader_handler<'a>(&'a self, format: &'a str) -> Option<&'a dyn CAIReader> {
-        let format_lc = format.to_lowercase();
-        for handler in self.io_handlers.iter().rev() {
-            if handler.supported_types().contains(&format_lc.as_str()) {
-                return Some(handler.get_reader());
-            }
-        }
-        crate::jumbf_io::get_cailoader_handler(format)
-    }
-
-    /// Look up the `CAIWriter` for `format`, checking custom handlers first.
-    ///
-    /// Returns an owned `Box<dyn CAIWriter>` because `AssetIO::get_writer` allocates a new
-    /// writer instance on each call.
-    pub fn get_caiwriter_handler(&self, format: &str) -> Option<Box<dyn CAIWriter>> {
-        let format_lc = format.to_lowercase();
-        for handler in self.io_handlers.iter().rev() {
-            if handler.supported_types().contains(&format_lc.as_str()) {
-                return handler.get_writer(&format_lc);
-            }
-        }
-        // Fall back to built-in: go through get_assetio_handler (which returns &'static) so we
-        // can call get_writer on it and get an owned Box rather than a &'static reference.
-        crate::jumbf_io::get_assetio_handler(format).and_then(|h| h.get_writer(format))
+    /// same format.
+    pub fn io(&self) -> &HandlerRegistry {
+        &self.io
     }
 
     /// Configure this Context with a custom cryptographic signer.
@@ -954,7 +922,7 @@ mod tests {
             async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
             progress_callback: None,
             cancel_flag: AtomicBool::new(false),
-            io_handlers: Vec::new(),
+            io: HandlerRegistry::new(),
         };
 
         // Update settings to ensure no signer configuration
@@ -1031,7 +999,7 @@ mod tests {
             async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
             progress_callback: None,
             cancel_flag: AtomicBool::new(false),
-            io_handlers: Vec::new(),
+            io: HandlerRegistry::new(),
         };
 
         // Verify that async_signer() returns an error when no async signer settings are present
@@ -1519,11 +1487,11 @@ mod tests {
         let ctx = Context::new().with_io_handler(CustomHandler);
 
         // Custom handler claims "image/jpeg" — it should win over the built-in.
-        let handler = ctx.get_assetio_handler("image/jpeg");
+        let handler = ctx.io().handler("image/jpeg");
         assert!(handler.is_some(), "should find a handler for image/jpeg");
 
-        // Verify our handler is invoked by reading via get_cailoader_handler.
-        let reader_handler = ctx.get_cailoader_handler("image/jpeg");
+        // Verify our handler is invoked by reading via get_reader_handler.
+        let reader_handler = ctx.io().reader("image/jpeg");
         assert!(reader_handler.is_some());
         let mut stream = std::io::Cursor::new(vec![]);
         let result = reader_handler.unwrap().read_cai(&mut stream);
@@ -1531,7 +1499,7 @@ mod tests {
 
         // Built-in format not claimed by the custom handler should fall through.
         assert!(
-            ctx.get_assetio_handler("image/png").is_some(),
+            ctx.io().handler("image/png").is_some(),
             "png should still resolve via builtin"
         );
     }
@@ -1539,9 +1507,9 @@ mod tests {
     #[test]
     fn test_builtin_handlers_still_work_without_custom() {
         let ctx = Context::new();
-        assert!(ctx.get_assetio_handler("image/jpeg").is_some());
-        assert!(ctx.get_assetio_handler("image/png").is_some());
-        assert!(ctx.get_assetio_handler("nonexistent/format").is_none());
+        assert!(ctx.io().handler("image/jpeg").is_some());
+        assert!(ctx.io().handler("image/png").is_some());
+        assert!(ctx.io().handler("nonexistent/format").is_none());
     }
 
     #[test]
@@ -1609,7 +1577,7 @@ mod tests {
         let ctx = Context::new()
             .with_io_handler(HandlerA)
             .with_io_handler(HandlerB);
-        let reader = ctx.get_cailoader_handler("x-custom/test").unwrap();
+        let reader = ctx.io().reader("x-custom/test").unwrap();
         let mut stream = std::io::Cursor::new(vec![]);
         // HandlerB was registered last, so it should win.
         assert_eq!(reader.read_cai(&mut stream).unwrap(), b"B");

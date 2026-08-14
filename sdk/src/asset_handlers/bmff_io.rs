@@ -1992,6 +1992,24 @@ impl AssetIO for BmffIO {
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
+
+    // BMFF covers several distinct sub-formats (image vs. video vs. audio), each needing
+    // its own MIME type, so the default single-MIME derivation from `supported_types()`
+    // doesn't apply here.
+    fn mime_type_map(&self) -> Vec<(String, String)> {
+        [
+            ("avif", "image/avif"),
+            ("heif", "image/heif"),
+            ("heic", "image/heic"),
+            ("mp4", "video/mp4"),
+            ("m4a", "audio/mp4"),
+            ("mov", "video/quicktime"),
+            ("m4v", "video/x-m4v"),
+        ]
+        .into_iter()
+        .map(|(ext, mime)| (ext.to_string(), mime.to_string()))
+        .collect()
+    }
 }
 
 impl CAIWriter for BmffIO {

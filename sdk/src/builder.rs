@@ -2393,7 +2393,8 @@ impl Builder {
         self.definition.format = format.to_string();
         self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
         let mut store = self.to_store()?;
-        let placeholder = store.get_data_hashed_manifest_placeholder(reserve_size, format)?;
+        let placeholder =
+            store.get_data_hashed_manifest_placeholder(reserve_size, format, self.context())?;
         Ok(placeholder)
     }
 
@@ -2433,14 +2434,14 @@ impl Builder {
         }
 
         // BMFF formats always use BmffHash.
-        if jumbf_io::is_bmff_format(format) {
+        if self.context.io().is_bmff_format(format) {
             return HashType::Bmff;
         }
 
         // When prefer_box_hash is enabled and the format handler supports it,
         // use BoxHash (no placeholder needed).
         if self.context.settings().builder.prefer_box_hash {
-            if let Some(handler) = self.context.get_assetio_handler(format) {
+            if let Some(handler) = self.context.io().handler(format) {
                 if handler.asset_box_hash_ref().is_some() {
                     return HashType::Box;
                 }
@@ -2510,7 +2511,7 @@ impl Builder {
 
         // If no hash exists, add an appropriate placeholder based on format
         if hash_count == 0 {
-            if crate::jumbf_io::is_bmff_format(format) {
+            if self.context().io().is_bmff_format(format) {
                 // For BMFF formats, add a placeholder BmffHash.
                 let ph_alg = self.definition.hash_alg.as_deref().unwrap_or("sha256");
 
@@ -2554,7 +2555,7 @@ impl Builder {
         // JUMBF to the same size, keeping the composed byte count identical.
         self.placeholder_jumbf_len = Some(jumbf.len());
         // Return composed bytes ready for the caller to embed into the asset.
-        Store::get_composed_manifest(&jumbf, format)
+        Store::get_composed_manifest(&jumbf, format, self.context())
     }
 
     /// Sets the exclusion object for the [`BmffHash`] assertion in the Builder.
@@ -2854,7 +2855,8 @@ impl Builder {
                 self.context.settings().builder.prefer_box_hash
                     && self
                         .context
-                        .get_assetio_handler(format)
+                        .io()
+                        .handler(format)
                         .and_then(|h| h.asset_box_hash_ref().map(|_| ()))
                         .is_some()
             });
@@ -2928,7 +2930,8 @@ impl Builder {
             // BoxHash path: get the format's AssetBoxHash handler and compute box hashes.
             let handler = self
                 .context
-                .get_assetio_handler(format)
+                .io()
+                .handler(format)
                 .ok_or(Error::UnsupportedType)?;
             let bhp = handler.asset_box_hash_ref().ok_or_else(|| {
                 Error::BadParam(format!("Format '{format}' does not support BoxHash"))
@@ -3079,7 +3082,7 @@ impl Builder {
             }
         }
 
-        Store::get_composed_manifest(&jumbf, format)
+        Store::get_composed_manifest(&jumbf, format, self.context())
     }
 
     /// Create a signed data hashed embeddable manifest using a supplied signer.
@@ -3169,7 +3172,7 @@ impl Builder {
             }
         }
         // get composed version for embedding to JPEG
-        Store::get_composed_manifest(&bytes, format)
+        Store::get_composed_manifest(&bytes, format, &self.context)
     }
 
     /// Embed a signed manifest into a stream using a supplied signer.
@@ -3331,8 +3334,11 @@ impl Builder {
             ));
         };
 
-        self.definition.format =
-            crate::format_from_path(path).ok_or(crate::Error::UnsupportedType)?;
+        self.definition.format = self
+            .context()
+            .io()
+            .format_from_path(path)
+            .ok_or(crate::Error::UnsupportedType)?;
         self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
         if self.definition.title.is_none() {
             if let Some(title) = path.file_name() {
@@ -3420,8 +3426,16 @@ impl Builder {
         self.set_asset_from_dest(dest)?;
 
         // formats must match but allow extensions to be slightly different (i.e. .jpeg vs .jpg)s
-        let format = crate::format_from_path(source).ok_or(crate::Error::UnsupportedType)?;
-        let format_dest = crate::format_from_path(dest).ok_or(crate::Error::UnsupportedType)?;
+        let format = self
+            .context()
+            .io()
+            .format_from_path(source)
+            .ok_or(crate::Error::UnsupportedType)?;
+        let format_dest = self
+            .context()
+            .io()
+            .format_from_path(dest)
+            .ok_or(crate::Error::UnsupportedType)?;
         if format != format_dest {
             return Err(crate::Error::BadParam(
                 "Source and destination file formats must match".to_string(),
@@ -3498,8 +3512,16 @@ impl Builder {
         self.set_asset_from_dest(dest)?;
 
         // formats must match but allow extensions to be slightly different (i.e. .jpeg vs .jpg)s
-        let format = crate::format_from_path(source).ok_or(crate::Error::UnsupportedType)?;
-        let format_dest = crate::format_from_path(dest).ok_or(crate::Error::UnsupportedType)?;
+        let format = self
+            .context()
+            .io()
+            .format_from_path(source)
+            .ok_or(crate::Error::UnsupportedType)?;
+        let format_dest = self
+            .context()
+            .io()
+            .format_from_path(dest)
+            .ok_or(crate::Error::UnsupportedType)?;
         if format != format_dest {
             return Err(crate::Error::BadParam(
                 "Source and destination file formats must match".to_string(),
@@ -3528,8 +3550,36 @@ impl Builder {
     /// * The bytes of the composed manifest.
     /// # Errors
     /// * Returns an [`Error`] if the manifest cannot be converted.
+    #[deprecated(
+        note = "Use `Builder::composed_manifest_with_context` on a `Builder` instance instead; without a `Context`, custom asset I/O handlers registered via `Context::with_io_handler` are not consulted."
+    )]
     pub fn composed_manifest(manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
-        Store::get_composed_manifest(manifest_bytes, format)
+        // Legacy behavior: no Context available, so only the built-in global registry is used.
+        Store::get_composed_manifest(manifest_bytes, format, &Context::new())
+    }
+
+    /// Converts a manifest into a composed manifest with the specified format.
+    ///
+    /// This wraps the bytes in the container format of the specified format.
+    /// So that it can be directly embedded into a stream of that format.
+    ///
+    /// Unlike [`Builder::composed_manifest`], this uses this builder's [`Context`] to look up
+    /// the asset I/O handler, so a handler registered via [`Context::with_io_handler`] is
+    /// consulted instead of only the built-in global registry.
+    ///
+    /// # Arguments
+    /// * `manifest_bytes` - The bytes of the manifest to convert.
+    /// * `format` - The format to convert to.
+    /// # Returns
+    /// * The bytes of the composed manifest.
+    /// # Errors
+    /// * Returns an [`Error`] if the manifest cannot be converted.
+    pub fn composed_manifest_with_context(
+        &self,
+        manifest_bytes: &[u8],
+        format: &str,
+    ) -> Result<Vec<u8>> {
+        Store::get_composed_manifest(manifest_bytes, format, self.context())
     }
 
     /// Add an ingredient to the manifest from a Reader.

@@ -11,15 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{
-    collections::HashMap,
-    io::{Cursor, Read, Seek},
-};
 #[cfg(feature = "file_io")]
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::path::Path;
+use std::{collections::HashMap, io::Cursor, sync::Arc};
 
 use lazy_static::lazy_static;
 
@@ -31,9 +25,8 @@ use crate::{
         jpegxl_io::JpegXlIO, mp3_io::Mp3IO, png_io::PngIO, riff_io::RiffIO, svg_io::SvgIO,
         tiff_io::TiffIO,
     },
-    asset_io::{AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions},
+    asset_io::{AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HandlerRegistry},
     error::{Error, Result},
-    maybe_send_sync::MaybeSend,
     utils::mime::normalize_format,
 };
 
@@ -78,158 +71,26 @@ lazy_static! {
         map
     };
 
-    /// Maps every known format string (extension or MIME type) to its container ID.
-    ///
-    /// The container ID is the first format string registered by that format's I/O handler.
-    /// Two format strings with the same container ID belong to the same handler family
-    /// (e.g. "dng", "tif", "image/tiff" all map to "tif").
-    static ref CONTAINER_MAP: HashMap<String, &'static str> = {
-        let mut map = HashMap::new();
+    /// The shared default [`HandlerRegistry`], seeded with the same built-in handlers as
+    /// `CAI_READERS`/`CAI_WRITERS`. This is what a fresh [`crate::Context`] falls back to
+    /// once its own (typically empty) set of custom handlers has been checked.
+    static ref DEFAULT_HANDLER_REGISTRY: Arc<HandlerRegistry> = {
+        let mut reg = HandlerRegistry::new();
         for h in HANDLER_PROTOTYPES.iter() {
-            let types = h.supported_types();
-            if let Some(&container_id) = types.first() {
-                for t in types {
-                    map.insert(t.to_string(), container_id);
-                }
-            }
+            // One instance stands in for the whole family, matching how a custom handler
+            // registered via Context::with_io_handler already works: every get_handler(t)
+            // impl just does Box::new(XxxIO::new(t)), so any supported type string produces
+            // an equivalent instance for dispatch purposes.
+            reg.add_boxed_handler(h.get_handler(h.supported_types()[0]));
         }
-        map
+        Arc::new(reg)
     };
 }
 
-pub(crate) fn is_bmff_format(asset_type: &str) -> bool {
-    container_from_format(asset_type) == container_from_format("avif")
-}
-
-/// Returns the container ID for a given format string (extension or MIME type), if known.
-///
-/// The container ID is the first format registered by the matching I/O handler. It can be
-/// used to check whether two format strings belong to the same container family without
-/// needing a separate enum: `container_from_format("dng") == container_from_format("tif")`.
-fn container_from_format(format: &str) -> Option<&'static str> {
-    CONTAINER_MAP
-        .get(normalize_format(format).as_str())
-        .copied()
-}
-
-/// Detects the [`ContainerType`] of a stream by inspecting its leading bytes.
-///
-/// Reads a small header from the stream and matches it against magic signatures for each
-/// known container, then rewinds before returning. Returns `None` when the container cannot
-/// be identified from the bytes alone.
-fn container_from_stream<R: Read + Seek>(stream: &mut R) -> Option<&'static str> {
-    use std::io::SeekFrom;
-
-    stream.rewind().ok()?;
-    let mut buf = [0u8; 16];
-    let n = stream.read(&mut buf).ok()?;
-    stream.rewind().ok()?;
-
-    if n < 2 {
-        return None;
-    }
-
-    // JPEG: FF D8 FF
-    if n >= 3 && buf[0] == 0xff && buf[1] == 0xd8 && buf[2] == 0xff {
-        return Some("jpg");
-    }
-
-    // PNG: 89 50 4E 47 0D 0A 1A 0A
-    if n >= 8 && buf[0..8] == [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] {
-        return Some("png");
-    }
-
-    // GIF87a or GIF89a
-    if n >= 6 && &buf[0..3] == b"GIF" && (&buf[3..6] == b"87a" || &buf[3..6] == b"89a") {
-        return Some("gif");
-    }
-
-    // TIFF (standard and BigTIFF, both byte orders).
-    // DNG, ARW, and NEF all share the TIFF magic bytes; they all use TiffIO.
-    if n >= 4
-        && (buf[0..4] == [0x49, 0x49, 0x2A, 0x00]   // TIFF little-endian
-            || buf[0..4] == [0x4D, 0x4D, 0x00, 0x2A] // TIFF big-endian
-            || buf[0..4] == [0x49, 0x49, 0x2B, 0x00] // BigTIFF little-endian
-            || buf[0..4] == [0x4D, 0x4D, 0x00, 0x2B])
-    // BigTIFF big-endian
-    {
-        return Some("tif");
-    }
-
-    // JPEG XL container: 00 00 00 0C 4A 58 4C 20 0D 0A 87 0A
-    if n >= 12
-        && buf[0..12]
-            == [
-                0x00, 0x00, 0x00, 0x0c, 0x4a, 0x58, 0x4c, 0x20, 0x0d, 0x0a, 0x87, 0x0a,
-            ]
-    {
-        return Some("jxl");
-    }
-
-    // RIFF family (WEBP, AVI, WAV, …): all use the same I/O handler.
-    if n >= 4 && &buf[0..4] == b"RIFF" {
-        return Some("avi");
-    }
-
-    // BMFF family: ISO 14496-12 "ftyp" box at bytes 4-7.
-    // All BMFF subtypes (MP4, MOV, HEIC, HEIF, AVIF, …) share the same handler.
-    if n >= 8 && &buf[4..8] == b"ftyp" {
-        return Some("avif");
-    }
-
-    // FLAC: fLaC marker
-    if n >= 4 && &buf[0..4] == b"fLaC" {
-        return Some("flac");
-    }
-
-    // ID3 tag: may precede MP3 or FLAC audio.
-    // Decode the sync-safe tag size and peek past the tag to check for fLaC.
-    if n >= 10 && &buf[0..3] == b"ID3" {
-        let tag_size = ((buf[6] as u64 & 0x7f) << 21)
-            | ((buf[7] as u64 & 0x7f) << 14)
-            | ((buf[8] as u64 & 0x7f) << 7)
-            | (buf[9] as u64 & 0x7f);
-        let flac_offset = 10 + tag_size;
-        let mut marker = [0u8; 4];
-        let is_flac = stream
-            .seek(SeekFrom::Start(flac_offset))
-            .and_then(|_| stream.read_exact(&mut marker))
-            .map(|_| &marker == b"fLaC")
-            .unwrap_or(false);
-        let _ = stream.rewind();
-        return if is_flac { Some("flac") } else { Some("mp3") };
-    }
-
-    // MPEG audio frame sync: 0xFF followed by a byte with the top 3 bits set.
-    if n >= 2 && buf[0] == 0xff && (buf[1] & 0xe0) == 0xe0 {
-        return Some("mp3");
-    }
-
-    // PDF: %PDF (only available with the pdf feature)
-    #[cfg(feature = "pdf")]
-    if n >= 4 && &buf[0..4] == b"%PDF" {
-        return Some("pdf");
-    }
-
-    None
-}
-
-/// Resolves the format string to use for reading by combining a caller-supplied hint
-/// with stream-based container detection.
-///
-/// * If the hint maps to the same container family as the detected bytes, the hint is
-///   returned unchanged (it may be more specific, e.g. `"dng"` within the TIFF family).
-/// * If they differ, the stream-detected container's canonical format is returned.
-/// * If stream detection fails, the hint is returned as-is.
-/// * Note that for reading, the exact format is not critical as long as it leads to the right container.
-pub(crate) fn format_from_stream<R: Read + Seek>(hint: &str, stream: &mut R) -> String {
-    let detected = container_from_stream(stream);
-    let hinted = container_from_format(hint);
-    match (hinted, detected) {
-        (Some(h), Some(d)) if h == d => hint.to_string(),
-        (_, Some(d)) => d.to_string(),
-        (_, None) => hint.to_string(),
-    }
+/// Returns the shared default [`HandlerRegistry`], populated with the SDK's built-in asset
+/// I/O handlers.
+pub(crate) fn default_handler_registry() -> Arc<HandlerRegistry> {
+    DEFAULT_HANDLER_REGISTRY.clone()
 }
 
 /// Return jumbf block from in memory asset
@@ -352,117 +213,13 @@ pub fn save_jumbf_to_file<P1: AsRef<Path>, P2: AsRef<Path>>(
     in_path: P1,
     out_path: Option<P2>,
 ) -> Result<()> {
-    let ext = get_file_extension(in_path.as_ref()).ok_or(Error::UnsupportedType)?;
-
-    // if no output path make a new file based off of source file name
-    let asset_out_path: PathBuf = match out_path.as_ref() {
-        Some(p) => p.as_ref().to_owned(),
-        None => {
-            let filename_osstr = in_path.as_ref().file_stem().ok_or(Error::UnsupportedType)?;
-            let filename = filename_osstr.to_str().ok_or(Error::UnsupportedType)?;
-
-            let out_name = format!("{filename}-c2pa.{ext}");
-            in_path.as_ref().to_owned().with_file_name(out_name)
-        }
-    };
-
-    // clone output to be overwritten
-    if in_path.as_ref() != asset_out_path {
-        fs::copy(in_path, &asset_out_path).map_err(Error::IoError)?;
-    }
-
-    match get_assetio_handler(&ext) {
-        Some(asset_handler) => {
-            // patch if possible to save time and resources
-            if let Some(patch_handler) = asset_handler.asset_patch_ref() {
-                if patch_handler.patch_cai_store(&asset_out_path, data).is_ok() {
-                    return Ok(());
-                }
-            }
-
-            // couldn't patch so just save
-            asset_handler.save_cai_store(&asset_out_path, data)
-        }
-        _ => Err(Error::UnsupportedType),
-    }
-}
-
-/// Updates jumbf content in a file, this will directly patch the contents no other processing is done.
-/// The search for content to replace only occurs over the jumbf content.
-/// Note: it is recommended that the replace contents be <= length of the search content so that the length of the
-/// file does not change. If it does that could make the new file unreadable. This function is primarily useful for
-/// generating test data since depending on how the file is rewritten the hashing mechanism should detect any tampering of the data.
-///
-/// out_path - path to file to be updated
-/// search_bytes - bytes to be replaced
-/// replace_bytes - replacement bytes
-/// returns the location where splice occurred
-#[allow(dead_code)] // this only used in Store unit tests, update this when those tests are updated
-#[cfg(feature = "file_io")]
-pub(crate) fn update_file_jumbf(
-    out_path: &Path,
-    search_bytes: &[u8],
-    replace_bytes: &[u8],
-) -> Result<usize> {
-    use crate::utils::patch::patch_bytes;
-
-    let mut jumbf = load_jumbf_from_file(out_path)?;
-
-    let splice_point = patch_bytes(&mut jumbf, search_bytes, replace_bytes)?;
-
-    save_jumbf_to_file(&jumbf, out_path, Some(out_path))?;
-
-    Ok(splice_point)
+    default_handler_registry().write_jumbf_to_file(data, in_path, out_path)
 }
 
 #[cfg(feature = "file_io")]
 /// load the JUMBF block from an asset if available
 pub fn load_jumbf_from_file<P: AsRef<Path>>(in_path: P) -> Result<Vec<u8>> {
-    let ext = get_file_extension(in_path.as_ref()).ok_or(Error::UnsupportedType)?;
-
-    match get_assetio_handler(&ext) {
-        Some(asset_handler) => {
-            let mut file = std::fs::File::open(in_path.as_ref()).map_err(Error::IoError)?;
-            asset_handler.get_reader().read_cai(&mut file)
-        }
-        _ => Err(Error::UnsupportedType),
-    }
-}
-
-struct CAIReadAdapter<R> {
-    pub reader: R,
-}
-
-impl<R> Read for CAIReadAdapter<R>
-where
-    R: Read + Seek,
-{
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.reader.read(buf)
-    }
-}
-
-impl<R> Seek for CAIReadAdapter<R>
-where
-    R: Read + Seek,
-{
-    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
-        self.reader.seek(pos)
-    }
-}
-
-pub(crate) fn object_locations_from_stream<R>(
-    format: &str,
-    stream: &mut R,
-) -> Result<Vec<HashObjectPositions>>
-where
-    R: Read + Seek + MaybeSend + ?Sized,
-{
-    let mut reader = CAIReadAdapter { reader: stream };
-    match get_caiwriter_handler(format) {
-        Some(handler) => handler.get_object_locations_from_stream(&mut reader),
-        _ => Err(Error::UnsupportedType),
-    }
+    default_handler_registry().read_jumbf_from_file(in_path)
 }
 
 /// removes the C2PA JUMBF from an asset
@@ -472,9 +229,6 @@ where
 /// path - path to file to be updated
 /// returns Unsupported type or errors from remove_cai_store
 #[cfg(feature = "file_io")]
-#[deprecated(
-    note = "unused within the SDK and has no known callers; will be removed in a future release"
-)]
 pub fn remove_jumbf_from_file<P: AsRef<Path>>(path: P) -> Result<()> {
     let ext = get_file_extension(path.as_ref()).ok_or(Error::UnsupportedType)?;
     match get_assetio_handler(&ext) {
@@ -596,16 +350,12 @@ pub mod tests {
     }
 
     /// Padded format strings (e.g. from an FFI boundary) must resolve to the
-    /// same handler as the unpadded form for reads, writes, and container lookup.
+    /// same handler as the unpadded form for reads and writes.
     #[test]
     fn test_handlers_trim_padded_format() {
         assert!(get_cailoader_handler("  image/jpeg  ").is_some());
         assert!(get_caiwriter_handler("\timage/jpeg\n").is_some());
         assert!(get_assetio_handler("  image/png  ").is_some());
-        assert_eq!(
-            container_from_format("  image/jpeg  "),
-            container_from_format("image/jpeg")
-        );
     }
 
     #[test]

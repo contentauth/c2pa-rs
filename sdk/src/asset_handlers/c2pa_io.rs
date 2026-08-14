@@ -151,12 +151,12 @@ pub mod tests {
             test::{fixture_path, temp_dir_path},
             test_signer::test_signer,
         },
-        SigningAlg,
+        Context, SigningAlg,
     };
 
     #[test]
     fn c2pa_io_parse() {
-        let context = crate::context::Context::new();
+        let context = Context::new();
 
         let path = fixture_path("C.jpg");
 
@@ -164,7 +164,10 @@ pub mod tests {
         let temp_path = temp_dir_path(&temp_dir, "test.c2pa");
 
         let c2pa_io = C2paIO {};
-        let manifest = crate::jumbf_io::load_jumbf_from_file(&path).expect("read_cai_store");
+        let manifest = context
+            .io()
+            .read_jumbf_from_file(&path)
+            .expect("read_cai_store");
         c2pa_io
             .save_cai_store(&temp_path, &manifest)
             .expect("save cai store");
@@ -199,7 +202,11 @@ pub mod tests {
         let path = fixture_path("C.jpg");
 
         let c2pa_io = C2paIO {};
-        let manifest = crate::jumbf_io::load_jumbf_from_file(&path).expect("load_jumbf_from_file");
+        let context = Context::new();
+        let manifest = context
+            .io()
+            .read_jumbf_from_file(&path)
+            .expect("load_jumbf_from_file");
         let mut output_stream = Cursor::new(Vec::new());
         c2pa_io
             .write_cai(&mut empty(), &mut output_stream, &manifest)

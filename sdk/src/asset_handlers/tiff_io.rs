@@ -2399,6 +2399,22 @@ impl AssetIO for TiffIO {
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
+
+    // TIFF, DNG, ARW, and NEF share the same magic bytes and handler, but each needs its
+    // own MIME type, so the default single-MIME derivation from `supported_types()`
+    // doesn't apply here.
+    fn mime_type_map(&self) -> Vec<(String, String)> {
+        [
+            ("tif", "image/tiff"),
+            ("tiff", "image/tiff"),
+            ("dng", "image/x-adobe-dng"),
+            ("arw", "image/x-sony-arw"),
+            ("nef", "image/x-nikon-nef"),
+        ]
+        .into_iter()
+        .map(|(ext, mime)| (ext.to_string(), mime.to_string()))
+        .collect()
+    }
 }
 
 impl CAIWriter for TiffIO {

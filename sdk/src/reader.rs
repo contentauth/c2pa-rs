@@ -228,7 +228,7 @@ impl Reader {
 
         // Prefer the caller's format hint when it identifies the same container as the
         // stream bytes (e.g. "dng" stays "dng" rather than being widened to "image/tiff").
-        let format_owned = jumbf_io::format_from_stream(format, &mut stream);
+        let format_owned = self.context.io().format_from_stream(format, &mut stream);
         let format = format_owned.as_str();
 
         self.context.check_progress(ProgressPhase::Reading, 1, 1)?;
@@ -306,8 +306,8 @@ impl Reader {
     pub fn with_file<P: AsRef<std::path::Path>>(mut self, path: P) -> Result<Self> {
         let path = path.as_ref();
         let mut file = File::open(path)?;
-        let path_fmt = crate::format_from_path(path).unwrap_or_default();
-        let format = jumbf_io::format_from_stream(&path_fmt, &mut file);
+        let path_fmt = self.context.io().format_from_path(path).unwrap_or_default();
+        let format = self.context.io().format_from_stream(&path_fmt, &mut file);
 
         // Try loading from stream first
         let mut validation_log = StatusTracker::default();

@@ -2955,7 +2955,8 @@ impl Claim {
                             let ext = crate::jumbf_io::get_file_extension(asset_path)
                                 .ok_or(Error::UnsupportedType)?;
                             let box_hash_processor = context
-                                .get_assetio_handler(&ext)
+                                .io()
+                                .handler(&ext)
                                 .ok_or(Error::UnsupportedType)?
                                 .asset_box_hash_ref()
                                 .ok_or(Error::HashMismatch("Box hash not supported".to_string()))?;
@@ -2970,7 +2971,8 @@ impl Claim {
                         }
                         ClaimAssetData::Bytes(asset_bytes, asset_type) => {
                             let box_hash_processor = context
-                                .get_assetio_handler(asset_type)
+                                .io()
+                                .handler(asset_type)
                                 .ok_or(Error::UnsupportedType)?
                                 .asset_box_hash_ref()
                                 .ok_or(Error::HashMismatch(format!(
@@ -2987,7 +2989,8 @@ impl Claim {
                         }
                         ClaimAssetData::Stream(stream_data, asset_type) => {
                             let box_hash_processor = context
-                                .get_assetio_handler(asset_type)
+                                .io()
+                                .handler(asset_type)
                                 .ok_or(Error::UnsupportedType)?
                                 .asset_box_hash_ref()
                                 .ok_or(Error::HashMismatch(format!(

@@ -21,8 +21,6 @@ use std::{
 use async_generic::async_generic;
 use log::error;
 
-#[cfg(feature = "file_io")]
-use crate::jumbf_io::{get_supported_file_extension, save_jumbf_to_file};
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError},
     assertions::{
@@ -62,10 +60,6 @@ use crate::{
             assertion_label_from_uri, manifest_label_from_uri, manifest_label_to_parts,
             to_assertion_uri, to_manifest_uri, ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE,
         },
-    },
-    jumbf_io::{
-        get_assetio_handler, is_bmff_format, load_jumbf_from_stream, object_locations_from_stream,
-        save_jumbf_to_stream,
     },
     log_item,
     manifest_store_report::ManifestStoreReport,
@@ -1862,7 +1856,9 @@ impl Store {
         claim: &'a Claim,
         asset_data: Option<&mut ClaimAssetData<'_>>,
         validation_log: &mut StatusTracker,
+        context: &Context,
     ) -> Result<StoreValidationInfo<'a>> {
+        let io = context.io();
         let mut svi = StoreValidationInfo::default();
         Store::get_claim_referenced_manifests(claim, self, &mut svi, true, validation_log)?;
 
@@ -1887,32 +1883,31 @@ impl Store {
             let locations = match asset_data {
                 #[cfg(feature = "file_io")]
                 ClaimAssetData::Path(path) => {
-                    let format =
-                        get_supported_file_extension(path).ok_or(Error::UnsupportedType)?;
+                    let format = io.supported_extension(path).ok_or(Error::UnsupportedType)?;
                     let mut reader = std::fs::File::open(path)?;
 
-                    object_locations_from_stream(&format, &mut reader)
+                    io.object_locations(&format, &mut reader)
                 }
                 ClaimAssetData::Bytes(items, typ) => {
                     let format = typ.to_owned();
                     let mut reader = Cursor::new(items);
 
-                    object_locations_from_stream(&format, &mut reader)
+                    io.object_locations(&format, &mut reader)
                 }
                 ClaimAssetData::Stream(reader, typ) => {
                     let format = typ.to_owned();
-                    let positions = object_locations_from_stream(&format, reader);
+                    let positions = io.object_locations(&format, reader);
                     reader.rewind()?;
                     positions
                 }
                 ClaimAssetData::StreamFragment(reader, _read1, typ) => {
                     let format = typ.to_owned();
-                    object_locations_from_stream(&format, reader)
+                    io.object_locations(&format, reader)
                 }
                 #[cfg(feature = "file_io")]
                 ClaimAssetData::StreamFragments(reader, _path_bufs, typ) => {
                     let format = typ.to_owned();
-                    object_locations_from_stream(&format, reader)
+                    io.object_locations(&format, reader)
                 }
             };
 
@@ -2034,8 +2029,12 @@ impl Store {
         };
 
         // get info needed to complete validation
-        let svi =
-            store.get_store_validation_info(claim, asset_data.as_deref_mut(), validation_log)?;
+        let svi = store.get_store_validation_info(
+            claim,
+            asset_data.as_deref_mut(),
+            validation_log,
+            context,
+        )?;
 
         // keep track of already verified ingredients
         let mut visited = HashSet::new();
@@ -2243,6 +2242,7 @@ impl Store {
         &mut self,
         reserve_size: usize,
         format: &str,
+        context: &Context,
     ) -> Result<Vec<u8>> {
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
 
@@ -2262,7 +2262,7 @@ impl Store {
 
         let jumbf_bytes = self.to_jumbf_internal(reserve_size)?;
 
-        let composed = Self::get_composed_manifest(&jumbf_bytes, format)?;
+        let composed = Self::get_composed_manifest(&jumbf_bytes, format, context)?;
 
         Ok(composed)
     }
@@ -2425,8 +2425,13 @@ impl Store {
         Ok(())
     }
 
-    fn finish_embeddable_store(&mut self, jumbf_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
-        Self::get_composed_manifest(jumbf_bytes, format)
+    fn finish_embeddable_store(
+        &mut self,
+        jumbf_bytes: &[u8],
+        format: &str,
+        context: &Context,
+    ) -> Result<Vec<u8>> {
+        Self::get_composed_manifest(jumbf_bytes, format, context)
     }
 
     /// Returns a finalized, signed manifest.  The manifest are only supported
@@ -2496,7 +2501,7 @@ impl Store {
             }
         }
 
-        self.finish_embeddable_store(&jumbf_bytes, format)
+        self.finish_embeddable_store(&jumbf_bytes, format, context)
     }
 
     /// Returns a finalized, signed manifest.  The client is required to have
@@ -2545,8 +2550,15 @@ impl Store {
     /// Returns the supplied manifest composed to be directly compatible with the desired format.
     /// For example, if format is JPEG function will return the set of APP11 segments that contains
     /// the manifest.  Similarly for PNG it would be the PNG chunk complete with header and  CRC.
-    pub fn get_composed_manifest(manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
-        if let Some(h) = get_assetio_handler(format) {
+    ///
+    /// Looks up the asset I/O handler via `context` first, so a handler registered with
+    /// [`Context::with_io_handler`] is used instead of the built-in global registry.
+    pub fn get_composed_manifest(
+        manifest_bytes: &[u8],
+        format: &str,
+        context: &Context,
+    ) -> Result<Vec<u8>> {
+        if let Some(h) = context.io().handler(format) {
             if let Some(composed_data_handler) = h.composed_data_ref() {
                 return composed_data_handler.compose_manifest(manifest_bytes, format);
             }
@@ -2763,9 +2775,9 @@ impl Store {
         // add a Merkle tree map for each init segment and its associated fragments
         for (i, init_path) in init_paths.iter().enumerate() {
             // make sure it is a supported BMFF format
-            match get_supported_file_extension(init_path.as_ref()) {
+            match context.io().supported_extension(init_path.as_ref()) {
                 Some(ext) => {
-                    if !is_bmff_format(&ext) {
+                    if !context.io().is_bmff_format(&ext) {
                         return Err(Error::UnsupportedType);
                     }
                 }
@@ -2846,7 +2858,9 @@ impl Store {
 
             // add manifest a placeholder that will be replaced with the final manifest after signing,
             // but we need to add it now to properly calculate the BMFF hash for each init segment
-            save_jumbf_to_file(&unsigned_jumbf, init_path, Some(&output_file))?;
+            context
+                .io()
+                .write_jumbf_to_file(&unsigned_jumbf, init_path, Some(&output_file))?;
 
             // update the initHash for each init segment
             bmff_hash.update_fragmented_inithash(*unique_id, *local_id, &output_file)?;
@@ -2901,7 +2915,9 @@ impl Store {
 
         // write the signed manifest to each output init segment
         for output_file in output_files.iter() {
-            save_jumbf_to_file(&final_jumbf, output_file, Some(output_file))?;
+            context
+                .io()
+                .write_jumbf_to_file(&final_jumbf, output_file, Some(output_file))?;
         }
 
         Ok(())
@@ -2994,8 +3010,13 @@ impl Store {
         let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
         output_stream.rewind()?;
-        match self.finish_save_stream(jumbf_bytes, format, &mut intermediate_stream, output_stream)
-        {
+        match self.finish_save_stream(
+            jumbf_bytes,
+            format,
+            &mut intermediate_stream,
+            output_stream,
+            context,
+        ) {
             Ok((s, m)) => {
                 output_stream.flush()?;
                 output_stream.rewind()?;
@@ -3050,9 +3071,10 @@ impl Store {
             RemoteManifest::EmbedWithRemote(url) => (Some(url), false),
         };
 
-        let io_handler = context.get_assetio_handler(format);
+        let io = context.io();
+        let io_handler = io.handler(format);
+        let is_bmff = io.is_bmff_format(format);
 
-        let is_bmff = is_bmff_format(format);
         // fast_path applies to all formats: when there is no XMP embed and no manifest removal,
         // we can pass input_stream directly to the write/hash steps, skipping one full-file copy.
         let fast_path = url.is_none() && !remove_manifests;
@@ -3238,10 +3260,10 @@ impl Store {
             if !remove_manifests {
                 if source_is_intermediate {
                     intermediate_stream.rewind()?;
-                    save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
+                    io.write_jumbf(format, &mut intermediate_stream, output_stream, &data)?;
                 } else {
                     input_stream.rewind()?;
-                    save_jumbf_to_stream(format, input_stream, output_stream, &data)?;
+                    io.write_jumbf(format, input_stream, output_stream, &data)?;
                 }
             } else {
                 // just copy the asset to the output stream without an embedded manifest (may be stripping one out here)
@@ -3279,9 +3301,9 @@ impl Store {
                 let mut hash_ranges = if io_handler.is_none() {
                     Vec::new()
                 } else if source_is_intermediate {
-                    object_locations_from_stream(format, &mut intermediate_stream)?
+                    io.object_locations(format, &mut intermediate_stream)?
                 } else {
-                    object_locations_from_stream(format, input_stream)?
+                    io.object_locations(format, input_stream)?
                 };
                 let hashes: Vec<DataHash> = if pc.update_manifest() {
                     Vec::new()
@@ -3324,10 +3346,10 @@ impl Store {
             if !remove_manifests && io_handler.is_some() {
                 if source_is_intermediate {
                     intermediate_stream.rewind()?;
-                    save_jumbf_to_stream(format, &mut intermediate_stream, output_stream, &data)?;
+                    io.write_jumbf(format, &mut intermediate_stream, output_stream, &data)?;
                 } else {
                     input_stream.rewind()?;
-                    save_jumbf_to_stream(format, input_stream, output_stream, &data)?;
+                    io.write_jumbf(format, input_stream, output_stream, &data)?;
                 }
             } else {
                 // just copy the asset to the output stream without an embedded manifest
@@ -3355,7 +3377,7 @@ impl Store {
                 // When there is no handler use empty ranges so the whole stream is hashed.
                 output_stream.rewind()?;
                 let mut new_hash_ranges = if io_handler.is_some() {
-                    object_locations_from_stream(format, output_stream)?
+                    io.object_locations(format, output_stream)?
                 } else {
                     Vec::new()
                 };
@@ -3405,12 +3427,15 @@ impl Store {
         format: &str,
         input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
+        context: &Context,
     ) -> Result<(Vec<u8>, Vec<u8>)> {
         // re-save to file
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
         match pc.remote_manifest() {
             RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
-                save_jumbf_to_stream(format, input_stream, output_stream, &jumbf_bytes)?;
+                context
+                    .io()
+                    .write_jumbf(format, input_stream, output_stream, &jumbf_bytes)?;
             }
             RemoteManifest::SideCar | RemoteManifest::Remote(_) => {
                 // just copy the asset to the output stream without an embedded manifest (may be stripping one out here)
@@ -3517,7 +3542,7 @@ impl Store {
         stream: &mut dyn CAIRead,
         context: &Context,
     ) -> Result<(Vec<u8>, Option<String>)> {
-        match load_jumbf_from_stream(asset_type, stream) {
+        match context.io().read_jumbf(asset_type, stream) {
             Ok(manifest_bytes) => Ok((manifest_bytes, None)),
             Err(Error::JumbfNotFound) => {
                 stream.rewind()?;
@@ -4381,7 +4406,7 @@ pub mod tests {
         assertion::AssertionJson,
         assertions::{labels::BOX_HASH, BoxHash},
         hashed_uri::HashedUri,
-        jumbf_io::{get_assetio_handler_from_path, load_jumbf_from_file, save_jumbf_to_file},
+        jumbf_io::get_assetio_handler_from_path,
         utils::{
             hash_utils::Hasher,
             io_utils::tempdirectory,
@@ -4392,6 +4417,7 @@ pub mod tests {
     use crate::{
         assertions::{Action, Actions, Uuid},
         claim::AssertionStoreJsonFormat,
+        jumbf_io::load_jumbf_from_stream,
         status_tracker::{LogItem, StatusTracker},
         utils::{
             patch::patch_bytes,
@@ -4800,12 +4826,15 @@ pub mod tests {
         let op = temp_dir_path(&temp_dir, "replacement_test.jpg");
 
         // grab jumbf from original
-        let original_jumbf = load_jumbf_from_file(&ap).unwrap();
+        let original_jumbf = context.io().read_jumbf_from_file(&ap).unwrap();
 
         // replace with new jumbf
-        save_jumbf_to_file(&jumbf_bytes, &ap, Some(&op)).unwrap();
+        context
+            .io()
+            .write_jumbf_to_file(&jumbf_bytes, &ap, Some(&op))
+            .unwrap();
 
-        let saved_jumbf = load_jumbf_from_file(&op).unwrap();
+        let saved_jumbf = context.io().read_jumbf_from_file(&op).unwrap();
 
         // saved data should be the new data
         assert_eq!(&jumbf_bytes, &saved_jumbf);
@@ -7989,7 +8018,7 @@ pub mod tests {
             .unwrap();
 
         // get composed version for embedding to JPEG
-        let cm = Store::get_composed_manifest(&em, "image/jpeg").unwrap();
+        let cm = Store::get_composed_manifest(&em, "image/jpeg", &context).unwrap();
 
         // insert manifest into output asset
         let jpeg_io = get_assetio_handler_from_path(&ap).unwrap();
@@ -8069,7 +8098,7 @@ pub mod tests {
             .unwrap();
 
         // get composed version for embedding to JPEG
-        let cm = Store::get_composed_manifest(&em, "jpg").unwrap();
+        let cm = Store::get_composed_manifest(&em, "jpg", &context).unwrap();
 
         // insert manifest into output asset
         let jpeg_io = get_assetio_handler_from_path(&ap).unwrap();
@@ -8138,7 +8167,7 @@ pub mod tests {
 
         // get a placeholder the manifest
         let placeholder = store
-            .get_data_hashed_manifest_placeholder(signer.reserve_size(), "jpeg")
+            .get_data_hashed_manifest_placeholder(signer.reserve_size(), "jpeg", &context)
             .unwrap();
 
         let temp_dir = tempdirectory().unwrap();
@@ -8214,7 +8243,7 @@ pub mod tests {
 
         // get a placeholder the manifest
         let placeholder = store
-            .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg")
+            .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg", &context)
             .unwrap();
 
         let temp_dir = tempdirectory().unwrap();
@@ -8324,7 +8353,7 @@ pub mod tests {
 
         // Reserve the hard-binding placeholder only – no dynamic-assertion slots.
         store
-            .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg")
+            .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg", &context)
             .unwrap();
 
         let err = store.sign_manifest(&signer, &context).unwrap_err();
@@ -8364,7 +8393,7 @@ pub mod tests {
 
         // get a placeholder for the manifest
         let placeholder = store
-            .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg")
+            .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg", &context)
             .unwrap();
 
         let temp_dir = tempdirectory().unwrap();

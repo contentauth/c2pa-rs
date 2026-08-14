@@ -396,6 +396,19 @@ impl AssetIO for RiffIO {
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
+
+    // RIFF covers three distinct sub-formats (WEBP/WAV/AVI), each needing its own MIME
+    // type, so the default single-MIME derivation from `supported_types()` doesn't apply.
+    fn mime_type_map(&self) -> Vec<(String, String)> {
+        [
+            ("webp", "image/webp"),
+            ("wav", "audio/wav"),
+            ("avi", "video/avi"),
+        ]
+        .into_iter()
+        .map(|(ext, mime)| (ext.to_string(), mime.to_string()))
+        .collect()
+    }
 }
 
 impl CAIWriter for RiffIO {
