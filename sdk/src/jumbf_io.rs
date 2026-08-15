@@ -150,6 +150,7 @@ pub(crate) fn get_assetio_handler_from_path(asset_path: &Path) -> Option<&dyn As
     CAI_READERS.get(&ext).map(|h| h.as_ref())
 }
 
+#[cfg_attr(not(any(test, feature = "file_io")), allow(dead_code))]
 pub(crate) fn get_assetio_handler(ext: &str) -> Option<&dyn AssetIO> {
     let ext = normalize_format(ext);
 
@@ -175,27 +176,6 @@ pub(crate) fn get_file_extension(path: &Path) -> Option<String> {
     let ext = ext_osstr.to_str()?;
 
     Some(ext.to_lowercase())
-}
-
-#[cfg(feature = "file_io")]
-pub(crate) fn get_supported_file_extension(path: &Path) -> Option<String> {
-    let ext = get_file_extension(path)?;
-
-    if CAI_READERS.get(&ext).is_some() {
-        Some(ext)
-    } else {
-        None
-    }
-}
-
-/// Returns a [Vec<String>] of supported mime types for reading manifests.
-pub(crate) fn supported_reader_mime_types() -> Vec<String> {
-    CAI_READERS.keys().map(String::to_owned).collect()
-}
-
-/// Returns a [Vec<String>] of mime types that [c2pa-rs] is able to sign.
-pub(crate) fn supported_builder_mime_types() -> Vec<String> {
-    CAI_WRITERS.keys().map(String::to_owned).collect()
 }
 
 #[cfg(feature = "file_io")]

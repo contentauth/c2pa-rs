@@ -38,7 +38,7 @@ use crate::{
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
-    jumbf_io, log_item,
+    log_item,
     manifest::StoreOptions,
     manifest_store_report::ManifestStoreReport,
     status_tracker::StatusTracker,
@@ -584,7 +584,10 @@ impl Reader {
     ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
 
-        let asset_type = jumbf_io::get_supported_file_extension(path.as_ref())
+        let asset_type = self
+            .context
+            .io()
+            .supported_extension(path.as_ref())
             .ok_or(crate::Error::UnsupportedType)?;
 
         let mut init_segment = std::fs::File::open(path.as_ref())?;
@@ -622,7 +625,7 @@ impl Reader {
 
     /// Returns a [Vec] of mime types that [c2pa-rs] is able to read.
     pub fn supported_mime_types() -> Vec<String> {
-        jumbf_io::supported_reader_mime_types()
+        Context::default().io().reader_mime_types()
     }
 
     /// replace assertion values in the reader json with the values from the assertion_values map

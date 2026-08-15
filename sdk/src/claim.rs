@@ -2952,11 +2952,9 @@ impl Claim {
                     let hash_result = match asset_data {
                         #[cfg(feature = "file_io")]
                         ClaimAssetData::Path(asset_path) => {
-                            let ext = crate::jumbf_io::get_file_extension(asset_path)
-                                .ok_or(Error::UnsupportedType)?;
                             let box_hash_processor = context
                                 .io()
-                                .handler(&ext)
+                                .handler_from_path(asset_path)
                                 .ok_or(Error::UnsupportedType)?
                                 .asset_box_hash_ref()
                                 .ok_or(Error::HashMismatch("Box hash not supported".to_string()))?;
