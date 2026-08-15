@@ -121,6 +121,9 @@ mod tests {
     async fn test_connected_identities_valid() {
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
+        // The proxy above points did:web resolution at a loopback mock server. The default policy
+        // allows direct requests to internal hosts (it only blocks redirects to internal
+        // addresses), so no allow-list is required here.
         #[cfg(not(target_arch = "wasm32"))]
         let _did_server = mock_connected_identities_did();
 

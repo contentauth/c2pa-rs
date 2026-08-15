@@ -190,7 +190,14 @@ fn parse_all_boxes(reader: &mut dyn CAIRead) -> Result<Vec<JxlBoxInfo>> {
                 let next_pos = if info.total_size == 0 {
                     file_len
                 } else {
-                    info.offset.saturating_add(info.total_size)
+                    // A box can never legitimately extend past the file.
+                    let box_end = info.offset.saturating_add(info.total_size);
+                    if box_end > file_len {
+                        return Err(Error::InvalidAsset(
+                            "JPEG XL box size extends beyond asset bounds".to_string(),
+                        ));
+                    }
+                    box_end
                 };
 
                 if boxes.len() >= MAX_JXL_BOX_COUNT {
@@ -2283,6 +2290,107 @@ pub mod tests {
         );
     }
 
+    /// A legitimate box whose declared `total_size` correctly lands exactly
+    /// at EOF must parse normally - the boundary itself isn't rejected.
+    #[test]
+    fn test_box_info_end_and_data_size_trust_declared_size() {
+        let file_len = 44;
+
+        let exact = JxlBoxInfo {
+            box_type: BOX_XML,
+            offset: 20,
+            header_size: BOX_HEADER_SIZE,
+            total_size: 24, // offset(20) + total_size(24) == file_len(44)
+        };
+        assert_eq!(exact.end(file_len), file_len);
+        assert_eq!(exact.data_size(file_len), file_len - exact.data_offset());
+    }
+
+    /// Reproduces the reported vulnerability: an `xml ` box declares a size
+    /// far larger than the actual file. `parse_all_boxes` must reject this
+    /// outright (matching how every other format handler in this codebase -
+    /// BMFF, RIFF, PNG, TIFF - treats a declared size that exceeds the file)
+    /// rather than clamping it and continuing, so `find_xmp_data` returns
+    /// `None` without ever allocating a buffer sized from the attacker-
+    /// controlled declared size.
+    #[test]
+    fn test_find_xmp_data_rejects_oversized_header() {
+        let ftyp_box = build_box(&BOX_FTYP, b"jxl \0\0\0\0jxl ");
+
+        let xmp = "abc";
+        let mut xml_box = Vec::new();
+        xml_box.extend_from_slice(&500_000_000u32.to_be_bytes()); // lie: declares ~500MB
+        xml_box.extend_from_slice(&BOX_XML);
+        xml_box.extend_from_slice(xmp.as_bytes());
+
+        let mut container = JXL_CONTAINER_MAGIC.to_vec();
+        container.extend_from_slice(&ftyp_box);
+        container.extend_from_slice(&xml_box);
+
+        let mut reader = Cursor::new(container);
+        let result = find_xmp_data(&mut reader);
+
+        assert_eq!(
+            result, None,
+            "an oversized declared box size must be rejected, not clamped and recovered"
+        );
+    }
+
+    /// Sibling of the above for the C2PA `jumb` box path: `find_jumb_data`
+    /// (via `parse_all_boxes`) is rejected by the same bounds check.
+    #[test]
+    fn test_find_jumb_data_rejects_oversized_header() {
+        let ftyp_box = build_box(&BOX_FTYP, b"jxl \0\0\0\0jxl ");
+
+        let jumd = build_jumd_box(b"c2pa\0");
+        let mut jumb_box = Vec::new();
+        jumb_box.extend_from_slice(&500_000_000u32.to_be_bytes()); // lie: declares ~500MB
+        jumb_box.extend_from_slice(&BOX_JUMB);
+        jumb_box.extend_from_slice(&jumd);
+
+        let mut container = JXL_CONTAINER_MAGIC.to_vec();
+        container.extend_from_slice(&ftyp_box);
+        container.extend_from_slice(&jumb_box);
+
+        let mut reader = Cursor::new(container);
+        let result = find_jumb_data(&mut reader);
+
+        assert!(
+            matches!(result, Err(Error::InvalidAsset(_))),
+            "an oversized declared box size must be rejected, not clamped and recovered: {result:?}"
+        );
+    }
+
+    /// Same as `test_find_jumb_data_rejects_oversized_header`, but the lie is
+    /// told via the 64-bit ISOBMFF `largesize` form (size field == 1,
+    /// followed by an 8-byte size) rather than the 32-bit size field. This
+    /// form can declare sizes far beyond `u32::MAX` from a ~58-byte file, so
+    /// it must be rejected identically.
+    #[test]
+    fn test_find_jumb_data_rejects_oversized_largesize_header() {
+        let ftyp_box = build_box(&BOX_FTYP, b"jxl \0\0\0\0jxl ");
+
+        let jumd = build_jumd_box(b"c2pa\0");
+        let mut jumb_box = Vec::new();
+        jumb_box.extend_from_slice(&1u32.to_be_bytes()); // size=1 -> large-size form
+        jumb_box.extend_from_slice(&BOX_JUMB);
+        jumb_box.extend_from_slice(&(1_500_000_000u64).to_be_bytes()); // lie: ~1.5 GB
+        jumb_box.extend_from_slice(&jumd);
+
+        let mut container = JXL_CONTAINER_MAGIC.to_vec();
+        container.extend_from_slice(&ftyp_box);
+        container.extend_from_slice(&jumb_box);
+
+        let mut reader = Cursor::new(container);
+        let result = find_jumb_data(&mut reader);
+
+        assert!(
+            matches!(result, Err(Error::InvalidAsset(_))),
+            "an oversized declared box size must be rejected even when declared \
+             via the 64-bit largesize form: {result:?}"
+        );
+    }
+
     /// An ISOBMFF box with a crafted `total_size` that would overflow `offset +
     /// total_size` must not cause `parse_all_boxes` to loop or panic.
     #[test]
@@ -2304,13 +2412,12 @@ pub mod tests {
         container.extend_from_slice(&overflow_box);
 
         let mut reader = Cursor::new(container);
-        // Must terminate without panic or infinite loop; result may be Ok or Err.
+        // Must terminate without panic or infinite loop, and must be rejected:
+        // saturating_add(12, u64::MAX) = u64::MAX, which is far past file_len.
         let result = parse_all_boxes(&mut reader);
-        // The box is parsed and next_pos = saturating_add(12, u64::MAX) = u64::MAX
-        // which is >= file_len, so the loop breaks after one box.
         assert!(
-            result.is_ok(),
-            "parse_all_boxes should handle overflow-sized box gracefully: {result:?}"
+            matches!(result, Err(Error::InvalidAsset(_))),
+            "overflow-sized box must be rejected, not silently tolerated: {result:?}"
         );
     }
 
