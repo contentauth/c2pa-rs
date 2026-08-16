@@ -593,10 +593,27 @@ impl SettingsValidate for Verify {}
 )]
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct SoftBinding {
+    /// List of soft binding algorithms to validate against. If not specified, soft binding
+    /// errors may be generated.
     pub soft_binding_algorithms: Option<Vec<String>>,
+    /// Raw JSON text of the C2PA soft binding algorithm list registry (see
+    /// <https://github.com/c2pa-org/softbinding-algorithm-list>), used to look up
+    /// [Soft Binding Resolution API](https://spec.c2pa.org/specifications/specifications/2.2/softbinding/Decoupled.html)
+    /// endpoints for [`Reader::with_soft_binding`](crate::Reader::with_soft_binding).
+    ///
+    /// This registry is not bundled with the SDK — populate it the same way you populate
+    /// [`Trust::trust_anchors`](crate::settings::Trust::trust_anchors).
+    pub algorithm_registry: Option<String>,
 }
 
-impl SettingsValidate for SoftBinding {}
+impl SettingsValidate for SoftBinding {
+    fn validate(&self) -> Result<()> {
+        if let Some(registry) = &self.algorithm_registry {
+            crate::soft_binding::SoftBindingList::from_json_str(registry)?;
+        }
+        Ok(())
+    }
+}
 
 /// Settings for configuring all aspects of c2pa-rs.
 ///

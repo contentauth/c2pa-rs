@@ -461,6 +461,114 @@ impl Reader {
         Ok(self)
     }
 
+    /// Resolve and validate a manifest for `stream` using a soft binding value the caller
+    /// has already obtained (e.g. via a proprietary local watermark/fingerprint decoder, or
+    /// the caller's own call to [`crate::soft_binding::resolution_api::query_by_content`]).
+    ///
+    /// This implements the caller-driven half of the C2PA
+    /// ["Decoupled" soft binding](https://spec.c2pa.org/specifications/specifications/2.2/softbinding/Decoupled.html)
+    /// resolution flow: it looks up `alg` in
+    /// [`Settings.soft_binding.algorithm_registry`](crate::settings::SoftBinding::algorithm_registry),
+    /// queries each of its registered resolution API endpoints via `byBinding`, and — for
+    /// the best match found — constructs the manifest's fetch URL and hands it to the same
+    /// remote-manifest fetch path used for an XMP-embedded provenance reference. If
+    /// fetching is disabled ([`Verify::remote_manifest_fetch`](crate::settings::Verify::remote_manifest_fetch))
+    /// or unsupported (the `fetch_remote_manifests` feature is off), this surfaces as
+    /// [`Error::RemoteManifestUrl`], exactly as it would for an XMP remote manifest
+    /// reference, so the caller can fetch it out-of-band and pass the bytes to
+    /// [`with_manifest_data_and_stream`](Self::with_manifest_data_and_stream) instead.
+    ///
+    /// The SDK never uploads asset content on the caller's behalf as part of this call —
+    /// only the small, already-known `value` is sent in the query.
+    ///
+    /// # Arguments
+    /// * `alg` - The soft binding algorithm identifier (e.g. `"com.adobe.trustmark.Q"`).
+    /// * `value` - The soft binding value already extracted from the asset by the caller.
+    /// * `format` - The format of the stream.
+    /// * `stream` - The stream to verify the resolved manifest against.
+    /// # Returns
+    /// The updated [`Reader`], unchanged if `algorithm_registry` isn't configured, `alg`
+    /// isn't found in it, or no endpoint returns a match — all normal, expected outcomes.
+    /// # Errors
+    /// Returns an [`Error`] if a match is found but its manifest cannot be fetched or fails
+    /// to validate.
+    #[async_generic]
+    pub fn with_soft_binding(
+        self,
+        alg: &str,
+        value: &[u8],
+        format: &str,
+        stream: impl Read + Seek + MaybeSend,
+    ) -> Result<Self> {
+        use crate::soft_binding::{resolution_api, SoftBindingList};
+
+        let registry = match self
+            .context
+            .settings()
+            .soft_binding
+            .algorithm_registry
+            .as_deref()
+        {
+            Some(json) => SoftBindingList::from_json_str(json)?,
+            None => return Ok(self),
+        };
+
+        let Some(entry) = registry.find(alg) else {
+            return Ok(self);
+        };
+
+        let mut all_matches = Vec::new();
+        for endpoint in entry.resolution_apis() {
+            let endpoint = endpoint.as_ref();
+            let result = if _sync {
+                resolution_api::query_by_binding_get(endpoint, alg, value, None, &self.context)
+            } else {
+                resolution_api::query_by_binding_get_async(
+                    endpoint,
+                    alg,
+                    value,
+                    None,
+                    &self.context,
+                )
+                .await
+            };
+            // Best-effort: one endpoint failing shouldn't abort the others.
+            if let Ok(query_result) = result {
+                all_matches.extend(query_result.matches.into_iter().map(|m| (endpoint, m)));
+            }
+        }
+
+        let best = all_matches.into_iter().max_by(|(_, a), (_, b)| {
+            match (a.similarity_score, b.similarity_score) {
+                (Some(x), Some(y)) => x.cmp(&y),
+                (Some(_), None) => std::cmp::Ordering::Greater,
+                (None, Some(_)) => std::cmp::Ordering::Less,
+                (None, None) => std::cmp::Ordering::Equal,
+            }
+        });
+
+        let Some((endpoint, best_match)) = best else {
+            return Ok(self);
+        };
+
+        let manifest_endpoint = best_match.endpoint.as_deref().unwrap_or(endpoint);
+        let manifest_url =
+            resolution_api::manifest_url(manifest_endpoint, &best_match.manifest_id)?;
+
+        let manifest_bytes = if _sync {
+            Store::handle_remote_manifest(manifest_url.as_str(), &self.context)?
+        } else {
+            Store::handle_remote_manifest_async(manifest_url.as_str(), &self.context).await?
+        };
+
+        if _sync {
+            self.with_manifest_data_and_stream(&manifest_bytes, format, stream)
+        } else {
+            self.with_manifest_data_and_stream_async(&manifest_bytes, format, stream)
+                .await
+        }
+    }
+
     /// Create a manifest store [`Reader`] from existing `c2pa_data` and a stream.
     /// Use this to validate a remote manifest or a sidecar manifest.
     /// # Arguments
@@ -1410,6 +1518,152 @@ pub mod tests {
         let remote_url = reader.remote_url();
         assert_eq!(remote_url, Some("https://cai-manifests.adobe.com/manifests/adobe-urn-uuid-5f37e182-3687-462e-a7fb-573462780391"));
         assert!(!reader.is_embedded());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_with_soft_binding_no_registry_is_noop() -> Result<()> {
+        // No `algorithm_registry` configured: `with_soft_binding` should be a no-op and
+        // must not attempt any network call.
+        let reader = Reader::default().with_soft_binding(
+            "com.example.watermark",
+            b"some watermark value",
+            "image/jpeg",
+            Cursor::new(IMAGE_WITH_MANIFEST),
+        )?;
+        assert!(reader.active_manifest().is_none());
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "fetch_remote_manifests")]
+    #[cfg(not(target_arch = "wasm32"))] // httpmock doesn't support wasm32 (issue #1378)
+    fn test_with_soft_binding_resolves_and_validates() -> Result<()> {
+        use httpmock::{Method, MockServer};
+
+        use crate::soft_binding::resolution_api::{SoftBindingMatch, SoftBindingQueryResult};
+
+        const CLOUD_ASSET: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
+        const CLOUD_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
+
+        let server = MockServer::start();
+
+        let query_result = SoftBindingQueryResult {
+            matches: vec![SoftBindingMatch {
+                manifest_id: "cloud_manifest".to_owned(),
+                endpoint: None,
+                similarity_score: Some(90),
+            }],
+        };
+        let by_binding_mock = server.mock(|when, then| {
+            when.method(Method::GET)
+                .path("/matches/byBinding")
+                .query_param("alg", "com.example.watermark");
+            then.status(200).json_body_obj(&query_result);
+        });
+        let manifest_mock = server.mock(|when, then| {
+            when.method(Method::GET).path("/manifests/cloud_manifest");
+            then.status(200)
+                .header("content-type", "application/c2pa")
+                .body(CLOUD_MANIFEST);
+        });
+
+        let registry_json = serde_json::json!([{
+            "identifier": 1,
+            "alg": "com.example.watermark",
+            "type": "watermark",
+            "decodedMediaTypes": ["image"],
+            "entryMetadata": {
+                "description": "test algorithm",
+                "dateEntered": "2025-01-01T00:00:00Z",
+                "contact": "test@example.com",
+                "informationalUrl": "https://example.com"
+            },
+            "softBindingResolutionApis": [server.base_url()]
+        }])
+        .to_string();
+
+        let mut context = Context::new();
+        context.settings_mut().soft_binding.algorithm_registry = Some(registry_json);
+        // The bundled test trust list doesn't include the cert this fixture was signed
+        // with; disable trust verification the same way other tests using this fixture do.
+        context.settings_mut().verify.verify_trust = false;
+
+        let reader = Reader::from_context(context).with_soft_binding(
+            "com.example.watermark",
+            b"some watermark value",
+            "image/jpeg",
+            Cursor::new(CLOUD_ASSET),
+        )?;
+
+        assert!(reader.active_manifest().is_some());
+        by_binding_mock.assert();
+        manifest_mock.assert();
+
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "fetch_remote_manifests")]
+    #[cfg(not(target_arch = "wasm32"))] // httpmock doesn't support wasm32 (issue #1378)
+    fn test_with_soft_binding_fetch_disabled_returns_remote_manifest_url() -> Result<()> {
+        use httpmock::{Method, MockServer};
+
+        use crate::soft_binding::resolution_api::{SoftBindingMatch, SoftBindingQueryResult};
+
+        const CLOUD_ASSET: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
+
+        let server = MockServer::start();
+
+        let query_result = SoftBindingQueryResult {
+            matches: vec![SoftBindingMatch {
+                manifest_id: "cloud_manifest".to_owned(),
+                endpoint: None,
+                similarity_score: Some(90),
+            }],
+        };
+        let by_binding_mock = server.mock(|when, then| {
+            when.method(Method::GET).path("/matches/byBinding");
+            then.status(200).json_body_obj(&query_result);
+        });
+
+        let registry_json = serde_json::json!([{
+            "identifier": 1,
+            "alg": "com.example.watermark",
+            "type": "watermark",
+            "decodedMediaTypes": ["image"],
+            "entryMetadata": {
+                "description": "test algorithm",
+                "dateEntered": "2025-01-01T00:00:00Z",
+                "contact": "test@example.com",
+                "informationalUrl": "https://example.com"
+            },
+            "softBindingResolutionApis": [server.base_url()]
+        }])
+        .to_string();
+
+        let mut context = Context::new();
+        context.settings_mut().soft_binding.algorithm_registry = Some(registry_json);
+        // Fetching the resolved manifest is disabled; the query itself is still allowed.
+        context.settings_mut().verify.remote_manifest_fetch = false;
+
+        let err = Reader::from_context(context)
+            .with_soft_binding(
+                "com.example.watermark",
+                b"some watermark value",
+                "image/jpeg",
+                Cursor::new(CLOUD_ASSET),
+            )
+            .unwrap_err();
+
+        match err {
+            Error::RemoteManifestUrl(url) => {
+                assert!(url.ends_with("/manifests/cloud_manifest"));
+            }
+            other => panic!("expected Error::RemoteManifestUrl, got {other:?}"),
+        }
+        by_binding_mock.assert();
 
         Ok(())
     }
