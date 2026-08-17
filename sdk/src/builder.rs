@@ -2568,7 +2568,12 @@ impl Builder {
                 self.bmff_hasher.alg = ph_alg.to_string();
 
                 let mut placeholder_bmff = BmffHash::new("jumbf manifest", ph_alg, None);
-                placeholder_bmff.set_default_exclusions();
+                placeholder_bmff.set_default_exclusions_with_options(
+                    self.context
+                        .settings()
+                        .builder
+                        .bmff_hash_exclude_free_and_skip_boxes,
+                );
                 placeholder_bmff.add_place_holder_hash()?;
                 let assertion_label = placeholder_bmff.to_assertion()?.label();
                 self.add_assertion(&assertion_label, &placeholder_bmff)?;

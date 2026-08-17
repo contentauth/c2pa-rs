@@ -2196,12 +2196,14 @@ impl Store {
         Ok(hashes)
     }
 
-    fn generate_bmff_data_hash_for_stream(alg: &str) -> Result<BmffHash> {
+    fn generate_bmff_data_hash_for_stream(alg: &str, settings: &Settings) -> Result<BmffHash> {
         // The spec has mandatory BMFF exclusion ranges for certain atoms.
         // The function makes sure those are included.
 
         let mut dh = BmffHash::new("jumbf manifest", alg, None);
-        dh.set_default_exclusions();
+        dh.set_default_exclusions_with_options(
+            settings.builder.bmff_hash_exclude_free_and_skip_boxes,
+        );
 
         // fill in temporary hash
         match alg {
@@ -2665,7 +2667,9 @@ impl Store {
         } else {
             let mut bmff_hash = BmffHash::new("jumbf manifest", pc.alg(), None);
 
-            bmff_hash.set_default_exclusions();
+            bmff_hash.set_default_exclusions_with_options(
+                settings.builder.bmff_hash_exclude_free_and_skip_boxes,
+            );
 
             if pc.version() < 2 {
                 bmff_hash.set_bmff_version(2); // backcompat support
@@ -3185,7 +3189,7 @@ impl Store {
                 } else {
                     input_stream.rewind()?;
                 }
-                let mut bmff_hash = Store::generate_bmff_data_hash_for_stream(pc.alg())?;
+                let mut bmff_hash = Store::generate_bmff_data_hash_for_stream(pc.alg(), settings)?;
 
                 if pc.version() < 2 {
                     bmff_hash.set_bmff_version(2); // backcompat support

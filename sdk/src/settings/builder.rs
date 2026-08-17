@@ -604,6 +604,10 @@ pub struct BuilderSettings {
     ///
     /// [`TimeStamp`]: crate::assertions::TimeStamp
     pub auto_timestamp_assertion: TimeStampSettings,
+    /// Whether `/free` and `/skip` boxes are excluded from the BMFF/MP4 hard-binding hash.
+    ///
+    /// The default value is `true`.
+    pub bmff_hash_exclude_free_and_skip_boxes: bool,
 }
 
 impl Default for BuilderSettings {
@@ -620,6 +624,7 @@ impl Default for BuilderSettings {
             prefer_box_hash: false,
             generate_c2pa_archive: Some(true),
             auto_timestamp_assertion: TimeStampSettings::default(),
+            bmff_hash_exclude_free_and_skip_boxes: true,
         }
     }
 }
