@@ -12,6 +12,7 @@
 // each license.
 
 use std::{
+    cmp::Ordering::{Equal, Greater, Less},
     fs::File,
     io::{self, Cursor, Read, Seek, SeekFrom},
     path::Path,
@@ -30,8 +31,8 @@ use crate::{
     },
     error::{Error, Result},
     utils::{
-        io_utils::{patch_stream, tempfile_builder, ReaderUtils},
-        xmp_inmemory_utils::{add_provenance, MIN_XMP},
+        io_utils::{patch_stream, patch_stream_multi, tempfile_builder, PatchItem, ReaderUtils},
+        xmp_inmemory_utils::{add_provenance, extract_provenance, remove_provenance, MIN_XMP},
     },
 };
 
@@ -172,113 +173,9 @@ impl CAIReader for PngIO {
     }
 
     // Get XMP block
-    fn read_xmp(&self, mut asset_reader: &mut dyn CAIRead) -> Option<String> {
+    fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String> {
         let ps = get_png_chunk_positions(asset_reader).ok()?;
-        let mut xmp_str: Option<String> = None;
-
-        ps.iter().find(|pcp| {
-            if pcp.name == ITXT_CHUNK {
-                // seek to start of chunk
-                if asset_reader.seek(SeekFrom::Start(pcp.start + 8)).is_err() {
-                    // move +8 to get past header
-                    return false;
-                }
-
-                // Track unread bytes in this iTxt chunk. Every consumed field
-                // is subtracted via `checked_sub` so a truncated/malicious
-                // chunk cannot underflow the length used for the final data
-                // read (previously crashed with "attempt to subtract with
-                // overflow" on a crafted ~70-byte PNG).
-                let mut remaining: u32 = pcp.length;
-
-                // parse the iTxt block
-                let (key, consumed) = match read_string(asset_reader, remaining) {
-                    Ok(v) => v,
-                    Err(_) => return false,
-                };
-                remaining = match remaining.checked_sub(consumed) {
-                    Some(r) => r,
-                    None => return false,
-                };
-
-                if key.is_empty() || key.len() > 79 {
-                    return false;
-                }
-
-                // is this an XMP key
-                if key != XMP_KEY {
-                    return false;
-                }
-
-                // compressed flag + compression method are one byte each;
-                // charge both against `remaining` before reading them.
-                remaining = match remaining.checked_sub(2) {
-                    Some(r) => r,
-                    None => return false,
-                };
-
-                let compressed = match asset_reader.read_u8() {
-                    Ok(c) => c != 0,
-                    Err(_) => return false,
-                };
-
-                let _compression_method = match asset_reader.read_u8() {
-                    Ok(c) => c != 0,
-                    Err(_) => return false,
-                };
-
-                let (_langtag, consumed) = match read_string(asset_reader, remaining) {
-                    Ok(v) => v,
-                    Err(_) => return false,
-                };
-                remaining = match remaining.checked_sub(consumed) {
-                    Some(r) => r,
-                    None => return false,
-                };
-
-                let (_transkey, consumed) = match read_string(asset_reader, remaining) {
-                    Ok(v) => v,
-                    Err(_) => return false,
-                };
-                remaining = match remaining.checked_sub(consumed) {
-                    Some(r) => r,
-                    None => return false,
-                };
-
-                // read iTxt data — bounded by the actual chunk boundary
-                let data = match asset_reader.read_to_vec(remaining as u64) {
-                    Ok(v) => v,
-                    Err(_) => return false,
-                };
-
-                // convert to string, decompress if needed
-                let val = if compressed {
-                    /*  should not be needed for current XMP
-                    use flate2::read::GzDecoder;
-
-                    let cursor = Cursor::new(data);
-
-                    let mut d = GzDecoder::new(cursor);
-                    let mut s = String::new();
-                    if d.read_to_string(&mut s).is_err() {
-                        return false;
-                    }
-                    s
-                    */
-                    return false;
-                } else {
-                    String::from_utf8_lossy(&data).to_string()
-                };
-
-                xmp_str = Some(val);
-
-                true
-            } else {
-                false
-            }
-        });
-
-        xmp_str
+        find_xmp_chunk(asset_reader, &ps).map(|(_, val)| val)
     }
 }
 
@@ -453,6 +350,71 @@ impl CAIWriter for PngIO {
 
         Ok(())
     }
+
+    fn remove_cai_store_and_reference_from_stream(
+        &self,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        remove_reference: bool,
+    ) -> Result<()> {
+        let ps = get_png_chunk_positions(input_stream)?;
+
+        let cai_region = ps
+            .iter()
+            .find(|pcp| pcp.name == CAI_CHUNK)
+            .map(|c2pa| (c2pa.start, c2pa.end() - c2pa.start));
+
+        let empty_bytes: Vec<u8> = Vec::new();
+
+        let mut xmp_region = None;
+        let mut xmp_bytes: Vec<u8> = Vec::new();
+        if remove_reference {
+            if let Some((pcp, xmp)) = find_xmp_chunk(input_stream, &ps) {
+                if extract_provenance(&xmp).is_some() {
+                    let updated_xmp = remove_provenance(&xmp)?;
+                    xmp_bytes = encode_xmp_chunk(&updated_xmp)?;
+                    xmp_region = Some((pcp.start, pcp.end() - pcp.start));
+                }
+            }
+        }
+
+        let mut patches: Vec<PatchItem> = Vec::new();
+        if let Some((start, len)) = cai_region {
+            patches.push(PatchItem {
+                start,
+                len,
+                bytes: &empty_bytes,
+            });
+        }
+        if let Some((start, len)) = xmp_region {
+            patches.push(PatchItem {
+                start,
+                len,
+                bytes: &xmp_bytes,
+            });
+        }
+
+        input_stream.rewind()?;
+        output_stream.rewind()?;
+
+        if patches.is_empty() {
+            io::copy(input_stream, output_stream)?;
+            return Ok(());
+        }
+
+        // regions can appear in either order in the file (CAI before or after XMP)
+        patches.sort_by(|patch1: &PatchItem, patch2: &PatchItem| {
+            if patch1.start > patch2.start {
+                Greater
+            } else if patch1.start == patch2.start {
+                Equal
+            } else {
+                Less
+            }
+        });
+
+        patch_stream_multi(input_stream, output_stream, &patches)
+    }
 }
 
 impl AssetIO for PngIO {
@@ -561,6 +523,108 @@ impl AssetIO for PngIO {
     }
 }
 
+/// Locates the XMP `iTXt` chunk (if any) among already-fetched chunk positions and
+/// returns its position together with the decoded XMP value. Takes `ps` instead of
+/// calling `get_png_chunk_positions` itself so callers that already parsed the chunk
+/// list (e.g. to also locate the CAI chunk) don't have to parse it twice.
+fn find_xmp_chunk(
+    mut asset_reader: &mut dyn CAIRead,
+    ps: &[PngChunkPos],
+) -> Option<(PngChunkPos, String)> {
+    let mut found: Option<(PngChunkPos, String)> = None;
+
+    ps.iter().find(|pcp| {
+        if pcp.name == ITXT_CHUNK {
+            // seek to start of chunk
+            if asset_reader.seek(SeekFrom::Start(pcp.start + 8)).is_err() {
+                // move +8 to get past header
+                return false;
+            }
+
+            // Track unread bytes in this iTxt chunk. Every consumed field
+            // is subtracted via `checked_sub` so a truncated/malicious
+            // chunk cannot underflow the length used for the final data
+            // read (previously crashed with "attempt to subtract with
+            // overflow" on a crafted ~70-byte PNG).
+            let mut remaining: u32 = pcp.length;
+
+            // parse the iTxt block
+            let (key, consumed) = match read_string(asset_reader, remaining) {
+                Ok(v) => v,
+                Err(_) => return false,
+            };
+            remaining = match remaining.checked_sub(consumed) {
+                Some(r) => r,
+                None => return false,
+            };
+
+            if key.is_empty() || key.len() > 79 {
+                return false;
+            }
+
+            // is this an XMP key
+            if key != XMP_KEY {
+                return false;
+            }
+
+            // compressed flag + compression method are one byte each;
+            // charge both against `remaining` before reading them.
+            remaining = match remaining.checked_sub(2) {
+                Some(r) => r,
+                None => return false,
+            };
+
+            let compressed = match asset_reader.read_u8() {
+                Ok(c) => c != 0,
+                Err(_) => return false,
+            };
+
+            let _compression_method = match asset_reader.read_u8() {
+                Ok(c) => c != 0,
+                Err(_) => return false,
+            };
+
+            let (_langtag, consumed) = match read_string(asset_reader, remaining) {
+                Ok(v) => v,
+                Err(_) => return false,
+            };
+            remaining = match remaining.checked_sub(consumed) {
+                Some(r) => r,
+                None => return false,
+            };
+
+            let (_transkey, consumed) = match read_string(asset_reader, remaining) {
+                Ok(v) => v,
+                Err(_) => return false,
+            };
+            remaining = match remaining.checked_sub(consumed) {
+                Some(r) => r,
+                None => return false,
+            };
+
+            // read iTxt data — bounded by the actual chunk boundary
+            let data = match asset_reader.read_to_vec(remaining as u64) {
+                Ok(v) => v,
+                Err(_) => return false,
+            };
+
+            // convert to string; decompression not implemented/needed for current XMP
+            if compressed {
+                return false;
+            }
+            let val = String::from_utf8_lossy(&data).to_string();
+
+            found = Some(((*pcp).clone(), val));
+
+            true
+        } else {
+            false
+        }
+    });
+
+    found
+}
+
 fn get_xmp_insertion_point(asset_reader: &mut dyn CAIRead) -> Option<(u64, u32)> {
     let ps = get_png_chunk_positions(asset_reader).ok()?;
 
@@ -599,6 +663,27 @@ fn get_xmp_insertion_point(asset_reader: &mut dyn CAIRead) -> Option<(u64, u32)>
             .map(|img_hdr| (img_hdr.end(), 0))
     }
 }
+
+// Encodes `xmp` as a complete PNG `iTXt` chunk (length + name + data + crc) carrying
+// the `XML:com.adobe.xmp` key, ready to splice into a PNG byte stream.
+fn encode_xmp_chunk(xmp: &str) -> Result<Vec<u8>> {
+    let mut xmp_data = Vec::new();
+    let mut xmp_encoder = png_pong::Encoder::new(&mut xmp_data).into_chunk_enc();
+
+    let mut xmp_chunk = png_pong::chunk::Chunk::InternationalText(InternationalText {
+        key: XMP_KEY.to_string(),
+        langtag: "".to_string(),
+        transkey: "".to_string(),
+        val: xmp.to_string(),
+        compressed: false,
+    });
+    xmp_encoder
+        .encode(&mut xmp_chunk)
+        .map_err(|_| Error::EmbeddingError)?;
+
+    Ok(xmp_data)
+}
+
 impl RemoteRefEmbed for PngIO {
     fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()> {
         match embed_ref {
@@ -643,21 +728,7 @@ impl RemoteRefEmbed for PngIO {
 
                 // update XMP
                 let updated_xmp = add_provenance(&xmp, &manifest_uri)?;
-
-                // make XMP chunk
-                let mut xmp_data = Vec::new();
-                let mut xmp_encoder = png_pong::Encoder::new(&mut xmp_data).into_chunk_enc();
-
-                let mut xmp_chunk = png_pong::chunk::Chunk::InternationalText(InternationalText {
-                    key: XMP_KEY.to_string(),
-                    langtag: "".to_string(),
-                    transkey: "".to_string(),
-                    val: updated_xmp,
-                    compressed: false,
-                });
-                xmp_encoder
-                    .encode(&mut xmp_chunk)
-                    .map_err(|_| Error::EmbeddingError)?;
+                let xmp_data = encode_xmp_chunk(&updated_xmp)?;
 
                 if let Some((xmp_start, xmp_len)) = get_xmp_insertion_point(source_stream) {
                     output_stream.rewind()?;
@@ -677,6 +748,53 @@ impl RemoteRefEmbed for PngIO {
             crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
             crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
             crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
+        }
+    }
+
+    fn supports_remove_reference(&self) -> bool {
+        true
+    }
+
+    fn remove_reference_to_stream(
+        &self,
+        source_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+    ) -> Result<()> {
+        source_stream.rewind()?;
+
+        // If there's no existing XMP, or no stale provenance value in it, there's nothing
+        // to clear -- just pass the asset through unchanged.
+        let needs_clearing = match self.read_xmp(source_stream) {
+            Some(xmp) => extract_provenance(&xmp).is_some(),
+            None => false,
+        };
+
+        if !needs_clearing {
+            source_stream.rewind()?;
+            output_stream.rewind()?;
+            io::copy(source_stream, output_stream)?;
+            return Ok(());
+        }
+
+        source_stream.rewind()?;
+        // read_xmp() above already confirmed this is Some
+        let xmp = self.read_xmp(source_stream).ok_or(Error::EmbeddingError)?;
+        let updated_xmp = remove_provenance(&xmp)?;
+        let xmp_data = encode_xmp_chunk(&updated_xmp)?;
+
+        if let Some((xmp_start, xmp_len)) = get_xmp_insertion_point(source_stream) {
+            output_stream.rewind()?;
+            patch_stream(
+                source_stream,
+                output_stream,
+                xmp_start,
+                xmp_len as u64,
+                &xmp_data,
+            )?;
+
+            Ok(())
+        } else {
+            Err(Error::EmbeddingError)
         }
     }
 }
@@ -850,6 +968,58 @@ pub mod tests {
     }
 
     #[test]
+    fn test_png_xmp_remove_reference() {
+        let ap = test::fixture_path("libpng-test.png");
+        let mut source_stream = std::fs::File::open(ap).unwrap();
+
+        let temp_dir = tempdirectory().unwrap();
+        let with_provenance = temp_dir_path(&temp_dir, "with_provenance.png");
+        let mut with_provenance_stream = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&with_provenance)
+            .unwrap();
+
+        let png_io = PngIO {};
+        let eh = png_io.remote_ref_writer_ref().unwrap();
+
+        // simulate a previous signing that embedded a (now stale) remote manifest URL
+        eh.embed_reference_to_stream(
+            &mut source_stream,
+            &mut with_provenance_stream,
+            RemoteRefEmbedType::Xmp("https://example.com/stale-manifest".to_string()),
+        )
+        .unwrap();
+
+        with_provenance_stream.rewind().unwrap();
+        let xmp = png_io.read_xmp(&mut with_provenance_stream).unwrap();
+        assert!(crate::utils::xmp_inmemory_utils::extract_provenance(&xmp)
+            .unwrap()
+            .contains("stale-manifest"));
+
+        // re-sign without a remote manifest: the stale provenance must be cleared
+        let cleared = temp_dir_path(&temp_dir, "cleared.png");
+        let mut cleared_stream = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&cleared)
+            .unwrap();
+
+        with_provenance_stream.rewind().unwrap();
+        assert!(eh.supports_remove_reference());
+        eh.remove_reference_to_stream(&mut with_provenance_stream, &mut cleared_stream)
+            .unwrap();
+
+        cleared_stream.rewind().unwrap();
+        let cleared_xmp = png_io.read_xmp(&mut cleared_stream).unwrap();
+        assert!(crate::utils::xmp_inmemory_utils::extract_provenance(&cleared_xmp).is_none());
+    }
+
+    #[test]
     fn test_png_parse() {
         let ap = test::fixture_path("libpng-test.png");
 
@@ -1020,6 +1190,111 @@ pub mod tests {
             Err(Error::JumbfNotFound) => (),
             _ => unreachable!(),
         }
+    }
+
+    // `Read + Seek` wrapper that counts how many times it's rewound to the start.
+    // Used to pin the "asset is touched only once per pass" contract of
+    // `remove_cai_store_and_reference_from_stream` -- see
+    // https://github.com/contentauth/c2pa-rs/issues/1532. `CAIRead` is blanket-implemented
+    // for any `Read + Seek + MaybeSend` type, so no manual `CAIRead` impl is needed here.
+    struct RewindCountingStream {
+        inner: Cursor<Vec<u8>>,
+        rewinds: usize,
+    }
+
+    impl std::io::Read for RewindCountingStream {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.inner.read(buf)
+        }
+    }
+
+    impl std::io::Seek for RewindCountingStream {
+        fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+            if pos == SeekFrom::Start(0) {
+                self.rewinds += 1;
+            }
+            self.inner.seek(pos)
+        }
+    }
+
+    #[test]
+    fn test_remove_cai_store_and_reference_from_stream() {
+        use crate::utils::xmp_inmemory_utils::extract_provenance;
+
+        let source = crate::utils::test::fixture_path("exp-test1.png");
+        let source_bytes = std::fs::read(source).unwrap();
+
+        let png_io = PngIO {};
+        let png_writer = png_io.get_writer("png").unwrap();
+        let remote_ref_writer = png_io.remote_ref_writer_ref().unwrap();
+
+        // Fixture that carries both a CAI store (already in exp-test1.png) and a stale
+        // XMP dcterms:provenance value (as if previously signed with a remote manifest).
+        let mut with_stale_provenance = Cursor::new(Vec::new());
+        remote_ref_writer
+            .embed_reference_to_stream(
+                &mut Cursor::new(source_bytes),
+                &mut with_stale_provenance,
+                RemoteRefEmbedType::Xmp("https://example.com/stale-manifest".to_string()),
+            )
+            .unwrap();
+
+        // remove_reference = false: only the CAI store is removed, stale XMP survives
+        let mut output_no_reference = Cursor::new(Vec::new());
+        with_stale_provenance.set_position(0);
+        png_writer
+            .remove_cai_store_and_reference_from_stream(
+                &mut with_stale_provenance,
+                &mut output_no_reference,
+                false,
+            )
+            .unwrap();
+
+        match png_io.get_reader().read_cai(&mut output_no_reference) {
+            Err(Error::JumbfNotFound) => (),
+            _ => unreachable!(),
+        }
+        output_no_reference.set_position(0);
+        let xmp = png_io.read_xmp(&mut output_no_reference).unwrap();
+        assert!(extract_provenance(&xmp).is_some());
+
+        // remove_reference = true: both the CAI store and the stale XMP provenance are
+        // cleared in a single pass
+        let mut output_with_reference = Cursor::new(Vec::new());
+        let mut counting_input = RewindCountingStream {
+            inner: Cursor::new(with_stale_provenance.get_ref().clone()),
+            rewinds: 0,
+        };
+        png_writer
+            .remove_cai_store_and_reference_from_stream(
+                &mut counting_input,
+                &mut output_with_reference,
+                true,
+            )
+            .unwrap();
+
+        // Regression guard for https://github.com/contentauth/c2pa-rs/issues/1532: the old
+        // implementation called separate `remove_cai_store_from_stream` +
+        // `remove_reference_to_stream` methods, each independently rewinding and re-scanning
+        // the asset. The combined method rewinds the input 4 times: once inside
+        // `get_png_chunk_positions`'s chunk-position scan, once explicitly before the patch
+        // pass, and twice more inside `patch_stream_multi` (its own leading rewind, plus
+        // `stream_len`'s position-restore seek back to 0). More than that means an extra
+        // scan/copy pass crept back in.
+        assert!(
+            counting_input.rewinds <= 4,
+            "expected at most 4 rewinds (chunk-position scan + patch pass, including its \
+             internal stream_len position restore), got {}",
+            counting_input.rewinds
+        );
+
+        match png_io.get_reader().read_cai(&mut output_with_reference) {
+            Err(Error::JumbfNotFound) => (),
+            _ => unreachable!(),
+        }
+        output_with_reference.set_position(0);
+        let xmp = png_io.read_xmp(&mut output_with_reference).unwrap();
+        assert!(extract_provenance(&xmp).is_none());
     }
 
     #[test]

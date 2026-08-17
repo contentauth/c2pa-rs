@@ -139,6 +139,22 @@ pub trait CAIWriter: Sync + Send {
         input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
     ) -> Result<()>;
+
+    /// Like [`Self::remove_cai_store_from_stream`], but when `remove_reference` is
+    /// true, also clears any stale remote reference (e.g. XMP `dcterms:provenance`)
+    /// in the same pass, if this handler supports it (see
+    /// [`crate::asset_io::RemoteRefEmbed::supports_remove_reference`]). Default
+    /// implementation ignores the flag and just removes the manifest store;
+    /// override to actually honor `true`.
+    fn remove_cai_store_and_reference_from_stream(
+        &self,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        remove_reference: bool,
+    ) -> Result<()> {
+        let _ = remove_reference;
+        self.remove_cai_store_from_stream(input_stream, output_stream)
+    }
 }
 
 #[allow(dead_code)]
@@ -253,6 +269,25 @@ pub trait RemoteRefEmbed {
         output_stream: &mut dyn CAIReadWrite,
         embed_ref: RemoteRefEmbedType,
     ) -> Result<()>;
+
+    /// Whether this handler implements real logic in [`Self::remove_reference_to_stream`].
+    /// Defaults to `false` so most handlers are unaffected; override alongside a real
+    /// implementation of `remove_reference_to_stream`.
+    fn supports_remove_reference(&self) -> bool {
+        false
+    }
+
+    /// Remove any previously embedded remote reference (e.g. a stale XMP
+    /// `dcterms:provenance` URL left over from an earlier signing) from the asset stream,
+    /// leaving the rest of the asset unchanged. Only called when
+    /// [`Self::supports_remove_reference`] returns `true`.
+    fn remove_reference_to_stream(
+        &self,
+        _source_stream: &mut dyn CAIRead,
+        _output_stream: &mut dyn CAIReadWrite,
+    ) -> Result<()> {
+        Err(crate::Error::UnsupportedType)
+    }
 }
 
 /// `ComposedManifestRefEmbed` is used to generate a C2PA manifest.  The
