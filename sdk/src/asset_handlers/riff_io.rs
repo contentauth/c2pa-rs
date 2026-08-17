@@ -12,9 +12,7 @@
 // each license.
 
 use std::{
-    fs::OpenOptions,
-    io::{Cursor, Seek, SeekFrom, Write},
-    path::Path,
+    io::{Cursor, Seek, SeekFrom},
     result,
 };
 
@@ -393,6 +391,10 @@ impl AssetIO for RiffIO {
         Some(self)
     }
 
+    fn write_xmp_ref(&self) -> Option<&dyn WriteXmp> {
+        Some(self)
+    }
+
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
@@ -573,19 +575,16 @@ impl CAIWriter for RiffIO {
 }
 
 impl AssetPatch for RiffIO {
-    fn patch_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
-        let mut asset = OpenOptions::new()
-            .write(true)
-            .read(true)
-            .create(false)
-            .open(asset_path)?;
-
-        let (manifest_pos, manifest_len) =
-            get_manifest_pos(&mut asset).ok_or(Error::EmbeddingError)?;
+    fn patch_cai_store_stream(
+        &self,
+        stream: &mut dyn CAIReadWrite,
+        store_bytes: &[u8],
+    ) -> Result<()> {
+        let (manifest_pos, manifest_len) = get_manifest_pos(stream).ok_or(Error::EmbeddingError)?;
 
         if store_bytes.len() + 8 == manifest_len as usize {
-            asset.seek(SeekFrom::Start(manifest_pos + 8))?; // skip 8 byte chunk data header
-            asset.write_all(store_bytes)?;
+            stream.seek(SeekFrom::Start(manifest_pos + 8))?; // skip 8 byte chunk data header
+            stream.write_all(store_bytes)?;
             Ok(())
         } else {
             Err(Error::InvalidAsset(
@@ -656,7 +655,7 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use std::{fs::File, panic};
+    use std::{fs::File, panic, path::Path};
 
     use super::*;
     use crate::utils::{

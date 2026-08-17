@@ -13,8 +13,7 @@
 
 use std::{
     borrow::Cow,
-    fs::OpenOptions,
-    io::{BufReader, Cursor, Seek, SeekFrom, Write},
+    io::{BufReader, Cursor, Seek, SeekFrom},
 };
 
 use quick_xml::{
@@ -90,6 +89,10 @@ impl AssetIO for SvgIO {
     }
 
     fn remote_manifest_url_ref(&self) -> Option<&dyn RemoteManifestUrl> {
+        Some(self)
+    }
+
+    fn write_xmp_ref(&self) -> Option<&dyn WriteXmp> {
         Some(self)
     }
 
@@ -605,15 +608,13 @@ impl CAIWriter for SvgIO {
 }
 
 impl AssetPatch for SvgIO {
-    fn patch_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
-        let mut input_file = OpenOptions::new()
-            .write(true)
-            .read(true)
-            .create(false)
-            .open(asset_path)?;
-
+    fn patch_cai_store_stream(
+        &self,
+        stream: &mut dyn CAIReadWrite,
+        store_bytes: &[u8],
+    ) -> Result<()> {
         let (asset_manifest_opt, _detected_tag_location, insertion_point) =
-            detect_manifest_location(&mut input_file)?;
+            detect_manifest_location(stream)?;
         let encoded_store_bytes = base64::encode(store_bytes);
 
         if let Some(manifest_bytes) = asset_manifest_opt {
@@ -621,8 +622,8 @@ impl AssetPatch for SvgIO {
             let encoded_manifest_bytes = base64::encode(&manifest_bytes);
             // can patch if encoded lengths are ==
             if encoded_store_bytes.len() == encoded_manifest_bytes.len() {
-                input_file.seek(SeekFrom::Start(insertion_point as u64))?;
-                input_file.write_all(encoded_store_bytes.as_bytes())?;
+                stream.seek(SeekFrom::Start(insertion_point as u64))?;
+                stream.write_all(encoded_store_bytes.as_bytes())?;
                 Ok(())
             } else {
                 Err(Error::InvalidAsset(

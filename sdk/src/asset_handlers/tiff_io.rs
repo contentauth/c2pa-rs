@@ -2392,6 +2392,10 @@ impl AssetIO for TiffIO {
         Some(self)
     }
 
+    fn write_xmp_ref(&self) -> Option<&dyn WriteXmp> {
+        Some(self)
+    }
+
     fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
         Some(self)
     }
@@ -2955,6 +2959,48 @@ pub mod tests {
         let loaded = crate::utils::xmp_inmemory_utils::extract_provenance(&xmp).unwrap();
 
         assert_eq!(&loaded, data);
+    }
+
+    #[test]
+    fn test_remove_remote_manifest_url() {
+        let url = "https://example.com/manifest.c2pa";
+
+        let source = crate::utils::test::fixture_path("TUSCANY.TIF");
+        let temp_dir = tempdirectory().unwrap();
+        let output = temp_dir_path(&temp_dir, "test.tif");
+        std::fs::copy(source, &output).unwrap();
+
+        let tiff_io = TiffIO {};
+
+        // write_xmp_ref must be wired up for this handler.
+        assert!(tiff_io.write_xmp_ref().is_some());
+
+        // embed a remote manifest url reference.
+        let eh = tiff_io.remote_manifest_url_ref().unwrap();
+        let mut input_stream = std::fs::File::open(&output).unwrap();
+        let mut embed_stream = Cursor::new(Vec::new());
+        eh.write_remote_manifest_url(&mut input_stream, &mut embed_stream, url)
+            .unwrap();
+        std::fs::write(&output, embed_stream.into_inner()).unwrap();
+
+        let mut with_url_stream = std::fs::File::open(&output).unwrap();
+        let xmp = tiff_io.read_xmp(&mut with_url_stream).unwrap();
+        assert_eq!(
+            crate::utils::xmp_inmemory_utils::extract_provenance(&xmp).as_deref(),
+            Some(url)
+        );
+
+        // remove_remote_manifest_url strips just the reference, in one pass.
+        let mut input_stream = std::fs::File::open(&output).unwrap();
+        let mut stripped_stream = Cursor::new(Vec::new());
+        eh.remove_remote_manifest_url(&mut input_stream, &mut stripped_stream)
+            .unwrap();
+        stripped_stream.rewind().unwrap();
+        let xmp = tiff_io.read_xmp(&mut stripped_stream).unwrap();
+        assert_eq!(
+            crate::utils::xmp_inmemory_utils::extract_provenance(&xmp),
+            None
+        );
     }
 
     #[test]

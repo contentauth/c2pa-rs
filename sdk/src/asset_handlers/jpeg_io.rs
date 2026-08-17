@@ -500,6 +500,10 @@ impl AssetIO for JpegIO {
         Some(self)
     }
 
+    fn write_xmp_ref(&self) -> Option<&dyn WriteXmp> {
+        Some(self)
+    }
+
     fn asset_box_hash_ref(&self) -> Option<&dyn AssetBoxHash> {
         Some(self)
     }

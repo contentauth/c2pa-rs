@@ -129,7 +129,7 @@ use crate::{
     maybe_send_sync::MaybeSend,
     utils::{
         mime::normalize_format,
-        xmp_inmemory_utils::{add_provenance, extract_provenance, MIN_XMP},
+        xmp_inmemory_utils::{add_provenance, extract_provenance, remove_provenance, MIN_XMP},
     },
     Error,
 };
@@ -447,6 +447,13 @@ pub trait AssetIO: Sync + Send {
     fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
         None
     }
+
+    /// Returns this handler's [`WriteXmp`] implementation, if it supports writing
+    /// an exact XMP packet (as opposed to [`RemoteManifestUrl`], which always
+    /// merges a URL into the *current* XMP).
+    fn write_xmp_ref(&self) -> Option<&dyn WriteXmp> {
+        None
+    }
 }
 
 /// Optimizes manifest updates for handlers that can patch an existing manifest
@@ -459,7 +466,39 @@ pub trait AssetPatch {
     ///
     /// Only valid when `store_bytes` is the same length as the existing manifest
     /// store — any other change would invalidate the asset's hashes.
-    fn patch_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()>;
+    ///
+    /// The default implementation opens `asset_path` for reading and writing and
+    /// delegates to [`patch_cai_store_stream`](Self::patch_cai_store_stream).
+    fn patch_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
+        let mut file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(asset_path)
+            .map_err(Error::IoError)?;
+        self.patch_cai_store_stream(&mut file, store_bytes)
+    }
+
+    /// Same operation as [`patch_cai_store`](Self::patch_cai_store), but on an
+    /// already-open stream: seeks to the existing manifest store's location and
+    /// overwrites it with `store_bytes` in place, without touching anything else
+    /// in the stream.
+    ///
+    /// Only valid when `store_bytes` is the same length as the existing manifest
+    /// store; implementations must verify this and return an error otherwise.
+    ///
+    /// The default implementation returns [`Error::NotImplemented`] — override
+    /// this (and rely on [`patch_cai_store`](Self::patch_cai_store)'s default
+    /// file-based wrapper above) for handlers whose manifest store can be
+    /// located and patched purely from a stream, with no file path needed.
+    fn patch_cai_store_stream(
+        &self,
+        _stream: &mut dyn CAIReadWrite,
+        _store_bytes: &[u8],
+    ) -> Result<()> {
+        Err(Error::NotImplemented(
+            "patch_cai_store_stream is not implemented by this handler".to_string(),
+        ))
+    }
 }
 
 /// The well-known box/chunk name every format's C2PA manifest store is reported
@@ -552,6 +591,26 @@ pub trait RemoteManifestUrl {
     fn read_manifest_url(&self, _input_stream: &mut dyn CAIRead) -> Option<String> {
         None
     }
+
+    /// Removes the remote manifest URL reference from the asset, if present,
+    /// leaving everything else (including any unrelated XMP) untouched.
+    ///
+    /// Needed when re-saving with a mode that no longer points at a remote
+    /// manifest (e.g. embedding a full manifest after a prior sidecar/remote
+    /// save) — without this, a stale reference would be left behind.
+    ///
+    /// The default implementation returns [`Error::NotImplemented`]. The
+    /// blanket impl for [`WriteXmp`] overrides this to read the current XMP,
+    /// strip the reference, and write the result back.
+    fn remove_remote_manifest_url(
+        &self,
+        _input_stream: &mut dyn CAIRead,
+        _output_stream: &mut dyn CAIReadWrite,
+    ) -> Result<()> {
+        Err(Error::NotImplemented(
+            "remove_remote_manifest_url is not supported by this handler".to_string(),
+        ))
+    }
 }
 
 /// Writes a complete XMP packet into an asset stream, replacing any existing XMP.
@@ -589,6 +648,18 @@ impl<T: WriteXmp + CAIReader> RemoteManifestUrl for T {
         self.read_xmp(input_stream)
             .as_deref()
             .and_then(extract_provenance)
+    }
+
+    fn remove_remote_manifest_url(
+        &self,
+        input_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+    ) -> Result<()> {
+        let current_xmp = self
+            .read_xmp(input_stream)
+            .unwrap_or_else(|| MIN_XMP.to_string());
+        let updated_xmp = remove_provenance(&current_xmp)?;
+        self.write_xmp(input_stream, output_stream, &updated_xmp)
     }
 }
 

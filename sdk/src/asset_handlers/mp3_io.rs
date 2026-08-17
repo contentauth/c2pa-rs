@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{io::Cursor, path::Path};
+use std::io::Cursor;
 
 use id3::Tag;
 
@@ -152,6 +152,10 @@ impl AssetIO for Mp3IO {
         Some(self)
     }
 
+    fn write_xmp_ref(&self) -> Option<&dyn WriteXmp> {
+        Some(self)
+    }
+
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
@@ -189,8 +193,12 @@ impl CAIWriter for Mp3IO {
 }
 
 impl AssetPatch for Mp3IO {
-    fn patch_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
-        id3_helper::patch_cai_in_id3_asset(asset_path, store_bytes)
+    fn patch_cai_store_stream(
+        &self,
+        stream: &mut dyn CAIReadWrite,
+        store_bytes: &[u8],
+    ) -> Result<()> {
+        id3_helper::patch_cai_in_id3_stream(stream, store_bytes)
     }
 }
 

@@ -170,6 +170,7 @@ impl AssetPatch for GifIO {
     fn patch_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
         let mut stream = fs::OpenOptions::new()
             .read(true)
+            .write(true)
             .open(asset_path)
             .map_err(Error::IoError)?;
 
@@ -301,6 +302,10 @@ impl AssetIO for GifIO {
     }
 
     fn remote_manifest_url_ref(&self) -> Option<&dyn RemoteManifestUrl> {
+        Some(self)
+    }
+
+    fn write_xmp_ref(&self) -> Option<&dyn WriteXmp> {
         Some(self)
     }
 

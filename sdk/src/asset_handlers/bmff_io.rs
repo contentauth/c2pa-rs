@@ -1985,6 +1985,10 @@ impl AssetIO for BmffIO {
         Some(self)
     }
 
+    fn write_xmp_ref(&self) -> Option<&dyn WriteXmp> {
+        Some(self)
+    }
+
     fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
         Some(self)
     }
