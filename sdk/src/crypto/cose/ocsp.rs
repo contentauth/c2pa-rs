@@ -95,127 +95,123 @@ pub fn check_ocsp_status(
         }
     }
 
-    match get_ocsp_der(sign1) {
-        Some(ocsp_response_der) => {
-            let mut ocsp_log = StatusTracker::default();
-            let result = if _sync {
-                check_stapled_ocsp_response(
-                    sign1,
-                    &ocsp_response_der,
-                    data,
-                    ctp,
-                    tst_info,
-                    &mut ocsp_log,
-                    context.settings(),
+    // If a stapled response is present, it takes precedence over fetching --
+    // but only when it affirmatively resolves revocation status. A present
+    // but inconclusive staple (malformed DER, untrusted OCSP signer, wrong
+    // EKU, etc.) falls through to the `fetch_policy` dispatch below, exactly
+    // as if no stapled response were present at all, instead of silently
+    // treating the unusable staple as a clean result and skipping the
+    // configured online check.
+    if let Some(ocsp_response_der) = get_ocsp_der(sign1) {
+        let mut ocsp_log = StatusTracker::default();
+        let result = if _sync {
+            check_stapled_ocsp_response(
+                sign1,
+                &ocsp_response_der,
+                data,
+                ctp,
+                tst_info,
+                &mut ocsp_log,
+                context.settings(),
+            )
+        } else {
+            check_stapled_ocsp_response_async(
+                sign1,
+                &ocsp_response_der,
+                data,
+                ctp,
+                tst_info,
+                &mut ocsp_log,
+                context.settings(),
+            )
+            .await
+        };
+
+        // we only care about OCSP value log info if the result is OK
+        if let Ok(ocsp_response) = result {
+            if ocsp_log.has_status(validation_status::SIGNING_CREDENTIAL_REVOKED) {
+                log_item!(
+                    "",
+                    format!(
+                        "signing cert revoked: {}",
+                        ocsp_response.certificate_serial_num
+                    ),
+                    "check_ocsp_status"
                 )
+                .validation_status(SIGNING_CREDENTIAL_REVOKED)
+                .informational(validation_log);
+
+                return Err(CoseError::CertificateTrustError(
+                    CertificateTrustError::CertificateNotTrusted,
+                ));
+            }
+
+            // If certificate is confirmed not revoked, return success
+            if ocsp_log.has_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED) {
+                log_item!(
+                    "",
+                    format!(
+                        "signing cert not revoked: {}",
+                        ocsp_response.certificate_serial_num
+                    ),
+                    "check_ocsp_status"
+                )
+                .validation_status(SIGNING_CREDENTIAL_NOT_REVOKED)
+                .informational(validation_log);
+
+                return Ok(ocsp_response);
+            }
+        }
+    }
+
+    match fetch_policy {
+        OcspFetchPolicy::FetchAllowed => {
+            if _sync {
+                fetch_and_check_ocsp_response(sign1, data, ctp, tst_info, validation_log, context)
             } else {
-                check_stapled_ocsp_response_async(
+                fetch_and_check_ocsp_response_async(
                     sign1,
-                    &ocsp_response_der,
                     data,
                     ctp,
                     tst_info,
-                    &mut ocsp_log,
-                    context.settings(),
+                    validation_log,
+                    context,
                 )
                 .await
-            };
-
-            // we only care about OCSP value log info if the result is OK
-            if let Ok(ocsp_response) = result {
-                if ocsp_log.has_status(validation_status::SIGNING_CREDENTIAL_REVOKED) {
-                    log_item!(
-                        "",
-                        format!(
-                            "signing cert revoked: {}",
-                            ocsp_response.certificate_serial_num
-                        ),
-                        "check_ocsp_status"
-                    )
-                    .validation_status(SIGNING_CREDENTIAL_REVOKED)
-                    .informational(validation_log);
-
-                    return Err(CoseError::CertificateTrustError(
-                        CertificateTrustError::CertificateNotTrusted,
-                    ));
-                }
-
-                // If certificate is confirmed not revoked, return success
-                if ocsp_log.has_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED) {
-                    log_item!(
-                        "",
-                        format!(
-                            "signing cert not revoked: {}",
-                            ocsp_response.certificate_serial_num
-                        ),
-                        "check_ocsp_status"
-                    )
-                    .validation_status(SIGNING_CREDENTIAL_NOT_REVOKED)
-                    .informational(validation_log);
-
-                    return Ok(ocsp_response);
-                }
             }
-            // errors mean we don't interpret the value
-            Ok(OcspResponse::default())
         }
-
-        None => match fetch_policy {
-            OcspFetchPolicy::FetchAllowed => {
-                if _sync {
-                    fetch_and_check_ocsp_response(
-                        sign1,
-                        data,
-                        ctp,
-                        tst_info,
-                        validation_log,
-                        context,
-                    )
-                } else {
-                    fetch_and_check_ocsp_response_async(
-                        sign1,
-                        data,
-                        ctp,
-                        tst_info,
-                        validation_log,
-                        context,
-                    )
-                    .await
-                }
-            }
-            OcspFetchPolicy::DoNotFetch => {
-                if let Some(ocsp_response_ders) = ocsp_responses {
-                    if !ocsp_response_ders.is_empty() {
-                        if _sync {
-                            process_ocsp_responses(
-                                sign1,
-                                data,
-                                ctp,
-                                ocsp_response_ders,
-                                tst_info,
-                                validation_log,
-                                context.settings(),
-                            )
-                        } else {
-                            process_ocsp_responses_async(
-                                sign1,
-                                data,
-                                ctp,
-                                ocsp_response_ders,
-                                tst_info,
-                                validation_log,
-                                context.settings(),
-                            )
-                            .await
-                        }
+        OcspFetchPolicy::DoNotFetch => {
+            if let Some(ocsp_response_ders) = ocsp_responses {
+                if !ocsp_response_ders.is_empty() {
+                    if _sync {
+                        process_ocsp_responses(
+                            sign1,
+                            data,
+                            ctp,
+                            ocsp_response_ders,
+                            tst_info,
+                            validation_log,
+                            context.settings(),
+                        )
                     } else {
-                        Ok(OcspResponse::default())
+                        process_ocsp_responses_async(
+                            sign1,
+                            data,
+                            ctp,
+                            ocsp_response_ders,
+                            tst_info,
+                            validation_log,
+                            context.settings(),
+                        )
+                        .await
                     }
                 } else {
                     Ok(OcspResponse::default())
                 }
+            } else {
+                Ok(OcspResponse::default())
             }
-        },
+        }
     }
 }
 
@@ -439,14 +435,7 @@ fn extend_ocsp_cert_chain(ocsp_certs: &[Vec<u8>], signing_cert_chain: &[Vec<u8>]
 }
 
 /// Fetches and validates an OCSP response for the given COSE signature.
-#[async_generic(async_signature(
-    sign1: &CoseSign1,
-    data: &[u8],
-    ctp: &CertificateTrustPolicy,
-    tst_info: Option<&TstInfo>,
-    validation_log: &mut StatusTracker,
-    context: &crate::context::Context,
-))]
+#[async_generic]
 pub(crate) fn fetch_and_check_ocsp_response(
     sign1: &CoseSign1,
     data: &[u8],
@@ -578,5 +567,115 @@ mod tests {
         assert_eq!(extend_ocsp_cert_chain(&chain[..1], &chain), chain);
         // the intermediate's issuer is the (absent) root: no extension
         assert_eq!(extend_ocsp_cert_chain(&chain[1..], &chain), &chain[1..]);
+    }
+
+    /// Regression test for CAI-13013 / VULN-37149: a malformed stapled OCSP
+    /// response must not silently suppress the configured online OCSP fetch.
+    #[test]
+    fn malformed_stapled_ocsp_falls_back_to_fetch_when_allowed() {
+        use c2pa_raw_crypto::{signer_from_private_key, RawSigner};
+
+        use super::{check_ocsp_status, OcspFetchPolicy};
+        use crate::{
+            claim::Claim,
+            context::Context,
+            crypto::cose::{cose_reserve_size, parse_cose_sign1, CertificateTrustPolicy},
+            settings::Settings,
+            status_tracker::StatusTracker,
+            validation_status::SIGNING_CREDENTIAL_OCSP_INACCESSIBLE,
+            Result, Signer, SigningAlg,
+        };
+
+        // A signer that staples an OCSP response consisting of garbage,
+        // non-DER bytes into the unsigned `rVals` header, mirroring the
+        // reported attack (an intermediary appending arbitrary bytes to an
+        // otherwise honestly-signed asset's unsigned COSE header).
+        struct OcspSigner {
+            raw_signer: Box<dyn RawSigner>,
+            cert_chain: Vec<Vec<u8>>,
+            ocsp_rsp: Vec<u8>,
+        }
+
+        impl Signer for OcspSigner {
+            fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+                Ok(self.raw_signer.sign(data)?)
+            }
+
+            fn alg(&self) -> SigningAlg {
+                SigningAlg::Ps256
+            }
+
+            fn certs(&self) -> Result<Vec<Vec<u8>>> {
+                Ok(self.cert_chain.clone())
+            }
+
+            fn reserve_size(&self) -> usize {
+                cose_reserve_size(
+                    self.raw_signer.max_signature_size(),
+                    &self.cert_chain,
+                    false,
+                    Some(&self.ocsp_rsp),
+                )
+            }
+
+            fn ocsp_val(&self) -> Option<Vec<u8>> {
+                Some(self.ocsp_rsp.clone())
+            }
+        }
+
+        let mut claim = Claim::new("ocsp_fallback_test", Some("contentauth"), 1);
+        claim.build().unwrap();
+        let claim_bytes = claim.data().unwrap();
+
+        let sign_cert = include_bytes!("../../../tests/fixtures/certs/ps256.pub").to_vec();
+        let pem_key = include_bytes!("../../../tests/fixtures/certs/ps256.pem").to_vec();
+
+        let raw_signer = signer_from_private_key(&pem_key, SigningAlg::Ps256).unwrap();
+        let cert_chain = cert_chain_pem_to_der(&sign_cert).unwrap();
+
+        let ocsp_signer = OcspSigner {
+            raw_signer,
+            cert_chain,
+            ocsp_rsp: vec![0xde, 0xad, 0xbe, 0xef], // not valid OCSP DER
+        };
+
+        let settings = Settings::default();
+        let cose_bytes = crate::cose_sign::sign_claim(
+            &claim_bytes,
+            &ocsp_signer,
+            ocsp_signer.reserve_size(),
+            &settings,
+        )
+        .unwrap();
+
+        let mut parse_log = StatusTracker::default();
+        let sign1 = parse_cose_sign1(&cose_bytes, &claim_bytes, &mut parse_log).unwrap();
+
+        let ctp = CertificateTrustPolicy::default();
+        let context = Context::new();
+        let mut validation_log = StatusTracker::default();
+
+        let result = check_ocsp_status(
+            &sign1,
+            &claim_bytes,
+            OcspFetchPolicy::FetchAllowed,
+            &ctp,
+            None,
+            None,
+            &mut validation_log,
+            &context,
+        );
+
+        // The malformed staple is inconclusive either way, so the returned
+        // value is still a default (no cached revocation status available)
+        // -- but the code must actually route through the online-fetch
+        // fallback rather than silently accepting the garbage staple as
+        // "checked". The test cert has no AIA/OCSP responder URL, so the
+        // fetch deterministically fails closed and logs
+        // SIGNING_CREDENTIAL_OCSP_INACCESSIBLE -- that status is only ever
+        // logged from the fetch fallback path, so its presence proves the
+        // fallback fired instead of short-circuiting on the unusable staple.
+        assert!(result.is_ok());
+        assert!(validation_log.has_status(SIGNING_CREDENTIAL_OCSP_INACCESSIBLE));
     }
 }
