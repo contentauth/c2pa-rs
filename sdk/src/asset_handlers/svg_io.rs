@@ -46,16 +46,7 @@ use crate::{
     },
 };
 
-static SUPPORTED_TYPES: [&str; 8] = [
-    "svg",
-    "application/svg+xml",
-    "xhtml",
-    "xml",
-    "application/xhtml+xml",
-    "application/xml",
-    "image/svg+xml",
-    "text/xml",
-];
+static SUPPORTED_TYPES: [&str; 3] = ["svg", "application/svg+xml", "image/svg+xml"];
 
 const SVG: &str = "svg";
 const METADATA: &str = "metadata";

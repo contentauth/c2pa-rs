@@ -33,12 +33,14 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0
-          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          token: ${{ secrets.RELEASE_PLZ_ORG_TOKEN }}
 
       - name: Create backport PRs
-        uses: korthout/backport-action@d07416681cab29bf2661702f925f020aaa962997 # v3
+        id: backport
+        uses: korthout/backport-action@2e830a1d0b8269505846ddd407a70876913ad1f8 # v4.6.0
         with:
-          github_token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          github_token: ${{ secrets.RELEASE_PLZ_ORG_TOKEN }}
+          comment_style: summary
           # Labels look like `backport-<branch>`; the captured group is the
           # target branch name.
           label_pattern: '^backport-(?<target>.+)$'
@@ -49,3 +51,20 @@ jobs:
             Upstream-first: this change already merged to `main`. If the
             cherry-pick did not apply cleanly, adapt it so it compiles and
             passes tests on this branch.
+
+      # Arm GitHub's native auto-merge on each backport PR that was opened. The
+      # actual merge only fires once the target branch's protection rules are
+      # satisfied -- i.e. CI is green and at least one approving review is in --
+      # so those requirements must be configured as branch protection on the
+      # release-line branches (CI passing + 1 required approval). Requires
+      # "Allow auto-merge" to be enabled in the repository settings.
+      - name: Enable auto-merge on backport PRs
+        if: steps.backport.outputs.created_pull_numbers != ''
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLZ_ORG_TOKEN }}
+          CREATED_PRS: ${{ steps.backport.outputs.created_pull_numbers }}
+        run: |
+          for pr in $CREATED_PRS; do
+            echo "Enabling auto-merge (squash) on backport PR #$pr"
+            gh pr merge "$pr" --auto --squash --repo "$GITHUB_REPOSITORY"
+          done

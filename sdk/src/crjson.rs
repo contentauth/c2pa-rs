@@ -54,7 +54,7 @@ struct Base64Bytes(Vec<u8>);
 
 impl Serialize for Base64Bytes {
     fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
-        s.serialize_str(&format!("b64'{}", base64::encode(&self.0)))
+        s.serialize_str(&format!("b64'{}'", base64::encode(&self.0)))
     }
 }
 
@@ -302,13 +302,14 @@ impl<'a> CrJsonExporter<'a> {
             alg: Some(claim.alg().to_string()),
             alg_soft: claim.alg_soft().map(|s| s.to_string()),
             title: claim.title().map(|s| s.to_string()),
-            redacted_assertions: claim.redactions().and_then(|r| {
-                if r.is_empty() {
-                    None
-                } else {
-                    Some(r.to_vec())
-                }
-            }),
+            redacted_assertions: if is_v1 {
+                claim
+                    .redactions()
+                    .and_then(|r| if r.is_empty() { None } else { Some(r.to_vec()) })
+            } else {
+                // crJSON 3.5.1: absent redactions are still serialised, as an empty array.
+                Some(claim.redactions().map(|r| r.to_vec()).unwrap_or_default())
+            },
             metadata: claim.metadata().and_then(|m| {
                 if m.is_empty() {
                     None
@@ -387,7 +388,7 @@ impl<'a> CrJsonExporter<'a> {
                         key,
                         json!({
                             "identifier": absolute_uri,
-                            "hash": format!("b64'{}", base64::encode(&assertion_ref.hash()))
+                            "hash": format!("b64'{}'", base64::encode(&assertion_ref.hash()))
                         }),
                     );
                 }
@@ -429,7 +430,7 @@ impl<'a> CrJsonExporter<'a> {
                 Ok(Some(json!({
                     "format": assertion.content_type(),
                     "identifier": absolute_uri,
-                    "hash": format!("b64'{}", base64::encode(ca.hash()))
+                    "hash": format!("b64'{}'", base64::encode(ca.hash()))
                 })))
             }
             _ => Ok(assertion.as_json_object().ok().map(fix_hash_encoding)),
@@ -678,7 +679,7 @@ fn fix_hash_encoding(value: Value) -> Value {
                                 .collect();
                             map.insert(
                                 field.to_string(),
-                                json!(format!("b64'{}", base64::encode(&bytes))),
+                                json!(format!("b64'{}'", base64::encode(&bytes))),
                             );
                         }
                     }
@@ -687,7 +688,7 @@ fn fix_hash_encoding(value: Value) -> Value {
 
             // Ensure hash-bearing objects also carry a (possibly empty) pad field.
             if map.contains_key("hash") && !map.contains_key("pad") {
-                map.insert("pad".to_string(), json!("b64'"));
+                map.insert("pad".to_string(), json!("b64''"));
             }
 
             if let Some(sig_val) = map.get("signature") {
@@ -698,7 +699,7 @@ fn fix_hash_encoding(value: Value) -> Value {
                             .filter_map(|v| v.as_u64().map(|n| n as u8))
                             .collect();
                         let decoded = decode_cawg_signature(&sig_bytes).unwrap_or_else(|_| {
-                            json!(format!("b64'{}", base64::encode(&sig_bytes)))
+                            json!(format!("b64'{}'", base64::encode(&sig_bytes)))
                         });
                         map.insert("signature".to_string(), decoded);
                     }
@@ -996,8 +997,8 @@ mod tests {
         // Verify pad2 is a b64'-prefixed string if present (pad1 does not exist in the schema)
         if let Some(pad2) = cawg_identity.get("pad2").and_then(|v| v.as_str()) {
             assert!(
-                pad2.starts_with("b64'"),
-                "pad2 must start with \"b64'\" prefix, got: {pad2:?}"
+                pad2.starts_with("b64'") && pad2.ends_with('\''),
+                "pad2 must be delimited by \"b64'\" and a closing \"'\", got: {pad2:?}"
             );
         }
 
@@ -1079,8 +1080,8 @@ mod tests {
             // Verify pad2 is a b64'-prefixed string if present (pad1 does not exist in the schema)
             if let Some(pad2) = cawg_identity.get("pad2").and_then(|v| v.as_str()) {
                 assert!(
-                    pad2.starts_with("b64'"),
-                    "pad2 must start with \"b64'\" prefix, got: {pad2:?}"
+                    pad2.starts_with("b64'") && pad2.ends_with('\''),
+                    "pad2 must be delimited by \"b64'\" and a closing \"'\", got: {pad2:?}"
                 );
             }
 

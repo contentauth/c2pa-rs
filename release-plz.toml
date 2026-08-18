@@ -21,6 +21,13 @@ _{{ timestamp | date(format="%d %B %Y") }}_
 """
 
 commit_parsers = [
+  # Changes to experimental features (scope `experimental`, see
+  # docs/experimental-features.md) are grouped into their own changelog
+  # section regardless of type, so consumers who opt into an `unstable_`
+  # feature have a human-readable signal even though these changes don't
+  # drive a minor/breaking version bump. This must stay first so it wins
+  # over the type-based parsers below.
+  { message = '^\w+\(experimental\)', group = "experimental" },
   { message = "^feat", group = "added" },
   { message = "^changed", group = "changed" },
   { message = "^deprecated", group = "deprecated" },
@@ -40,8 +47,8 @@ release_always = false
 # Only these commit types trigger a release PR. This keeps chore-only commits
 # (including chore cherry-picks brought over by the backport bot) from
 # generating spurious release PRs on a release-line branch.
-# See https://github.com/contentauth/c2pa-rs/issues/2229
-release_commits = "^(feat|fix|docs|perf|refactor|revert|test|update)[!]?[(:]"
+# TODO: Commented due to bug with release-plz, see https://github.com/contentauth/c2pa-rs/issues/2229
+# release_commits = "^(feat|fix|docs|perf|refactor|revert|test|update)[!]?[(:]"
 
 [[package]]
 name = "c2pa"

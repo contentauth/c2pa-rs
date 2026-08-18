@@ -1,6 +1,6 @@
 # Contributing
 
-The information in this page is primarily for those who wish to contribute to the c2patool project itself, rather than those who simply wish to use it as a tool.  For general contribution guidelines, see [CONTRIBUTING.md](../CONTRIBUTING.md).
+The information in this page is primarily for those who wish to contribute to the c2patool project itself, rather than those who simply wish to use it as a tool.  For general contribution guidelines, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 ## Building from source
 

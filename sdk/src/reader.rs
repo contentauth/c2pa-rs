@@ -46,7 +46,7 @@ use crate::{
     utils::hash_utils::hash_to_b64,
     validation_results::{ValidationResults, ValidationState},
     validation_status::{ValidationStatus, ASSERTION_MISSING, ASSERTION_NOT_REDACTED},
-    Ingredient, Manifest, ManifestAssertion,
+    Ingredient, Manifest, ManifestAssertion, ManifestAssertionKind,
 };
 
 /// MaybeSend allows for no Send bound on wasm32 targets
@@ -981,13 +981,13 @@ impl Reader {
                 ) {
                     let uri = to_assertion_uri(claim_label, &ca.label());
                     if let Some(a) = self.store.get_assertion_from_uri(&uri) {
-                        write_bytes(uri_to_path(&uri, Some(claim_label)), a.data())?;
+                        write_bytes(uri_to_path(&uri, Some(claim_label))?, a.data())?;
                     }
                 }
             }
             // Write databoxes
             for (hr, databox) in claim.databoxes() {
-                write_bytes(uri_to_path(&hr.url(), Some(claim_label)), &databox.data)?;
+                write_bytes(uri_to_path(&hr.url(), Some(claim_label))?, &databox.data)?;
             }
         }
         Ok(())
@@ -1237,7 +1237,24 @@ impl Reader {
                     builder.add_ingredient(ingredient);
                 }
                 for assertion in manifest.assertions.iter() {
-                    builder.add_assertion(assertion.label(), assertion.value()?)?;
+                    // Archive bookkeeping, not part of the manifest being edited.
+                    if assertion
+                        .label()
+                        .starts_with(crate::assertions::labels::ARCHIVE_METADATA)
+                    {
+                        continue;
+                    }
+                    // For archive roundtrip: keep created/gathered attribution and kind
+                    let kind = match assertion.kind() {
+                        ManifestAssertionKind::Json => Some(ManifestAssertionKind::Json),
+                        _ => None,
+                    };
+                    builder.add_assertion_impl(
+                        assertion.label(),
+                        assertion.value()?,
+                        kind,
+                        assertion.created(),
+                    )?;
                 }
             }
         }
@@ -1579,6 +1596,48 @@ pub mod tests {
             );
         }
         Ok(())
+    }
+
+    /// A databox label containing path traversal (as could be read straight
+    /// from an attacker-crafted asset's JUMBF `jumd` box - see
+    /// `Store::from_jumbf_impl`, which passes that label to `Claim::put_databox`
+    /// unmodified) must not let `to_folder` write outside the output folder.
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_to_folder_rejects_path_traversal_in_databox_label() {
+        use crate::{assertions::DataBox, claim::Claim, utils::io_utils::tempdirectory};
+
+        let malicious_databox = DataBox {
+            format: "application/octet-stream".to_string(),
+            data: b"attacker controlled bytes".to_vec(),
+            data_types: None,
+        };
+        let db_cbor = c2pa_cbor::to_vec(&malicious_databox).unwrap();
+
+        let mut claim = Claim::new("test", None, 1);
+        claim.put_databox("../../../evil", &db_cbor, None).unwrap();
+
+        let mut store = Store::new();
+        store.commit_claim(claim).unwrap();
+
+        let reader = Reader {
+            store: Arc::new(store),
+            ..Default::default()
+        };
+
+        let temp_dir = tempdirectory().unwrap();
+        let result = reader.to_folder(temp_dir.path());
+        assert!(
+            result.is_err(),
+            "a databox label containing path traversal must be rejected, not written to disk"
+        );
+
+        // Confirm nothing escaped into the output folder's parent.
+        let escaped = temp_dir.path().parent().unwrap().join("evil");
+        assert!(
+            !escaped.exists(),
+            "traversal must not create files outside the output folder"
+        );
     }
 
     #[test]
