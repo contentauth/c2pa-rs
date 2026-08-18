@@ -43,7 +43,7 @@ use byteorder::{BigEndian, ReadBytesExt};
 use serde_bytes::ByteBuf;
 
 use crate::{
-    assertions::{BoxMap, C2PA_BOXHASH},
+    assertions::{BoxKind, BoxMap, C2PA_BOXHASH},
     asset_io::{
         rename_or_move, AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
         ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
@@ -819,6 +819,20 @@ impl RemoteRefEmbed for JpegXlIO {
     }
 }
 
+// JPEG-XL box types are extensible/vendor-specific (unlike JPEG/GIF, nothing
+// rejects an unrecognized box type at parse time), so a name this classifier
+// has no rule for is genuinely unclassified - `Unknown`, not `Content`.
+fn classify_jxl_box(name: &str) -> BoxKind {
+    match name {
+        C2PA_BOXHASH => BoxKind::C2pa,
+        // `brob` (Brotli-compressed) may wrap either of the above; spec's own
+        // §18.7.4 JXL example treats it as excludable either way.
+        "Exif" | "xml " | "brob" => BoxKind::Metadata,
+        "ftyp" | "jxlc" | "jxlp" => BoxKind::Content,
+        _ => BoxKind::Unknown,
+    }
+}
+
 impl AssetBoxHash for JpegXlIO {
     fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
         let file_len = stream_len(input_stream)?;
@@ -847,6 +861,7 @@ impl AssetBoxHash for JpegXlIO {
             } else {
                 b.type_str()
             };
+            let kind = classify_jxl_box(&name);
 
             box_maps.push(BoxMap {
                 names: vec![name],
@@ -854,6 +869,7 @@ impl AssetBoxHash for JpegXlIO {
                 hash: ByteBuf::from(Vec::new()),
                 excluded: None,
                 exclusions: None,
+                kind,
                 pad: ByteBuf::from(Vec::new()),
                 range_start: b.offset,
                 range_len: total,
@@ -875,6 +891,7 @@ impl AssetBoxHash for JpegXlIO {
                 hash: ByteBuf::from(Vec::new()),
                 excluded: None,
                 exclusions: None,
+                kind: classify_jxl_box(C2PA_BOXHASH),
                 pad: ByteBuf::from(Vec::new()),
                 range_start, // will be patched to correct offset by add_required_jumb_to_stream
                 range_len: 0,
@@ -1046,6 +1063,17 @@ pub mod tests {
         let mut jumb_payload = build_jumd_box(b"c2pa\0");
         jumb_payload.extend_from_slice(extra);
         build_box(&BOX_JUMB, &jumb_payload)
+    }
+
+    #[test]
+    fn test_classify_jxl_box() {
+        assert_eq!(classify_jxl_box(C2PA_BOXHASH), BoxKind::C2pa);
+        assert_eq!(classify_jxl_box("Exif"), BoxKind::Metadata);
+        assert_eq!(classify_jxl_box("xml "), BoxKind::Metadata);
+        assert_eq!(classify_jxl_box("brob"), BoxKind::Metadata);
+        assert_eq!(classify_jxl_box("ftyp"), BoxKind::Content);
+        // JPEG-XL box types are vendor-extensible - unrecognized, not content.
+        assert_eq!(classify_jxl_box("zzzz"), BoxKind::Unknown);
     }
 
     // ─── Spec compliance: Section A.3.9 - JPEG XL container validation ───

@@ -64,6 +64,28 @@ pub struct BoxHashExclusionRequest {
     pub length: u64,
 }
 
+/// What a box's content represents, for spec §15.12.3's exclusion-content
+/// validation: only `C2pa` and `Metadata` boxes may be excluded. Always
+/// derived by the format-specific [`AssetBoxHash::get_box_map`] from the
+/// *live* asset being verified - never trusted from the assertion itself,
+/// so [`BoxMap::kind`] is never serialized (like `range_start`/`range_len`).
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, Default, PartialEq, Eq)]
+pub enum BoxKind {
+    /// Ordinary structural/payload content. Exclusions are not permitted.
+    #[default]
+    Content,
+    /// A box this format's classifier has no specific rule for. Treated
+    /// identically to `Content` (exclusions not permitted) - kept distinct
+    /// only so classifiers stay exhaustive instead of silently folding
+    /// unrecognized boxes into a name that implies positive identification.
+    Unknown,
+    /// The C2PA Manifest Store box itself.
+    C2pa,
+    /// Asset metadata (EXIF/XMP/IPTC-equivalent) per spec §9.2.6. May be
+    /// excluded.
+    Metadata,
+}
+
 #[derive(Serialize, Default, Deserialize, Debug, PartialEq, Eq)]
 pub struct BoxMap {
     pub names: Vec<String>,
@@ -86,6 +108,9 @@ pub struct BoxMap {
 
     #[serde(skip)]
     pub range_len: u64,
+
+    #[serde(skip)]
+    pub kind: BoxKind,
 }
 
 impl BoxMap {
@@ -106,21 +131,34 @@ impl BoxMap {
     }
 }
 
-/// Resolves `exclusions`' `boxIndex`-relative ranges against `box_ranges`
-/// (the absolute `(start, length)` of each name in a box-hash-map entry, in
-/// order) and returns the ordered sub-ranges of `[entry_start, entry_start +
-/// entry_len)` left to hash once the exclusions are punched out.
+/// Resolves `exclusions`' `boxIndex`-relative ranges against `box_ranges`/
+/// `box_kinds` (the absolute range and [`BoxKind`] of each name in a
+/// box-hash-map entry, in order). Rejects any exclusion targeting a
+/// `Content`/`Unknown` box (spec §15.12.3: only the C2PA store or asset
+/// metadata may be excluded). Returns the ordered sub-ranges of
+/// `[entry_start, entry_start + entry_len)` left to hash once the exclusions
+/// are punched out, plus whether any referenced box was `Metadata` (for the
+/// informational `additionalExclusionsPresent` status).
 fn split_exclusions(
     box_ranges: &[(u64, u64)],
+    box_kinds: &[BoxKind],
     entry_start: u64,
     entry_len: u64,
     exclusions: &[BoxExclusion],
-) -> Result<Vec<HashRange>> {
+) -> Result<(Vec<HashRange>, bool)> {
+    // `box_kinds` is meant to be parallel to `box_ranges` (every call site
+    // pushes to both together); the lookup below degrades safely rather than
+    // panicking if that invariant is ever broken, but assert it explicitly
+    // so a caller mistake fails a debug/test build instead of silently
+    // falling back to always-reject.
+    debug_assert_eq!(box_ranges.len(), box_kinds.len());
+
     let entry_end = entry_start
         .checked_add(entry_len)
         .ok_or_else(|| Error::HashMismatch("box hash entry range overflow".to_string()))?;
 
     let mut abs_ranges: Vec<(u64, u64)> = Vec::with_capacity(exclusions.len());
+    let mut metadata_used = false;
     for excl in exclusions {
         let box_index = match excl.box_index {
             Some(idx) if idx >= 0 => usize::try_from(idx).map_err(|_| {
@@ -142,6 +180,17 @@ fn split_exclusions(
         let (box_start, box_len) = box_ranges.get(box_index).ok_or_else(|| {
             Error::HashMismatch("box hash exclusion boxIndex out of range".to_string())
         })?;
+
+        match box_kinds.get(box_index).copied().unwrap_or_default() {
+            BoxKind::Content | BoxKind::Unknown => {
+                return Err(Error::HashMismatch(
+                    "box hash exclusion targets content that is not the C2PA store or asset metadata"
+                        .to_string(),
+                ));
+            }
+            BoxKind::Metadata => metadata_used = true,
+            BoxKind::C2pa => {}
+        }
 
         let excl_end = excl
             .start
@@ -195,7 +244,7 @@ fn split_exclusions(
         ranges.push(HashRange::new(entry_start, 0));
     }
 
-    Ok(ranges)
+    Ok((ranges, metadata_used))
 }
 
 /// Helper class to create BoxHash assertion
@@ -236,18 +285,23 @@ impl BoxHash {
         bhp: &dyn AssetBoxHash,
     ) -> Result<()> {
         self.verify_stream_hash_with_progress(reader, alg, bhp, &mut |_, _| Ok(()))
+            .map(|_metadata_exclusion_used| ())
     }
 
     /// Like [`verify_stream_hash`] but fires `progress(step, total)` once per hashed
     /// box so callers with a [`Context`] can report `ProgressPhase::VerifyingAssetHash`
     /// ticks and support cancellation.
+    ///
+    /// Returns whether any `exclusions` entry referenced a `BoxKind::Metadata`
+    /// box, for the informational `assertion.boxesHash.additionalExclusionsPresent`
+    /// status.
     pub(crate) fn verify_stream_hash_with_progress<F>(
         &self,
         reader: &mut dyn CAIRead,
         alg: Option<&str>,
         bhp: &dyn AssetBoxHash,
         progress: &mut F,
-    ) -> Result<()>
+    ) -> Result<bool>
     where
         F: FnMut(u32, u32) -> Result<()>,
     {
@@ -274,14 +328,18 @@ impl BoxHash {
             return Err(Error::HashMismatch("No data boxes found".to_string()));
         };
 
+        let mut metadata_exclusion_used = false;
+
         for bm in &self.boxes {
             let mut skip_c2pa = false;
             let mut inclusion = HashRange::new(0u64, 0u64);
             let mut box_ranges: Vec<(u64, u64)> = Vec::with_capacity(bm.names.len());
+            let mut box_kinds: Vec<BoxKind> = Vec::with_capacity(bm.names.len());
             for name in &bm.names {
                 match source_bms.get(source_index) {
                     Some(next_source_bm) if name == &next_source_bm.names[0] => {
                         box_ranges.push((next_source_bm.range_start, next_source_bm.range_len));
+                        box_kinds.push(next_source_bm.kind);
 
                         if inclusion.length() == 0 {
                             inclusion.set_start(next_source_bm.range_start);
@@ -321,7 +379,15 @@ impl BoxHash {
 
             let inclusions = match &bm.exclusions {
                 Some(excl) if !excl.is_empty() => {
-                    split_exclusions(&box_ranges, inclusion.start(), inclusion.length(), excl)?
+                    let (ranges, metadata_used) = split_exclusions(
+                        &box_ranges,
+                        &box_kinds,
+                        inclusion.start(),
+                        inclusion.length(),
+                        excl,
+                    )?;
+                    metadata_exclusion_used |= metadata_used;
+                    ranges
                 }
                 _ => vec![inclusion],
             };
@@ -347,7 +413,7 @@ impl BoxHash {
             }
         }
 
-        Ok(())
+        Ok(metadata_exclusion_used)
     }
 
     pub fn generate_box_hash_from_stream<R>(
@@ -439,11 +505,13 @@ impl BoxHash {
                 hash: ByteBuf::from(vec![]),
                 excluded: None,
                 exclusions: None,
+                kind: BoxKind::Content,
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 0,
             };
             let mut before_c2pa_ranges: Vec<(u64, u64)> = Vec::new();
+            let mut before_c2pa_kinds: Vec<BoxKind> = Vec::new();
             let mut before_c2pa_exclusions: Vec<BoxExclusion> = Vec::new();
 
             let mut c2pa_box = BoxMap {
@@ -452,6 +520,7 @@ impl BoxHash {
                 hash: ByteBuf::from(vec![]),
                 excluded: None,
                 exclusions: None,
+                kind: BoxKind::Content,
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 0,
@@ -463,11 +532,13 @@ impl BoxHash {
                 hash: ByteBuf::from(vec![]),
                 excluded: None,
                 exclusions: None,
+                kind: BoxKind::Content,
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 0,
             };
             let mut after_c2pa_ranges: Vec<(u64, u64)> = Vec::new();
+            let mut after_c2pa_kinds: Vec<BoxKind> = Vec::new();
             let mut after_c2pa_exclusions: Vec<BoxExclusion> = Vec::new();
 
             let mut is_before_c2pa = true;
@@ -485,16 +556,18 @@ impl BoxHash {
                     continue;
                 }
 
-                let (group, group_ranges, group_exclusions) = if is_before_c2pa {
+                let (group, group_ranges, group_kinds, group_exclusions) = if is_before_c2pa {
                     (
                         &mut before_c2pa,
                         &mut before_c2pa_ranges,
+                        &mut before_c2pa_kinds,
                         &mut before_c2pa_exclusions,
                     )
                 } else {
                     (
                         &mut after_c2pa,
                         &mut after_c2pa_ranges,
+                        &mut after_c2pa_kinds,
                         &mut after_c2pa_exclusions,
                     )
                 };
@@ -504,6 +577,7 @@ impl BoxHash {
                 // future position in `group.names` - i.e. its `boxIndex`.
                 let box_index_in_group = group_ranges.len();
                 group_ranges.push((bm.range_start, bm.range_len));
+                group_kinds.push(bm.kind);
                 for req in exclusion_requests {
                     if req.source_box_index == source_index {
                         group_exclusions.push(BoxExclusion {
@@ -534,25 +608,34 @@ impl BoxHash {
             // box hashes, we will check the bounds of each one
             let mut boxes = Vec::<BoxMap>::new();
             let mut boxes_ranges = Vec::<Vec<(u64, u64)>>::new();
+            let mut boxes_kinds = Vec::<Vec<BoxKind>>::new();
             // Only add if we have some before the C2PA box
             if before_c2pa.range_len > 0 {
                 boxes_ranges.push(before_c2pa_ranges);
+                boxes_kinds.push(before_c2pa_kinds);
                 boxes.push(before_c2pa);
             }
             // Do the same for the actual C2PA box
             if c2pa_box.range_len > 0 {
                 boxes_ranges.push(vec![(c2pa_box.range_start, c2pa_box.range_len)]);
+                boxes_kinds.push(vec![c2pa_box.kind]);
                 boxes.push(c2pa_box);
             }
             // And finally, add the boxes after the C2PA box
             if after_c2pa.range_len > 0 {
                 boxes_ranges.push(after_c2pa_ranges);
+                boxes_kinds.push(after_c2pa_kinds);
                 boxes.push(after_c2pa);
             }
             self.boxes = boxes;
 
             // compute the hashes
-            for (bm, box_ranges) in self.boxes.iter_mut().zip(boxes_ranges.iter()) {
+            for ((bm, box_ranges), box_kinds) in self
+                .boxes
+                .iter_mut()
+                .zip(boxes_ranges.iter())
+                .zip(boxes_kinds.iter())
+            {
                 // skip c2pa box
                 if bm.names[0] == C2PA_BOXHASH {
                     continue;
@@ -560,7 +643,8 @@ impl BoxHash {
 
                 let inclusions = match &bm.exclusions {
                     Some(excl) if !excl.is_empty() => {
-                        split_exclusions(box_ranges, bm.range_start, bm.range_len, excl)?
+                        split_exclusions(box_ranges, box_kinds, bm.range_start, bm.range_len, excl)?
+                            .0
                     }
                     _ => vec![HashRange::new(bm.range_start, bm.range_len)],
                 };
@@ -586,6 +670,7 @@ impl BoxHash {
                 }
 
                 let box_ranges = [(bm.range_start, bm.range_len)];
+                let box_kinds = [bm.kind];
                 let exclusions: Vec<BoxExclusion> = exclusion_requests
                     .iter()
                     .filter(|req| req.source_box_index == source_index)
@@ -599,7 +684,14 @@ impl BoxHash {
                 let inclusions = if exclusions.is_empty() {
                     vec![HashRange::new(bm.range_start, bm.range_len)]
                 } else {
-                    split_exclusions(&box_ranges, bm.range_start, bm.range_len, &exclusions)?
+                    split_exclusions(
+                        &box_ranges,
+                        &box_kinds,
+                        bm.range_start,
+                        bm.range_len,
+                        &exclusions,
+                    )?
+                    .0
                 };
 
                 bm.alg = Some(alg.to_string());
@@ -822,6 +914,7 @@ mod tests {
                     hash: ByteBuf::from(vec![0]),
                     excluded: None,
                     exclusions: None,
+                    kind: BoxKind::C2pa,
                     pad: ByteBuf::from(vec![]),
                     range_start: 0,
                     range_len: 10,
@@ -833,6 +926,7 @@ mod tests {
                     hash: ByteBuf::from(vec![0]),
                     excluded: None,
                     exclusions: None,
+                    kind: BoxKind::Content,
                     pad: ByteBuf::from(vec![]),
                     range_start: 10,
                     range_len: 10,
@@ -871,6 +965,7 @@ mod tests {
                     hash: ByteBuf::from(vec![0]),
                     excluded: None,
                     exclusions: None,
+                    kind: BoxKind::Content,
                     pad: ByteBuf::from(vec![]),
                     range_start: 0,
                     range_len: 10,
@@ -882,6 +977,7 @@ mod tests {
                     hash: ByteBuf::from(vec![0]),
                     excluded: None,
                     exclusions: None,
+                    kind: BoxKind::C2pa,
                     pad: ByteBuf::from(vec![]),
                     range_start: 10,
                     range_len: 10,
@@ -920,6 +1016,7 @@ mod tests {
                     hash: ByteBuf::from(vec![0]),
                     excluded: None,
                     exclusions: None,
+                    kind: BoxKind::Content,
                     pad: ByteBuf::from(vec![]),
                     range_start: 0,
                     range_len: 10,
@@ -931,6 +1028,7 @@ mod tests {
                     hash: ByteBuf::from(vec![0]),
                     excluded: None,
                     exclusions: None,
+                    kind: BoxKind::C2pa,
                     pad: ByteBuf::from(vec![]),
                     range_start: 10,
                     range_len: 10,
@@ -941,6 +1039,7 @@ mod tests {
                     hash: ByteBuf::from(vec![0]),
                     excluded: None,
                     exclusions: None,
+                    kind: BoxKind::Content,
                     pad: ByteBuf::from(vec![]),
                     range_start: 20,
                     range_len: 10,
@@ -980,6 +1079,7 @@ mod tests {
                 hash: ByteBuf::from(vec![0]),
                 excluded: None,
                 exclusions: None,
+                kind: BoxKind::Content,
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 0,
@@ -1009,6 +1109,7 @@ mod tests {
                     box_index: Some(1),
                 },
             ]),
+            kind: BoxKind::Content,
             pad: ByteBuf::from(vec![]),
             range_start: 0,
             range_len: 20,
@@ -1029,6 +1130,7 @@ mod tests {
         // box 0: [100, 150), box 1: [150, 230); exclude [110,115) in box 0
         // and [170,180) in box 1.
         let box_ranges = [(100u64, 50u64), (150u64, 80u64)];
+        let box_kinds = [BoxKind::Metadata, BoxKind::Metadata];
         let exclusions = vec![
             BoxExclusion {
                 start: 10,
@@ -1041,20 +1143,24 @@ mod tests {
                 box_index: Some(1),
             },
         ];
-        let ranges = split_exclusions(&box_ranges, 100, 130, &exclusions).unwrap();
+        let (ranges, metadata_used) =
+            split_exclusions(&box_ranges, &box_kinds, 100, 130, &exclusions).unwrap();
         let simplified: Vec<(u64, u64)> = ranges.iter().map(|r| (r.start(), r.length())).collect();
         assert_eq!(simplified, vec![(100, 10), (115, 55), (180, 50)]);
+        assert!(metadata_used);
     }
 
     #[test]
     fn test_split_exclusions_fully_excluded_entry_does_not_fall_back_to_full_range() {
         let box_ranges = [(5u64, 10u64)];
+        let box_kinds = [BoxKind::Metadata];
         let exclusions = vec![BoxExclusion {
             start: 0,
             length: 10,
             box_index: None,
         }];
-        let ranges = split_exclusions(&box_ranges, 5, 10, &exclusions).unwrap();
+        let (ranges, _metadata_used) =
+            split_exclusions(&box_ranges, &box_kinds, 5, 10, &exclusions).unwrap();
         assert_eq!(ranges.len(), 1);
         assert_eq!(ranges[0].length(), 0);
     }
@@ -1062,12 +1168,13 @@ mod tests {
     #[test]
     fn test_split_exclusions_missing_box_index_with_multiple_boxes() {
         let box_ranges = [(0u64, 10u64), (10u64, 10u64)];
+        let box_kinds = [BoxKind::Metadata, BoxKind::Metadata];
         let exclusions = vec![BoxExclusion {
             start: 0,
             length: 1,
             box_index: None,
         }];
-        let result = split_exclusions(&box_ranges, 0, 20, &exclusions);
+        let result = split_exclusions(&box_ranges, &box_kinds, 0, 20, &exclusions);
         assert!(
             matches!(&result, Err(Error::HashMismatch(msg)) if msg.contains("missing required boxIndex")),
             "unexpected result: {result:?}"
@@ -1077,12 +1184,13 @@ mod tests {
     #[test]
     fn test_split_exclusions_out_of_range_box_index() {
         let box_ranges = [(0u64, 10u64)];
+        let box_kinds = [BoxKind::Metadata];
         let exclusions = vec![BoxExclusion {
             start: 0,
             length: 1,
             box_index: Some(5),
         }];
-        let result = split_exclusions(&box_ranges, 0, 10, &exclusions);
+        let result = split_exclusions(&box_ranges, &box_kinds, 0, 10, &exclusions);
         assert!(
             matches!(&result, Err(Error::HashMismatch(msg)) if msg.contains("boxIndex out of range")),
             "unexpected result: {result:?}"
@@ -1092,12 +1200,13 @@ mod tests {
     #[test]
     fn test_split_exclusions_negative_box_index() {
         let box_ranges = [(0u64, 10u64)];
+        let box_kinds = [BoxKind::Metadata];
         let exclusions = vec![BoxExclusion {
             start: 0,
             length: 1,
             box_index: Some(-1),
         }];
-        let result = split_exclusions(&box_ranges, 0, 10, &exclusions);
+        let result = split_exclusions(&box_ranges, &box_kinds, 0, 10, &exclusions);
         assert!(
             matches!(&result, Err(Error::HashMismatch(msg)) if msg.contains("negative boxIndex")),
             "unexpected result: {result:?}"
@@ -1107,12 +1216,13 @@ mod tests {
     #[test]
     fn test_split_exclusions_range_past_end_of_box() {
         let box_ranges = [(0u64, 10u64)];
+        let box_kinds = [BoxKind::Metadata];
         let exclusions = vec![BoxExclusion {
             start: 8,
             length: 5,
             box_index: None,
         }];
-        let result = split_exclusions(&box_ranges, 0, 10, &exclusions);
+        let result = split_exclusions(&box_ranges, &box_kinds, 0, 10, &exclusions);
         assert!(
             matches!(&result, Err(Error::HashMismatch(msg)) if msg.contains("extends beyond the end of its box")),
             "unexpected result: {result:?}"
@@ -1122,6 +1232,7 @@ mod tests {
     #[test]
     fn test_split_exclusions_overlapping_ranges() {
         let box_ranges = [(0u64, 20u64)];
+        let box_kinds = [BoxKind::Metadata];
         let exclusions = vec![
             BoxExclusion {
                 start: 0,
@@ -1134,7 +1245,7 @@ mod tests {
                 box_index: None,
             },
         ];
-        let result = split_exclusions(&box_ranges, 0, 20, &exclusions);
+        let result = split_exclusions(&box_ranges, &box_kinds, 0, 20, &exclusions);
         assert!(
             matches!(&result, Err(Error::HashMismatch(msg)) if msg.contains("overlap or are not ordered")),
             "unexpected result: {result:?}"
@@ -1147,6 +1258,7 @@ mod tests {
     #[test]
     fn test_split_exclusions_out_of_order_ranges_are_rejected_not_reordered() {
         let box_ranges = [(0u64, 20u64)];
+        let box_kinds = [BoxKind::Metadata];
         let exclusions = vec![
             BoxExclusion {
                 start: 10,
@@ -1159,9 +1271,95 @@ mod tests {
                 box_index: None,
             },
         ];
-        let result = split_exclusions(&box_ranges, 0, 20, &exclusions);
+        let result = split_exclusions(&box_ranges, &box_kinds, 0, 20, &exclusions);
         assert!(
             matches!(&result, Err(Error::HashMismatch(msg)) if msg.contains("overlap or are not ordered")),
+            "unexpected result: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_split_exclusions_rejects_content_kind() {
+        let box_ranges = [(0u64, 10u64)];
+        let box_kinds = [BoxKind::Content];
+        let exclusions = vec![BoxExclusion {
+            start: 0,
+            length: 1,
+            box_index: None,
+        }];
+        let result = split_exclusions(&box_ranges, &box_kinds, 0, 10, &exclusions);
+        assert!(
+            matches!(&result, Err(Error::HashMismatch(msg)) if msg.contains("not the C2PA store or asset metadata")),
+            "unexpected result: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_split_exclusions_rejects_unknown_kind() {
+        let box_ranges = [(0u64, 10u64)];
+        let box_kinds = [BoxKind::Unknown];
+        let exclusions = vec![BoxExclusion {
+            start: 0,
+            length: 1,
+            box_index: None,
+        }];
+        let result = split_exclusions(&box_ranges, &box_kinds, 0, 10, &exclusions);
+        assert!(
+            matches!(&result, Err(Error::HashMismatch(msg)) if msg.contains("not the C2PA store or asset metadata")),
+            "unexpected result: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_split_exclusions_allows_c2pa_kind_without_metadata_signal() {
+        let box_ranges = [(0u64, 10u64)];
+        let box_kinds = [BoxKind::C2pa];
+        let exclusions = vec![BoxExclusion {
+            start: 0,
+            length: 1,
+            box_index: None,
+        }];
+        let (_ranges, metadata_used) =
+            split_exclusions(&box_ranges, &box_kinds, 0, 10, &exclusions).unwrap();
+        assert!(!metadata_used);
+    }
+
+    #[test]
+    fn test_generate_box_hash_from_stream_with_exclusions_rejects_content_kind_request() {
+        let alg = "sha256";
+        let mut mock = MockMABH::new();
+        mock.expect_get_box_map().returning(|_| {
+            Ok(vec![BoxMap {
+                names: vec!["AAAA".to_string()],
+                alg: None,
+                hash: ByteBuf::from(vec![]),
+                excluded: None,
+                exclusions: None,
+                kind: BoxKind::Content,
+                pad: ByteBuf::from(vec![]),
+                range_start: 0,
+                range_len: 10,
+            }])
+        });
+
+        let data: Vec<u8> = (0..10).collect();
+        let mut reader = Cursor::new(data);
+        let exclusion_requests = vec![BoxHashExclusionRequest {
+            source_box_index: 0,
+            start: 0,
+            length: 1,
+        }];
+
+        let mut bh = BoxHash { boxes: Vec::new() };
+        let result = bh.generate_box_hash_from_stream_with_exclusions(
+            &mut reader,
+            alg,
+            &mock,
+            false,
+            &exclusion_requests,
+        );
+        assert!(
+            matches!(&result, Err(Error::HashMismatch(msg)) if msg.contains("not the C2PA store or asset metadata")),
             "unexpected result: {result:?}"
         );
     }
@@ -1178,6 +1376,8 @@ mod tests {
                     hash: ByteBuf::from(vec![]),
                     excluded: None,
                     exclusions: None,
+                    // Only Metadata/C2pa boxes may carry an exclusion (spec §15.12.3).
+                    kind: BoxKind::Metadata,
                     pad: ByteBuf::from(vec![]),
                     range_start: 0,
                     range_len: 10,
@@ -1188,6 +1388,7 @@ mod tests {
                     hash: ByteBuf::from(vec![]),
                     excluded: None,
                     exclusions: None,
+                    kind: BoxKind::Metadata,
                     pad: ByteBuf::from(vec![]),
                     range_start: 10,
                     range_len: 10,

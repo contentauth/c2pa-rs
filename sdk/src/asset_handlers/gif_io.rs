@@ -23,7 +23,7 @@ use serde_bytes::ByteBuf;
 use tempfile::Builder;
 
 use crate::{
-    assertions::{BoxMap, C2PA_BOXHASH},
+    assertions::{BoxKind, BoxMap, C2PA_BOXHASH},
     asset_io::{
         self, AssetBoxHash, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
         ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
@@ -647,6 +647,7 @@ impl BlockMarker<Block> {
             hash: ByteBuf::from(Vec::new()),
             excluded: None,
             exclusions: None,
+            kind: self.block.box_kind(),
             pad: ByteBuf::from(Vec::new()),
             range_start: self.start(),
             range_len: self.len(),
@@ -806,6 +807,21 @@ impl Block {
             Block::LocalColorTable(_) => None,
             Block::ImageData(_) => Some("TBID"),
             Block::Trailer => Some("3B"),
+        }
+    }
+
+    // GIF's block enum is matched exhaustively at parse time (`Block::from_stream`
+    // errors on any unrecognized extension label), so every variant here was
+    // deliberately identified - there is no `BoxKind::Unknown` case for this format.
+    fn box_kind(&self) -> BoxKind {
+        match self {
+            Block::ApplicationExtension(application_extension)
+                if ApplicationExtensionKind::C2pa == application_extension.kind() =>
+            {
+                BoxKind::C2pa
+            }
+            Block::CommentExtension(_) => BoxKind::Metadata,
+            _ => BoxKind::Content,
         }
     }
 
@@ -1183,6 +1199,20 @@ mod tests {
     const SAMPLE1: &[u8] = include_bytes!("../../tests/fixtures/sample1.gif");
 
     #[test]
+    fn test_box_kind() {
+        assert_eq!(
+            Block::CommentExtension(CommentExtension {}).box_kind(),
+            BoxKind::Metadata
+        );
+        assert_eq!(
+            Block::ApplicationExtension(ApplicationExtension::new_c2pa(&[]).unwrap()).box_kind(),
+            BoxKind::C2pa
+        );
+        assert_eq!(Block::Header(Header {}).box_kind(), BoxKind::Content);
+        assert_eq!(Block::Trailer.box_kind(), BoxKind::Content);
+    }
+
+    #[test]
     fn test_read_blocks() -> Result<()> {
         let mut stream = Cursor::new(SAMPLE1);
 
@@ -1454,6 +1484,7 @@ mod tests {
                 hash: ByteBuf::from(Vec::new()),
                 excluded: None,
                 exclusions: None,
+                kind: BoxKind::Content,
                 pad: ByteBuf::from(Vec::new()),
                 range_start: 0,
                 range_len: 6
@@ -1467,6 +1498,7 @@ mod tests {
                 hash: ByteBuf::from(Vec::new()),
                 excluded: None,
                 exclusions: None,
+                kind: BoxKind::Content,
                 pad: ByteBuf::from(Vec::new()),
                 range_start: 368494,
                 range_len: 778
@@ -1480,6 +1512,7 @@ mod tests {
                 hash: ByteBuf::from(Vec::new()),
                 excluded: None,
                 exclusions: None,
+                kind: BoxKind::Content,
                 pad: ByteBuf::from(Vec::new()),
                 range_start: SAMPLE1.len() as u64 - 1,
                 range_len: 1

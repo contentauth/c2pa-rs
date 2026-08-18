@@ -29,7 +29,7 @@ use img_parts::{
 use serde_bytes::ByteBuf;
 
 use crate::{
-    assertions::{BoxMap, C2PA_BOXHASH},
+    assertions::{BoxKind, BoxMap, C2PA_BOXHASH},
     asset_io::{
         rename_or_move, AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
         ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
@@ -714,6 +714,20 @@ fn get_seg_size(input_stream: &mut dyn CAIRead) -> Result<usize> {
     }
 }
 
+// JPEG's parser already rejects genuinely unrecognized markers before a box
+// name reaches this classifier (see the `segment_names.get(..).ok_or(...)`
+// call sites below), so every name seen here was deliberately identified -
+// there is no `BoxKind::Unknown` case for this format. Used at every
+// `BoxMap` construction site in this file so there is a single source of
+// truth for name -> kind, including the C2PA box's own construction sites.
+fn classify_jpeg_box(name: &str) -> BoxKind {
+    match name {
+        C2PA_BOXHASH => BoxKind::C2pa,
+        "APP1" | "APP13" | "COM" => BoxKind::Metadata,
+        _ => BoxKind::Content,
+    }
+}
+
 fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
     let segment_names = HashMap::from([
         (0xe0u8, "APP0"),
@@ -786,6 +800,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     hash: ByteBuf::from(Vec::new()),
                     excluded: None,
                     exclusions: None,
+                    kind: classify_jpeg_box("EOI"),
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
@@ -800,6 +815,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     hash: ByteBuf::from(Vec::new()),
                     excluded: None,
                     exclusions: None,
+                    kind: classify_jpeg_box("SOI"),
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
@@ -851,6 +867,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                                 hash: ByteBuf::from(Vec::new()),
                                 excluded: None,
                                 exclusions: None,
+                                kind: classify_jpeg_box(C2PA_BOXHASH),
                                 pad: ByteBuf::from(Vec::new()),
                                 range_start: seg.position as u64,
                                 range_len: (raw_bytes.len() + 4) as u64,
@@ -869,6 +886,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                                 hash: ByteBuf::from(Vec::new()),
                                 excluded: None,
                                 exclusions: None,
+                                kind: classify_jpeg_box(name),
                                 pad: ByteBuf::from(Vec::new()),
                                 range_start: seg.position as u64,
                                 range_len: 0,
@@ -893,6 +911,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     hash: ByteBuf::from(Vec::new()),
                     excluded: None,
                     exclusions: None,
+                    kind: classify_jpeg_box(name),
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
@@ -907,6 +926,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     hash: ByteBuf::from(Vec::new()),
                     excluded: None,
                     exclusions: None,
+                    kind: classify_jpeg_box("APP0"),
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
@@ -921,6 +941,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     hash: ByteBuf::from(Vec::new()),
                     excluded: None,
                     exclusions: None,
+                    kind: classify_jpeg_box("DQT"),
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
@@ -935,6 +956,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     hash: ByteBuf::from(Vec::new()),
                     excluded: None,
                     exclusions: None,
+                    kind: classify_jpeg_box("DHT"),
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
@@ -949,6 +971,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     hash: ByteBuf::from(Vec::new()),
                     excluded: None,
                     exclusions: None,
+                    kind: classify_jpeg_box("DAC"),
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
@@ -967,6 +990,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     hash: ByteBuf::from(Vec::new()),
                     excluded: None,
                     exclusions: None,
+                    kind: classify_jpeg_box(name),
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
@@ -981,6 +1005,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     hash: ByteBuf::from(Vec::new()),
                     excluded: None,
                     exclusions: None,
+                    kind: classify_jpeg_box("SOS"),
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
@@ -995,6 +1020,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     hash: ByteBuf::from(Vec::new()),
                     excluded: None,
                     exclusions: None,
+                    kind: classify_jpeg_box("DRI"),
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
@@ -1003,12 +1029,14 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                 box_maps.push(bm);
             }
             jfifdump::SegmentKind::Rst(r) => {
+                let name = format!("RST{}", r.nr);
                 let bm = BoxMap {
-                    names: vec![format!("RST{}", r.nr)],
+                    names: vec![name.clone()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     excluded: None,
                     exclusions: None,
+                    kind: classify_jpeg_box(&name),
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
@@ -1023,6 +1051,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     hash: ByteBuf::from(Vec::new()),
                     excluded: None,
                     exclusions: None,
+                    kind: classify_jpeg_box("COM"),
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
@@ -1041,6 +1070,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     hash: ByteBuf::from(Vec::new()),
                     excluded: None,
                     exclusions: None,
+                    kind: classify_jpeg_box(name),
                     pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
                     range_len: 0,
@@ -1077,6 +1107,7 @@ impl AssetBoxHash for JpegIO {
                 hash: ByteBuf::from(Vec::new()),
                 excluded: Some(true),
                 exclusions: None,
+                kind: classify_jpeg_box(C2PA_BOXHASH),
                 pad: ByteBuf::from(Vec::new()),
                 range_start: 0,
                 range_len: 0,
@@ -1241,6 +1272,16 @@ pub mod tests {
         let seg = JpegSegment::new_with_contents(markers::APP1, contents);
         let result = extract_xmp(&seg);
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_classify_jpeg_box() {
+        assert_eq!(classify_jpeg_box(C2PA_BOXHASH), BoxKind::C2pa);
+        assert_eq!(classify_jpeg_box("APP1"), BoxKind::Metadata);
+        assert_eq!(classify_jpeg_box("APP13"), BoxKind::Metadata);
+        assert_eq!(classify_jpeg_box("COM"), BoxKind::Metadata);
+        assert_eq!(classify_jpeg_box("SOS"), BoxKind::Content);
+        assert_eq!(classify_jpeg_box("APP0"), BoxKind::Content);
     }
 
     #[test]

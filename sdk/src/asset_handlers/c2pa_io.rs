@@ -16,7 +16,7 @@ use std::{fs::File, path::Path};
 use serde_bytes::ByteBuf;
 
 use crate::{
-    assertions::{BoxMap, C2PA_BOXHASH},
+    assertions::{BoxKind, BoxMap, C2PA_BOXHASH},
     asset_io::{
         AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
         HashBlockObjectType, HashObjectPositions,
@@ -153,6 +153,7 @@ impl AssetBoxHash for C2paIO {
             hash: ByteBuf::from(vec![]),
             excluded: None,
             exclusions: None,
+            kind: BoxKind::C2pa,
             pad: ByteBuf::from(vec![]),
             range_start: 0,
             range_len: 0,

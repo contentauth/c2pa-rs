@@ -22,7 +22,7 @@ use png_pong::chunk::InternationalText;
 use serde_bytes::ByteBuf;
 
 use crate::{
-    assertions::{BoxMap, C2PA_BOXHASH},
+    assertions::{BoxKind, BoxMap, C2PA_BOXHASH},
     asset_io::{
         rename_or_move, AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
         ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
@@ -681,6 +681,18 @@ impl RemoteRefEmbed for PngIO {
     }
 }
 
+// PNG permits arbitrary private/ancillary chunk types, so a chunk name this
+// classifier has no rule for is genuinely unclassified, not necessarily safe
+// structural content - `Unknown`, not `Content`.
+fn classify_png_box(name: &str) -> BoxKind {
+    match name {
+        C2PA_BOXHASH => BoxKind::C2pa,
+        "eXIf" | "iTXt" | "tEXt" | "zTXt" => BoxKind::Metadata,
+        "PNGh" | "IHDR" | "IDAT" | "IEND" => BoxKind::Content,
+        _ => BoxKind::Unknown,
+    }
+}
+
 impl AssetBoxHash for PngIO {
     fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
         input_stream.rewind()?;
@@ -698,6 +710,7 @@ impl AssetBoxHash for PngIO {
             hash: ByteBuf::from(Vec::new()),
             excluded: None,
             exclusions: None,
+            kind: classify_png_box("PNGh"),
             pad: ByteBuf::from(Vec::new()),
             range_start: 0,
             range_len: 8,
@@ -714,6 +727,7 @@ impl AssetBoxHash for PngIO {
                     hash: ByteBuf::from(Vec::new()),
                     excluded: None,
                     exclusions: None,
+                    kind: classify_png_box(C2PA_BOXHASH),
                     pad: ByteBuf::from(Vec::new()),
                     range_start: pc.start,
                     range_len: pc.length as u64 + 12, // length(4) + name(4) + crc(4)
@@ -725,12 +739,14 @@ impl AssetBoxHash for PngIO {
             // all other chunks
             let chunk_end = pc.end(); // byte immediately after this chunk
             let is_ihdr = pc.name == IMG_HDR;
+            let kind = classify_png_box(&pc.name_str);
             let bm = BoxMap {
                 names: vec![pc.name_str],
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
                 excluded: None,
                 exclusions: None,
+                kind,
                 pad: ByteBuf::from(Vec::new()),
                 range_start: pc.start,
                 range_len: pc.length as u64 + 12, // length(4) + name(4) + crc(4)
@@ -749,6 +765,7 @@ impl AssetBoxHash for PngIO {
                     hash: ByteBuf::from(Vec::new()),
                     excluded: Some(true),
                     exclusions: None,
+                    kind: classify_png_box(C2PA_BOXHASH),
                     pad: ByteBuf::from(Vec::new()),
                     range_start: chunk_end,
                     range_len: 0,
@@ -800,6 +817,17 @@ pub mod tests {
         io_utils::tempdirectory,
         test::{self, temp_dir_path},
     };
+
+    #[test]
+    fn test_classify_png_box() {
+        assert_eq!(classify_png_box(C2PA_BOXHASH), BoxKind::C2pa);
+        assert_eq!(classify_png_box("eXIf"), BoxKind::Metadata);
+        assert_eq!(classify_png_box("tEXt"), BoxKind::Metadata);
+        assert_eq!(classify_png_box("IHDR"), BoxKind::Content);
+        assert_eq!(classify_png_box("PNGh"), BoxKind::Content);
+        // PNG allows arbitrary private/ancillary chunks - unrecognized, not content.
+        assert_eq!(classify_png_box("pHYs"), BoxKind::Unknown);
+    }
 
     #[test]
     fn test_png_xmp() {

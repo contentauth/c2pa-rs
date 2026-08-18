@@ -3030,7 +3030,19 @@ impl Claim {
                     };
 
                     match hash_result {
-                        Ok(_a) => {
+                        Ok(metadata_exclusion_used) => {
+                            if metadata_exclusion_used {
+                                log_item!(
+                                    claim.assertion_uri(&hash_binding_assertion.label()),
+                                    "additional box hash exclusions found",
+                                    "verify_internal"
+                                )
+                                .validation_status(
+                                    validation_status::ASSERTION_BOXHASH_ADDITIONAL_EXCLUSIONS,
+                                )
+                                .informational(validation_log);
+                            }
+
                             log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
                                 "boxes hash valid",
