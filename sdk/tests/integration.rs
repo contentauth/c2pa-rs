@@ -342,7 +342,7 @@ mod integration_1 {
                 .last()
                 .unwrap()
                 .code(),
-            "signingCredential.untrusted"
+            "cawg.x509.credential.untrusted"
         );
 
         Ok(())
