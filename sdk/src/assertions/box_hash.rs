@@ -123,7 +123,9 @@ fn split_exclusions(
     let mut abs_ranges: Vec<(u64, u64)> = Vec::with_capacity(exclusions.len());
     for excl in exclusions {
         let box_index = match excl.box_index {
-            Some(idx) if idx >= 0 => idx as usize,
+            Some(idx) if idx >= 0 => usize::try_from(idx).map_err(|_| {
+                Error::HashMismatch("box hash exclusion boxIndex out of range".to_string())
+            })?,
             Some(_) => {
                 return Err(Error::HashMismatch(
                     "box hash exclusion has a negative boxIndex".to_string(),
@@ -164,7 +166,8 @@ fn split_exclusions(
         abs_ranges.push((abs_start, abs_end));
     }
 
-    abs_ranges.sort_by_key(|r| r.0);
+    // Validate the sequence as given (not sorted) - the spec requires
+    // exclusions to already be in increasing, non-overlapping order.
     for i in 1..abs_ranges.len() {
         if abs_ranges[i - 1].1 > abs_ranges[i].0 {
             return Err(Error::HashMismatch(
@@ -1128,6 +1131,31 @@ mod tests {
             BoxExclusion {
                 start: 5,
                 length: 5,
+                box_index: None,
+            },
+        ];
+        let result = split_exclusions(&box_ranges, 0, 20, &exclusions);
+        assert!(
+            matches!(&result, Err(Error::HashMismatch(msg)) if msg.contains("overlap or are not ordered")),
+            "unexpected result: {result:?}"
+        );
+    }
+
+    // Spec §15.12.3 requires exclusion ranges to be given in increasing order;
+    // an out-of-order but non-overlapping array must still be rejected, not
+    // silently sorted into a valid-looking sequence.
+    #[test]
+    fn test_split_exclusions_out_of_order_ranges_are_rejected_not_reordered() {
+        let box_ranges = [(0u64, 20u64)];
+        let exclusions = vec![
+            BoxExclusion {
+                start: 10,
+                length: 1,
+                box_index: None,
+            },
+            BoxExclusion {
+                start: 0,
+                length: 1,
                 box_index: None,
             },
         ];
