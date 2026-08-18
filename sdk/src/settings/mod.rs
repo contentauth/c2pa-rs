@@ -313,12 +313,17 @@ impl SettingsValidate for CawgTrust {
 }
 
 /// Settings to configure core features.
+///
+/// This struct is `#[non_exhaustive]`: construct it via [`Default`] (and the `with_*` builders on
+/// [`Settings`]) rather than a struct literal, so that future settings can be added without a
+/// breaking change.
 #[cfg_attr(
     feature = "json_schema",
     derive(schemars::JsonSchema),
     schemars(default)
 )]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[non_exhaustive]
 pub struct Core {
     /// Size of the [`BmffHash`] merkle tree chunks in kilobytes.
     ///
@@ -372,9 +377,15 @@ pub struct Core {
     /// is omitted, any scheme is allowed as long as the host matches.
     ///
     /// The behavior is as follows:
-    /// - `None` (default) no filtering enabled.
+    /// - `None` (default): no host allow-list is applied. Redirect handling is governed
+    ///   independently by [`allow_redirects`] (which rejects redirects to internal addresses).
     /// - `Some(vec)` where `vec` is empty, all traffic is blocked.
     /// - `Some(vec)` with at least one pattern, filtering enabled for only those patterns.
+    ///
+    /// When an allow-list is set it is enforced on every request, including each redirect hop the
+    /// SDK follows, so a redirect to a host outside the allow-list is rejected.
+    ///
+    /// [`allow_redirects`]: Core::allow_redirects
     ///
     /// # Examples
     ///
@@ -398,6 +409,30 @@ pub struct Core {
     /// When network requests occur depends on the operations being performed (reading manifests,
     /// validating credentials, timestamping, etc.).
     pub allowed_network_hosts: Option<Vec<HostPattern>>,
+    /// Whether the SDK follows HTTP redirects for requests made while reading and validating
+    /// (remote manifests, OCSP, timestamps, `did:web`).
+    ///
+    /// Because some request URLs come from untrusted content, following redirects can be abused to
+    /// reach internal or cloud-metadata endpoints (SSRF – CAI-12574). To prevent that while
+    /// remaining compatible with legitimate redirects:
+    ///
+    /// - `true` (default): redirects are followed, **except** when a redirect target is a
+    ///   non-globally-routable address (loopback, private/RFC1918, link-local and cloud-metadata,
+    ///   IPv6 unique-local/link-local, CGNAT, etc.). Such a redirect is rejected with
+    ///   [`HttpResolverError::RedirectTargetDisallowed`]. Redirects to public hosts are followed
+    ///   normally.
+    /// - `false`: redirects are not followed at all; a redirect response is surfaced as
+    ///   [`HttpResolverError::RedirectDisallowed`].
+    ///
+    /// This applies to redirect *targets*, not the initial request: a URL that *directly* names an
+    /// internal host (for example an enterprise OCSP responder on a private address, or a
+    /// `localhost` development server) is still fetched. Use [`allowed_network_hosts`] to restrict
+    /// which hosts may be contacted at all.
+    ///
+    /// [`allowed_network_hosts`]: Core::allowed_network_hosts
+    /// [`HttpResolverError::RedirectTargetDisallowed`]: crate::http::HttpResolverError::RedirectTargetDisallowed
+    /// [`HttpResolverError::RedirectDisallowed`]: crate::http::HttpResolverError::RedirectDisallowed
+    pub allow_redirects: bool,
     /// Whether to prefer compressing manifests. This can reduce the size of the manifest. Compressed manifest
     /// are not always possible and will default back to uncompressed if the manifest contains features
     /// that are not compatible with compression.
@@ -422,6 +457,7 @@ impl Default for Core {
             backing_store_memory_threshold_in_mb: 512,
             decode_identity_assertions: true,
             allowed_network_hosts: None,
+            allow_redirects: true,
             prefer_compress_manifests: false,
             max_decompressed_manifest_size_in_mb: 32,
         }
