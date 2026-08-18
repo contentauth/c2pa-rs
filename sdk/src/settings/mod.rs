@@ -223,6 +223,14 @@ pub struct Trust {
     /// certificates must have.
     pub trust_config: Option<String>,
 
+    // This is deprecated and will be removed in a future release. Use TrustAchors instead.
+    #[deprecated(note = "Use `anchors` to add a user TrustAnchor.")]
+    pub user_anchors: Option<String>,
+
+    // This is deprecated and will be removed in a future release. Use TrustAchors instead.
+    #[deprecated(note = "Use `anchors` to add a TrustAnchor.")]
+    pub trust_anchors: Option<String>,
+
     /// Whether to verify certificates against the trust lists specified in [`CawgTrust`].
     ///
     /// The default value is true.
@@ -314,6 +322,7 @@ fn test_load_trust(allowed_list: &[u8]) -> Result<()> {
 // `clippy::derivable_impls` fires on non-test builds; the `#[cfg(test)]` variant
 // loads bundled fixtures and cannot be derived.
 #[allow(clippy::derivable_impls)]
+#[allow(deprecated)]
 impl Default for Trust {
     fn default() -> Self {
         // load test config store for unit tests
@@ -323,6 +332,8 @@ impl Default for Trust {
                 anchors: None,
                 trust_config: None,
                 verify_trust_list: true,
+                user_anchors: None,
+                trust_anchors: None,
             };
 
             trust.trust_config = Some(
@@ -342,18 +353,22 @@ impl Default for Trust {
                 verify_trust_list: true,
                 anchors: None,
                 trust_config: None,
+                user_anchors: None,
+                trust_anchors: None,
             }
         }
     }
 }
 
 impl SettingsValidate for Trust {
+    #[allow(deprecated)]
     fn validate(&self) -> Result<()> {
         if let Some(anchors) = &self.anchors {
             for anchor in anchors {
                 anchor.validate()?;
             }
         }
+
         Ok(())
     }
 }
@@ -939,15 +954,61 @@ impl Settings {
     ///
     /// This overlays the parsed configuration on top of the current Settings
     /// instance without touching thread-local state.
+    #[allow(deprecated)]
     fn with_string(&self, settings_str: &str, format: &str) -> Result<Self> {
         let overlay = parse_to_value(settings_str, format)?;
         let mut merged =
             serde_json::to_value(self).map_err(|err| Error::OtherError(Box::new(err)))?;
         merge_json(&mut merged, overlay);
 
-        let settings: Settings =
+        let mut settings: Settings =
             serde_json::from_value(merged).map_err(|err| Error::BadParam(err.to_string()))?;
         settings.validate()?;
+
+        // support legacy trust_anchors and user_anchors for backwards compatibility until they are removed in a future release
+        let mut legacy_anchors = Vec::new();
+        // try legacy trust_anchors and user_anchors for backwards compatibility
+        if let Some(ta) = &settings.trust.trust_anchors {
+            test_load_trust(ta.as_bytes())?;
+
+            // add in those anchors to the anchors list for backwards compatibility
+            let a = TrustAnchor {
+                trust_anchors: ta.clone(),
+                trust_uri: Some("system_anchors".to_string()),
+                trust_kind: TrustListKind::Manifest,
+                trust_config: None,
+                allowed_list: None,
+                trusted_ica_issuers: None,
+            };
+            a.validate()?;
+
+            legacy_anchors.push(a);
+        }
+        if let Some(ua) = &settings.trust.user_anchors {
+            test_load_trust(ua.as_bytes())?;
+
+            // add in those anchors to the anchors list for backwards compatibility
+            let a = TrustAnchor {
+                trust_anchors: ua.clone(),
+                trust_uri: Some("user_anchors".to_string()),
+                trust_kind: TrustListKind::Manifest,
+                trust_config: None,
+                allowed_list: None,
+                trusted_ica_issuers: None,
+            };
+            a.validate()?;
+
+            legacy_anchors.push(a);
+        }
+
+        // if there are any legacy anchors, add them to the anchors list
+        if !legacy_anchors.is_empty() {
+            if let Some(anchors) = &mut settings.trust.anchors {
+                anchors.extend(legacy_anchors);
+            } else {
+                settings.trust.anchors = Some(legacy_anchors);
+            }
+        }
 
         Ok(settings)
     }
@@ -1844,6 +1905,48 @@ pub mod tests {
         assert!(
             settings.trust.anchors.is_none(),
             "Expected zero trust anchor after adding"
+        );
+    }
+
+    // thes loading deprecated trust achors from the legacy `trust_anchors` and `user_anchors` fields in the trust settings
+    #[test]
+    fn test_loading_legacy_trust_anchors() {
+        let legacy_trust_anchors = r#"{
+                "trust": {
+                    "trust_anchors": "-----BEGIN CERTIFICATE-----\\nMIICEzCCAcWgAwIBAgIUW4fUnS38162x10PCnB8qFsrQuZgwBQYDK2VwMHcxCzAJ\\nBgNVBAYTAlVTMQswCQYDVQQIDAJDQTESMBAGA1UEBwwJU29tZXdoZXJlMRowGAYD\\nVQQKDBFDMlBBIFRlc3QgUm9vdCBDQTEZMBcGA1UECwwQRk9SIFRFU1RJTkdfT05M\\nWTEQMA4GA1UEAwwHUm9vdCBDQTAeFw0yMjA2MTAxODQ2NDFaFw0zMjA2MDcxODQ2\\nNDFaMHcxCzAJBgNVBAYTAlVTMQswCQYDVQQIDAJDQTESMBAGA1UEBwwJU29tZXdo\\nZXJlMRowGAYDVQQKDBFDMlBBIFRlc3QgUm9vdCBDQTEZMBcGA1UECwwQRk9SIFRF\\nU1RJTkdfT05MWTEQMA4GA1UEAwwHUm9vdCBDQTAqMAUGAytlcAMhAGPUgK9q1H3D\\neKMGqLGjTXJSpsrLpe0kpxkaFMe7KUAuo2MwYTAdBgNVHQ4EFgQUXuZWArP1jiRM\\nfgye6ZqRyGupTowwHwYDVR0jBBgwFoAUXuZWArP1jiRMfgye6ZqRyGupTowwDwYD\\nVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMCAYYwBQYDK2VwA0EA8E79g54u2fUy\\ndfVLPyqKmtjenOUMvVQD7waNbetLY7kvUJZCd5eaDghk30/Q1RaNjiP/2RfA/it8\\nzGxQnM2hCA==\\n-----END CERTIFICATE-----",
+                    "user_anchors": "-----BEGIN CERTIFICATE-----\\n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\\nxPd7wFhjRZHfuWb2cs63xjAGjQ==\\n-----END CERTIFICATE-----"
+                }
+        }"#;
+
+        let settings = Settings::new().with_json(legacy_trust_anchors).unwrap();
+
+        assert!(
+            settings.trust.anchors.is_some(),
+            "Expected trust anchors to be loaded from legacy fields"
+        );
+
+        let anchors = settings.trust.anchors.as_ref().unwrap();
+        assert_eq!(
+            anchors.len(),
+            3,
+            "Expected two trust anchors loaded from legacy fields"
+        );
+
+        let has_user_trust_anchor = anchors
+            .iter()
+            .any(|anchor| anchor.trust_uri.as_deref() == Some("user_anchors"));
+
+        let has_system_trust_anchor = anchors
+            .iter()
+            .any(|anchor| anchor.trust_uri.as_deref() == Some("system_anchors"));
+
+        assert!(
+            has_user_trust_anchor,
+            "Expected user trust anchor to be present"
+        );
+        assert!(
+            has_system_trust_anchor,
+            "Expected system trust anchor to be present"
         );
     }
 }
