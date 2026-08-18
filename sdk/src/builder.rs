@@ -3055,24 +3055,11 @@ impl Builder {
         // Build a fresh store from Builder state (contains the real hash assertions).
         let mut store = self.to_store()?;
 
-        // Add dynamic assertion placeholder slots so sign_manifest() will write them.
-        let signer = self.context().signer()?;
-        let dynamic_assertions = signer.dynamic_assertions();
-        if !dynamic_assertions.is_empty() {
-            store.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
-        }
-
-        let mut jumbf = store.sign_manifest(signer, self.context())?;
-
-        // Mode 1 only: zero-pad the signed JUMBF to match the pre-committed placeholder
-        // size so the composed result is byte-for-byte the same length as the composed
-        // placeholder the caller already embedded.  The JUMBF parser honours its own
-        // internal length field and ignores trailing padding bytes.
-        if let Some(len) = placeholder_jumbf_len {
-            if jumbf.len() < len {
-                jumbf.resize(len, 0u8);
-            }
-        }
+        // sign_manifest() reserves and writes any dynamic assertions itself, and
+        // (Mode 1 only) zero-pads the signed JUMBF to match the pre-committed
+        // placeholder size so the composed result is byte-for-byte the same
+        // length as the composed placeholder the caller already embedded.
+        let jumbf = store.sign_manifest(self.context(), placeholder_jumbf_len)?;
 
         Store::get_composed_manifest(&jumbf, format)
     }
