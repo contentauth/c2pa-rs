@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.90.16](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.15...c2pa-v0.90.16)
+_18 August 2026_
+
+### Fixed
+
+* Reject BMFF Merkle map location that overflows u32 chunk index (CAI-12884) (backport #2445) ([#2500](https://github.com/contentauth/c2pa-rs/pull/2500))
+
 ## [0.90.15](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.14...c2pa-v0.90.15)
 _13 August 2026_
 
