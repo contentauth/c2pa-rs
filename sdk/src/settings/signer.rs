@@ -13,17 +13,13 @@
 
 use std::sync::Arc;
 
+use c2pa_raw_crypto::{signer_from_private_key, RawSigner, RawSignerError, SigningAlg};
 use http::Request;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     create_signer,
-    crypto::{
-        raw_signature::{
-            signer_from_cert_chain_and_private_key, RawSigner, RawSignerError, SigningAlg,
-        },
-        time_stamp::{TimeStampError, TimeStampProvider},
-    },
+    crypto::cert_chain_pem_to_der,
     dynamic_assertion::DynamicAssertion,
     http::{SyncGenericResolver, SyncHttpResolver},
     identity::{builder::IdentityAssertionBuilder, x509::X509CredentialHolder},
@@ -45,6 +41,7 @@ pub enum SignerSettings {
     /// A signer configured locally.
     Local {
         /// Algorithm to use for signing.
+        #[cfg_attr(feature = "json_schema", schemars(with = "crate::SigningAlgSchema"))]
         alg: SigningAlg,
         /// Certificate used for signing (PEM format).
         sign_cert: String,
@@ -63,6 +60,7 @@ pub enum SignerSettings {
         /// A POST request with a byte-stream will be sent to this URL.
         url: String,
         /// Algorithm to use for signing.
+        #[cfg_attr(feature = "json_schema", schemars(with = "crate::SigningAlgSchema"))]
         alg: SigningAlg,
         /// Certificate used for signing (PEM format).
         sign_cert: String,
@@ -126,13 +124,17 @@ impl SignerSettings {
                 tsa_url,
                 referenced_assertions: _,
                 roles: _,
-            } => Ok(Box::new(RemoteSigner {
-                url,
-                alg,
-                reserve_size: 10000 + sign_cert.len(),
-                certs: vec![sign_cert.into_bytes()],
-                tsa_url,
-            })),
+            } => {
+                let certs = cert_chain_pem_to_der(sign_cert.as_bytes())?;
+                let reserve_size = 10000 + certs.iter().map(|c| c.len()).sum::<usize>();
+                Ok(Box::new(RemoteSigner {
+                    url,
+                    alg,
+                    reserve_size,
+                    certs,
+                    tsa_url,
+                }))
+            }
         }
     }
 
@@ -180,30 +182,6 @@ impl SettingsValidate for SignerSettings {
 /// Wraps an `Arc<dyn RawSigner>` so it can be passed as an owned `Box<dyn RawSigner>`.
 struct ArcRawSigner(Arc<dyn RawSigner + Send + Sync>);
 
-impl TimeStampProvider for ArcRawSigner {
-    fn time_stamp_service_url(&self) -> Option<String> {
-        self.0.time_stamp_service_url()
-    }
-
-    fn time_stamp_request_headers(&self) -> Option<Vec<(String, String)>> {
-        self.0.time_stamp_request_headers()
-    }
-
-    fn time_stamp_request_body(
-        &self,
-        message: &[u8],
-    ) -> std::result::Result<Vec<u8>, TimeStampError> {
-        self.0.time_stamp_request_body(message)
-    }
-
-    fn send_time_stamp_request(
-        &self,
-        message: &[u8],
-    ) -> Option<std::result::Result<Vec<u8>, TimeStampError>> {
-        self.0.send_time_stamp_request(message)
-    }
-}
-
 impl RawSigner for ArcRawSigner {
     fn sign(&self, data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
         self.0.sign(data)
@@ -213,22 +191,15 @@ impl RawSigner for ArcRawSigner {
         self.0.alg()
     }
 
-    fn cert_chain(&self) -> std::result::Result<Vec<Vec<u8>>, RawSignerError> {
-        self.0.cert_chain()
-    }
-
-    fn reserve_size(&self) -> usize {
-        self.0.reserve_size()
-    }
-
-    fn ocsp_response(&self) -> Option<Vec<u8>> {
-        self.0.ocsp_response()
+    fn max_signature_size(&self) -> usize {
+        self.0.max_signature_size()
     }
 }
 
 pub(crate) struct CawgX509IdentitySigner {
     c2pa_signer: BoxedSigner,
     identity_signer: Arc<dyn RawSigner + Send + Sync>,
+    identity_cert_chain: Vec<Vec<u8>>,
     referenced_assertions: Vec<String>,
     roles: Vec<String>,
 }
@@ -244,11 +215,14 @@ impl CawgX509IdentitySigner {
         referenced_assertions: Vec<String>,
         roles: Vec<String>,
     ) -> Result<Self> {
-        let raw_signer =
-            signer_from_cert_chain_and_private_key(sign_cert, private_key, alg, tsa_url)?;
+        // The identity (CAWG) signature is not RFC 3161 time stamped, so the TSA
+        // URL is intentionally unused here.
+        let _ = tsa_url;
+        let raw_signer = signer_from_private_key(private_key, alg)?;
         Ok(Self {
             c2pa_signer,
             identity_signer: Arc::from(raw_signer),
+            identity_cert_chain: cert_chain_pem_to_der(sign_cert)?,
             referenced_assertions,
             roles,
         })
@@ -261,9 +235,11 @@ impl CawgX509IdentitySigner {
         referenced_assertions: &[&str],
         roles: &[&str],
     ) -> Self {
+        let identity_cert_chain = identity_signer.certs().unwrap_or_default();
         Self {
             c2pa_signer,
             identity_signer: Arc::new(OwnedSignerWrapper(identity_signer)),
+            identity_cert_chain,
             referenced_assertions: referenced_assertions
                 .iter()
                 .map(|s| s.to_string())
@@ -317,7 +293,10 @@ impl Signer for CawgX509IdentitySigner {
     fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
         let identity_signer: Box<dyn RawSigner + Sync + Send + 'static> =
             Box::new(ArcRawSigner(Arc::clone(&self.identity_signer)));
-        let x509_credential_holder = X509CredentialHolder::from_raw_signer(identity_signer);
+        let x509_credential_holder = X509CredentialHolder::from_raw_signer(
+            identity_signer,
+            self.identity_cert_chain.clone(),
+        );
 
         let mut iab = IdentityAssertionBuilder::for_credential_holder(x509_credential_holder);
 
@@ -336,10 +315,6 @@ impl Signer for CawgX509IdentitySigner {
         }
 
         vec![Box::new(iab)]
-    }
-
-    fn raw_signer(&self) -> Option<Box<&dyn RawSigner>> {
-        self.c2pa_signer.raw_signer()
     }
 }
 
@@ -553,5 +528,113 @@ pub mod tests {
         assert_eq!(signer.sign(&[1, 2, 3]).unwrap(), signed_bytes);
 
         mock.assert();
+
+        // certs() must return DER-encoded certs (not raw PEM text), matching the
+        // Local variant's behavior via create_signer::from_keys.
+        let der_certs = signer.certs().unwrap();
+        assert!(!der_certs.is_empty());
+        let pem_text = String::from_utf8(sign_cert.to_vec()).unwrap();
+        let expected_der = crate::crypto::cert_chain_pem_to_der(pem_text.as_bytes()).unwrap();
+        assert_eq!(der_certs, expected_der);
+        for der in &der_certs {
+            assert_ne!(der.as_slice(), pem_text.as_bytes());
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_make_remote_signer_json_escaped_pem() {
+        use httpmock::MockServer;
+
+        use crate::create_signer;
+
+        let alg = SigningAlg::Ps384;
+        let (sign_cert, private_key) = test_signer::cert_chain_and_private_key_for_alg(alg);
+
+        let signer = create_signer::from_keys(sign_cert, private_key, alg, None).unwrap();
+        let signed_bytes = signer.sign(&[1, 2, 3]).unwrap();
+
+        let server = MockServer::start();
+        let mock = remote_signer_mock_server(&server, &signed_bytes);
+
+        // Simulate a cert chain delivered with literal "\n" escapes, as happens
+        // when a PEM cert is embedded in a JSON config value.
+        let pem_text = String::from_utf8(sign_cert.to_vec()).unwrap();
+        let escaped_pem = pem_text.replace('\n', "\\n");
+
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [signer.remote]
+                    url = (server.base_url())
+                    alg = (alg.to_string())
+                    sign_cert = (escaped_pem)
+                }
+                .to_string(),
+            )
+            .unwrap();
+
+        let signer_settings = settings.signer.expect("signer settings should be present");
+        let signer = signer_settings.c2pa_signer().unwrap();
+        assert_eq!(signer.alg(), alg);
+        assert_eq!(signer.sign(&[1, 2, 3]).unwrap(), signed_bytes);
+
+        let der_certs = signer.certs().unwrap();
+        assert!(!der_certs.is_empty());
+        let expected_der = crate::crypto::cert_chain_pem_to_der(pem_text.as_bytes()).unwrap();
+        assert_eq!(der_certs, expected_der);
+
+        mock.assert();
+    }
+
+    #[test]
+    fn test_make_remote_signer_malformed_pem_errors() {
+        let alg = SigningAlg::Ps384;
+
+        // Has BEGIN/END markers (so the parser attempts to decode a block) but
+        // the body is not valid base64, so decoding must fail with an error
+        // rather than silently producing an empty cert list.
+        let malformed_pem =
+            "-----BEGIN CERTIFICATE-----\nnot-valid-base64!!!\n-----END CERTIFICATE-----\n";
+
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [signer.remote]
+                    url = "https://example.com/sign"
+                    alg = (alg.to_string())
+                    sign_cert = (malformed_pem)
+                }
+                .to_string(),
+            )
+            .unwrap();
+
+        let signer_settings = settings.signer.expect("signer settings should be present");
+        assert!(signer_settings.c2pa_signer().is_err());
+    }
+
+    #[test]
+    fn test_make_remote_signer_no_pem_blocks_yields_empty_certs() {
+        // No BEGIN/END markers at all: the underlying parser treats this as
+        // "no blocks found" and returns an empty cert list rather than an
+        // error. This documents that behavior so a future change can't
+        // silently alter it without a failing test.
+        let alg = SigningAlg::Ps384;
+
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [signer.remote]
+                    url = "https://example.com/sign"
+                    alg = (alg.to_string())
+                    sign_cert = "not a pem cert chain at all"
+                }
+                .to_string(),
+            )
+            .unwrap();
+
+        let signer_settings = settings.signer.expect("signer settings should be present");
+        let signer = signer_settings.c2pa_signer().unwrap();
+        assert_eq!(signer.certs().unwrap(), Vec::<Vec<u8>>::new());
     }
 }

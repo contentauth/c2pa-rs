@@ -8,15 +8,18 @@ Use the tool on a file in one of the [supported formats](https://github.com/cont
 - Read a low-level report of C2PA manifest data.
 - Add a C2PA manifest to the file.
 
+> [!TIP]
+> For a series of educational videos on using C2PA Tool, see [Content Credentials Foundations](https://learn.contentauthenticity.org/signing-your-first-asset).
+
 For a simple example of calling c2patool from a Node.js server application, see the [c2patool-service-example](https://github.com/contentauth/c2patool-service-example) repository.
 
-<div style={{display: 'none'}}>
+<div class="github-only">
 
 **Additional documentation**:
 
 - [Using C2PA Tool](docs/usage.md)
 - [Manifest definition file](docs/manifest.md)
-- [Using an X.509 certificate](docs/x_509.md)
+- [Signing assets](docs/signing.md)
 - [Change log / release notes](CHANGELOG.md)
 - [Contributing to the project](docs/project-contributions.md)
 
@@ -54,7 +57,7 @@ NOTE: You also may want to get some of the example files provided in the reposit
 
 ### Installing from source
 
-Instead of installing a prebuilt binary, you can [build the project from source](docs/project-contributions.md#building-from-source).
+Instead of installing a prebuilt binary, you can [build the project from source](https://github.com/contentauth/c2pa-rs/blob/main/cli/docs/project-contributions.md#building-from-source).
 
 ### Upgrading
 

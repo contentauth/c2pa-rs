@@ -23,8 +23,7 @@ use serde_bytes::ByteBuf;
 use crate::{
     crypto::{
         asn1::rfc3161::{TimeStampResp, TstInfo},
-        cose::{CertificateTrustPolicy, CoseError, TimeStampStorage},
-        raw_signature::{AsyncRawSigner, RawSigner},
+        cose::{AsyncCoseSigner, CertificateTrustPolicy, CoseError, CoseSigner, TimeStampStorage},
         time_stamp::{
             verify_time_stamp, verify_time_stamp_async, ContentInfo, TimeStampError,
             TimeStampResponse,
@@ -225,14 +224,14 @@ impl TstContainer {
 /// [`AsyncTimeStampProvider`]: crate::crypto::time_stamp::AsyncTimeStampProvider
 #[async_generic(
     async_signature(
-        ts_provider: &dyn AsyncRawSigner,
+        ts_provider: &dyn AsyncCoseSigner,
         data: &[u8],
         p_header: &ProtectedHeader,
         mut header_builder: HeaderBuilder,
         tss: TimeStampStorage,
     ))]
 pub(crate) fn add_sigtst_header(
-    ts_provider: &dyn RawSigner,
+    ts_provider: &dyn CoseSigner,
     data: &[u8],
     p_header: &ProtectedHeader,
     mut header_builder: HeaderBuilder,

@@ -42,7 +42,7 @@ The following options are available with any (or no) subcommand.  Additional opt
 | `--remote` | `-r` | `<manifest_url>` | URL for remote manifest available over HTTP. See [Generating a remote manifest](#generating-a-remote-manifest). |
 | `--identity-signer-path` | N/A | `<command>` | Command for signing the CAWG identity assertion. Same protocol as `--signer-path`. See [Signing assets](signing.md). |
 | `--reserve-size` | N/A | `<size>` | Space to reserve for signatures when using `--signer-path` or `--identity-signer-path`. Default: 20000. See [Signing assets](signing.md). |
-| `--settings` | N/A | `<settings_file>` | Path to the settings file. Default is the value of the `C2PATOOL_SETTINGS` environment variable. If not set, defaults to `~/.config/c2pa/c2pa.toml`. See [Configuring SDK settings](../../docs/context-settings.md). |
+| `--settings` | N/A | `<settings_file>` | Path to the settings file. Default is the value of the `C2PATOOL_SETTINGS` environment variable. If not set, defaults to `~/.config/c2pa/c2pa.toml`. See [Configuring SDK settings](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/context-settings). |
 | `--sidecar` | `-s` | N/A | Put manifest in external "sidecar" file with `.c2pa` extension. See [Generating an external manifest](#generating-an-external-manifest). |
 | `--signer-path` | N/A | `<command>` | Command for signing the C2PA claim. See [Signing assets](signing.md). |
 | `--tree` | | N/A | Create a tree diagram of the manifest store. See [Displaying a tree diagram](#displaying-a-tree-diagram). |

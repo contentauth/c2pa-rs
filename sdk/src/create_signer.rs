@@ -18,12 +18,9 @@
 #[cfg(feature = "file_io")]
 use std::path::Path;
 
-use crate::{
-    crypto::raw_signature::{signer_from_cert_chain_and_private_key, SigningAlg},
-    error::Result,
-    signer::RawSignerWrapper,
-    BoxedSigner,
-};
+use c2pa_raw_crypto::{signer_from_private_key, SigningAlg};
+
+use crate::{crypto::cert_chain_pem_to_der, error::Result, signer::RawSignerWrapper, BoxedSigner};
 
 /// Creates a [`Signer`](crate::Signer) instance using signing certificate and private key
 /// as byte slices.
@@ -43,8 +40,10 @@ pub fn from_keys(
     alg: SigningAlg,
     tsa_url: Option<String>,
 ) -> Result<BoxedSigner> {
-    Ok(Box::new(RawSignerWrapper(
-        signer_from_cert_chain_and_private_key(signcert, pkey, alg, tsa_url)?,
+    Ok(Box::new(RawSignerWrapper::new(
+        signer_from_private_key(pkey, alg)?,
+        cert_chain_pem_to_der(signcert)?,
+        tsa_url,
     )))
 }
 
@@ -106,10 +105,9 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::{
-        crypto::raw_signature::SigningAlg,
         identity::tests::fixtures::{manifest_json, parent_json},
         utils::test_signer::test_signer,
-        Builder, Reader,
+        Builder, Reader, SigningAlg,
     };
 
     const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");

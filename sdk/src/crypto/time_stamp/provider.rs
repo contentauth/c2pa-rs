@@ -13,18 +13,21 @@
 
 use async_trait::async_trait;
 use bcder::{encode::Values, OctetString};
+use c2pa_raw_crypto::oids::SHA256_OID;
 use rand::{thread_rng, Rng};
 use sha2::{Digest, Sha256};
 
 use crate::{
     context::Context,
-    crypto::{
-        asn1::rfc3161::TimeStampReq,
-        raw_signature::oids::{ans1_oid_bcder_oid, SHA256_OID},
-        time_stamp::TimeStampError,
-    },
+    crypto::{asn1::rfc3161::TimeStampReq, time_stamp::TimeStampError},
     maybe_send_sync::MaybeSync,
 };
+
+/// Convert a [`c2pa_raw_crypto::Oid`] into a `bcder::Oid` by reusing the OID's
+/// DER content octets directly.
+fn raw_crypto_oid_to_bcder_oid(oid: &c2pa_raw_crypto::Oid) -> bcder::Oid {
+    bcder::Oid(bytes::Bytes::copy_from_slice(oid.as_bytes()))
+}
 
 /// A `TimeStampProvider` implementation can contact a [RFC 3161] time stamp
 /// service and generate a corresponding time stamp for a specific piece of
@@ -146,8 +149,7 @@ pub fn default_rfc3161_message(data: &[u8]) -> Result<Vec<u8>, TimeStampError> {
     })?;
 
     // SHA-256 OID: 2.16.840.1.101.3.4.2.1
-    let sha256_oid = ans1_oid_bcder_oid(&SHA256_OID)
-        .ok_or_else(|| TimeStampError::InternalError("Invalid SHA-256 OID".to_string()))?;
+    let sha256_oid = raw_crypto_oid_to_bcder_oid(&SHA256_OID);
 
     let request = TimeStampReq {
         version: bcder::Integer::from(1_u8),

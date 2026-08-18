@@ -6,7 +6,7 @@ name: Semver checks
 # backport.yml -- and baselines the public API against the latest crates.io
 # release.
 #
-# This deliberately does NOT run on release-candidate (`*-rc.*`) branches: the
+# This deliberately does NOT run on release-candidate (`*-rc*`) branches: the
 # breaking train IS the intended place for breaking changes.
 
 on:
@@ -21,6 +21,11 @@ permissions:
 jobs:
   semver-checks:
     name: cargo-semver-checks
+
+    # cargo-semver-checks compiles the PR's code, so untrusted fork PRs must not
+    # run it unreviewed. That trust gate is enforced by GitHub's "Fork pull
+    # request workflows from outside collaborators" Actions setting (see
+    # tier-1a.yml) rather than in this workflow.
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

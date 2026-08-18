@@ -18,9 +18,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use c2pa::{
     assertions::{labels, Actions},
-    create_signer,
-    crypto::raw_signature::SigningAlg,
-    Builder, BuilderIntent, ClaimGeneratorInfo, Reader,
+    create_signer, Builder, BuilderIntent, ClaimGeneratorInfo, Reader, SigningAlg,
 };
 use serde_json::json;
 

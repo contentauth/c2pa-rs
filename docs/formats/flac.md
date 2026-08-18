@@ -23,7 +23,7 @@ So the file layout is: `[optional ID3v2][fLaC stream]`.
 
 ## Crates
 
-- **id3**: Used to read and write the optional prepended ID3v2 tag and the GEOB frame that holds the C2PA manifest (same approach as [sdk/src/asset_handlers/mp3_io.rs](../sdk/src/asset_handlers/mp3_io.rs)).
+- **id3**: Used to read and write the optional prepended ID3v2 tag and the GEOB frame that holds the C2PA manifest (same approach as [sdk/src/asset_handlers/mp3_io.rs](../../sdk/src/asset_handlers/mp3_io.rs)).
 The FLAC stream is validated by checking that the first 4 bytes after the optional ID3v2 block are `fLaC`. The FLAC stream is not modified when writing—only the optional ID3 block is added or replaced.
 
 ## Implementation summary

@@ -7,6 +7,14 @@
 # If you change the supported platforms in this workflow, please also
 # update docs/support-tiers.md to match the changes you're making.
 
+# Fork-PR trust is handled by GitHub, not by this workflow: the repository's
+# "Fork pull request workflows from outside collaborators" Actions setting holds
+# a fork PR's workflows until a maintainer approves them, so by the time this
+# suite runs it is already authorized. Same-repo branches (which require write
+# access to push) always run. Secrets are still never exposed to fork PRs, so
+# the Codecov upload steps below additionally gate on the PR originating from
+# this repository.
+
 name: Tier 1A
 
 on:
@@ -20,24 +28,24 @@ on:
       - main
       - stable
       - 'v0.*'
-      - '*-rc.*'
+      - '*-rc*'
     types:
       - opened
       - reopened
       - synchronize
-      - labeled
   push:
     branches:
       - main
       - stable
       - 'v0.*'
-      - '*-rc.*'
+      - '*-rc*'
 
 jobs:
   get-features:
     name: Get features
     runs-on: ubuntu-latest
     outputs:
+      features: ${{ steps.get-features.outputs.features }}
       rust-native-features: ${{ steps.get-features.outputs.rust-native-features }}
       openssl-features: ${{ steps.get-features.outputs.openssl-features }}
     steps:
@@ -52,23 +60,22 @@ jobs:
       - name: Get all features
         id: get-features
         run: |
-          FEATURES=$(cargo metadata --format-version=1 | jq -r '[.packages[] | select(.name=="c2pa") | .features | keys | map(select(. != "default")) | .[]] | unique | join(" ")')
+          # Experimental (`unstable_`) features are deliberately excluded from
+          # the required suite: they sit outside the SDK's normal support
+          # commitments and must not gate main or the release branches. They are
+          # exercised separately by the non-blocking experimental-features.yml.
+          # See docs/experimental-features.md.
+          FEATURES=$(cargo metadata --format-version=1 | jq -r '[.packages[] | select(.name=="c2pa") | .features | keys | map(select(. != "default" and (startswith("unstable_") | not))) | .[]] | unique | join(" ")')
 
           RUST_NATIVE_FEATURES=$(echo $FEATURES | sed 's/openssl//g')
           OPENSSL_FEATURES=$(echo $FEATURES | sed 's/rust_native_crypto//g')
+          echo "features=$FEATURES" >> "$GITHUB_OUTPUT"
           echo "rust-native-features=$RUST_NATIVE_FEATURES" >> "$GITHUB_OUTPUT"
           echo "openssl-features=$OPENSSL_FEATURES" >> "$GITHUB_OUTPUT"
 
   tests-openssl:
     name: Unit tests (OpenSSL installed)
     needs: get-features
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
 
     runs-on: ubuntu-latest
 
@@ -95,7 +102,7 @@ jobs:
           RUST_BACKTRACE: "1"
           FEATURES: ${{needs.get-features.outputs.openssl-features}}
         run: |
-          cargo llvm-cov --lib --features "$FEATURES" --lcov --output-path lcov-openssl.info
+          cargo llvm-cov --tests --features "$FEATURES" --lcov --output-path lcov-openssl.info
 
       - name: Filter out tests
         uses: scouten/uncover-tests@af7baaca5bf5189b968573d5f14627c2e1ea0704 # v1.1.0
@@ -106,11 +113,7 @@ jobs:
       # Tokens aren't available for PRs originating from forks,
       # so we don't attempt to upload code coverage in that case.
       - name: Upload code coverage results
-        if: |
-          github.event_name != 'pull_request' ||
-          github.event.pull_request.author_association == 'COLLABORATOR' ||
-          github.event.pull_request.author_association == 'MEMBER' ||
-          github.event.pull_request.user.login == 'dependabot[bot]'
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -121,13 +124,6 @@ jobs:
   tests-rust-native-crypto:
     name: Unit tests (Rust native crypto installed)
     needs: get-features
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
 
     runs-on: ubuntu-latest
 
@@ -154,7 +150,7 @@ jobs:
           RUST_BACKTRACE: "1"
           FEATURES: ${{needs.get-features.outputs.rust-native-features}}
         run: |
-          cargo llvm-cov -p c2pa --no-default-features --features "$FEATURES" --lcov --output-path lcov-rust_native_crypto.info
+          cargo llvm-cov -p c2pa --tests --no-default-features --features "$FEATURES" --lcov --output-path lcov-rust_native_crypto.info
 
       - name: Filter out tests
         uses: scouten/uncover-tests@af7baaca5bf5189b968573d5f14627c2e1ea0704 # v1.1.0
@@ -165,11 +161,7 @@ jobs:
       # Tokens aren't available for PRs originating from forks,
       # so we don't attempt to upload code coverage in that case.
       - name: Upload code coverage results
-        if: |
-          github.event_name != 'pull_request' ||
-          github.event.pull_request.author_association == 'COLLABORATOR' ||
-          github.event.pull_request.author_association == 'MEMBER' ||
-          github.event.pull_request.user.login == 'dependabot[bot]'
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -180,13 +172,6 @@ jobs:
   tests-cli:
     name: Unit tests (c2patool)
     needs: get-features
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
 
     runs-on: ubuntu-latest
 
@@ -218,11 +203,7 @@ jobs:
       # Tokens aren't available for PRs originating from forks,
       # so we don't attempt to upload code coverage in that case.
       - name: Upload code coverage results
-        if: |
-          github.event_name != 'pull_request' ||
-          github.event.pull_request.author_association == 'COLLABORATOR' ||
-          github.event.pull_request.author_association == 'MEMBER' ||
-          github.event.pull_request.user.login == 'dependabot[bot]'
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -233,13 +214,6 @@ jobs:
   tests-windows-arm-openssl:
     name: Unit tests (Windows ARM, OpenSSL)
     needs: get-features
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
 
     runs-on: windows-11-arm
 
@@ -265,13 +239,6 @@ jobs:
   tests-windows-arm-rust-native-crypto:
     name: Unit tests (Windows ARM, Rust native crypto)
     needs: get-features
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
 
     runs-on: windows-11-arm
 
@@ -298,14 +265,6 @@ jobs:
     name: Preflight docs.rs build
     runs-on: ubuntu-latest
 
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -313,7 +272,11 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
-          toolchain: nightly
+          # Pinned to the nightly docs.rs itself runs (see the version string
+          # at https://docs.rs/about/builds). Pinning decouples this preflight
+          # from the Rust team's daily nightly churn; refresh periodically
+          # (e.g. at release time) to track what docs.rs is actually using.
+          toolchain: nightly-2026-07-12
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
@@ -324,17 +287,51 @@ jobs:
           crate: cargo-docs-rs
           version: "1.0.4"
 
+      # This job only verifies that the docs.rs build itself succeeds under the
+      # docs.rs environment (`--cfg docsrs`). We deliberately do not deny any
+      # warnings here: docs.rs does not build with `-Dwarnings`, and warning
+      # enforcement is handled on the predictable stable toolchain in the
+      # `docs_stable` job below.
       - name: Preflight c2pa-rs docs.rs
-        env:
-          RUSTDOCFLAGS: -Dwarnings
         run: cargo docs-rs -p c2pa
 
       - name: Preflight c2pa-c-ffi docs.rs
-        env:
-          RUSTDOCFLAGS: -Dwarnings
         run: cargo docs-rs -p c2pa-c-ffi
 
-      - name: Preflight c2patool cargo docs
+  docs_stable:
+    name: Doc build (stable, warnings denied)
+    needs: get-features
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      # Blanket `-Dwarnings` enforcement on the predictable stable toolchain
+      # (advances every ~6 weeks, not daily). These builds use plain `cargo
+      # doc` and omit `--cfg docsrs`, so the nightly-only `doc_cfg` feature in
+      # sdk/src/lib.rs stays inert and stable can compile the docs.
+      # Experimental (`unstable_`) features are excluded from this required doc
+      # build; the non-blocking experimental-features.yml covers them.
+      - name: c2pa docs
+        env:
+          RUSTDOCFLAGS: -Dwarnings
+        run: cargo doc -p c2pa --no-deps --features "${{ needs.get-features.outputs.features }}"
+
+      - name: c2pa-c-ffi docs
+        env:
+          RUSTDOCFLAGS: -Dwarnings
+        run: cargo doc -p c2pa-c-ffi --no-deps --all-features
+
+      - name: c2patool docs
         env:
           RUSTDOCFLAGS: -Dwarnings
         run: cargo doc -p c2patool --no-deps --all-features
@@ -346,14 +343,6 @@ jobs:
     # coverage. (This requires a bug fix that is only available in nightly Rust.)
     # Watch https://github.com/taiki-e/cargo-llvm-cov/issues/2
     # for progress.
-
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
 
     runs-on: ubuntu-latest
 
@@ -395,11 +384,7 @@ jobs:
       # Tokens aren't available for PRs originating from forks,
       # so we don't attempt to upload code coverage in that case.
       # - name: Upload code coverage results
-      #   if: |
-      #     github.event_name != 'pull_request' ||
-      #     github.event.pull_request.author_association == 'COLLABORATOR' ||
-      #     github.event.pull_request.author_association == 'MEMBER' ||
-      #     github.event.pull_request.user.login == 'dependabot[bot]'
+      #   if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
       #   uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
       #   with:
       #     token: ${{ secrets.CODECOV_TOKEN }}
@@ -408,13 +393,6 @@ jobs:
 
   cargo-check:
     name: Default features build
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
 
     runs-on: ubuntu-latest
 
@@ -435,13 +413,6 @@ jobs:
 
   cargo-lock:
     name: Cargo.lock is up to date
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
 
     runs-on: ubuntu-latest
 
@@ -460,13 +431,6 @@ jobs:
   tests-wasm:
     name: Unit tests (Wasm)
     needs: get-features
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
 
     runs-on: ubuntu-latest
 
@@ -505,13 +469,6 @@ jobs:
   tests-wasi:
     name: Unit tests (WASI)
     needs: get-features
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
 
     runs-on: ubuntu-latest
 
@@ -560,13 +517,6 @@ jobs:
   clippy_check:
     name: Clippy
     needs: get-features
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
 
     runs-on: ubuntu-latest
 
@@ -591,13 +541,6 @@ jobs:
 
   cargo_fmt:
     name: Enforce Rust code format
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
 
     runs-on: ubuntu-latest
 
@@ -616,13 +559,6 @@ jobs:
 
   cargo-deny:
     name: License / vulnerability audit
-    if: |
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.author_association == 'COLLABORATOR' ||
-      github.event.pull_request.author_association == 'MEMBER' ||
-      github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(github.event.pull_request.labels.*.name, 'safe to test') ||
-      contains(github.event.pull_request.labels.*.name, 'check-release')
 
     runs-on: ubuntu-latest
 
