@@ -42,14 +42,13 @@ use crate::{
         c2pa_action,
         labels::{self, parse_label},
         Action, ActionTemplate, Actions, AssertionMetadata, BmffHash, BoxHash, DataHash,
-        DigitalSourceType, EmbeddedData, ExclusionsMap, MerkleMap, Metadata, SoftwareAgent,
-        SubsetMap, Thumbnail, TimeStamp, User, UserCbor,
+        DigitalSourceType, EmbeddedData, ExclusionsMap, Metadata, SoftwareAgent, Thumbnail,
+        TimeStamp, User, UserCbor,
     },
     claim::Claim,
     context::{Context, ProgressPhase},
     crypto::cose,
     error::{Error, Result},
-    hash_utils::hash_by_alg,
     jumbf::labels::manifest_label_from_uri,
     jumbf_io,
     maybe_send_sync::MaybeSend,
@@ -2873,43 +2872,9 @@ impl Builder {
             let mut bmff_hash = self.find_assertion::<BmffHash>(BmffHash::LABEL)?;
             bmff_hash.set_bmff_version(stored_version);
 
-            // Add in the Merkle leaf hashes that were collected via hash_bmff_mdat_bytes().
-            // We add any remainders (partially filled fixed-size leaves that are unhashed) as the last leaf of the Merkle leaves for that mdat_id.
-            for (mdat_id, remainder) in &self.bmff_hasher.fixed_size_remainder {
-                let fragment_hash = hash_by_alg(self.bmff_hasher.alg.as_str(), remainder, None);
-
-                self.bmff_hasher
-                    .merkle_leaves
-                    .entry(*mdat_id)
-                    .and_modify(|leaves| {
-                        leaves.push((remainder.len() as u64, fragment_hash.clone()))
-                    })
-                    .or_insert(vec![(remainder.len() as u64, fragment_hash)]);
-            }
-
-            // If there are Merkle hashes we need to create a MerkleMap and add it to the BmffHash
-            if !self.bmff_hasher.merkle_leaves.is_empty() {
-                // generate MerkleMaps for the mdat leaves stored in C2paHasher
-                let merkle_maps = MerkleMap::create_mms_from_mdat_leaves(
-                    &self.bmff_hasher.alg,
-                    &self.bmff_hasher.merkle_leaves,
-                    self.bmff_hasher.fixed_size,
-                )?;
-
-                // add required mdat exclusion
-                let mut mdat = ExclusionsMap::new("/mdat".to_owned());
-                let subset_mdat = SubsetMap {
-                    offset: 16,
-                    length: 0,
-                };
-                let subset_mdat_vec = vec![subset_mdat];
-                mdat.subset = Some(subset_mdat_vec);
-
-                bmff_hash.add_exclusions(&mut vec![mdat]);
-
-                // add the MerkleMaps
-                bmff_hash.set_merkle(merkle_maps);
-            }
+            // Fill in real Merkle maps from any leaf hashes collected via
+            // hash_bmff_mdat_bytes(); no-op if that was never called.
+            bmff_hash.add_merkle_maps_from_accumulator(&mut self.bmff_hasher)?;
 
             // gen_hash_from_stream uses the BmffHash's own path-based exclusion list
             // and its own alg field (set when the assertion was created).
