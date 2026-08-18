@@ -1918,8 +1918,9 @@ impl Builder {
             self.add_actions_assertion_settings(&ingredient_map, &mut actions, true)?;
 
             if !actions.actions().is_empty() {
-                // todo: add setting for created added actions
-                add_assertion(&mut claim, &actions, false)?;
+                // This is the manifest's only actions assertion, so per spec it must live in
+                // `created_assertions` rather than `gathered_assertions`.
+                add_assertion(&mut claim, &actions, true)?;
             }
         }
 
@@ -1942,10 +1943,19 @@ impl Builder {
     ///
     /// Per the C2PA spec's [All actions included](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_all_actions_included)
     /// section, a claim generator that opens an asset strictly to record its `c2pa.opened`
-    /// action and immediately re-saves it without making any other changes shall set
-    /// `allActionsIncluded` to `true`. When `builder.actions.auto_all_actions_included` is
-    /// enabled, this is detected once every action has been merged in, so it happens at the
-    /// end of this function rather than the start.
+    /// action, with no other action recorded for that manifest, shall set `allActionsIncluded`
+    /// to `true`. When `builder.actions.auto_all_actions_included` is enabled, this function
+    /// checks for that condition only after every other source of actions (templates, the
+    /// `builder.actions.actions` setting, and the auto-inserted inception/placed actions) has
+    /// been merged in, so the check happens at the end of this function rather than the start —
+    /// otherwise it could wrongly fire before a later merge adds a second action.
+    ///
+    /// Note that a redaction performed via [`ManifestDefinition::redactions`] is applied earlier,
+    /// while ingredients are being added to the claim, and by itself is invisible to this
+    /// function: nothing here inspects `redactions`. Per spec, a `c2pa.redacted` [`Action`] must
+    /// be added to `actions.actions` alongside the corresponding entry in `redactions` (which is
+    /// the caller's responsibility, as in every redaction test in this module) for a redaction
+    /// to be counted against the "no other action recorded" condition above.
     fn add_actions_assertion_settings(
         &self,
         ingredient_map: &HashMap<String, (&Relationship, HashedUri)>,
@@ -2008,15 +2018,16 @@ impl Builder {
                 .actions
                 .auto_all_actions_included;
 
-            // A sole `c2pa.opened` action means the asset was opened only to record that
-            // action and immediately re-saved with no other changes, which the spec requires
-            // to be reported as `allActionsIncluded: true`. The SDK can only see changes that
-            // were recorded as actions, so this detection is opt-in via
-            // `auto_all_actions_included` rather than always-on.
+            // Now that every other source of actions has been merged in above, a sole
+            // `c2pa.opened` action means this manifest records nothing but that inception
+            // action, which the spec requires to be reported as `allActionsIncluded: true`.
+            // The SDK can only see changes that were recorded as actions (e.g. a redaction
+            // performed without a matching `c2pa.redacted` action would go unnoticed here),
+            // so this detection is opt-in via `auto_all_actions_included` rather than always-on.
             actions.all_actions_included = if auto_all_actions_included
                 && allow_inception
-                && actions.actions.len() == 1
-                && actions.actions[0].action() == c2pa_action::OPENED
+                && actions.actions().len() == 1
+                && actions.actions()[0].action() == c2pa_action::OPENED
             {
                 Some(true)
             } else {
@@ -4799,6 +4810,14 @@ mod tests {
         assert_eq!(actions.actions().len(), 1);
         assert_eq!(actions.actions()[0].action(), c2pa_action::OPENED);
         assert_eq!(actions.all_actions_included, Some(true));
+
+        // The spec requires the inception actions assertion to live in the claim's
+        // `created_assertions` array; confirm the forced value landed on that assertion.
+        let claim = builder.to_claim().unwrap();
+        let created_assertions = claim.created_action_assertions();
+        assert_eq!(created_assertions.len(), 1);
+        let created_actions = Actions::from_assertion(created_assertions[0].assertion()).unwrap();
+        assert_eq!(created_actions.all_actions_included, Some(true));
     }
 
     // The C2PA spec requires `allActionsIncluded` to be forced to `true` only when the sole
