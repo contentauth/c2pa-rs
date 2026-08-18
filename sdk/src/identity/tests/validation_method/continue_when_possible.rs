@@ -496,7 +496,8 @@ mod invalid_sig_type {
     use crate::{
         context::Context,
         identity::{
-            claim_aggregation::IcaSignatureVerifier, x509::X509SignatureVerifier, IdentityAssertion,
+            claim_aggregation::IcaSignatureVerifier, x509::X509SignatureVerifier,
+            IdentityAssertion, SignatureVerifier,
         },
         status_tracker::{LogKind, StatusTracker},
         Reader,
@@ -575,6 +576,15 @@ mod invalid_sig_type {
             log.validation_status.as_ref().unwrap().as_ref() as &str,
             "cawg.identity.sig_type.unknown"
         );
+
+        // The sync `check_signature` entry point must behave identically to
+        // `check_signature_async`.
+        let mut sync_status_tracker = StatusTracker::default();
+        let sync_err = x509_verifier
+            .check_signature(&ia.signer_payload, &ia.signature, &mut sync_status_tracker)
+            .unwrap_err();
+        assert_eq!(sync_err.to_string(), err.to_string());
+        assert_eq!(sync_status_tracker.logged_items().len(), 1);
     }
 
     #[c2pa_test_async]

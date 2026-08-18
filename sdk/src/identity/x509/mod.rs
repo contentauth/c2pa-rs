@@ -71,3 +71,101 @@ pub(crate) fn remap_x509_cose_status_codes(
         item.validation_status = Some(new_code.into());
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+    use crate::{log_item, status_tracker::StatusTracker};
+
+    fn status_of(tracker: &StatusTracker, index: usize) -> &str {
+        tracker.logged_items()[index]
+            .validation_status
+            .as_ref()
+            .unwrap()
+            .as_ref()
+    }
+
+    #[test]
+    fn remaps_known_c2pa_codes() {
+        let mut st = StatusTracker::default();
+
+        log_item!("l", "d", "f")
+            .validation_status(validation_status::ALGORITHM_UNSUPPORTED)
+            .informational(&mut st);
+
+        log_item!("l", "d", "f")
+            .validation_status(validation_status::SIGNING_CREDENTIAL_TRUSTED)
+            .success(&mut st);
+
+        log_item!("l", "d", "f")
+            .validation_status(validation_status::SIGNING_CREDENTIAL_UNTRUSTED)
+            .informational(&mut st);
+
+        log_item!("l", "d", "f")
+            .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
+            .informational(&mut st);
+
+        log_item!("l", "d", "f")
+            .validation_status(validation_status::SIGNING_CREDENTIAL_EXPIRED)
+            .informational(&mut st);
+
+        log_item!("l", "d", "f")
+            .validation_status(validation_status::CLAIM_SIGNATURE_MISMATCH)
+            .informational(&mut st);
+
+        remap_x509_cose_status_codes(&mut st, 0);
+
+        assert_eq!(status_of(&st, 0), "cawg.x509.algorithm.unsupported");
+        assert_eq!(status_of(&st, 1), "cawg.x509.credential.trusted");
+        assert_eq!(status_of(&st, 2), "cawg.x509.credential.untrusted");
+        assert_eq!(status_of(&st, 3), "cawg.x509.credential.untrusted");
+        assert_eq!(status_of(&st, 4), "cawg.x509.signature.outside_validity");
+        assert_eq!(status_of(&st, 5), "cawg.x509.signature.mismatch");
+    }
+
+    #[test]
+    fn leaves_unrelated_and_missing_codes_untouched() {
+        let mut st = StatusTracker::default();
+
+        // A code that isn't produced by `crypto::cose` must be left alone.
+        log_item!("l", "d", "f")
+            .validation_status("cawg.identity.pad.invalid")
+            .informational(&mut st);
+
+        // A log item with no validation status at all must not panic and must
+        // be left alone.
+        log_item!("l", "d", "f").informational(&mut st);
+
+        remap_x509_cose_status_codes(&mut st, 0);
+
+        assert_eq!(status_of(&st, 0), "cawg.identity.pad.invalid");
+        assert!(st.logged_items()[1].validation_status.is_none());
+    }
+
+    #[test]
+    fn ignores_items_before_first_new_item() {
+        let mut st = StatusTracker::default();
+
+        log_item!("l", "d", "f")
+            .validation_status(validation_status::SIGNING_CREDENTIAL_TRUSTED)
+            .success(&mut st);
+
+        let first_new_item = st.logged_items().len();
+
+        log_item!("l", "d", "f")
+            .validation_status(validation_status::SIGNING_CREDENTIAL_UNTRUSTED)
+            .informational(&mut st);
+
+        remap_x509_cose_status_codes(&mut st, first_new_item);
+
+        // The item logged before `first_new_item` must be untouched, even
+        // though its code would otherwise be remapped.
+        assert_eq!(
+            status_of(&st, 0),
+            validation_status::SIGNING_CREDENTIAL_TRUSTED
+        );
+        assert_eq!(status_of(&st, 1), "cawg.x509.credential.untrusted");
+    }
+}

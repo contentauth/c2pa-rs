@@ -502,3 +502,145 @@ impl Debug for IdentityAssertion {
             .finish()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::panic)]
+    #![allow(clippy::unwrap_used)]
+
+    use std::io::{Cursor, Seek};
+
+    use c2pa_macros::c2pa_test_async;
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use super::*;
+    use crate::{
+        dynamic_assertion::PartialClaim,
+        identity::{
+            builder::{IdentityAssertionBuilder, IdentityAssertionSigner},
+            tests::{
+                fixtures::{cert_chain_and_private_key_for_alg, manifest_json, parent_json},
+                read_manifest,
+            },
+            x509::X509CredentialHolder,
+        },
+        Builder, SigningAlg,
+    };
+
+    const TEST_IMAGE: &[u8] = include_bytes!("../../../tests/fixtures/CA.jpg");
+    const TEST_THUMBNAIL: &[u8] = include_bytes!("../../../tests/fixtures/thumbnail.jpg");
+
+    #[c2pa_test_async]
+    async fn x509_signature_mismatch_is_reported() {
+        let format = "image/jpeg";
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
+        builder
+            .add_ingredient_from_stream(parent_json(), format, &mut source)
+            .unwrap();
+
+        builder
+            .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
+            .unwrap();
+
+        let mut c2pa_signer = IdentityAssertionSigner::from_test_credentials(SigningAlg::Ps256);
+
+        let (cawg_cert_chain, cawg_private_key) =
+            cert_chain_and_private_key_for_alg(SigningAlg::Ed25519);
+
+        let cawg_raw_signer =
+            c2pa_raw_crypto::signer_from_private_key(&cawg_private_key, SigningAlg::Ed25519)
+                .unwrap();
+
+        let x509_holder = X509CredentialHolder::from_raw_signer(
+            cawg_raw_signer,
+            crate::crypto::cert_chain_pem_to_der(&cawg_cert_chain).unwrap(),
+        );
+        let iab = IdentityAssertionBuilder::for_credential_holder(x509_holder);
+        c2pa_signer.add_identity_assertion(iab);
+
+        builder
+            .sign(&c2pa_signer, format, &mut source, &mut dest)
+            .unwrap();
+
+        // Read back the Manifest that was generated.
+        dest.rewind().unwrap();
+
+        let manifest_store = read_manifest(format, &mut dest).await;
+        assert_eq!(manifest_store.validation_status(), None);
+
+        let manifest = manifest_store.active_manifest().unwrap();
+        let mut st = StatusTracker::default();
+        let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
+
+        // Should find exactly one identity assertion.
+        let ia = ia_iter.next().unwrap().unwrap();
+        assert!(ia_iter.next().is_none());
+        drop(ia_iter);
+
+        let mut partial_claim = PartialClaim::default();
+        for referenced_assertion in &ia.signer_payload.referenced_assertions {
+            partial_claim.add_assertion(referenced_assertion);
+        }
+
+        // Tamper with the signer payload (leaving the original signature bytes
+        // untouched) so that the COSE signature no longer matches. This is a
+        // syntactically valid `SignerPayload`, so it exercises a genuine
+        // cryptographic mismatch -- through the production `validate_partial_claim`
+        // path used during normal manifest reading -- rather than a CBOR parsing
+        // failure.
+        let mut tampered_signer_payload = ia.signer_payload.clone();
+        tampered_signer_payload.roles.push("tampered".to_string());
+
+        let tampered_ia = IdentityAssertion {
+            signer_payload: tampered_signer_payload,
+            signature: ia.signature.clone(),
+            pad1: ia.pad1.clone(),
+            pad2: ia.pad2.clone(),
+            label: None,
+        };
+
+        let context = Context::new();
+        let err = tampered_ia
+            .validate_partial_claim_async(&partial_claim, &mut st, &context)
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.to_string(), "signature is invalid");
+
+        let log = st
+            .logged_items()
+            .iter()
+            .find(|item| item.description == "signature mismatch")
+            .unwrap();
+
+        assert_eq!(log.kind, crate::status_tracker::LogKind::Failure);
+        assert_eq!(
+            log.validation_status.as_ref().unwrap().as_ref() as &str,
+            "cawg.x509.signature.mismatch"
+        );
+
+        // Signature bytes that don't even parse as a COSE_Sign1 structure must
+        // also be reported, distinct from a cryptographic mismatch.
+        let malformed_ia = IdentityAssertion {
+            signer_payload: ia.signer_payload.clone(),
+            signature: b"not a COSE_Sign1 structure".to_vec(),
+            pad1: ia.pad1.clone(),
+            pad2: ia.pad2.clone(),
+            label: None,
+        };
+
+        let mut malformed_st = StatusTracker::default();
+        let malformed_err = malformed_ia
+            .validate_partial_claim_async(&partial_claim, &mut malformed_st, &context)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(malformed_err, ValidationError::SignatureError(_)));
+
+        assert!(malformed_st.has_status("cawg.x509.signature.mismatch"));
+    }
+}
