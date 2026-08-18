@@ -152,6 +152,7 @@ impl AssetBoxHash for C2paIO {
             alg: Some(alg.to_string()),
             hash: ByteBuf::from(vec![]),
             excluded: None,
+            exclusions: None,
             pad: ByteBuf::from(vec![]),
             range_start: 0,
             range_len: 0,
