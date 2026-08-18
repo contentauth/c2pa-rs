@@ -32,7 +32,9 @@ use crate::{
         hash_utils::{hash_stream_by_alg_with_progress, vec_compare, HashRange},
         io_utils::ReaderUtils,
     },
-    validation_results::validation_codes::ASSERTION_BOXHASH_UNKNOWN_BOX,
+    validation_results::validation_codes::{
+        ASSERTION_BOXESHASH_MALFORMED, ASSERTION_BOXHASH_UNKNOWN_BOX,
+    },
 };
 
 const ASSERTION_CREATION_VERSION: usize = 1;
@@ -153,33 +155,24 @@ fn split_exclusions(
     // falling back to always-reject.
     debug_assert_eq!(box_ranges.len(), box_kinds.len());
 
-    let entry_end = entry_start
-        .checked_add(entry_len)
-        .ok_or_else(|| Error::HashMismatch("box hash entry range overflow".to_string()))?;
+    // Structural problems with the exclusions array itself (bad/missing
+    // boxIndex, overflow, unordered ranges) are spec §15.12.3's
+    // `assertion.boxesHash.malformed`, not a hash/content mismatch.
+    let malformed = || Error::C2PAValidation(ASSERTION_BOXESHASH_MALFORMED.to_string());
+
+    let entry_end = entry_start.checked_add(entry_len).ok_or_else(malformed)?;
 
     let mut abs_ranges: Vec<(u64, u64)> = Vec::with_capacity(exclusions.len());
     let mut metadata_used = false;
     for excl in exclusions {
         let box_index = match excl.box_index {
-            Some(idx) if idx >= 0 => usize::try_from(idx).map_err(|_| {
-                Error::HashMismatch("box hash exclusion boxIndex out of range".to_string())
-            })?,
-            Some(_) => {
-                return Err(Error::HashMismatch(
-                    "box hash exclusion has a negative boxIndex".to_string(),
-                ))
-            }
+            Some(idx) if idx >= 0 => usize::try_from(idx).map_err(|_| malformed())?,
+            Some(_) => return Err(malformed()),
             None if box_ranges.len() == 1 => 0,
-            None => {
-                return Err(Error::HashMismatch(
-                    "box hash exclusion missing required boxIndex".to_string(),
-                ))
-            }
+            None => return Err(malformed()),
         };
 
-        let (box_start, box_len) = box_ranges.get(box_index).ok_or_else(|| {
-            Error::HashMismatch("box hash exclusion boxIndex out of range".to_string())
-        })?;
+        let (box_start, box_len) = box_ranges.get(box_index).ok_or_else(malformed)?;
 
         match box_kinds.get(box_index).copied().unwrap_or_default() {
             BoxKind::Content | BoxKind::Unknown => {
@@ -192,10 +185,7 @@ fn split_exclusions(
             BoxKind::C2pa => {}
         }
 
-        let excl_end = excl
-            .start
-            .checked_add(excl.length)
-            .ok_or_else(|| Error::HashMismatch("box hash exclusion range overflow".to_string()))?;
+        let excl_end = excl.start.checked_add(excl.length).ok_or_else(malformed)?;
 
         // Spec: an exclusion range ending past the end of its own box is a
         // content mismatch, not a structural malformation.
@@ -205,12 +195,8 @@ fn split_exclusions(
             ));
         }
 
-        let abs_start = box_start
-            .checked_add(excl.start)
-            .ok_or_else(|| Error::HashMismatch("box hash exclusion range overflow".to_string()))?;
-        let abs_end = box_start
-            .checked_add(excl_end)
-            .ok_or_else(|| Error::HashMismatch("box hash exclusion range overflow".to_string()))?;
+        let abs_start = box_start.checked_add(excl.start).ok_or_else(malformed)?;
+        let abs_end = box_start.checked_add(excl_end).ok_or_else(malformed)?;
 
         abs_ranges.push((abs_start, abs_end));
     }
@@ -219,9 +205,7 @@ fn split_exclusions(
     // exclusions to already be in increasing, non-overlapping order.
     for i in 1..abs_ranges.len() {
         if abs_ranges[i - 1].1 > abs_ranges[i].0 {
-            return Err(Error::HashMismatch(
-                "box hash exclusion ranges overlap or are not ordered".to_string(),
-            ));
+            return Err(malformed());
         }
     }
 
@@ -1176,7 +1160,7 @@ mod tests {
         }];
         let result = split_exclusions(&box_ranges, &box_kinds, 0, 20, &exclusions);
         assert!(
-            matches!(&result, Err(Error::HashMismatch(msg)) if msg.contains("missing required boxIndex")),
+            matches!(&result, Err(Error::C2PAValidation(s)) if s == ASSERTION_BOXESHASH_MALFORMED),
             "unexpected result: {result:?}"
         );
     }
@@ -1192,7 +1176,7 @@ mod tests {
         }];
         let result = split_exclusions(&box_ranges, &box_kinds, 0, 10, &exclusions);
         assert!(
-            matches!(&result, Err(Error::HashMismatch(msg)) if msg.contains("boxIndex out of range")),
+            matches!(&result, Err(Error::C2PAValidation(s)) if s == ASSERTION_BOXESHASH_MALFORMED),
             "unexpected result: {result:?}"
         );
     }
@@ -1208,7 +1192,7 @@ mod tests {
         }];
         let result = split_exclusions(&box_ranges, &box_kinds, 0, 10, &exclusions);
         assert!(
-            matches!(&result, Err(Error::HashMismatch(msg)) if msg.contains("negative boxIndex")),
+            matches!(&result, Err(Error::C2PAValidation(s)) if s == ASSERTION_BOXESHASH_MALFORMED),
             "unexpected result: {result:?}"
         );
     }
@@ -1247,7 +1231,7 @@ mod tests {
         ];
         let result = split_exclusions(&box_ranges, &box_kinds, 0, 20, &exclusions);
         assert!(
-            matches!(&result, Err(Error::HashMismatch(msg)) if msg.contains("overlap or are not ordered")),
+            matches!(&result, Err(Error::C2PAValidation(s)) if s == ASSERTION_BOXESHASH_MALFORMED),
             "unexpected result: {result:?}"
         );
     }
@@ -1273,7 +1257,7 @@ mod tests {
         ];
         let result = split_exclusions(&box_ranges, &box_kinds, 0, 20, &exclusions);
         assert!(
-            matches!(&result, Err(Error::HashMismatch(msg)) if msg.contains("overlap or are not ordered")),
+            matches!(&result, Err(Error::C2PAValidation(s)) if s == ASSERTION_BOXESHASH_MALFORMED),
             "unexpected result: {result:?}"
         );
     }
