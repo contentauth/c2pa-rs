@@ -5,14 +5,20 @@ version = 1
 
 # # Trust settings for certificate validation.
 # [trust]
-# # String to user-provided trust anchors (PEM format).
-# user_anchors = ""
-# # String to system trust anchors (PEM format).
-# trust_anchors = ""
 # # String to trust configuration.
 # trust_config = ""
 # # Path to allowed certificate list (PEM format).
 # allowed_list = ""
+#
+# # Trust anchors used to validate certificates. Repeat this table to
+# # configure multiple independent trust lists.
+# [[trust.anchors]]
+# # PEM bundle of trust anchor certificates.
+# trust_anchors = ""
+# # URI identifier for this trust list. If omitted, one is generated automatically.
+# trust_uri = ""
+# # Kind of trust list: "signer", "tsa", or "cawg". Defaults to "signer".
+# trust_kind = "signer"
 
 # Verification settings.
 [verify]

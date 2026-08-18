@@ -16,6 +16,10 @@ trust_config = """
 // c2pa-kp-claimSigning
 1.3.6.1.4.1.62558.2.1
 """
+
+[[trust.anchors]]
+trust_uri = "https://cai.org/cawg_test_settings_trust_list"
+trust_kind = "signer"
 trust_anchors = """
 -----BEGIN CERTIFICATE-----
 MIICEzCCAcWgAwIBAgIUW4fUnS38162x10PCnB8qFsrQuZgwBQYDK2VwMHcxCzAJ
