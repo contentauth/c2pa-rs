@@ -75,7 +75,6 @@ use crate::{
     resource_store::UriOrResource,
     salt::{DefaultSalt, SaltGenerator},
     settings::{Settings, MAX_ASSERTIONS},
-    spec_versions::C2PA_GENERATOR_VERSION,
     status_tracker::{ErrorBehavior, StatusTracker},
     store::StoreValidationInfo,
     utils::hash_utils::{hash_by_alg, vec_compare},
@@ -469,7 +468,7 @@ impl Claim {
             created_assertions: Vec::new(),
             gathered_assertions: None,
             context: None,
-            spec_version: Some(C2PA_GENERATOR_VERSION.to_string()),
+            spec_version: None,
         }
     }
 
@@ -571,7 +570,7 @@ impl Claim {
             created_assertions: Vec::new(),
             gathered_assertions: None,
             context: None,
-            spec_version: Some(C2PA_GENERATOR_VERSION.to_string()),
+            spec_version: None,
         })
     }
 
@@ -1253,6 +1252,10 @@ impl Claim {
 
     pub fn spec_version(&self) -> Option<&String> {
         self.spec_version.as_ref()
+    }
+
+    pub fn set_spec_version(&mut self, spec_version: Option<String>) {
+        self.spec_version = spec_version;
     }
 
     pub fn add_claim_generator_hint(&mut self, hint_key: &str, hint_value: Value) {
