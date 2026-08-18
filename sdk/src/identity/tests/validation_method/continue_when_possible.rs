@@ -21,9 +21,9 @@ use c2pa_macros::c2pa_test_async;
 use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::{
-    crypto::raw_signature::SigningAlg,
     identity::{x509::X509SignatureVerifier, IdentityAssertion},
     status_tracker::{LogKind, StatusTracker},
+    SigningAlg,
 };
 
 /// An identity assertion MUST contain a valid CBOR data structure that contains

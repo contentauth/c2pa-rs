@@ -5,9 +5,16 @@
 
 # Gating (see docs/support-tiers.md and docs/release-process.md): Tier 1B runs
 # automatically on any PR whose base is a release-line (`stable`, `v0.*`) or
-# release-candidate (`*-rc.*`) branch -- this includes backport PRs and the
+# release-candidate (`*-rc*`) branch -- this includes backport PRs and the
 # release-plz release PR. For a PR against `main`, add the "check-release" label
 # to run this suite on demand.
+#
+# Fork-PR trust is handled by GitHub's "Fork pull request workflows from outside
+# collaborators" Actions setting (see tier-1a.yml), not by this workflow, so the
+# `authorize` job below only decides scope. A `labeled` event fires for every
+# label, so the scope decision also ignores label events unless the label added
+# is one that can bring a PR into scope (`release`/`check-release`); this keeps
+# an unrelated label (e.g. `backport-stable`) from restarting the suite.
 
 name: Tier 1B
 
@@ -28,14 +35,27 @@ on:
   # per-job `if:` conditions below also accept `github.event_name == 'push'`.)
   push:
     branches:
-      - '*-rc.*'
+      - '*-rc*'
 
 jobs:
+  authorize:
+    name: Authorize CI run
+    runs-on: ubuntu-latest
+    outputs:
+      run-suite: ${{ steps.decide.outputs.run-suite }}
+    steps:
+      - name: Determine whether to run the Tier 1B suite
+        id: decide
+        run: |
+          echo "run-suite=${{ (github.event_name == 'push' || github.event_name == 'schedule' || github.event.pull_request.base.ref == 'stable' || startsWith(github.event.pull_request.base.ref, 'v0.') || contains(github.event.pull_request.base.ref, '-rc') || contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')) && (github.event.action != 'labeled' || contains(fromJSON('["release", "check-release"]'), github.event.label.name)) }}" >> "$GITHUB_OUTPUT"
+
   get-features:
     name: Get features
+    needs: authorize
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event.pull_request.base.ref == 'stable' || startsWith(github.event.pull_request.base.ref, 'v0.') || contains(github.event.pull_request.base.ref, '-rc.') || contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    if: needs.authorize.outputs.run-suite == 'true'
     outputs:
+      features: ${{ steps.get-features.outputs.features }}
       rust-native-features: ${{ steps.get-features.outputs.rust-native-features }}
       openssl-features: ${{ steps.get-features.outputs.openssl-features }}
     steps:
@@ -50,17 +70,23 @@ jobs:
       - name: Get all features
         id: get-features
         run: |
-          FEATURES=$(cargo metadata --format-version=1 | jq -r '[.packages[] | select(.name=="c2pa") | .features | keys | map(select(. != "default")) | .[]] | unique | join(" ")')
+          # Experimental (`unstable_`) features are deliberately excluded from
+          # the required suite: they sit outside the SDK's normal support
+          # commitments and must not gate main or the release branches. They are
+          # exercised separately by the non-blocking experimental-features.yml.
+          # See docs/experimental-features.md.
+          FEATURES=$(cargo metadata --format-version=1 | jq -r '[.packages[] | select(.name=="c2pa") | .features | keys | map(select(. != "default" and (startswith("unstable_") | not))) | .[]] | unique | join(" ")')
 
           RUST_NATIVE_FEATURES=$(echo $FEATURES | sed 's/openssl//g')
           OPENSSL_FEATURES=$(echo $FEATURES | sed 's/rust_native_crypto//g')
+          echo "features=$FEATURES" >> "$GITHUB_OUTPUT"
           echo "rust-native-features=$RUST_NATIVE_FEATURES" >> "$GITHUB_OUTPUT"
           echo "openssl-features=$OPENSSL_FEATURES" >> "$GITHUB_OUTPUT"
 
   tests-openssl:
     name: Unit tests (with OpenSSL installed)
-    needs: get-features
-    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event.pull_request.base.ref == 'stable' || startsWith(github.event.pull_request.base.ref, 'v0.') || contains(github.event.pull_request.base.ref, '-rc.') || contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    needs: [authorize, get-features]
+    if: needs.authorize.outputs.run-suite == 'true'
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -90,8 +116,8 @@ jobs:
 
   tests-rust-native-crypto:
     name: Unit tests (with Rust native crypto installed)
-    needs: get-features
-    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event.pull_request.base.ref == 'stable' || startsWith(github.event.pull_request.base.ref, 'v0.') || contains(github.event.pull_request.base.ref, '-rc.') || contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    needs: [authorize, get-features]
+    if: needs.authorize.outputs.run-suite == 'true'
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -121,8 +147,8 @@ jobs:
 
   tests-cross:
     name: Unit tests
-    needs: get-features
-    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event.pull_request.base.ref == 'stable' || startsWith(github.event.pull_request.base.ref, 'v0.') || contains(github.event.pull_request.base.ref, '-rc.') || contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    needs: [authorize, get-features]
+    if: needs.authorize.outputs.run-suite == 'true'
     runs-on: ubuntu-latest
 
     strategy:
@@ -158,8 +184,8 @@ jobs:
 
   test-direct-minimal-versions:
     name: Unit tests with minimum versions of direct dependencies
-    needs: get-features
-    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event.pull_request.base.ref == 'stable' || startsWith(github.event.pull_request.base.ref, 'v0.') || contains(github.event.pull_request.base.ref, '-rc.') || contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    needs: [authorize, get-features]
+    if: needs.authorize.outputs.run-suite == 'true'
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -187,8 +213,8 @@ jobs:
 
   unused_deps:
     name: Check for unused dependencies
-    needs: get-features
-    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event.pull_request.base.ref == 'stable' || startsWith(github.event.pull_request.base.ref, 'v0.') || contains(github.event.pull_request.base.ref, '-rc.') || contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')
+    needs: [authorize, get-features]
+    if: needs.authorize.outputs.run-suite == 'true'
     runs-on: ubuntu-latest
 
     permissions:
@@ -201,7 +227,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
-          toolchain: nightly-2025-12-06
+          toolchain: nightly-2026-07-12
           # Pinning to specific nightly build for now. More recent versions
           # introduce a lifetime check that creates a whole slew of build
           # errors.
@@ -210,7 +236,10 @@ jobs:
         uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
 
       - name: Install cargo-udeps
-        run: cargo binstall --no-confirm cargo-udeps
+        run: cargo binstall --no-confirm cargo-udeps@0.1.61
 
+      # Experimental (`unstable_`) features are excluded (see get-features); an
+      # unstable-only optional dependency stays unactivated and so is never
+      # miscounted as unused here.
       - name: Run cargo-udeps
-        run: cargo udeps --all-targets --all-features
+        run: cargo udeps --all-targets --features "${{ needs.get-features.outputs.features }}"

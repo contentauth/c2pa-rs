@@ -2,7 +2,7 @@ name: Upstream-first check
 
 # Proactive guard for the upstream-first rule (see docs/release-process.md):
 # every change must land on `main` before it is brought onto a release-line
-# (`stable`, `v0.*`) or release-candidate (`*-rc.*`) branch. This blocks a PR to
+# (`stable`, `v0.*`) or release-candidate (`*-rc*`) branch. This blocks a PR to
 # such a branch if it introduces a commit whose change is not already present on
 # `main`, so drift is prevented rather than merely detected after the fact.
 #
@@ -24,7 +24,7 @@ on:
     branches:
       - stable
       - 'v0.*'
-      - '*-rc.*'
+      - '*-rc*'
     types: [opened, reopened, synchronize, labeled, unlabeled]
 
 permissions:

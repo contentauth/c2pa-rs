@@ -25,7 +25,7 @@ use crate::{
 
 /// Check to see if this a label whose string can vary, if so return the root of the label and version if available
 fn get_mutable_label(var_label: &str) -> (String, Option<usize>) {
-    if var_label.starts_with(labels::SCHEMA_ORG) {
+    if var_label.starts_with(labels::SCHEMA_ORG_INTERNAL) {
         (var_label.to_string(), None)
     } else {
         // is it a type of thumbnail

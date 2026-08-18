@@ -13,11 +13,15 @@ on:
     branches:
       - stable
       - 'v0.*'
-      - '*-rc.*'
+      - '*-rc*'
 
 jobs:
   check:
     name: No patch/git dependencies
+
+    # Fork-PR trust is enforced by GitHub's "Fork pull request workflows from
+    # outside collaborators" Actions setting (see tier-1a.yml), not in this
+    # workflow; `workflow_call` invocations run unconditionally.
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
