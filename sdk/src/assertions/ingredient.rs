@@ -445,11 +445,6 @@ impl Ingredient {
                 "Ingredient v3 activeManifest and validationResults must both be present or absent",
             ));
         }
-        if self.active_manifest.is_some() && self.digital_source_type.is_some() {
-            return Err(serde::ser::Error::custom(
-                "Ingredient v3 digitalSourceType cannot be combined with activeManifest",
-            ));
-        }
 
         let mut ingredient_map_len = 1;
         if self.title.is_some() {
@@ -1167,30 +1162,6 @@ pub mod tests {
         let assertion = ingredient.to_assertion().unwrap();
         let decoded = Ingredient::from_assertion(&assertion).unwrap();
         assert_eq!(ingredient.digital_source_type, decoded.digital_source_type);
-    }
-
-    #[test]
-    fn test_digital_source_type_conflicts_with_active_manifest() {
-        let ingredient = Ingredient {
-            digital_source_type: Some(DigitalSourceType::TrainedAlgorithmicData),
-            active_manifest: Some(HashedUri::new(
-                "self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(),
-                Some("sha256".to_owned()),
-                &[1, 2, 3, 4, 5, 6, 7, 8, 9, 0],
-            )),
-            validation_results: Some(ValidationResults::default()),
-            claim_signature: Some(HashedUri::new(
-                "self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.signature"
-                    .to_owned(),
-                Some("sha256".to_owned()),
-                &[1, 2, 3, 4, 5, 6, 7, 8, 9, 0],
-            )),
-            relationship: Relationship::InputTo,
-            version: 3,
-            ..Default::default()
-        };
-
-        assert!(ingredient.to_assertion().is_err());
     }
 
     #[test]
