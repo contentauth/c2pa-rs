@@ -31,7 +31,7 @@ use crate::{
 /// and COSE signatures].
 ///
 /// [`SignatureVerifier`]: crate::identity::SignatureVerifier
-/// [§8.2, X.509 certificates and COSE signatures]: https://cawg.io/identity/1.1-draft/#_x_509_certificates_and_cose_signatures
+/// [§8.2, X.509 certificates and COSE signatures]: https://cawg.io/identity/1.3/#_x_509_certificates_and_cose_signatures
 #[derive(Debug, Default)]
 pub struct X509SignatureVerifier<'a> {
     /// Describes the verification policy to use for COSE signatures.
@@ -70,24 +70,52 @@ impl SignatureVerifier for X509SignatureVerifier<'_> {
         c2pa_cbor::to_writer(&mut signer_payload_cbor, signer_payload)
             .map_err(|_| ValidationError::InternalError("CBOR serialization error".to_string()))?;
 
-        let cose_sign1 = parse_cose_sign1(signature, &signer_payload_cbor, status_tracker)?;
+        let first_new_item = status_tracker.logged_items().len();
 
-        let cert_info = self
-            .cose_verifier
-            .verify_signature(signature, &signer_payload_cbor, &[], None, status_tracker)
-            .map_err(|e| match e {
-                CoseError::RawSignatureValidationError(
-                    RawSignatureValidationError::SignatureMismatch,
-                ) => ValidationError::SignatureMismatch,
+        let result = match parse_cose_sign1(signature, &signer_payload_cbor, status_tracker) {
+            Ok(cose_sign1) => self
+                .cose_verifier
+                .verify_signature(signature, &signer_payload_cbor, &[], None, status_tracker)
+                .map_err(|e| match e {
+                    CoseError::RawSignatureValidationError(
+                        RawSignatureValidationError::SignatureMismatch,
+                    ) => {
+                        log_current_item!(
+                            "signature mismatch",
+                            "X509SignatureVerifier::check_signature"
+                        )
+                        .validation_status("cawg.x509.signature.mismatch")
+                        .failure_no_throw(
+                            status_tracker,
+                            ValidationError::<CoseError>::SignatureMismatch,
+                        );
 
-                e => ValidationError::SignatureError(e),
-            })?;
+                        ValidationError::SignatureMismatch
+                    }
 
-        Ok(X509SignatureInfo {
-            signer_payload: signer_payload.clone(),
-            cose_sign1,
-            cert_info,
-        })
+                    e => ValidationError::SignatureError(e),
+                })
+                .map(|cert_info| X509SignatureInfo {
+                    signer_payload: signer_payload.clone(),
+                    cose_sign1,
+                    cert_info,
+                }),
+
+            Err(e) => Err(e.into()),
+        };
+
+        super::remap_x509_cose_status_codes(status_tracker, first_new_item);
+
+        if result.is_ok() {
+            log_current_item!(
+                "X.509 identity assertion signature validated",
+                "X509SignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.x509.signature.validated")
+            .success(status_tracker);
+        }
+
+        result
     }
 
     async fn check_signature_async(
@@ -116,25 +144,53 @@ impl SignatureVerifier for X509SignatureVerifier<'_> {
         c2pa_cbor::to_writer(&mut signer_payload_cbor, signer_payload)
             .map_err(|_| ValidationError::InternalError("CBOR serialization error".to_string()))?;
 
-        let cose_sign1 = parse_cose_sign1(signature, &signer_payload_cbor, status_tracker)?;
+        let first_new_item = status_tracker.logged_items().len();
 
-        let cert_info = self
-            .cose_verifier
-            .verify_signature_async(signature, &signer_payload_cbor, &[], None, status_tracker)
-            .await
-            .map_err(|e| match e {
-                CoseError::RawSignatureValidationError(
-                    RawSignatureValidationError::SignatureMismatch,
-                ) => ValidationError::SignatureMismatch,
+        let result = match parse_cose_sign1(signature, &signer_payload_cbor, status_tracker) {
+            Ok(cose_sign1) => self
+                .cose_verifier
+                .verify_signature_async(signature, &signer_payload_cbor, &[], None, status_tracker)
+                .await
+                .map_err(|e| match e {
+                    CoseError::RawSignatureValidationError(
+                        RawSignatureValidationError::SignatureMismatch,
+                    ) => {
+                        log_current_item!(
+                            "signature mismatch",
+                            "X509SignatureVerifier::check_signature_async"
+                        )
+                        .validation_status("cawg.x509.signature.mismatch")
+                        .failure_no_throw(
+                            status_tracker,
+                            ValidationError::<CoseError>::SignatureMismatch,
+                        );
 
-                e => ValidationError::SignatureError(e),
-            })?;
+                        ValidationError::SignatureMismatch
+                    }
 
-        Ok(X509SignatureInfo {
-            signer_payload: signer_payload.clone(),
-            cose_sign1,
-            cert_info,
-        })
+                    e => ValidationError::SignatureError(e),
+                })
+                .map(|cert_info| X509SignatureInfo {
+                    signer_payload: signer_payload.clone(),
+                    cose_sign1,
+                    cert_info,
+                }),
+
+            Err(e) => Err(e.into()),
+        };
+
+        super::remap_x509_cose_status_codes(status_tracker, first_new_item);
+
+        if result.is_ok() {
+            log_current_item!(
+                "X.509 identity assertion signature validated",
+                "X509SignatureVerifier::check_signature_async"
+            )
+            .validation_status("cawg.x509.signature.validated")
+            .success(status_tracker);
+        }
+
+        result
     }
 }
 
@@ -291,7 +347,7 @@ mod tests {
         // this should log an error but return Ok
         assert!(result.is_ok());
 
-        assert_eq!(st.logged_items().len(), 1);
+        assert_eq!(st.logged_items().len(), 2);
 
         let log = &st.logged_items()[0];
         assert_eq!(log.kind, LogKind::Failure);
@@ -301,7 +357,23 @@ mod tests {
 
         assert_eq!(
             log.validation_status.as_ref().unwrap().as_ref() as &str,
-            "signingCredential.untrusted"
+            "cawg.x509.credential.untrusted"
+        );
+
+        // The cryptographic signature itself is still valid, independent of
+        // whether the signing certificate is trusted.
+        let log = &st.logged_items()[1];
+        assert_eq!(log.kind, LogKind::Success);
+
+        assert!(log.label.ends_with("/c2pa.assertions/cawg.identity"));
+        assert_eq!(
+            log.description,
+            "X.509 identity assertion signature validated"
+        );
+
+        assert_eq!(
+            log.validation_status.as_ref().unwrap().as_ref() as &str,
+            "cawg.x509.signature.validated"
         );
     }
 }

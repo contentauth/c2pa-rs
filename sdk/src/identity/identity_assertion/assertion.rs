@@ -36,7 +36,7 @@ use crate::{
             signer_payload::SignerPayload,
         },
         internal::debug_byte_slice::DebugByteSlice,
-        x509::X509SignatureInfo,
+        x509::{remap_x509_cose_status_codes, X509SignatureInfo},
         SignatureVerifier, ToCredentialSummary, ValidationError,
     },
     jumbf::labels::to_assertion_uri,
@@ -346,35 +346,67 @@ impl IdentityAssertion {
                 ValidationError::InternalError("CBOR serialization error".to_string())
             })?;
 
-            let cose_sign1 =
-                parse_cose_sign1(&self.signature, &signer_payload_cbor, status_tracker)
-                    .map_err(|e| ValidationError::SignatureError(e.to_string()))?;
+            let first_new_item = status_tracker.logged_items().len();
 
-            let cert_info = if _sync {
-                cose_verifier.verify_signature(
-                    &self.signature,
-                    &signer_payload_cbor,
-                    &[],
-                    None,
-                    status_tracker,
-                )
-            } else {
-                cose_verifier
-                    .verify_signature_async(
-                        &self.signature,
-                        &signer_payload_cbor,
-                        &[],
-                        None,
-                        status_tracker,
-                    )
-                    .await
-            }
-            .map_err(|e| match e {
-                CoseError::RawSignatureValidationError(
-                    RawSignatureValidationError::SignatureMismatch,
-                ) => ValidationError::SignatureMismatch,
-                e => ValidationError::SignatureError(e.to_string()),
-            })?;
+            let signature_result =
+                match parse_cose_sign1(&self.signature, &signer_payload_cbor, status_tracker) {
+                    Ok(cose_sign1) => {
+                        let verify_result = if _sync {
+                            cose_verifier.verify_signature(
+                                &self.signature,
+                                &signer_payload_cbor,
+                                &[],
+                                None,
+                                status_tracker,
+                            )
+                        } else {
+                            cose_verifier
+                                .verify_signature_async(
+                                    &self.signature,
+                                    &signer_payload_cbor,
+                                    &[],
+                                    None,
+                                    status_tracker,
+                                )
+                                .await
+                        };
+
+                        verify_result
+                            .map(|cert_info| (cose_sign1, cert_info))
+                            .map_err(|e| match e {
+                                CoseError::RawSignatureValidationError(
+                                    RawSignatureValidationError::SignatureMismatch,
+                                ) => {
+                                    log_current_item!(
+                                        "signature mismatch",
+                                        "validate_partial_claim"
+                                    )
+                                    .validation_status("cawg.x509.signature.mismatch")
+                                    .failure_no_throw(
+                                        status_tracker,
+                                        ValidationError::<String>::SignatureMismatch,
+                                    );
+
+                                    ValidationError::SignatureMismatch
+                                }
+
+                                e => ValidationError::SignatureError(e.to_string()),
+                            })
+                    }
+
+                    Err(e) => Err(ValidationError::SignatureError(e.to_string())),
+                };
+
+            remap_x509_cose_status_codes(status_tracker, first_new_item);
+
+            let (cose_sign1, cert_info) = signature_result?;
+
+            log_current_item!(
+                "X.509 identity assertion signature validated",
+                "validate_partial_claim"
+            )
+            .validation_status("cawg.x509.signature.validated")
+            .success(status_tracker);
 
             let info = X509SignatureInfo {
                 signer_payload: self.signer_payload.clone(),
