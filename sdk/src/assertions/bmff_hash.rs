@@ -1502,10 +1502,24 @@ impl BmffHash {
                             }
                         }
 
+                        // Look up by `mm.local_id`, the key this group was actually
+                        // inserted under in `split_bmff_merkle_map` (not `track_id`,
+                        // which only coincidentally matches it).
+                        let chunk_bmff_mms = track_to_bmff_merkle_map
+                            .get(&mm.local_id)
+                            .ok_or(Error::HashMismatch("Merkle location not found".to_owned()))?;
+
                         // finalize leaf hashes
                         let mut leaf_hashes = Vec::new();
-                        for chunk_bmff_mm in &track_to_bmff_merkle_map[&(track_id as usize)] {
-                            match chunk_hash_map.remove(&(chunk_bmff_mm.location as u32 + 1)) {
+                        for chunk_bmff_mm in chunk_bmff_mms {
+                            // `location` is attacker-controlled (deserialized from the
+                            // file's uuid merkle box), so both the u32 conversion and the
+                            // +1 must be checked rather than wrapping/panicking.
+                            let chunk_id = u32::try_from(chunk_bmff_mm.location)
+                                .ok()
+                                .and_then(|loc| loc.checked_add(1));
+
+                            match chunk_id.and_then(|id| chunk_hash_map.remove(&id)) {
                                 Some(h) => {
                                     let h = Hasher::finalize(h);
                                     leaf_hashes.push(h);
@@ -1518,7 +1532,7 @@ impl BmffHash {
                             }
                         }
 
-                        for chunk_bmff_mm in &track_to_bmff_merkle_map[&(track_id as usize)] {
+                        for chunk_bmff_mm in chunk_bmff_mms {
                             if chunk_bmff_mm.location >= leaf_hashes.len() {
                                 return Err(Error::HashMismatch(
                                     "BmffMerkleMap location exceeds leaf hash count".to_string(),
@@ -3066,6 +3080,30 @@ mod bmff_hash_tests {
             matches!(err, Error::HashMismatch(_)),
             "unexpected error: {err:?}"
         );
+    }
+
+    /// A `local_id` that exceeds `u32::MAX` but truncates to a real track id
+    /// (here, track 1) must not panic. Before the fix, the group built by
+    /// `split_bmff_merkle_map` was keyed by the full `local_id`, while the
+    /// verify loop looked it back up by the real track's `u32` id widened to
+    /// `usize` - those never match once `local_id > u32::MAX`, so the
+    /// panicking `HashMap` index crashed here. The data is otherwise
+    /// legitimate (the sample truly hashes to `root`), so once the lookup
+    /// uses the same key it was inserted under, verification just succeeds.
+    ///
+    /// Gated to 64-bit targets: on a 32-bit `usize` (wasm32, wasi), a value
+    /// "exceeding `u32::MAX`" can't exist, and the shift below is a
+    /// compile-time overflow rather than a runtime scenario to test.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn timed_media_oversized_local_id_matching_real_track_does_not_panic() {
+        let (file, root) = build_timed_media(b"hello sample data", true);
+        let oversized_local_id = (1usize << 32) | 1; // truncates to the real track id, 1
+        let bmff_hash = tm_assertion(root, oversized_local_id);
+        let mut reader = Cursor::new(file);
+        bmff_hash
+            .verify_stream_hash(&mut reader, Some("sha256"))
+            .expect("oversized-but-consistent local_id should verify, not panic");
     }
 }
 
