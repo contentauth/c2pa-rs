@@ -853,6 +853,7 @@ impl AssetBoxHash for JpegXlIO {
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
                 excluded: None,
+                exclusions: None,
                 pad: ByteBuf::from(Vec::new()),
                 range_start: b.offset,
                 range_len: total,
@@ -873,6 +874,7 @@ impl AssetBoxHash for JpegXlIO {
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
                 excluded: None,
+                exclusions: None,
                 pad: ByteBuf::from(Vec::new()),
                 range_start, // will be patched to correct offset by add_required_jumb_to_stream
                 range_len: 0,

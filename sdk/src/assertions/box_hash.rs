@@ -39,6 +39,31 @@ const ASSERTION_CREATION_VERSION: usize = 1;
 
 pub const C2PA_BOXHASH: &str = "C2PA";
 
+/// A byte range within one of a [`BoxMap`]'s named boxes, excluded from that
+/// entry's hash. See the `box-exclusions-map` CDDL rule for this assertion.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub struct BoxExclusion {
+    /// Offset from the start of the referenced box.
+    pub start: u64,
+    pub length: u64,
+
+    /// 0-based index into [`BoxMap::names`]. Omittable only when `names`
+    /// has one entry. Signed (per CDDL `int`) so a negative wire value is a
+    /// validation error, not a deserialize failure.
+    #[serde(rename = "boxIndex", skip_serializing_if = "Option::is_none")]
+    pub box_index: Option<i64>,
+}
+
+/// A caller-specified byte range to exclude when generating a [`BoxHash`],
+/// targeting the box at `source_box_index` in [`AssetBoxHash::get_box_map`]'s
+/// output (0-based, file order).
+#[derive(Clone, Debug)]
+pub struct BoxHashExclusionRequest {
+    pub source_box_index: usize,
+    pub start: u64,
+    pub length: u64,
+}
+
 #[derive(Serialize, Default, Deserialize, Debug, PartialEq, Eq)]
 pub struct BoxMap {
     pub names: Vec<String>,
@@ -50,6 +75,9 @@ pub struct BoxMap {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub excluded: Option<bool>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exclusions: Option<Vec<BoxExclusion>>,
 
     pub pad: ByteBuf,
 
@@ -76,6 +104,95 @@ impl BoxMap {
         println!("data len: {}, hash: {}", len, Hexlify(&hash));
         Ok(())
     }
+}
+
+/// Resolves `exclusions`' `boxIndex`-relative ranges against `box_ranges`
+/// (the absolute `(start, length)` of each name in a box-hash-map entry, in
+/// order) and returns the ordered sub-ranges of `[entry_start, entry_start +
+/// entry_len)` left to hash once the exclusions are punched out.
+fn split_exclusions(
+    box_ranges: &[(u64, u64)],
+    entry_start: u64,
+    entry_len: u64,
+    exclusions: &[BoxExclusion],
+) -> Result<Vec<HashRange>> {
+    let entry_end = entry_start
+        .checked_add(entry_len)
+        .ok_or_else(|| Error::HashMismatch("box hash entry range overflow".to_string()))?;
+
+    let mut abs_ranges: Vec<(u64, u64)> = Vec::with_capacity(exclusions.len());
+    for excl in exclusions {
+        let box_index = match excl.box_index {
+            Some(idx) if idx >= 0 => idx as usize,
+            Some(_) => {
+                return Err(Error::HashMismatch(
+                    "box hash exclusion has a negative boxIndex".to_string(),
+                ))
+            }
+            None if box_ranges.len() == 1 => 0,
+            None => {
+                return Err(Error::HashMismatch(
+                    "box hash exclusion missing required boxIndex".to_string(),
+                ))
+            }
+        };
+
+        let (box_start, box_len) = box_ranges.get(box_index).ok_or_else(|| {
+            Error::HashMismatch("box hash exclusion boxIndex out of range".to_string())
+        })?;
+
+        let excl_end = excl
+            .start
+            .checked_add(excl.length)
+            .ok_or_else(|| Error::HashMismatch("box hash exclusion range overflow".to_string()))?;
+
+        // Spec: an exclusion range ending past the end of its own box is a
+        // content mismatch, not a structural malformation.
+        if excl_end > *box_len {
+            return Err(Error::HashMismatch(
+                "box hash exclusion range extends beyond the end of its box".to_string(),
+            ));
+        }
+
+        let abs_start = box_start
+            .checked_add(excl.start)
+            .ok_or_else(|| Error::HashMismatch("box hash exclusion range overflow".to_string()))?;
+        let abs_end = box_start
+            .checked_add(excl_end)
+            .ok_or_else(|| Error::HashMismatch("box hash exclusion range overflow".to_string()))?;
+
+        abs_ranges.push((abs_start, abs_end));
+    }
+
+    abs_ranges.sort_by_key(|r| r.0);
+    for i in 1..abs_ranges.len() {
+        if abs_ranges[i - 1].1 > abs_ranges[i].0 {
+            return Err(Error::HashMismatch(
+                "box hash exclusion ranges overlap or are not ordered".to_string(),
+            ));
+        }
+    }
+
+    let mut ranges = Vec::new();
+    let mut cursor = entry_start;
+    for (abs_start, abs_end) in abs_ranges {
+        if abs_start > cursor {
+            ranges.push(HashRange::new(cursor, abs_start - cursor));
+        }
+        cursor = abs_end.max(cursor);
+    }
+    if cursor < entry_end {
+        ranges.push(HashRange::new(cursor, entry_end - cursor));
+    }
+
+    // An empty Vec (the whole entry excluded) would make
+    // `hash_stream_by_alg_with_progress` fall back to hashing the entire
+    // stream, so keep an explicit zero-length range instead.
+    if ranges.is_empty() {
+        ranges.push(HashRange::new(entry_start, 0));
+    }
+
+    Ok(ranges)
 }
 
 /// Helper class to create BoxHash assertion
@@ -155,13 +272,14 @@ impl BoxHash {
         };
 
         for bm in &self.boxes {
-            let mut inclusions = Vec::new();
-
             let mut skip_c2pa = false;
             let mut inclusion = HashRange::new(0u64, 0u64);
+            let mut box_ranges: Vec<(u64, u64)> = Vec::with_capacity(bm.names.len());
             for name in &bm.names {
                 match source_bms.get(source_index) {
                     Some(next_source_bm) if name == &next_source_bm.names[0] => {
+                        box_ranges.push((next_source_bm.range_start, next_source_bm.range_len));
+
                         if inclusion.length() == 0 {
                             inclusion.set_start(next_source_bm.range_start);
                             inclusion.set_length(next_source_bm.range_len);
@@ -198,7 +316,12 @@ impl BoxHash {
                 continue;
             }
 
-            inclusions.push(inclusion);
+            let inclusions = match &bm.exclusions {
+                Some(excl) if !excl.is_empty() => {
+                    split_exclusions(&box_ranges, inclusion.start(), inclusion.length(), excl)?
+                }
+                _ => vec![inclusion],
+            };
 
             let curr_alg = match &bm.alg {
                 Some(a) => a.clone(),
@@ -248,6 +371,55 @@ impl BoxHash {
         alg: &str,
         bhp: &dyn AssetBoxHash,
         minimal_form: bool,
+        progress: F,
+    ) -> Result<()>
+    where
+        R: Read + Seek + MaybeSend,
+        F: FnMut(u32, u32) -> Result<()>,
+    {
+        self.generate_box_hash_from_stream_with_progress_and_exclusions(
+            reader,
+            alg,
+            bhp,
+            minimal_form,
+            &[],
+            progress,
+        )
+    }
+
+    /// Like [`generate_box_hash_from_stream`], but `exclusion_requests` carves byte
+    /// ranges out of specific source boxes' hashes, producing a spec-conformant
+    /// `exclusions` field (see [`BoxExclusion`]) on the resulting entries.
+    pub fn generate_box_hash_from_stream_with_exclusions<R>(
+        &mut self,
+        reader: &mut R,
+        alg: &str,
+        bhp: &dyn AssetBoxHash,
+        minimal_form: bool,
+        exclusion_requests: &[BoxHashExclusionRequest],
+    ) -> Result<()>
+    where
+        R: Read + Seek + MaybeSend,
+    {
+        self.generate_box_hash_from_stream_with_progress_and_exclusions(
+            reader,
+            alg,
+            bhp,
+            minimal_form,
+            exclusion_requests,
+            |_, _| Ok(()),
+        )
+    }
+
+    /// Like [`generate_box_hash_from_stream_with_exclusions`] but fires
+    /// `progress(step, total)` once per hashed box.
+    pub(crate) fn generate_box_hash_from_stream_with_progress_and_exclusions<R, F>(
+        &mut self,
+        reader: &mut R,
+        alg: &str,
+        bhp: &dyn AssetBoxHash,
+        minimal_form: bool,
+        exclusion_requests: &[BoxHashExclusionRequest],
         mut progress: F,
     ) -> Result<()>
     where
@@ -263,16 +435,20 @@ impl BoxHash {
                 alg: Some(alg.to_string()),
                 hash: ByteBuf::from(vec![]),
                 excluded: None,
+                exclusions: None,
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 0,
             };
+            let mut before_c2pa_ranges: Vec<(u64, u64)> = Vec::new();
+            let mut before_c2pa_exclusions: Vec<BoxExclusion> = Vec::new();
 
             let mut c2pa_box = BoxMap {
                 names: Vec::new(),
                 alg: Some(alg.to_string()),
                 hash: ByteBuf::from(vec![]),
                 excluded: None,
+                exclusions: None,
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 0,
@@ -283,15 +459,18 @@ impl BoxHash {
                 alg: Some(alg.to_string()),
                 hash: ByteBuf::from(vec![]),
                 excluded: None,
+                exclusions: None,
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 0,
             };
+            let mut after_c2pa_ranges: Vec<(u64, u64)> = Vec::new();
+            let mut after_c2pa_exclusions: Vec<BoxExclusion> = Vec::new();
 
             let mut is_before_c2pa = true;
 
             // collapse map list to minimal set
-            for bm in source_bms.into_iter() {
+            for (source_index, bm) in source_bms.into_iter().enumerate() {
                 if bm.names[0] == "C2PA" {
                     // there should only be 1 collapsed C2PA range
                     if bm.names.len() != 1 {
@@ -303,50 +482,85 @@ impl BoxHash {
                     continue;
                 }
 
-                if is_before_c2pa {
-                    before_c2pa.names.extend(bm.names);
-                    if before_c2pa.range_len == 0 {
-                        before_c2pa.range_start = bm.range_start;
-                        before_c2pa.range_len = bm.range_len;
-                    } else {
-                        before_c2pa.range_len += bm.range_len;
-                    }
+                let (group, group_ranges, group_exclusions) = if is_before_c2pa {
+                    (
+                        &mut before_c2pa,
+                        &mut before_c2pa_ranges,
+                        &mut before_c2pa_exclusions,
+                    )
                 } else {
-                    after_c2pa.names.extend(bm.names);
-                    if after_c2pa.range_len == 0 {
-                        after_c2pa.range_start = bm.range_start;
-                        after_c2pa.range_len = bm.range_len;
-                    } else {
-                        after_c2pa.range_len += bm.range_len;
+                    (
+                        &mut after_c2pa,
+                        &mut after_c2pa_ranges,
+                        &mut after_c2pa_exclusions,
+                    )
+                };
+
+                // `names` and `group_ranges` grow in lockstep, so this box's
+                // position in `group_ranges` (before pushing) is also its
+                // future position in `group.names` - i.e. its `boxIndex`.
+                let box_index_in_group = group_ranges.len();
+                group_ranges.push((bm.range_start, bm.range_len));
+                for req in exclusion_requests {
+                    if req.source_box_index == source_index {
+                        group_exclusions.push(BoxExclusion {
+                            start: req.start,
+                            length: req.length,
+                            box_index: Some(box_index_in_group as i64),
+                        });
                     }
                 }
+
+                if group.range_len == 0 {
+                    group.range_start = bm.range_start;
+                    group.range_len = bm.range_len;
+                } else {
+                    group.range_len += bm.range_len;
+                }
+                group.names.extend(bm.names);
+            }
+
+            if !before_c2pa_exclusions.is_empty() {
+                before_c2pa.exclusions = Some(before_c2pa_exclusions);
+            }
+            if !after_c2pa_exclusions.is_empty() {
+                after_c2pa.exclusions = Some(after_c2pa_exclusions);
             }
 
             // Instead of assuming we can combine all of the different ranges of
             // box hashes, we will check the bounds of each one
             let mut boxes = Vec::<BoxMap>::new();
+            let mut boxes_ranges = Vec::<Vec<(u64, u64)>>::new();
             // Only add if we have some before the C2PA box
             if before_c2pa.range_len > 0 {
+                boxes_ranges.push(before_c2pa_ranges);
                 boxes.push(before_c2pa);
             }
             // Do the same for the actual C2PA box
             if c2pa_box.range_len > 0 {
+                boxes_ranges.push(vec![(c2pa_box.range_start, c2pa_box.range_len)]);
                 boxes.push(c2pa_box);
             }
             // And finally, add the boxes after the C2PA box
             if after_c2pa.range_len > 0 {
+                boxes_ranges.push(after_c2pa_ranges);
                 boxes.push(after_c2pa);
             }
             self.boxes = boxes;
 
             // compute the hashes
-            for bm in self.boxes.iter_mut() {
+            for (bm, box_ranges) in self.boxes.iter_mut().zip(boxes_ranges.iter()) {
                 // skip c2pa box
                 if bm.names[0] == C2PA_BOXHASH {
                     continue;
                 }
 
-                let inclusions = vec![HashRange::new(bm.range_start, bm.range_len)];
+                let inclusions = match &bm.exclusions {
+                    Some(excl) if !excl.is_empty() => {
+                        split_exclusions(box_ranges, bm.range_start, bm.range_len, excl)?
+                    }
+                    _ => vec![HashRange::new(bm.range_start, bm.range_len)],
+                };
                 bm.hash = ByteBuf::from(hash_stream_by_alg_with_progress(
                     alg,
                     reader,
@@ -356,7 +570,7 @@ impl BoxHash {
                 )?);
             }
         } else {
-            for mut bm in source_bms {
+            for (source_index, mut bm) in source_bms.into_iter().enumerate() {
                 if bm.names[0] == "C2PA" {
                     // there should only be 1 collapsed C2PA range
                     if bm.names.len() != 1 {
@@ -368,7 +582,23 @@ impl BoxHash {
                     continue;
                 }
 
-                let inclusions = vec![HashRange::new(bm.range_start, bm.range_len)];
+                let box_ranges = [(bm.range_start, bm.range_len)];
+                let exclusions: Vec<BoxExclusion> = exclusion_requests
+                    .iter()
+                    .filter(|req| req.source_box_index == source_index)
+                    .map(|req| BoxExclusion {
+                        start: req.start,
+                        length: req.length,
+                        box_index: None,
+                    })
+                    .collect();
+
+                let inclusions = if exclusions.is_empty() {
+                    vec![HashRange::new(bm.range_start, bm.range_len)]
+                } else {
+                    split_exclusions(&box_ranges, bm.range_start, bm.range_len, &exclusions)?
+                };
+
                 bm.alg = Some(alg.to_string());
                 bm.hash = ByteBuf::from(hash_stream_by_alg_with_progress(
                     alg,
@@ -378,6 +608,11 @@ impl BoxHash {
                     &mut progress,
                 )?);
                 bm.pad = ByteBuf::from(vec![]);
+                bm.exclusions = if exclusions.is_empty() {
+                    None
+                } else {
+                    Some(exclusions)
+                };
                 self.boxes.push(bm);
             }
         }
@@ -583,6 +818,7 @@ mod tests {
                     alg: Some(alg.to_string()),
                     hash: ByteBuf::from(vec![0]),
                     excluded: None,
+                    exclusions: None,
                     pad: ByteBuf::from(vec![]),
                     range_start: 0,
                     range_len: 10,
@@ -593,6 +829,7 @@ mod tests {
                     alg: Some(alg.to_string()),
                     hash: ByteBuf::from(vec![0]),
                     excluded: None,
+                    exclusions: None,
                     pad: ByteBuf::from(vec![]),
                     range_start: 10,
                     range_len: 10,
@@ -630,6 +867,7 @@ mod tests {
                     alg: Some(alg.to_string()),
                     hash: ByteBuf::from(vec![0]),
                     excluded: None,
+                    exclusions: None,
                     pad: ByteBuf::from(vec![]),
                     range_start: 0,
                     range_len: 10,
@@ -640,6 +878,7 @@ mod tests {
                     alg: Some(alg.to_string()),
                     hash: ByteBuf::from(vec![0]),
                     excluded: None,
+                    exclusions: None,
                     pad: ByteBuf::from(vec![]),
                     range_start: 10,
                     range_len: 10,
@@ -677,6 +916,7 @@ mod tests {
                     alg: Some(alg.to_string()),
                     hash: ByteBuf::from(vec![0]),
                     excluded: None,
+                    exclusions: None,
                     pad: ByteBuf::from(vec![]),
                     range_start: 0,
                     range_len: 10,
@@ -687,6 +927,7 @@ mod tests {
                     alg: Some(alg.to_string()),
                     hash: ByteBuf::from(vec![0]),
                     excluded: None,
+                    exclusions: None,
                     pad: ByteBuf::from(vec![]),
                     range_start: 10,
                     range_len: 10,
@@ -696,6 +937,7 @@ mod tests {
                     alg: Some(alg.to_string()),
                     hash: ByteBuf::from(vec![0]),
                     excluded: None,
+                    exclusions: None,
                     pad: ByteBuf::from(vec![]),
                     range_start: 20,
                     range_len: 10,
@@ -734,6 +976,7 @@ mod tests {
                 alg: Some("sha256".to_string()),
                 hash: ByteBuf::from(vec![0]),
                 excluded: None,
+                exclusions: None,
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 0,
@@ -742,5 +985,232 @@ mod tests {
 
         // This shouldn't crash.
         let _ = malicious_bh.verify_stream_hash(&mut input, Some("sha256"), bhp);
+    }
+
+    #[test]
+    fn test_exclusions_round_trip() {
+        let bm = BoxMap {
+            names: vec!["AAAA".to_string(), "BBBB".to_string()],
+            alg: Some("sha256".to_string()),
+            hash: ByteBuf::from(vec![1, 2, 3]),
+            excluded: None,
+            exclusions: Some(vec![
+                BoxExclusion {
+                    start: 3,
+                    length: 2,
+                    box_index: Some(0),
+                },
+                BoxExclusion {
+                    start: 2,
+                    length: 3,
+                    box_index: Some(1),
+                },
+            ]),
+            pad: ByteBuf::from(vec![]),
+            range_start: 0,
+            range_len: 20,
+        };
+        let bh = BoxHash { boxes: vec![bm] };
+
+        let json_assertion = bh.to_json_assertion().unwrap();
+        let from_json = BoxHash::from_json_assertion(&json_assertion).unwrap();
+        assert_eq!(from_json.boxes[0].exclusions, bh.boxes[0].exclusions);
+
+        let cbor_assertion = bh.to_cbor_assertion().unwrap();
+        let from_cbor = BoxHash::from_cbor_assertion(&cbor_assertion).unwrap();
+        assert_eq!(from_cbor.boxes[0].exclusions, bh.boxes[0].exclusions);
+    }
+
+    #[test]
+    fn test_split_exclusions_basic_example() {
+        // box 0: [100, 150), box 1: [150, 230); exclude [110,115) in box 0
+        // and [170,180) in box 1.
+        let box_ranges = [(100u64, 50u64), (150u64, 80u64)];
+        let exclusions = vec![
+            BoxExclusion {
+                start: 10,
+                length: 5,
+                box_index: Some(0),
+            },
+            BoxExclusion {
+                start: 20,
+                length: 10,
+                box_index: Some(1),
+            },
+        ];
+        let ranges = split_exclusions(&box_ranges, 100, 130, &exclusions).unwrap();
+        let simplified: Vec<(u64, u64)> = ranges.iter().map(|r| (r.start(), r.length())).collect();
+        assert_eq!(simplified, vec![(100, 10), (115, 55), (180, 50)]);
+    }
+
+    #[test]
+    fn test_split_exclusions_fully_excluded_entry_does_not_fall_back_to_full_range() {
+        let box_ranges = [(5u64, 10u64)];
+        let exclusions = vec![BoxExclusion {
+            start: 0,
+            length: 10,
+            box_index: None,
+        }];
+        let ranges = split_exclusions(&box_ranges, 5, 10, &exclusions).unwrap();
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0].length(), 0);
+    }
+
+    #[test]
+    fn test_split_exclusions_missing_box_index_with_multiple_boxes() {
+        let box_ranges = [(0u64, 10u64), (10u64, 10u64)];
+        let exclusions = vec![BoxExclusion {
+            start: 0,
+            length: 1,
+            box_index: None,
+        }];
+        let result = split_exclusions(&box_ranges, 0, 20, &exclusions);
+        assert!(
+            matches!(&result, Err(Error::HashMismatch(msg)) if msg.contains("missing required boxIndex")),
+            "unexpected result: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_split_exclusions_out_of_range_box_index() {
+        let box_ranges = [(0u64, 10u64)];
+        let exclusions = vec![BoxExclusion {
+            start: 0,
+            length: 1,
+            box_index: Some(5),
+        }];
+        let result = split_exclusions(&box_ranges, 0, 10, &exclusions);
+        assert!(
+            matches!(&result, Err(Error::HashMismatch(msg)) if msg.contains("boxIndex out of range")),
+            "unexpected result: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_split_exclusions_negative_box_index() {
+        let box_ranges = [(0u64, 10u64)];
+        let exclusions = vec![BoxExclusion {
+            start: 0,
+            length: 1,
+            box_index: Some(-1),
+        }];
+        let result = split_exclusions(&box_ranges, 0, 10, &exclusions);
+        assert!(
+            matches!(&result, Err(Error::HashMismatch(msg)) if msg.contains("negative boxIndex")),
+            "unexpected result: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_split_exclusions_range_past_end_of_box() {
+        let box_ranges = [(0u64, 10u64)];
+        let exclusions = vec![BoxExclusion {
+            start: 8,
+            length: 5,
+            box_index: None,
+        }];
+        let result = split_exclusions(&box_ranges, 0, 10, &exclusions);
+        assert!(
+            matches!(&result, Err(Error::HashMismatch(msg)) if msg.contains("extends beyond the end of its box")),
+            "unexpected result: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_split_exclusions_overlapping_ranges() {
+        let box_ranges = [(0u64, 20u64)];
+        let exclusions = vec![
+            BoxExclusion {
+                start: 0,
+                length: 10,
+                box_index: None,
+            },
+            BoxExclusion {
+                start: 5,
+                length: 5,
+                box_index: None,
+            },
+        ];
+        let result = split_exclusions(&box_ranges, 0, 20, &exclusions);
+        assert!(
+            matches!(&result, Err(Error::HashMismatch(msg)) if msg.contains("overlap or are not ordered")),
+            "unexpected result: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_generate_and_verify_with_exclusions() {
+        let alg = "sha256";
+        let mut mock = MockMABH::new();
+        mock.expect_get_box_map().returning(|_| {
+            Ok(vec![
+                BoxMap {
+                    names: vec!["AAAA".to_string()],
+                    alg: None,
+                    hash: ByteBuf::from(vec![]),
+                    excluded: None,
+                    exclusions: None,
+                    pad: ByteBuf::from(vec![]),
+                    range_start: 0,
+                    range_len: 10,
+                },
+                BoxMap {
+                    names: vec!["BBBB".to_string()],
+                    alg: None,
+                    hash: ByteBuf::from(vec![]),
+                    excluded: None,
+                    exclusions: None,
+                    pad: ByteBuf::from(vec![]),
+                    range_start: 10,
+                    range_len: 10,
+                },
+            ])
+        });
+
+        let data: Vec<u8> = (0..20).collect();
+        let mut reader = Cursor::new(data.clone());
+
+        // Exclude AAAA's bytes [3,5) and BBBB's bytes [2,5) (absolute [12,15)).
+        let exclusion_requests = vec![
+            BoxHashExclusionRequest {
+                source_box_index: 0,
+                start: 3,
+                length: 2,
+            },
+            BoxHashExclusionRequest {
+                source_box_index: 1,
+                start: 2,
+                length: 3,
+            },
+        ];
+
+        let mut bh = BoxHash { boxes: Vec::new() };
+        bh.generate_box_hash_from_stream_with_exclusions(
+            &mut reader,
+            alg,
+            &mock,
+            false,
+            &exclusion_requests,
+        )
+        .unwrap();
+
+        // Unmodified data verifies.
+        bh.verify_stream_hash(&mut reader, Some(alg), &mock)
+            .unwrap();
+
+        // A change inside an excluded range still verifies.
+        let mut inside = data.clone();
+        inside[3] ^= 0xff;
+        let mut inside_reader = Cursor::new(inside);
+        bh.verify_stream_hash(&mut inside_reader, Some(alg), &mock)
+            .unwrap();
+
+        // A change outside any excluded range invalidates the hash.
+        let mut outside = data.clone();
+        outside[0] ^= 0xff;
+        let mut outside_reader = Cursor::new(outside);
+        assert!(bh
+            .verify_stream_hash(&mut outside_reader, Some(alg), &mock)
+            .is_err());
     }
 }
