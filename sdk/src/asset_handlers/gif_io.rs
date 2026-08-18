@@ -646,6 +646,7 @@ impl BlockMarker<Block> {
             alg: None,
             hash: ByteBuf::from(Vec::new()),
             excluded: None,
+            exclusions: None,
             pad: ByteBuf::from(Vec::new()),
             range_start: self.start(),
             range_len: self.len(),
@@ -1452,6 +1453,7 @@ mod tests {
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
                 excluded: None,
+                exclusions: None,
                 pad: ByteBuf::from(Vec::new()),
                 range_start: 0,
                 range_len: 6
@@ -1464,6 +1466,7 @@ mod tests {
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
                 excluded: None,
+                exclusions: None,
                 pad: ByteBuf::from(Vec::new()),
                 range_start: 368494,
                 range_len: 778
@@ -1476,6 +1479,7 @@ mod tests {
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
                 excluded: None,
+                exclusions: None,
                 pad: ByteBuf::from(Vec::new()),
                 range_start: SAMPLE1.len() as u64 - 1,
                 range_len: 1
