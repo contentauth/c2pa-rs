@@ -3452,17 +3452,22 @@ impl Claim {
         for ca in claim.soft_binding_assertions() {
             let label = to_assertion_uri(claim.label(), &ca.label());
 
-            let soft_binding = SoftBinding::from_assertion(ca.assertion()).map_err(|_| {
-                log_item!(
-                    label.clone(),
-                    "soft binding assertion could not be decoded",
-                    "verify_soft_binding_alg"
-                )
-                .validation_status(validation_status::CLAIM_MALFORMED)
-                .failure_no_throw(validation_log, Error::ClaimDecoding(label.clone()));
+            let soft_binding = match SoftBinding::from_assertion(ca.assertion()) {
+                Ok(soft_binding) => soft_binding,
+                Err(_) => {
+                    log_item!(
+                        label.clone(),
+                        "soft binding assertion could not be decoded",
+                        "verify_soft_binding_alg"
+                    )
+                    .validation_status(validation_status::CLAIM_MALFORMED)
+                    .failure_no_throw(validation_log, Error::ClaimDecoding(label.clone()));
 
-                Error::ClaimDecoding(label.clone())
-            })?;
+                    // Malformed, but don't abort the whole verification over one
+                    // bad soft binding assertion -- move on to the next one.
+                    continue;
+                }
+            };
 
             // Effective alg: assertion field takes precedence over claim-level alg_soft.
             let effective_alg = soft_binding
@@ -3518,16 +3523,22 @@ impl Claim {
         for ca in claim.cloud_data_assertions() {
             let label = to_assertion_uri(claim.label(), &ca.label());
 
-            let cloud_data = CloudData::from_assertion(ca.assertion()).map_err(|_| {
-                log_item!(
-                    label.clone(),
-                    "cloud-data assertion could not be decoded",
-                    "verify_cloud_data"
-                )
-                .validation_status(validation_status::ASSERTION_CLOUD_DATA_MALFORMED)
-                .failure_no_throw(validation_log, Error::ClaimDecoding(label.clone()));
-                Error::ClaimDecoding(label.clone())
-            })?;
+            let cloud_data = match CloudData::from_assertion(ca.assertion()) {
+                Ok(cloud_data) => cloud_data,
+                Err(_) => {
+                    log_item!(
+                        label.clone(),
+                        "cloud-data assertion could not be decoded",
+                        "verify_cloud_data"
+                    )
+                    .validation_status(validation_status::ASSERTION_CLOUD_DATA_MALFORMED)
+                    .failure_no_throw(validation_log, Error::ClaimDecoding(label.clone()));
+
+                    // Malformed, but don't abort the whole verification over one
+                    // bad cloud-data assertion -- move on to the next one.
+                    continue;
+                }
+            };
 
             // Step 1: size must be at least 1 byte.
             if cloud_data.size < 1 {
@@ -5028,6 +5039,75 @@ pub mod tests {
             "valid alg_soft fallback should pass"
         );
         assert!(validation_log.logged_items().is_empty());
+    }
+
+    #[test]
+    fn test_verify_soft_binding_alg_undecodable_does_not_abort() {
+        // A soft binding assertion that isn't valid CBOR-encoded SoftBinding data
+        // (e.g. reusing the c2pa.soft-binding label for a JSON payload) should be
+        // logged as a claim.malformed failure, not abort the whole verification.
+        struct MalformedSoftBinding;
+
+        impl AssertionBase for MalformedSoftBinding {
+            const LABEL: &'static str = assertions::SoftBinding::LABEL;
+
+            fn to_assertion(&self) -> Result<Assertion> {
+                Ok(Assertion::new(
+                    Self::LABEL,
+                    None,
+                    AssertionData::Json(
+                        r#"{"alg":"com.example.sha256","value":"abc123"}"#.to_string(),
+                    ),
+                )
+                .set_content_type("application/json"))
+            }
+
+            fn from_assertion(_assertion: &Assertion) -> Result<Self> {
+                unimplemented!("not needed for this test")
+            }
+        }
+
+        let settings = Settings::new()
+            .with_json(
+                r#"
+                {
+                    "soft_binding": {
+                        "soft_binding_algorithms": ["com.example.sha256"]
+                    }
+                }
+            "#,
+            )
+            .unwrap();
+
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let mut claim = create_test_claim().expect("create test claim");
+
+        claim
+            .add_assertion(&MalformedSoftBinding)
+            .expect("add malformed soft binding");
+
+        assert!(
+            Claim::verify_soft_binding_alg(
+                &claim,
+                settings
+                    .soft_binding
+                    .soft_binding_algorithms
+                    .as_deref()
+                    .unwrap_or(&[]),
+                &mut validation_log
+            )
+            .is_ok(),
+            "an undecodable soft binding assertion should not abort verification"
+        );
+        assert!(
+            validation_log
+                .logged_items()
+                .iter()
+                .any(|item| item.validation_status.as_deref()
+                    == Some(validation_status::CLAIM_MALFORMED)),
+            "should log CLAIM_MALFORMED for the undecodable assertion"
+        );
     }
 
     #[test]
