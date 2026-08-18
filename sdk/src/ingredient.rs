@@ -1750,6 +1750,18 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_digital_source_type() {
+        let mut ingredient = Ingredient::new("title", "format", "instance_id");
+        assert_eq!(ingredient.digital_source_type(), None);
+
+        ingredient.set_digital_source_type(DigitalSourceType::TrainedAlgorithmicData);
+        assert_eq!(
+            ingredient.digital_source_type(),
+            Some(&DigitalSourceType::TrainedAlgorithmicData)
+        );
+    }
+
     #[c2pa_test_async]
     async fn test_stream_async_jpg() {
         let title = "Test Image";
