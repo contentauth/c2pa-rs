@@ -9295,8 +9295,15 @@ pub mod tests {
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         let context = Context::new();
 
-        let result =
-            Store::ingredient_checks(&store, &claim, &svi, &mut validation_log, 0, &context);
+        let result = Store::ingredient_checks(
+            &store,
+            &claim,
+            &svi,
+            &mut validation_log,
+            0,
+            &context,
+            &mut HashSet::new(),
+        );
 
         assert!(result.is_err());
         assert!(validation_log.logged_items().iter().any(|item| {
