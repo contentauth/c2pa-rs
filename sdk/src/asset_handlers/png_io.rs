@@ -683,9 +683,12 @@ impl RemoteRefEmbed for PngIO {
 
 // A PNG chunk's `range_len` covers the 4-byte length field, 4-byte type, the
 // chunk data, and the trailing 4-byte CRC - `range_start` points at the
-// length field, not the data. So a chunk's own excludable payload is
-// `[8, range_len - 4)`, box-relative: skip the 8-byte length+type header,
-// stop before the CRC.
+// length field, not the data. The CRC covers the type and data fields (not
+// length), so it must change if the data does - the excludable range has to
+// include it too, or any legitimate metadata edit (which necessarily also
+// updates the CRC) would leave the new CRC bytes hashed and fail
+// verification. So a chunk's own excludable range is `[8, range_len)`,
+// box-relative: skip only the 8-byte length+type header.
 fn classify_png_allowed_exclusions(name: &str, range_len: u64) -> Vec<AllowedExclusion> {
     match name {
         C2PA_BOXHASH => vec![AllowedExclusion {
@@ -695,7 +698,7 @@ fn classify_png_allowed_exclusions(name: &str, range_len: u64) -> Vec<AllowedExc
         }],
         "eXIf" | "iTXt" | "tEXt" | "zTXt" => vec![AllowedExclusion {
             start: 8,
-            length: range_len.saturating_sub(12),
+            length: range_len.saturating_sub(8),
             kind: ExclusionKind::AssetMetadata,
         }],
         _ => Vec::new(),
@@ -840,11 +843,15 @@ pub mod tests {
                 kind: ExclusionKind::ManifestOrPadding,
             }]
         );
+        // length is 12 (data + trailing CRC), not 8 - the CRC covers the
+        // type and data fields, so it must be excludable too, or a
+        // legitimate metadata edit (which changes the CRC) would fail
+        // verification.
         assert_eq!(
             classify_png_allowed_exclusions("eXIf", 20),
             vec![AllowedExclusion {
                 start: 8,
-                length: 8,
+                length: 12,
                 kind: ExclusionKind::AssetMetadata,
             }]
         );
@@ -852,7 +859,7 @@ pub mod tests {
             classify_png_allowed_exclusions("tEXt", 20),
             vec![AllowedExclusion {
                 start: 8,
-                length: 8,
+                length: 12,
                 kind: ExclusionKind::AssetMetadata,
             }]
         );

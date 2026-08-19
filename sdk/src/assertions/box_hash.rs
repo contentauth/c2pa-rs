@@ -278,8 +278,10 @@ impl BoxHash {
     /// box so callers with a [`Context`] can report `ProgressPhase::VerifyingAssetHash`
     /// ticks and support cancellation.
     ///
-    /// Returns whether any `exclusions` entry referenced an `AssetMetadata`
-    /// range, for the informational `assertion.boxesHash.additionalExclusionsPresent`
+    /// Returns whether any exclusion beyond the C2PA store itself was used -
+    /// either an `exclusions` entry referencing an `AssetMetadata` range, or
+    /// a whole non-C2PA box skipped via `excluded: true` - for the
+    /// informational `assertion.boxesHash.additionalExclusionsPresent`
     /// status.
     pub(crate) fn verify_stream_hash_with_progress<F>(
         &self,
@@ -359,13 +361,35 @@ impl BoxHash {
                 source_index += 1;
             }
 
+            // CDDL: `"exclusions": [1* box-exclusions-map]` - an empty array is
+            // structurally invalid, not equivalent to the key being absent.
+            // This must be checked regardless of `excluded`/being the C2PA
+            // box below: `excluded` only says the box's hash is skipped, it
+            // doesn't excuse an otherwise-present `exclusions` value from
+            // still satisfying the CDDL shape.
+            if matches!(&bm.exclusions, Some(excl) if excl.is_empty()) {
+                return Err(Error::C2PAValidation(
+                    ASSERTION_BOXESHASH_MALFORMED.to_string(),
+                ));
+            }
+
             let exclude = bm.excluded.unwrap_or(false);
             if skip_c2pa || exclude {
+                // A box excluded in its entirety via `excluded: true` that
+                // isn't the C2PA store itself is an exclusion beyond the
+                // C2PA-store-only baseline, so it counts toward the
+                // informational signal - regardless of the excluded box's
+                // content, which this path doesn't classify (unlike the
+                // `exclusions` sub-range case below).
+                if exclude && !skip_c2pa {
+                    metadata_exclusion_used = true;
+                }
                 continue;
             }
 
             let inclusions = match &bm.exclusions {
-                Some(excl) if !excl.is_empty() => {
+                None => vec![inclusion],
+                Some(excl) => {
                     let (ranges, metadata_used) = split_exclusions(
                         &box_ranges,
                         &box_allowed_exclusions,
@@ -376,7 +400,6 @@ impl BoxHash {
                     metadata_exclusion_used |= metadata_used;
                     ranges
                 }
-                _ => vec![inclusion],
             };
 
             let curr_alg = match &bm.alg {
@@ -1093,6 +1116,241 @@ mod tests {
 
         // This shouldn't crash.
         let _ = malicious_bh.verify_stream_hash(&mut input, Some("sha256"), bhp);
+    }
+
+    #[test]
+    fn test_verify_stream_hash_rejects_empty_exclusions_array() {
+        // CDDL: `"exclusions": [1* box-exclusions-map]` - an empty array is
+        // structurally invalid, not equivalent to the key being absent.
+        let alg = "sha256";
+        let mut mock = MockMABH::new();
+        mock.expect_get_box_map().returning(|_| {
+            Ok(vec![BoxMap {
+                names: vec!["AAAA".to_string()],
+                alg: None,
+                hash: ByteBuf::from(vec![]),
+                excluded: None,
+                exclusions: None,
+                allowed_exclusions: vec![AllowedExclusion {
+                    start: 0,
+                    length: 10,
+                    kind: ExclusionKind::AssetMetadata,
+                }],
+                pad: ByteBuf::from(vec![]),
+                range_start: 0,
+                range_len: 10,
+            }])
+        });
+
+        let data: Vec<u8> = (0..10).collect();
+        let mut reader = Cursor::new(data);
+
+        let bh = BoxHash {
+            boxes: vec![BoxMap {
+                names: vec!["AAAA".to_string()],
+                alg: Some(alg.to_string()),
+                hash: ByteBuf::from(vec![0; 32]),
+                excluded: None,
+                exclusions: Some(vec![]),
+                allowed_exclusions: vec![],
+                pad: ByteBuf::from(vec![]),
+                range_start: 0,
+                range_len: 10,
+            }],
+        };
+
+        let result =
+            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &mock, &mut |_, _| Ok(()));
+        assert!(
+            matches!(&result, Err(Error::C2PAValidation(s)) if s == ASSERTION_BOXESHASH_MALFORMED),
+            "unexpected result: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_verify_stream_hash_rejects_empty_exclusions_array_on_excluded_box() {
+        // `excluded: true` skips the box's hash, but doesn't excuse an
+        // otherwise-present `exclusions` value from still satisfying the
+        // CDDL `[1* box-exclusions-map]` shape.
+        let alg = "sha256";
+        let mut mock = MockMABH::new();
+        mock.expect_get_box_map().returning(|_| {
+            Ok(vec![BoxMap {
+                names: vec!["AAAA".to_string()],
+                alg: None,
+                hash: ByteBuf::from(vec![]),
+                excluded: None,
+                exclusions: None,
+                allowed_exclusions: vec![],
+                pad: ByteBuf::from(vec![]),
+                range_start: 0,
+                range_len: 10,
+            }])
+        });
+
+        let data: Vec<u8> = (0..10).collect();
+        let mut reader = Cursor::new(data);
+
+        let bh = BoxHash {
+            boxes: vec![BoxMap {
+                names: vec!["AAAA".to_string()],
+                alg: Some(alg.to_string()),
+                hash: ByteBuf::from(vec![]),
+                excluded: Some(true),
+                exclusions: Some(vec![]),
+                allowed_exclusions: vec![],
+                pad: ByteBuf::from(vec![]),
+                range_start: 0,
+                range_len: 10,
+            }],
+        };
+
+        let result =
+            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &mock, &mut |_, _| Ok(()));
+        assert!(
+            matches!(&result, Err(Error::C2PAValidation(s)) if s == ASSERTION_BOXESHASH_MALFORMED),
+            "unexpected result: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_verify_stream_hash_rejects_empty_exclusions_array_on_c2pa_box() {
+        // Same as above, but for the C2PA store's own box (`skip_c2pa`)
+        // rather than an `excluded: true` box.
+        let alg = "sha256";
+        let mut mock = MockMABH::new();
+        mock.expect_get_box_map().returning(|_| {
+            Ok(vec![BoxMap {
+                names: vec![C2PA_BOXHASH.to_string()],
+                alg: None,
+                hash: ByteBuf::from(vec![]),
+                excluded: None,
+                exclusions: None,
+                allowed_exclusions: vec![AllowedExclusion {
+                    start: 0,
+                    length: 10,
+                    kind: ExclusionKind::ManifestOrPadding,
+                }],
+                pad: ByteBuf::from(vec![]),
+                range_start: 0,
+                range_len: 10,
+            }])
+        });
+
+        let data: Vec<u8> = (0..10).collect();
+        let mut reader = Cursor::new(data);
+
+        let bh = BoxHash {
+            boxes: vec![BoxMap {
+                names: vec![C2PA_BOXHASH.to_string()],
+                alg: Some(alg.to_string()),
+                hash: ByteBuf::from(vec![]),
+                excluded: None,
+                exclusions: Some(vec![]),
+                allowed_exclusions: vec![],
+                pad: ByteBuf::from(vec![]),
+                range_start: 0,
+                range_len: 10,
+            }],
+        };
+
+        let result =
+            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &mock, &mut |_, _| Ok(()));
+        assert!(
+            matches!(&result, Err(Error::C2PAValidation(s)) if s == ASSERTION_BOXESHASH_MALFORMED),
+            "unexpected result: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_verify_stream_hash_flags_excluded_non_c2pa_box() {
+        // A whole box skipped via `excluded: true` that isn't the C2PA store
+        // itself (e.g. the spec's PNG iTXt example) is an exclusion beyond
+        // the C2PA-store-only baseline, so it must surface the informational
+        // `additionalExclusionsPresent` signal - even though this path never
+        // classifies the excluded box's content.
+        let alg = "sha256";
+        let mut mock = MockMABH::new();
+        mock.expect_get_box_map().returning(|_| {
+            Ok(vec![BoxMap {
+                names: vec!["AAAA".to_string()],
+                alg: None,
+                hash: ByteBuf::from(vec![]),
+                excluded: None,
+                exclusions: None,
+                allowed_exclusions: vec![],
+                pad: ByteBuf::from(vec![]),
+                range_start: 0,
+                range_len: 10,
+            }])
+        });
+
+        let data: Vec<u8> = (0..10).collect();
+        let mut reader = Cursor::new(data);
+
+        let bh = BoxHash {
+            boxes: vec![BoxMap {
+                names: vec!["AAAA".to_string()],
+                alg: Some(alg.to_string()),
+                hash: ByteBuf::from(vec![]),
+                excluded: Some(true),
+                exclusions: None,
+                allowed_exclusions: vec![],
+                pad: ByteBuf::from(vec![]),
+                range_start: 0,
+                range_len: 10,
+            }],
+        };
+
+        let result =
+            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &mock, &mut |_, _| Ok(()));
+        assert!(result.unwrap());
+    }
+
+    #[test]
+    fn test_verify_stream_hash_does_not_flag_excluded_c2pa_box() {
+        // The C2PA store's own box is the baseline exclusion, not an
+        // "additional" one - even if it's also marked `excluded: true`.
+        let alg = "sha256";
+        let mut mock = MockMABH::new();
+        mock.expect_get_box_map().returning(|_| {
+            Ok(vec![BoxMap {
+                names: vec![C2PA_BOXHASH.to_string()],
+                alg: None,
+                hash: ByteBuf::from(vec![]),
+                excluded: None,
+                exclusions: None,
+                allowed_exclusions: vec![AllowedExclusion {
+                    start: 0,
+                    length: 10,
+                    kind: ExclusionKind::ManifestOrPadding,
+                }],
+                pad: ByteBuf::from(vec![]),
+                range_start: 0,
+                range_len: 10,
+            }])
+        });
+
+        let data: Vec<u8> = (0..10).collect();
+        let mut reader = Cursor::new(data);
+
+        let bh = BoxHash {
+            boxes: vec![BoxMap {
+                names: vec![C2PA_BOXHASH.to_string()],
+                alg: Some(alg.to_string()),
+                hash: ByteBuf::from(vec![]),
+                excluded: Some(true),
+                exclusions: None,
+                allowed_exclusions: vec![],
+                pad: ByteBuf::from(vec![]),
+                range_start: 0,
+                range_len: 10,
+            }],
+        };
+
+        let result =
+            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &mock, &mut |_, _| Ok(()));
+        assert!(!result.unwrap());
     }
 
     #[test]
