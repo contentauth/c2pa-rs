@@ -421,7 +421,7 @@ where
         .iter()
         .map(|r| {
             let len = r.end() - r.start() + 1;
-            (len as usize).div_ceil(max_hash_buf) as u32
+            len.div_ceil(max_hash_buf as u64) as u32
         })
         .sum();
     let mut step: u32 = 0;
@@ -446,7 +446,7 @@ where
             data.seek(SeekFrom::Start(*start))?;
 
             loop {
-                let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, max_hash_buf)];
+                let mut chunk = vec![0u8; std::cmp::min(chunk_left, max_hash_buf as u64) as usize];
 
                 data.read_exact(&mut chunk)?;
 
@@ -482,7 +482,7 @@ where
             // move to start of range
             data.seek(SeekFrom::Start(*start))?;
 
-            let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, max_hash_buf)];
+            let mut chunk = vec![0u8; std::cmp::min(chunk_left, max_hash_buf as u64) as usize];
             data.read_exact(&mut chunk)?;
 
             loop {
@@ -504,7 +504,8 @@ where
                     })?;
 
                 // read next chunk while we wait for hash
-                let mut next_chunk = vec![0u8; std::cmp::min(chunk_left as usize, max_hash_buf)];
+                let mut next_chunk =
+                    vec![0u8; std::cmp::min(chunk_left, max_hash_buf as u64) as usize];
                 data.read_exact(&mut next_chunk)?;
 
                 hasher_enum = match rx.recv() {
@@ -770,5 +771,57 @@ mod tests {
             hash,
             hex!("e3301ce38a42503098530b98cd1b652a10c5caf890735017dd0012ec319f04e5")
         );
+    }
+
+    // Reports a fixed virtual length and yields zero bytes on read, so a multi-GiB
+    // stream can be exercised without allocating that much memory.
+    struct ZeroStream {
+        len: u64,
+        pos: u64,
+    }
+
+    impl Read for ZeroStream {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let remaining = self.len - self.pos;
+            let n = std::cmp::min(buf.len() as u64, remaining) as usize;
+            buf[..n].fill(0);
+            self.pos += n as u64;
+            Ok(n)
+        }
+    }
+
+    impl Seek for ZeroStream {
+        fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+            self.pos = match pos {
+                SeekFrom::Start(p) => p,
+                SeekFrom::End(p) => (self.len as i64 + p) as u64,
+                SeekFrom::Current(p) => (self.pos as i64 + p) as u64,
+            };
+            Ok(self.pos)
+        }
+    }
+
+    // Regression test for CAI-13325: on 32-bit targets (wasm32) `chunk_left as usize`
+    // truncated a range of exactly 4 GiB (2^32) to zero, so each read-chunk buffer was
+    // empty, `read_exact` on it returned `Ok(())` immediately without decrementing
+    // `chunk_left`, and the loop spun forever. This drives the real hashing loop
+    // across a virtual 4 GiB range so the fix is verified under the project's
+    // wasm32-wasip2 test job, where `usize` is actually 32 bits.
+    #[test]
+    fn hash_range_of_exactly_4gib_terminates() {
+        let mut reader = ZeroStream {
+            len: 1u64 << 32,
+            pos: 0,
+        };
+        let hash = hash_stream_by_alg_with_progress_impl(
+            "sha256",
+            &mut reader,
+            None,
+            true,
+            &mut |_, _| Ok(()),
+            NonZeroUsize::new(1024 * 1024).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(hash.len(), 32);
     }
 }
