@@ -797,6 +797,46 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a CAWG identity assertion.
     pub const CAWG_ICA_UNTRUSTED_ISSUER: &str = "cawg.ica.untrusted_issuer";
 
+    /// A chain of trust from the CAWG identity assertion's X.509 signing
+    /// certificate to a trust anchor configuration was verified.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_X509_CREDENTIAL_TRUSTED: &str = "cawg.x509.credential.trusted";
+
+    /// A chain of trust could not be verified from the CAWG identity
+    /// assertion's X.509 signing certificate to any configured trust anchor,
+    /// or a CA certificate in the chain was determined to be revoked.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_X509_CREDENTIAL_UNTRUSTED: &str = "cawg.x509.credential.untrusted";
+
+    /// The cryptographic signature over a CAWG identity assertion using an
+    /// X.509 credential was validated against the signing certificate.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_X509_SIGNATURE_VALIDATED: &str = "cawg.x509.signature.validated";
+
+    /// The cryptographic signature over a CAWG identity assertion using an
+    /// X.509 credential could not be validated against the signing
+    /// certificate.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_X509_SIGNATURE_MISMATCH: &str = "cawg.x509.signature.mismatch";
+
+    /// The signature algorithm used to sign a CAWG identity assertion using
+    /// an X.509 credential is not on the allowed or deprecated list defined
+    /// in the C2PA technical specification.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_X509_ALGORITHM_UNSUPPORTED: &str = "cawg.x509.algorithm.unsupported";
+
+    /// The time of signing falls outside the validity period of the named
+    /// actor's X.509 certificate or one of the CA certificates up to the
+    /// trust anchor.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_X509_SIGNATURE_OUTSIDE_VALIDITY: &str = "cawg.x509.signature.outside_validity";
+
     /// The signing credential is not valid for signing.
     ///
     /// Any corresponding URL should point to a C2PA claim signature box.
@@ -1111,7 +1151,9 @@ pub mod validation_codes {
             | ASSERTION_COLLECTIONHASH_MATCH
             | INGREDIENT_MANIFEST_VALIDATED
             | INGREDIENT_MANIFEST_MISSING
-            | INGREDIENT_CLAIM_SIGNATURE_VALIDATED => LogKind::Success,
+            | INGREDIENT_CLAIM_SIGNATURE_VALIDATED
+            | CAWG_X509_CREDENTIAL_TRUSTED
+            | CAWG_X509_SIGNATURE_VALIDATED => LogKind::Success,
             SIGNING_CREDENTIAL_OCSP_SKIPPED
             | SIGNING_CREDENTIAL_OCSP_INACCESSIBLE
             | SIGNING_CREDENTIAL_OCSP_UNKNOWN

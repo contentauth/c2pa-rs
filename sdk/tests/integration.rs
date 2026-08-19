@@ -21,6 +21,7 @@ mod integration_1 {
 
     use c2pa::{
         assertions::{c2pa_action, Action, Actions, AssetReference, Metadata},
+        validation_status::CAWG_X509_CREDENTIAL_UNTRUSTED,
         Builder, Context, Reader, Result, Settings,
     };
     use c2pa_macros::c2pa_test_async;
@@ -342,7 +343,7 @@ mod integration_1 {
                 .last()
                 .unwrap()
                 .code(),
-            "cawg.x509.credential.untrusted"
+            CAWG_X509_CREDENTIAL_UNTRUSTED
         );
 
         Ok(())

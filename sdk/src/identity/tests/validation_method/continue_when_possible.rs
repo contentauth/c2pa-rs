@@ -23,6 +23,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 use crate::{
     identity::{x509::X509SignatureVerifier, IdentityAssertion},
     status_tracker::{LogKind, StatusTracker},
+    validation_status::{CAWG_X509_CREDENTIAL_TRUSTED, CAWG_X509_SIGNATURE_VALIDATED},
     SigningAlg,
 };
 
@@ -208,7 +209,7 @@ async fn assertion_not_in_claim_v1() {
 
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref() as &str,
-        "cawg.x509.credential.trusted"
+        CAWG_X509_CREDENTIAL_TRUSTED
     );
 
     let log = &status_tracker.logged_items()[2];
@@ -226,7 +227,7 @@ async fn assertion_not_in_claim_v1() {
 
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref() as &str,
-        "cawg.x509.signature.validated"
+        CAWG_X509_SIGNATURE_VALIDATED
     );
 
     let cert_info = &sig_info.cert_info;
@@ -337,7 +338,7 @@ async fn duplicate_assertion_reference() {
     );
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref() as &str,
-        "cawg.x509.credential.trusted"
+        CAWG_X509_CREDENTIAL_TRUSTED
     );
 
     let log = &status_tracker.logged_items()[2];
@@ -355,7 +356,7 @@ async fn duplicate_assertion_reference() {
 
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref() as &str,
-        "cawg.x509.signature.validated"
+        CAWG_X509_SIGNATURE_VALIDATED
     );
 
     let cert_info = &sig_info.cert_info;
@@ -446,7 +447,7 @@ async fn no_hard_binding() {
 
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref() as &str,
-        "cawg.x509.credential.trusted"
+        CAWG_X509_CREDENTIAL_TRUSTED
     );
 
     let log = &status_tracker.logged_items()[2];
@@ -464,7 +465,7 @@ async fn no_hard_binding() {
 
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref() as &str,
-        "cawg.x509.signature.validated"
+        CAWG_X509_SIGNATURE_VALIDATED
     );
 
     let cert_info = &sig_info.cert_info;
@@ -745,7 +746,7 @@ async fn pad1_invalid() {
 
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref() as &str,
-        "cawg.x509.credential.trusted"
+        CAWG_X509_CREDENTIAL_TRUSTED
     );
 
     let log = &status_tracker.logged_items()[2];
@@ -763,7 +764,7 @@ async fn pad1_invalid() {
 
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref() as &str,
-        "cawg.x509.signature.validated"
+        CAWG_X509_SIGNATURE_VALIDATED
     );
 
     let cert_info = &sig_info.cert_info;
@@ -854,7 +855,7 @@ async fn pad2_invalid() {
 
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref() as &str,
-        "cawg.x509.credential.trusted"
+        CAWG_X509_CREDENTIAL_TRUSTED
     );
 
     let log = &status_tracker.logged_items()[2];
@@ -872,7 +873,7 @@ async fn pad2_invalid() {
 
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref() as &str,
-        "cawg.x509.signature.validated"
+        CAWG_X509_SIGNATURE_VALIDATED
     );
 
     let cert_info = &sig_info.cert_info;

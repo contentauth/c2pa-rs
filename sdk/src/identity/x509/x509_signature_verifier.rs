@@ -25,6 +25,7 @@ use crate::{
     },
     log_current_item,
     status_tracker::StatusTracker,
+    validation_status::{CAWG_X509_SIGNATURE_MISMATCH, CAWG_X509_SIGNATURE_VALIDATED},
 };
 
 /// An implementation of [`SignatureVerifier`] that supports COSE signatures
@@ -133,7 +134,7 @@ impl X509SignatureVerifier<'_> {
                                 "signature mismatch",
                                 "X509SignatureVerifier::check_x509_cose_signature"
                             )
-                            .validation_status("cawg.x509.signature.mismatch")
+                            .validation_status(CAWG_X509_SIGNATURE_MISMATCH)
                             .failure_no_throw(
                                 status_tracker,
                                 ValidationError::<CoseError>::SignatureMismatch,
@@ -161,7 +162,7 @@ impl X509SignatureVerifier<'_> {
                 "X.509 identity assertion signature validated",
                 "X509SignatureVerifier::check_x509_cose_signature"
             )
-            .validation_status("cawg.x509.signature.validated")
+            .validation_status(CAWG_X509_SIGNATURE_VALIDATED)
             .success(status_tracker);
         }
 
@@ -247,6 +248,10 @@ mod tests {
             IdentityAssertion, SignatureVerifier, ValidationError,
         },
         status_tracker::{LogKind, StatusTracker},
+        validation_status::{
+            CAWG_X509_CREDENTIAL_UNTRUSTED, CAWG_X509_SIGNATURE_MISMATCH,
+            CAWG_X509_SIGNATURE_VALIDATED,
+        },
         Builder, SigningAlg,
     };
 
@@ -332,7 +337,7 @@ mod tests {
 
         assert_eq!(
             log.validation_status.as_ref().unwrap().as_ref() as &str,
-            "cawg.x509.credential.untrusted"
+            CAWG_X509_CREDENTIAL_UNTRUSTED
         );
 
         // The cryptographic signature itself is still valid, independent of
@@ -348,7 +353,7 @@ mod tests {
 
         assert_eq!(
             log.validation_status.as_ref().unwrap().as_ref() as &str,
-            "cawg.x509.signature.validated"
+            CAWG_X509_SIGNATURE_VALIDATED
         );
 
         // The sync `check_signature` entry point must behave identically to
@@ -436,7 +441,7 @@ mod tests {
 
         assert_eq!(
             log.validation_status.as_ref().unwrap().as_ref() as &str,
-            "cawg.x509.signature.mismatch"
+            CAWG_X509_SIGNATURE_MISMATCH
         );
 
         // The sync `check_signature` entry point must behave identically to
@@ -467,7 +472,7 @@ mod tests {
                 .as_ref()
                 .unwrap()
                 .as_ref() as &str,
-            "cawg.x509.signature.mismatch"
+            CAWG_X509_SIGNATURE_MISMATCH
         );
     }
 }

@@ -42,6 +42,7 @@ use crate::{
     jumbf::labels::to_assertion_uri,
     log_current_item, log_item,
     status_tracker::StatusTracker,
+    validation_status::{CAWG_X509_SIGNATURE_MISMATCH, CAWG_X509_SIGNATURE_VALIDATED},
     Manifest, Reader,
 };
 
@@ -381,7 +382,7 @@ impl IdentityAssertion {
                                         "signature mismatch",
                                         "validate_partial_claim"
                                     )
-                                    .validation_status("cawg.x509.signature.mismatch")
+                                    .validation_status(CAWG_X509_SIGNATURE_MISMATCH)
                                     .failure_no_throw(
                                         status_tracker,
                                         ValidationError::<String>::SignatureMismatch,
@@ -405,7 +406,7 @@ impl IdentityAssertion {
                 "X.509 identity assertion signature validated",
                 "validate_partial_claim"
             )
-            .validation_status("cawg.x509.signature.validated")
+            .validation_status(CAWG_X509_SIGNATURE_VALIDATED)
             .success(status_tracker);
 
             let info = X509SignatureInfo {
@@ -620,7 +621,7 @@ mod tests {
         assert_eq!(log.kind, crate::status_tracker::LogKind::Failure);
         assert_eq!(
             log.validation_status.as_ref().unwrap().as_ref() as &str,
-            "cawg.x509.signature.mismatch"
+            CAWG_X509_SIGNATURE_MISMATCH
         );
 
         // Signature bytes that don't even parse as a COSE_Sign1 structure must
@@ -641,6 +642,6 @@ mod tests {
 
         assert!(matches!(malformed_err, ValidationError::SignatureError(_)));
 
-        assert!(malformed_st.has_status("cawg.x509.signature.mismatch"));
+        assert!(malformed_st.has_status(CAWG_X509_SIGNATURE_MISMATCH));
     }
 }

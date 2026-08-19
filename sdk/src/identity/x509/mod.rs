@@ -55,15 +55,26 @@ pub(crate) fn remap_x509_cose_status_codes(
         };
 
         let new_code = match old_code {
-            validation_status::ALGORITHM_UNSUPPORTED => "cawg.x509.algorithm.unsupported",
-            validation_status::SIGNING_CREDENTIAL_TRUSTED => "cawg.x509.credential.trusted",
+            validation_status::ALGORITHM_UNSUPPORTED => {
+                validation_status::CAWG_X509_ALGORITHM_UNSUPPORTED
+            }
+
+            validation_status::SIGNING_CREDENTIAL_TRUSTED => {
+                validation_status::CAWG_X509_CREDENTIAL_TRUSTED
+            }
 
             validation_status::SIGNING_CREDENTIAL_UNTRUSTED
-            | validation_status::SIGNING_CREDENTIAL_INVALID => "cawg.x509.credential.untrusted",
+            | validation_status::SIGNING_CREDENTIAL_INVALID => {
+                validation_status::CAWG_X509_CREDENTIAL_UNTRUSTED
+            }
 
-            validation_status::SIGNING_CREDENTIAL_EXPIRED => "cawg.x509.signature.outside_validity",
+            validation_status::SIGNING_CREDENTIAL_EXPIRED => {
+                validation_status::CAWG_X509_SIGNATURE_OUTSIDE_VALIDITY
+            }
 
-            validation_status::CLAIM_SIGNATURE_MISMATCH => "cawg.x509.signature.mismatch",
+            validation_status::CLAIM_SIGNATURE_MISMATCH => {
+                validation_status::CAWG_X509_SIGNATURE_MISMATCH
+            }
 
             _ => continue,
         };
@@ -117,12 +128,30 @@ mod tests {
 
         remap_x509_cose_status_codes(&mut st, 0);
 
-        assert_eq!(status_of(&st, 0), "cawg.x509.algorithm.unsupported");
-        assert_eq!(status_of(&st, 1), "cawg.x509.credential.trusted");
-        assert_eq!(status_of(&st, 2), "cawg.x509.credential.untrusted");
-        assert_eq!(status_of(&st, 3), "cawg.x509.credential.untrusted");
-        assert_eq!(status_of(&st, 4), "cawg.x509.signature.outside_validity");
-        assert_eq!(status_of(&st, 5), "cawg.x509.signature.mismatch");
+        assert_eq!(
+            status_of(&st, 0),
+            validation_status::CAWG_X509_ALGORITHM_UNSUPPORTED
+        );
+        assert_eq!(
+            status_of(&st, 1),
+            validation_status::CAWG_X509_CREDENTIAL_TRUSTED
+        );
+        assert_eq!(
+            status_of(&st, 2),
+            validation_status::CAWG_X509_CREDENTIAL_UNTRUSTED
+        );
+        assert_eq!(
+            status_of(&st, 3),
+            validation_status::CAWG_X509_CREDENTIAL_UNTRUSTED
+        );
+        assert_eq!(
+            status_of(&st, 4),
+            validation_status::CAWG_X509_SIGNATURE_OUTSIDE_VALIDITY
+        );
+        assert_eq!(
+            status_of(&st, 5),
+            validation_status::CAWG_X509_SIGNATURE_MISMATCH
+        );
     }
 
     #[test]
@@ -166,6 +195,9 @@ mod tests {
             status_of(&st, 0),
             validation_status::SIGNING_CREDENTIAL_TRUSTED
         );
-        assert_eq!(status_of(&st, 1), "cawg.x509.credential.untrusted");
+        assert_eq!(
+            status_of(&st, 1),
+            validation_status::CAWG_X509_CREDENTIAL_UNTRUSTED
+        );
     }
 }
