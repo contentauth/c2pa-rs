@@ -43,7 +43,7 @@ use byteorder::{BigEndian, ReadBytesExt};
 use serde_bytes::ByteBuf;
 
 use crate::{
-    assertions::{BoxKind, BoxMap, C2PA_BOXHASH},
+    assertions::{AllowedExclusion, BoxMap, ExclusionKind, C2PA_BOXHASH},
     asset_io::{
         rename_or_move, AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
         ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
@@ -819,17 +819,29 @@ impl RemoteRefEmbed for JpegXlIO {
     }
 }
 
-// JPEG-XL box types are extensible/vendor-specific (unlike JPEG/GIF, nothing
-// rejects an unrecognized box type at parse time), so a name this classifier
-// has no rule for is genuinely unclassified - `Unknown`, not `Content`.
-fn classify_jxl_box(name: &str) -> BoxKind {
+// `header_size`/`data_size` already separate a JXL box's header (4-byte size
+// + 4-byte type, or the 16-byte extended form) from its payload, so the
+// permitted range is exactly the data span - no header/length field overlap
+// to account for.
+fn classify_jxl_allowed_exclusions(
+    name: &str,
+    header_size: u64,
+    data_size: u64,
+) -> Vec<AllowedExclusion> {
     match name {
-        C2PA_BOXHASH => BoxKind::C2pa,
-        // `brob` (Brotli-compressed) may wrap either of the above; spec's own
+        C2PA_BOXHASH => vec![AllowedExclusion {
+            start: 0,
+            length: header_size + data_size,
+            kind: ExclusionKind::ManifestOrPadding,
+        }],
+        // `brob` (Brotli-compressed) may wrap either Exif or XMP; spec's own
         // §18.7.4 JXL example treats it as excludable either way.
-        "Exif" | "xml " | "brob" => BoxKind::Metadata,
-        "ftyp" | "jxlc" | "jxlp" => BoxKind::Content,
-        _ => BoxKind::Unknown,
+        "Exif" | "xml " | "brob" => vec![AllowedExclusion {
+            start: header_size,
+            length: data_size,
+            kind: ExclusionKind::AssetMetadata,
+        }],
+        _ => Vec::new(),
     }
 }
 
@@ -861,7 +873,8 @@ impl AssetBoxHash for JpegXlIO {
             } else {
                 b.type_str()
             };
-            let kind = classify_jxl_box(&name);
+            let allowed_exclusions =
+                classify_jxl_allowed_exclusions(&name, b.header_size, b.data_size(file_len));
 
             box_maps.push(BoxMap {
                 names: vec![name],
@@ -869,7 +882,7 @@ impl AssetBoxHash for JpegXlIO {
                 hash: ByteBuf::from(Vec::new()),
                 excluded: None,
                 exclusions: None,
-                kind,
+                allowed_exclusions,
                 pad: ByteBuf::from(Vec::new()),
                 range_start: b.offset,
                 range_len: total,
@@ -891,7 +904,7 @@ impl AssetBoxHash for JpegXlIO {
                 hash: ByteBuf::from(Vec::new()),
                 excluded: None,
                 exclusions: None,
-                kind: classify_jxl_box(C2PA_BOXHASH),
+                allowed_exclusions: classify_jxl_allowed_exclusions(C2PA_BOXHASH, 0, 0),
                 pad: ByteBuf::from(Vec::new()),
                 range_start, // will be patched to correct offset by add_required_jumb_to_stream
                 range_len: 0,
@@ -1066,14 +1079,42 @@ pub mod tests {
     }
 
     #[test]
-    fn test_classify_jxl_box() {
-        assert_eq!(classify_jxl_box(C2PA_BOXHASH), BoxKind::C2pa);
-        assert_eq!(classify_jxl_box("Exif"), BoxKind::Metadata);
-        assert_eq!(classify_jxl_box("xml "), BoxKind::Metadata);
-        assert_eq!(classify_jxl_box("brob"), BoxKind::Metadata);
-        assert_eq!(classify_jxl_box("ftyp"), BoxKind::Content);
-        // JPEG-XL box types are vendor-extensible - unrecognized, not content.
-        assert_eq!(classify_jxl_box("zzzz"), BoxKind::Unknown);
+    fn test_classify_jxl_allowed_exclusions() {
+        assert_eq!(
+            classify_jxl_allowed_exclusions(C2PA_BOXHASH, 8, 12),
+            vec![AllowedExclusion {
+                start: 0,
+                length: 20,
+                kind: ExclusionKind::ManifestOrPadding,
+            }]
+        );
+        assert_eq!(
+            classify_jxl_allowed_exclusions("Exif", 8, 12),
+            vec![AllowedExclusion {
+                start: 8,
+                length: 12,
+                kind: ExclusionKind::AssetMetadata,
+            }]
+        );
+        assert_eq!(
+            classify_jxl_allowed_exclusions("xml ", 8, 12),
+            vec![AllowedExclusion {
+                start: 8,
+                length: 12,
+                kind: ExclusionKind::AssetMetadata,
+            }]
+        );
+        assert_eq!(
+            classify_jxl_allowed_exclusions("brob", 8, 12),
+            vec![AllowedExclusion {
+                start: 8,
+                length: 12,
+                kind: ExclusionKind::AssetMetadata,
+            }]
+        );
+        assert!(classify_jxl_allowed_exclusions("ftyp", 8, 12).is_empty());
+        // JPEG-XL box types are vendor-extensible - unrecognized, not excludable.
+        assert!(classify_jxl_allowed_exclusions("zzzz", 8, 12).is_empty());
     }
 
     // ─── Spec compliance: Section A.3.9 - JPEG XL container validation ───
