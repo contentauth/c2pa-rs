@@ -1771,4 +1771,129 @@ mod tests {
             .verify_stream_hash(&mut outside_reader, Some(alg), &mock)
             .is_err());
     }
+
+    #[test]
+    fn test_generate_and_verify_with_exclusions_minimal_form() {
+        // `minimal_form` folds every non-C2PA box before/after the C2PA box
+        // into one merged `before_c2pa`/`after_c2pa` entry each. Exclusion
+        // requests must still land on the right source box once its bytes
+        // are folded into one of those merged entries, with `boxIndex`
+        // translated to the box's position within the merged entry's
+        // `names` list (not its position in the original source box list).
+        let alg = "sha256";
+        let mut mock = MockMABH::new();
+        mock.expect_get_box_map().returning(|_| {
+            Ok(vec![
+                BoxMap {
+                    names: vec!["AAAA".to_string()],
+                    alg: None,
+                    hash: ByteBuf::from(vec![]),
+                    excluded: None,
+                    exclusions: None,
+                    allowed_exclusions: vec![AllowedExclusion {
+                        start: 0,
+                        length: 10,
+                        kind: ExclusionKind::AssetMetadata,
+                    }],
+                    pad: ByteBuf::from(vec![]),
+                    range_start: 0,
+                    range_len: 10,
+                },
+                BoxMap {
+                    names: vec![C2PA_BOXHASH.to_string()],
+                    alg: None,
+                    hash: ByteBuf::from(vec![]),
+                    excluded: None,
+                    exclusions: None,
+                    allowed_exclusions: vec![AllowedExclusion {
+                        start: 0,
+                        length: 5,
+                        kind: ExclusionKind::ManifestOrPadding,
+                    }],
+                    pad: ByteBuf::from(vec![]),
+                    range_start: 10,
+                    range_len: 5,
+                },
+                BoxMap {
+                    names: vec!["BBBB".to_string()],
+                    alg: None,
+                    hash: ByteBuf::from(vec![]),
+                    excluded: None,
+                    exclusions: None,
+                    allowed_exclusions: vec![AllowedExclusion {
+                        start: 0,
+                        length: 10,
+                        kind: ExclusionKind::AssetMetadata,
+                    }],
+                    pad: ByteBuf::from(vec![]),
+                    range_start: 15,
+                    range_len: 10,
+                },
+            ])
+        });
+
+        let data: Vec<u8> = (0..25).collect();
+        let mut reader = Cursor::new(data.clone());
+
+        // Exclude AAAA's bytes [3,5) (absolute [3,5), in the before_c2pa
+        // group) and BBBB's bytes [2,5) (absolute [17,20), in the
+        // after_c2pa group). Source indices are positions in
+        // `get_box_map`'s output: 0 = AAAA, 1 = C2PA, 2 = BBBB.
+        let exclusion_requests = vec![
+            BoxHashExclusionRequest {
+                source_box_index: 0,
+                start: 3,
+                length: 2,
+            },
+            BoxHashExclusionRequest {
+                source_box_index: 2,
+                start: 2,
+                length: 3,
+            },
+        ];
+
+        let mut bh = BoxHash { boxes: Vec::new() };
+        bh.generate_box_hash_from_stream_with_exclusions(
+            &mut reader,
+            alg,
+            &mock,
+            true,
+            &exclusion_requests,
+        )
+        .unwrap();
+
+        // Folded into 3 entries: before_c2pa (AAAA), the C2PA box itself,
+        // and after_c2pa (BBBB).
+        assert_eq!(bh.boxes.len(), 3);
+        assert_eq!(bh.boxes[0].names, vec!["AAAA".to_string()]);
+        assert_eq!(bh.boxes[1].names, vec![C2PA_BOXHASH.to_string()]);
+        assert_eq!(bh.boxes[2].names, vec!["BBBB".to_string()]);
+
+        // Unmodified data verifies.
+        bh.verify_stream_hash(&mut reader, Some(alg), &mock)
+            .unwrap();
+
+        // A change inside AAAA's excluded range still verifies.
+        let mut inside_before = data.clone();
+        inside_before[3] ^= 0xff;
+        let mut inside_before_reader = Cursor::new(inside_before);
+        bh.verify_stream_hash(&mut inside_before_reader, Some(alg), &mock)
+            .unwrap();
+
+        // A change inside BBBB's excluded range still verifies.
+        let mut inside_after = data.clone();
+        inside_after[18] ^= 0xff;
+        let mut inside_after_reader = Cursor::new(inside_after);
+        bh.verify_stream_hash(&mut inside_after_reader, Some(alg), &mock)
+            .unwrap();
+
+        // A change outside any excluded range (but still within AAAA)
+        // invalidates the hash.
+        let mut outside = data.clone();
+        outside[0] ^= 0xff;
+        let mut outside_reader = Cursor::new(outside);
+        assert!(bh
+            .verify_stream_hash(&mut outside_reader, Some(alg), &mock)
+            .is_err());
+    }
 }
