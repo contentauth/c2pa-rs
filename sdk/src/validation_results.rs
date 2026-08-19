@@ -122,6 +122,19 @@ pub struct ValidationResults {
     validation_time: Option<String>,
 }
 
+/// Returns `true` if `code` reports that a signing credential is untrusted,
+/// whether that's the C2PA claim signature's credential
+/// (`signingCredential.untrusted`) or a CAWG X.509 identity assertion's
+/// credential (`cawg.x509.credential.untrusted`).
+///
+/// Such a failure is scoped to the credential in question and does not by
+/// itself render the enclosing manifest invalid. See
+/// [`ValidationResults::validation_state`] and [`ValidationFailureSummary`].
+fn is_untrusted_credential_code(code: &str) -> bool {
+    code == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
+        || code == validation_status::CAWG_X509_CREDENTIAL_UNTRUSTED
+}
+
 impl ValidationResults {
     pub(crate) fn from_store(store: &Store, validation_log: &StatusTracker) -> Self {
         let mut results = ValidationResults::default();
@@ -227,6 +240,12 @@ impl ValidationResults {
             // credential's `cawg.ica.credential_valid` success code is withheld),
             // so it never appears among the failures examined below.
             //
+            // An untrusted signing credential -- for either the C2PA claim
+            // signature (`signingCredential.untrusted`) or a CAWG X.509 identity
+            // assertion (`cawg.x509.credential.untrusted`) -- is likewise scoped
+            // to the credential in question and does not by itself render the
+            // manifest invalid.
+            //
             // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_valid_manifest
             let is_valid = active_manifest
                 // First check if the claim is valid and the certificate hasn't expired.
@@ -236,20 +255,23 @@ impl ValidationResults {
                 && active_manifest.success().iter().any(|status| {
                     status.code() == validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY
                 })
-                // Then check if the manifest contains either no failures or that it's only untrusted.
+                // Then check if the manifest contains either no failures or that they're
+                // all untrusted-credential failures.
                 && (active_manifest.failure().is_empty()
-                    || active_manifest.failure().iter().all(|status| {
-                        status.code() == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
-                    }))
-                // Finally check if the ingredients contain either no failures or the only failure is
-                // that the ingredient is untrusted.
+                    || active_manifest
+                        .failure()
+                        .iter()
+                        .all(|status| is_untrusted_credential_code(status.code())))
+                // Finally check if the ingredients contain either no failures or the only
+                // failures are untrusted-credential failures.
                 && self.ingredient_deltas.as_ref().iter().all(|deltas| {
                     deltas.iter().all(|idv| {
                         let deltas = idv.validation_deltas();
                         deltas.failure().is_empty()
-                            || deltas.failure().iter().all(|status| {
-                                status.code() == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
-                            })
+                            || deltas
+                                .failure()
+                                .iter()
+                                .all(|status| is_untrusted_credential_code(status.code()))
                     })
                 });
 
@@ -465,7 +487,7 @@ impl Display for ValidationFailureSummary<'_> {
             let failures = active_manifest
                 .failure
                 .iter()
-                .filter(|status| status.code() != validation_status::SIGNING_CREDENTIAL_UNTRUSTED)
+                .filter(|status| !is_untrusted_credential_code(status.code()))
                 .collect::<Vec<_>>();
             if !failures.is_empty() {
                 output_lines.push("failures:".to_string());
@@ -483,9 +505,7 @@ impl Display for ValidationFailureSummary<'_> {
                     .validation_deltas()
                     .failure
                     .iter()
-                    .filter(|status| {
-                        status.code() != validation_status::SIGNING_CREDENTIAL_UNTRUSTED
-                    })
+                    .filter(|status| !is_untrusted_credential_code(status.code()))
                     .collect::<Vec<_>>();
                 if !failures.is_empty() {
                     output_lines.push(format!(
@@ -1183,9 +1203,9 @@ pub mod tests {
         jumbf::labels,
         log_item,
         validation_status::{
-            ASSERTION_DATAHASH_MISMATCH, ASSERTION_HASHEDURI_MISMATCH, CLAIM_MALFORMED,
-            CLAIM_SIGNATURE_INSIDE_VALIDITY, CLAIM_SIGNATURE_VALIDATED, SIGNING_CREDENTIAL_TRUSTED,
-            SIGNING_CREDENTIAL_UNTRUSTED,
+            ASSERTION_DATAHASH_MISMATCH, ASSERTION_HASHEDURI_MISMATCH,
+            CAWG_X509_CREDENTIAL_UNTRUSTED, CLAIM_MALFORMED, CLAIM_SIGNATURE_INSIDE_VALIDITY,
+            CLAIM_SIGNATURE_VALIDATED, SIGNING_CREDENTIAL_TRUSTED, SIGNING_CREDENTIAL_UNTRUSTED,
         },
         HashedUri, Relationship,
     };
@@ -1225,6 +1245,32 @@ pub mod tests {
         );
 
         validation_results.add_status(ValidationStatus::new_failure(SIGNING_CREDENTIAL_UNTRUSTED));
+
+        assert_eq!(
+            validation_results.validation_state(),
+            ValidationState::Valid
+        );
+    }
+
+    #[test]
+    fn not_trusted_state_with_cawg_x509_untrusted_credential_failure() {
+        // An untrusted CAWG X.509 identity assertion credential must be tolerated
+        // the same way an untrusted C2PA claim signature credential is.
+        let mut validation_results = ValidationResults::default();
+
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_VALIDATED).set_kind(LogKind::Success),
+        );
+        validation_results.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_INSIDE_VALIDITY).set_kind(LogKind::Success),
+        );
+        validation_results.add_status(
+            ValidationStatus::new(SIGNING_CREDENTIAL_TRUSTED).set_kind(LogKind::Success),
+        );
+
+        validation_results.add_status(ValidationStatus::new_failure(
+            CAWG_X509_CREDENTIAL_UNTRUSTED,
+        ));
 
         assert_eq!(
             validation_results.validation_state(),
