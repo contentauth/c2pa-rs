@@ -1918,9 +1918,16 @@ impl Builder {
             self.add_actions_assertion_settings(&ingredient_map, &mut actions, true)?;
 
             if !actions.actions().is_empty() {
-                // This is the manifest's only actions assertion, so per spec it must live in
-                // `created_assertions` rather than `gathered_assertions`.
-                add_assertion(&mut claim, &actions, true)?;
+                // Per spec, only the actions assertion carrying the manifest's inception
+                // action is required to live in `created_assertions` rather than
+                // `gathered_assertions`. Settings can add other, non-inception actions here
+                // too (e.g. via `builder.actions.actions`), and those don't need to be forced
+                // into `created_assertions`.
+                let has_inception = actions
+                    .actions()
+                    .iter()
+                    .any(|a| matches!(a.action(), c2pa_action::CREATED | c2pa_action::OPENED));
+                add_assertion(&mut claim, &actions, has_inception)?;
             }
         }
 
@@ -5081,6 +5088,41 @@ mod tests {
                 _ => {}
             }
         }
+    }
+
+    // Per Gavin's review feedback on #2503: settings-defined actions with no inception step
+    // (`c2pa.created`/`c2pa.opened`) must not be forced into `created_assertions` -- only an
+    // actions assertion that actually carries the inception step has that spec requirement.
+    #[test]
+    fn test_builder_settings_actions_without_inception_stay_gathered() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [[builder.actions.actions]]
+                    action = (c2pa_action::EDITED)
+                    source_type = (DigitalSourceType::Empty.to_string())
+                }
+                .to_string(),
+            )
+            .unwrap();
+
+        let context = Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .with_signer(test_signer(SigningAlg::Ps256));
+
+        let claim = Builder::from_context(context).to_claim().unwrap();
+
+        assert_eq!(claim.created_action_assertions().len(), 0);
+
+        let gathered_assertions = claim.gathered_action_assertions();
+        assert_eq!(gathered_assertions.len(), 1);
+        let actions = Actions::from_assertion(gathered_assertions[0].assertion()).unwrap();
+        assert_eq!(actions.actions().len(), 1);
+        assert_eq!(actions.actions()[0].action(), c2pa_action::EDITED);
     }
 
     #[test]
