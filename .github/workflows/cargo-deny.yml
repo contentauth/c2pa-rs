@@ -154,28 +154,48 @@ jobs:
               await ensureIssue(title, body);
             }
 
-            if (problems.length > 0) {
-              const cap = 40;
-              const lines = problems.slice(0, cap).map(problem => {
+            // Let's be safe.
+            const SPAM_CAP = 5;
+            if (problems.length > SPAM_CAP) {
+              const lines = problems.slice(0, 40).map(problem => {
                 const where = problem.crate ? `\`${problem.crate}\`` : '';
                 const why = problem.note ? ` (${problem.note.replace(/:$/, '')})` : '';
                 return `- **${problem.code}** ${where}: ${problem.message}${why}`;
               });
-              const more = problems.length > cap ? [``, `…and ${problems.length - cap} more.`] : [];
-              const title = 'Dependency audit (cargo-deny): license / bans / sources violations';
+              const more = problems.length > 40 ? [``, `…and ${problems.length - 40} more.`] : [];
+              const title = 'Dependency audit (cargo-deny): many license / bans / sources violations';
               const body = [
-                `The dependency audit is failing on \`${context.ref}\` with the following violations:`,
+                `The dependency audit is failing on \`${context.ref}\` with ${problems.length} violations (too many to open individually — likely a \`deny.toml\` misconfiguration):`,
                 '',
                 ...lines,
                 ...more,
                 '',
-                'Fix the offending dependency, or adjust `deny.toml` (allow the license/source or add a scoped exception) with justification.',
+                'Fix the offending dependencies, or adjust `deny.toml` (allow the license/source or add a scoped exception) with justification.',
                 '',
                 `Run: ${run}`,
                 '',
                 outputDetails,
               ].join('\n');
               await ensureIssue(title, body);
+            } else {
+              for (const problem of problems) {
+                const crateName = problem.crate ? problem.crate.split(' ')[0] : 'workspace';
+                const why = problem.note ? ` (${problem.note.replace(/:$/, '')})` : '';
+                const title = `Dependency audit (${problem.code}): ${crateName}`;
+                const body = [
+                  `The dependency audit is failing on \`${context.ref}\`: ${problem.message}${why}`,
+                  '',
+                  problem.crate ? `- Crate: \`${problem.crate}\`` : null,
+                  `- Violation: \`${problem.code}\``,
+                  '',
+                  'Fix the offending dependency, or adjust `deny.toml` (allow the license/source or add a scoped exception) with justification.',
+                  '',
+                  `Run: ${run}`,
+                  '',
+                  outputDetails,
+                ].filter(l => l !== null).join('\n');
+                await ensureIssue(title, body);
+              }
             }
 
             if (advisories.length === 0 && problems.length === 0) {
