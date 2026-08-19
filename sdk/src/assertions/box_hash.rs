@@ -57,7 +57,7 @@ pub struct BoxExclusion {
 }
 
 /// A caller-specified byte range to exclude when generating a [`BoxHash`],
-/// targeting the box at `source_box_index` in [`AssetBoxHash::get_box_map`]'s
+/// targeting the box at `source_box_index` in `AssetBoxHash::get_box_map`'s
 /// output (0-based, file order).
 #[derive(Clone, Debug)]
 pub struct BoxHashExclusionRequest {
@@ -77,7 +77,7 @@ pub enum ExclusionKind {
 
 /// A box-relative byte range a format handler has determined is safe to
 /// exclude. Always derived from the *live* asset by
-/// [`AssetBoxHash::get_box_map`] - never trusted from the assertion itself,
+/// `AssetBoxHash::get_box_map` - never trusted from the assertion itself,
 /// so [`BoxMap::allowed_exclusions`] is never serialized.
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct AllowedExclusion {
@@ -274,7 +274,7 @@ impl BoxHash {
             .map(|_metadata_exclusion_used| ())
     }
 
-    /// Like [`verify_stream_hash`] but fires `progress(step, total)` once per hashed
+    /// Like [`Self::verify_stream_hash`] but fires `progress(step, total)` once per hashed
     /// box so callers with a [`Context`] can report `ProgressPhase::VerifyingAssetHash`
     /// ticks and support cancellation.
     ///
@@ -441,7 +441,7 @@ impl BoxHash {
         })
     }
 
-    /// Like [`generate_box_hash_from_stream`] but fires `progress(step, total)` once
+    /// Like [`Self::generate_box_hash_from_stream`] but fires `progress(step, total)` once
     /// per hashed box so callers with a [`Context`] can report `ProgressPhase::Hashing`
     /// ticks and support cancellation.
     pub(crate) fn generate_box_hash_from_stream_with_progress<R, F>(
@@ -466,7 +466,7 @@ impl BoxHash {
         )
     }
 
-    /// Like [`generate_box_hash_from_stream`], but `exclusion_requests` carves byte
+    /// Like [`Self::generate_box_hash_from_stream`], but `exclusion_requests` carves byte
     /// ranges out of specific source boxes' hashes, producing a spec-conformant
     /// `exclusions` field (see [`BoxExclusion`]) on the resulting entries.
     pub fn generate_box_hash_from_stream_with_exclusions<R>(
@@ -490,7 +490,7 @@ impl BoxHash {
         )
     }
 
-    /// Like [`generate_box_hash_from_stream_with_exclusions`] but fires
+    /// Like [`Self::generate_box_hash_from_stream_with_exclusions`] but fires
     /// `progress(step, total)` once per hashed box.
     pub(crate) fn generate_box_hash_from_stream_with_progress_and_exclusions<R, F>(
         &mut self,
