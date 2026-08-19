@@ -1,0 +1,189 @@
+name: Dependency audit
+
+# Dependency license / vulnerability audit.
+#
+# cargo-deny checks advisories (RUSTSEC), banned crates, licenses, and sources.
+# Advisories are time-based: a newly published advisory can start failing the
+# audit even when nothing in a given PR touched dependencies, so this workflow
+# splits the audit:
+#   * On a PR, the audit only runs (and blocks) when the PR actually changes
+#     Rust dependencies (Cargo.toml / Cargo.lock) or the deny config. A PR that
+#     touches none of those skips the audit step and the job still reports green,
+#     satisfying the required "License / vulnerability audit" status check
+#     without any branch-protection reconfiguration.
+#   * On every merge to main/stable/backport branch, and daily against main,
+#     the audit always runs and, on failure, opens or updates a GitHub issue
+#     instead of blocking anything.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 8 * * *'
+  pull_request:
+    branches:
+      - main
+      - stable
+      - 'v0.*'
+      - '*-rc*'
+    types:
+      - opened
+      - reopened
+      - synchronize
+  push:
+    branches:
+      - main
+      - stable
+      - 'v0.*'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  cargo-deny:
+    name: License / vulnerability audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+
+      - name: Detect dependency changes
+        id: deps
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if git diff --name-only "$BASE_SHA" HEAD \
+              | grep -qE '(^|/)Cargo\.(toml|lock)$|(^|/)deny\.toml$'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "This PR changes Rust dependencies or the deny config, auditing..."
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No dependency or deny-config changes in this PR, the audit runs post-merge instead."
+          fi
+
+      - name: Install cargo-deny
+        if: github.event_name != 'pull_request' || steps.deps.outputs.changed == 'true'
+        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2.82.9
+        with:
+          tool: cargo-deny
+
+      - name: Audit crate dependencies
+        if: github.event_name != 'pull_request' || steps.deps.outputs.changed == 'true'
+        run: cargo deny check advisories bans licenses sources
+
+      - name: Collect failing checks
+        if: failure() && github.event_name != 'pull_request'
+        run: |
+          # Human-readable output.
+          cargo deny check advisories bans licenses sources > deny.txt 2>&1 || true
+          # Machine-readable output
+          cargo deny --format json check advisories bans licenses sources \
+            2> deny.ndjson 1>/dev/null || true
+
+            # Advisories
+          jq -c 'select(.type == "diagnostic" and .fields.severity == "error" and .fields.advisory != null)
+                 | {id: .fields.advisory.id, title: .fields.advisory.title, package: .fields.advisory.package, url: .fields.advisory.url}' \
+            deny.ndjson \
+            | jq -s 'unique_by(.id)' > advisories.json
+
+          # Non-advisories.
+          jq -c 'select(.type == "diagnostic" and .fields.severity == "error" and .fields.advisory == null)
+                 | {code: .fields.code,
+                    message: .fields.message,
+                    crate: (.fields.graphs[0]?.Krate | if . then "\(.name) \(.version)" else null end),
+                    note: ([.fields.notes[]? | select(startswith("  ") | not)] | .[0] // null)}' \
+            deny.ndjson \
+            | jq -s 'unique_by([.code, .message, .crate])' > problems.json
+
+          echo "Advisory errors:"; cat advisories.json
+          echo "Other violations:"; cat problems.json
+
+      - name: Open per-advisory issues on failure
+        if: failure() && github.event_name != 'pull_request'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const fs = require('fs');
+            const advisories = JSON.parse(fs.readFileSync('advisories.json', 'utf8'));
+            const problems = JSON.parse(fs.readFileSync('problems.json', 'utf8'));
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+
+            const output = fs.readFileSync('deny.txt', 'utf8');
+            const outputDetails = `<details><summary>cargo-deny output</summary>\n\n\`\`\`\`\n${output}\n\`\`\`\`\n\n</details>`;
+
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'dependency-audit',
+              per_page: 100,
+            });
+            const openByTitle = new Map(existing.data.map(i => [i.title, i]));
+
+            async function ensureIssue(title, body) {
+              if (openByTitle.has(title)) {
+                console.log(`Already tracked: ${title}`);
+                return;
+              }
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo,
+                title, labels: ['dependency-audit'], body,
+              });
+              console.log(`Opened: ${title}`);
+            }
+
+            for (const advisory of advisories) {
+              const title = `${advisory.id}: ${advisory.title}`;
+              const rustsec = `https://rustsec.org/advisories/${advisory.id}.html`;
+              const body = [
+                `The dependency audit is failing on \`${context.ref}\` because of [${advisory.id}](${rustsec}).`,
+                '',
+                `- Affected crate: \`${advisory.package}\``,
+                `- Advisory: ${rustsec}`,
+                advisory.url ? `- Upstream: ${advisory.url}` : null,
+                '',
+                'Update or patch the affected dependency, or add a scoped ignore to `deny.toml` with justification.',
+                '',
+                `Run: ${run}`,
+                '',
+                outputDetails,
+              ].filter(l => l !== null).join('\n');
+              await ensureIssue(title, body);
+            }
+
+            if (problems.length > 0) {
+              const cap = 40;
+              const lines = problems.slice(0, cap).map(problem => {
+                const where = problem.crate ? `\`${problem.crate}\`` : '';
+                const why = problem.note ? ` (${problem.note.replace(/:$/, '')})` : '';
+                return `- **${problem.code}** ${where}: ${problem.message}${why}`;
+              });
+              const more = problems.length > cap ? [``, `…and ${problems.length - cap} more.`] : [];
+              const title = 'Dependency audit (cargo-deny): license / bans / sources violations';
+              const body = [
+                `The dependency audit is failing on \`${context.ref}\` with the following violations:`,
+                '',
+                ...lines,
+                ...more,
+                '',
+                'Fix the offending dependency, or adjust `deny.toml` (allow the license/source or add a scoped exception) with justification.',
+                '',
+                `Run: ${run}`,
+                '',
+                outputDetails,
+              ].join('\n');
+              await ensureIssue(title, body);
+            }
+
+            if (advisories.length === 0 && problems.length === 0) {
+              await ensureIssue('Dependency audit (cargo-deny) is failing', [
+                `The dependency audit failed on \`${context.ref}\`, but no specific violation could be parsed from its output.`,
+                '',
+                `Run: ${run}`,
+                '',
+                outputDetails,
+              ].join('\n'));
+            }
