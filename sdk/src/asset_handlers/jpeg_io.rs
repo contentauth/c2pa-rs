@@ -47,6 +47,9 @@ static SUPPORTED_TYPES: [&str; 3] = ["jpg", "jpeg", "image/jpeg"];
 const XMP_SIGNATURE: &str = "http://ns.adobe.com/xap/1.0/";
 const XMP_SIGNATURE_BUFFER_SIZE: usize = XMP_SIGNATURE.len() + 1; // skip null or space char at end
 
+const EXIF_SIGNATURE: &[u8] = b"Exif\0\0";
+const PHOTOSHOP_SIGNATURE: &[u8] = b"Photoshop 3.0\0"; // APP13 Image Resource Block (carries IPTC)
+
 const MAX_JPEG_MARKER_SIZE: usize = 64000; // technically it's 64K but a bit smaller is fine
 
 const C2PA_MARKER: [u8; 4] = [0x63, 0x32, 0x70, 0x61];
@@ -714,6 +717,24 @@ fn get_seg_size(input_stream: &mut dyn CAIRead) -> Result<usize> {
     }
 }
 
+// Unlike PNG/JPEG-XL's format-registered chunk/box types, JPEG's APPn
+// markers are a generic "any application can use this for anything"
+// convention - APP1 is *conventionally* Exif or XMP and APP13 is
+// *conventionally* Photoshop's IRB (which carries IPTC), but nothing in the
+// JPEG spec enforces that. So the marker name alone isn't proof of content;
+// an APP1/APP13 segment is only treated as metadata if its payload actually
+// starts with a recognized signature. `prefix` is the first few bytes of
+// the segment's payload (after the 4-byte marker+length header).
+fn app_segment_is_recognized_metadata(name: &str, prefix: &[u8]) -> bool {
+    match name {
+        "APP1" => {
+            prefix.starts_with(EXIF_SIGNATURE) || prefix.starts_with(XMP_SIGNATURE.as_bytes())
+        }
+        "APP13" => prefix.starts_with(PHOTOSHOP_SIGNATURE),
+        _ => false,
+    }
+}
+
 // A JPEG segment's `range_len` covers the 2-byte marker and (for markers
 // that have one) the 2-byte length field, before the payload - `range_start`
 // points at the marker, not the data. So an APP1/APP13/COM segment's own
@@ -1168,12 +1189,25 @@ impl AssetBoxHash for JpegIO {
 
             bm.range_len = size as u64;
 
-            if bm
-                .names
-                .first()
-                .is_some_and(|name| matches!(name.as_str(), "APP1" | "APP13" | "COM"))
-            {
-                bm.allowed_exclusions = jpeg_metadata_allowed_exclusions(bm.range_len);
+            match bm.names.first().map(String::as_str) {
+                Some("APP1") | Some("APP13") => {
+                    let name = bm.names[0].clone();
+                    let prefix_len =
+                        bm.range_len
+                            .saturating_sub(4)
+                            .min(XMP_SIGNATURE_BUFFER_SIZE as u64) as usize;
+                    input_stream.seek(std::io::SeekFrom::Start(bm.range_start + 4))?;
+                    let mut prefix = vec![0u8; prefix_len];
+                    input_stream.read_exact(&mut prefix)?;
+                    if app_segment_is_recognized_metadata(&name, &prefix) {
+                        bm.allowed_exclusions = jpeg_metadata_allowed_exclusions(bm.range_len);
+                    }
+                }
+                // COM is free-form text with no defined signature to check.
+                Some("COM") => {
+                    bm.allowed_exclusions = jpeg_metadata_allowed_exclusions(bm.range_len);
+                }
+                _ => {}
             }
         }
 
@@ -1309,6 +1343,33 @@ pub mod tests {
                 kind: ExclusionKind::ManifestOrPadding,
             }]
         );
+    }
+
+    #[test]
+    fn test_app_segment_is_recognized_metadata() {
+        assert!(app_segment_is_recognized_metadata("APP1", b"Exif\0\0stuff"));
+        assert!(app_segment_is_recognized_metadata(
+            "APP1",
+            b"http://ns.adobe.com/xap/1.0/\0stuff"
+        ));
+        assert!(app_segment_is_recognized_metadata(
+            "APP13",
+            b"Photoshop 3.0\0stuff"
+        ));
+        // Same bytes under the wrong marker name aren't recognized - a
+        // signature only counts for the segment type it actually belongs to.
+        assert!(!app_segment_is_recognized_metadata(
+            "APP13",
+            b"Exif\0\0stuff"
+        ));
+        // JPEG's APPn markers are a generic "any application" convention -
+        // an APP1/APP13 segment whose payload doesn't match any recognized
+        // signature is not metadata, whatever it actually contains.
+        assert!(!app_segment_is_recognized_metadata(
+            "APP1",
+            b"some vendor's private data"
+        ));
+        assert!(!app_segment_is_recognized_metadata("COM", b"Exif\0\0stuff"));
     }
 
     #[test]
