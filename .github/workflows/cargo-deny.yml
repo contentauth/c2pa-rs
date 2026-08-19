@@ -83,7 +83,7 @@ jobs:
           cargo deny --format json check advisories bans licenses sources \
             2> deny.ndjson 1>/dev/null || true
 
-            # Advisories
+          # Advisories.
           jq -c 'select(.type == "diagnostic" and .fields.severity == "error" and .fields.advisory != null)
                  | {id: .fields.advisory.id, title: .fields.advisory.title, package: .fields.advisory.package, url: .fields.advisory.url}' \
             deny.ndjson \
