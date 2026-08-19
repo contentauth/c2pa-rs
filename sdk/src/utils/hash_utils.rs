@@ -29,6 +29,16 @@ use crate::{crypto::base64::encode, utils::io_utils::stream_len, Error, Result};
 
 const MAX_HASH_BUF: usize = 256 * 1024 * 1024; // cap memory usage to 256MB
 
+/// Size of the next chunk to read, given how much of the range is left and the
+/// configured buffer cap.
+///
+/// Clamping in `u64` keeps a range of 4 GiB or more from truncating on a 32-bit target,
+/// where `usize` is 32 bits. The cap fits in every supported `usize`, so the clamped
+/// value always converts.
+fn chunk_size(chunk_left: u64, max_hash_buf: usize) -> usize {
+    usize::try_from(chunk_left.min(max_hash_buf as u64)).unwrap_or(usize::MAX)
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 /// Defines a hash range to be used with `hash_stream_by_alg`
 pub struct HashRange {
@@ -421,7 +431,7 @@ where
         .iter()
         .map(|r| {
             let len = r.end() - r.start() + 1;
-            len.div_ceil(max_hash_buf as u64) as u32
+            u32::try_from(len.div_ceil(max_hash_buf as u64)).unwrap_or(u32::MAX)
         })
         .sum();
     let mut step: u32 = 0;
@@ -446,7 +456,7 @@ where
             data.seek(SeekFrom::Start(*start))?;
 
             loop {
-                let mut chunk = vec![0u8; std::cmp::min(chunk_left, max_hash_buf as u64) as usize];
+                let mut chunk = vec![0u8; chunk_size(chunk_left, max_hash_buf)];
 
                 data.read_exact(&mut chunk)?;
 
@@ -482,7 +492,7 @@ where
             // move to start of range
             data.seek(SeekFrom::Start(*start))?;
 
-            let mut chunk = vec![0u8; std::cmp::min(chunk_left, max_hash_buf as u64) as usize];
+            let mut chunk = vec![0u8; chunk_size(chunk_left, max_hash_buf)];
             data.read_exact(&mut chunk)?;
 
             loop {
@@ -504,8 +514,7 @@ where
                     })?;
 
                 // read next chunk while we wait for hash
-                let mut next_chunk =
-                    vec![0u8; std::cmp::min(chunk_left, max_hash_buf as u64) as usize];
+                let mut next_chunk = vec![0u8; chunk_size(chunk_left, max_hash_buf)];
                 data.read_exact(&mut next_chunk)?;
 
                 hasher_enum = match rx.recv() {
@@ -645,6 +654,21 @@ mod tests {
     // Small enough that a few KB of test data spans multiple chunks.
     fn test_hash_buf() -> NonZeroUsize {
         NonZeroUsize::new(1024).unwrap()
+    }
+
+    // Regression test for CAI-13325: `chunk_left as usize` truncated a range of
+    // exactly 4 GiB (2^32) to zero on 32-bit targets, so the read loop asked for
+    // zero bytes on every iteration and never terminated.
+    #[test]
+    fn chunk_size_does_not_truncate_on_32_bit_targets() {
+        let cap = test_hash_buf().get();
+
+        assert_eq!(chunk_size(0, cap), 0);
+        assert_eq!(chunk_size(1, cap), 1);
+        assert_eq!(chunk_size(cap as u64, cap), cap);
+        assert_eq!(chunk_size(cap as u64 + 1, cap), cap);
+        assert_eq!(chunk_size(1 << 32, cap), cap);
+        assert_eq!(chunk_size(u64::MAX, cap), cap);
     }
 
     // Attacker-controlled HashRange with start+length > u64::MAX must return Err,
