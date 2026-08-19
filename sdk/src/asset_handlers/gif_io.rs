@@ -23,7 +23,7 @@ use serde_bytes::ByteBuf;
 use tempfile::Builder;
 
 use crate::{
-    assertions::{BoxKind, BoxMap, C2PA_BOXHASH},
+    assertions::{AllowedExclusion, BoxMap, ExclusionKind, C2PA_BOXHASH},
     asset_io::{
         self, AssetBoxHash, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
         ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
@@ -647,7 +647,7 @@ impl BlockMarker<Block> {
             hash: ByteBuf::from(Vec::new()),
             excluded: None,
             exclusions: None,
-            kind: self.block.box_kind(),
+            allowed_exclusions: self.block.allowed_exclusions(self.len()),
             pad: ByteBuf::from(Vec::new()),
             range_start: self.start(),
             range_len: self.len(),
@@ -810,18 +810,33 @@ impl Block {
         }
     }
 
-    // GIF's block enum is matched exhaustively at parse time (`Block::from_stream`
-    // errors on any unrecognized extension label), so every variant here was
-    // deliberately identified - there is no `BoxKind::Unknown` case for this format.
-    fn box_kind(&self) -> BoxKind {
+    // `box_len` is this block's own total length (from `BlockMarker::len()`),
+    // already fully known by the time this is called - no second pass needed.
+    fn allowed_exclusions(&self, box_len: u64) -> Vec<AllowedExclusion> {
         match self {
             Block::ApplicationExtension(application_extension)
                 if ApplicationExtensionKind::C2pa == application_extension.kind() =>
             {
-                BoxKind::C2pa
+                vec![AllowedExclusion {
+                    start: 0,
+                    length: box_len,
+                    kind: ExclusionKind::ManifestOrPadding,
+                }]
             }
-            Block::CommentExtension(_) => BoxKind::Metadata,
-            _ => BoxKind::Content,
+            // Comment Extension bodies are a length-prefixed sub-block stream
+            // (1-byte length + data, repeated, 0x00-terminated) with no
+            // single fixed header, so each sub-block's data gets its own
+            // range, skipping every length-prefix byte and the terminator.
+            Block::CommentExtension(comment) => comment
+                .sub_block_data_ranges
+                .iter()
+                .map(|&(offset, length)| AllowedExclusion {
+                    start: offset + 2, // skip the extension introducer + label
+                    length,
+                    kind: ExclusionKind::AssetMetadata,
+                })
+                .collect(),
+            _ => Vec::new(),
         }
     }
 
@@ -1017,13 +1032,31 @@ impl PlainTextExtension {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct CommentExtension {}
+struct CommentExtension {
+    // (offset, length) of each sub-block's data, relative to the start of
+    // the sub-block region (i.e. right after the 2-byte extension
+    // introducer + label) - excludes each sub-block's own 1-byte length
+    // prefix and the final 0x00 terminator.
+    sub_block_data_ranges: Vec<(u64, u64)>,
+}
 
 impl CommentExtension {
     fn from_stream(stream: &mut dyn CAIRead) -> Result<CommentExtension> {
-        // stream.seek(SeekFrom::Current(0))?;
-        DataSubBlocks::from_encoded_stream_and_skip(stream)?;
-        Ok(CommentExtension {})
+        let mut sub_block_data_ranges = Vec::new();
+        let mut pos: u64 = 0;
+        loop {
+            let sub_block_size = stream.read_u8()?;
+            pos += 1;
+            if sub_block_size == 0 {
+                break;
+            }
+            sub_block_data_ranges.push((pos, sub_block_size as u64));
+            stream.seek(SeekFrom::Current(sub_block_size as i64))?;
+            pos += sub_block_size as u64;
+        }
+        Ok(CommentExtension {
+            sub_block_data_ranges,
+        })
     }
 }
 
@@ -1199,17 +1232,39 @@ mod tests {
     const SAMPLE1: &[u8] = include_bytes!("../../tests/fixtures/sample1.gif");
 
     #[test]
-    fn test_box_kind() {
+    fn test_allowed_exclusions() {
+        // Sub-block data at offsets 1 (length 5) and 7 (length 3), relative
+        // to the start of the sub-block region - box-relative start is +2
+        // for the extension introducer + label.
+        let comment = CommentExtension {
+            sub_block_data_ranges: vec![(1, 5), (7, 3)],
+        };
         assert_eq!(
-            Block::CommentExtension(CommentExtension {}).box_kind(),
-            BoxKind::Metadata
+            Block::CommentExtension(comment).allowed_exclusions(20),
+            vec![
+                AllowedExclusion {
+                    start: 3,
+                    length: 5,
+                    kind: ExclusionKind::AssetMetadata,
+                },
+                AllowedExclusion {
+                    start: 9,
+                    length: 3,
+                    kind: ExclusionKind::AssetMetadata,
+                },
+            ]
         );
         assert_eq!(
-            Block::ApplicationExtension(ApplicationExtension::new_c2pa(&[]).unwrap()).box_kind(),
-            BoxKind::C2pa
+            Block::ApplicationExtension(ApplicationExtension::new_c2pa(&[]).unwrap())
+                .allowed_exclusions(20),
+            vec![AllowedExclusion {
+                start: 0,
+                length: 20,
+                kind: ExclusionKind::ManifestOrPadding,
+            }]
         );
-        assert_eq!(Block::Header(Header {}).box_kind(), BoxKind::Content);
-        assert_eq!(Block::Trailer.box_kind(), BoxKind::Content);
+        assert!(Block::Header(Header {}).allowed_exclusions(20).is_empty());
+        assert!(Block::Trailer.allowed_exclusions(20).is_empty());
     }
 
     #[test]
@@ -1269,7 +1324,10 @@ mod tests {
             Some(&BlockMarker {
                 start: 808,
                 len: 52,
-                block: Block::CommentExtension(CommentExtension {})
+                block: Block::CommentExtension(CommentExtension {
+                    // The comment in this fixture is a single 48-byte sub-block.
+                    sub_block_data_ranges: vec![(1, 48)]
+                })
             })
         );
 
@@ -1484,7 +1542,7 @@ mod tests {
                 hash: ByteBuf::from(Vec::new()),
                 excluded: None,
                 exclusions: None,
-                kind: BoxKind::Content,
+                allowed_exclusions: vec![],
                 pad: ByteBuf::from(Vec::new()),
                 range_start: 0,
                 range_len: 6
@@ -1498,7 +1556,7 @@ mod tests {
                 hash: ByteBuf::from(Vec::new()),
                 excluded: None,
                 exclusions: None,
-                kind: BoxKind::Content,
+                allowed_exclusions: vec![],
                 pad: ByteBuf::from(Vec::new()),
                 range_start: 368494,
                 range_len: 778
@@ -1512,7 +1570,7 @@ mod tests {
                 hash: ByteBuf::from(Vec::new()),
                 excluded: None,
                 exclusions: None,
-                kind: BoxKind::Content,
+                allowed_exclusions: vec![],
                 pad: ByteBuf::from(Vec::new()),
                 range_start: SAMPLE1.len() as u64 - 1,
                 range_len: 1
