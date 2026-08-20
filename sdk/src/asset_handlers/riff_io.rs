@@ -557,6 +557,17 @@ impl CAIWriter for RiffIO {
             htype: HashBlockObjectType::Cai,
         });
 
+        // the RIFF header's chunk length field (bytes 4-8) is rewritten whenever
+        // the manifest store changes size, so it must be excluded from the data
+        // hash: an update manifest may change the store's length in place, and
+        // without this exclusion that rewrite breaks the parent manifest's hard
+        // binding
+        positions.push(HashObjectPositions {
+            offset: 4,
+            length: 4,
+            htype: HashBlockObjectType::OtherExclusion,
+        });
+
         // add hash of chunks before cai
         positions.push(HashObjectPositions {
             offset: 0,
@@ -745,6 +756,24 @@ pub mod tests {
         test::{fixture_path, temp_dir_path},
         xmp_inmemory_utils::extract_provenance,
     };
+
+    #[test]
+    fn test_object_locations_exclude_riff_size_field() {
+        let source = fixture_path("sample1.wav");
+        let mut stream = File::open(source).unwrap();
+
+        let riff_io = RiffIO::new("wav");
+        let positions = riff_io
+            .get_object_locations_from_stream(&mut stream)
+            .unwrap();
+
+        // the riff header length field must be an explicit exclusion so that
+        // manifest store growth (e.g. an update manifest) cannot break the
+        // data hash
+        assert!(positions.iter().any(|p| p.offset == 4
+            && p.length == 4
+            && p.htype == HashBlockObjectType::OtherExclusion));
+    }
 
     #[test]
     fn test_write_wav() {
