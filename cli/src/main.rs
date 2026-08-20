@@ -820,7 +820,6 @@ fn configure_sdk(args: &CliArgs) -> Result<Settings> {
                     trust_anchors: data,
                     trust_uri: trust_list_uri.clone(),
                     trust_kind: TrustListKind::Manifest,
-                    trust_config: Some("1.3.6.1.4.1.62558.2.1".to_string()),
                     ..Default::default()
                 };
 
