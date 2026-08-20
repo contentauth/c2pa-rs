@@ -22,6 +22,7 @@ use std::{
 #[allow(unused)] // different code path for WASI
 use tempfile::{tempdir, Builder, NamedTempFile, SpooledTempFile, TempDir};
 
+#[allow(unused)] // different code path for WASI
 use crate::{asset_io::rename_or_move, utils::path_utils::sanitize_archive_path, Error, Result};
 
 // Replace data at arbitrary location and len in a file.
