@@ -21,7 +21,7 @@ use crate::{
     asset_handlers::{
         bmff_io::BmffError, flac_io::FlacError, gif_io::GifError, jpeg_io::JpegError,
         mp3_io::Mp3Error, png_io::PngError, riff_io::RiffError, svg_io::SvgError,
-        tiff_io::TiffError,
+        tiff_io::TiffError, zip_io::ZipError,
     },
     crypto::{cose::CoseError, time_stamp::TimeStampError},
     http::HttpResolverError,
@@ -353,6 +353,9 @@ pub enum Error {
 
     #[error("error parsing TIFF: {0}")]
     TiffError(#[from] TiffError),
+
+    #[error(transparent)]
+    ZipError(#[from] ZipError),
 }
 
 /// A specialized `Result` type for C2PA toolkit operations.
