@@ -95,3 +95,8 @@ pub use soft_binding::{SoftBinding, SoftBindingBlock, SoftBindingScope};
 
 mod cloud_data;
 pub use cloud_data::{CloudData, HashedExtUri};
+
+#[cfg(feature = "unstable_live_video")]
+mod live_video_segment;
+#[cfg(feature = "unstable_live_video")]
+pub use live_video_segment::{ContinuityMethod, LiveVideoSegment};

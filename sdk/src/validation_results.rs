@@ -1164,6 +1164,44 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a C2PA assertion box.
     pub const ASSERTION_TIMESTAMP_MALFORMED: &str = "assertion.timestamp.malformed";
 
+    // -- live video failure codes (experimental, gated by `unstable_live_video`) --
+
+    /// A live video segment assertion field is invalid (e.g., `sequenceNumber` did
+    /// not increase or `streamId` does not match the previous segment).
+    ///
+    /// See [Live Video - C2PA Technical Specification section 19.7.2](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_live_video_validation_process).
+    #[cfg(feature = "unstable_live_video")]
+    pub const LIVEVIDEO_ASSERTION_INVALID: &str = "livevideo.assertion.invalid";
+
+    /// The `continuityMethod` field is absent, unsupported, or its required
+    /// companion fields (e.g., `previousManifestId`) are missing or incorrect.
+    ///
+    /// See [Live Video - C2PA Technical Specification section 19.7.2](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_live_video_validation_process).
+    #[cfg(feature = "unstable_live_video")]
+    pub const LIVEVIDEO_CONTINUITY_METHOD_INVALID: &str = "livevideo.continuityMethod.invalid";
+
+    /// The segment structure is invalid (e.g., a media segment lacks both a
+    /// C2PA Manifest Box and an `emsg` box, or `previousManifestId` does not
+    /// match the previous segment's manifest identifier).
+    ///
+    /// See [Live Video - C2PA Technical Specification section 19.7](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_live_video_validation_process).
+    #[cfg(feature = "unstable_live_video")]
+    pub const LIVEVIDEO_SEGMENT_INVALID: &str = "livevideo.segment.invalid";
+
+    /// The C2PA Manifest found in the segment's C2PA Manifest Box failed
+    /// standard C2PA validation.
+    ///
+    /// See [Live Video - C2PA Technical Specification section 19.7.1](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_live_video_validation_process).
+    #[cfg(feature = "unstable_live_video")]
+    pub const LIVEVIDEO_MANIFEST_INVALID: &str = "livevideo.manifest.invalid";
+
+    /// An initialization segment contains an `mdat` box, which is not permitted
+    /// for live video initialization segments.
+    ///
+    /// See [Live Video - C2PA Technical Specification section 19.7.1](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_live_video_validation_process).
+    #[cfg(feature = "unstable_live_video")]
+    pub const LIVEVIDEO_INIT_INVALID: &str = "livevideo.init.invalid";
+
     /// Returns `true` if the status code is a known C2PA success status code.
     ///
     /// Returns `false` if the status code is a known C2PA failure status
