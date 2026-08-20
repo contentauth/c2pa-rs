@@ -207,6 +207,109 @@ fn add_xmp_key(xmp: &str, key: &str, value: &str) -> Result<String> {
     String::from_utf8(result).map_err(|e| Error::XmpWriteError(e.to_string()))
 }
 
+/// Remove a value from XMP by key — the inverse of `add_xmp_key`. Strips the
+/// key whether it's stored as an `rdf:Description` attribute (how
+/// `add_xmp_key` always writes it) or as a standalone child element (how
+/// `extract_xmp_key` also knows how to read it, for interop with XMP this
+/// crate didn't produce), leaving everything else in the packet untouched.
+fn remove_xmp_key(xmp: &str, key: &str) -> Result<String> {
+    let orig_length = xmp.len();
+
+    let mut target_length = orig_length.max(4096);
+    let xpacket_end = "<?xpacket end";
+    let xpacket_end_length = XMP_END.len();
+    let xmp_body = if let Some(pos) = xmp.rfind(xpacket_end) {
+        target_length = orig_length - xpacket_end_length;
+        xmp[..pos].trim_end()
+    } else {
+        xmp
+    };
+
+    let mut reader = Reader::from_str(xmp_body);
+    reader.config_mut().trim_text(false);
+    reader.config_mut().expand_empty_elements = false;
+    let mut writer = Writer::new(Cursor::new(Vec::new()));
+    // Set while inside a standalone `<key>...</key>` child element, so its
+    // contents (text, nested events) are swallowed until the matching end.
+    let mut skipping_key_element = false;
+    loop {
+        let event = reader
+            .read_event()
+            .map_err(|e| Error::XmpReadError(e.to_string()))?;
+        match event {
+            Event::Start(ref e) if e.name() == QName(RDF_DESCRIPTION) => {
+                let mut elem = BytesStart::from_content(
+                    String::from_utf8_lossy(RDF_DESCRIPTION),
+                    RDF_DESCRIPTION.len(),
+                );
+                for attr in e.attributes() {
+                    match attr {
+                        Ok(attr) if attr.key == QName(key.as_bytes()) => {
+                            // drop this attribute
+                        }
+                        Ok(attr) => {
+                            elem.extend_attributes([attr]);
+                        }
+                        Err(e) => {
+                            error!("Error at position {}", reader.buffer_position());
+                            return Err(Error::XmpReadError(e.to_string()));
+                        }
+                    }
+                }
+                writer
+                    .write_event(Event::Start(elem))
+                    .map_err(|e| Error::XmpWriteError(e.to_string()))?;
+            }
+            Event::Empty(ref e) if e.name() == QName(RDF_DESCRIPTION) => {
+                let mut elem = BytesStart::from_content(
+                    String::from_utf8_lossy(RDF_DESCRIPTION),
+                    RDF_DESCRIPTION.len(),
+                );
+                for attr in e.attributes() {
+                    match attr {
+                        Ok(attr) if attr.key == QName(key.as_bytes()) => {
+                            // drop this attribute
+                        }
+                        Ok(attr) => {
+                            elem.extend_attributes([attr]);
+                        }
+                        Err(e) => {
+                            error!("Error at position {}", reader.buffer_position());
+                            return Err(Error::XmpReadError(e.to_string()));
+                        }
+                    }
+                }
+                writer
+                    .write_event(Event::Empty(elem))
+                    .map_err(|e| Error::XmpWriteError(e.to_string()))?;
+            }
+            Event::Start(ref e) if e.name() == QName(key.as_bytes()) => {
+                skipping_key_element = true;
+            }
+            Event::Empty(ref e) if e.name() == QName(key.as_bytes()) => {
+                // self-closing standalone form — nothing further to skip.
+            }
+            Event::End(ref e) if skipping_key_element && e.name() == QName(key.as_bytes()) => {
+                skipping_key_element = false;
+            }
+            Event::Eof => break,
+            _ if skipping_key_element => {
+                // swallow contents of the standalone element being removed.
+            }
+            e => {
+                writer
+                    .write_event(e)
+                    .map_err(|e| Error::XmpWriteError(e.to_string()))?;
+            }
+        }
+    }
+    // Maintain XMP packet length with padding if possible.
+    let padding_length = target_length.saturating_sub(writer.get_ref().get_ref().len());
+    write_xmp_padding(&mut writer.get_mut(), padding_length)?;
+    let result = writer.into_inner().into_inner();
+    String::from_utf8(result).map_err(|e| Error::XmpWriteError(e.to_string()))
+}
+
 /// extract the dc:provenance value from xmp
 pub fn extract_provenance(xmp: &str) -> Option<String> {
     extract_xmp_key(xmp, "dcterms:provenance")
@@ -226,6 +329,12 @@ fn extract_document_id(xmp: &str) -> Option<String> {
 pub fn add_provenance(xmp: &str, provenance: &str) -> Result<String> {
     let xmp = add_xmp_key(xmp, "xmlns:dcterms", "http://purl.org/dc/terms/")?;
     add_xmp_key(&xmp, "dcterms:provenance", provenance)
+}
+
+/// Remove the dc:provenance value from xmp, if present, leaving everything
+/// else in the packet untouched. The inverse of `add_provenance`.
+pub fn remove_provenance(xmp: &str) -> Result<String> {
+    remove_xmp_key(xmp, "dcterms:provenance")
 }
 
 // According to the XMP Spec, the recommended practice is to use the ASCII space
@@ -265,10 +374,7 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::*;
-    use crate::{
-        asset_handlers::jpeg_io::JpegIO,
-        asset_io::{AssetIO, RemoteRefEmbedType},
-    };
+    use crate::{asset_handlers::jpeg_io::JpegIO, asset_io::AssetIO};
 
     const XMP_DATA: &str = r#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
     <x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="contentauth">
@@ -331,7 +437,7 @@ mod tests {
 
         let assetio_handler = handler.get_handler("jpg");
 
-        let remote_ref_handler = assetio_handler.remote_ref_writer_ref().unwrap();
+        let remote_ref_handler = assetio_handler.remote_manifest_url_ref().unwrap();
 
         let mut source_stream = Cursor::new(source_bytes.to_vec());
         let mut output_stream = Cursor::new(Vec::new());
@@ -344,11 +450,7 @@ mod tests {
         source_stream.set_position(0);
 
         remote_ref_handler
-            .embed_reference_to_stream(
-                &mut source_stream,
-                &mut output_stream,
-                RemoteRefEmbedType::Xmp(test_msg.to_string()),
-            )
+            .write_remote_manifest_url(&mut source_stream, &mut output_stream, test_msg)
             .unwrap();
 
         output_stream.set_position(0);

@@ -11,15 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{fs::File, path::Path};
-
-use serde_bytes::ByteBuf;
+use std::path::Path;
 
 use crate::{
-    assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
-        HashBlockObjectType, HashObjectPositions,
+        AssetBoxHash, AssetIO, BoxMap, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
+        ComposedManifestRef, HashObjectPositions, C2PA_BOXHASH,
     },
     error::{Error, Result},
 };
@@ -34,17 +31,17 @@ pub(crate) static SUPPORTED_TYPES: [&str; 3] = [
 pub struct C2paIO {}
 
 impl CAIReader for C2paIO {
-    fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
-        asset_reader.rewind()?;
+    fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
+        input_stream.rewind()?;
 
         let mut cai_data = Vec::new();
         // read the whole file
-        asset_reader.read_to_end(&mut cai_data)?;
+        input_stream.read_to_end(&mut cai_data)?;
         Ok(cai_data)
     }
 
     // C2PA files have no xmp data
-    fn read_xmp(&self, _asset_reader: &mut dyn CAIRead) -> Option<String> {
+    fn read_xmp(&self, _input_stream: &mut dyn CAIRead) -> Option<String> {
         None
     }
 }
@@ -80,30 +77,12 @@ impl CAIWriter for C2paIO {
 }
 
 impl AssetIO for C2paIO {
-    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
-        let mut f = File::open(asset_path)?;
-        self.read_cai(&mut f)
-    }
-
     fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
         // just save the data in a file
         std::fs::write(asset_path, store_bytes)
             .map_err(|_err| Error::BadParam("C2PA write error".to_owned()))?;
 
         Ok(())
-    }
-
-    fn get_object_locations(
-        &self,
-        _asset_path: &std::path::Path,
-    ) -> Result<Vec<HashObjectPositions>> {
-        let hop = HashObjectPositions {
-            offset: 0,
-            length: 0,
-            htype: HashBlockObjectType::Cai,
-        };
-
-        Ok(vec![hop])
     }
 
     fn remove_cai_store(&self, _asset_path: &Path) -> Result<()> {
@@ -146,19 +125,7 @@ impl AssetBoxHash for C2paIO {
     fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
         // creates a box map with only a C2PA box.
         input_stream.rewind()?;
-        let alg = "sha256";
-        let c2pa_box_map = BoxMap {
-            names: vec![C2PA_BOXHASH.to_string()],
-            alg: Some(alg.to_string()),
-            hash: ByteBuf::from(vec![]),
-            excluded: None,
-            pad: ByteBuf::from(vec![]),
-            range_start: 0,
-            range_len: 0,
-        };
-
-        let box_maps = vec![c2pa_box_map];
-        Ok(box_maps)
+        Ok(vec![BoxMap::new(vec![C2PA_BOXHASH.to_string()], 0, 0)])
     }
 }
 
@@ -184,12 +151,12 @@ pub mod tests {
             test::{fixture_path, temp_dir_path},
             test_signer::test_signer,
         },
-        SigningAlg,
+        Context, SigningAlg,
     };
 
     #[test]
     fn c2pa_io_parse() {
-        let context = crate::context::Context::new();
+        let context = Context::new();
 
         let path = fixture_path("C.jpg");
 
@@ -197,7 +164,10 @@ pub mod tests {
         let temp_path = temp_dir_path(&temp_dir, "test.c2pa");
 
         let c2pa_io = C2paIO {};
-        let manifest = crate::jumbf_io::load_jumbf_from_file(&path).expect("read_cai_store");
+        let manifest = context
+            .io()
+            .read_jumbf_from_file(&path)
+            .expect("read_cai_store");
         c2pa_io
             .save_cai_store(&temp_path, &manifest)
             .expect("save cai store");
@@ -232,7 +202,11 @@ pub mod tests {
         let path = fixture_path("C.jpg");
 
         let c2pa_io = C2paIO {};
-        let manifest = crate::jumbf_io::load_jumbf_from_file(&path).expect("load_jumbf_from_file");
+        let context = Context::new();
+        let manifest = context
+            .io()
+            .read_jumbf_from_file(&path)
+            .expect("load_jumbf_from_file");
         let mut output_stream = Cursor::new(Vec::new());
         c2pa_io
             .write_cai(&mut empty(), &mut output_stream, &manifest)

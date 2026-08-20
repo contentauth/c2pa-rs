@@ -24,7 +24,7 @@ use serde_bytes::ByteBuf;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor, AssertionJson},
     assertions::labels,
-    asset_io::{AssetBoxHash, CAIRead},
+    asset_io::{AssetBoxHash, BoxMap as AssetBoxMap, CAIRead, C2PA_BOXHASH},
     error::{Error, Result},
     hash_utils::hash_by_alg,
     maybe_send_sync::MaybeSend,
@@ -36,8 +36,6 @@ use crate::{
 };
 
 const ASSERTION_CREATION_VERSION: usize = 1;
-
-pub const C2PA_BOXHASH: &str = "C2PA";
 
 #[derive(Serialize, Default, Deserialize, Debug, PartialEq, Eq)]
 pub struct BoxMap {
@@ -76,6 +74,20 @@ impl BoxMap {
         println!("data len: {}, hash: {}", len, Hexlify(&hash));
         Ok(())
     }
+
+    /// Builds a spec `BoxMap` (hash-bearing) from an [`AssetBoxHash::get_box_map`]
+    /// entry (region-only), attaching the hash produced for that region.
+    fn from_asset_box_map(bm: AssetBoxMap, hash: Vec<u8>, alg: Option<String>) -> Self {
+        BoxMap {
+            names: bm.names,
+            alg,
+            hash: ByteBuf::from(hash),
+            excluded: bm.excluded,
+            pad: ByteBuf::from(vec![]),
+            range_start: bm.range_start,
+            range_len: bm.range_len,
+        }
+    }
 }
 
 /// Helper class to create BoxHash assertion
@@ -86,6 +98,24 @@ pub struct BoxHash {
 
 impl BoxHash {
     pub const LABEL: &'static str = labels::BOX_HASH;
+
+    /// Builds an unhashed placeholder [`BoxHash`] straight from
+    /// [`AssetBoxHash::get_box_map`]'s output, with every entry's `hash` left
+    /// empty and `alg` unset.
+    ///
+    /// Used to size and reserve space for a `c2pa.hash.boxes` assertion before
+    /// the asset (and its real box hashes) exist — e.g. an archived working
+    /// store signed over an empty asset. Call
+    /// [`generate_box_hash_from_stream`](Self::generate_box_hash_from_stream)
+    /// separately to fill in real hashes once the asset is available.
+    pub fn from_box_map(boxes: Vec<AssetBoxMap>) -> Self {
+        BoxHash {
+            boxes: boxes
+                .into_iter()
+                .map(|bm| BoxMap::from_asset_box_map(bm, vec![], None))
+                .collect(),
+        }
+    }
 
     pub fn verify_hash(
         &self,
@@ -298,7 +328,7 @@ impl BoxHash {
                         return Err(Error::HashMismatch("Malformed C2PA box hash".to_owned()));
                     }
 
-                    c2pa_box = bm;
+                    c2pa_box = BoxMap::from_asset_box_map(bm, vec![], None);
                     is_before_c2pa = false;
                     continue;
                 }
@@ -356,29 +386,27 @@ impl BoxHash {
                 )?);
             }
         } else {
-            for mut bm in source_bms {
+            for bm in source_bms {
                 if bm.names[0] == "C2PA" {
                     // there should only be 1 collapsed C2PA range
                     if bm.names.len() != 1 {
                         return Err(Error::HashMismatch("Malformed C2PA box hash".to_owned()));
                     }
-                    bm.hash = ByteBuf::from(vec![0]);
-                    bm.pad = ByteBuf::from(vec![]);
-                    self.boxes.push(bm);
+                    self.boxes
+                        .push(BoxMap::from_asset_box_map(bm, vec![0], None));
                     continue;
                 }
 
                 let inclusions = vec![HashRange::new(bm.range_start, bm.range_len)];
-                bm.alg = Some(alg.to_string());
-                bm.hash = ByteBuf::from(hash_stream_by_alg_with_progress(
+                let hash = hash_stream_by_alg_with_progress(
                     alg,
                     reader,
                     Some(inclusions),
                     false,
                     &mut progress,
-                )?);
-                bm.pad = ByteBuf::from(vec![]);
-                self.boxes.push(bm);
+                )?;
+                self.boxes
+                    .push(BoxMap::from_asset_box_map(bm, hash, Some(alg.to_string())));
             }
         }
 
@@ -564,7 +592,7 @@ mod tests {
     mockall::mock! {
         pub MABH { }
         impl AssetBoxHash for MABH {
-            fn get_box_map(&self, reader: &mut dyn CAIRead) -> Result<Vec<BoxMap>>;
+            fn get_box_map(&self, reader: &mut dyn CAIRead) -> Result<Vec<AssetBoxMap>>;
         }
     }
 
@@ -578,25 +606,9 @@ mod tests {
         mock.expect_get_box_map().returning(|_| {
             Ok(vec![
                 // Make sure the first one is the C2PA box
-                BoxMap {
-                    names: vec!["C2PA".to_string()],
-                    alg: Some(alg.to_string()),
-                    hash: ByteBuf::from(vec![0]),
-                    excluded: None,
-                    pad: ByteBuf::from(vec![]),
-                    range_start: 0,
-                    range_len: 10,
-                },
+                AssetBoxMap::new(vec!["C2PA".to_string()], 0, 10),
                 // And follow with
-                BoxMap {
-                    names: vec!["test".to_string()],
-                    alg: Some(alg.to_string()),
-                    hash: ByteBuf::from(vec![0]),
-                    excluded: None,
-                    pad: ByteBuf::from(vec![]),
-                    range_start: 10,
-                    range_len: 10,
-                },
+                AssetBoxMap::new(vec!["test".to_string()], 10, 10),
             ])
         });
         // The data size must match what we return in the expectation
@@ -625,25 +637,9 @@ mod tests {
         mock.expect_get_box_map().returning(|_| {
             Ok(vec![
                 // And follow with
-                BoxMap {
-                    names: vec!["test".to_string()],
-                    alg: Some(alg.to_string()),
-                    hash: ByteBuf::from(vec![0]),
-                    excluded: None,
-                    pad: ByteBuf::from(vec![]),
-                    range_start: 0,
-                    range_len: 10,
-                },
+                AssetBoxMap::new(vec!["test".to_string()], 0, 10),
                 // Make sure the first one is the C2PA box
-                BoxMap {
-                    names: vec!["C2PA".to_string()],
-                    alg: Some(alg.to_string()),
-                    hash: ByteBuf::from(vec![0]),
-                    excluded: None,
-                    pad: ByteBuf::from(vec![]),
-                    range_start: 10,
-                    range_len: 10,
-                },
+                AssetBoxMap::new(vec!["C2PA".to_string()], 10, 10),
             ])
         });
         // The data size must match what we return in the expectation
@@ -672,34 +668,10 @@ mod tests {
         mock.expect_get_box_map().returning(|_| {
             Ok(vec![
                 // And follow with
-                BoxMap {
-                    names: vec!["test".to_string()],
-                    alg: Some(alg.to_string()),
-                    hash: ByteBuf::from(vec![0]),
-                    excluded: None,
-                    pad: ByteBuf::from(vec![]),
-                    range_start: 0,
-                    range_len: 10,
-                },
+                AssetBoxMap::new(vec!["test".to_string()], 0, 10),
                 // Make sure the first one is the C2PA box
-                BoxMap {
-                    names: vec!["C2PA".to_string()],
-                    alg: Some(alg.to_string()),
-                    hash: ByteBuf::from(vec![0]),
-                    excluded: None,
-                    pad: ByteBuf::from(vec![]),
-                    range_start: 10,
-                    range_len: 10,
-                },
-                BoxMap {
-                    names: vec!["test1".to_string()],
-                    alg: Some(alg.to_string()),
-                    hash: ByteBuf::from(vec![0]),
-                    excluded: None,
-                    pad: ByteBuf::from(vec![]),
-                    range_start: 20,
-                    range_len: 10,
-                },
+                AssetBoxMap::new(vec!["C2PA".to_string()], 10, 10),
+                AssetBoxMap::new(vec!["test1".to_string()], 20, 10),
             ])
         });
         // The data size must match what we return in the expectation

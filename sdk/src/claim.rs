@@ -70,7 +70,6 @@ use crate::{
             DATABOX, DATABOXES, SIGNATURE,
         },
     },
-    jumbf_io::get_assetio_handler,
     log_item,
     resource_store::UriOrResource,
     salt::{DefaultSalt, SaltGenerator},
@@ -2953,13 +2952,12 @@ impl Claim {
                     let hash_result = match asset_data {
                         #[cfg(feature = "file_io")]
                         ClaimAssetData::Path(asset_path) => {
-                            let box_hash_processor =
-                                crate::jumbf_io::get_assetio_handler_from_path(asset_path)
-                                    .ok_or(Error::UnsupportedType)?
-                                    .asset_box_hash_ref()
-                                    .ok_or(Error::HashMismatch(
-                                        "Box hash not supported".to_string(),
-                                    ))?;
+                            let box_hash_processor = context
+                                .io()
+                                .handler_from_path(asset_path)
+                                .ok_or(Error::UnsupportedType)?
+                                .asset_box_hash_ref()
+                                .ok_or(Error::HashMismatch("Box hash not supported".to_string()))?;
 
                             let mut file = std::fs::File::open(asset_path)?;
                             bh.verify_stream_hash_with_progress(
@@ -2970,7 +2968,9 @@ impl Claim {
                             )
                         }
                         ClaimAssetData::Bytes(asset_bytes, asset_type) => {
-                            let box_hash_processor = get_assetio_handler(asset_type)
+                            let box_hash_processor = context
+                                .io()
+                                .handler(asset_type)
                                 .ok_or(Error::UnsupportedType)?
                                 .asset_box_hash_ref()
                                 .ok_or(Error::HashMismatch(format!(
@@ -2986,7 +2986,9 @@ impl Claim {
                             )
                         }
                         ClaimAssetData::Stream(stream_data, asset_type) => {
-                            let box_hash_processor = get_assetio_handler(asset_type)
+                            let box_hash_processor = context
+                                .io()
+                                .handler(asset_type)
                                 .ok_or(Error::UnsupportedType)?
                                 .asset_box_hash_ref()
                                 .ok_or(Error::HashMismatch(format!(

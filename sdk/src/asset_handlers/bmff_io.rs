@@ -14,9 +14,8 @@
 use std::{
     cmp::min,
     collections::HashMap,
-    fs::{File, OpenOptions},
-    io::{Cursor, Read, Seek, SeekFrom, Write},
-    path::Path,
+    fs::OpenOptions,
+    io::{Read, Seek, SeekFrom, Write},
 };
 
 use atree::{Arena, Node, Token};
@@ -25,17 +24,16 @@ use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use crate::{
     assertions::{BmffMerkleMap, ExclusionsMap},
     asset_io::{
-        rename_or_move, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
-        ComposedManifestRef, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
+        HashObjectPositions, RemoteManifestUrl, WriteXmp,
     },
     error::{Error, Result},
     status_tracker::{ErrorBehavior, StatusTracker},
     store::Store,
     utils::{
         hash_utils::{vec_compare, HashRange},
-        io_utils::{patch_stream, stream_len, tempfile_builder, ReaderUtils},
+        io_utils::{patch_stream, stream_len, ReaderUtils},
         patch::patch_bytes,
-        xmp_inmemory_utils::{add_provenance, MIN_XMP},
     },
 };
 
@@ -1902,11 +1900,11 @@ pub(crate) fn read_bmff_c2pa_boxes<R: Read + Seek + ?Sized>(
 }
 
 impl CAIReader for BmffIO {
-    fn read_cai(&self, reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
-        reader.seek(SeekFrom::Start(4))?;
+    fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
+        input_stream.seek(SeekFrom::Start(4))?;
 
         let mut header = [0u8; 4];
-        reader.read_exact(&mut header)?;
+        input_stream.read_exact(&mut header)?;
 
         if header[..4] != *b"ftyp" {
             return Err(BmffError::InvalidFileSignature {
@@ -1918,7 +1916,7 @@ impl CAIReader for BmffIO {
             .into());
         }
 
-        let c2pa_boxes = read_bmff_c2pa_boxes(reader)?;
+        let c2pa_boxes = read_bmff_c2pa_boxes(input_stream)?;
 
         // is this an update manifest?
         if let Some(original_bytes) = c2pa_boxes.original_bytes {
@@ -1950,8 +1948,8 @@ impl CAIReader for BmffIO {
     }
 
     // Get XMP block
-    fn read_xmp(&self, reader: &mut dyn CAIRead) -> Option<String> {
-        let c2pa_boxes = read_bmff_c2pa_boxes(reader).ok()?;
+    fn read_xmp(&self, input_stream: &mut dyn CAIRead) -> Option<String> {
+        let c2pa_boxes = read_bmff_c2pa_boxes(input_stream).ok()?;
 
         c2pa_boxes.xmp
     }
@@ -1960,44 +1958,6 @@ impl CAIReader for BmffIO {
 impl AssetIO for BmffIO {
     fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
         Some(self)
-    }
-
-    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
-        let mut f = File::open(asset_path)?;
-        self.read_cai(&mut f)
-    }
-
-    fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
-        let mut input_stream = std::fs::OpenOptions::new()
-            .read(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        let mut temp_file = tempfile_builder("c2pa_temp")?;
-
-        self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
-
-        // copy temp file to asset
-        rename_or_move(temp_file, asset_path)
-    }
-
-    fn get_object_locations(
-        &self,
-        _asset_path: &std::path::Path,
-    ) -> Result<Vec<HashObjectPositions>> {
-        let vec: Vec<HashObjectPositions> = Vec::new();
-        Ok(vec)
-    }
-
-    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
-        let mut input_file = std::fs::File::open(asset_path)?;
-
-        let mut temp_file = tempfile_builder("c2pa_temp")?;
-
-        self.remove_cai_store_from_stream(&mut input_file, &mut temp_file)?;
-
-        // copy temp file to asset
-        rename_or_move(temp_file, asset_path)
     }
 
     fn new(asset_type: &str) -> Self
@@ -2021,7 +1981,11 @@ impl AssetIO for BmffIO {
         Some(Box::new(BmffIO::new(asset_type)))
     }
 
-    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+    fn remote_manifest_url_ref(&self) -> Option<&dyn RemoteManifestUrl> {
+        Some(self)
+    }
+
+    fn write_xmp_ref(&self) -> Option<&dyn WriteXmp> {
         Some(self)
     }
 
@@ -2031,6 +1995,24 @@ impl AssetIO for BmffIO {
 
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
+    }
+
+    // BMFF covers several distinct sub-formats (image vs. video vs. audio), each needing
+    // its own MIME type, so the default single-MIME derivation from `supported_types()`
+    // doesn't apply here.
+    fn mime_type_map(&self) -> Vec<(String, String)> {
+        [
+            ("avif", "image/avif"),
+            ("heif", "image/heif"),
+            ("heic", "image/heic"),
+            ("mp4", "video/mp4"),
+            ("m4a", "audio/mp4"),
+            ("mov", "video/quicktime"),
+            ("m4v", "video/x-m4v"),
+        ]
+        .into_iter()
+        .map(|(ext, mime)| (ext.to_string(), mime.to_string()))
+        .collect()
     }
 }
 
@@ -2389,140 +2371,93 @@ impl ComposedManifestRef for BmffIO {
     }
 }
 
-impl RemoteRefEmbed for BmffIO {
-    #[allow(unused_variables)]
-    fn embed_reference(
-        &self,
-        asset_path: &Path,
-        embed_ref: crate::asset_io::RemoteRefEmbedType,
-    ) -> Result<()> {
-        match embed_ref {
-            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
-                let output_buf = Vec::new();
-                let mut output_stream = Cursor::new(output_buf);
-
-                // block so that source file is closed after embed
-                {
-                    let mut source_stream = std::fs::File::open(asset_path)?;
-                    self.embed_reference_to_stream(
-                        &mut source_stream,
-                        &mut output_stream,
-                        RemoteRefEmbedType::Xmp(manifest_uri),
-                    )?;
-                }
-
-                // write will replace exisiting contents
-                std::fs::write(asset_path, output_stream.into_inner())?;
-                Ok(())
-            }
-            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
-        }
-    }
-
-    fn embed_reference_to_stream(
+impl WriteXmp for BmffIO {
+    fn write_xmp(
         &self,
         input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
-        embed_ref: RemoteRefEmbedType,
+        xmp: &str,
     ) -> Result<()> {
-        match embed_ref {
-            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
-                let (bmff_tree, bmff_map) = BMFFArena::from_stream(input_stream)?;
-                input_stream.rewind()?;
+        let (bmff_tree, bmff_map) = BMFFArena::from_stream(input_stream)?;
+        input_stream.rewind()?;
 
-                let c2pa_boxes = c2pa_boxes_from_tree_and_map(input_stream, &bmff_tree, &bmff_map)?;
+        let c2pa_boxes = c2pa_boxes_from_tree_and_map(input_stream, &bmff_tree, &bmff_map)?;
 
-                let xmp = match &c2pa_boxes.xmp {
-                    Some(xmp) => add_provenance(xmp, &manifest_uri)?,
-                    None => {
-                        let xmp = MIN_XMP.to_string();
-                        add_provenance(&xmp, &manifest_uri)?
-                    }
-                };
+        // get position to insert xmp
+        let (xmp_start, xmp_length) = match &c2pa_boxes.xmp {
+            Some(_xmp) => (c2pa_boxes.xmp_box_offset, Some(c2pa_boxes.xmp_box_size)),
+            None => {
+                // get ftyp location
+                // start after ftyp
+                let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
+                let ftyp_info = &bmff_tree.as_ref()[ftyp_token[0]].data;
+                let ftyp_offset = ftyp_info.offset;
+                let ftyp_size = ftyp_info.size;
 
-                // get position to insert xmp
-                let (xmp_start, xmp_length) = match &c2pa_boxes.xmp {
-                    Some(_xmp) => (c2pa_boxes.xmp_box_offset, Some(c2pa_boxes.xmp_box_size)),
-                    None => {
-                        // get ftyp location
-                        // start after ftyp
-                        let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
-                        let ftyp_info = &bmff_tree.as_ref()[ftyp_token[0]].data;
-                        let ftyp_offset = ftyp_info.offset;
-                        let ftyp_size = ftyp_info.size;
-
-                        ((ftyp_offset + ftyp_size), None)
-                    }
-                };
-
-                let mut new_xmp_box: Vec<u8> = Vec::with_capacity(xmp.len() * 2);
-                write_xmp_box(&mut new_xmp_box, xmp.as_bytes())?;
-                let new_xmp_box_size = new_xmp_box.len();
-
-                let (start, end) = if let Some(xmp_length) = xmp_length {
-                    let start = usize::try_from(xmp_start)
-                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
-
-                    let end = usize::try_from(xmp_start + xmp_length)
-                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-
-                    (start, end)
-                } else {
-                    // insert new c2pa
-                    let end = usize::try_from(xmp_start)
-                        .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-
-                    (end, end)
-                };
-
-                // write content before XMP box
-                input_stream.rewind()?;
-                let mut before_xmp = input_stream.take(start as u64);
-                std::io::copy(&mut before_xmp, output_stream)?;
-
-                // write ContentProvenanceBox
-                output_stream.write_all(&new_xmp_box)?;
-
-                // calc offset adjustments. Use i64 so XMP boxes larger than
-                // i32::MAX (2 GiB) do not silently truncate.
-                let new_xmp_box_size_i64 = i64::try_from(new_xmp_box_size)
-                    .map_err(|_| Error::InvalidAsset("XMP box too large".to_string()))?;
-                let offset_adjust: i64 = if end == 0 {
-                    new_xmp_box_size_i64
-                } else {
-                    // value could be negative if box is truncated
-                    let existing_xmp_box_size = end - start;
-                    let existing_i64 = i64::try_from(existing_xmp_box_size).map_err(|_| {
-                        Error::InvalidAsset("existing XMP box too large".to_string())
-                    })?;
-                    new_xmp_box_size_i64 - existing_i64
-                };
-
-                // write content after XMP box
-                input_stream.seek(SeekFrom::Start(end as u64))?;
-                std::io::copy(input_stream, output_stream)?;
-
-                // Manipulating the UUID box means we may need some patch offsets if they are file absolute offsets.
-
-                // map box layout of current output file
-                output_stream.rewind()?;
-                let (output_bmff_tree, output_bmff_map) = BMFFArena::from_stream(output_stream)?;
-
-                // adjust offsets based on current layout
-                output_stream.rewind()?;
-                adjust_known_offsets(
-                    output_stream,
-                    output_bmff_tree.as_ref(),
-                    &output_bmff_map,
-                    offset_adjust,
-                )
+                ((ftyp_offset + ftyp_size), None)
             }
-            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
-        }
+        };
+
+        let mut new_xmp_box: Vec<u8> = Vec::with_capacity(xmp.len() * 2);
+        write_xmp_box(&mut new_xmp_box, xmp.as_bytes())?;
+        let new_xmp_box_size = new_xmp_box.len();
+
+        let (start, end) = if let Some(xmp_length) = xmp_length {
+            let start = usize::try_from(xmp_start)
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?; // get beginning of chunk which starts 4 bytes before label
+
+            let end = usize::try_from(xmp_start + xmp_length)
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+            (start, end)
+        } else {
+            // insert new c2pa
+            let end = usize::try_from(xmp_start)
+                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
+
+            (end, end)
+        };
+
+        // write content before XMP box
+        input_stream.rewind()?;
+        let mut before_xmp = input_stream.take(start as u64);
+        std::io::copy(&mut before_xmp, output_stream)?;
+
+        // write ContentProvenanceBox
+        output_stream.write_all(&new_xmp_box)?;
+
+        // calc offset adjustments. Use i64 so XMP boxes larger than
+        // i32::MAX (2 GiB) do not silently truncate.
+        let new_xmp_box_size_i64 = i64::try_from(new_xmp_box_size)
+            .map_err(|_| Error::InvalidAsset("XMP box too large".to_string()))?;
+        let offset_adjust: i64 = if end == 0 {
+            new_xmp_box_size_i64
+        } else {
+            // value could be negative if box is truncated
+            let existing_xmp_box_size = end - start;
+            let existing_i64 = i64::try_from(existing_xmp_box_size)
+                .map_err(|_| Error::InvalidAsset("existing XMP box too large".to_string()))?;
+            new_xmp_box_size_i64 - existing_i64
+        };
+
+        // write content after XMP box
+        input_stream.seek(SeekFrom::Start(end as u64))?;
+        std::io::copy(input_stream, output_stream)?;
+
+        // Manipulating the UUID box means we may need some patch offsets if they are file absolute offsets.
+
+        // map box layout of current output file
+        output_stream.rewind()?;
+        let (output_bmff_tree, output_bmff_map) = BMFFArena::from_stream(output_stream)?;
+
+        // adjust offsets based on current layout
+        output_stream.rewind()?;
+        adjust_known_offsets(
+            output_stream,
+            output_bmff_tree.as_ref(),
+            &output_bmff_map,
+            offset_adjust,
+        )
     }
 }
 
@@ -3199,6 +3134,8 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
+    use std::io::Cursor;
+
     use super::*;
     use crate::utils::{
         io_utils::tempdirectory,
@@ -3243,10 +3180,13 @@ pub mod tests {
 
         let bmff = BmffIO::new("mp4");
 
-        let eh = bmff.remote_ref_writer_ref().unwrap();
+        let eh = bmff.remote_manifest_url_ref().unwrap();
 
-        eh.embed_reference(&output, RemoteRefEmbedType::Xmp(data.to_string()))
+        let mut input_stream = std::fs::File::open(&output).unwrap();
+        let mut embed_stream = Cursor::new(Vec::new());
+        eh.write_remote_manifest_url(&mut input_stream, &mut embed_stream, data)
             .unwrap();
+        std::fs::write(&output, embed_stream.into_inner()).unwrap();
 
         let mut output_stream = std::fs::File::open(&output).unwrap();
         let xmp = bmff.get_reader().read_xmp(&mut output_stream).unwrap();

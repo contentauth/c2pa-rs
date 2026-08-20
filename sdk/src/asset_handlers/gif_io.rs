@@ -12,28 +12,22 @@
 // each license.
 
 use std::{
-    fs::{self, File},
-    io::{self, Cursor, Read, SeekFrom},
+    fs,
+    io::{self, Read, SeekFrom},
     path::Path,
     str,
 };
 
 use byteorder::{ReadBytesExt, WriteBytesExt};
-use serde_bytes::ByteBuf;
-use tempfile::Builder;
 
 use crate::{
-    assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        self, AssetBoxHash, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
-        ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
-        RemoteRefEmbedType,
+        AssetBoxHash, AssetIO, AssetPatch, BoxMap, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
+        ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteManifestUrl, WriteXmp,
+        C2PA_BOXHASH,
     },
     error::Result,
-    utils::{
-        io_utils::stream_len,
-        xmp_inmemory_utils::{self, MIN_XMP},
-    },
+    utils::io_utils::stream_len,
     Error,
 };
 
@@ -44,15 +38,15 @@ const XMP_MAGIC_TRAILER_LEN: usize = 257;
 pub struct GifIO {}
 
 impl CAIReader for GifIO {
-    fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
-        self.find_c2pa_block(asset_reader)?
+    fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
+        self.find_c2pa_block(input_stream)?
             .map(|marker| marker.block.data_sub_blocks.to_decoded_bytes())
             .ok_or(Error::JumbfNotFound)
     }
 
-    fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String> {
+    fn read_xmp(&self, input_stream: &mut dyn CAIRead) -> Option<String> {
         let mut bytes = self
-            .find_xmp_block(asset_reader)
+            .find_xmp_block(input_stream)
             .ok()?
             .map(|marker| marker.block.data_sub_blocks.to_decoded_bytes())?;
 
@@ -176,6 +170,7 @@ impl AssetPatch for GifIO {
     fn patch_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
         let mut stream = fs::OpenOptions::new()
             .read(true)
+            .write(true)
             .open(asset_path)
             .map_err(Error::IoError)?;
 
@@ -190,50 +185,24 @@ impl AssetPatch for GifIO {
     }
 }
 
-impl RemoteRefEmbed for GifIO {
-    fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()> {
-        match &embed_ref {
-            RemoteRefEmbedType::Xmp(_) => {
-                let mut input_stream = File::open(asset_path)?;
-                let mut output_stream = Cursor::new(Vec::new());
-                self.embed_reference_to_stream(&mut input_stream, &mut output_stream, embed_ref)?;
-                fs::write(asset_path, output_stream.into_inner())?;
-                Ok(())
-            }
-            _ => Err(Error::UnsupportedType),
-        }
-    }
-
-    fn embed_reference_to_stream(
+impl WriteXmp for GifIO {
+    fn write_xmp(
         &self,
-        source_stream: &mut dyn CAIRead,
+        input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
-        embed_ref: RemoteRefEmbedType,
+        xmp: &str,
     ) -> Result<()> {
-        match embed_ref {
-            RemoteRefEmbedType::Xmp(url) => {
-                let xmp = xmp_inmemory_utils::add_provenance(
-                    // TODO: we read xmp here, then search for it again after, we can cache it
-                    &self
-                        .read_xmp(source_stream)
-                        .unwrap_or_else(|| MIN_XMP.to_string()),
-                    &url,
-                )?;
+        let old_block_marker = self.find_xmp_block(input_stream)?;
+        let new_block = ApplicationExtension::new_xmp(xmp.as_bytes().to_vec())?;
 
-                let old_block_marker = self.find_xmp_block(source_stream)?;
-                let new_block = ApplicationExtension::new_xmp(xmp.into_bytes())?;
-
-                match old_block_marker {
-                    Some(old_block_marker) => self.replace_block(
-                        source_stream,
-                        output_stream,
-                        &old_block_marker.into(),
-                        &new_block.into(),
-                    ),
-                    None => self.insert_block(source_stream, output_stream, &new_block.into()),
-                }
-            }
-            _ => Err(Error::UnsupportedType),
+        match old_block_marker {
+            Some(old_block_marker) => self.replace_block(
+                input_stream,
+                output_stream,
+                &old_block_marker.into(),
+                &new_block.into(),
+            ),
+            None => self.insert_block(input_stream, output_stream, &new_block.into()),
         }
     }
 }
@@ -332,7 +301,11 @@ impl AssetIO for GifIO {
         Some(self)
     }
 
-    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+    fn remote_manifest_url_ref(&self) -> Option<&dyn RemoteManifestUrl> {
+        Some(self)
+    }
+
+    fn write_xmp_ref(&self) -> Option<&dyn WriteXmp> {
         Some(self)
     }
 
@@ -342,48 +315,6 @@ impl AssetIO for GifIO {
 
     fn asset_box_hash_ref(&self) -> Option<&dyn AssetBoxHash> {
         Some(self)
-    }
-
-    fn read_cai_store(&self, asset_path: &Path) -> crate::Result<Vec<u8>> {
-        let mut f = File::open(asset_path)?;
-        self.read_cai(&mut f)
-    }
-
-    fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> crate::Result<()> {
-        let mut stream = fs::OpenOptions::new()
-            .read(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        let mut temp_file = Builder::new()
-            .prefix("c2pa_temp")
-            .rand_bytes(5)
-            .tempfile()?;
-
-        self.write_cai(&mut stream, &mut temp_file, store_bytes)?;
-
-        asset_io::rename_or_move(temp_file, asset_path)
-    }
-
-    fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>> {
-        let mut f = std::fs::File::open(asset_path).map_err(|_err| Error::EmbeddingError)?;
-        self.get_object_locations_from_stream(&mut f)
-    }
-
-    fn remove_cai_store(&self, asset_path: &Path) -> crate::Result<()> {
-        let mut stream = fs::OpenOptions::new()
-            .read(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        let mut temp_file = Builder::new()
-            .prefix("c2pa_temp")
-            .rand_bytes(5)
-            .tempfile()?;
-
-        self.remove_cai_store_from_stream(&mut stream, &mut temp_file)?;
-
-        asset_io::rename_or_move(temp_file, asset_path)
     }
 
     fn supported_types(&self) -> &[&str] {
@@ -641,15 +572,7 @@ impl BlockMarker<Block> {
             names.push(name.to_owned());
         }
 
-        Ok(BoxMap {
-            names,
-            alg: None,
-            hash: ByteBuf::from(Vec::new()),
-            excluded: None,
-            pad: ByteBuf::from(Vec::new()),
-            range_start: self.start(),
-            range_len: self.len(),
-        })
+        Ok(BoxMap::new(names, self.start(), self.len()))
     }
 }
 
@@ -1175,9 +1098,9 @@ pub enum GifError {
 mod tests {
     #![allow(clippy::unwrap_used)]
     use io::{Cursor, Seek};
-    use xmp_inmemory_utils::extract_provenance;
 
     use super::*;
+    use crate::utils::xmp_inmemory_utils::extract_provenance;
 
     const SAMPLE1: &[u8] = include_bytes!("../../tests/fixtures/sample1.gif");
 
@@ -1447,39 +1370,19 @@ mod tests {
         let box_map = gif_io.get_box_map(&mut stream)?;
         assert_eq!(
             box_map.first(),
-            Some(&BoxMap {
-                names: vec!["GIF89a".to_owned()],
-                alg: None,
-                hash: ByteBuf::from(Vec::new()),
-                excluded: None,
-                pad: ByteBuf::from(Vec::new()),
-                range_start: 0,
-                range_len: 6
-            })
+            Some(&BoxMap::new(vec!["GIF89a".to_owned()], 0, 6))
         );
         assert_eq!(
             box_map.get(box_map.len() / 2),
-            Some(&BoxMap {
-                names: vec!["2C".to_owned()],
-                alg: None,
-                hash: ByteBuf::from(Vec::new()),
-                excluded: None,
-                pad: ByteBuf::from(Vec::new()),
-                range_start: 368494,
-                range_len: 778
-            })
+            Some(&BoxMap::new(vec!["2C".to_owned()], 368494, 778))
         );
         assert_eq!(
             box_map.last(),
-            Some(&BoxMap {
-                names: vec!["3B".to_owned()],
-                alg: None,
-                hash: ByteBuf::from(Vec::new()),
-                excluded: None,
-                pad: ByteBuf::from(Vec::new()),
-                range_start: SAMPLE1.len() as u64 - 1,
-                range_len: 1
-            })
+            Some(&BoxMap::new(
+                vec!["3B".to_owned()],
+                SAMPLE1.len() as u64 - 1,
+                1
+            ))
         );
         assert_eq!(box_map.len(), 276);
 
@@ -1541,11 +1444,7 @@ mod tests {
         assert_eq!(gif_io.read_xmp(&mut stream), None);
 
         let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len()));
-        gif_io.embed_reference_to_stream(
-            &mut stream,
-            &mut output_stream1,
-            RemoteRefEmbedType::Xmp("Test".to_owned()),
-        )?;
+        gif_io.write_remote_manifest_url(&mut stream, &mut output_stream1, "Test")?;
 
         let xmp = gif_io.read_xmp(&mut output_stream1).unwrap();
         let p = extract_provenance(&xmp).unwrap();

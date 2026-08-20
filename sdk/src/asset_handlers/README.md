@@ -2,6 +2,9 @@
 
 > [!NOTE]
 > This documentation is primarily for SDK developers and contributors, not SDK users or consumers.
+> `asset_io.rs` itself (`AssetIO`, `CAIReader`, `CAIWriter`, and friends) is a public,
+> documented module — consumers implementing a custom format handler should start with
+> its rustdoc rather than this file.
 
 ## How asset handlers work
 
@@ -35,7 +38,7 @@ At startup, each handler is instantiated, asked for its `supported_types()` (e.g
 | `save_jumbf_to_stream()` | Write JUMBF manifest to a stream |
 | `save_jumbf_to_memory()` | Write JUMBF manifest to in-memory bytes |
 | `save_jumbf_to_file()` | Write JUMBF manifest to a file path |
-| `remove_jumbf_from_file()` | Remove C2PA manifest from a file |
+| `remove_jumbf_from_file()` | Remove C2PA manifest from a file. **Deprecated** — unused within the SDK; slated for removal. |
 | `get_supported_types()` | List all supported extensions/MIME types |
 
 
@@ -113,41 +116,54 @@ pub trait AssetIO: Sync + Send {
     fn get_reader(&self) -> &dyn CAIReader;
     fn get_writer(&self, _asset_type: &str) -> Option<Box<dyn CAIWriter>> { None }
 
-    // File-based operations
-    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>>;
-    fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()>;
-    fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>>;
-    fn remove_cai_store(&self, asset_path: &Path) -> Result<()>;
+    // File-based operations (default-derived from the stream-based methods above;
+    // most handlers never need to override these — see below)
+    fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> { .. }
+    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> { .. } // deprecated
 
     // Metadata
     fn supported_types(&self) -> &[&str];
 
     // Optional capability accessors (all default to None)
     fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> { None }
-    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> { None }
+    fn remote_manifest_url_ref(&self) -> Option<&dyn RemoteManifestUrl> { None }
     fn asset_box_hash_ref(&self) -> Option<&dyn AssetBoxHash> { None }
     fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> { None }
 }
 ```
 
-The file-based methods (`read_cai_store`, `save_cai_store`, etc.) are thin wrappers that open files and delegate to the stream-based `CAIReader`/`CAIWriter` methods. The standard pattern is:
+`read_cai_store` and `get_object_locations` (file-`Path` variants) were removed entirely —
+tracing their only production-adjacent callers showed both were dead outside each
+handler's own unit tests; use `get_reader().read_cai(...)` /
+`get_writer(ext)?.get_object_locations_from_stream(...)` against an opened file instead.
+
+`save_cai_store` and `remove_cai_store` keep default implementations, derived from the
+stream-based methods, that open the file, delegate to `CAIWriter`, and move the result
+into place via `rename_or_move`:
 
 ```rust
 fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
+    let ext = asset_path.extension().and_then(|e| e.to_str()).unwrap_or_default();
+    let writer = self.get_writer(ext).ok_or(Error::UnsupportedType)?;
     let mut input_stream = std::fs::OpenOptions::new()
         .read(true).open(asset_path).map_err(Error::IoError)?;
     let mut temp_file = tempfile_builder("c2pa_temp")?;
-    self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
+    writer.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
     rename_or_move(temp_file, asset_path)
 }
 ```
+
+Most handlers never override these two — only override when a format needs different
+file-level semantics (e.g. `C2paIO`'s sidecar format, or `PdfIO`'s read-only stub).
+`remove_cai_store` only backs the already-deprecated `jumbf_io::remove_jumbf_from_file`;
+it and its default will be removed together in a future release.
 
 ### Optional traits
 
 The optional traits are:
 
 - [AssetPatch](#assetpatch) 
-- [RemoteRefEmbed](#remoterefembed-) 
+- [RemoteManifestUrl / WriteXmp](#remotemanifesturl--writexmp) 
 - [AssetBoxHash](#assetboxhash) 
 - [ComposedManifestRef](#composedmanifestref-)
 
@@ -163,23 +179,58 @@ pub trait AssetPatch {
 
 It optimizes manifest updates by patching bytes in-place without rewriting the whole file. Only works when the new store is the same size as the existing one. This is a performance optimization.
 
-#### RemoteRefEmbed 
+#### RemoteManifestUrl / WriteXmp
 
-Use `RemoteRefEmbed` for remote manifest reference embedding:
+Use `RemoteManifestUrl` for writing a remote manifest URL into an asset (the C2PA spec
+calls this a remote manifest URI — the SDK's `Builder`/`Claim` layers call the same
+concept `remote_url`/`remote_manifest`; this trait is the asset-level mechanics
+underneath all of them):
 
 ```rust
-pub trait RemoteRefEmbed {
-    fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()>;
-    fn embed_reference_to_stream(
+pub trait RemoteManifestUrl {
+    fn write_remote_manifest_url(
         &self,
         source_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
-        embed_ref: RemoteRefEmbedType,
+        remote_manifest_url: &str,
     ) -> Result<()>;
 }
 ```
 
-It embeds a remote manifest reference URL into the asset's XMP metadata. The `RemoteRefEmbedType` enum supports `Xmp`, `StegoS`, `StegoB`, and `Watermark` variants, though most handlers only implement `Xmp`.
+Note the direction: this is for a *remote* manifest (referenced by URL, not present in
+the asset) — unrelated to *embedding* a manifest store, which is what `CAIWriter::write_cai`
+does. It's deliberately narrow: it only covers "point a reader at a manifest hosted
+elsewhere." A future non-XMP technique (e.g. a watermark) would be its own separate
+trait, not another variant or parameter here — which is also why the old
+`RemoteRefEmbedType` enum (and its unused `StegoS`/`StegoB`/`Watermark` variants, plus
+the file-`Path`-based `embed_reference` method) is gone; the method just takes the URL
+directly.
+
+**Don't implement `RemoteManifestUrl` directly.** Since writing a remote manifest URL is
+always "merge it into XMP, then write XMP", implement `WriteXmp` instead —
+`RemoteManifestUrl` has a blanket impl for any type that implements `WriteXmp` (and
+`CAIReader`, for reading the current XMP):
+
+```rust
+pub trait WriteXmp {
+    fn write_xmp(
+        &self,
+        source_stream: &mut dyn CAIRead,
+        output_stream: &mut dyn CAIReadWrite,
+        xmp: &str,
+    ) -> Result<()>;
+}
+```
+
+The blanket impl reads the current XMP via `CAIReader::read_xmp` (falling back to
+`MIN_XMP` if there is none), merges in the URL with `xmp_inmemory_utils::add_provenance`,
+and calls `write_xmp` with the finished string — every built-in handler that supports
+`RemoteManifestUrl` implements `WriteXmp`, not `RemoteManifestUrl`, and none of them call
+`add_provenance` themselves anymore. A `write_xmp` impl only needs the format-specific
+insertion logic (find/replace the existing XMP block or chunk, or pick an insertion
+point if there isn't one yet); one exception is `SvgIO`, which needs a bit more than the
+plain XMP string to know *where* in the XML tree to splice — it re-parses the asset
+internally via a private helper rather than relying solely on the string handed to it.
 
 #### AssetBoxHash
 
@@ -306,7 +357,7 @@ All traits require `Sync + Send`. Handlers must be **stateless structs** with no
 
 ## Trait implementation matrix
 
-| Handler | CAIReader | CAIWriter | AssetIO | RemoteRefEmbed | AssetBoxHash | ComposedManifestRef | AssetPatch |
+| Handler | CAIReader | CAIWriter | AssetIO | RemoteManifestUrl | AssetBoxHash | ComposedManifestRef | AssetPatch |
 |---------|:---------:|:---------:|:-------:|:--------------:|:------------:|:-------------------:|:----------:|
 | **BmffIO** (MP4, HEIF, AVIF, MOV) | Y | Y | Y | Y | -- | -- | Y |
 | **JpegIO** (JPG, JPEG) | Y | Y | Y | Y | Y | Y | -- |
@@ -344,9 +395,9 @@ Verifies the full round-trip:
 
 ### test_remote_ref
 
-Verifies remote reference embedding (only applicable if the handler supports `RemoteRefEmbed`):
-1. Get the `RemoteRefEmbed` from the handler
-2. Embed an XMP remote URL into the asset if supported
+Verifies remote manifest URL writing (only applicable if the handler supports `RemoteManifestUrl`):
+1. Get the `RemoteManifestUrl` from the handler
+2. Write a remote manifest URL into the asset's XMP if supported
 3. Read XMP back from the output if supported
 4. Extract provenance URL from the XMP
 5. Assert it matches the original URL
@@ -384,7 +435,7 @@ flowchart TB
         end
         subgraph optional["Optional"]
             t4["<b>AssetPatch</b>:<br>In-place patching"]
-            t5["<b>RemoteRefEmbed</b>:<br>XMP remote references"]
+            t5["<b>RemoteManifestUrl</b> (via <b>WriteXmp</b>):<br>Remote manifest URL"]
             t6["<b>AssetBoxHash</b>:<br>Box map for c2pa.hash.boxes"]
             t7["<b>ComposedManifestRef</b>:<br>Pre-composed wrapping"]
         end

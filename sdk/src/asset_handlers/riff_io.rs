@@ -12,9 +12,7 @@
 // each license.
 
 use std::{
-    fs::{File, OpenOptions},
-    io::{Cursor, Seek, SeekFrom, Write},
-    path::Path,
+    io::{Cursor, Seek, SeekFrom},
     result,
 };
 
@@ -23,15 +21,11 @@ use riff::*;
 
 use crate::{
     asset_io::{
-        rename_or_move, AssetIO, AssetPatch, CAIRead, CAIReadWrapper, CAIReadWrite,
-        CAIReadWriteWrapper, CAIReader, CAIWriter, HashBlockObjectType, HashObjectPositions,
-        RemoteRefEmbed, RemoteRefEmbedType,
+        AssetIO, AssetPatch, CAIRead, CAIReadWrapper, CAIReadWrite, CAIReadWriteWrapper, CAIReader,
+        CAIWriter, HashBlockObjectType, HashObjectPositions, RemoteManifestUrl, WriteXmp,
     },
     error::{Error, Result},
-    utils::{
-        io_utils::{stream_len, tempfile_builder},
-        xmp_inmemory_utils::{add_provenance, MIN_XMP},
-    },
+    utils::io_utils::stream_len,
 };
 
 static SUPPORTED_TYPES: [&str; 12] = [
@@ -393,38 +387,29 @@ impl AssetIO for RiffIO {
         Some(self)
     }
 
-    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
-        let mut f = File::open(asset_path)?;
-        self.read_cai(&mut f)
+    fn remote_manifest_url_ref(&self) -> Option<&dyn RemoteManifestUrl> {
+        Some(self)
     }
 
-    fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
-        let mut input_stream = File::open(asset_path)?;
-
-        let mut temp_file = tempfile_builder("c2pa_temp")?;
-
-        self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
-
-        // copy temp file to asset
-        rename_or_move(temp_file, asset_path)
-    }
-
-    fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>> {
-        let mut f = File::open(asset_path).map_err(|_err| Error::EmbeddingError)?;
-
-        self.get_object_locations_from_stream(&mut f)
-    }
-
-    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
-        self.save_cai_store(asset_path, &[])
-    }
-
-    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+    fn write_xmp_ref(&self) -> Option<&dyn WriteXmp> {
         Some(self)
     }
 
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
+    }
+
+    // RIFF covers three distinct sub-formats (WEBP/WAV/AVI), each needing its own MIME
+    // type, so the default single-MIME derivation from `supported_types()` doesn't apply.
+    fn mime_type_map(&self) -> Vec<(String, String)> {
+        [
+            ("webp", "image/webp"),
+            ("wav", "audio/wav"),
+            ("avi", "video/avi"),
+        ]
+        .into_iter()
+        .map(|(ext, mime)| (ext.to_string(), mime.to_string()))
+        .collect()
     }
 }
 
@@ -590,19 +575,16 @@ impl CAIWriter for RiffIO {
 }
 
 impl AssetPatch for RiffIO {
-    fn patch_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
-        let mut asset = OpenOptions::new()
-            .write(true)
-            .read(true)
-            .create(false)
-            .open(asset_path)?;
-
-        let (manifest_pos, manifest_len) =
-            get_manifest_pos(&mut asset).ok_or(Error::EmbeddingError)?;
+    fn patch_cai_store_stream(
+        &self,
+        stream: &mut dyn CAIReadWrite,
+        store_bytes: &[u8],
+    ) -> Result<()> {
+        let (manifest_pos, manifest_len) = get_manifest_pos(stream).ok_or(Error::EmbeddingError)?;
 
         if store_bytes.len() + 8 == manifest_len as usize {
-            asset.seek(SeekFrom::Start(manifest_pos + 8))?; // skip 8 byte chunk data header
-            asset.write_all(store_bytes)?;
+            stream.seek(SeekFrom::Start(manifest_pos + 8))?; // skip 8 byte chunk data header
+            stream.write_all(store_bytes)?;
             Ok(())
         } else {
             Err(Error::InvalidAsset(
@@ -612,115 +594,52 @@ impl AssetPatch for RiffIO {
     }
 }
 
-impl RemoteRefEmbed for RiffIO {
-    #[allow(unused_variables)]
-    fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()> {
-        let mut input_stream = File::open(asset_path)?;
-
-        let mut output_stream = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        self.embed_reference_to_stream(&mut input_stream, &mut output_stream, embed_ref)
-    }
-
-    fn embed_reference_to_stream(
+impl WriteXmp for RiffIO {
+    fn write_xmp(
         &self,
         input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
-        embed_ref: RemoteRefEmbedType,
+        xmp: &str,
     ) -> Result<()> {
-        match embed_ref {
-            RemoteRefEmbedType::Xmp(manifest_uri) => {
-                if let Some(curr_xmp) = self.read_xmp(input_stream) {
-                    let mut new_xmp = add_provenance(&curr_xmp, &manifest_uri)?;
-                    if new_xmp.len() % 2 == 1 {
-                        // pad if needed to even length
-                        new_xmp.push(' ');
-                    }
-
-                    let top_level_chunks = {
-                        let mut reader = CAIReadWrapper {
-                            reader: input_stream,
-                        };
-                        Chunk::read(&mut reader, 0)?
-                    };
-
-                    if top_level_chunks.id() != RIFF_ID {
-                        return Err(Error::InvalidAsset("Invalid RIFF format".to_string()));
-                    }
-
-                    let mut reader = CAIReadWrapper {
-                        reader: input_stream,
-                    };
-
-                    // replace/add manifest in memory
-                    let new_contents = inject_c2pa(
-                        &top_level_chunks,
-                        &mut reader,
-                        &[],
-                        Some(new_xmp.as_bytes()),
-                        &self.riff_format,
-                        0,
-                    )?;
-
-                    // save contents
-                    let mut writer = CAIReadWriteWrapper {
-                        reader_writer: output_stream,
-                    };
-                    new_contents
-                        .write(&mut writer)
-                        .map_err(|_e| Error::EmbeddingError)?;
-                    Ok(())
-                } else {
-                    let mut new_xmp = add_provenance(MIN_XMP, &manifest_uri)?;
-
-                    if new_xmp.len() % 2 == 1 {
-                        // pad if needed to even length
-                        new_xmp.push(' ');
-                    }
-
-                    let top_level_chunks = {
-                        let mut reader = CAIReadWrapper {
-                            reader: input_stream,
-                        };
-                        Chunk::read(&mut reader, 0)?
-                    };
-
-                    if top_level_chunks.id() != RIFF_ID {
-                        return Err(Error::InvalidAsset("Invalid RIFF format".to_string()));
-                    }
-
-                    let mut reader = CAIReadWrapper {
-                        reader: input_stream,
-                    };
-
-                    // replace/add manifest in memory
-                    let new_contents = inject_c2pa(
-                        &top_level_chunks,
-                        &mut reader,
-                        &[],
-                        Some(new_xmp.as_bytes()),
-                        &self.riff_format,
-                        0,
-                    )?;
-
-                    // save contents
-                    let mut writer = CAIReadWriteWrapper {
-                        reader_writer: output_stream,
-                    };
-                    new_contents
-                        .write(&mut writer)
-                        .map_err(|_e| Error::EmbeddingError)?;
-                    Ok(())
-                }
-            }
-            RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
-            RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
-            RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
+        let mut new_xmp = xmp.to_string();
+        if new_xmp.len() % 2 == 1 {
+            // pad if needed to even length
+            new_xmp.push(' ');
         }
+
+        let top_level_chunks = {
+            let mut reader = CAIReadWrapper {
+                reader: input_stream,
+            };
+            Chunk::read(&mut reader, 0)?
+        };
+
+        if top_level_chunks.id() != RIFF_ID {
+            return Err(Error::InvalidAsset("Invalid RIFF format".to_string()));
+        }
+
+        let mut reader = CAIReadWrapper {
+            reader: input_stream,
+        };
+
+        // replace/add manifest in memory
+        let new_contents = inject_c2pa(
+            &top_level_chunks,
+            &mut reader,
+            &[],
+            Some(new_xmp.as_bytes()),
+            &self.riff_format,
+            0,
+        )?;
+
+        // save contents
+        let mut writer = CAIReadWriteWrapper {
+            reader_writer: output_stream,
+        };
+        new_contents
+            .write(&mut writer)
+            .map_err(|_e| Error::EmbeddingError)?;
+        Ok(())
     }
 }
 
@@ -736,7 +655,7 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use std::panic;
+    use std::{fs::File, panic, path::Path};
 
     use super::*;
     use crate::utils::{
@@ -745,6 +664,22 @@ pub mod tests {
         test::{fixture_path, temp_dir_path},
         xmp_inmemory_utils::extract_provenance,
     };
+
+    // test-only equivalent of the removed file-`Path`-based embed method
+    fn write_remote_manifest_url(
+        handler: &dyn RemoteManifestUrl,
+        path: &Path,
+        remote_manifest_url: &str,
+    ) -> Result<()> {
+        let mut input_stream = File::open(path).map_err(Error::IoError)?;
+        let mut output_stream = Cursor::new(Vec::new());
+        handler.write_remote_manifest_url(
+            &mut input_stream,
+            &mut output_stream,
+            remote_manifest_url,
+        )?;
+        std::fs::write(path, output_stream.into_inner()).map_err(Error::IoError)
+    }
 
     #[test]
     fn test_write_wav() {
@@ -938,11 +873,10 @@ pub mod tests {
 
             let riff_io = RiffIO::new("webp");
 
-            if let Some(embed_handler) = riff_io.remote_ref_writer_ref() {
-                if let Ok(()) = embed_handler.embed_reference(
-                    output.as_path(),
-                    RemoteRefEmbedType::Xmp(more_data.to_string()),
-                ) {
+            if let Some(embed_handler) = riff_io.remote_manifest_url_ref() {
+                if let Ok(()) =
+                    write_remote_manifest_url(embed_handler, output.as_path(), more_data)
+                {
                     let mut output_stream = File::open(&output).unwrap();
 
                     // check the xmp
@@ -974,11 +908,10 @@ pub mod tests {
 
             let riff_io = RiffIO::new("webp");
 
-            if let Some(embed_handler) = riff_io.remote_ref_writer_ref() {
-                if let Ok(()) = embed_handler.embed_reference(
-                    output.as_path(),
-                    RemoteRefEmbedType::Xmp(more_data.to_string()),
-                ) {
+            if let Some(embed_handler) = riff_io.remote_manifest_url_ref() {
+                if let Ok(()) =
+                    write_remote_manifest_url(embed_handler, output.as_path(), more_data)
+                {
                     let mut output_stream = File::open(&output).unwrap();
 
                     // check the xmp
@@ -1010,11 +943,10 @@ pub mod tests {
 
             let riff_io = RiffIO::new("webp");
 
-            if let Some(embed_handler) = riff_io.remote_ref_writer_ref() {
-                if let Ok(()) = embed_handler.embed_reference(
-                    output.as_path(),
-                    RemoteRefEmbedType::Xmp(more_data.to_string()),
-                ) {
+            if let Some(embed_handler) = riff_io.remote_manifest_url_ref() {
+                if let Ok(()) =
+                    write_remote_manifest_url(embed_handler, output.as_path(), more_data)
+                {
                     let mut output_stream = File::open(&output).unwrap();
 
                     // check the xmp

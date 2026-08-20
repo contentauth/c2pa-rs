@@ -34,7 +34,9 @@ pub use bmff_hash::{
 };
 
 mod box_hash;
-pub use box_hash::{BoxHash, BoxMap, C2PA_BOXHASH};
+pub use box_hash::{BoxHash, BoxMap};
+
+pub use crate::asset_io::C2PA_BOXHASH;
 
 mod data_hash;
 pub use data_hash::DataHash;

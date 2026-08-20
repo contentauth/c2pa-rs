@@ -13,9 +13,7 @@
 
 use std::{
     borrow::Cow,
-    fs::{self, File, OpenOptions},
-    io::{BufReader, Cursor, Seek, SeekFrom, Write},
-    path::Path,
+    io::{BufReader, Cursor, Seek, SeekFrom},
 };
 
 use quick_xml::{
@@ -23,27 +21,14 @@ use quick_xml::{
     Reader, Writer,
 };
 
-use crate::crypto::base64;
 use crate::{
     asset_io::{
-        rename_or_move,
-        AssetIO,
-        AssetPatch,
-        CAIRead,
-        CAIReadWrite,
-        CAIReader,
-        CAIWriter, //RemoteRefEmbedType,
-        HashBlockObjectType,
-        //HashBlockObjectType,
-        HashObjectPositions,
-        RemoteRefEmbed,
-        RemoteRefEmbedType,
+        AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashBlockObjectType,
+        HashObjectPositions, RemoteManifestUrl, WriteXmp,
     },
+    crypto::base64,
     error::{Error, Result},
-    utils::{
-        io_utils::{patch_stream, stream_len, tempfile_builder, ReaderUtils},
-        xmp_inmemory_utils::{self, MIN_XMP},
-    },
+    utils::io_utils::{patch_stream, stream_len, ReaderUtils},
 };
 
 static SUPPORTED_TYPES: [&str; 3] = ["svg", "application/svg+xml", "image/svg+xml"];
@@ -59,9 +44,9 @@ const XMP_ID: &str = "W5M0MpCehiHzreSzNTczkc9d";
 pub struct SvgIO {}
 
 impl CAIReader for SvgIO {
-    fn read_cai(&self, reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
+    fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
         let (decoded_manifest_opt, _detected_tag_location, _insertion_point) =
-            detect_manifest_location(reader)?;
+            detect_manifest_location(input_stream)?;
 
         match decoded_manifest_opt {
             Some(decoded_manifest) => {
@@ -76,8 +61,8 @@ impl CAIReader for SvgIO {
     }
 
     // Get XMP block
-    fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String> {
-        let (xmp, _dtd, _insertion_pt) = read_xmp(asset_reader).ok()?;
+    fn read_xmp(&self, input_stream: &mut dyn CAIRead) -> Option<String> {
+        let (xmp, _dtd, _insertion_pt) = read_xmp(input_stream).ok()?;
         xmp
     }
 }
@@ -103,47 +88,11 @@ impl AssetIO for SvgIO {
         Some(Box::new(SvgIO::new(asset_type)))
     }
 
-    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
-        let mut f = File::open(asset_path)?;
-        self.read_cai(&mut f)
+    fn remote_manifest_url_ref(&self) -> Option<&dyn RemoteManifestUrl> {
+        Some(self)
     }
 
-    fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
-        let mut input_stream = std::fs::OpenOptions::new()
-            .read(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        let mut temp_file = tempfile_builder("c2pa_temp")?;
-
-        self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
-
-        // copy temp file to asset
-        rename_or_move(temp_file, asset_path)
-    }
-
-    fn get_object_locations(
-        &self,
-        asset_path: &std::path::Path,
-    ) -> Result<Vec<HashObjectPositions>> {
-        let mut input_stream =
-            std::fs::File::open(asset_path).map_err(|_err| Error::EmbeddingError)?;
-
-        self.get_object_locations_from_stream(&mut input_stream)
-    }
-
-    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
-        let mut input_file = File::open(asset_path)?;
-
-        let mut temp_file = tempfile_builder("c2pa_temp")?;
-
-        self.remove_cai_store_from_stream(&mut input_file, &mut temp_file)?;
-
-        // copy temp file to asset
-        rename_or_move(temp_file, asset_path)
-    }
-
-    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+    fn write_xmp_ref(&self) -> Option<&dyn WriteXmp> {
         Some(self)
     }
 
@@ -659,15 +608,13 @@ impl CAIWriter for SvgIO {
 }
 
 impl AssetPatch for SvgIO {
-    fn patch_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
-        let mut input_file = OpenOptions::new()
-            .write(true)
-            .read(true)
-            .create(false)
-            .open(asset_path)?;
-
+    fn patch_cai_store_stream(
+        &self,
+        stream: &mut dyn CAIReadWrite,
+        store_bytes: &[u8],
+    ) -> Result<()> {
         let (asset_manifest_opt, _detected_tag_location, insertion_point) =
-            detect_manifest_location(&mut input_file)?;
+            detect_manifest_location(stream)?;
         let encoded_store_bytes = base64::encode(store_bytes);
 
         if let Some(manifest_bytes) = asset_manifest_opt {
@@ -675,8 +622,8 @@ impl AssetPatch for SvgIO {
             let encoded_manifest_bytes = base64::encode(&manifest_bytes);
             // can patch if encoded lengths are ==
             if encoded_store_bytes.len() == encoded_manifest_bytes.len() {
-                input_file.seek(SeekFrom::Start(insertion_point as u64))?;
-                input_file.write_all(encoded_store_bytes.as_bytes())?;
+                stream.seek(SeekFrom::Start(insertion_point as u64))?;
+                stream.write_all(encoded_store_bytes.as_bytes())?;
                 Ok(())
             } else {
                 Err(Error::InvalidAsset(
@@ -691,74 +638,51 @@ impl AssetPatch for SvgIO {
     }
 }
 
-impl RemoteRefEmbed for SvgIO {
-    fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()> {
-        match &embed_ref {
-            RemoteRefEmbedType::Xmp(_) => {
-                let mut input_stream = File::open(asset_path)?;
-                let mut output_stream = Cursor::new(Vec::new());
-                self.embed_reference_to_stream(&mut input_stream, &mut output_stream, embed_ref)?;
-                fs::write(asset_path, output_stream.into_inner())?;
-                Ok(())
-            }
-            _ => Err(Error::UnsupportedType),
-        }
-    }
-
-    fn embed_reference_to_stream(
+impl WriteXmp for SvgIO {
+    fn write_xmp(
         &self,
-        source_stream: &mut dyn CAIRead,
+        input_stream: &mut dyn CAIRead,
         output_stream: &mut dyn CAIReadWrite,
-        embed_ref: RemoteRefEmbedType,
+        xmp: &str,
     ) -> Result<()> {
-        match embed_ref {
-            RemoteRefEmbedType::Xmp(url) => {
-                source_stream.rewind()?;
+        input_stream.rewind()?;
 
-                let (raw_xmp, dtd, insertion_pt) = read_xmp(source_stream)?;
+        let (raw_xmp, dtd, insertion_pt) = read_xmp(input_stream)?;
 
-                let xmp = xmp_inmemory_utils::add_provenance(
-                    &raw_xmp.clone().unwrap_or_else(|| MIN_XMP.to_string()),
-                    &url,
-                )?;
-
-                if let Some(raw_xmp) = raw_xmp {
-                    // replace existing
+        if let Some(raw_xmp) = raw_xmp {
+            // replace existing
+            patch_stream(
+                input_stream,
+                output_stream,
+                insertion_pt as u64,
+                raw_xmp.len() as u64,
+                xmp.as_bytes(),
+            )
+        } else {
+            // insert at location and level
+            match dtd {
+                DetectedTagsDepth::Metadata => patch_stream(
+                    input_stream,
+                    output_stream,
+                    insertion_pt as u64,
+                    0,
+                    xmp.as_bytes(),
+                ),
+                DetectedTagsDepth::Empty => {
+                    // we have to add metadata tag
+                    let new_xmp = format!("<metadata>{xmp}</metadata>");
                     patch_stream(
-                        source_stream,
+                        input_stream,
                         output_stream,
                         insertion_pt as u64,
-                        raw_xmp.len() as u64,
-                        xmp.as_bytes(),
+                        0,
+                        new_xmp.as_bytes(),
                     )
-                } else {
-                    // insert at location and level
-                    match dtd {
-                        DetectedTagsDepth::Metadata => patch_stream(
-                            source_stream,
-                            output_stream,
-                            insertion_pt as u64,
-                            0,
-                            xmp.as_bytes(),
-                        ),
-                        DetectedTagsDepth::Empty => {
-                            // we have to add metadata tag
-                            let new_xmp = format!("<metadata>{xmp}</metadata>");
-                            patch_stream(
-                                source_stream,
-                                output_stream,
-                                insertion_pt as u64,
-                                0,
-                                new_xmp.as_bytes(),
-                            )
-                        }
-                        _ => Err(Error::OtherError(
-                            "could not determine XML insertion point".into(),
-                        )),
-                    }
                 }
+                _ => Err(Error::OtherError(
+                    "could not determine XML insertion point".into(),
+                )),
             }
-            _ => Err(Error::UnsupportedType),
         }
     }
 }
@@ -775,15 +699,14 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use std::io::Read;
-
-    use xmp_inmemory_utils::extract_provenance;
+    use std::{fs::File, io::Read};
 
     use super::*;
     use crate::utils::{
         hash_utils::vec_compare,
         io_utils::tempdirectory,
         test::{fixture_path, temp_dir_path},
+        xmp_inmemory_utils::extract_provenance,
     };
 
     fn assert_c2pa_namespace_on_svg_root(xml: &str) {
@@ -1021,7 +944,10 @@ pub mod tests {
                 let svg_io = SvgIO::new("svg");
 
                 if let Ok(()) = svg_io.save_cai_store(&output, more_data) {
-                    if let Ok(locations) = svg_io.get_object_locations(&output) {
+                    let mut output_reader = File::open(&output).unwrap();
+                    if let Ok(locations) =
+                        svg_io.get_object_locations_from_stream(&mut output_reader)
+                    {
                         for op in locations {
                             if op.htype == HashBlockObjectType::Cai {
                                 let mut of = File::open(&output).unwrap();
@@ -1066,13 +992,9 @@ pub mod tests {
 
         let svg_io = SvgIO::new("svg");
 
-        let ref_writer = svg_io.remote_ref_writer_ref().unwrap();
+        let ref_writer = svg_io.remote_manifest_url_ref().unwrap();
         ref_writer
-            .embed_reference_to_stream(
-                &mut stream,
-                &mut output_stream,
-                RemoteRefEmbedType::Xmp(test_data.to_string()),
-            )
+            .write_remote_manifest_url(&mut stream, &mut output_stream, test_data)
             .unwrap();
 
         output_stream.rewind().unwrap();
@@ -1093,13 +1015,9 @@ pub mod tests {
 
         let svg_io = SvgIO::new("svg");
 
-        let ref_writer = svg_io.remote_ref_writer_ref().unwrap();
+        let ref_writer = svg_io.remote_manifest_url_ref().unwrap();
         ref_writer
-            .embed_reference_to_stream(
-                &mut stream,
-                &mut output_stream,
-                RemoteRefEmbedType::Xmp(test_data.to_string()),
-            )
+            .write_remote_manifest_url(&mut stream, &mut output_stream, test_data)
             .unwrap();
 
         output_stream.rewind().unwrap();
@@ -1120,13 +1038,9 @@ pub mod tests {
 
         let svg_io = SvgIO::new("svg");
 
-        let ref_writer = svg_io.remote_ref_writer_ref().unwrap();
+        let ref_writer = svg_io.remote_manifest_url_ref().unwrap();
         ref_writer
-            .embed_reference_to_stream(
-                &mut stream,
-                &mut output_stream,
-                RemoteRefEmbedType::Xmp(test_data.to_string()),
-            )
+            .write_remote_manifest_url(&mut stream, &mut output_stream, test_data)
             .unwrap();
 
         output_stream.rewind().unwrap();
