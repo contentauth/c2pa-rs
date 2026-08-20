@@ -20,7 +20,7 @@ use quick_xml::{
     Reader, Writer,
 };
 
-use crate::{asset_io::CAIRead, jumbf_io::get_cailoader_handler, Error, Result};
+use crate::{asset_io::ReadSeek, jumbf_io::get_cailoader_handler, Error, Result};
 
 const RDF_DESCRIPTION: &[u8] = b"rdf:Description";
 const XMP_END: &[u8] = b"<?xpacket end=\"w\"?>";
@@ -36,7 +36,7 @@ pub struct XmpInfo {
 
 impl XmpInfo {
     /// search xmp data for provenance, documentID and instanceID
-    pub fn from_source(source: &mut dyn CAIRead, format: &str) -> Self {
+    pub fn from_source(source: &mut dyn ReadSeek, format: &str) -> Self {
         let xmp = get_cailoader_handler(format).and_then(|cai_loader| {
             // read xmp if available
             cai_loader.read_xmp(source)

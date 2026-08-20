@@ -1578,15 +1578,15 @@ mod tests {
 
     #[test]
     fn test_custom_io_handler_overrides_builtin() {
-        use crate::asset_io::{AssetIO, CAIRead, CAIReader};
+        use crate::asset_io::{AssetIO, C2paReader, ReadSeek};
 
         struct NoopReader;
-        impl CAIReader for NoopReader {
-            fn read_cai(&self, _: &mut dyn CAIRead) -> crate::Result<Vec<u8>> {
+        impl C2paReader for NoopReader {
+            fn read_c2pa(&self, _: &mut dyn ReadSeek) -> crate::Result<Vec<u8>> {
                 Ok(b"custom-cai".to_vec())
             }
 
-            fn read_xmp(&self, _: &mut dyn CAIRead) -> Option<String> {
+            fn read_xmp(&self, _: &mut dyn ReadSeek) -> Option<String> {
                 None
             }
         }
@@ -1601,7 +1601,7 @@ mod tests {
                 Box::new(CustomHandler)
             }
 
-            fn get_reader(&self) -> &dyn CAIReader {
+            fn get_reader(&self) -> &dyn C2paReader {
                 &NoopReader
             }
 
@@ -1620,7 +1620,7 @@ mod tests {
         let reader_handler = ctx.io().reader("image/jpeg");
         assert!(reader_handler.is_some());
         let mut stream = std::io::Cursor::new(vec![]);
-        let result = reader_handler.unwrap().read_cai(&mut stream);
+        let result = reader_handler.unwrap().read_c2pa(&mut stream);
         assert_eq!(result.unwrap(), b"custom-cai");
 
         // Built-in format not claimed by the custom handler should fall through.
@@ -1640,16 +1640,16 @@ mod tests {
 
     #[test]
     fn test_last_registered_custom_handler_wins() {
-        use crate::asset_io::{AssetIO, CAIRead, CAIReader};
+        use crate::asset_io::{AssetIO, C2paReader, ReadSeek};
 
         struct HandlerA;
         struct ReaderA;
-        impl CAIReader for ReaderA {
-            fn read_cai(&self, _: &mut dyn CAIRead) -> crate::Result<Vec<u8>> {
+        impl C2paReader for ReaderA {
+            fn read_c2pa(&self, _: &mut dyn ReadSeek) -> crate::Result<Vec<u8>> {
                 Ok(b"A".to_vec())
             }
 
-            fn read_xmp(&self, _: &mut dyn CAIRead) -> Option<String> {
+            fn read_xmp(&self, _: &mut dyn ReadSeek) -> Option<String> {
                 None
             }
         }
@@ -1662,7 +1662,7 @@ mod tests {
                 Box::new(HandlerA)
             }
 
-            fn get_reader(&self) -> &dyn CAIReader {
+            fn get_reader(&self) -> &dyn C2paReader {
                 &ReaderA
             }
 
@@ -1673,12 +1673,12 @@ mod tests {
 
         struct HandlerB;
         struct ReaderB;
-        impl CAIReader for ReaderB {
-            fn read_cai(&self, _: &mut dyn CAIRead) -> crate::Result<Vec<u8>> {
+        impl C2paReader for ReaderB {
+            fn read_c2pa(&self, _: &mut dyn ReadSeek) -> crate::Result<Vec<u8>> {
                 Ok(b"B".to_vec())
             }
 
-            fn read_xmp(&self, _: &mut dyn CAIRead) -> Option<String> {
+            fn read_xmp(&self, _: &mut dyn ReadSeek) -> Option<String> {
                 None
             }
         }
@@ -1691,7 +1691,7 @@ mod tests {
                 Box::new(HandlerB)
             }
 
-            fn get_reader(&self) -> &dyn CAIReader {
+            fn get_reader(&self) -> &dyn C2paReader {
                 &ReaderB
             }
 
@@ -1706,6 +1706,6 @@ mod tests {
         let reader = ctx.io().reader("x-custom/test").unwrap();
         let mut stream = std::io::Cursor::new(vec![]);
         // HandlerB was registered last, so it should win.
-        assert_eq!(reader.read_cai(&mut stream).unwrap(), b"B");
+        assert_eq!(reader.read_c2pa(&mut stream).unwrap(), b"B");
     }
 }

@@ -24,8 +24,8 @@ use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use crate::{
     assertions::{BmffMerkleMap, ExclusionsMap},
     asset_io::{
-        AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
-        HashObjectPositions, RemoteManifestUrl, WriteXmp,
+        AssetIO, AssetPatch, C2paReader, C2paWriter, ComposedManifestRef, ObjectLocations,
+        ReadSeek, ReadWriteSeek, RemoteManifestUrl, WriteXmp,
     },
     error::{Error, Result},
     status_tracker::{ErrorBehavior, StatusTracker},
@@ -890,7 +890,7 @@ where
 }
 
 // `iloc`, `stco`, `co64`, `mfro`, `saio`, `sidx`, `tdhd`, and `tfra` elements contain absolute file offsets so they need to be adjusted based on whether content was added or removed.
-fn adjust_known_offsets<W: Write + CAIRead + ?Sized>(
+fn adjust_known_offsets<W: Write + ReadSeek + ?Sized>(
     mut output: &mut W,
     bmff_tree: &Arena<BoxInfo>,
     bmff_path_map: &HashMap<String, Vec<Token>>,
@@ -1697,7 +1697,7 @@ fn get_uuid_box_purpose<R: Read + Seek + ?Sized>(
 }
 
 fn get_uuid_token(
-    reader: &mut dyn CAIRead,
+    reader: &mut dyn ReadSeek,
     bmff_tree: &BMFFArena,
     uuid: &[u8; 16],
     purpose: Option<&[&str]>,
@@ -1899,8 +1899,8 @@ pub(crate) fn read_bmff_c2pa_boxes<R: Read + Seek + ?Sized>(
     c2pa_boxes_from_tree_and_map(reader, &bmff_tree, &bmff_map)
 }
 
-impl CAIReader for BmffIO {
-    fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
+impl C2paReader for BmffIO {
+    fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>> {
         input_stream.seek(SeekFrom::Start(4))?;
 
         let mut header = [0u8; 4];
@@ -1948,7 +1948,7 @@ impl CAIReader for BmffIO {
     }
 
     // Get XMP block
-    fn read_xmp(&self, input_stream: &mut dyn CAIRead) -> Option<String> {
+    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Option<String> {
         let c2pa_boxes = read_bmff_c2pa_boxes(input_stream).ok()?;
 
         c2pa_boxes.xmp
@@ -1973,11 +1973,11 @@ impl AssetIO for BmffIO {
         Box::new(BmffIO::new(asset_type))
     }
 
-    fn get_reader(&self) -> &dyn CAIReader {
+    fn get_reader(&self) -> &dyn C2paReader {
         self
     }
 
-    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn C2paWriter>> {
         Some(Box::new(BmffIO::new(asset_type)))
     }
 
@@ -2016,11 +2016,11 @@ impl AssetIO for BmffIO {
     }
 }
 
-impl CAIWriter for BmffIO {
-    fn write_cai(
+impl C2paWriter for BmffIO {
+    fn write_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         store_bytes: &[u8],
     ) -> Result<()> {
         let (bmff_tree, bmff_map) = BMFFArena::from_stream(input_stream)?;
@@ -2237,18 +2237,18 @@ impl CAIWriter for BmffIO {
         Ok(())
     }
 
-    fn get_object_locations_from_stream(
+    fn get_object_locations(
         &self,
-        _input_stream: &mut dyn CAIRead,
-    ) -> Result<Vec<HashObjectPositions>> {
-        let vec: Vec<HashObjectPositions> = Vec::new();
+        _input_stream: &mut dyn ReadSeek,
+    ) -> Result<Vec<ObjectLocations>> {
+        let vec: Vec<ObjectLocations> = Vec::new();
         Ok(vec)
     }
 
-    fn remove_cai_store_from_stream(
+    fn remove_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
     ) -> Result<()> {
         let (bmff_tree, _bmff_map) = BMFFArena::from_stream(input_stream)?;
         input_stream.rewind()?;
@@ -2315,7 +2315,7 @@ impl CAIWriter for BmffIO {
 }
 
 impl AssetPatch for BmffIO {
-    fn patch_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
+    fn patch_c2pa_file(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
         let mut asset = OpenOptions::new()
             .write(true)
             .read(true)
@@ -2374,8 +2374,8 @@ impl ComposedManifestRef for BmffIO {
 impl WriteXmp for BmffIO {
     fn write_xmp(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         xmp: &str,
     ) -> Result<()> {
         let (bmff_tree, bmff_map) = BMFFArena::from_stream(input_stream)?;
@@ -2467,8 +2467,8 @@ impl WriteXmp for BmffIO {
 // an existing manifest store and that the placeholder box will be replaced with the manifest store during the first update pass.
 #[allow(dead_code)]
 pub(crate) fn inject_placeholder(
-    input_stream: &mut dyn CAIRead,
-    output_stream: &mut dyn CAIReadWrite,
+    input_stream: &mut dyn ReadSeek,
+    output_stream: &mut dyn ReadWriteSeek,
     free_size: usize,
 ) -> Result<u64> {
     let (bmff_tree, bmff_map) = BMFFArena::from_stream(input_stream)?;
@@ -2548,7 +2548,7 @@ pub(crate) fn inject_placeholder(
 // the file offset of the beginning of the free box to be replaced by the manifest box.
 #[allow(dead_code)]
 pub(crate) fn inject_manifest_into_free_box(
-    stream: &mut dyn CAIReadWrite,
+    stream: &mut dyn ReadWriteSeek,
     manifest_bytes: &[u8],
     free_box_start: u64,
 ) -> Result<()> {
@@ -3150,7 +3150,7 @@ pub mod tests {
         let mut input_stream = std::fs::File::open(&ap).unwrap();
 
         let bmff = BmffIO::new("mp4");
-        let cai = bmff.read_cai(&mut input_stream);
+        let cai = bmff.read_c2pa(&mut input_stream);
 
         assert!(cai.is_err());
     }
@@ -3163,7 +3163,7 @@ pub mod tests {
         let mut input_stream = std::fs::File::open(&ap).unwrap();
 
         let bmff = BmffIO::new("mp4");
-        let cai = bmff.read_cai(&mut input_stream).unwrap();
+        let cai = bmff.read_c2pa(&mut input_stream).unwrap();
 
         assert!(!cai.is_empty());
     }
@@ -3209,7 +3209,7 @@ pub mod tests {
                 let bmff = BmffIO::new("mp4");
 
                 //let test_data =  bmff.read_cai_store(&source).unwrap();
-                if let Ok(()) = bmff.save_cai_store(&output, test_data) {
+                if let Ok(()) = bmff.save_c2pa_store(&output, test_data) {
                     if let Ok(read_test_data) = bmff.read_cai_store(&output) {
                         assert!(vec_compare(test_data, &read_test_data));
                         success = true;
@@ -3234,7 +3234,7 @@ pub mod tests {
 
                 if let Ok(mut test_data) = bmff.read_cai_store(&source) {
                     test_data.append(&mut more_data);
-                    if let Ok(()) = bmff.save_cai_store(&output, &test_data) {
+                    if let Ok(()) = bmff.save_c2pa_store(&output, &test_data) {
                         if let Ok(read_test_data) = bmff.read_cai_store(&output) {
                             assert!(vec_compare(&test_data, &read_test_data));
                             success = true;
@@ -3262,7 +3262,7 @@ pub mod tests {
                     // create replacement data of same size
                     let mut new_data = vec![0u8; source_data.len()];
                     new_data[..test_data.len()].copy_from_slice(test_data);
-                    bmff.patch_cai_store(&output, &new_data).unwrap();
+                    bmff.patch_c2pa_file(&output, &new_data).unwrap();
 
                     let replaced = bmff.read_cai_store(&output).unwrap();
 
@@ -3285,7 +3285,7 @@ pub mod tests {
         std::fs::copy(source, &output).unwrap();
         let bmff_io = BmffIO::new("mp4");
 
-        bmff_io.remove_cai_store(&output).unwrap();
+        bmff_io.remove_c2pa_store(&output).unwrap();
 
         // read back in asset, JumbfNotFound is expected since it was removed
         match bmff_io.read_cai_store(&output) {
@@ -3314,7 +3314,7 @@ pub mod tests {
         let bmff_io = BmffIO::new("mp4");
         let mut source = Cursor::new(data);
         assert!(matches!(
-            bmff_io.read_cai(&mut source),
+            bmff_io.read_c2pa(&mut source),
             Err(Error::InvalidAsset(_))
         ));
     }
@@ -3437,7 +3437,7 @@ pub mod tests {
 
         let bmff_io = BmffIO::new("mp4");
         let mut source = Cursor::new(data);
-        let result = bmff_io.read_cai(&mut source);
+        let result = bmff_io.read_c2pa(&mut source);
         assert!(
             matches!(
                 result,
@@ -3454,7 +3454,7 @@ pub mod tests {
 
         let bmff_io = BmffIO::new("mp4");
         let mut source = Cursor::new(data);
-        let result = bmff_io.read_cai(&mut source);
+        let result = bmff_io.read_c2pa(&mut source);
         assert!(
             matches!(
                 result,
@@ -3473,7 +3473,7 @@ pub mod tests {
 
         let bmff_io = BmffIO::new("mp4");
         let mut source = Cursor::new(data);
-        let result = bmff_io.read_cai(&mut source);
+        let result = bmff_io.read_c2pa(&mut source);
         assert!(
             matches!(result, Ok(ref bytes) if bytes == b"dummy manifest bytes"),
             "expected ordinary manifest-only asset to be read as-is, got {result:?}"

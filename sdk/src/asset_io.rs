@@ -20,9 +20,9 @@
 //!
 //! There are three mandatory traits:
 //!
-//! - [`CAIReader`] — read the C2PA manifest store and XMP from a stream.
-//! - [`CAIWriter`] — write, locate, and remove the C2PA manifest store in a stream.
-//! - [`AssetIO`] — the master trait; ties a [`CAIReader`]/[`CAIWriter`] pair to a
+//! - [`C2paReader`] — read the C2PA manifest store and XMP from a stream.
+//! - [`C2paWriter`] — write, locate, and remove the C2PA manifest store in a stream.
+//! - [`AssetIO`] — the master trait; ties a [`C2paReader`]/[`C2paWriter`] pair to a
 //!   set of supported file extensions and MIME types.
 //!
 //! Everything else in this module — [`AssetPatch`], [`AssetBoxHash`],
@@ -34,51 +34,51 @@
 //!
 //! # Example
 //!
-//! A minimal custom handler needs a [`CAIReader`] and [`CAIWriter`] impl and an
+//! A minimal custom handler needs a [`C2paReader`] and [`C2paWriter`] impl and an
 //! [`AssetIO`] impl that ties them together:
 //!
 //! ```
 //! use std::path::Path;
 //!
 //! use c2pa::{
-//!     asset_io::{AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions},
+//!     asset_io::{AssetIO, C2paReader, C2paWriter, ObjectLocations, ReadSeek, ReadWriteSeek},
 //!     Result,
 //! };
 //!
 //! struct MyFormatReader;
 //!
-//! impl CAIReader for MyFormatReader {
-//!     fn read_cai(&self, _input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
+//! impl C2paReader for MyFormatReader {
+//!     fn read_c2pa(&self, _input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>> {
 //!         // Locate and return the C2PA manifest store bytes.
 //!         todo!()
 //!     }
 //!
-//!     fn read_xmp(&self, _input_stream: &mut dyn CAIRead) -> Option<String> {
+//!     fn read_xmp(&self, _input_stream: &mut dyn ReadSeek) -> Option<String> {
 //!         None
 //!     }
 //! }
 //!
-//! impl CAIWriter for MyFormatReader {
-//!     fn write_cai(
+//! impl C2paWriter for MyFormatReader {
+//!     fn write_c2pa(
 //!         &self,
-//!         _input_stream: &mut dyn CAIRead,
-//!         _output_stream: &mut dyn CAIReadWrite,
+//!         _input_stream: &mut dyn ReadSeek,
+//!         _output_stream: &mut dyn ReadWriteSeek,
 //!         _store_bytes: &[u8],
 //!     ) -> Result<()> {
 //!         todo!()
 //!     }
 //!
-//!     fn get_object_locations_from_stream(
+//!     fn get_object_locations(
 //!         &self,
-//!         _input_stream: &mut dyn CAIRead,
-//!     ) -> Result<Vec<HashObjectPositions>> {
+//!         _input_stream: &mut dyn ReadSeek,
+//!     ) -> Result<Vec<ObjectLocations>> {
 //!         todo!()
 //!     }
 //!
-//!     fn remove_cai_store_from_stream(
+//!     fn remove_c2pa(
 //!         &self,
-//!         _input_stream: &mut dyn CAIRead,
-//!         _output_stream: &mut dyn CAIReadWrite,
+//!         _input_stream: &mut dyn ReadSeek,
+//!         _output_stream: &mut dyn ReadWriteSeek,
 //!     ) -> Result<()> {
 //!         todo!()
 //!     }
@@ -95,11 +95,11 @@
 //!         Box::new(Self::new(asset_type))
 //!     }
 //!
-//!     fn get_reader(&self) -> &dyn CAIReader {
+//!     fn get_reader(&self) -> &dyn C2paReader {
 //!         &MyFormatReader
 //!     }
 //!
-//!     fn get_writer(&self, _asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+//!     fn get_writer(&self, _asset_type: &str) -> Option<Box<dyn C2paWriter>> {
 //!         Some(Box::new(MyFormatReader))
 //!     }
 //!
@@ -117,16 +117,16 @@ use std::{
     collections::HashMap,
     ffi::OsStr,
     fmt, fs,
-    io::{Cursor, Read, Seek, Write},
+    io::{Read, Seek},
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 use tempfile::{Builder, NamedTempFile};
 
+pub use crate::read_seek::{ReadSeek, ReadWriteSeek};
 use crate::{
     error::Result,
-    maybe_send_sync::MaybeSend,
     utils::{
         mime::normalize_format,
         xmp_inmemory_utils::{add_provenance, extract_provenance, remove_provenance, MIN_XMP},
@@ -134,9 +134,9 @@ use crate::{
     Error,
 };
 
-/// The kind of region a [`HashObjectPositions`] entry describes.
+/// The kind of region a [`ObjectLocations`] entry describes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HashBlockObjectType {
+pub enum ObjectType {
     /// The C2PA manifest store.
     Cai,
     /// An XMP metadata block.
@@ -147,7 +147,7 @@ pub enum HashBlockObjectType {
     OtherExclusion,
 }
 
-impl fmt::Display for HashBlockObjectType {
+impl fmt::Display for ObjectType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{self:?}")
     }
@@ -155,121 +155,44 @@ impl fmt::Display for HashBlockObjectType {
 
 /// A byte range within an asset, tagged with the kind of region it covers.
 ///
-/// Returned by [`CAIWriter::get_object_locations_from_stream`] so the hashing system
+/// Returned by [`C2paWriter::get_object_locations`] so the hashing system
 /// knows what to hash and what to exclude.
 #[derive(Debug, PartialEq)]
-pub struct HashObjectPositions {
+pub struct ObjectLocations {
     /// Offset from the beginning of the asset to the beginning of the region.
-    pub offset: usize,
+    pub offset: u64,
     /// Length of the region, in bytes.
-    pub length: usize,
+    pub length: u64,
     /// The kind of region this entry describes.
-    pub htype: HashBlockObjectType,
-}
-
-/// Marker trait for a seekable, readable stream that can be sent across threads.
-///
-/// Blanket-implemented for any type that is `Read + Seek + Send` (or `Read + Seek`
-/// on targets without threading). Exists so it can be used in `dyn` position
-/// (`&mut dyn CAIRead`) — Rust trait objects can only name one non-auto trait, so
-/// this trait exists to bundle `Read` + `Seek` into one.
-pub trait CAIRead: Read + Seek + MaybeSend {}
-
-impl<T> CAIRead for T where T: Read + Seek + MaybeSend {}
-
-impl From<String> for Box<dyn CAIRead> {
-    fn from(val: String) -> Self {
-        Box::new(Cursor::new(val))
-    }
-}
-
-// Helper struct to create a concrete type for CAIRead when
-// that is required.  For example a function defined like this
-//  pub fn read<T>(&self, reader: &mut T) cannot currently accept
-// a CAIRead trait because it is not Sized (bound to a object).
-// Needed because some third-party crates (e.g. `riff`, `id3`) expose generic
-// `fn read<T: Read + Seek>(reader: T)` APIs with an implicit `Sized` bound, so a
-// bare `&mut dyn CAIRead` can't be passed directly.
-pub(crate) struct CAIReadWrapper<'a> {
-    pub reader: &'a mut dyn CAIRead,
-}
-
-impl Read for CAIReadWrapper<'_> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.reader.read(buf)
-    }
-}
-
-impl Seek for CAIReadWrapper<'_> {
-    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
-        self.reader.seek(pos)
-    }
-}
-
-/// Marker trait for a seekable, readable, writable stream that can be sent across
-/// threads.
-///
-/// Blanket-implemented for any type that is `CAIRead + Write`. Exists for the same
-/// reason as [`CAIRead`]: to bundle multiple traits into one for use in `dyn`
-/// position (`&mut dyn CAIReadWrite`).
-pub trait CAIReadWrite: CAIRead + Write {}
-
-impl<T> CAIReadWrite for T where T: CAIRead + Write {}
-
-// Helper struct to create a concrete type for CAIReadWrite when
-// that is required. See [`CAIReadWrapper`] for why this is needed.
-pub(crate) struct CAIReadWriteWrapper<'a> {
-    pub reader_writer: &'a mut dyn CAIReadWrite,
-}
-
-impl Read for CAIReadWriteWrapper<'_> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.reader_writer.read(buf)
-    }
-}
-
-impl Write for CAIReadWriteWrapper<'_> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.reader_writer.write(buf)
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.reader_writer.flush()
-    }
-}
-
-impl Seek for CAIReadWriteWrapper<'_> {
-    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
-        self.reader_writer.seek(pos)
-    }
+    pub htype: ObjectType,
 }
 
 /// Reads the C2PA manifest store and XMP metadata from an asset stream.
-pub trait CAIReader: Sync + Send {
+pub trait C2paReader: Sync + Send {
     /// Returns the raw C2PA JUMBF manifest store bytes from `input_stream`.
     ///
     /// Returns [`Error::JumbfNotFound`] if no manifest
     /// store is present, or
     /// [`Error::TooManyManifestStores`] if
     /// more than one is detected.
-    fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>>;
+    fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>>;
 
     /// Returns the asset's XMP metadata as a string, or `None` if the format
     /// doesn't carry XMP or none is present.
-    fn read_xmp(&self, input_stream: &mut dyn CAIRead) -> Option<String>;
+    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Option<String>;
 }
 
 /// Writes, locates, and removes the C2PA manifest store in an asset stream.
-pub trait CAIWriter: Sync + Send {
+pub trait C2paWriter: Sync + Send {
     /// Reads `input_stream`, embeds `store_bytes` as the C2PA manifest store, and
     /// writes the result to `output_stream`.
     ///
     /// Must replace any existing manifest store. The output must be a valid asset
     /// of the same format.
-    fn write_cai(
+    fn write_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         store_bytes: &[u8],
     ) -> Result<()>;
 
@@ -280,23 +203,21 @@ pub trait CAIWriter: Sync + Send {
     /// If no manifest store exists yet, this should still return a placeholder
     /// entry at the location where one would be written, so the hashing system
     /// knows where the manifest will go.
-    fn get_object_locations_from_stream(
-        &self,
-        input_stream: &mut dyn CAIRead,
-    ) -> Result<Vec<HashObjectPositions>>;
+    fn get_object_locations(&self, input_stream: &mut dyn ReadSeek)
+        -> Result<Vec<ObjectLocations>>;
 
     /// Rewrites `input_stream` into `output_stream` with the C2PA manifest store
     /// removed. The output must remain a valid asset of the same format.
-    fn remove_cai_store_from_stream(
+    fn remove_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
     ) -> Result<()>;
 }
 
 /// The master trait for a C2PA I/O handler for a single file format.
 ///
-/// Implement this (plus [`CAIReader`] and [`CAIWriter`]) to add support for a
+/// Implement this (plus [`C2paReader`] and [`C2paWriter`]) to add support for a
 /// format the SDK doesn't natively handle, and register it with
 /// [`Context::with_io_handler`](crate::Context::with_io_handler).
 pub trait AssetIO: Sync + Send {
@@ -317,12 +238,12 @@ pub trait AssetIO: Sync + Send {
     // -- Reader / writer access --
 
     /// Returns the streaming reader for this format.
-    fn get_reader(&self) -> &dyn CAIReader;
+    fn get_reader(&self) -> &dyn C2paReader;
 
     /// Returns the streaming writer for this format, if writing is supported.
     ///
     /// Defaults to `None` (read-only format).
-    fn get_writer(&self, _asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+    fn get_writer(&self, _asset_type: &str) -> Option<Box<dyn C2paWriter>> {
         None
     }
 
@@ -331,24 +252,24 @@ pub trait AssetIO: Sync + Send {
     /// Reads the C2PA manifest store from the file at `asset_path`.
     ///
     /// The default implementation opens `asset_path` and delegates to
-    /// [`get_reader`](AssetIO::get_reader)'s [`CAIReader::read_cai`].
+    /// [`get_reader`](AssetIO::get_reader)'s [`C2paReader::read_c2pa`].
     fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
         let mut input_stream = fs::OpenOptions::new()
             .read(true)
             .open(asset_path)
             .map_err(Error::IoError)?;
 
-        self.get_reader().read_cai(&mut input_stream)
+        self.get_reader().read_c2pa(&mut input_stream)
     }
 
     /// Writes `store_bytes` as the C2PA manifest store in the file at `asset_path`.
     ///
     /// The default implementation opens `asset_path`, calls
-    /// [`get_writer`](AssetIO::get_writer)'s [`CAIWriter::write_cai`] into a
+    /// [`get_writer`](AssetIO::get_writer)'s [`C2paWriter::write_c2pa`] into a
     /// temporary file, and moves the result into place with [`rename_or_move`].
     /// Returns [`Error::UnsupportedType`] if [`get_writer`](AssetIO::get_writer)
     /// returns `None`.
-    fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
+    fn save_c2pa_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
         let ext = asset_path
             .extension()
             .and_then(|e| e.to_str())
@@ -361,16 +282,16 @@ pub trait AssetIO: Sync + Send {
             .map_err(Error::IoError)?;
         let mut temp_file = tempfile_builder("c2pa_temp")?;
 
-        writer.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
+        writer.write_c2pa(&mut input_stream, &mut temp_file, store_bytes)?;
 
         rename_or_move(temp_file, asset_path)
     }
 
     /// Removes the C2PA manifest store from the file at `asset_path`.
     ///
-    /// The default implementation mirrors [`save_cai_store`](AssetIO::save_cai_store),
-    /// calling [`CAIWriter::remove_cai_store_from_stream`] instead.
-    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
+    /// The default implementation mirrors [`save_c2pa_store`](AssetIO::save_c2pa_store),
+    /// calling [`C2paWriter::remove_c2pa`] instead.
+    fn remove_c2pa_store(&self, asset_path: &Path) -> Result<()> {
         let ext = asset_path
             .extension()
             .and_then(|e| e.to_str())
@@ -383,7 +304,7 @@ pub trait AssetIO: Sync + Send {
             .map_err(Error::IoError)?;
         let mut temp_file = tempfile_builder("c2pa_temp")?;
 
-        writer.remove_cai_store_from_stream(&mut input_stream, &mut temp_file)?;
+        writer.remove_c2pa(&mut input_stream, &mut temp_file)?;
 
         rename_or_move(temp_file, asset_path)
     }
@@ -468,17 +389,17 @@ pub trait AssetPatch {
     /// store — any other change would invalidate the asset's hashes.
     ///
     /// The default implementation opens `asset_path` for reading and writing and
-    /// delegates to [`patch_cai_store_stream`](Self::patch_cai_store_stream).
-    fn patch_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
+    /// delegates to [`patch_c2pa`](Self::patch_c2pa).
+    fn patch_c2pa_file(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
         let mut file = fs::OpenOptions::new()
             .read(true)
             .write(true)
             .open(asset_path)
             .map_err(Error::IoError)?;
-        self.patch_cai_store_stream(&mut file, store_bytes)
+        self.patch_c2pa(&mut file, store_bytes)
     }
 
-    /// Same operation as [`patch_cai_store`](Self::patch_cai_store), but on an
+    /// Same operation as [`patch_c2pa`](Self::patch_c2pa), but on an
     /// already-open stream: seeks to the existing manifest store's location and
     /// overwrites it with `store_bytes` in place, without touching anything else
     /// in the stream.
@@ -487,16 +408,12 @@ pub trait AssetPatch {
     /// store; implementations must verify this and return an error otherwise.
     ///
     /// The default implementation returns [`Error::NotImplemented`] — override
-    /// this (and rely on [`patch_cai_store`](Self::patch_cai_store)'s default
+    /// this (and rely on [`patch_c2pa`](Self::patch_c2pa)'s default
     /// file-based wrapper above) for handlers whose manifest store can be
     /// located and patched purely from a stream, with no file path needed.
-    fn patch_cai_store_stream(
-        &self,
-        _stream: &mut dyn CAIReadWrite,
-        _store_bytes: &[u8],
-    ) -> Result<()> {
+    fn patch_c2pa(&self, _stream: &mut dyn ReadWriteSeek, _store_bytes: &[u8]) -> Result<()> {
         Err(Error::NotImplemented(
-            "patch_cai_store_stream is not implemented by this handler".to_string(),
+            "patch_c2pa is not implemented by this handler".to_string(),
         ))
     }
 }
@@ -554,7 +471,7 @@ pub trait AssetBoxHash {
     /// Hashes don't need to be calculated here — only the name and positional
     /// information. If the C2PA manifest isn't present yet, include a placeholder
     /// entry at the location it would occupy once written.
-    fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>>;
+    fn get_box_map(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<BoxMap>>;
 }
 
 /// Writes a remote manifest URL into an asset, so a reader can find the manifest
@@ -562,12 +479,12 @@ pub trait AssetBoxHash {
 ///
 /// Note the direction: this is for a *remote* manifest (referenced by URL, not
 /// present in the asset) — unrelated to *embedding* a manifest store, which is what
-/// [`CAIWriter::write_cai`] does.
+/// [`C2paWriter::write_c2pa`] does.
 ///
 /// Implement [`WriteXmp`] instead of this trait directly — every format writes the
 /// remote manifest URL the same way (merge it into XMP, then write XMP back), and
 /// there's a blanket impl of `RemoteManifestUrl` for any type that implements
-/// [`WriteXmp`] and [`CAIReader`] that does exactly that.
+/// [`WriteXmp`] and [`C2paReader`] that does exactly that.
 ///
 /// This is deliberately narrow: it only covers "point a reader at a manifest hosted
 /// elsewhere." A future non-XMP technique (e.g. a watermark) would be its own
@@ -577,8 +494,8 @@ pub trait RemoteManifestUrl {
     /// producing `output_stream`.
     fn write_remote_manifest_url(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         remote_manifest_url: &str,
     ) -> Result<()>;
 
@@ -588,7 +505,7 @@ pub trait RemoteManifestUrl {
     /// [`WriteXmp`] overrides this to extract the URL from XMP, since that's
     /// where `write_remote_manifest_url` puts it. Implement this directly if
     /// your format stores the remote manifest URL somewhere other than XMP.
-    fn read_manifest_url(&self, _input_stream: &mut dyn CAIRead) -> Option<String> {
+    fn read_manifest_url(&self, _input_stream: &mut dyn ReadSeek) -> Option<String> {
         None
     }
 
@@ -604,8 +521,8 @@ pub trait RemoteManifestUrl {
     /// strip the reference, and write the result back.
     fn remove_remote_manifest_url(
         &self,
-        _input_stream: &mut dyn CAIRead,
-        _output_stream: &mut dyn CAIReadWrite,
+        _input_stream: &mut dyn ReadSeek,
+        _output_stream: &mut dyn ReadWriteSeek,
     ) -> Result<()> {
         Err(Error::NotImplemented(
             "remove_remote_manifest_url is not supported by this handler".to_string(),
@@ -624,17 +541,17 @@ pub trait WriteXmp {
     /// Writes `xmp` into `input_stream`, producing `output_stream`.
     fn write_xmp(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         xmp: &str,
     ) -> Result<()>;
 }
 
-impl<T: WriteXmp + CAIReader> RemoteManifestUrl for T {
+impl<T: WriteXmp + C2paReader> RemoteManifestUrl for T {
     fn write_remote_manifest_url(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         remote_manifest_url: &str,
     ) -> Result<()> {
         let current_xmp = self
@@ -644,7 +561,7 @@ impl<T: WriteXmp + CAIReader> RemoteManifestUrl for T {
         self.write_xmp(input_stream, output_stream, &updated_xmp)
     }
 
-    fn read_manifest_url(&self, input_stream: &mut dyn CAIRead) -> Option<String> {
+    fn read_manifest_url(&self, input_stream: &mut dyn ReadSeek) -> Option<String> {
         self.read_xmp(input_stream)
             .as_deref()
             .and_then(extract_provenance)
@@ -652,8 +569,8 @@ impl<T: WriteXmp + CAIReader> RemoteManifestUrl for T {
 
     fn remove_remote_manifest_url(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
     ) -> Result<()> {
         let current_xmp = self
             .read_xmp(input_stream)
@@ -731,22 +648,29 @@ impl HandlerRegistry {
     /// when the caller only has a `Box<dyn AssetIO>` (e.g. from another
     /// [`AssetIO::get_handler`] call) rather than a concrete, sized type.
     pub(crate) fn add_boxed_handler(&mut self, handler: Box<dyn AssetIO>) {
-        let handler: Arc<dyn AssetIO> = Arc::from(handler);
         let types = handler.supported_types();
         let Some(canonical) = types.first() else {
             return;
         };
         let canonical = normalize_format(canonical);
-        for t in types {
-            let t = normalize_format(t);
-            self.containers.insert(t.clone(), canonical.clone());
-            self.handlers.insert(t, Arc::clone(&handler));
-        }
 
         for (ext, mime) in handler.mime_type_map() {
             let mime = normalize_format(&mime);
             self.mimes.insert(normalize_format(&ext), mime.clone());
             self.mimes.insert(mime.clone(), mime);
+        }
+
+        // Register a distinct instance per format string via `get_handler`, rather than one
+        // instance shared across the whole family: `AssetIO::new`/`get_handler` are
+        // documented to allow format-specific customization based on which supported_types()
+        // entry they were constructed with (e.g. RiffIO reads its own stored asset_type to
+        // decide whether to patch WebP's VP8X chunk on write), so a single shared instance
+        // can silently behave as if it were still the first-registered format.
+        for t in types {
+            let handler: Arc<dyn AssetIO> = Arc::from(handler.get_handler(t));
+            let key = normalize_format(t);
+            self.containers.insert(key.clone(), canonical.clone());
+            self.handlers.insert(key, handler);
         }
     }
 
@@ -760,18 +684,18 @@ impl HandlerRegistry {
         }
     }
 
-    /// Looks up the [`CAIReader`] for `format`, checking `fallback` if this registry has no
+    /// Looks up the [`C2paReader`] for `format`, checking `fallback` if this registry has no
     /// match.
-    pub fn reader(&self, format: &str) -> Option<&dyn CAIReader> {
+    pub fn reader(&self, format: &str) -> Option<&dyn C2paReader> {
         self.handler(format).map(|h| h.get_reader())
     }
 
-    /// Looks up the [`CAIWriter`] for `format`, checking `fallback` if this registry has no
+    /// Looks up the [`C2paWriter`] for `format`, checking `fallback` if this registry has no
     /// match.
     ///
-    /// Returns an owned `Box<dyn CAIWriter>` because [`AssetIO::get_writer`] allocates a new
+    /// Returns an owned `Box<dyn C2paWriter>` because [`AssetIO::get_writer`] allocates a new
     /// writer instance on each call.
-    pub fn writer(&self, format: &str) -> Option<Box<dyn CAIWriter>> {
+    pub fn writer(&self, format: &str) -> Option<Box<dyn C2paWriter>> {
         self.handler(format).and_then(|h| h.get_writer(format))
     }
 
@@ -896,29 +820,29 @@ impl HandlerRegistry {
 
     /// Reads the C2PA manifest store from `stream` via the registered reader for
     /// `asset_type`, checking `fallback` if this registry has no match.
-    pub(crate) fn read_jumbf(&self, asset_type: &str, stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
-        let cai_block = match self.reader(asset_type) {
-            Some(r) => r.read_cai(stream)?,
+    pub(crate) fn read_c2pa(&self, asset_type: &str, stream: &mut dyn ReadSeek) -> Result<Vec<u8>> {
+        let c2pa_block = match self.reader(asset_type) {
+            Some(r) => r.read_c2pa(stream)?,
             None => return Err(Error::UnsupportedType),
         };
-        if cai_block.is_empty() {
+        if c2pa_block.is_empty() {
             return Err(Error::JumbfNotFound);
         }
-        Ok(cai_block)
+        Ok(c2pa_block)
     }
 
     /// Writes `store_bytes` as the C2PA manifest store, reading an asset of `asset_type`
     /// from `input_stream` and writing the result to `output_stream`, via the registered
     /// writer for `asset_type`, checking `fallback` if this registry has no match.
-    pub(crate) fn write_jumbf(
+    pub(crate) fn write_c2pa(
         &self,
         asset_type: &str,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         store_bytes: &[u8],
     ) -> Result<()> {
         match self.writer(asset_type) {
-            Some(w) => w.write_cai(input_stream, output_stream, store_bytes),
+            Some(w) => w.write_c2pa(input_stream, output_stream, store_bytes),
             None => Err(Error::UnsupportedType),
         }
     }
@@ -926,12 +850,12 @@ impl HandlerRegistry {
     /// Reads the C2PA manifest store from the file at `in_path`, via the registered handler
     /// for its file extension, checking `fallback` if this registry has no match.
     ///
-    /// Unlike [`Self::read_jumbf`], this does not treat an empty result as
-    /// [`Error::JumbfNotFound`] — it returns whatever [`CAIReader::read_cai`] returns,
+    /// Unlike [`Self::read_c2pa`], this does not treat an empty result as
+    /// [`Error::JumbfNotFound`] — it returns whatever [`C2paReader::read_c2pa`] returns,
     /// matching the legacy `jumbf_io::load_jumbf_from_file` behavior.
     #[cfg(feature = "file_io")]
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn read_jumbf_from_file<P: AsRef<Path>>(&self, in_path: P) -> Result<Vec<u8>> {
+    pub(crate) fn read_c2pa_from_file<P: AsRef<Path>>(&self, in_path: P) -> Result<Vec<u8>> {
         let ext = in_path
             .as_ref()
             .extension()
@@ -942,7 +866,7 @@ impl HandlerRegistry {
         match self.handler(&ext) {
             Some(asset_handler) => {
                 let mut file = fs::File::open(in_path.as_ref()).map_err(Error::IoError)?;
-                asset_handler.get_reader().read_cai(&mut file)
+                asset_handler.get_reader().read_c2pa(&mut file)
             }
             None => Err(Error::UnsupportedType),
         }
@@ -955,10 +879,10 @@ impl HandlerRegistry {
     /// appended to the file name (e.g. `test.jpg` -> `test-c2pa.jpg`). If `in_path` and
     /// `out_path` are the same, the input file is overwritten. Patches the existing manifest
     /// store in place when the handler supports it (via [`AssetIO::asset_patch_ref`]) and the
-    /// patch succeeds, saving a full rewrite; falls back to [`AssetIO::save_cai_store`]
+    /// patch succeeds, saving a full rewrite; falls back to [`AssetIO::save_c2pa_store`]
     /// otherwise — matching the legacy `jumbf_io::save_jumbf_to_file` behavior.
     #[cfg(feature = "file_io")]
-    pub(crate) fn write_jumbf_to_file<P1: AsRef<Path>, P2: AsRef<Path>>(
+    pub(crate) fn write_c2pa_to_file<P1: AsRef<Path>, P2: AsRef<Path>>(
         &self,
         data: &[u8],
         in_path: P1,
@@ -992,13 +916,13 @@ impl HandlerRegistry {
             Some(asset_handler) => {
                 // patch if possible to save time and resources
                 if let Some(patch_handler) = asset_handler.asset_patch_ref() {
-                    if patch_handler.patch_cai_store(&asset_out_path, data).is_ok() {
+                    if patch_handler.patch_c2pa_file(&asset_out_path, data).is_ok() {
                         return Ok(());
                     }
                 }
 
                 // couldn't patch so just save
-                asset_handler.save_cai_store(&asset_out_path, data)
+                asset_handler.save_c2pa_store(&asset_out_path, data)
             }
             None => Err(Error::UnsupportedType),
         }
@@ -1010,10 +934,10 @@ impl HandlerRegistry {
     pub(crate) fn object_locations(
         &self,
         format: &str,
-        stream: &mut dyn CAIRead,
-    ) -> Result<Vec<HashObjectPositions>> {
+        stream: &mut dyn ReadSeek,
+    ) -> Result<Vec<ObjectLocations>> {
         match self.writer(format) {
-            Some(w) => w.get_object_locations_from_stream(stream),
+            Some(w) => w.get_object_locations(stream),
             None => Err(Error::UnsupportedType),
         }
     }
@@ -1194,7 +1118,7 @@ mod tests {
             })
         }
 
-        fn get_reader(&self) -> &dyn CAIReader {
+        fn get_reader(&self) -> &dyn C2paReader {
             self
         }
 
@@ -1220,12 +1144,12 @@ mod tests {
             }
         }
     }
-    impl CAIReader for TestHandler {
-        fn read_cai(&self, _: &mut dyn CAIRead) -> Result<Vec<u8>> {
+    impl C2paReader for TestHandler {
+        fn read_c2pa(&self, _: &mut dyn ReadSeek) -> Result<Vec<u8>> {
             Ok(self.tag.to_vec())
         }
 
-        fn read_xmp(&self, _: &mut dyn CAIRead) -> Option<String> {
+        fn read_xmp(&self, _: &mut dyn ReadSeek) -> Option<String> {
             None
         }
     }
@@ -1261,7 +1185,7 @@ mod tests {
 
         let mut stream = Cursor::new(vec![]);
         let reader = reg.reader("x-custom/test").unwrap();
-        assert_eq!(reader.read_cai(&mut stream).unwrap(), b"B");
+        assert_eq!(reader.read_c2pa(&mut stream).unwrap(), b"B");
     }
 
     #[test]
@@ -1276,7 +1200,7 @@ mod tests {
             overlay
                 .reader("image/jpeg")
                 .unwrap()
-                .read_cai(&mut stream)
+                .read_c2pa(&mut stream)
                 .unwrap(),
             b"custom"
         );

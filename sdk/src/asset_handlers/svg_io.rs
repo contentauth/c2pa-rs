@@ -23,8 +23,8 @@ use quick_xml::{
 
 use crate::{
     asset_io::{
-        AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashBlockObjectType,
-        HashObjectPositions, RemoteManifestUrl, WriteXmp,
+        AssetIO, AssetPatch, C2paReader, C2paWriter, ObjectLocations, ObjectType, ReadSeek,
+        ReadWriteSeek, RemoteManifestUrl, WriteXmp,
     },
     crypto::base64,
     error::{Error, Result},
@@ -43,8 +43,8 @@ const XMP_ID: &str = "W5M0MpCehiHzreSzNTczkc9d";
 
 pub struct SvgIO {}
 
-impl CAIReader for SvgIO {
-    fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
+impl C2paReader for SvgIO {
+    fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>> {
         let (decoded_manifest_opt, _detected_tag_location, _insertion_point) =
             detect_manifest_location(input_stream)?;
 
@@ -61,7 +61,7 @@ impl CAIReader for SvgIO {
     }
 
     // Get XMP block
-    fn read_xmp(&self, input_stream: &mut dyn CAIRead) -> Option<String> {
+    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Option<String> {
         let (xmp, _dtd, _insertion_pt) = read_xmp(input_stream).ok()?;
         xmp
     }
@@ -76,7 +76,7 @@ impl AssetIO for SvgIO {
         Box::new(SvgIO::new(asset_type))
     }
 
-    fn get_reader(&self) -> &dyn CAIReader {
+    fn get_reader(&self) -> &dyn C2paReader {
         self
     }
 
@@ -84,7 +84,7 @@ impl AssetIO for SvgIO {
         Some(self)
     }
 
-    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn C2paWriter>> {
         Some(Box::new(SvgIO::new(asset_type)))
     }
 
@@ -151,7 +151,7 @@ enum DetectedTagsDepth {
 
 // returns tuple of found manifest, where in the XML hierarchy the manifest needs to go, and the manifest insertion point
 fn detect_manifest_location(
-    input_stream: &mut dyn CAIRead,
+    input_stream: &mut dyn ReadSeek,
 ) -> Result<(Option<Vec<u8>>, DetectedTagsDepth, usize)> {
     input_stream.rewind()?;
 
@@ -232,7 +232,7 @@ fn detect_manifest_location(
     Ok((output, detected_level, insertion_point))
 }
 
-fn read_xmp(input_stream: &mut dyn CAIRead) -> Result<(Option<String>, DetectedTagsDepth, usize)> {
+fn read_xmp(input_stream: &mut dyn ReadSeek) -> Result<(Option<String>, DetectedTagsDepth, usize)> {
     input_stream.rewind()?;
 
     let mut insertion_point = stream_len(input_stream)?;
@@ -306,8 +306,8 @@ fn read_xmp(input_stream: &mut dyn CAIRead) -> Result<(Option<String>, DetectedT
 }
 
 fn add_required_segs_to_stream(
-    input_stream: &mut dyn CAIRead,
-    output_stream: &mut dyn CAIReadWrite,
+    input_stream: &mut dyn ReadSeek,
+    output_stream: &mut dyn ReadWriteSeek,
 ) -> Result<()> {
     let (encoded_manifest_opt, _detected_tag_location, _insertion_point) =
         detect_manifest_location(input_stream)?;
@@ -325,7 +325,7 @@ fn add_required_segs_to_stream(
         let svg = SvgIO::new("svg");
         let svg_writer = svg.get_writer("svg").ok_or(Error::UnsupportedType)?;
 
-        svg_writer.write_cai(input_stream, output_stream, data.as_bytes())?;
+        svg_writer.write_c2pa(input_stream, output_stream, data.as_bytes())?;
     } else {
         // just clone
         input_stream.rewind()?;
@@ -336,11 +336,11 @@ fn add_required_segs_to_stream(
     Ok(())
 }
 
-impl CAIWriter for SvgIO {
-    fn write_cai(
+impl C2paWriter for SvgIO {
+    fn write_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         store_bytes: &[u8],
     ) -> Result<()> {
         input_stream.rewind()?;
@@ -489,16 +489,16 @@ impl CAIWriter for SvgIO {
         Ok(())
     }
 
-    fn get_object_locations_from_stream(
+    fn get_object_locations(
         &self,
-        input_stream: &mut dyn CAIRead,
-    ) -> Result<Vec<HashObjectPositions>> {
+        input_stream: &mut dyn ReadSeek,
+    ) -> Result<Vec<ObjectLocations>> {
         let output: Vec<u8> = Vec::new();
         let mut output_stream = Cursor::new(output);
 
         add_required_segs_to_stream(input_stream, &mut output_stream)?;
 
-        let mut positions: Vec<HashObjectPositions> = Vec::new();
+        let mut positions: Vec<ObjectLocations> = Vec::new();
 
         let (decoded_manifest_opt, _detected_tag_location, manifest_pos) =
             detect_manifest_location(&mut output_stream)?;
@@ -506,37 +506,35 @@ impl CAIWriter for SvgIO {
         let decoded_manifest = decoded_manifest_opt.ok_or(Error::JumbfNotFound)?;
         let encoded_manifest_len = base64::encode(&decoded_manifest).len();
 
-        positions.push(HashObjectPositions {
-            offset: manifest_pos,
-            length: encoded_manifest_len,
-            htype: HashBlockObjectType::Cai,
+        positions.push(ObjectLocations {
+            offset: manifest_pos as u64,
+            length: encoded_manifest_len as u64,
+            htype: ObjectType::Cai,
         });
 
         // add hash of chunks before cai
-        positions.push(HashObjectPositions {
+        positions.push(ObjectLocations {
             offset: 0,
-            length: manifest_pos,
-            htype: HashBlockObjectType::Other,
+            length: manifest_pos as u64,
+            htype: ObjectType::Other,
         });
 
         // add position from cai to end
-        let end = manifest_pos + encoded_manifest_len;
-        let length = usize::try_from(stream_len(input_stream)?)
-            .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?
-            .saturating_sub(end);
-        positions.push(HashObjectPositions {
+        let end = (manifest_pos + encoded_manifest_len) as u64;
+        let length = stream_len(input_stream)?.saturating_sub(end);
+        positions.push(ObjectLocations {
             offset: end,
             length,
-            htype: HashBlockObjectType::Other,
+            htype: ObjectType::Other,
         });
 
         Ok(positions)
     }
 
-    fn remove_cai_store_from_stream(
+    fn remove_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
     ) -> Result<()> {
         let buf_reader = BufReader::new(input_stream);
         let mut reader = Reader::from_reader(buf_reader);
@@ -608,11 +606,7 @@ impl CAIWriter for SvgIO {
 }
 
 impl AssetPatch for SvgIO {
-    fn patch_cai_store_stream(
-        &self,
-        stream: &mut dyn CAIReadWrite,
-        store_bytes: &[u8],
-    ) -> Result<()> {
+    fn patch_c2pa(&self, stream: &mut dyn ReadWriteSeek, store_bytes: &[u8]) -> Result<()> {
         let (asset_manifest_opt, _detected_tag_location, insertion_point) =
             detect_manifest_location(stream)?;
         let encoded_store_bytes = base64::encode(store_bytes);
@@ -641,8 +635,8 @@ impl AssetPatch for SvgIO {
 impl WriteXmp for SvgIO {
     fn write_xmp(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         xmp: &str,
     ) -> Result<()> {
         input_stream.rewind()?;
@@ -747,7 +741,7 @@ pub mod tests {
             if let Ok(_size) = std::fs::copy(source, &output) {
                 let svg_io = SvgIO::new("svg");
 
-                if let Ok(()) = svg_io.save_cai_store(&output, more_data) {
+                if let Ok(()) = svg_io.save_c2pa_store(&output, more_data) {
                     let xml = std::fs::read_to_string(&output).unwrap();
                     assert_c2pa_namespace_on_svg_root(&xml);
                     assert_no_c2pa_namespace_on_manifest(&xml);
@@ -773,7 +767,7 @@ pub mod tests {
             if let Ok(_size) = std::fs::copy(source, &output) {
                 let svg_io = SvgIO::new("svg");
 
-                if let Ok(()) = svg_io.save_cai_store(&output, more_data) {
+                if let Ok(()) = svg_io.save_c2pa_store(&output, more_data) {
                     let xml = std::fs::read_to_string(&output).unwrap();
                     assert_c2pa_namespace_on_svg_root(&xml);
                     assert_no_c2pa_namespace_on_manifest(&xml);
@@ -799,7 +793,7 @@ pub mod tests {
             if let Ok(_size) = std::fs::copy(source, &output) {
                 let svg_io = SvgIO::new("svg");
 
-                if let Ok(()) = svg_io.save_cai_store(&output, more_data) {
+                if let Ok(()) = svg_io.save_c2pa_store(&output, more_data) {
                     let xml = std::fs::read_to_string(&output).unwrap();
                     assert_c2pa_namespace_on_svg_root(&xml);
                     // sample3's <c2pa:manifest> has inline xmlns:c2pa from a prior
@@ -827,7 +821,7 @@ pub mod tests {
             if let Ok(_size) = std::fs::copy(source, &output) {
                 let svg_io = SvgIO::new("svg");
 
-                if let Ok(()) = svg_io.save_cai_store(&output, more_data) {
+                if let Ok(()) = svg_io.save_c2pa_store(&output, more_data) {
                     let xml = std::fs::read_to_string(&output).unwrap();
                     assert_c2pa_namespace_on_svg_root(&xml);
                     assert_no_c2pa_namespace_on_manifest(&xml);
@@ -854,8 +848,8 @@ pub mod tests {
             if let Ok(_size) = std::fs::copy(source, &output) {
                 let svg_io = SvgIO::new("svg");
 
-                if let Ok(()) = svg_io.save_cai_store(&output, more_data) {
-                    if let Ok(()) = svg_io.save_cai_store(&output, new_manifest_data) {
+                if let Ok(()) = svg_io.save_c2pa_store(&output, more_data) {
+                    if let Ok(()) = svg_io.save_c2pa_store(&output, new_manifest_data) {
                         let xml = std::fs::read_to_string(&output).unwrap();
 
                         let svg_idx = xml.find("<svg").expect("SVG root tag missing");
@@ -893,12 +887,12 @@ pub mod tests {
             if let Ok(_size) = std::fs::copy(source, &output) {
                 let svg_io = SvgIO::new("svg");
 
-                if let Ok(()) = svg_io.save_cai_store(&output, test_data) {
+                if let Ok(()) = svg_io.save_c2pa_store(&output, test_data) {
                     if let Ok(source_data) = svg_io.read_cai_store(&output) {
                         // create replacement data of same size
                         let mut new_data = vec![0u8; source_data.len()];
                         new_data[..test_data.len()].copy_from_slice(test_data);
-                        svg_io.patch_cai_store(&output, &new_data).unwrap();
+                        svg_io.patch_c2pa_file(&output, &new_data).unwrap();
 
                         let replaced = svg_io.read_cai_store(&output).unwrap();
 
@@ -922,7 +916,7 @@ pub mod tests {
         std::fs::copy(source, &output).unwrap();
         let svg_io = SvgIO::new("svg");
 
-        svg_io.remove_cai_store(&output).unwrap();
+        svg_io.remove_c2pa_store(&output).unwrap();
 
         // read back in asset, JumbfNotFound is expected since it was removed
         match svg_io.read_cai_store(&output) {
@@ -943,17 +937,16 @@ pub mod tests {
             if let Ok(_size) = std::fs::copy(source, &output) {
                 let svg_io = SvgIO::new("svg");
 
-                if let Ok(()) = svg_io.save_cai_store(&output, more_data) {
+                if let Ok(()) = svg_io.save_c2pa_store(&output, more_data) {
                     let mut output_reader = File::open(&output).unwrap();
-                    if let Ok(locations) =
-                        svg_io.get_object_locations_from_stream(&mut output_reader)
-                    {
+                    if let Ok(locations) = svg_io.get_object_locations(&mut output_reader) {
                         for op in locations {
-                            if op.htype == HashBlockObjectType::Cai {
+                            if op.htype == ObjectType::Cai {
                                 let mut of = File::open(&output).unwrap();
 
-                                let mut manifests_buf: Vec<u8> = vec![0u8; op.length];
-                                of.seek(SeekFrom::Start(op.offset as u64)).unwrap();
+                                let mut manifests_buf: Vec<u8> =
+                                    vec![0u8; usize::try_from(op.length).unwrap()];
+                                of.seek(SeekFrom::Start(op.offset)).unwrap();
                                 of.read_exact(manifests_buf.as_mut_slice()).unwrap();
                                 let buf_str = std::str::from_utf8(&manifests_buf).unwrap();
                                 let decoded_data = base64::decode(buf_str).unwrap();
@@ -1058,6 +1051,6 @@ pub mod tests {
         let mut stream = Cursor::new(&data);
         let svg_io = SvgIO::new("svg");
 
-        let _ = svg_io.get_object_locations_from_stream(&mut stream);
+        let _ = svg_io.get_object_locations(&mut stream);
     }
 }

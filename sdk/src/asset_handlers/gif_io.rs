@@ -22,8 +22,8 @@ use byteorder::{ReadBytesExt, WriteBytesExt};
 
 use crate::{
     asset_io::{
-        AssetBoxHash, AssetIO, AssetPatch, BoxMap, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
-        ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteManifestUrl, WriteXmp,
+        AssetBoxHash, AssetIO, AssetPatch, BoxMap, C2paReader, C2paWriter, ComposedManifestRef,
+        ObjectLocations, ObjectType, ReadSeek, ReadWriteSeek, RemoteManifestUrl, WriteXmp,
         C2PA_BOXHASH,
     },
     error::Result,
@@ -37,14 +37,14 @@ const XMP_MAGIC_TRAILER_LEN: usize = 257;
 
 pub struct GifIO {}
 
-impl CAIReader for GifIO {
-    fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
+impl C2paReader for GifIO {
+    fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>> {
         self.find_c2pa_block(input_stream)?
             .map(|marker| marker.block.data_sub_blocks.to_decoded_bytes())
             .ok_or(Error::JumbfNotFound)
     }
 
-    fn read_xmp(&self, input_stream: &mut dyn CAIRead) -> Option<String> {
+    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Option<String> {
         let mut bytes = self
             .find_xmp_block(input_stream)
             .ok()?
@@ -79,11 +79,11 @@ impl CAIReader for GifIO {
     }
 }
 
-impl CAIWriter for GifIO {
-    fn write_cai(
+impl C2paWriter for GifIO {
+    fn write_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         store_bytes: &[u8],
     ) -> Result<()> {
         let old_block_marker = self.find_c2pa_block(input_stream)?;
@@ -100,58 +100,58 @@ impl CAIWriter for GifIO {
         }
     }
 
-    fn get_object_locations_from_stream(
+    fn get_object_locations(
         &self,
-        input_stream: &mut dyn CAIRead,
-    ) -> Result<Vec<HashObjectPositions>> {
+        input_stream: &mut dyn ReadSeek,
+    ) -> Result<Vec<ObjectLocations>> {
         let c2pa_block = self.find_c2pa_block(input_stream)?;
         match c2pa_block {
             Some(c2pa_block) => Ok(vec![
-                HashObjectPositions {
+                ObjectLocations {
                     offset: 0,
-                    length: usize::try_from(c2pa_block.start() - 1)?,
-                    htype: HashBlockObjectType::Other,
+                    length: c2pa_block.start() - 1,
+                    htype: ObjectType::Other,
                 },
-                HashObjectPositions {
-                    offset: usize::try_from(c2pa_block.start())?,
-                    length: usize::try_from(c2pa_block.len())?,
-                    htype: HashBlockObjectType::Cai,
+                ObjectLocations {
+                    offset: c2pa_block.start(),
+                    length: c2pa_block.len(),
+                    htype: ObjectType::Cai,
                 },
-                HashObjectPositions {
-                    offset: usize::try_from(c2pa_block.end())?,
-                    length: usize::try_from(stream_len(input_stream)? - c2pa_block.end())?,
-                    htype: HashBlockObjectType::Other,
+                ObjectLocations {
+                    offset: c2pa_block.end(),
+                    length: stream_len(input_stream)? - c2pa_block.end(),
+                    htype: ObjectType::Other,
                 },
             ]),
             None => {
                 self.skip_preamble(input_stream)?;
 
-                let end_preamble_pos = usize::try_from(input_stream.stream_position()?)?;
+                let end_preamble_pos = input_stream.stream_position()?;
                 Ok(vec![
-                    HashObjectPositions {
+                    ObjectLocations {
                         offset: 0,
                         length: end_preamble_pos - 1,
-                        htype: HashBlockObjectType::Other,
+                        htype: ObjectType::Other,
                     },
-                    HashObjectPositions {
+                    ObjectLocations {
                         offset: end_preamble_pos,
                         length: 1, // Need at least size 1.
-                        htype: HashBlockObjectType::Cai,
+                        htype: ObjectType::Cai,
                     },
-                    HashObjectPositions {
+                    ObjectLocations {
                         offset: end_preamble_pos + 1,
-                        length: usize::try_from(stream_len(input_stream)?)? - end_preamble_pos,
-                        htype: HashBlockObjectType::Other,
+                        length: stream_len(input_stream)? - end_preamble_pos,
+                        htype: ObjectType::Other,
                     },
                 ])
             }
         }
     }
 
-    fn remove_cai_store_from_stream(
+    fn remove_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
     ) -> Result<()> {
         match self.find_c2pa_block(input_stream)? {
             Some(block_marker) => {
@@ -167,7 +167,7 @@ impl CAIWriter for GifIO {
 }
 
 impl AssetPatch for GifIO {
-    fn patch_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
+    fn patch_c2pa_file(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
         let mut stream = fs::OpenOptions::new()
             .read(true)
             .write(true)
@@ -188,8 +188,8 @@ impl AssetPatch for GifIO {
 impl WriteXmp for GifIO {
     fn write_xmp(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         xmp: &str,
     ) -> Result<()> {
         let old_block_marker = self.find_xmp_block(input_stream)?;
@@ -214,7 +214,7 @@ impl ComposedManifestRef for GifIO {
 }
 
 impl AssetBoxHash for GifIO {
-    fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
+    fn get_box_map(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<BoxMap>> {
         let c2pa_block_exists = self.find_c2pa_block(input_stream)?.is_some();
 
         let mut box_maps = Vec::new();
@@ -289,11 +289,11 @@ impl AssetIO for GifIO {
         Box::new(GifIO::new(asset_type))
     }
 
-    fn get_reader(&self) -> &dyn CAIReader {
+    fn get_reader(&self) -> &dyn C2paReader {
         self
     }
 
-    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn C2paWriter>> {
         Some(Box::new(GifIO::new(asset_type)))
     }
 
@@ -323,7 +323,7 @@ impl AssetIO for GifIO {
 }
 
 impl GifIO {
-    fn skip_preamble(&self, stream: &mut dyn CAIRead) -> Result<()> {
+    fn skip_preamble(&self, stream: &mut dyn ReadSeek) -> Result<()> {
         stream.rewind()?;
 
         Header::from_stream(stream)?;
@@ -341,7 +341,7 @@ impl GifIO {
     // According to spec, C2PA blocks must come before the first image descriptor.
     fn find_c2pa_block(
         &self,
-        stream: &mut dyn CAIRead,
+        stream: &mut dyn ReadSeek,
     ) -> Result<Option<BlockMarker<ApplicationExtension>>> {
         self.find_app_block_from_iterator(
             ApplicationExtensionKind::C2pa,
@@ -359,7 +359,7 @@ impl GifIO {
 
     fn find_xmp_block(
         &self,
-        stream: &mut dyn CAIRead,
+        stream: &mut dyn ReadSeek,
     ) -> Result<Option<BlockMarker<ApplicationExtension>>> {
         self.find_app_block_from_iterator(ApplicationExtensionKind::Xmp, Blocks::new(stream)?)
     }
@@ -390,8 +390,8 @@ impl GifIO {
 
     fn remove_block(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         block_meta: &BlockMarker<Block>,
     ) -> Result<()> {
         input_stream.rewind()?;
@@ -409,8 +409,8 @@ impl GifIO {
 
     fn replace_block(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         old_block_marker: &BlockMarker<Block>,
         new_block: &Block,
     ) -> Result<()> {
@@ -434,7 +434,7 @@ impl GifIO {
     #[allow(dead_code)] // this here for wasm builds to pass clippy  (todo: remove)
     fn replace_block_in_place(
         &self,
-        stream: &mut dyn CAIReadWrite,
+        stream: &mut dyn ReadWriteSeek,
         old_block_marker: &BlockMarker<Block>,
         new_block: &Block,
     ) -> Result<()> {
@@ -452,8 +452,8 @@ impl GifIO {
 
     fn insert_block(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         block: &Block,
     ) -> Result<()> {
         self.skip_preamble(input_stream)?;
@@ -477,7 +477,7 @@ impl GifIO {
 
     // GIF has two versions: 87a and 89a. 87a doesn't support block extensions, so if the input stream is
     // 87a we need to update it to 89a.
-    fn update_to_89a(&self, stream: &mut dyn CAIReadWrite) -> Result<()> {
+    fn update_to_89a(&self, stream: &mut dyn ReadWriteSeek) -> Result<()> {
         stream.seek(SeekFrom::Start(4))?;
         // 0x39 is 9 in ASCII.
         stream.write_u8(0x39)?;
@@ -487,12 +487,12 @@ impl GifIO {
 
 struct Blocks<'a> {
     next: Option<BlockMarker<Block>>,
-    stream: &'a mut dyn CAIRead,
+    stream: &'a mut dyn ReadSeek,
     reached_trailer: bool,
 }
 
 impl<'a> Blocks<'a> {
-    fn new(stream: &'a mut dyn CAIRead) -> Result<Blocks<'a>> {
+    fn new(stream: &'a mut dyn ReadSeek) -> Result<Blocks<'a>> {
         stream.rewind()?;
 
         let start = stream.stream_position()?;
@@ -602,7 +602,7 @@ enum Block {
 }
 
 impl Block {
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<BlockMarker<Block>> {
+    fn from_stream(stream: &mut dyn ReadSeek) -> Result<BlockMarker<Block>> {
         let start = stream.stream_position()?;
 
         let ext_introducer = stream.read_u8()?;
@@ -645,7 +645,7 @@ impl Block {
     }
 
     // Some blocks MUST come after other blocks, this function ensures that.
-    fn next_block_hint(&self, stream: &mut dyn CAIRead) -> Result<Option<BlockMarker<Block>>> {
+    fn next_block_hint(&self, stream: &mut dyn ReadSeek) -> Result<Option<BlockMarker<Block>>> {
         let start = stream.stream_position()?;
         let next_block = match self {
             Block::Header(_) => Some(Block::LogicalScreenDescriptor(
@@ -746,7 +746,7 @@ struct Header {
 }
 
 impl Header {
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<Header> {
+    fn from_stream(stream: &mut dyn ReadSeek) -> Result<Header> {
         let mut signature = [0u8; 3];
         stream.read_exact(&mut signature)?;
         if signature != *b"GIF" {
@@ -784,7 +784,7 @@ struct LogicalScreenDescriptor {
 }
 
 impl LogicalScreenDescriptor {
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<LogicalScreenDescriptor> {
+    fn from_stream(stream: &mut dyn ReadSeek) -> Result<LogicalScreenDescriptor> {
         stream.seek(SeekFrom::Current(4))?;
 
         let packed = stream.read_u8()?;
@@ -804,7 +804,7 @@ impl LogicalScreenDescriptor {
 struct GlobalColorTable {}
 
 impl GlobalColorTable {
-    fn from_stream(stream: &mut dyn CAIRead, size: u8) -> Result<GlobalColorTable> {
+    fn from_stream(stream: &mut dyn ReadSeek, size: u8) -> Result<GlobalColorTable> {
         stream.seek(SeekFrom::Current(3 * (2_i64.pow(size as u32 + 1))))?;
 
         Ok(GlobalColorTable {})
@@ -849,7 +849,7 @@ impl ApplicationExtension {
         })
     }
 
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<ApplicationExtension> {
+    fn from_stream(stream: &mut dyn ReadSeek) -> Result<ApplicationExtension> {
         let app_block_size = stream.read_u8()?;
         // App block size is a fixed value.
         if app_block_size != 0x0b {
@@ -915,7 +915,7 @@ impl From<ApplicationExtension> for Block {
 struct PlainTextExtension {}
 
 impl PlainTextExtension {
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<PlainTextExtension> {
+    fn from_stream(stream: &mut dyn ReadSeek) -> Result<PlainTextExtension> {
         stream.seek(SeekFrom::Current(11))?;
         DataSubBlocks::from_encoded_stream_and_skip(stream)?;
         Ok(PlainTextExtension {})
@@ -926,7 +926,7 @@ impl PlainTextExtension {
 struct CommentExtension {}
 
 impl CommentExtension {
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<CommentExtension> {
+    fn from_stream(stream: &mut dyn ReadSeek) -> Result<CommentExtension> {
         // stream.seek(SeekFrom::Current(0))?;
         DataSubBlocks::from_encoded_stream_and_skip(stream)?;
         Ok(CommentExtension {})
@@ -938,7 +938,7 @@ struct GraphicControlExtension {}
 
 impl GraphicControlExtension {
     // TODO: validate ext introducer and label, and do that for other extensions?
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<GraphicControlExtension> {
+    fn from_stream(stream: &mut dyn ReadSeek) -> Result<GraphicControlExtension> {
         stream.seek(SeekFrom::Current(6))?;
         Ok(GraphicControlExtension {})
     }
@@ -951,7 +951,7 @@ struct ImageDescriptor {
 }
 
 impl ImageDescriptor {
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<ImageDescriptor> {
+    fn from_stream(stream: &mut dyn ReadSeek) -> Result<ImageDescriptor> {
         stream.seek(SeekFrom::Current(8))?;
 
         let packed = stream.read_u8()?;
@@ -970,7 +970,7 @@ struct LocalColorTable {}
 
 impl LocalColorTable {
     fn from_stream(
-        stream: &mut dyn CAIRead,
+        stream: &mut dyn ReadSeek,
         local_color_table_size: u8,
     ) -> Result<LocalColorTable> {
         stream.seek(SeekFrom::Current(
@@ -984,7 +984,7 @@ impl LocalColorTable {
 struct ImageData {}
 
 impl ImageData {
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<ImageData> {
+    fn from_stream(stream: &mut dyn ReadSeek) -> Result<ImageData> {
         stream.seek(SeekFrom::Current(1))?;
         DataSubBlocks::from_encoded_stream_and_skip(stream)?;
         Ok(ImageData {})
@@ -1022,7 +1022,7 @@ impl DataSubBlocks {
         })
     }
 
-    fn from_encoded_stream(stream: &mut dyn CAIRead) -> Result<DataSubBlocks> {
+    fn from_encoded_stream(stream: &mut dyn ReadSeek) -> Result<DataSubBlocks> {
         let mut data_sub_blocks = Vec::new();
         loop {
             let sub_block_size = stream.read_u8()?;
@@ -1046,7 +1046,7 @@ impl DataSubBlocks {
         })
     }
 
-    fn from_encoded_stream_and_skip(stream: &mut dyn CAIRead) -> Result<u64> {
+    fn from_encoded_stream_and_skip(stream: &mut dyn ReadSeek) -> Result<u64> {
         let mut length = 0;
         loop {
             let sub_block_size = stream.read_u8()?;
@@ -1175,22 +1175,22 @@ mod tests {
         let gif_io = GifIO {};
 
         assert!(matches!(
-            gif_io.read_cai(&mut stream),
+            gif_io.read_c2pa(&mut stream),
             Err(Error::JumbfNotFound)
         ));
 
         let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 7));
         let random_bytes = [1, 2, 3, 4, 3, 2, 1];
-        gif_io.write_cai(&mut stream, &mut output_stream1, &random_bytes)?;
+        gif_io.write_c2pa(&mut stream, &mut output_stream1, &random_bytes)?;
 
-        let data_written = gif_io.read_cai(&mut output_stream1)?;
+        let data_written = gif_io.read_c2pa(&mut output_stream1)?;
         assert_eq!(data_written, random_bytes);
 
         let mut output_stream2 = Cursor::new(Vec::with_capacity(SAMPLE1.len()));
-        gif_io.remove_cai_store_from_stream(&mut output_stream1, &mut output_stream2)?;
+        gif_io.remove_c2pa(&mut output_stream1, &mut output_stream2)?;
 
         assert!(matches!(
-            gif_io.read_cai(&mut stream),
+            gif_io.read_c2pa(&mut stream),
             Err(Error::JumbfNotFound)
         ));
 
@@ -1246,15 +1246,15 @@ mod tests {
         let gif_io = GifIO {};
 
         assert!(matches!(
-            gif_io.read_cai(&mut stream),
+            gif_io.read_c2pa(&mut stream),
             Err(Error::JumbfNotFound)
         ));
 
         let mut output_stream = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 7));
         let random_bytes = [1, 2, 3, 4, 3, 2, 1];
-        gif_io.write_cai(&mut stream, &mut output_stream, &random_bytes)?;
+        gif_io.write_c2pa(&mut stream, &mut output_stream, &random_bytes)?;
 
-        let data_written = gif_io.read_cai(&mut output_stream)?;
+        let data_written = gif_io.read_c2pa(&mut output_stream)?;
         assert_eq!(data_written, random_bytes);
 
         Ok(())
@@ -1267,22 +1267,22 @@ mod tests {
         let gif_io = GifIO {};
 
         assert!(matches!(
-            gif_io.read_cai(&mut stream),
+            gif_io.read_c2pa(&mut stream),
             Err(Error::JumbfNotFound)
         ));
 
         let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 7));
         let random_bytes = [1, 2, 3, 4, 3, 2, 1];
-        gif_io.write_cai(&mut stream, &mut output_stream1, &random_bytes)?;
+        gif_io.write_c2pa(&mut stream, &mut output_stream1, &random_bytes)?;
 
-        let data_written = gif_io.read_cai(&mut output_stream1)?;
+        let data_written = gif_io.read_c2pa(&mut output_stream1)?;
         assert_eq!(data_written, random_bytes);
 
         let mut output_stream2 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 5));
         let random_bytes = [3, 2, 1, 2, 3];
-        gif_io.write_cai(&mut output_stream1, &mut output_stream2, &random_bytes)?;
+        gif_io.write_c2pa(&mut output_stream1, &mut output_stream2, &random_bytes)?;
 
-        let data_written = gif_io.read_cai(&mut output_stream2)?;
+        let data_written = gif_io.read_c2pa(&mut output_stream2)?;
         assert_eq!(data_written, random_bytes);
 
         let mut bytes = Vec::new();
@@ -1299,61 +1299,61 @@ mod tests {
 
         let gif_io = GifIO {};
 
-        let obj_locations = gif_io.get_object_locations_from_stream(&mut stream)?;
+        let obj_locations = gif_io.get_object_locations(&mut stream)?;
         assert_eq!(
             obj_locations.first(),
-            Some(&HashObjectPositions {
+            Some(&ObjectLocations {
                 offset: 0,
                 length: 780,
-                htype: HashBlockObjectType::Other,
+                htype: ObjectType::Other,
             })
         );
         assert_eq!(
             obj_locations.get(1),
-            Some(&HashObjectPositions {
+            Some(&ObjectLocations {
                 offset: 781,
                 length: 1,
-                htype: HashBlockObjectType::Cai,
+                htype: ObjectType::Cai,
             })
         );
         assert_eq!(
             obj_locations.get(2),
-            Some(&HashObjectPositions {
+            Some(&ObjectLocations {
                 offset: 782,
-                length: SAMPLE1.len() - 781,
-                htype: HashBlockObjectType::Other,
+                length: (SAMPLE1.len() - 781) as u64,
+                htype: ObjectType::Other,
             })
         );
         assert_eq!(obj_locations.len(), 3);
 
         let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 4));
-        gif_io.write_cai(&mut stream, &mut output_stream1, &[1, 2, 3, 4])?;
+        gif_io.write_c2pa(&mut stream, &mut output_stream1, &[1, 2, 3, 4])?;
 
-        let mut obj_locations = gif_io.get_object_locations_from_stream(&mut output_stream1)?;
+        let mut obj_locations = gif_io.get_object_locations(&mut output_stream1)?;
         obj_locations.sort_by_key(|pos| pos.offset);
 
         assert_eq!(
             obj_locations.first(),
-            Some(&HashObjectPositions {
+            Some(&ObjectLocations {
                 offset: 0,
                 length: 780,
-                htype: HashBlockObjectType::Other,
+                htype: ObjectType::Other,
             })
         );
         assert_eq!(
             obj_locations.get(1),
-            Some(&HashObjectPositions {
+            Some(&ObjectLocations {
                 offset: 781,
                 length: 20,
-                htype: HashBlockObjectType::Cai,
+                htype: ObjectType::Cai,
             })
         );
         assert_eq!(
             obj_locations.get(2),
-            Some(&HashObjectPositions {
+            Some(&ObjectLocations {
                 offset: 801,
-                length: SAMPLE1.len() - 781,
-                htype: HashBlockObjectType::Other,
+                length: (SAMPLE1.len() - 781) as u64,
+                htype: ObjectType::Other,
             })
         );
         assert_eq!(obj_locations.len(), 3);

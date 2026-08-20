@@ -15,8 +15,8 @@ use std::path::Path;
 
 use crate::{
     asset_io::{
-        AssetBoxHash, AssetIO, BoxMap, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
-        ComposedManifestRef, HashObjectPositions, C2PA_BOXHASH,
+        AssetBoxHash, AssetIO, BoxMap, C2paReader, C2paWriter, ComposedManifestRef,
+        ObjectLocations, ReadSeek, ReadWriteSeek, C2PA_BOXHASH,
     },
     error::{Error, Result},
 };
@@ -30,8 +30,8 @@ pub(crate) static SUPPORTED_TYPES: [&str; 3] = [
 /// Supports working with ".c2pa" files containing only manifest store data
 pub struct C2paIO {}
 
-impl CAIReader for C2paIO {
-    fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
+impl C2paReader for C2paIO {
+    fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>> {
         input_stream.rewind()?;
 
         let mut cai_data = Vec::new();
@@ -41,16 +41,16 @@ impl CAIReader for C2paIO {
     }
 
     // C2PA files have no xmp data
-    fn read_xmp(&self, _input_stream: &mut dyn CAIRead) -> Option<String> {
+    fn read_xmp(&self, _input_stream: &mut dyn ReadSeek) -> Option<String> {
         None
     }
 }
 
-impl CAIWriter for C2paIO {
-    fn write_cai(
+impl C2paWriter for C2paIO {
+    fn write_c2pa(
         &self,
-        _input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        _input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         store_bytes: &[u8],
     ) -> Result<()> {
         // just write the store bytes and ingore the input stream
@@ -58,18 +58,18 @@ impl CAIWriter for C2paIO {
         Ok(())
     }
 
-    fn get_object_locations_from_stream(
+    fn get_object_locations(
         &self,
-        __input_stream: &mut dyn CAIRead,
-    ) -> Result<Vec<HashObjectPositions>> {
+        __input_stream: &mut dyn ReadSeek,
+    ) -> Result<Vec<ObjectLocations>> {
         // there is no data to hash
         Ok(vec![])
     }
 
-    fn remove_cai_store_from_stream(
+    fn remove_c2pa(
         &self,
-        _input_stream: &mut dyn CAIRead,
-        _output_stream: &mut dyn CAIReadWrite,
+        _input_stream: &mut dyn ReadSeek,
+        _output_stream: &mut dyn ReadWriteSeek,
     ) -> Result<()> {
         // nothing to do here, just return Ok
         Ok(())
@@ -77,7 +77,7 @@ impl CAIWriter for C2paIO {
 }
 
 impl AssetIO for C2paIO {
-    fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
+    fn save_c2pa_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
         // just save the data in a file
         std::fs::write(asset_path, store_bytes)
             .map_err(|_err| Error::BadParam("C2PA write error".to_owned()))?;
@@ -85,7 +85,7 @@ impl AssetIO for C2paIO {
         Ok(())
     }
 
-    fn remove_cai_store(&self, _asset_path: &Path) -> Result<()> {
+    fn remove_c2pa_store(&self, _asset_path: &Path) -> Result<()> {
         Ok(())
     }
 
@@ -100,11 +100,11 @@ impl AssetIO for C2paIO {
         Box::new(C2paIO::new(asset_type))
     }
 
-    fn get_reader(&self) -> &dyn CAIReader {
+    fn get_reader(&self) -> &dyn C2paReader {
         self
     }
 
-    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn C2paWriter>> {
         Some(Box::new(C2paIO::new(asset_type)))
     }
 
@@ -122,7 +122,7 @@ impl AssetIO for C2paIO {
 }
 
 impl AssetBoxHash for C2paIO {
-    fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
+    fn get_box_map(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<BoxMap>> {
         // creates a box map with only a C2PA box.
         input_stream.rewind()?;
         Ok(vec![BoxMap::new(vec![C2PA_BOXHASH.to_string()], 0, 0)])
@@ -142,7 +142,7 @@ pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
 
-    use super::{AssetIO, C2paIO, CAIReader, CAIWriter};
+    use super::{AssetIO, C2paIO, C2paReader, C2paWriter};
     use crate::{
         status_tracker::{ErrorBehavior, StatusTracker},
         store::Store,
@@ -166,14 +166,14 @@ pub mod tests {
         let c2pa_io = C2paIO {};
         let manifest = context
             .io()
-            .read_jumbf_from_file(&path)
+            .read_c2pa_from_file(&path)
             .expect("read_cai_store");
         c2pa_io
-            .save_cai_store(&temp_path, &manifest)
+            .save_c2pa_store(&temp_path, &manifest)
             .expect("save cai store");
 
         let mut temp_file = std::fs::File::open(&temp_path).expect("open temp file");
-        let manifest_2 = c2pa_io.read_cai(&mut temp_file).expect("read cai store");
+        let manifest_2 = c2pa_io.read_c2pa(&mut temp_file).expect("read cai store");
 
         assert_eq!(&manifest, &manifest_2);
         // validate against our source stream and the saved / loaded manifest
@@ -205,15 +205,15 @@ pub mod tests {
         let context = Context::new();
         let manifest = context
             .io()
-            .read_jumbf_from_file(&path)
+            .read_c2pa_from_file(&path)
             .expect("load_jumbf_from_file");
         let mut output_stream = Cursor::new(Vec::new());
         c2pa_io
-            .write_cai(&mut empty(), &mut output_stream, &manifest)
+            .write_c2pa(&mut empty(), &mut output_stream, &manifest)
             .expect("write_cai");
 
         output_stream.set_position(0);
-        let manifest2 = c2pa_io.read_cai(&mut output_stream).expect("read_cai");
+        let manifest2 = c2pa_io.read_c2pa(&mut output_stream).expect("read_cai");
 
         assert_eq!(&manifest, &manifest2);
     }

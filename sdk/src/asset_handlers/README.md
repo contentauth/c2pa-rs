@@ -2,7 +2,7 @@
 
 > [!NOTE]
 > This documentation is primarily for SDK developers and contributors, not SDK users or consumers.
-> `asset_io.rs` itself (`AssetIO`, `CAIReader`, `CAIWriter`, and friends) is a public,
+> `asset_io.rs` itself (`AssetIO`, `C2paReader`, `C2paWriter`, and friends) is a public,
 > documented module — consumers implementing a custom format handler should start with
 > its rustdoc rather than this file.
 
@@ -15,7 +15,7 @@ The asset handler system follows a **trait-based plugin architecture** where eac
 The system uses two `lazy_static` `HashMap`s that map file extension/MIME strings to handler instances:
 
 - **`CAI_READERS`** — Maps every supported extension and MIME type to a `Box<dyn AssetIO>` handler instance. Used for reading manifests, getting object locations, and accessing optional capabilities.
-- **`CAI_WRITERS`** — Maps every writable extension/MIME type to a `Box<dyn CAIWriter>` handler instance. Only populated for handlers that return `Some` from `get_writer()`.
+- **`CAI_WRITERS`** — Maps every writable extension/MIME type to a `Box<dyn C2paWriter>` handler instance. Only populated for handlers that return `Some` from `get_writer()`.
 
 At startup, each handler is instantiated, asked for its `supported_types()` (e.g., `["jpg", "jpeg", "image/jpeg"]`), and entries are created in the map for each type. When the SDK needs to process a file, it looks up the extension/MIME in the map and gets the appropriate handler.
 
@@ -25,8 +25,8 @@ At startup, each handler is instantiated, asked for its `supported_types()` (e.g
 |----------|---------|---------|
 | `get_assetio_handler(ext)` | `Option<&dyn AssetIO>` | Full handler with all capabilities |
 | `get_assetio_handler_from_path(path)` | `Option<&dyn AssetIO>` | Same, but extracts extension from file path |
-| `get_cailoader_handler(asset_type)` | `Option<&dyn CAIReader>` | Stream-based reader only |
-| `get_caiwriter_handler(asset_type)` | `Option<&dyn CAIWriter>` | Stream-based writer only |
+| `get_cailoader_handler(asset_type)` | `Option<&dyn C2paReader>` | Stream-based reader only |
+| `get_caiwriter_handler(asset_type)` | `Option<&dyn C2paWriter>` | Stream-based writer only |
 
 ### Public entry points
 
@@ -50,18 +50,18 @@ There are **three mandatory traits** and **four optional traits** that a handler
 
 The mandatory traits are:
 
-- [CAIReader](#caireader-) 
-- [CAIWriter](#caiwriter) 
+- [C2paReader](#manifestreader-) 
+- [C2paWriter](#manifestwriter) 
 - [AssetIO](#assetio--the-master-trait)
 
-#### CAIReader 
+#### C2paReader 
 
-Use `CAIReader` for stream-based reading:
+Use `C2paReader` for stream-based reading:
 
 ```rust
-pub trait CAIReader: Sync + Send {
-    fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>>;
-    fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String>;
+pub trait C2paReader: Sync + Send {
+    fn read_cai(&self, asset_reader: &mut dyn ReadSeek) -> Result<Vec<u8>>;
+    fn read_xmp(&self, asset_reader: &mut dyn ReadSeek) -> Option<String>;
 }
 ```
 
@@ -70,28 +70,28 @@ pub trait CAIReader: Sync + Send {
 | `read_cai` | Extract the raw C2PA JUMBF manifest store bytes from a stream. Return `Error::JumbfNotFound` if none exists. Return `Error::TooManyManifestStores` if more than one manifest is detected. |
 | `read_xmp` | Extract XMP metadata as a string. Return `None` if the format doesn't contain XMP or if no XMP is present. |
 
-#### CAIWriter
+#### C2paWriter
 
-Use `CAIWriter` for stream-based writing:
+Use `C2paWriter` for stream-based writing:
 
 ```rust
-pub trait CAIWriter: Sync + Send {
+pub trait C2paWriter: Sync + Send {
     fn write_cai(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         store_bytes: &[u8],
     ) -> Result<()>;
 
     fn get_object_locations_from_stream(
         &self,
-        input_stream: &mut dyn CAIRead,
+        input_stream: &mut dyn ReadSeek,
     ) -> Result<Vec<HashObjectPositions>>;
 
     fn remove_cai_store_from_stream(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
     ) -> Result<()>;
 }
 ```
@@ -113,8 +113,8 @@ pub trait AssetIO: Sync + Send {
     fn get_handler(&self, asset_type: &str) -> Box<dyn AssetIO>;
 
     // Reader/Writer access
-    fn get_reader(&self) -> &dyn CAIReader;
-    fn get_writer(&self, _asset_type: &str) -> Option<Box<dyn CAIWriter>> { None }
+    fn get_reader(&self) -> &dyn C2paReader;
+    fn get_writer(&self, _asset_type: &str) -> Option<Box<dyn C2paWriter>> { None }
 
     // File-based operations (default-derived from the stream-based methods above;
     // most handlers never need to override these — see below)
@@ -138,7 +138,7 @@ handler's own unit tests; use `get_reader().read_cai(...)` /
 `get_writer(ext)?.get_object_locations_from_stream(...)` against an opened file instead.
 
 `save_cai_store` and `remove_cai_store` keep default implementations, derived from the
-stream-based methods, that open the file, delegate to `CAIWriter`, and move the result
+stream-based methods, that open the file, delegate to `C2paWriter`, and move the result
 into place via `rename_or_move`:
 
 ```rust
@@ -190,15 +190,15 @@ underneath all of them):
 pub trait RemoteManifestUrl {
     fn write_remote_manifest_url(
         &self,
-        source_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        source_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         remote_manifest_url: &str,
     ) -> Result<()>;
 }
 ```
 
 Note the direction: this is for a *remote* manifest (referenced by URL, not present in
-the asset) — unrelated to *embedding* a manifest store, which is what `CAIWriter::write_cai`
+the asset) — unrelated to *embedding* a manifest store, which is what `C2paWriter::write_cai`
 does. It's deliberately narrow: it only covers "point a reader at a manifest hosted
 elsewhere." A future non-XMP technique (e.g. a watermark) would be its own separate
 trait, not another variant or parameter here — which is also why the old
@@ -209,20 +209,20 @@ directly.
 **Don't implement `RemoteManifestUrl` directly.** Since writing a remote manifest URL is
 always "merge it into XMP, then write XMP", implement `WriteXmp` instead —
 `RemoteManifestUrl` has a blanket impl for any type that implements `WriteXmp` (and
-`CAIReader`, for reading the current XMP):
+`C2paReader`, for reading the current XMP):
 
 ```rust
 pub trait WriteXmp {
     fn write_xmp(
         &self,
-        source_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        source_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         xmp: &str,
     ) -> Result<()>;
 }
 ```
 
-The blanket impl reads the current XMP via `CAIReader::read_xmp` (falling back to
+The blanket impl reads the current XMP via `C2paReader::read_xmp` (falling back to
 `MIN_XMP` if there is none), merges in the URL with `xmp_inmemory_utils::add_provenance`,
 and calls `write_xmp` with the finished string — every built-in handler that supports
 `RemoteManifestUrl` implements `WriteXmp`, not `RemoteManifestUrl`, and none of them call
@@ -238,7 +238,7 @@ Use `AssetBoxHash` for box hash support:
 
 ```rust
 pub trait AssetBoxHash {
-    fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>>;
+    fn get_box_map(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<BoxMap>>;
 }
 ```
 
@@ -335,8 +335,8 @@ All traits require `Sync + Send`. Handlers must be **stateless structs** with no
 
 ### Stream semantics
 
-- All stream-based methods receive `&mut dyn CAIRead` (= `Read + Seek + Send`) for input
-- Output streams use `&mut dyn CAIReadWrite` (= `Read + Seek + Write + Send`)
+- All stream-based methods receive `&mut dyn ReadSeek` (= `Read + Seek + Send`) for input
+- Output streams use `&mut dyn ReadWriteSeek` (= `Read + Seek + Write + Send`)
 - Handlers should `rewind()` streams before reading
 - Never assume the stream position on entry
 
@@ -357,7 +357,7 @@ All traits require `Sync + Send`. Handlers must be **stateless structs** with no
 
 ## Trait implementation matrix
 
-| Handler | CAIReader | CAIWriter | AssetIO | RemoteManifestUrl | AssetBoxHash | ComposedManifestRef | AssetPatch |
+| Handler | C2paReader | C2paWriter | AssetIO | RemoteManifestUrl | AssetBoxHash | ComposedManifestRef | AssetPatch |
 |---------|:---------:|:---------:|:-------:|:--------------:|:------------:|:-------------------:|:----------:|
 | **BmffIO** (MP4, HEIF, AVIF, MOV) | Y | Y | Y | Y | -- | -- | Y |
 | **JpegIO** (JPG, JPEG) | Y | Y | Y | Y | Y | Y | -- |
@@ -373,8 +373,8 @@ All traits require `Sync + Send`. Handlers must be **stateless structs** with no
 
 ### Key observations
 
-- `CAIReader` + `AssetIO` are implemented by **every** handler (minimum requirement)
-- `CAIWriter` is implemented by everything except PDF (which is currently read-only)
+- `C2paReader` + `AssetIO` are implemented by **every** handler (minimum requirement)
+- `C2paWriter` is implemented by everything except PDF (which is currently read-only)
 - `AssetPatch` is a performance optimization — formats that support it can update manifests in-place
 - All traits are independent; format capabilities, as defined by the C2PA specification, determine which ones to implement
 
@@ -422,15 +422,15 @@ fn test_streams_jxl() {
 flowchart TB
     subgraph dispatch["jumbf_io.rs — Dispatch layer"]
         readers["CAI_READERS:<br><pre>HashMap&lt;String, Box&lt;dyn AssetIO&gt;&gt;</pre>"]
-        writers["CAI_WRITERS:<br><pre>HashMap&lt;String, Box&tl;dyn CAIWriter&gt;&gt;</pre> "]
+        writers["CAI_WRITERS:<br><pre>HashMap&lt;String, Box&tl;dyn C2paWriter&gt;&gt;</pre> "]
         mappings["'jpg' → JpegIO <br> 'png' → PngIO <br> 'jxl' → JpegXlIO <br> 'mp4' → BmffIO  <br> ..."]
     end
 
     subgraph traits["asset_io.rs — Trait definitions"]
         direction TB
         subgraph mandatory["Mandatory"]
-            t1["<b>CAIReader</b>:<br>read_cai, read_xmp"]
-            t2["<b>CAIWriter</b>:<br>write_cai, get_object_locations, remove_cai_store"]
+            t1["<b>C2paReader</b>:<br>read_cai, read_xmp"]
+            t2["<b>C2paWriter</b>:<br>write_cai, get_object_locations, remove_cai_store"]
             t3["<b>AssetIO</b>:<br>master trait: file-based ops, supported_types, accessors"]
         end
         subgraph optional["Optional"]

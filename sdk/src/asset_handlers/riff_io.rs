@@ -21,8 +21,8 @@ use riff::*;
 
 use crate::{
     asset_io::{
-        AssetIO, AssetPatch, CAIRead, CAIReadWrapper, CAIReadWrite, CAIReadWriteWrapper, CAIReader,
-        CAIWriter, HashBlockObjectType, HashObjectPositions, RemoteManifestUrl, WriteXmp,
+        AssetIO, AssetPatch, C2paReader, C2paWriter, ObjectLocations, ObjectType, ReadSeek,
+        ReadWriteSeek, RemoteManifestUrl, WriteXmp,
     },
     error::{Error, Result},
     utils::io_utils::stream_len,
@@ -273,14 +273,13 @@ where
     }
 }
 
-fn get_manifest_pos(reader: &mut dyn CAIRead) -> Option<(u64, u32)> {
+fn get_manifest_pos(mut reader: &mut dyn ReadSeek) -> Option<(u64, u32)> {
     reader.rewind().ok()?;
-    let mut chunk_reader = CAIReadWrapper { reader };
 
-    let top_level_chunks = Chunk::read(&mut chunk_reader, 0).ok()?;
+    let top_level_chunks = Chunk::read(&mut reader, 0).ok()?;
 
     if top_level_chunks.id() == RIFF_ID {
-        for chunk in top_level_chunks.iter(&mut chunk_reader) {
+        for chunk in top_level_chunks.iter(&mut reader) {
             let chunk = chunk.ok()?;
             if chunk.id() == C2PA_CHUNK_ID {
                 return Some((chunk.offset(), chunk.len() + 8)); // 8 is len of data chunk header
@@ -290,14 +289,11 @@ fn get_manifest_pos(reader: &mut dyn CAIRead) -> Option<(u64, u32)> {
     None
 }
 
-impl CAIReader for RiffIO {
-    fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
+impl C2paReader for RiffIO {
+    fn read_c2pa(&self, mut input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>> {
         let file_len = stream_len(input_stream)?;
-        let mut chunk_reader = CAIReadWrapper {
-            reader: input_stream,
-        };
 
-        let top_level_chunks = Chunk::read(&mut chunk_reader, 0)?;
+        let top_level_chunks = Chunk::read(&mut input_stream, 0)?;
 
         // Assume C2PA data will be in the first chunk, even for multiple RIFF/AVIX chunk files.
         if top_level_chunks.id() != RIFF_ID {
@@ -311,7 +307,7 @@ impl CAIReader for RiffIO {
             .into());
         }
 
-        for result in top_level_chunks.iter(&mut chunk_reader) {
+        for result in top_level_chunks.iter(&mut input_stream) {
             let chunk =
                 result.map_err(|_| Error::InvalidAsset("Invalid RIFF format".to_string()))?;
 
@@ -323,7 +319,7 @@ impl CAIReader for RiffIO {
                         "RIFF chunk declared size exceeds file size".to_string(),
                     ));
                 }
-                return Ok(chunk.read_contents(&mut chunk_reader)?);
+                return Ok(chunk.read_contents(&mut input_stream)?);
             }
         }
 
@@ -331,31 +327,22 @@ impl CAIReader for RiffIO {
     }
 
     // Get XMP block
-    fn read_xmp(&self, input_stream: &mut dyn CAIRead) -> Option<String> {
+    fn read_xmp(&self, mut input_stream: &mut dyn ReadSeek) -> Option<String> {
         let file_len = stream_len(input_stream).ok()?;
-        let top_level_chunks = {
-            let mut reader = CAIReadWrapper {
-                reader: input_stream,
-            };
-            Chunk::read(&mut reader, 0).ok()?
-        };
+        let top_level_chunks = Chunk::read(&mut input_stream, 0).ok()?;
 
         if top_level_chunks.id() != RIFF_ID {
             return None;
         }
 
-        let mut chunk_reader = CAIReadWrapper {
-            reader: input_stream,
-        };
-
-        for chunk in top_level_chunks.iter(&mut chunk_reader) {
+        for chunk in top_level_chunks.iter(&mut input_stream) {
             let chunk = chunk.ok()?;
             if chunk.id() == XMP_CHUNK_ID {
                 let chunk_end = chunk_data_end(&chunk)?;
                 if chunk_end > file_len {
                     return None;
                 }
-                let output = chunk.read_contents(&mut chunk_reader).ok()?;
+                let output = chunk.read_contents(&mut input_stream).ok()?;
                 return Some(String::from_utf8_lossy(&output).to_string());
             }
         }
@@ -375,11 +362,11 @@ impl AssetIO for RiffIO {
         Box::new(RiffIO::new(asset_type))
     }
 
-    fn get_reader(&self) -> &dyn CAIReader {
+    fn get_reader(&self) -> &dyn C2paReader {
         self
     }
 
-    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn C2paWriter>> {
         Some(Box::new(RiffIO::new(asset_type)))
     }
 
@@ -413,19 +400,14 @@ impl AssetIO for RiffIO {
     }
 }
 
-impl CAIWriter for RiffIO {
-    fn write_cai(
+impl C2paWriter for RiffIO {
+    fn write_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        mut input_stream: &mut dyn ReadSeek,
+        mut output_stream: &mut dyn ReadWriteSeek,
         store_bytes: &[u8],
     ) -> Result<()> {
-        let top_level_chunks = {
-            let mut reader = CAIReadWrapper {
-                reader: input_stream,
-            };
-            Chunk::read(&mut reader, 0)?
-        };
+        let top_level_chunks = Chunk::read(&mut input_stream, 0)?;
 
         if top_level_chunks.id() != RIFF_ID {
             return Err(Error::InvalidAsset("Invalid RIFF format".to_string()));
@@ -433,27 +415,19 @@ impl CAIWriter for RiffIO {
 
         let first_chunk_size = top_level_chunks.len();
 
-        let mut reader = CAIReadWrapper {
-            reader: input_stream,
-        };
-
         // replace/add manifest in memory
         let new_contents = inject_c2pa(
             &top_level_chunks,
-            &mut reader,
+            &mut input_stream,
             store_bytes,
             None,
             &self.riff_format,
             0,
         )?;
 
-        let mut writer = CAIReadWriteWrapper {
-            reader_writer: output_stream,
-        };
-
         // save contents
         new_contents
-            .write(&mut writer)
+            .write(&mut output_stream)
             .map_err(|_e| Error::EmbeddingError)?;
 
         // Copy additional RIFF/AVIX chunks for large AVI files
@@ -495,10 +469,8 @@ impl CAIWriter for RiffIO {
                 }
 
                 // Write the chunk header
-                writer.reader_writer.write_all(&chunk_id.value)?;
-                writer
-                    .reader_writer
-                    .write_all(&(chunk_size as u32).to_le_bytes())?;
+                output_stream.write_all(&chunk_id.value)?;
+                output_stream.write_all(&(chunk_size as u32).to_le_bytes())?;
 
                 // Copy the chunk data in 1MB chunks
                 let mut remaining = chunk_size;
@@ -506,7 +478,7 @@ impl CAIWriter for RiffIO {
                 while remaining > 0 {
                     let to_read = remaining.min(buffer.len() as u64) as usize;
                     input_stream.read_exact(&mut buffer[..to_read])?;
-                    writer.reader_writer.write_all(&buffer[..to_read])?;
+                    output_stream.write_all(&buffer[..to_read])?;
                     remaining -= to_read as u64;
                 }
             }
@@ -515,11 +487,11 @@ impl CAIWriter for RiffIO {
         Ok(())
     }
 
-    fn get_object_locations_from_stream(
+    fn get_object_locations(
         &self,
-        input_stream: &mut dyn CAIRead,
-    ) -> Result<Vec<HashObjectPositions>> {
-        let mut positions: Vec<HashObjectPositions> = Vec::new();
+        input_stream: &mut dyn ReadSeek,
+    ) -> Result<Vec<ObjectLocations>> {
+        let mut positions: Vec<ObjectLocations> = Vec::new();
 
         let (manifest_pos, manifest_len, file_end) =
             if let Some((position, len)) = get_manifest_pos(input_stream) {
@@ -527,59 +499,50 @@ impl CAIWriter for RiffIO {
                 (position, len, file_end)
             } else {
                 let mut output_stream = Cursor::new(Vec::new());
-                self.write_cai(input_stream, &mut output_stream, &[1, 2, 3, 4])?;
+                self.write_c2pa(input_stream, &mut output_stream, &[1, 2, 3, 4])?;
                 let (position, len) =
                     get_manifest_pos(&mut output_stream).ok_or(Error::EmbeddingError)?;
                 let file_end = output_stream.seek(SeekFrom::End(0))?;
                 (position, len, file_end)
             };
 
-        positions.push(HashObjectPositions {
-            offset: usize::try_from(manifest_pos)
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?,
-            length: usize::try_from(manifest_len)
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?,
-            htype: HashBlockObjectType::Cai,
+        positions.push(ObjectLocations {
+            offset: manifest_pos,
+            length: manifest_len as u64,
+            htype: ObjectType::Cai,
         });
 
         // add hash of chunks before cai
-        positions.push(HashObjectPositions {
+        positions.push(ObjectLocations {
             offset: 0,
-            length: usize::try_from(manifest_pos)
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?,
-            htype: HashBlockObjectType::Other,
+            length: manifest_pos,
+            htype: ObjectType::Other,
         });
 
         // add position from cai to end
         let Some(end) = u64::checked_add(manifest_pos, manifest_len as u64) else {
             return Err(Error::InvalidAsset("value out of range".to_string()));
         };
-        positions.push(HashObjectPositions {
-            offset: usize::try_from(end)
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?, // len of cai
-            length: usize::try_from(file_end - end)
-                .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?,
-            htype: HashBlockObjectType::Other,
+        positions.push(ObjectLocations {
+            offset: end, // len of cai
+            length: file_end - end,
+            htype: ObjectType::Other,
         });
 
         Ok(positions)
     }
 
-    fn remove_cai_store_from_stream(
+    fn remove_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
     ) -> Result<()> {
-        self.write_cai(input_stream, output_stream, &[])
+        self.write_c2pa(input_stream, output_stream, &[])
     }
 }
 
 impl AssetPatch for RiffIO {
-    fn patch_cai_store_stream(
-        &self,
-        stream: &mut dyn CAIReadWrite,
-        store_bytes: &[u8],
-    ) -> Result<()> {
+    fn patch_c2pa(&self, stream: &mut dyn ReadWriteSeek, store_bytes: &[u8]) -> Result<()> {
         let (manifest_pos, manifest_len) = get_manifest_pos(stream).ok_or(Error::EmbeddingError)?;
 
         if store_bytes.len() + 8 == manifest_len as usize {
@@ -597,8 +560,8 @@ impl AssetPatch for RiffIO {
 impl WriteXmp for RiffIO {
     fn write_xmp(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        mut input_stream: &mut dyn ReadSeek,
+        mut output_stream: &mut dyn ReadWriteSeek,
         xmp: &str,
     ) -> Result<()> {
         let mut new_xmp = xmp.to_string();
@@ -607,25 +570,16 @@ impl WriteXmp for RiffIO {
             new_xmp.push(' ');
         }
 
-        let top_level_chunks = {
-            let mut reader = CAIReadWrapper {
-                reader: input_stream,
-            };
-            Chunk::read(&mut reader, 0)?
-        };
+        let top_level_chunks = Chunk::read(&mut input_stream, 0)?;
 
         if top_level_chunks.id() != RIFF_ID {
             return Err(Error::InvalidAsset("Invalid RIFF format".to_string()));
         }
 
-        let mut reader = CAIReadWrapper {
-            reader: input_stream,
-        };
-
         // replace/add manifest in memory
         let new_contents = inject_c2pa(
             &top_level_chunks,
-            &mut reader,
+            &mut input_stream,
             &[],
             Some(new_xmp.as_bytes()),
             &self.riff_format,
@@ -633,11 +587,8 @@ impl WriteXmp for RiffIO {
         )?;
 
         // save contents
-        let mut writer = CAIReadWriteWrapper {
-            reader_writer: output_stream,
-        };
         new_contents
-            .write(&mut writer)
+            .write(&mut output_stream)
             .map_err(|_e| Error::EmbeddingError)?;
         Ok(())
     }
@@ -693,7 +644,7 @@ pub mod tests {
             if let Ok(_size) = std::fs::copy(source, &output) {
                 let riff_io = RiffIO::new("wav");
 
-                if let Ok(()) = riff_io.save_cai_store(&output, more_data) {
+                if let Ok(()) = riff_io.save_c2pa_store(&output, more_data) {
                     if let Ok(read_test_data) = riff_io.read_cai_store(&output) {
                         assert!(vec_compare(more_data, &read_test_data));
                         success = true;
@@ -718,7 +669,7 @@ pub mod tests {
         let riff_io = RiffIO::new("wav");
         let mut source = Cursor::new(data);
         assert!(matches!(
-            riff_io.read_cai(&mut source),
+            riff_io.read_c2pa(&mut source),
             Err(Error::InvalidAsset(_))
         ));
     }
@@ -737,7 +688,7 @@ pub mod tests {
         let mut source = Cursor::new(data);
         let mut dest = Cursor::new(Vec::new());
         assert!(matches!(
-            riff_io.write_cai(&mut source, &mut dest, b"manifest"),
+            riff_io.write_c2pa(&mut source, &mut dest, b"manifest"),
             Err(Error::InvalidAsset(_))
         ));
     }
@@ -749,7 +700,7 @@ pub mod tests {
         let panic_result = panic::catch_unwind(|| {
             let mut source = File::open(fixture_path("sample3.invalid.wav")).unwrap();
             assert!(matches!(
-                riff_io.read_cai(&mut source),
+                riff_io.read_c2pa(&mut source),
                 Err(Error::InvalidAsset(_))
             ));
         });
@@ -769,7 +720,7 @@ pub mod tests {
                 let mut output_stream = File::create(&output).unwrap();
                 let mut source = File::open(fixture_path("riff_bomb_1000.wav")).unwrap();
                 assert!(matches!(
-                    riff_io.write_cai(&mut source, &mut output_stream, more_data),
+                    riff_io.write_c2pa(&mut source, &mut output_stream, more_data),
                     Err(Error::InvalidAsset(_))
                 ));
             });
@@ -790,11 +741,11 @@ pub mod tests {
             let mut output_stream = File::create(&output).unwrap();
 
             riff_io
-                .write_cai(&mut source, &mut output_stream, more_data)
+                .write_c2pa(&mut source, &mut output_stream, more_data)
                 .unwrap();
 
             let mut source = File::open(output).unwrap();
-            let read_test_data = riff_io.read_cai(&mut source).unwrap();
+            let read_test_data = riff_io.read_c2pa(&mut source).unwrap();
             assert!(vec_compare(more_data, &read_test_data));
         }
     }
@@ -811,12 +762,12 @@ pub mod tests {
             if let Ok(_size) = std::fs::copy(source, &output) {
                 let riff_io = RiffIO::new("wav");
 
-                if let Ok(()) = riff_io.save_cai_store(&output, test_data) {
+                if let Ok(()) = riff_io.save_c2pa_store(&output, test_data) {
                     if let Ok(source_data) = riff_io.read_cai_store(&output) {
                         // create replacement data of same size
                         let mut new_data = vec![0u8; source_data.len()];
                         new_data[..test_data.len()].copy_from_slice(test_data);
-                        riff_io.patch_cai_store(&output, &new_data).unwrap();
+                        riff_io.patch_c2pa_file(&output, &new_data).unwrap();
 
                         let replaced = riff_io.read_cai_store(&output).unwrap();
 
@@ -840,7 +791,7 @@ pub mod tests {
         std::fs::copy(source, &output).unwrap();
         let riff_io = RiffIO::new("wav");
 
-        riff_io.remove_cai_store(&output).unwrap();
+        riff_io.remove_c2pa_store(&output).unwrap();
 
         // read back in asset, JumbfNotFound is expected since it was removed
         match riff_io.read_cai_store(&output) {
@@ -974,7 +925,7 @@ pub mod tests {
 
         // Should work even though file doesn't have C2PA yet
         assert!(matches!(
-            riff_io.read_cai(&mut f),
+            riff_io.read_c2pa(&mut f),
             Err(Error::JumbfNotFound)
         ));
     }
@@ -1017,7 +968,7 @@ pub mod tests {
             timeout_flag_clone.store(true, Ordering::SeqCst);
         });
 
-        let write_result = riff_io.write_cai(&mut source, &mut dest, test_data);
+        let write_result = riff_io.write_c2pa(&mut source, &mut dest, test_data);
         let write_duration = start.elapsed();
 
         assert!(
@@ -1049,7 +1000,7 @@ pub mod tests {
         eprintln!("Reading C2PA data back...");
         dest.rewind().unwrap();
         let mut buffered_dest = BufReader::new(dest.as_file());
-        let read_data = riff_io.read_cai(&mut buffered_dest).unwrap();
+        let read_data = riff_io.read_c2pa(&mut buffered_dest).unwrap();
         assert_eq!(read_data, test_data);
         eprintln!("✓ Successfully read C2PA data from large AVI file");
     }
@@ -1075,7 +1026,7 @@ pub mod tests {
 
         // Write C2PA data
         riff_io
-            .write_cai(&mut source, &mut dest, test_data)
+            .write_c2pa(&mut source, &mut dest, test_data)
             .unwrap();
 
         // Verify output size is reasonable (should be close to source + C2PA data)
@@ -1088,7 +1039,7 @@ pub mod tests {
 
         // Try to read it back
         dest.set_position(0);
-        let read_data = riff_io.read_cai(&mut dest).unwrap();
+        let read_data = riff_io.read_c2pa(&mut dest).unwrap();
         assert_eq!(read_data, test_data);
     }
 

@@ -39,7 +39,6 @@ use crate::{
         Action, Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, DataBox, DataHash,
         Ingredient, Metadata, Relationship, V2_DEPRECATED_ACTIONS,
     },
-    asset_io::CAIRead,
     cbor_types::map_cbor_to_type,
     context::{Context, ProgressPhase},
     cose_validator::{
@@ -71,6 +70,7 @@ use crate::{
         },
     },
     log_item,
+    read_seek::ReadSeek,
     resource_store::UriOrResource,
     salt::{DefaultSalt, SaltGenerator},
     settings::{Settings, MAX_ASSERTIONS},
@@ -113,10 +113,10 @@ pub enum ClaimAssetData<'a> {
     #[cfg(feature = "file_io")]
     Path(&'a Path),
     Bytes(&'a [u8], &'a str),
-    Stream(&'a mut dyn CAIRead, &'a str),
-    StreamFragment(&'a mut dyn CAIRead, &'a mut dyn CAIRead, &'a str),
+    Stream(&'a mut dyn ReadSeek, &'a str),
+    StreamFragment(&'a mut dyn ReadSeek, &'a mut dyn ReadSeek, &'a str),
     #[cfg(feature = "file_io")]
-    StreamFragments(&'a mut dyn CAIRead, &'a Vec<std::path::PathBuf>, &'a str),
+    StreamFragments(&'a mut dyn ReadSeek, &'a Vec<std::path::PathBuf>, &'a str),
 }
 
 #[derive(PartialEq, Debug, Eq, Clone, Hash)]

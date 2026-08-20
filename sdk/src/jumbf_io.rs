@@ -25,7 +25,7 @@ use crate::{
         jpegxl_io::JpegXlIO, mp3_io::Mp3IO, png_io::PngIO, riff_io::RiffIO, svg_io::SvgIO,
         tiff_io::TiffIO,
     },
-    asset_io::{AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HandlerRegistry},
+    asset_io::{AssetIO, C2paReader, C2paWriter, HandlerRegistry, ReadSeek, ReadWriteSeek},
     error::{Error, Result},
     utils::mime::normalize_format,
 };
@@ -59,7 +59,7 @@ lazy_static! {
         map
     };
 
-    static ref CAI_WRITERS: HashMap<String, Box<dyn CAIWriter>> = {
+    static ref CAI_WRITERS: HashMap<String, Box<dyn C2paWriter>> = {
         let mut map = HashMap::new();
         for h in HANDLER_PROTOTYPES.iter() {
             for t in h.supported_types() {
@@ -102,9 +102,12 @@ pub fn load_jumbf_from_memory(asset_type: &str, data: &[u8]) -> Result<Vec<u8>> 
 }
 
 /// Return jumbf block from stream asset
-pub fn load_jumbf_from_stream(asset_type: &str, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
+pub fn load_jumbf_from_stream(
+    asset_type: &str,
+    input_stream: &mut dyn ReadSeek,
+) -> Result<Vec<u8>> {
     let cai_block = match get_cailoader_handler(asset_type) {
-        Some(asset_handler) => asset_handler.read_cai(input_stream)?,
+        Some(asset_handler) => asset_handler.read_c2pa(input_stream)?,
         None => return Err(Error::UnsupportedType),
     };
     if cai_block.is_empty() {
@@ -116,12 +119,12 @@ pub fn load_jumbf_from_stream(asset_type: &str, input_stream: &mut dyn CAIRead) 
 /// reads an asset of asset_type from reader, adds jumbf data and then writes to writer
 pub fn save_jumbf_to_stream(
     asset_type: &str,
-    input_stream: &mut dyn CAIRead,
-    output_stream: &mut dyn CAIReadWrite,
+    input_stream: &mut dyn ReadSeek,
+    output_stream: &mut dyn ReadWriteSeek,
     store_bytes: &[u8],
 ) -> Result<()> {
     match get_caiwriter_handler(asset_type) {
-        Some(asset_handler) => asset_handler.write_cai(input_stream, output_stream, store_bytes),
+        Some(asset_handler) => asset_handler.write_c2pa(input_stream, output_stream, store_bytes),
         None => Err(Error::UnsupportedType),
     }
 }
@@ -157,13 +160,13 @@ pub(crate) fn get_assetio_handler(ext: &str) -> Option<&dyn AssetIO> {
     CAI_READERS.get(&ext).map(|h| h.as_ref())
 }
 
-pub(crate) fn get_cailoader_handler(asset_type: &str) -> Option<&dyn CAIReader> {
+pub(crate) fn get_cailoader_handler(asset_type: &str) -> Option<&dyn C2paReader> {
     let asset_type = normalize_format(asset_type);
 
     CAI_READERS.get(&asset_type).map(|h| h.get_reader())
 }
 
-pub(crate) fn get_caiwriter_handler(asset_type: &str) -> Option<&dyn CAIWriter> {
+pub(crate) fn get_caiwriter_handler(asset_type: &str) -> Option<&dyn C2paWriter> {
     let asset_type = normalize_format(asset_type);
 
     CAI_WRITERS.get(&asset_type).map(|h| h.as_ref())
@@ -193,13 +196,13 @@ pub fn save_jumbf_to_file<P1: AsRef<Path>, P2: AsRef<Path>>(
     in_path: P1,
     out_path: Option<P2>,
 ) -> Result<()> {
-    default_handler_registry().write_jumbf_to_file(data, in_path, out_path)
+    default_handler_registry().write_c2pa_to_file(data, in_path, out_path)
 }
 
 #[cfg(feature = "file_io")]
 /// load the JUMBF block from an asset if available
 pub fn load_jumbf_from_file<P: AsRef<Path>>(in_path: P) -> Result<Vec<u8>> {
-    default_handler_registry().read_jumbf_from_file(in_path)
+    default_handler_registry().read_c2pa_from_file(in_path)
 }
 
 /// removes the C2PA JUMBF from an asset
@@ -207,12 +210,12 @@ pub fn load_jumbf_from_file<P: AsRef<Path>>(in_path: P) -> Result<Vec<u8>> {
 /// It is useful when creating remote manifests from embedded manifests
 ///
 /// path - path to file to be updated
-/// returns Unsupported type or errors from remove_cai_store
+/// returns Unsupported type or errors from remove_c2pa_store
 #[cfg(feature = "file_io")]
 pub fn remove_jumbf_from_file<P: AsRef<Path>>(path: P) -> Result<()> {
     let ext = get_file_extension(path.as_ref()).ok_or(Error::UnsupportedType)?;
     match get_assetio_handler(&ext) {
-        Some(asset_handler) => asset_handler.remove_cai_store(path.as_ref()),
+        Some(asset_handler) => asset_handler.remove_c2pa_store(path.as_ref()),
         _ => Err(Error::UnsupportedType),
     }
 }
@@ -362,7 +365,7 @@ pub mod tests {
         assert!(supported.iter().any(|s| s == "jxl"));
     }
 
-    fn test_jumbf(asset_type: &str, reader: &mut dyn CAIRead) {
+    fn test_jumbf(asset_type: &str, reader: &mut dyn ReadSeek) {
         let mut writer = Cursor::new(Vec::new());
         let store = create_test_store().unwrap();
         let signer = test_signer(SigningAlg::Ps256);
@@ -376,9 +379,7 @@ pub mod tests {
         writer.set_position(0);
         let handler = get_caiwriter_handler(asset_type).unwrap();
         let mut removed = Cursor::new(Vec::new());
-        handler
-            .remove_cai_store_from_stream(&mut writer, &mut removed)
-            .unwrap();
+        handler.remove_c2pa(&mut writer, &mut removed).unwrap();
         removed.set_position(0);
         let result = load_jumbf_from_stream(asset_type, &mut removed);
         if (asset_type != "wav")
@@ -389,7 +390,7 @@ pub mod tests {
         //assert!(matches!(result.err().unwrap(), Error::JumbfNotFound));
     }
 
-    fn test_remote_ref(asset_type: &str, reader: &mut dyn CAIRead) {
+    fn test_remote_ref(asset_type: &str, reader: &mut dyn ReadSeek) {
         const REMOTE_URL: &str = "https://example.com/remote_manifest";
         let asset_handler = get_assetio_handler(asset_type).unwrap();
         let remote_ref_writer = asset_handler.remote_manifest_url_ref().unwrap();

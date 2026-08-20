@@ -15,7 +15,7 @@ use std::path::Path;
 
 use crate::{
     asset_handlers::pdf::{C2paPdf, Pdf},
-    asset_io::{AssetIO, CAIRead, CAIReader, CAIWriter, ComposedManifestRef},
+    asset_io::{AssetIO, C2paReader, C2paWriter, ComposedManifestRef, ReadSeek},
     Error::{self, JumbfNotFound, NotImplemented, PdfReadError},
 };
 
@@ -24,15 +24,15 @@ static WRITE_NOT_IMPLEMENTED: &str = "PDF write functionality will be added in a
 
 pub struct PdfIO {}
 
-impl CAIReader for PdfIO {
-    fn read_cai(&self, input_stream: &mut dyn CAIRead) -> crate::Result<Vec<u8>> {
+impl C2paReader for PdfIO {
+    fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> crate::Result<Vec<u8>> {
         input_stream.rewind()?;
 
         let pdf = Pdf::from_reader(input_stream).map_err(|e| Error::InvalidAsset(e.to_string()))?;
         self.read_manifest_bytes(pdf)
     }
 
-    fn read_xmp(&self, input_stream: &mut dyn CAIRead) -> Option<String> {
+    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Option<String> {
         if input_stream.rewind().is_err() {
             return None;
         }
@@ -80,19 +80,19 @@ impl AssetIO for PdfIO {
         Box::new(PdfIO::new(asset_type))
     }
 
-    fn get_reader(&self) -> &dyn CAIReader {
+    fn get_reader(&self) -> &dyn C2paReader {
         self
     }
 
-    fn get_writer(&self, _asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+    fn get_writer(&self, _asset_type: &str) -> Option<Box<dyn C2paWriter>> {
         None
     }
 
-    fn save_cai_store(&self, _asset_path: &Path, _store_bytes: &[u8]) -> crate::Result<()> {
+    fn save_c2pa_store(&self, _asset_path: &Path, _store_bytes: &[u8]) -> crate::Result<()> {
         Err(NotImplemented(WRITE_NOT_IMPLEMENTED.into()))
     }
 
-    fn remove_cai_store(&self, _asset_path: &Path) -> crate::Result<()> {
+    fn remove_c2pa_store(&self, _asset_path: &Path) -> crate::Result<()> {
         Err(NotImplemented(WRITE_NOT_IMPLEMENTED.into()))
     }
 
@@ -128,7 +128,7 @@ pub mod tests {
     use crate::{
         asset_handlers,
         asset_handlers::{pdf::MockC2paPdf, pdf_io::PdfIO},
-        asset_io::{AssetIO, CAIReader},
+        asset_io::{AssetIO, C2paReader},
     };
 
     static MANIFEST_BYTES: &[u8; 2] = &[10u8, 20u8];
@@ -215,7 +215,7 @@ pub mod tests {
         let mut f = std::fs::File::open(&source).unwrap();
 
         assert!(matches!(
-            pdf_io.read_cai(&mut f),
+            pdf_io.read_c2pa(&mut f),
             Err(crate::Error::JumbfNotFound)
         ));
     }
@@ -234,6 +234,6 @@ pub mod tests {
         let source = include_bytes!("../../tests/fixtures/express-signed.pdf");
         let pdf_io = PdfIO::new("pdf");
         let mut pdf_stream = Cursor::new(source.to_vec());
-        assert!(pdf_io.read_cai(&mut pdf_stream).is_ok());
+        assert!(pdf_io.read_c2pa(&mut pdf_stream).is_ok());
     }
 }

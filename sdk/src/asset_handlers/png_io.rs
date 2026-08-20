@@ -18,8 +18,8 @@ use png_pong::chunk::InternationalText;
 
 use crate::{
     asset_io::{
-        AssetBoxHash, AssetIO, BoxMap, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
-        ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteManifestUrl, WriteXmp,
+        AssetBoxHash, AssetIO, BoxMap, C2paReader, C2paWriter, ComposedManifestRef,
+        ObjectLocations, ObjectType, ReadSeek, ReadWriteSeek, RemoteManifestUrl, WriteXmp,
         C2PA_BOXHASH,
     },
     error::{Error, Result},
@@ -138,7 +138,7 @@ fn get_cai_data<R: Read + Seek + ?Sized>(mut f: &mut R) -> Result<Vec<u8>> {
 /// from `asset_reader` — including the NUL terminator when one was found. The
 /// bytes-consumed count lets callers bound subsequent reads to the enclosing
 /// PNG chunk instead of trusting attacker-supplied lengths.
-fn read_string(asset_reader: &mut dyn CAIRead, max_read: u32) -> Result<(String, u32)> {
+fn read_string(asset_reader: &mut dyn ReadSeek, max_read: u32) -> Result<(String, u32)> {
     let mut bytes_read: u32 = 0;
     let mut s: Vec<u8> = Vec::with_capacity(80);
 
@@ -156,14 +156,14 @@ fn read_string(asset_reader: &mut dyn CAIRead, max_read: u32) -> Result<(String,
 
 pub struct PngIO {}
 
-impl CAIReader for PngIO {
-    fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
+impl C2paReader for PngIO {
+    fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>> {
         let cai_data = get_cai_data(input_stream)?;
         Ok(cai_data)
     }
 
     // Get XMP block
-    fn read_xmp(&self, mut input_stream: &mut dyn CAIRead) -> Option<String> {
+    fn read_xmp(&self, mut input_stream: &mut dyn ReadSeek) -> Option<String> {
         let ps = get_png_chunk_positions(input_stream).ok()?;
         let mut xmp_str: Option<String> = None;
 
@@ -273,11 +273,11 @@ impl CAIReader for PngIO {
     }
 }
 
-impl CAIWriter for PngIO {
-    fn write_cai(
+impl C2paWriter for PngIO {
+    fn write_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         store_bytes: &[u8],
     ) -> Result<()> {
         let mut c2pa_data = Vec::new();
@@ -343,17 +343,17 @@ impl CAIWriter for PngIO {
         Ok(())
     }
 
-    fn get_object_locations_from_stream(
+    fn get_object_locations(
         &self,
-        input_stream: &mut dyn CAIRead,
-    ) -> Result<Vec<HashObjectPositions>> {
-        let mut positions: Vec<HashObjectPositions> = Vec::new();
+        input_stream: &mut dyn ReadSeek,
+    ) -> Result<Vec<ObjectLocations>> {
+        let mut positions: Vec<ObjectLocations> = Vec::new();
 
         input_stream.rewind()?;
         let mut ps = get_png_chunk_positions(input_stream)?;
 
         let (ps, file_end) = if ps.iter().any(|chunk| chunk.name == CAI_CHUNK) {
-            let file_end = input_stream.seek(SeekFrom::End(0))? as usize;
+            let file_end = input_stream.seek(SeekFrom::End(0))?;
             (ps, file_end)
         } else {
             let ihdr_index = ps
@@ -371,8 +371,8 @@ impl CAIWriter for PngIO {
                 },
             );
 
-            let file_end = input_stream.seek(SeekFrom::End(0))? as usize;
-            (ps, file_end + PNG_HDR_LEN as usize)
+            let file_end = input_stream.seek(SeekFrom::End(0))?;
+            (ps, file_end + PNG_HDR_LEN)
         };
 
         let pcp = ps
@@ -380,40 +380,37 @@ impl CAIWriter for PngIO {
             .find(|pcp| pcp.name == CAI_CHUNK)
             .ok_or(Error::JumbfNotFound)?;
 
-        let cai_offset = usize::try_from(pcp.start)
-            .map_err(|_| Error::InvalidAsset("PNG CAI chunk offset overflows usize".to_string()))?;
-        let cai_length = usize::try_from(pcp.length as u64 + PNG_HDR_LEN)
-            .map_err(|_| Error::InvalidAsset("PNG CAI chunk length overflows usize".to_string()))?;
-        let end = usize::try_from(pcp.end())
-            .map_err(|_| Error::InvalidAsset("PNG CAI chunk end overflows usize".to_string()))?;
+        let cai_offset = pcp.start;
+        let cai_length = pcp.length as u64 + PNG_HDR_LEN;
+        let end = pcp.end();
 
-        positions.push(HashObjectPositions {
+        positions.push(ObjectLocations {
             offset: cai_offset,
             length: cai_length,
-            htype: HashBlockObjectType::Cai,
+            htype: ObjectType::Cai,
         });
 
         // add hash of chunks before cai
-        positions.push(HashObjectPositions {
+        positions.push(ObjectLocations {
             offset: 0,
             length: cai_offset,
-            htype: HashBlockObjectType::Other,
+            htype: ObjectType::Other,
         });
 
         // add position from cai to end
-        positions.push(HashObjectPositions {
+        positions.push(ObjectLocations {
             offset: end, // len of cai
             length: file_end - end,
-            htype: HashBlockObjectType::Other,
+            htype: ObjectType::Other,
         });
 
         Ok(positions)
     }
 
-    fn remove_cai_store_from_stream(
+    fn remove_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
     ) -> Result<()> {
         let ps = get_png_chunk_positions(input_stream)?;
         let existing_c2pa = ps.iter().find(|pcp| pcp.name == CAI_CHUNK);
@@ -458,11 +455,11 @@ impl AssetIO for PngIO {
         Box::new(PngIO::new(asset_type))
     }
 
-    fn get_reader(&self) -> &dyn CAIReader {
+    fn get_reader(&self) -> &dyn C2paReader {
         self
     }
 
-    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn C2paWriter>> {
         Some(Box::new(PngIO::new(asset_type)))
     }
 
@@ -487,7 +484,7 @@ impl AssetIO for PngIO {
     }
 }
 
-fn get_xmp_insertion_point(asset_reader: &mut dyn CAIRead) -> Option<(u64, u32)> {
+fn get_xmp_insertion_point(asset_reader: &mut dyn ReadSeek) -> Option<(u64, u32)> {
     let ps = get_png_chunk_positions(asset_reader).ok()?;
 
     let xmp_box = ps.iter().find(|pcp| {
@@ -528,8 +525,8 @@ fn get_xmp_insertion_point(asset_reader: &mut dyn CAIRead) -> Option<(u64, u32)>
 impl WriteXmp for PngIO {
     fn write_xmp(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         xmp: &str,
     ) -> Result<()> {
         input_stream.rewind()?;
@@ -567,7 +564,7 @@ impl WriteXmp for PngIO {
 }
 
 impl AssetBoxHash for PngIO {
-    fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
+    fn get_box_map(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<BoxMap>> {
         input_stream.rewind()?;
 
         let ps = get_png_chunk_positions(input_stream)?;
@@ -735,7 +732,7 @@ pub mod tests {
 
         // cai data already exists
         assert!(matches!(
-            png_io.read_cai(&mut stream),
+            png_io.read_c2pa(&mut stream),
             Ok(data) if !data.is_empty(),
         ));
 
@@ -745,11 +742,11 @@ pub mod tests {
 
         let data_to_write: Vec<u8> = vec![0, 1, 1, 2, 3, 5, 8, 13, 21, 34];
         assert!(png_io
-            .write_cai(&mut stream, &mut output_stream, &data_to_write)
+            .write_c2pa(&mut stream, &mut output_stream, &data_to_write)
             .is_ok());
 
         // new data replaces the existing cai data
-        let data_written = png_io.read_cai(&mut output_stream).unwrap();
+        let data_written = png_io.read_c2pa(&mut output_stream).unwrap();
         assert_eq!(data_to_write, data_written);
     }
 
@@ -761,7 +758,7 @@ pub mod tests {
 
         // no cai data present in stream.
         assert!(matches!(
-            png_io.read_cai(&mut stream),
+            png_io.read_c2pa(&mut stream),
             Err(Error::JumbfNotFound)
         ));
 
@@ -771,11 +768,11 @@ pub mod tests {
 
         let data_to_write: Vec<u8> = vec![0, 1, 1, 2, 3, 5, 8, 13, 21, 34];
         assert!(png_io
-            .write_cai(&mut stream, &mut output_stream, &data_to_write)
+            .write_c2pa(&mut stream, &mut output_stream, &data_to_write)
             .is_ok());
 
         // assert new cai data is present.
-        let data_written = png_io.read_cai(&mut output_stream).unwrap();
+        let data_written = png_io.read_c2pa(&mut output_stream).unwrap();
         assert_eq!(data_to_write, data_written);
     }
 
@@ -788,7 +785,7 @@ pub mod tests {
         let output: Vec<u8> = Vec::new();
         let mut output_stream = Cursor::new(output);
         assert!(matches!(
-            png_io.write_cai(&mut stream, &mut output_stream, &[]),
+            png_io.write_c2pa(&mut stream, &mut output_stream, &[]),
             Err(Error::PngError(PngError::InvalidFileSignature { .. }))
         ));
     }
@@ -799,10 +796,10 @@ pub mod tests {
         let mut stream = Cursor::new(source.to_vec());
         let png_io = PngIO {};
         let cai_pos = png_io
-            .get_object_locations_from_stream(&mut stream)
+            .get_object_locations(&mut stream)
             .unwrap()
             .into_iter()
-            .find(|pos| pos.htype == HashBlockObjectType::Cai)
+            .find(|pos| pos.htype == ObjectType::Cai)
             .unwrap();
 
         assert_eq!(cai_pos.offset, 33);
@@ -815,7 +812,7 @@ pub mod tests {
         let mut stream = Cursor::new(source.to_vec());
         let png_io = PngIO {};
         assert!(matches!(
-            png_io.get_object_locations_from_stream(&mut stream),
+            png_io.get_object_locations(&mut stream),
             Err(Error::PngError(PngError::InvalidFileSignature { .. }))
         ));
     }
@@ -827,10 +824,10 @@ pub mod tests {
 
         let png_io = PngIO {};
         assert!(png_io
-            .get_object_locations_from_stream(&mut stream)
+            .get_object_locations(&mut stream)
             .unwrap()
             .into_iter()
-            .any(|chunk| chunk.htype == HashBlockObjectType::Cai));
+            .any(|chunk| chunk.htype == ObjectType::Cai));
     }
 
     #[test]
@@ -841,11 +838,11 @@ pub mod tests {
         std::fs::copy(source, &output).unwrap();
 
         let png_io = PngIO {};
-        png_io.remove_cai_store(&output).unwrap();
+        png_io.remove_c2pa_store(&output).unwrap();
 
         // read back in asset, JumbfNotFound is expected since it was removed
         let mut file_reader = std::fs::File::open(&output).unwrap();
-        match png_io.read_cai(&mut file_reader) {
+        match png_io.read_c2pa(&mut file_reader) {
             Err(Error::JumbfNotFound) => (),
             _ => unreachable!(),
         }
@@ -865,12 +862,12 @@ pub mod tests {
         let mut output_stream = Cursor::new(output_bytes);
 
         png_writer
-            .remove_cai_store_from_stream(&mut source_stream, &mut output_stream)
+            .remove_c2pa(&mut source_stream, &mut output_stream)
             .unwrap();
 
         // read back in asset, JumbfNotFound is expected since it was removed
         let png_reader = png_io.get_reader();
-        match png_reader.read_cai(&mut output_stream) {
+        match png_reader.read_c2pa(&mut output_stream) {
             Err(Error::JumbfNotFound) => (),
             _ => unreachable!(),
         }
@@ -897,9 +894,7 @@ pub mod tests {
 
         let png_io = PngIO {};
         let mut stream = Cursor::new(data);
-        assert!(png_io
-            .get_object_locations_from_stream(&mut stream)
-            .is_err());
+        assert!(png_io.get_object_locations(&mut stream).is_err());
     }
 
     #[test]
@@ -909,15 +904,10 @@ pub mod tests {
         let source = crate::utils::test::fixture_path("exp-test1.png");
 
         let mut source_reader = std::fs::File::open(&source).unwrap();
-        let ol = png_io
-            .get_object_locations_from_stream(&mut source_reader)
-            .unwrap();
+        let ol = png_io.get_object_locations(&mut source_reader).unwrap();
 
-        let cai_loc = ol
-            .iter()
-            .find(|o| o.htype == HashBlockObjectType::Cai)
-            .unwrap();
-        let curr_manifest = png_io.read_cai(&mut source_reader).unwrap();
+        let cai_loc = ol.iter().find(|o| o.htype == ObjectType::Cai).unwrap();
+        let curr_manifest = png_io.read_c2pa(&mut source_reader).unwrap();
 
         let temp_dir = tempdirectory().unwrap();
         let output = crate::utils::test::temp_dir_path(&temp_dir, "exp-test1-out.png");
@@ -925,7 +915,7 @@ pub mod tests {
         std::fs::copy(source, &output).unwrap();
 
         // remove existing
-        png_io.remove_cai_store(&output).unwrap();
+        png_io.remove_c2pa_store(&output).unwrap();
 
         // generate new manifest data
         let em = png_io
@@ -938,7 +928,7 @@ pub mod tests {
         let outbuf = Vec::new();
         let mut out_stream = Cursor::new(outbuf);
 
-        let mut before = vec![0u8; cai_loc.offset];
+        let mut before = vec![0u8; usize::try_from(cai_loc.offset).unwrap()];
         let mut in_file = std::fs::File::open(&output).unwrap();
 
         // write before
@@ -955,7 +945,7 @@ pub mod tests {
 
         // read manifest back in from new in-memory PNG
         out_stream.rewind().unwrap();
-        let restored_manifest = png_io.read_cai(&mut out_stream).unwrap();
+        let restored_manifest = png_io.read_c2pa(&mut out_stream).unwrap();
 
         assert_eq!(&curr_manifest, &restored_manifest);
     }

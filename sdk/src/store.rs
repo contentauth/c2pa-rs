@@ -28,7 +28,7 @@ use crate::{
         BmffHash, BoxHash, CertificateStatus, DataBox, DataHash, Ingredient, Relationship,
         TimeStamp, User, UserCbor,
     },
-    asset_io::{CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions},
+    asset_io::{ObjectLocations, ObjectType, ReadSeek, ReadWriteSeek},
     claim::{
         check_ocsp_status, check_ocsp_status_async, Claim, ClaimAssertion, ClaimAssetData,
         RemoteManifest,
@@ -1912,14 +1912,9 @@ impl Store {
             };
 
             if let Ok(locations) = locations {
-                if let Some(manifest_loc) = locations
-                    .iter()
-                    .find(|o| o.htype == HashBlockObjectType::Cai)
-                {
-                    svi.manifest_store_range = Some(HashRange::new(
-                        manifest_loc.offset as u64,
-                        manifest_loc.length as u64,
-                    ));
+                if let Some(manifest_loc) = locations.iter().find(|o| o.htype == ObjectType::Cai) {
+                    svi.manifest_store_range =
+                        Some(HashRange::new(manifest_loc.offset, manifest_loc.length));
                 }
             }
         }
@@ -2102,7 +2097,7 @@ impl Store {
     fn generate_data_hashes_for_stream<R, F>(
         stream: &mut R,
         alg: &str,
-        block_locations: &mut Vec<HashObjectPositions>,
+        block_locations: &mut Vec<ObjectLocations>,
         calc_hashes: bool,
         progress: &mut F,
     ) -> Result<Vec<DataHash>>
@@ -2126,51 +2121,45 @@ impl Store {
         // generate default data hash that excludes jumbf block
         // find the first jumbf block (ours are always in order)
         // find the first block after the jumbf blocks
-        let mut block_start: usize = 0;
-        let mut block_end: usize = 0;
+        let mut block_start: u64 = 0;
+        let mut block_end: u64 = 0;
         let mut found_jumbf = false;
         for item in block_locations {
             // find start of jumbf
-            if !found_jumbf && item.htype == HashBlockObjectType::Cai {
+            if !found_jumbf && item.htype == ObjectType::Cai {
                 block_start = item.offset;
                 found_jumbf = true;
             }
 
             // find start of block after jumbf blocks
-            if found_jumbf && item.htype == HashBlockObjectType::Cai {
+            if found_jumbf && item.htype == ObjectType::Cai {
                 block_end = item.offset + item.length;
             }
 
             // add explict exclusion ranges
-            if item.htype == HashBlockObjectType::OtherExclusion {
-                dh.add_exclusion(HashRange::new(item.offset as u64, item.length as u64));
+            if item.htype == ObjectType::OtherExclusion {
+                dh.add_exclusion(HashRange::new(item.offset, item.length));
             }
         }
 
         if found_jumbf {
             // add exclusion for embedded jumbf
             if calc_hashes {
-                if block_end > block_start && (block_end as u64) <= stream_len {
-                    dh.add_exclusion(HashRange::new(
-                        block_start as u64,
-                        (block_end - block_start) as u64,
-                    ));
+                if block_end > block_start && block_end <= stream_len {
+                    dh.add_exclusion(HashRange::new(block_start, block_end - block_start));
                 }
 
                 // this check is only valid on the final sized asset
                 //
                 // a case may occur where there is no existing manifest in the stream and the
                 // asset handler creates a placeholder beyond the length of the stream
-                if block_end as u64 > stream_len + (block_end - block_start) as u64 {
+                if block_end > stream_len + (block_end - block_start) {
                     return Err(Error::BadParam(
                         "data hash exclusions out of range".to_string(),
                     ));
                 }
             } else if block_end > block_start {
-                dh.add_exclusion(HashRange::new(
-                    block_start as u64,
-                    (block_end - block_start) as u64,
-                ));
+                dh.add_exclusion(HashRange::new(block_start, block_end - block_start));
             }
         }
 
@@ -2216,7 +2205,7 @@ impl Store {
     // If the user is supplying their own BmffHash they can specify the Merkle
     // tree leaves themselves and this function will not be called.
     fn generate_bmff_mdat_hashes(
-        asset_stream: &mut dyn CAIRead,
+        asset_stream: &mut dyn ReadSeek,
         bmff_hash: &mut BmffHash,
         settings: &Settings,
     ) -> Result<()> {
@@ -2390,7 +2379,7 @@ impl Store {
     fn prep_embeddable_store(
         &mut self,
         dh: &DataHash,
-        asset_reader: Option<&mut dyn CAIRead>,
+        asset_reader: Option<&mut dyn ReadSeek>,
         context: &Context,
     ) -> Result<()> {
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
@@ -2450,7 +2439,7 @@ impl Store {
         dh: &DataHash,
         signer: &dyn AsyncSigner,
         format: &str,
-        asset_reader: Option<&mut dyn CAIRead>,
+        asset_reader: Option<&mut dyn ReadSeek>,
         context: &Context,
     ))]
     pub fn get_data_hashed_embeddable_manifest(
@@ -2458,7 +2447,7 @@ impl Store {
         dh: &DataHash,
         signer: &dyn Signer,
         format: &str,
-        asset_reader: Option<&mut dyn CAIRead>,
+        asset_reader: Option<&mut dyn ReadSeek>,
         context: &Context,
     ) -> Result<Vec<u8>> {
         self.prep_embeddable_store(dh, asset_reader, context)?;
@@ -2860,7 +2849,7 @@ impl Store {
             // but we need to add it now to properly calculate the BMFF hash for each init segment
             context
                 .io()
-                .write_jumbf_to_file(&unsigned_jumbf, init_path, Some(&output_file))?;
+                .write_c2pa_to_file(&unsigned_jumbf, init_path, Some(&output_file))?;
 
             // update the initHash for each init segment
             bmff_hash.update_fragmented_inithash(*unique_id, *local_id, &output_file)?;
@@ -2917,7 +2906,7 @@ impl Store {
         for output_file in output_files.iter() {
             context
                 .io()
-                .write_jumbf_to_file(&final_jumbf, output_file, Some(output_file))?;
+                .write_c2pa_to_file(&final_jumbf, output_file, Some(output_file))?;
         }
 
         Ok(())
@@ -2937,16 +2926,16 @@ impl Store {
     #[async_generic(async_signature(
         &mut self,
         format: &str,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         signer: &dyn AsyncSigner,
         context: &Context,
     ))]
     pub(crate) fn save_to_stream(
         &mut self,
         format: &str,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         signer: &dyn Signer,
         context: &Context,
     ) -> Result<Vec<u8>> {
@@ -3049,8 +3038,8 @@ impl Store {
     fn start_save_stream(
         &mut self,
         format: &str,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         reserve_size: usize,
         context: &Context,
     ) -> Result<Vec<u8>> {
@@ -3094,7 +3083,7 @@ impl Store {
                         .ok_or(Error::UnsupportedType)?;
 
                     let mut tmp_stream = io_utils::stream_with_fs_fallback(threshold, input_len)?;
-                    manifest_writer.remove_cai_store_from_stream(input_stream, &mut tmp_stream)?;
+                    manifest_writer.remove_c2pa(input_stream, &mut tmp_stream)?;
 
                     // add external ref if possible
                     tmp_stream.rewind()?;
@@ -3116,8 +3105,7 @@ impl Store {
                     .get_writer(format)
                     .ok_or(Error::UnsupportedType)?;
 
-                manifest_writer
-                    .remove_cai_store_from_stream(input_stream, &mut intermediate_stream)?;
+                manifest_writer.remove_c2pa(input_stream, &mut intermediate_stream)?;
             } else if !fast_path {
                 // XMP or manifest-removal was NOT the trigger — but fast_path is false,
                 // which can only happen if remove_manifests is true (already handled above).
@@ -3260,10 +3248,10 @@ impl Store {
             if !remove_manifests {
                 if source_is_intermediate {
                     intermediate_stream.rewind()?;
-                    io.write_jumbf(format, &mut intermediate_stream, output_stream, &data)?;
+                    io.write_c2pa(format, &mut intermediate_stream, output_stream, &data)?;
                 } else {
                     input_stream.rewind()?;
-                    io.write_jumbf(format, input_stream, output_stream, &data)?;
+                    io.write_c2pa(format, input_stream, output_stream, &data)?;
                 }
             } else {
                 // just copy the asset to the output stream without an embedded manifest (may be stripping one out here)
@@ -3346,10 +3334,10 @@ impl Store {
             if !remove_manifests && io_handler.is_some() {
                 if source_is_intermediate {
                     intermediate_stream.rewind()?;
-                    io.write_jumbf(format, &mut intermediate_stream, output_stream, &data)?;
+                    io.write_c2pa(format, &mut intermediate_stream, output_stream, &data)?;
                 } else {
                     input_stream.rewind()?;
-                    io.write_jumbf(format, input_stream, output_stream, &data)?;
+                    io.write_c2pa(format, input_stream, output_stream, &data)?;
                 }
             } else {
                 // just copy the asset to the output stream without an embedded manifest
@@ -3385,9 +3373,7 @@ impl Store {
                     // if we removed the manifest fixup the hash range to be empty
                     if remove_manifests {
                         new_hash_ranges.iter_mut().for_each(|h| {
-                            if h.htype == HashBlockObjectType::Cai
-                                || h.htype == HashBlockObjectType::OtherExclusion
-                            {
+                            if h.htype == ObjectType::Cai || h.htype == ObjectType::OtherExclusion {
                                 h.offset = 0;
                                 h.length = 0;
                             }
@@ -3425,8 +3411,8 @@ impl Store {
         &self,
         jumbf_bytes: Vec<u8>,
         format: &str,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         context: &Context,
     ) -> Result<(Vec<u8>, Vec<u8>)> {
         // re-save to file
@@ -3435,7 +3421,7 @@ impl Store {
             RemoteManifest::NoRemote | RemoteManifest::EmbedWithRemote(_) => {
                 context
                     .io()
-                    .write_jumbf(format, input_stream, output_stream, &jumbf_bytes)?;
+                    .write_c2pa(format, input_stream, output_stream, &jumbf_bytes)?;
             }
             RemoteManifest::SideCar | RemoteManifest::Remote(_) => {
                 // just copy the asset to the output stream without an embedded manifest (may be stripping one out here)
@@ -3534,15 +3520,15 @@ impl Store {
     /// if it was used to fetch the jumbf_bytes.
     #[async_generic(async_signature(
         asset_type: &str,
-        stream: &mut dyn CAIRead,
+        stream: &mut dyn ReadSeek,
         context: &Context
     ))]
     pub fn load_jumbf_from_stream(
         asset_type: &str,
-        stream: &mut dyn CAIRead,
+        stream: &mut dyn ReadSeek,
         context: &Context,
     ) -> Result<(Vec<u8>, Option<String>)> {
-        match context.io().read_jumbf(asset_type, stream) {
+        match context.io().read_c2pa(asset_type, stream) {
             Ok(manifest_bytes) => Ok((manifest_bytes, None)),
             Err(Error::JumbfNotFound) => {
                 stream.rewind()?;
@@ -3678,7 +3664,7 @@ impl Store {
     #[cfg(feature = "file_io")]
     pub fn load_from_file_and_fragments(
         asset_type: &str,
-        init_segment: &mut dyn CAIRead,
+        init_segment: &mut dyn ReadSeek,
         fragments: &Vec<PathBuf>,
         validation_log: &mut StatusTracker,
         context: &Context,
@@ -4826,15 +4812,15 @@ pub mod tests {
         let op = temp_dir_path(&temp_dir, "replacement_test.jpg");
 
         // grab jumbf from original
-        let original_jumbf = context.io().read_jumbf_from_file(&ap).unwrap();
+        let original_jumbf = context.io().read_c2pa_from_file(&ap).unwrap();
 
         // replace with new jumbf
         context
             .io()
-            .write_jumbf_to_file(&jumbf_bytes, &ap, Some(&op))
+            .write_c2pa_to_file(&jumbf_bytes, &ap, Some(&op))
             .unwrap();
 
-        let saved_jumbf = context.io().read_jumbf_from_file(&op).unwrap();
+        let saved_jumbf = context.io().read_c2pa_from_file(&op).unwrap();
 
         // saved data should be the new data
         assert_eq!(&jumbf_bytes, &saved_jumbf);
@@ -8026,16 +8012,13 @@ pub mod tests {
         let ol = jpeg_io
             .get_writer("jpg")
             .unwrap()
-            .get_object_locations_from_stream(&mut input_file)
+            .get_object_locations(&mut input_file)
             .unwrap();
 
-        let cai_loc = ol
-            .iter()
-            .find(|o| o.htype == HashBlockObjectType::Cai)
-            .unwrap();
+        let cai_loc = ol.iter().find(|o| o.htype == ObjectType::Cai).unwrap();
 
         // remove any existing manifest
-        jpeg_io.get_reader().read_cai(&mut input_file).unwrap();
+        jpeg_io.get_reader().read_c2pa(&mut input_file).unwrap();
 
         // build new asset in memory inserting new manifest
         let outbuf = Vec::new();
@@ -8043,7 +8026,7 @@ pub mod tests {
         input_file.rewind().unwrap();
 
         // write before
-        let mut before = vec![0u8; cai_loc.offset];
+        let mut before = vec![0u8; usize::try_from(cai_loc.offset).unwrap()];
         input_file.read_exact(before.as_mut_slice()).unwrap();
         out_stream.write_all(&before).unwrap();
 
@@ -8106,16 +8089,13 @@ pub mod tests {
         let ol = jpeg_io
             .get_writer("jpg")
             .unwrap()
-            .get_object_locations_from_stream(&mut input_file)
+            .get_object_locations(&mut input_file)
             .unwrap();
 
-        let cai_loc = ol
-            .iter()
-            .find(|o| o.htype == HashBlockObjectType::Cai)
-            .unwrap();
+        let cai_loc = ol.iter().find(|o| o.htype == ObjectType::Cai).unwrap();
 
         // remove any existing manifest
-        jpeg_io.get_reader().read_cai(&mut input_file).unwrap();
+        jpeg_io.get_reader().read_c2pa(&mut input_file).unwrap();
 
         // build new asset in memory inserting new manifest
         let outbuf = Vec::new();
@@ -8123,7 +8103,7 @@ pub mod tests {
         input_file.rewind().unwrap();
 
         // write before
-        let mut before = vec![0u8; cai_loc.offset];
+        let mut before = vec![0u8; usize::try_from(cai_loc.offset).unwrap()];
         input_file.read_exact(before.as_mut_slice()).unwrap();
         out_stream.write_all(&before).unwrap();
 
@@ -8928,14 +8908,14 @@ pub mod tests {
 
         /// Stream wrapper that simulates the streams like it would be in C FFI layer.
         /// Needed to repro a use-after-free bug from the FFI layer.
-        struct FlushTrackingStream<T: CAIReadWrite> {
+        struct FlushTrackingStream<T: ReadWriteSeek> {
             inner: T,
             buffer: Vec<u8>,
             flush_called: Arc<AtomicBool>,
             dropped: Arc<AtomicBool>,
         }
 
-        impl<T: CAIReadWrite> FlushTrackingStream<T> {
+        impl<T: ReadWriteSeek> FlushTrackingStream<T> {
             fn new(inner: T, flush_called: Arc<AtomicBool>, dropped: Arc<AtomicBool>) -> Self {
                 Self {
                     inner,
@@ -8946,13 +8926,13 @@ pub mod tests {
             }
         }
 
-        impl<T: CAIReadWrite> Read for FlushTrackingStream<T> {
+        impl<T: ReadWriteSeek> Read for FlushTrackingStream<T> {
             fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
                 self.inner.read(buf)
             }
         }
 
-        impl<T: CAIReadWrite> Write for FlushTrackingStream<T> {
+        impl<T: ReadWriteSeek> Write for FlushTrackingStream<T> {
             fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
                 // Simulate buffering behavior
                 if !self.buffer.is_empty() {
@@ -8977,7 +8957,7 @@ pub mod tests {
             }
         }
 
-        impl<T: CAIReadWrite> Seek for FlushTrackingStream<T> {
+        impl<T: ReadWriteSeek> Seek for FlushTrackingStream<T> {
             fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
                 // Check if we're trying to seek without flushing first
                 // Simulates a crash scenario where the stream is accessed
@@ -9006,7 +8986,7 @@ pub mod tests {
             }
         }
 
-        impl<T: CAIReadWrite> Drop for FlushTrackingStream<T> {
+        impl<T: ReadWriteSeek> Drop for FlushTrackingStream<T> {
             fn drop(&mut self) {
                 self.dropped.store(true, Ordering::SeqCst);
                 // Dropping without flush frees the context

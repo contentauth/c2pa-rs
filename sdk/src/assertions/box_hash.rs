@@ -24,7 +24,7 @@ use serde_bytes::ByteBuf;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor, AssertionJson},
     assertions::labels,
-    asset_io::{AssetBoxHash, BoxMap as AssetBoxMap, CAIRead, C2PA_BOXHASH},
+    asset_io::{AssetBoxHash, BoxMap as AssetBoxMap, ReadSeek, C2PA_BOXHASH},
     error::{Error, Result},
     hash_utils::hash_by_alg,
     maybe_send_sync::MaybeSend,
@@ -60,7 +60,7 @@ pub struct BoxMap {
 
 impl BoxMap {
     // diagnostic tool to show hashes for boxes
-    pub fn dump_box(&self, mut reader: &mut dyn CAIRead, alg: &str) -> Result<()> {
+    pub fn dump_box(&self, mut reader: &mut dyn ReadSeek, alg: &str) -> Result<()> {
         print!("box names: ");
         for name in &self.names {
             print!("{name}, ");
@@ -141,7 +141,7 @@ impl BoxHash {
 
     pub fn verify_stream_hash(
         &self,
-        reader: &mut dyn CAIRead,
+        reader: &mut dyn ReadSeek,
         alg: Option<&str>,
         bhp: &dyn AssetBoxHash,
     ) -> Result<()> {
@@ -153,7 +153,7 @@ impl BoxHash {
     /// ticks and support cancellation.
     pub(crate) fn verify_stream_hash_with_progress<F>(
         &self,
-        reader: &mut dyn CAIRead,
+        reader: &mut dyn ReadSeek,
         alg: Option<&str>,
         bhp: &dyn AssetBoxHash,
         progress: &mut F,
@@ -592,7 +592,7 @@ mod tests {
     mockall::mock! {
         pub MABH { }
         impl AssetBoxHash for MABH {
-            fn get_box_map(&self, reader: &mut dyn CAIRead) -> Result<Vec<AssetBoxMap>>;
+            fn get_box_map(&self, reader: &mut dyn ReadSeek) -> Result<Vec<AssetBoxMap>>;
         }
     }
 

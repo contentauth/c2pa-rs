@@ -311,6 +311,7 @@ pub(crate) mod manifest_assertion;
 pub(crate) mod manifest_store_report;
 /// The `maybe_send_sync` module contains traits for conditional Send bounds based on target architecture.
 pub(crate) mod maybe_send_sync;
+pub(crate) mod read_seek;
 pub(crate) mod reader;
 pub(crate) mod resource_store;
 pub(crate) mod salt;
