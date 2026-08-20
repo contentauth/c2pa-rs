@@ -168,6 +168,9 @@ impl Store {
         let mut store = Store::new();
         let settings = context.settings();
 
+        // use the incoming trust settings
+        store.ctp.clear();
+
         // Add all of the trust anchors
         if let Some(anchors) = &settings.trust.anchors {
             for anchor in anchors {
@@ -194,6 +197,7 @@ impl Store {
                     anchor.trust_anchors.as_bytes(),
                     &trust_list_uri,
                     trust_list_type,
+                    anchor.trust_config.clone(),
                 );
 
                 if let Some(al) = &anchor.allowed_list {
@@ -235,16 +239,18 @@ impl Store {
     /// Load named trust anchor sets. [u8] containing the
     /// trust anchors is passed in the trust_vec variable.  The trust_list_uri
     /// is the URI of the trust list per C2PA specification. The TrustAnchorType
-    /// indicates the intended use.  
+    /// indicates the intended use.  trust_config is an optional byte array containing
+    /// the trust configuration data for this trust list.
     pub fn add_trust_anchor(
         &mut self,
         trust_vec: &[u8],
         trust_list_uri: &str,
         trust_list_type: TrustAnchorType,
+        trust_config: Option<String>,
     ) -> Result<()> {
         Ok(self
             .ctp
-            .add_trust_anchors(trust_vec, trust_list_uri, trust_list_type)?)
+            .add_trust_anchors(trust_vec, trust_list_uri, trust_list_type, trust_config)?)
     }
 
     pub fn add_trust_config(&mut self, trust_vec: &[u8]) -> Result<()> {
@@ -4419,6 +4425,7 @@ pub mod tests {
     use crate::{
         assertions::{Action, Actions, Uuid},
         claim::AssertionStoreJsonFormat,
+        settings::SettingsValidate,
         status_tracker::{LogItem, StatusTracker},
         utils::{
             patch::patch_bytes,
@@ -9823,5 +9830,42 @@ pub mod tests {
             validated <= 4 * DEPTH,
             "shared ingredient subtrees must be verified only once"
         );
+    }
+
+    #[test]
+    fn test_custom_anchor_ekus() {
+        let mut context = crate::context::Context::new();
+
+        // test adding to actual image
+        let ap = fixture_path("C.jpg");
+
+        let mut stream = std::fs::File::open(&ap).unwrap();
+        let format = "image/jpeg";
+
+        let (manifest_bytes, _remote_url) =
+            Store::load_jumbf_from_stream(format, &mut stream, &context).unwrap();
+
+        let mut log = StatusTracker::default();
+        let _store = Store::from_jumbf_with_context(&manifest_bytes, &mut log, &context).unwrap();
+
+        assert!(!log.has_any_error());
+
+        // modify the settings so that the default EKUs are in the anchors
+        let mut settings = Settings::default();
+        let ekus = settings.trust.trust_config.take();
+
+        let anchors = settings.trust.anchors.as_mut().unwrap();
+        assert!(anchors.len() == 1); // this test expects one anchor set
+        anchors[0].trust_config = ekus;
+        settings.validate().unwrap();
+        context.set_settings(settings).unwrap();
+
+        stream.rewind().unwrap();
+
+        // with alternate Context
+        log = StatusTracker::default();
+        let _store = Store::from_stream(format, &mut stream, &mut log, &context).unwrap();
+
+        assert!(!log.has_any_error());
     }
 }

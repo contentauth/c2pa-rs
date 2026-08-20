@@ -63,6 +63,8 @@ pub struct TrustAnchor {
     pub trust_anchor_uri: String,
     /// Kind of trust list
     pub trust_anchor_type: TrustAnchorType,
+    /// Optional trust configuration data
+    pub trust_config: Option<String>,
 }
 
 /// A `CertificateTrustPolicy` is configured with information about trust
@@ -108,6 +110,7 @@ impl Default for CertificateTrustPolicy {
                 ),
                 "https://c2pa-rs/unknown_tl",
                 TrustAnchorType::Manifest,
+                None,
             );
         }
 
@@ -259,6 +262,7 @@ impl CertificateTrustPolicy {
         trust_anchor_pems: &[u8],
         trust_list_uri: &str,
         trust_anchor_type: TrustAnchorType,
+        trust_config: Option<String>,
     ) -> Result<(), InvalidCertificateError> {
         // allow for JSON-encoded PEMs with \n
         let mut trust_anchor_ders = Vec::new();
@@ -281,6 +285,7 @@ impl CertificateTrustPolicy {
             trust_anchor_ders,
             trust_anchor_uri: trust_list_uri.to_string(),
             trust_anchor_type,
+            trust_config,
         });
 
         Ok(())
@@ -425,6 +430,7 @@ impl CertificateTrustPolicy {
         self.trust_anchors.clear();
         self.end_entity_cert_set.clear();
         self.additional_ekus.clear();
+        self.mandatory_ekus.clear();
     }
 
     /// Return an iterator over the trust anchor sets.
@@ -432,6 +438,13 @@ impl CertificateTrustPolicy {
     /// Each TrustAnchor will be returned.
     pub(crate) fn anchor_sets(&self) -> impl Iterator<Item = &'_ TrustAnchor> {
         self.trust_anchors.iter()
+    }
+
+    /// Returns the anchors set by name and type
+    pub(crate) fn get_anchor_set(&self, kind: TrustAnchorType, uri: &str) -> Option<&TrustAnchor> {
+        self.trust_anchors
+            .iter()
+            .find(|a| a.trust_anchor_type == kind && a.trust_anchor_uri == uri)
     }
 
     // Returns true if all mandatory EKUs are present, false if any are missing.
@@ -764,7 +777,7 @@ mod tests {
     fn add_trust_anchors_err_bad_pem() {
         let mut ctp = CertificateTrustPolicy::new();
         assert!(ctp
-            .add_trust_anchors(BAD_PEM.as_bytes(), "", TrustAnchorType::Manifest)
+            .add_trust_anchors(BAD_PEM.as_bytes(), "", TrustAnchorType::Manifest, None)
             .is_err());
     }
 
@@ -884,6 +897,7 @@ zGxQnM2hCA==
             ),
             "",
             TrustAnchorType::Manifest,
+            None,
         )
         .unwrap();
 
@@ -1467,12 +1481,14 @@ zGxQnM2hCA==
             ta.trust_anchors.as_bytes(),
             "https://example.com/tsa",
             TrustAnchorType::TSA,
+            None,
         )
         .unwrap();
         ctp.add_trust_anchors(
             ta.trust_anchors.as_bytes(),
             "https://example.com/cawg",
             TrustAnchorType::CAWG,
+            None,
         )
         .unwrap();
 

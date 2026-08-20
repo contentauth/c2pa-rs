@@ -658,6 +658,7 @@ pub fn test_certificate_acceptance_policy() -> CertificateTrustPolicy {
         include_bytes!("../../tests/fixtures/certs/trust/test_cert_root_bundle.pem"),
         "https://c2pa-rs/unknown_tl",
         TrustAnchorType::Manifest,
+        None,
     )
     .unwrap();
     ctp

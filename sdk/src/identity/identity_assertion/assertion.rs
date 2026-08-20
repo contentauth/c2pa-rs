@@ -327,13 +327,8 @@ impl IdentityAssertion {
                             anchor.trust_anchors.as_bytes(),
                             anchor.trust_uri.as_deref().unwrap_or(""),
                             anchor.trust_kind.clone().into(),
+                            anchor.trust_config.clone(),
                         );
-
-                        if let Some(tc) = &anchor.trust_config {
-                            // override default EKUs
-                            ctp.clear_ekus();
-                            ctp.add_valid_ekus(tc.as_bytes());
-                        }
 
                         if let Some(al) = &anchor.allowed_list {
                             let _ = ctp.add_end_entity_credentials(al.as_bytes());
