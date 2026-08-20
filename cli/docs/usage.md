@@ -9,13 +9,14 @@ c2patool <ASSET_PATH> [OPTIONS] [SUBCOMMAND]
 Where:
 - `<ASSET_PATH>` is the (relative or absolute) file path to the asset to read or embed a manifest into.
 - `[OPTIONS]` is one or more of the [command-line options](#options) described in following table.
-- `[SUBCOMMAND]` is one of the optional [subcommands](#subcommands): `trust`, `fragment`, or `help`.
+- `[SUBCOMMAND]` is one of the optional [subcommands](#subcommands): `init`, `trust`, `fragment`, or `help`.
 
 By default, C2PA Tool writes the JSON manifest data found in the asset to the standard output. You can override the default by using the `--output, -o` option.
 
 ## Subcommands
 
 The tool supports the following subcommands:
+- `init trust` [bootstraps trust list files](#bootstrapping-trust-files-with-init-trust) next to the settings file, so you don't need to repeat trust options on every run. Does not take an `<ASSET_PATH>`.
 - `trust` [configures trust support](#configuring-trust-support) for certificates on a "known certificate list." With this subcommand, several additional options are available.
 - `fragment` [adds a manifest to fragmented BMFF content](#adding-a-manifest-to-fragmented-bmff-content).  With this subcommand, one additional option is available.
 - `help` displays command line help information.
@@ -290,6 +291,31 @@ There are two significant trust lists for signing Content Credentials:
 > [!NOTE]
 > With the `trust` subcommand, C2PA Tool will make several HTTP requests each time it runs. Since these lists may change without notice (and the allowed list may change quite often), check these lists frequently to stay in sync with the Verify site. However, when performing bulk operations, you may want to cache these files locally to avoid a large number of network calls that might affect performance.
 
+### Bootstrapping trust files with `init trust`
+
+Instead of passing `trust` subcommand options on every run, you can use `init trust` to fetch a trust list once and cache it next to your settings file. C2PA Tool automatically loads these cached files on every subsequent run and enables trust checks, so you don't need to repeat any `trust` options.
+
+`init` does not take an `<ASSET_PATH>`, so run it on its own:
+
+```shell
+c2patool init trust
+```
+
+This fetches the [official C2PA trust list](https://opensource.contentauthenticity.org/docs/conformance/trust-lists#c2pa-trust-list) and writes it to `c2pa-trust-list.pem` in the same directory as the [settings file](#options) (the `--settings` option, or `C2PATOOL_SETTINGS`, or the default settings path if neither is set).
+
+To also fetch the legacy interim trust anchors, EKU store configuration, and allowed list, add `--legacy`:
+
+```shell
+c2patool init trust --legacy
+```
+
+This additionally writes `c2pa-trust-list-legacy.pem`, `c2pa-trust-store.cfg`, and `c2pa-trust-allowed.sha256.txt` to the same directory.
+
+On the next run of any command, C2PA Tool automatically loads whichever of these files it finds next to the settings file and enables trust checks — no `trust` subcommand options are required. Re-run `c2patool init trust` at any time to refresh the cached files with the latest trust list contents.
+
+> [!NOTE]
+> `init trust` requires network access to fetch the trust list, so it is not available on WASI targets.
+
 ### Trust subcommand options
 
 Enable trust support by using the `trust` subcommand, as follows:
@@ -309,6 +335,7 @@ Several additional CLI options are available with the `trust` sub-command, as de
 | `--trust_anchors` | `C2PATOOL_TRUST_ANCHORS` | URL or relative path to a file containing a list of trust anchors (in PEM format) used to validate the manifest certificate chain. To be valid, the manifest certificate chain must lead to a certificate on the trust list. All certificates in the trust anchor list must have the [Basic Constraints extension](https://docs.digicert.com/en/iot-trust-manager/certificate-templates/create-json-formatted-certificate-templates/extensions/basic-constraints.html) and the CA attribute of this extension must be `True`.  |
 | `--allowed_list` | `C2PATOOL_ALLOWED_LIST` | URL or relative path to a file containing a list of end-entity certificates (in PEM format) to trust. These certificates are used to sign the manifest. Supersedes the `trust_anchors` setting. The list must NOT contain certificates with the [Basic Constraints extension](https://docs.digicert.com/en/iot-trust-manager/certificate-templates/create-json-formatted-certificate-templates/extensions/basic-constraints.html) with the CA attribute `True`. |
 | `--trust_config` | `C2PATOOL_TRUST_CONFIG` | URL or relative path to a file containing the allowed set of custom certificate extended key usages (EKUs). Each entry in the list is an object identifiers in [OID dot notation](http://www.oid-info.com/#oid) format.  |
+| `--trust_list_uri` | `C2PATOOL_TRUST_LIST_URI` | URI that identifies the trust list supplied via `--trust_anchors`. This URI is included in the validation report's `trustListUri` field so downstream consumers can identify which trust list validated the signing certificate. If omitted, an identifier is generated automatically. |
 
 </div>
 
@@ -326,6 +353,14 @@ Another example with URL argument values:
 c2patool sample/C.jpg trust \
   --trust_anchors https://server.com/anchors.pem \
   --trust_config https://server.com/store.cfg
+```
+
+To tag a custom trust list with an identifying URI:
+
+```shell
+c2patool sample/C.jpg trust \
+  --trust_anchors https://server.com/anchors.pem \
+  --trust_list_uri https://server.com/trust-list-id
 ```
 
 ### Using the official C2PA trust list
