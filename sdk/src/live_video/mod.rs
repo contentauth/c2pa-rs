@@ -19,6 +19,10 @@
 //!
 //! [Section 19.3]: https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#using_c2pa_manifest_box
 //!
+//! # Signing
+//!
+//! Use [`LiveVideoSigner`] to sign an init segment and a sequence of media segments.
+//!
 //! # Validation
 //!
 //! Use [`LiveVideoValidator`] to validate a signed live video stream.
@@ -26,7 +30,10 @@
 //! See [C2PA Technical Specification - Live Video](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#live-video).
 
 mod segment_manifest_validation;
+mod signing;
 pub mod verifiable_segment_info;
+
+pub use signing::LiveVideoSigner;
 
 use crate::{
     assertions::LiveVideoSegment,
