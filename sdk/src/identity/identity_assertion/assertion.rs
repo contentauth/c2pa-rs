@@ -36,7 +36,7 @@ use crate::{
             signer_payload::SignerPayload,
         },
         internal::debug_byte_slice::DebugByteSlice,
-        x509::{remap_x509_cose_status_codes, X509SignatureInfo},
+        x509::{X509SignatureInfo, X509StatusRemapGuard},
         SignatureVerifier, ToCredentialSummary, ValidationError,
     },
     jumbf::labels::to_assertion_uri,
@@ -347,9 +347,10 @@ impl IdentityAssertion {
                 ValidationError::InternalError("CBOR serialization error".to_string())
             })?;
 
-            let first_new_item = status_tracker.logged_items().len();
+            let signature_result = {
+                let mut remap_guard = X509StatusRemapGuard::new(status_tracker);
+                let status_tracker = remap_guard.status_tracker();
 
-            let signature_result =
                 match parse_cose_sign1(&self.signature, &signer_payload_cbor, status_tracker) {
                     Ok(cose_sign1) => {
                         let verify_result = if _sync {
@@ -396,9 +397,8 @@ impl IdentityAssertion {
                     }
 
                     Err(e) => Err(ValidationError::SignatureError(e.to_string())),
-                };
-
-            remap_x509_cose_status_codes(status_tracker, first_new_item);
+                }
+            }; // `remap_guard` drops here, remapping the codes logged above.
 
             let (cose_sign1, cert_info) = signature_result?;
 
@@ -624,8 +624,11 @@ mod tests {
             CAWG_X509_SIGNATURE_MISMATCH
         );
 
-        // Signature bytes that don't even parse as a COSE_Sign1 structure must
-        // also be reported, distinct from a cryptographic mismatch.
+        // Signature bytes that don't even parse as a COSE_Sign1 structure are a
+        // different Rust error variant (`SignatureError`, not
+        // `SignatureMismatch`) from the cryptographic mismatch above, but the
+        // CAWG spec reports both under the same status code -- see the longer
+        // comment in x509_signature_verifier.rs's equivalent test.
         let malformed_ia = IdentityAssertion {
             signer_payload: ia.signer_payload.clone(),
             signature: b"not a COSE_Sign1 structure".to_vec(),

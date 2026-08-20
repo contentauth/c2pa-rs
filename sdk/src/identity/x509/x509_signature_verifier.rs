@@ -101,61 +101,62 @@ impl X509SignatureVerifier<'_> {
         c2pa_cbor::to_writer(&mut signer_payload_cbor, signer_payload)
             .map_err(|_| ValidationError::InternalError("CBOR serialization error".to_string()))?;
 
-        let first_new_item = status_tracker.logged_items().len();
+        let result = {
+            let mut remap_guard = super::X509StatusRemapGuard::new(status_tracker);
+            let status_tracker = remap_guard.status_tracker();
 
-        let result = match parse_cose_sign1(signature, &signer_payload_cbor, status_tracker) {
-            Ok(cose_sign1) => {
-                let verify_result = if _sync {
-                    self.cose_verifier.verify_signature(
-                        signature,
-                        &signer_payload_cbor,
-                        &[],
-                        None,
-                        status_tracker,
-                    )
-                } else {
-                    self.cose_verifier
-                        .verify_signature_async(
+            match parse_cose_sign1(signature, &signer_payload_cbor, status_tracker) {
+                Ok(cose_sign1) => {
+                    let verify_result = if _sync {
+                        self.cose_verifier.verify_signature(
                             signature,
                             &signer_payload_cbor,
                             &[],
                             None,
                             status_tracker,
                         )
-                        .await
-                };
-
-                verify_result
-                    .map_err(|e| match e {
-                        CoseError::RawSignatureValidationError(
-                            RawSignatureValidationError::SignatureMismatch,
-                        ) => {
-                            log_current_item!(
-                                "signature mismatch",
-                                "X509SignatureVerifier::check_x509_cose_signature"
-                            )
-                            .validation_status(CAWG_X509_SIGNATURE_MISMATCH)
-                            .failure_no_throw(
+                    } else {
+                        self.cose_verifier
+                            .verify_signature_async(
+                                signature,
+                                &signer_payload_cbor,
+                                &[],
+                                None,
                                 status_tracker,
-                                ValidationError::<CoseError>::SignatureMismatch,
-                            );
+                            )
+                            .await
+                    };
 
-                            ValidationError::SignatureMismatch
-                        }
+                    verify_result
+                        .map_err(|e| match e {
+                            CoseError::RawSignatureValidationError(
+                                RawSignatureValidationError::SignatureMismatch,
+                            ) => {
+                                log_current_item!(
+                                    "signature mismatch",
+                                    "X509SignatureVerifier::check_x509_cose_signature"
+                                )
+                                .validation_status(CAWG_X509_SIGNATURE_MISMATCH)
+                                .failure_no_throw(
+                                    status_tracker,
+                                    ValidationError::<CoseError>::SignatureMismatch,
+                                );
 
-                        e => ValidationError::SignatureError(e),
-                    })
-                    .map(|cert_info| X509SignatureInfo {
-                        signer_payload: signer_payload.clone(),
-                        cose_sign1,
-                        cert_info,
-                    })
+                                ValidationError::SignatureMismatch
+                            }
+
+                            e => ValidationError::SignatureError(e),
+                        })
+                        .map(|cert_info| X509SignatureInfo {
+                            signer_payload: signer_payload.clone(),
+                            cose_sign1,
+                            cert_info,
+                        })
+                }
+
+                Err(e) => Err(e.into()),
             }
-
-            Err(e) => Err(e.into()),
-        };
-
-        super::remap_x509_cose_status_codes(status_tracker, first_new_item);
+        }; // `remap_guard` drops here, remapping the codes logged above.
 
         if result.is_ok() {
             log_current_item!(
@@ -453,8 +454,14 @@ mod tests {
         assert!(matches!(sync_err, ValidationError::SignatureMismatch));
         assert_eq!(sync_st.logged_items().len(), 1);
 
-        // Signature bytes that don't even parse as a COSE_Sign1 structure must be
-        // reported as a `SignatureError`, distinct from a cryptographic mismatch.
+        // Signature bytes that don't even parse as a COSE_Sign1 structure are a
+        // different Rust error variant (`SignatureError`, not
+        // `SignatureMismatch`), since they're detected earlier and separately
+        // from the cryptographic check above. The CAWG spec doesn't distinguish
+        // the two conditions at the status-code level, though: both a malformed
+        // structure and a cryptographic mismatch are cases where "validation of
+        // the signature fails," so both are reported with the same
+        // `CAWG_X509_SIGNATURE_MISMATCH` status code.
         let mut malformed_st = StatusTracker::default();
         let malformed_err = x509_verifier
             .check_signature_async(

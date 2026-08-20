@@ -122,17 +122,28 @@ pub struct ValidationResults {
     validation_time: Option<String>,
 }
 
-/// Returns `true` if `code` reports that a signing credential is untrusted,
-/// whether that's the C2PA claim signature's credential
-/// (`signingCredential.untrusted`) or a CAWG X.509 identity assertion's
-/// credential (`cawg.x509.credential.untrusted`).
+/// Prefix shared by every CAWG X.509 identity assertion status code (for
+/// example, `cawg.x509.credential.untrusted`, `cawg.x509.signature.mismatch`).
+const CAWG_X509_STATUS_PREFIX: &str = "cawg.x509.";
+
+/// Returns `true` if a failure with `code` is scoped to an individual
+/// credential or CAWG identity assertion and does not by itself render the
+/// enclosing manifest invalid.
 ///
-/// Such a failure is scoped to the credential in question and does not by
-/// itself render the enclosing manifest invalid. See
-/// [`ValidationResults::validation_state`] and [`ValidationFailureSummary`].
-fn is_untrusted_credential_code(code: &str) -> bool {
+/// This covers the C2PA claim signature's untrusted-credential failure
+/// (`signingCredential.untrusted`) and every CAWG X.509 identity assertion
+/// failure code (all of which share the `cawg.x509.` prefix). A CAWG X.509
+/// identity assertion is supplementary content layered on top of the C2PA
+/// manifest -- much like a CAWG identity claims aggregation (ICA) issuer-trust
+/// failure (`cawg.ica.untrusted_issuer`, which is scoped out via its
+/// `LogKind::Informational` rather than appearing in `.failure()` at all) --
+/// so none of its failures should, by themselves, make the enclosing
+/// manifest invalid.
+///
+/// See [`ValidationResults::validation_state`] and [`ValidationFailureSummary`].
+fn is_tolerated_manifest_failure_code(code: &str) -> bool {
     code == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
-        || code == validation_status::CAWG_X509_CREDENTIAL_UNTRUSTED
+        || code.starts_with(CAWG_X509_STATUS_PREFIX)
 }
 
 impl ValidationResults {
@@ -240,11 +251,10 @@ impl ValidationResults {
             // credential's `cawg.ica.credential_valid` success code is withheld),
             // so it never appears among the failures examined below.
             //
-            // An untrusted signing credential -- for either the C2PA claim
-            // signature (`signingCredential.untrusted`) or a CAWG X.509 identity
-            // assertion (`cawg.x509.credential.untrusted`) -- is likewise scoped
-            // to the credential in question and does not by itself render the
-            // manifest invalid.
+            // An untrusted C2PA claim signature credential
+            // (`signingCredential.untrusted`), and every CAWG X.509 identity
+            // assertion failure code, is likewise tolerated here -- see
+            // [`is_tolerated_manifest_failure_code`].
             //
             // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_valid_manifest
             let is_valid = active_manifest
@@ -256,14 +266,14 @@ impl ValidationResults {
                     status.code() == validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY
                 })
                 // Then check if the manifest contains either no failures or that they're
-                // all untrusted-credential failures.
+                // all tolerated failures.
                 && (active_manifest.failure().is_empty()
                     || active_manifest
                         .failure()
                         .iter()
-                        .all(|status| is_untrusted_credential_code(status.code())))
+                        .all(|status| is_tolerated_manifest_failure_code(status.code())))
                 // Finally check if the ingredients contain either no failures or the only
-                // failures are untrusted-credential failures.
+                // failures are tolerated failures.
                 && self.ingredient_deltas.as_ref().iter().all(|deltas| {
                     deltas.iter().all(|idv| {
                         let deltas = idv.validation_deltas();
@@ -271,7 +281,7 @@ impl ValidationResults {
                             || deltas
                                 .failure()
                                 .iter()
-                                .all(|status| is_untrusted_credential_code(status.code()))
+                                .all(|status| is_tolerated_manifest_failure_code(status.code()))
                     })
                 });
 
@@ -487,7 +497,7 @@ impl Display for ValidationFailureSummary<'_> {
             let failures = active_manifest
                 .failure
                 .iter()
-                .filter(|status| !is_untrusted_credential_code(status.code()))
+                .filter(|status| !is_tolerated_manifest_failure_code(status.code()))
                 .collect::<Vec<_>>();
             if !failures.is_empty() {
                 output_lines.push("failures:".to_string());
@@ -505,7 +515,7 @@ impl Display for ValidationFailureSummary<'_> {
                     .validation_deltas()
                     .failure
                     .iter()
-                    .filter(|status| !is_untrusted_credential_code(status.code()))
+                    .filter(|status| !is_tolerated_manifest_failure_code(status.code()))
                     .collect::<Vec<_>>();
                 if !failures.is_empty() {
                     output_lines.push(format!(
@@ -829,6 +839,24 @@ pub mod validation_codes {
     ///
     /// Any corresponding URL should point to a CAWG identity assertion.
     pub const CAWG_X509_CREDENTIAL_UNTRUSTED: &str = "cawg.x509.credential.untrusted";
+
+    /// The CAWG identity assertion's X.509 signing certificate (or its
+    /// certificate chain) does not meet the certificate profile requirements
+    /// defined in the C2PA technical specification -- for example, an invalid
+    /// EKU, an unsupported algorithm, or a disallowed self-signed certificate.
+    ///
+    /// This is distinct from [`CAWG_X509_CREDENTIAL_UNTRUSTED`]: a credential
+    /// can fail to meet the certificate profile even when the underlying
+    /// cryptographic signature is otherwise valid and independent of whether
+    /// a trust chain could be established.
+    ///
+    /// This code is not yet part of the ratified CAWG identity assertion
+    /// specification, which currently has no code distinct from
+    /// [`CAWG_X509_CREDENTIAL_UNTRUSTED`] for this condition (CAI-13385 tracks
+    /// proposing this addition upstream).
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_X509_CREDENTIAL_INVALID: &str = "cawg.x509.credential.invalid";
 
     /// The cryptographic signature over a CAWG identity assertion using an
     /// X.509 credential was validated against the signing certificate.
@@ -1204,7 +1232,9 @@ pub mod tests {
         log_item,
         validation_status::{
             ASSERTION_DATAHASH_MISMATCH, ASSERTION_HASHEDURI_MISMATCH,
-            CAWG_X509_CREDENTIAL_UNTRUSTED, CLAIM_MALFORMED, CLAIM_SIGNATURE_INSIDE_VALIDITY,
+            CAWG_X509_ALGORITHM_UNSUPPORTED, CAWG_X509_CREDENTIAL_INVALID,
+            CAWG_X509_CREDENTIAL_UNTRUSTED, CAWG_X509_SIGNATURE_MISMATCH,
+            CAWG_X509_SIGNATURE_OUTSIDE_VALIDITY, CLAIM_MALFORMED, CLAIM_SIGNATURE_INSIDE_VALIDITY,
             CLAIM_SIGNATURE_VALIDATED, SIGNING_CREDENTIAL_TRUSTED, SIGNING_CREDENTIAL_UNTRUSTED,
         },
         HashedUri, Relationship,
@@ -1253,29 +1283,37 @@ pub mod tests {
     }
 
     #[test]
-    fn not_trusted_state_with_cawg_x509_untrusted_credential_failure() {
-        // An untrusted CAWG X.509 identity assertion credential must be tolerated
-        // the same way an untrusted C2PA claim signature credential is.
-        let mut validation_results = ValidationResults::default();
-
-        validation_results.add_status(
-            ValidationStatus::new(CLAIM_SIGNATURE_VALIDATED).set_kind(LogKind::Success),
-        );
-        validation_results.add_status(
-            ValidationStatus::new(CLAIM_SIGNATURE_INSIDE_VALIDITY).set_kind(LogKind::Success),
-        );
-        validation_results.add_status(
-            ValidationStatus::new(SIGNING_CREDENTIAL_TRUSTED).set_kind(LogKind::Success),
-        );
-
-        validation_results.add_status(ValidationStatus::new_failure(
+    fn not_trusted_state_with_cawg_x509_failure() {
+        // No CAWG X.509 identity assertion failure code -- whatever the
+        // underlying problem -- should by itself render the enclosing
+        // manifest invalid; each is scoped to that identity assertion.
+        for code in [
+            CAWG_X509_ALGORITHM_UNSUPPORTED,
             CAWG_X509_CREDENTIAL_UNTRUSTED,
-        ));
+            CAWG_X509_CREDENTIAL_INVALID,
+            CAWG_X509_SIGNATURE_MISMATCH,
+            CAWG_X509_SIGNATURE_OUTSIDE_VALIDITY,
+        ] {
+            let mut validation_results = ValidationResults::default();
 
-        assert_eq!(
-            validation_results.validation_state(),
-            ValidationState::Valid
-        );
+            validation_results.add_status(
+                ValidationStatus::new(CLAIM_SIGNATURE_VALIDATED).set_kind(LogKind::Success),
+            );
+            validation_results.add_status(
+                ValidationStatus::new(CLAIM_SIGNATURE_INSIDE_VALIDITY).set_kind(LogKind::Success),
+            );
+            validation_results.add_status(
+                ValidationStatus::new(SIGNING_CREDENTIAL_TRUSTED).set_kind(LogKind::Success),
+            );
+
+            validation_results.add_status(ValidationStatus::new_failure(code));
+
+            assert_eq!(
+                validation_results.validation_state(),
+                ValidationState::Valid,
+                "expected Valid state for failure code {code}"
+            );
+        }
     }
 
     #[test]
