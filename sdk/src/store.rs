@@ -2197,13 +2197,14 @@ impl Store {
     }
 
     fn generate_bmff_data_hash_for_stream(alg: &str, settings: &Settings) -> Result<BmffHash> {
-        // The spec has mandatory BMFF exclusion ranges for certain atoms.
-        // The function makes sure those are included.
+        // The spec mandates BMFF exclusion ranges for certain atoms (/uuid,
+        // /ftyp, /mfra) - those are always added below. /free and /skip are
+        // only spec-*permitted* to exclude, not required, so whether to
+        // exclude them is controlled by
+        // `settings.builder.bmff_hash_exclude_free_and_skip_boxes`.
 
         let mut dh = BmffHash::new("jumbf manifest", alg, None);
-        dh.set_default_exclusions_with_options(
-            settings.builder.bmff_hash_exclude_free_and_skip_boxes,
-        );
+        dh.set_default_exclusions_with_options(settings);
 
         // fill in temporary hash
         match alg {
@@ -2667,9 +2668,7 @@ impl Store {
         } else {
             let mut bmff_hash = BmffHash::new("jumbf manifest", pc.alg(), None);
 
-            bmff_hash.set_default_exclusions_with_options(
-                settings.builder.bmff_hash_exclude_free_and_skip_boxes,
-            );
+            bmff_hash.set_default_exclusions_with_options(settings);
 
             if pc.version() < 2 {
                 bmff_hash.set_bmff_version(2); // backcompat support

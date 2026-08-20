@@ -65,6 +65,7 @@ use crate::{
     },
     asset_io::CAIRead,
     cbor_types::UriT,
+    settings::Settings,
     utils::{
         hash_utils::{
             concat_and_hash, hash_stream_by_alg, hash_stream_by_alg_with_progress, vec_compare,
@@ -635,17 +636,15 @@ impl BmffHash {
 
     // Adds default exclusion ranges for BMFF hashes.  Add as needed.
     pub fn set_default_exclusions(&mut self) -> &[ExclusionsMap] {
-        self.set_default_exclusions_with_options(true)
+        self.set_default_exclusions_with_options(&Settings::default())
     }
 
-    /// Like [`set_default_exclusions`](Self::set_default_exclusions), but lets
-    /// the caller control whether `/free` and `/skip` are excluded from the
-    /// hash. Mirrors
-    /// [`BuilderSettings::bmff_hash_exclude_free_and_skip_boxes`](crate::settings::builder::BuilderSettings::bmff_hash_exclude_free_and_skip_boxes).
-    pub fn set_default_exclusions_with_options(
-        &mut self,
-        exclude_free_and_skip: bool,
-    ) -> &[ExclusionsMap] {
+    /// Like [`set_default_exclusions`](Self::set_default_exclusions), but takes
+    /// the full [`Settings`] so new BMFF-hash-related options can be added
+    /// without another signature change. Currently only
+    /// [`BuilderSettings::bmff_hash_exclude_free_and_skip_boxes`](crate::settings::builder::BuilderSettings::bmff_hash_exclude_free_and_skip_boxes)
+    /// is consulted.
+    pub fn set_default_exclusions_with_options(&mut self, settings: &Settings) -> &[ExclusionsMap] {
         let exclusions = &mut self.exclusions;
 
         let cp2a_id: [u8; 16] = [
@@ -679,7 +678,7 @@ impl BmffHash {
             exclusions.push(mfra);
         }
 
-        if exclude_free_and_skip {
+        if settings.builder.bmff_hash_exclude_free_and_skip_boxes {
             // /free exclusion
             if !exclusions.iter().any(|e| e.xpath == "/free") {
                 let free = ExclusionsMap::new("/free".to_owned());
@@ -2529,12 +2528,15 @@ mod bmff_hash_tests {
         assert!(exclusions.iter().any(|e| e.xpath == "/skip"));
     }
 
-    /// `set_default_exclusions_with_options(false)` must omit `/free`/`/skip`
-    /// from the exclusion list, so their content is folded into the hash.
+    /// `set_default_exclusions_with_options` with the setting off must omit
+    /// `/free`/`/skip` from the exclusion list, so their content is folded
+    /// into the hash.
     #[test]
     fn set_default_exclusions_with_options_false_keeps_free_and_skip_hashed() {
         let mut bmff_hash = BmffHash::new("test", "sha256", None);
-        let exclusions = bmff_hash.set_default_exclusions_with_options(false);
+        let mut settings = Settings::default();
+        settings.builder.bmff_hash_exclude_free_and_skip_boxes = false;
+        let exclusions = bmff_hash.set_default_exclusions_with_options(&settings);
         assert!(!exclusions.iter().any(|e| e.xpath == "/free"));
         assert!(!exclusions.iter().any(|e| e.xpath == "/skip"));
         // Other mandatory exclusions are unaffected.

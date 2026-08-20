@@ -606,6 +606,11 @@ pub struct BuilderSettings {
     pub auto_timestamp_assertion: TimeStampSettings,
     /// Whether `/free` and `/skip` boxes are excluded from the BMFF/MP4 hard-binding hash.
     ///
+    /// `/free` and `/skip` are reserved/padding space that apps commonly rewrite after
+    /// signing (e.g. to reclaim or repurpose it), so the C2PA spec permits excluding
+    /// them. Set to `false` to fold their content into the hash instead, so any later
+    /// edit to either box invalidates the hard binding like any other content change.
+    ///
     /// The default value is `true`.
     pub bmff_hash_exclude_free_and_skip_boxes: bool,
 }
