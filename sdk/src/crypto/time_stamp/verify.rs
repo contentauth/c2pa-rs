@@ -539,15 +539,18 @@ pub fn verify_time_stamp(
                 last_err = TimeStampError::Untrusted;
                 continue;
             }
-        }
 
-        log_item!(
-            "",
-            format!("timestamp cert trusted: {}", &common_name),
-            "verify_time_stamp"
-        )
-        .validation_status(TIMESTAMP_TRUSTED)
-        .success(&mut current_validation_log);
+            // Only assert trust when a trust check actually ran. Emitting this
+            // outside the guard claims a trusted timestamp on the
+            // verify_trust == false path, where nothing was evaluated.
+            log_item!(
+                "",
+                format!("timestamp cert trusted: {}", &common_name),
+                "verify_time_stamp"
+            )
+            .validation_status(TIMESTAMP_TRUSTED)
+            .success(&mut current_validation_log);
+        }
 
         // If we find a valid value, we're done.
         validation_log.append(&current_validation_log);
