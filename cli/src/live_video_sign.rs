@@ -152,6 +152,12 @@ fn output_path_for(input_path: &Path, output_dir: &Path) -> Result<PathBuf> {
 ///
 /// If `previous_segment_path` is provided, the sequence number is resumed from
 /// the previous segment's `emsg` box.
+///
+/// If `min_sequence_number` is `None` and this is the first invocation (no
+/// `previous_segment_path`), it's inferred from the first media segment's own
+/// `moof/mfhd.sequence_number` rather than assumed to be 1 — real packagers commonly start a
+/// live stream's sequence numbers elsewhere (e.g. FFmpeg continues counting from stream start,
+/// not from when the signer attaches).
 #[allow(clippy::too_many_arguments)]
 pub fn sign_live_video_vsi(
     segments_dir: &Path,
@@ -162,12 +168,22 @@ pub fn sign_live_video_vsi(
     output_dir: &Path,
     session_key_path: &Path,
     signer: &dyn Signer,
-    min_sequence_number: u64,
+    min_sequence_number: Option<u64>,
 ) -> Result<()> {
     fs::create_dir_all(output_dir)
         .with_context(|| format!("Failed to create output directory: {output_dir:?}"))?;
 
     let session_key = load_ed25519_session_key(session_key_path)?;
+
+    let segment_paths = crate::live_video_common::collect_segments(segments_dir, segments_glob)?;
+
+    // Only meaningful on the first invocation: a resumed session (--previous-segment) restores
+    // its counter from the already-signed init/segment instead, so any value works there.
+    let min_sequence_number = match min_sequence_number {
+        Some(n) => n,
+        None if previous_segment_path.is_some() => 1,
+        None => infer_min_sequence_number(segment_paths.first())?,
+    };
 
     let mut vsi_signer = LiveVideoVsiSigner::from_signing_key(
         manifest_json,
@@ -206,8 +222,6 @@ pub fn sign_live_video_vsi(
         // First invocation: sign the init segment and capture its manifest ID.
         sign_vsi_init_segment(init_path, output_dir, &mut vsi_signer, signer)?;
     }
-
-    let segment_paths = crate::live_video_common::collect_segments(segments_dir, segments_glob)?;
 
     if segment_paths.is_empty() {
         println!(
@@ -294,6 +308,20 @@ fn load_ed25519_session_key(path: &Path) -> Result<Ed25519SessionKey> {
     let mut seed = [0u8; 32];
     seed.copy_from_slice(&bytes);
     Ok(Ed25519SessionKey::from_bytes(&seed))
+}
+
+/// Infers `minSequenceNumber` from `first_segment`'s own `moof/mfhd.sequence_number`, falling
+/// back to 1 if there's no segment yet or it has no `moof` box. `sign_media_segment` cross-checks
+/// every segment's own `mfhd.sequence_number` against the signer's counter (§19.4.1) and errors
+/// on drift, so this must match the very first segment that's about to be signed.
+fn infer_min_sequence_number(first_segment: Option<&PathBuf>) -> Result<u64> {
+    let Some(path) = first_segment else {
+        return Ok(1);
+    };
+    let data = fs::read(path).with_context(|| format!("Cannot read segment: {path:?}"))?;
+    Ok(c2pa::live_video::moof_sequence_number(&data)
+        .map(u64::from)
+        .unwrap_or(1))
 }
 
 #[cfg(test)]

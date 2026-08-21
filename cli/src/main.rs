@@ -379,9 +379,10 @@ enum Commands {
         /// session reuses the already-signed init segment's session key.
         ///
         /// Must match the first media segment's own `moof/mfhd.sequence_number` when one is
-        /// present — many packagers start at 0 rather than 1.
-        #[arg(long = "min-sequence-number", default_value_t = 1)]
-        min_sequence_number: u64,
+        /// present — many packagers start at 0 rather than 1. If omitted, it's inferred from
+        /// that field on the first media segment (most live packagers don't start at 1).
+        #[arg(long = "min-sequence-number")]
+        min_sequence_number: Option<u64>,
     },
 }
 
