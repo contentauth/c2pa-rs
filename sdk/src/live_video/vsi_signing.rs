@@ -173,7 +173,7 @@ impl LiveVideoVsiSigner {
         // it against the segment's own mfhd whenever one is present, rather than silently
         // signing a sequenceNumber that has drifted from the segment actually being signed
         // (e.g. because a segment was skipped, reordered, or duplicated upstream).
-        if let Some(mfhd_sequence_number) = parse_first_moof_sequence_number(segment_data) {
+        if let Some(mfhd_sequence_number) = moof_sequence_number(segment_data) {
             if u64::from(mfhd_sequence_number) != sequence_number {
                 return Err(Error::BadParam(format!(
                     "VSI sequenceNumber ({sequence_number}) does not match the segment's own \
@@ -592,7 +592,11 @@ fn parse_first_moof_duration_ticks(segment_data: &[u8]) -> Option<u32> {
 
 /// Parses `moof/mfhd`'s `sequence_number` field from a media segment, per ISO/IEC 14496-12
 /// §8.8.5. Used to cross-check the signer's own sequence counter (§19.4.1).
-fn parse_first_moof_sequence_number(segment_data: &[u8]) -> Option<u32> {
+///
+/// Public so callers can infer a VSI session's starting `minSequenceNumber` from a live
+/// stream's first segment, rather than assuming the packager starts at 1 (it commonly
+/// doesn't). Returns `None` if the segment has no `moof` box, or `mfhd` is missing/malformed.
+pub fn moof_sequence_number(segment_data: &[u8]) -> Option<u32> {
     let moof = box_payload(find_box(segment_data, b"moof")?);
     let mfhd = box_payload(find_box(moof, b"mfhd")?);
     Some(u32::from_be_bytes(mfhd.get(4..8)?.try_into().ok()?))

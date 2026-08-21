@@ -42,7 +42,7 @@ mod vsi_signing;
 
 pub use ed25519_dalek::SigningKey as Ed25519SessionKey;
 pub use signing::LiveVideoSigner;
-pub use vsi_signing::LiveVideoVsiSigner;
+pub use vsi_signing::{moof_sequence_number, LiveVideoVsiSigner};
 
 use crate::{
     assertions::{LiveVideoSegment, SessionKey, SessionKeys},
