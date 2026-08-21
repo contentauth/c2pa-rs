@@ -142,16 +142,31 @@ pub fn validate_live_video(
     }
 }
 
-/// Returns a description of the first non-passed validation status on `reader`, if any.
+/// Returns a description of the first non-passed *trust/signature* validation status on
+/// `reader`, if any.
 ///
 /// A `Reader` built via `with_stream` can return `Ok` even when the manifest's signature is
 /// invalid or its certificate is untrusted — the SDK logs those as validation statuses rather
 /// than hard errors, so a successful `Result` alone does not mean the manifest is trustworthy.
+///
+/// Only codes in the `signingCredential.*`, `claimSignature.*`, and `timeStamp.*` namespaces are
+/// considered: these are what determine whether the manifest's signature is valid and its signer
+/// trusted (per §19.7.1's "not cryptographically valid and trusted" requirement). Other failed
+/// statuses (e.g. `assertion.action.malformed`) reflect a content/assertion authoring issue in an
+/// otherwise trustworthy manifest and must not block live video continuity validation.
 fn reader_trust_failure(reader: &Reader) -> Option<String> {
+    const TRUST_STATUS_PREFIXES: &[&str] =
+        &["signingCredential.", "claimSignature.", "timeStamp."];
+
     reader
         .validation_status()?
         .iter()
-        .find(|status| !status.passed())
+        .find(|status| {
+            !status.passed()
+                && TRUST_STATUS_PREFIXES
+                    .iter()
+                    .any(|prefix| status.code().starts_with(prefix))
+        })
         .map(|status| {
             format!(
                 "{}{}",
