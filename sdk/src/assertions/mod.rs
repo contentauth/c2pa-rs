@@ -30,7 +30,8 @@ pub use asset_types::{AssetTypeEnum, AssetTypes};
 
 mod bmff_hash;
 pub use bmff_hash::{
-    BmffHash, BmffMerkleMap, DataMap, ExclusionsMap, MerkleMap, SubsetMap, VecByteBuf,
+    BmffHash, BmffMerkleMap, DataMap, ExclusionsMap, MerkleMap, MerkleUuidBoxes, SubsetMap,
+    VecByteBuf,
 };
 
 mod box_hash;
