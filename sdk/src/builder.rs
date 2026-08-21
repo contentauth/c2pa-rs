@@ -5162,6 +5162,110 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "unstable_plain_text")]
+    fn test_builder_sign_plain_text() {
+        let mut source = Cursor::new(b"Plain text provenance, end to end.\n".to_vec());
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
+        builder
+            .add_ingredient_from_stream(parent_json(), "text/plain", &mut source)
+            .unwrap();
+        builder
+            .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
+            .unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        builder
+            .sign(signer.as_ref(), "text/plain", &mut source, &mut dest)
+            .unwrap();
+
+        dest.rewind().unwrap();
+        let manifest_store = Reader::default()
+            .with_stream("text/plain", &mut dest)
+            .unwrap();
+        assert_eq!(
+            manifest_store.validation_state(),
+            ValidationState::Trusted,
+            "signed text/plain did not validate as Trusted"
+        );
+        assert_eq!(
+            manifest_store.active_manifest().unwrap().title().unwrap(),
+            "Test_Manifest"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "unstable_plain_text")]
+    fn test_tampered_plain_text_fails_validation() {
+        let mut source = Cursor::new(b"Original TAMPER_ME body.\n".to_vec());
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
+        builder
+            .add_ingredient_from_stream(parent_json(), "text/plain", &mut source)
+            .unwrap();
+        builder
+            .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
+            .unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+        builder
+            .sign(signer.as_ref(), "text/plain", &mut source, &mut dest)
+            .unwrap();
+
+        // Same-length replacement keeps the wrapper's byte offset stable, so only the
+        // visible content changes.
+        let signed = String::from_utf8(dest.into_inner()).unwrap();
+        let tampered = signed.replace("TAMPER_ME", "tampered!");
+        assert_ne!(tampered, signed, "replacement must change the bytes");
+
+        let mut tampered_stream = Cursor::new(tampered.into_bytes());
+        let manifest_store = Reader::default()
+            .with_stream("text/plain", &mut tampered_stream)
+            .unwrap();
+        assert_ne!(
+            manifest_store.validation_state(),
+            ValidationState::Trusted,
+            "tampered plain text must not validate as Trusted"
+        );
+    }
+
+    /// The reason `PlainTextIO::write_cai` normalizes to NFC before embedding: content
+    /// that arrives decomposed (NFD) must still sign and validate as `Trusted`, proving
+    /// the generic raw-byte hash engine agrees with the A.8-mandated NFC hash end to end
+    /// (asset_handlers::plain_text_io has the unit-level version of this argument).
+    #[test]
+    #[cfg(feature = "unstable_plain_text")]
+    fn test_builder_sign_plain_text_nfd_input_validates_trusted() {
+        // "café" written NFD: 'e' + U+0301 combining acute accent, instead of precomposed é.
+        let nfd_source = "cafe\u{0301} notes, decomposed on disk.\n";
+        let mut source = Cursor::new(nfd_source.as_bytes().to_vec());
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
+        builder
+            .add_ingredient_from_stream(parent_json(), "text/plain", &mut source)
+            .unwrap();
+        builder
+            .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
+            .unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+        builder
+            .sign(signer.as_ref(), "text/plain", &mut source, &mut dest)
+            .unwrap();
+
+        dest.rewind().unwrap();
+        let manifest_store = Reader::default()
+            .with_stream("text/plain", &mut dest)
+            .unwrap();
+        assert_eq!(
+            manifest_store.validation_state(),
+            ValidationState::Trusted,
+            "NFD-decomposed input must still validate as Trusted"
+        );
+    }
+
+    #[test]
     #[cfg(feature = "file_io")]
     fn test_builder_sign_assets() {
         const TESTFILES: &[&str] = &[
