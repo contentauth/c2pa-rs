@@ -3206,3 +3206,24 @@ pub mod tests {
     }
 }
 */
+
+#[cfg(test)]
+mod bmff_version_tests {
+    #![allow(clippy::unwrap_used)]
+
+    use crate::{assertion::AssertionCbor, assertions::BmffHash};
+
+    #[test]
+    fn bmff_hash_assertion_label_uses_v3() {
+        let bmff_hash = BmffHash::new("", "sha256", None);
+        let assertion = bmff_hash.to_cbor_assertion().unwrap();
+
+        // §19.3 requires c2pa.hash.bmff.v3 (version 3 introduced exclusive
+        // hashing semantics for live video). Guard against regressions to v2.
+        assert_eq!(
+            assertion.label(),
+            "c2pa.hash.bmff.v3",
+            "BmffHash must use assertion creation version 3"
+        );
+    }
+}
