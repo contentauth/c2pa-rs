@@ -135,16 +135,10 @@ impl ValidationResults {
         // Filter out any status that is already captured in an ingredient assertion.
         // There is always an active manifest in a manifest store; ensure active_manifest is set
         // so serialization (e.g. crJSON) always includes activeManifest when validationResults exist.
-        if let Some(claim) = store.provenance_claim() {
+        if store.provenance_claim().is_some() {
             let _ = results
                 .active_manifest
                 .get_or_insert_with(StatusCodes::default);
-            let active_manifest = Some(claim.label().to_string());
-
-            // This closure returns true if the URI references the store's active manifest.
-            let is_active_manifest = |uri: Option<&str>| {
-                uri.is_some_and(|uri| manifest_label_from_uri(uri) == active_manifest)
-            };
 
             // Returns a flat list of validation statuses from the ingredient with absolute URIs.
             let get_statuses = |i: Ingredient| {
@@ -187,7 +181,7 @@ impl ValidationResults {
 
             // We only need to do the more detailed filtering if there are any status
             // reports that reference ingredients.
-            if statuses.iter().any(|s| !is_active_manifest(s.url())) {
+            if statuses.iter().any(|s| s.ingredient_uri().is_some()) {
                 // Collect all the ValidationStatus records from all the ingredients in the store.
                 // Since we need to process v1,v2 and v3 ingredients, we process all in the same format.
                 let ingredient_statuses: Vec<ValidationStatus> = store
@@ -199,9 +193,20 @@ impl ValidationResults {
                     .flatten()
                     .collect();
 
-                // Filter statuses to only contain those from the active manifest and those not found in any ingredient.
+                // Keep a status if it belongs to the active manifest, or if no ingredient has
+                // attested an identical one; drop only ingredient statuses that duplicate an
+                // attestation.
+                //
+                // Active-manifest membership is decided by `ingredient_uri`, which the status
+                // tracker sets only while inside an ingredient's recursive-validation scope. A
+                // `None` value therefore reliably identifies a status the validator produced for
+                // the active manifest itself, and cannot be influenced by ingredient assertion
+                // content. Deciding membership by parsing the status URL would be unsafe: an
+                // active-manifest failure can carry the bare manifest-label form (`urn:c2pa:...`),
+                // which does not resolve to the active manifest, so it would be misclassified as
+                // an ingredient status and could be cancelled by a matching attestation.
                 statuses.retain(|s| {
-                    is_active_manifest(s.url()) || !ingredient_statuses.iter().any(|i| i == s)
+                    s.ingredient_uri().is_none() || !ingredient_statuses.iter().any(|i| i == s)
                 })
             }
             for status in statuses {
@@ -1141,9 +1146,9 @@ pub mod tests {
         jumbf::labels,
         log_item,
         validation_status::{
-            ASSERTION_DATAHASH_MISMATCH, ASSERTION_HASHEDURI_MISMATCH, CLAIM_MALFORMED,
-            CLAIM_SIGNATURE_INSIDE_VALIDITY, CLAIM_SIGNATURE_VALIDATED, SIGNING_CREDENTIAL_TRUSTED,
-            SIGNING_CREDENTIAL_UNTRUSTED,
+            ASSERTION_ACTION_MALFORMED, ASSERTION_DATAHASH_MISMATCH, ASSERTION_HASHEDURI_MISMATCH,
+            CLAIM_MALFORMED, CLAIM_SIGNATURE_INSIDE_VALIDITY, CLAIM_SIGNATURE_VALIDATED,
+            SIGNING_CREDENTIAL_TRUSTED, SIGNING_CREDENTIAL_UNTRUSTED,
         },
         HashedUri, Relationship,
     };
@@ -1527,5 +1532,96 @@ pub mod tests {
 
         // check that there are no failures since they were attested to
         assert!(delta_failures.is_empty());
+    }
+
+    #[test]
+    fn from_store_ingredient_cannot_suppress_active_manifest_failure() {
+        // CAI-12751: an attacker-authored ingredient assertion must not be able to cancel a
+        // genuine failure of the *active* manifest by attesting a status with the same
+        // code + url. The active manifest's failure is logged against its bare claim label
+        // (`urn:c2pa:...`) with no `ingredient_uri`, so it must survive de-duplication
+        // against ingredient-attested statuses (whereas the sibling test above confirms a
+        // genuinely ingredient-scoped failure is still deduped).
+
+        let mut outer_claim = Claim::new("test-generator", None, 2);
+        let outer_label = outer_claim.label().to_string();
+
+        // Attacker plants a validation status inside an ingredient that "attests" the exact
+        // failure (code + url) the active manifest will produce live during validation.
+        let mut attested = ValidationResults::default();
+        attested.add_status(
+            ValidationStatus::new_failure(ASSERTION_ACTION_MALFORMED).set_url(&outer_label),
+        );
+        let inner_manifest_uri = labels::to_manifest_uri("urn:uuid:inner-test");
+        let ingredient = Ingredient {
+            relationship: Relationship::ComponentOf,
+            version: 3,
+            active_manifest: Some(HashedUri::new(
+                inner_manifest_uri,
+                Some("sha256".into()),
+                &[0u8; 32],
+            )),
+            validation_results: Some(attested),
+            ..Default::default()
+        };
+        outer_claim.add_assertion(&ingredient).unwrap();
+
+        let mut store = Store::new();
+        store.insert_restored_claim(outer_label.clone(), outer_claim);
+
+        let mut tracker = StatusTracker::default();
+
+        // Active-manifest signature checks pass, so the malformed-actions failure is the only
+        // thing keeping this asset out of the `Valid` state.
+        log_item!(outer_label.clone(), "claim signature valid", "verify")
+            .validation_status(CLAIM_SIGNATURE_VALIDATED)
+            .success(&mut tracker);
+        log_item!(
+            outer_label.clone(),
+            "claim signature inside validity",
+            "verify"
+        )
+        .validation_status(CLAIM_SIGNATURE_INSIDE_VALIDITY)
+        .success(&mut tracker);
+
+        // A benign ingredient-scoped status ensures the de-duplication path actually runs (it
+        // only runs when some status references an ingredient), so this test exercises the
+        // retain filter rather than the early-out.
+        let ingredient_uri = labels::to_assertion_uri(&outer_label, assertions::labels::INGREDIENT);
+        tracker.push_ingredient_uri(ingredient_uri.clone());
+        log_item!(
+            ingredient_uri.clone(),
+            "ingredient signature valid",
+            "verify"
+        )
+        .validation_status(CLAIM_SIGNATURE_VALIDATED)
+        .success(&mut tracker);
+        tracker.pop_ingredient_uri();
+
+        // The genuine active-manifest failure, logged against the bare claim label with no
+        // ingredient_uri — the exact status the attacker's attestation tries to cancel.
+        let _ = log_item!(
+            outer_label.clone(),
+            "first action must be created or opened",
+            "verify_actions"
+        )
+        .validation_status(ASSERTION_ACTION_MALFORMED)
+        .failure(&mut tracker, "malformed actions");
+
+        let results = ValidationResults::from_store(&store, &tracker);
+
+        // The active-manifest failure must be retained (not suppressed by the ingredient)...
+        let active_failures: Vec<&str> = results
+            .active_manifest
+            .as_ref()
+            .map(|sc| sc.failure().iter().map(|s| s.code()).collect())
+            .unwrap_or_default();
+        assert!(
+            active_failures.contains(&ASSERTION_ACTION_MALFORMED),
+            "active-manifest failure was suppressed by ingredient attestation: {active_failures:?}"
+        );
+
+        // ...so the overall state stays Invalid rather than being upgraded to Valid.
+        assert_eq!(results.validation_state(), ValidationState::Invalid);
     }
 }
