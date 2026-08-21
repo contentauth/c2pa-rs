@@ -249,6 +249,12 @@ pub const ARCHIVE_TYPE_INGREDIENT: &str = "ingredient";
 #[cfg(feature = "unstable_live_video")]
 pub const LIVE_VIDEO_SEGMENT: &str = "c2pa.livevideo.segment";
 
+/// Label for a session keys assertion used in the Verifiable Segment Info live video method.
+///
+/// See [Session Keys - C2PA Technical Specification section 18.25](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_session_keys).
+#[cfg(feature = "unstable_live_video")]
+pub const SESSION_KEYS: &str = "c2pa.session-keys";
+
 /// Continuity method identifier for manifest-ID-based segment linking.
 ///
 /// When a `LiveVideoSegment` uses this method, it must include a `previous_manifest_id` field.

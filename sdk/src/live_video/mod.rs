@@ -11,13 +11,17 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! Support for C2PA Live Video validation (section 19 of the C2PA Technical Specification).
+//! Support for C2PA Live Video signing and validation (section 19 of the C2PA Technical Specification).
 //!
-//! Implements the per-segment C2PA Manifest Box method ([Section 19.3]): each segment
-//! carries its own C2PA Manifest with a [`LiveVideoSegment`] assertion. Use
-//! [`LiveVideoValidator::validate_media_segment`].
+//! Implements two validation methods:
 //!
-//! [Section 19.3]: https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#using_c2pa_manifest_box
+//! - **Section 19.3** (per-segment C2PA Manifest Box): each segment carries its own C2PA
+//!   Manifest with a [`LiveVideoSegment`] assertion. Use [`LiveVideoValidator::validate_media_segment`].
+//!
+//! - **Section 19.4** (Verifiable Segment Info): the init segment manifest contains a
+//!   [`crate::assertions::SessionKeys`] assertion; each media segment carries a COSE_Sign1 in
+//!   an `emsg` box. Use [`LiveVideoValidator::validate_session_keys`] and
+//!   [`LiveVideoValidator::validate_verifiable_segment_info`].
 //!
 //! # Signing
 //!
@@ -29,19 +33,25 @@
 //!
 //! See [C2PA Technical Specification - Live Video](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#live-video).
 
+pub(crate) mod cose_key;
 mod segment_manifest_validation;
+mod session_key_validation;
 mod signing;
 pub mod verifiable_segment_info;
 
 pub use signing::LiveVideoSigner;
 
 use crate::{
-    assertions::LiveVideoSegment,
+    assertions::{LiveVideoSegment, SessionKey, SessionKeys},
     error::{Error, Result},
     log_item,
     status_tracker::StatusTracker,
-    validation_results::validation_codes::{LIVEVIDEO_INIT_INVALID, LIVEVIDEO_MANIFEST_INVALID},
+    validation_results::validation_codes::{
+        LIVEVIDEO_INIT_INVALID, LIVEVIDEO_MANIFEST_INVALID, LIVEVIDEO_SESSIONKEY_INVALID,
+    },
 };
+
+use self::cose_key::kid_from_cose_key;
 
 /// Builds a [`crate::Context`] from thread-local settings, for callers ([`LiveVideoSigner`],
 /// [`LiveVideoVsiSigner`]) that don't yet take an explicit `Context`.
@@ -78,18 +88,31 @@ struct SegmentState {
 
 /// Validates a sequence of live video segments against C2PA section 19 rules.
 ///
-/// Supports section [19.3] (per-segment C2PA Manifest Box). Create one instance per live
-/// stream.
+/// Supports section [19.3] (per-segment C2PA Manifest Box) and section [19.4] (Verifiable
+/// Segment Info). Create one instance per live stream; for 19.4 call
+/// [`validate_session_keys`] after [`validate_init_segment`].
 ///
 /// [19.3]: https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#using_c2pa_manifest_box
+/// [19.4]: https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#verifiable_segment_info
+/// [`validate_session_keys`]: LiveVideoValidator::validate_session_keys
+/// [`validate_init_segment`]: LiveVideoValidator::validate_init_segment
 pub struct LiveVideoValidator {
     previous_segment: Option<SegmentState>,
+    session_keys: Vec<SessionKey>,
+    /// The manifest identifier (c2pa URN label) of the trusted manifest that carried the
+    /// `c2pa.session-keys` assertion, captured by [`validate_session_keys`]. Every VSI
+    /// segment's `manifestId` is checked against this (§19.4.4).
+    ///
+    /// [`validate_session_keys`]: LiveVideoValidator::validate_session_keys
+    expected_manifest_id: Option<String>,
 }
 
 impl LiveVideoValidator {
     pub fn new() -> Self {
         Self {
             previous_segment: None,
+            session_keys: Vec::new(),
+            expected_manifest_id: None,
         }
     }
 
@@ -171,6 +194,117 @@ impl LiveVideoValidator {
             sequence_number: assertion.sequence_number,
             stream_id: assertion.stream_id.clone(),
             manifest_id: manifest_id.to_string(),
+        });
+
+        Ok(())
+    }
+
+    /// Validates a `c2pa.session-keys` assertion and stores the keys for VSI verification ([§19.4]).
+    ///
+    /// `ee_cert_der` must be the DER-encoded end-entity certificate of the *trusted* manifest
+    /// signer that carried this assertion; each key's `signerBinding` COSE_Sign1 is verified
+    /// against it ([§19.7.3]). Per §19.7.3, a key whose `signerBinding` does not verify shall
+    /// not be used to validate any media segment — if `ee_cert_der` is `None` (the caller could
+    /// not obtain a trusted certificate), no key in this assertion can be verified, so all keys
+    /// are rejected rather than accepted unchecked.
+    ///
+    /// `manifest_id` is the c2pa URN label of that same trusted manifest; every subsequent VSI
+    /// segment's `manifestId` is checked against it ([§19.4.4]).
+    ///
+    /// [§19.4]: https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#verifiable_segment_info
+    /// [§19.4.4]: https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_manifest_retrieval_from_the_manifestid_field
+    /// [§19.7.3]: https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_verifiable_segment_info_validation
+    pub fn validate_session_keys(
+        &mut self,
+        assertion: &SessionKeys,
+        manifest_id: &str,
+        ee_cert_der: Option<&[u8]>,
+        tracker: &mut StatusTracker,
+    ) -> Result<()> {
+        if assertion.keys.is_empty() {
+            return fail_validation(
+                "session-keys assertion must contain at least one key",
+                LIVEVIDEO_SESSIONKEY_INVALID,
+                tracker,
+            );
+        }
+
+        let Some(cert) = ee_cert_der else {
+            return fail_validation(
+                "cannot verify session key signerBinding without the manifest signer's \
+                 end-entity certificate; per §19.7.3 a key that cannot be verified shall not \
+                 be used",
+                LIVEVIDEO_SESSIONKEY_INVALID,
+                tracker,
+            );
+        };
+
+        let mut verified_keys = Vec::with_capacity(assertion.keys.len());
+        for key in &assertion.keys {
+            if kid_from_cose_key(&key.key).is_none() {
+                return fail_validation(
+                    "session key COSE_Key must include a kid (key identifier)",
+                    LIVEVIDEO_SESSIONKEY_INVALID,
+                    tracker,
+                );
+            }
+
+            if key.validity_period == 0 {
+                return fail_validation(
+                    "session key validityPeriod must be greater than zero",
+                    LIVEVIDEO_SESSIONKEY_INVALID,
+                    tracker,
+                );
+            }
+
+            // Per §19.7.3, a key whose signerBinding fails to verify shall not be used to
+            // validate any media segment, so it must not be added to `verified_keys` below.
+            if !self.verify_signer_binding(key, cert, tracker)? {
+                continue;
+            }
+
+            verified_keys.push(key.clone());
+        }
+
+        self.session_keys = verified_keys;
+        self.expected_manifest_id = Some(manifest_id.to_string());
+        Ok(())
+    }
+
+    /// Validates a media segment using the Verifiable Segment Info method ([§19.4]).
+    ///
+    /// [§19.4]: https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#verifiable_segment_info
+    pub fn validate_verifiable_segment_info(
+        &mut self,
+        segment_data: &[u8],
+        tracker: &mut StatusTracker,
+    ) -> Result<()> {
+        self.require_session_keys(tracker)?;
+        let parsed = self.extract_and_parse_vsi(segment_data, tracker)?;
+        let session_key = self.resolve_session_key(&parsed.sign1, tracker)?;
+        let seq_num = parsed.segment_info_map.sequence_number;
+
+        // See the comment in `validate_media_segment`: `fail_validation` logs a failure but
+        // still returns `Ok(())` under the default tracker, so these `?` calls do not
+        // short-circuit on failure. Snapshot the failure count so a failed segment doesn't
+        // become the trusted continuity baseline for the next one.
+        let failures_before = tracker.filter_errors().count();
+
+        self.validate_vsi_manifest_id(&parsed.segment_info_map.manifest_id, tracker)?;
+        self.validate_vsi_sequence_bounds(seq_num, &session_key, tracker)?;
+        self.validate_vsi_key_validity(&session_key, &parsed.sign1, tracker)?;
+        self.validate_vsi_signature(&parsed.sign1, &session_key, tracker)?;
+        self.validate_vsi_sequence_continuity(seq_num, tracker)?;
+        self.validate_vsi_bmff_hash(segment_data, &parsed.segment_info_map.bmff_hash, tracker)?;
+
+        if tracker.filter_errors().count() > failures_before {
+            return Ok(());
+        }
+
+        self.previous_segment = Some(SegmentState {
+            sequence_number: seq_num,
+            stream_id: String::new(),
+            manifest_id: parsed.segment_info_map.manifest_id.clone(),
         });
 
         Ok(())
