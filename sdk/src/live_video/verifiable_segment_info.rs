@@ -25,8 +25,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Error, HashedUri, Result};
 
-const VSI_SCHEME_ID_URI: &str = "urn:c2pa:verifiable-segment-info";
+pub(super) const VSI_SCHEME_ID_URI: &str = "urn:c2pa:verifiable-segment-info";
 const VSI_VALUE_FSEG: &str = "fseg";
+
+/// Byte offset of the `scheme_id_uri` field from the start of an ISO BMFF `emsg`
+/// box (8-byte BMFF header + 4-byte FullBox version/flags header).
+pub(super) const VSI_URI_OFFSET_IN_EMSG: u64 = 12;
 
 /// CBOR `segment-info-map` payload of the COSE_Sign1 in a VSI `emsg` box ([§19.4]).
 ///

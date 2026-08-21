@@ -1114,6 +1114,13 @@ pub mod validation_codes {
     #[cfg(feature = "unstable_live_video")]
     pub const LIVEVIDEO_INIT_INVALID: &str = "livevideo.init.invalid";
 
+    /// A session key in the `c2pa.session-keys` assertion is invalid (e.g.,
+    /// `signerBinding` verification failed or required fields are absent).
+    ///
+    /// See [Session Keys - C2PA Technical Specification section 18.25](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_session_keys).
+    #[cfg(feature = "unstable_live_video")]
+    pub const LIVEVIDEO_SESSIONKEY_INVALID: &str = "livevideo.sessionkey.invalid";
+
     /// Returns `true` if the status code is a known C2PA success status code.
     ///
     /// Returns `false` if the status code is a known C2PA failure status
