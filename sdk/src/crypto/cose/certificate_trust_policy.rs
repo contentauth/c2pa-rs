@@ -844,6 +844,37 @@ zGxQnM2hCA==
         );
     }
 
+    /// An intermediate CA certificate must be held to the same validity-period
+    /// requirement as the leaf. Without a trusted timestamp, a manifest whose
+    /// intermediate has expired must not be reported as trusted just because
+    /// the leaf itself looks fine - `check_certificate_profile` only ever
+    /// examines the leaf, so this check has to happen in
+    /// `check_certificate_trust` (both backends) instead.
+    #[test]
+    fn test_intermediate_validity_is_checked() {
+        let mut ctp = CertificateTrustPolicy::new();
+        ctp.add_trust_anchors(include_bytes!(
+            "../../../tests/fixtures/crypto/cose/chain_trust_root.pub"
+        ))
+        .unwrap();
+
+        // Positive case: a currently-valid, properly-signed intermediate
+        // must still verify (don't over-block legitimate chains).
+        let valid_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/cose/chain_trust_valid.pub"
+        ));
+        ctp.check_certificate_trust(&valid_certs[1..], &valid_certs[0], None)
+            .expect("a currently-valid, properly-signed intermediate should be trusted");
+
+        // An expired intermediate must be rejected even though the leaf
+        // itself is still within its own validity window.
+        let expired_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/cose/chain_trust_expired_intermediate.pub"
+        ));
+        ctp.check_certificate_trust(&expired_certs[1..], &expired_certs[0], None)
+            .expect_err("an expired intermediate CA certificate must not be trusted");
+    }
+
     #[test]
     fn test_user_trust_store() {
         let ctp = CertificateTrustPolicy::default();
