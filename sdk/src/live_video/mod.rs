@@ -38,8 +38,11 @@ mod segment_manifest_validation;
 mod session_key_validation;
 mod signing;
 pub mod verifiable_segment_info;
+mod vsi_signing;
 
+pub use ed25519_dalek::SigningKey as Ed25519SessionKey;
 pub use signing::LiveVideoSigner;
+pub use vsi_signing::LiveVideoVsiSigner;
 
 use crate::{
     assertions::{LiveVideoSegment, SessionKey, SessionKeys},
