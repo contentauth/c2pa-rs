@@ -46,6 +46,12 @@ use url::Url;
 use crate::info::info;
 
 mod info;
+#[cfg(feature = "unstable_live_video")]
+mod live_video;
+#[cfg(feature = "unstable_live_video")]
+mod live_video_common;
+#[cfg(feature = "unstable_live_video")]
+mod live_video_sign;
 mod tree;
 
 mod signer;
@@ -277,6 +283,105 @@ enum Commands {
         /// Exit with an error (for testing failure paths).
         #[arg(long)]
         fail: bool,
+    },
+
+    /// Validate a live video stream against C2PA section 19 (Live Video) rules
+    /// (https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#live-video).
+    ///
+    /// The path argument is the initialization segment. The validation method is detected
+    /// automatically from the init segment's manifest: if it contains a `c2pa.session-keys`
+    /// assertion, segments are validated using section 19.4 (Verifiable Segment Info);
+    /// otherwise each media segment must embed its own C2PA Manifest with a
+    /// `c2pa.livevideo.segment` assertion (section 19.3, per-segment C2PA Manifest Box).
+    /// Segments are discovered via the `--segments_glob` pattern (relative to the init
+    /// segment's directory) and validated in natural (numeric-aware) filename order.
+    ///
+    /// Example:
+    ///
+    ///   c2patool init.mp4 live-video --segments_glob "segment_*.m4s"
+    ///
+    /// NOTE: Quote glob patterns to prevent shell expansion.
+    #[cfg(feature = "unstable_live_video")]
+    LiveVideo {
+        /// Glob pattern to find the media segments. The search path is automatically set to be the
+        /// same directory as the init segment.
+        ///
+        /// The pattern should match only file names, not full paths (e.g. "segment_*[0-9].m4s").
+        #[arg(long = "segments_glob", verbatim_doc_comment)]
+        segments_glob: Option<PathBuf>,
+    },
+
+    /// Sign a live video stream using the per-segment C2PA Manifest Box method (C2PA section 19.3).
+    ///
+    /// The path argument is the directory containing the media segments. Each segment is signed
+    /// independently with its own C2PA Manifest containing a `c2pa.livevideo.segment` assertion.
+    /// Segments are discovered via `--segments_glob` and processed in natural (numeric-aware)
+    /// filename order. Signed files are written to `--output`.
+    ///
+    /// Signing the init segment is optional (per §19.2.3). Pass `--init` to sign it too.
+    ///
+    /// Example (segments only):
+    ///
+    ///   c2patool /streams/live -m manifest.json -o output/ --segments_glob "segment_*.m4s"
+    ///
+    /// Example (with init segment):
+    ///
+    ///   c2patool /streams/live -m manifest.json -o output/ --segments_glob "segment_*.m4s" --init init.mp4
+    ///
+    /// NOTE: Quote glob patterns to prevent shell expansion.
+    /// NOTE: The manifest JSON must include a 'c2pa.livevideo.segment' assertion with 'streamId'.
+    #[cfg(feature = "unstable_live_video")]
+    LiveVideoSign {
+        /// Glob pattern to find the media segments to sign.
+        ///
+        /// The pattern should match only file names, not full paths (e.g. "segment_*[0-9].m4s").
+        #[arg(long = "segments_glob", verbatim_doc_comment)]
+        segments_glob: PathBuf,
+
+        /// Path to the output directory where signed segments will be written.
+        #[arg(long = "output", short = 'o')]
+        output: PathBuf,
+
+        /// Path to the manifest definition JSON file.
+        #[arg(long = "manifest", short = 'm')]
+        manifest: PathBuf,
+
+        /// Optional path to an init segment to sign (§19.2.3). Resolved relative to the path
+        /// argument if not absolute.
+        #[arg(long = "init")]
+        init: Option<PathBuf>,
+
+        /// Optional path to the last signed media segment from a previous invocation.
+        /// Used to resume the continuity chain across separate process runs.
+        ///
+        /// When using --method vsi, providing this flag skips re-signing the init segment.
+        /// The already-signed init must be present in the output directory (written by the
+        /// first invocation). This preserves the same manifestId across all segments.
+        #[arg(long = "previous-segment")]
+        previous_segment: Option<PathBuf>,
+
+        /// Signing method to use: "manifest" (§19.3, default) or "vsi" (§19.4).
+        ///
+        /// - manifest: each segment carries its own C2PA Manifest Box.
+        /// - vsi: each segment carries a COSE_Sign1 emsg box; the init segment is required.
+        #[arg(long = "method", default_value = "manifest")]
+        method: String,
+
+        /// Path to an Ed25519 session key file (raw 32-byte seed).
+        /// Required when using --method vsi. The same key must be used across all
+        /// invocations for a given live video session.
+        #[arg(long = "session-key")]
+        session_key: Option<PathBuf>,
+
+        /// The first `sequenceNumber`/`moof/mfhd.sequence_number` valid for this VSI session
+        /// key (§18.25.2's `minSequenceNumber`). Only used with --method vsi on the first
+        /// invocation (i.e. without --previous-segment); ignored otherwise, since a resumed
+        /// session reuses the already-signed init segment's session key.
+        ///
+        /// Must match the first media segment's own `moof/mfhd.sequence_number` when one is
+        /// present — many packagers start at 0 rather than 1.
+        #[arg(long = "min-sequence-number", default_value_t = 1)]
+        min_sequence_number: u64,
     },
 }
 
@@ -1054,6 +1159,92 @@ fn main() -> Result<()> {
     // configure the SDK
     let mut settings = configure_sdk(&args).context("Could not configure c2pa-rs")?;
     let context = Arc::new(C2paContext::new().with_settings(&settings)?);
+
+    #[cfg(feature = "unstable_live_video")]
+    {
+        if let Some(Commands::LiveVideo {
+            segments_glob: Some(sg),
+        }) = &args.command
+        {
+            return live_video::validate_live_video(&context, path, sg);
+        } else if matches!(
+            &args.command,
+            Some(Commands::LiveVideo {
+                segments_glob: None
+            })
+        ) {
+            bail!("segments_glob must be set for the live-video subcommand");
+        }
+
+        if let Some(Commands::LiveVideoSign {
+            segments_glob,
+            output,
+            manifest,
+            init,
+            previous_segment,
+            method,
+            session_key,
+            min_sequence_number,
+        }) = &args.command
+        {
+            let manifest_json = std::fs::read_to_string(manifest)
+                .with_context(|| format!("Failed to read manifest file: {manifest:?}"))?;
+            let sign_config = signer::SignConfig::from_json(&manifest_json)?;
+            let sign_config_signer;
+            let signer: &dyn Signer = match context.signer() {
+                Ok(s) => s,
+                Err(Error::MissingSignerSettings) => {
+                    sign_config_signer = sign_config.signer()?;
+                    sign_config_signer.as_ref()
+                }
+                Err(err) => return Err(err.into()),
+            };
+
+            if method == "vsi" {
+                let init_path = match init.as_deref() {
+                    Some(p) => {
+                        if p.is_absolute() {
+                            p.to_path_buf()
+                        } else {
+                            path.join(p)
+                        }
+                    }
+                    None => bail!("--init is required when using --method vsi"),
+                };
+                let session_key_path = session_key
+                    .as_deref()
+                    .ok_or_else(|| anyhow!("--session-key is required when using --method vsi"))?;
+                return live_video_sign::sign_live_video_vsi(
+                    path,
+                    segments_glob,
+                    &init_path,
+                    previous_segment.as_deref(),
+                    &manifest_json,
+                    output,
+                    session_key_path,
+                    signer,
+                    *min_sequence_number,
+                );
+            }
+
+            let init_path = init.as_deref().map(|p| {
+                if p.is_absolute() {
+                    p.to_path_buf()
+                } else {
+                    path.join(p)
+                }
+            });
+            return live_video_sign::sign_live_video(
+                path,
+                segments_glob,
+                init_path.as_deref(),
+                previous_segment.as_deref(),
+                &manifest_json,
+                output,
+                signer,
+            );
+        }
+    }
 
     // Remove manifest needs to also remove XMP provenance
     // if args.remove_manifest {

@@ -29,6 +29,8 @@ pub fn extension_to_mime(extension: &str) -> Option<&'static str> {
         "heif" => "image/heif",
         "mp2" | "mpa" | "mpe" | "mpeg" | "mpg" | "mpv2" => "video/mpeg",
         "mp4" => "video/mp4",
+        #[cfg(feature = "unstable_live_video")]
+        "m4s" => "video/mp4",
         "avi" => "video/avi",
         "avif" => "image/avif",
         "mov" | "qt" => "video/quicktime",
@@ -85,6 +87,8 @@ pub fn format_to_extension(format: &str) -> Option<&'static str> {
         "heif" | "image/heif" => "heif",
         "mp2" | "mpa" | "mpe" | "mpeg" | "mpg" | "mpv2" | "video/mpeg" => "mp2",
         "mp4" | "video/mp4" => "mp4",
+        #[cfg(feature = "unstable_live_video")]
+        "m4s" | "video/iso.segment" => "m4s",
         "avif" | "image/avif" => "avif",
         "avi" | "video/avi" => "avi",
         "mov" | "qt" | "video/quicktime" => "mov",
