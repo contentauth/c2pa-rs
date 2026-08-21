@@ -472,7 +472,7 @@ impl SettingsValidate for ActionsSettings {
 pub enum TimeStampFetchScope {
     /// Fetch timestamps for only the parent manifest.
     Parent,
-    /// Fetch timestmaps for all manifests in the manifest store.
+    /// Fetch timestamps for all manifests in the manifest store.
     All,
 }
 
@@ -604,15 +604,18 @@ pub struct BuilderSettings {
     ///
     /// [`TimeStamp`]: crate::assertions::TimeStamp
     pub auto_timestamp_assertion: TimeStampSettings,
-    /// Whether to ignore errors encountered while loading or validating an ingredient's
-    /// manifest (e.g. a remote manifest that couldn't be fetched, or an invalid file format).
+    /// Whether to ignore errors encountered while loading or validating an [`Ingredient`]'s
+    /// manifest (e.g. a remote manifest that couldn't be fetched, or a invalid file format).
     ///
     /// The default value is false.
     ///
     /// <div class="warning">
-    /// When enabled, an ingredient whose manifest can't be loaded or validated is returned
-    /// with no validation status or validation results set, instead of failing.
+    /// When enabled, an ingredient whose manifest can't be loaded is returned with no manifest
+    /// instead of failing (no `active_manifest`, `manifest_data`, or validation status/results).
+    /// See [#2327](https://github.com/contentauth/c2pa-rs/issues/2327).
     /// </div>
+    ///
+    /// [`Ingredient`]: crate::Ingredient
     pub ignore_ingredient_errors: bool,
 }
 
