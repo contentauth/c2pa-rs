@@ -22,7 +22,7 @@ use png_pong::chunk::InternationalText;
 use serde_bytes::ByteBuf;
 
 use crate::{
-    assertions::{BoxMap, C2PA_BOXHASH},
+    assertions::{AllowedExclusion, BoxMap, ExclusionKind, C2PA_BOXHASH},
     asset_io::{
         rename_or_move, AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
         ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
@@ -681,6 +681,30 @@ impl RemoteRefEmbed for PngIO {
     }
 }
 
+// A PNG chunk's `range_len` covers the 4-byte length field, 4-byte type, the
+// chunk data, and the trailing 4-byte CRC - `range_start` points at the
+// length field, not the data. The CRC covers the type and data fields (not
+// length), so it must change if the data does - the excludable range has to
+// include it too, or any legitimate metadata edit (which necessarily also
+// updates the CRC) would leave the new CRC bytes hashed and fail
+// verification. So a chunk's own excludable range is `[8, range_len)`,
+// box-relative: skip only the 8-byte length+type header.
+fn classify_png_allowed_exclusions(name: &str, range_len: u64) -> Vec<AllowedExclusion> {
+    match name {
+        C2PA_BOXHASH => vec![AllowedExclusion {
+            start: 0,
+            length: range_len,
+            kind: ExclusionKind::ManifestOrPadding,
+        }],
+        "eXIf" | "iTXt" | "tEXt" | "zTXt" => vec![AllowedExclusion {
+            start: 8,
+            length: range_len.saturating_sub(8),
+            kind: ExclusionKind::AssetMetadata,
+        }],
+        _ => Vec::new(),
+    }
+}
+
 impl AssetBoxHash for PngIO {
     fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
         input_stream.rewind()?;
@@ -697,6 +721,8 @@ impl AssetBoxHash for PngIO {
             alg: None,
             hash: ByteBuf::from(Vec::new()),
             excluded: None,
+            exclusions: None,
+            allowed_exclusions: classify_png_allowed_exclusions("PNGh", 8),
             pad: ByteBuf::from(Vec::new()),
             range_start: 0,
             range_len: 8,
@@ -707,14 +733,17 @@ impl AssetBoxHash for PngIO {
         for pc in ps.into_iter() {
             // add special C2PA box
             if pc.name == CAI_CHUNK {
+                let range_len = pc.length as u64 + 12; // length(4) + name(4) + crc(4)
                 let c2pa_bm = BoxMap {
                     names: vec![C2PA_BOXHASH.to_string()],
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     excluded: None,
+                    exclusions: None,
+                    allowed_exclusions: classify_png_allowed_exclusions(C2PA_BOXHASH, range_len),
                     pad: ByteBuf::from(Vec::new()),
                     range_start: pc.start,
-                    range_len: pc.length as u64 + 12, // length(4) + name(4) + crc(4)
+                    range_len,
                 };
                 box_maps.push(c2pa_bm);
                 continue;
@@ -723,14 +752,18 @@ impl AssetBoxHash for PngIO {
             // all other chunks
             let chunk_end = pc.end(); // byte immediately after this chunk
             let is_ihdr = pc.name == IMG_HDR;
+            let range_len = pc.length as u64 + 12; // length(4) + name(4) + crc(4)
+            let allowed_exclusions = classify_png_allowed_exclusions(&pc.name_str, range_len);
             let bm = BoxMap {
                 names: vec![pc.name_str],
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
                 excluded: None,
+                exclusions: None,
+                allowed_exclusions,
                 pad: ByteBuf::from(Vec::new()),
                 range_start: pc.start,
-                range_len: pc.length as u64 + 12, // length(4) + name(4) + crc(4)
+                range_len,
             };
             box_maps.push(bm);
 
@@ -745,6 +778,8 @@ impl AssetBoxHash for PngIO {
                     alg: None,
                     hash: ByteBuf::from(Vec::new()),
                     excluded: Some(true),
+                    exclusions: None,
+                    allowed_exclusions: classify_png_allowed_exclusions(C2PA_BOXHASH, 0),
                     pad: ByteBuf::from(Vec::new()),
                     range_start: chunk_end,
                     range_len: 0,
@@ -796,6 +831,43 @@ pub mod tests {
         io_utils::tempdirectory,
         test::{self, temp_dir_path},
     };
+
+    #[test]
+    fn test_classify_png_allowed_exclusions() {
+        // 20-byte chunk: 4-byte length + 4-byte type + 8 bytes of data + 4-byte CRC.
+        assert_eq!(
+            classify_png_allowed_exclusions(C2PA_BOXHASH, 20),
+            vec![AllowedExclusion {
+                start: 0,
+                length: 20,
+                kind: ExclusionKind::ManifestOrPadding,
+            }]
+        );
+        // length is 12 (data + trailing CRC), not 8 - the CRC covers the
+        // type and data fields, so it must be excludable too, or a
+        // legitimate metadata edit (which changes the CRC) would fail
+        // verification.
+        assert_eq!(
+            classify_png_allowed_exclusions("eXIf", 20),
+            vec![AllowedExclusion {
+                start: 8,
+                length: 12,
+                kind: ExclusionKind::AssetMetadata,
+            }]
+        );
+        assert_eq!(
+            classify_png_allowed_exclusions("tEXt", 20),
+            vec![AllowedExclusion {
+                start: 8,
+                length: 12,
+                kind: ExclusionKind::AssetMetadata,
+            }]
+        );
+        assert!(classify_png_allowed_exclusions("IHDR", 20).is_empty());
+        assert!(classify_png_allowed_exclusions("PNGh", 8).is_empty());
+        // PNG allows arbitrary private/ancillary chunks - unrecognized, not excludable.
+        assert!(classify_png_allowed_exclusions("pHYs", 20).is_empty());
+    }
 
     #[test]
     fn test_png_xmp() {

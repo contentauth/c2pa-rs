@@ -23,7 +23,7 @@ use serde_bytes::ByteBuf;
 use tempfile::Builder;
 
 use crate::{
-    assertions::{BoxMap, C2PA_BOXHASH},
+    assertions::{AllowedExclusion, BoxMap, ExclusionKind, C2PA_BOXHASH},
     asset_io::{
         self, AssetBoxHash, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
         ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
@@ -646,6 +646,8 @@ impl BlockMarker<Block> {
             alg: None,
             hash: ByteBuf::from(Vec::new()),
             excluded: None,
+            exclusions: None,
+            allowed_exclusions: self.block.allowed_exclusions(self.len()),
             pad: ByteBuf::from(Vec::new()),
             range_start: self.start(),
             range_len: self.len(),
@@ -805,6 +807,54 @@ impl Block {
             Block::LocalColorTable(_) => None,
             Block::ImageData(_) => Some("TBID"),
             Block::Trailer => Some("3B"),
+        }
+    }
+
+    // `box_len` is this block's own total length (from `BlockMarker::len()`),
+    // already fully known by the time this is called - no second pass needed.
+    fn allowed_exclusions(&self, box_len: u64) -> Vec<AllowedExclusion> {
+        match self {
+            Block::ApplicationExtension(application_extension)
+                if ApplicationExtensionKind::C2pa == application_extension.kind() =>
+            {
+                vec![AllowedExclusion {
+                    start: 0,
+                    length: box_len,
+                    kind: ExclusionKind::ManifestOrPadding,
+                }]
+            }
+            // XMP is stored the same way as a Comment Extension's body - a
+            // length-prefixed sub-block stream - just behind a longer,
+            // fixed-size header (0x21 0xff + block-size byte + 8-byte
+            // identifier + 3-byte auth code = 14 bytes) instead of the
+            // Comment Extension's 2-byte introducer + label.
+            Block::ApplicationExtension(application_extension)
+                if ApplicationExtensionKind::Xmp == application_extension.kind() =>
+            {
+                sub_block_data_ranges(&application_extension.data_sub_blocks.bytes)
+                    .into_iter()
+                    .map(|(offset, length)| AllowedExclusion {
+                        start: offset + 14,
+                        length,
+                        kind: ExclusionKind::AssetMetadata,
+                    })
+                    .collect()
+            }
+            // Comment Extension bodies are a length-prefixed sub-block stream
+            // (1-byte length + data, repeated, 0x00-terminated) with no
+            // single fixed header, so each sub-block's data gets its own
+            // range, skipping every length-prefix byte and the terminator.
+            Block::CommentExtension(comment) => {
+                sub_block_data_ranges(&comment.data_sub_blocks.bytes)
+                    .into_iter()
+                    .map(|(offset, length)| AllowedExclusion {
+                        start: offset + 2, // skip the extension introducer + label
+                        length,
+                        kind: ExclusionKind::AssetMetadata,
+                    })
+                    .collect()
+            }
+            _ => Vec::new(),
         }
     }
 
@@ -1000,13 +1050,15 @@ impl PlainTextExtension {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct CommentExtension {}
+struct CommentExtension {
+    data_sub_blocks: DataSubBlocks,
+}
 
 impl CommentExtension {
     fn from_stream(stream: &mut dyn CAIRead) -> Result<CommentExtension> {
-        // stream.seek(SeekFrom::Current(0))?;
-        DataSubBlocks::from_encoded_stream_and_skip(stream)?;
-        Ok(CommentExtension {})
+        Ok(CommentExtension {
+            data_sub_blocks: DataSubBlocks::from_encoded_stream(stream)?,
+        })
     }
 }
 
@@ -1165,6 +1217,20 @@ fn gif_chunks(mut encoded_bytes: &[u8]) -> impl Iterator<Item = &[u8]> {
     })
 }
 
+/// (offset, length) of each sub-block's data within an encoded, length-prefixed,
+/// 0x00-terminated GIF sub-block stream (as stored in [`DataSubBlocks::bytes`]) -
+/// offsets relative to the start of that stream, excluding each sub-block's own
+/// 1-byte length prefix and the final terminator.
+fn sub_block_data_ranges(encoded_bytes: &[u8]) -> Vec<(u64, u64)> {
+    let mut ranges = Vec::new();
+    let mut pos: u64 = 0;
+    for chunk in gif_chunks(encoded_bytes) {
+        ranges.push((pos + 1, chunk.len() as u64));
+        pos += 1 + chunk.len() as u64;
+    }
+    ranges
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum GifError {
     #[error("invalid file signature: {reason}")]
@@ -1180,6 +1246,75 @@ mod tests {
     use super::*;
 
     const SAMPLE1: &[u8] = include_bytes!("../../tests/fixtures/sample1.gif");
+
+    #[test]
+    fn test_allowed_exclusions() {
+        // Two sub-blocks (lengths 5 and 3) followed by the terminator -
+        // data at offsets 1 (length 5) and 7 (length 3) relative to the
+        // start of the sub-block region; box-relative start is +2 for the
+        // extension introducer + label.
+        let comment = CommentExtension {
+            data_sub_blocks: DataSubBlocks {
+                bytes: vec![5, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0],
+            },
+        };
+        assert_eq!(
+            Block::CommentExtension(comment).allowed_exclusions(20),
+            vec![
+                AllowedExclusion {
+                    start: 3,
+                    length: 5,
+                    kind: ExclusionKind::AssetMetadata,
+                },
+                AllowedExclusion {
+                    start: 9,
+                    length: 3,
+                    kind: ExclusionKind::AssetMetadata,
+                },
+            ]
+        );
+        assert_eq!(
+            Block::ApplicationExtension(ApplicationExtension::new_c2pa(&[]).unwrap())
+                .allowed_exclusions(20),
+            vec![AllowedExclusion {
+                start: 0,
+                length: 20,
+                kind: ExclusionKind::ManifestOrPadding,
+            }]
+        );
+        // XMP is stored the same length-prefixed sub-block way as a Comment
+        // Extension, just behind a longer 14-byte header. `new_xmp` appends
+        // the 257-byte magic trailer, so 8 bytes of XMP text + the trailer
+        // (265 bytes total) gets chunked by `DataSubBlocks` into a 255-byte
+        // sub-block followed by a 10-byte one.
+        let xmp = ApplicationExtension::new_xmp(b"xmp data".to_vec()).unwrap();
+        assert_eq!(
+            Block::ApplicationExtension(xmp).allowed_exclusions(300),
+            vec![
+                AllowedExclusion {
+                    start: 15,
+                    length: 255,
+                    kind: ExclusionKind::AssetMetadata,
+                },
+                AllowedExclusion {
+                    start: 271,
+                    length: 10,
+                    kind: ExclusionKind::AssetMetadata,
+                },
+            ]
+        );
+        // An application extension that's neither C2PA nor XMP is unrecognized.
+        let unknown = ApplicationExtension {
+            identifier: *b"UNKNOWN0",
+            authentication_code: [0, 0, 0],
+            data_sub_blocks: DataSubBlocks::empty(),
+        };
+        assert!(Block::ApplicationExtension(unknown)
+            .allowed_exclusions(20)
+            .is_empty());
+        assert!(Block::Header(Header {}).allowed_exclusions(20).is_empty());
+        assert!(Block::Trailer.allowed_exclusions(20).is_empty());
+    }
 
     #[test]
     fn test_read_blocks() -> Result<()> {
@@ -1238,7 +1373,14 @@ mod tests {
             Some(&BlockMarker {
                 start: 808,
                 len: 52,
-                block: Block::CommentExtension(CommentExtension {})
+                block: Block::CommentExtension(CommentExtension {
+                    // The comment in this fixture is a single 48-byte sub-block
+                    // (1-byte length + 48 bytes of data + terminator = 50 bytes,
+                    // right after the introducer + label at 808..810).
+                    data_sub_blocks: DataSubBlocks {
+                        bytes: SAMPLE1[810..860].to_vec()
+                    }
+                })
             })
         );
 
@@ -1452,6 +1594,8 @@ mod tests {
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
                 excluded: None,
+                exclusions: None,
+                allowed_exclusions: vec![],
                 pad: ByteBuf::from(Vec::new()),
                 range_start: 0,
                 range_len: 6
@@ -1464,6 +1608,8 @@ mod tests {
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
                 excluded: None,
+                exclusions: None,
+                allowed_exclusions: vec![],
                 pad: ByteBuf::from(Vec::new()),
                 range_start: 368494,
                 range_len: 778
@@ -1476,6 +1622,8 @@ mod tests {
                 alg: None,
                 hash: ByteBuf::from(Vec::new()),
                 excluded: None,
+                exclusions: None,
+                allowed_exclusions: vec![],
                 pad: ByteBuf::from(Vec::new()),
                 range_start: SAMPLE1.len() as u64 - 1,
                 range_len: 1

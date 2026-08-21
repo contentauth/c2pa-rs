@@ -3004,7 +3004,19 @@ impl Claim {
                     };
 
                     match hash_result {
-                        Ok(_a) => {
+                        Ok(metadata_exclusion_used) => {
+                            if metadata_exclusion_used {
+                                log_item!(
+                                    claim.assertion_uri(&hash_binding_assertion.label()),
+                                    "additional box hash exclusions found",
+                                    "verify_internal"
+                                )
+                                .validation_status(
+                                    validation_status::ASSERTION_BOXHASH_ADDITIONAL_EXCLUSIONS,
+                                )
+                                .informational(validation_log);
+                            }
+
                             log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
                                 "boxes hash valid",
@@ -3016,15 +3028,26 @@ impl Claim {
                             continue;
                         }
                         Err(e) => {
+                            let err_str = match e {
+                                Error::C2PAValidation(es) => {
+                                    if es == validation_status::ASSERTION_BOXESHASH_MALFORMED {
+                                        validation_status::ASSERTION_BOXESHASH_MALFORMED
+                                    } else {
+                                        validation_status::ASSERTION_BOXHASH_MISMATCH
+                                    }
+                                }
+                                _ => validation_status::ASSERTION_BOXHASH_MISMATCH,
+                            };
+
                             log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
-                                format!("asset hash error: {e}"),
+                                format!("asset hash error: {err_str}"),
                                 "verify_internal"
                             )
-                            .validation_status(validation_status::ASSERTION_BOXHASH_MISMATCH)
+                            .validation_status(err_str)
                             .failure(
                                 validation_log,
-                                Error::HashMismatch(format!("Asset hash failure: {e}")),
+                                Error::HashMismatch(format!("Asset hash failure: {err_str}")),
                             )?;
                         }
                     }
