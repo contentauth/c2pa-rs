@@ -28,3 +28,6 @@ pub mod tiff_io;
 pub(crate) mod pdf;
 #[cfg(feature = "pdf")]
 pub mod pdf_io;
+
+#[cfg(feature = "plain_text")]
+pub mod text_io;
