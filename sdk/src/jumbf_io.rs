@@ -25,6 +25,10 @@ use lazy_static::lazy_static;
 
 #[cfg(feature = "pdf")]
 use crate::asset_handlers::pdf_io::PdfIO;
+#[cfg(feature = "structured_text")]
+use crate::asset_handlers::structured_text_io::StructuredTextIO;
+#[cfg(feature = "plain_text")]
+use crate::asset_handlers::text_io::TextIO;
 use crate::{
     asset_handlers::{
         bmff_io::BmffIO, c2pa_io::C2paIO, flac_io::FlacIO, gif_io::GifIO, jpeg_io::JpegIO,
@@ -54,6 +58,10 @@ lazy_static! {
         Box::new(Mp3IO::new("")),
         Box::new(GifIO::new("")),
         Box::new(FlacIO::new("")),
+        #[cfg(feature = "plain_text")]
+        Box::new(TextIO::new("")),
+        #[cfg(feature = "structured_text")]
+        Box::new(StructuredTextIO::new("")),
     ];
 
     static ref CAI_READERS: HashMap<String, Box<dyn AssetIO>> = {
@@ -508,6 +516,10 @@ pub mod tests {
             Box::new(SvgIO::new("")),
             Box::new(Mp3IO::new("")),
             Box::new(FlacIO::new("")),
+            #[cfg(feature = "plain_text")]
+            Box::new(TextIO::new("")),
+            #[cfg(feature = "structured_text")]
+            Box::new(StructuredTextIO::new("")),
         ];
 
         // build handler map
@@ -534,6 +546,10 @@ pub mod tests {
             Box::new(SvgIO::new("")),
             Box::new(Mp3IO::new("")),
             Box::new(FlacIO::new("")),
+            #[cfg(feature = "plain_text")]
+            Box::new(TextIO::new("")),
+            #[cfg(feature = "structured_text")]
+            Box::new(StructuredTextIO::new("")),
         ];
 
         // build handler map
@@ -556,6 +572,10 @@ pub mod tests {
             Box::new(SvgIO::new("")),
             Box::new(RiffIO::new("")),
             Box::new(GifIO::new("")),
+            #[cfg(feature = "plain_text")]
+            Box::new(TextIO::new("")),
+            #[cfg(feature = "structured_text")]
+            Box::new(StructuredTextIO::new("")),
         ];
 
         // build handler map
@@ -608,6 +628,12 @@ pub mod tests {
 
         let pdf_supported = supported.iter().any(|s| s == "pdf");
         assert_eq!(pdf_supported, cfg!(feature = "pdf"));
+
+        let txt_supported = supported.iter().any(|s| s == "txt");
+        assert_eq!(txt_supported, cfg!(feature = "plain_text"));
+
+        let md_supported = supported.iter().any(|s| s == "md");
+        assert_eq!(md_supported, cfg!(feature = "structured_text"));
 
         assert!(supported.iter().any(|s| s == "jpg"));
         assert!(supported.iter().any(|s| s == "jpeg"));
