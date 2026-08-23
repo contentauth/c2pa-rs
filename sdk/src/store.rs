@@ -3670,9 +3670,9 @@ impl Store {
     }
 
     /// Builds a store from already-extracted manifest bytes read through an
-    /// asynchronous byte source, running manifest and signature validation but not
-    /// the data-hash binding — that would require reading the whole asset
-    /// synchronously, which the async range path deliberately does not do.
+    /// async byte source.
+    /// Runs manifest and signature validation but not the data-hash binding,
+    /// because that would require reading the whole asset (would force sync).
     pub(crate) async fn from_manifest_bytes_no_data_hash_async(
         c2pa_data: &[u8],
         remote_url: Option<String>,
@@ -3698,8 +3698,6 @@ impl Store {
     /// Load a init and fragments given as file paths, opening each through the
     /// filesystem one at a time via a [`FragmentSource`] and delegating to
     /// [`load_from_init_and_fragments`].
-    ///
-    /// [`load_from_init_and_fragments`]: Store::load_from_init_and_fragments
     #[cfg(feature = "file_io")]
     #[allow(dead_code)]
     pub fn load_from_file_and_fragments(
@@ -3718,11 +3716,8 @@ impl Store {
         )
     }
 
-    /// Load a [`Store`] from an init segment plus a lazily-opened fragment source.
-    ///
-    /// The fragment source opens one fragment at a time during verification, so a
-    /// local or remote fragmented read holds at most one fragment open regardless of
-    /// fragment count, and both take the same verification path.
+    /// Load a [`Store`] from an init segment and a (lazily-)opened fragment source.
+    /// The fragment source opens one fragment at a time during verification.
     #[async_generic]
     pub fn load_from_init_and_fragments(
         asset_type: &str,

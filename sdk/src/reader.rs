@@ -248,24 +248,14 @@ impl Reader {
         Ok(self)
     }
 
-    /// Add a manifest store to the [`Reader`] from an asset *reference*, resolved
-    /// through the [`Context`]'s asset source.
-    ///
-    /// The reference (a path, URL, or opaque id) is opened by the context's asset
-    /// source — [`LocalAssetSource`] by default, or a custom source set via
-    /// [`Context::with_sync_asset_source`] / [`Context::with_async_asset_source`] to
-    /// pull bytes from a network range-reader or other transport. Parsing and
-    /// validation are identical to [`with_stream`](Self::with_stream); with
-    /// validation on, hard-binding verification re-reads the asset through the same
-    /// source.
+    /// Add a manifest store to the [`Reader`] from an asset *reference*,
+    /// resolved through the [`Context`]'s asset source.
+    /// The reference (a path, URL, or opaque id) is opened
+    /// by the context's asset source.
     ///
     /// # Arguments
     /// * `format` - The MIME type or extension hint for the asset.
     /// * `reference` - The asset reference to resolve and open.
-    ///
-    /// [`LocalAssetSource`]: crate::asset_source::LocalAssetSource
-    /// [`Context::with_sync_asset_source`]: crate::Context::with_sync_asset_source
-    /// [`Context::with_async_asset_source`]: crate::Context::with_async_asset_source
     #[async_generic]
     pub fn with_reference(self, format: &str, reference: &str) -> Result<Self> {
         let request = AssetRequest::from_reference(reference, Some(format));
@@ -285,12 +275,9 @@ impl Reader {
         }
     }
 
-    /// Reads a manifest through an asynchronous range source.
-    ///
-    /// Manifest discovery is driven over the async source with no blocking read;
-    /// the data-hash binding is not verified here, since re-hashing the whole asset
-    /// would require a synchronous read. Callers needing full hash verification of a
-    /// network-backed asset must supply a synchronous source (or run on a worker).
+    /// Reads a manifest through an asynchronous range source,
+    /// the data-hash binding is not verified here.
+    /// Manifest discovery is driven over the async source with no blocking read.
     async fn with_async_ranges(
         mut self,
         format: &str,
@@ -660,8 +647,7 @@ impl Reader {
             .supported_extension(path.as_ref())
             .ok_or(crate::Error::UnsupportedType)?;
 
-        // Resolve init through the context's asset source (LocalAssetSource by
-        // default); fragments are opened lazily, one at a time, during verification.
+        // Resolve init through the context's asset source.
         let source = self.context.asset_source();
         let init_request = AssetRequest::new(
             crate::asset_source::AssetRef::Path(path.as_ref()),
@@ -691,8 +677,9 @@ impl Reader {
     /// The streaming counterpart of [`with_fragmented_files`](Self::with_fragmented_files):
     /// init and each fragment are opened by the context's asset source, so a custom
     /// source (e.g. a network range-reader) can serve a fragmented DASH stream
-    /// without local files. With validation on, each fragment's merkle hard binding
-    /// is verified against bytes pulled through the source.
+    /// without local files.
+    ///  With validation on, each fragment's merkle hard binding is verified against
+    /// bytes pulled through the source.
     ///
     /// # Arguments
     /// * `format` - The MIME type or extension hint.
@@ -1551,9 +1538,8 @@ pub mod tests {
 
         use crate::asset_source::{AssetRequest, AssetSourceError, ResolvedAsset, SyncAssetSource};
 
-        // Custom source that serves the fixture bytes for any reference and
-        // counts how many times it was asked to open — proving `with_reference`
-        // goes through the Context's asset source rather than the filesystem.
+        // Custom source that serves the fixture bytes for any reference,
+        // and counts how many times it was asked to open
         struct CountingSource {
             bytes: Vec<u8>,
             opens: Arc<AtomicUsize>,
@@ -1611,7 +1597,7 @@ pub mod tests {
             AssetRequest, AssetSourceError,
         };
 
-        // In-memory range reader over the fixture that tallies every byte fetched.
+        // CHeck the bytes to verify no over-fetch.
         struct MemRanges {
             data: Vec<u8>,
             fetched: Arc<AtomicU64>,
@@ -1641,9 +1627,7 @@ pub mod tests {
         let fetched = Arc::new(AtomicU64::new(0));
         let fetched_factory = fetched.clone();
 
-        // Small window so the parser seeks across several cache misses; the segment
-        // cache must serve every repeat access without re-fetching, so total fetched
-        // never exceeds the file size (a thrashing sliding window would exceed it).
+        // Small window to force cache misses.
         let source = RangeAssetSource::new(move |_request: &AssetRequest<'_>| {
             Ok(MemRanges {
                 data: IMAGE_WITH_MANIFEST.to_vec(),
@@ -1662,11 +1646,7 @@ pub mod tests {
         assert!(reader.active_manifest().is_some());
 
         let total = fetched.load(Ordering::SeqCst);
-        assert!(
-            total <= file_len,
-            "range read fetched {total} bytes of a {file_len}-byte file; the cache must fetch \
-             each byte at most once"
-        );
+        assert!(total <= file_len);
 
         Ok(())
     }
@@ -1678,8 +1658,7 @@ pub mod tests {
             AssetRequest, AssetSourceError, AsyncAssetSource, ResolvedAsset,
         };
 
-        // Async-only range reader over the fixture — implements no synchronous
-        // method, so the whole read is driven without a blocking call.
+        // Async-only range reader over the fixture.
         struct AsyncMem(Vec<u8>);
 
         #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -1716,8 +1695,7 @@ pub mod tests {
             }
         }
 
-        // Verification off keeps this a pure manifest-discovery read (the async
-        // range path does not do the synchronous data-hash re-read).
+        // Verification off keeps this a pure manifest-discovery read.
         let context = test_context()
             .with_settings(r#"{"verify": {"verify_after_reading": false}}"#)
             .unwrap()

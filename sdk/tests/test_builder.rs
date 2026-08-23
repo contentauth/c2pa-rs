@@ -269,7 +269,7 @@ fn test_builder_fragmented() -> Result<()> {
 
 #[test]
 #[cfg(feature = "file_io")]
-fn test_fragmented_lazy_one_open() -> Result<()> {
+fn test_fragmented_lazy_one_by_one_open() -> Result<()> {
     use std::{
         io::Read,
         path::PathBuf,
@@ -369,8 +369,7 @@ fn test_fragmented_lazy_one_open() -> Result<()> {
     let reader = Reader::from_context(ctx).with_fragmented_files(&output_init, &output_fragments)?;
     assert_eq!(reader.validation_status(), None);
 
-    // Peak live opens is the init segment plus at most one fragment; the old
-    // behavior opened every fragment up front (peak would be fragments + 1).
+    // Peak live opens is the init segment plus at most one fragment.
     assert!(
         counter.peak.load(Ordering::SeqCst) <= 2,
         "fragments must be opened one at a time (peak = {})",
