@@ -115,8 +115,9 @@ pub enum ClaimAssetData<'a> {
     Bytes(&'a [u8], &'a str),
     Stream(&'a mut dyn CAIRead, &'a str),
     StreamFragment(&'a mut dyn CAIRead, &'a mut dyn CAIRead, &'a str),
-    #[cfg(feature = "file_io")]
-    StreamFragments(&'a mut dyn CAIRead, &'a Vec<std::path::PathBuf>, &'a str),
+    /// Init segment stream plus already-opened fragment streams, so the caller
+    /// controls fragment transport (local file, network range-reader, ...).
+    StreamFragments(&'a mut dyn CAIRead, &'a mut [Box<dyn CAIRead>], &'a str),
 }
 
 #[derive(PartialEq, Debug, Eq, Clone, Hash)]
@@ -2892,11 +2893,10 @@ impl Claim {
                                 Some(claim.alg()),
                                 &mut cb,
                             ),
-                        #[cfg(feature = "file_io")]
-                        ClaimAssetData::StreamFragments(initseg_data, fragment_paths, _) => dh
+                        ClaimAssetData::StreamFragments(initseg_data, fragment_streams, _) => dh
                             .verify_stream_segments_with_progress(
                                 *initseg_data,
-                                fragment_paths,
+                                fragment_streams,
                                 Some(claim.alg()),
                                 &mut cb,
                             ),

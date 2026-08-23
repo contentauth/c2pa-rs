@@ -245,6 +245,9 @@ pub use assertions::DigitalSourceType;
 #[doc(inline)]
 pub use assertions::Relationship;
 pub use asset_io::AssetIO;
+#[cfg(feature = "file_io")]
+pub use asset_io::LocalAssetResolver;
+pub use asset_io::{AssetResolver, AsyncAssetResolver};
 pub use builder::{Builder, BuilderIntent, HashType, ManifestDefinition};
 pub use c2pa_raw_crypto::{RawSignatureValidationError, RawSigner, RawSignerError, SigningAlg};
 pub use callback_signer::{CallbackFunc, CallbackSigner};

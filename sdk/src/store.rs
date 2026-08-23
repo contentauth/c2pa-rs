@@ -1904,8 +1904,7 @@ impl Store {
                     let format = typ.to_owned();
                     io.object_locations(&format, reader)
                 }
-                #[cfg(feature = "file_io")]
-                ClaimAssetData::StreamFragments(reader, _path_bufs, typ) => {
+                ClaimAssetData::StreamFragments(reader, _fragment_streams, typ) => {
                     let format = typ.to_owned();
                     io.object_locations(&format, reader)
                 }
@@ -3669,13 +3668,12 @@ impl Store {
         Ok(store)
     }
 
-    /// Load Store from a init and fragments
-    /// asset_type: asset extension or mime type
-    /// init_segment: reader for the file containing the initialization segments
-    /// fragments: list of paths to the fragments to verify
-    /// verify: if true will run verification checks when loading, all fragments must verify for Ok status
-    /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
+    /// Load a init and fragments given as file paths, opening each through the
+    /// filesystem and delegating to [`load_from_init_and_fragment_streams`].
+    ///
+    /// [`load_from_init_and_fragment_streams`]: Store::load_from_init_and_fragment_streams
     #[cfg(feature = "file_io")]
+    #[allow(dead_code)]
     pub fn load_from_file_and_fragments(
         asset_type: &str,
         init_segment: &mut dyn CAIRead,
@@ -3683,24 +3681,55 @@ impl Store {
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<Store> {
-        let manifest_bytes = Store::load_jumbf_from_stream(asset_type, init_segment, context)?.0;
+        let mut fragment_streams: Vec<Box<dyn CAIRead>> = fragments
+            .iter()
+            .map(|p| std::fs::File::open(p).map(|f| Box::new(f) as Box<dyn CAIRead>))
+            .collect::<std::io::Result<_>>()?;
+        Store::load_from_init_and_fragment_streams(
+            asset_type,
+            init_segment,
+            &mut fragment_streams,
+            validation_log,
+            context,
+        )
+    }
+
+    /// Load a [`Store`] from an init segment plus already-opened fragment streams.
+    ///
+    /// Shared by the file-based [`load_from_file_and_fragments`] and any caller
+    /// that resolves fragment references to streams (e.g. a network range-reader),
+    /// so local and remote fragmented reads take the same verification path.
+    ///
+    /// [`load_from_file_and_fragments`]: Store::load_from_file_and_fragments
+    #[async_generic]
+    pub fn load_from_init_and_fragment_streams(
+        asset_type: &str,
+        init_segment: &mut dyn CAIRead,
+        fragment_streams: &mut [Box<dyn CAIRead>],
+        validation_log: &mut StatusTracker,
+        context: &Context,
+    ) -> Result<Store> {
+        let manifest_bytes = if _sync {
+            Store::load_jumbf_from_stream(asset_type, init_segment, context)?.0
+        } else {
+            Store::load_jumbf_from_stream_async(asset_type, init_segment, context)
+                .await?
+                .0
+        };
 
         let store = Store::from_jumbf_with_context(&manifest_bytes, validation_log, context)?;
         let verify = context.settings().verify.verify_after_reading;
 
         if verify {
             init_segment.rewind()?;
-            // verify store and claims
-            Store::verify_store(
-                &store,
-                Some(&mut ClaimAssetData::StreamFragments(
-                    init_segment,
-                    fragments,
-                    asset_type,
-                )),
-                validation_log,
-                context,
-            )?;
+            let mut asset_data =
+                ClaimAssetData::StreamFragments(init_segment, fragment_streams, asset_type);
+            if _sync {
+                Store::verify_store(&store, Some(&mut asset_data), validation_log, context)
+            } else {
+                Store::verify_store_async(&store, Some(&mut asset_data), validation_log, context)
+                    .await
+            }?;
         }
 
         Ok(store)

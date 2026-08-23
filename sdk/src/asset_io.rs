@@ -124,9 +124,11 @@ use std::{
 
 use tempfile::{Builder, NamedTempFile};
 
+use async_trait::async_trait;
+
 use crate::{
     error::Result,
-    maybe_send_sync::MaybeSend,
+    maybe_send_sync::{MaybeSend, MaybeSync},
     utils::{
         mime::normalize_format,
         xmp_inmemory_utils::{add_provenance, extract_provenance, remove_provenance, MIN_XMP},
@@ -203,6 +205,101 @@ impl Read for CAIReadWrapper<'_> {
 impl Seek for CAIReadWrapper<'_> {
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
         self.reader.seek(pos)
+    }
+}
+
+/// Resolves an asset *reference* (a path, URL, or any scheme the implementation
+/// understands) into a seekable stream of the asset's bytes.
+///
+/// This is the extension seam for *where asset bytes come from*, kept separate
+/// from [`AssetIO`] (which decides *how* a format is parsed). The SDK ships
+/// [`LocalAssetResolver`] as the default, which opens local file paths. Override
+/// it on a [`Context`](crate::Context) with
+/// [`Context::with_asset_resolver`](crate::Context::with_asset_resolver) to pull
+/// asset bytes from anywhere — a network range-reader, an object store, an
+/// encrypted volume — while leaving the SDK's parsing and validation unchanged.
+///
+/// An implementation is free to layer its own concerns (windowed caching, request
+/// logging, retries, authentication) inside the stream it returns; the SDK only
+/// sees a [`CAIRead`]. When validation is enabled, hard-binding verification
+/// re-reads the asset through the same stream, so the resolver's transport also
+/// carries the (necessarily full) hash read.
+///
+/// See [`AsyncAssetResolver`] for the async equivalent used by the async read
+/// path.
+///
+/// # Examples
+///
+/// ```
+/// use std::io::Cursor;
+///
+/// use c2pa::asset_io::{AssetResolver, CAIRead};
+/// use c2pa::Result;
+///
+/// /// Serves a single in-memory asset regardless of the reference.
+/// struct InMemory(Vec<u8>);
+///
+/// impl AssetResolver for InMemory {
+///     fn open(&self, _reference: &str, _format: &str) -> Result<Box<dyn CAIRead>> {
+///         Ok(Box::new(Cursor::new(self.0.clone())))
+///     }
+/// }
+/// ```
+pub trait AssetResolver: MaybeSend + MaybeSync {
+    /// Open `reference` and return a seekable stream positioned at the start.
+    ///
+    /// `format` is the caller's format hint (a MIME type or extension) for sources
+    /// that need it to pick a transport; most implementations can ignore it.
+    fn open(&self, reference: &str, format: &str) -> Result<Box<dyn CAIRead>>;
+}
+
+/// Async equivalent of [`AssetResolver`], used by the async read path so a
+/// network-backed resolver can perform non-blocking I/O instead of blocking the
+/// executor.
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+pub trait AsyncAssetResolver: MaybeSend + MaybeSync {
+    /// Open `reference` and return a seekable stream positioned at the start.
+    async fn open_async(&self, reference: &str, format: &str) -> Result<Box<dyn CAIRead>>;
+}
+
+impl<T: AssetResolver + ?Sized> AssetResolver for Arc<T> {
+    fn open(&self, reference: &str, format: &str) -> Result<Box<dyn CAIRead>> {
+        (**self).open(reference, format)
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl<T: AsyncAssetResolver + ?Sized> AsyncAssetResolver for Arc<T> {
+    async fn open_async(&self, reference: &str, format: &str) -> Result<Box<dyn CAIRead>> {
+        (**self).open_async(reference, format).await
+    }
+}
+
+/// The SDK's default asset resolver: opens `reference` as a local filesystem path.
+///
+/// This is what a [`Context`](crate::Context) uses when no custom resolver has
+/// been registered. Only available with the `file_io` feature; on targets without
+/// filesystem access, register a custom resolver via
+/// [`Context::with_asset_resolver`](crate::Context::with_asset_resolver).
+#[cfg(feature = "file_io")]
+#[derive(Debug, Default, Clone, Copy)]
+pub struct LocalAssetResolver;
+
+#[cfg(feature = "file_io")]
+impl AssetResolver for LocalAssetResolver {
+    fn open(&self, reference: &str, _format: &str) -> Result<Box<dyn CAIRead>> {
+        Ok(Box::new(fs::File::open(reference)?))
+    }
+}
+
+#[cfg(feature = "file_io")]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl AsyncAssetResolver for LocalAssetResolver {
+    async fn open_async(&self, reference: &str, format: &str) -> Result<Box<dyn CAIRead>> {
+        self.open(reference, format)
     }
 }
 

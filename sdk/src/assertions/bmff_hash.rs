@@ -1576,16 +1576,22 @@ impl BmffHash {
         fragment_paths: &Vec<std::path::PathBuf>,
         alg: Option<&str>,
     ) -> crate::Result<()> {
-        self.verify_stream_segments_with_progress(init_stream, fragment_paths, alg, &mut |_, _| {
+        let mut fragments: Vec<Box<dyn CAIRead>> = fragment_paths
+            .iter()
+            .map(|p| std::fs::File::open(p).map(|f| Box::new(f) as Box<dyn CAIRead>))
+            .collect::<std::io::Result<_>>()?;
+        self.verify_stream_segments_with_progress(init_stream, &mut fragments, alg, &mut |_, _| {
             Ok(())
         })
     }
 
-    #[cfg(feature = "file_io")]
+    /// Verify the merkle hashes of a fragmented BMFF asset whose fragments are
+    /// supplied as already-opened streams (rather than file paths), so the caller
+    /// controls the transport (local file, network range-reader, ...).
     pub(crate) fn verify_stream_segments_with_progress<F>(
         &self,
         init_stream: &mut dyn CAIRead,
-        fragment_paths: &Vec<std::path::PathBuf>,
+        fragments: &mut [Box<dyn CAIRead>],
         alg: Option<&str>,
         progress: &mut F,
     ) -> crate::Result<()>
@@ -1614,17 +1620,17 @@ impl BmffHash {
             // inithash cache to prevent duplicate work.
             let mut init_hashes = std::collections::HashSet::new();
 
-            if fragment_paths.is_empty() {
+            if fragments.is_empty() {
                 return Err(Error::HashMismatch("No fragment specified".to_string()));
             }
 
             let mut step = 0u32;
 
-            for fp in fragment_paths {
-                let mut fragment_stream = std::fs::File::open(fp)?;
+            for fragment_stream in fragments.iter_mut() {
+                let fragment_stream = fragment_stream.as_mut();
 
                 // get merkle boxes from segment
-                let c2pa_boxes = read_bmff_c2pa_boxes(&mut fragment_stream)?;
+                let c2pa_boxes = read_bmff_c2pa_boxes(fragment_stream)?;
                 let bmff_merkle = c2pa_boxes.bmff_merkle;
 
                 if bmff_merkle.is_empty() {
@@ -1674,7 +1680,7 @@ impl BmffHash {
                             // check the segments
                             fragment_stream.rewind()?;
                             let fragment_exclusions = bmff_to_jumbf_exclusions(
-                                &mut fragment_stream,
+                                fragment_stream,
                                 bmff_exclusions,
                                 self.bmff_version > 1,
                             )?;
@@ -1684,7 +1690,7 @@ impl BmffHash {
                             // hash the entire fragment minus exclusions
                             let hash = hash_stream_by_alg(
                                 alg,
-                                &mut fragment_stream,
+                                fragment_stream,
                                 Some(fragment_exclusions),
                                 true,
                             )?;

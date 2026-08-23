@@ -34,6 +34,7 @@ use serde_with::skip_serializing_none;
 use crate::utils::io_utils::uri_to_path;
 use crate::{
     assertions::Metadata,
+    asset_io::CAIRead,
     context::{Context, ProgressPhase},
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
@@ -245,6 +246,38 @@ impl Reader {
             self.with_store_async(store, &mut validation_log).await
         }?;
         Ok(self)
+    }
+
+    /// Add a manifest store to the [`Reader`] from an asset *reference*, resolved
+    /// through the [`Context`]'s [`AssetResolver`].
+    ///
+    /// The reference (a path, URL, or opaque id) is opened by the context's
+    /// resolver — [`LocalAssetResolver`] by default, or a custom resolver set via
+    /// [`Context::with_asset_resolver`] / [`Context::with_async_asset_resolver`] to
+    /// pull bytes from a network range-reader or other transport. Parsing and
+    /// validation are identical to [`with_stream`](Self::with_stream); with
+    /// validation on, hard-binding verification re-reads the asset through the same
+    /// resolver.
+    ///
+    /// # Arguments
+    /// * `format` - The MIME type or extension hint for the asset.
+    /// * `reference` - The asset reference to resolve and open.
+    ///
+    /// [`AssetResolver`]: crate::asset_io::AssetResolver
+    /// [`LocalAssetResolver`]: crate::asset_io::LocalAssetResolver
+    #[async_generic]
+    pub fn with_reference(self, format: &str, reference: &str) -> Result<Self> {
+        if _sync {
+            let stream = self.context.asset_resolver().open(reference, format)?;
+            self.with_stream(format, stream)
+        } else {
+            let stream = self
+                .context
+                .async_asset_resolver()
+                .open_async(reference, format)
+                .await?;
+            self.with_stream_async(format, stream).await
+        }
     }
 
     /// Create a manifest store [`Reader`] from a stream.  A Reader is used to validate C2PA data from an asset.
@@ -590,21 +623,94 @@ impl Reader {
             .supported_extension(path.as_ref())
             .ok_or(crate::Error::UnsupportedType)?;
 
-        let mut init_segment = std::fs::File::open(path.as_ref())?;
+        // Resolve init + fragments through the context's AssetResolver (LocalAssetResolver
+        // by default) so local and remote fragmented reads share one verification path.
+        let resolver = self.context.asset_resolver();
+        let init_ref = path.as_ref().to_string_lossy();
+        let mut init_segment = resolver.open(&init_ref, &asset_type)?;
+        let mut fragment_streams: Vec<Box<dyn CAIRead>> = fragments
+            .iter()
+            .map(|p| resolver.open(&p.to_string_lossy(), &asset_type))
+            .collect::<Result<_>>()?;
 
-        match Store::load_from_file_and_fragments(
+        let store = Store::load_from_init_and_fragment_streams(
             &asset_type,
-            &mut init_segment,
-            fragments,
+            init_segment.as_mut(),
+            &mut fragment_streams,
             &mut validation_log,
             &self.context,
-        ) {
-            Ok(store) => {
-                self.with_store(store, &mut validation_log)?;
-                Ok(self)
+        )?;
+        self.with_store(store, &mut validation_log)?;
+        Ok(self)
+    }
+
+    /// Add manifest store from an initial-segment *reference* and fragment
+    /// *references*, resolved through the [`Context`]'s [`AssetResolver`].
+    ///
+    /// The streaming counterpart of [`with_fragmented_files`](Self::with_fragmented_files):
+    /// init and each fragment are opened by the context's resolver, so a custom
+    /// resolver (e.g. a network range-reader) can serve a fragmented DASH stream
+    /// without local files. With validation on, each fragment's merkle hard binding
+    /// is verified against bytes pulled through the resolver.
+    ///
+    /// # Arguments
+    /// * `format` - The MIME type or extension hint.
+    /// * `init_reference` - Reference to the initialization segment.
+    /// * `fragment_references` - References to the fragment segments, in order.
+    ///
+    /// [`AssetResolver`]: crate::asset_io::AssetResolver
+    #[async_generic]
+    pub fn with_fragment_references(
+        mut self,
+        format: &str,
+        init_reference: &str,
+        fragment_references: &[String],
+    ) -> Result<Self> {
+        let mut validation_log = StatusTracker::default();
+
+        let (mut init_segment, mut fragment_streams) = if _sync {
+            let resolver = self.context.asset_resolver();
+            let init = resolver.open(init_reference, format)?;
+            let frags = fragment_references
+                .iter()
+                .map(|r| resolver.open(r, format))
+                .collect::<Result<Vec<_>>>()?;
+            (init, frags)
+        } else {
+            let resolver = self.context.async_asset_resolver();
+            let init = resolver.open_async(init_reference, format).await?;
+            let mut frags: Vec<Box<dyn CAIRead>> = Vec::with_capacity(fragment_references.len());
+            for r in fragment_references {
+                frags.push(resolver.open_async(r, format).await?);
             }
-            Err(e) => Err(e),
-        }
+            (init, frags)
+        };
+
+        let store = if _sync {
+            Store::load_from_init_and_fragment_streams(
+                format,
+                init_segment.as_mut(),
+                &mut fragment_streams,
+                &mut validation_log,
+                &self.context,
+            )
+        } else {
+            Store::load_from_init_and_fragment_streams_async(
+                format,
+                init_segment.as_mut(),
+                &mut fragment_streams,
+                &mut validation_log,
+                &self.context,
+            )
+            .await
+        }?;
+
+        if _sync {
+            self.with_store(store, &mut validation_log)
+        } else {
+            self.with_store_async(store, &mut validation_log).await
+        }?;
+        Ok(self)
     }
 
     /// Loads a [`Reader`]` from an initial segment and fragments.  This
@@ -1398,6 +1504,46 @@ pub mod tests {
         let reader = Reader::from_context(context).with_stream("image/jpeg", &mut source)?;
 
         assert_eq!(reader.remote_url(), None);
+        assert!(reader.is_embedded());
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+        assert!(reader.active_manifest().is_some());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_reader_with_reference_custom_resolver() -> Result<()> {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+
+        use crate::asset_io::{AssetResolver, CAIRead};
+
+        // Custom resolver that serves the fixture bytes for any reference and
+        // counts how many times it was asked to open — proving `with_reference`
+        // goes through the Context's resolver rather than the filesystem.
+        struct CountingResolver {
+            bytes: Vec<u8>,
+            opens: Arc<AtomicUsize>,
+        }
+
+        impl AssetResolver for CountingResolver {
+            fn open(&self, _reference: &str, _format: &str) -> Result<Box<dyn CAIRead>> {
+                self.opens.fetch_add(1, Ordering::SeqCst);
+                Ok(Box::new(Cursor::new(self.bytes.clone())))
+            }
+        }
+
+        let opens = Arc::new(AtomicUsize::new(0));
+        let context = test_context().with_asset_resolver(CountingResolver {
+            bytes: IMAGE_WITH_MANIFEST.to_vec(),
+            opens: opens.clone(),
+        });
+
+        let reader = Reader::from_context(context).with_reference("image/jpeg", "any-reference")?;
+
+        assert!(opens.load(Ordering::SeqCst) >= 1, "resolver must be consulted");
         assert!(reader.is_embedded());
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
         assert!(reader.active_manifest().is_some());
