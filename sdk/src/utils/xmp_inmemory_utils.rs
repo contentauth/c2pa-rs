@@ -316,12 +316,12 @@ pub fn extract_provenance(xmp: &str) -> Option<String> {
 }
 
 /// extract the xmpMM:InstanceID value from xmp
-fn extract_instance_id(xmp: &str) -> Option<String> {
+pub(crate) fn extract_instance_id(xmp: &str) -> Option<String> {
     extract_xmp_key(xmp, "xmpMM:InstanceID")
 }
 
 /// extract the "xmpMM:DocumentID" value from xmp
-fn extract_document_id(xmp: &str) -> Option<String> {
+pub(crate) fn extract_document_id(xmp: &str) -> Option<String> {
     extract_xmp_key(xmp, "xmpMM:DocumentID")
 }
 
@@ -335,6 +335,13 @@ pub fn add_provenance(xmp: &str, provenance: &str) -> Result<String> {
 /// else in the packet untouched. The inverse of `add_provenance`.
 pub fn remove_provenance(xmp: &str) -> Result<String> {
     remove_xmp_key(xmp, "dcterms:provenance")
+}
+
+/// Add or replace the xmpMM:InstanceID value in xmp, including the xmpMM
+/// namespace declaration if needed.
+pub(crate) fn set_instance_id(xmp: &str, instance_id: &str) -> Result<String> {
+    let xmp = add_xmp_key(xmp, "xmlns:xmpMM", "http://ns.adobe.com/xap/1.0/mm/")?;
+    add_xmp_key(&xmp, "xmpMM:InstanceID", instance_id)
 }
 
 // According to the XMP Spec, the recommended practice is to use the ASCII space
