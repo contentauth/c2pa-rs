@@ -31,7 +31,7 @@ use super::{cache::RangeCache, AsyncRangeReader, RangeConfig};
 use crate::{
     asset_source::AssetSourceError,
     context::Context,
-    error::{Error, Result},
+    error::Result,
 };
 
 /// Aborts a driven closure after this many attempts rather than spinning on a
@@ -40,14 +40,17 @@ const MAX_ATTEMPTS: u32 = 64;
 
 /// A synchronous `Read + Seek` view over a [`RangeCache`] that performs no I/O.
 ///
-/// A read of bytes not resident in the cache returns an [`io::Error`] carrying a
-/// [`AssetSourceError::RangeMiss`] naming the range to fetch. Seeks never fail on
-/// missing bytes (they only move the cursor).
+/// A read of bytes not resident in the cache records the wanted range in a side
+/// channel and returns an error to abort the read. The range is recorded in the
+/// side channel rather than only in the error, so a miss is detected even when the
+/// parser reclassifies the error (e.g. the BMFF reader wraps it as
+/// `InvalidAsset`). Seeks never fail on missing bytes (they only move the cursor).
 pub(crate) struct PrefetchStream<'a> {
     cache: &'a mut RangeCache,
     len: u64,
     offset: u64,
     config: RangeConfig,
+    miss: &'a mut Option<(u64, u64)>,
 }
 
 impl Read for PrefetchStream<'_> {
@@ -66,6 +69,7 @@ impl Read for PrefetchStream<'_> {
                 .max(self.config.window)
                 .min(self.config.max_request)
                 .min(remaining);
+            *self.miss = Some((self.offset, fetch_len));
             return Err(io::Error::other(AssetSourceError::RangeMiss {
                 offset: self.offset,
                 len: fetch_len,
@@ -99,24 +103,13 @@ fn add_signed(base: u64, delta: i64) -> io::Result<u64> {
     Ok(result as u64)
 }
 
-/// Recovers a [`AssetSourceError::RangeMiss`] carried out of a driven closure as an
-/// [`Error::IoError`]. Returns `None` for any other error (a genuine parse error).
-fn range_miss(err: &Error) -> Option<(u64, u64)> {
-    let Error::IoError(io_err) = err else {
-        return None;
-    };
-    match io_err.get_ref()?.downcast_ref::<AssetSourceError>()? {
-        AssetSourceError::RangeMiss { offset, len } => Some((*offset, *len)),
-        _ => None,
-    }
-}
-
 /// Runs a synchronous parse closure over an asynchronous byte source.
 ///
 /// Each cache miss aborts `op`, the missing range is awaited and inserted, and `op`
-/// is re-run over the warmed cache. Aborts with a "prefetch stalled" error if the
-/// closure requests a range already fetched or exceeds [`MAX_ATTEMPTS`], and checks
-/// the context cancellation flag before each attempt.
+/// is re-run over the warmed cache. A miss is detected through a side channel, so it
+/// works even when the parser swallows or reclassifies the abort error. Aborts with
+/// a "prefetch stalled" error if the closure re-requests a resident range or exceeds
+/// [`MAX_ATTEMPTS`], and checks the context cancellation flag before each attempt.
 pub(crate) async fn drive_async<T, F>(
     reader: &dyn AsyncRangeReader,
     context: &Context,
@@ -128,6 +121,7 @@ where
 {
     let len = reader.info_async().await?.len;
     let mut cache = RangeCache::new(config.max_cached);
+    let mut miss: Option<(u64, u64)> = None;
     let mut attempts: u32 = 0;
 
     loop {
@@ -142,43 +136,43 @@ where
             .into());
         }
 
+        miss = None;
         let result = {
             let mut stream = PrefetchStream {
                 cache: &mut cache,
                 len,
                 offset: 0,
                 config,
+                miss: &mut miss,
             };
             op(&mut stream)
         };
 
-        match result {
-            Ok(value) => return Ok(value),
-            Err(err) => {
-                let Some((offset, fetch_len)) = range_miss(&err) else {
-                    return Err(err);
-                };
-                // A range that is already resident cannot legitimately miss again;
-                // that means the closure is not converging.
-                let mut probe = [0u8; 1];
-                if cache.copy_into(offset, &mut probe) > 0 {
-                    return Err(AssetSourceError::Other(
-                        "prefetch stalled: re-requested a cached range".into(),
-                    )
-                    .into());
-                }
-                let data = reader.read_range_async(offset, fetch_len).await?;
-                if data.is_empty() {
-                    return Err(AssetSourceError::ShortRead {
-                        offset,
-                        expected: fetch_len,
-                        got: 0,
-                    }
-                    .into());
-                }
-                cache.insert(offset, data);
-            }
+        // A miss during this attempt means the parse ran on incomplete bytes, so the
+        // result is discarded regardless of whether `op` returned Ok or Err.
+        let Some((offset, fetch_len)) = miss.take() else {
+            return result;
+        };
+
+        // A range that is already resident cannot legitimately miss again; that means
+        // the closure is not converging.
+        let mut probe = [0u8; 1];
+        if cache.copy_into(offset, &mut probe) > 0 {
+            return Err(AssetSourceError::Other(
+                "prefetch stalled: re-requested a cached range".into(),
+            )
+            .into());
         }
+        let data = reader.read_range_async(offset, fetch_len).await?;
+        if data.is_empty() {
+            return Err(AssetSourceError::ShortRead {
+                offset,
+                expected: fetch_len,
+                got: 0,
+            }
+            .into());
+        }
+        cache.insert(offset, data);
     }
 }
 
@@ -192,6 +186,7 @@ mod tests {
 
     use super::*;
     use crate::asset_source::range::RangeInfo;
+    use crate::error::Error;
 
     struct AsyncMem {
         data: Vec<u8>,
@@ -296,5 +291,32 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, Error::AssetSource(AssetSourceError::Other(_))));
+    }
+
+    #[tokio::test]
+    async fn miss_detected_when_parser_reclassifies_the_abort_error() {
+        // The BMFF reader wraps a read error into a non-io error; the driver must
+        // still detect the miss through the side channel and converge.
+        let data: Vec<u8> = (0..250u8).collect();
+        let reader = AsyncMem {
+            data: data.clone(),
+            calls: Arc::new(AtomicUsize::new(0)),
+        };
+        let context = Context::new();
+        let config = RangeConfig {
+            window: 32,
+            max_request: 64,
+            max_cached: 4 * 1024 * 1024,
+        };
+        let out = drive_async(&reader, &context, config, |stream| {
+            let mut out = Vec::new();
+            stream
+                .read_to_end(&mut out)
+                .map_err(|e| Error::BadParam(format!("reclassified: {e}")))?;
+            Ok(out)
+        })
+        .await
+        .unwrap();
+        assert_eq!(out, data);
     }
 }
