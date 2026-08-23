@@ -17,7 +17,8 @@ use std::sync::{
 };
 
 use crate::{
-    asset_io::{AssetIO, AssetResolver, AsyncAssetResolver, HandlerRegistry},
+    asset_io::{AssetIO, HandlerRegistry},
+    asset_source::{AssetSourceSlot, SyncAssetSource},
     http::{
         restricted::{RedirectResolver, RestrictedResolver},
         AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver,
@@ -138,54 +139,19 @@ enum AsyncSignerState {
     FromSettings(OnceLock<Result<BoxedAsyncSigner>>),
 }
 
-/// Default asset resolver used when the `file_io` feature is disabled: has no way
-/// to open a reference, so it errors and points the caller at
-/// [`Context::with_asset_resolver`].
-#[cfg(not(feature = "file_io"))]
-struct NoAssetResolver;
-
-#[cfg(not(feature = "file_io"))]
-impl AssetResolver for NoAssetResolver {
-    fn open(&self, _reference: &str, _format: &str) -> Result<Box<dyn crate::asset_io::CAIRead>> {
-        Err(Error::BadParam(
-            "no default asset resolver without the `file_io` feature; register one via \
-             Context::with_asset_resolver"
-                .to_string(),
-        ))
-    }
-}
-
-#[cfg(not(feature = "file_io"))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-impl AsyncAssetResolver for NoAssetResolver {
-    async fn open_async(
-        &self,
-        reference: &str,
-        format: &str,
-    ) -> Result<Box<dyn crate::asset_io::CAIRead>> {
-        self.open(reference, format)
-    }
-}
-
+/// The default asset source: the local filesystem when `file_io` is enabled,
+/// otherwise a placeholder that reports [`AssetSourceError::NotConfigured`] until a
+/// source is registered.
+///
+/// [`AssetSourceError::NotConfigured`]: crate::asset_source::AssetSourceError::NotConfigured
 #[cfg(feature = "file_io")]
-fn default_asset_resolver() -> Arc<dyn AssetResolver> {
-    Arc::new(crate::asset_io::LocalAssetResolver)
+fn default_asset_source() -> AssetSourceSlot {
+    AssetSourceSlot::Sync(Arc::new(crate::asset_source::LocalAssetSource))
 }
 
 #[cfg(not(feature = "file_io"))]
-fn default_asset_resolver() -> Arc<dyn AssetResolver> {
-    Arc::new(NoAssetResolver)
-}
-
-#[cfg(feature = "file_io")]
-fn default_async_asset_resolver() -> Arc<dyn AsyncAssetResolver> {
-    Arc::new(crate::asset_io::LocalAssetResolver)
-}
-
-#[cfg(not(feature = "file_io"))]
-fn default_async_asset_resolver() -> Arc<dyn AsyncAssetResolver> {
-    Arc::new(NoAssetResolver)
+fn default_asset_source() -> AssetSourceSlot {
+    AssetSourceSlot::Sync(Arc::new(crate::asset_source::NoAssetSource))
 }
 
 /// A trait for types that can be converted into Settings.
@@ -330,11 +296,9 @@ pub struct Context {
     /// Custom handlers are searched first; last-registered wins when two handlers claim the
     /// same format.
     io: HandlerRegistry,
-    /// Resolves an asset reference (path/URL/opaque id) into a seekable byte stream.
-    /// Defaults to opening local files; override to pull asset bytes from anywhere.
-    asset_resolver: Arc<dyn AssetResolver>,
-    /// Async twin of [`asset_resolver`](Self::asset_resolver), used by the async read path.
-    async_asset_resolver: Arc<dyn AsyncAssetResolver>,
+    /// Where asset bytes come from when the SDK opens an asset by reference.
+    /// Defaults to opening local files; override to pull bytes from anywhere.
+    asset_source: AssetSourceSlot,
 }
 
 impl Default for Context {
@@ -353,8 +317,7 @@ impl Default for Context {
             progress_callback: None,
             cancel_flag: AtomicBool::new(false),
             io: HandlerRegistry::with_fallback(crate::jumbf_io::default_handler_registry()),
-            asset_resolver: default_asset_resolver(),
-            async_asset_resolver: default_async_asset_resolver(),
+            asset_source: default_asset_source(),
         }
     }
 }
@@ -617,48 +580,54 @@ impl Context {
         &self.io
     }
 
-    /// Configure this Context with a custom [`AssetResolver`].
+    /// Configure this Context with a custom synchronous [`SyncAssetSource`].
     ///
-    /// The resolver decides where asset bytes come from when the SDK opens an asset
+    /// The source decides where asset bytes come from when the SDK opens an asset
     /// by reference (e.g. [`Reader::with_reference`](crate::Reader::with_reference)
-    /// or the file-based read APIs). Defaults to [`LocalAssetResolver`], which opens
-    /// local file paths; override it to pull bytes from a network range-reader, an
-    /// object store, or any custom transport — parsing and validation are unchanged.
+    /// or the file-based read APIs). Defaults to
+    /// [`LocalAssetSource`](crate::asset_source::LocalAssetSource), which opens local
+    /// file paths; override it to pull bytes from a network range-reader, an object
+    /// store, or any custom transport — parsing and validation are unchanged.
     ///
-    /// [`LocalAssetResolver`]: crate::asset_io::LocalAssetResolver
-    pub fn with_asset_resolver<T: AssetResolver + 'static>(mut self, resolver: T) -> Self {
-        self.asset_resolver = Arc::new(resolver);
+    /// Registering a source replaces any previously registered source, sync or async.
+    pub fn with_sync_asset_source<T: SyncAssetSource + 'static>(mut self, source: T) -> Self {
+        self.asset_source = AssetSourceSlot::Sync(Arc::new(source));
         self
     }
 
-    /// Mutable variant of [`with_asset_resolver`](Self::with_asset_resolver).
-    pub fn set_asset_resolver<T: AssetResolver + 'static>(&mut self, resolver: T) {
-        self.asset_resolver = Arc::new(resolver);
+    /// Mutable variant of [`with_sync_asset_source`](Self::with_sync_asset_source).
+    pub fn set_sync_asset_source<T: SyncAssetSource + 'static>(&mut self, source: T) {
+        self.asset_source = AssetSourceSlot::Sync(Arc::new(source));
     }
 
-    /// Returns this Context's sync [`AssetResolver`].
-    pub fn asset_resolver(&self) -> Arc<dyn AssetResolver> {
-        self.asset_resolver.clone()
-    }
-
-    /// Configure this Context with a custom [`AsyncAssetResolver`], used by the
-    /// async read path so a network-backed resolver can do non-blocking I/O.
-    pub fn with_async_asset_resolver<T: AsyncAssetResolver + 'static>(
+    /// Configure this Context with a custom asynchronous
+    /// [`AsyncAssetSource`](crate::asset_source::AsyncAssetSource), used by the async
+    /// read path so a network-backed source can do non-blocking I/O.
+    ///
+    /// A synchronous read against an async-only source returns
+    /// [`AssetSourceError::SyncUnsupported`](crate::asset_source::AssetSourceError::SyncUnsupported)
+    /// rather than silently falling back to the filesystem.
+    ///
+    /// Registering a source replaces any previously registered source, sync or async.
+    pub fn with_async_asset_source<T: crate::asset_source::AsyncAssetSource + 'static>(
         mut self,
-        resolver: T,
+        source: T,
     ) -> Self {
-        self.async_asset_resolver = Arc::new(resolver);
+        self.asset_source = AssetSourceSlot::Async(Arc::new(source));
         self
     }
 
-    /// Mutable variant of [`with_async_asset_resolver`](Self::with_async_asset_resolver).
-    pub fn set_async_asset_resolver<T: AsyncAssetResolver + 'static>(&mut self, resolver: T) {
-        self.async_asset_resolver = Arc::new(resolver);
+    /// Mutable variant of [`with_async_asset_source`](Self::with_async_asset_source).
+    pub fn set_async_asset_source<T: crate::asset_source::AsyncAssetSource + 'static>(
+        &mut self,
+        source: T,
+    ) {
+        self.asset_source = AssetSourceSlot::Async(Arc::new(source));
     }
 
-    /// Returns this Context's [`AsyncAssetResolver`].
-    pub fn async_asset_resolver(&self) -> Arc<dyn AsyncAssetResolver> {
-        self.async_asset_resolver.clone()
+    /// Returns this Context's [`AssetSourceSlot`].
+    pub fn asset_source(&self) -> &AssetSourceSlot {
+        &self.asset_source
     }
 
     /// Configure this Context with a custom cryptographic signer.
@@ -986,6 +955,33 @@ mod tests {
     }
 
     #[test]
+    fn test_sync_open_on_async_only_source_reports_sync_unsupported() {
+        use crate::asset_source::{
+            AssetRequest, AssetSourceError, AsyncAssetSource, ResolvedAsset,
+        };
+
+        struct AsyncOnly;
+
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+        impl AsyncAssetSource for AsyncOnly {
+            async fn open_async(
+                &self,
+                _request: &AssetRequest<'_>,
+            ) -> std::result::Result<ResolvedAsset, AssetSourceError> {
+                unreachable!("sync path must not reach the async source")
+            }
+        }
+
+        // A sync open against an async-only source must name the missing capability
+        // rather than falling back to the filesystem default.
+        let context = Context::new().with_async_asset_source(AsyncOnly);
+        let request = AssetRequest::from_reference("any-reference", None);
+        let result = context.asset_source().open(&request);
+        assert!(matches!(result, Err(AssetSourceError::SyncUnsupported)));
+    }
+
+    #[test]
     fn test_into_settings_from_json_str() {
         let json = r#"{"verify": {"verify_after_sign": true}}"#;
         let context = Context::new().with_settings(json).unwrap();
@@ -1048,8 +1044,7 @@ mod tests {
             progress_callback: None,
             cancel_flag: AtomicBool::new(false),
             io: HandlerRegistry::new(),
-            asset_resolver: default_asset_resolver(),
-            async_asset_resolver: default_async_asset_resolver(),
+            asset_source: default_asset_source(),
         };
 
         // Update settings to ensure no signer configuration
@@ -1127,8 +1122,7 @@ mod tests {
             progress_callback: None,
             cancel_flag: AtomicBool::new(false),
             io: HandlerRegistry::new(),
-            asset_resolver: default_asset_resolver(),
-            async_asset_resolver: default_async_asset_resolver(),
+            asset_source: default_asset_source(),
         };
 
         // Verify that async_signer() returns an error when no async signer settings are present

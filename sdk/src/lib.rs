@@ -199,6 +199,8 @@ pub mod assertions;
 
 pub mod asset_io;
 
+pub mod asset_source;
+
 /// The `cose_sign` module contains the definitions for the COSE signing algorithms.
 pub mod cose_sign;
 
@@ -246,8 +248,14 @@ pub use assertions::DigitalSourceType;
 pub use assertions::Relationship;
 pub use asset_io::AssetIO;
 #[cfg(feature = "file_io")]
-pub use asset_io::LocalAssetResolver;
-pub use asset_io::{AssetResolver, AsyncAssetResolver};
+pub use asset_source::LocalAssetSource;
+pub use asset_source::{
+    range::{
+        AsyncRangeReader, RangeAssetSource, RangeConfig, RangeInfo, RangeStream, SyncRangeReader,
+    },
+    AssetBytes, AssetRef, AssetRequest, AssetSourceError, AssetSourceSlot, AsyncAssetSource,
+    FragmentSource, NoAssetSource, ResolvedAsset, SyncAssetSource,
+};
 pub use builder::{Builder, BuilderIntent, HashType, ManifestDefinition};
 pub use c2pa_raw_crypto::{RawSignatureValidationError, RawSigner, RawSignerError, SigningAlg};
 pub use callback_signer::{CallbackFunc, CallbackSigner};

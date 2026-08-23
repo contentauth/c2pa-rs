@@ -34,7 +34,7 @@ use serde_with::skip_serializing_none;
 use crate::utils::io_utils::uri_to_path;
 use crate::{
     assertions::Metadata,
-    asset_io::CAIRead,
+    asset_source::AssetRequest,
     context::{Context, ProgressPhase},
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
@@ -249,35 +249,72 @@ impl Reader {
     }
 
     /// Add a manifest store to the [`Reader`] from an asset *reference*, resolved
-    /// through the [`Context`]'s [`AssetResolver`].
+    /// through the [`Context`]'s asset source.
     ///
-    /// The reference (a path, URL, or opaque id) is opened by the context's
-    /// resolver — [`LocalAssetResolver`] by default, or a custom resolver set via
-    /// [`Context::with_asset_resolver`] / [`Context::with_async_asset_resolver`] to
+    /// The reference (a path, URL, or opaque id) is opened by the context's asset
+    /// source — [`LocalAssetSource`] by default, or a custom source set via
+    /// [`Context::with_sync_asset_source`] / [`Context::with_async_asset_source`] to
     /// pull bytes from a network range-reader or other transport. Parsing and
     /// validation are identical to [`with_stream`](Self::with_stream); with
     /// validation on, hard-binding verification re-reads the asset through the same
-    /// resolver.
+    /// source.
     ///
     /// # Arguments
     /// * `format` - The MIME type or extension hint for the asset.
     /// * `reference` - The asset reference to resolve and open.
     ///
-    /// [`AssetResolver`]: crate::asset_io::AssetResolver
-    /// [`LocalAssetResolver`]: crate::asset_io::LocalAssetResolver
+    /// [`LocalAssetSource`]: crate::asset_source::LocalAssetSource
+    /// [`Context::with_sync_asset_source`]: crate::Context::with_sync_asset_source
+    /// [`Context::with_async_asset_source`]: crate::Context::with_async_asset_source
     #[async_generic]
     pub fn with_reference(self, format: &str, reference: &str) -> Result<Self> {
+        let request = AssetRequest::from_reference(reference, Some(format));
         if _sync {
-            let stream = self.context.asset_resolver().open(reference, format)?;
+            let stream = self.context.asset_source().open(&request)?.into_cai_read()?;
             self.with_stream(format, stream)
         } else {
-            let stream = self
-                .context
-                .async_asset_resolver()
-                .open_async(reference, format)
-                .await?;
-            self.with_stream_async(format, stream).await
+            let resolved = self.context.asset_source().open_async(&request).await?;
+            match resolved.into_read_target() {
+                crate::asset_source::ReadTarget::Stream(stream) => {
+                    self.with_stream_async(format, stream).await
+                }
+                crate::asset_source::ReadTarget::AsyncRanges { reader, config } => {
+                    self.with_async_ranges(format, reader, config).await
+                }
+            }
         }
+    }
+
+    /// Reads a manifest through an asynchronous range source.
+    ///
+    /// Manifest discovery is driven over the async source with no blocking read;
+    /// the data-hash binding is not verified here, since re-hashing the whole asset
+    /// would require a synchronous read. Callers needing full hash verification of a
+    /// network-backed asset must supply a synchronous source (or run on a worker).
+    async fn with_async_ranges(
+        mut self,
+        format: &str,
+        reader: Box<dyn crate::asset_source::range::AsyncRangeReader>,
+        config: crate::asset_source::range::RangeConfig,
+    ) -> Result<Self> {
+        let mut validation_log = StatusTracker::default();
+
+        let (manifest_bytes, remote_url) =
+            crate::asset_source::range::drive_async(reader.as_ref(), &self.context, config, |s| {
+                Store::load_jumbf_from_stream(format, s, &self.context)
+            })
+            .await?;
+
+        let store = Store::from_manifest_bytes_no_data_hash_async(
+            &manifest_bytes,
+            remote_url,
+            &mut validation_log,
+            &self.context,
+        )
+        .await?;
+
+        self.with_store_async(store, &mut validation_log).await?;
+        Ok(self)
     }
 
     /// Create a manifest store [`Reader`] from a stream.  A Reader is used to validate C2PA data from an asset.
@@ -623,20 +660,24 @@ impl Reader {
             .supported_extension(path.as_ref())
             .ok_or(crate::Error::UnsupportedType)?;
 
-        // Resolve init + fragments through the context's AssetResolver (LocalAssetResolver
-        // by default) so local and remote fragmented reads share one verification path.
-        let resolver = self.context.asset_resolver();
-        let init_ref = path.as_ref().to_string_lossy();
-        let mut init_segment = resolver.open(&init_ref, &asset_type)?;
-        let mut fragment_streams: Vec<Box<dyn CAIRead>> = fragments
-            .iter()
-            .map(|p| resolver.open(&p.to_string_lossy(), &asset_type))
-            .collect::<Result<_>>()?;
+        // Resolve init through the context's asset source (LocalAssetSource by
+        // default); fragments are opened lazily, one at a time, during verification.
+        let source = self.context.asset_source();
+        let init_request = AssetRequest::new(
+            crate::asset_source::AssetRef::Path(path.as_ref()),
+            Some(&asset_type),
+        );
+        let mut init_segment = source.open(&init_request)?.into_cai_read()?;
+        let fragment_source = crate::asset_source::SourcePathFragments {
+            source,
+            paths: fragments.as_slice(),
+            format: asset_type.clone(),
+        };
 
-        let store = Store::load_from_init_and_fragment_streams(
+        let store = Store::load_from_init_and_fragments(
             &asset_type,
             init_segment.as_mut(),
-            &mut fragment_streams,
+            &fragment_source,
             &mut validation_log,
             &self.context,
         )?;
@@ -645,20 +686,18 @@ impl Reader {
     }
 
     /// Add manifest store from an initial-segment *reference* and fragment
-    /// *references*, resolved through the [`Context`]'s [`AssetResolver`].
+    /// *references*, resolved through the [`Context`]'s asset source.
     ///
     /// The streaming counterpart of [`with_fragmented_files`](Self::with_fragmented_files):
-    /// init and each fragment are opened by the context's resolver, so a custom
-    /// resolver (e.g. a network range-reader) can serve a fragmented DASH stream
+    /// init and each fragment are opened by the context's asset source, so a custom
+    /// source (e.g. a network range-reader) can serve a fragmented DASH stream
     /// without local files. With validation on, each fragment's merkle hard binding
-    /// is verified against bytes pulled through the resolver.
+    /// is verified against bytes pulled through the source.
     ///
     /// # Arguments
     /// * `format` - The MIME type or extension hint.
     /// * `init_reference` - Reference to the initialization segment.
     /// * `fragment_references` - References to the fragment segments, in order.
-    ///
-    /// [`AssetResolver`]: crate::asset_io::AssetResolver
     #[async_generic]
     pub fn with_fragment_references(
         mut self,
@@ -668,37 +707,29 @@ impl Reader {
     ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
 
-        let (mut init_segment, mut fragment_streams) = if _sync {
-            let resolver = self.context.asset_resolver();
-            let init = resolver.open(init_reference, format)?;
-            let frags = fragment_references
-                .iter()
-                .map(|r| resolver.open(r, format))
-                .collect::<Result<Vec<_>>>()?;
-            (init, frags)
-        } else {
-            let resolver = self.context.async_asset_resolver();
-            let init = resolver.open_async(init_reference, format).await?;
-            let mut frags: Vec<Box<dyn CAIRead>> = Vec::with_capacity(fragment_references.len());
-            for r in fragment_references {
-                frags.push(resolver.open_async(r, format).await?);
-            }
-            (init, frags)
+        let init_request = AssetRequest::from_reference(init_reference, Some(format));
+        let source = self.context.asset_source();
+        let fragment_source = crate::asset_source::SourceRefFragments {
+            source,
+            references: fragment_references,
+            format: format.to_string(),
         };
 
         let store = if _sync {
-            Store::load_from_init_and_fragment_streams(
+            let mut init_segment = source.open(&init_request)?.into_cai_read()?;
+            Store::load_from_init_and_fragments(
                 format,
                 init_segment.as_mut(),
-                &mut fragment_streams,
+                &fragment_source,
                 &mut validation_log,
                 &self.context,
             )
         } else {
-            Store::load_from_init_and_fragment_streams_async(
+            let mut init_segment = source.open_async(&init_request).await?.into_cai_read()?;
+            Store::load_from_init_and_fragments_async(
                 format,
                 init_segment.as_mut(),
-                &mut fragment_streams,
+                &fragment_source,
                 &mut validation_log,
                 &self.context,
             )
@@ -1518,32 +1549,37 @@ pub mod tests {
             Arc,
         };
 
-        use crate::asset_io::{AssetResolver, CAIRead};
+        use crate::asset_source::{AssetRequest, AssetSourceError, ResolvedAsset, SyncAssetSource};
 
-        // Custom resolver that serves the fixture bytes for any reference and
+        // Custom source that serves the fixture bytes for any reference and
         // counts how many times it was asked to open — proving `with_reference`
-        // goes through the Context's resolver rather than the filesystem.
-        struct CountingResolver {
+        // goes through the Context's asset source rather than the filesystem.
+        struct CountingSource {
             bytes: Vec<u8>,
             opens: Arc<AtomicUsize>,
         }
 
-        impl AssetResolver for CountingResolver {
-            fn open(&self, _reference: &str, _format: &str) -> Result<Box<dyn CAIRead>> {
+        impl SyncAssetSource for CountingSource {
+            fn open(
+                &self,
+                _request: &AssetRequest<'_>,
+            ) -> std::result::Result<ResolvedAsset, AssetSourceError> {
                 self.opens.fetch_add(1, Ordering::SeqCst);
-                Ok(Box::new(Cursor::new(self.bytes.clone())))
+                Ok(ResolvedAsset::from_stream(Box::new(Cursor::new(
+                    self.bytes.clone(),
+                ))))
             }
         }
 
         let opens = Arc::new(AtomicUsize::new(0));
-        let context = test_context().with_asset_resolver(CountingResolver {
+        let context = test_context().with_sync_asset_source(CountingSource {
             bytes: IMAGE_WITH_MANIFEST.to_vec(),
             opens: opens.clone(),
         });
 
         let reader = Reader::from_context(context).with_reference("image/jpeg", "any-reference")?;
 
-        assert!(opens.load(Ordering::SeqCst) >= 1, "resolver must be consulted");
+        assert!(opens.load(Ordering::SeqCst) >= 1, "source must be consulted");
         assert!(reader.is_embedded());
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
         assert!(reader.active_manifest().is_some());
@@ -1561,6 +1597,137 @@ pub mod tests {
         assert!(!reader.is_embedded());
 
         Ok(())
+    }
+
+    #[test]
+    fn test_reader_range_source_does_not_over_fetch() -> Result<()> {
+        use std::sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc,
+        };
+
+        use crate::asset_source::{
+            range::{RangeAssetSource, RangeConfig, RangeInfo, SyncRangeReader},
+            AssetRequest, AssetSourceError,
+        };
+
+        // In-memory range reader over the fixture that tallies every byte fetched.
+        struct MemRanges {
+            data: Vec<u8>,
+            fetched: Arc<AtomicU64>,
+        }
+
+        impl SyncRangeReader for MemRanges {
+            fn info(&self) -> std::result::Result<RangeInfo, AssetSourceError> {
+                Ok(RangeInfo {
+                    len: self.data.len() as u64,
+                })
+            }
+
+            fn read_range(
+                &self,
+                offset: u64,
+                len: u64,
+            ) -> std::result::Result<Vec<u8>, AssetSourceError> {
+                let start = offset as usize;
+                let end = (offset + len).min(self.data.len() as u64) as usize;
+                let slice = self.data[start..end].to_vec();
+                self.fetched.fetch_add(slice.len() as u64, Ordering::SeqCst);
+                Ok(slice)
+            }
+        }
+
+        let file_len = IMAGE_WITH_MANIFEST.len() as u64;
+        let fetched = Arc::new(AtomicU64::new(0));
+        let fetched_factory = fetched.clone();
+
+        // Small window so the parser seeks across several cache misses; the segment
+        // cache must serve every repeat access without re-fetching, so total fetched
+        // never exceeds the file size (a thrashing sliding window would exceed it).
+        let source = RangeAssetSource::new(move |_request: &AssetRequest<'_>| {
+            Ok(MemRanges {
+                data: IMAGE_WITH_MANIFEST.to_vec(),
+                fetched: fetched_factory.clone(),
+            })
+        })
+        .with_config(RangeConfig {
+            window: 4096,
+            max_request: 16 * 1024,
+            max_cached: 4 * 1024 * 1024,
+        });
+
+        let context = test_context().with_sync_asset_source(source);
+
+        let reader = Reader::from_context(context).with_reference("image/jpeg", "any-reference")?;
+        assert!(reader.active_manifest().is_some());
+
+        let total = fetched.load(Ordering::SeqCst);
+        assert!(
+            total <= file_len,
+            "range read fetched {total} bytes of a {file_len}-byte file; the cache must fetch \
+             each byte at most once"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_reader_async_range_source_reads_manifest() {
+        use crate::asset_source::{
+            range::{AsyncRangeReader, RangeInfo},
+            AssetRequest, AssetSourceError, AsyncAssetSource, ResolvedAsset,
+        };
+
+        // Async-only range reader over the fixture — implements no synchronous
+        // method, so the whole read is driven without a blocking call.
+        struct AsyncMem(Vec<u8>);
+
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        impl AsyncRangeReader for AsyncMem {
+            async fn info_async(&self) -> std::result::Result<RangeInfo, AssetSourceError> {
+                Ok(RangeInfo {
+                    len: self.0.len() as u64,
+                })
+            }
+            async fn read_range_async(
+                &self,
+                offset: u64,
+                len: u64,
+            ) -> std::result::Result<Vec<u8>, AssetSourceError> {
+                let start = offset as usize;
+                let end = (offset + len).min(self.0.len() as u64) as usize;
+                Ok(self.0[start..end].to_vec())
+            }
+        }
+
+        struct AsyncRangeSource;
+
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        impl AsyncAssetSource for AsyncRangeSource {
+            async fn open_async(
+                &self,
+                _request: &AssetRequest<'_>,
+            ) -> std::result::Result<ResolvedAsset, AssetSourceError> {
+                Ok(ResolvedAsset::from_ranges_async(Box::new(AsyncMem(
+                    IMAGE_WITH_MANIFEST.to_vec(),
+                ))))
+            }
+        }
+
+        // Verification off keeps this a pure manifest-discovery read (the async
+        // range path does not do the synchronous data-hash re-read).
+        let context = test_context()
+            .with_settings(r#"{"verify": {"verify_after_reading": false}}"#)
+            .unwrap()
+            .with_async_asset_source(AsyncRangeSource);
+
+        let reader = Reader::from_context(context)
+            .with_reference_async("image/jpeg", "any-reference")
+            .await
+            .unwrap();
+        assert!(reader.active_manifest().is_some());
     }
 
     #[test]

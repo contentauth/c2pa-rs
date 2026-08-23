@@ -268,6 +268,133 @@ fn test_builder_fragmented() -> Result<()> {
 }
 
 #[test]
+#[cfg(feature = "file_io")]
+fn test_fragmented_lazy_one_open() -> Result<()> {
+    use std::{
+        io::Read,
+        path::PathBuf,
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        },
+    };
+
+    use c2pa::{AssetRef, AssetRequest, AssetSourceError, ResolvedAsset, SyncAssetSource};
+    use common::tempdirectory;
+
+    let context = test_context().into_shared();
+    let mut builder = Builder::from_shared_context(&context);
+    builder.set_intent(BuilderIntent::Create(c2pa::DigitalSourceType::Empty));
+    let tempdir = tempdirectory().expect("temp dir");
+    let output_path = tempdir.path().to_path_buf();
+    let mut init_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    init_path.push("tests/fixtures/bunny/**/BigBuckBunny_2s_init.mp4");
+    let pattern = init_path.as_os_str().to_str().unwrap();
+    let frag_glob = PathBuf::from("BigBuckBunny_2s*.m4s");
+    builder.sign_fragmented_files(context.signer()?, &init_path, &frag_glob, &output_path)?;
+
+    // Tracks how many streams the source has open at once.
+    #[derive(Clone)]
+    struct Counter {
+        current: Arc<AtomicUsize>,
+        peak: Arc<AtomicUsize>,
+    }
+    // Decrements the live-open counter when the stream is dropped.
+    struct Guard {
+        inner: std::fs::File,
+        current: Arc<AtomicUsize>,
+    }
+    impl Read for Guard {
+        fn read(&mut self, b: &mut [u8]) -> io::Result<usize> {
+            self.inner.read(b)
+        }
+    }
+    impl Seek for Guard {
+        fn seek(&mut self, p: io::SeekFrom) -> io::Result<u64> {
+            self.inner.seek(p)
+        }
+    }
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            self.current.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+    struct CountingSource(Counter);
+    impl SyncAssetSource for CountingSource {
+        fn open(
+            &self,
+            req: &AssetRequest<'_>,
+        ) -> std::result::Result<ResolvedAsset, AssetSourceError> {
+            let path = match req.reference {
+                AssetRef::Path(p) => p,
+                _ => return Err(AssetSourceError::UnsupportedReference),
+            };
+            let file = std::fs::File::open(path).map_err(AssetSourceError::Io)?;
+            let now = self.0.current.fetch_add(1, Ordering::SeqCst) + 1;
+            self.0.peak.fetch_max(now, Ordering::SeqCst);
+            Ok(ResolvedAsset::from_stream(Box::new(Guard {
+                inner: file,
+                current: self.0.current.clone(),
+            })))
+        }
+    }
+
+    let init = glob::glob(pattern)
+        .unwrap()
+        .flatten()
+        .next()
+        .expect("a signed init segment");
+    let init_dir = init.parent().unwrap();
+    let seg_pattern = init_dir.join("BigBuckBunny_2s*.m4s");
+    let source_fragments: Vec<PathBuf> = glob::glob(seg_pattern.to_str().unwrap())
+        .unwrap()
+        .flatten()
+        .collect();
+    let new_output_path = output_path.join(init.parent().unwrap().file_name().unwrap());
+    let output_init = new_output_path.join(init.file_name().unwrap());
+    let output_fragments: Vec<PathBuf> = source_fragments
+        .into_iter()
+        .map(|f| new_output_path.join(f.file_name().unwrap()))
+        .collect();
+    assert!(
+        output_fragments.len() >= 2,
+        "need multiple fragments to prove lazy opening"
+    );
+
+    let counter = Counter {
+        current: Arc::new(AtomicUsize::new(0)),
+        peak: Arc::new(AtomicUsize::new(0)),
+    };
+    let ctx = test_context().with_sync_asset_source(CountingSource(counter.clone()));
+    let reader = Reader::from_context(ctx).with_fragmented_files(&output_init, &output_fragments)?;
+    assert_eq!(reader.validation_status(), None);
+
+    // Peak live opens is the init segment plus at most one fragment; the old
+    // behavior opened every fragment up front (peak would be fragments + 1).
+    assert!(
+        counter.peak.load(Ordering::SeqCst) <= 2,
+        "fragments must be opened one at a time (peak = {})",
+        counter.peak.load(Ordering::SeqCst)
+    );
+    assert_eq!(
+        counter.current.load(Ordering::SeqCst),
+        0,
+        "every fragment stream must be closed"
+    );
+
+    // Verifying the same source a second time succeeds (fresh opens + rewind).
+    let ctx2 = test_context().with_sync_asset_source(CountingSource(Counter {
+        current: Arc::new(AtomicUsize::new(0)),
+        peak: Arc::new(AtomicUsize::new(0)),
+    }));
+    let reader2 =
+        Reader::from_context(ctx2).with_fragmented_files(&output_init, &output_fragments)?;
+    assert_eq!(reader2.validation_status(), None);
+
+    Ok(())
+}
+
+#[test]
 fn test_builder_remote_url_no_embed() -> Result<()> {
     let mut settings = test_settings();
     // disable remote fetching for this test

@@ -262,6 +262,9 @@ pub enum Error {
     HttpResolverError(#[from] HttpResolverError),
 
     #[error(transparent)]
+    AssetSource(#[from] crate::asset_source::AssetSourceError),
+
+    #[error(transparent)]
     TryFromIntError(#[from] std::num::TryFromIntError),
 
     #[error(transparent)]

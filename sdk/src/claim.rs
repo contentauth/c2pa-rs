@@ -40,6 +40,7 @@ use crate::{
         Ingredient, Metadata, Relationship, V2_DEPRECATED_ACTIONS,
     },
     asset_io::CAIRead,
+    asset_source::FragmentSource,
     cbor_types::map_cbor_to_type,
     context::{Context, ProgressPhase},
     cose_validator::{
@@ -109,15 +110,17 @@ pub(crate) const ALLOWED_UPDATE_MANIFEST_ACTIONS: [&str; 4] = [
 // having different implementations for functions as a single entry point can be
 // used to handle different data types.
 #[allow(dead_code)] // Bytes and third param in StreamFragment not used without v1_api feature
+#[non_exhaustive]
 pub enum ClaimAssetData<'a> {
     #[cfg(feature = "file_io")]
     Path(&'a Path),
     Bytes(&'a [u8], &'a str),
     Stream(&'a mut dyn CAIRead, &'a str),
     StreamFragment(&'a mut dyn CAIRead, &'a mut dyn CAIRead, &'a str),
-    /// Init segment stream plus already-opened fragment streams, so the caller
-    /// controls fragment transport (local file, network range-reader, ...).
-    StreamFragments(&'a mut dyn CAIRead, &'a mut [Box<dyn CAIRead>], &'a str),
+    /// Init segment stream plus a lazily-opened fragment source, so the caller
+    /// controls fragment transport (local file, network range-reader, ...) and only
+    /// one fragment is held open at a time.
+    Fragments(&'a mut dyn CAIRead, &'a dyn FragmentSource, &'a str),
 }
 
 #[derive(PartialEq, Debug, Eq, Clone, Hash)]
@@ -2893,10 +2896,10 @@ impl Claim {
                                 Some(claim.alg()),
                                 &mut cb,
                             ),
-                        ClaimAssetData::StreamFragments(initseg_data, fragment_streams, _) => dh
+                        ClaimAssetData::Fragments(initseg_data, fragments, _) => dh
                             .verify_stream_segments_with_progress(
                                 *initseg_data,
-                                fragment_streams,
+                                *fragments,
                                 Some(claim.alg()),
                                 &mut cb,
                             ),

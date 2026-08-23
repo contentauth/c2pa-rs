@@ -1576,22 +1576,18 @@ impl BmffHash {
         fragment_paths: &Vec<std::path::PathBuf>,
         alg: Option<&str>,
     ) -> crate::Result<()> {
-        let mut fragments: Vec<Box<dyn CAIRead>> = fragment_paths
-            .iter()
-            .map(|p| std::fs::File::open(p).map(|f| Box::new(f) as Box<dyn CAIRead>))
-            .collect::<std::io::Result<_>>()?;
-        self.verify_stream_segments_with_progress(init_stream, &mut fragments, alg, &mut |_, _| {
+        self.verify_stream_segments_with_progress(init_stream, fragment_paths, alg, &mut |_, _| {
             Ok(())
         })
     }
 
     /// Verify the merkle hashes of a fragmented BMFF asset whose fragments are
-    /// supplied as already-opened streams (rather than file paths), so the caller
-    /// controls the transport (local file, network range-reader, ...).
+    /// supplied by a [`FragmentSource`], opened one at a time so at most one
+    /// fragment is held open regardless of fragment count.
     pub(crate) fn verify_stream_segments_with_progress<F>(
         &self,
         init_stream: &mut dyn CAIRead,
-        fragments: &mut [Box<dyn CAIRead>],
+        fragments: &dyn crate::asset_source::FragmentSource,
         alg: Option<&str>,
         progress: &mut F,
     ) -> crate::Result<()>
@@ -1620,14 +1616,24 @@ impl BmffHash {
             // inithash cache to prevent duplicate work.
             let mut init_hashes = std::collections::HashSet::new();
 
-            if fragments.is_empty() {
+            let fragment_count = fragments.count();
+            if fragment_count == 0 {
                 return Err(Error::HashMismatch("No fragment specified".to_string()));
             }
 
             let mut step = 0u32;
 
-            for fragment_stream in fragments.iter_mut() {
-                let fragment_stream = fragment_stream.as_mut();
+            for index in 0..fragment_count {
+                // Open one fragment at a time and drop it before the next, so a
+                // large fragment set never holds more than one handle open.
+                let mut fragment_box = fragments.open(index)?;
+                let fragment_stream = fragment_box.as_mut();
+
+                // The caller now owns the stream lifecycle; rewind so a re-verified
+                // source starts each fragment at its head rather than at EOF.
+                fragment_stream.rewind()?;
+
+                progress((index + 1) as u32, fragment_count as u32)?;
 
                 // get merkle boxes from segment
                 let c2pa_boxes = read_bmff_c2pa_boxes(fragment_stream)?;

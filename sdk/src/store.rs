@@ -29,6 +29,7 @@ use crate::{
         TimeStamp, User, UserCbor,
     },
     asset_io::{CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions},
+    asset_source::FragmentSource,
     claim::{
         check_ocsp_status, check_ocsp_status_async, Claim, ClaimAssertion, ClaimAssetData,
         RemoteManifest,
@@ -1904,7 +1905,7 @@ impl Store {
                     let format = typ.to_owned();
                     io.object_locations(&format, reader)
                 }
-                ClaimAssetData::StreamFragments(reader, _fragment_streams, typ) => {
+                ClaimAssetData::Fragments(reader, _fragments, typ) => {
                     let format = typ.to_owned();
                     io.object_locations(&format, reader)
                 }
@@ -3668,10 +3669,37 @@ impl Store {
         Ok(store)
     }
 
+    /// Builds a store from already-extracted manifest bytes read through an
+    /// asynchronous byte source, running manifest and signature validation but not
+    /// the data-hash binding — that would require reading the whole asset
+    /// synchronously, which the async range path deliberately does not do.
+    pub(crate) async fn from_manifest_bytes_no_data_hash_async(
+        c2pa_data: &[u8],
+        remote_url: Option<String>,
+        validation_log: &mut StatusTracker,
+        context: &Context,
+    ) -> Result<Self> {
+        let mut store = Store::from_jumbf_with_context(c2pa_data, validation_log, context)
+            .inspect_err(|e| {
+                log_item!("asset", "error loading file", "load_from_asset")
+                    .failure_no_throw(validation_log, e);
+            })?;
+        if context.settings().verify.verify_after_reading {
+            Store::verify_store_async(&store, None, validation_log, context).await?;
+        }
+        if remote_url.is_none() {
+            store.embedded = true;
+        } else {
+            store.remote_url = remote_url;
+        }
+        Ok(store)
+    }
+
     /// Load a init and fragments given as file paths, opening each through the
-    /// filesystem and delegating to [`load_from_init_and_fragment_streams`].
+    /// filesystem one at a time via a [`FragmentSource`] and delegating to
+    /// [`load_from_init_and_fragments`].
     ///
-    /// [`load_from_init_and_fragment_streams`]: Store::load_from_init_and_fragment_streams
+    /// [`load_from_init_and_fragments`]: Store::load_from_init_and_fragments
     #[cfg(feature = "file_io")]
     #[allow(dead_code)]
     pub fn load_from_file_and_fragments(
@@ -3681,31 +3709,25 @@ impl Store {
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<Store> {
-        let mut fragment_streams: Vec<Box<dyn CAIRead>> = fragments
-            .iter()
-            .map(|p| std::fs::File::open(p).map(|f| Box::new(f) as Box<dyn CAIRead>))
-            .collect::<std::io::Result<_>>()?;
-        Store::load_from_init_and_fragment_streams(
+        Store::load_from_init_and_fragments(
             asset_type,
             init_segment,
-            &mut fragment_streams,
+            fragments,
             validation_log,
             context,
         )
     }
 
-    /// Load a [`Store`] from an init segment plus already-opened fragment streams.
+    /// Load a [`Store`] from an init segment plus a lazily-opened fragment source.
     ///
-    /// Shared by the file-based [`load_from_file_and_fragments`] and any caller
-    /// that resolves fragment references to streams (e.g. a network range-reader),
-    /// so local and remote fragmented reads take the same verification path.
-    ///
-    /// [`load_from_file_and_fragments`]: Store::load_from_file_and_fragments
+    /// The fragment source opens one fragment at a time during verification, so a
+    /// local or remote fragmented read holds at most one fragment open regardless of
+    /// fragment count, and both take the same verification path.
     #[async_generic]
-    pub fn load_from_init_and_fragment_streams(
+    pub fn load_from_init_and_fragments(
         asset_type: &str,
         init_segment: &mut dyn CAIRead,
-        fragment_streams: &mut [Box<dyn CAIRead>],
+        fragments: &dyn FragmentSource,
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<Store> {
@@ -3722,8 +3744,7 @@ impl Store {
 
         if verify {
             init_segment.rewind()?;
-            let mut asset_data =
-                ClaimAssetData::StreamFragments(init_segment, fragment_streams, asset_type);
+            let mut asset_data = ClaimAssetData::Fragments(init_segment, fragments, asset_type);
             if _sync {
                 Store::verify_store(&store, Some(&mut asset_data), validation_log, context)
             } else {
