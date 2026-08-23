@@ -11,11 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! Lazy access to the fragments of a fragmented (DASH/CMAF) asset.
+//! (Lazy) access to the fragments of a fragmented (DASH/CMAF) asset.
 //!
-//! Fragment verification opens one fragment at a time and drops it before the
-//! next, so a 100-fragment verification never holds more than one file descriptor
-//! or socket open regardless of fragment count.
+//! Fragment verification opens one fragment at a time and drops it before the next.
 
 use super::{AssetRequest, AssetSourceError, AssetSourceSlot};
 use crate::{
@@ -24,10 +22,6 @@ use crate::{
 };
 
 /// A lazily-opened sequence of asset fragments.
-///
-/// Implementors must make [`open`](FragmentSource::open) cheap — avoid I/O where
-/// possible — because it is called from the synchronous verification path once per
-/// fragment.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 pub trait FragmentSource: MaybeSend + MaybeSync {

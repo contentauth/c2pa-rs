@@ -11,8 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! Built-in asset sources: the local filesystem default and the unconfigured
-//! placeholder.
+//! Built-in asset sources:
+//! the local filesystem default and the unconfigured placeholder.
 
 use super::{AssetRequest, AssetSourceError, ResolvedAsset, SyncAssetSource};
 #[cfg(feature = "file_io")]
@@ -21,9 +21,9 @@ use super::AssetRef;
 /// The SDK's default asset source: opens a reference as a local filesystem path.
 ///
 /// Accepts an [`AssetRef::Path`], an [`AssetRef::Opaque`] (treated as a path), or a
-/// `file:` [`AssetRef::Uri`]. Any other URI scheme is rejected with
-/// [`AssetSourceError::UnsupportedReference`] rather than being opened as a
-/// relative path.
+/// `file:` [`AssetRef::Uri`].
+/// Any other URI scheme is rejected with [`AssetSourceError::UnsupportedReference`]
+/// rather than being opened as a relative path.
 #[cfg(feature = "file_io")]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct LocalAssetSource;
@@ -50,8 +50,7 @@ impl SyncAssetSource for LocalAssetSource {
 }
 
 /// Placeholder source used when no source is registered and no filesystem default
-/// is available (the `file_io` feature is off). Every open reports
-/// [`AssetSourceError::NotConfigured`].
+/// is available (the `file_io` feature is off).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct NoAssetSource;
 

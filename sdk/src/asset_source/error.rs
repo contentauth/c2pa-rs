@@ -17,8 +17,8 @@
 /// [`SyncAssetSource`](crate::asset_source::SyncAssetSource) or
 /// [`AsyncAssetSource`](crate::asset_source::AsyncAssetSource).
 ///
-/// Distinguishing these from a malformed-asset error lets a caller tell "the
-/// transport refused the request" apart from "the bytes are not valid C2PA".
+/// Distinguishing these from a malformed-asset error lets a caller tell
+/// "the transport refused the request" apart from "the bytes are not valid C2PA".
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum AssetSourceError {
@@ -35,9 +35,7 @@ pub enum AssetSourceError {
     #[error("this asset source does not support that reference kind")]
     UnsupportedReference,
 
-    /// A synchronous open was attempted against a source that only implements the
-    /// asynchronous path. Reported instead of silently falling back to a different
-    /// source, so the failure names the source rather than opening the wrong bytes.
+    /// A synchronous open was attempted against a source that only implements the asynchronous path.
     #[error("this asset source has no synchronous implementation")]
     SyncUnsupported,
 
@@ -56,14 +54,14 @@ pub enum AssetSourceError {
     #[error("range {offset}+{expected} returned only {got} bytes")]
     ShortRead { offset: u64, expected: u64, got: u64 },
 
-    /// Internal sentinel: the requested range is not resident in the prefetch
-    /// cache. Carried out of a synchronous parse pass so the async driver can fetch
-    /// the range and retry. Never surfaced to callers.
+    /// The requested range is not resident in the prefetch cache.
+    /// Carried out of a synchronous parse pass so the async driver can fetch
+    /// the range and retry.
     #[error("range {offset}+{len} not resident in cache")]
     RangeMiss { offset: u64, len: u64 },
 
-    /// A transport-level failure. HTTP status (if any) lives inside `source`, so the
-    /// variant stays transport-agnostic.
+    /// A transport-level failure.
+    /// HTTP status (if any) lives inside `source`, so the variant stays transport-agnostic.
     #[error("transport error")]
     Transport {
         source: Box<dyn std::error::Error + Send + Sync>,
@@ -81,8 +79,8 @@ pub enum AssetSourceError {
 }
 
 impl AssetSourceError {
-    /// Maps a filesystem [`std::io::Error`] to the most specific variant, tagging it
-    /// with `reference` so the message names what failed to open.
+    /// Maps a filesystem [`std::io::Error`] to the most specific variant,
+    /// tagging it with `reference` so the message names what failed to open.
     #[cfg(feature = "file_io")]
     pub(crate) fn from_io(err: std::io::Error, reference: &str) -> Self {
         match err.kind() {
