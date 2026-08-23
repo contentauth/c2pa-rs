@@ -60,6 +60,22 @@ pub struct RangeConfig {
     pub hash_chunk: u64,
 }
 
+impl RangeConfig {
+    /// Sets the bytes held at once while hashing for verification.
+    ///
+    /// This struct is `#[non_exhaustive]`, so a caller outside the crate cannot
+    /// build one field-by-field; chain from [`Default`] instead:
+    ///
+    /// ```
+    /// # use c2pa::RangeConfig;
+    /// let config = RangeConfig::default().with_hash_chunk(1024 * 1024);
+    /// ```
+    pub fn with_hash_chunk(mut self, hash_chunk: u64) -> Self {
+        self.hash_chunk = hash_chunk;
+        self
+    }
+}
+
 impl Default for RangeConfig {
     fn default() -> Self {
         Self {
