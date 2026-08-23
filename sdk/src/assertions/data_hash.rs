@@ -310,6 +310,56 @@ impl DataHash {
         }
     }
 
+
+    /// The asynchronous counterpart of [`verify_stream_hash_with_progress`], for an
+    /// asset reachable only through a non-blocking range source.
+    ///
+    /// Applies the same remote-hash rejection and algorithm resolution, then hashes
+    /// through [`hash_ranges_by_alg_async`], which holds at most `chunk_size` bytes
+    /// at a time rather than requiring the asset as a seekable stream.
+    pub(crate) async fn verify_async_ranges_with_progress<F>(
+        &self,
+        reader: &dyn crate::asset_source::range::AsyncRangeReader,
+        alg: Option<&str>,
+        data_len: u64,
+        chunk_size: std::num::NonZeroUsize,
+        progress: &mut F,
+    ) -> Result<()>
+    where
+        F: FnMut(u32, u32) -> Result<()>,
+    {
+        if self.is_remote_hash() {
+            return Err(Error::BadParam("asset hash is remote".to_owned()));
+        }
+
+        let curr_alg = match &self.alg {
+            Some(a) => a.clone(),
+            None => match alg {
+                Some(a) => a.to_owned(),
+                None => return Err(Error::HashMismatch("no alg specified".to_owned())),
+            },
+        };
+
+        let exclusions = self.exclusions.as_ref().cloned();
+
+        let computed = crate::utils::hash_utils::hash_ranges_by_alg_async(
+            &curr_alg,
+            reader,
+            exclusions,
+            true,
+            data_len,
+            chunk_size,
+            progress,
+        )
+        .await?;
+
+        if vec_compare(&self.hash, &computed) {
+            Ok(())
+        } else {
+            Err(Error::HashMismatch("Hashes do not match".to_owned()))
+        }
+    }
+
     /// Create a new instance from Assertion
     pub fn from_assertion(assertion: &Assertion) -> Result<Self> {
         assertion.check_version_from_label(ASSERTION_CREATION_VERSION)?;

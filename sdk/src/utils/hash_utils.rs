@@ -243,35 +243,17 @@ where
     )
 }
 
-/// Make `hash_stream_by_alg_with_progress` configurable with `max_hash_buf`.
-/// e.g. makes it configurable in tests too.
-fn hash_stream_by_alg_with_progress_impl<R, F>(
-    alg: &str,
-    data: &mut R,
+/// Builds the ordered list of byte ranges to hash,
+/// resolving `hash_range` against an asset of `data_len` bytes.
+///
+/// Returns the ranges sorted ascending by start, plus the BMFF V2 offsets whose
+/// value (rather than whose bytes) is folded into the hash.
+pub(crate) fn build_hash_ranges(
     hash_range: Option<Vec<HashRange>>,
     is_exclusion: bool,
-    progress: &mut F,
-    max_hash_buf: NonZeroUsize,
-) -> Result<Vec<u8>>
-where
-    R: Read + Seek + ?Sized,
-    F: FnMut(u32, u32) -> Result<()>,
-{
-    let max_hash_buf = max_hash_buf.get();
+    data_len: u64,
+) -> Result<(Vec<RangeInclusive<u64>>, Vec<u64>)> {
     let mut bmff_v2_starts: Vec<u64> = Vec::new();
-
-    use Hasher::*;
-    let mut hasher_enum = match alg {
-        "sha256" => SHA256(Sha256::new()),
-        "sha384" => SHA384(Sha384::new()),
-        "sha512" => SHA512(Sha512::new()),
-        _ => {
-            return Err(Error::UnsupportedType);
-        }
-    };
-
-    let data_len = stream_len(data)?;
-    data.rewind()?;
 
     if data_len < 1 {
         return Err(Error::OtherError("no data to hash".into()));
@@ -415,15 +397,54 @@ where
         }
     };
 
-    // Total callbacks = one per 256 MB chunk across all ranges (BMFF V2 single-byte offsets
-    // each contribute exactly one tick regardless of MAX_HASH_BUF).
-    let total: u32 = ranges
+    Ok((ranges, bmff_v2_starts))
+}
+
+/// Counts progress callbacks: one per `max_hash_buf` chunk across all ranges.
+fn progress_total(ranges: &[RangeInclusive<u64>], max_hash_buf: usize) -> u32 {
+    ranges
         .iter()
         .map(|r| {
             let len = r.end() - r.start() + 1;
             (len as usize).div_ceil(max_hash_buf) as u32
         })
-        .sum();
+        .sum()
+}
+
+/// Selects the hasher for `alg`.
+fn hasher_for_alg(alg: &str) -> Result<Hasher> {
+    use Hasher::*;
+    match alg {
+        "sha256" => Ok(SHA256(Sha256::new())),
+        "sha384" => Ok(SHA384(Sha384::new())),
+        "sha512" => Ok(SHA512(Sha512::new())),
+        _ => Err(Error::UnsupportedType),
+    }
+}
+
+/// Make `hash_stream_by_alg_with_progress` configurable with `max_hash_buf`.
+fn hash_stream_by_alg_with_progress_impl<R, F>(
+    alg: &str,
+    data: &mut R,
+    hash_range: Option<Vec<HashRange>>,
+    is_exclusion: bool,
+    progress: &mut F,
+    max_hash_buf: NonZeroUsize,
+) -> Result<Vec<u8>>
+where
+    R: Read + Seek + ?Sized,
+    F: FnMut(u32, u32) -> Result<()>,
+{
+    let max_hash_buf = max_hash_buf.get();
+
+    let mut hasher_enum = hasher_for_alg(alg)?;
+
+    let data_len = stream_len(data)?;
+    data.rewind()?;
+
+    let (ranges, bmff_v2_starts) = build_hash_ranges(hash_range, is_exclusion, data_len)?;
+
+    let total: u32 = progress_total(&ranges, max_hash_buf);
     let mut step: u32 = 0;
 
     if cfg!(target_arch = "wasm32") {
@@ -536,6 +557,90 @@ where
     R: Read + Seek + ?Sized,
 {
     hash_stream_by_alg_with_progress(alg, data, hash_range, is_exclusion, &mut |_, _| Ok(()))
+}
+
+/// Hashes an asset read through an asynchronous range source,
+/// holding at most `chunk_size` bytes at a time.
+///
+/// The ranges come from [`build_hash_ranges`], so exclusions resolve exactly as they
+/// do for [`hash_stream_by_alg`]. They are sorted ascending and walked in order, so
+/// this needs only a forward sequence of chunk fetches and no random access and no
+/// blocking read. Each chunk is hashed and dropped before the next is requested.
+///
+/// A range shorter than `chunk_size` is still fetched in one request; a longer one
+/// is split. Because `read_range_async` may return fewer bytes than asked for, each
+/// chunk accumulates until it is full, and a fetch yielding nothing is a short read
+/// rather than end-of-file.
+pub(crate) async fn hash_ranges_by_alg_async<F>(
+    alg: &str,
+    reader: &dyn crate::asset_source::range::AsyncRangeReader,
+    hash_range: Option<Vec<HashRange>>,
+    is_exclusion: bool,
+    data_len: u64,
+    chunk_size: NonZeroUsize,
+    progress: &mut F,
+) -> Result<Vec<u8>>
+where
+    F: FnMut(u32, u32) -> Result<()>,
+{
+    let chunk_size = chunk_size.get();
+    let mut hasher_enum = hasher_for_alg(alg)?;
+
+    let (ranges, bmff_v2_starts) = build_hash_ranges(hash_range, is_exclusion, data_len)?;
+
+    let total = progress_total(&ranges, chunk_size);
+    let mut step: u32 = 0;
+
+    for r in &ranges {
+        step += 1;
+        progress(step, total)?;
+
+        let start = *r.start();
+        let end = *r.end();
+
+        // a BMFF V2 offset contributes its value to the hash, not the bytes there
+        if bmff_v2_starts.contains(&start) && end == start {
+            hasher_enum.update(&start.to_be_bytes());
+            continue;
+        }
+
+        let mut offset = start;
+        let mut range_left = end - start + 1;
+
+        while range_left > 0 {
+            let want = std::cmp::min(range_left, chunk_size as u64);
+            let mut chunk = Vec::with_capacity(want as usize);
+
+            // one logical chunk may take several fetches if the source short-reads
+            while (chunk.len() as u64) < want {
+                let still_want = want - chunk.len() as u64;
+                let data = reader.read_range_async(offset, still_want).await?;
+                if data.is_empty() {
+                    return Err(crate::asset_source::AssetSourceError::ShortRead {
+                        offset,
+                        expected: still_want,
+                        got: 0,
+                    }
+                    .into());
+                }
+                // a source may also overshoot; take only what this chunk needs
+                let take = std::cmp::min(data.len() as u64, still_want) as usize;
+                chunk.extend_from_slice(&data[..take]);
+                offset += take as u64;
+            }
+
+            hasher_enum.update(&chunk);
+            range_left -= want;
+
+            if range_left > 0 {
+                // fire after each non-final chunk so large ranges report sub-range progress
+                step += 1;
+                progress(step, total)?;
+            }
+        }
+    }
+
+    Ok(Hasher::finalize(hasher_enum))
 }
 
 // verify the hash using the specified algorithm
@@ -769,6 +874,189 @@ mod tests {
         assert_eq!(
             hash,
             hex!("e3301ce38a42503098530b98cd1b652a10c5caf890735017dd0012ec319f04e5")
+        );
+    }
+
+    // The async loop must agree with the synchronous one on every exclusion shape;
+    // a drift between the two produces a wrong digest, which surfaces as a hash
+    // mismatch on a valid asset.
+    #[tokio::test]
+    async fn async_digest_matches_sync_digest_with_exclusions() {
+        use std::sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc,
+        };
+
+        use crate::asset_source::{
+            range::{AsyncRangeReader, RangeInfo},
+            AssetSourceError,
+        };
+
+        struct AsyncMem {
+            data: Vec<u8>,
+            largest: Arc<AtomicU64>,
+        }
+
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+        impl AsyncRangeReader for AsyncMem {
+            async fn info_async(&self) -> std::result::Result<RangeInfo, AssetSourceError> {
+                Ok(RangeInfo {
+                    len: self.data.len() as u64,
+                })
+            }
+            async fn read_range_async(
+                &self,
+                offset: u64,
+                len: u64,
+            ) -> std::result::Result<Vec<u8>, AssetSourceError> {
+                self.largest.fetch_max(len, Ordering::SeqCst);
+                let start = offset as usize;
+                let end = (offset + len).min(self.data.len() as u64) as usize;
+                Ok(self.data[start..end].to_vec())
+            }
+        }
+
+        let data: Vec<u8> = (0..8 * 1024).map(|i| (i % 251) as u8).collect();
+
+        // several exclusions, including one at the very start and one running to the
+        // end, so the range list has gaps at both edges and in the middle
+        let exclusions = vec![
+            HashRange::new(0, 64),
+            HashRange::new(1000, 100),
+            HashRange::new(5000, 33),
+            HashRange::new(8 * 1024 - 16, 16),
+        ];
+
+        let mut cursor = Cursor::new(&data);
+        let sync_hash = hash_stream_by_alg_with_progress_impl(
+            "sha256",
+            &mut cursor,
+            Some(exclusions.clone()),
+            true,
+            &mut |_, _| Ok(()),
+            test_hash_buf(),
+        )
+        .unwrap();
+
+        let largest = Arc::new(AtomicU64::new(0));
+        let reader = AsyncMem {
+            data: data.clone(),
+            largest: largest.clone(),
+        };
+        let async_hash = hash_ranges_by_alg_async(
+            "sha256",
+            &reader,
+            Some(exclusions),
+            true,
+            data.len() as u64,
+            test_hash_buf(),
+            &mut |_, _| Ok(()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(sync_hash, async_hash);
+
+        // peak memory is the point of the streaming design: no single fetch may
+        // exceed the configured chunk size, whatever the asset size
+        assert!(
+            largest.load(Ordering::SeqCst) <= test_hash_buf().get() as u64,
+            "requested {} bytes in one fetch, chunk size is {}",
+            largest.load(Ordering::SeqCst),
+            test_hash_buf().get()
+        );
+    }
+
+    // A range source may legally return fewer bytes than requested; the digest must
+    // still be correct, and a source returning nothing must error rather than spin.
+    #[tokio::test]
+    async fn async_digest_survives_short_reads() {
+        use crate::asset_source::{
+            range::{AsyncRangeReader, RangeInfo},
+            AssetSourceError,
+        };
+
+        struct Dribble {
+            data: Vec<u8>,
+            per_read: usize,
+        }
+
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+        impl AsyncRangeReader for Dribble {
+            async fn info_async(&self) -> std::result::Result<RangeInfo, AssetSourceError> {
+                Ok(RangeInfo {
+                    len: self.data.len() as u64,
+                })
+            }
+            async fn read_range_async(
+                &self,
+                offset: u64,
+                len: u64,
+            ) -> std::result::Result<Vec<u8>, AssetSourceError> {
+                let start = offset as usize;
+                let capped = (len as usize).min(self.per_read);
+                let end = (start + capped).min(self.data.len());
+                Ok(self.data[start..end].to_vec())
+            }
+        }
+
+        let data: Vec<u8> = (0..4 * 1024).map(|i| (i % 251) as u8).collect();
+        let exclusions = vec![HashRange::new(500, 50)];
+
+        let mut cursor = Cursor::new(&data);
+        let expected = hash_stream_by_alg_with_progress_impl(
+            "sha256",
+            &mut cursor,
+            Some(exclusions.clone()),
+            true,
+            &mut |_, _| Ok(()),
+            test_hash_buf(),
+        )
+        .unwrap();
+
+        // 7 bytes per fetch, so every chunk needs many round trips to fill
+        let reader = Dribble {
+            data: data.clone(),
+            per_read: 7,
+        };
+        let got = hash_ranges_by_alg_async(
+            "sha256",
+            &reader,
+            Some(exclusions.clone()),
+            true,
+            data.len() as u64,
+            test_hash_buf(),
+            &mut |_, _| Ok(()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(expected, got);
+
+        // a source that yields nothing at all is a short read, not end-of-file
+        let stalled = Dribble {
+            data: data.clone(),
+            per_read: 0,
+        };
+        let err = hash_ranges_by_alg_async(
+            "sha256",
+            &stalled,
+            Some(exclusions),
+            true,
+            data.len() as u64,
+            test_hash_buf(),
+            &mut |_, _| Ok(()),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::AssetSource(crate::asset_source::AssetSourceError::ShortRead { .. })
+            ),
+            "expected a short-read error, got {err:?}"
         );
     }
 }

@@ -54,6 +54,10 @@ pub struct RangeConfig {
     pub max_request: u64,
     /// Eviction budget for cached bytes.
     pub max_cached: u64,
+    /// Bytes held at once while hashing an asset for verification over an async source.
+    /// Verification hashes the whole asset, so this bounds peak memory for the
+    /// read: one chunk is fetched, hashed, and dropped before the next.
+    pub hash_chunk: u64,
 }
 
 impl Default for RangeConfig {
@@ -62,6 +66,7 @@ impl Default for RangeConfig {
             window: 64 * 1024,
             max_request: 8 * 1024 * 1024,
             max_cached: 4 * 1024 * 1024,
+            hash_chunk: 4 * 1024 * 1024,
         }
     }
 }

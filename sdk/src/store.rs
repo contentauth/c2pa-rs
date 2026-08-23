@@ -1909,6 +1909,12 @@ impl Store {
                     let format = typ.to_owned();
                     io.object_locations(&format, reader)
                 }
+                // Locating the manifest store means parsing the asset, which needs a
+                // blocking read this source cannot give.
+                // The range is only used to widen a data-hash exclusion for update manifests,
+                // and the caller already tolerates not having it, so leave it unset rather than
+                // making every caller of this function async for now.
+                ClaimAssetData::AsyncRanges(..) => Err(Error::UnsupportedType),
             };
 
             if let Ok(locations) = locations {
@@ -2064,7 +2070,18 @@ impl Store {
         // verify the asset hash binding once for the whole store, on the binding manifest
         if let Some(data) = asset_data {
             if let Some(binding_claim) = store.get_claim(&svi.binding_claim) {
-                Claim::verify_hash_binding(binding_claim, data, &svi, validation_log, context)?;
+                if _sync {
+                    Claim::verify_hash_binding(binding_claim, data, &svi, validation_log, context)?;
+                } else {
+                    Claim::verify_hash_binding_async(
+                        binding_claim,
+                        data,
+                        &svi,
+                        validation_log,
+                        context,
+                    )
+                    .await?;
+                }
             }
         }
 
@@ -3673,9 +3690,23 @@ impl Store {
     /// async byte source.
     /// Runs manifest and signature validation but not the data-hash binding,
     /// because that would require reading the whole asset (would force sync).
-    pub(crate) async fn from_manifest_bytes_no_data_hash_async(
+    /// Builds a store from manifest bytes already read through an asynchronous byte
+    /// source.
+    ///
+    /// With `asset` supplied and verification enabled, the data-hash binding is
+    /// checked by streaming the asset back through the same source one chunk at a
+    /// time. Without it the manifest and signature are still validated, but the
+    /// binding is not — the asset bytes are never proven to be the ones the manifest
+    /// describes.
+    pub(crate) async fn from_manifest_bytes_async_ranges(
         c2pa_data: &[u8],
         remote_url: Option<String>,
+        asset: Option<(
+            &dyn crate::asset_source::range::AsyncRangeReader,
+            u64,
+            crate::asset_source::range::RangeConfig,
+            &str,
+        )>,
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<Self> {
@@ -3685,7 +3716,25 @@ impl Store {
                     .failure_no_throw(validation_log, e);
             })?;
         if context.settings().verify.verify_after_reading {
-            Store::verify_store_async(&store, None, validation_log, context).await?;
+            match asset {
+                Some((reader, data_len, config, format)) => {
+                    let chunk_size = std::num::NonZeroUsize::new(config.hash_chunk as usize)
+                        .ok_or(Error::BadParam("hash_chunk must be non-zero".to_string()))?;
+                    let mut asset_data = ClaimAssetData::AsyncRanges(
+                        reader, data_len, chunk_size, config, format,
+                    );
+                    Store::verify_store_async(
+                        &store,
+                        Some(&mut asset_data),
+                        validation_log,
+                        context,
+                    )
+                    .await?;
+                }
+                None => {
+                    Store::verify_store_async(&store, None, validation_log, context).await?;
+                }
+            }
         }
         if remote_url.is_none() {
             store.embedded = true;

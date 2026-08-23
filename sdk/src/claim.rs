@@ -120,6 +120,16 @@ pub enum ClaimAssetData<'a> {
     /// Init segment stream and a lazily-opened fragment source.
     /// This is so the caller can set where the fragments come from.
     Fragments(&'a mut dyn CAIRead, &'a dyn FragmentSource, &'a str),
+    /// An asset reachable only through a non-blocking range source, carrying its
+    /// length and the chunk budget for hashing. Verification streams it one chunk
+    /// at a time instead of holding it.
+    AsyncRanges(
+        &'a dyn crate::asset_source::range::AsyncRangeReader,
+        u64,
+        std::num::NonZeroUsize,
+        crate::asset_source::range::RangeConfig,
+        &'a str,
+    ),
 }
 
 #[derive(PartialEq, Debug, Eq, Clone, Hash)]
@@ -2690,10 +2700,11 @@ impl Claim {
         Ok(())
     }
 
+    #[async_generic]
     pub(crate) fn verify_hash_binding(
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
-        svi: &StoreValidationInfo,
+        svi: &StoreValidationInfo<'_>,
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<()> {
@@ -2815,6 +2826,21 @@ impl Claim {
                                     Some(claim.alg()),
                                     &mut cb,
                                 ),
+                            ClaimAssetData::AsyncRanges(_reader, _data_len, _chunk_size, _, _) => {
+                                if _sync {
+                                    // an async source has no blocking read for this path
+                                    Err(Error::UnsupportedType)
+                                } else {
+                                    dh.verify_async_ranges_with_progress(
+                                        *_reader,
+                                        Some(claim.alg()),
+                                        *_data_len,
+                                        *_chunk_size,
+                                        &mut cb,
+                                    )
+                                    .await
+                                }
+                            }
                             _ => return Err(Error::UnsupportedType), /* this should never happen (coding error) */
                         };
 
@@ -2902,6 +2928,23 @@ impl Claim {
                                 Some(claim.alg()),
                                 &mut cb,
                             ),
+                        ClaimAssetData::AsyncRanges(_reader, _data_len, _chunk_size, _config, _) => {
+                            if _sync {
+                                // an async source has no blocking read for this path
+                                Err(Error::UnsupportedType)
+                            } else {
+                                dh.verify_async_ranges_with_progress(
+                                    *_reader,
+                                    Some(claim.alg()),
+                                    *_data_len,
+                                    *_chunk_size,
+                                    *_config,
+                                    context,
+                                    &mut cb,
+                                )
+                                .await
+                            }
+                        }
                     };
 
                     match hash_result {
@@ -3003,6 +3046,16 @@ impl Claim {
                                 box_hash_processor,
                                 &mut cb,
                             )
+                        }
+                        // Box hashing walks the asset's box structure through a
+                        // processor rather than flat byte ranges, so it has no
+                        // asynchronous counterpart yet.
+                        ClaimAssetData::AsyncRanges(..) => {
+                            return Err(Error::HashMismatch(
+                                "box hash verification is not supported over an asynchronous \
+                                 range source"
+                                    .to_string(),
+                            ))
                         }
                         _ => return Err(Error::UnsupportedType),
                     };

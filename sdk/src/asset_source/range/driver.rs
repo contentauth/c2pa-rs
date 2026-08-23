@@ -228,6 +228,7 @@ mod tests {
             window: 32,
             max_request: 64,
             max_cached: 4 * 1024 * 1024,
+            ..Default::default()
         };
         let out = drive_async(&reader, &context, config, read_all).await.unwrap();
         assert_eq!(out, data);
@@ -278,6 +279,7 @@ mod tests {
             window: 1,
             max_request: 1,
             max_cached: 4 * 1024 * 1024,
+            ..Default::default()
         };
         // Reading the whole 1000-byte object one byte per fetch exceeds the attempt cap.
         let err = drive_async(&reader, &context, config, read_all)
@@ -299,6 +301,7 @@ mod tests {
             window: 32,
             max_request: 64,
             max_cached: 4 * 1024 * 1024,
+            ..Default::default()
         };
         let out = drive_async(&reader, &context, config, |stream| {
             let mut out = Vec::new();

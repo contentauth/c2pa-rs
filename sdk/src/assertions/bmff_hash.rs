@@ -1248,6 +1248,204 @@ impl BmffHash {
     /// sub-pass granularity for large files.  For Merkle paths it fires once per hash operation.
     /// `total` is always `0` (indeterminate) from this layer because the pass count is not
     /// known until the file structure is parsed.
+    ///
+    /// The asynchronous counterpart of [`verify_stream_hash_with_progress`], for an
+    /// asset reachable only through a non-blocking range source.
+    ///
+    /// Splits the work in two, because the box structure and the hashing have
+    /// different requirements. Parsing the BMFF tree is restartable and
+    /// side-effect-free, so it runs through [`drive_async`], which re-runs it over a
+    /// warmed cache on each miss. Hashing accumulates state and cannot be restarted,
+    /// so it runs through [`hash_ranges_by_alg_async`], holding one chunk at a time.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn verify_async_ranges_with_progress<F>(
+        &self,
+        reader: &dyn crate::asset_source::range::AsyncRangeReader,
+        alg: Option<&str>,
+        data_len: u64,
+        chunk_size: std::num::NonZeroUsize,
+        config: crate::asset_source::range::RangeConfig,
+        context: &crate::Context,
+        progress: &mut F,
+    ) -> crate::error::Result<()>
+    where
+        F: FnMut(u32, u32) -> crate::error::Result<()>,
+    {
+        use crate::{
+            asset_source::range::drive_async, utils::hash_utils::hash_ranges_by_alg_async,
+        };
+
+        self.verify_self()?;
+
+        let size = data_len;
+        let curr_alg = match &self.alg {
+            Some(a) => a.clone(),
+            None => match alg {
+                Some(a) => a.to_owned(),
+                None => "sha256".to_string(),
+            },
+        };
+
+        // Both parses are restartable.
+        // So they share one driven pass and the cache warmed by the first serves the second.
+        let bmff_v2 = self.bmff_version > 1;
+        let bmff_exclusions = self.exclusions.clone();
+        let needs_boxes = self.merkle().is_some();
+        let (exclusions, c2pa_boxes) = drive_async(reader, context, config, move |stream| {
+            let exclusions = bmff_to_jumbf_exclusions(stream, &bmff_exclusions, bmff_v2)?;
+            let boxes = if needs_boxes {
+                stream.rewind()?;
+                Some(read_bmff_c2pa_boxes(stream)?)
+            } else {
+                None
+            };
+            Ok((exclusions, boxes))
+        })
+        .await?;
+
+        let mut step = 0u32;
+
+        // file level hash
+        if let Some(hash) = self.hash() {
+            let computed = hash_ranges_by_alg_async(
+                &curr_alg,
+                reader,
+                Some(exclusions.clone()),
+                true,
+                size,
+                chunk_size,
+                progress,
+            )
+            .await?;
+            if !vec_compare(hash, &computed) {
+                return Err(Error::HashMismatch(
+                    "BMFF file level hash mismatch".to_string(),
+                ));
+            }
+        }
+
+        // merkle hashed BMFF
+        if let Some(mm_vec) = self.merkle() {
+            let c2pa_boxes = c2pa_boxes.ok_or(Error::HashMismatch(
+                "BMFF merkle hash present but no boxes read".to_string(),
+            ))?;
+            let bmff_merkle = &c2pa_boxes.bmff_merkle;
+            let box_infos = &c2pa_boxes.box_infos;
+
+            let first_moof = box_infos.iter().find(|b| b.path == "moof");
+            let is_fragmented = first_moof.is_some();
+
+            // check initialization segments
+            for mm in mm_vec {
+                let alg = match &mm.alg {
+                    Some(a) => a,
+                    None => self
+                        .alg()
+                        .ok_or(Error::HashMismatch("no algorithm found".to_string()))?,
+                };
+
+                if let Some(init_hash) = &mm.init_hash {
+                    if let Some(moof_box) = first_moof {
+                        // add the moof to end exclusion
+                        let moof_exclusion =
+                            HashRange::new(moof_box.offset, size - moof_box.offset);
+
+                        let mut mm_exclusions = exclusions.clone();
+                        mm_exclusions.push(moof_exclusion);
+
+                        Self::progress_tick(&mut step, progress)?;
+                        let computed = hash_ranges_by_alg_async(
+                            alg,
+                            reader,
+                            Some(mm_exclusions),
+                            true,
+                            size,
+                            chunk_size,
+                            &mut |_, _| Ok(()),
+                        )
+                        .await?;
+                        if !vec_compare(init_hash, &computed) {
+                            return Err(Error::HashMismatch(
+                                "BMFF file level hash mismatch".to_string(),
+                            ));
+                        }
+                    } else {
+                        return Err(Error::HashMismatch(
+                            "BMFF inithash must not be present for non-fragmented media".to_owned(),
+                        ));
+                    }
+                }
+            }
+
+            if is_fragmented {
+                for mm in mm_vec {
+                    let alg = match &mm.alg {
+                        Some(a) => a,
+                        None => self
+                            .alg()
+                            .ok_or(Error::HashMismatch("no algorithm found".to_string()))?,
+                    };
+
+                    let moof_chunks = BmffHash::split_fragment_boxes(box_infos);
+
+                    // make sure there is a 1-1 mapping of moof chunks and Merkle values
+                    if moof_chunks.len() != mm.count || bmff_merkle.len() != mm.count {
+                        return Err(Error::HashMismatch(
+                            "Incorrect number of fragments hashes".to_owned(),
+                        ));
+                    }
+
+                    for (index, boxes) in moof_chunks.iter().enumerate() {
+                        // include just this chunk by excluding everything before and after
+                        let mut curr_exclusions = exclusions.clone();
+
+                        let before_box_len = match boxes.first() {
+                            Some(first) => first.offset,
+                            None => 0,
+                        };
+                        curr_exclusions.push(HashRange::new(0u64, before_box_len));
+
+                        let after_box_start = match boxes.last() {
+                            Some(last) => last.offset + last.size,
+                            None => 0,
+                        };
+                        curr_exclusions.push(HashRange::new(after_box_start, size - after_box_start));
+
+                        Self::progress_tick(&mut step, progress)?;
+
+                        let hash = hash_ranges_by_alg_async(
+                            alg,
+                            reader,
+                            Some(curr_exclusions),
+                            true,
+                            size,
+                            chunk_size,
+                            &mut |_, _| Ok(()),
+                        )
+                        .await?;
+
+                        let bmff_mm = &bmff_merkle[index];
+
+                        if !mm.check_merkle_tree(alg, &hash, bmff_mm.location, &bmff_mm.hashes) {
+                            return Err(Error::HashMismatch("Fragment not valid".to_string()));
+                        }
+                    }
+                }
+                return Ok(());
+            }
+
+            // Non-fragmented merkle variants walk the asset through a BmffSampleReader,
+            // so they are not covered by this path yet.
+            return Err(Error::HashMismatch(
+                "BMFF merkle hashing of non-fragmented media is not supported over an \
+                 async range source"
+                    .to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
     pub(crate) fn verify_stream_hash_with_progress<F>(
         &self,
         reader: &mut dyn CAIRead,

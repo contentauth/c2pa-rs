@@ -275,9 +275,18 @@ impl Reader {
         }
     }
 
-    /// Reads a manifest through an asynchronous range source,
-    /// the data-hash binding is not verified here.
-    /// Manifest discovery is driven over the async source with no blocking read.
+    /// Reads and validates a manifest through an asynchronous range source, with no
+    /// blocking read anywhere in the path.
+    ///
+    /// Manifest discovery is driven over the source; with verification enabled the
+    /// data-hash binding is then checked by streaming the asset back through the
+    /// same source one `RangeConfig::hash_chunk` at a time, so peak memory stays
+    /// bounded regardless of asset size. This is what lets a runtime with no
+    /// blocking read — a browser extension service worker, a Cloudflare Worker —
+    /// verify an asset it can only reach over HTTP range requests.
+    ///
+    /// Box hashes and merkle-hashed non-fragmented BMFF are not verifiable this way
+    /// and report an explicit error rather than passing unchecked.
     async fn with_async_ranges(
         mut self,
         format: &str,
@@ -292,9 +301,14 @@ impl Reader {
             })
             .await?;
 
-        let store = Store::from_manifest_bytes_no_data_hash_async(
+        // the asset length is already known to the source; verification needs it to
+        // resolve exclusion ranges without a seek-to-end
+        let data_len = reader.info_async().await?.len;
+
+        let store = Store::from_manifest_bytes_async_ranges(
             &manifest_bytes,
             remote_url,
+            Some((reader.as_ref(), data_len, config, format)),
             &mut validation_log,
             &self.context,
         )
@@ -1467,7 +1481,7 @@ pub mod tests {
         assertions::DigitalSourceType,
         builder::BuilderIntent,
         utils::{test::test_context, test_signer::test_signer},
-        Builder, SigningAlg,
+        validation_status, Builder, SigningAlg,
     };
 
     const IMAGE_COMPLEX_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACAE-uri-CA.jpg");
@@ -1638,6 +1652,7 @@ pub mod tests {
             window: 4096,
             max_request: 16 * 1024,
             max_cached: 4 * 1024 * 1024,
+            ..Default::default()
         });
 
         let context = test_context().with_sync_asset_source(source);
@@ -1695,9 +1710,9 @@ pub mod tests {
             }
         }
 
-        // Verification off keeps this a pure manifest-discovery read.
+        // Verification on: the data-hash binding must be checked over the async source.
         let context = test_context()
-            .with_settings(r#"{"verify": {"verify_after_reading": false}}"#)
+            .with_settings(r#"{"verify": {"verify_after_reading": true}}"#)
             .unwrap()
             .with_async_asset_source(AsyncRangeSource);
 
@@ -1706,6 +1721,211 @@ pub mod tests {
             .await
             .unwrap();
         assert!(reader.active_manifest().is_some());
+
+        let results = reader
+            .validation_results()
+            .expect("validation results after a verifying read");
+        let active = results
+            .active_manifest()
+            .expect("active manifest status codes");
+        assert!(
+            active
+                .success()
+                .iter()
+                .any(|s| s.code() == validation_status::ASSERTION_DATAHASH_MATCH),
+            "async range read must verify the data-hash binding; success codes were {:?}",
+            active.success().iter().map(|s| s.code()).collect::<Vec<_>>()
+        );
+    }
+
+    // A verifier that always succeeds would pass every positive test, so corrupt a
+    // byte the manifest covers and require the read to reject it.
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    async fn test_reader_async_range_source_detects_tampered_bytes() {
+        use crate::asset_source::{
+            range::{AsyncRangeReader, RangeInfo},
+            AssetRequest, AssetSourceError, AsyncAssetSource, ResolvedAsset,
+        };
+
+        struct AsyncMem(Vec<u8>);
+
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        impl AsyncRangeReader for AsyncMem {
+            async fn info_async(&self) -> std::result::Result<RangeInfo, AssetSourceError> {
+                Ok(RangeInfo {
+                    len: self.0.len() as u64,
+                })
+            }
+            async fn read_range_async(
+                &self,
+                offset: u64,
+                len: u64,
+            ) -> std::result::Result<Vec<u8>, AssetSourceError> {
+                let start = offset as usize;
+                let end = (offset + len).min(self.0.len() as u64) as usize;
+                Ok(self.0[start..end].to_vec())
+            }
+        }
+
+        struct AsyncRangeSource(Vec<u8>);
+
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        impl AsyncAssetSource for AsyncRangeSource {
+            async fn open_async(
+                &self,
+                _request: &AssetRequest<'_>,
+            ) -> std::result::Result<ResolvedAsset, AssetSourceError> {
+                Ok(ResolvedAsset::from_ranges_async(Box::new(AsyncMem(
+                    self.0.clone(),
+                ))))
+            }
+        }
+
+        // Flip a byte deep in the image data, well past the manifest, so the change
+        // falls inside the hashed region rather than an exclusion.
+        let mut tampered = IMAGE_WITH_MANIFEST.to_vec();
+        let target = tampered.len() - 64;
+        tampered[target] ^= 0xff;
+
+        let context = test_context()
+            .with_settings(r#"{"verify": {"verify_after_reading": true}}"#)
+            .unwrap()
+            .with_async_asset_source(AsyncRangeSource(tampered));
+
+        let reader = Reader::from_context(context)
+            .with_reference_async("image/jpeg", "any-reference")
+            .await
+            .unwrap();
+
+        let results = reader
+            .validation_results()
+            .expect("validation results after a verifying read");
+        let active = results
+            .active_manifest()
+            .expect("active manifest status codes");
+        assert!(
+            active
+                .failure()
+                .iter()
+                .any(|s| s.code() == validation_status::ASSERTION_DATAHASH_MISMATCH),
+            "tampered bytes must fail the data-hash binding; failures were {:?}",
+            active.failure().iter().map(|s| s.code()).collect::<Vec<_>>()
+        );
+        assert_eq!(reader.validation_state(), ValidationState::Invalid);
+    }
+
+    // BMFF takes a different verification path than DataHash: the box structure is
+    // parsed through the retry-on-miss driver, then hashed over async ranges.
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    async fn test_reader_async_range_source_verifies_bmff() {
+        use crate::asset_source::{
+            range::{AsyncRangeReader, RangeInfo},
+            AssetRequest, AssetSourceError, AsyncAssetSource, ResolvedAsset,
+        };
+
+        const VIDEO_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/video1.mp4");
+
+        struct AsyncMem(Vec<u8>);
+
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        impl AsyncRangeReader for AsyncMem {
+            async fn info_async(&self) -> std::result::Result<RangeInfo, AssetSourceError> {
+                Ok(RangeInfo {
+                    len: self.0.len() as u64,
+                })
+            }
+            async fn read_range_async(
+                &self,
+                offset: u64,
+                len: u64,
+            ) -> std::result::Result<Vec<u8>, AssetSourceError> {
+                let start = offset as usize;
+                let end = (offset + len).min(self.0.len() as u64) as usize;
+                Ok(self.0[start..end].to_vec())
+            }
+        }
+
+        struct AsyncRangeSource(Vec<u8>);
+
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        impl AsyncAssetSource for AsyncRangeSource {
+            async fn open_async(
+                &self,
+                _request: &AssetRequest<'_>,
+            ) -> std::result::Result<ResolvedAsset, AssetSourceError> {
+                Ok(ResolvedAsset::from_ranges_async(Box::new(AsyncMem(
+                    self.0.clone(),
+                ))))
+            }
+        }
+
+        let context = test_context()
+            .with_settings(r#"{"verify": {"verify_after_reading": true}}"#)
+            .unwrap()
+            .with_async_asset_source(AsyncRangeSource(VIDEO_WITH_MANIFEST.to_vec()));
+
+        let reader = Reader::from_context(context)
+            .with_reference_async("video/mp4", "any-reference")
+            .await
+            .unwrap();
+        assert!(reader.active_manifest().is_some());
+
+        let results = reader
+            .validation_results()
+            .expect("validation results after a verifying read");
+        let active = results
+            .active_manifest()
+            .expect("active manifest status codes");
+        assert!(
+            active
+                .failure()
+                .is_empty(),
+            "an untampered video must verify cleanly; failures were {:?}",
+            active.failure().iter().map(|s| s.code()).collect::<Vec<_>>()
+        );
+        assert!(
+            active
+                .success()
+                .iter()
+                .any(|s| s.code() == validation_status::ASSERTION_BMFFHASH_MATCH),
+            "async range read must verify the BMFF binding; success codes were {:?}",
+            active.success().iter().map(|s| s.code()).collect::<Vec<_>>()
+        );
+
+        // and the same asset with a tampered byte must be rejected
+        let mut tampered = VIDEO_WITH_MANIFEST.to_vec();
+        let target = tampered.len() - 128;
+        tampered[target] ^= 0xff;
+
+        let context = test_context()
+            .with_settings(r#"{"verify": {"verify_after_reading": true}}"#)
+            .unwrap()
+            .with_async_asset_source(AsyncRangeSource(tampered));
+
+        let reader = Reader::from_context(context)
+            .with_reference_async("video/mp4", "any-reference")
+            .await
+            .unwrap();
+        let results = reader
+            .validation_results()
+            .expect("validation results after a verifying read");
+        let active = results
+            .active_manifest()
+            .expect("active manifest status codes");
+        assert!(
+            active
+                .failure()
+                .iter()
+                .any(|s| s.code() == validation_status::ASSERTION_BMFFHASH_MISMATCH),
+            "tampered video must fail the BMFF binding; failures were {:?}",
+            active.failure().iter().map(|s| s.code()).collect::<Vec<_>>()
+        );
     }
 
     #[test]
