@@ -9,6 +9,40 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.90.15](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.14...c2pa-v0.90.15)
+_13 August 2026_
+
+### Fixed
+
+* Hardening against potential deep recursion in update manifests with parent cycles (backport #2493) ([#2501](https://github.com/contentauth/c2pa-rs/pull/2501))
+
+## [0.90.14](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.13...c2pa-v0.90.14)
+_13 August 2026_
+
+### Fixed
+
+* Diamond inputTo manifest exponential reverifications depending on ingredient paths reachability (backport #2492) ([#2498](https://github.com/contentauth/c2pa-rs/pull/2498))
+
+## [0.90.13](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.12...c2pa-v0.90.13)
+_13 August 2026_
+
+### Fixed
+
+* *(sdk)* Parse PEM cert chain to DER for RemoteSigner (backport #2414) ([#2481](https://github.com/contentauth/c2pa-rs/pull/2481))
+
+## [0.90.12](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.11...c2pa-v0.90.12)
+_12 August 2026_
+
+### Fixed
+
+* Preserve identity assertions in split-signing paths (backport #2421) ([#2465](https://github.com/contentauth/c2pa-rs/pull/2465))
+* Avoid QoS runtime detection warning (backport #2467) ([#2482](https://github.com/contentauth/c2pa-rs/pull/2482))
+* *(sdk)* Validate inputTo ingredients against manifest tampering (#2… ([#2476](https://github.com/contentauth/c2pa-rs/pull/2476))
+
+### Updated dependencies
+
+* Bump sha1 from 0.10.7 to 0.11.0 (backport #2456) ([#2473](https://github.com/contentauth/c2pa-rs/pull/2473))
+
 ## [0.90.11](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.10...c2pa-v0.90.11)
 _12 August 2026_
 
