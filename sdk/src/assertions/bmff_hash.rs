@@ -1582,8 +1582,8 @@ impl BmffHash {
     }
 
     /// Verify the merkle hashes of a fragmented BMFF asset whose fragments are
-    /// supplied by a [`FragmentSource`], opened one at a time so at most one
-    /// fragment is held open regardless of fragment count.
+    /// supplied by a [`FragmentSource`].
+    /// The fragments open one at a time so at most one fragment is held open.
     pub(crate) fn verify_stream_segments_with_progress<F>(
         &self,
         init_stream: &mut dyn CAIRead,
@@ -1624,13 +1624,10 @@ impl BmffHash {
             let mut step = 0u32;
 
             for index in 0..fragment_count {
-                // Open one fragment at a time and drop it before the next, so a
-                // large fragment set never holds more than one handle open.
+                // Open one fragment at a time and drop it before the next...
                 let mut fragment_box = fragments.open(index)?;
                 let fragment_stream = fragment_box.as_mut();
 
-                // The caller now owns the stream lifecycle; rewind so a re-verified
-                // source starts each fragment at its head rather than at EOF.
                 fragment_stream.rewind()?;
 
                 progress((index + 1) as u32, fragment_count as u32)?;

@@ -117,9 +117,8 @@ pub enum ClaimAssetData<'a> {
     Bytes(&'a [u8], &'a str),
     Stream(&'a mut dyn CAIRead, &'a str),
     StreamFragment(&'a mut dyn CAIRead, &'a mut dyn CAIRead, &'a str),
-    /// Init segment stream plus a lazily-opened fragment source, so the caller
-    /// controls fragment transport (local file, network range-reader, ...) and only
-    /// one fragment is held open at a time.
+    /// Init segment stream and a lazily-opened fragment source.
+    /// This is so the caller can set where the fragments come from.
     Fragments(&'a mut dyn CAIRead, &'a dyn FragmentSource, &'a str),
 }
 

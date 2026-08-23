@@ -735,7 +735,7 @@ impl HandlerRegistry {
         let types = handler.supported_types();
         let Some(canonical) = types.first() else {
             log::warn!(
-                "ignoring asset handler that declares no supported types; it will never be dispatched"
+                "asset handler declares no supported types"
             );
             return;
         };

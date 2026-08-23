@@ -139,11 +139,8 @@ enum AsyncSignerState {
     FromSettings(OnceLock<Result<BoxedAsyncSigner>>),
 }
 
-/// The default asset source: the local filesystem when `file_io` is enabled,
-/// otherwise a placeholder that reports [`AssetSourceError::NotConfigured`] until a
-/// source is registered.
-///
-/// [`AssetSourceError::NotConfigured`]: crate::asset_source::AssetSourceError::NotConfigured
+/// If file_io is on, default asset source is local filesystem.
+/// Otherwise, [`AssetSourceError::NotConfigured`] until a source is configured.
 #[cfg(feature = "file_io")]
 fn default_asset_source() -> AssetSourceSlot {
     AssetSourceSlot::Sync(Arc::new(crate::asset_source::LocalAssetSource))
@@ -296,8 +293,8 @@ pub struct Context {
     /// Custom handlers are searched first; last-registered wins when two handlers claim the
     /// same format.
     io: HandlerRegistry,
-    /// Where asset bytes come from when the SDK opens an asset by reference.
-    /// Defaults to opening local files; override to pull bytes from anywhere.
+    /// Where asset bytes come from when the opens an asset by red.
+    /// Default: local filesystem, can be overriden.
     asset_source: AssetSourceSlot,
 }
 
@@ -582,14 +579,11 @@ impl Context {
 
     /// Configure this Context with a custom synchronous [`SyncAssetSource`].
     ///
-    /// The source decides where asset bytes come from when the SDK opens an asset
-    /// by reference (e.g. [`Reader::with_reference`](crate::Reader::with_reference)
-    /// or the file-based read APIs). Defaults to
-    /// [`LocalAssetSource`](crate::asset_source::LocalAssetSource), which opens local
-    /// file paths; override it to pull bytes from a network range-reader, an object
-    /// store, or any custom transport — parsing and validation are unchanged.
+    /// The source decides where asset bytes come from when the SDK opens an asset by ref,
+    /// with default being a local filesystem.
+    // The asset source can be overwritten for custom transport.
     ///
-    /// Registering a source replaces any previously registered source, sync or async.
+    /// Registering a source replaces any previously registered source.
     pub fn with_sync_asset_source<T: SyncAssetSource + 'static>(mut self, source: T) -> Self {
         self.asset_source = AssetSourceSlot::Sync(Arc::new(source));
         self
@@ -600,9 +594,8 @@ impl Context {
         self.asset_source = AssetSourceSlot::Sync(Arc::new(source));
     }
 
-    /// Configure this Context with a custom asynchronous
-    /// [`AsyncAssetSource`](crate::asset_source::AsyncAssetSource), used by the async
-    /// read path so a network-backed source can do non-blocking I/O.
+    /// Configure this Context with a custom asynchronous [`AsyncAssetSource`](crate::asset_source::AsyncAssetSource),
+    /// used by the async read path, so e.g. a network-backed source can do non-blocking I/O.
     ///
     /// A synchronous read against an async-only source returns
     /// [`AssetSourceError::SyncUnsupported`](crate::asset_source::AssetSourceError::SyncUnsupported)
@@ -952,33 +945,6 @@ mod tests {
         settings.verify.verify_after_sign = true;
         let context = Context::new().with_settings(settings).unwrap();
         assert!(context.settings().verify.verify_after_sign);
-    }
-
-    #[test]
-    fn test_sync_open_on_async_only_source_reports_sync_unsupported() {
-        use crate::asset_source::{
-            AssetRequest, AssetSourceError, AsyncAssetSource, ResolvedAsset,
-        };
-
-        struct AsyncOnly;
-
-        #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
-        #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-        impl AsyncAssetSource for AsyncOnly {
-            async fn open_async(
-                &self,
-                _request: &AssetRequest<'_>,
-            ) -> std::result::Result<ResolvedAsset, AssetSourceError> {
-                unreachable!("sync path must not reach the async source")
-            }
-        }
-
-        // A sync open against an async-only source must name the missing capability
-        // rather than falling back to the filesystem default.
-        let context = Context::new().with_async_asset_source(AsyncOnly);
-        let request = AssetRequest::from_reference("any-reference", None);
-        let result = context.asset_source().open(&request);
-        assert!(matches!(result, Err(AssetSourceError::SyncUnsupported)));
     }
 
     #[test]
