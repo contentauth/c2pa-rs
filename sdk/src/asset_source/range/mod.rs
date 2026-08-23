@@ -39,6 +39,13 @@ pub struct RangeInfo {
     pub len: u64,
 }
 
+impl RangeInfo {
+    /// Reports an object of `len` bytes.
+    pub fn new(len: u64) -> Self {
+        Self { len }
+    }
+}
+
 /// Tunables for the window cache layered over a range reader.
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
