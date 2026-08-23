@@ -11,19 +11,17 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! Drives a synchronous parse over an asynchronous byte source.
+//! COntrols a synchronous parse over an asynchronous byte source.
 //!
 //! The C2PA parse path is synchronous `Read + Seek`. To read it over a
 //! non-blocking transport without making the whole parser async, a synchronous
 //! parse closure is run over a [`PrefetchStream`] that never performs I/O: a read
 //! of uncached bytes aborts the closure with a [`AssetSourceError::RangeMiss`]
-//! sentinel naming the wanted range. [`drive_async`] awaits that range, inserts it
+//! naming the wanted range. [`drive_async`] awaits that range, inserts it
 //! into the cache, and re-runs the closure. The cache persists across attempts, so
 //! every attempt makes strict progress.
 //!
-//! Only side-effect-free, restartable work may be driven this way. Manifest
-//! discovery qualifies (it parses into a fresh buffer and touches no status
-//! tracker); hash verification does not and stays synchronous.
+//! Only side-effect-free, restartable work may be driven this way.
 
 use std::io::{self, Read, Seek, SeekFrom};
 
@@ -34,8 +32,7 @@ use crate::{
     error::Result,
 };
 
-/// Aborts a driven closure after this many attempts rather than spinning on a
-/// closure that will not converge.
+/// Aborts a driven closure after this many attempts.
 const MAX_ATTEMPTS: u32 = 64;
 
 /// A synchronous `Read + Seek` view over a [`RangeCache`] that performs no I/O.
@@ -43,8 +40,8 @@ const MAX_ATTEMPTS: u32 = 64;
 /// A read of bytes not resident in the cache records the wanted range in a side
 /// channel and returns an error to abort the read. The range is recorded in the
 /// side channel rather than only in the error, so a miss is detected even when the
-/// parser reclassifies the error (e.g. the BMFF reader wraps it as
-/// `InvalidAsset`). Seeks never fail on missing bytes (they only move the cursor).
+/// parser reclassifies the error.
+/// Seeks never fail on missing bytes (they only move the cursor).
 pub(crate) struct PrefetchStream<'a> {
     cache: &'a mut RangeCache,
     len: u64,
@@ -106,9 +103,8 @@ fn add_signed(base: u64, delta: i64) -> io::Result<u64> {
 /// Runs a synchronous parse closure over an asynchronous byte source.
 ///
 /// Each cache miss aborts `op`, the missing range is awaited and inserted, and `op`
-/// is re-run over the warmed cache. A miss is detected through a side channel, so it
-/// works even when the parser swallows or reclassifies the abort error. Aborts with
-/// a "prefetch stalled" error if the closure re-requests a resident range or exceeds
+/// is re-run over the warmed cache.
+/// Aborts with a "prefetch stalled" error if the closure re-requests a resident range or exceeds
 /// [`MAX_ATTEMPTS`], and checks the context cancellation flag before each attempt.
 pub(crate) async fn drive_async<T, F>(
     reader: &dyn AsyncRangeReader,
@@ -154,8 +150,8 @@ where
             return result;
         };
 
-        // A range that is already resident cannot legitimately miss again; that means
-        // the closure is not converging.
+        // A range that is already resident cannot legitimately miss again:
+        // that means the closure is not converging.
         let mut probe = [0u8; 1];
         if cache.copy_into(offset, &mut probe) > 0 {
             return Err(AssetSourceError::Other(
@@ -213,8 +209,7 @@ mod tests {
         }
     }
 
-    // A tiny synchronous parser that reads the whole stream, standing in for
-    // manifest discovery.
+    // A tiny synchronous parser that reads the whole stream.
     fn read_all(stream: &mut PrefetchStream<'_>) -> Result<Vec<u8>> {
         let mut out = Vec::new();
         stream.read_to_end(&mut out)?;
@@ -266,8 +261,7 @@ mod tests {
             offset: u64,
             len: u64,
         ) -> std::result::Result<Vec<u8>, AssetSourceError> {
-            // Serves only one byte per request, so a full read needs far more
-            // fetches than the attempt cap allows.
+            // Serves only one byte per request, forcing many fetches.
             let _ = len;
             if offset >= 1000 {
                 return Ok(Vec::new());
@@ -285,8 +279,7 @@ mod tests {
             max_request: 1,
             max_cached: 4 * 1024 * 1024,
         };
-        // Reading the whole 1000-byte object one byte per fetch exceeds the attempt
-        // cap and must stall rather than loop forever.
+        // Reading the whole 1000-byte object one byte per fetch exceeds the attempt cap.
         let err = drive_async(&reader, &context, config, read_all)
             .await
             .unwrap_err();
@@ -295,8 +288,7 @@ mod tests {
 
     #[tokio::test]
     async fn miss_detected_when_parser_reclassifies_the_abort_error() {
-        // The BMFF reader wraps a read error into a non-io error; the driver must
-        // still detect the miss through the side channel and converge.
+        // The BMFF reader wraps a read error into a non-io error...
         let data: Vec<u8> = (0..250u8).collect();
         let reader = AsyncMem {
             data: data.clone(),
