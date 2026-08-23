@@ -11,13 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! Random-access byte sources and the shared window cache the SDK layers over
-//! them.
+//! Random-access byte sources and a shared window cache.
 //!
-//! A binding implements one method — [`SyncRangeReader::read_range`] (or its async
-//! twin) — and gets segment caching, coalescing, short-read handling, and length
-//! discovery from [`RangeStream`] for free, instead of hand-rolling a window cache
-//! per transport.
+//! A binding implements one method [`SyncRangeReader::read_range`] (or its async
+//! twin) and gets segment caching, coalescing, short-read handling, and length
+//! discovery from [`RangeStream`].
 
 mod cache;
 mod driver;

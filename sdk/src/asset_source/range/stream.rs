@@ -22,8 +22,7 @@ use crate::asset_source::AssetSourceError;
 /// [`SyncRangeReader`], caching fetched segments so seek-heavy access does not
 /// re-request bytes it already holds.
 ///
-/// The object length is discovered lazily on the first read, not in the
-/// constructor, so building a `RangeStream` performs no I/O.
+/// The object length is discovered lazily on the first read, not in the constructor.
 pub struct RangeStream {
     reader: Box<dyn SyncRangeReader>,
     cache: RangeCache,
@@ -43,7 +42,7 @@ impl RangeStream {
         }
     }
 
-    /// Discovers and caches the object length on first use.
+    /// Discovers and caches the object length.
     fn resolved_len(&mut self) -> io::Result<u64> {
         if let Some(len) = self.len {
             return Ok(len);

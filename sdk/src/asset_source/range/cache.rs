@@ -15,9 +15,7 @@
 //!
 //! Holds non-overlapping byte segments keyed by start offset, coalescing adjacent
 //! segments on insert and evicting least-recently-used segments once a byte budget
-//! is exceeded. A segment cache (rather than a single sliding window) holds both
-//! the header at the front of an asset and structures elsewhere at once, which is
-//! what a format like BMFF needs as it hops between `moov`/`mdat` and the header.
+//! is exceeded.
 
 use std::collections::BTreeMap;
 
@@ -52,9 +50,7 @@ impl RangeCache {
     }
 
     /// Copies contiguous cached bytes starting at `offset` into `buf`, returning how
-    /// many bytes were copied (0 if `offset` is not cached). Only bytes from the
-    /// single segment containing `offset` are copied, so a return smaller than
-    /// `buf.len()` means the cache holds no further contiguous bytes.
+    /// many bytes were copied (0 if `offset` is not cached).
     pub(crate) fn copy_into(&mut self, offset: u64, buf: &mut [u8]) -> usize {
         let Some((&start, seg)) = self.segments.range(..=offset).next_back() else {
             return 0;
