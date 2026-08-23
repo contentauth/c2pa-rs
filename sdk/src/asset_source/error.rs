@@ -54,6 +54,16 @@ pub enum AssetSourceError {
     #[error("range {offset}+{expected} returned only {got} bytes")]
     ShortRead { offset: u64, expected: u64, got: u64 },
 
+    /// The object changed while it was being read.
+    ///
+    /// A range-backed read fetches an object many times.
+    /// Every byte must come from one version of it.
+    /// Raised when a later request serves a different version
+    /// than the read started with, whether the source detected that itself or the
+    /// version it reported no longer matches.
+    #[error("object changed while being read: expected version {expected}, got {got}")]
+    VersionChanged { expected: String, got: String },
+
     /// The requested range is not resident in the prefetch cache.
     /// Carried out of a synchronous parse pass so the async driver can fetch
     /// the range and retry.

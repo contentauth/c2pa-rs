@@ -1263,6 +1263,7 @@ impl BmffHash {
         reader: &dyn crate::asset_source::range::AsyncRangeReader,
         alg: Option<&str>,
         data_len: u64,
+        expect_version: Option<&crate::asset_source::range::ObjectVersion>,
         chunk_size: std::num::NonZeroUsize,
         config: crate::asset_source::range::RangeConfig,
         context: &crate::Context,
@@ -1309,10 +1310,13 @@ impl BmffHash {
         if let Some(hash) = self.hash() {
             let computed = hash_ranges_by_alg_async(
                 &curr_alg,
-                reader,
+                crate::utils::hash_utils::AsyncHashSource {
+                    reader,
+                    data_len: size,
+                    expect_version,
+                },
                 Some(exclusions.clone()),
                 true,
-                size,
                 chunk_size,
                 progress,
             )
@@ -1356,10 +1360,13 @@ impl BmffHash {
                         Self::progress_tick(&mut step, progress)?;
                         let computed = hash_ranges_by_alg_async(
                             alg,
-                            reader,
+                            crate::utils::hash_utils::AsyncHashSource {
+                                reader,
+                                data_len: size,
+                                expect_version,
+                            },
                             Some(mm_exclusions),
                             true,
-                            size,
                             chunk_size,
                             &mut |_, _| Ok(()),
                         )
@@ -1415,10 +1422,13 @@ impl BmffHash {
 
                         let hash = hash_ranges_by_alg_async(
                             alg,
-                            reader,
+                            crate::utils::hash_utils::AsyncHashSource {
+                                reader,
+                                data_len: size,
+                                expect_version,
+                            },
                             Some(curr_exclusions),
                             true,
-                            size,
                             chunk_size,
                             &mut |_, _| Ok(()),
                         )

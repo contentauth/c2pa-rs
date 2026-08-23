@@ -319,9 +319,8 @@ impl DataHash {
     /// at a time rather than requiring the asset as a seekable stream.
     pub(crate) async fn verify_async_ranges_with_progress<F>(
         &self,
-        reader: &dyn crate::asset_source::range::AsyncRangeReader,
+        source: crate::utils::hash_utils::AsyncHashSource<'_>,
         alg: Option<&str>,
-        data_len: u64,
         chunk_size: std::num::NonZeroUsize,
         progress: &mut F,
     ) -> Result<()>
@@ -344,10 +343,9 @@ impl DataHash {
 
         let computed = crate::utils::hash_utils::hash_ranges_by_alg_async(
             &curr_alg,
-            reader,
+            source,
             exclusions,
             true,
-            data_len,
             chunk_size,
             progress,
         )

@@ -15,7 +15,7 @@
 
 use std::io::{self, Read, Seek, SeekFrom};
 
-use super::{cache::RangeCache, RangeConfig, SyncRangeReader};
+use super::{cache::RangeCache, ObjectVersion, RangeChunk, RangeConfig, SyncRangeReader};
 use crate::asset_source::AssetSourceError;
 
 /// A seekable stream that fetches asset bytes on demand through a
@@ -29,6 +29,10 @@ pub struct RangeStream {
     config: RangeConfig,
     offset: u64,
     len: Option<u64>,
+    /// The object version this stream is reading, adopted from the first response
+    /// that reports one. Every later response must agree, so a stream cannot
+    /// silently splice together two versions of an object.
+    version: Option<ObjectVersion>,
 }
 
 impl RangeStream {
@@ -39,17 +43,22 @@ impl RangeStream {
             config,
             offset: 0,
             len: None,
+            version: None,
         }
     }
 
-    /// Discovers and caches the object length.
+    /// Discovers and caches the object length, adopting the reported version if the
+    /// stream has not already anchored on one.
     fn resolved_len(&mut self) -> io::Result<u64> {
         if let Some(len) = self.len {
             return Ok(len);
         }
-        let len = self.reader.info().map_err(to_io)?.len;
-        self.len = Some(len);
-        Ok(len)
+        let info = self.reader.info().map_err(to_io)?;
+        self.len = Some(info.len);
+        if self.version.is_none() {
+            self.version = info.version;
+        }
+        Ok(info.len)
     }
 }
 
@@ -71,11 +80,14 @@ impl Read for RangeStream {
                 .max(self.config.window)
                 .min(self.config.max_request)
                 .min(remaining);
-            let data = self
-                .reader
-                .read_range(self.offset, fetch_len)
-                .map_err(to_io)?;
-            if data.is_empty() {
+            let chunk = super::fetch_versioned(
+                self.reader.as_ref(),
+                self.offset,
+                fetch_len,
+                self.version.as_ref(),
+            )
+            .map_err(to_io)?;
+            if chunk.bytes.is_empty() {
                 // Bytes remain but the source returned nothing: a short read, not EOF.
                 return Err(to_io(AssetSourceError::ShortRead {
                     offset: self.offset,
@@ -83,7 +95,12 @@ impl Read for RangeStream {
                     got: 0,
                 }));
             }
-            self.cache.insert(self.offset, data);
+            // Anchor on the first version seen; `fetch_versioned` has already
+            // rejected any later response that disagrees with it.
+            if self.version.is_none() {
+                self.version = chunk.version;
+            }
+            self.cache.insert(self.offset, chunk.bytes);
             got = self.cache.copy_into(self.offset, &mut buf[..want]);
         }
 
@@ -141,19 +158,23 @@ mod tests {
 
     impl SyncRangeReader for MemReader {
         fn info(&self) -> Result<RangeInfo, AssetSourceError> {
-            Ok(RangeInfo {
-                len: self.data.len() as u64,
-            })
+            Ok(RangeInfo::new(self.data.len() as u64))
         }
 
-        fn read_range(&self, offset: u64, len: u64) -> Result<Vec<u8>, AssetSourceError> {
+        fn read_range(
+            &self,
+            offset: u64,
+            len: u64,
+            expect: Option<&ObjectVersion>,
+        ) -> Result<RangeChunk, AssetSourceError> {
+            let _ = expect;
             self.calls.fetch_add(1, Ordering::SeqCst);
             if self.short {
-                return Ok(Vec::new());
+                return Ok(RangeChunk::new(Vec::new()));
             }
             let start = offset as usize;
             let end = (offset + len).min(self.data.len() as u64) as usize;
-            Ok(self.data[start..end].to_vec())
+            Ok(RangeChunk::new(self.data[start..end].to_vec()))
         }
     }
 

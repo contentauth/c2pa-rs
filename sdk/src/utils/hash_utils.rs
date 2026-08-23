@@ -559,6 +559,17 @@ where
     hash_stream_by_alg_with_progress(alg, data, hash_range, is_exclusion, &mut |_, _| Ok(()))
 }
 
+/// The object a hash pass reads from: the source, its length, and the version every
+/// fetch must come from.
+///
+/// Grouped so the version travels with the reader it belongs to and cannot be
+/// forgotten at a call site.
+pub(crate) struct AsyncHashSource<'a> {
+    pub reader: &'a dyn crate::asset_source::range::AsyncRangeReader,
+    pub data_len: u64,
+    pub expect_version: Option<&'a crate::asset_source::range::ObjectVersion>,
+}
+
 /// Hashes an asset read through an asynchronous range source,
 /// holding at most `chunk_size` bytes at a time.
 ///
@@ -573,16 +584,20 @@ where
 /// rather than end-of-file.
 pub(crate) async fn hash_ranges_by_alg_async<F>(
     alg: &str,
-    reader: &dyn crate::asset_source::range::AsyncRangeReader,
+    source: AsyncHashSource<'_>,
     hash_range: Option<Vec<HashRange>>,
     is_exclusion: bool,
-    data_len: u64,
     chunk_size: NonZeroUsize,
     progress: &mut F,
 ) -> Result<Vec<u8>>
 where
     F: FnMut(u32, u32) -> Result<()>,
 {
+    let AsyncHashSource {
+        reader,
+        data_len,
+        expect_version,
+    } = source;
     let chunk_size = chunk_size.get();
     let mut hasher_enum = hasher_for_alg(alg)?;
 
@@ -614,7 +629,13 @@ where
             // one logical chunk may take several fetches if the source short-reads
             while (chunk.len() as u64) < want {
                 let still_want = want - chunk.len() as u64;
-                let data = reader.read_range_async(offset, still_want).await?;
+                let data = crate::asset_source::range::fetch_versioned_async(
+                    reader,
+                    offset,
+                    still_want,
+                    expect_version,
+                )
+                .await?;
                 if data.is_empty() {
                     return Err(crate::asset_source::AssetSourceError::ShortRead {
                         offset,
@@ -888,7 +909,7 @@ mod tests {
         };
 
         use crate::asset_source::{
-            range::{AsyncRangeReader, RangeInfo},
+            range::{AsyncRangeReader, ObjectVersion, RangeChunk, RangeInfo},
             AssetSourceError,
         };
 
@@ -901,19 +922,19 @@ mod tests {
         #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
         impl AsyncRangeReader for AsyncMem {
             async fn info_async(&self) -> std::result::Result<RangeInfo, AssetSourceError> {
-                Ok(RangeInfo {
-                    len: self.data.len() as u64,
-                })
+                Ok(RangeInfo::new(self.data.len() as u64))
             }
             async fn read_range_async(
                 &self,
                 offset: u64,
                 len: u64,
-            ) -> std::result::Result<Vec<u8>, AssetSourceError> {
+                expect: Option<&ObjectVersion>,
+            ) -> std::result::Result<RangeChunk, AssetSourceError> {
+                let _ = expect;
                 self.largest.fetch_max(len, Ordering::SeqCst);
                 let start = offset as usize;
                 let end = (offset + len).min(self.data.len() as u64) as usize;
-                Ok(self.data[start..end].to_vec())
+                Ok(RangeChunk::new(self.data[start..end].to_vec()))
             }
         }
 
@@ -946,10 +967,13 @@ mod tests {
         };
         let async_hash = hash_ranges_by_alg_async(
             "sha256",
-            &reader,
+            AsyncHashSource {
+                reader: &reader,
+                data_len: data.len() as u64,
+                expect_version: None,
+            },
             Some(exclusions),
             true,
-            data.len() as u64,
             test_hash_buf(),
             &mut |_, _| Ok(()),
         )
@@ -973,7 +997,7 @@ mod tests {
     #[tokio::test]
     async fn async_digest_survives_short_reads() {
         use crate::asset_source::{
-            range::{AsyncRangeReader, RangeInfo},
+            range::{AsyncRangeReader, ObjectVersion, RangeChunk, RangeInfo},
             AssetSourceError,
         };
 
@@ -986,19 +1010,19 @@ mod tests {
         #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
         impl AsyncRangeReader for Dribble {
             async fn info_async(&self) -> std::result::Result<RangeInfo, AssetSourceError> {
-                Ok(RangeInfo {
-                    len: self.data.len() as u64,
-                })
+                Ok(RangeInfo::new(self.data.len() as u64))
             }
             async fn read_range_async(
                 &self,
                 offset: u64,
                 len: u64,
-            ) -> std::result::Result<Vec<u8>, AssetSourceError> {
+                expect: Option<&ObjectVersion>,
+            ) -> std::result::Result<RangeChunk, AssetSourceError> {
+                let _ = expect;
                 let start = offset as usize;
                 let capped = (len as usize).min(self.per_read);
                 let end = (start + capped).min(self.data.len());
-                Ok(self.data[start..end].to_vec())
+                Ok(RangeChunk::new(self.data[start..end].to_vec()))
             }
         }
 
@@ -1023,10 +1047,13 @@ mod tests {
         };
         let got = hash_ranges_by_alg_async(
             "sha256",
-            &reader,
+            AsyncHashSource {
+                reader: &reader,
+                data_len: data.len() as u64,
+                expect_version: None,
+            },
             Some(exclusions.clone()),
             true,
-            data.len() as u64,
             test_hash_buf(),
             &mut |_, _| Ok(()),
         )
@@ -1042,10 +1069,13 @@ mod tests {
         };
         let err = hash_ranges_by_alg_async(
             "sha256",
-            &stalled,
+            AsyncHashSource {
+                reader: &stalled,
+                data_len: data.len() as u64,
+                expect_version: None,
+            },
             Some(exclusions),
             true,
-            data.len() as u64,
             test_hash_buf(),
             &mut |_, _| Ok(()),
         )

@@ -593,6 +593,15 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a C2PA assertion.
     pub const ASSERTION_DATAHASH_MATCH: &str = "assertion.dataHash.match";
 
+    /// The hard binding was checked, but the asset source could not confirm that
+    /// every byte came from one version of the object.
+    ///
+    /// A range-backed read fetches the asset many times. When the transport
+    /// cannot identify object versions, a source that changed the bytes between
+    /// requests would go unnoticed, so the binding covers bytes that were read
+    /// rather than bytes proven to belong together.
+    pub const ASSET_SOURCE_VERSION_UNCONFIRMED: &str = "assetSource.versionUnconfirmed";
+
     /// Additional exclusions are present in the data hash assertion.
     ///
     /// Any corresponding URL should point to a C2PA assertion.
@@ -1124,6 +1133,7 @@ pub mod validation_codes {
             | TIME_OF_SIGNING_INSIDE_VALIDITY
             | INGREDIENT_PROVENANCE_UNKNOWN
             | ASSERTION_DATAHASH_ADDITIONAL_EXCLUSIONS
+            | ASSET_SOURCE_VERSION_UNCONFIRMED
             | CAWG_ICA_UNTRUSTED_ISSUER => LogKind::Informational,
             _ => LogKind::Failure,
         }

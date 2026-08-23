@@ -110,12 +110,31 @@ pub(crate) async fn drive_async<T, F>(
     reader: &dyn AsyncRangeReader,
     context: &Context,
     config: RangeConfig,
+    op: F,
+) -> Result<T>
+where
+    F: FnMut(&mut PrefetchStream<'_>) -> Result<T>,
+{
+    let info = reader.info_async().await?;
+    let len = info.len;
+    drive_async_versioned(reader, context, config, len, info.version.as_ref(), op).await
+}
+
+/// [`drive_async`] over an object whose length and version are already known.
+///
+/// Every fetch must come from `expect`, so a driven parse cannot silently span two
+/// versions of the object.
+pub(crate) async fn drive_async_versioned<T, F>(
+    reader: &dyn AsyncRangeReader,
+    context: &Context,
+    config: RangeConfig,
+    len: u64,
+    expect: Option<&super::ObjectVersion>,
     mut op: F,
 ) -> Result<T>
 where
     F: FnMut(&mut PrefetchStream<'_>) -> Result<T>,
 {
-    let len = reader.info_async().await?.len;
     let mut cache = RangeCache::new(config.max_cached);
     let mut miss: Option<(u64, u64)> = None;
     let mut attempts: u32 = 0;
@@ -159,7 +178,7 @@ where
             )
             .into());
         }
-        let data = reader.read_range_async(offset, fetch_len).await?;
+        let data = super::fetch_versioned_async(reader, offset, fetch_len, expect).await?;
         if data.is_empty() {
             return Err(AssetSourceError::ShortRead {
                 offset,
@@ -181,7 +200,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::asset_source::range::RangeInfo;
+    use crate::asset_source::range::{ObjectVersion, RangeChunk, RangeInfo};
     use crate::error::Error;
 
     struct AsyncMem {
@@ -193,19 +212,19 @@ mod tests {
     #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
     impl AsyncRangeReader for AsyncMem {
         async fn info_async(&self) -> std::result::Result<RangeInfo, AssetSourceError> {
-            Ok(RangeInfo {
-                len: self.data.len() as u64,
-            })
+            Ok(RangeInfo::new(self.data.len() as u64))
         }
         async fn read_range_async(
             &self,
             offset: u64,
             len: u64,
-        ) -> std::result::Result<Vec<u8>, AssetSourceError> {
+            expect: Option<&ObjectVersion>,
+        ) -> std::result::Result<RangeChunk, AssetSourceError> {
+            let _ = expect;
             self.calls.fetch_add(1, Ordering::SeqCst);
             let start = offset as usize;
             let end = (offset + len).min(self.data.len() as u64) as usize;
-            Ok(self.data[start..end].to_vec())
+            Ok(RangeChunk::new(self.data[start..end].to_vec()))
         }
     }
 
@@ -255,19 +274,21 @@ mod tests {
     #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
     impl AsyncRangeReader for NeverSatisfies {
         async fn info_async(&self) -> std::result::Result<RangeInfo, AssetSourceError> {
-            Ok(RangeInfo { len: 1000 })
+            Ok(RangeInfo::new(1000))
         }
         async fn read_range_async(
             &self,
             offset: u64,
             len: u64,
-        ) -> std::result::Result<Vec<u8>, AssetSourceError> {
+            expect: Option<&ObjectVersion>,
+        ) -> std::result::Result<RangeChunk, AssetSourceError> {
+            let _ = expect;
             // Serves only one byte per request, forcing many fetches.
             let _ = len;
             if offset >= 1000 {
-                return Ok(Vec::new());
+                return Ok(RangeChunk::new(Vec::new()));
             }
-            Ok(vec![0u8; 1])
+            Ok(RangeChunk::new(vec![0u8; 1]))
         }
     }
 

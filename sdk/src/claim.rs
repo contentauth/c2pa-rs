@@ -123,13 +123,22 @@ pub enum ClaimAssetData<'a> {
     /// An asset reachable only through a non-blocking range source, carrying its
     /// length and the chunk budget for hashing. Verification streams it one chunk
     /// at a time instead of holding it.
-    AsyncRanges(
-        &'a dyn crate::asset_source::range::AsyncRangeReader,
-        u64,
-        std::num::NonZeroUsize,
-        crate::asset_source::range::RangeConfig,
-        &'a str,
-    ),
+    AsyncRanges(AsyncRangeAsset<'a>),
+}
+
+/// An asset reachable only through a non-blocking range source.
+///
+/// `expect_version` identifies the object version every fetch must come from, so a
+/// verification spanning many requests cannot silently read two different objects.
+/// It is `None` when the transport cannot identify versions, and the read then
+/// proceeds without that guarantee.
+pub struct AsyncRangeAsset<'a> {
+    pub reader: &'a dyn crate::asset_source::range::AsyncRangeReader,
+    pub data_len: u64,
+    pub chunk_size: std::num::NonZeroUsize,
+    pub config: crate::asset_source::range::RangeConfig,
+    pub expect_version: Option<&'a crate::asset_source::range::ObjectVersion>,
+    pub format: &'a str,
 }
 
 #[derive(PartialEq, Debug, Eq, Clone, Hash)]
@@ -2826,16 +2835,19 @@ impl Claim {
                                     Some(claim.alg()),
                                     &mut cb,
                                 ),
-                            ClaimAssetData::AsyncRanges(_reader, _data_len, _chunk_size, _, _) => {
+                            ClaimAssetData::AsyncRanges(_asset) => {
                                 if _sync {
                                     // an async source has no blocking read for this path
                                     Err(Error::UnsupportedType)
                                 } else {
                                     dh.verify_async_ranges_with_progress(
-                                        *_reader,
+                                        crate::utils::hash_utils::AsyncHashSource {
+                                            reader: _asset.reader,
+                                            data_len: _asset.data_len,
+                                            expect_version: _asset.expect_version,
+                                        },
                                         Some(claim.alg()),
-                                        *_data_len,
-                                        *_chunk_size,
+                                        _asset.chunk_size,
                                         &mut cb,
                                     )
                                     .await
@@ -2928,17 +2940,18 @@ impl Claim {
                                 Some(claim.alg()),
                                 &mut cb,
                             ),
-                        ClaimAssetData::AsyncRanges(_reader, _data_len, _chunk_size, _config, _) => {
+                        ClaimAssetData::AsyncRanges(_asset) => {
                             if _sync {
                                 // an async source has no blocking read for this path
                                 Err(Error::UnsupportedType)
                             } else {
                                 dh.verify_async_ranges_with_progress(
-                                    *_reader,
+                                    _asset.reader,
                                     Some(claim.alg()),
-                                    *_data_len,
-                                    *_chunk_size,
-                                    *_config,
+                                    _asset.data_len,
+                                    _asset.expect_version,
+                                    _asset.chunk_size,
+                                    _asset.config,
                                     context,
                                     &mut cb,
                                 )

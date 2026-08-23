@@ -295,20 +295,22 @@ impl Reader {
     ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
 
-        let (manifest_bytes, remote_url) =
-            crate::asset_source::range::drive_async(reader.as_ref(), &self.context, config, |s| {
-                Store::load_jumbf_from_stream(format, s, &self.context)
-            })
-            .await?;
+        let info = reader.info_async().await?;
 
-        // the asset length is already known to the source; verification needs it to
-        // resolve exclusion ranges without a seek-to-end
-        let data_len = reader.info_async().await?.len;
+        let (manifest_bytes, remote_url) = crate::asset_source::range::drive_async_versioned(
+            reader.as_ref(),
+            &self.context,
+            config,
+            info.len,
+            info.version.as_ref(),
+            |s| Store::load_jumbf_from_stream(format, s, &self.context),
+        )
+        .await?;
 
         let store = Store::from_manifest_bytes_async_ranges(
             &manifest_bytes,
             remote_url,
-            Some((reader.as_ref(), data_len, config, format)),
+            Some((reader.as_ref(), info, config, format)),
             &mut validation_log,
             &self.context,
         )
@@ -1486,6 +1488,9 @@ pub mod tests {
 
     const IMAGE_COMPLEX_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACAE-uri-CA.jpg");
     const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
+    // Same length as CA.jpg and independently signed, for tests that need two
+    // separately valid versions of an object.
+    const IMAGE_WITH_MANIFEST_CT: &[u8] = include_bytes!("../tests/fixtures/CA_ct.jpg");
     #[cfg(feature = "fetch_remote_manifests")]
     const IMAGE_WITH_REMOTE_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
     const IMAGE_WITH_INGREDIENT_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACA.jpg");
@@ -1607,7 +1612,7 @@ pub mod tests {
         };
 
         use crate::asset_source::{
-            range::{RangeAssetSource, RangeConfig, RangeInfo, SyncRangeReader},
+            range::{ObjectVersion, RangeAssetSource, RangeChunk, RangeConfig, RangeInfo, SyncRangeReader},
             AssetRequest, AssetSourceError,
         };
 
@@ -1619,21 +1624,21 @@ pub mod tests {
 
         impl SyncRangeReader for MemRanges {
             fn info(&self) -> std::result::Result<RangeInfo, AssetSourceError> {
-                Ok(RangeInfo {
-                    len: self.data.len() as u64,
-                })
+                Ok(RangeInfo::new(self.data.len() as u64))
             }
 
             fn read_range(
                 &self,
                 offset: u64,
                 len: u64,
-            ) -> std::result::Result<Vec<u8>, AssetSourceError> {
+                expect: Option<&ObjectVersion>,
+            ) -> std::result::Result<RangeChunk, AssetSourceError> {
+                let _ = expect;
                 let start = offset as usize;
                 let end = (offset + len).min(self.data.len() as u64) as usize;
                 let slice = self.data[start..end].to_vec();
                 self.fetched.fetch_add(slice.len() as u64, Ordering::SeqCst);
-                Ok(slice)
+                Ok(RangeChunk::new(slice))
             }
         }
 
@@ -1669,7 +1674,7 @@ pub mod tests {
     #[tokio::test]
     async fn test_reader_async_range_source_reads_manifest() {
         use crate::asset_source::{
-            range::{AsyncRangeReader, RangeInfo},
+            range::{AsyncRangeReader, ObjectVersion, RangeChunk, RangeInfo},
             AssetRequest, AssetSourceError, AsyncAssetSource, ResolvedAsset,
         };
 
@@ -1680,18 +1685,18 @@ pub mod tests {
         #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
         impl AsyncRangeReader for AsyncMem {
             async fn info_async(&self) -> std::result::Result<RangeInfo, AssetSourceError> {
-                Ok(RangeInfo {
-                    len: self.0.len() as u64,
-                })
+                Ok(RangeInfo::new(self.0.len() as u64))
             }
             async fn read_range_async(
                 &self,
                 offset: u64,
                 len: u64,
-            ) -> std::result::Result<Vec<u8>, AssetSourceError> {
+                expect: Option<&ObjectVersion>,
+            ) -> std::result::Result<RangeChunk, AssetSourceError> {
+                let _ = expect;
                 let start = offset as usize;
                 let end = (offset + len).min(self.0.len() as u64) as usize;
-                Ok(self.0[start..end].to_vec())
+                Ok(RangeChunk::new(self.0[start..end].to_vec()))
             }
         }
 
@@ -1744,7 +1749,7 @@ pub mod tests {
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_reader_async_range_source_detects_tampered_bytes() {
         use crate::asset_source::{
-            range::{AsyncRangeReader, RangeInfo},
+            range::{AsyncRangeReader, ObjectVersion, RangeChunk, RangeInfo},
             AssetRequest, AssetSourceError, AsyncAssetSource, ResolvedAsset,
         };
 
@@ -1754,18 +1759,18 @@ pub mod tests {
         #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
         impl AsyncRangeReader for AsyncMem {
             async fn info_async(&self) -> std::result::Result<RangeInfo, AssetSourceError> {
-                Ok(RangeInfo {
-                    len: self.0.len() as u64,
-                })
+                Ok(RangeInfo::new(self.0.len() as u64))
             }
             async fn read_range_async(
                 &self,
                 offset: u64,
                 len: u64,
-            ) -> std::result::Result<Vec<u8>, AssetSourceError> {
+                expect: Option<&ObjectVersion>,
+            ) -> std::result::Result<RangeChunk, AssetSourceError> {
+                let _ = expect;
                 let start = offset as usize;
                 let end = (offset + len).min(self.0.len() as u64) as usize;
-                Ok(self.0[start..end].to_vec())
+                Ok(RangeChunk::new(self.0[start..end].to_vec()))
             }
         }
 
@@ -1823,7 +1828,7 @@ pub mod tests {
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_reader_async_range_source_verifies_bmff() {
         use crate::asset_source::{
-            range::{AsyncRangeReader, RangeInfo},
+            range::{AsyncRangeReader, ObjectVersion, RangeChunk, RangeInfo},
             AssetRequest, AssetSourceError, AsyncAssetSource, ResolvedAsset,
         };
 
@@ -1835,18 +1840,18 @@ pub mod tests {
         #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
         impl AsyncRangeReader for AsyncMem {
             async fn info_async(&self) -> std::result::Result<RangeInfo, AssetSourceError> {
-                Ok(RangeInfo {
-                    len: self.0.len() as u64,
-                })
+                Ok(RangeInfo::new(self.0.len() as u64))
             }
             async fn read_range_async(
                 &self,
                 offset: u64,
                 len: u64,
-            ) -> std::result::Result<Vec<u8>, AssetSourceError> {
+                expect: Option<&ObjectVersion>,
+            ) -> std::result::Result<RangeChunk, AssetSourceError> {
+                let _ = expect;
                 let start = offset as usize;
                 let end = (offset + len).min(self.0.len() as u64) as usize;
-                Ok(self.0[start..end].to_vec())
+                Ok(RangeChunk::new(self.0[start..end].to_vec()))
             }
         }
 
@@ -1926,6 +1931,318 @@ pub mod tests {
             "tampered video must fail the BMFF binding; failures were {:?}",
             active.failure().iter().map(|s| s.code()).collect::<Vec<_>>()
         );
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    async fn test_reader_async_range_source_rejects_midread_version_change() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+
+        use crate::asset_source::{
+            range::{AsyncRangeReader, ObjectVersion, RangeChunk, RangeInfo},
+            AssetRequest, AssetSourceError, AsyncAssetSource, ResolvedAsset,
+        };
+
+        // Serves `first` until `switch_after` reads have happened, then `second`.
+        // Both are valid signed assets of the same length.
+        struct SwappingMem {
+            first: Vec<u8>,
+            second: Vec<u8>,
+            reads: Arc<AtomicUsize>,
+            switch_after: usize,
+        }
+
+        impl SwappingMem {
+            fn current(&self) -> (&[u8], &'static str) {
+                if self.reads.load(Ordering::SeqCst) >= self.switch_after {
+                    (&self.second, "v2")
+                } else {
+                    (&self.first, "v1")
+                }
+            }
+        }
+
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        impl AsyncRangeReader for SwappingMem {
+            async fn info_async(&self) -> std::result::Result<RangeInfo, AssetSourceError> {
+                let (bytes, version) = self.current();
+                Ok(RangeInfo::new(bytes.len() as u64).with_version(version))
+            }
+            // Reports the version it actually served, as a transport that can
+            // identify object versions would, but does not enforce `expect` itself.
+            // That leaves the caller's comparison to catch the change.
+            async fn read_range_async(
+                &self,
+                offset: u64,
+                len: u64,
+                _expect: Option<&ObjectVersion>,
+            ) -> std::result::Result<RangeChunk, AssetSourceError> {
+                let (bytes, version) = self.current();
+                let start = offset as usize;
+                let end = (offset + len).min(bytes.len() as u64) as usize;
+                let out = bytes[start..end].to_vec();
+                self.reads.fetch_add(1, Ordering::SeqCst);
+                Ok(RangeChunk::new(out).with_version(version))
+            }
+        }
+
+        struct SwappingSource {
+            first: Vec<u8>,
+            second: Vec<u8>,
+            switch_after: usize,
+        }
+
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        impl AsyncAssetSource for SwappingSource {
+            async fn open_async(
+                &self,
+                _request: &AssetRequest<'_>,
+            ) -> std::result::Result<ResolvedAsset, AssetSourceError> {
+                Ok(ResolvedAsset::from_ranges_async(Box::new(SwappingMem {
+                    first: self.first.clone(),
+                    second: self.second.clone(),
+                    reads: Arc::new(AtomicUsize::new(0)),
+                    switch_after: self.switch_after,
+                })))
+            }
+        }
+
+        // Two independently signed assets of identical length.
+        // Each is valid on its own, so neither a length check nor
+        // the hash binding can tell that the read spanned both:
+        // whichever manifest discovery found, the bytes hashed
+        // afterwards carry their own valid signature.
+        // Only object identity distinguishes them.
+        let first = IMAGE_WITH_MANIFEST.to_vec();
+        let second = IMAGE_WITH_MANIFEST_CT.to_vec();
+        assert_eq!(
+            first.len(),
+            second.len(),
+            "fixtures must match in length for this to test identity rather than size"
+        );
+        assert_ne!(first, second, "fixtures must actually differ");
+
+        let context = test_context()
+            .with_settings(r#"{"verify": {"verify_after_reading": true}}"#)
+            .unwrap()
+            .with_async_asset_source(SwappingSource {
+                first,
+                second,
+                // discovery reads a handful of ranges; swap once it is done
+                switch_after: 1,
+            });
+
+        let result = Reader::from_context(context)
+            .with_reference_async("image/jpeg", "any-reference")
+            .await;
+
+        // The read must not report success over two different objects.
+        match result {
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("version"),
+                    "expected a version-change error, got: {msg}"
+                );
+            }
+            Ok(reader) => {
+                let results = reader
+                    .validation_results()
+                    .expect("validation results after a verifying read");
+                let active = results
+                    .active_manifest()
+                    .expect("active manifest status codes");
+                assert!(
+                    !active.failure().is_empty(),
+                    "a mid-read version change must not verify cleanly; success codes were {:?}",
+                    active.success().iter().map(|s| s.code()).collect::<Vec<_>>()
+                );
+            }
+        }
+    }
+
+    // Most origins cannot identify object versions, so a read over one still verifies.
+    #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
+    #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+    async fn test_reader_async_range_source_reports_unconfirmed_version() {
+        use crate::asset_source::{
+            range::{AsyncRangeReader, ObjectVersion, RangeChunk, RangeInfo},
+            AssetRequest, AssetSourceError, AsyncAssetSource, ResolvedAsset,
+        };
+
+        // Reports no version, like an origin that sends no entity tag.
+        struct VersionlessMem(Vec<u8>);
+
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        impl AsyncRangeReader for VersionlessMem {
+            async fn info_async(&self) -> std::result::Result<RangeInfo, AssetSourceError> {
+                Ok(RangeInfo::new(self.0.len() as u64))
+            }
+            async fn read_range_async(
+                &self,
+                offset: u64,
+                len: u64,
+                expect: Option<&ObjectVersion>,
+            ) -> std::result::Result<RangeChunk, AssetSourceError> {
+                let _ = expect;
+                let start = offset as usize;
+                let end = (offset + len).min(self.0.len() as u64) as usize;
+                Ok(RangeChunk::new(self.0[start..end].to_vec()))
+            }
+        }
+
+        struct VersionlessSource;
+
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        impl AsyncAssetSource for VersionlessSource {
+            async fn open_async(
+                &self,
+                _request: &AssetRequest<'_>,
+            ) -> std::result::Result<ResolvedAsset, AssetSourceError> {
+                Ok(ResolvedAsset::from_ranges_async(Box::new(VersionlessMem(
+                    IMAGE_WITH_MANIFEST.to_vec(),
+                ))))
+            }
+        }
+
+        let context = test_context()
+            .with_settings(r#"{"verify": {"verify_after_reading": true}}"#)
+            .unwrap()
+            .with_async_asset_source(VersionlessSource);
+
+        let reader = Reader::from_context(context)
+            .with_reference_async("image/jpeg", "any-reference")
+            .await
+            .unwrap();
+
+        let results = reader
+            .validation_results()
+            .expect("validation results after a verifying read");
+        let active = results
+            .active_manifest()
+            .expect("active manifest status codes");
+
+        // the binding is still checked
+        assert!(
+            active
+                .success()
+                .iter()
+                .any(|s| s.code() == validation_status::ASSERTION_DATAHASH_MATCH),
+            "an unversioned source must still verify the binding"
+        );
+        // and the missing guarantee is recorded, not silently dropped
+        assert!(
+            active
+                .informational()
+                .iter()
+                .any(|s| s.code() == validation_status::ASSET_SOURCE_VERSION_UNCONFIRMED),
+            "an unversioned read must say so; informational codes were {:?}",
+            active
+                .informational()
+                .iter()
+                .map(|s| s.code())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_reader_sync_range_source_rejects_midread_version_change() -> Result<()> {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+
+        use crate::asset_source::{
+            range::{ObjectVersion, RangeAssetSource, RangeChunk, RangeInfo, SyncRangeReader},
+            AssetRequest, AssetSourceError,
+        };
+
+        struct SwappingMem {
+            first: Vec<u8>,
+            second: Vec<u8>,
+            reads: Arc<AtomicUsize>,
+        }
+
+        impl SwappingMem {
+            fn current(&self) -> (&[u8], &'static str) {
+                // swap once discovery has pulled its first window
+                if self.reads.load(Ordering::SeqCst) >= 1 {
+                    (&self.second, "v2")
+                } else {
+                    (&self.first, "v1")
+                }
+            }
+        }
+
+        impl SyncRangeReader for SwappingMem {
+            fn info(&self) -> std::result::Result<RangeInfo, AssetSourceError> {
+                let (bytes, version) = self.current();
+                Ok(RangeInfo::new(bytes.len() as u64).with_version(version))
+            }
+            fn read_range(
+                &self,
+                offset: u64,
+                len: u64,
+                _expect: Option<&ObjectVersion>,
+            ) -> std::result::Result<RangeChunk, AssetSourceError> {
+                let (bytes, version) = self.current();
+                let start = offset as usize;
+                let end = (offset + len).min(bytes.len() as u64) as usize;
+                let out = bytes[start..end].to_vec();
+                self.reads.fetch_add(1, Ordering::SeqCst);
+                Ok(RangeChunk::new(out).with_version(version))
+            }
+        }
+
+        let first = IMAGE_WITH_MANIFEST.to_vec();
+        let second = IMAGE_WITH_MANIFEST_CT.to_vec();
+        let reads = Arc::new(AtomicUsize::new(0));
+
+        let source = RangeAssetSource::new(move |_request: &AssetRequest<'_>| {
+            Ok(SwappingMem {
+                first: first.clone(),
+                second: second.clone(),
+                reads: reads.clone(),
+            })
+        });
+
+        let context = test_context()
+            .with_settings(r#"{"verify": {"verify_after_reading": true}}"#)?
+            .with_sync_asset_source(source);
+
+        let result = Reader::from_context(context).with_reference("image/jpeg", "any-reference");
+
+        match result {
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    msg.contains("changed while being read") || msg.contains("version"),
+                    "expected a version-change error, got: {msg}"
+                );
+            }
+            Ok(reader) => {
+                let results = reader
+                    .validation_results()
+                    .expect("validation results after a verifying read");
+                let active = results
+                    .active_manifest()
+                    .expect("active manifest status codes");
+                assert!(
+                    !active.failure().is_empty(),
+                    "a mid-read version change must not verify cleanly; success codes were {:?}",
+                    active.success().iter().map(|s| s.code()).collect::<Vec<_>>()
+                );
+            }
+        }
+
+        Ok(())
     }
 
     #[test]

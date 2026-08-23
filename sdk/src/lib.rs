@@ -251,7 +251,8 @@ pub use asset_io::AssetIO;
 pub use asset_source::LocalAssetSource;
 pub use asset_source::{
     range::{
-        AsyncRangeReader, RangeAssetSource, RangeConfig, RangeInfo, RangeStream, SyncRangeReader,
+        AsyncRangeReader, ObjectVersion, RangeAssetSource, RangeChunk, RangeConfig, RangeInfo,
+        RangeStream, SyncRangeReader,
     },
     AssetBytes, AssetRef, AssetRequest, AssetSourceError, AssetSourceSlot, AsyncAssetSource,
     FragmentSource, NoAssetSource, ResolvedAsset, SyncAssetSource,

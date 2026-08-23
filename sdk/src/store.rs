@@ -3703,7 +3703,7 @@ impl Store {
         remote_url: Option<String>,
         asset: Option<(
             &dyn crate::asset_source::range::AsyncRangeReader,
-            u64,
+            crate::asset_source::range::RangeInfo,
             crate::asset_source::range::RangeConfig,
             &str,
         )>,
@@ -3717,12 +3717,34 @@ impl Store {
             })?;
         if context.settings().verify.verify_after_reading {
             match asset {
-                Some((reader, data_len, config, format)) => {
+                Some((reader, info, config, format)) => {
                     let chunk_size = std::num::NonZeroUsize::new(config.hash_chunk as usize)
                         .ok_or(Error::BadParam("hash_chunk must be non-zero".to_string()))?;
-                    let mut asset_data = ClaimAssetData::AsyncRanges(
-                        reader, data_len, chunk_size, config, format,
-                    );
+
+                    // A source that cannot identify object versions leaves the read
+                    // open to being served different bytes per request, so say so
+                    // rather than reporting the same guarantee as a pinned read.
+                    if info.version.is_none() {
+                        log_item!(
+                            "asset",
+                            "asset source cannot confirm the object version across reads",
+                            "from_manifest_bytes_async_ranges"
+                        )
+                        .validation_status(
+                            validation_status::ASSET_SOURCE_VERSION_UNCONFIRMED,
+                        )
+                        .informational(validation_log);
+                    }
+
+                    let mut asset_data =
+                        ClaimAssetData::AsyncRanges(crate::claim::AsyncRangeAsset {
+                            reader,
+                            data_len: info.len,
+                            chunk_size,
+                            config,
+                            expect_version: info.version.as_ref(),
+                            format,
+                        });
                     Store::verify_store_async(
                         &store,
                         Some(&mut asset_data),
