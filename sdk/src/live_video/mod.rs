@@ -32,6 +32,12 @@
 //! Use [`LiveVideoValidator`] to validate a signed live video stream.
 //!
 //! See [C2PA Technical Specification - Live Video](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#live-video).
+//!
+//! # Experimental
+//!
+//! This module is gated behind the `unstable_live_video` crate feature and exempt from the
+//! crate's usual semver stability guarantees. See
+//! [`docs/experimental-features.md`](https://github.com/contentauth/c2pa-rs/blob/main/docs/experimental-features.md).
 
 pub(crate) mod cose_key;
 mod segment_manifest_validation;

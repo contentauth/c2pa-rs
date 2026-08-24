@@ -63,7 +63,7 @@ pub struct LiveVideoSegment {
 
     /// Method used to establish cryptographic continuity with the previous segment.
     ///
-    /// Defaults to [`ContinuityMethod::missing`] when absent from the wire, rather than
+    /// Defaults to `ContinuityMethod::missing()` when absent from the wire, rather than
     /// failing deserialization outright, so that validation can report the spec-mandated
     /// `livevideo.continuityMethod.invalid` failure (§19.7.2) instead of a generic parse error.
     #[serde(default = "ContinuityMethod::missing")]
