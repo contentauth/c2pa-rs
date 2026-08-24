@@ -186,7 +186,11 @@ fn read_null_terminated_string(cursor: &mut Cursor<&[u8]>) -> Option<String> {
 }
 
 fn skip_bytes(cursor: &mut Cursor<&[u8]>, count: u64) -> Option<()> {
-    cursor.set_position(cursor.position() + count);
+    let new_pos = cursor.position().checked_add(count)?;
+    if new_pos > cursor.get_ref().len() as u64 {
+        return None;
+    }
+    cursor.set_position(new_pos);
     Some(())
 }
 
@@ -270,6 +274,29 @@ mod tests {
         let payload = b"should_be_ignored";
         let segment = make_emsg_v0(VSI_SCHEME_ID_URI, "iseg", payload);
         assert!(extract_vsi_payload_from_segment(&segment).is_none());
+    }
+
+    /// Regression test: an `emsg` box truncated inside the fixed
+    /// timescale/presentation_time_delta/event_duration/id fields (16 bytes per §19.4.2) must be
+    /// rejected, not silently parsed with an empty `message_data`.
+    #[test]
+    fn rejects_emsg_truncated_in_fixed_fields() {
+        let mut body = Vec::new();
+        body.extend_from_slice(VSI_SCHEME_ID_URI.as_bytes());
+        body.push(0);
+        body.extend_from_slice(VSI_VALUE_FSEG.as_bytes());
+        body.push(0);
+        body.extend_from_slice(&[0u8; 10]); // 10 of the required 16 fixed-field bytes
+
+        let total_size = 8u32 + 4 + body.len() as u32;
+        let mut emsg = Vec::new();
+        emsg.extend_from_slice(&total_size.to_be_bytes());
+        emsg.extend_from_slice(b"emsg");
+        emsg.push(0); // version 0
+        emsg.extend_from_slice(&[0u8; 3]); // flags
+        emsg.extend_from_slice(&body);
+
+        assert!(extract_vsi_payload_from_segment(&emsg).is_none());
     }
 
     #[test]
