@@ -1216,17 +1216,17 @@ fn main() -> Result<()> {
                 let session_key_path = session_key
                     .as_deref()
                     .ok_or_else(|| anyhow!("--session-key is required when using --method vsi"))?;
-                return live_video_sign::sign_live_video_vsi(
-                    path,
+                return live_video_sign::sign_live_video_vsi(live_video_sign::VsiSignArgs {
+                    segments_dir: path,
                     segments_glob,
-                    &init_path,
-                    previous_segment.as_deref(),
-                    &manifest_json,
-                    output,
+                    init_path: &init_path,
+                    previous_segment_path: previous_segment.as_deref(),
+                    manifest_json: &manifest_json,
+                    output_dir: output,
                     session_key_path,
                     signer,
-                    *min_sequence_number,
-                );
+                    min_sequence_number: *min_sequence_number,
+                });
             }
 
             let init_path = init.as_deref().map(|p| {

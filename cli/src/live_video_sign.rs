@@ -144,32 +144,46 @@ fn output_path_for(input_path: &Path, output_dir: &Path) -> Result<PathBuf> {
     Ok(output_dir.join(file_name))
 }
 
+/// Arguments for [`sign_live_video_vsi`].
+pub struct VsiSignArgs<'a> {
+    pub segments_dir: &'a Path,
+    pub segments_glob: &'a Path,
+    pub init_path: &'a Path,
+    pub previous_segment_path: Option<&'a Path>,
+    pub manifest_json: &'a str,
+    pub output_dir: &'a Path,
+    pub session_key_path: &'a Path,
+    pub signer: &'a dyn Signer,
+    pub min_sequence_number: Option<u64>,
+}
+
 /// Signs a sequence of media segments using the Verifiable Segment Info method (§19.4).
 ///
-/// The Ed25519 session key is loaded from `session_key_path` (raw 32-byte seed).
+/// The Ed25519 session key is loaded from `args.session_key_path` (raw 32-byte seed).
 /// The init segment (required for §19.4) is always signed with the manifest signer
 /// and carries a `c2pa.session-keys` assertion.
 ///
-/// If `previous_segment_path` is provided, the sequence number is resumed from
+/// If `args.previous_segment_path` is provided, the sequence number is resumed from
 /// the previous segment's `emsg` box.
 ///
-/// If `min_sequence_number` is `None` and this is the first invocation (no
+/// If `args.min_sequence_number` is `None` and this is the first invocation (no
 /// `previous_segment_path`), it's inferred from the first media segment's own
 /// `moof/mfhd.sequence_number` rather than assumed to be 1 — real packagers commonly start a
 /// live stream's sequence numbers elsewhere (e.g. FFmpeg continues counting from stream start,
 /// not from when the signer attaches).
-#[allow(clippy::too_many_arguments)]
-pub fn sign_live_video_vsi(
-    segments_dir: &Path,
-    segments_glob: &Path,
-    init_path: &Path,
-    previous_segment_path: Option<&Path>,
-    manifest_json: &str,
-    output_dir: &Path,
-    session_key_path: &Path,
-    signer: &dyn Signer,
-    min_sequence_number: Option<u64>,
-) -> Result<()> {
+pub fn sign_live_video_vsi(args: VsiSignArgs) -> Result<()> {
+    let VsiSignArgs {
+        segments_dir,
+        segments_glob,
+        init_path,
+        previous_segment_path,
+        manifest_json,
+        output_dir,
+        session_key_path,
+        signer,
+        min_sequence_number,
+    } = args;
+
     fs::create_dir_all(output_dir)
         .with_context(|| format!("Failed to create output directory: {output_dir:?}"))?;
 
