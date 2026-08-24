@@ -81,7 +81,12 @@ pub fn parse_vsi(cose_sign1_bytes: &[u8]) -> Result<ParsedVsi> {
 }
 
 /// Parses a [`SegmentInfoMap`] from a `COSE_Sign1_Tagged` byte slice.
-pub fn parse_segment_info_map(cose_sign1_bytes: &[u8]) -> Result<SegmentInfoMap> {
+///
+/// Test-only: production code uses [`parse_vsi`], which also returns the raw `CoseSign1` needed
+/// to verify the segment's signature; this discards it, so it's only a convenience for tests
+/// that just want to inspect the decoded fields.
+#[cfg(test)]
+pub(crate) fn parse_segment_info_map(cose_sign1_bytes: &[u8]) -> Result<SegmentInfoMap> {
     parse_vsi(cose_sign1_bytes).map(|p| p.segment_info_map)
 }
 

@@ -43,7 +43,7 @@ pub(crate) mod cose_key;
 mod segment_manifest_validation;
 mod session_key_validation;
 mod signing;
-pub mod verifiable_segment_info;
+pub(crate) mod verifiable_segment_info;
 mod vsi_signing;
 
 pub use ed25519_dalek::SigningKey as Ed25519SessionKey;
