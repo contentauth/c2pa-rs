@@ -286,7 +286,7 @@ enum Commands {
     },
 
     /// Validate a live video stream against C2PA section 19 (Live Video) rules
-    /// (https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#live-video).
+    /// (<https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#live-video>).
     ///
     /// The path argument is the initialization segment. The validation method is detected
     /// automatically from the init segment's manifest: if it contains a `c2pa.session-keys`
