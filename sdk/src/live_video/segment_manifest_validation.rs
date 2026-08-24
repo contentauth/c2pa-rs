@@ -81,12 +81,11 @@ impl LiveVideoValidator {
     pub(super) fn validate_continuity_rules(
         &self,
         assertion: &LiveVideoSegment,
-        manifest_id: &str,
         tracker: &mut StatusTracker,
     ) -> Result<()> {
         match &assertion.continuity_method {
             ContinuityMethod::ManifestId => {
-                self.validate_manifest_id_continuity(assertion, manifest_id, tracker)
+                self.validate_manifest_id_continuity(assertion, tracker)
             }
             // Per §19.7.2, a missing `continuityMethod` field (deserialized to the empty-string
             // sentinel, see `ContinuityMethod::missing`) and an unrecognized value both fail
@@ -102,7 +101,6 @@ impl LiveVideoValidator {
     fn validate_manifest_id_continuity(
         &self,
         assertion: &LiveVideoSegment,
-        _current_manifest_id: &str,
         tracker: &mut StatusTracker,
     ) -> Result<()> {
         let Some(previous) = &self.previous_segment else {

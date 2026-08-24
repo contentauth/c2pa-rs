@@ -187,7 +187,7 @@ impl LiveVideoValidator {
         let failures_before = tracker.filter_errors().count();
 
         self.validate_segment_has_c2pa_or_emsg(segment_data, tracker)?;
-        self.validate_continuity_rules(assertion, manifest_id, tracker)?;
+        self.validate_continuity_rules(assertion, tracker)?;
 
         if let Some(previous) = &self.previous_segment {
             self.validate_sequence_number(assertion, previous, tracker)?;
