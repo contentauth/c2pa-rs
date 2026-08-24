@@ -547,7 +547,6 @@ mod tests {
     }
 
     /// Builds an `emsg` version 0 box with C2PA VSI scheme carrying `message_data`.
-    #[cfg(feature = "rust_native_crypto")]
     fn make_vsi_emsg_box(message_data: &[u8]) -> Vec<u8> {
         let mut body = Vec::new();
         body.extend_from_slice(b"urn:c2pa:verifiable-segment-info\0");
@@ -565,7 +564,6 @@ mod tests {
         emsg
     }
 
-    #[cfg(feature = "rust_native_crypto")]
     mod vsi_crypto_helpers {
         use super::*;
         use crate::{
@@ -586,80 +584,36 @@ mod tests {
             signer.cert_chain_der[0].clone()
         }
 
-        pub fn generate_test_key_pair() -> (p256::ecdsa::SigningKey, c2pa_cbor::Value) {
-            use p256::elliptic_curve::sec1::ToEncodedPoint;
-            let signing_key = p256::ecdsa::SigningKey::random(&mut rand::thread_rng());
-            let verifying_key = signing_key.verifying_key();
-            let point = verifying_key.to_encoded_point(false);
-
-            let mut map = std::collections::BTreeMap::new();
-            map.insert(cbor_int(1), cbor_int(2)); // kty: EC2
-            map.insert(cbor_int(2), c2pa_cbor::Value::Bytes(TEST_KID.to_vec()));
-            map.insert(cbor_int(-1), cbor_int(1)); // crv: P-256
-            map.insert(
-                cbor_int(-2),
-                c2pa_cbor::Value::Bytes(point.x().unwrap().to_vec()),
-            );
-            map.insert(
-                cbor_int(-3),
-                c2pa_cbor::Value::Bytes(point.y().unwrap().to_vec()),
-            );
-
-            (signing_key, c2pa_cbor::Value::Map(map))
-        }
-
-        /// Builds a `signerBinding` detached COSE_Sign1 (§18.25.2) for a P-256 session key.
-        pub fn make_signer_binding_for_ee_cert_p256(
-            session_signing_key: &p256::ecdsa::SigningKey,
-            ee_cert_der: &[u8],
-        ) -> Vec<u8> {
-            use coset::{iana, HeaderBuilder, TaggedCborSerializable};
-            use p256::ecdsa::{signature::Signer, Signature};
-
-            let external_payload =
-                c2pa_cbor::to_vec(&c2pa_cbor::Value::Bytes(ee_cert_der.to_vec())).unwrap();
-
-            let protected = HeaderBuilder::new()
-                .algorithm(iana::Algorithm::ES256)
-                .build();
-            let mut sign1 = coset::CoseSign1Builder::new().protected(protected).build();
-
-            let tbs = sign1.tbs_detached_data(&external_payload, b"");
-            let sig: Signature = session_signing_key.sign(&tbs);
-            sign1.signature = sig.to_bytes().to_vec();
-            sign1.to_tagged_vec().unwrap()
+        /// Generates an Ed25519 session key pair, matching what `LiveVideoVsiSigner` actually
+        /// produces in production (session keys are always Ed25519; see `vsi_signing.rs`).
+        pub fn generate_test_key_pair() -> (ed25519_dalek::SigningKey, c2pa_cbor::Value) {
+            let signing_key = generate_ed25519_session_key();
+            let cose_key = build_ed25519_cose_key_value(&signing_key.verifying_key(), TEST_KID);
+            (signing_key, cose_key)
         }
 
         /// Builds a `SessionKeys` assertion with a real `signerBinding` over `ee_cert_der`, so
         /// `validate_session_keys`'s now-mandatory signerBinding check succeeds.
         pub fn session_keys_with_cose_key(
             cose_key: c2pa_cbor::Value,
-            signing_key: &p256::ecdsa::SigningKey,
+            signing_key: &ed25519_dalek::SigningKey,
             ee_cert_der: &[u8],
         ) -> SessionKeys {
-            let binding = make_signer_binding_for_ee_cert_p256(signing_key, ee_cert_der);
-            SessionKeys {
-                keys: vec![SessionKey {
-                    key: cose_key,
-                    min_sequence_number: 0,
-                    created_at: DateT(chrono::Utc::now().to_rfc3339()),
-                    validity_period: 3600,
-                    signer_binding: c2pa_cbor::Value::Bytes(binding),
-                }],
-            }
+            let binding = make_signer_binding_for_ee_cert(signing_key, ee_cert_der);
+            session_key_with_ed25519_binding(cose_key, binding)
         }
 
         pub fn make_signed_cose_sign1_bytes(
             segment_info_map: &SegmentInfoMap,
-            signing_key: &p256::ecdsa::SigningKey,
+            signing_key: &ed25519_dalek::SigningKey,
         ) -> Vec<u8> {
             use coset::{iana, HeaderBuilder, TaggedCborSerializable};
-            use p256::ecdsa::{signature::Signer, Signature};
+            use ed25519_dalek::Signer;
 
             let payload = c2pa_cbor::to_vec(segment_info_map).unwrap();
 
             let protected = HeaderBuilder::new()
-                .algorithm(iana::Algorithm::ES256)
+                .algorithm(iana::Algorithm::EdDSA)
                 .build();
 
             let unprotected = HeaderBuilder::new().key_id(TEST_KID.to_vec()).build();
@@ -671,7 +625,7 @@ mod tests {
                 .build();
 
             let tbs = sign1.tbs_data(b"");
-            let sig: Signature = signing_key.sign(&tbs);
+            let sig: ed25519_dalek::Signature = signing_key.sign(&tbs);
             sign1.signature = sig.to_bytes().to_vec();
 
             sign1.to_tagged_vec().unwrap()
@@ -684,7 +638,7 @@ mod tests {
         pub fn make_signed_vsi_segment(
             sequence_number: u64,
             manifest_id: &str,
-            signing_key: &p256::ecdsa::SigningKey,
+            signing_key: &ed25519_dalek::SigningKey,
         ) -> Vec<u8> {
             let trailer = make_mdat_box();
             let build = |bmff_hash: c2pa_cbor::Value| -> Vec<u8> {
@@ -694,16 +648,17 @@ mod tests {
                     manifest_id: manifest_id.to_string(),
                     manifest_uri: None,
                 };
-                let mut seg = super::make_vsi_emsg_box(&make_signed_cose_sign1_bytes(
-                    &map,
-                    signing_key,
-                ));
+                let mut seg =
+                    super::make_vsi_emsg_box(&make_signed_cose_sign1_bytes(&map, signing_key));
                 seg.extend_from_slice(&trailer);
                 seg
             };
 
-            let draft = build(super::super::vsi_signing::build_segment_bmff_hash_placeholder().unwrap());
-            let real_hash = super::super::vsi_signing::build_segment_bmff_hash(&draft).unwrap();
+            let draft = build(
+                crate::live_video::vsi_signing::build_segment_bmff_hash_placeholder().unwrap(),
+            );
+            let real_hash =
+                crate::live_video::vsi_signing::build_segment_bmff_hash(&draft).unwrap();
             let signed = build(real_hash);
             assert_eq!(
                 draft.len(),
@@ -713,7 +668,7 @@ mod tests {
             signed
         }
 
-        pub fn setup_vsi_validator() -> (LiveVideoValidator, p256::ecdsa::SigningKey) {
+        pub fn setup_vsi_validator() -> (LiveVideoValidator, ed25519_dalek::SigningKey) {
             let (signing_key, cose_key) = generate_test_key_pair();
             let ee_cert_der = test_ee_cert_der();
             let mut validator = LiveVideoValidator::new();
@@ -821,7 +776,6 @@ mod tests {
             .any(|i| { i.validation_status.as_deref() == Some(LIVEVIDEO_SEGMENT_INVALID) }));
     }
 
-    #[cfg(feature = "rust_native_crypto")]
     #[test]
     fn vsi_segment_without_emsg_fails() {
         let (mut validator, _) = vsi_crypto_helpers::setup_vsi_validator();
@@ -835,7 +789,6 @@ mod tests {
             .any(|i| { i.validation_status.as_deref() == Some(LIVEVIDEO_SEGMENT_INVALID) }));
     }
 
-    #[cfg(feature = "rust_native_crypto")]
     #[test]
     fn vsi_segment_with_invalid_cose_fails() {
         let (mut validator, _) = vsi_crypto_helpers::setup_vsi_validator();
@@ -850,7 +803,6 @@ mod tests {
             .any(|i| { i.validation_status.as_deref() == Some(LIVEVIDEO_SEGMENT_INVALID) }));
     }
 
-    #[cfg(feature = "rust_native_crypto")]
     #[test]
     fn vsi_valid_sequence_advances_state() {
         use vsi_crypto_helpers::*;
@@ -879,11 +831,11 @@ mod tests {
         }));
     }
 
-    #[cfg(feature = "rust_native_crypto")]
     #[test]
     fn vsi_regressed_sequence_number_fails() {
-        use crate::validation_results::validation_codes::LIVEVIDEO_ASSERTION_INVALID;
         use vsi_crypto_helpers::*;
+
+        use crate::validation_results::validation_codes::LIVEVIDEO_ASSERTION_INVALID;
         let (mut validator, signing_key) = setup_vsi_validator();
         let mut tracker = aggregate_tracker();
 
@@ -902,7 +854,6 @@ mod tests {
             .any(|i| { i.validation_status.as_deref() == Some(LIVEVIDEO_ASSERTION_INVALID) }));
     }
 
-    #[cfg(feature = "rust_native_crypto")]
     #[test]
     fn vsi_min_sequence_number_enforced() {
         use vsi_crypto_helpers::*;
@@ -934,7 +885,6 @@ mod tests {
             .any(|i| { i.validation_status.as_deref() == Some(LIVEVIDEO_SEGMENT_INVALID) }));
     }
 
-    #[cfg(feature = "rust_native_crypto")]
     #[test]
     fn vsi_expired_key_fails() {
         use vsi_crypto_helpers::*;
@@ -969,7 +919,6 @@ mod tests {
             .any(|i| { i.validation_status.as_deref() == Some(LIVEVIDEO_SEGMENT_INVALID) }));
     }
 
-    #[cfg(feature = "rust_native_crypto")]
     #[test]
     fn vsi_bad_signature_fails() {
         use vsi_crypto_helpers::*;
