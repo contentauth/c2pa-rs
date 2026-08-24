@@ -50,6 +50,14 @@ const VSI_VALUE_FSEG: &str = "fseg";
 /// key; the box is prepended to the segment bytes.
 ///
 /// [`from_signing_key`]: LiveVideoVsiSigner::from_signing_key
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is available only with the `unstable_live_video` feature
+/// enabled. It is exempt from this crate's usual semantic-versioning stability guarantees and
+/// may change in a backward-incompatible way, or be removed entirely, in any release.
+///
+/// </div>
 pub struct LiveVideoVsiSigner {
     session_signing_key: SigningKey,
     session_cose_key: c2pa_cbor::Value,
@@ -606,6 +614,14 @@ fn parse_first_moof_duration_ticks(segment_data: &[u8]) -> Option<u32> {
 /// Public so callers can infer a VSI session's starting `minSequenceNumber` from a live
 /// stream's first segment, rather than assuming the packager starts at 1 (it commonly
 /// doesn't). Returns `None` if the segment has no `moof` box, or `mfhd` is missing/malformed.
+///
+/// <div class="warning">
+///
+/// **Experimental.** This function is available only with the `unstable_live_video` feature
+/// enabled. It is exempt from this crate's usual semantic-versioning stability guarantees and
+/// may change in a backward-incompatible way, or be removed entirely, in any release.
+///
+/// </div>
 pub fn moof_sequence_number(segment_data: &[u8]) -> Option<u32> {
     let moof = box_payload(find_box(segment_data, b"moof")?)?;
     let mfhd = box_payload(find_box(moof, b"mfhd")?)?;

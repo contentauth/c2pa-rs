@@ -55,11 +55,22 @@ where
 /// A single session key used to verify VSI signatures ([§18.25]).
 ///
 /// [§18.25]: https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_session_keys
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is available only with the `unstable_live_video` feature
+/// enabled. It is exempt from this crate's usual semantic-versioning stability guarantees and
+/// may change in a backward-incompatible way, or be removed entirely, in any release.
+///
+/// </div>
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionKey {
     /// COSE_Key (RFC 9052) with mandatory `kid`, stored as raw CBOR.
     pub key: c2pa_cbor::Value,
+    /// First `sequenceNumber` this key is valid for ([§18.25.2]).
+    ///
+    /// [§18.25.2]: https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_session_keys
     pub min_sequence_number: u64,
     /// Key creation time (CBOR tag 0 date-time string).
     pub created_at: DateT,
@@ -79,8 +90,17 @@ pub struct SessionKey {
 /// The `c2pa.session-keys` assertion embedded in a live video init segment manifest ([§18.25]).
 ///
 /// [§18.25]: https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_session_keys
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is available only with the `unstable_live_video` feature
+/// enabled. It is exempt from this crate's usual semantic-versioning stability guarantees and
+/// may change in a backward-incompatible way, or be removed entirely, in any release.
+///
+/// </div>
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct SessionKeys {
+    /// The session keys published by this assertion. At least one per [§18.25].
     pub keys: Vec<SessionKey>,
 }
 

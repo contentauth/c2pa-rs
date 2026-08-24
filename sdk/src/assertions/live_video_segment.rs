@@ -24,6 +24,14 @@ use crate::{
 /// Method used to establish cryptographic continuity between adjacent live video segments.
 ///
 /// See [Live Video - C2PA Technical Specification section 19.3.2](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#using_c2pa_manifest_box).
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is available only with the `unstable_live_video` feature
+/// enabled. It is exempt from this crate's usual semantic-versioning stability guarantees and
+/// may change in a backward-incompatible way, or be removed entirely, in any release.
+///
+/// </div>
 #[non_exhaustive]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum ContinuityMethod {
@@ -52,6 +60,14 @@ impl ContinuityMethod {
 /// using the per-segment C2PA Manifest Box method.
 ///
 /// See [Live Video - C2PA Technical Specification section 19.3.2](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#using_c2pa_manifest_box).
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is available only with the `unstable_live_video` feature
+/// enabled. It is exempt from this crate's usual semantic-versioning stability guarantees and
+/// may change in a backward-incompatible way, or be removed entirely, in any release.
+///
+/// </div>
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LiveVideoSegment {

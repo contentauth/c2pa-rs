@@ -46,6 +46,20 @@ mod signing;
 pub(crate) mod verifiable_segment_info;
 mod vsi_signing;
 
+/// Ed25519 signing key type used for VSI session keys ([§19.4]/[§18.25]), re-exported from
+/// `ed25519-dalek` for callers constructing a [`LiveVideoVsiSigner`].
+///
+/// [§19.4]: https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#verifiable_segment_info
+/// [§18.25]: https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_session_keys
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is available only with the `unstable_live_video` feature
+/// enabled. It is exempt from this crate's usual semantic-versioning stability guarantees and
+/// may change in a backward-incompatible way, or be removed entirely, in any release. Being a
+/// re-export of an external crate's type, it also tracks that crate's own version and API.
+///
+/// </div>
 pub use ed25519_dalek::SigningKey as Ed25519SessionKey;
 pub use signing::LiveVideoSigner;
 pub use vsi_signing::{moof_sequence_number, LiveVideoVsiSigner};
@@ -104,6 +118,14 @@ struct SegmentState {
 /// [19.4]: https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#verifiable_segment_info
 /// [`validate_session_keys`]: LiveVideoValidator::validate_session_keys
 /// [`validate_init_segment`]: LiveVideoValidator::validate_init_segment
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is available only with the `unstable_live_video` feature
+/// enabled. It is exempt from this crate's usual semantic-versioning stability guarantees and
+/// may change in a backward-incompatible way, or be removed entirely, in any release.
+///
+/// </div>
 pub struct LiveVideoValidator {
     previous_segment: Option<SegmentState>,
     session_keys: Vec<SessionKey>,

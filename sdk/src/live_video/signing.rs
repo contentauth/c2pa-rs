@@ -29,6 +29,14 @@ use crate::{
 ///
 /// [`sign_media_segment`]: LiveVideoSigner::sign_media_segment
 /// [`sign_init_segment`]: LiveVideoSigner::sign_init_segment
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is available only with the `unstable_live_video` feature
+/// enabled. It is exempt from this crate's usual semantic-versioning stability guarantees and
+/// may change in a backward-incompatible way, or be removed entirely, in any release.
+///
+/// </div>
 pub struct LiveVideoSigner {
     stream_id: String,
     next_sequence_number: u64,
