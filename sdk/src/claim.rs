@@ -5111,6 +5111,91 @@ pub mod tests {
     }
 
     #[test]
+    fn test_verify_soft_binding_alg_continues_past_malformed_assertion() {
+        // A claim with three c2pa.soft-binding assertions: the first undecodable,
+        // the second valid, and the third using an unsupported algorithm. Skipping
+        // past the first (undecodable, non-fatal) must not skip evaluation of the
+        // second and third -- the unsupported algorithm in the third must still be
+        // caught and reported as a fatal error.
+        struct MalformedSoftBinding;
+
+        impl AssertionBase for MalformedSoftBinding {
+            const LABEL: &'static str = assertions::SoftBinding::LABEL;
+
+            fn to_assertion(&self) -> Result<Assertion> {
+                Ok(Assertion::new(
+                    Self::LABEL,
+                    None,
+                    AssertionData::Json(
+                        r#"{"alg":"com.example.sha256","value":"abc123"}"#.to_string(),
+                    ),
+                )
+                .set_content_type("application/json"))
+            }
+
+            fn from_assertion(_assertion: &Assertion) -> Result<Self> {
+                unimplemented!("not needed for this test")
+            }
+        }
+
+        let settings = Settings::new()
+            .with_json(
+                r#"
+                {
+                    "soft_binding": {
+                        "soft_binding_algorithms": ["com.example.sha256"]
+                    }
+                }
+            "#,
+            )
+            .unwrap();
+
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let mut claim = create_test_claim().expect("create test claim");
+
+        claim
+            .add_assertion(&MalformedSoftBinding)
+            .expect("add malformed soft binding");
+        claim
+            .add_assertion(&make_soft_binding(Some("com.example.sha256")))
+            .expect("add valid soft binding");
+        claim
+            .add_assertion(&make_soft_binding(Some("com.unknown.watermark.99")))
+            .expect("add soft binding with unsupported algorithm");
+
+        let result = Claim::verify_soft_binding_alg(
+            &claim,
+            settings
+                .soft_binding
+                .soft_binding_algorithms
+                .as_deref()
+                .unwrap_or(&[]),
+            &mut validation_log,
+        );
+        assert!(
+            result.is_err(),
+            "the unsupported algorithm on the third assertion must still be fatal"
+        );
+        assert!(
+            validation_log
+                .logged_items()
+                .iter()
+                .any(|item| item.validation_status.as_deref()
+                    == Some(validation_status::CLAIM_MALFORMED)),
+            "should log CLAIM_MALFORMED for the first, undecodable assertion"
+        );
+        assert!(
+            validation_log
+                .logged_items()
+                .iter()
+                .any(|item| item.validation_status.as_deref()
+                    == Some(validation_status::ALGORITHM_UNSUPPORTED)),
+            "should still reach and log ALGORITHM_UNSUPPORTED for the third assertion"
+        );
+    }
+
+    #[test]
     fn test_verify_claim_generator_info_valid() {
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
