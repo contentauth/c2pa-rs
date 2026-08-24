@@ -9,7 +9,7 @@ c2patool <ASSET_PATH> [OPTIONS] [SUBCOMMAND]
 Where:
 - `<ASSET_PATH>` is the (relative or absolute) file path to the asset to read or embed a manifest into.
 - `[OPTIONS]` is one or more of the [command-line options](#options) described in following table.
-- `[SUBCOMMAND]` is one of the optional [subcommands](#subcommands): `trust`, `fragment`, or `help`.
+- `[SUBCOMMAND]` is one of the optional [subcommands](#subcommands): `trust`, `fragment`, `live-video`, `live-video-sign`, or `help`.
 
 By default, C2PA Tool writes the JSON manifest data found in the asset to the standard output. You can override the default by using the `--output, -o` option.
 
@@ -18,6 +18,7 @@ By default, C2PA Tool writes the JSON manifest data found in the asset to the st
 The tool supports the following subcommands:
 - `trust` [configures trust support](#configuring-trust-support) for certificates on a "known certificate list." With this subcommand, several additional options are available.
 - `fragment` [adds a manifest to fragmented BMFF content](#adding-a-manifest-to-fragmented-bmff-content).  With this subcommand, one additional option is available.
+- `live-video` and `live-video-sign` [sign and validate live video streams](#signing-and-validating-live-video-streams-experimental) (experimental, requires the `unstable_live_video` feature).
 - `help` displays command line help information.
 
 ## Options
@@ -402,6 +403,39 @@ c2patool  /Downloads/1080p_out/avc1/init.mp4 \
 ### Additional option for BMFF files
 
 The `--fragments_glob` option is only available with the `fragment` subcommand and specifies the glob pattern to find the fragments of the asset. The path is automatically set to be the same as the "init" segment, so the pattern must match only segment file names, not full paths.
+
+## Signing and validating live video streams (experimental)
+
+C2PA [section 19 (Live Video)](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#live-video) support is an experimental feature: it's available only in a build with the `unstable_live_video` Cargo feature enabled, and is exempt from the crate's usual stability guarantees. See the [experimental features policy](https://github.com/contentauth/c2pa-rs/blob/main/docs/experimental-features.md).
+
+Live video streams a fragmented MP4 (fMP4) asset segment by segment rather than as one finished file, so it needs its own signing and validation flow instead of the single-asset one described above. Two subcommands are available: `live-video-sign` to sign a stream and `live-video` to validate one.
+
+Two signing methods are supported, per §19.3 (per-segment C2PA Manifest Box, the default) and §19.4 (Verifiable Segment Info, which needs an Ed25519 session key):
+
+```
+c2patool <SEGMENTS_DIR> live-video-sign --segments_glob <GLOB> -o <OUTPUT_DIR> -m <MANIFEST_FILE> [--init <INIT_FILE>]
+
+c2patool <SEGMENTS_DIR> live-video-sign --segments_glob <GLOB> -o <OUTPUT_DIR> -m <MANIFEST_FILE> --method vsi --session-key <KEY_FILE> --init <INIT_FILE>
+```
+
+The manifest definition passed to `-m` must include a `c2pa.livevideo.segment` assertion with a `streamId`; see [Manifest definition](manifest.md).
+
+To validate a previously signed stream, pass the init segment and the same glob pattern used to sign it. The validation method (§19.3 or §19.4) is detected automatically from the init segment's manifest:
+
+```
+c2patool <INIT_FILE> live-video --segments_glob <GLOB>
+```
+
+### Additional options for live video
+
+| CLI option | Argument | Description |
+|-----|----|----|
+| `--segments_glob` | `<glob>` | Required with both `live-video` and `live-video-sign`. Glob pattern to find the media segments, resolved relative to the init segment's (or, for `live-video-sign`, the path argument's) directory, and matched in natural (numeric-aware) filename order. |
+| `--init` | `<init_file>` | With `live-video-sign` (§19.3), optionally also signs the init segment. With `--method vsi`, the init segment is required (§19.4 mandates a signed manifest there). |
+| `--previous-segment` | `<segment_file>` | Resumes the continuity chain from a prior `live-video-sign` invocation's last signed segment, for a process that restarts mid-stream. With `--method vsi`, this also skips re-signing the init segment. |
+| `--method` | `manifest` &#124; `vsi` | Signing method for `live-video-sign` (default `manifest`). |
+| `--session-key` | `<key_file>` | Required with `--method vsi`: an Ed25519 session key, as a 32-byte raw seed file. Reused across all invocations for the same live video session. |
+| `--min-sequence-number` | `<n>` | With `--method vsi`, the VSI session key's starting `minSequenceNumber`. Only used on the first invocation (no `--previous-segment`); if omitted, it's inferred from the first media segment's own `moof/mfhd.sequence_number`. |
 
 ## WASI
 
