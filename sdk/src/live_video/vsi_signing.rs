@@ -164,7 +164,16 @@ impl LiveVideoVsiSigner {
     /// sequence number, a `bmffHash` covering the segment data excluding VSI
     /// `emsg` boxes, and the `manifestId` from the signed init segment per §19.4.
     pub fn sign_media_segment(&mut self, segment_data: &[u8]) -> Result<Vec<u8>> {
-        let manifest_id = self.active_manifest_id.clone().unwrap_or_default();
+        let manifest_id = match self.active_manifest_id.as_deref() {
+            Some(id) if !id.is_empty() => id.to_string(),
+            _ => {
+                return Err(Error::BadParam(
+                    "no manifestId available to sign into the segment; call sign_init_segment \
+                     (or resume_from_segment/restore_manifest_id) before sign_media_segment"
+                        .to_string(),
+                ));
+            }
+        };
         let sequence_number = self.next_sequence_number;
 
         // Per §19.4.1, sequenceNumber "shall either match the mfhd.sequence_number field ...
@@ -739,7 +748,7 @@ mod tests {
     #[test]
     fn signed_segments_have_real_emsg_timing_fields() {
         let signer = make_test_signer();
-        let mut vsi_signer = make_vsi_signer(&signer, b"k", 1);
+        let mut vsi_signer = make_vsi_signer_with_manifest_id(&signer, b"k", 1);
         // Bypass sign_init_segment (which round-trips through the full BMFF
         // asset-signing pipeline, requiring a complete valid MP4 structure
         // beyond the scope of this unit test) and set the field it would
@@ -790,7 +799,7 @@ mod tests {
     #[test]
     fn sign_media_segment_rejects_mfhd_sequence_number_mismatch() {
         let signer = make_test_signer();
-        let mut vsi_signer = make_vsi_signer(&signer, b"k", 1); // starts at sequenceNumber 1
+        let mut vsi_signer = make_vsi_signer_with_manifest_id(&signer, b"k", 1); // starts at sequenceNumber 1
 
         let err = vsi_signer
             .sign_media_segment(&make_test_media_segment_with_mfhd(5))
@@ -804,7 +813,7 @@ mod tests {
     #[test]
     fn sign_media_segment_accepts_matching_mfhd_sequence_number() {
         let signer = make_test_signer();
-        let mut vsi_signer = make_vsi_signer(&signer, b"k", 1); // starts at sequenceNumber 1
+        let mut vsi_signer = make_vsi_signer_with_manifest_id(&signer, b"k", 1); // starts at sequenceNumber 1
 
         vsi_signer
             .sign_media_segment(&make_test_media_segment_with_mfhd(1))
@@ -853,10 +862,28 @@ mod tests {
         .unwrap()
     }
 
+    /// A stand-in for the manifest label that `sign_init_segment` would normally capture.
+    /// Tests that only exercise `sign_media_segment` in isolation (without round-tripping a
+    /// full init segment through the signing pipeline) use this to satisfy
+    /// `sign_media_segment`'s now-mandatory manifestId requirement.
+    const TEST_MANIFEST_ID: &str = "urn:c2pa:test-manifest";
+
+    /// Like [`make_vsi_signer`], but with `active_manifest_id` already set to
+    /// [`TEST_MANIFEST_ID`], bypassing the need to sign a real init segment first.
+    fn make_vsi_signer_with_manifest_id(
+        signer: &EphemeralSigner,
+        kid: &[u8],
+        min_seq: u64,
+    ) -> LiveVideoVsiSigner {
+        let mut vsi_signer = make_vsi_signer(signer, kid, min_seq);
+        vsi_signer.active_manifest_id = Some(TEST_MANIFEST_ID.to_string());
+        vsi_signer
+    }
+
     #[test]
     fn sign_media_segment_prepends_emsg_box() {
         let signer = make_test_signer();
-        let mut vsi_signer = make_vsi_signer(&signer, b"key-1", 1);
+        let mut vsi_signer = make_vsi_signer_with_manifest_id(&signer, b"key-1", 1);
 
         let segment = make_test_segment();
         let signed = vsi_signer.sign_media_segment(&segment).unwrap();
@@ -873,7 +900,7 @@ mod tests {
     #[test]
     fn sequence_numbers_advance_per_segment() {
         let signer = make_test_signer();
-        let mut vsi_signer = make_vsi_signer(&signer, b"k", 1);
+        let mut vsi_signer = make_vsi_signer_with_manifest_id(&signer, b"k", 1);
 
         assert_eq!(vsi_signer.next_sequence_number(), 1);
 
@@ -887,7 +914,7 @@ mod tests {
     #[test]
     fn signed_segment_passes_vsi_validation() {
         let signer = make_test_signer();
-        let mut vsi_signer = make_vsi_signer(&signer, b"key-1", 1);
+        let mut vsi_signer = make_vsi_signer_with_manifest_id(&signer, b"key-1", 1);
 
         let session_keys = vsi_signer.build_session_keys_assertion();
         let ee_cert_der = signer.certs().unwrap().into_iter().next().unwrap();
@@ -895,7 +922,12 @@ mod tests {
         let mut tracker = StatusTracker::default();
 
         validator
-            .validate_session_keys(&session_keys, "", Some(&ee_cert_der), &mut tracker)
+            .validate_session_keys(
+                &session_keys,
+                TEST_MANIFEST_ID,
+                Some(&ee_cert_der),
+                &mut tracker,
+            )
             .unwrap();
 
         let segment = vsi_signer.sign_media_segment(&make_test_segment()).unwrap();
@@ -925,7 +957,7 @@ mod tests {
         use crate::live_video::verifiable_segment_info::parse_segment_info_map;
 
         let signer = make_test_signer();
-        let mut vsi_signer = make_vsi_signer(&signer, b"k", 5);
+        let mut vsi_signer = make_vsi_signer_with_manifest_id(&signer, b"k", 5);
 
         let signed = vsi_signer.sign_media_segment(&make_test_segment()).unwrap();
         let vsi_bytes = extract_vsi_payload_from_segment(&signed).unwrap();
@@ -970,7 +1002,7 @@ mod tests {
         use crate::live_video::verifiable_segment_info::parse_segment_info_map;
 
         let signer = make_test_signer();
-        let mut vsi_signer = make_vsi_signer(&signer, b"k", 1);
+        let mut vsi_signer = make_vsi_signer_with_manifest_id(&signer, b"k", 1);
 
         let seg1 = vsi_signer.sign_media_segment(&make_test_segment()).unwrap();
         let seg2 = vsi_signer.sign_media_segment(&make_test_segment()).unwrap();
@@ -987,7 +1019,7 @@ mod tests {
     #[test]
     fn resume_from_segment_advances_sequence_number() {
         let signer = make_test_signer();
-        let mut vsi_signer = make_vsi_signer(&signer, b"k", 1);
+        let mut vsi_signer = make_vsi_signer_with_manifest_id(&signer, b"k", 1);
 
         let seg1 = vsi_signer.sign_media_segment(&make_test_segment()).unwrap();
         assert_eq!(vsi_signer.next_sequence_number(), 2);
@@ -1002,7 +1034,7 @@ mod tests {
         use crate::live_video::verifiable_segment_info::parse_segment_info_map;
 
         let signer = make_test_signer();
-        let mut vsi_signer = make_vsi_signer(&signer, b"k", 1);
+        let mut vsi_signer = make_vsi_signer_with_manifest_id(&signer, b"k", 1);
 
         let signed = vsi_signer.sign_media_segment(&make_test_segment()).unwrap();
         let vsi_bytes = extract_vsi_payload_from_segment(&signed).unwrap();
@@ -1015,18 +1047,16 @@ mod tests {
     }
 
     #[test]
-    fn sign_media_segment_manifest_id_empty_without_init() {
-        use crate::live_video::verifiable_segment_info::parse_segment_info_map;
-
+    fn sign_media_segment_fails_without_manifest_id() {
         let signer = make_test_signer();
         let mut vsi_signer = make_vsi_signer(&signer, b"k", 1);
 
-        let signed = vsi_signer.sign_media_segment(&make_test_segment()).unwrap();
-        let vsi_bytes = extract_vsi_payload_from_segment(&signed).unwrap();
-        let info_map = parse_segment_info_map(&vsi_bytes).unwrap();
+        // Neither sign_init_segment nor resume_from_segment/restore_manifest_id has been
+        // called, so there's no manifestId to sign into the segment — must fail rather than
+        // silently sign an empty (spec-non-conformant) manifestId.
+        let result = vsi_signer.sign_media_segment(&make_test_segment());
 
-        // When sign_init_segment has not been called, manifest_id defaults to empty.
-        assert_eq!(info_map.manifest_id, "");
+        assert!(result.is_err());
     }
 
     #[test]
@@ -1082,6 +1112,7 @@ mod tests {
             3600,
         )
         .unwrap();
+        signer1.active_manifest_id = Some(TEST_MANIFEST_ID.to_string());
         let seg1 = signer1.sign_media_segment(&make_test_segment()).unwrap();
 
         let mut signer2 = LiveVideoVsiSigner::from_signing_key(
@@ -1108,7 +1139,12 @@ mod tests {
         let mut validator = LiveVideoValidator::new();
         let mut tracker = StatusTracker::default();
         validator
-            .validate_session_keys(&session_keys, "", Some(&ee_cert_der), &mut tracker)
+            .validate_session_keys(
+                &session_keys,
+                TEST_MANIFEST_ID,
+                Some(&ee_cert_der),
+                &mut tracker,
+            )
             .unwrap();
 
         validator
