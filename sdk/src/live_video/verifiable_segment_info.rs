@@ -107,7 +107,12 @@ fn find_emsg_boxes(segment_data: &[u8]) -> Vec<Vec<u8>> {
             if cursor.read_exact(&mut large).is_err() {
                 break;
             }
-            u64::from_be_bytes(large) as usize
+            // A largesize that doesn't fit in `usize` (possible on 32-bit targets) can't be a
+            // real box in this segment, since it already exceeds any buffer we could hold.
+            let Ok(large_size) = usize::try_from(u64::from_be_bytes(large)) else {
+                break;
+            };
+            large_size
         } else if size == 0 {
             segment_data.len() - box_start
         } else {
