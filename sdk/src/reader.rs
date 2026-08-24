@@ -1743,8 +1743,8 @@ pub mod tests {
         );
     }
 
-    // A verifier that always succeeds would pass every positive test, so corrupt a
-    // byte the manifest covers and require the read to reject it.
+    // Corrupts a byte the manifest covers and requires the read to reject it. A
+    // verifier that always succeeds passes the positive tests but fails this one.
     #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_reader_async_range_source_detects_tampered_bytes() {
@@ -1972,9 +1972,9 @@ pub mod tests {
                 let (bytes, version) = self.current();
                 Ok(RangeInfo::new(bytes.len() as u64).with_version(version))
             }
-            // Reports the version it actually served, as a transport that can
-            // identify object versions would, but does not enforce `expect` itself.
-            // That leaves the caller's comparison to catch the change.
+            // Reports the version it served, as a transport that can identify
+            // object versions would, and does not enforce `expect` itself. The
+            // caller's comparison catches the change.
             async fn read_range_async(
                 &self,
                 offset: u64,
@@ -2012,12 +2012,11 @@ pub mod tests {
             }
         }
 
-        // Two independently signed assets of identical length.
-        // Each is valid on its own, so neither a length check nor
-        // the hash binding can tell that the read spanned both:
-        // whichever manifest discovery found, the bytes hashed
-        // afterwards carry their own valid signature.
-        // Only object identity distinguishes them.
+        // Two independently signed assets of identical length. Each is valid on
+        // its own, so neither a length check nor the hash binding detects that the
+        // read spanned both: whichever manifest discovery found, the bytes hashed
+        // afterwards carry their own valid signature. Only object identity
+        // distinguishes them.
         let first = IMAGE_WITH_MANIFEST.to_vec();
         let second = IMAGE_WITH_MANIFEST_CT.to_vec();
         assert_eq!(
@@ -2041,7 +2040,8 @@ pub mod tests {
             .with_reference_async("image/jpeg", "any-reference")
             .await;
 
-        // The read must not report success over two different objects.
+        // The read must not report success over two different objects: either the
+        // source layer refuses, or verification fails the binding.
         match result {
             Err(e) => {
                 let msg = e.to_string();
@@ -2066,7 +2066,8 @@ pub mod tests {
         }
     }
 
-    // Most origins cannot identify object versions, so a read over one still verifies.
+    // A source that reports no version still verifies. The weaker guarantee is
+    // recorded in the validation results.
     #[cfg_attr(not(target_arch = "wasm32"), tokio::test)]
     #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
     async fn test_reader_async_range_source_reports_unconfirmed_version() {
@@ -2129,7 +2130,7 @@ pub mod tests {
             .active_manifest()
             .expect("active manifest status codes");
 
-        // the binding is still checked
+        // the binding is checked
         assert!(
             active
                 .success()
@@ -2137,7 +2138,7 @@ pub mod tests {
                 .any(|s| s.code() == validation_status::ASSERTION_DATAHASH_MATCH),
             "an unversioned source must still verify the binding"
         );
-        // and the missing guarantee is recorded, not silently dropped
+        // and the absent version guarantee is recorded
         assert!(
             active
                 .informational()

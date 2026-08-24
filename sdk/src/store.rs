@@ -3721,9 +3721,9 @@ impl Store {
                     let chunk_size = std::num::NonZeroUsize::new(config.hash_chunk as usize)
                         .ok_or(Error::BadParam("hash_chunk must be non-zero".to_string()))?;
 
-                    // A source that cannot identify object versions leaves the read
-                    // open to being served different bytes per request, so say so
-                    // rather than reporting the same guarantee as a pinned read.
+                    // A source that cannot identify object versions leaves the
+                    // read open to being served different bytes per request. Record
+                    // that the version was not confirmed.
                     if info.version.is_none() {
                         log_item!(
                             "asset",

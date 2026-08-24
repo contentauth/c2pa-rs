@@ -33,10 +33,10 @@ use crate::{
 ///
 /// A range-backed read fetches the same object many times, and the bytes must all
 /// come from one version of it.
-/// The token is compared for equality and never interpreted. What it contains is
-/// the transport's choice. A transport that cannot identify versions,
-/// or judges its own token unfit for this purpose, reports `None` instead, and the
-/// read proceeds without the guarantee.
+/// The token is compared for equality and never interpreted. Its contents are the
+/// transport's choice. A transport that cannot identify versions, or whose token is
+/// unfit for this purpose, reports `None` instead, and the read proceeds without
+/// the guarantee.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObjectVersion(String);
 
@@ -155,9 +155,8 @@ impl RangeChunk {
 pub trait SyncRangeReader: MaybeSend + MaybeSync {
     /// Reports the object length, and its version when the transport knows one.
     ///
-    /// Called at most once per read. Prefer letting [`read_range`](Self::read_range)
-    /// establish the version where the transport can, so the read anchors on a
-    /// response whose bytes are actually used.
+    /// Called at most once per read. [`read_range`](Self::read_range) also reports a
+    /// version, which anchors the read on a response whose bytes are used.
     fn info(&self) -> Result<RangeInfo, AssetSourceError>;
 
     /// Reads up to `len` bytes at `offset`, reporting which version served them.
@@ -166,10 +165,15 @@ pub trait SyncRangeReader: MaybeSend + MaybeSync {
     /// [`AssetSourceError::ShortRead`], never as end-of-file.
     ///
     /// `expect` carries the version established earlier in this read, when one is
-    /// known. A transport able to enforce it server-side should do so and report a
-    /// mismatch as [`AssetSourceError::VersionChanged`]; the caller compares the
-    /// returned version too, so a transport that cannot enforce it is still caught
-    /// one round trip later.
+    /// known. The caller compares the returned version against what it expected, and
+    /// that comparison is what holds a read to one object.
+    ///
+    /// A transport may additionally ask the far end to reject a changed object — an
+    /// HTTP one can send `If-Range` — and report the refusal as
+    /// [`AssetSourceError::VersionChanged`]. RFC 9110 13.1.1 permits any cache or
+    /// intermediary to ignore a conditional header meant for an origin, so behind a
+    /// CDN it may not be evaluated. A transport must always report the version it
+    /// observed.
     fn read_range(
         &self,
         offset: u64,
@@ -191,8 +195,8 @@ pub trait AsyncRangeReader: MaybeSend + MaybeSync {
     /// Reads up to `len` bytes at `offset`, reporting which version served them.
     ///
     /// The asynchronous twin of [`SyncRangeReader::read_range`], with the same
-    /// contract: enforce `expect` where the transport can, and report what was
-    /// served so the caller can compare.
+    /// contract: always report the version that served the bytes, and optionally ask
+    /// the far end to reject a changed object.
     async fn read_range_async(
         &self,
         offset: u64,
@@ -234,8 +238,8 @@ pub(crate) fn fetch_versioned(
 
 /// Compares an observed object version against the one a read began with.
 ///
-/// Only a disagreement between two known versions is an error: if either side has
-/// nothing to report, there is no guarantee to break.
+/// A disagreement between two known versions is an error. If either side reports no
+/// version, the comparison passes.
 pub(crate) fn check_version(
     expect: Option<&ObjectVersion>,
     observed: Option<&ObjectVersion>,

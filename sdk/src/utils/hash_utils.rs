@@ -562,8 +562,7 @@ where
 /// The object a hash pass reads from: the source, its length, and the version every
 /// fetch must come from.
 ///
-/// Grouped so the version travels with the reader it belongs to and cannot be
-/// forgotten at a call site.
+/// Grouped so the version travels with the reader it belongs to.
 pub(crate) struct AsyncHashSource<'a> {
     pub reader: &'a dyn crate::asset_source::range::AsyncRangeReader,
     pub data_len: u64,
