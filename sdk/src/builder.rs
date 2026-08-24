@@ -853,6 +853,33 @@ impl Builder {
         Ok(())
     }
 
+    /// Adds an assertion to the manifest,
+    /// preserving its `kind` and `created`/`gathered` attribution.
+    pub(crate) fn add_assertion_impl<S, T>(
+        &mut self,
+        label: S,
+        data: &T,
+        kind: Option<ManifestAssertionKind>,
+        created: bool,
+    ) -> Result<&mut Self>
+    where
+        S: Into<String>,
+        T: Serialize,
+    {
+        self.check_assertion_limit()?;
+        let assertion_data = match kind {
+            Some(ManifestAssertionKind::Json) => AssertionData::Json(serde_json::to_value(data)?),
+            _ => AssertionData::Cbor(c2pa_cbor::value::to_value(data)?),
+        };
+        self.definition.assertions.push(AssertionDefinition {
+            label: label.into(),
+            data: assertion_data,
+            kind,
+            created,
+        });
+        Ok(self)
+    }
+
     /// # Arguments
     /// * `label` - A label for the assertion.
     /// * `data` - The data for the assertion. The data can be any Serde-serializable type or an AssertionDefinition.
@@ -865,15 +892,7 @@ impl Builder {
         S: Into<String>,
         T: Serialize,
     {
-        self.check_assertion_limit()?;
-        let created = false;
-        self.definition.assertions.push(AssertionDefinition {
-            label: label.into(),
-            data: AssertionData::Cbor(c2pa_cbor::value::to_value(data)?),
-            kind: None, // defaults to cbor
-            created,
-        });
-        Ok(self)
+        self.add_assertion_impl(label, data, None, false)
     }
 
     /// Adds a JSON assertion to the manifest.
@@ -891,15 +910,7 @@ impl Builder {
         S: Into<String>,
         T: Serialize,
     {
-        self.check_assertion_limit()?;
-        let created = false;
-        self.definition.assertions.push(AssertionDefinition {
-            label: label.into(),
-            data: AssertionData::Json(serde_json::to_value(data)?),
-            kind: Some(ManifestAssertionKind::Json),
-            created,
-        });
-        Ok(self)
+        self.add_assertion_impl(label, data, Some(ManifestAssertionKind::Json), false)
     }
 
     /// Adds a single action to the manifest.
@@ -934,23 +945,24 @@ impl Builder {
 
         // if an actions assertion already exists, we will append to it
         // if not, we will create a new one
-        let (actions, original_label) = if let Some(pos) = self
+        match self
             .definition
             .assertions
             .iter()
             .position(|a| a.label().starts_with(Actions::LABEL))
         {
-            // Remove and use the existing actions assertion
-            let assertion_def = self.definition.assertions.remove(pos);
-            let original_label = assertion_def.label.clone();
-            (assertion_def.to_assertion()?, original_label)
-        } else {
-            (Actions::new(), Actions::LABEL_VERSIONED.to_string())
-        };
-
-        let actions = actions.add_action(action);
-
-        self.add_assertion(original_label, &actions)?;
+            Some(pos) => {
+                // In-place replacement/update
+                let actions: Actions = self.definition.assertions[pos].to_assertion()?;
+                let actions = actions.add_action(action);
+                self.definition.assertions[pos].data =
+                    AssertionData::Cbor(c2pa_cbor::value::to_value(&actions)?);
+            }
+            None => {
+                let actions = Actions::new().add_action(action);
+                self.add_assertion(Actions::LABEL_VERSIONED, &actions)?;
+            }
+        }
         Ok(self)
     }
 
@@ -1288,6 +1300,7 @@ impl Builder {
 
         #[allow(unused_mut)]
         let mut ingredient: Ingredient = Ingredient::from_json(&ingredient_json.into())?;
+        ingredient.chain_resolver_to(&mut self.resources);
 
         if format == "c2pa" || format == "application/c2pa" {
             let parent_ingredient = self.add_ingredient_from_archive(stream)?;
@@ -1756,6 +1769,10 @@ impl Builder {
         }
 
         let mut found_actions = false;
+        // A manifest may carry more than one actions assertion (a created-list assertion, which
+        // holds the inception action, and a gathered-list assertion). Only the first one may
+        // carry an inception, so clear this once we have seen an actions assertion.
+        let mut allow_inception = true;
         // add any additional assertions
         for manifest_assertion in &definition.assertions {
             let (match_label, version, _instance) = parse_label(manifest_assertion.label());
@@ -1844,7 +1861,12 @@ impl Builder {
 
                     // Do this at the end of the preprocessing step to ensure all ingredient references
                     // are resolved to their hashed URIs.
-                    self.add_actions_assertion_settings(&ingredient_map, &mut actions)?;
+                    self.add_actions_assertion_settings(
+                        &ingredient_map,
+                        &mut actions,
+                        allow_inception,
+                    )?;
+                    allow_inception = false;
 
                     add_assertion(&mut claim, &actions, manifest_assertion.created())
                 }
@@ -1893,11 +1915,19 @@ impl Builder {
 
         if !found_actions {
             let mut actions = Actions::new();
-            self.add_actions_assertion_settings(&ingredient_map, &mut actions)?;
+            self.add_actions_assertion_settings(&ingredient_map, &mut actions, true)?;
 
             if !actions.actions().is_empty() {
-                // todo: add setting for created added actions
-                add_assertion(&mut claim, &actions, false)?;
+                // Per spec, only the actions assertion carrying the manifest's inception
+                // action is required to live in `created_assertions` rather than
+                // `gathered_assertions`. Settings can add other, non-inception actions here
+                // too (e.g. via `builder.actions.actions`), and those don't need to be forced
+                // into `created_assertions`.
+                let has_inception = actions
+                    .actions()
+                    .iter()
+                    .any(|a| matches!(a.action(), c2pa_action::CREATED | c2pa_action::OPENED));
+                add_assertion(&mut claim, &actions, has_inception)?;
             }
         }
 
@@ -1911,16 +1941,35 @@ impl Builder {
     /// * `builder.actions.auto_opened_action`
     /// * `builder.actions.templates`
     /// * `builder.actions.actions`
+    /// * `builder.actions.all_actions_included`
+    /// * `builder.actions.auto_all_actions_included`
     /// * For more, see [Builder::add_auto_actions_assertions]
+    ///
+    /// Only the first actions assertion of a manifest may carry an inception (created/opened)
+    /// action, so `allow_inception` must only be true for that assertion.
+    ///
+    /// Per the C2PA spec's [All actions included](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_all_actions_included)
+    /// section, a claim generator that opens an asset strictly to record its `c2pa.opened`
+    /// action, with no other action recorded for that manifest, shall set `allActionsIncluded`
+    /// to `true`. When `builder.actions.auto_all_actions_included` is enabled, this function
+    /// checks for that condition only after every other source of actions (templates, the
+    /// `builder.actions.actions` setting, and the auto-inserted inception/placed actions) has
+    /// been merged in, so the check happens at the end of this function rather than the start —
+    /// otherwise it could wrongly fire before a later merge adds a second action.
+    ///
+    /// Note that a redaction performed via [`ManifestDefinition::redactions`] is applied earlier,
+    /// while ingredients are being added to the claim, and by itself is invisible to this
+    /// function: nothing here inspects `redactions`. Per spec, a `c2pa.redacted` [`Action`] must
+    /// be added to `actions.actions` alongside the corresponding entry in `redactions` (which is
+    /// the caller's responsibility, as in every redaction test in this module) for a redaction
+    /// to be counted against the "no other action recorded" condition above.
     fn add_actions_assertion_settings(
         &self,
         ingredient_map: &HashMap<String, (&Relationship, HashedUri)>,
         actions: &mut Actions,
+        allow_inception: bool,
     ) -> Result<()> {
-        if actions.all_actions_included.is_none() {
-            actions.all_actions_included =
-                self.context.settings().builder.actions.all_actions_included;
-        }
+        let all_actions_included_explicit = actions.all_actions_included.is_some();
 
         let action_templates = &self.context.settings().builder.actions.templates;
 
@@ -1952,7 +2001,48 @@ impl Builder {
                 true => actions.actions = additional_actions,
             }
         }
-        self.add_auto_actions_assertions_settings(ingredient_map, actions)
+
+        // Check after the settings actions are merged in, since they may add an inception too.
+        if !allow_inception
+            && actions
+                .actions()
+                .iter()
+                .any(|a| matches!(a.action(), c2pa_action::CREATED | c2pa_action::OPENED))
+        {
+            return Err(Error::BadParam(
+                "Only the first actions assertion may contain a created or opened action"
+                    .to_string(),
+            ));
+        }
+
+        self.add_auto_actions_assertions_settings(ingredient_map, actions, allow_inception)?;
+
+        if !all_actions_included_explicit {
+            let auto_all_actions_included = self
+                .context
+                .settings()
+                .builder
+                .actions
+                .auto_all_actions_included;
+
+            // Now that every other source of actions has been merged in above, a sole
+            // `c2pa.opened` action means this manifest records nothing but that inception
+            // action, which the spec requires to be reported as `allActionsIncluded: true`.
+            // The SDK can only see changes that were recorded as actions (e.g. a redaction
+            // performed without a matching `c2pa.redacted` action would go unnoticed here),
+            // so this detection is opt-in via `auto_all_actions_included` rather than always-on.
+            actions.all_actions_included = if auto_all_actions_included
+                && allow_inception
+                && actions.actions().len() == 1
+                && actions.actions()[0].action() == c2pa_action::OPENED
+            {
+                Some(true)
+            } else {
+                self.context.settings().builder.actions.all_actions_included
+            };
+        }
+
+        Ok(())
     }
 
     /// Adds c2pa.created, c2pa.opened, and c2pa.placed actions for the specified [Actions][crate::assertions::Actions]
@@ -1962,17 +2052,22 @@ impl Builder {
     /// * `builder.actions.auto_created_action`
     /// * `builder.actions.auto_opened_action`
     /// * `builder.actions.auto_placed_action`
+    ///
+    /// A manifest may contain more than one actions assertion, but only the first one may carry
+    /// the inception (created/opened) action, so `allow_inception` must only be true for it.
     fn add_auto_actions_assertions_settings(
         &self,
         ingredient_map: &HashMap<String, (&Relationship, HashedUri)>,
         actions: &mut Actions,
+        allow_inception: bool,
     ) -> Result<()> {
         let settings = self.context.settings();
         // https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
         let auto_created = settings.builder.actions.auto_created_action.enabled;
         let auto_opened = settings.builder.actions.auto_opened_action.enabled;
 
-        if (self.intent().is_some() || auto_created || auto_opened)
+        if allow_inception
+            && (self.intent().is_some() || auto_created || auto_opened)
             && !actions.actions.iter().any(|action| {
                 action.action() == c2pa_action::CREATED || action.action() == c2pa_action::OPENED
             })
@@ -3198,8 +3293,8 @@ impl Builder {
     /// This provides a simpler alternative to [`sign()`](Self::sign) when you want to use
     /// the context's configured signer rather than providing an explicit signer.
     ///
-    /// **Note**: This method is only available for synchronous signing. For async signing,
-    /// use [`sign_async()`](Self::sign_async) with an explicit async signer.
+    /// **Note**: An async signer must be set explicitly with [`Context::with_async_signer()`],
+    /// since async signers cannot currently be created automatically from settings.
     ///
     /// # Arguments
     /// * `format` - The format of the stream.
@@ -3240,6 +3335,7 @@ impl Builder {
     /// # Ok(())
     /// # }
     /// ```
+    #[async_generic()]
     pub fn save_to_stream<R, W>(
         &mut self,
         format: &str,
@@ -3250,30 +3346,16 @@ impl Builder {
         R: Read + Seek + Send,
         W: Write + Read + Seek + Send,
     {
-        let format = format_to_mime(format);
-        self.definition.format.clone_from(&format);
-        if let Some(instance_id) = XmpInfo::from_source(source, &format).instance_id {
-            self.definition.instance_id = instance_id;
+        // Clone the Arc (cheap) so the signer borrowed from it doesn't keep
+        // `self` immutably borrowed while `sign`/`sign_async` need `&mut self`.
+        let ctx = Arc::clone(&self.context);
+        if _sync {
+            let signer = ctx.signer()?;
+            self.sign(signer, format, source, dest)
+        } else {
+            let signer = ctx.async_signer()?;
+            self.sign_async(signer, format, source, dest).await
         }
-        source.rewind()?;
-
-        #[cfg(feature = "file_io")]
-        self.apply_resource_base_path();
-
-        self.maybe_add_parent(&format, source)?;
-
-        // generate thumbnail if we don't already have one
-        #[cfg(feature = "add_thumbnails")]
-        self.maybe_add_thumbnail(&format, source)?;
-
-        // convert the manifest to a store
-        let mut store = self.to_store()?;
-
-        // Get signer from context
-        let signer = self.context.signer()?;
-
-        // sign and write our store to to the output image file
-        store.save_to_stream(&format, source, dest, signer, &self.context)
     }
 
     #[cfg(feature = "file_io")]
@@ -4219,6 +4301,220 @@ mod tests {
     }
 
     #[test]
+    fn test_auto_inception_out_of_order_inception_errors() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let mut builder = Builder::from_context(test_context())
+            .with_definition(
+                json!({
+                    "assertions": [
+                        {
+                            "label": "c2pa.actions.v2",
+                            "data": { "actions": [ { "action": "c2pa.cropped" } ] }
+                        },
+                        {
+                            "label": "c2pa.actions.v2",
+                            "created": true,
+                            "data": { "actions": [
+                                {
+                                    "action": "c2pa.created",
+                                    "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
+                                },
+                                { "action": "c2pa.color_adjustments" }
+                            ]}
+                        }
+                    ]
+                })
+                .to_string(),
+            )
+            .unwrap();
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+
+        let err = builder.to_claim().unwrap_err();
+        assert!(
+            matches!(err, Error::BadParam(ref message)
+                if message.contains("first actions assertion")),
+            "expected a BadParam about the first actions assertion, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_auto_inception_not_duplicated_across_actions_assertions() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let mut builder = Builder::from_context(test_context())
+            .with_definition(
+                json!({
+                    "assertions": [
+                        {
+                            "label": "c2pa.actions.v2",
+                            "created": true,
+                            "data": { "actions": [ { "action": "c2pa.color_adjustments" } ] }
+                        },
+                        {
+                            "label": "c2pa.actions.v2",
+                            "data": { "actions": [ { "action": "c2pa.cropped" } ] }
+                        }
+                    ]
+                })
+                .to_string(),
+            )
+            .unwrap();
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+
+        let claim = builder.to_claim().unwrap();
+
+        let action_assertions = claim.action_assertions();
+        assert_eq!(action_assertions.len(), 2);
+
+        let all_actions: Vec<Actions> = action_assertions
+            .iter()
+            .map(|aa| Actions::from_assertion(aa.assertion()).unwrap())
+            .collect();
+
+        let inception_count = all_actions
+            .iter()
+            .flat_map(|actions| actions.actions().iter())
+            .filter(|action| matches!(action.action(), c2pa_action::CREATED | c2pa_action::OPENED))
+            .count();
+        assert_eq!(
+            inception_count, 1,
+            "expected exactly one inception action across all actions assertions"
+        );
+
+        // The inception belongs at the front of the first actions assertion.
+        assert_eq!(
+            all_actions[0].actions().first().unwrap().action(),
+            c2pa_action::CREATED
+        );
+    }
+
+    #[test]
+    fn test_auto_inception_only_added_to_created_actions_assertion() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let mut builder = Builder::from_context(test_context())
+            .with_definition(
+                json!({
+                    "assertions": [
+                        {
+                            "label": "c2pa.actions.v2",
+                            "created": true,
+                            "data": { "actions": [ { "action": "c2pa.color_adjustments" } ] }
+                        },
+                        {
+                            "label": "c2pa.actions.v2",
+                            "data": { "actions": [ { "action": "c2pa.cropped" } ] }
+                        }
+                    ]
+                })
+                .to_string(),
+            )
+            .unwrap();
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+
+        let claim = builder.to_claim().unwrap();
+
+        let action_assertions = claim.action_assertions();
+        assert_eq!(action_assertions.len(), 2);
+
+        let all_actions: Vec<Actions> = action_assertions
+            .iter()
+            .map(|aa| Actions::from_assertion(aa.assertion()).unwrap())
+            .collect();
+
+        // Exactly one inception across the entire manifest.
+        let inception_count = all_actions
+            .iter()
+            .flat_map(|actions| actions.actions().iter())
+            .filter(|action| {
+                action.action() == c2pa_action::CREATED || action.action() == c2pa_action::OPENED
+            })
+            .count();
+        assert_eq!(
+            inception_count, 1,
+            "expected exactly one inception action across all actions assertions"
+        );
+
+        // It lives at index 0 of the created-list assertion.
+        let created_assertions = claim.created_action_assertions();
+        assert_eq!(created_assertions.len(), 1);
+        let created_actions = Actions::from_assertion(created_assertions[0].assertion()).unwrap();
+        assert_eq!(
+            created_actions.actions().first().unwrap().action(),
+            c2pa_action::CREATED
+        );
+
+        // The gathered-list assertion is untouched.
+        let gathered_assertions = claim.gathered_action_assertions();
+        assert_eq!(gathered_assertions.len(), 1);
+        let gathered_actions = Actions::from_assertion(gathered_assertions[0].assertion()).unwrap();
+        assert_eq!(
+            gathered_actions
+                .actions()
+                .iter()
+                .map(|a| a.action())
+                .collect::<Vec<_>>(),
+            vec!["c2pa.cropped"]
+        );
+    }
+
+    /// A manifest with two actions assertions and an intent must sign and validate.
+    #[test]
+    fn test_auto_inception_multiple_actions_assertions_signs_and_validates() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let context = test_context().with_signer(test_signer(SigningAlg::Ps256));
+
+        let mut builder = Builder::from_context(context)
+            .with_definition(
+                json!({
+                    "assertions": [
+                        {
+                            "label": "c2pa.actions.v2",
+                            "created": true,
+                            "data": { "actions": [ { "action": "c2pa.color_adjustments" } ] }
+                        },
+                        {
+                            "label": "c2pa.actions.v2",
+                            "data": { "actions": [ { "action": "c2pa.cropped" } ] }
+                        }
+                    ]
+                })
+                .to_string(),
+            )
+            .unwrap();
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .save_to_stream("image/jpeg", &mut Cursor::new(TEST_IMAGE), &mut output)
+            .unwrap();
+
+        output.rewind().unwrap();
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .unwrap();
+
+        // The test signer is in the trust anchors, so this validates as Trusted.
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        let actions: Actions = reader
+            .active_manifest()
+            .unwrap()
+            .find_assertion("c2pa.actions.v2")
+            .unwrap();
+        assert_eq!(
+            actions.actions().first().unwrap().action(),
+            c2pa_action::CREATED
+        );
+    }
+
+    #[test]
     fn test_builder_settings_auto_created() {
         #[cfg(target_os = "wasi")]
         Settings::reset().unwrap();
@@ -4302,6 +4598,9 @@ mod tests {
 
         let action = actions.actions().first().unwrap();
         assert_eq!(action.action(), c2pa_action::OPENED);
+
+        // `auto_all_actions_included` was not enabled, so nothing forces this field.
+        assert_eq!(actions.all_actions_included, None);
 
         let ingredient_uris = action
             .parameters
@@ -4469,6 +4768,201 @@ mod tests {
         assert_eq!(actions.all_actions_included, Some(true));
     }
 
+    // With `auto_all_actions_included` enabled, opening an ingredient and re-saving with no
+    // other changes is the case the spec requires `allActionsIncluded` to be set to `true` for.
+    #[test]
+    fn test_builder_settings_auto_all_actions_included() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [builder.actions]
+                    auto_all_actions_included = true
+
+                    [builder.actions.auto_opened_action]
+                    enabled = true
+                }
+                .to_string(),
+            )
+            .unwrap();
+
+        let context = Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .with_signer(test_signer(SigningAlg::Ps256));
+
+        let mut builder = Builder::from_context(context);
+        builder
+            .add_ingredient_from_stream(parent_json(), "image/jpeg", &mut Cursor::new(TEST_IMAGE))
+            .unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .save_to_stream("image/jpeg", &mut Cursor::new(TEST_IMAGE), &mut output)
+            .unwrap();
+
+        output.rewind().unwrap();
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .unwrap();
+
+        let actions: Actions = reader
+            .active_manifest()
+            .unwrap()
+            .find_assertion(Actions::LABEL)
+            .unwrap();
+
+        assert_eq!(actions.actions().len(), 1);
+        assert_eq!(actions.actions()[0].action(), c2pa_action::OPENED);
+        assert_eq!(actions.all_actions_included, Some(true));
+
+        // The spec requires the inception actions assertion to live in the claim's
+        // `created_assertions` array; confirm the forced value landed on that assertion.
+        let claim = builder.to_claim().unwrap();
+        let created_assertions = claim.created_action_assertions();
+        assert_eq!(created_assertions.len(), 1);
+        let created_actions = Actions::from_assertion(created_assertions[0].assertion()).unwrap();
+        assert_eq!(created_actions.all_actions_included, Some(true));
+    }
+
+    // The C2PA spec requires `allActionsIncluded` to be forced to `true` only when the sole
+    // recorded action is `c2pa.opened`; an ingredient opened for editing with additional actions
+    // recorded is not "opened and immediately re-saved without making any other changes", so no
+    // value should be forced even with `auto_all_actions_included` enabled.
+    #[test]
+    fn test_all_actions_included_not_forced_when_other_actions_present() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [builder.actions]
+                    auto_all_actions_included = true
+
+                    [builder.actions.auto_opened_action]
+                    enabled = true
+                }
+                .to_string(),
+            )
+            .unwrap();
+
+        let context = Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .with_signer(test_signer(SigningAlg::Ps256));
+
+        let mut builder = Builder::from_context(context);
+        builder
+            .add_ingredient_from_stream(parent_json(), "image/jpeg", &mut Cursor::new(TEST_IMAGE))
+            .unwrap();
+        builder.add_action(Action::new("c2pa.cropped")).unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .save_to_stream("image/jpeg", &mut Cursor::new(TEST_IMAGE), &mut output)
+            .unwrap();
+
+        output.rewind().unwrap();
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .unwrap();
+
+        let actions: Actions = reader
+            .active_manifest()
+            .unwrap()
+            .find_assertion(Actions::LABEL)
+            .unwrap();
+
+        assert_eq!(actions.actions().len(), 2);
+        assert_eq!(actions.all_actions_included, None);
+    }
+
+    // A value the caller explicitly authored into the actions assertion data is a statement
+    // about that specific manifest, not a mere fallback default, so it must not be overridden
+    // even when `auto_all_actions_included` is enabled and the sole recorded action is
+    // `c2pa.opened`.
+    #[test]
+    fn test_all_actions_included_explicit_false_not_overridden() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [builder.actions]
+                    auto_all_actions_included = true
+                }
+                .to_string(),
+            )
+            .unwrap();
+
+        let context = Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .with_signer(test_signer(SigningAlg::Ps256));
+
+        let definition = json!({
+            "claim_generator_info": [
+                {
+                    "name": "c2pa_test",
+                    "version": "1.0.0"
+                }
+            ],
+            "title": "Test_Manifest",
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": {
+                        "allActionsIncluded": false,
+                        "actions": [
+                            {
+                                "action": "c2pa.opened",
+                                "parameters": {
+                                    "ingredientIds": ["CA.jpg"]
+                                },
+                            }
+                        ]
+                    }
+                }
+            ]
+        })
+        .to_string();
+
+        let mut builder = Builder::from_context(context)
+            .with_definition(definition)
+            .unwrap();
+        builder
+            .add_ingredient_from_stream(parent_json(), "image/jpeg", &mut Cursor::new(TEST_IMAGE))
+            .unwrap();
+
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(
+                &test_signer(SigningAlg::Ps256),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE),
+                &mut output,
+            )
+            .unwrap();
+
+        output.rewind().unwrap();
+        let reader = Reader::default()
+            .with_stream("image/jpeg", &mut output)
+            .unwrap();
+
+        let actions: Actions = reader
+            .active_manifest()
+            .unwrap()
+            .find_assertion(Actions::LABEL)
+            .unwrap();
+
+        assert_eq!(actions.actions().len(), 1);
+        assert_eq!(actions.all_actions_included, Some(false));
+    }
+
     #[test]
     fn test_builder_settings_action_templates() {
         #[cfg(target_os = "wasi")]
@@ -4594,6 +5088,41 @@ mod tests {
                 _ => {}
             }
         }
+    }
+
+    // Per Gavin's review feedback on #2503: settings-defined actions with no inception step
+    // (`c2pa.created`/`c2pa.opened`) must not be forced into `created_assertions` -- only an
+    // actions assertion that actually carries the inception step has that spec requirement.
+    #[test]
+    fn test_builder_settings_actions_without_inception_stay_gathered() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [[builder.actions.actions]]
+                    action = (c2pa_action::EDITED)
+                    source_type = (DigitalSourceType::Empty.to_string())
+                }
+                .to_string(),
+            )
+            .unwrap();
+
+        let context = Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .with_signer(test_signer(SigningAlg::Ps256));
+
+        let claim = Builder::from_context(context).to_claim().unwrap();
+
+        assert_eq!(claim.created_action_assertions().len(), 0);
+
+        let gathered_assertions = claim.gathered_action_assertions();
+        assert_eq!(gathered_assertions.len(), 1);
+        let actions = Actions::from_assertion(gathered_assertions[0].assertion()).unwrap();
+        assert_eq!(actions.actions().len(), 1);
+        assert_eq!(actions.actions()[0].action(), c2pa_action::EDITED);
     }
 
     #[test]
@@ -9450,6 +9979,133 @@ mod tests {
         assert_eq!(
             loaded_builder.definition.title,
             Some("Test Image".to_string())
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_archive_round_trip_preserves_created_flag_and_kind() -> Result<()> {
+        let context = Context::new().into_shared();
+
+        let builder = Builder::from_shared_context(&context).with_definition(
+            json!({
+                // "claim_version": 2,
+                "format": "image/jpeg",
+                "assertions": [
+                    {
+                        "label": "c2pa.actions.v2",
+                        "created": true,
+                        "data": { "actions": [{
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
+                        }]}
+                    },
+                    {
+                        "label": "c2pa.actions.v2",
+                        "data": { "actions": [{ "action": "c2pa.color_adjustments" }] }
+                    },
+                    { "label": "org.test.created", "created": true, "data": { "value": "created" } },
+                    { "label": "org.test.gathered", "data": { "value": "gathered" } },
+                    { "label": "org.test.json", "kind": "Json", "data": { "value": "json" } }
+                ]
+            })
+            .to_string(),
+        )?;
+
+        let mut archive = Cursor::new(Vec::new());
+        builder.to_archive(&mut archive)?;
+        archive.rewind()?;
+
+        let restored = Builder::from_shared_context(&context).with_archive(archive)?;
+
+        let created_of = |label: &str| -> Vec<bool> {
+            restored
+                .definition
+                .assertions
+                .iter()
+                .filter(|a| a.label == label)
+                .map(|a| a.created)
+                .collect()
+        };
+
+        // The created-list actions assertion is read back first, so the flags must be [true, false].
+        assert_eq!(
+            created_of("c2pa.actions.v2"),
+            vec![true, false],
+            "actions assertions must keep their created/gathered attribution"
+        );
+        assert_eq!(created_of("org.test.created"), vec![true]);
+        assert_eq!(created_of("org.test.gathered"), vec![false]);
+
+        // `kind` survive too.
+        let kind_of = |label: &str| {
+            restored
+                .definition
+                .assertions
+                .iter()
+                .find(|a| a.label == label)
+                .and_then(|a| a.kind.clone())
+        };
+        assert_eq!(kind_of("org.test.json"), Some(ManifestAssertionKind::Json));
+        assert_eq!(kind_of("org.test.gathered"), None); // None is the Cbor default
+
+        let claim = restored.to_claim()?;
+        assert_eq!(
+            claim.created_action_assertions().len(),
+            1,
+            "actions assertion must be in created_assertions after an archive round trip"
+        );
+        assert_eq!(
+            claim.gathered_action_assertions().len(),
+            1,
+            "gathered actions assertion must stay in gathered_assertions"
+        );
+        let actions = Actions::from_assertion(claim.created_action_assertions()[0].assertion())?;
+        assert_eq!(
+            actions.actions().first().unwrap().action(),
+            c2pa_action::CREATED
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_add_action_preserves_created_flag() -> Result<()> {
+        let mut builder = Builder::from_context(test_context()).with_definition(
+            json!({
+                "assertions": [{
+                    "label": "c2pa.actions.v2",
+                    "created": true,
+                    "data": { "actions": [{ "action": "c2pa.color_adjustments" }] }
+                }]
+            })
+            .to_string(),
+        )?;
+
+        builder.add_action(json!({ "action": "c2pa.cropped" }))?;
+
+        let actions_def = builder
+            .definition
+            .assertions
+            .iter()
+            .find(|a| a.label.starts_with(Actions::LABEL))
+            .expect("actions assertion should still be present");
+
+        assert!(
+            actions_def.created,
+            "add_action must not downgrade a created actions assertion to gathered"
+        );
+
+        let actions: Actions = actions_def.to_assertion()?;
+        assert_eq!(
+            actions
+                .actions()
+                .iter()
+                .map(|a| a.action())
+                .collect::<Vec<_>>(),
+            vec!["c2pa.color_adjustments", "c2pa.cropped"],
+            "the new action should be appended to the existing actions assertion"
         );
 
         Ok(())
