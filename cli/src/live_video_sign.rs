@@ -352,4 +352,65 @@ mod tests {
         assert_eq!(result.file_name().unwrap(), "seg_001.m4s");
         assert_eq!(result.parent().unwrap(), dir.path());
     }
+
+    fn make_box(fourcc: &[u8; 4], payload: &[u8]) -> Vec<u8> {
+        let mut b = Vec::new();
+        b.extend_from_slice(&((8 + payload.len()) as u32).to_be_bytes());
+        b.extend_from_slice(fourcc);
+        b.extend_from_slice(payload);
+        b
+    }
+
+    fn make_moof_with_mfhd(sequence_number: u32) -> Vec<u8> {
+        let mut mfhd_payload = vec![0u8; 4]; // FullBox version(1) + flags(3)
+        mfhd_payload.extend_from_slice(&sequence_number.to_be_bytes());
+        let mfhd = make_box(b"mfhd", &mfhd_payload);
+        make_box(b"moof", &mfhd)
+    }
+
+    #[test]
+    fn infer_min_sequence_number_defaults_to_one_without_a_segment() {
+        assert_eq!(infer_min_sequence_number(None).unwrap(), 1);
+    }
+
+    #[test]
+    fn infer_min_sequence_number_defaults_to_one_without_a_moof_box() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("seg_001.m4s");
+        fs::write(&path, make_box(b"mdat", &[0u8; 4])).unwrap();
+
+        assert_eq!(infer_min_sequence_number(Some(&path)).unwrap(), 1);
+    }
+
+    #[test]
+    fn infer_min_sequence_number_reads_moof_mfhd_sequence_number() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("seg_001.m4s");
+        fs::write(&path, make_moof_with_mfhd(277)).unwrap();
+
+        assert_eq!(infer_min_sequence_number(Some(&path)).unwrap(), 277);
+    }
+
+    #[test]
+    fn load_ed25519_session_key_accepts_a_32_byte_seed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.key");
+        fs::write(&path, [0x42u8; 32]).unwrap();
+
+        assert!(load_ed25519_session_key(&path).is_ok());
+    }
+
+    #[test]
+    fn load_ed25519_session_key_rejects_wrong_length() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.key");
+        fs::write(&path, [0x42u8; 16]).unwrap();
+
+        let err = load_ed25519_session_key(&path).unwrap_err();
+        assert!(
+            format!("{err}").contains("32 bytes"),
+            "unexpected error: {}",
+            err
+        );
+    }
 }
