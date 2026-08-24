@@ -666,11 +666,23 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a C2PA assertion.
     pub const ASSERTION_BMFFHASH_MATCH: &str = "assertion.bmffHash.match";
 
+    /// Additional exclusions are present in the BMFF hash assertion.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    pub const ASSERTION_BMFFASH_ADDITIONAL_EXCLUSIONS: &str =
+        "assertion.bmffHash.additionalExclusionsPresent";
+
     /// Hash of a box-based asset matches the hash declared in the General Box
     /// Hash assertion.
     ///
     /// Any corresponding URL should point to a C2PA assertion.
     pub const ASSERTION_BOXHASH_MATCH: &str = "assertion.boxesHash.match";
+
+    /// Additional exclusions are present in the BMFF hash assertion.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    pub const ASSERTION_BOXESHASH_ADDITIONAL_EXCLUSIONS: &str =
+        "assertion.boxesHash.additionalExclusionsPresent";
 
     /// Hash of all assets contained in collection match hashes declared
     /// in Collection Data
@@ -1185,6 +1197,8 @@ pub mod validation_codes {
             | TIME_OF_SIGNING_INSIDE_VALIDITY
             | INGREDIENT_PROVENANCE_UNKNOWN
             | ASSERTION_DATAHASH_ADDITIONAL_EXCLUSIONS
+            | ASSERTION_BMFFASH_ADDITIONAL_EXCLUSIONS
+            | ASSERTION_BOXESHASH_ADDITIONAL_EXCLUSIONS
             | CAWG_ICA_UNTRUSTED_ISSUER => LogKind::Informational,
             _ => LogKind::Failure,
         }

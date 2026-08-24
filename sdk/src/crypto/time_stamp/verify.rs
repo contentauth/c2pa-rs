@@ -492,12 +492,13 @@ pub fn verify_time_stamp(
 
         // the certificate must be on the trust list to be considered valid
         if verify_trust {
-            let mut adjusted_ctp = ctp.clone();
+            let mut adjusted_ctp = CertificateTrustPolicy::default();
 
             // Order certificates from leaf to root before trust validation
             let ordered_cert_ders = order_certificates_leaf_to_root(&cert_ders, cert_pos)?;
 
             // make sure this is a timestamping EKU
+            adjusted_ctp.clear_ekus();
             adjusted_ctp.add_mandatory_ekus(TIMESTAMP_OID_STR.as_bytes()); // timestamp signing EKU
             if check_end_entity_certificate_profile(
                 &ordered_cert_ders[0],
@@ -519,7 +520,7 @@ pub fn verify_time_stamp(
                 continue;
             }
 
-            match adjusted_ctp.check_certificate_trust(
+            match ctp.check_certificate_trust(
                 &ordered_cert_ders[0..],
                 &ordered_cert_ders[0],
                 Some(signing_time),
@@ -548,6 +549,8 @@ pub fn verify_time_stamp(
                     .validation_status(TIMESTAMP_TRUSTED)
                     .set_trust_list_uri(&trust_uri)
                     .success(&mut current_validation_log);
+
+                    validation_log.append(&current_validation_log);
                     return Ok(tst);
                 }
             }
