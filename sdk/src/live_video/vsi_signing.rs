@@ -501,22 +501,23 @@ fn find_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
     None
 }
 
-/// Returns the payload of a box (its bytes after the size/type header).
-fn box_payload(box_bytes: &[u8]) -> &[u8] {
-    let size = u32::from_be_bytes([box_bytes[0], box_bytes[1], box_bytes[2], box_bytes[3]]);
+/// Returns the payload of a box (its bytes after the size/type header), or `None` if the box
+/// is truncated shorter than its own header.
+fn box_payload(box_bytes: &[u8]) -> Option<&[u8]> {
+    let size = u32::from_be_bytes(box_bytes.get(0..4)?.try_into().ok()?);
     if size == 1 {
-        &box_bytes[16..]
+        box_bytes.get(16..)
     } else {
-        &box_bytes[8..]
+        box_bytes.get(8..)
     }
 }
 
 /// Parses `moov/trak/mdia/mdhd`'s `timescale` field from an init segment.
 fn parse_first_mdhd_timescale(init_data: &[u8]) -> Option<u32> {
-    let moov = box_payload(find_box(init_data, b"moov")?);
-    let trak = box_payload(find_box(moov, b"trak")?);
-    let mdia = box_payload(find_box(trak, b"mdia")?);
-    let mdhd = box_payload(find_box(mdia, b"mdhd")?);
+    let moov = box_payload(find_box(init_data, b"moov")?)?;
+    let trak = box_payload(find_box(moov, b"trak")?)?;
+    let mdia = box_payload(find_box(trak, b"mdia")?)?;
+    let mdhd = box_payload(find_box(mdia, b"mdhd")?)?;
 
     let version = *mdhd.first()?;
     let fields = mdhd.get(4..)?; // skip FullBox version(1)+flags(3)
@@ -533,11 +534,11 @@ fn parse_first_mdhd_timescale(init_data: &[u8]) -> Option<u32> {
 /// back to `tfhd`'s `default_sample_duration * sample_count` when `trun`
 /// doesn't carry per-sample durations.
 fn parse_first_moof_duration_ticks(segment_data: &[u8]) -> Option<u32> {
-    let moof = box_payload(find_box(segment_data, b"moof")?);
-    let traf = box_payload(find_box(moof, b"traf")?);
+    let moof = box_payload(find_box(segment_data, b"moof")?)?;
+    let traf = box_payload(find_box(moof, b"traf")?)?;
 
-    let tfhd = box_payload(find_box(traf, b"tfhd")?);
-    let tfhd_flags = u32::from_be_bytes([0, tfhd[1], tfhd[2], tfhd[3]]);
+    let tfhd = box_payload(find_box(traf, b"tfhd")?)?;
+    let tfhd_flags = u32::from_be_bytes([0, *tfhd.get(1)?, *tfhd.get(2)?, *tfhd.get(3)?]);
     let mut pos = 4 + 4; // FullBox header + track_ID
     if tfhd_flags & 0x000001 != 0 {
         pos += 8; // base_data_offset
@@ -551,8 +552,8 @@ fn parse_first_moof_duration_ticks(segment_data: &[u8]) -> Option<u32> {
         None
     };
 
-    let trun = box_payload(find_box(traf, b"trun")?);
-    let trun_flags = u32::from_be_bytes([0, trun[1], trun[2], trun[3]]);
+    let trun = box_payload(find_box(traf, b"trun")?)?;
+    let trun_flags = u32::from_be_bytes([0, *trun.get(1)?, *trun.get(2)?, *trun.get(3)?]);
     let sample_count = u32::from_be_bytes(trun.get(4..8)?.try_into().ok()?);
     let mut tpos = 8;
     if trun_flags & 0x000001 != 0 {
@@ -597,8 +598,8 @@ fn parse_first_moof_duration_ticks(segment_data: &[u8]) -> Option<u32> {
 /// stream's first segment, rather than assuming the packager starts at 1 (it commonly
 /// doesn't). Returns `None` if the segment has no `moof` box, or `mfhd` is missing/malformed.
 pub fn moof_sequence_number(segment_data: &[u8]) -> Option<u32> {
-    let moof = box_payload(find_box(segment_data, b"moof")?);
-    let mfhd = box_payload(find_box(moof, b"mfhd")?);
+    let moof = box_payload(find_box(segment_data, b"moof")?)?;
+    let mfhd = box_payload(find_box(moof, b"mfhd")?)?;
     Some(u32::from_be_bytes(mfhd.get(4..8)?.try_into().ok()?))
 }
 
@@ -709,6 +710,32 @@ mod tests {
         assert_eq!(parse_first_moof_duration_ticks(&plain_segment), None);
     }
 
+    /// Regression test: a `tfhd`/`trun` box truncated shorter than its own fixed fields must
+    /// return `None`, not panic, since these parsers run on attacker-controlled segment bytes.
+    #[test]
+    fn parsers_return_none_for_truncated_boxes_instead_of_panicking() {
+        // `tfhd` with no payload at all (not even the FullBox version/flags bytes).
+        let empty_tfhd = make_box(b"tfhd", &[]);
+        let traf = make_box(b"traf", &empty_tfhd);
+        let moof = make_box(b"moof", &traf);
+        assert_eq!(parse_first_moof_duration_ticks(&moof), None);
+
+        // `tfhd` present and well-formed, but `trun` truncated to nothing.
+        let tfhd_payload = 1u32.to_be_bytes();
+        let tfhd = make_fullbox(b"tfhd", 0, 0, &tfhd_payload);
+        let empty_trun = make_box(b"trun", &[]);
+        let traf = make_box(b"traf", &[tfhd, empty_trun].concat());
+        let moof = make_box(b"moof", &traf);
+        assert_eq!(parse_first_moof_duration_ticks(&moof), None);
+
+        // A zero-length box (just an 8-byte header, no payload at all) as the outermost box.
+        let empty_box = make_box(b"moof", &[]);
+        assert_eq!(box_payload(&empty_box), Some(&[][..]));
+
+        // A box shorter than its own 8-byte header.
+        assert_eq!(box_payload(&[0, 0, 0, 4]), None);
+    }
+
     #[test]
     fn signed_segments_have_real_emsg_timing_fields() {
         let signer = make_test_signer();
@@ -788,7 +815,7 @@ mod tests {
     /// segment's `emsg` box, to assert on what [`build_emsg_box`] actually wrote.
     fn read_emsg_timing_fields(signed_segment: &[u8]) -> (u32, u32, u32) {
         let emsg = find_box(signed_segment, b"emsg").unwrap();
-        let body = box_payload(emsg);
+        let body = box_payload(emsg).unwrap();
         let fields = &body[4..]; // skip FullBox version+flags
         let mut pos = fields.iter().position(|&b| b == 0).unwrap() + 1; // scheme_id_uri\0
         pos += fields[pos..].iter().position(|&b| b == 0).unwrap() + 1; // value\0
