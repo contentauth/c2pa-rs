@@ -231,6 +231,17 @@ enum InitCmd {
     },
 }
 
+/// Live video signing method (C2PA section 19): per-segment C2PA Manifest Box (§19.3) or
+/// Verifiable Segment Info (§19.4).
+#[cfg(feature = "unstable_live_video")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum LiveVideoSignMethod {
+    /// §19.3: each segment carries its own C2PA Manifest Box.
+    Manifest,
+    /// §19.4: each segment carries a COSE_Sign1 emsg box; the init segment is required.
+    Vsi,
+}
+
 // We only construct one per invocation, not worth shrinking this.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Subcommand)]
@@ -365,7 +376,7 @@ enum Commands {
         /// - manifest: each segment carries its own C2PA Manifest Box.
         /// - vsi: each segment carries a COSE_Sign1 emsg box; the init segment is required.
         #[arg(long = "method", default_value = "manifest")]
-        method: String,
+        method: LiveVideoSignMethod,
 
         /// Path to an Ed25519 session key file (raw 32-byte seed).
         /// Required when using --method vsi. The same key must be used across all
@@ -1201,7 +1212,7 @@ fn main() -> Result<()> {
                 Err(err) => return Err(err.into()),
             };
 
-            if method == "vsi" {
+            if *method == LiveVideoSignMethod::Vsi {
                 let init_path = match init.as_deref() {
                     Some(p) => {
                         if p.is_absolute() {
