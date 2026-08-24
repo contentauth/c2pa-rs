@@ -141,12 +141,17 @@ fn ec2_to_der(map: &BTreeMap<i128, &CborValue>) -> Option<Vec<u8>> {
     let x = cbor_as_bytes(map.get(&EC2_X)?)?;
     let y = cbor_as_bytes(map.get(&EC2_Y)?)?;
 
-    let curve_oid = match crv {
-        CRV_P256 => P256_OID,
-        CRV_P384 => P384_OID,
-        CRV_P521 => P521_OID,
+    // RFC 9053 §7.1.1 requires x/y to be exactly the curve's field-element length; a CBOR
+    // encoder that strips leading zero bytes from the coordinate's big-endian encoding would
+    // otherwise produce a shorter-than-expected SEC1 point here.
+    let (curve_oid, field_len) = match crv {
+        CRV_P256 => (P256_OID, 32),
+        CRV_P384 => (P384_OID, 48),
+        CRV_P521 => (P521_OID, 66),
         _ => return None,
     };
+    let x = left_pad(&x, field_len)?;
+    let y = left_pad(&y, field_len)?;
 
     // Build SEC1 uncompressed point: 0x04 || x || y
     let mut point = Vec::with_capacity(1 + x.len() + y.len());
@@ -185,6 +190,17 @@ fn okp_to_der(map: &BTreeMap<i128, &CborValue>) -> Option<Vec<u8>> {
     let spki = der_sequence(&[&algorithm_seq, &bit_string]);
 
     Some(spki)
+}
+
+/// Left-pads `bytes` with zeros to exactly `len` bytes, or returns `None` if `bytes` is already
+/// longer than `len` (an oversized, malformed coordinate).
+fn left_pad(bytes: &[u8], len: usize) -> Option<Vec<u8>> {
+    if bytes.len() > len {
+        return None;
+    }
+    let mut padded = vec![0u8; len - bytes.len()];
+    padded.extend_from_slice(bytes);
+    Some(padded)
 }
 
 // ── DER encoding helpers ────────────────────────────────────────────────────
@@ -338,6 +354,36 @@ mod tests {
         assert!(der
             .windows(expected_point.len())
             .any(|w| w == expected_point.as_slice()));
+    }
+
+    /// Regression test: per RFC 9053 §7.1.1, EC2 x/y must be exactly the curve's field-element
+    /// length. An encoder that strips a coordinate's leading zero byte (a common minimal-length
+    /// big-integer encoding) must still produce a correctly-sized, left-zero-padded SEC1 point.
+    #[test]
+    fn ec2_p256_to_der_pads_short_coordinates() {
+        let short_x = [0xaa; 31]; // one byte short of P-256's 32-byte field length
+        let y = [0xbb; 32];
+        let key = make_ec2_cose_key(CRV_P256 as i64, &short_x, &y, b"test-kid");
+
+        let der = cose_key_to_der(&key).unwrap();
+
+        let mut expected_point = vec![0x04, 0x00]; // leading zero pad byte for x
+        expected_point.extend_from_slice(&short_x);
+        expected_point.extend_from_slice(&y);
+        assert!(
+            der.windows(expected_point.len())
+                .any(|w| w == expected_point.as_slice()),
+            "expected a zero-padded 32-byte x coordinate in the SEC1 point"
+        );
+    }
+
+    #[test]
+    fn ec2_to_der_rejects_oversized_coordinate() {
+        let oversized_x = [0xaa; 33]; // one byte over P-256's 32-byte field length
+        let y = [0xbb; 32];
+        let key = make_ec2_cose_key(CRV_P256 as i64, &oversized_x, &y, b"test-kid");
+
+        assert!(cose_key_to_der(&key).is_none());
     }
 
     #[test]
