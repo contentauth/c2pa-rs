@@ -1170,6 +1170,14 @@ pub mod validation_codes {
     /// not increase or `streamId` does not match the previous segment).
     ///
     /// See [Live Video - C2PA Technical Specification section 19.7.2](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_live_video_validation_process).
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This item is available only with the `unstable_live_video` feature
+    /// enabled. It is exempt from this crate's usual semantic-versioning stability guarantees
+    /// and may change in a backward-incompatible way, or be removed entirely, in any release.
+    ///
+    /// </div>
     #[cfg(feature = "unstable_live_video")]
     pub const LIVEVIDEO_ASSERTION_INVALID: &str = "livevideo.assertion.invalid";
 
@@ -1177,6 +1185,14 @@ pub mod validation_codes {
     /// companion fields (e.g., `previousManifestId`) are missing or incorrect.
     ///
     /// See [Live Video - C2PA Technical Specification section 19.7.2](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_live_video_validation_process).
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This item is available only with the `unstable_live_video` feature
+    /// enabled. It is exempt from this crate's usual semantic-versioning stability guarantees
+    /// and may change in a backward-incompatible way, or be removed entirely, in any release.
+    ///
+    /// </div>
     #[cfg(feature = "unstable_live_video")]
     pub const LIVEVIDEO_CONTINUITY_METHOD_INVALID: &str = "livevideo.continuityMethod.invalid";
 
@@ -1185,6 +1201,14 @@ pub mod validation_codes {
     /// match the previous segment's manifest identifier).
     ///
     /// See [Live Video - C2PA Technical Specification section 19.7](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_live_video_validation_process).
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This item is available only with the `unstable_live_video` feature
+    /// enabled. It is exempt from this crate's usual semantic-versioning stability guarantees
+    /// and may change in a backward-incompatible way, or be removed entirely, in any release.
+    ///
+    /// </div>
     #[cfg(feature = "unstable_live_video")]
     pub const LIVEVIDEO_SEGMENT_INVALID: &str = "livevideo.segment.invalid";
 
@@ -1192,6 +1216,14 @@ pub mod validation_codes {
     /// standard C2PA validation.
     ///
     /// See [Live Video - C2PA Technical Specification section 19.7.1](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_live_video_validation_process).
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This item is available only with the `unstable_live_video` feature
+    /// enabled. It is exempt from this crate's usual semantic-versioning stability guarantees
+    /// and may change in a backward-incompatible way, or be removed entirely, in any release.
+    ///
+    /// </div>
     #[cfg(feature = "unstable_live_video")]
     pub const LIVEVIDEO_MANIFEST_INVALID: &str = "livevideo.manifest.invalid";
 
@@ -1199,6 +1231,14 @@ pub mod validation_codes {
     /// for live video initialization segments.
     ///
     /// See [Live Video - C2PA Technical Specification section 19.7.1](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_live_video_validation_process).
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This item is available only with the `unstable_live_video` feature
+    /// enabled. It is exempt from this crate's usual semantic-versioning stability guarantees
+    /// and may change in a backward-incompatible way, or be removed entirely, in any release.
+    ///
+    /// </div>
     #[cfg(feature = "unstable_live_video")]
     pub const LIVEVIDEO_INIT_INVALID: &str = "livevideo.init.invalid";
 
@@ -1206,6 +1246,14 @@ pub mod validation_codes {
     /// `signerBinding` verification failed or required fields are absent).
     ///
     /// See [Session Keys - C2PA Technical Specification section 18.25](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_session_keys).
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This item is available only with the `unstable_live_video` feature
+    /// enabled. It is exempt from this crate's usual semantic-versioning stability guarantees
+    /// and may change in a backward-incompatible way, or be removed entirely, in any release.
+    ///
+    /// </div>
     #[cfg(feature = "unstable_live_video")]
     pub const LIVEVIDEO_SESSIONKEY_INVALID: &str = "livevideo.sessionkey.invalid";
 
