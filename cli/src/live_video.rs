@@ -347,9 +347,10 @@ fn validate_segment_manifest_box(
     // `tracker` (the default StatusTracker behavior continues past validation failures rather
     // than raising them as errors), so a successful `Result` alone does not mean the segment
     // is valid — check whether a new failure was logged too.
-    let failures_before = collect_live_video_failures(tracker).len();
-    let result = live_validator.validate_media_segment(&segment_data, &manifest_id, &assertion, tracker);
-    let has_new_failure = collect_live_video_failures(tracker).len() > failures_before;
+    let logged_items_before = tracker.logged_items().len();
+    let result =
+        live_validator.validate_media_segment(&segment_data, &manifest_id, &assertion, tracker);
+    let has_new_failure = has_new_live_video_failure(tracker, logged_items_before);
 
     match result {
         Ok(_) if !has_new_failure => {
@@ -388,9 +389,9 @@ fn validate_segment_vsi(
     // livevideo.* failure to `tracker` (the default StatusTracker behavior continues past
     // validation failures rather than raising them as errors), so a successful `Result` alone
     // does not mean the segment is valid — check whether a new failure was logged too.
-    let failures_before = collect_live_video_failures(tracker).len();
+    let logged_items_before = tracker.logged_items().len();
     let result = live_validator.validate_verifiable_segment_info(&segment_data, tracker);
-    let has_new_failure = collect_live_video_failures(tracker).len() > failures_before;
+    let has_new_failure = has_new_live_video_failure(tracker, logged_items_before);
 
     match result {
         Ok(_) if !has_new_failure => {
@@ -409,6 +410,20 @@ fn validate_segment_vsi(
             false
         }
     }
+}
+
+/// Returns whether any `livevideo.*` failure was logged to `tracker` at or after index
+/// `logged_items_before`. Only scans the newly logged items rather than re-filtering the
+/// whole tracker, so calling this once per segment in a validation loop stays linear in the
+/// total number of segments instead of quadratic.
+fn has_new_live_video_failure(tracker: &StatusTracker, logged_items_before: usize) -> bool {
+    tracker.logged_items()[logged_items_before..]
+        .iter()
+        .any(|item| {
+            item.validation_status
+                .as_deref()
+                .is_some_and(|code| code.starts_with("livevideo"))
+        })
 }
 
 fn collect_live_video_failures(tracker: &StatusTracker) -> Vec<(String, String)> {
