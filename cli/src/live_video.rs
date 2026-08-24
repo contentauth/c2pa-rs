@@ -25,7 +25,7 @@ use c2pa::{
     live_video::LiveVideoValidator,
     status_tracker::StatusTracker,
     validation_results::validation_codes::{LIVEVIDEO_INIT_INVALID, LIVEVIDEO_SESSIONKEY_INVALID},
-    Context as C2paContext, Manifest, Reader,
+    Context as C2paContext, Manifest, Reader, ValidationState,
 };
 
 /// Which C2PA Live Video validation method the init segment advertises.
@@ -56,9 +56,29 @@ pub fn validate_live_video(
     let mut tracker = StatusTracker::default();
     let mut live_validator = LiveVideoValidator::new();
 
-    match live_validator.validate_init_segment(&init_data, &mut tracker) {
-        Ok(_) => println!("Init OK:   {init_path:?}"),
+    // `validate_init_segment` returns `Ok` even when it has logged a `LIVEVIDEO_INIT_INVALID`
+    // failure to `tracker` (the default StatusTracker behavior continues past validation
+    // failures rather than raising them as errors), so a successful `Result` alone does not mean
+    // the init segment is structurally valid — check whether a new failure was logged too.
+    let structural_failures_before = tracker.logged_items().len();
+    let init_struct_result = live_validator.validate_init_segment(&init_data, &mut tracker);
+    let init_structurally_invalid = tracker.logged_items()[structural_failures_before..]
+        .iter()
+        .any(|i| i.validation_status.as_deref() == Some(LIVEVIDEO_INIT_INVALID));
+
+    match &init_struct_result {
+        Ok(_) if !init_structurally_invalid => println!("Init OK:   {init_path:?}"),
+        Ok(_) => eprintln!(
+            "Init FAIL: {init_path:?}: initialization segment must not contain an mdat box"
+        ),
         Err(e) => eprintln!("Init FAIL: {init_path:?}: {e}"),
+    }
+
+    if init_structurally_invalid {
+        bail!(
+            "Live video validation failed: init segment is structurally invalid \
+             (contains an mdat box)"
+        );
     }
 
     let method = detect_validation_method(
@@ -78,7 +98,10 @@ pub fn validate_live_video(
         .iter()
         .any(|i| i.validation_status.as_deref() == Some(LIVEVIDEO_INIT_INVALID))
     {
-        bail!("Live video validation failed: init segment manifest is not valid/trusted");
+        bail!(
+            "Live video validation failed: init segment manifest is not cryptographically \
+             valid and trusted"
+        );
     }
 
     match &method {
@@ -142,31 +165,24 @@ pub fn validate_live_video(
     }
 }
 
-/// Returns a description of the first non-passed *trust/signature* validation status on
-/// `reader`, if any.
+/// Returns a diagnostic reason if `reader`'s manifest is not cryptographically valid and
+/// trusted, per §19.7.1's "not cryptographically valid and trusted" requirement.
 ///
-/// A `Reader` built via `with_stream` can return `Ok` even when the manifest's signature is
-/// invalid or its certificate is untrusted — the SDK logs those as validation statuses rather
-/// than hard errors, so a successful `Result` alone does not mean the manifest is trustworthy.
-///
-/// Only codes in the `signingCredential.*`, `claimSignature.*`, and `timeStamp.*` namespaces are
-/// considered: these are what determine whether the manifest's signature is valid and its signer
-/// trusted (per §19.7.1's "not cryptographically valid and trusted" requirement). Other failed
-/// statuses (e.g. `assertion.action.malformed`) reflect a content/assertion authoring issue in an
-/// otherwise trustworthy manifest and must not block live video continuity validation.
-fn reader_trust_failure(reader: &Reader) -> Option<String> {
-    const TRUST_STATUS_PREFIXES: &[&str] =
-        &["signingCredential.", "claimSignature.", "timeStamp."];
+/// Uses [`Reader::validation_state`], the SDK's own authoritative computation: the manifest must
+/// have a validated signature inside its validity period, its signing certificate must trace to
+/// a trust anchor, and every validation status logged against it must have passed. Unlike a
+/// check limited to `signingCredential.*`/`claimSignature.*`/`timeStamp.*` codes, this also
+/// rejects a manifest with a content/assertion failure such as `assertion.bmffHash.mismatch`,
+/// since that indicates the segment's actual bytes don't match what was signed and must not be
+/// treated as trustworthy for live video continuity.
+fn reader_not_trusted_reason(reader: &Reader) -> Option<String> {
+    if reader.validation_state() == ValidationState::Trusted {
+        return None;
+    }
 
-    reader
-        .validation_status()?
-        .iter()
-        .find(|status| {
-            !status.passed()
-                && TRUST_STATUS_PREFIXES
-                    .iter()
-                    .any(|prefix| status.code().starts_with(prefix))
-        })
+    let reason = reader
+        .validation_status()
+        .and_then(|statuses| statuses.iter().find(|status| !status.passed()))
         .map(|status| {
             format!(
                 "{}{}",
@@ -177,6 +193,9 @@ fn reader_trust_failure(reader: &Reader) -> Option<String> {
                     .unwrap_or_default()
             )
         })
+        .unwrap_or_else(|| "not cryptographically valid and trusted".to_string());
+
+    Some(reason)
 }
 
 /// Detects the validation method from the init segment manifest.
@@ -198,12 +217,12 @@ fn detect_validation_method(
             Err(_) => return ValidationMethod::ManifestBox,
         };
 
-    if let Some(reason) = reader_trust_failure(&reader) {
+    if let Some(reason) = reader_not_trusted_reason(&reader) {
         let _ = live_validator.fail_init_manifest(
-            format!("init segment manifest is not valid/trusted: {reason}"),
+            format!("init segment manifest is not cryptographically valid and trusted: {reason}"),
             tracker,
         );
-        eprintln!("Init segment manifest is not valid/trusted: {reason}");
+        eprintln!("Init segment manifest is not cryptographically valid and trusted: {reason}");
         return ValidationMethod::ManifestBox;
     }
 
@@ -280,12 +299,15 @@ fn validate_segment_manifest_box(
         }
     };
 
-    if let Some(reason) = reader_trust_failure(&reader) {
+    if let Some(reason) = reader_not_trusted_reason(&reader) {
         let _ = live_validator.fail_segment_manifest(
-            format!("segment manifest is not valid/trusted: {reason}"),
+            format!("segment manifest is not cryptographically valid and trusted: {reason}"),
             tracker,
         );
-        eprintln!("Segment FAIL [{segment_path:?}]: manifest is not valid/trusted: {reason}");
+        eprintln!(
+            "Segment FAIL [{segment_path:?}]: manifest is not cryptographically valid and \
+             trusted: {reason}"
+        );
         return false;
     }
 
@@ -495,7 +517,10 @@ mod tests {
             validate_live_video(&Arc::new(C2paContext::new()), &init, Path::new("seg_*.m4s"));
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not valid/trusted"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("structurally invalid"));
     }
 
     #[test]
