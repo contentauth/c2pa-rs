@@ -195,7 +195,7 @@ fn der_length(len: usize) -> Vec<u8> {
     } else if len < 256 {
         vec![0x81, len as u8]
     } else {
-        vec![0x82, (len >> 8) as u8, (len & 0xFF) as u8]
+        vec![0x82, (len >> 8) as u8, (len & 0xff) as u8]
     }
 }
 
@@ -314,8 +314,8 @@ mod tests {
 
     #[test]
     fn ec2_p256_to_der_produces_valid_spki() {
-        let x = [0xAA; 32];
-        let y = [0xBB; 32];
+        let x = [0xaa; 32];
+        let y = [0xbb; 32];
         let key = make_ec2_cose_key(CRV_P256 as i64, &x, &y, b"test-kid");
 
         let der = cose_key_to_der(&key).unwrap();
@@ -342,7 +342,7 @@ mod tests {
 
     #[test]
     fn ed25519_to_der_produces_valid_spki() {
-        let x = [0xCC; 32];
+        let x = [0xcc; 32];
         let mut map = BTreeMap::new();
         map.insert(cbor_int(KTY as i64), cbor_int(KTY_OKP as i64));
         map.insert(cbor_int(OKP_CRV as i64), cbor_int(CRV_ED25519 as i64));

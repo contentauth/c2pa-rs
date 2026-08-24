@@ -13,17 +13,16 @@
 
 use std::io::{Cursor, Read, Seek, SeekFrom};
 
+use super::{fail_validation, LiveVideoValidator, SegmentState, C2PA_UUID, UUID_BOX_TYPE};
 use crate::{
     assertions::{ContinuityMethod, LiveVideoSegment},
     error::{Error, Result},
+    live_video::verifiable_segment_info::extract_vsi_payload_from_segment,
     status_tracker::StatusTracker,
     validation_results::validation_codes::{
         LIVEVIDEO_ASSERTION_INVALID, LIVEVIDEO_CONTINUITY_METHOD_INVALID, LIVEVIDEO_SEGMENT_INVALID,
     },
 };
-
-use super::{fail_validation, LiveVideoValidator, SegmentState, C2PA_UUID, UUID_BOX_TYPE};
-use crate::live_video::verifiable_segment_info::extract_vsi_payload_from_segment;
 
 impl LiveVideoValidator {
     pub(super) fn validate_segment_has_c2pa_or_emsg(

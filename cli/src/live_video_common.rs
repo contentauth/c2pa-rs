@@ -141,8 +141,7 @@ mod tests {
             write_temp_file(&dir, &format!("wdr-video=762993-{t}.dash"));
         }
 
-        let segments =
-            collect_segments(dir.path(), Path::new("wdr-video=762993-*.dash")).unwrap();
+        let segments = collect_segments(dir.path(), Path::new("wdr-video=762993-*.dash")).unwrap();
 
         let names: Vec<_> = segments
             .iter()

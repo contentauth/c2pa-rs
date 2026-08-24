@@ -12,16 +12,6 @@
 // each license.
 
 use c2pa_raw_crypto::validator_for_signing_alg;
-
-use crate::{
-    assertions::SessionKey,
-    error::{Error, Result},
-    status_tracker::StatusTracker,
-    validation_results::validation_codes::{
-        LIVEVIDEO_ASSERTION_INVALID, LIVEVIDEO_SEGMENT_INVALID, LIVEVIDEO_SESSIONKEY_INVALID,
-    },
-};
-
 use coset::TaggedCborSerializable;
 
 use super::{
@@ -29,6 +19,14 @@ use super::{
     fail_validation,
     verifiable_segment_info::{extract_vsi_payload_from_segment, parse_vsi, ParsedVsi},
     LiveVideoValidator,
+};
+use crate::{
+    assertions::SessionKey,
+    error::{Error, Result},
+    status_tracker::StatusTracker,
+    validation_results::validation_codes::{
+        LIVEVIDEO_ASSERTION_INVALID, LIVEVIDEO_SEGMENT_INVALID, LIVEVIDEO_SESSIONKEY_INVALID,
+    },
 };
 
 impl LiveVideoValidator {
@@ -235,7 +233,8 @@ impl LiveVideoValidator {
                 && excl.data.as_deref().is_some_and(|data| {
                     data.iter().any(|d| {
                         d.offset == super::verifiable_segment_info::VSI_URI_OFFSET_IN_EMSG
-                            && d.value == super::verifiable_segment_info::VSI_SCHEME_ID_URI.as_bytes()
+                            && d.value
+                                == super::verifiable_segment_info::VSI_SCHEME_ID_URI.as_bytes()
                     })
                 })
         });
@@ -303,11 +302,7 @@ impl LiveVideoValidator {
                 "session key expired: createdAt={}, validityPeriod={}s, {}={now}",
                 key.created_at.0,
                 key.validity_period,
-                if claimed_time.is_some() {
-                    "iat"
-                } else {
-                    "now"
-                },
+                if claimed_time.is_some() { "iat" } else { "now" },
             ));
         }
 
@@ -430,14 +425,17 @@ fn reject_signer_binding(msg: impl Into<String>, tracker: &mut StatusTracker) ->
 /// Extracts the `iat` ("claimed time of signing", §19.4.1/RFC 8392) protected header field, if
 /// present, as a Unix timestamp in seconds.
 fn extract_iat(sign1: &coset::CoseSign1) -> Option<i64> {
-    sign1.protected.header.rest.iter().find_map(|(label, value)| {
-        match label {
+    sign1
+        .protected
+        .header
+        .rest
+        .iter()
+        .find_map(|(label, value)| match label {
             coset::Label::Text(s) if s == "iat" => {
                 value.as_integer().and_then(|i| i64::try_from(i).ok())
             }
             _ => None,
-        }
-    })
+        })
 }
 
 /// Extracts raw COSE_Sign1_Tagged bytes from a `signerBinding` CBOR value.
@@ -1062,7 +1060,7 @@ mod tests {
     fn signer_binding_none_cert_fails_closed() {
         let session_key = generate_ed25519_session_key();
         let cose_key = build_ed25519_cose_key_value(&session_key.verifying_key(), b"k");
-        let keys = session_key_with_ed25519_binding(cose_key, vec![0xDE, 0xAD]);
+        let keys = session_key_with_ed25519_binding(cose_key, vec![0xde, 0xad]);
 
         let mut validator = LiveVideoValidator::new();
         let mut tracker = aggregate_tracker();
@@ -1145,7 +1143,7 @@ mod tests {
             "binding bytes should not be empty"
         );
         assert_eq!(
-            binding_bytes[0], 0xD2,
+            binding_bytes[0], 0xd2,
             "signerBinding must start with CBOR tag 18 (0xD2), got 0x{:02X}",
             binding_bytes[0]
         );

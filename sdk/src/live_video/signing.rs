@@ -269,9 +269,8 @@ mod tests {
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
 
         let signer = test_signer();
-        let segment_data = include_bytes!(
-            "../../tests/fixtures/bunny/bunny_791182bps/BigBuckBunny_2s5.m4s"
-        );
+        let segment_data =
+            include_bytes!("../../tests/fixtures/bunny/bunny_791182bps/BigBuckBunny_2s5.m4s");
 
         let mut live_signer = LiveVideoSigner::from_manifest_json(test_manifest_json()).unwrap();
         let signed = live_signer
@@ -285,11 +284,10 @@ mod tests {
         );
 
         // Cross-check against the label actually embedded in the signed segment's manifest.
-        let reader = Reader::from_context(
-            crate::live_video::context_from_thread_local_settings().unwrap(),
-        )
-        .with_stream("video/mp4", Cursor::new(&signed))
-        .unwrap();
+        let reader =
+            Reader::from_context(crate::live_video::context_from_thread_local_settings().unwrap())
+                .with_stream("video/mp4", Cursor::new(&signed))
+                .unwrap();
         let manifest = reader.active_manifest().unwrap();
         assert_eq!(manifest.label().unwrap(), manifest_id);
     }

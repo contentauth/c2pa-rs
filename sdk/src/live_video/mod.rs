@@ -44,6 +44,7 @@ pub use ed25519_dalek::SigningKey as Ed25519SessionKey;
 pub use signing::LiveVideoSigner;
 pub use vsi_signing::{moof_sequence_number, LiveVideoVsiSigner};
 
+use self::cose_key::kid_from_cose_key;
 use crate::{
     assertions::{LiveVideoSegment, SessionKey, SessionKeys},
     error::{Error, Result},
@@ -53,8 +54,6 @@ use crate::{
         LIVEVIDEO_INIT_INVALID, LIVEVIDEO_MANIFEST_INVALID, LIVEVIDEO_SESSIONKEY_INVALID,
     },
 };
-
-use self::cose_key::kid_from_cose_key;
 
 /// Builds a [`crate::Context`] from thread-local settings, for callers ([`LiveVideoSigner`],
 /// [`LiveVideoVsiSigner`]) that don't yet take an explicit `Context`.
