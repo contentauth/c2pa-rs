@@ -272,6 +272,7 @@ pub struct AssertionDefinition {
     /// Pre-encoded CBOR bytes that bypass the `Value` intermediate representation.
     /// When set, these bytes are used directly instead of serializing `data` via `to_vec`.
     /// This preserves CBOR features that `c2pa_cbor::Value` cannot represent (e.g. tags).
+    #[cfg(feature = "unstable_live_video")]
     #[serde(skip)]
     pub(crate) cbor_override: Option<Vec<u8>>,
 }
@@ -313,6 +314,7 @@ impl<'de> Deserialize<'de> for AssertionDefinition {
             data,
             kind: helper.kind,
             created: helper.created,
+            #[cfg(feature = "unstable_live_video")]
             cbor_override: None,
         })
     }
@@ -882,6 +884,7 @@ impl Builder {
             data: assertion_data,
             kind,
             created,
+            #[cfg(feature = "unstable_live_video")]
             cbor_override: None,
         });
         Ok(self)
@@ -1937,10 +1940,13 @@ impl Builder {
                         manifest_assertion.created(),
                     ),
                     AssertionData::Cbor(value) => {
+                        #[cfg(feature = "unstable_live_video")]
                         let cbor_bytes = match &manifest_assertion.cbor_override {
                             Some(bytes) => bytes.clone(),
                             None => c2pa_cbor::to_vec(value)?,
                         };
+                        #[cfg(not(feature = "unstable_live_video"))]
+                        let cbor_bytes = c2pa_cbor::to_vec(value)?;
                         add_assertion(
                             &mut claim,
                             &UserCbor::new(manifest_assertion.label(), cbor_bytes),
