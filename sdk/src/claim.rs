@@ -37,7 +37,7 @@ use crate::{
             DATABOX_STORE, METADATA_LABEL_REGEX,
         },
         Action, Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, DataBox, DataHash,
-        Ingredient, Metadata, Relationship, V2_DEPRECATED_ACTIONS,
+        DataMap, Ingredient, Metadata, Relationship, V2_DEPRECATED_ACTIONS,
     },
     asset_io::CAIRead,
     cbor_types::map_cbor_to_type,
@@ -2854,10 +2854,42 @@ impl Claim {
                     .label_raw()
                     .starts_with(BmffHash::LABEL)
                 {
+                    let cp2a_id: [u8; 16] = [
+                        216, 254, 195, 214, 27, 14, 72, 60, 146, 151, 88, 40, 135, 126, 196, 129,
+                    ];
+                    let c2pa_dm = DataMap {
+                        offset: 8,
+                        value: cp2a_id.to_vec(), // C2PA identifier
+                    };
+
                     // handle BMFF data hashes
                     let dh = BmffHash::from_assertion(hash_binding_assertion.assertion())?;
 
                     let name = dh.name().map_or("unnamed".to_string(), default_str);
+
+                    // are there addtional exclusions that are not manifests or ftyp
+                    if dh.exclusions().iter().any(|e| {
+                        if e.xpath == "/uuid" {
+                            match &e.data {
+                                Some(dm_vec) if dm_vec.len() == 1 => !(dm_vec[0] == c2pa_dm),
+                                _ => true,
+                            }
+                        } else if e.xpath == "/ftyp" || e.xpath == "/mfra" {
+                            false
+                        } else {
+                            true // not ftyp, mfra or uuid
+                        }
+                    }) {
+                        log_item!(
+                            claim.assertion_uri(&hash_binding_assertion.label()),
+                            "extra BMFF hash exclusion(s) found",
+                            "verify_internal"
+                        )
+                        .validation_status(
+                            validation_status::ASSERTION_BMFFHASH_ADDITIONAL_EXCLUSIONS,
+                        )
+                        .informational(validation_log);
+                    }
 
                     let mut step = 0u32;
                     let mut cb = |_s: u32, t: u32| {
@@ -3148,7 +3180,11 @@ impl Claim {
             .iter()
             .filter(|a| {
                 if let Ok(ingredient) = Ingredient::from_assertion(a.assertion()) {
-                    return ingredient.relationship == Relationship::ParentOf;
+                    let version = ingredient.version().unwrap_or(1);
+                    let has_valid_parent = version <= 2 && ingredient.c2pa_manifest().is_some()
+                        || ingredient.c2pa_manifest().is_some() && ingredient.signature().is_some();
+
+                    return has_valid_parent && ingredient.relationship == Relationship::ParentOf;
                 }
                 false
             })
