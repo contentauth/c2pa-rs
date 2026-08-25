@@ -11863,11 +11863,8 @@ mod tests {
                 ]}}]
             }));
 
-            b.filter_actions_and_ingredients(
-                |_| true,
-                |ing| ing.label() == Some("kept"),
-            )
-            .unwrap();
+            b.filter_actions_and_ingredients(|_| true, |ing| ing.label() == Some("kept"))
+                .unwrap();
 
             assert_eq!(b.definition.ingredients.len(), 1);
             assert_eq!(b.definition.ingredients[0].label(), Some("kept"));
