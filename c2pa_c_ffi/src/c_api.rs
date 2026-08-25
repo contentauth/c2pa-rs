@@ -2355,9 +2355,7 @@ pub unsafe extern "C" fn c2pa_builder_set_data_hash_exclusions(
 
     let flat = std::slice::from_raw_parts(exclusions_ptr, exclusion_count * 2);
     let exclusions: Vec<c2pa::HashRange> = flat
-        .as_chunks::<2>()
-        .0
-        .iter()
+        .chunks_exact(2)
         .map(|pair| c2pa::HashRange::new(pair[0], pair[1]))
         .collect();
 

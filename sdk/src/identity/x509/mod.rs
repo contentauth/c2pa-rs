@@ -17,7 +17,7 @@
 //!
 //! [`AsyncCredentialHolder`]: crate::identity::builder::AsyncCredentialHolder
 //! [`SignatureVerifier`]: crate::identity::SignatureVerifier
-//! [§8.2, X.509 certificates and COSE signatures]: https://cawg.io/identity/1.3/#_x_509_certificates_and_cose_signatures
+//! [§8.2, X.509 certificates and COSE signatures]: https://cawg.io/identity/1.1-draft/#_x_509_certificates_and_cose_signatures
 
 mod async_x509_credential_holder;
 pub use async_x509_credential_holder::AsyncX509CredentialHolder;
@@ -27,8 +27,5 @@ pub use x509_credential_holder::X509CredentialHolder;
 
 mod x509_signature_verifier;
 pub use x509_signature_verifier::{X509SignatureInfo, X509SignatureReport, X509SignatureVerifier};
-
-mod x509_status_remap;
-pub(crate) use x509_status_remap::X509StatusRemapGuard;
 
 pub(crate) const CAWG_X509_SIG_TYPE: &str = "cawg.x509.cose";

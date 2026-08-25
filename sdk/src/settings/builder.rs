@@ -604,15 +604,6 @@ pub struct BuilderSettings {
     ///
     /// [`TimeStamp`]: crate::assertions::TimeStamp
     pub auto_timestamp_assertion: TimeStampSettings,
-    /// Whether `/free` and `/skip` boxes are excluded from the BMFF/MP4 hard-binding hash.
-    ///
-    /// `/free` and `/skip` are reserved/padding space that apps commonly rewrite after
-    /// signing (e.g. to reclaim or repurpose it), so the C2PA spec permits excluding
-    /// them. Set to `false` to fold their content into the hash instead, so any later
-    /// edit to either box invalidates the hard binding like any other content change.
-    ///
-    /// The default value is `true`.
-    pub bmff_hash_exclude_free_and_skip_boxes: bool,
 }
 
 impl Default for BuilderSettings {
@@ -629,7 +620,6 @@ impl Default for BuilderSettings {
             prefer_box_hash: false,
             generate_c2pa_archive: Some(true),
             auto_timestamp_assertion: TimeStampSettings::default(),
-            bmff_hash_exclude_free_and_skip_boxes: true,
         }
     }
 }
