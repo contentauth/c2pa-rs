@@ -492,11 +492,20 @@ pub(crate) fn fetch_and_check_ocsp_response(
     // Check the OCSP response, but only if it is well-formed.
     // Revocation errors are reported in the validation log.
     // `certs` is the signing certificate chain; bind the OCSP response to it.
+    //
+    // Status codes go to a scratch log until the responder has been accepted, then
+    // are appended below. RFC 6960 section 3.2 requires all of requirements 1-4
+    // before a response may be accepted, and C2PA 2.4 section 15.9.2 conditions
+    // `signingCredential.ocsp.notRevoked` on that acceptance -- but
+    // `from_der_checked` logs the success as soon as requirements 1 and 2 hold. With
+    // the caller's log passed in directly, an early return below discarded the
+    // response while leaving that success code behind.
+    let mut current_validation_log = StatusTracker::default();
     let ocsp_data = match OcspResponse::from_der_checked(
         &ocsp_response_der,
         &certs,
         signing_time,
-        validation_log,
+        &mut current_validation_log,
     ) {
         Ok(data) => data,
         Err(_) => return Ok(OcspResponse::default()),
@@ -518,12 +527,32 @@ pub(crate) fn fetch_and_check_ocsp_response(
             return Ok(OcspResponse::default());
         }
 
-        // no need to check trust here, that is checked during validation
+        // validate the trust; complete the responder's path from the signer's
+        // x5chain if the response does not embed the responder's issuing CA.
+        //
+        // This is RFC 6960 section 3.2 requirement 4, "the signer is currently
+        // authorized to provide a response for the certificate in question". The
+        // EKU check above does not establish it: `check_certificate_profile`
+        // inspects a single certificate and builds no path, so a self-signed
+        // certificate carrying id-kp-OCSPSigning satisfies it.
+        let ocsp_cert_chain = extend_ocsp_cert_chain(ocsp_certs, &certs);
+        if new_ctp
+            .check_certificate_trust(
+                &ocsp_cert_chain,
+                first_cert,
+                signing_time.map(|t| t.timestamp()),
+            )
+            .is_err()
+        {
+            return Ok(OcspResponse::default());
+        }
     } else {
         // OCSP response must be signed by and the cert chain provided
         return Ok(OcspResponse::default());
     }
 
+    // only append usable OCSP responses to validation_log
+    validation_log.append(&current_validation_log);
     Ok(ocsp_data)
 }
 
