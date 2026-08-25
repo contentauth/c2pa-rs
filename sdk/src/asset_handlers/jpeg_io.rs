@@ -29,7 +29,7 @@ use img_parts::{
 use serde_bytes::ByteBuf;
 
 use crate::{
-    assertions::{AllowedExclusion, BoxMap, ExclusionKind, C2PA_BOXHASH},
+    assertions::{AllowedExclusion, BoxMap, C2PA_BOXHASH},
     asset_io::{
         rename_or_move, AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
         ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
@@ -61,10 +61,17 @@ fn vec_compare(va: &[u8], vb: &[u8]) -> bool {
        .all(|(a,b)| a == b)
 }
 
+// Single source of truth for "does this APP1 payload start with the XMP
+// signature", so the box-hash exclusion classifier below and the unrelated
+// XMP-extraction path can't drift from each other.
+fn is_xmp_signature(bytes: &[u8]) -> bool {
+    bytes.starts_with(XMP_SIGNATURE.as_bytes())
+}
+
 // Return contents of APP1 segment if it is an XMP segment.
 fn extract_xmp(seg: &JpegSegment) -> Option<&str> {
     let (sig, rest) = seg.contents().split_at_checked(XMP_SIGNATURE_BUFFER_SIZE)?;
-    if sig.starts_with(XMP_SIGNATURE.as_bytes()) {
+    if is_xmp_signature(sig) {
         std::str::from_utf8(rest).ok()
     } else {
         None
@@ -727,9 +734,7 @@ fn get_seg_size(input_stream: &mut dyn CAIRead) -> Result<usize> {
 // the segment's payload (after the 4-byte marker+length header).
 fn app_segment_is_recognized_metadata(name: &str, prefix: &[u8]) -> bool {
     match name {
-        "APP1" => {
-            prefix.starts_with(EXIF_SIGNATURE) || prefix.starts_with(XMP_SIGNATURE.as_bytes())
-        }
+        "APP1" => prefix.starts_with(EXIF_SIGNATURE) || is_xmp_signature(prefix),
         "APP13" => prefix.starts_with(PHOTOSHOP_SIGNATURE),
         _ => false,
     }
@@ -741,22 +746,24 @@ fn app_segment_is_recognized_metadata(name: &str, prefix: &[u8]) -> bool {
 // excludable payload is `[4, range_len)`, box-relative, skipping the
 // 4-byte marker+length header.
 fn jpeg_metadata_allowed_exclusions(range_len: u64) -> Vec<AllowedExclusion> {
-    vec![AllowedExclusion {
-        start: 4,
-        length: range_len.saturating_sub(4),
-        kind: ExclusionKind::AssetMetadata,
-    }]
+    vec![AllowedExclusion::after_header(4, range_len)]
 }
 
 fn jpeg_c2pa_allowed_exclusions(range_len: u64) -> Vec<AllowedExclusion> {
-    vec![AllowedExclusion {
-        start: 0,
-        length: range_len,
-        kind: ExclusionKind::ManifestOrPadding,
-    }]
+    vec![AllowedExclusion::whole_box(range_len)]
 }
 
-fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
+/// Leading payload bytes of each APP1/APP13 segment, keyed by that box's
+/// `range_start`.
+type AppSegmentPrefixes = HashMap<u64, Vec<u8>>;
+
+/// Returns the parsed box maps alongside the leading bytes of each APP1/
+/// APP13 segment's payload (keyed by that box's `range_start`, since jfifdump
+/// hands us this payload up front but `range_len` - needed to bound how much
+/// of it matters - isn't known until [`get_box_map`]'s later pass). This lets
+/// that later pass classify APP1/APP13 content without re-seeking and
+/// re-reading bytes already in hand here.
+fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<(Vec<BoxMap>, AppSegmentPrefixes)> {
     let segment_names = HashMap::from([
         (0xe0u8, "APP0"),
         (0xe1u8, "APP1"),
@@ -809,6 +816,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
     ]);
 
     let mut box_maps = Vec::new();
+    let mut app_prefixes: HashMap<u64, Vec<u8>> = HashMap::new();
     let mut cai_en: Vec<u8> = Vec::new();
     let mut cai_seg_cnt: u32 = 0;
     let mut cai_index = 0;
@@ -927,11 +935,20 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
             }
             jfifdump::SegmentKind::App { nr, data } => {
                 let nr = nr | 0xe0;
-                let _data = data;
 
                 let name = segment_names
                     .get(&nr)
                     .ok_or(Error::InvalidAsset("Unknown segment marker".to_owned()))?;
+
+                // Only APP1/APP13 are ever classified as metadata (see
+                // `app_segment_is_recognized_metadata`), so only stash a
+                // prefix for those - capped at the longest signature we ever
+                // need to check, to avoid holding a large APPn payload (e.g.
+                // an ICC profile) in memory for the rest of this pass.
+                if nr == 0xe1 || nr == 0xed {
+                    let prefix_len = data.len().min(XMP_SIGNATURE_BUFFER_SIZE);
+                    app_prefixes.insert(seg.position as u64, data[..prefix_len].to_vec());
+                }
 
                 let bm = BoxMap {
                     names: vec![name.to_string()],
@@ -1109,12 +1126,12 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
         }
     }
 
-    Ok(box_maps)
+    Ok((box_maps, app_prefixes))
 }
 
 impl AssetBoxHash for JpegIO {
     fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
-        let mut box_maps = make_box_maps(input_stream)?;
+        let (mut box_maps, app_prefixes) = make_box_maps(input_stream)?;
 
         // If no C2PA APP11 segment exists in the source, synthesize a placeholder
         // entry at the standard insertion point (immediately after the 2-byte SOI
@@ -1192,15 +1209,10 @@ impl AssetBoxHash for JpegIO {
             match bm.names.first().map(String::as_str) {
                 Some("APP1") | Some("APP13") => {
                     let name = bm.names[0].clone();
-                    let prefix_len =
-                        bm.range_len
-                            .saturating_sub(4)
-                            .min(XMP_SIGNATURE_BUFFER_SIZE as u64) as usize;
-                    input_stream.seek(std::io::SeekFrom::Start(bm.range_start + 4))?;
-                    let mut prefix = vec![0u8; prefix_len];
-                    input_stream.read_exact(&mut prefix)?;
-                    if app_segment_is_recognized_metadata(&name, &prefix) {
-                        bm.allowed_exclusions = jpeg_metadata_allowed_exclusions(bm.range_len);
+                    if let Some(prefix) = app_prefixes.get(&bm.range_start) {
+                        if app_segment_is_recognized_metadata(&name, prefix) {
+                            bm.allowed_exclusions = jpeg_metadata_allowed_exclusions(bm.range_len);
+                        }
                     }
                 }
                 // COM is free-form text with no defined signature to check.
@@ -1300,7 +1312,10 @@ pub mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
-    use crate::utils::io_utils::{safe_vec, tempdirectory};
+    use crate::{
+        assertions::ExclusionKind,
+        utils::io_utils::{safe_vec, tempdirectory},
+    };
     #[test]
     fn test_extract_xmp() {
         let contents = Bytes::from_static(b"http://ns.adobe.com/xap/1.0/\0stuff");
