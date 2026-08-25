@@ -2568,7 +2568,9 @@ impl Builder {
                 self.bmff_hasher.alg = ph_alg.to_string();
 
                 let mut placeholder_bmff = BmffHash::new("jumbf manifest", ph_alg, None);
-                placeholder_bmff.set_default_exclusions();
+                // Baked into this assertion's exclusions now; later setting
+                // changes won't affect this placeholder or its signed hash.
+                placeholder_bmff.set_default_exclusions_with_options(self.context.settings());
                 placeholder_bmff.add_place_holder_hash()?;
                 let assertion_label = placeholder_bmff.to_assertion()?.label();
                 self.add_assertion(&assertion_label, &placeholder_bmff)?;
@@ -5831,6 +5833,106 @@ mod tests {
         let reader = Reader::default().with_stream("video/mp4", &mut output_stream)?;
         println!("{reader}");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        Ok(())
+    }
+
+    /// End-to-end sign + re-read for the `bmff_hash_exclude_free_and_skip_boxes`
+    /// setting, in both positions. `TEST_VIDEO_MP4` has a real, pre-existing
+    /// top-level `/free` box unrelated to the placeholder (which is inserted
+    /// right after `ftyp`), so tampering with that box's payload after signing
+    /// proves whether it was actually covered by the hash.
+    #[test]
+    fn test_bmff_hash_exclude_free_and_skip_boxes_setting() -> Result<()> {
+        use std::io::{Seek, SeekFrom, Write};
+
+        // Finds the byte offset of a top-level box's payload by walking
+        // 4-byte-size + 4-byte-type headers from the start of the stream.
+        fn find_top_level_box_payload_offset(data: &[u8], want_type: &[u8; 4]) -> Option<usize> {
+            let mut pos = 0;
+            while pos + 8 <= data.len() {
+                let size = u32::from_be_bytes(data[pos..pos + 4].try_into().unwrap()) as usize;
+                if &data[pos + 4..pos + 8] == want_type {
+                    return Some(pos + 8);
+                }
+                if size < 8 {
+                    break;
+                }
+                pos += size;
+            }
+            None
+        }
+
+        // Builds, embeds, hashes, signs, and patches the fixture MP4 under the
+        // given setting, returning the final asset bytes.
+        fn sign_with_setting(exclude_free_and_skip: bool) -> Result<Vec<u8>> {
+            let context = Context::new().with_settings(
+                serde_json::json!({
+                    "builder": { "bmff_hash_exclude_free_and_skip_boxes": exclude_free_and_skip }
+                })
+                .to_string(),
+            )?;
+            let mut builder =
+                Builder::from_context(context).with_definition(simple_manifest_json().as_str())?;
+
+            let composed_placeholder = builder.placeholder("video/mp4")?;
+
+            let bmff_hash: BmffHash = builder.find_assertion(BmffHash::LABEL)?;
+            assert_eq!(
+                bmff_hash.exclusions().iter().any(|e| e.xpath == "/free"),
+                exclude_free_and_skip
+            );
+
+            let mut input_stream = Cursor::new(TEST_VIDEO_MP4);
+            let mut output_stream = Cursor::new(Vec::new());
+            let offset = write_bmff_placeholder_stream(
+                &composed_placeholder,
+                &mut input_stream,
+                &mut output_stream,
+            )?;
+
+            output_stream.rewind()?;
+            builder.update_hash_from_stream("video/mp4", &mut output_stream)?;
+
+            let signed_manifest = builder.sign_embeddable("video/mp4")?;
+
+            output_stream.seek(SeekFrom::Start(offset as u64))?;
+            output_stream.write_all(&signed_manifest)?;
+
+            Ok(output_stream.into_inner())
+        }
+
+        fn is_trusted(data: &[u8]) -> bool {
+            let mut stream = Cursor::new(data.to_vec());
+            let reader = Reader::default()
+                .with_stream("video/mp4", &mut stream)
+                .unwrap();
+            reader.validation_state() == ValidationState::Trusted
+        }
+
+        for exclude_free_and_skip in [true, false] {
+            let mut signed = sign_with_setting(exclude_free_and_skip)?;
+            assert!(
+                is_trusted(&signed),
+                "clean asset (exclude_free_and_skip={exclude_free_and_skip}) must verify as trusted"
+            );
+
+            let free_payload_offset = find_top_level_box_payload_offset(&signed, b"free")
+                .expect("fixture must contain a top-level /free box");
+            signed[free_payload_offset + 100] ^= 0xff;
+
+            if exclude_free_and_skip {
+                assert!(
+                    is_trusted(&signed),
+                    "/free is excluded from the hash, so tampering it must not be detected"
+                );
+            } else {
+                assert!(
+                    !is_trusted(&signed),
+                    "/free is included in the hash, so tampering it must be detected"
+                );
+            }
+        }
 
         Ok(())
     }
