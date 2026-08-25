@@ -32,7 +32,7 @@ use crate::{
     status_tracker::StatusTracker,
     validation_status::{
         self, SIGNING_CREDENTIAL_NOT_REVOKED, SIGNING_CREDENTIAL_OCSP_INACCESSIBLE,
-        SIGNING_CREDENTIAL_REVOKED,
+        SIGNING_CREDENTIAL_OCSP_SKIPPED, SIGNING_CREDENTIAL_REVOKED,
     },
 };
 
