@@ -141,7 +141,8 @@ impl Verifier<'_> {
             .iter_organization()
             .map(|attr| attr.as_str())
             .last()
-            .and_then(|attr| attr.map_or(None, |a| Some(a.to_string())));
+            .and_then(|attr| attr.ok())
+            .map(|a| a.to_string());
 
         Ok(CertificateInfo {
             alg: Some(alg),
