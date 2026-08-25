@@ -248,6 +248,21 @@ pub const HASH_LABELS: [&str; 4] = [DATA_HASH, BOX_HASH, BMFF_HASH, COLLECTION_H
 pub const NON_REDACTABLE_LABELS: [&str; 5] =
     [ACTIONS, DATA_HASH, BOX_HASH, BMFF_HASH, COLLECTION_HASH];
 
+/// Returns `true` if `label` names a hard binding assertion (`c2pa.hash.data`,
+/// any `c2pa.hash.bmff.*`, `c2pa.hash.boxes`, `c2pa.hash.collection.data`, or
+/// `c2pa.hash.multi-asset`).
+///
+/// `BMFF_HASH` is matched by prefix since it's the only one of these still at
+/// creation version > 1, so it's the only one that carries a version suffix
+/// (e.g. `.v3`) in practice; the others are compared exactly.
+pub(crate) fn is_hard_binding_label(label: &str) -> bool {
+    label == DATA_HASH
+        || label == BOX_HASH
+        || label == COLLECTION_HASH
+        || label == MULTI_ASSET_HASH
+        || label.starts_with(BMFF_HASH)
+}
+
 /// Must have a label that ends in '.metadata' and is preceded by an entity-specific namespace.
 /// For example, a 'com.litware.metadata' assertion would be valid.
 pub static METADATA_LABEL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
@@ -495,5 +510,38 @@ mod tests {
             parse_label("c2pa.ingredient.V2"),
             ("c2pa.ingredient.V2", 1, 0)
         );
+    }
+
+    /// Regression: only the real hard-binding assertion types (and BMFF's
+    /// versioned variants) count, not any label with a `c2pa.hash.` prefix.
+    /// A fake label like `c2pa.hash.fake` must be rejected - this used to be
+    /// accepted by a naive `starts_with("c2pa.hash.")` check in the CAWG
+    /// identity assertion's hard-binding-presence check.
+    #[test]
+    fn test_is_hard_binding_label() {
+        for label in [
+            DATA_HASH,
+            BOX_HASH,
+            COLLECTION_HASH,
+            MULTI_ASSET_HASH,
+            BMFF_HASH,
+            "c2pa.hash.bmff.v2",
+            "c2pa.hash.bmff.v3",
+        ] {
+            assert!(is_hard_binding_label(label), "expected {label} to match");
+        }
+
+        for label in [
+            "c2pa.hash.fake",
+            "c2pa.hash",
+            "c2pa.hash.",
+            "c2pa.hash.databoxes",
+            "c2pa.actions",
+        ] {
+            assert!(
+                !is_hard_binding_label(label),
+                "expected {label} to be rejected"
+            );
+        }
     }
 }

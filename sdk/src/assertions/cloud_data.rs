@@ -134,12 +134,7 @@ impl CloudData {
     ///
     /// [`assertion.cloud-data.hardBinding`]: crate::validation_results::validation_codes::ASSERTION_CLOUD_DATA_HARD_BINDING
     pub(crate) fn is_hard_binding(&self) -> bool {
-        let l = self.label.as_str();
-        l == labels::DATA_HASH
-            || l == labels::BOX_HASH
-            || l == labels::COLLECTION_HASH
-            || l == labels::MULTI_ASSET_HASH
-            || l.starts_with(labels::BMFF_HASH)
+        labels::is_hard_binding_label(&self.label)
     }
 
     /// Returns `true` if [`label`](CloudData::label) names an actions assertion
