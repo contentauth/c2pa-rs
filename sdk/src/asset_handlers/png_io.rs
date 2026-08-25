@@ -22,7 +22,7 @@ use png_pong::chunk::InternationalText;
 use serde_bytes::ByteBuf;
 
 use crate::{
-    assertions::{AllowedExclusion, BoxMap, ExclusionKind, C2PA_BOXHASH},
+    assertions::{AllowedExclusion, BoxMap, C2PA_BOXHASH},
     asset_io::{
         rename_or_move, AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
         ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
@@ -691,16 +691,8 @@ impl RemoteRefEmbed for PngIO {
 // box-relative: skip only the 8-byte length+type header.
 fn classify_png_allowed_exclusions(name: &str, range_len: u64) -> Vec<AllowedExclusion> {
     match name {
-        C2PA_BOXHASH => vec![AllowedExclusion {
-            start: 0,
-            length: range_len,
-            kind: ExclusionKind::ManifestOrPadding,
-        }],
-        "eXIf" | "iTXt" | "tEXt" | "zTXt" => vec![AllowedExclusion {
-            start: 8,
-            length: range_len.saturating_sub(8),
-            kind: ExclusionKind::AssetMetadata,
-        }],
+        C2PA_BOXHASH => vec![AllowedExclusion::whole_box(range_len)],
+        "eXIf" | "iTXt" | "tEXt" | "zTXt" => vec![AllowedExclusion::after_header(8, range_len)],
         _ => Vec::new(),
     }
 }
@@ -827,9 +819,12 @@ pub mod tests {
     use memchr::memmem;
 
     use super::*;
-    use crate::utils::{
-        io_utils::tempdirectory,
-        test::{self, temp_dir_path},
+    use crate::{
+        assertions::ExclusionKind,
+        utils::{
+            io_utils::tempdirectory,
+            test::{self, temp_dir_path},
+        },
     };
 
     #[test]
