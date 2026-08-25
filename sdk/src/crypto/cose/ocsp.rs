@@ -209,9 +209,17 @@ pub fn check_ocsp_status(
                             .await
                         }
                     } else {
+                        log_item!("", "OCSP fetching skipped", "check_ocsp_status")
+                            .validation_status(SIGNING_CREDENTIAL_OCSP_SKIPPED)
+                            .informational(validation_log);
+
                         Ok(OcspResponse::default())
                     }
                 } else {
+                    log_item!("", "OCSP fetching skipped", "check_ocsp_status")
+                        .validation_status(SIGNING_CREDENTIAL_OCSP_SKIPPED)
+                        .informational(validation_log);
+
                     Ok(OcspResponse::default())
                 }
             }

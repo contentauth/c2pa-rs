@@ -148,6 +148,30 @@ impl Default for ValidationResults {
     }
 }
 
+/// Prefix shared by every CAWG X.509 identity assertion status code (for
+/// example, `cawg.x509.credential.untrusted`, `cawg.x509.signature.mismatch`).
+const CAWG_X509_STATUS_PREFIX: &str = "cawg.x509.";
+
+/// Returns `true` if a failure with `code` is scoped to an individual
+/// credential or CAWG identity assertion and does not by itself render the
+/// enclosing manifest invalid.
+///
+/// This covers the C2PA claim signature's untrusted-credential failure
+/// (`signingCredential.untrusted`) and every CAWG X.509 identity assertion
+/// failure code (all of which share the `cawg.x509.` prefix). A CAWG X.509
+/// identity assertion is supplementary content layered on top of the C2PA
+/// manifest -- much like a CAWG identity claims aggregation (ICA) issuer-trust
+/// failure (`cawg.ica.untrusted_issuer`, which is scoped out via its
+/// `LogKind::Informational` rather than appearing in `.failure()` at all) --
+/// so none of its failures should, by themselves, make the enclosing
+/// manifest invalid.
+///
+/// See [`ValidationResults::validation_state`] and [`ValidationFailureSummary`].
+fn is_tolerated_manifest_failure_code(code: &str) -> bool {
+    code == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
+        || code.starts_with(CAWG_X509_STATUS_PREFIX)
+}
+
 impl ValidationResults {
     pub(crate) fn from_store(store: &Store, validation_log: &StatusTracker) -> Self {
         let mut results = ValidationResults::default();

@@ -6243,6 +6243,69 @@ pub mod tests {
         assert!(!report.has_any_error());
     }
 
+    #[test]
+    fn test_bad_update_manifest_v1() {
+        use crate::{hashed_uri::HashedUri, utils::test::create_test_store_v1};
+
+        let context = crate::context::Context::new();
+
+        let (format, mut input_stream, mut output_stream) =
+            create_test_streams("earth_apollo17.jpg");
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // get default store with default claim
+        let mut store = create_test_store_v1().unwrap();
+
+        // save to output
+        store
+            .save_to_stream(
+                format,
+                &mut input_stream,
+                &mut output_stream,
+                signer.as_ref(),
+                &context,
+            )
+            .unwrap();
+
+        let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        // read back in
+        output_stream.rewind().unwrap();
+        let restored_store =
+            Store::from_stream(format, &mut output_stream, &mut report, &context).unwrap();
+        let pc = restored_store.provenance_claim().unwrap();
+
+        // should be a regular manifest
+        assert!(!pc.update_manifest());
+
+        // create a new update manifest
+        let mut claim = Claim::new("adobe unit test", Some("update_manifest"), 1);
+        output_stream.rewind().unwrap();
+        let mut new_store = Store::load_ingredient_to_claim(
+            &mut claim,
+            &load_jumbf_from_stream(format, &mut output_stream).unwrap(),
+            None,
+            &context,
+        )
+        .unwrap();
+
+        let ingredient_hashes = new_store.get_manifest_box_hashes(pc);
+        let parent_hashed_uri = HashedUri::new(
+            restored_store.provenance_path().unwrap(),
+            Some(pc.alg().to_string()),
+            &ingredient_hashes.manifest_box_hash,
+        );
+
+        // missing signature Hashed URI.  Should fail
+        let ingredient = Ingredient::new_v3(Relationship::ParentOf)
+            .set_parent()
+            .set_c2pa_manifest_from_hashed_uri(Some(parent_hashed_uri));
+
+        claim.add_assertion(&ingredient).unwrap();
+
+        // won't serialize because it must have activeManifest
+        assert!(new_store.commit_update_manifest(claim).is_err());
+    }
+
     ///Test for Update Manifest V2
     #[test]
     fn test_update_manifest_v2() {
