@@ -817,11 +817,7 @@ impl Block {
             Block::ApplicationExtension(application_extension)
                 if ApplicationExtensionKind::C2pa == application_extension.kind() =>
             {
-                vec![AllowedExclusion {
-                    start: 0,
-                    length: box_len,
-                    kind: ExclusionKind::ManifestOrPadding,
-                }]
+                vec![AllowedExclusion::whole_box(box_len)]
             }
             // XMP is stored the same way as a Comment Extension's body - a
             // length-prefixed sub-block stream - just behind a longer,

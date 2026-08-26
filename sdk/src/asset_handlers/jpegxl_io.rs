@@ -43,7 +43,7 @@ use byteorder::{BigEndian, ReadBytesExt};
 use serde_bytes::ByteBuf;
 
 use crate::{
-    assertions::{AllowedExclusion, BoxMap, ExclusionKind, C2PA_BOXHASH},
+    assertions::{AllowedExclusion, BoxMap, C2PA_BOXHASH},
     asset_io::{
         rename_or_move, AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
         ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
@@ -832,16 +832,11 @@ fn classify_jxl_allowed_exclusions(
     brob_inner_type: Option<[u8; 4]>,
 ) -> Vec<AllowedExclusion> {
     match name {
-        C2PA_BOXHASH => vec![AllowedExclusion {
-            start: 0,
-            length: header_size + data_size,
-            kind: ExclusionKind::ManifestOrPadding,
-        }],
-        "Exif" | "xml " => vec![AllowedExclusion {
-            start: header_size,
-            length: data_size,
-            kind: ExclusionKind::AssetMetadata,
-        }],
+        C2PA_BOXHASH => vec![AllowedExclusion::whole_box(header_size + data_size)],
+        "Exif" | "xml " => vec![AllowedExclusion::after_header(
+            header_size,
+            header_size + data_size,
+        )],
         // "brob" (Brotli-compressed) may wrap either Exif or XMP, per spec's
         // own §18.7.4 JXL example - but the box type alone doesn't prove
         // that: it wraps an arbitrary embedded type, so only a recognized
@@ -850,11 +845,10 @@ fn classify_jxl_allowed_exclusions(
         // content, the same kind of structural field that must never be
         // excludable).
         "brob" if matches!(brob_inner_type, Some(t) if t == BOX_EXIF || t == BOX_XML) => {
-            vec![AllowedExclusion {
-                start: header_size + 4,
-                length: data_size.saturating_sub(4),
-                kind: ExclusionKind::AssetMetadata,
-            }]
+            vec![AllowedExclusion::after_header(
+                header_size + 4,
+                header_size + data_size,
+            )]
         }
         _ => Vec::new(),
     }
@@ -1084,6 +1078,7 @@ pub mod tests {
 
     use super::*;
     use crate::{
+        assertions::ExclusionKind,
         utils::{io_utils::tempdirectory, test::test_context},
         Builder, CallbackSigner, Reader, SigningAlg,
     };

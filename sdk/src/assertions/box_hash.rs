@@ -86,6 +86,31 @@ pub struct AllowedExclusion {
     pub kind: ExclusionKind,
 }
 
+impl AllowedExclusion {
+    /// The box's entire content is excludable - e.g. the C2PA store itself,
+    /// or a format's dedicated padding box.
+    pub fn whole_box(len: u64) -> Self {
+        AllowedExclusion {
+            start: 0,
+            length: len,
+            kind: ExclusionKind::ManifestOrPadding,
+        }
+    }
+
+    /// Everything past a fixed-size structural header is excludable asset
+    /// metadata (EXIF/XMP/IPTC-equivalent per spec §9.2.6). `total_len` is
+    /// the box's own full length, and `header_len` the number of leading
+    /// bytes (marker/length/type/CRC-adjacent fields, as applicable per
+    /// format) that must stay hashed.
+    pub fn after_header(header_len: u64, total_len: u64) -> Self {
+        AllowedExclusion {
+            start: header_len,
+            length: total_len.saturating_sub(header_len),
+            kind: ExclusionKind::AssetMetadata,
+        }
+    }
+}
+
 #[derive(Serialize, Default, Deserialize, Debug, PartialEq, Eq)]
 pub struct BoxMap {
     pub names: Vec<String>,
@@ -131,30 +156,31 @@ impl BoxMap {
     }
 }
 
-/// Resolves `exclusions`' `boxIndex`-relative ranges against `box_ranges`/
-/// `box_allowed_exclusions` (the absolute range and permitted sub-ranges of
-/// each name in a box-hash-map entry, in order). Rejects any exclusion not
-/// fully contained within one single permitted sub-range for its box (spec
-/// §15.12.3: only the C2PA store or asset metadata may be excluded, and only
-/// the actual payload - not header/length fields around it). Returns the
-/// ordered sub-ranges of `[entry_start, entry_start + entry_len)` left to
+/// A named box's absolute `(start, len)` range plus the permitted exclusion
+/// sub-ranges measured for it from the live asset. Keeping these together
+/// (rather than as two parallel vectors) makes it impossible for a caller to
+/// push one without the other.
+type BoxRangeInfo = (u64, u64, Vec<AllowedExclusion>);
+
+/// Resolves `exclusions`' `boxIndex`-relative ranges against `box_ranges`
+/// (the absolute range and permitted sub-ranges of each name in a
+/// box-hash-map entry, in order). Rejects any exclusion not fully contained
+/// within one single permitted sub-range for its box (spec §15.12.3: only
+/// the C2PA store or asset metadata may be excluded, and only the actual
+/// payload - not header/length fields around it), and rejects a permitted
+/// sub-range that would itself reach past its box's real length (a defensive
+/// check against a buggy or malicious `AssetBoxHash` implementor, since
+/// `AllowedExclusion` is otherwise trusted as already self-bounded). Returns
+/// the ordered sub-ranges of `[entry_start, entry_start + entry_len)` left to
 /// hash once the exclusions are punched out, plus whether any referenced
 /// range was `AssetMetadata` (for the informational
 /// `additionalExclusionsPresent` status).
 fn split_exclusions(
-    box_ranges: &[(u64, u64)],
-    box_allowed_exclusions: &[Vec<AllowedExclusion>],
+    box_ranges: &[BoxRangeInfo],
     entry_start: u64,
     entry_len: u64,
     exclusions: &[BoxExclusion],
 ) -> Result<(Vec<HashRange>, bool)> {
-    // `box_allowed_exclusions` is meant to be parallel to `box_ranges` (every
-    // call site pushes to both together); the lookup below degrades safely
-    // rather than panicking if that invariant is ever broken, but assert it
-    // explicitly so a caller mistake fails a debug/test build instead of
-    // silently falling back to always-reject.
-    debug_assert_eq!(box_ranges.len(), box_allowed_exclusions.len());
-
     // Structural problems with the exclusions array itself (bad/missing
     // boxIndex, overflow, unordered ranges) are spec §15.12.3's
     // `assertion.boxesHash.malformed`, not a hash/content mismatch.
@@ -172,18 +198,14 @@ fn split_exclusions(
             None => return Err(malformed()),
         };
 
-        let (box_start, _box_len) = box_ranges.get(box_index).ok_or_else(malformed)?;
+        let (box_start, box_len, allowed) = box_ranges.get(box_index).ok_or_else(malformed)?;
 
         let excl_end = excl.start.checked_add(excl.length).ok_or_else(malformed)?;
 
-        let allowed = box_allowed_exclusions
-            .get(box_index)
-            .map(Vec::as_slice)
-            .unwrap_or(&[]);
         let permitting_range = allowed.iter().find(|a| {
-            a.start
-                .checked_add(a.length)
-                .is_some_and(|a_end| excl.start >= a.start && excl_end <= a_end)
+            a.start.checked_add(a.length).is_some_and(|a_end| {
+                a_end <= *box_len && excl.start >= a.start && excl_end <= a_end
+            })
         });
 
         match permitting_range {
@@ -321,14 +343,15 @@ impl BoxHash {
         for bm in &self.boxes {
             let mut skip_c2pa = false;
             let mut inclusion = HashRange::new(0u64, 0u64);
-            let mut box_ranges: Vec<(u64, u64)> = Vec::with_capacity(bm.names.len());
-            let mut box_allowed_exclusions: Vec<Vec<AllowedExclusion>> =
-                Vec::with_capacity(bm.names.len());
+            let mut box_ranges: Vec<BoxRangeInfo> = Vec::with_capacity(bm.names.len());
             for name in &bm.names {
                 match source_bms.get(source_index) {
                     Some(next_source_bm) if name == &next_source_bm.names[0] => {
-                        box_ranges.push((next_source_bm.range_start, next_source_bm.range_len));
-                        box_allowed_exclusions.push(next_source_bm.allowed_exclusions.clone());
+                        box_ranges.push((
+                            next_source_bm.range_start,
+                            next_source_bm.range_len,
+                            next_source_bm.allowed_exclusions.clone(),
+                        ));
 
                         if inclusion.length() == 0 {
                             inclusion.set_start(next_source_bm.range_start);
@@ -390,13 +413,8 @@ impl BoxHash {
             let inclusions = match &bm.exclusions {
                 None => vec![inclusion],
                 Some(excl) => {
-                    let (ranges, metadata_used) = split_exclusions(
-                        &box_ranges,
-                        &box_allowed_exclusions,
-                        inclusion.start(),
-                        inclusion.length(),
-                        excl,
-                    )?;
+                    let (ranges, metadata_used) =
+                        split_exclusions(&box_ranges, inclusion.start(), inclusion.length(), excl)?;
                     metadata_exclusion_used |= metadata_used;
                     ranges
                 }
@@ -520,8 +538,7 @@ impl BoxHash {
                 range_start: 0,
                 range_len: 0,
             };
-            let mut before_c2pa_ranges: Vec<(u64, u64)> = Vec::new();
-            let mut before_c2pa_allowed: Vec<Vec<AllowedExclusion>> = Vec::new();
+            let mut before_c2pa_ranges: Vec<BoxRangeInfo> = Vec::new();
             let mut before_c2pa_exclusions: Vec<BoxExclusion> = Vec::new();
 
             let mut c2pa_box = BoxMap {
@@ -547,8 +564,7 @@ impl BoxHash {
                 range_start: 0,
                 range_len: 0,
             };
-            let mut after_c2pa_ranges: Vec<(u64, u64)> = Vec::new();
-            let mut after_c2pa_allowed: Vec<Vec<AllowedExclusion>> = Vec::new();
+            let mut after_c2pa_ranges: Vec<BoxRangeInfo> = Vec::new();
             let mut after_c2pa_exclusions: Vec<BoxExclusion> = Vec::new();
 
             let mut is_before_c2pa = true;
@@ -566,18 +582,16 @@ impl BoxHash {
                     continue;
                 }
 
-                let (group, group_ranges, group_allowed, group_exclusions) = if is_before_c2pa {
+                let (group, group_ranges, group_exclusions) = if is_before_c2pa {
                     (
                         &mut before_c2pa,
                         &mut before_c2pa_ranges,
-                        &mut before_c2pa_allowed,
                         &mut before_c2pa_exclusions,
                     )
                 } else {
                     (
                         &mut after_c2pa,
                         &mut after_c2pa_ranges,
-                        &mut after_c2pa_allowed,
                         &mut after_c2pa_exclusions,
                     )
                 };
@@ -586,8 +600,7 @@ impl BoxHash {
                 // position in `group_ranges` (before pushing) is also its
                 // future position in `group.names` - i.e. its `boxIndex`.
                 let box_index_in_group = group_ranges.len();
-                group_ranges.push((bm.range_start, bm.range_len));
-                group_allowed.push(bm.allowed_exclusions.clone());
+                group_ranges.push((bm.range_start, bm.range_len, bm.allowed_exclusions.clone()));
                 for req in exclusion_requests {
                     if req.source_box_index == source_index {
                         group_exclusions.push(BoxExclusion {
@@ -617,35 +630,30 @@ impl BoxHash {
             // Instead of assuming we can combine all of the different ranges of
             // box hashes, we will check the bounds of each one
             let mut boxes = Vec::<BoxMap>::new();
-            let mut boxes_ranges = Vec::<Vec<(u64, u64)>>::new();
-            let mut boxes_allowed = Vec::<Vec<Vec<AllowedExclusion>>>::new();
+            let mut boxes_ranges = Vec::<Vec<BoxRangeInfo>>::new();
             // Only add if we have some before the C2PA box
             if before_c2pa.range_len > 0 {
                 boxes_ranges.push(before_c2pa_ranges);
-                boxes_allowed.push(before_c2pa_allowed);
                 boxes.push(before_c2pa);
             }
             // Do the same for the actual C2PA box
             if c2pa_box.range_len > 0 {
-                boxes_ranges.push(vec![(c2pa_box.range_start, c2pa_box.range_len)]);
-                boxes_allowed.push(vec![c2pa_box.allowed_exclusions.clone()]);
+                boxes_ranges.push(vec![(
+                    c2pa_box.range_start,
+                    c2pa_box.range_len,
+                    c2pa_box.allowed_exclusions.clone(),
+                )]);
                 boxes.push(c2pa_box);
             }
             // And finally, add the boxes after the C2PA box
             if after_c2pa.range_len > 0 {
                 boxes_ranges.push(after_c2pa_ranges);
-                boxes_allowed.push(after_c2pa_allowed);
                 boxes.push(after_c2pa);
             }
             self.boxes = boxes;
 
             // compute the hashes
-            for ((bm, box_ranges), box_allowed) in self
-                .boxes
-                .iter_mut()
-                .zip(boxes_ranges.iter())
-                .zip(boxes_allowed.iter())
-            {
+            for (bm, box_ranges) in self.boxes.iter_mut().zip(boxes_ranges.iter()) {
                 // skip c2pa box
                 if bm.names[0] == C2PA_BOXHASH {
                     continue;
@@ -653,14 +661,7 @@ impl BoxHash {
 
                 let inclusions = match &bm.exclusions {
                     Some(excl) if !excl.is_empty() => {
-                        split_exclusions(
-                            box_ranges,
-                            box_allowed,
-                            bm.range_start,
-                            bm.range_len,
-                            excl,
-                        )?
-                        .0
+                        split_exclusions(box_ranges, bm.range_start, bm.range_len, excl)?.0
                     }
                     _ => vec![HashRange::new(bm.range_start, bm.range_len)],
                 };
@@ -685,8 +686,7 @@ impl BoxHash {
                     continue;
                 }
 
-                let box_ranges = [(bm.range_start, bm.range_len)];
-                let box_allowed = [bm.allowed_exclusions.clone()];
+                let box_ranges = [(bm.range_start, bm.range_len, bm.allowed_exclusions.clone())];
                 let exclusions: Vec<BoxExclusion> = exclusion_requests
                     .iter()
                     .filter(|req| req.source_box_index == source_index)
@@ -700,14 +700,7 @@ impl BoxHash {
                 let inclusions = if exclusions.is_empty() {
                     vec![HashRange::new(bm.range_start, bm.range_len)]
                 } else {
-                    split_exclusions(
-                        &box_ranges,
-                        &box_allowed,
-                        bm.range_start,
-                        bm.range_len,
-                        &exclusions,
-                    )?
-                    .0
+                    split_exclusions(&box_ranges, bm.range_start, bm.range_len, &exclusions)?.0
                 };
 
                 bm.alg = Some(alg.to_string());
@@ -1392,18 +1385,25 @@ mod tests {
     fn test_split_exclusions_basic_example() {
         // box 0: [100, 150), box 1: [150, 230); exclude [110,115) in box 0
         // and [170,180) in box 1.
-        let box_ranges = [(100u64, 50u64), (150u64, 80u64)];
-        let box_allowed: [Vec<AllowedExclusion>; 2] = [
-            vec![AllowedExclusion {
-                start: 0,
-                length: 50,
-                kind: ExclusionKind::AssetMetadata,
-            }],
-            vec![AllowedExclusion {
-                start: 0,
-                length: 80,
-                kind: ExclusionKind::AssetMetadata,
-            }],
+        let box_ranges: [BoxRangeInfo; 2] = [
+            (
+                100,
+                50,
+                vec![AllowedExclusion {
+                    start: 0,
+                    length: 50,
+                    kind: ExclusionKind::AssetMetadata,
+                }],
+            ),
+            (
+                150,
+                80,
+                vec![AllowedExclusion {
+                    start: 0,
+                    length: 80,
+                    kind: ExclusionKind::AssetMetadata,
+                }],
+            ),
         ];
         let exclusions = vec![
             BoxExclusion {
@@ -1417,8 +1417,7 @@ mod tests {
                 box_index: Some(1),
             },
         ];
-        let (ranges, metadata_used) =
-            split_exclusions(&box_ranges, &box_allowed, 100, 130, &exclusions).unwrap();
+        let (ranges, metadata_used) = split_exclusions(&box_ranges, 100, 130, &exclusions).unwrap();
         let simplified: Vec<(u64, u64)> = ranges.iter().map(|r| (r.start(), r.length())).collect();
         assert_eq!(simplified, vec![(100, 10), (115, 55), (180, 50)]);
         assert!(metadata_used);
@@ -1426,44 +1425,53 @@ mod tests {
 
     #[test]
     fn test_split_exclusions_fully_excluded_entry_does_not_fall_back_to_full_range() {
-        let box_ranges = [(5u64, 10u64)];
-        let box_allowed: [Vec<AllowedExclusion>; 1] = [vec![AllowedExclusion {
-            start: 0,
-            length: 10,
-            kind: ExclusionKind::AssetMetadata,
-        }]];
+        let box_ranges: [BoxRangeInfo; 1] = [(
+            5,
+            10,
+            vec![AllowedExclusion {
+                start: 0,
+                length: 10,
+                kind: ExclusionKind::AssetMetadata,
+            }],
+        )];
         let exclusions = vec![BoxExclusion {
             start: 0,
             length: 10,
             box_index: None,
         }];
-        let (ranges, _metadata_used) =
-            split_exclusions(&box_ranges, &box_allowed, 5, 10, &exclusions).unwrap();
+        let (ranges, _metadata_used) = split_exclusions(&box_ranges, 5, 10, &exclusions).unwrap();
         assert_eq!(ranges.len(), 1);
         assert_eq!(ranges[0].length(), 0);
     }
 
     #[test]
     fn test_split_exclusions_missing_box_index_with_multiple_boxes() {
-        let box_ranges = [(0u64, 10u64), (10u64, 10u64)];
-        let box_allowed: [Vec<AllowedExclusion>; 2] = [
-            vec![AllowedExclusion {
-                start: 0,
-                length: 10,
-                kind: ExclusionKind::AssetMetadata,
-            }],
-            vec![AllowedExclusion {
-                start: 0,
-                length: 10,
-                kind: ExclusionKind::AssetMetadata,
-            }],
+        let box_ranges: [BoxRangeInfo; 2] = [
+            (
+                0,
+                10,
+                vec![AllowedExclusion {
+                    start: 0,
+                    length: 10,
+                    kind: ExclusionKind::AssetMetadata,
+                }],
+            ),
+            (
+                10,
+                10,
+                vec![AllowedExclusion {
+                    start: 0,
+                    length: 10,
+                    kind: ExclusionKind::AssetMetadata,
+                }],
+            ),
         ];
         let exclusions = vec![BoxExclusion {
             start: 0,
             length: 1,
             box_index: None,
         }];
-        let result = split_exclusions(&box_ranges, &box_allowed, 0, 20, &exclusions);
+        let result = split_exclusions(&box_ranges, 0, 20, &exclusions);
         assert!(
             matches!(&result, Err(Error::C2PAValidation(s)) if s == ASSERTION_BOXESHASH_MALFORMED),
             "unexpected result: {result:?}"
@@ -1472,18 +1480,21 @@ mod tests {
 
     #[test]
     fn test_split_exclusions_out_of_range_box_index() {
-        let box_ranges = [(0u64, 10u64)];
-        let box_allowed: [Vec<AllowedExclusion>; 1] = [vec![AllowedExclusion {
-            start: 0,
-            length: 10,
-            kind: ExclusionKind::AssetMetadata,
-        }]];
+        let box_ranges: [BoxRangeInfo; 1] = [(
+            0,
+            10,
+            vec![AllowedExclusion {
+                start: 0,
+                length: 10,
+                kind: ExclusionKind::AssetMetadata,
+            }],
+        )];
         let exclusions = vec![BoxExclusion {
             start: 0,
             length: 1,
             box_index: Some(5),
         }];
-        let result = split_exclusions(&box_ranges, &box_allowed, 0, 10, &exclusions);
+        let result = split_exclusions(&box_ranges, 0, 10, &exclusions);
         assert!(
             matches!(&result, Err(Error::C2PAValidation(s)) if s == ASSERTION_BOXESHASH_MALFORMED),
             "unexpected result: {result:?}"
@@ -1492,18 +1503,21 @@ mod tests {
 
     #[test]
     fn test_split_exclusions_negative_box_index() {
-        let box_ranges = [(0u64, 10u64)];
-        let box_allowed: [Vec<AllowedExclusion>; 1] = [vec![AllowedExclusion {
-            start: 0,
-            length: 10,
-            kind: ExclusionKind::AssetMetadata,
-        }]];
+        let box_ranges: [BoxRangeInfo; 1] = [(
+            0,
+            10,
+            vec![AllowedExclusion {
+                start: 0,
+                length: 10,
+                kind: ExclusionKind::AssetMetadata,
+            }],
+        )];
         let exclusions = vec![BoxExclusion {
             start: 0,
             length: 1,
             box_index: Some(-1),
         }];
-        let result = split_exclusions(&box_ranges, &box_allowed, 0, 10, &exclusions);
+        let result = split_exclusions(&box_ranges, 0, 10, &exclusions);
         assert!(
             matches!(&result, Err(Error::C2PAValidation(s)) if s == ASSERTION_BOXESHASH_MALFORMED),
             "unexpected result: {result:?}"
@@ -1512,18 +1526,49 @@ mod tests {
 
     #[test]
     fn test_split_exclusions_rejects_range_extending_past_box_end() {
-        let box_ranges = [(0u64, 10u64)];
-        let box_allowed: [Vec<AllowedExclusion>; 1] = [vec![AllowedExclusion {
-            start: 0,
-            length: 10,
-            kind: ExclusionKind::AssetMetadata,
-        }]];
+        let box_ranges: [BoxRangeInfo; 1] = [(
+            0,
+            10,
+            vec![AllowedExclusion {
+                start: 0,
+                length: 10,
+                kind: ExclusionKind::AssetMetadata,
+            }],
+        )];
         let exclusions = vec![BoxExclusion {
             start: 8,
             length: 5,
             box_index: None,
         }];
-        let result = split_exclusions(&box_ranges, &box_allowed, 0, 10, &exclusions);
+        let result = split_exclusions(&box_ranges, 0, 10, &exclusions);
+        assert!(
+            matches!(&result, Err(Error::HashMismatch(msg)) if msg.contains("not contained within any permitted range")),
+            "unexpected result: {result:?}"
+        );
+    }
+
+    // A malicious/buggy `AssetBoxHash` implementor could report an
+    // `AllowedExclusion` that itself reaches past the box's real length.
+    // Even though the requested exclusion is fully contained *within* that
+    // over-wide permitted range, it must still be rejected - the permitted
+    // range's own bound against the box's live length is not optional.
+    #[test]
+    fn test_split_exclusions_rejects_allowed_exclusion_wider_than_box() {
+        let box_ranges: [BoxRangeInfo; 1] = [(
+            0,
+            10,
+            vec![AllowedExclusion {
+                start: 0,
+                length: 15,
+                kind: ExclusionKind::AssetMetadata,
+            }],
+        )];
+        let exclusions = vec![BoxExclusion {
+            start: 11,
+            length: 2,
+            box_index: None,
+        }];
+        let result = split_exclusions(&box_ranges, 0, 10, &exclusions);
         assert!(
             matches!(&result, Err(Error::HashMismatch(msg)) if msg.contains("not contained within any permitted range")),
             "unexpected result: {result:?}"
@@ -1532,12 +1577,15 @@ mod tests {
 
     #[test]
     fn test_split_exclusions_overlapping_ranges() {
-        let box_ranges = [(0u64, 20u64)];
-        let box_allowed: [Vec<AllowedExclusion>; 1] = [vec![AllowedExclusion {
-            start: 0,
-            length: 20,
-            kind: ExclusionKind::AssetMetadata,
-        }]];
+        let box_ranges: [BoxRangeInfo; 1] = [(
+            0,
+            20,
+            vec![AllowedExclusion {
+                start: 0,
+                length: 20,
+                kind: ExclusionKind::AssetMetadata,
+            }],
+        )];
         let exclusions = vec![
             BoxExclusion {
                 start: 0,
@@ -1550,7 +1598,7 @@ mod tests {
                 box_index: None,
             },
         ];
-        let result = split_exclusions(&box_ranges, &box_allowed, 0, 20, &exclusions);
+        let result = split_exclusions(&box_ranges, 0, 20, &exclusions);
         assert!(
             matches!(&result, Err(Error::C2PAValidation(s)) if s == ASSERTION_BOXESHASH_MALFORMED),
             "unexpected result: {result:?}"
@@ -1562,12 +1610,15 @@ mod tests {
     // silently sorted into a valid-looking sequence.
     #[test]
     fn test_split_exclusions_out_of_order_ranges_are_rejected_not_reordered() {
-        let box_ranges = [(0u64, 20u64)];
-        let box_allowed: [Vec<AllowedExclusion>; 1] = [vec![AllowedExclusion {
-            start: 0,
-            length: 20,
-            kind: ExclusionKind::AssetMetadata,
-        }]];
+        let box_ranges: [BoxRangeInfo; 1] = [(
+            0,
+            20,
+            vec![AllowedExclusion {
+                start: 0,
+                length: 20,
+                kind: ExclusionKind::AssetMetadata,
+            }],
+        )];
         let exclusions = vec![
             BoxExclusion {
                 start: 10,
@@ -1580,7 +1631,7 @@ mod tests {
                 box_index: None,
             },
         ];
-        let result = split_exclusions(&box_ranges, &box_allowed, 0, 20, &exclusions);
+        let result = split_exclusions(&box_ranges, 0, 20, &exclusions);
         assert!(
             matches!(&result, Err(Error::C2PAValidation(s)) if s == ASSERTION_BOXESHASH_MALFORMED),
             "unexpected result: {result:?}"
@@ -1589,14 +1640,13 @@ mod tests {
 
     #[test]
     fn test_split_exclusions_rejects_box_with_no_allowed_exclusions() {
-        let box_ranges = [(0u64, 10u64)];
-        let box_allowed: [Vec<AllowedExclusion>; 1] = [vec![]];
+        let box_ranges: [BoxRangeInfo; 1] = [(0, 10, vec![])];
         let exclusions = vec![BoxExclusion {
             start: 0,
             length: 1,
             box_index: None,
         }];
-        let result = split_exclusions(&box_ranges, &box_allowed, 0, 10, &exclusions);
+        let result = split_exclusions(&box_ranges, 0, 10, &exclusions);
         assert!(
             matches!(&result, Err(Error::HashMismatch(msg)) if msg.contains("not contained within any permitted range")),
             "unexpected result: {result:?}"
@@ -1608,18 +1658,21 @@ mod tests {
         // The box has a permitted range, but the requested exclusion falls
         // outside it - e.g. covering a PNG chunk's length/type header
         // instead of its data.
-        let box_ranges = [(0u64, 10u64)];
-        let box_allowed: [Vec<AllowedExclusion>; 1] = [vec![AllowedExclusion {
-            start: 5,
-            length: 5,
-            kind: ExclusionKind::AssetMetadata,
-        }]];
+        let box_ranges: [BoxRangeInfo; 1] = [(
+            0,
+            10,
+            vec![AllowedExclusion {
+                start: 5,
+                length: 5,
+                kind: ExclusionKind::AssetMetadata,
+            }],
+        )];
         let exclusions = vec![BoxExclusion {
             start: 0,
             length: 1,
             box_index: None,
         }];
-        let result = split_exclusions(&box_ranges, &box_allowed, 0, 10, &exclusions);
+        let result = split_exclusions(&box_ranges, 0, 10, &exclusions);
         assert!(
             matches!(&result, Err(Error::HashMismatch(msg)) if msg.contains("not contained within any permitted range")),
             "unexpected result: {result:?}"
@@ -1628,19 +1681,21 @@ mod tests {
 
     #[test]
     fn test_split_exclusions_allows_manifest_or_padding_without_metadata_signal() {
-        let box_ranges = [(0u64, 10u64)];
-        let box_allowed: [Vec<AllowedExclusion>; 1] = [vec![AllowedExclusion {
-            start: 0,
-            length: 10,
-            kind: ExclusionKind::ManifestOrPadding,
-        }]];
+        let box_ranges: [BoxRangeInfo; 1] = [(
+            0,
+            10,
+            vec![AllowedExclusion {
+                start: 0,
+                length: 10,
+                kind: ExclusionKind::ManifestOrPadding,
+            }],
+        )];
         let exclusions = vec![BoxExclusion {
             start: 0,
             length: 1,
             box_index: None,
         }];
-        let (_ranges, metadata_used) =
-            split_exclusions(&box_ranges, &box_allowed, 0, 10, &exclusions).unwrap();
+        let (_ranges, metadata_used) = split_exclusions(&box_ranges, 0, 10, &exclusions).unwrap();
         assert!(!metadata_used);
     }
 
