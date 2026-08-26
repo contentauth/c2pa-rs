@@ -3028,26 +3028,27 @@ impl Claim {
                             continue;
                         }
                         Err(e) => {
-                            let err_str = match e {
-                                Error::C2PAValidation(es) => {
-                                    if es == validation_status::ASSERTION_BOXESHASH_MALFORMED {
-                                        validation_status::ASSERTION_BOXESHASH_MALFORMED
-                                    } else {
-                                        validation_status::ASSERTION_BOXHASH_MISMATCH
-                                    }
+                            // Classify the status code from the error's shape, but keep
+                            // logging/returning `e` itself below so the actual failure
+                            // reason (which box, which range, what mismatched) isn't lost.
+                            let err_str = match &e {
+                                Error::C2PAValidation(es)
+                                    if es == validation_status::ASSERTION_BOXESHASH_MALFORMED =>
+                                {
+                                    validation_status::ASSERTION_BOXESHASH_MALFORMED
                                 }
                                 _ => validation_status::ASSERTION_BOXHASH_MISMATCH,
                             };
 
                             log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
-                                format!("asset hash error: {err_str}"),
+                                format!("asset hash error: {e}"),
                                 "verify_internal"
                             )
                             .validation_status(err_str)
                             .failure(
                                 validation_log,
-                                Error::HashMismatch(format!("Asset hash failure: {err_str}")),
+                                Error::HashMismatch(format!("Asset hash failure: {e}")),
                             )?;
                         }
                     }
