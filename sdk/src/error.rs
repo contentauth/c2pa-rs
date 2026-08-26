@@ -53,7 +53,7 @@ pub enum Error {
     AssertionMissing { url: String },
 
     /// The attempt to serialize the assertion (typically to JSON or CBOR) failed.
-    #[error("unable to encode assertion data")]
+    #[error("unable to encode assertion data: {0}")]
     AssertionEncoding(String),
 
     #[error(transparent)]
