@@ -247,7 +247,7 @@ pub(crate) fn get_object_locations(
     positions.push(ObjectLocations {
         offset: manifest_pos,
         length: manifest_len as u64,
-        htype: ObjectType::Cai,
+        htype: ObjectType::C2pa,
     });
     positions.push(ObjectLocations {
         offset: 0,
@@ -498,7 +498,7 @@ pub(crate) mod test_helpers {
             sum_len, file_len,
             "position lengths should sum to file size"
         );
-        assert!(positions.iter().any(|p| p.htype == ObjectType::Cai));
+        assert!(positions.iter().any(|p| p.htype == ObjectType::C2pa));
         assert!(positions
             .iter()
             .any(|p| p.htype == ObjectType::Other && p.offset == 0));

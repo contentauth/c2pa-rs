@@ -115,7 +115,7 @@ impl C2paWriter for GifIO {
                 ObjectLocations {
                     offset: c2pa_block.start(),
                     length: c2pa_block.len(),
-                    htype: ObjectType::Cai,
+                    htype: ObjectType::C2pa,
                 },
                 ObjectLocations {
                     offset: c2pa_block.end(),
@@ -136,7 +136,7 @@ impl C2paWriter for GifIO {
                     ObjectLocations {
                         offset: end_preamble_pos,
                         length: 1, // Need at least size 1.
-                        htype: ObjectType::Cai,
+                        htype: ObjectType::C2pa,
                     },
                     ObjectLocations {
                         offset: end_preamble_pos + 1,
@@ -1313,7 +1313,7 @@ mod tests {
             Some(&ObjectLocations {
                 offset: 781,
                 length: 1,
-                htype: ObjectType::Cai,
+                htype: ObjectType::C2pa,
             })
         );
         assert_eq!(
@@ -1345,7 +1345,7 @@ mod tests {
             Some(&ObjectLocations {
                 offset: 781,
                 length: 20,
-                htype: ObjectType::Cai,
+                htype: ObjectType::C2pa,
             })
         );
         assert_eq!(

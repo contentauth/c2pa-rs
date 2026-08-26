@@ -360,7 +360,7 @@ impl C2paWriter for JpegIO {
         let mut cai_loc = ObjectLocations {
             offset: 0,
             length: 0,
-            htype: ObjectType::Cai,
+            htype: ObjectType::C2pa,
         };
 
         for (index, seg) in jpeg.segments().iter().enumerate() {
@@ -1120,7 +1120,7 @@ pub mod tests {
         let mut source_reader = std::fs::File::open(&source).unwrap();
         let ol = jpeg_io.get_object_locations(&mut source_reader).unwrap();
 
-        let cai_loc = ol.iter().find(|o| o.htype == ObjectType::Cai).unwrap();
+        let cai_loc = ol.iter().find(|o| o.htype == ObjectType::C2pa).unwrap();
         let curr_manifest = jpeg_io.read_c2pa(&mut source_reader).unwrap();
 
         let temp_dir = tempdirectory().unwrap();

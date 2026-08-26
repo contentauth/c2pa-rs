@@ -509,7 +509,7 @@ impl C2paWriter for RiffIO {
         positions.push(ObjectLocations {
             offset: manifest_pos,
             length: manifest_len as u64,
-            htype: ObjectType::Cai,
+            htype: ObjectType::C2pa,
         });
 
         // add hash of chunks before cai

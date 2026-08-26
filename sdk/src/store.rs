@@ -1912,7 +1912,7 @@ impl Store {
             };
 
             if let Ok(locations) = locations {
-                if let Some(manifest_loc) = locations.iter().find(|o| o.htype == ObjectType::Cai) {
+                if let Some(manifest_loc) = locations.iter().find(|o| o.htype == ObjectType::C2pa) {
                     svi.manifest_store_range =
                         Some(HashRange::new(manifest_loc.offset, manifest_loc.length));
                 }
@@ -2126,13 +2126,13 @@ impl Store {
         let mut found_jumbf = false;
         for item in block_locations {
             // find start of jumbf
-            if !found_jumbf && item.htype == ObjectType::Cai {
+            if !found_jumbf && item.htype == ObjectType::C2pa {
                 block_start = item.offset;
                 found_jumbf = true;
             }
 
             // find start of block after jumbf blocks
-            if found_jumbf && item.htype == ObjectType::Cai {
+            if found_jumbf && item.htype == ObjectType::C2pa {
                 block_end = item.offset + item.length;
             }
 
@@ -3373,7 +3373,7 @@ impl Store {
                     // if we removed the manifest fixup the hash range to be empty
                     if remove_manifests {
                         new_hash_ranges.iter_mut().for_each(|h| {
-                            if h.htype == ObjectType::Cai || h.htype == ObjectType::OtherExclusion {
+                            if h.htype == ObjectType::C2pa || h.htype == ObjectType::OtherExclusion {
                                 h.offset = 0;
                                 h.length = 0;
                             }
@@ -8015,7 +8015,7 @@ pub mod tests {
             .get_object_locations(&mut input_file)
             .unwrap();
 
-        let cai_loc = ol.iter().find(|o| o.htype == ObjectType::Cai).unwrap();
+        let cai_loc = ol.iter().find(|o| o.htype == ObjectType::C2pa).unwrap();
 
         // remove any existing manifest
         jpeg_io.get_reader().read_c2pa(&mut input_file).unwrap();
@@ -8092,7 +8092,7 @@ pub mod tests {
             .get_object_locations(&mut input_file)
             .unwrap();
 
-        let cai_loc = ol.iter().find(|o| o.htype == ObjectType::Cai).unwrap();
+        let cai_loc = ol.iter().find(|o| o.htype == ObjectType::C2pa).unwrap();
 
         // remove any existing manifest
         jpeg_io.get_reader().read_c2pa(&mut input_file).unwrap();

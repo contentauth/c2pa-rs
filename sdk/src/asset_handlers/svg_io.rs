@@ -509,7 +509,7 @@ impl C2paWriter for SvgIO {
         positions.push(ObjectLocations {
             offset: manifest_pos as u64,
             length: encoded_manifest_len as u64,
-            htype: ObjectType::Cai,
+            htype: ObjectType::C2pa,
         });
 
         // add hash of chunks before cai
@@ -941,7 +941,7 @@ pub mod tests {
                     let mut output_reader = File::open(&output).unwrap();
                     if let Ok(locations) = svg_io.get_object_locations(&mut output_reader) {
                         for op in locations {
-                            if op.htype == ObjectType::Cai {
+                            if op.htype == ObjectType::C2pa {
                                 let mut of = File::open(&output).unwrap();
 
                                 let mut manifests_buf: Vec<u8> =

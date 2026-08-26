@@ -387,7 +387,7 @@ impl C2paWriter for PngIO {
         positions.push(ObjectLocations {
             offset: cai_offset,
             length: cai_length,
-            htype: ObjectType::Cai,
+            htype: ObjectType::C2pa,
         });
 
         // add hash of chunks before cai
@@ -932,7 +932,7 @@ pub mod tests {
             .get_object_locations(&mut stream)
             .unwrap()
             .into_iter()
-            .find(|pos| pos.htype == ObjectType::Cai)
+            .find(|pos| pos.htype == ObjectType::C2pa)
             .unwrap();
 
         assert_eq!(cai_pos.offset, 33);
@@ -960,7 +960,7 @@ pub mod tests {
             .get_object_locations(&mut stream)
             .unwrap()
             .into_iter()
-            .any(|chunk| chunk.htype == ObjectType::Cai));
+            .any(|chunk| chunk.htype == ObjectType::C2pa));
     }
 
     #[test]
@@ -1039,7 +1039,7 @@ pub mod tests {
         let mut source_reader = std::fs::File::open(&source).unwrap();
         let ol = png_io.get_object_locations(&mut source_reader).unwrap();
 
-        let cai_loc = ol.iter().find(|o| o.htype == ObjectType::Cai).unwrap();
+        let cai_loc = ol.iter().find(|o| o.htype == ObjectType::C2pa).unwrap();
         let curr_manifest = png_io.read_c2pa(&mut source_reader).unwrap();
 
         let temp_dir = tempdirectory().unwrap();

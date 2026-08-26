@@ -2506,7 +2506,7 @@ impl C2paWriter for TiffIO {
             ObjectLocations {
                 offset: manifest_offset,
                 length: manifest_len,
-                htype: ObjectType::Cai,
+                htype: ObjectType::C2pa,
             },
             ObjectLocations {
                 offset: count_offset,
@@ -3056,7 +3056,7 @@ pub mod tests {
         let mut output_reader = std::fs::File::open(&output).unwrap();
         if let Ok(locations) = tiff_io.get_object_locations(&mut output_reader) {
             for op in locations {
-                if op.htype == ObjectType::Cai {
+                if op.htype == ObjectType::C2pa {
                     let mut of = std::fs::File::open(&output).unwrap();
 
                     let mut manifests_buf: Vec<u8> = vec![0u8; usize::try_from(op.length).unwrap()];

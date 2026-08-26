@@ -142,7 +142,7 @@ use crate::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ObjectType {
     /// The C2PA manifest store.
-    Cai,
+    C2pa,
     /// An XMP metadata block.
     Xmp,
     /// Any other region that should be hashed.
@@ -356,6 +356,7 @@ pub trait AssetIO: Sync + Send {
     ///
     /// The default implementation opens `asset_path` and delegates to
     /// [`get_reader`](AssetIO::get_reader)'s [`C2paReader::read_c2pa`].
+    #[cfg(feature = "file_io")]
     fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
         let mut input_stream = fs::OpenOptions::new()
             .read(true)
@@ -372,6 +373,7 @@ pub trait AssetIO: Sync + Send {
     /// temporary file, and moves the result into place with [`rename_or_move`].
     /// Returns [`Error::UnsupportedType`] if [`get_writer`](AssetIO::get_writer)
     /// returns `None`.
+    #[cfg(feature = "file_io")]
     fn save_c2pa_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
         let ext = asset_path
             .extension()
@@ -394,6 +396,7 @@ pub trait AssetIO: Sync + Send {
     ///
     /// The default implementation mirrors [`save_c2pa_store`](AssetIO::save_c2pa_store),
     /// calling [`C2paWriter::remove_c2pa`] instead.
+    #[cfg(feature = "file_io")]
     fn remove_c2pa_store(&self, asset_path: &Path) -> Result<()> {
         let ext = asset_path
             .extension()
@@ -1008,7 +1011,6 @@ impl HandlerRegistry {
     }
 
     /// Returns the (lowercased) file extension of `path` if a handler supports it.
-    #[cfg(feature = "file_io")]
     pub fn supported_extension(&self, path: &Path) -> Option<String> {
         let ext = path.extension()?.to_str()?.to_lowercase();
         self.handler(&ext).is_some().then_some(ext)
@@ -1346,6 +1348,7 @@ fn sniff_container_from_stream<R: Read + Seek>(stream: &mut R) -> Option<&'stati
     None
 }
 
+#[cfg(feature = "file_io")]
 fn tempfile_builder<T: AsRef<OsStr> + Sized>(prefix: T) -> Result<NamedTempFile> {
     #[cfg(all(target_os = "wasi", target_env = "p1"))]
     return Err(Error::NotImplemented(

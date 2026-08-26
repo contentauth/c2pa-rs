@@ -5852,7 +5852,7 @@ mod tests {
         let ol = jpeg_io.get_object_locations(&mut input_stream).unwrap();
         input_stream.rewind().unwrap();
 
-        let cai_loc = ol.iter().find(|o| o.htype == ObjectType::Cai).unwrap();
+        let cai_loc = ol.iter().find(|o| o.htype == ObjectType::C2pa).unwrap();
 
         // build new asset in memory inserting new manifest
         let outbuf = Vec::new();

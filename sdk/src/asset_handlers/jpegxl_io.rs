@@ -585,7 +585,7 @@ impl C2paWriter for JpegXlIO {
                     b.total_size
                 };
                 let htype = if Some(b.offset) == c2pa_offset {
-                    ObjectType::Cai
+                    ObjectType::C2pa
                 } else if b.box_type == BOX_XML {
                     ObjectType::Xmp
                 } else {
@@ -1502,7 +1502,7 @@ pub mod tests {
         output.rewind().unwrap();
         let locations = jpegxl_io.get_object_locations(&mut output).unwrap();
 
-        let cai_loc = locations.iter().find(|l| l.htype == ObjectType::Cai);
+        let cai_loc = locations.iter().find(|l| l.htype == ObjectType::C2pa);
         assert!(cai_loc.is_some(), "Should have a Cai hash object");
         assert!(cai_loc.unwrap().length > 0);
     }
@@ -1930,7 +1930,7 @@ pub mod tests {
 
         let mut f = std::fs::File::open(&test_path).unwrap();
         let locations = jpegxl_io.get_object_locations(&mut f).unwrap();
-        assert!(locations.iter().any(|l| l.htype == ObjectType::Cai));
+        assert!(locations.iter().any(|l| l.htype == ObjectType::C2pa));
     }
 
     // ─── Spec compliance: container with jxlp (partial codestream) ───
@@ -2174,7 +2174,7 @@ pub mod tests {
         // Exactly one CAI slot (the manifest store jumb box).
         let cai_count = sorted_locs
             .iter()
-            .filter(|l| l.htype == ObjectType::Cai)
+            .filter(|l| l.htype == ObjectType::C2pa)
             .count();
         assert_eq!(
             cai_count, 1,
@@ -2186,7 +2186,7 @@ pub mod tests {
             assert!(
                 matches!(
                     loc.htype,
-                    ObjectType::Cai
+                    ObjectType::C2pa
                         | ObjectType::Xmp
                         | ObjectType::Other
                         | ObjectType::OtherExclusion
