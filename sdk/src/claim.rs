@@ -3168,7 +3168,7 @@ impl Claim {
                         "redaction of disallowed hash assertion",
                         "verify_internal"
                     )
-                    .validation_status(validation_status::ASSERTION_DATAHASH_REDACTED)
+                    .validation_status(validation_status::ASSERTION_HARDBINDING_REDACTED)
                     .failure(validation_log, Error::ClaimDisallowedRedaction)?;
                 }
             }

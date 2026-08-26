@@ -1147,6 +1147,12 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a C2PA assertion box.
     pub const ASSERTION_DATAHASH_REDACTED: &str = "assertion.dataHash.redacted";
 
+    /// A hard binding assertion was redacted when the claim was created.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion box. Replaces ASSERTION_DATAHASH_REDACTED
+    /// in 2.3 forward
+    pub const ASSERTION_HARDBINDING_REDACTED: &str = "assertion.hardBinding.redacted";
+
     /// A BMFF hash assertion is malformed.
     ///
     /// Any corresponding URL should point to a C2PA assertion box.
