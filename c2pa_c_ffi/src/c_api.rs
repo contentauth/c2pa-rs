@@ -3307,7 +3307,7 @@ mod tests {
         // This fixture's identity claims aggregation (ICA) credential is signed
         // by a `did:jwk` issuer. ICA issuers are untrusted by default, so we must
         // add that issuer to `trust.anchors[n].trusted_ica_issuers` for the credential
-        // to be reported as valid. You can do this by added to the trust list anchors.
+        // to be reported as valid. You can do this by adding to the trust list anchors.
         let builder = unsafe { c2pa_context_builder_new() };
         let settings = unsafe { c2pa_settings_new() };
 
