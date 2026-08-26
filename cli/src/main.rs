@@ -252,7 +252,7 @@ enum Commands {
         #[arg(long = "trust_config", env="C2PATOOL_TRUST_CONFIG", value_parser = parse_resource_string)]
         trust_config: Option<TrustResource>,
 
-        /// UR used to identify the trust list
+        /// URI used to identify the trust list
         #[arg(long = "trust_list_uri", env = "C2PATOOL_TRUST_LIST_URI")]
         trust_list_uri: Option<String>,
     },
