@@ -2589,7 +2589,6 @@ impl Claim {
                                                 .is_some_and(|r| r.contains(redacted_uri));
                                         parent_tested = Some(in_assertions || in_redacted);
                                     } else {
-                                        dbg!("failed here");
                                         parent_tested = Some(false);
                                     }
                                 }
