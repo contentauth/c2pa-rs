@@ -46,10 +46,16 @@ pub(crate) fn check_certificate_trust(
     verify_param.set_flags(X509VerifyFlags::X509_STRICT)?;
     verify_param.set_flags(X509VerifyFlags::PARTIAL_CHAIN)?; // allow intermediates to be on anchor list
 
+    // Without a trusted timestamp, leave the check time unset so OpenSSL
+    // checks the current time against every cert on the built path (not
+    // just the leaf) - matching the leaf's own "no timestamp -> valid now"
+    // fallback in certificate_profile.rs. `chain_der` is always the
+    // signer's own linear x5chain (see verifier.rs), so the path OpenSSL
+    // builds is the whole chain we supply. Previously this set
+    // NO_CHECK_TIME, which disabled expiry checking for the whole chain,
+    // including intermediates that have no other validity check anywhere.
     if let Some(st) = signing_time_epoch {
         verify_param.set_time(st);
-    } else {
-        verify_param.set_flags(X509VerifyFlags::NO_CHECK_TIME)?;
     }
 
     builder.set_param(&verify_param)?;
