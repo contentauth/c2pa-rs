@@ -223,11 +223,11 @@ pub struct Trust {
     /// certificates must have.
     pub trust_config: Option<String>,
 
-    // This is deprecated and will be removed in a future release. Use TrustAchors instead.
+    // This is deprecated and will be removed not before 11/12/26. Use TrustAchors instead.
     #[deprecated(note = "Use `anchors` to add a user TrustAnchor.")]
     pub user_anchors: Option<String>,
 
-    // This is deprecated and will be removed in a future release. Use TrustAchors instead.
+    // This is deprecated and will be removed not before 11/12/26. Use TrustAchors instead.
     #[deprecated(note = "Use `anchors` to add a TrustAnchor.")]
     pub trust_anchors: Option<String>,
 }
