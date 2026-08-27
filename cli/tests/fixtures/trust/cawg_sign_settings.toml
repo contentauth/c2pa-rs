@@ -23,6 +23,7 @@ trust_config = """
 # allowed_list = ""
 
 # Trust anchors used to validate certificates.
+# Placeholder for testing
 [[trust.anchors]]
 trust_uri = "https://cai.org/cawg_sign_settings_trust_list"
 trust_kind = "signer"
