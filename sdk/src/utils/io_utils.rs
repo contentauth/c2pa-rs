@@ -60,48 +60,25 @@ pub(crate) fn patch_stream<R: Read + Seek + ?Sized, W: Write + ?Sized>(
     replace_len: u64,
     data: &[u8],
 ) -> Result<()> {
-    patch_stream_multi(source, dest, &[(start_location, replace_len, data)])
-}
-
-// Replace multiple, non-overlapping regions of a stream in a single pass.
-// Each region is `(start_location, replace_len, data)`, with the same meaning as
-// the single-region `patch_stream`. Regions do not need to be pre-sorted.
-#[allow(dead_code)]
-pub(crate) fn patch_stream_multi<R: Read + Seek + ?Sized, W: Write + ?Sized>(
-    source: &mut R,
-    dest: &mut W,
-    regions: &[(u64, u64, &[u8])],
-) -> Result<()> {
     source.rewind()?;
     let source_len = stream_len(source)?;
 
-    let mut sorted: Vec<(u64, u64, &[u8])> = regions.to_vec();
-    sorted.sort_by_key(|(start, _, _)| *start);
-
-    let mut src = source;
-    let mut cursor = 0u64;
-    for (start, replace_len, data) in sorted {
-        if start < cursor || start + replace_len > source_len {
-            return Err(Error::BadParam(
-                "invalid or overlapping patch region".into(),
-            ));
-        }
-
-        // copy data before the region start
-        let mut before_handle = src.take(start - cursor);
-        std::io::copy(&mut before_handle, dest)?;
-
-        // write out new data for this region
-        dest.write_all(data)?;
-
-        // skip the bytes we wanted to replace
-        src = before_handle.into_inner();
-        src.seek(SeekFrom::Start(start + replace_len))?;
-        cursor = start + replace_len;
+    if start_location + replace_len > source_len {
+        return Err(Error::BadParam("read past end of source stream".into()));
     }
 
-    // copy the remainder after the last region
-    std::io::copy(src, dest)?;
+    let mut before_handle = source.take(start_location);
+
+    // copy data before start location
+    std::io::copy(&mut before_handle, dest)?;
+
+    // write out new data
+    dest.write_all(data)?;
+
+    // write out the rest of the source skipping the bytes we wanted to replace
+    let source = before_handle.into_inner();
+    source.seek(SeekFrom::Start(start_location + replace_len))?;
+    std::io::copy(source, dest)?;
 
     Ok(())
 }
@@ -418,35 +395,6 @@ mod tests {
             10,
             29,
             &[],
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn test_patch_stream_multi() {
-        let source = "this is a very very good test";
-
-        // two disjoint regions, given out of order, applied in one pass
-        let mut output = Vec::new();
-        patch_stream_multi(
-            &mut Cursor::new(source.as_bytes()),
-            &mut output,
-            &[(10, 4, "wonderful".as_bytes()), (0, 4, "that".as_bytes())],
-        )
-        .unwrap();
-        assert_eq!(&output, "that is a wonderful very good test".as_bytes());
-
-        // no regions at all is just a verbatim copy
-        let mut output = Vec::new();
-        patch_stream_multi(&mut Cursor::new(source.as_bytes()), &mut output, &[]).unwrap();
-        assert_eq!(&output, source.as_bytes());
-
-        // overlapping regions are rejected
-        let mut output = Vec::new();
-        assert!(patch_stream_multi(
-            &mut Cursor::new(source.as_bytes()),
-            &mut output,
-            &[(0, 15, &[]), (10, 5, &[])],
         )
         .is_err());
     }
