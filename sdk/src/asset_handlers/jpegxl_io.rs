@@ -40,7 +40,6 @@ use std::{
 };
 
 use byteorder::{BigEndian, ReadBytesExt};
-use serde_bytes::ByteBuf;
 
 use crate::{
     assertions::{AllowedExclusion, BoxMap, C2PA_BOXHASH},
@@ -833,7 +832,17 @@ fn classify_jxl_allowed_exclusions(
 ) -> Vec<AllowedExclusion> {
     match name {
         C2PA_BOXHASH => vec![AllowedExclusion::whole_box(header_size + data_size)],
-        "Exif" | "xml " => vec![AllowedExclusion::after_header(
+        // A bare `Exif` box's payload is prefixed by a mandatory 4-byte
+        // big-endian `exif_tiff_header_offset` field (the same convention
+        // HEIF uses for its Exif item, per ISO/IEC 23008-12 Annex A) before
+        // the actual TIFF/Exif data - a structural field that must stay
+        // hashed, the same as the embedded-type field the "brob" case below
+        // skips. `xml ` (raw XMP text) has no such field.
+        "Exif" => vec![AllowedExclusion::after_header(
+            header_size + 4,
+            header_size + data_size,
+        )],
+        "xml " => vec![AllowedExclusion::after_header(
             header_size,
             header_size + data_size,
         )],
@@ -902,14 +911,10 @@ impl AssetBoxHash for JpegXlIO {
 
             box_maps.push(BoxMap {
                 names: vec![name],
-                alg: None,
-                hash: ByteBuf::from(Vec::new()),
-                excluded: None,
-                exclusions: None,
                 allowed_exclusions,
-                pad: ByteBuf::from(Vec::new()),
                 range_start: b.offset,
                 range_len: total,
+                ..Default::default()
             });
         }
 
@@ -924,14 +929,9 @@ impl AssetBoxHash for JpegXlIO {
 
             let c2pa_box = BoxMap {
                 names: vec![C2PA_BOXHASH.to_string()],
-                alg: None,
-                hash: ByteBuf::from(Vec::new()),
-                excluded: None,
-                exclusions: None,
                 allowed_exclusions: classify_jxl_allowed_exclusions(C2PA_BOXHASH, 0, 0, None),
-                pad: ByteBuf::from(Vec::new()),
                 range_start, // will be patched to correct offset by add_required_jumb_to_stream
-                range_len: 0,
+                ..Default::default()
             };
 
             // Insert the C2PA box after ftyp.
@@ -1113,11 +1113,14 @@ pub mod tests {
                 kind: ExclusionKind::ManifestOrPadding,
             }]
         );
+        // A bare `Exif` box's payload starts with a 4-byte
+        // `exif_tiff_header_offset` field, so the excludable range starts
+        // 4 bytes further in than `xml `'s (which has no such field).
         assert_eq!(
             classify_jxl_allowed_exclusions("Exif", 8, 12, None),
             vec![AllowedExclusion {
-                start: 8,
-                length: 12,
+                start: 12,
+                length: 8,
                 kind: ExclusionKind::AssetMetadata,
             }]
         );
