@@ -19,7 +19,6 @@ use std::{
 
 use byteorder::{BigEndian, ReadBytesExt};
 use png_pong::chunk::InternationalText;
-use serde_bytes::ByteBuf;
 
 use crate::{
     assertions::{AllowedExclusion, BoxMap, C2PA_BOXHASH},
@@ -710,14 +709,10 @@ impl AssetBoxHash for PngIO {
         // add PNGh header
         let pngh_bm = BoxMap {
             names: vec!["PNGh".to_string()],
-            alg: None,
-            hash: ByteBuf::from(Vec::new()),
-            excluded: None,
-            exclusions: None,
             allowed_exclusions: classify_png_allowed_exclusions("PNGh", 8),
-            pad: ByteBuf::from(Vec::new()),
             range_start: 0,
             range_len: 8,
+            ..Default::default()
         };
         box_maps.push(pngh_bm);
 
@@ -728,14 +723,10 @@ impl AssetBoxHash for PngIO {
                 let range_len = pc.length as u64 + 12; // length(4) + name(4) + crc(4)
                 let c2pa_bm = BoxMap {
                     names: vec![C2PA_BOXHASH.to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    exclusions: None,
                     allowed_exclusions: classify_png_allowed_exclusions(C2PA_BOXHASH, range_len),
-                    pad: ByteBuf::from(Vec::new()),
                     range_start: pc.start,
                     range_len,
+                    ..Default::default()
                 };
                 box_maps.push(c2pa_bm);
                 continue;
@@ -748,14 +739,10 @@ impl AssetBoxHash for PngIO {
             let allowed_exclusions = classify_png_allowed_exclusions(&pc.name_str, range_len);
             let bm = BoxMap {
                 names: vec![pc.name_str],
-                alg: None,
-                hash: ByteBuf::from(Vec::new()),
-                excluded: None,
-                exclusions: None,
                 allowed_exclusions,
-                pad: ByteBuf::from(Vec::new()),
                 range_start: pc.start,
                 range_len,
+                ..Default::default()
             };
             box_maps.push(bm);
 
@@ -767,14 +754,10 @@ impl AssetBoxHash for PngIO {
             if !has_c2pa && is_ihdr {
                 let synthetic = BoxMap {
                     names: vec![C2PA_BOXHASH.to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
                     excluded: Some(true),
-                    exclusions: None,
                     allowed_exclusions: classify_png_allowed_exclusions(C2PA_BOXHASH, 0),
-                    pad: ByteBuf::from(Vec::new()),
                     range_start: chunk_end,
-                    range_len: 0,
+                    ..Default::default()
                 };
                 box_maps.push(synthetic);
             }
