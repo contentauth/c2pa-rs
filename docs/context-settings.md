@@ -173,7 +173,7 @@ For a complete reference to all the `Settings` properties, see the [SDK object r
 | [`cawg_x509_signer`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#signersettings) | Configuration for the [CAWG x.509 signer](https://docs.rs/c2pa/latest/c2pa/struct.Settings.html#structfield.signer). |
 | [`core`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#core) | Configuration for core features. |
 | [`signer`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#signersettings) | Configuration for the base [C2PA signer](https://docs.rs/c2pa/latest/c2pa/struct.Settings.html#structfield.signer). |
-| [`trust`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#trust) | Configuration for manifestn trust lists, CAWG trust lists & TSA time-stamp trust lists |
+| [`trust`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#trust) | Configuration for C2PA claim generator trust lists, CAWG trust lists & TSA time-stamp trust lists |
 | [`verify`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#verify) | Configuration for verification (validation). |
 | [`soft_binding`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#soft_binding)  | Configure allowed set of soft bindings |
 
@@ -367,7 +367,7 @@ Here's the `Settings` JSON with all default values:
             "trust_anchors": "-----BEGIN CERTIFICATE-----\n...",
             "trust_config": "1.3.6.1.5.5.7.3.4\n1.3.6.1.5.5.7.3.36",
             "trust_kind": "manifest",
-            "trust_uri": "https://c2pa-rs/test_cert_trust_list,
+            "trust_uri": "https://c2pa-rs/test_cert_trust_list",
             "trusted_ica_issuers": ["did:jwk:eyJhbGciOiJFZERTQSIs..."]
           }
       ],
