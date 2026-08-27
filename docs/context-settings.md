@@ -236,8 +236,7 @@ Here's the `Settings` JSON with all default values:
   },
   "signer": null,
   "trust": {
-    "user_anchors": null,
-    "trust_anchors": null,
+    "anchors": null,
     "trust_config": null,
     "allowed_list": null
   },
@@ -351,7 +350,13 @@ Here's the `Settings` JSON with all default values:
 {
   "version": 1,
   "trust": {
-    "trust_anchors": "-----BEGIN CERTIFICATE-----\n...",
+    "anchors": [
+      {
+        "trust_anchors": "-----BEGIN CERTIFICATE-----\n...",
+        "trust_uri": null,
+        "trust_kind": "signer"
+      }
+    ],
     "trust_config": "1.3.6.1.5.5.7.3.4\n1.3.6.1.5.5.7.3.36"
   },
   "core": {
