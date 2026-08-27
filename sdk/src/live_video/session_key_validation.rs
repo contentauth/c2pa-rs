@@ -280,10 +280,10 @@ impl LiveVideoValidator {
     ) -> std::result::Result<(), String> {
         use chrono::{DateTime, Duration, TimeZone, Utc};
 
-        let created_at: DateTime<Utc> =
-            key.created_at.0.parse().map_err(|_| {
-                "session key createdAt is not a valid RFC 3339 datetime".to_string()
-            })?;
+        let created_at: DateTime<Utc> = key
+            .created_at
+            .parse()
+            .map_err(|_| "session key createdAt is not a valid RFC 3339 datetime".to_string())?;
 
         let validity_seconds = i64::try_from(key.validity_period)
             .map_err(|_| "validityPeriod overflow".to_string())?;
@@ -312,7 +312,7 @@ impl LiveVideoValidator {
         if now < created_at_floor {
             return Err(format!(
                 "session key not yet valid: createdAt={}, {}={now}",
-                key.created_at.0,
+                key.created_at,
                 if claimed_time.is_some() { "iat" } else { "now" },
             ));
         }
@@ -320,7 +320,7 @@ impl LiveVideoValidator {
         if now > expires_at {
             return Err(format!(
                 "session key expired: createdAt={}, validityPeriod={}s, {}={now}",
-                key.created_at.0,
+                key.created_at,
                 key.validity_period,
                 if claimed_time.is_some() { "iat" } else { "now" },
             ));
@@ -535,7 +535,6 @@ mod tests {
     use super::super::{test_helpers::*, LiveVideoValidator};
     use crate::{
         assertions::{SessionKey, SessionKeys},
-        cbor_types::DateT,
         validation_results::validation_codes::{
             LIVEVIDEO_SEGMENT_INVALID, LIVEVIDEO_SESSIONKEY_INVALID,
         },
@@ -557,7 +556,7 @@ mod tests {
             keys: vec![SessionKey {
                 key: c2pa_cbor::Value::Map(map),
                 min_sequence_number: 0,
-                created_at: DateT(chrono::Utc::now().to_rfc3339()),
+                created_at: chrono::Utc::now().to_rfc3339(),
                 validity_period: 3600,
                 signer_binding: c2pa_cbor::Value::Bytes(vec![]),
             }],
@@ -913,7 +912,7 @@ mod tests {
 
         let keys = SessionKeys {
             keys: vec![SessionKey {
-                created_at: DateT("2020-01-01T00:00:00Z".to_string()),
+                created_at: "2020-01-01T00:00:00Z".to_string(),
                 validity_period: 1,
                 ..session_keys_with_cose_key(cose_key, &signing_key, &ee_cert_der)
                     .keys
@@ -950,7 +949,7 @@ mod tests {
 
         let keys = SessionKeys {
             keys: vec![SessionKey {
-                created_at: DateT("2099-01-01T00:00:00Z".to_string()),
+                created_at: "2099-01-01T00:00:00Z".to_string(),
                 validity_period: 3600,
                 ..session_keys_with_cose_key(cose_key, &signing_key, &ee_cert_der)
                     .keys
@@ -1052,7 +1051,7 @@ mod tests {
             keys: vec![SessionKey {
                 key: cose_key,
                 min_sequence_number: 0,
-                created_at: DateT(chrono::Utc::now().to_rfc3339()),
+                created_at: chrono::Utc::now().to_rfc3339(),
                 validity_period: 3600,
                 signer_binding: c2pa_cbor::Value::Bytes(binding_bytes),
             }],

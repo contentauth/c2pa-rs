@@ -52,6 +52,27 @@ where
     c2pa_cbor::Value::deserialize(deserializer)
 }
 
+/// Serialize the `created_at` field as a CBOR tag 0 date-time string, per §18.25.
+///
+/// The field is a plain `String` rather than [`DateT`] so that `SessionKey` is nameable and
+/// constructible from outside the crate: `DateT` lives in a `pub(crate)` module, so a public
+/// field of that type would be visible in the docs but impossible for a caller to write.
+fn serialize_date_tagged<S>(value: &str, serializer: S) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    DateT(value.to_string()).serialize(serializer)
+}
+
+/// Deserialize the `created_at` field, accepting the spec's CBOR tag 0 date-time string (and,
+/// like [`DateT`], an untagged string so the assertion survives a JSON round-trip).
+fn deserialize_date_tagged<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    DateT::deserialize(deserializer).map(|d| d.0)
+}
+
 /// A single session key used to verify VSI signatures ([§18.25]).
 ///
 /// [§18.25]: https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_session_keys
@@ -72,8 +93,14 @@ pub struct SessionKey {
     ///
     /// [§18.25.2]: https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_session_keys
     pub min_sequence_number: u64,
-    /// Key creation time (CBOR tag 0 date-time string).
-    pub created_at: DateT,
+    /// Key creation time, an RFC 3339 date-time string.
+    ///
+    /// Serialized as a CBOR tag 0 date-time string on the wire, per §18.25.
+    #[serde(
+        serialize_with = "serialize_date_tagged",
+        deserialize_with = "deserialize_date_tagged"
+    )]
+    pub created_at: String,
     /// Seconds from `created_at` for which this key is valid.
     pub validity_period: u64,
     /// COSE_Sign1_Tagged binding this key to the signer's certificate.
@@ -139,7 +166,7 @@ mod tests {
         SessionKey {
             key: c2pa_cbor::Value::Map(key_map),
             min_sequence_number: 0,
-            created_at: DateT("2026-01-01T00:00:00Z".to_string()),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
             validity_period: 3600,
             signer_binding: c2pa_cbor::Value::Bytes(vec![]),
         }
@@ -169,6 +196,47 @@ mod tests {
         let assertion = original.to_assertion().unwrap();
         let restored = SessionKeys::from_assertion(&assertion).unwrap();
         assert_eq!(original, restored);
+    }
+
+    /// Per §18.25, `createdAt` is a CBOR tag 0 (standard date-time string) value. The field is
+    /// a plain `String` in Rust, so this guards the tag against being dropped on the wire.
+    #[test]
+    fn created_at_serializes_as_cbor_tag_0() {
+        let keys = SessionKeys {
+            keys: vec![minimal_session_key()],
+        };
+        let encoded = c2pa_cbor::to_vec(&keys).unwrap();
+
+        // CBOR tag 0 is major type 6, value 0 => 0xc0; the tagged item that follows is the
+        // RFC 3339 text string.
+        let date = b"2026-01-01T00:00:00Z";
+        let tag_then_date = encoded
+            .windows(date.len() + 2)
+            .any(|w| w[0] == 0xc0 && w[2..] == date[..]);
+        assert!(
+            tag_then_date,
+            "createdAt must be encoded as CBOR tag 0 immediately followed by the date string"
+        );
+    }
+
+    /// The spec requires tag 0, but a JSON round-trip strips CBOR tags, so an untagged string
+    /// must still deserialize (matching `DateT`'s own long-standing behavior).
+    #[test]
+    fn created_at_accepts_untagged_string() {
+        let keys = SessionKeys {
+            keys: vec![minimal_session_key()],
+        };
+        let mut encoded = c2pa_cbor::to_vec(&keys).unwrap();
+
+        let date = b"2026-01-01T00:00:00Z";
+        let pos = encoded
+            .windows(date.len() + 2)
+            .position(|w| w[0] == 0xc0 && w[2..] == date[..])
+            .unwrap();
+        encoded.remove(pos); // drop the 0xc0 tag byte, leaving a bare text string
+
+        let restored: SessionKeys = c2pa_cbor::from_slice(&encoded).unwrap();
+        assert_eq!(restored.keys[0].created_at, "2026-01-01T00:00:00Z");
     }
 
     #[test]

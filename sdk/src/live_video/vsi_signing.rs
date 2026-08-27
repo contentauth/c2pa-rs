@@ -31,7 +31,6 @@ use super::{
 use crate::{
     assertions::{BmffHash, DataMap, ExclusionsMap, SessionKey, SessionKeys},
     builder::Builder,
-    cbor_types::DateT,
     error::{Error, Result},
     live_video::verifiable_segment_info::SegmentInfoMap,
     Reader, Signer,
@@ -65,7 +64,7 @@ pub struct LiveVideoVsiSigner {
     kid: Vec<u8>,
     signer_binding: c2pa_cbor::Value,
     min_sequence_number: u64,
-    created_at: DateT,
+    created_at: String,
     validity_period: u64,
     next_sequence_number: u64,
     base_manifest_json: String,
@@ -118,7 +117,7 @@ impl LiveVideoVsiSigner {
 
         let signer_binding = build_signer_binding(&ee_cert_der, &signing_key)?;
 
-        let created_at = DateT(chrono::Utc::now().to_rfc3339());
+        let created_at = chrono::Utc::now().to_rfc3339();
 
         Ok(Self {
             session_signing_key: signing_key,
