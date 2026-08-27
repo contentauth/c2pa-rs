@@ -26,7 +26,6 @@ use img_parts::{
     },
     Bytes, DynImage,
 };
-use serde_bytes::ByteBuf;
 
 use crate::{
     assertions::{AllowedExclusion, BoxMap, C2PA_BOXHASH},
@@ -832,14 +831,8 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<(Vec<BoxMap>, AppSegm
             jfifdump::SegmentKind::Eoi => {
                 let bm = BoxMap {
                     names: vec!["EOI".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    exclusions: None,
-                    allowed_exclusions: Vec::new(),
-                    pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
-                    range_len: 0,
+                    ..Default::default()
                 };
 
                 box_maps.push(bm);
@@ -847,14 +840,8 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<(Vec<BoxMap>, AppSegm
             jfifdump::SegmentKind::Soi => {
                 let bm = BoxMap {
                     names: vec!["SOI".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    exclusions: None,
-                    allowed_exclusions: Vec::new(),
-                    pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
-                    range_len: 0,
+                    ..Default::default()
                 };
 
                 box_maps.push(bm);
@@ -899,14 +886,9 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<(Vec<BoxMap>, AppSegm
 
                             let c2pa_bm = BoxMap {
                                 names: vec![C2PA_BOXHASH.to_string()],
-                                alg: None,
-                                hash: ByteBuf::from(Vec::new()),
-                                excluded: None,
-                                exclusions: None,
-                                allowed_exclusions: Vec::new(),
-                                pad: ByteBuf::from(Vec::new()),
                                 range_start: seg.position as u64,
                                 range_len: (raw_bytes.len() + 4) as u64,
+                                ..Default::default()
                             };
 
                             box_maps.push(c2pa_bm);
@@ -918,14 +900,8 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<(Vec<BoxMap>, AppSegm
 
                             let bm = BoxMap {
                                 names: vec![name.to_string()],
-                                alg: None,
-                                hash: ByteBuf::from(Vec::new()),
-                                excluded: None,
-                                exclusions: None,
-                                allowed_exclusions: Vec::new(),
-                                pad: ByteBuf::from(Vec::new()),
                                 range_start: seg.position as u64,
-                                range_len: 0,
+                                ..Default::default()
                             };
 
                             box_maps.push(bm);
@@ -944,22 +920,19 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<(Vec<BoxMap>, AppSegm
                 // `app_segment_is_recognized_metadata`), so only stash a
                 // prefix for those - capped at the longest signature we ever
                 // need to check, to avoid holding a large APPn payload (e.g.
-                // an ICC profile) in memory for the rest of this pass.
-                if nr == 0xe1 || nr == 0xed {
+                // an ICC profile) in memory for the rest of this pass. Keyed
+                // off the same resolved `name` the classifier itself checks
+                // against, rather than re-deriving it from `nr`, so the two
+                // checks can't drift out of sync with `segment_names`.
+                if *name == "APP1" || *name == "APP13" {
                     let prefix_len = data.len().min(XMP_SIGNATURE_BUFFER_SIZE);
                     app_prefixes.insert(seg.position as u64, data[..prefix_len].to_vec());
                 }
 
                 let bm = BoxMap {
                     names: vec![name.to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    exclusions: None,
-                    allowed_exclusions: Vec::new(),
-                    pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
-                    range_len: 0,
+                    ..Default::default()
                 };
 
                 box_maps.push(bm);
@@ -967,14 +940,8 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<(Vec<BoxMap>, AppSegm
             jfifdump::SegmentKind::App0Jfif(_) => {
                 let bm = BoxMap {
                     names: vec!["APP0".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    exclusions: None,
-                    allowed_exclusions: Vec::new(),
-                    pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
-                    range_len: 0,
+                    ..Default::default()
                 };
 
                 box_maps.push(bm);
@@ -982,14 +949,8 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<(Vec<BoxMap>, AppSegm
             jfifdump::SegmentKind::Dqt(_) => {
                 let bm = BoxMap {
                     names: vec!["DQT".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    exclusions: None,
-                    allowed_exclusions: Vec::new(),
-                    pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
-                    range_len: 0,
+                    ..Default::default()
                 };
 
                 box_maps.push(bm);
@@ -997,14 +958,8 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<(Vec<BoxMap>, AppSegm
             jfifdump::SegmentKind::Dht(_) => {
                 let bm = BoxMap {
                     names: vec!["DHT".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    exclusions: None,
-                    allowed_exclusions: Vec::new(),
-                    pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
-                    range_len: 0,
+                    ..Default::default()
                 };
 
                 box_maps.push(bm);
@@ -1012,14 +967,8 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<(Vec<BoxMap>, AppSegm
             jfifdump::SegmentKind::Dac(_) => {
                 let bm = BoxMap {
                     names: vec!["DAC".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    exclusions: None,
-                    allowed_exclusions: Vec::new(),
-                    pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
-                    range_len: 0,
+                    ..Default::default()
                 };
 
                 box_maps.push(bm);
@@ -1031,14 +980,8 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<(Vec<BoxMap>, AppSegm
 
                 let bm = BoxMap {
                     names: vec![name.to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    exclusions: None,
-                    allowed_exclusions: Vec::new(),
-                    pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
-                    range_len: 0,
+                    ..Default::default()
                 };
 
                 box_maps.push(bm);
@@ -1046,14 +989,8 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<(Vec<BoxMap>, AppSegm
             jfifdump::SegmentKind::Scan(_s) => {
                 let bm = BoxMap {
                     names: vec!["SOS".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    exclusions: None,
-                    allowed_exclusions: Vec::new(),
-                    pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
-                    range_len: 0,
+                    ..Default::default()
                 };
 
                 box_maps.push(bm);
@@ -1061,14 +998,8 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<(Vec<BoxMap>, AppSegm
             jfifdump::SegmentKind::Dri(_) => {
                 let bm = BoxMap {
                     names: vec!["DRI".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    exclusions: None,
-                    allowed_exclusions: Vec::new(),
-                    pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
-                    range_len: 0,
+                    ..Default::default()
                 };
 
                 box_maps.push(bm);
@@ -1077,14 +1008,8 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<(Vec<BoxMap>, AppSegm
                 let name = format!("RST{}", r.nr);
                 let bm = BoxMap {
                     names: vec![name.clone()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    exclusions: None,
-                    allowed_exclusions: Vec::new(),
-                    pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
-                    range_len: 0,
+                    ..Default::default()
                 };
 
                 box_maps.push(bm);
@@ -1092,14 +1017,8 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<(Vec<BoxMap>, AppSegm
             jfifdump::SegmentKind::Comment(_) => {
                 let bm = BoxMap {
                     names: vec!["COM".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    exclusions: None,
-                    allowed_exclusions: Vec::new(),
-                    pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
-                    range_len: 0,
+                    ..Default::default()
                 };
 
                 box_maps.push(bm);
@@ -1111,14 +1030,8 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<(Vec<BoxMap>, AppSegm
 
                 let bm = BoxMap {
                     names: vec![name.to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    exclusions: None,
-                    allowed_exclusions: Vec::new(),
-                    pad: ByteBuf::from(Vec::new()),
                     range_start: seg.position as u64,
-                    range_len: 0,
+                    ..Default::default()
                 };
 
                 box_maps.push(bm);
@@ -1148,14 +1061,8 @@ impl AssetBoxHash for JpegIO {
         if !has_c2pa {
             let mut c2pa_box = BoxMap {
                 names: vec![C2PA_BOXHASH.to_string()],
-                alg: None,
-                hash: ByteBuf::from(Vec::new()),
                 excluded: Some(true),
-                exclusions: None,
-                allowed_exclusions: Vec::new(),
-                pad: ByteBuf::from(Vec::new()),
-                range_start: 0,
-                range_len: 0,
+                ..Default::default()
             };
             // SOI is always first; insert the C2PA box right after it or after APP0 if it exists.
             let app0_index = box_maps
