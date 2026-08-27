@@ -9,11 +9,12 @@
 # release-plz release PR. For a PR against `main`, add the "check-release" label
 # to run this suite on demand.
 #
-# On top of that scope, the suite only runs for trusted PRs (those whose branch
-# lives in this repository, plus fork PRs a maintainer has labeled `safe to
-# test`/`check-release`); see tier-1a.yml for why trust keys off the PR's head
-# repository rather than `author_association`. Both conditions are combined once
-# in the `authorize` job below into a single `run-suite` decision.
+# Fork-PR trust is handled by GitHub's "Fork pull request workflows from outside
+# collaborators" Actions setting (see tier-1a.yml), not by this workflow, so the
+# `authorize` job below only decides scope. A `labeled` event fires for every
+# label, so the scope decision also ignores label events unless the label added
+# is one that can bring a PR into scope (`release`/`check-release`); this keeps
+# an unrelated label (e.g. `backport-stable`) from restarting the suite.
 
 name: Tier 1B
 
@@ -46,7 +47,7 @@ jobs:
       - name: Determine whether to run the Tier 1B suite
         id: decide
         run: |
-          echo "run-suite=${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository || contains(github.event.pull_request.labels.*.name, 'safe to test') || contains(github.event.pull_request.labels.*.name, 'check-release')) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event.pull_request.base.ref == 'stable' || startsWith(github.event.pull_request.base.ref, 'v0.') || contains(github.event.pull_request.base.ref, '-rc') || contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')) }}" >> "$GITHUB_OUTPUT"
+          echo "run-suite=${{ (github.event_name == 'push' || github.event_name == 'schedule' || github.event.pull_request.base.ref == 'stable' || startsWith(github.event.pull_request.base.ref, 'v0.') || contains(github.event.pull_request.base.ref, '-rc') || contains(github.event.pull_request.labels.*.name, 'release') || contains(github.event.pull_request.labels.*.name, 'check-release')) && (github.event.action != 'labeled' || contains(fromJSON('["release", "check-release"]'), github.event.label.name)) }}" >> "$GITHUB_OUTPUT"
 
   get-features:
     name: Get features
@@ -235,7 +236,7 @@ jobs:
         uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
 
       - name: Install cargo-udeps
-        run: cargo binstall --no-confirm cargo-udeps@0.1.61
+        run: cargo binstall --no-confirm cargo-udeps@0.1.60
 
       # Experimental (`unstable_`) features are excluded (see get-features); an
       # unstable-only optional dependency stays unactivated and so is never

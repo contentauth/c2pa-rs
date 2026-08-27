@@ -14,6 +14,7 @@
 use std::{
     fs::File,
     io::{Cursor, Read, Seek, SeekFrom},
+    num::NonZeroUsize,
     ops::RangeInclusive,
     path::Path,
 };
@@ -27,6 +28,16 @@ use sha2::{Digest, Sha256, Sha384, Sha512};
 use crate::{crypto::base64::encode, utils::io_utils::stream_len, Error, Result};
 
 const MAX_HASH_BUF: usize = 256 * 1024 * 1024; // cap memory usage to 256MB
+
+/// Size of the next chunk to read, given how much of the range is left and the
+/// configured buffer cap.
+///
+/// Clamping in `u64` keeps a range of 4 GiB or more from truncating on a 32-bit target,
+/// where `usize` is 32 bits. The cap fits in every supported `usize`, so the clamped
+/// value always converts.
+fn chunk_size(chunk_left: u64, max_hash_buf: usize) -> usize {
+    usize::try_from(chunk_left.min(max_hash_buf as u64)).unwrap_or(usize::MAX)
+}
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 /// Defines a hash range to be used with `hash_stream_by_alg`
@@ -230,6 +241,33 @@ where
     R: Read + Seek + ?Sized,
     F: FnMut(u32, u32) -> Result<()>,
 {
+    let max_hash_buf = NonZeroUsize::new(MAX_HASH_BUF)
+        .ok_or(Error::BadParam("invalid max_hash_buf".to_string()))?;
+    hash_stream_by_alg_with_progress_impl(
+        alg,
+        data,
+        hash_range,
+        is_exclusion,
+        progress,
+        max_hash_buf,
+    )
+}
+
+/// Make `hash_stream_by_alg_with_progress` configurable with `max_hash_buf`.
+/// e.g. makes it configurable in tests too.
+fn hash_stream_by_alg_with_progress_impl<R, F>(
+    alg: &str,
+    data: &mut R,
+    hash_range: Option<Vec<HashRange>>,
+    is_exclusion: bool,
+    progress: &mut F,
+    max_hash_buf: NonZeroUsize,
+) -> Result<Vec<u8>>
+where
+    R: Read + Seek + ?Sized,
+    F: FnMut(u32, u32) -> Result<()>,
+{
+    let max_hash_buf = max_hash_buf.get();
     let mut bmff_v2_starts: Vec<u64> = Vec::new();
 
     use Hasher::*;
@@ -393,7 +431,7 @@ where
         .iter()
         .map(|r| {
             let len = r.end() - r.start() + 1;
-            (len as usize).div_ceil(MAX_HASH_BUF) as u32
+            u32::try_from(len.div_ceil(max_hash_buf as u64)).unwrap_or(u32::MAX)
         })
         .sum();
     let mut step: u32 = 0;
@@ -418,7 +456,7 @@ where
             data.seek(SeekFrom::Start(*start))?;
 
             loop {
-                let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
+                let mut chunk = vec![0u8; chunk_size(chunk_left, max_hash_buf)];
 
                 data.read_exact(&mut chunk)?;
 
@@ -435,7 +473,8 @@ where
             }
         }
     } else {
-        // hash the data for ranges
+        // hash the data for ranges, reading the next chunk on this thread while
+        // the current one hashes on a worker (hash is still moving ahead sequentially).
         for r in ranges {
             step += 1;
             progress(step, total)?;
@@ -453,30 +492,29 @@ where
             // move to start of range
             data.seek(SeekFrom::Start(*start))?;
 
-            let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
+            let mut chunk = vec![0u8; chunk_size(chunk_left, max_hash_buf)];
             data.read_exact(&mut chunk)?;
 
             loop {
-                let (tx, rx) = std::sync::mpsc::channel();
-
                 chunk_left -= chunk.len() as u64;
 
-                std::thread::spawn(move || {
-                    hasher_enum.update(&chunk);
-                    tx.send(hasher_enum).unwrap_or_default();
-                });
-
-                // are we done
+                // with no next chunk to read there is nothing to overlap, so hash inline.
                 if chunk_left == 0 {
-                    hasher_enum = match rx.recv() {
-                        Ok(hasher) => hasher,
-                        Err(_) => return Err(Error::ThreadReceiveError),
-                    };
+                    hasher_enum.update(&chunk);
                     break;
                 }
 
+                let (tx, rx) = std::sync::mpsc::channel();
+
+                std::thread::Builder::new()
+                    .name("c2pa-hash".to_string())
+                    .spawn(move || {
+                        hasher_enum.update(&chunk);
+                        tx.send(hasher_enum).unwrap_or_default();
+                    })?;
+
                 // read next chunk while we wait for hash
-                let mut next_chunk = vec![0u8; std::cmp::min(chunk_left as usize, MAX_HASH_BUF)];
+                let mut next_chunk = vec![0u8; chunk_size(chunk_left, max_hash_buf)];
                 data.read_exact(&mut next_chunk)?;
 
                 hasher_enum = match rx.recv() {
@@ -609,7 +647,29 @@ mod tests {
 
     use std::io::Cursor;
 
+    use hex_literal::hex;
+
     use super::*;
+
+    // Small enough that a few KB of test data spans multiple chunks.
+    fn test_hash_buf() -> NonZeroUsize {
+        NonZeroUsize::new(1024).unwrap()
+    }
+
+    // Regression test for CAI-13325: `chunk_left as usize` truncated a range of
+    // exactly 4 GiB (2^32) to zero on 32-bit targets, so the read loop asked for
+    // zero bytes on every iteration and never terminated.
+    #[test]
+    fn chunk_size_does_not_truncate_on_32_bit_targets() {
+        let cap = test_hash_buf().get();
+
+        assert_eq!(chunk_size(0, cap), 0);
+        assert_eq!(chunk_size(1, cap), 1);
+        assert_eq!(chunk_size(cap as u64, cap), cap);
+        assert_eq!(chunk_size(cap as u64 + 1, cap), cap);
+        assert_eq!(chunk_size(1 << 32, cap), cap);
+        assert_eq!(chunk_size(u64::MAX, cap), cap);
+    }
 
     // Attacker-controlled HashRange with start+length > u64::MAX must return Err,
     // not panic, in both the exclusion and inclusion paths.
@@ -660,5 +720,132 @@ mod tests {
             matches!(result, Err(Error::OperationCancelled)),
             "expected OperationCancelled, got {result:?}"
         );
+    }
+
+    // One tick per range before any read, one after each non-final chunk,
+    // none for the final chunk regardless of whether it hashed inline.
+    #[test]
+    fn progress_sequence_multi_chunk() {
+        let data = vec![0u8; 3 * 1024]; // 3 chunks at the 1024 buffer size below
+        let mut reader = Cursor::new(&data);
+        let mut seen: Vec<(u32, u32)> = Vec::new();
+        let mut cb = |step, total| {
+            seen.push((step, total));
+            Ok(())
+        };
+        hash_stream_by_alg_with_progress_impl(
+            "sha256",
+            &mut reader,
+            None,
+            true,
+            &mut cb,
+            test_hash_buf(),
+        )
+        .unwrap();
+        assert_eq!(seen, vec![(1, 3), (2, 3), (3, 3)]);
+    }
+
+    // 3 chunks at the 1024 buffer size passed below, non-uniform.
+    // A reordered or dropped chunk changes the hash.
+    // Expected value computed with:
+    //   python3 -c "import hashlib
+    //   d = bytes((i % 251) for i in range(3*1024))
+    //   print(hashlib.sha256(d).hexdigest())"
+    #[test]
+    fn multi_chunk_digest_matches_known_value() {
+        let data: Vec<u8> = (0..3 * 1024).map(|i| (i % 251) as u8).collect();
+        let mut reader = Cursor::new(&data);
+        let hash = hash_stream_by_alg_with_progress_impl(
+            "sha256",
+            &mut reader,
+            None,
+            true,
+            &mut |_, _| Ok(()),
+            test_hash_buf(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            hash,
+            hex!("5f24b2f16026ec7d0450a5a08283d3cfd47302fe859f579ed79fe7d2663b73f9")
+        );
+    }
+
+    // Exclusion splits this into a 1-chunk range and a 2-chunk range.
+    // Expected value computed with:
+    //   python3 -c "import hashlib
+    //   d = bytes((i % 251) for i in range(3*1024))
+    //   print(hashlib.sha256(d[:1000] + d[1100:]).hexdigest())"
+    #[test]
+    fn multi_chunk_digest_survives_range_splits() {
+        let data: Vec<u8> = (0..3 * 1024).map(|i| (i % 251) as u8).collect();
+        let mut reader = Cursor::new(&data);
+        let hr = vec![HashRange::new(1000, 100)];
+        let hash = hash_stream_by_alg_with_progress_impl(
+            "sha256",
+            &mut reader,
+            Some(hr),
+            true,
+            &mut |_, _| Ok(()),
+            test_hash_buf(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            hash,
+            hex!("e3301ce38a42503098530b98cd1b652a10c5caf890735017dd0012ec319f04e5")
+        );
+    }
+
+    // Reports a fixed virtual length and yields zero bytes on read, so a multi-GiB
+    // stream can be exercised without allocating that much memory.
+    struct ZeroStream {
+        len: u64,
+        pos: u64,
+    }
+
+    impl Read for ZeroStream {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let remaining = self.len - self.pos;
+            let n = std::cmp::min(buf.len() as u64, remaining) as usize;
+            buf[..n].fill(0);
+            self.pos += n as u64;
+            Ok(n)
+        }
+    }
+
+    impl Seek for ZeroStream {
+        fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+            self.pos = match pos {
+                SeekFrom::Start(p) => p,
+                SeekFrom::End(p) => (self.len as i64 + p) as u64,
+                SeekFrom::Current(p) => (self.pos as i64 + p) as u64,
+            };
+            Ok(self.pos)
+        }
+    }
+
+    // Regression test for CAI-13325: on 32-bit targets (wasm32) `chunk_left as usize`
+    // truncated a range of exactly 4 GiB (2^32) to zero, so each read-chunk buffer was
+    // empty, `read_exact` on it returned `Ok(())` immediately without decrementing
+    // `chunk_left`, and the loop spun forever. This drives the real hashing loop
+    // across a virtual 4 GiB range so the fix is verified under the project's
+    // wasm32-wasip2 test job, where `usize` is actually 32 bits.
+    #[test]
+    fn hash_range_of_exactly_4gib_terminates() {
+        let mut reader = ZeroStream {
+            len: 1u64 << 32,
+            pos: 0,
+        };
+        let hash = hash_stream_by_alg_with_progress_impl(
+            "sha256",
+            &mut reader,
+            None,
+            true,
+            &mut |_, _| Ok(()),
+            NonZeroUsize::new(1024 * 1024).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(hash.len(), 32);
     }
 }
