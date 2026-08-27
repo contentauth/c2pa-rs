@@ -164,9 +164,9 @@ fn ec2_to_der(map: &BTreeMap<i128, &CborValue>) -> Option<Vec<u8>> {
     //     SEQUENCE { OID ecPublicKey, OID curve }
     //     BIT STRING { uncompressed point }
     //   }
-    let algorithm_seq = der_sequence(&[EC_PUBLIC_KEY_OID, curve_oid]);
-    let bit_string = der_bit_string(&point);
-    let spki = der_sequence(&[&algorithm_seq, &bit_string]);
+    let algorithm_seq = der_sequence(&[EC_PUBLIC_KEY_OID, curve_oid])?;
+    let bit_string = der_bit_string(&point)?;
+    let spki = der_sequence(&[&algorithm_seq, &bit_string])?;
 
     Some(spki)
 }
@@ -185,9 +185,9 @@ fn okp_to_der(map: &BTreeMap<i128, &CborValue>) -> Option<Vec<u8>> {
     //     SEQUENCE { OID ed25519 }
     //     BIT STRING { public key bytes }
     //   }
-    let algorithm_seq = der_sequence(&[ED25519_OID]);
-    let bit_string = der_bit_string(&x);
-    let spki = der_sequence(&[&algorithm_seq, &bit_string]);
+    let algorithm_seq = der_sequence(&[ED25519_OID])?;
+    let bit_string = der_bit_string(&x)?;
+    let spki = der_sequence(&[&algorithm_seq, &bit_string])?;
 
     Some(spki)
 }
@@ -205,34 +205,41 @@ fn left_pad(bytes: &[u8], len: usize) -> Option<Vec<u8>> {
 
 // ── DER encoding helpers ────────────────────────────────────────────────────
 
-fn der_length(len: usize) -> Vec<u8> {
+/// DER definite-length encoding, up to the two-byte long form (65535 bytes).
+///
+/// Returns `None` beyond that rather than silently truncating `len` into two bytes. Every key
+/// this module encodes is far below the limit (the largest, a P-521 SPKI, is a few hundred
+/// bytes), so this is a guard against a future caller rather than a reachable case today.
+fn der_length(len: usize) -> Option<Vec<u8>> {
     if len < 128 {
-        vec![len as u8]
+        Some(vec![len as u8])
     } else if len < 256 {
-        vec![0x81, len as u8]
+        Some(vec![0x81, len as u8])
+    } else if len < 65536 {
+        Some(vec![0x82, (len >> 8) as u8, (len & 0xff) as u8])
     } else {
-        vec![0x82, (len >> 8) as u8, (len & 0xff) as u8]
+        None
     }
 }
 
-fn der_sequence(items: &[&[u8]]) -> Vec<u8> {
+fn der_sequence(items: &[&[u8]]) -> Option<Vec<u8>> {
     let total: usize = items.iter().map(|i| i.len()).sum();
     let mut out = vec![0x30]; // SEQUENCE tag
-    out.extend(der_length(total));
+    out.extend(der_length(total)?);
     for item in items {
         out.extend_from_slice(item);
     }
-    out
+    Some(out)
 }
 
-fn der_bit_string(data: &[u8]) -> Vec<u8> {
+fn der_bit_string(data: &[u8]) -> Option<Vec<u8>> {
     // BIT STRING: tag 0x03, length = data.len() + 1 (for unused-bits byte), 0x00 (unused bits), data
     let content_len = data.len() + 1;
     let mut out = vec![0x03];
-    out.extend(der_length(content_len));
+    out.extend(der_length(content_len)?);
     out.push(0x00); // zero unused bits
     out.extend_from_slice(data);
-    out
+    Some(out)
 }
 
 // ── CBOR helpers ────────────────────────────────────────────────────────────
@@ -301,6 +308,22 @@ mod tests {
         map.insert(cbor_int(EC2_CRV as i64), cbor_int(crv));
         map.insert(cbor_int(EC2_X as i64), CborValue::Bytes(x.to_vec()));
         map.insert(cbor_int(EC2_Y as i64), CborValue::Bytes(y.to_vec()));
+        CborValue::Map(map)
+    }
+
+    /// The same EC2 key as [`make_ec2_cose_key`], but shaped the way it comes back after a
+    /// round-trip through JSON (as happens in the SDK's manifest read path): integer map keys
+    /// become text strings, and byte strings become arrays of integers.
+    fn make_json_transcoded_ec2_cose_key(crv: i64, x: &[u8], y: &[u8], kid: &[u8]) -> CborValue {
+        let ints = |b: &[u8]| CborValue::Array(b.iter().map(|&v| cbor_int(v as i64)).collect());
+        let text_key = |k: i128| CborValue::Text(k.to_string());
+
+        let mut map = BTreeMap::new();
+        map.insert(text_key(KTY), cbor_int(KTY_EC2 as i64));
+        map.insert(text_key(KID), ints(kid));
+        map.insert(text_key(EC2_CRV), cbor_int(crv));
+        map.insert(text_key(EC2_X), ints(x));
+        map.insert(text_key(EC2_Y), ints(y));
         CborValue::Map(map)
     }
 
@@ -375,6 +398,82 @@ mod tests {
                 .any(|w| w == expected_point.as_slice()),
             "expected a zero-padded 32-byte x coordinate in the SEC1 point"
         );
+    }
+
+    // ── JSON-transcoded input ────────────────────────────────────────────────
+    //
+    // `cbor_to_i128` accepts `Text` map keys and `cbor_as_bytes` accepts integer arrays
+    // specifically to survive a CBOR -> JSON -> CBOR round-trip. These pin that behavior,
+    // since it's the shape that actually reaches this code from the manifest read path.
+
+    /// A JSON-transcoded key must produce byte-identical DER to its native-CBOR equivalent.
+    #[test]
+    fn json_transcoded_ec2_key_matches_native_der() {
+        let (x, y) = ([0xaa; 32], [0xbb; 32]);
+        let native = make_ec2_cose_key(CRV_P256 as i64, &x, &y, b"test-kid");
+        let transcoded = make_json_transcoded_ec2_cose_key(CRV_P256 as i64, &x, &y, b"test-kid");
+
+        assert_eq!(
+            cose_key_to_der(&transcoded).unwrap(),
+            cose_key_to_der(&native).unwrap(),
+            "a JSON round-trip must not change the DER encoding"
+        );
+    }
+
+    #[test]
+    fn json_transcoded_key_resolves_kid_and_alg() {
+        let transcoded =
+            make_json_transcoded_ec2_cose_key(CRV_P256 as i64, &[1; 32], &[2; 32], b"key-1");
+
+        assert_eq!(kid_from_cose_key(&transcoded).unwrap(), b"key-1");
+        assert_eq!(
+            signing_alg_from_cose_key(&transcoded).unwrap(),
+            SigningAlg::Es256
+        );
+    }
+
+    /// A text key that isn't a number at all must not be silently treated as absent.
+    #[test]
+    fn non_numeric_text_key_is_rejected() {
+        let mut map = BTreeMap::new();
+        map.insert(CborValue::Text("kty".to_string()), cbor_int(KTY_EC2 as i64));
+        let key = CborValue::Map(map);
+
+        assert!(cose_key_to_der(&key).is_none());
+        assert!(signing_alg_from_cose_key(&key).is_none());
+    }
+
+    /// An integer array carrying a value outside the byte range isn't a transcoded bstr.
+    #[test]
+    fn out_of_range_integer_array_is_rejected() {
+        let mut map = BTreeMap::new();
+        map.insert(cbor_int(KTY as i64), cbor_int(KTY_EC2 as i64));
+        map.insert(cbor_int(EC2_CRV as i64), cbor_int(CRV_P256 as i64));
+        map.insert(
+            cbor_int(EC2_X as i64),
+            CborValue::Array(vec![cbor_int(300)]), // > u8::MAX
+        );
+        map.insert(cbor_int(EC2_Y as i64), CborValue::Bytes(vec![2; 32]));
+
+        assert!(cose_key_to_der(&CborValue::Map(map)).is_none());
+    }
+
+    // ── DER length encoding ──────────────────────────────────────────────────
+
+    #[test]
+    fn der_length_covers_short_and_long_forms() {
+        assert_eq!(der_length(10).unwrap(), vec![10]); // short form
+        assert_eq!(der_length(200).unwrap(), vec![0x81, 200]); // one-byte long form
+        assert_eq!(der_length(1000).unwrap(), vec![0x82, 0x03, 0xe8]); // two-byte long form
+    }
+
+    /// The encoder tops out at the two-byte long form; beyond that it must refuse rather than
+    /// truncate the length into two bytes. Unreachable for these curves, but the guard is the
+    /// documented contract.
+    #[test]
+    fn der_length_refuses_beyond_two_byte_form() {
+        assert_eq!(der_length(65535).unwrap(), vec![0x82, 0xff, 0xff]);
+        assert!(der_length(65536).is_none());
     }
 
     #[test]
