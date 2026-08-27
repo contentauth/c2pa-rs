@@ -59,7 +59,7 @@ pub(crate) trait SettingsValidate {
 
 // Kind of Trust list represented
 #[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TrustListKind {
     // Manifest signing trust list
@@ -75,7 +75,7 @@ pub enum TrustListKind {
     derive(schemars::JsonSchema),
     schemars(default)
 )]
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct TrustAnchor {
     /// Specifies the details of a specific trust list.  
     ///
@@ -230,15 +230,6 @@ pub struct Trust {
     // This is deprecated and will be removed in a future release. Use TrustAchors instead.
     #[deprecated(note = "Use `anchors` to add a TrustAnchor.")]
     pub trust_anchors: Option<String>,
-
-    /// Whether to verify certificates against the trust lists specified in [`CawgTrust`].
-    ///
-    /// The default value is true.
-    ///
-    /// <div class="warning">
-    /// Verifying trust is REQUIRED by the CAWG spec. This option should only be used for development or testing.
-    /// </div>
-    pub(crate) verify_trust_list: bool,
 }
 
 impl Trust {
@@ -331,7 +322,6 @@ impl Default for Trust {
             let mut trust = Self {
                 anchors: None,
                 trust_config: None,
-                verify_trust_list: true,
                 user_anchors: None,
                 trust_anchors: None,
             };
@@ -350,7 +340,6 @@ impl Default for Trust {
         #[cfg(not(test))]
         {
             Self {
-                verify_trust_list: true,
                 anchors: None,
                 trust_config: None,
                 user_anchors: None,
@@ -956,58 +945,115 @@ impl Settings {
     /// instance without touching thread-local state.
     #[allow(deprecated)]
     fn with_string(&self, settings_str: &str, format: &str) -> Result<Self> {
-        let overlay = parse_to_value(settings_str, format)?;
+        let mut overlay = parse_to_value(settings_str, format)?;
         let mut merged =
             serde_json::to_value(self).map_err(|err| Error::OtherError(Box::new(err)))?;
+
+        // remove any trust settings that will be manually merged since merge_json does not handle arrays
+        let mut new_anchors = None;
+        let mut legacy_trust_anchors = None;
+        let mut legacy_user_anchors = None;
+
+        if let Some(overlay_map) = overlay.as_object_mut() {
+            if let Some(trust) = overlay_map.get_mut("trust").and_then(|t| t.as_object_mut()) {
+                if let Some(new_anchors_value) = trust.get_mut("anchors") {
+                    let v = new_anchors_value.take();
+                    let na: Option<Vec<TrustAnchor>> = serde_json::from_value(v)
+                        .map_err(|err| Error::OtherError(Box::new(err)))?;
+
+                    new_anchors = na;
+                }
+
+                if let Some(trust_anchors_value) = trust.get_mut("trust_anchors") {
+                    let v = trust_anchors_value.take();
+                    let ta: Option<String> = serde_json::from_value(v)
+                        .map_err(|err| Error::OtherError(Box::new(err)))?;
+
+                    legacy_trust_anchors = ta;
+                }
+
+                if let Some(user_anchors_value) = trust.get_mut("user_anchors") {
+                    let v = user_anchors_value.take();
+                    let ua: Option<String> = serde_json::from_value(v)
+                        .map_err(|err| Error::OtherError(Box::new(err)))?;
+
+                    legacy_user_anchors = ua;
+                }
+
+                // remove so that these do not override existing values improperly
+                if new_anchors.is_some() {
+                    trust.remove("anchors");
+                }
+                if legacy_trust_anchors.is_some() {
+                    trust.remove("trust_anchors");
+                }
+                if legacy_user_anchors.is_some() {
+                    trust.remove("user_anchors");
+                }
+            }
+        }
+
         merge_json(&mut merged, overlay);
 
         let mut settings: Settings =
             serde_json::from_value(merged).map_err(|err| Error::BadParam(err.to_string()))?;
         settings.validate()?;
 
-        // support legacy trust_anchors and user_anchors for backwards compatibility until they are removed in a future release
-        let mut legacy_anchors = Vec::new();
-        // try legacy trust_anchors and user_anchors for backwards compatibility
-        if let Some(ta) = &settings.trust.trust_anchors {
-            test_load_trust(ta.as_bytes())?;
+        // merge to legacy anchors and new anchors into current anchors set (deduping)
+        if new_anchors.is_some() || legacy_trust_anchors.is_some() || legacy_user_anchors.is_some()
+        {
+            let mut unique = HashSet::new();
 
-            // add in those anchors to the anchors list for backwards compatibility
-            let a = TrustAnchor {
-                trust_anchors: ta.clone(),
-                trust_uri: Some("system_anchors".to_string()),
-                trust_kind: TrustListKind::Manifest,
-                trust_config: None,
-                allowed_list: None,
-                trusted_ica_issuers: None,
-            };
-            a.validate()?;
-
-            legacy_anchors.push(a);
-        }
-        if let Some(ua) = &settings.trust.user_anchors {
-            test_load_trust(ua.as_bytes())?;
-
-            // add in those anchors to the anchors list for backwards compatibility
-            let a = TrustAnchor {
-                trust_anchors: ua.clone(),
-                trust_uri: Some("user_anchors".to_string()),
-                trust_kind: TrustListKind::Manifest,
-                trust_config: None,
-                allowed_list: None,
-                trusted_ica_issuers: None,
-            };
-            a.validate()?;
-
-            legacy_anchors.push(a);
-        }
-
-        // if there are any legacy anchors, add them to the anchors list
-        if !legacy_anchors.is_empty() {
-            if let Some(anchors) = &mut settings.trust.anchors {
-                anchors.extend(legacy_anchors);
-            } else {
-                settings.trust.anchors = Some(legacy_anchors);
+            // load existing anchors
+            if let Some(existing_anchors) = settings.trust.anchors.take() {
+                unique.extend(existing_anchors);
             }
+
+            // load new_anchors
+            if let Some(new_anchors) = new_anchors {
+                unique.extend(new_anchors);
+            }
+
+            // load legacy trust_anchors
+            if let Some(ta) = legacy_trust_anchors {
+                test_load_trust(ta.as_bytes())?;
+
+                // add in those anchors to the anchors list for backwards compatibility
+                let a = TrustAnchor {
+                    trust_anchors: ta.clone(),
+                    trust_uri: Some("system_anchors".to_string()),
+                    trust_kind: TrustListKind::Manifest,
+                    trust_config: None,
+                    allowed_list: None,
+                    trusted_ica_issuers: None,
+                };
+                a.validate()?;
+
+                unique.insert(a);
+
+                settings.trust.trust_anchors = None;
+            }
+
+            if let Some(ua) = legacy_user_anchors {
+                test_load_trust(ua.as_bytes())?;
+
+                // add in those anchors to the anchors list for backwards compatibility
+                let a = TrustAnchor {
+                    trust_anchors: ua.clone(),
+                    trust_uri: Some("user_anchors".to_string()),
+                    trust_kind: TrustListKind::Manifest,
+                    trust_config: None,
+                    allowed_list: None,
+                    trusted_ica_issuers: None,
+                };
+                a.validate()?;
+
+                unique.insert(a);
+
+                settings.trust.user_anchors = None;
+            }
+
+            settings.trust.anchors = Some(unique.into_iter().collect());
         }
 
         Ok(settings)
@@ -1213,44 +1259,21 @@ impl SettingsValidate for Settings {
 /// Overlays `overlay` onto `target`. Objects are merged key-by-key, and any
 /// other value (e.g. `null` and arrays) replaces the target value.
 fn merge_json(target: &mut Value, overlay: Value) {
-    merge_json_depth(target, overlay, 0, "".to_string());
+    merge_json_depth(target, overlay, 0);
 }
 
-fn merge_json_depth(target: &mut Value, overlay: Value, depth: usize, outer_key: String) {
+fn merge_json_depth(target: &mut Value, overlay: Value, depth: usize) {
     match (target, overlay) {
         (Value::Object(target_map), Value::Object(overlay_map)) if depth < MERGE_MAX_DEPTH => {
             for (key, overlay_value) in overlay_map {
                 merge_json_depth(
-                    target_map.entry(&key).or_insert(Value::Null),
+                    target_map.entry(key).or_insert(Value::Null),
                     overlay_value,
                     depth + 1,
-                    key,
                 );
             }
         }
-        (target, overlay) => {
-            // Currently only allow merging of arrays for the trust.anchors.
-            // This is a design choice to avoid unexpected behavior when merging arrays
-            // in other parts of the settings.
-            if target.is_array() && overlay.is_array() && depth == 2 && outer_key == "anchors" {
-                // If both are arrays, merge and deduplicate. This is a design choice.
-                let target_array = target.as_array().cloned().unwrap_or_default();
-                let overlay_array = overlay.as_array().cloned().unwrap_or_default();
-                if !target_array.is_empty() {
-                    let mut unique = HashSet::new();
-                    unique.extend(target_array);
-                    if !overlay_array.is_empty() {
-                        unique.extend(overlay_array);
-                    }
-                    *target = Value::Array(unique.into_iter().collect());
-                } else {
-                    *target = overlay;
-                }
-            } else {
-                // For all other cases (including null), we replace the target with the overlay.
-                *target = overlay;
-            }
-        }
+        (target, overlay) => *target = overlay,
     }
 }
 
@@ -1725,23 +1748,6 @@ pub mod tests {
         } else {
             panic!("test_settings should have a Local signer configured");
         }
-    }
-
-    #[test]
-    fn test_cawg_trust_is_distinct_from_c2pa_trust() {
-        // The CAWG-only `verify_trust_list` setting lives on `trust` and is
-        // still reachable at its historical path for backward compatibility.
-        let settings = Settings::default()
-            .with_value("trust.verify_trust_list", false)
-            .unwrap();
-        assert!(!settings.trust.verify_trust_list);
-
-        // The CAWG trust configuration round-trips through JSON on its own struct.
-        let json = serde_json::to_string(&settings.trust).unwrap();
-        let trust: Trust =
-            serde_json::from_value(serde_json::from_str::<serde_json::Value>(&json).unwrap())
-                .unwrap();
-        assert_eq!(trust, settings.trust);
     }
 
     #[test]

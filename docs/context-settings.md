@@ -238,8 +238,7 @@ Here's the `Settings` JSON with all default values:
           "trusted_ica_issuers": null
         }
     ]
-    "trust_config": null,
-    "verify_trust_list": true
+    "trust_config": null
   },
   "verify": {
     "verify_after_reading": true,

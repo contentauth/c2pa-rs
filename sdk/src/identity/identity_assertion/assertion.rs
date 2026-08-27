@@ -321,25 +321,21 @@ impl IdentityAssertion {
             // Load the trust handler settings. Don't worry about status as these
             // are checked during setting generation.
 
-            let cose_verifier = if settings.trust.verify_trust_list {
-                if let Some(anchors) = &settings.trust.anchors_for_trust_kind(TrustListKind::CAWG) {
-                    for anchor in anchors {
-                        let _ = ctp.add_trust_anchors(
-                            anchor.trust_anchors.as_bytes(),
-                            anchor.trust_uri.as_deref().unwrap_or(""),
-                            anchor.trust_kind.clone().into(),
-                            anchor.trust_config.clone(),
-                        );
+            if let Some(anchors) = &settings.trust.anchors_for_trust_kind(TrustListKind::CAWG) {
+                for anchor in anchors {
+                    let _ = ctp.add_trust_anchors(
+                        anchor.trust_anchors.as_bytes(),
+                        anchor.trust_uri.as_deref().unwrap_or(""),
+                        anchor.trust_kind.clone().into(),
+                        anchor.trust_config.clone(),
+                    );
 
-                        if let Some(al) = &anchor.allowed_list {
-                            let _ = ctp.add_end_entity_credentials(al.as_bytes());
-                        }
+                    if let Some(al) = &anchor.allowed_list {
+                        let _ = ctp.add_end_entity_credentials(al.as_bytes());
                     }
                 }
-                Verifier::VerifyTrustPolicy(Cow::Owned(ctp))
-            } else {
-                Verifier::IgnoreProfileAndTrustPolicy
-            };
+            }
+            let cose_verifier = Verifier::VerifyTrustPolicy(Cow::Owned(ctp));
 
             let mut signer_payload_cbor: Vec<u8> = vec![];
             c2pa_cbor::to_writer(&mut signer_payload_cbor, &self.signer_payload).map_err(|_| {
