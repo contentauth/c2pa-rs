@@ -297,6 +297,26 @@ impl LiveVideoValidator {
         let claimed_time = extract_iat(sign1).and_then(|secs| Utc.timestamp_opt(secs, 0).single());
         let now = claimed_time.unwrap_or_else(Utc::now);
 
+        // §19.4.1's validity window is [createdAt, createdAt + validityPeriod]. Only the upper
+        // bound was checked before; a claimed `iat` (or, in principle, a clock skew on `now`)
+        // before the key was even created must be rejected too, not just the expiry.
+        //
+        // `iat` (RFC 8392 NumericDate) is whole-seconds, while `createdAt` may carry sub-second
+        // precision — comparing them directly would spuriously reject a segment signed in the
+        // same wall-clock second the key was created, since flooring `iat` down can put it just
+        // under a sub-second `createdAt`. Floor `created_at` to match `iat`'s granularity.
+        let created_at_floor = Utc
+            .timestamp_opt(created_at.timestamp(), 0)
+            .single()
+            .unwrap_or(created_at);
+        if now < created_at_floor {
+            return Err(format!(
+                "session key not yet valid: createdAt={}, {}={now}",
+                key.created_at.0,
+                if claimed_time.is_some() { "iat" } else { "now" },
+            ));
+        }
+
         if now > expires_at {
             return Err(format!(
                 "session key expired: createdAt={}, validityPeriod={}s, {}={now}",
@@ -911,6 +931,41 @@ mod tests {
 
         // Per §19.7.3, "the segment's presentation time is outside the key's validity
         // period" is coded livevideo.segment.invalid.
+        assert!(tracker
+            .logged_items()
+            .iter()
+            .any(|i| { i.validation_status.as_deref() == Some(LIVEVIDEO_SEGMENT_INVALID) }));
+    }
+
+    /// Regression test: the validity window is [createdAt, createdAt + validityPeriod], not
+    /// just an upper (expiry) bound. A segment claiming to be signed before its own session
+    /// key's createdAt must be rejected too.
+    #[test]
+    fn vsi_key_not_yet_valid_fails() {
+        use vsi_crypto_helpers::*;
+        let (signing_key, cose_key) = generate_test_key_pair();
+        let ee_cert_der = test_ee_cert_der();
+        let mut validator = LiveVideoValidator::new();
+        let mut tracker = aggregate_tracker();
+
+        let keys = SessionKeys {
+            keys: vec![SessionKey {
+                created_at: DateT("2099-01-01T00:00:00Z".to_string()),
+                validity_period: 3600,
+                ..session_keys_with_cose_key(cose_key, &signing_key, &ee_cert_der)
+                    .keys
+                    .remove(0)
+            }],
+        };
+        validator
+            .validate_session_keys(&keys, TEST_MANIFEST_ID, Some(&ee_cert_der), &mut tracker)
+            .unwrap();
+
+        let _ = validator.validate_verifiable_segment_info(
+            &make_signed_vsi_segment(1, TEST_MANIFEST_ID, &signing_key),
+            &mut tracker,
+        );
+
         assert!(tracker
             .logged_items()
             .iter()
