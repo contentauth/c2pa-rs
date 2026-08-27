@@ -44,7 +44,7 @@ fn read_header(reader: &mut dyn ReadSeek) -> Result<Option<ID3V2Header>> {
 
     if buf[0..3] == *ID3_HEADER {
         return ID3V2Header::parse_from_bytes(&buf)
-            .map_err(|_| Error::FlacError(FlacError::InvalidId3Version));
+            .map_err(|_| Error::InvalidAsset("invalid ID3 version for FLAC".into()));
     }
 
     if buf[0..4] == *FLAC_HEADER {
@@ -92,14 +92,6 @@ fn add_required_frame(
         Err(Error::TooManyManifestStores) => Ok(()),
         Err(e) => Err(e),
     }
-}
-
-// ── FlacError ────────────────────────────────────────────────────────────────
-
-#[derive(Debug, thiserror::Error)]
-pub enum FlacError {
-    #[error("invalid ID3 version for FLAC")]
-    InvalidId3Version,
 }
 
 // ── FlacIO ───────────────────────────────────────────────────────────────────
@@ -368,8 +360,8 @@ mod tests {
         buf.extend_from_slice(MINIMAL_FLAC);
         let mut cursor = Cursor::new(buf);
         match flac_io.read_c2pa(&mut cursor) {
-            Err(Error::FlacError(FlacError::InvalidId3Version)) => {}
-            other => panic!("expected FlacError(InvalidId3Version), got {:?}", other),
+            Err(Error::InvalidAsset(_)) => {}
+            other => panic!("expected InvalidAsset, got {:?}", other),
         }
     }
 

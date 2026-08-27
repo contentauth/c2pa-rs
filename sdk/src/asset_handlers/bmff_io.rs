@@ -1907,13 +1907,10 @@ impl C2paReader for BmffIO {
         input_stream.read_exact(&mut header)?;
 
         if header[..4] != *b"ftyp" {
-            return Err(BmffError::InvalidFileSignature {
-                reason: format!(
-                    "invalid BMFF structure: expected box type \"ftyp\" at offset 4, found {}",
-                    String::from_utf8_lossy(&header[..4])
-                ),
-            }
-            .into());
+            return Err(Error::InvalidAsset(format!(
+                "invalid BMFF structure: expected box type \"ftyp\" at offset 4, found {}",
+                String::from_utf8_lossy(&header[..4])
+            )));
         }
 
         let c2pa_boxes = read_bmff_c2pa_boxes(input_stream)?;
@@ -2596,12 +2593,6 @@ pub(crate) fn inject_manifest_into_free_box(
         ))?;
     }
     Ok(())
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum BmffError {
-    #[error("invalid file signature: {reason}")]
-    InvalidFileSignature { reason: String },
 }
 
 // ---------------------------------------------------------------------------

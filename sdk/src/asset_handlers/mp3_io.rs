@@ -198,9 +198,6 @@ impl AssetPatch for Mp3IO {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum Mp3Error {}
-
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

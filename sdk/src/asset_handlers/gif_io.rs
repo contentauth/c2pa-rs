@@ -750,25 +750,19 @@ impl Header {
         let mut signature = [0u8; 3];
         stream.read_exact(&mut signature)?;
         if signature != *b"GIF" {
-            return Err(GifError::InvalidFileSignature {
-                reason: format!(
-                    "invalid header signature: expected \"GIF\", found \"{}\"",
-                    String::from_utf8_lossy(&signature)
-                ),
-            }
-            .into());
+            return Err(Error::InvalidAsset(format!(
+                "invalid header signature: expected \"GIF\", found \"{}\"",
+                String::from_utf8_lossy(&signature)
+            )));
         }
 
         let mut version = [0u8; 3];
         stream.read_exact(&mut version)?;
         if version != *b"87a" && version != *b"89a" {
-            return Err(GifError::InvalidFileSignature {
-                reason: format!(
-                    "invalid header version: expected \"89a\" or \"87a\", found \"{}\"",
-                    String::from_utf8_lossy(&version)
-                ),
-            }
-            .into());
+            return Err(Error::InvalidAsset(format!(
+                "invalid header version: expected \"89a\" or \"87a\", found \"{}\"",
+                String::from_utf8_lossy(&version)
+            )));
         }
 
         Ok(Header {
@@ -1086,12 +1080,6 @@ fn gif_chunks(mut encoded_bytes: &[u8]) -> impl Iterator<Item = &[u8]> {
         encoded_bytes = rest;
         Some(chunk)
     })
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum GifError {
-    #[error("invalid file signature: {reason}")]
-    InvalidFileSignature { reason: String },
 }
 
 #[cfg(test)]

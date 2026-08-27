@@ -3373,7 +3373,8 @@ impl Store {
                     // if we removed the manifest fixup the hash range to be empty
                     if remove_manifests {
                         new_hash_ranges.iter_mut().for_each(|h| {
-                            if h.htype == ObjectType::C2pa || h.htype == ObjectType::OtherExclusion {
+                            if h.htype == ObjectType::C2pa || h.htype == ObjectType::OtherExclusion
+                            {
                                 h.offset = 0;
                                 h.length = 0;
                             }

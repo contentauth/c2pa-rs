@@ -112,12 +112,6 @@ impl ComposedManifestRef for PdfIO {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum PdfError {
-    #[error("invalid file signature: {reason}")]
-    InvalidFileSignature { reason: String },
-}
-
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::panic)]

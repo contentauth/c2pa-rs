@@ -18,12 +18,12 @@ use png_pong::chunk::InternationalText;
 
 use crate::{
     asset_io::{
-        merge_xmp_updates, AssetBoxHash, AssetIO, AssetReader, AssetWriter, BoxMap, C2paReader,
-        C2paWriter, ComposedManifestRef, FieldUpdate, ObjectLocations, ObjectType, ReadSeek,
-        ReadWriteSeek, RemoteManifestUrl, WriteUpdates, WriteXmp, C2PA_BOXHASH,
+        AssetBoxHash, AssetIO, BoxMap, C2paReader, C2paWriter, ComposedManifestRef,
+        ObjectLocations, ObjectType, ReadSeek, ReadWriteSeek, RemoteManifestUrl, WriteXmp,
+        C2PA_BOXHASH,
     },
     error::{Error, Result},
-    utils::io_utils::{patch_stream, patch_stream_multi, ReaderUtils},
+    utils::io_utils::{patch_stream, ReaderUtils},
 };
 
 const PNG_ID: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
@@ -64,10 +64,9 @@ fn get_png_chunk_positions<R: Read + Seek + ?Sized>(f: &mut R) -> Result<Vec<Png
     // check PNG signature
     f.read_exact(&mut hdr)?;
     if hdr != PNG_ID {
-        return Err(PngError::InvalidFileSignature {
-            reason: format!("invalid header: expected {PNG_ID:02X?}, got {hdr:02X?}"),
-        }
-        .into());
+        return Err(Error::InvalidAsset(format!(
+            "invalid header: expected {PNG_ID:02X?}, got {hdr:02X?}"
+        )));
     }
 
     loop {
@@ -482,139 +481,6 @@ impl AssetIO for PngIO {
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
-
-    fn new_asset_reader<'a>(
-        &'a self,
-        _asset_type: &str,
-        stream: &'a mut dyn ReadSeek,
-    ) -> Result<Box<dyn AssetReader + 'a>> {
-        Ok(Box::new(PngAssetReader {
-            stream,
-            c2pa: None,
-            xmp: None,
-            object_locations: None,
-        }))
-    }
-}
-
-/// Reference [`AssetReader`] implementation for PNG: caches c2pa/xmp/object-location
-/// reads, and produces a [`PngAssetWriter`] that applies a c2pa change and an XMP
-/// change (provenance and/or instance ID) in a single physical output pass, instead
-/// of the two full-file passes the generic bridge (and today's production code in
-/// `store.rs`) falls back to when both need to change.
-struct PngAssetReader<'a> {
-    stream: &'a mut dyn ReadSeek,
-    c2pa: Option<Vec<u8>>,
-    xmp: Option<Option<String>>,
-    object_locations: Option<Vec<ObjectLocations>>,
-}
-
-impl AssetReader for PngAssetReader<'_> {
-    fn c2pa(&mut self) -> Result<Vec<u8>> {
-        if let Some(cached) = &self.c2pa {
-            return Ok(cached.clone());
-        }
-        let data = get_cai_data(self.stream)?;
-        self.c2pa = Some(data.clone());
-        Ok(data)
-    }
-
-    fn xmp(&mut self) -> Option<String> {
-        if self.xmp.is_none() {
-            self.xmp = Some(PngIO {}.read_xmp(self.stream));
-        }
-        self.xmp.clone().flatten()
-    }
-
-    fn object_locations(&mut self) -> Result<Vec<ObjectLocations>> {
-        if let Some(cached) = &self.object_locations {
-            return Ok(cached.clone());
-        }
-        let locations = PngIO {}.get_object_locations(self.stream)?;
-        self.object_locations = Some(locations.clone());
-        Ok(locations)
-    }
-
-    fn as_writer(&mut self) -> Result<Box<dyn AssetWriter + '_>> {
-        Ok(Box::new(PngAssetWriter {
-            stream: &mut *self.stream,
-        }))
-    }
-}
-
-struct PngAssetWriter<'a> {
-    stream: &'a mut dyn ReadSeek,
-}
-
-impl AssetWriter for PngAssetWriter<'_> {
-    fn write(&mut self, output: &mut dyn ReadWriteSeek, updates: &WriteUpdates) -> Result<()> {
-        self.stream.rewind()?;
-        let ps = get_png_chunk_positions(self.stream)?;
-
-        // Encode the c2pa region (if requested) up front so its bytes outlive the
-        // `regions` slice passed to `patch_stream_multi` below.
-        let c2pa_region = match &updates.c2pa {
-            FieldUpdate::Keep => None,
-            FieldUpdate::Set(bytes) => {
-                let mut c2pa_data = Vec::new();
-                let mut c2pa_encoder = png_pong::Encoder::new(&mut c2pa_data).into_chunk_enc();
-                let mut c2pa_chunk = png_pong::chunk::Chunk::Unknown(png_pong::chunk::Unknown {
-                    name: CAI_CHUNK,
-                    data: bytes.clone(),
-                });
-                c2pa_encoder
-                    .encode(&mut c2pa_chunk)
-                    .map_err(|_| Error::EmbeddingError)?;
-
-                let (start, len) = match ps.iter().find(|pcp| pcp.name == CAI_CHUNK) {
-                    Some(pcp) => (pcp.start, pcp.length as u64 + PNG_HDR_LEN),
-                    None => {
-                        let ihdr_end = ps
-                            .iter()
-                            .find(|pcp| pcp.name == IMG_HDR)
-                            .ok_or(Error::EmbeddingError)?
-                            .end();
-                        (ihdr_end, 0)
-                    }
-                };
-                Some((start, len, c2pa_data))
-            }
-            FieldUpdate::Remove => ps
-                .iter()
-                .find(|pcp| pcp.name == CAI_CHUNK)
-                .map(|pcp| (pcp.start, pcp.end() - pcp.start, Vec::new())),
-        };
-
-        let current_xmp = PngIO {}.read_xmp(self.stream);
-        let xmp_region = if let Some(xmp) = merge_xmp_updates(current_xmp, updates)? {
-            let mut xmp_data = Vec::new();
-            let mut xmp_encoder = png_pong::Encoder::new(&mut xmp_data).into_chunk_enc();
-            let mut xmp_chunk = png_pong::chunk::Chunk::InternationalText(InternationalText {
-                key: XMP_KEY.to_string(),
-                langtag: "".to_string(),
-                transkey: "".to_string(),
-                val: xmp,
-                compressed: false,
-            });
-            xmp_encoder
-                .encode(&mut xmp_chunk)
-                .map_err(|_| Error::EmbeddingError)?;
-
-            let (start, len) = get_xmp_insertion_point(self.stream).ok_or(Error::EmbeddingError)?;
-            Some((start, len as u64, xmp_data))
-        } else {
-            None
-        };
-
-        let regions: Vec<(u64, u64, &[u8])> = c2pa_region
-            .iter()
-            .chain(xmp_region.iter())
-            .map(|(start, len, data)| (*start, *len, data.as_slice()))
-            .collect();
-
-        self.stream.rewind()?;
-        patch_stream_multi(self.stream, output, &regions)
-    }
 }
 
 fn get_xmp_insertion_point(asset_reader: &mut dyn ReadSeek) -> Option<(u64, u32)> {
@@ -762,12 +628,6 @@ impl ComposedManifestRef for PngIO {
 
         Ok(cai_data)
     }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum PngError {
-    #[error("invalid file signature: {reason}")]
-    InvalidFileSignature { reason: String },
 }
 
 #[cfg(test)]
@@ -919,7 +779,7 @@ pub mod tests {
         let mut output_stream = Cursor::new(output);
         assert!(matches!(
             png_io.write_c2pa(&mut stream, &mut output_stream, &[]),
-            Err(Error::PngError(PngError::InvalidFileSignature { .. }))
+            Err(Error::InvalidAsset(_))
         ));
     }
 
@@ -946,7 +806,7 @@ pub mod tests {
         let png_io = PngIO {};
         assert!(matches!(
             png_io.get_object_locations(&mut stream),
-            Err(Error::PngError(PngError::InvalidFileSignature { .. }))
+            Err(Error::InvalidAsset(_))
         ));
     }
 
@@ -1173,113 +1033,5 @@ pub mod tests {
         let png_io = PngIO {};
         let mut stream = Cursor::new(data);
         assert!(png_io.read_xmp(&mut stream).is_none());
-    }
-
-    #[test]
-    fn test_asset_reader_matches_legacy_reads() {
-        let png_io = PngIO {};
-
-        let c2pa_source = test::fixture_path("exp-test1.png");
-        let expected_c2pa = png_io
-            .read_c2pa(&mut std::fs::File::open(&c2pa_source).unwrap())
-            .unwrap();
-        let expected_locations = png_io
-            .get_object_locations(&mut std::fs::File::open(&c2pa_source).unwrap())
-            .unwrap();
-
-        let mut c2pa_stream = std::fs::File::open(&c2pa_source).unwrap();
-        let mut reader = png_io.new_asset_reader("png", &mut c2pa_stream).unwrap();
-        assert_eq!(reader.c2pa().unwrap(), expected_c2pa);
-        // second call must hit the cache and still agree
-        assert_eq!(reader.c2pa().unwrap(), expected_c2pa);
-        assert_eq!(reader.object_locations().unwrap(), expected_locations);
-
-        let xmp_source = test::fixture_path("libpng-test_with_url.png");
-        let expected_provenance = crate::utils::xmp_inmemory_utils::extract_provenance(
-            &png_io
-                .read_xmp(&mut std::fs::File::open(&xmp_source).unwrap())
-                .unwrap(),
-        )
-        .unwrap();
-
-        let mut xmp_stream = std::fs::File::open(&xmp_source).unwrap();
-        let mut reader = png_io.new_asset_reader("png", &mut xmp_stream).unwrap();
-        assert_eq!(reader.xmp_provenance().unwrap(), expected_provenance);
-    }
-
-    #[test]
-    fn test_asset_writer_single_pass_c2pa_and_provenance() {
-        let png_io = PngIO {};
-        let source = test::fixture_path("exp-test1.png");
-
-        // sanity check: the fixture starts with an embedded c2pa store
-        assert!(png_io
-            .read_c2pa(&mut std::fs::File::open(&source).unwrap())
-            .is_ok());
-
-        let mut input = std::fs::File::open(&source).unwrap();
-        let mut reader = png_io.new_asset_reader("png", &mut input).unwrap();
-        let mut writer = reader.as_writer().unwrap();
-
-        let mut output = Cursor::new(Vec::new());
-        writer
-            .write(
-                &mut output,
-                &WriteUpdates {
-                    c2pa: FieldUpdate::Remove,
-                    provenance: FieldUpdate::Set("https://example.com/manifest".to_string()),
-                    instance_id: None,
-                },
-            )
-            .unwrap();
-
-        output.rewind().unwrap();
-        match png_io.read_c2pa(&mut output) {
-            Err(Error::JumbfNotFound) => (),
-            other => panic!("expected c2pa to be removed, got {other:?}"),
-        }
-
-        output.rewind().unwrap();
-        let xmp = png_io.read_xmp(&mut output).unwrap();
-        assert_eq!(
-            crate::utils::xmp_inmemory_utils::extract_provenance(&xmp).unwrap(),
-            "https://example.com/manifest"
-        );
-    }
-
-    #[test]
-    fn test_asset_writer_instance_id_only() {
-        let png_io = PngIO {};
-        let source = test::fixture_path("exp-test1.png");
-
-        let expected_c2pa = png_io
-            .read_c2pa(&mut std::fs::File::open(&source).unwrap())
-            .unwrap();
-
-        let mut input = std::fs::File::open(&source).unwrap();
-        let mut reader = png_io.new_asset_reader("png", &mut input).unwrap();
-        let mut writer = reader.as_writer().unwrap();
-
-        let mut output = Cursor::new(Vec::new());
-        writer
-            .write(
-                &mut output,
-                &WriteUpdates {
-                    c2pa: FieldUpdate::Keep,
-                    provenance: FieldUpdate::Keep,
-                    instance_id: Some("xmp.iid:test-instance".to_string()),
-                },
-            )
-            .unwrap();
-
-        output.rewind().unwrap();
-        assert_eq!(png_io.read_c2pa(&mut output).unwrap(), expected_c2pa);
-
-        output.rewind().unwrap();
-        let xmp = png_io.read_xmp(&mut output).unwrap();
-        assert_eq!(
-            crate::utils::xmp_inmemory_utils::extract_instance_id(&xmp).unwrap(),
-            "xmp.iid:test-instance"
-        );
     }
 }

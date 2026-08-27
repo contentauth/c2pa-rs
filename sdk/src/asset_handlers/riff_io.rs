@@ -297,14 +297,11 @@ impl C2paReader for RiffIO {
 
         // Assume C2PA data will be in the first chunk, even for multiple RIFF/AVIX chunk files.
         if top_level_chunks.id() != RIFF_ID {
-            return Err(RiffError::InvalidFileSignature {
-                reason: format!(
-                    "invalid header: expected \"{}\", got \"{}\"",
-                    String::from_utf8_lossy(&RIFF_ID.value),
-                    String::from_utf8_lossy(&top_level_chunks.id().value),
-                ),
-            }
-            .into());
+            return Err(Error::InvalidAsset(format!(
+                "invalid header: expected \"{}\", got \"{}\"",
+                String::from_utf8_lossy(&RIFF_ID.value),
+                String::from_utf8_lossy(&top_level_chunks.id().value),
+            )));
         }
 
         for result in top_level_chunks.iter(&mut input_stream) {
@@ -592,12 +589,6 @@ impl WriteXmp for RiffIO {
             .map_err(|_e| Error::EmbeddingError)?;
         Ok(())
     }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum RiffError {
-    #[error("invalid file signature: {reason}")]
-    InvalidFileSignature { reason: String },
 }
 
 #[cfg(test)]

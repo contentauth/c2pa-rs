@@ -113,12 +113,14 @@
 //! [`Context::with_io_handler`](crate::Context::with_io_handler), and it will be
 //! consulted before the SDK's built-in handlers for any format string it claims.
 
+#[cfg(feature = "file_io")]
+use std::path::PathBuf;
 use std::{
     collections::HashMap,
     ffi::OsStr,
     fmt, fs,
     io::{Read, Seek},
-    path::{Path, PathBuf},
+    path::Path,
     sync::Arc,
 };
 
@@ -128,12 +130,8 @@ pub use crate::read_seek::{ReadSeek, ReadWriteSeek};
 use crate::{
     error::Result,
     utils::{
-        io_utils::{stream_len, stream_with_fs_fallback},
         mime::normalize_format,
-        xmp_inmemory_utils::{
-            add_provenance, extract_document_id, extract_instance_id, extract_provenance,
-            remove_provenance, set_instance_id, MIN_XMP,
-        },
+        xmp_inmemory_utils::{add_provenance, extract_provenance, remove_provenance, MIN_XMP},
     },
     Error,
 };
@@ -219,105 +217,6 @@ pub trait C2paWriter: Sync + Send {
     ) -> Result<()>;
 }
 
-/// Reads and caches an asset's C2PA manifest, XMP metadata, and hashable byte
-/// ranges from a single stream, for the duration of one call.
-///
-/// Unlike [`C2paReader`], an implementor of this trait holds the stream it was
-/// constructed from and can memoize whatever it computes, so repeated queries
-/// against the same asset don't re-parse it. Obtained via
-/// [`HandlerRegistry::asset_reader`].
-///
-/// Deliberately not `Send`/`Sync`: unlike the long-lived, shareable handler
-/// singletons `C2paReader`/`C2paWriter` implementations are, an `AssetReader`
-/// is a short-lived, per-call object holding a borrowed stream, and
-/// [`ReadSeek`] (via `MaybeSend`) allows non-`Send` streams on targets without
-/// threading — requiring `Send` here would rule those out.
-pub trait AssetReader {
-    /// Returns the raw C2PA JUMBF manifest store bytes, computing and caching
-    /// them on first call.
-    fn c2pa(&mut self) -> Result<Vec<u8>>;
-
-    /// Returns the asset's raw XMP packet, if any, computing and caching it on
-    /// first call.
-    ///
-    /// Implement just this one accessor — `xmp_provenance`/`xmp_document_id`/
-    /// `xmp_instance_id` are derived from it by a default implementation below,
-    /// so handlers don't need to duplicate XMP parsing.
-    fn xmp(&mut self) -> Option<String>;
-
-    /// Returns the XMP `dcterms:provenance` (remote manifest URL) value, if any.
-    fn xmp_provenance(&mut self) -> Option<String> {
-        self.xmp().as_deref().and_then(extract_provenance)
-    }
-
-    /// Returns the XMP `xmpMM:DocumentID` value, if any.
-    fn xmp_document_id(&mut self) -> Option<String> {
-        self.xmp().as_deref().and_then(extract_document_id)
-    }
-
-    /// Returns the XMP `xmpMM:InstanceID` value, if any.
-    fn xmp_instance_id(&mut self) -> Option<String> {
-        self.xmp().as_deref().and_then(extract_instance_id)
-    }
-
-    /// Returns the byte positions and lengths of the key regions in the asset
-    /// (the C2PA manifest, XMP, and everything else), computing and caching
-    /// them on first call. See [`C2paWriter::get_object_locations`].
-    fn object_locations(&mut self) -> Result<Vec<ObjectLocations>>;
-
-    /// Produces a writer for the same asset, reusing whatever this reader has
-    /// already cached.
-    ///
-    /// Takes `&mut self` (rather than consuming `self`) so the returned
-    /// writer's lifetime can borrow directly from it, but the borrow it
-    /// creates means this reader is inaccessible for as long as the writer
-    /// is alive — deliberately: `AssetReader` and [`AssetWriter`] are kept as
-    /// separate traits (rather than one type implementing both) so that code
-    /// which only reads an asset is structurally unable to write to it.
-    fn as_writer(&mut self) -> Result<Box<dyn AssetWriter + '_>>;
-}
-
-/// Applies a bundle of add/update/remove operations to an asset in a single
-/// pass. Obtained from [`AssetReader::as_writer`].
-pub trait AssetWriter {
-    /// Applies `updates` to the asset this writer was derived from, writing
-    /// the result to `output`. Fields left as [`FieldUpdate::Keep`] (or, for
-    /// `instance_id`, `None`) are carried through unchanged.
-    fn write(&mut self, output: &mut dyn ReadWriteSeek, updates: &WriteUpdates) -> Result<()>;
-}
-
-/// Describes what should happen to one field of an asset during an
-/// [`AssetWriter::write`] call.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub enum FieldUpdate<T> {
-    /// Leave the field as it currently is.
-    #[default]
-    Keep,
-    /// Remove the field entirely.
-    Remove,
-    /// Set the field to this value, replacing whatever is there.
-    Set(T),
-}
-
-/// A bundle of write operations to apply to an asset in one
-/// [`AssetWriter::write`] pass.
-///
-/// `patch_c2pa` ([`AssetPatch`]) is intentionally not represented here: it has
-/// a different contract (same-length, in-place) and a different execution
-/// shape (a targeted overwrite rather than a full rewrite), so there's no
-/// shared-pass benefit to fusing it in with these fields.
-#[derive(Debug, Default, Clone)]
-pub struct WriteUpdates {
-    /// What to do with the C2PA manifest store.
-    pub c2pa: FieldUpdate<Vec<u8>>,
-    /// What to do with the XMP `dcterms:provenance` (remote manifest URL) value.
-    pub provenance: FieldUpdate<String>,
-    /// The XMP `xmpMM:InstanceID` value to set, if it should change. `None`
-    /// leaves the existing value untouched — there's no meaningful "remove"
-    /// for this field, so unlike `c2pa`/`provenance` it isn't a `FieldUpdate`.
-    pub instance_id: Option<String>,
-}
-
 /// The master trait for a C2PA I/O handler for a single file format.
 ///
 /// Implement this (plus [`C2paReader`] and [`C2paWriter`]) to add support for a
@@ -356,7 +255,6 @@ pub trait AssetIO: Sync + Send {
     ///
     /// The default implementation opens `asset_path` and delegates to
     /// [`get_reader`](AssetIO::get_reader)'s [`C2paReader::read_c2pa`].
-    #[cfg(feature = "file_io")]
     fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
         let mut input_stream = fs::OpenOptions::new()
             .read(true)
@@ -373,7 +271,6 @@ pub trait AssetIO: Sync + Send {
     /// temporary file, and moves the result into place with [`rename_or_move`].
     /// Returns [`Error::UnsupportedType`] if [`get_writer`](AssetIO::get_writer)
     /// returns `None`.
-    #[cfg(feature = "file_io")]
     fn save_c2pa_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
         let ext = asset_path
             .extension()
@@ -396,7 +293,6 @@ pub trait AssetIO: Sync + Send {
     ///
     /// The default implementation mirrors [`save_c2pa_store`](AssetIO::save_c2pa_store),
     /// calling [`C2paWriter::remove_c2pa`] instead.
-    #[cfg(feature = "file_io")]
     fn remove_c2pa_store(&self, asset_path: &Path) -> Result<()> {
         let ext = asset_path
             .extension()
@@ -480,29 +376,6 @@ pub trait AssetIO: Sync + Send {
     /// merges a URL into the *current* XMP).
     fn write_xmp_ref(&self) -> Option<&dyn WriteXmp> {
         None
-    }
-
-    /// Returns an [`AssetReader`] over `stream`.
-    ///
-    /// The default builds a generic reader from this handler's existing
-    /// [`C2paReader`]/[`C2paWriter`]/[`WriteXmp`] methods — functionally
-    /// complete, but not single-pass optimized the way a handler-specific
-    /// override can be. `asset_type` is the format string this reader was
-    /// requested for (see [`get_writer`](AssetIO::get_writer)).
-    fn new_asset_reader<'a>(
-        &'a self,
-        asset_type: &str,
-        stream: &'a mut dyn ReadSeek,
-    ) -> Result<Box<dyn AssetReader + 'a>> {
-        Ok(Box::new(BridgedAssetReader {
-            stream,
-            reader: self.get_reader(),
-            writer: self.get_writer(asset_type),
-            write_xmp: self.write_xmp_ref(),
-            c2pa: None,
-            xmp: None,
-            object_locations: None,
-        }))
     }
 }
 
@@ -716,166 +589,6 @@ pub trait ComposedManifestRef {
     /// (e.g. a JPEG APP11 segment, or a PNG `caBX` chunk).
     fn compose_manifest(&self, manifest_data: &[u8], format: &str) -> Result<Vec<u8>>;
 }
-
-/// Merges `updates`' provenance/instance-ID changes into `current` (the asset's
-/// existing XMP, if any), returning the packet that should be written — or
-/// `None` if neither field is being changed, in which case the existing XMP
-/// (if any) should be left untouched.
-pub(crate) fn merge_xmp_updates(
-    current: Option<String>,
-    updates: &WriteUpdates,
-) -> Result<Option<String>> {
-    if matches!(updates.provenance, FieldUpdate::Keep) && updates.instance_id.is_none() {
-        return Ok(None);
-    }
-
-    let mut xmp = current.unwrap_or_else(|| MIN_XMP.to_string());
-    match &updates.provenance {
-        FieldUpdate::Keep => {}
-        FieldUpdate::Set(url) => xmp = add_provenance(&xmp, url)?,
-        FieldUpdate::Remove => xmp = remove_provenance(&xmp)?,
-    }
-    if let Some(id) = &updates.instance_id {
-        xmp = set_instance_id(&xmp, id)?;
-    }
-    Ok(Some(xmp))
-}
-
-/// Generic [`AssetReader`] built from a handler's existing
-/// [`C2paReader`]/[`C2paWriter`]/[`WriteXmp`] methods, for handlers that don't
-/// provide a purpose-built [`AssetIO::new_asset_reader`] override.
-///
-/// Correct for every handler, but not single-pass optimized: a [`write`](AssetWriter::write)
-/// call that touches both `c2pa` and XMP still does two passes internally (one
-/// to apply the c2pa change, one to apply the XMP change on top of that) — the
-/// same cost paid today by callers that chain `remove_c2pa` and
-/// `write_remote_manifest_url` by hand. This is temporary scaffolding for
-/// handlers that haven't been migrated to a purpose-built, single-pass
-/// [`AssetWriter`] yet (see PNG's handler for what that looks like) — the goal
-/// is for every handler to eventually have one, making this bridge (and the
-/// scratch buffer below) dead code.
-struct BridgedAssetReader<'a> {
-    stream: &'a mut dyn ReadSeek,
-    reader: &'a dyn C2paReader,
-    writer: Option<Box<dyn C2paWriter>>,
-    write_xmp: Option<&'a dyn WriteXmp>,
-    c2pa: Option<Vec<u8>>,
-    xmp: Option<Option<String>>,
-    object_locations: Option<Vec<ObjectLocations>>,
-}
-
-impl AssetReader for BridgedAssetReader<'_> {
-    fn c2pa(&mut self) -> Result<Vec<u8>> {
-        if let Some(cached) = &self.c2pa {
-            return Ok(cached.clone());
-        }
-        let data = self.reader.read_c2pa(self.stream)?;
-        self.c2pa = Some(data.clone());
-        Ok(data)
-    }
-
-    fn xmp(&mut self) -> Option<String> {
-        if self.xmp.is_none() {
-            let value = self.reader.read_xmp(self.stream);
-            self.xmp = Some(value);
-        }
-        self.xmp.clone().flatten()
-    }
-
-    fn object_locations(&mut self) -> Result<Vec<ObjectLocations>> {
-        if let Some(cached) = &self.object_locations {
-            return Ok(cached.clone());
-        }
-        let writer = self.writer.as_deref().ok_or(Error::UnsupportedType)?;
-        let locations = writer.get_object_locations(self.stream)?;
-        self.object_locations = Some(locations.clone());
-        Ok(locations)
-    }
-
-    fn as_writer(&mut self) -> Result<Box<dyn AssetWriter + '_>> {
-        let writer = self.writer.take().ok_or(Error::UnsupportedType)?;
-        Ok(Box::new(BridgedAssetWriter {
-            stream: &mut *self.stream,
-            reader: self.reader,
-            writer,
-            write_xmp: self.write_xmp,
-        }))
-    }
-}
-
-struct BridgedAssetWriter<'a> {
-    stream: &'a mut dyn ReadSeek,
-    reader: &'a dyn C2paReader,
-    writer: Box<dyn C2paWriter>,
-    write_xmp: Option<&'a dyn WriteXmp>,
-}
-
-impl BridgedAssetWriter<'_> {
-    fn apply_c2pa(
-        &mut self,
-        output: &mut dyn ReadWriteSeek,
-        op: &FieldUpdate<Vec<u8>>,
-    ) -> Result<()> {
-        match op {
-            FieldUpdate::Keep => {
-                self.stream.rewind()?;
-                std::io::copy(&mut self.stream, output)?;
-                Ok(())
-            }
-            FieldUpdate::Set(bytes) => self.writer.write_c2pa(self.stream, output, bytes),
-            FieldUpdate::Remove => self.writer.remove_c2pa(self.stream, output),
-        }
-    }
-
-    fn apply_xmp(
-        &self,
-        input: &mut dyn ReadSeek,
-        output: &mut dyn ReadWriteSeek,
-        updates: &WriteUpdates,
-    ) -> Result<()> {
-        let current = self.reader.read_xmp(input);
-        match merge_xmp_updates(current, updates)? {
-            None => {
-                input.rewind()?;
-                std::io::copy(input, output)?;
-                Ok(())
-            }
-            Some(xmp) => {
-                let write_xmp = self.write_xmp.ok_or(Error::XmpNotSupported)?;
-                input.rewind()?;
-                write_xmp.write_xmp(input, output, &xmp)
-            }
-        }
-    }
-}
-
-/// Memory threshold (see [`stream_with_fs_fallback`]) for the scratch buffer
-/// [`BridgedAssetWriter::write`] needs when both `c2pa` and XMP change in one
-/// call — the same value [`Settings`](crate::settings::Settings)'
-/// `core.backing_store_memory_threshold_in_mb` defaults to. This exists only
-/// for handlers that haven't been migrated to a single-pass `AssetWriter`
-/// (see the note on [`BridgedAssetReader`]); it isn't part of the public
-/// `AssetIO`/`AssetReader` surface, so migrating a handler away from this
-/// bridge removes it from that handler's path entirely.
-const BRIDGE_SCRATCH_THRESHOLD_MB: usize = 512;
-
-impl AssetWriter for BridgedAssetWriter<'_> {
-    fn write(&mut self, output: &mut dyn ReadWriteSeek, updates: &WriteUpdates) -> Result<()> {
-        let touches_xmp =
-            !matches!(updates.provenance, FieldUpdate::Keep) || updates.instance_id.is_some();
-
-        if !touches_xmp {
-            return self.apply_c2pa(output, &updates.c2pa);
-        }
-
-        let expected_size = stream_len(self.stream)?;
-        let mut stage = stream_with_fs_fallback(BRIDGE_SCRATCH_THRESHOLD_MB, expected_size)?;
-        self.apply_c2pa(&mut stage, &updates.c2pa)?;
-        stage.rewind()?;
-        self.apply_xmp(&mut stage, output, updates)
-    }
-}
-
 /// A registry of [`AssetIO`] handlers, dispatching by format string (a file extension or
 /// MIME type, e.g. `"jpg"` or `"image/jpeg"`).
 ///
@@ -985,22 +698,6 @@ impl HandlerRegistry {
     /// writer instance on each call.
     pub fn writer(&self, format: &str) -> Option<Box<dyn C2paWriter>> {
         self.handler(format).and_then(|h| h.get_writer(format))
-    }
-
-    /// Constructs an [`AssetReader`] for `format` over `stream`, checking `fallback` if this
-    /// registry has no match.
-    ///
-    /// Uses the handler's [`AssetIO::new_asset_reader`] override if it has one; otherwise that
-    /// method's default builds a generic reader from the handler's existing
-    /// [`C2paReader`]/[`C2paWriter`]/[`WriteXmp`] methods.
-    pub fn asset_reader<'a>(
-        &'a self,
-        format: &str,
-        stream: &'a mut dyn ReadSeek,
-    ) -> Result<Box<dyn AssetReader + 'a>> {
-        self.handler(format)
-            .ok_or(Error::UnsupportedType)?
-            .new_asset_reader(format, stream)
     }
 
     /// Looks up the full [`AssetIO`] handler for the file extension of `asset_path`, if any.
@@ -1348,7 +1045,6 @@ fn sniff_container_from_stream<R: Read + Seek>(stream: &mut R) -> Option<&'stati
     None
 }
 
-#[cfg(feature = "file_io")]
 fn tempfile_builder<T: AsRef<OsStr> + Sized>(prefix: T) -> Result<NamedTempFile> {
     #[cfg(all(target_os = "wasi", target_env = "p1"))]
     return Err(Error::NotImplemented(
@@ -1491,54 +1187,6 @@ mod tests {
         let mut stream = Cursor::new(vec![]);
         let reader = reg.reader("x-custom/test").unwrap();
         assert_eq!(reader.read_c2pa(&mut stream).unwrap(), b"B");
-    }
-
-    #[test]
-    fn test_bridged_asset_reader_writer_for_unmigrated_handler() {
-        // JpegIO doesn't override `new_asset_reader`, so this exercises the generic
-        // `BridgedAssetReader`/`BridgedAssetWriter` fallback against a real handler,
-        // proving the default works for formats that haven't been migrated yet.
-        use crate::asset_handlers::jpeg_io::JpegIO;
-
-        let jpeg_io = JpegIO {};
-        let source = crate::utils::test::fixture_path("CA.jpg");
-
-        let expected_c2pa = jpeg_io
-            .read_c2pa(&mut std::fs::File::open(&source).unwrap())
-            .unwrap();
-
-        let mut input = std::fs::File::open(&source).unwrap();
-        let mut reader = jpeg_io.new_asset_reader("jpg", &mut input).unwrap();
-        assert_eq!(reader.c2pa().unwrap(), expected_c2pa);
-
-        // one call combining a c2pa removal and a provenance write — the bridge does
-        // this as two internal passes (unlike a migrated handler's single pass), but
-        // it must still produce a correct result from one `write` call.
-        let mut writer = reader.as_writer().unwrap();
-        let mut output = Cursor::new(Vec::new());
-        writer
-            .write(
-                &mut output,
-                &WriteUpdates {
-                    c2pa: FieldUpdate::Remove,
-                    provenance: FieldUpdate::Set("https://example.com/manifest".to_string()),
-                    instance_id: None,
-                },
-            )
-            .unwrap();
-
-        output.rewind().unwrap();
-        match jpeg_io.read_c2pa(&mut output) {
-            Err(Error::JumbfNotFound) => (),
-            other => panic!("expected c2pa to be removed, got {other:?}"),
-        }
-
-        output.rewind().unwrap();
-        let xmp = jpeg_io.read_xmp(&mut output).unwrap();
-        assert_eq!(
-            crate::utils::xmp_inmemory_utils::extract_provenance(&xmp).unwrap(),
-            "https://example.com/manifest"
-        );
     }
 
     #[test]

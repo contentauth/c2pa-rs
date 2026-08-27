@@ -176,13 +176,10 @@ fn detect_manifest_location(
                             insertion_point = xml_reader.buffer_position();
                         }
                     } else {
-                        return Err(SvgError::InvalidFileSignature {
-                            reason: format!(
-                                "invalid tag structure: root element must be \"{}\", found \"{}\"",
-                                SVG, xml_path[0]
-                            ),
-                        }
-                        .into());
+                        return Err(Error::InvalidAsset(format!(
+                            "invalid tag structure: root element must be \"{}\", found \"{}\"",
+                            SVG, xml_path[0]
+                        )));
                     }
                 }
 
@@ -679,12 +676,6 @@ impl WriteXmp for SvgIO {
             }
         }
     }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum SvgError {
-    #[error("invalid file signature: {reason}")]
-    InvalidFileSignature { reason: String },
 }
 
 #[cfg(test)]

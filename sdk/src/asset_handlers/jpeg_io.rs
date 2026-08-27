@@ -149,14 +149,11 @@ impl C2paReader for JpegIO {
         input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
 
         let dimg_opt = DynImage::from_bytes(buf.into()).map_err(|err| match err {
-            img_parts::Error::WrongSignature => JpegError::InvalidFileSignature {
-                reason: format!(
-                    "it may be because the stream does not start with \"{} {}\"",
-                    markers::P,
-                    markers::SOI
-                ),
-            }
-            .into(),
+            img_parts::Error::WrongSignature => Error::InvalidAsset(format!(
+                "it may be because the stream does not start with \"{} {}\"",
+                markers::P,
+                markers::SOI
+            )),
             _ => Error::InvalidAsset("Could not parse input JPEG".to_owned()),
         })?;
 
@@ -957,12 +954,6 @@ impl ComposedManifestRef for JpegIO {
 
         Ok(out_stream.into_inner())
     }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum JpegError {
-    #[error("invalid file signature: {reason}")]
-    InvalidFileSignature { reason: String },
 }
 
 #[cfg(test)]
