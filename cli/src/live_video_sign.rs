@@ -413,4 +413,224 @@ mod tests {
             err
         );
     }
+
+    // ── VSI end-to-end: init signing and the resume flow ─────────────────────
+    //
+    // These exercise `sign_live_video_vsi` for real (signing a genuine BMFF init segment with
+    // the sample certs), rather than the synthetic-box unit tests above. The resume path is
+    // what keeps `manifestId` stable across process restarts, so a regression there silently
+    // produces segments that a validator rejects.
+
+    /// A real fragmented-MP4 init segment (`ftyp` + `moov`, no `mdat`, per §19.2.3).
+    const INIT_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/live_video/init.mp4");
+
+    fn sample_path(name: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("sample")
+            .join(name)
+    }
+
+    fn test_signer() -> Box<dyn Signer> {
+        Box::new(
+            c2pa::create_signer::from_files(
+                sample_path("es256_certs.pem"),
+                sample_path("es256_private.key"),
+                c2pa::SigningAlg::Es256,
+                None,
+            )
+            .unwrap(),
+        )
+    }
+
+    fn vsi_manifest_json() -> &'static str {
+        r#"{"assertions": [{"label": "c2pa.actions", "data": {"actions": [{"action": "c2pa.created", "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"}]}}]}"#
+    }
+
+    /// Writes an `mdat`-only media segment. It carries no `moof/mfhd`, so the signer's
+    /// sequence-number cross-check (§19.4.1) has nothing to compare against and won't object.
+    fn write_media_segment(dir: &Path, name: &str) -> PathBuf {
+        let path = dir.join(name);
+        fs::write(&path, make_box(b"mdat", &[0u8; 16])).unwrap();
+        path
+    }
+
+    /// Reads the `manifestId` a signed segment actually carries in its VSI `emsg` box.
+    fn signed_segment_manifest_id(path: &Path) -> String {
+        let data = fs::read(path).unwrap();
+        let text = String::from_utf8_lossy(&data);
+        let start = text
+            .find("urn:")
+            .expect("signed segment should carry a c2pa URN manifestId");
+        text[start..]
+            .chars()
+            .take_while(|c| !c.is_control())
+            .collect()
+    }
+
+    /// Sets up a signing run: a segments dir with `count` media segments, plus an output dir.
+    fn setup_vsi_dirs(count: usize) -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
+        // The sample certs aren't on a trust list, and signing reads the init back through a
+        // full manifest validation, so turn trust verification off for these tests. The signer
+        // reads thread-local settings, which is what `from_string` writes; the non-deprecated
+        // builders deliberately don't touch thread-local state, so there's no alternative here.
+        #[allow(deprecated)]
+        c2pa::settings::Settings::from_string(r#"{"verify": {"verify_trust": false}}"#, "json")
+            .unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let segments_dir = dir.path().join("in");
+        let output_dir = dir.path().join("out");
+        fs::create_dir_all(&segments_dir).unwrap();
+
+        let init_path = segments_dir.join("init.mp4");
+        fs::write(&init_path, INIT_FIXTURE).unwrap();
+        for i in 1..=count {
+            write_media_segment(&segments_dir, &format!("seg_{i:03}.m4s"));
+        }
+
+        (dir, segments_dir, output_dir, init_path)
+    }
+
+    #[test]
+    fn vsi_signs_init_and_media_segments() {
+        let (_guard, segments_dir, output_dir, init_path) = setup_vsi_dirs(2);
+        let key_path = segments_dir.join("session.key");
+        fs::write(&key_path, [0x42u8; 32]).unwrap();
+        let signer = test_signer();
+
+        sign_live_video_vsi(VsiSignArgs {
+            segments_dir: &segments_dir,
+            segments_glob: Path::new("seg_*.m4s"),
+            init_path: &init_path,
+            previous_segment_path: None,
+            manifest_json: vsi_manifest_json(),
+            output_dir: &output_dir,
+            session_key_path: &key_path,
+            signer: signer.as_ref(),
+            min_sequence_number: Some(1),
+        })
+        .unwrap();
+
+        // The init segment is signed and carries the session-keys assertion.
+        let signed_init = fs::read(output_dir.join("init.mp4")).unwrap();
+        assert!(signed_init.len() > INIT_FIXTURE.len());
+        assert!(
+            String::from_utf8_lossy(&signed_init).contains("c2pa.session-keys"),
+            "signed init must carry the c2pa.session-keys assertion (§19.4)"
+        );
+
+        // Both media segments got a VSI emsg box.
+        for name in ["seg_001.m4s", "seg_002.m4s"] {
+            let signed = fs::read(output_dir.join(name)).unwrap();
+            assert!(
+                String::from_utf8_lossy(&signed).contains("urn:c2pa:verifiable-segment-info"),
+                "{} must carry a VSI emsg box",
+                name
+            );
+        }
+    }
+
+    /// Regression test for the resume flow: a second invocation with `--previous-segment` must
+    /// reuse the already-signed init's `manifestId` rather than re-signing the init and
+    /// minting a new one, which would break §19.4.4 continuity across a process restart.
+    #[test]
+    fn vsi_resume_keeps_manifest_id_stable_across_invocations() {
+        let (_guard, segments_dir, output_dir, init_path) = setup_vsi_dirs(1);
+        let key_path = segments_dir.join("session.key");
+        fs::write(&key_path, [0x42u8; 32]).unwrap();
+        let signer = test_signer();
+
+        // First invocation: signs the init plus seg_001.
+        sign_live_video_vsi(VsiSignArgs {
+            segments_dir: &segments_dir,
+            segments_glob: Path::new("seg_001.m4s"),
+            init_path: &init_path,
+            previous_segment_path: None,
+            manifest_json: vsi_manifest_json(),
+            output_dir: &output_dir,
+            session_key_path: &key_path,
+            signer: signer.as_ref(),
+            min_sequence_number: Some(1),
+        })
+        .unwrap();
+        let first_id = signed_segment_manifest_id(&output_dir.join("seg_001.m4s"));
+        let signed_init_before = fs::read(output_dir.join("init.mp4")).unwrap();
+
+        // Second invocation resumes from the previously signed segment.
+        write_media_segment(&segments_dir, "seg_002.m4s");
+        let previous = output_dir.join("seg_001.m4s");
+        sign_live_video_vsi(VsiSignArgs {
+            segments_dir: &segments_dir,
+            segments_glob: Path::new("seg_002.m4s"),
+            init_path: &init_path,
+            previous_segment_path: Some(&previous),
+            manifest_json: vsi_manifest_json(),
+            output_dir: &output_dir,
+            session_key_path: &key_path,
+            signer: signer.as_ref(),
+            min_sequence_number: Some(1),
+        })
+        .unwrap();
+
+        let second_id = signed_segment_manifest_id(&output_dir.join("seg_002.m4s"));
+        assert_eq!(
+            first_id, second_id,
+            "resuming must preserve the manifestId from the already-signed init (§19.4.4)"
+        );
+
+        assert_eq!(
+            signed_init_before,
+            fs::read(output_dir.join("init.mp4")).unwrap(),
+            "resuming must not re-sign the init segment"
+        );
+    }
+
+    /// The resume path reads the signed init back out of the output dir; if a caller passes
+    /// `--previous-segment` without having run a first invocation, that has to be a clear
+    /// error rather than a silent re-sign with a fresh manifestId.
+    #[test]
+    fn vsi_resume_without_a_signed_init_fails_clearly() {
+        let (_guard, segments_dir, output_dir, init_path) = setup_vsi_dirs(1);
+        let key_path = segments_dir.join("session.key");
+        fs::write(&key_path, [0x42u8; 32]).unwrap();
+        let signer = test_signer();
+
+        // Produce a signed segment to resume from, but in a *different* output dir, so the
+        // real output dir has no signed init.
+        let staging = segments_dir.join("staging");
+        fs::create_dir_all(&staging).unwrap();
+        sign_live_video_vsi(VsiSignArgs {
+            segments_dir: &segments_dir,
+            segments_glob: Path::new("seg_001.m4s"),
+            init_path: &init_path,
+            previous_segment_path: None,
+            manifest_json: vsi_manifest_json(),
+            output_dir: &staging,
+            session_key_path: &key_path,
+            signer: signer.as_ref(),
+            min_sequence_number: Some(1),
+        })
+        .unwrap();
+
+        let previous = staging.join("seg_001.m4s");
+        let err = sign_live_video_vsi(VsiSignArgs {
+            segments_dir: &segments_dir,
+            segments_glob: Path::new("seg_001.m4s"),
+            init_path: &init_path,
+            previous_segment_path: Some(&previous),
+            manifest_json: vsi_manifest_json(),
+            output_dir: &output_dir,
+            session_key_path: &key_path,
+            signer: signer.as_ref(),
+            min_sequence_number: Some(1),
+        })
+        .unwrap_err();
+
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("signed init segment"),
+            "error should name the missing signed init, got: {}",
+            msg
+        );
+    }
 }
