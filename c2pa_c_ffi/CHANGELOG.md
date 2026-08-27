@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.90.16](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.90.15...c2pa-c-ffi-v0.90.16)
+_27 August 2026_
+
+### Fixed
+
+* Resolve new Rust 1.98.0 Clippy lint (chunks_exact_to_as_chunks) (backport #2528) ([#2531](https://github.com/contentauth/c2pa-rs/pull/2531))
+
 ## [0.90.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.90.3...c2pa-c-ffi-v0.90.4)
 _04 August 2026_
 

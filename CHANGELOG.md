@@ -9,6 +9,20 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.90.16](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.15...c2pa-v0.90.16)
+_27 August 2026_
+
+### Added
+
+* Add `Error::AssertionEncoding` error source to error message (backport #2544) ([#2549](https://github.com/contentauth/c2pa-rs/pull/2549))
+
+### Fixed
+
+* Remove `validationResults` requires `activeManifest` when serializing v3 ingredients (backport #2429) ([#2537](https://github.com/contentauth/c2pa-rs/pull/2537))
+* Remove dbg! call used for testing (backport #2551) ([#2552](https://github.com/contentauth/c2pa-rs/pull/2552))
+* Filter functions did not consider `ingredient` parameter (backport #2541) ([#2546](https://github.com/contentauth/c2pa-rs/pull/2546))
+* Reject BMFF Merkle map location that overflows u32 chunk index (CAI-12884) (backport #2445) ([#2500](https://github.com/contentauth/c2pa-rs/pull/2500))
+
 ## [0.90.15](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.14...c2pa-v0.90.15)
 _13 August 2026_
 
