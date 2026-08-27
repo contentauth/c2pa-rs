@@ -24,6 +24,7 @@ use coset::{iana, CoseSign1Builder, HeaderBuilder, TaggedCborSerializable};
 use ed25519_dalek::{Signer as Ed25519Signer, SigningKey};
 
 use super::{
+    box_walk::{box_payload, find_box},
     cose_key::build_ed25519_cose_key,
     verifiable_segment_info::{VSI_SCHEME_ID_URI, VSI_URI_OFFSET_IN_EMSG},
 };
@@ -490,44 +491,6 @@ fn build_emsg_box(
 // the media segment's own `moof/traf/tfhd`+`trun` sample durations, which are
 // always expressed in that same track timescale regardless of whether the
 // caller supplies the init segment.
-
-/// Finds the first direct child box of `fourcc` in `data` and returns its
-/// full bytes (header included). Handles the 32-bit and 64-bit (`size == 1`)
-/// box-size forms; does not handle `size == 0` (box-extends-to-EOF), which
-/// doesn't occur for the container/leaf boxes looked up here.
-fn find_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
-    let mut pos = 0usize;
-    while pos + 8 <= data.len() {
-        let size = u32::from_be_bytes(data[pos..pos + 4].try_into().ok()?) as usize;
-        let box_type = &data[pos + 4..pos + 8];
-        let (header_len, box_size) = if size == 1 {
-            let largesize =
-                u64::from_be_bytes(data.get(pos + 8..pos + 16)?.try_into().ok()?) as usize;
-            (16, largesize)
-        } else {
-            (8, size)
-        };
-        if box_size < header_len || pos.checked_add(box_size)? > data.len() {
-            return None;
-        }
-        if box_type == fourcc {
-            return Some(&data[pos..pos + box_size]);
-        }
-        pos += box_size;
-    }
-    None
-}
-
-/// Returns the payload of a box (its bytes after the size/type header), or `None` if the box
-/// is truncated shorter than its own header.
-fn box_payload(box_bytes: &[u8]) -> Option<&[u8]> {
-    let size = u32::from_be_bytes(box_bytes.get(0..4)?.try_into().ok()?);
-    if size == 1 {
-        box_bytes.get(16..)
-    } else {
-        box_bytes.get(8..)
-    }
-}
 
 /// Parses `moov/trak/mdia/mdhd`'s `timescale` field from an init segment.
 fn parse_first_mdhd_timescale(init_data: &[u8]) -> Option<u32> {

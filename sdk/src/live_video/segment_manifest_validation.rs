@@ -11,12 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::io::{Cursor, Read, Seek, SeekFrom};
-
-use super::{fail_validation, LiveVideoValidator, SegmentState, C2PA_UUID, UUID_BOX_TYPE};
+use super::{
+    box_walk, fail_validation, LiveVideoValidator, SegmentState, C2PA_UUID, UUID_BOX_TYPE,
+};
 use crate::{
     assertions::{ContinuityMethod, LiveVideoSegment},
-    error::{Error, Result},
+    error::Result,
     live_video::verifiable_segment_info::extract_vsi_payload_from_segment,
     status_tracker::StatusTracker,
     validation_results::validation_codes::{
@@ -129,85 +129,20 @@ impl LiveVideoValidator {
     }
 }
 
-/// Returns the offset of the box following the one starting at `box_start` with the given
-/// declared `box_size`, or `None` if the box extends to (or past) the end of `data` — a
-/// `box_size` of `u64::MAX` (the "extends to EOF" sentinel from a declared size of 0) always
-/// takes this path, as would any size large enough to overflow `box_start + box_size`.
-fn next_box_offset(box_start: u64, box_size: u64, data_len: u64) -> Option<u64> {
-    match box_start.checked_add(box_size) {
-        Some(next) if next <= data_len => Some(next),
-        _ => None,
-    }
-}
-
 /// Returns `true` if the BMFF data contains a top-level box with the given FourCC type.
 pub(super) fn segment_contains_box_type(data: &[u8], target_type: u32) -> bool {
-    let mut cursor = Cursor::new(data);
-    loop {
-        let box_start = cursor.stream_position().unwrap_or(0);
-        match read_box_header(&mut cursor) {
-            Ok((box_type, box_size)) => {
-                if box_type == target_type {
-                    return true;
-                }
-                match next_box_offset(box_start, box_size, data.len() as u64) {
-                    Some(next) if cursor.seek(SeekFrom::Start(next)).is_ok() => {}
-                    _ => break,
-                }
-            }
-            Err(_) => break,
-        }
-    }
-    false
+    box_walk::contains_box_type(data, &target_type.to_be_bytes())
 }
 
 /// Returns `true` if the BMFF data contains a `uuid` box with the C2PA Manifest Store UUID.
 fn segment_contains_c2pa_uuid_box(data: &[u8]) -> bool {
-    let mut cursor = Cursor::new(data);
-    loop {
-        let box_start = cursor.stream_position().unwrap_or(0);
-        match read_box_header(&mut cursor) {
-            Ok((box_type, box_size)) => {
-                if box_type == UUID_BOX_TYPE {
-                    let mut uuid_bytes = [0u8; 16];
-                    if cursor.read_exact(&mut uuid_bytes).is_ok() && uuid_bytes == C2PA_UUID {
-                        return true;
-                    }
-                }
-                match next_box_offset(box_start, box_size, data.len() as u64) {
-                    Some(next) if cursor.seek(SeekFrom::Start(next)).is_ok() => {}
-                    _ => break,
-                }
-            }
-            Err(_) => break,
-        }
-    }
-    false
-}
-
-/// Reads a single ISO BMFF box header and returns `(fourcc, total_box_size_in_bytes)`.
-fn read_box_header<R: Read + Seek>(reader: &mut R) -> Result<(u32, u64)> {
-    let mut header = [0u8; 8];
-    reader
-        .read_exact(&mut header)
-        .map_err(|_| Error::NotFound)?;
-
-    let size = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
-    let box_type = u32::from_be_bytes([header[4], header[5], header[6], header[7]]);
-
-    let total_size = if size == 1 {
-        let mut large_size_bytes = [0u8; 8];
-        reader
-            .read_exact(&mut large_size_bytes)
-            .map_err(|_| Error::NotFound)?;
-        u64::from_be_bytes(large_size_bytes)
-    } else if size == 0 {
-        u64::MAX
-    } else {
-        size as u64
-    };
-
-    Ok((box_type, total_size))
+    box_walk::top_level_boxes(data)
+        .filter(|(fourcc, _)| **fourcc == UUID_BOX_TYPE.to_be_bytes())
+        .any(|(_, box_bytes)| {
+            box_walk::box_payload(box_bytes)
+                .and_then(|payload| payload.get(..16))
+                .is_some_and(|uuid| uuid == C2PA_UUID)
+        })
 }
 
 #[cfg(test)]

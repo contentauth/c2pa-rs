@@ -91,57 +91,10 @@ pub(crate) fn parse_segment_info_map(cose_sign1_bytes: &[u8]) -> Result<SegmentI
 }
 
 fn find_emsg_boxes(segment_data: &[u8]) -> Vec<Vec<u8>> {
-    const EMSG_BOX_TYPE: &[u8; 4] = b"emsg";
-
-    let mut cursor = Cursor::new(segment_data);
-    let mut emsg_boxes = Vec::new();
-
-    loop {
-        let box_start = cursor.position() as usize;
-
-        let mut header = [0u8; 8];
-        if cursor.read_exact(&mut header).is_err() {
-            break;
-        }
-
-        let size = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
-        let box_type = &header[4..8];
-
-        let box_size = if size == 1 {
-            let mut large = [0u8; 8];
-            if cursor.read_exact(&mut large).is_err() {
-                break;
-            }
-            // A largesize that doesn't fit in `usize` (possible on 32-bit targets) can't be a
-            // real box in this segment, since it already exceeds any buffer we could hold.
-            let Ok(large_size) = usize::try_from(u64::from_be_bytes(large)) else {
-                break;
-            };
-            large_size
-        } else if size == 0 {
-            segment_data.len() - box_start
-        } else {
-            size as usize
-        };
-
-        let Some(box_end) = box_start.checked_add(box_size) else {
-            break;
-        };
-        if box_end > segment_data.len() {
-            break;
-        }
-
-        if box_type == EMSG_BOX_TYPE {
-            emsg_boxes.push(segment_data[box_start..box_end].to_vec());
-        }
-
-        cursor.set_position(box_end as u64);
-        if box_end >= segment_data.len() {
-            break;
-        }
-    }
-
-    emsg_boxes
+    super::box_walk::top_level_boxes(segment_data)
+        .filter(|(fourcc, _)| **fourcc == *b"emsg")
+        .map(|(_, box_bytes)| box_bytes.to_vec())
+        .collect()
 }
 
 fn extract_vsi_from_emsg_box(emsg_box: &[u8]) -> Option<Vec<u8>> {

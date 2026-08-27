@@ -39,6 +39,7 @@
 //! crate's usual semver stability guarantees. See
 //! [`docs/experimental-features.md`](https://github.com/contentauth/c2pa-rs/blob/main/docs/experimental-features.md).
 
+mod box_walk;
 pub(crate) mod cose_key;
 mod segment_manifest_validation;
 mod session_key_validation;
