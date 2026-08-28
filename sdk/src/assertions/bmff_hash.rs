@@ -65,6 +65,7 @@ use crate::{
     },
     asset_io::ReadSeek,
     cbor_types::UriT,
+    settings::Settings,
     utils::{
         hash_utils::{
             concat_and_hash, hash_stream_by_alg, hash_stream_by_alg_with_progress, vec_compare,
@@ -635,6 +636,15 @@ impl BmffHash {
 
     // Adds default exclusion ranges for BMFF hashes.  Add as needed.
     pub fn set_default_exclusions(&mut self) -> &[ExclusionsMap] {
+        self.set_default_exclusions_with_options(&Settings::default())
+    }
+
+    /// Like [`set_default_exclusions`](Self::set_default_exclusions), but takes
+    /// the full [`Settings`] so new BMFF-hash-related options can be added
+    /// without another signature change. Currently only
+    /// [`BuilderSettings::bmff_hash_exclude_free_and_skip_boxes`](crate::settings::builder::BuilderSettings::bmff_hash_exclude_free_and_skip_boxes)
+    /// is consulted.
+    pub fn set_default_exclusions_with_options(&mut self, settings: &Settings) -> &[ExclusionsMap] {
         let exclusions = &mut self.exclusions;
 
         let cp2a_id: [u8; 16] = [
@@ -668,16 +678,18 @@ impl BmffHash {
             exclusions.push(mfra);
         }
 
-        // /free exclusion
-        if !exclusions.iter().any(|e| e.xpath == "/free") {
-            let free = ExclusionsMap::new("/free".to_owned());
-            exclusions.push(free);
-        }
+        if settings.builder.bmff_hash_exclude_free_and_skip_boxes {
+            // /free exclusion
+            if !exclusions.iter().any(|e| e.xpath == "/free") {
+                let free = ExclusionsMap::new("/free".to_owned());
+                exclusions.push(free);
+            }
 
-        // /skip exclusion
-        if !exclusions.iter().any(|e| e.xpath == "/skip") {
-            let skip = ExclusionsMap::new("/skip".to_owned());
-            exclusions.push(skip);
+            // /skip exclusion
+            if !exclusions.iter().any(|e| e.xpath == "/skip") {
+                let skip = ExclusionsMap::new("/skip".to_owned());
+                exclusions.push(skip);
+            }
         }
 
         /*  no longer mandatory
@@ -2505,6 +2517,32 @@ mod bmff_hash_tests {
 
     use super::*;
     use crate::asset_handlers::bmff_io::{BoxInfoLite, C2PABmffBoxes};
+
+    /// `set_default_exclusions` (no args) must keep excluding `/free`/`/skip`,
+    /// matching its existing, documented default behavior.
+    #[test]
+    fn set_default_exclusions_excludes_free_and_skip() {
+        let mut bmff_hash = BmffHash::new("test", "sha256", None);
+        let exclusions = bmff_hash.set_default_exclusions();
+        assert!(exclusions.iter().any(|e| e.xpath == "/free"));
+        assert!(exclusions.iter().any(|e| e.xpath == "/skip"));
+    }
+
+    /// `set_default_exclusions_with_options` with the setting off must omit
+    /// `/free`/`/skip` from the exclusion list, so their content is folded
+    /// into the hash.
+    #[test]
+    fn set_default_exclusions_with_options_false_keeps_free_and_skip_hashed() {
+        let mut bmff_hash = BmffHash::new("test", "sha256", None);
+        let mut settings = Settings::default();
+        settings.builder.bmff_hash_exclude_free_and_skip_boxes = false;
+        let exclusions = bmff_hash.set_default_exclusions_with_options(&settings);
+        assert!(!exclusions.iter().any(|e| e.xpath == "/free"));
+        assert!(!exclusions.iter().any(|e| e.xpath == "/skip"));
+        // Other mandatory exclusions are unaffected.
+        assert!(exclusions.iter().any(|e| e.xpath == "/ftyp"));
+        assert!(exclusions.iter().any(|e| e.xpath == "/mfra"));
+    }
 
     fn small_mdat_box_info() -> BoxInfoLite {
         // A standard BMFF mdat box with an 8-byte header and no payload (size = 8).

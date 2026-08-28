@@ -844,6 +844,89 @@ zGxQnM2hCA==
         );
     }
 
+    /// An intermediate CA certificate must be held to the same validity-period
+    /// requirement as the leaf. Without a trusted timestamp, a manifest whose
+    /// intermediate has expired must not be reported as trusted just because
+    /// the leaf itself looks fine - `check_certificate_profile` only ever
+    /// examines the leaf, so this check has to happen in
+    /// `check_certificate_trust` (both backends) instead.
+    #[test]
+    fn test_intermediate_validity_is_checked() {
+        let mut ctp = CertificateTrustPolicy::new();
+        ctp.add_trust_anchors(include_bytes!(
+            "../../../tests/fixtures/crypto/cose/chain_trust_root.pub"
+        ))
+        .unwrap();
+
+        // Positive case: a currently-valid, properly-signed intermediate
+        // must still verify (don't over-block legitimate chains).
+        let valid_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/cose/chain_trust_valid.pub"
+        ));
+        ctp.check_certificate_trust(&valid_certs[1..], &valid_certs[0], None)
+            .expect("a currently-valid, properly-signed intermediate should be trusted");
+
+        // An expired intermediate must be rejected even though the leaf
+        // itself is still within its own validity window.
+        let expired_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/cose/chain_trust_expired_intermediate.pub"
+        ));
+        ctp.check_certificate_trust(&expired_certs[1..], &expired_certs[0], None)
+            .expect_err("an expired intermediate CA certificate must not be trusted");
+    }
+
+    /// Regression: an ordinary end-entity certificate (`basicConstraints
+    /// CA:FALSE`) must not be usable as an issuer, even when it cryptographically
+    /// signed the certificate below it. Before the fix, `check_chain_order`
+    /// only verified the signature chained correctly - it never checked
+    /// whether the issuer was actually authorized to issue. An attacker who
+    /// legitimately holds the private key for *any* ordinary, validly-issued
+    /// certificate could use it to self-issue an arbitrary forged certificate
+    /// that would then "chain" up to a real trust anchor.
+    #[test]
+    fn test_non_ca_intermediate_is_rejected() {
+        let mut ctp = CertificateTrustPolicy::new();
+        ctp.add_trust_anchors(include_bytes!(
+            "../../../tests/fixtures/crypto/cose/ca_authorization_root.pub"
+        ))
+        .unwrap();
+
+        let certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/cose/ca_authorization_non_ca_intermediate.pub"
+        ));
+        ctp.check_certificate_trust(&certs[1..], &certs[0], None)
+            .expect_err(
+                "a certificate without basicConstraints CA:TRUE must not be usable as an issuer",
+            );
+    }
+
+    /// Regression: a `pathLenConstraint` on an intermediate CA must actually
+    /// be enforced against the number of CA certificates below it.
+    #[test]
+    fn test_path_len_constraint_is_enforced() {
+        let mut ctp = CertificateTrustPolicy::new();
+        ctp.add_trust_anchors(include_bytes!(
+            "../../../tests/fixtures/crypto/cose/ca_authorization_root.pub"
+        ))
+        .unwrap();
+
+        // Positive case: an intermediate declaring pathlen:1 with exactly one
+        // CA certificate below it must still verify.
+        let ok_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/cose/ca_authorization_pathlen_ok.pub"
+        ));
+        ctp.check_certificate_trust(&ok_certs[1..], &ok_certs[0], None)
+            .expect("a chain respecting its pathLenConstraint should be trusted");
+
+        // Negative case: an intermediate declaring pathlen:0 with a further
+        // CA certificate below it must be rejected.
+        let violation_certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/cose/ca_authorization_pathlen_violation.pub"
+        ));
+        ctp.check_certificate_trust(&violation_certs[1..], &violation_certs[0], None)
+            .expect_err("a chain violating its pathLenConstraint must not be trusted");
+    }
+
     #[test]
     fn test_user_trust_store() {
         let ctp = CertificateTrustPolicy::default();

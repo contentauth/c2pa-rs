@@ -46,7 +46,7 @@ pub enum Error {
     AssertionMissing { url: String },
 
     /// The attempt to serialize the assertion (typically to JSON or CBOR) failed.
-    #[error("unable to encode assertion data")]
+    #[error("unable to encode assertion data: {0}")]
     AssertionEncoding(String),
 
     #[error(transparent)]
@@ -78,8 +78,10 @@ pub enum Error {
     #[error("claim could not be converted to CBOR")]
     ClaimEncoding,
 
-    /// The attempt to deserialize the claim from CBOR failed.
-    #[error("claim could not be converted from CBOR")]
+    /// The claim (or one of its assertions) failed to decode or is structurally
+    /// invalid. The string carries the assertion URI or a description of what
+    /// was wrong.
+    #[error("claim could not be converted from CBOR: {0}")]
     ClaimDecoding(String),
 
     #[error("attempt to add new claim without signing last claim")]
