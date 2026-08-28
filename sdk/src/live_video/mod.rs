@@ -178,10 +178,14 @@ impl LiveVideoValidator {
         fail_validation(description, LIVEVIDEO_MANIFEST_INVALID, tracker)
     }
 
-    /// Records an initialization-segment-level validation failure ([§19.7.1]).
+    /// Records a manifest validation failure for the initialization segment ([§19.7.1]).
     ///
     /// Use this when the init segment's C2PA manifest cannot be read, has no active manifest,
-    /// or is not cryptographically valid and trusted.
+    /// or fails the general validation rules of Chapter 15.
+    ///
+    /// Logged as `livevideo.manifest.invalid`, not `livevideo.init.invalid`: §19.7.1 reserves
+    /// the latter for an init segment that contains an `mdat` box, and assigns
+    /// `livevideo.manifest.invalid` to a C2PA Manifest that fails validation.
     ///
     /// [§19.7.1]: https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_live_video_validation_process
     pub fn fail_init_manifest(
@@ -189,7 +193,7 @@ impl LiveVideoValidator {
         description: impl Into<String>,
         tracker: &mut StatusTracker,
     ) -> Result<()> {
-        fail_validation(description, LIVEVIDEO_INIT_INVALID, tracker)
+        fail_validation(description, LIVEVIDEO_MANIFEST_INVALID, tracker)
     }
 
     /// Validates a media segment using the per-segment C2PA Manifest Box method ([§19.3]).
