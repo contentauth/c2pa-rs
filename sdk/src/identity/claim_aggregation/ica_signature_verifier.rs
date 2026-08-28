@@ -610,6 +610,10 @@ impl<'a> IcaSignatureVerifier<'a> {
                 .iter()
                 .filter(|a| a.trust_kind == TrustListKind::CAWG)
             {
+                println!(
+                    "Testing CAWG anchor: {:?}, value: {:?}",
+                    anchor.trust_uri, anchor.trusted_ica_issuers
+                );
                 // check the installed CAWG anchors
                 if let Some(trusted_issuers) = &anchor.trusted_ica_issuers {
                     if trusted_issuers.iter().any(|t| t.as_str() == primary_did) {
