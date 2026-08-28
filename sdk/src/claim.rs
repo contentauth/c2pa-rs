@@ -37,7 +37,7 @@ use crate::{
             DATABOX_STORE, METADATA_LABEL_REGEX,
         },
         Action, Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, DataBox, DataHash,
-        Ingredient, Metadata, Relationship, V2_DEPRECATED_ACTIONS,
+        DataMap, Ingredient, Metadata, Relationship, V2_DEPRECATED_ACTIONS,
     },
     asset_io::CAIRead,
     cbor_types::map_cbor_to_type,
@@ -251,6 +251,7 @@ const ALG_SOFT_F: &str = "alg_soft";
 const METADATA_F: &str = "metadata";
 const CREATED_ASSERTIONS_F: &str = "created_assertions";
 const GATHERED_ASSERTIONS_F: &str = "gathered_assertions";
+const SPEC_VERSION_F: &str = "specVersion";
 
 /// A `Claim` gathers together all the `Assertion`s about an asset
 /// from an actor at a given time, and may also include one or more
@@ -336,6 +337,8 @@ pub struct Claim {
     data_boxes: Vec<(HashedUri, DataBox)>, /* list of the data boxes and their hashed URIs found for this manifest */
 
     claim_version: usize,
+
+    spec_version: Option<String>, // The version of the specification against which the validation was performed (SemVer formatted string)
 
     // Optional context for settings access (set when created from Builder)
     context: Option<Arc<Context>>,
@@ -465,6 +468,7 @@ impl Claim {
             created_assertions: Vec::new(),
             gathered_assertions: None,
             context: None,
+            spec_version: None,
         }
     }
 
@@ -566,6 +570,7 @@ impl Claim {
             created_assertions: Vec::new(),
             gathered_assertions: None,
             context: None,
+            spec_version: None,
         })
     }
 
@@ -701,6 +706,7 @@ impl Claim {
                 created_assertions: Vec::new(),
                 gathered_assertions: None,
                 context: None,
+                spec_version: None,
             })
         } else {
             /* Claim V2 fields
@@ -714,37 +720,9 @@ impl Claim {
             ? "alg": tstr .size (1..max-tstr-length),
             ? "alg_soft": tstr .size (1..max-tstr-length),
             ? "metadata": $assertion-metadata-map,
+            ? "spec_version": semver-string,
+            ? any unknown fields
             */
-
-            static V2_FIELDS: [&str; 10] = [
-                INSTANCE_ID_F,
-                CLAIM_GENERATOR_INFO_F,
-                SIGNATURE_F,
-                CREATED_ASSERTIONS_F,
-                GATHERED_ASSERTIONS_F,
-                DC_TITLE_F,
-                REDACTED_ASSERTIONS_F,
-                ALG_F,
-                ALG_SOFT_F,
-                METADATA_F,
-            ];
-
-            // make sure only V2 fields are present
-            if let c2pa_cbor::Value::Map(m) = &claim_value {
-                for v in m.keys() {
-                    if let c2pa_cbor::Value::Text(t) = v {
-                        if !V2_FIELDS.contains(&t.as_str()) {
-                            return Err(Error::ClaimDecoding(format!(
-                                "unknown V2 claim field: {t}",
-                            )));
-                        }
-                    } else {
-                        return Err(Error::ClaimDecoding("non-text key in V2 claim".to_string()));
-                    }
-                }
-            } else {
-                return Err(Error::ClaimDecoding("claim is not an object".to_string()));
-            }
 
             let instance_id = map_cbor_to_type(INSTANCE_ID_F, &claim_value).ok_or(
                 Error::ClaimDecoding("instanceID is missing or invalid".to_string()),
@@ -771,6 +749,7 @@ impl Claim {
             let alg_soft: Option<String> = map_cbor_to_type(ALG_SOFT_F, &claim_value);
             let metadata: Option<Vec<AssertionMetadata>> =
                 map_cbor_to_type(METADATA_F, &claim_value);
+            let spec_version: Option<String> = map_cbor_to_type(SPEC_VERSION_F, &claim_value);
 
             // create merged list of created and gathered assertions for processing compatibility
             // created are added first with highest priority than gathered
@@ -810,6 +789,7 @@ impl Claim {
                 claim_version,
                 created_assertions,
                 gathered_assertions,
+                spec_version,
                 context: None,
             })
         }
@@ -902,6 +882,7 @@ impl Claim {
         ? "redacted_assertions": [1* jumbf-uri-type],
         ? "alg": tstr .size (1..max-tstr-length),
         ? "alg_soft": tstr .size (1..max-tstr-length),
+        ? "spec_version": semver-string,
         ? "metadata": $assertion-metadata-map,
         */
 
@@ -923,6 +904,9 @@ impl Claim {
             claim_map_len += 1
         }
         if self.metadata.is_some() {
+            claim_map_len += 1
+        }
+        if self.spec_version.is_some() {
             claim_map_len += 1
         }
 
@@ -964,6 +948,9 @@ impl Claim {
         }
         if let Some(md) = self.metadata() {
             claim_map.serialize_field(METADATA_F, md)?;
+        }
+        if let Some(spec_version) = self.spec_version() {
+            claim_map.serialize_field(SPEC_VERSION_F, spec_version)?;
         }
 
         claim_map.end()
@@ -1261,6 +1248,14 @@ impl Claim {
 
     pub fn metadata(&self) -> Option<&[AssertionMetadata]> {
         self.metadata.as_deref()
+    }
+
+    pub fn spec_version(&self) -> Option<&String> {
+        self.spec_version.as_ref()
+    }
+
+    pub fn set_spec_version(&mut self, spec_version: Option<String>) {
+        self.spec_version = spec_version;
     }
 
     pub fn add_claim_generator_hint(&mut self, hint_key: &str, hint_value: Value) {
@@ -2858,10 +2853,42 @@ impl Claim {
                     .label_raw()
                     .starts_with(BmffHash::LABEL)
                 {
+                    let cp2a_id: [u8; 16] = [
+                        216, 254, 195, 214, 27, 14, 72, 60, 146, 151, 88, 40, 135, 126, 196, 129,
+                    ];
+                    let c2pa_dm = DataMap {
+                        offset: 8,
+                        value: cp2a_id.to_vec(), // C2PA identifier
+                    };
+
                     // handle BMFF data hashes
                     let dh = BmffHash::from_assertion(hash_binding_assertion.assertion())?;
 
                     let name = dh.name().map_or("unnamed".to_string(), default_str);
+
+                    // are there addtional exclusions that are not manifests or ftyp
+                    if dh.exclusions().iter().any(|e| {
+                        if e.xpath == "/uuid" {
+                            match &e.data {
+                                Some(dm_vec) if dm_vec.len() == 1 => !(dm_vec[0] == c2pa_dm),
+                                _ => true,
+                            }
+                        } else if e.xpath == "/ftyp" || e.xpath == "/mfra" {
+                            false
+                        } else {
+                            true // not ftyp, mfra or uuid
+                        }
+                    }) {
+                        log_item!(
+                            claim.assertion_uri(&hash_binding_assertion.label()),
+                            "extra BMFF hash exclusion(s) found",
+                            "verify_internal"
+                        )
+                        .validation_status(
+                            validation_status::ASSERTION_BMFFHASH_ADDITIONAL_EXCLUSIONS,
+                        )
+                        .informational(validation_log);
+                    }
 
                     let mut step = 0u32;
                     let mut cb = |_s: u32, t: u32| {
@@ -3140,7 +3167,7 @@ impl Claim {
                         "redaction of disallowed hash assertion",
                         "verify_internal"
                     )
-                    .validation_status(validation_status::ASSERTION_DATAHASH_REDACTED)
+                    .validation_status(validation_status::ASSERTION_HARDBINDING_REDACTED)
                     .failure(validation_log, Error::ClaimDisallowedRedaction)?;
                 }
             }
@@ -3152,7 +3179,11 @@ impl Claim {
             .iter()
             .filter(|a| {
                 if let Ok(ingredient) = Ingredient::from_assertion(a.assertion()) {
-                    return ingredient.relationship == Relationship::ParentOf;
+                    let version = ingredient.version().unwrap_or(1);
+                    let has_valid_parent = version <= 2 && ingredient.c2pa_manifest().is_some()
+                        || ingredient.c2pa_manifest().is_some() && ingredient.signature().is_some();
+
+                    return has_valid_parent && ingredient.relationship == Relationship::ParentOf;
                 }
                 false
             })
