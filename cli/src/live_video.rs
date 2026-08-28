@@ -24,13 +24,16 @@ use c2pa::{
     format_from_path,
     live_video::LiveVideoValidator,
     settings::Settings,
-    status_tracker::StatusTracker,
+    status_tracker::{LogItem, StatusTracker},
     validation_results::validation_codes::{
         LIVEVIDEO_INIT_INVALID, LIVEVIDEO_SESSIONKEY_INVALID, SIGNING_CREDENTIAL_UNTRUSTED,
     },
-    Context as C2paContext, Manifest, Reader, ValidationState,
+    Context as C2paContext, Error, Manifest, Reader, ValidationState,
 };
 use serde::Serialize;
+
+/// Shared prefix of the §19.7 live video status codes, used to pick them out of the tracker.
+const LIVEVIDEO_CODE_PREFIX: &str = "livevideo";
 
 /// One `livevideo.*` (or manifest-level) status in the JSON report.
 ///
@@ -77,17 +80,6 @@ impl LiveVideoReport {
     }
 }
 
-/// Collects every `livevideo.*` failure logged to `tracker` as report statuses.
-fn report_failures(tracker: &StatusTracker) -> Vec<ReportStatus> {
-    collect_live_video_failures(tracker)
-        .into_iter()
-        .map(|(code, description)| ReportStatus {
-            code,
-            explanation: Some(description),
-        })
-        .collect()
-}
-
 /// Result of validating a single media segment.
 struct SegmentOutcome {
     /// Whether the segment passed every §19.7 check.
@@ -95,6 +87,37 @@ struct SegmentOutcome {
     /// The segment manifest's own state, so the report can distinguish a Trusted stream from a
     /// merely Valid one instead of collapsing both to "passed".
     state: ValidationState,
+}
+
+impl SegmentOutcome {
+    /// A segment that failed: `Invalid` regardless of the trust configuration, since the
+    /// failure is either structural or a content mismatch.
+    fn invalid() -> Self {
+        Self {
+            ok: false,
+            state: ValidationState::Invalid,
+        }
+    }
+}
+
+/// Folds the init segment's state and every segment's state into the stream's own.
+///
+/// `init` is `None` when the init segment carried no C2PA manifest, which §19.2.3 permits for
+/// §19.3: it then contributes nothing, and the stream is judged on its media segments alone.
+/// A stream with nothing to judge at all is `Valid`, since nothing failed.
+fn fold_stream_state(
+    init: Option<ValidationState>,
+    segments: impl IntoIterator<Item = ValidationState>,
+) -> ValidationState {
+    segments
+        .into_iter()
+        .fold(init, |acc, state| {
+            Some(match acc {
+                Some(current) => weaker(current, state),
+                None => state,
+            })
+        })
+        .unwrap_or(ValidationState::Valid)
 }
 
 /// Returns the weaker of two states, per §14.3.2's nesting (Trusted implies Valid, which
@@ -221,7 +244,7 @@ pub fn validate_live_video(
             init_dir.join(segments_glob)
         );
         LiveVideoReport {
-            validation_state: state_name(init_state),
+            validation_state: state_name(init_state.unwrap_or(ValidationState::Valid)),
             method: Some(method_label(&method)),
             init_segment: init_path.display().to_string(),
             segments: Vec::new(),
@@ -233,10 +256,11 @@ pub fn validate_live_video(
 
     let mut failed_count = 0usize;
     let mut segment_reports = Vec::with_capacity(segment_paths.len());
+    let mut segment_states = Vec::with_capacity(segment_paths.len());
 
     // A §19.4 segment carries only an `emsg`, not its own manifest, so its trust standing is
-    // the one established by the init segment's manifest.
-    let mut stream_state = init_state;
+    // the one established by the init segment's manifest. `None` means the init carried no
+    // manifest at all, which §19.2.3 permits: the stream is then judged on its segments alone.
 
     for segment_path in &segment_paths {
         let outcome = match method {
@@ -248,50 +272,47 @@ pub fn validate_live_video(
                 trust_configured,
             ),
             ValidationMethod::VerifiableSegmentInfo => {
-                let ok = validate_segment_vsi(segment_path, &mut live_validator, &mut tracker);
-                SegmentOutcome {
-                    ok,
-                    state: if ok {
-                        init_state
-                    } else {
-                        ValidationState::Invalid
-                    },
-                }
+                validate_segment_vsi(segment_path, &mut live_validator, &mut tracker, init_state)
             }
         };
         if !outcome.ok {
             failed_count += 1;
         }
-        stream_state = weaker(stream_state, outcome.state);
+        segment_states.push(outcome.state);
         segment_reports.push(SegmentReport {
             path: segment_path.display().to_string(),
             state: state_name(outcome.state),
         });
     }
 
-    let live_video_failures = collect_live_video_failures(&tracker);
+    let failures = collect_live_video_failures(&tracker);
 
-    if !live_video_failures.is_empty() {
+    if !failures.is_empty() {
         eprintln!("\nLive video continuity failures:");
-        for (code, description) in &live_video_failures {
-            eprintln!("  [{code}] {description}");
+        for f in &failures {
+            eprintln!(
+                "  [{}] {}",
+                f.code,
+                f.explanation.as_deref().unwrap_or_default()
+            );
         }
     }
 
     let total = segment_paths.len();
-    let valid = failed_count == 0 && live_video_failures.is_empty();
-    if !valid {
-        stream_state = ValidationState::Invalid;
-    }
+    let failure_count = failures.len();
+    let valid = failed_count == 0 && failures.is_empty();
+    let stream_state = if valid {
+        fold_stream_state(init_state, segment_states)
+    } else {
+        ValidationState::Invalid
+    };
 
     LiveVideoReport {
         validation_state: state_name(stream_state),
         method: Some(method_label(&method)),
         init_segment: init_path.display().to_string(),
         segments: segment_reports,
-        validation_results: ReportResults {
-            failure: report_failures(&tracker),
-        },
+        validation_results: ReportResults { failure: failures },
     }
     .emit();
 
@@ -302,7 +323,7 @@ pub fn validate_live_video(
         bail!(
             "Live video validation failed: {failed_count}/{total} segment(s) failed, \
              {} continuity error(s)",
-            live_video_failures.len()
+            failure_count
         )
     }
 }
@@ -324,7 +345,7 @@ fn invalid_init_report(init_path: &Path, tracker: &StatusTracker) -> LiveVideoRe
         init_segment: init_path.display().to_string(),
         segments: Vec::new(),
         validation_results: ReportResults {
-            failure: report_failures(tracker),
+            failure: collect_live_video_failures(tracker),
         },
     }
 }
@@ -422,13 +443,26 @@ fn detect_validation_method(
     live_validator: &mut LiveVideoValidator,
     tracker: &mut StatusTracker,
     trust_configured: bool,
-) -> (ValidationMethod, ValidationState) {
+) -> (ValidationMethod, Option<ValidationState>) {
     let format = format_from_path(init_path).unwrap_or_else(|| "video/mp4".to_string());
 
     let reader =
         match Reader::from_shared_context(context).with_stream(&format, Cursor::new(init_data)) {
             Ok(r) => r,
-            Err(_) => return (ValidationMethod::ManifestBox, ValidationState::Invalid),
+            // §19.2.3 makes signing the init segment optional for §19.3, so an init with no
+            // manifest at all is legitimate and contributes no state: the stream is then judged
+            // on its media segments alone. Any other read error is a real failure.
+            Err(Error::JumbfNotFound) => return (ValidationMethod::ManifestBox, None),
+            Err(e) => {
+                let _ = live_validator.fail_init_manifest(
+                    format!("init segment manifest could not be read: {e}"),
+                    tracker,
+                );
+                return (
+                    ValidationMethod::ManifestBox,
+                    Some(ValidationState::Invalid),
+                );
+            }
         };
 
     if let Some(reason) = reader_invalid_reason(&reader, trust_configured) {
@@ -436,10 +470,13 @@ fn detect_validation_method(
             format!("init segment manifest did not validate: {reason}"),
             tracker,
         );
-        return (ValidationMethod::ManifestBox, ValidationState::Invalid);
+        return (
+            ValidationMethod::ManifestBox,
+            Some(ValidationState::Invalid),
+        );
     }
 
-    let init_state = reader.validation_state();
+    let init_state = Some(reader.validation_state());
 
     let manifest = match reader.active_manifest() {
         Some(m) => m,
@@ -614,16 +651,21 @@ fn validate_segment_manifest_box(
 }
 
 /// Validates one segment using section 19.4 (Verifiable Segment Info).
+/// Validates one segment using section 19.4 (Verifiable Segment Info).
+///
+/// A VSI media segment carries only an `emsg`, never its own manifest, so a segment that passes
+/// inherits `init_state`: the trust standing established once by the init segment's manifest.
 fn validate_segment_vsi(
     segment_path: &Path,
     live_validator: &mut LiveVideoValidator,
     tracker: &mut StatusTracker,
-) -> bool {
+    init_state: Option<ValidationState>,
+) -> SegmentOutcome {
     let segment_data = match fs::read(segment_path) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("Segment FAIL [{segment_path:?}]: cannot read file: {e}");
-            return false;
+            return SegmentOutcome::invalid();
         }
     };
 
@@ -638,20 +680,35 @@ fn validate_segment_vsi(
     match result {
         Ok(_) if !has_new_failure => {
             eprintln!("Segment OK  [{segment_path:?}]");
-            true
+            SegmentOutcome {
+                ok: true,
+                state: init_state.unwrap_or(ValidationState::Valid),
+            }
         }
         Ok(_) => {
             eprintln!(
                 "Segment FAIL [{segment_path:?}]: validation failure recorded \
                  (see live video continuity failures below)"
             );
-            false
+            SegmentOutcome::invalid()
         }
         Err(e) => {
             eprintln!("Segment FAIL [{segment_path:?}]: {e}");
-            false
+            SegmentOutcome::invalid()
         }
     }
+}
+
+/// Every `livevideo.*` failure among `items`, as `(code, description)`.
+///
+/// The helpers below and the JSON report all need the same scan, so it lives in one place:
+/// the §19.7 code prefix is then written once rather than in each caller.
+fn live_video_failures(items: &[LogItem]) -> impl Iterator<Item = (&str, &str)> {
+    items.iter().filter_map(|item| {
+        let code = item.validation_status.as_deref()?;
+        code.starts_with(LIVEVIDEO_CODE_PREFIX)
+            .then(|| (code, item.description.as_ref()))
+    })
 }
 
 /// Returns whether any `livevideo.*` failure was logged to `tracker` at or after index
@@ -659,38 +716,28 @@ fn validate_segment_vsi(
 /// whole tracker, so calling this once per segment in a validation loop stays linear in the
 /// total number of segments instead of quadratic.
 fn has_new_live_video_failure(tracker: &StatusTracker, logged_items_before: usize) -> bool {
-    tracker.logged_items()[logged_items_before..]
-        .iter()
-        .any(|item| {
-            item.validation_status
-                .as_deref()
-                .is_some_and(|code| code.starts_with("livevideo"))
-        })
+    live_video_failures(&tracker.logged_items()[logged_items_before..])
+        .next()
+        .is_some()
 }
 
 /// Returns the first `livevideo.*` failure logged at or after `logged_items_before`, formatted
 /// as `[code] description` so every diagnostic the command prints carries its §19.7 status code.
 fn first_failure_since(tracker: &StatusTracker, logged_items_before: usize) -> Option<String> {
-    tracker.logged_items()[logged_items_before..]
-        .iter()
-        .find_map(|item| {
-            let code = item.validation_status.as_deref()?;
-            code.starts_with("livevideo")
-                .then(|| format!("[{code}] {}", item.description))
-        })
+    live_video_failures(&tracker.logged_items()[logged_items_before..])
+        .next()
+        .map(|(code, description)| format!("[{code}] {description}"))
 }
 
-fn collect_live_video_failures(tracker: &StatusTracker) -> Vec<(String, String)> {
-    tracker
-        .logged_items()
-        .iter()
-        .filter_map(|item| {
-            let code = item.validation_status.as_deref()?;
-            if code.starts_with("livevideo") {
-                Some((code.to_string(), item.description.to_string()))
-            } else {
-                None
-            }
+/// Every `livevideo.*` failure logged to `tracker`, as report statuses.
+///
+/// The stream summary printed to stderr and the JSON report written to stdout are built from
+/// one call, rather than scanning the tracker once for each.
+fn collect_live_video_failures(tracker: &StatusTracker) -> Vec<ReportStatus> {
+    live_video_failures(tracker.logged_items())
+        .map(|(code, description)| ReportStatus {
+            code: code.to_string(),
+            explanation: Some(description.to_string()),
         })
         .collect()
 }
@@ -766,8 +813,8 @@ mod tests {
         let failures = collect_live_video_failures(&tracker);
 
         assert_eq!(failures.len(), 2);
-        assert_eq!(failures[0].0, "livevideo.segment.invalid");
-        assert_eq!(failures[1].0, "livevideo.assertion.invalid");
+        assert_eq!(failures[0].code, "livevideo.segment.invalid");
+        assert_eq!(failures[1].code, "livevideo.assertion.invalid");
     }
 
     /// §19.7.1 defers to Chapter 15, whose acceptance threshold is a Valid manifest
@@ -853,6 +900,36 @@ mod tests {
     }
 
     /// §14.3.2 nests the states, so a stream is reported at the level of its weakest segment.
+    /// §19.2.3 makes signing the init segment optional for §19.3, so an init carrying no
+    /// manifest must not drag the stream down: it contributes no state, and the stream is
+    /// judged on its segments. Reporting `Invalid` there contradicted both the per-segment
+    /// states and the exit code.
+    #[test]
+    fn an_init_without_a_manifest_does_not_lower_the_stream_state() {
+        use ValidationState::{Trusted, Valid};
+
+        assert_eq!(fold_stream_state(None, [Valid, Valid]), Valid);
+        assert_eq!(fold_stream_state(None, [Trusted, Trusted]), Trusted);
+    }
+
+    #[test]
+    fn the_stream_takes_the_state_of_its_weakest_segment() {
+        use ValidationState::{Invalid, Trusted, Valid};
+
+        assert_eq!(fold_stream_state(Some(Trusted), [Trusted, Valid]), Valid);
+        assert_eq!(
+            fold_stream_state(Some(Trusted), [Trusted, Invalid]),
+            Invalid
+        );
+        assert_eq!(fold_stream_state(Some(Valid), [Trusted, Trusted]), Valid);
+    }
+
+    /// Nothing to judge is not a failure.
+    #[test]
+    fn a_stream_with_no_segments_and_no_init_manifest_is_valid() {
+        assert_eq!(fold_stream_state(None, []), ValidationState::Valid);
+    }
+
     #[test]
     fn weaker_returns_the_lower_state() {
         use ValidationState::{Invalid, Trusted, Valid};
@@ -896,8 +973,11 @@ mod tests {
     fn validate_live_video_fails_when_segment_has_no_manifest() {
         let dir = tempfile::tempdir().unwrap();
 
-        let init_data = make_bmff_box(b"ftyp");
-        let init = write_temp_file(&dir, "init.mp4", &init_data);
+        // A real, parseable fMP4 init that carries no C2PA manifest. §19.2.3 permits that, so
+        // validation must reach the segments rather than stopping here; a synthetic `ftyp` would
+        // instead fail to parse and never exercise the segment path.
+        const INIT_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/live_video/init.mp4");
+        let init = write_temp_file(&dir, "init.mp4", INIT_FIXTURE);
 
         // A segment with raw BMFF but no C2PA manifest
         let seg_data = make_bmff_box(b"mdat");
