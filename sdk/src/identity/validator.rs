@@ -179,7 +179,7 @@ mod tests {
             .await
             .unwrap();
 
-        // println!("validation results: {}", reader);
+        println!("validation results: {}", reader);
 
         assert!(reader
             .validation_results()
