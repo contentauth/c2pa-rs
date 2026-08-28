@@ -555,20 +555,35 @@ fn collect_segments(init_path: &Path, segments_glob: &Path) -> Result<Vec<PathBu
     crate::live_video_common::collect_segments(init_dir, segments_glob)
 }
 
-/// Records a §19.3 segment failure and reports it, returning the outcome to hand back.
+/// Which §19.7 status code a segment failure is recorded under.
+enum SegmentFailure {
+    /// The segment's manifest was reached and did not validate: `livevideo.manifest.invalid`.
+    Manifest,
+    /// The segment itself could not be shown to satisfy §19.7: `livevideo.segment.invalid`.
+    Segment,
+}
+
+/// Records a segment failure, reports it, and returns the outcome to hand back.
 ///
-/// `logged` goes to the tracker under `livevideo.manifest.invalid` and ends up in the JSON
-/// report; `printed` is the operator-facing line. They differ where the tracker needs the
-/// stream-level phrasing and the console already names the segment.
+/// `reason` is written to the tracker as `segment {reason}` and printed after the
+/// `Segment FAIL [path]:` prefix, so it reads correctly in both places from one string. Every
+/// failure goes through here, which is what keeps the JSON report's failures in step with its
+/// `validation_state`: an `Invalid` state with an empty `failure` array means a path returned
+/// without recording anything.
 fn fail_segment(
     segment_path: &Path,
-    logged: impl Into<String>,
-    printed: &str,
+    reason: impl AsRef<str>,
+    kind: SegmentFailure,
     live_validator: &LiveVideoValidator,
     tracker: &mut StatusTracker,
 ) -> SegmentOutcome {
-    let _ = live_validator.fail_segment_manifest(logged, tracker);
-    eprintln!("Segment FAIL [{segment_path:?}]: {printed}");
+    let reason = reason.as_ref();
+    let logged = format!("segment {reason}");
+    let _ = match kind {
+        SegmentFailure::Manifest => live_validator.fail_segment_manifest(logged, tracker),
+        SegmentFailure::Segment => live_validator.fail_segment_invalid(logged, tracker),
+    };
+    eprintln!("Segment FAIL [{segment_path:?}]: {reason}");
     SegmentOutcome::invalid()
 }
 
@@ -583,8 +598,13 @@ fn validate_segment_manifest_box(
     let segment_data = match fs::read(segment_path) {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("Segment FAIL [{segment_path:?}]: cannot read file: {e}");
-            return SegmentOutcome::invalid();
+            return fail_segment(
+                segment_path,
+                format!("could not be read: {e}"),
+                SegmentFailure::Segment,
+                live_validator,
+                tracker,
+            );
         }
     };
 
@@ -596,8 +616,8 @@ fn validate_segment_manifest_box(
         Err(e) => {
             return fail_segment(
                 segment_path,
-                format!("C2PA manifest validation failed: {e}"),
-                &format!("cannot read C2PA manifest: {e}"),
+                format!("manifest could not be read: {e}"),
+                SegmentFailure::Manifest,
                 live_validator,
                 tracker,
             );
@@ -607,8 +627,8 @@ fn validate_segment_manifest_box(
     if let Some(reason) = reader_invalid_reason(&reader, trust_configured) {
         return fail_segment(
             segment_path,
-            format!("segment manifest did not validate: {reason}"),
-            &format!("manifest did not validate: {reason}"),
+            format!("manifest did not validate: {reason}"),
+            SegmentFailure::Manifest,
             live_validator,
             tracker,
         );
@@ -621,8 +641,8 @@ fn validate_segment_manifest_box(
         None => {
             return fail_segment(
                 segment_path,
-                "no active manifest in segment",
-                "no active manifest",
+                "has no active manifest",
+                SegmentFailure::Manifest,
                 live_validator,
                 tracker,
             );
@@ -634,8 +654,8 @@ fn validate_segment_manifest_box(
         None => {
             return fail_segment(
                 segment_path,
-                "active manifest has no label",
-                "active manifest has no label",
+                "manifest has no label",
+                SegmentFailure::Manifest,
                 live_validator,
                 tracker,
             );
@@ -644,15 +664,13 @@ fn validate_segment_manifest_box(
     let assertion = match manifest.find_assertion::<LiveVideoSegment>(LiveVideoSegment::LABEL) {
         Ok(a) => a,
         Err(_) => {
-            let _ = live_validator.fail_segment_manifest(
-                format!("no `{}` assertion found", LiveVideoSegment::LABEL),
+            return fail_segment(
+                segment_path,
+                format!("has no `{}` assertion", LiveVideoSegment::LABEL),
+                SegmentFailure::Manifest,
+                live_validator,
                 tracker,
             );
-            eprintln!(
-                "Segment FAIL [{segment_path:?}]: no `{}` assertion found",
-                LiveVideoSegment::LABEL
-            );
-            return SegmentOutcome::invalid();
         }
     };
 
@@ -701,8 +719,13 @@ fn validate_segment_vsi(
     let segment_data = match fs::read(segment_path) {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("Segment FAIL [{segment_path:?}]: cannot read file: {e}");
-            return SegmentOutcome::invalid();
+            return fail_segment(
+                segment_path,
+                format!("could not be read: {e}"),
+                SegmentFailure::Segment,
+                live_validator,
+                tracker,
+            );
         }
     };
 
@@ -934,6 +957,68 @@ mod tests {
             .with_toml("[trust]\ntrust_config = \"1.3.6.1.5.5.7.3.4\"\n")
             .unwrap();
         assert!(!trust_material_configured(&settings));
+    }
+
+    /// The JSON report's failures come from the tracker, so any path that returns an invalid
+    /// outcome without recording one produces `"validation_state": "Invalid"` next to an empty
+    /// `failure` array: the report says the stream failed but not why, which is the one thing
+    /// structured output exists to avoid. That has broken twice, through unrelated paths, so
+    /// the invariant is asserted directly rather than re-checked by hand.
+    #[test]
+    fn an_invalid_segment_always_records_a_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = Path::new("/nonexistent/segment_that_cannot_be_read.m4s");
+        // Exists but is not BMFF at all, which reaches the validators' error arms rather than
+        // the read-failure branch.
+        let garbage = write_temp_file(&dir, "garbage.m4s", b"not a bmff file at all");
+        // Structurally a BMFF box, but carries neither a Manifest Box nor a VSI `emsg`.
+        let bare = write_temp_file(&dir, "bare.m4s", &make_bmff_box(b"mdat"));
+        let context = Arc::new(C2paContext::new());
+
+        let cases: Vec<(&str, &Path)> = vec![
+            ("unreadable", missing),
+            ("not bmff", garbage.as_path()),
+            ("no manifest and no emsg", bare.as_path()),
+        ];
+
+        for (case, path) in cases {
+            for (label, outcome, tracker) in [
+                {
+                    let mut tracker = StatusTracker::default();
+                    let mut validator = LiveVideoValidator::new();
+                    let outcome = validate_segment_manifest_box(
+                        &context,
+                        path,
+                        &mut validator,
+                        &mut tracker,
+                        false,
+                    );
+                    ("§19.3", outcome, tracker)
+                },
+                {
+                    let mut tracker = StatusTracker::default();
+                    let mut validator = LiveVideoValidator::new();
+                    let outcome = validate_segment_vsi(path, &mut validator, &mut tracker, None);
+                    ("§19.4", outcome, tracker)
+                },
+            ] {
+                assert!(!outcome.ok, "{} {}: must fail", label, case);
+                assert_eq!(
+                    outcome.state,
+                    ValidationState::Invalid,
+                    "{} {}",
+                    label,
+                    case
+                );
+                assert!(
+                    !collect_live_video_failures(&tracker).is_empty(),
+                    "{} {}: an Invalid outcome must come with a recorded failure, or the \
+                     JSON report shows Invalid with an empty failure array",
+                    label,
+                    case
+                );
+            }
+        }
     }
 
     /// §14.3.2 nests the states, so a stream is reported at the level of its weakest segment.

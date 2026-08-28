@@ -72,7 +72,8 @@ use crate::{
     log_item,
     status_tracker::StatusTracker,
     validation_results::validation_codes::{
-        LIVEVIDEO_INIT_INVALID, LIVEVIDEO_MANIFEST_INVALID, LIVEVIDEO_SESSIONKEY_INVALID,
+        LIVEVIDEO_INIT_INVALID, LIVEVIDEO_MANIFEST_INVALID, LIVEVIDEO_SEGMENT_INVALID,
+        LIVEVIDEO_SESSIONKEY_INVALID,
     },
 };
 
@@ -176,6 +177,22 @@ impl LiveVideoValidator {
         tracker: &mut StatusTracker,
     ) -> Result<()> {
         fail_validation(description, LIVEVIDEO_MANIFEST_INVALID, tracker)
+    }
+
+    /// Records a segment-level validation failure ([§19.7.1]).
+    ///
+    /// Use this when the segment itself cannot be shown to satisfy §19.7, as opposed to a
+    /// manifest that was read and failed to validate: a segment that cannot be read carries
+    /// neither a C2PA Manifest Box nor a qualifying `emsg`, which §19.7.1 assigns
+    /// `livevideo.segment.invalid`.
+    ///
+    /// [§19.7.1]: https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_live_video_validation_process
+    pub fn fail_segment_invalid(
+        &self,
+        description: impl Into<String>,
+        tracker: &mut StatusTracker,
+    ) -> Result<()> {
+        fail_validation(description, LIVEVIDEO_SEGMENT_INVALID, tracker)
     }
 
     /// Records a manifest validation failure for the initialization segment ([§19.7.1]).
