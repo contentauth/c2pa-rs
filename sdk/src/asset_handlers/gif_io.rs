@@ -19,7 +19,6 @@ use std::{
 };
 
 use byteorder::{ReadBytesExt, WriteBytesExt};
-use serde_bytes::ByteBuf;
 use tempfile::Builder;
 
 use crate::{
@@ -643,14 +642,10 @@ impl BlockMarker<Block> {
 
         Ok(BoxMap {
             names,
-            alg: None,
-            hash: ByteBuf::from(Vec::new()),
-            excluded: None,
-            exclusions: None,
             allowed_exclusions: self.block.allowed_exclusions(self.len()),
-            pad: ByteBuf::from(Vec::new()),
             range_start: self.start(),
             range_len: self.len(),
+            ..Default::default()
         })
     }
 }
@@ -827,28 +822,18 @@ impl Block {
             Block::ApplicationExtension(application_extension)
                 if ApplicationExtensionKind::Xmp == application_extension.kind() =>
             {
-                sub_block_data_ranges(&application_extension.data_sub_blocks.bytes)
-                    .into_iter()
-                    .map(|(offset, length)| AllowedExclusion {
-                        start: offset + 14,
-                        length,
-                        kind: ExclusionKind::AssetMetadata,
-                    })
-                    .collect()
+                metadata_exclusions_from_sub_blocks(
+                    &application_extension.data_sub_blocks.bytes,
+                    14,
+                )
             }
             // Comment Extension bodies are a length-prefixed sub-block stream
             // (1-byte length + data, repeated, 0x00-terminated) with no
             // single fixed header, so each sub-block's data gets its own
-            // range, skipping every length-prefix byte and the terminator.
+            // range, skipping every length-prefix byte and the terminator -
+            // the 2-byte extension introducer + label.
             Block::CommentExtension(comment) => {
-                sub_block_data_ranges(&comment.data_sub_blocks.bytes)
-                    .into_iter()
-                    .map(|(offset, length)| AllowedExclusion {
-                        start: offset + 2, // skip the extension introducer + label
-                        length,
-                        kind: ExclusionKind::AssetMetadata,
-                    })
-                    .collect()
+                metadata_exclusions_from_sub_blocks(&comment.data_sub_blocks.bytes, 2)
             }
             _ => Vec::new(),
         }
@@ -1227,6 +1212,24 @@ fn sub_block_data_ranges(encoded_bytes: &[u8]) -> Vec<(u64, u64)> {
     ranges
 }
 
+/// One `AllowedExclusion` per sub-block's data in a length-prefixed,
+/// 0x00-terminated sub-block stream (shared by the Comment Extension and XMP
+/// Application Extension cases, which differ only in their fixed-size
+/// header's length).
+fn metadata_exclusions_from_sub_blocks(
+    encoded_bytes: &[u8],
+    header_len: u64,
+) -> Vec<AllowedExclusion> {
+    sub_block_data_ranges(encoded_bytes)
+        .into_iter()
+        .map(|(offset, length)| AllowedExclusion {
+            start: offset + header_len,
+            length,
+            kind: ExclusionKind::AssetMetadata,
+        })
+        .collect()
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum GifError {
     #[error("invalid file signature: {reason}")]
@@ -1587,42 +1590,27 @@ mod tests {
             box_map.first(),
             Some(&BoxMap {
                 names: vec!["GIF89a".to_owned()],
-                alg: None,
-                hash: ByteBuf::from(Vec::new()),
-                excluded: None,
-                exclusions: None,
-                allowed_exclusions: vec![],
-                pad: ByteBuf::from(Vec::new()),
                 range_start: 0,
-                range_len: 6
+                range_len: 6,
+                ..Default::default()
             })
         );
         assert_eq!(
             box_map.get(box_map.len() / 2),
             Some(&BoxMap {
                 names: vec!["2C".to_owned()],
-                alg: None,
-                hash: ByteBuf::from(Vec::new()),
-                excluded: None,
-                exclusions: None,
-                allowed_exclusions: vec![],
-                pad: ByteBuf::from(Vec::new()),
                 range_start: 368494,
-                range_len: 778
+                range_len: 778,
+                ..Default::default()
             })
         );
         assert_eq!(
             box_map.last(),
             Some(&BoxMap {
                 names: vec!["3B".to_owned()],
-                alg: None,
-                hash: ByteBuf::from(Vec::new()),
-                excluded: None,
-                exclusions: None,
-                allowed_exclusions: vec![],
-                pad: ByteBuf::from(Vec::new()),
                 range_start: SAMPLE1.len() as u64 - 1,
-                range_len: 1
+                range_len: 1,
+                ..Default::default()
             })
         );
         assert_eq!(box_map.len(), 276);

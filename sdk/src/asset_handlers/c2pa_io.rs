@@ -13,10 +13,8 @@
 
 use std::{fs::File, path::Path};
 
-use serde_bytes::ByteBuf;
-
 use crate::{
-    assertions::{AllowedExclusion, BoxMap, ExclusionKind, C2PA_BOXHASH},
+    assertions::{AllowedExclusion, BoxMap, C2PA_BOXHASH},
     asset_io::{
         AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
         HashBlockObjectType, HashObjectPositions,
@@ -150,17 +148,8 @@ impl AssetBoxHash for C2paIO {
         let c2pa_box_map = BoxMap {
             names: vec![C2PA_BOXHASH.to_string()],
             alg: Some(alg.to_string()),
-            hash: ByteBuf::from(vec![]),
-            excluded: None,
-            exclusions: None,
-            allowed_exclusions: vec![AllowedExclusion {
-                start: 0,
-                length: 0,
-                kind: ExclusionKind::ManifestOrPadding,
-            }],
-            pad: ByteBuf::from(vec![]),
-            range_start: 0,
-            range_len: 0,
+            allowed_exclusions: vec![AllowedExclusion::whole_box(0)],
+            ..Default::default()
         };
 
         let box_maps = vec![c2pa_box_map];
