@@ -54,14 +54,13 @@ impl LiveVideoSigner {
     /// [`sign_media_segment`]: LiveVideoSigner::sign_media_segment
     pub fn from_manifest_json(manifest_json: impl Into<String>) -> Result<Self> {
         let json = manifest_json.into();
-        let (stream_id, previous_manifest_id, base_manifest_json) =
-            extract_live_video_state(&json)?;
+        let (stream_id, base_manifest_json) = extract_live_video_state(&json)?;
         Ok(Self {
             stream_id,
             // A fresh signer starts the chain; `resume_from_segment` overrides this when
             // continuing an existing one.
             next_sequence_number: 1,
-            previous_manifest_id,
+            previous_manifest_id: None,
             base_manifest_json,
         })
     }
@@ -165,10 +164,17 @@ fn extract_signed_manifest_id(signed_segment: &[u8], format: &str) -> Result<Str
 
 /// Parses the manifest JSON and extracts the live video signer state.
 ///
-/// Returns `(stream_id, previous_manifest_id, base_manifest_json)`.
+/// Returns `(stream_id, base_manifest_json)`.
+///
+/// Only `streamId` is read. `sequenceNumber`, `continuityMethod` and `previousManifestId` are
+/// the signer's to manage, as `cli/docs/manifest.md` states: a `previousManifestId` left in a
+/// manifest file between sessions would otherwise be signed verbatim into the first segment as
+/// a claim about a predecessor this stream does not contain, and no validator would catch it,
+/// since §19.3.2's continuity check has no previous segment to compare against. Resuming a
+/// chain is `resume_from_segment`'s job, which reads the real predecessor.
 /// The `c2pa.livevideo.segment` assertion is removed from `base_manifest_json` so it is
 /// not duplicated when the full assertion is added at signing time.
-fn extract_live_video_state(manifest_json: &str) -> Result<(String, Option<String>, String)> {
+fn extract_live_video_state(manifest_json: &str) -> Result<(String, String)> {
     let mut value: serde_json::Value = serde_json::from_str(manifest_json)
         .map_err(|e| Error::BadParam(format!("invalid manifest JSON: {e}")))?;
 
@@ -199,12 +205,10 @@ fn extract_live_video_state(manifest_json: &str) -> Result<(String, Option<Strin
         })?
         .to_string();
 
-    let previous_manifest_id = data["previousManifestId"].as_str().map(String::from);
-
     let base_json = serde_json::to_string(&value)
         .map_err(|e| Error::BadParam(format!("failed to serialize manifest: {e}")))?;
 
-    Ok((stream_id, previous_manifest_id, base_json))
+    Ok((stream_id, base_json))
 }
 
 #[cfg(test)]
@@ -276,6 +280,45 @@ mod tests {
                 "error should mention {expected:?}, got: {err}"
             );
         }
+    }
+
+    /// `cli/docs/manifest.md` says the signer manages `sequenceNumber`, `continuityMethod` and
+    /// `previousManifestId`. A `previousManifestId` left in a manifest file between sessions
+    /// used to be signed verbatim into the first segment, as a claim about a predecessor the
+    /// stream does not contain, which no validator catches: §19.3.2's continuity check has no
+    /// previous segment to compare it against.
+    #[test]
+    fn a_manifest_supplied_previous_manifest_id_is_not_signed_into_the_first_segment() {
+        let _guard = TrustVerificationOff::new();
+        let signer = test_signer();
+
+        let manifest = r#"{"assertions": [
+            {"label": "c2pa.actions", "data": {"actions": [{"action": "c2pa.created", "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"}]}},
+            {"label": "c2pa.livevideo.segment", "data": {
+                "sequenceNumber": 5000,
+                "streamId": "stream-1",
+                "continuityMethod": "c2pa.manifestId",
+                "previousManifestId": "urn:c2pa:SEEDED-BY-USER"}}
+        ]}"#;
+
+        let mut live_signer = LiveVideoSigner::from_manifest_json(manifest).unwrap();
+        assert!(live_signer.previous_manifest_id().is_none());
+
+        let signed = live_signer
+            .sign_media_segment(segment_fixture(), "video/mp4", &signer)
+            .unwrap();
+        let reader =
+            Reader::from_context(crate::live_video::context_from_thread_local_settings().unwrap())
+                .with_stream("video/mp4", Cursor::new(&signed))
+                .unwrap();
+        let assertion: LiveVideoSegment = reader
+            .active_manifest()
+            .unwrap()
+            .find_assertion(LiveVideoSegment::LABEL)
+            .unwrap();
+
+        assert_eq!(assertion.previous_manifest_id, None);
+        assert_eq!(assertion.sequence_number, 1);
     }
 
     /// §19.3.2 chains each segment to the previous one through `previousManifestId`. The first
