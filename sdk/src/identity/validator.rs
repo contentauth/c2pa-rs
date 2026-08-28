@@ -161,6 +161,10 @@ mod tests {
         let mut cawg_anchor: crate::settings::TrustAnchor = anchors[0].clone();
         cawg_anchor.trust_kind = crate::settings::TrustListKind::CAWG;
         cawg_anchor.trust_uri = Some("cawg_trust".to_string());
+        cawg_anchor.trusted_ica_issuers = Some(vec![
+                "did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9".to_string(),
+                "did:web:connected-identities.identity-stage.adobe.com".to_string(),
+            ]);
         anchors.push(cawg_anchor);
         settings.trust.anchors = Some(anchors.clone());
 
