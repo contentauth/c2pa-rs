@@ -54,46 +54,16 @@ impl LiveVideoSigner {
     /// [`sign_media_segment`]: LiveVideoSigner::sign_media_segment
     pub fn from_manifest_json(manifest_json: impl Into<String>) -> Result<Self> {
         let json = manifest_json.into();
-        let (stream_id, previous_manifest_id, next_sequence_number, base_manifest_json) =
+        let (stream_id, previous_manifest_id, base_manifest_json) =
             extract_live_video_state(&json)?;
         Ok(Self {
             stream_id,
-            next_sequence_number,
+            // A fresh signer starts the chain; `resume_from_segment` overrides this when
+            // continuing an existing one.
+            next_sequence_number: 1,
             previous_manifest_id,
             base_manifest_json,
         })
-    }
-
-    /// Returns the original manifest JSON updated with the current continuity state.
-    ///
-    /// Call this after signing a batch of segments and persist the result back to the manifest
-    /// file so that the next invocation resumes the chain automatically.
-    pub fn updated_manifest_json(&self, original_manifest_json: &str) -> Result<String> {
-        let mut value: serde_json::Value = serde_json::from_str(original_manifest_json)
-            .map_err(|e| Error::BadParam(format!("invalid manifest JSON: {e}")))?;
-
-        let assertions = value["assertions"].as_array_mut().ok_or_else(|| {
-            Error::BadParam("manifest must have an 'assertions' array".to_string())
-        })?;
-
-        let assertion = assertions
-            .iter_mut()
-            .find(|a| a["label"].as_str() == Some(LiveVideoSegment::LABEL))
-            .ok_or_else(|| {
-                Error::BadParam(format!(
-                    "manifest must include a '{}' assertion",
-                    LiveVideoSegment::LABEL
-                ))
-            })?;
-
-        if let Some(prev_id) = &self.previous_manifest_id {
-            assertion["data"]["previousManifestId"] = serde_json::Value::String(prev_id.clone());
-        }
-        assertion["data"]["nextSequenceNumber"] =
-            serde_json::Value::Number(self.next_sequence_number.into());
-
-        serde_json::to_string_pretty(&value)
-            .map_err(|e| Error::BadParam(format!("failed to serialize manifest: {e}")))
     }
 
     /// Restores continuity state from a previously signed segment.
@@ -172,11 +142,6 @@ impl LiveVideoSigner {
         self.previous_manifest_id.as_deref()
     }
 
-    /// Returns the sequence number that will be assigned to the next media segment.
-    pub fn next_sequence_number(&self) -> u64 {
-        self.next_sequence_number
-    }
-
     fn build_live_video_assertion(&self) -> LiveVideoSegment {
         LiveVideoSegment {
             sequence_number: self.next_sequence_number,
@@ -200,10 +165,10 @@ fn extract_signed_manifest_id(signed_segment: &[u8], format: &str) -> Result<Str
 
 /// Parses the manifest JSON and extracts the live video signer state.
 ///
-/// Returns `(stream_id, previous_manifest_id, next_sequence_number, base_manifest_json)`.
+/// Returns `(stream_id, previous_manifest_id, base_manifest_json)`.
 /// The `c2pa.livevideo.segment` assertion is removed from `base_manifest_json` so it is
 /// not duplicated when the full assertion is added at signing time.
-fn extract_live_video_state(manifest_json: &str) -> Result<(String, Option<String>, u64, String)> {
+fn extract_live_video_state(manifest_json: &str) -> Result<(String, Option<String>, String)> {
     let mut value: serde_json::Value = serde_json::from_str(manifest_json)
         .map_err(|e| Error::BadParam(format!("invalid manifest JSON: {e}")))?;
 
@@ -236,17 +201,10 @@ fn extract_live_video_state(manifest_json: &str) -> Result<(String, Option<Strin
 
     let previous_manifest_id = data["previousManifestId"].as_str().map(String::from);
 
-    let next_sequence_number = data["nextSequenceNumber"].as_u64().unwrap_or(1);
-
     let base_json = serde_json::to_string(&value)
         .map_err(|e| Error::BadParam(format!("failed to serialize manifest: {e}")))?;
 
-    Ok((
-        stream_id,
-        previous_manifest_id,
-        next_sequence_number,
-        base_json,
-    ))
+    Ok((stream_id, previous_manifest_id, base_json))
 }
 
 #[cfg(test)]
