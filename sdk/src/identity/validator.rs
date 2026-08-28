@@ -168,9 +168,9 @@ mod tests {
         // network connection, so this test is hermetic on every target (including
         // WASI, which has no compatible TCP-based mock server).
         let context = Context::default()
-            .with_resolver_async(MockDidResolver)
             .with_settings(settings)
-            .unwrap();
+            .unwrap()
+            .with_resolver_async(MockDidResolver);
 
         let mut stream = Cursor::new(CONNECTED_IDENTITIES_VALID);
 
