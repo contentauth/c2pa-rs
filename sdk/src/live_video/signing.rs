@@ -225,6 +225,158 @@ mod tests {
         ]}"#
     }
 
+    /// `verify.verify_trust` is thread-local and `cargo test` reuses threads, so leaving it off
+    /// would let a later test on the same thread pass while masking a real trust failure.
+    struct TrustVerificationOff;
+
+    impl TrustVerificationOff {
+        fn new() -> Self {
+            // EphemeralSigner certs are intentionally untrusted (see ephemeral_signer.rs).
+            crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+            Self
+        }
+    }
+
+    impl Drop for TrustVerificationOff {
+        fn drop(&mut self) {
+            crate::settings::set_settings_value("verify.verify_trust", true).unwrap();
+        }
+    }
+
+    fn init_fixture() -> &'static [u8] {
+        include_bytes!("../../tests/fixtures/bunny/bunny_791182bps/BigBuckBunny_2s_init.mp4")
+    }
+
+    fn segment_fixture() -> &'static [u8] {
+        include_bytes!("../../tests/fixtures/bunny/bunny_791182bps/BigBuckBunny_2s5.m4s")
+    }
+
+    /// `extract_live_video_state` is the only validation a caller's manifest gets before
+    /// signing starts, so each way it can be malformed must be rejected with a usable message
+    /// rather than panicking or silently signing something incomplete.
+    #[test]
+    fn from_manifest_json_rejects_malformed_manifests() {
+        for (json, expected) in [
+            ("not json at all", "invalid manifest JSON"),
+            (r#"{"assertions": {}}"#, "assertions"),
+            (r#"{"assertions": []}"#, LiveVideoSegment::LABEL),
+            (
+                r#"{"assertions": [{"label": "c2pa.livevideo.segment", "data": {}}]}"#,
+                "streamId",
+            ),
+        ] {
+            let result = LiveVideoSigner::from_manifest_json(json);
+            assert!(
+                result.is_err(),
+                "malformed manifest must be rejected: {json}"
+            );
+            let err = result.err().map(|e| e.to_string()).unwrap_or_default();
+            assert!(
+                err.contains(expected),
+                "error should mention {expected:?}, got: {err}"
+            );
+        }
+    }
+
+    /// §19.3.2 chains each segment to the previous one through `previousManifestId`. The first
+    /// segment has none, and every later one must carry the label of the segment before it.
+    #[test]
+    fn previous_manifest_id_chains_across_segments() {
+        let _guard = TrustVerificationOff::new();
+        let signer = test_signer();
+        let mut live_signer = LiveVideoSigner::from_manifest_json(test_manifest_json()).unwrap();
+
+        assert!(
+            live_signer.previous_manifest_id().is_none(),
+            "a fresh signer has nothing to chain to"
+        );
+
+        let mut labels = Vec::new();
+        for _ in 0..3 {
+            let signed = live_signer
+                .sign_media_segment(segment_fixture(), "video/mp4", &signer)
+                .unwrap();
+            let reader = Reader::from_context(
+                crate::live_video::context_from_thread_local_settings().unwrap(),
+            )
+            .with_stream("video/mp4", Cursor::new(&signed))
+            .unwrap();
+            let label = reader
+                .active_manifest()
+                .unwrap()
+                .label()
+                .unwrap()
+                .to_string();
+
+            // After signing segment N, the signer points at N: that is what segment N+1 will
+            // record as its `previousManifestId`.
+            assert_eq!(live_signer.previous_manifest_id(), Some(label.as_str()));
+            labels.push(label);
+        }
+
+        labels.sort();
+        labels.dedup();
+        assert_eq!(labels.len(), 3, "each segment must get its own manifest id");
+    }
+
+    /// §19.2.3 makes signing the init segment optional, and it carries no
+    /// `c2pa.livevideo.segment` assertion: it must not advance the continuity state.
+    #[test]
+    fn sign_init_segment_does_not_advance_the_chain() {
+        let _guard = TrustVerificationOff::new();
+        let signer = test_signer();
+        let live_signer = LiveVideoSigner::from_manifest_json(test_manifest_json()).unwrap();
+
+        let signed = live_signer
+            .sign_init_segment(init_fixture(), "video/mp4", &signer)
+            .unwrap();
+
+        assert!(live_signer.previous_manifest_id().is_none());
+
+        let reader =
+            Reader::from_context(crate::live_video::context_from_thread_local_settings().unwrap())
+                .with_stream("video/mp4", Cursor::new(&signed))
+                .unwrap();
+        let manifest = reader.active_manifest().unwrap();
+        assert!(
+            manifest
+                .find_assertion::<LiveVideoSegment>(LiveVideoSegment::LABEL)
+                .is_err(),
+            "the init segment carries no live video segment assertion"
+        );
+    }
+
+    /// Signing one segment per process invocation is the live case, so a fresh signer must be
+    /// able to pick the chain up from the last segment the previous run wrote.
+    #[test]
+    fn resume_from_segment_restores_the_chain() {
+        let _guard = TrustVerificationOff::new();
+        let signer = test_signer();
+
+        let mut first_run = LiveVideoSigner::from_manifest_json(test_manifest_json()).unwrap();
+        let signed = first_run
+            .sign_media_segment(segment_fixture(), "video/mp4", &signer)
+            .unwrap();
+        let expected = first_run.previous_manifest_id().unwrap().to_string();
+
+        let mut second_run = LiveVideoSigner::from_manifest_json(test_manifest_json()).unwrap();
+        second_run
+            .resume_from_segment(&signed, "video/mp4")
+            .unwrap();
+
+        assert_eq!(second_run.previous_manifest_id(), Some(expected.as_str()));
+    }
+
+    #[test]
+    fn resume_from_segment_rejects_a_segment_without_a_manifest() {
+        let _guard = TrustVerificationOff::new();
+        let mut live_signer = LiveVideoSigner::from_manifest_json(test_manifest_json()).unwrap();
+
+        assert!(live_signer
+            .resume_from_segment(segment_fixture(), "video/mp4")
+            .is_err());
+    }
+
     /// Regression test: `manifestId`/`previousManifestId` must be the manifest's c2pa URN
     /// label (§8.1), not its XMP instance ID — otherwise continuity breaks with any
     /// spec-compliant third-party validator, since instance IDs and manifest labels are

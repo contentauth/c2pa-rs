@@ -467,15 +467,53 @@ mod tests {
             .collect()
     }
 
-    /// Sets up a signing run: a segments dir with `count` media segments, plus an output dir.
-    fn setup_vsi_dirs(count: usize) -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
-        // The sample certs aren't on a trust list, and signing reads the init back through a
-        // full manifest validation, so turn trust verification off for these tests. The signer
-        // reads thread-local settings, which is what `from_string` writes; the non-deprecated
-        // builders deliberately don't touch thread-local state, so there's no alternative here.
+    /// Writes `verify.verify_trust` into the thread-local settings the signer reads.
+    ///
+    /// The non-deprecated builders deliberately don't touch thread-local state, so the
+    /// deprecated entry point is the only way to reach it from here.
+    fn set_verify_trust(enabled: bool) {
         #[allow(deprecated)]
-        c2pa::settings::Settings::from_string(r#"{"verify": {"verify_trust": false}}"#, "json")
-            .unwrap();
+        c2pa::settings::Settings::from_string(
+            &format!(r#"{{"verify": {{"verify_trust": {enabled}}}}}"#),
+            "json",
+        )
+        .unwrap();
+    }
+
+    /// Turns trust verification off while alive, and restores the SDK default on drop.
+    ///
+    /// The sample certs aren't on a trust list, and signing reads the init back through a full
+    /// manifest validation, so these tests have to turn it off. Since `cargo test` reuses
+    /// threads and the setting is thread-local, leaving it off would let a later test on the
+    /// same thread pass while masking a real trust failure.
+    struct TrustVerificationOff;
+
+    impl TrustVerificationOff {
+        fn new() -> Self {
+            set_verify_trust(false);
+            Self
+        }
+    }
+
+    impl Drop for TrustVerificationOff {
+        fn drop(&mut self) {
+            set_verify_trust(true);
+        }
+    }
+
+    /// Sets up a signing run: a segments dir with `count` media segments, plus an output dir.
+    ///
+    /// The returned guard must be held for the duration of the test; dropping it early puts
+    /// trust verification back and the signing calls start failing.
+    fn setup_vsi_dirs(
+        count: usize,
+    ) -> (
+        (tempfile::TempDir, TrustVerificationOff),
+        PathBuf,
+        PathBuf,
+        PathBuf,
+    ) {
+        let trust_guard = TrustVerificationOff::new();
 
         let dir = tempfile::tempdir().unwrap();
         let segments_dir = dir.path().join("in");
@@ -488,7 +526,7 @@ mod tests {
             write_media_segment(&segments_dir, &format!("seg_{i:03}.m4s"));
         }
 
-        (dir, segments_dir, output_dir, init_path)
+        ((dir, trust_guard), segments_dir, output_dir, init_path)
     }
 
     #[test]
