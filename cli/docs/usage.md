@@ -426,6 +426,79 @@ To validate a previously signed stream, pass the init segment and the same glob 
 c2patool <INIT_FILE> live-video --segments_glob <GLOB>
 ```
 
+Per-segment progress is written to stderr and a JSON report to stdout, so the report can be redirected on its own:
+
+```
+c2patool <INIT_FILE> live-video --segments_glob <GLOB> > report.json
+```
+
+The report gives the stream's overall `validation_state`, the detected method, the state of each segment, and any failures, using the [section 19.7 status codes](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_live_video_validation_process):
+
+```json
+{
+  "validation_state": "Valid",
+  "method": "19.3 (per-segment C2PA Manifest Box)",
+  "init_segment": "stream/init.mp4",
+  "segments": [
+    { "path": "stream/seg_001.m4s", "state": "Valid" }
+  ],
+  "validation_results": {
+    "failure": [
+      {
+        "code": "livevideo.segment.invalid",
+        "explanation": "previousManifestId does not match the previous segment's manifest identifier"
+      }
+    ]
+  }
+}
+```
+
+A stream is reported at the level of its weakest segment, following the nesting of manifest states in §14.3.2. The command exits with a non-zero status when the state is `Invalid`.
+
+### Trust lists and live video
+
+Validation follows the general rules of chapter 15, as §19.7.1 requires. A stream whose signer doesn't chain to a trust anchor is reported as `Valid` rather than `Trusted`, and is accepted: §15.7 makes verifying a chain of trust a `should`, and §14.3.3 treats an asset backed by a manifest that is "either Valid or Trusted" as valid. Content failures such as `assertion.bmffHash.mismatch` still make a segment `Invalid`.
+
+Once a trust list is configured, §15.7 requires an unverifiable chain to be rejected, so a `signingCredential.untrusted` failure becomes fatal and the stream is reported as `Invalid`.
+
+`live-video` picks up trust material from sidecar files kept in the settings directory, which defaults to the platform configuration directory (`~/.config/c2pa/` on Linux, and note that `$XDG_CONFIG_HOME` is often unset, in which case that is the path used). No flag is needed to use it: `--settings` only moves that directory elsewhere, which is worth doing in CI or in a script that runs against several trust configurations, so a stray anchor in the shared location cannot silently make everything `Trusted`. Only the directory is used; the settings file inside it does not have to exist.
+
+There are two ways to put the sidecars there.
+
+To trust the official C2PA conformance list, let `c2patool` fetch it:
+
+```
+c2patool init trust
+c2patool <INIT_FILE> live-video --segments_glob <GLOB>
+```
+
+To trust your own anchors, copy the PEM into place yourself:
+
+```
+mkdir -p ~/.config/c2pa
+cp my-anchors.pem ~/.config/c2pa/c2pa-trust-list.pem
+c2patool <INIT_FILE> live-video --segments_glob <GLOB>
+```
+
+Or, keeping it out of the shared directory:
+
+```
+mkdir -p /tmp/my-trust
+cp my-anchors.pem /tmp/my-trust/c2pa-trust-list.pem
+c2patool --settings /tmp/my-trust/c2pa.toml <INIT_FILE> live-video --segments_glob <GLOB>
+```
+
+Either way, four sidecar names are recognised, and all of them are read for every subcommand:
+
+| File | Contents | Written by |
+|-----|----|----|
+| `c2pa-trust-list.pem` | Trust anchors. | `init trust` |
+| `c2pa-trust-list-legacy.pem` | Legacy interim anchors, applied as user anchors. | `init trust --legacy` |
+| `c2pa-trust-store.cfg` | Allowed extended key usage (EKU) OIDs. | `init trust --legacy` |
+| `c2pa-trust-allowed.sha256.txt` | Certificates to trust explicitly. | `init trust --legacy` |
+
+The `trust` subcommand's `--trust_anchors`, `--allowed_list` and `--trust_config` options cannot be combined with `live-video`, since a single invocation runs one subcommand. Anchors can also be embedded in the settings file's own `[trust]` section as inline PEM strings, which is what the SDK ultimately consumes, but the sidecars avoid pasting certificates into a configuration document.
+
 ### Additional options for live video
 
 | CLI option | Argument | Description |
