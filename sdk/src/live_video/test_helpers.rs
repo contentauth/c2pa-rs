@@ -13,10 +13,7 @@
 
 use std::collections::HashMap;
 
-use crate::{
-    assertions::{ContinuityMethod, LiveVideoSegment},
-    status_tracker::StatusTracker,
-};
+use crate::assertions::{ContinuityMethod, LiveVideoSegment};
 
 pub(super) fn make_segment(sequence_number: u64, stream_id: &str) -> LiveVideoSegment {
     LiveVideoSegment {
@@ -74,8 +71,4 @@ pub(super) fn make_vsi_conformant_emsg_box() -> Vec<u8> {
     data.extend_from_slice(b"emsg");
     data.extend_from_slice(&body);
     data
-}
-
-pub(super) fn aggregate_tracker() -> StatusTracker {
-    StatusTracker::default()
 }

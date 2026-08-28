@@ -535,6 +535,7 @@ mod tests {
     use super::super::{test_helpers::*, LiveVideoValidator};
     use crate::{
         assertions::{SessionKey, SessionKeys},
+        status_tracker::StatusTracker,
         validation_results::validation_codes::{
             LIVEVIDEO_SEGMENT_INVALID, LIVEVIDEO_SESSIONKEY_INVALID,
         },
@@ -703,7 +704,7 @@ mod tests {
     #[test]
     fn session_keys_empty_fails() {
         let mut validator = LiveVideoValidator::new();
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
 
         let _ =
             validator.validate_session_keys(&SessionKeys { keys: vec![] }, "", None, &mut tracker);
@@ -717,7 +718,7 @@ mod tests {
     #[test]
     fn session_keys_zero_validity_period_fails() {
         let mut validator = LiveVideoValidator::new();
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
 
         let keys = SessionKeys {
             keys: vec![SessionKey {
@@ -736,7 +737,7 @@ mod tests {
     #[test]
     fn session_keys_missing_kid_fails() {
         let mut validator = LiveVideoValidator::new();
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
 
         let mut key_map = std::collections::BTreeMap::new();
         key_map.insert(
@@ -764,7 +765,7 @@ mod tests {
     #[test]
     fn session_keys_none_cert_fails_closed() {
         let mut validator = LiveVideoValidator::new();
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
 
         let _ = validator.validate_session_keys(&minimal_session_keys(), "", None, &mut tracker);
 
@@ -783,7 +784,7 @@ mod tests {
     #[test]
     fn vsi_without_session_keys_fails() {
         let mut validator = LiveVideoValidator::new();
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
 
         let _ = validator.validate_verifiable_segment_info(&make_mdat_box(), &mut tracker);
 
@@ -796,7 +797,7 @@ mod tests {
     #[test]
     fn vsi_segment_without_emsg_fails() {
         let (mut validator, _) = vsi_crypto_helpers::setup_vsi_validator();
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
 
         let _ = validator.validate_verifiable_segment_info(&make_mdat_box(), &mut tracker);
 
@@ -809,7 +810,7 @@ mod tests {
     #[test]
     fn vsi_segment_with_invalid_cose_fails() {
         let (mut validator, _) = vsi_crypto_helpers::setup_vsi_validator();
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
 
         let segment = make_vsi_emsg_box(b"not-a-cose-sign1");
         let _ = validator.validate_verifiable_segment_info(&segment, &mut tracker);
@@ -824,7 +825,7 @@ mod tests {
     fn vsi_valid_sequence_advances_state() {
         use vsi_crypto_helpers::*;
         let (mut validator, signing_key) = setup_vsi_validator();
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
 
         validator
             .validate_verifiable_segment_info(
@@ -854,7 +855,7 @@ mod tests {
 
         use crate::validation_results::validation_codes::LIVEVIDEO_ASSERTION_INVALID;
         let (mut validator, signing_key) = setup_vsi_validator();
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
 
         let _ = validator.validate_verifiable_segment_info(
             &make_signed_vsi_segment(5, TEST_MANIFEST_ID, &signing_key),
@@ -877,7 +878,7 @@ mod tests {
         let (signing_key, cose_key) = generate_test_key_pair();
         let ee_cert_der = test_ee_cert_der();
         let mut validator = LiveVideoValidator::new();
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
 
         let keys = SessionKeys {
             keys: vec![SessionKey {
@@ -908,7 +909,7 @@ mod tests {
         let (signing_key, cose_key) = generate_test_key_pair();
         let ee_cert_der = test_ee_cert_der();
         let mut validator = LiveVideoValidator::new();
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
 
         let keys = SessionKeys {
             keys: vec![SessionKey {
@@ -945,7 +946,7 @@ mod tests {
         let (signing_key, cose_key) = generate_test_key_pair();
         let ee_cert_der = test_ee_cert_der();
         let mut validator = LiveVideoValidator::new();
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
 
         let keys = SessionKeys {
             keys: vec![SessionKey {
@@ -977,7 +978,7 @@ mod tests {
         let (correct_signing_key, cose_key) = generate_test_key_pair();
         let ee_cert_der = test_ee_cert_der();
         let mut validator = LiveVideoValidator::new();
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
 
         let keys = session_keys_with_cose_key(cose_key, &correct_signing_key, &ee_cert_der);
         validator
@@ -1070,7 +1071,7 @@ mod tests {
         let keys = session_key_with_ed25519_binding(cose_key, binding);
 
         let mut validator = LiveVideoValidator::new();
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
         validator
             .validate_session_keys(&keys, "", Some(&ee_cert_der), &mut tracker)
             .unwrap();
@@ -1098,7 +1099,7 @@ mod tests {
         let keys = session_key_with_ed25519_binding(cose_key, binding);
 
         let mut validator = LiveVideoValidator::new();
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
         let _ = validator.validate_session_keys(&keys, "", Some(&ee_cert_der), &mut tracker);
 
         assert!(tracker
@@ -1117,7 +1118,7 @@ mod tests {
         let keys = session_key_with_ed25519_binding(cose_key, vec![0xde, 0xad]);
 
         let mut validator = LiveVideoValidator::new();
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
         let _ = validator.validate_session_keys(&keys, "", None, &mut tracker);
 
         assert!(tracker
@@ -1147,7 +1148,7 @@ mod tests {
         let other_ee_cert = other_signer.cert_chain_der[0].clone();
 
         let mut validator = LiveVideoValidator::new();
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
         let _ = validator.validate_session_keys(&keys, "", Some(&other_ee_cert), &mut tracker);
 
         assert!(tracker
@@ -1174,7 +1175,7 @@ mod tests {
         let keys = session_key_with_ed25519_binding(cose_key, binding);
 
         let mut validator = LiveVideoValidator::new();
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
         let _ = validator.validate_session_keys(&keys, "", Some(&ee_cert_der), &mut tracker);
 
         assert!(

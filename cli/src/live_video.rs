@@ -25,9 +25,7 @@ use c2pa::{
     live_video::LiveVideoValidator,
     settings::Settings,
     status_tracker::{LogItem, StatusTracker},
-    validation_results::validation_codes::{
-        LIVEVIDEO_INIT_INVALID, LIVEVIDEO_SESSIONKEY_INVALID, SIGNING_CREDENTIAL_UNTRUSTED,
-    },
+    validation_results::validation_codes::{LIVEVIDEO_INIT_INVALID, SIGNING_CREDENTIAL_UNTRUSTED},
     Context as C2paContext, Error, Manifest, Reader, ValidationState,
 };
 use serde::Serialize;
@@ -174,66 +172,16 @@ pub fn validate_live_video(
     let mut tracker = StatusTracker::default();
     let mut live_validator = LiveVideoValidator::new();
 
-    // `validate_init_segment` returns `Ok` even when it has logged a `LIVEVIDEO_INIT_INVALID`
-    // failure to `tracker` (the default StatusTracker behavior continues past validation
-    // failures rather than raising them as errors), so a successful `Result` alone does not mean
-    // the init segment is structurally valid — check whether a new failure was logged too.
-    let structural_failures_before = tracker.logged_items().len();
-    let init_struct_result = live_validator.validate_init_segment(&init_data, &mut tracker);
-    let init_structurally_invalid = tracker.logged_items()[structural_failures_before..]
-        .iter()
-        .any(|i| i.validation_status.as_deref() == Some(LIVEVIDEO_INIT_INVALID));
-
-    if let Err(e) = &init_struct_result {
-        eprintln!("Init FAIL: {init_path:?}: {e}");
-        invalid_init_report(init_path, &tracker).emit();
-        bail!("Live video validation failed: init segment could not be read: {e}");
-    }
-
-    if init_structurally_invalid {
-        eprintln!(
-            "Init FAIL: {init_path:?}: [{LIVEVIDEO_INIT_INVALID}] initialization segment must \
-             not contain an mdat box"
-        );
-        invalid_init_report(init_path, &tracker).emit();
-        bail!(
-            "Live video validation failed: init segment is structurally invalid \
-             (contains an mdat box)"
-        );
-    }
-
-    let manifest_failures_before = tracker.logged_items().len();
-    let (method, init_state) = detect_validation_method(
+    let (method, init_state) = validate_init(
         context,
         init_path,
         &init_data,
         &mut live_validator,
         &mut tracker,
         trust_configured,
-    );
+    )?;
 
-    // If the init segment's manifest failed validation, don't proceed to validate segments
-    // under a guessed fallback method — the segments' actual method (and any VSI session keys)
-    // can't be read reliably from a manifest that didn't validate, so per-segment errors from
-    // here on would be confusing rather than useful.
-    if let Some(reason) = first_failure_since(&tracker, manifest_failures_before) {
-        eprintln!("Init FAIL: {init_path:?}: {reason}");
-        invalid_init_report(init_path, &tracker).emit();
-        bail!("Live video validation failed: init segment manifest did not validate");
-    }
-
-    // Only now is the init segment known to be both structurally valid and carrying a manifest
-    // that validated, so this is the earliest point at which reporting success is accurate.
-    eprintln!("Init OK:   {init_path:?}");
-
-    match &method {
-        ValidationMethod::ManifestBox => {
-            eprintln!("Method:    19.3 (per-segment C2PA Manifest Box)")
-        }
-        ValidationMethod::VerifiableSegmentInfo => {
-            eprintln!("Method:    19.4 (Verifiable Segment Info)")
-        }
-    }
+    eprintln!("Method:    {}", method_label(&method));
 
     let segment_paths = collect_segments(init_path, segments_glob)?;
 
@@ -254,36 +202,15 @@ pub fn validate_live_video(
         return Ok(());
     }
 
-    let mut failed_count = 0usize;
-    let mut segment_reports = Vec::with_capacity(segment_paths.len());
-    let mut segment_states = Vec::with_capacity(segment_paths.len());
-
-    // A §19.4 segment carries only an `emsg`, not its own manifest, so its trust standing is
-    // the one established by the init segment's manifest. `None` means the init carried no
-    // manifest at all, which §19.2.3 permits: the stream is then judged on its segments alone.
-
-    for segment_path in &segment_paths {
-        let outcome = match method {
-            ValidationMethod::ManifestBox => validate_segment_manifest_box(
-                context,
-                segment_path,
-                &mut live_validator,
-                &mut tracker,
-                trust_configured,
-            ),
-            ValidationMethod::VerifiableSegmentInfo => {
-                validate_segment_vsi(segment_path, &mut live_validator, &mut tracker, init_state)
-            }
-        };
-        if !outcome.ok {
-            failed_count += 1;
-        }
-        segment_states.push(outcome.state);
-        segment_reports.push(SegmentReport {
-            path: segment_path.display().to_string(),
-            state: state_name(outcome.state),
-        });
-    }
+    let (segment_reports, segment_states, failed_count) = validate_segments(
+        context,
+        &segment_paths,
+        &method,
+        &mut live_validator,
+        &mut tracker,
+        trust_configured,
+        init_state,
+    );
 
     let failures = collect_live_video_failures(&tracker);
 
@@ -418,6 +345,116 @@ fn trust_material_configured(settings: &Settings) -> bool {
     .any(|path| matches!(settings.get_value::<Option<String>>(path), Ok(Some(_))))
 }
 
+/// Runs the init segment's own checks and detects the stream's validation method.
+///
+/// Returns the detected method and the state the init segment contributes, or an error once a
+/// report has been emitted: the three ways an init can fail (unreadable, structurally invalid
+/// per §19.7.1, or carrying a manifest that did not validate) each stop the run here, since the
+/// segments' method and any VSI session keys cannot be read reliably from an init that failed.
+fn validate_init(
+    context: &Arc<C2paContext>,
+    init_path: &Path,
+    init_data: &[u8],
+    live_validator: &mut LiveVideoValidator,
+    tracker: &mut StatusTracker,
+    trust_configured: bool,
+) -> Result<(ValidationMethod, Option<ValidationState>)> {
+    // `validate_init_segment` returns `Ok` even when it has logged a `LIVEVIDEO_INIT_INVALID`
+    // failure to `tracker` (the default StatusTracker behavior continues past validation
+    // failures rather than raising them as errors), so a successful `Result` alone does not mean
+    // the init segment is structurally valid: check whether a new failure was logged too.
+    let structural_failures_before = tracker.logged_items().len();
+    let init_struct_result = live_validator.validate_init_segment(init_data, tracker);
+    let init_structurally_invalid = tracker.logged_items()[structural_failures_before..]
+        .iter()
+        .any(|i| i.validation_status.as_deref() == Some(LIVEVIDEO_INIT_INVALID));
+
+    if let Err(e) = &init_struct_result {
+        eprintln!("Init FAIL: {init_path:?}: {e}");
+        invalid_init_report(init_path, tracker).emit();
+        bail!("Live video validation failed: init segment could not be read: {e}");
+    }
+
+    if init_structurally_invalid {
+        eprintln!(
+            "Init FAIL: {init_path:?}: [{LIVEVIDEO_INIT_INVALID}] initialization segment must \
+             not contain an mdat box"
+        );
+        invalid_init_report(init_path, tracker).emit();
+        bail!(
+            "Live video validation failed: init segment is structurally invalid \
+             (contains an mdat box)"
+        );
+    }
+
+    let manifest_failures_before = tracker.logged_items().len();
+    let (method, init_state) = detect_validation_method(
+        context,
+        init_path,
+        init_data,
+        live_validator,
+        tracker,
+        trust_configured,
+    );
+
+    if let Some(reason) = first_failure_since(tracker, manifest_failures_before) {
+        eprintln!("Init FAIL: {init_path:?}: {reason}");
+        invalid_init_report(init_path, tracker).emit();
+        bail!("Live video validation failed: init segment manifest did not validate");
+    }
+
+    // Only now is the init segment known to be both structurally valid and carrying a manifest
+    // that validated, so this is the earliest point at which reporting success is accurate.
+    eprintln!("Init OK:   {init_path:?}");
+
+    Ok((method, init_state))
+}
+
+/// Validates every media segment under the detected method.
+///
+/// Returns the per-segment report rows, their states for the stream-level fold, and how many
+/// failed. A §19.4 segment carries only an `emsg`, not its own manifest, so its trust standing
+/// is the one `init_state` established; `None` means the init carried no manifest at all, which
+/// §19.2.3 permits.
+fn validate_segments(
+    context: &Arc<C2paContext>,
+    segment_paths: &[PathBuf],
+    method: &ValidationMethod,
+    live_validator: &mut LiveVideoValidator,
+    tracker: &mut StatusTracker,
+    trust_configured: bool,
+    init_state: Option<ValidationState>,
+) -> (Vec<SegmentReport>, Vec<ValidationState>, usize) {
+    let mut reports = Vec::with_capacity(segment_paths.len());
+    let mut states = Vec::with_capacity(segment_paths.len());
+    let mut failed = 0usize;
+
+    for segment_path in segment_paths {
+        let outcome = match method {
+            ValidationMethod::ManifestBox => validate_segment_manifest_box(
+                context,
+                segment_path,
+                live_validator,
+                tracker,
+                trust_configured,
+            ),
+            ValidationMethod::VerifiableSegmentInfo => {
+                validate_segment_vsi(segment_path, live_validator, tracker, init_state)
+            }
+        };
+        if !outcome.ok {
+            failed += 1;
+        }
+        states.push(outcome.state);
+        reports.push(SegmentReport {
+            path: segment_path.display().to_string(),
+            state: state_name(outcome.state),
+        });
+    }
+
+    (reports, states, failed)
+}
+
 /// Decides whether a manifest in `state` must be rejected under §19.7.1.
 ///
 /// [`ValidationState::Trusted`] always passes and [`ValidationState::Invalid`] always fails.
@@ -488,19 +525,14 @@ fn detect_validation_method(
             let manifest_id = manifest.label().unwrap_or_default().to_string();
             let ee_cert_der = extract_ee_cert_der(manifest);
 
-            let failures_before = tracker.logged_items().len();
+            // A `livevideo.sessionkey.invalid` failure logged here is reported by the caller,
+            // with its status code attached, when it bails on the init segment.
             let _ = live_validator.validate_session_keys(
                 &session_keys,
                 &manifest_id,
                 ee_cert_der.as_deref(),
                 tracker,
             );
-            if let Some(item) = tracker.logged_items()[failures_before..]
-                .iter()
-                .find(|i| i.validation_status.as_deref() == Some(LIVEVIDEO_SESSIONKEY_INVALID))
-            {
-                eprintln!("Session keys FAIL: {}", item.description);
-            }
 
             (ValidationMethod::VerifiableSegmentInfo, init_state)
         }
@@ -523,6 +555,23 @@ fn collect_segments(init_path: &Path, segments_glob: &Path) -> Result<Vec<PathBu
     crate::live_video_common::collect_segments(init_dir, segments_glob)
 }
 
+/// Records a §19.3 segment failure and reports it, returning the outcome to hand back.
+///
+/// `logged` goes to the tracker under `livevideo.manifest.invalid` and ends up in the JSON
+/// report; `printed` is the operator-facing line. They differ where the tracker needs the
+/// stream-level phrasing and the console already names the segment.
+fn fail_segment(
+    segment_path: &Path,
+    logged: impl Into<String>,
+    printed: &str,
+    live_validator: &LiveVideoValidator,
+    tracker: &mut StatusTracker,
+) -> SegmentOutcome {
+    let _ = live_validator.fail_segment_manifest(logged, tracker);
+    eprintln!("Segment FAIL [{segment_path:?}]: {printed}");
+    SegmentOutcome::invalid()
+}
+
 /// Validates one segment using section 19.3 (per-segment C2PA Manifest Box).
 fn validate_segment_manifest_box(
     context: &Arc<C2paContext>,
@@ -535,10 +584,7 @@ fn validate_segment_manifest_box(
         Ok(d) => d,
         Err(e) => {
             eprintln!("Segment FAIL [{segment_path:?}]: cannot read file: {e}");
-            return SegmentOutcome {
-                ok: false,
-                state: ValidationState::Invalid,
-            };
+            return SegmentOutcome::invalid();
         }
     };
 
@@ -548,26 +594,24 @@ fn validate_segment_manifest_box(
     {
         Ok(r) => r,
         Err(e) => {
-            let _ = live_validator
-                .fail_segment_manifest(format!("C2PA manifest validation failed: {e}"), tracker);
-            eprintln!("Segment FAIL [{segment_path:?}]: cannot read C2PA manifest: {e}");
-            return SegmentOutcome {
-                ok: false,
-                state: ValidationState::Invalid,
-            };
+            return fail_segment(
+                segment_path,
+                format!("C2PA manifest validation failed: {e}"),
+                &format!("cannot read C2PA manifest: {e}"),
+                live_validator,
+                tracker,
+            );
         }
     };
 
     if let Some(reason) = reader_invalid_reason(&reader, trust_configured) {
-        let _ = live_validator.fail_segment_manifest(
+        return fail_segment(
+            segment_path,
             format!("segment manifest did not validate: {reason}"),
+            &format!("manifest did not validate: {reason}"),
+            live_validator,
             tracker,
         );
-        eprintln!("Segment FAIL [{segment_path:?}]: manifest did not validate: {reason}");
-        return SegmentOutcome {
-            ok: false,
-            state: ValidationState::Invalid,
-        };
     }
 
     let segment_state = reader.validation_state();
@@ -575,24 +619,26 @@ fn validate_segment_manifest_box(
     let manifest = match reader.active_manifest() {
         Some(m) => m,
         None => {
-            let _ = live_validator.fail_segment_manifest("no active manifest in segment", tracker);
-            eprintln!("Segment FAIL [{segment_path:?}]: no active manifest");
-            return SegmentOutcome {
-                ok: false,
-                state: ValidationState::Invalid,
-            };
+            return fail_segment(
+                segment_path,
+                "no active manifest in segment",
+                "no active manifest",
+                live_validator,
+                tracker,
+            );
         }
     };
 
     let manifest_id = match manifest.label() {
         Some(l) => l.to_string(),
         None => {
-            let _ = live_validator.fail_segment_manifest("active manifest has no label", tracker);
-            eprintln!("Segment FAIL [{segment_path:?}]: active manifest has no label");
-            return SegmentOutcome {
-                ok: false,
-                state: ValidationState::Invalid,
-            };
+            return fail_segment(
+                segment_path,
+                "active manifest has no label",
+                "active manifest has no label",
+                live_validator,
+                tracker,
+            );
         }
     };
     let assertion = match manifest.find_assertion::<LiveVideoSegment>(LiveVideoSegment::LABEL) {
@@ -606,10 +652,7 @@ fn validate_segment_manifest_box(
                 "Segment FAIL [{segment_path:?}]: no `{}` assertion found",
                 LiveVideoSegment::LABEL
             );
-            return SegmentOutcome {
-                ok: false,
-                state: ValidationState::Invalid,
-            };
+            return SegmentOutcome::invalid();
         }
     };
 
@@ -635,17 +678,11 @@ fn validate_segment_manifest_box(
                 "Segment FAIL [{segment_path:?}]: validation failure recorded \
                  (see live video continuity failures below)"
             );
-            SegmentOutcome {
-                ok: false,
-                state: ValidationState::Invalid,
-            }
+            SegmentOutcome::invalid()
         }
         Err(e) => {
             eprintln!("Segment FAIL [{segment_path:?}]: {e}");
-            SegmentOutcome {
-                ok: false,
-                state: ValidationState::Invalid,
-            }
+            SegmentOutcome::invalid()
         }
     }
 }

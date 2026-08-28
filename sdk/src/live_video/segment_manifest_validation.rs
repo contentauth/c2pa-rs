@@ -155,6 +155,7 @@ mod tests {
     use super::super::{test_helpers::*, LiveVideoValidator};
     use crate::{
         assertions::{ContinuityMethod, LiveVideoSegment},
+        status_tracker::StatusTracker,
         validation_results::validation_codes::{
             LIVEVIDEO_ASSERTION_INVALID, LIVEVIDEO_CONTINUITY_METHOD_INVALID,
             LIVEVIDEO_INIT_INVALID, LIVEVIDEO_MANIFEST_INVALID, LIVEVIDEO_SEGMENT_INVALID,
@@ -165,7 +166,7 @@ mod tests {
     fn init_segment_without_mdat_is_valid() {
         let validator = LiveVideoValidator::new();
         let segment = make_uuid_box(true);
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
 
         validator
             .validate_init_segment(&segment, &mut tracker)
@@ -189,7 +190,7 @@ mod tests {
         let validator = LiveVideoValidator::new();
         let mut segment = make_uuid_box(true);
         segment.extend(make_mdat_box());
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
 
         let _ = validator.validate_init_segment(&segment, &mut tracker);
 
@@ -203,7 +204,7 @@ mod tests {
     #[test]
     fn fail_segment_manifest_records_manifest_invalid() {
         let validator = LiveVideoValidator::new();
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
 
         let _ = validator.fail_segment_manifest("no active manifest in segment", &mut tracker);
 
@@ -219,7 +220,7 @@ mod tests {
         let mut validator = LiveVideoValidator::new();
         let segment_data = make_mdat_box();
         let assertion = make_segment(1, "stream-1");
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
 
         let _ = validator.validate_media_segment(
             &segment_data,
@@ -239,7 +240,7 @@ mod tests {
     fn valid_sequence_advances_state() {
         let mut validator = LiveVideoValidator::new();
         let segment_data = make_uuid_box(true);
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
 
         let first = LiveVideoSegment {
             sequence_number: 1,
@@ -280,7 +281,7 @@ mod tests {
     fn regressed_sequence_number_fails() {
         let mut validator = LiveVideoValidator::new();
         let segment_data = make_uuid_box(true);
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
 
         let first = LiveVideoSegment {
             sequence_number: 5,
@@ -312,7 +313,7 @@ mod tests {
     fn mismatched_stream_id_fails() {
         let mut validator = LiveVideoValidator::new();
         let segment_data = make_uuid_box(true);
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
 
         let first = LiveVideoSegment {
             sequence_number: 1,
@@ -344,7 +345,7 @@ mod tests {
     fn missing_previous_manifest_id_fails_with_continuity_method_invalid() {
         let mut validator = LiveVideoValidator::new();
         let segment_data = make_uuid_box(true);
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
 
         let first = LiveVideoSegment {
             sequence_number: 1,
@@ -376,7 +377,7 @@ mod tests {
     fn wrong_previous_manifest_id_fails_with_segment_invalid() {
         let mut validator = LiveVideoValidator::new();
         let segment_data = make_uuid_box(true);
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
 
         let first = LiveVideoSegment {
             sequence_number: 1,
@@ -408,7 +409,7 @@ mod tests {
     fn unknown_continuity_method_fails() {
         let mut validator = LiveVideoValidator::new();
         let segment_data = make_uuid_box(true);
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
 
         let assertion = LiveVideoSegment {
             sequence_number: 1,
@@ -434,7 +435,7 @@ mod tests {
     fn missing_continuity_method_fails_with_continuity_method_invalid() {
         let mut validator = LiveVideoValidator::new();
         let segment_data = make_uuid_box(true);
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
 
         let assertion = LiveVideoSegment {
             sequence_number: 1,
@@ -457,7 +458,7 @@ mod tests {
     fn conformant_vsi_emsg_box_satisfies_presence_check() {
         let mut validator = LiveVideoValidator::new();
         let segment_data = make_vsi_conformant_emsg_box();
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
 
         let assertion = LiveVideoSegment {
             sequence_number: 1,
@@ -482,7 +483,7 @@ mod tests {
     fn non_conformant_emsg_box_does_not_satisfy_presence_check() {
         let mut validator = LiveVideoValidator::new();
         let segment_data = make_emsg_box();
-        let mut tracker = aggregate_tracker();
+        let mut tracker = StatusTracker::default();
 
         let assertion = LiveVideoSegment {
             sequence_number: 1,
