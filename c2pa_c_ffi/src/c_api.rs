@@ -28,9 +28,9 @@ use crate::safe_slice_from_raw_parts;
 #[allow(unused_imports)] // Usage varies by feature flags and test/non-test builds
 use crate::{
     box_tracked, bytes_or_return_int, bytes_or_return_null, c2pa_stream::C2paStream, cimpl_free,
-    cstr_or_return_int, cstr_or_return_null, deref_mut_or_return, deref_mut_or_return_int,
-    deref_mut_or_return_null, deref_or_return_int, deref_or_return_null, error::Error,
-    ok_or_return_int, ok_or_return_null, option_to_c_string, ptr_or_return_int,
+    cstr_or_return_int, cstr_or_return_null, deref_mut_option_or_return_int, deref_mut_or_return,
+    deref_mut_or_return_int, deref_mut_or_return_null, deref_or_return_int, deref_or_return_null,
+    error::Error, ok_or_return_int, ok_or_return_null, option_to_c_string, ptr_or_return_int,
     signer_info::SignerInfo, to_c_bytes, to_c_string, CimplError,
 };
 
@@ -1411,6 +1411,7 @@ pub unsafe extern "C" fn c2pa_reader_resource_to_stream(
 ) -> i64 {
     let uri = cstr_or_return_int!(uri);
     let reader = deref_mut_or_return_int!(reader_ptr, C2paReader);
+    let stream = deref_mut_or_return_int!(stream, C2paStream);
     let result = reader.resource_to_stream(&uri, &mut (*stream));
     let len = ok_or_return_int!(result);
     len as i64
@@ -1750,6 +1751,7 @@ pub unsafe extern "C" fn c2pa_builder_add_resource(
 ) -> c_int {
     let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
     let uri = cstr_or_return_int!(uri);
+    let stream = deref_mut_or_return_int!(stream, C2paStream);
     let result = builder.add_resource(&uri, &mut (*stream));
     ok_or_return_int!(result);
     0 // returns 0 on success
@@ -2152,10 +2154,10 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
     let mut data_hash: DataHash = ok_or_return_int!(serde_json::from_str(&data_hash_json)
         .map_err(|e| Error::from_c2pa_error(c2pa::Error::JsonError(e))));
 
-    if !asset.is_null() {
+    if let Some(asset) = deref_mut_option_or_return_int!(asset, C2paStream) {
         // calc hashes from the asset stream
         ok_or_return_int!(data_hash
-            .gen_hash_from_stream(&mut *asset)
+            .gen_hash_from_stream(asset)
             .map_err(Error::from_c2pa_error));
     }
 
