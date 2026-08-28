@@ -4262,6 +4262,30 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[test]
+    fn test_builder_incorrect_ingredient_format_ignore_ingredient_errors() {
+        let mut source = Cursor::new(TEST_IMAGE);
+
+        let ingredient_json = json!({
+            "title": "CA.jpg",
+            "format": "image/jpeg",
+        })
+        .to_string();
+
+        let settings = Settings::default()
+            .with_value("builder.ignore_ingredient_errors", true)
+            .unwrap();
+        let context = Context::default().with_settings(settings).unwrap();
+
+        let mut builder = Builder::from_context(context)
+            .with_definition(simple_manifest_json())
+            .unwrap();
+
+        // pass incorrect format, but ignore_ingredient_errors should prevent an error
+        let result = builder.add_ingredient_from_stream(ingredient_json, "image/png", &mut source);
+        assert!(result.is_ok());
+    }
+
     // Ensure multiple `c2pa.placed` actions aren't created.
     // Source: https://github.com/contentauth/c2pa-rs/pull/1458
     // This makes a created Manifest and includes two ingredients.
@@ -6612,8 +6636,6 @@ mod tests {
 
         let settings = Settings::default()
             .with_value("verify.remote_manifest_fetch", false)
-            .unwrap()
-            .with_value("builder.ignore_ingredient_errors", true)
             .unwrap();
         let context = Context::default().with_settings(settings).unwrap();
 
@@ -6624,8 +6646,13 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(ingredient.validation_status(), None);
-        assert_eq!(ingredient.validation_results(), None);
+        let validation_results = ingredient.validation_results().unwrap();
+        assert!(validation_results
+            .active_manifest()
+            .unwrap()
+            .failure()
+            .iter()
+            .any(|status| status.code() == crate::validation_status::MANIFEST_INACCESSIBLE));
     }
 
     #[test]
