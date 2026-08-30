@@ -716,7 +716,9 @@ pub unsafe extern "C" fn c2pa_context_builder_set_settings(
 ///
 /// * `builder` must be a valid C2paContextBuilder pointer (not yet built).
 /// * `signer_ptr` must be a valid C2paSigner pointer. It is consumed by this
-///   call and must not be used or freed afterward.
+///   call and must not be used or freed afterward — unless `builder` itself is
+///   rejected, which happens before the signer is touched. In that case the
+///   signer is untouched and the caller still owns it.
 ///
 /// # Returns
 ///
@@ -825,7 +827,10 @@ pub unsafe extern "C" fn c2pa_http_resolver_create(
 /// # Safety
 ///
 /// * `builder` must be a valid C2paContextBuilder pointer (not yet built).
-/// * `resolver_ptr` is consumed and must not be used or freed afterward.
+/// * `resolver_ptr` is consumed and must not be used or freed afterward —
+///   unless `builder` itself is rejected, which happens before the resolver is
+///   touched. In that case the resolver is untouched and the caller still owns
+///   it.
 ///
 /// # Returns
 ///
@@ -2943,6 +2948,38 @@ mod tests {
         unsafe { c2pa_free(error as *const c_void) };
         let error = error_owned;
         assert_eq!(error.to_str().unwrap(), "Other: Invalid signing algorithm");
+    }
+
+    #[test]
+    fn test_set_signer_leaves_signer_owned_when_builder_is_invalid() {
+        // The builder is validated before the signer is consumed, so a bad
+        // builder must leave the signer tracked and freeable. The docs promise
+        // this; without it a caller told "the signer is consumed" would leak it.
+        let certs = include_str!(fixture_path!("certs/ed25519.pub"));
+        let private_key = include_bytes!(fixture_path!("certs/ed25519.pem"));
+        let alg = CString::new("Ed25519").unwrap();
+        let sign_cert = CString::new(certs).unwrap();
+        let private_key = CString::new(private_key).unwrap();
+        let signer_info = C2paSignerInfo {
+            alg: alg.as_ptr(),
+            sign_cert: sign_cert.as_ptr(),
+            private_key: private_key.as_ptr(),
+            ta_url: std::ptr::null(),
+        };
+        let signer = unsafe { c2pa_signer_from_info(&signer_info) };
+        assert!(!signer.is_null());
+
+        // An untracked builder handle: rejected before the signer is reached.
+        let bogus_builder = 0xdead_beef_usize as *mut C2paContextBuilder;
+        let result = unsafe { c2pa_context_builder_set_signer(bogus_builder, signer) };
+        assert_eq!(result, -1, "an invalid builder must be rejected");
+
+        // The signer was never consumed, so the caller still owns it.
+        assert_eq!(
+            unsafe { c2pa_free(signer as *const c_void) },
+            0,
+            "signer must still be freeable after the builder was rejected"
+        );
     }
 
     #[test]

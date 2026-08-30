@@ -118,17 +118,8 @@ impl CimplError {
         Self::new(5, format!("Other: {}", msg.into()))
     }
 
-    /// A handle minted by a different loaded copy of this crate was passed in.
-    /// Each copy has its own registry, so the handle is meaningless here.
-    pub fn foreign_registry_pointer(issuing_copy: u16) -> Self {
-        Self::new(
-            11,
-            format!("ForeignRegistryPointer: handle was minted by loaded copy {issuing_copy}"),
-        )
-    }
-
-    /// A registry call was made from a process that did not create the
-    /// registry, which happens after `fork()` without an `exec()`.
+    /// A registry call was made from a process that did not create the registry,
+    /// which can happen after `fork()` without an `exec()`.
     pub fn foreign_process() -> Self {
         Self::new(
             10,
@@ -136,8 +127,8 @@ impl CimplError {
         )
     }
 
-    /// Ownership was requested for a handle tracked as an `Arc`, where other
-    /// clones may exist, so no single owner can be handed back.
+    /// Ownership was requested for a handle tracked as an `Arc`,
+    /// where other clones may exist, so no single owner can be handed back.
     pub fn wrong_wrapper_kind() -> Self {
         Self::new(
             9,
@@ -148,9 +139,6 @@ impl CimplError {
     /// The handle is tracked, but another borrow of it is still outstanding.
     /// Returned when an exclusive borrow is requested while any borrow exists,
     /// or when a shared borrow is requested during an exclusive one.
-    ///
-    /// The message carries no handle value: an id is opaque to the caller, so
-    /// printing it identifies nothing and puts a token into logs.
     pub fn pointer_in_use() -> Self {
         Self::new(8, "PointerInUse: handle is already borrowed".to_string())
     }

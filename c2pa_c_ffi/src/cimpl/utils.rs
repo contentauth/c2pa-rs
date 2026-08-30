@@ -31,14 +31,7 @@ use std::{
     },
 };
 
-use crate::{
-    cimpl::{
-        cimpl_error::CimplError,
-        shared_counter::{fallback::LocalCounter, SharedCounter},
-    },
-    error::Error,
-    maybe_send_sync::MaybeSend,
-};
+use crate::{cimpl::cimpl_error::CimplError, error::Error, maybe_send_sync::MaybeSend};
 
 // ============================================================================
 // Pointer Registry - Tracks pointers with their cleanup functions
@@ -54,36 +47,51 @@ enum Wrapper {
     Arced,
 }
 
-/// One tracked entry, held behind an `Arc` for borrow semantics.
-/// Arc will help us handle lifetimes of pointers.
+/// One tracked object: where it lives, how to free it, and who is using it.
+///
+/// Held behind an `Arc` so a borrow outlives a concurrent free. When C frees a
+/// handle the registry drops its own `Arc`, but a thread still using the object
+/// holds another, and cleanup runs only when the last one goes.
 struct EntryInner {
     real_addr: usize,
     type_id: TypeId,
-    /// Read by `untrack_owned`,
-    /// which must not hand an `Arc`-tracked entry to `Box::from_raw`,
-    /// for correct reconstruction of handle type .
-    #[allow(dead_code)] // Read from step 2 on.
+    /// Which allocator created this object, so `untrack_owned` reconstructs it
+    /// with the matching one. Handing an `Arc`-tracked entry to `Box::from_raw`
+    /// is undefined behavior.
     wrapper: Wrapper,
-    /// Borrow claim: 0 is free, n is n shared readers, `EXCLUSIVE` is one
-    /// writer. Gates aliasing and untrack, never cleanup timing, which belongs
-    /// to the `Arc`. Do not infer it from `Arc::strong_count`: a transient
-    /// clone inflates that count without any borrow existing.
-    #[allow(dead_code)] // Read from step 2 on.
-    claims: AtomicUsize,
+    /// Which borrows of this object are outstanding right now.
+    ///
+    /// A C caller holds an opaque id, not a reference.
+    // This counter is what makes handing out `&mut T` manageable:
+    /// a borrow is refused unless the counter permits it.
+    ///
+    /// - `0`: nobody is using the object, so any borrow may start.
+    /// - `1..EXCLUSIVE`: that many readers hold a `TypedShared`.
+    //     More readers may join; a writer may not.
+    /// - `EXCLUSIVE`: one writer holds a `TypedExclusive`.
+    //     No other borrow of any kind may start until it drops.
+    ///
+    /// `untrack` also refuses while this is non-zero, since ownership cannot
+    /// move out from under a live borrow.
+    ///
+    /// This is *not* what decides when the object is freed since that is the
+    /// `Arc`'s refcount, and the two move independently. Nor can it be
+    /// inferred from `Arc::strong_count`, which any transient clone increases
+    /// without a borrow existing.
+    borrow_state: AtomicUsize,
     /// `Option` so `untrack` can take the closure out through a shared `Arc`,
     /// leaving nothing for `Drop` to run.
     cleanup: Mutex<Option<CleanupFn>>,
     /// The process that created this entry. A forked child inherits the map by
-    /// copy-on-write, so without this it would free memory the parent still
-    /// owns. Plain `u32`: written once at construction, read-only after.
+    /// copy-on-write, so without this it would free memory the parent still  owns.
+    /// Written once at construction, read-only after.
     owner_pid: u32,
 }
 
 /// The current process id.
 ///
-/// Never cache this. It costs roughly 2.4ns (*measured*), and a cached value
-/// returns the parent's id in a forked child, silently defeating every check
-/// below. On wasm32 there is no fork, so a constant is correct.
+/// Never cache this, because a cached value returns the parent's id in a forked child.
+/// On wasm32 there is no fork, so return a constant.
 #[cfg(not(target_arch = "wasm32"))]
 fn current_pid() -> u32 {
     // SAFETY: getpid takes no arguments and cannot fail.
@@ -95,23 +103,23 @@ fn current_pid() -> u32 {
     0
 }
 
-/// Sentinel `claims` value for a single exclusive borrow.
-#[allow(dead_code)] // Read by the checkout paths added in step 2.
+/// The `borrow_state` value meaning "one writer holds this object".
+///
+/// `usize::MAX` cannot be reached by counting readers:
+/// every reader holds a live guard, so that many would need more memory than the address space has.
 const EXCLUSIVE: usize = usize::MAX;
 
-// Hand-written because a cleanup closure has no Debug. Reports whether the
-// closure is still armed rather than trying to show it, and prints the real
-// address so a debugger session can be pointed at the object behind a handle.
+// Log/Debug helper for registry entries.
 impl std::fmt::Debug for EntryInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let claims = self.claims.load(Ordering::Relaxed);
+        let borrow_state = self.borrow_state.load(Ordering::Relaxed);
         f.debug_struct("EntryInner")
             .field("real_addr", &format_args!("0x{:x}", self.real_addr))
             .field("type_id", &self.type_id)
             .field("wrapper", &self.wrapper)
             .field(
-                "claims",
-                &match claims {
+                "borrow_state",
+                &match borrow_state {
                     0 => "free".to_string(),
                     EXCLUSIVE => "exclusive".to_string(),
                     n => format!("{n} shared"),
@@ -119,8 +127,7 @@ impl std::fmt::Debug for EntryInner {
             )
             .field(
                 "cleanup",
-                // try_lock: Debug must never block, and a poisoned or contended
-                // lock is itself worth seeing in a dump.
+                // try_lock: Debug must never block.
                 &match self.cleanup.try_lock() {
                     Ok(guard) => {
                         if guard.is_some() {
@@ -186,32 +193,34 @@ impl Drop for SharedCheckout {
     fn drop(&mut self) {
         // Releasing the claim is separate from dropping the Arc. Without it a
         // handle stays borrowed forever and every later checkout fails.
-        self.entry.claims.fetch_sub(1, Ordering::AcqRel);
+        self.entry.borrow_state.fetch_sub(1, Ordering::AcqRel);
     }
 }
 
-/// A live exclusive borrow of a tracked entry. At most one can exist, which is
-/// what makes handing out `&mut T` sound.
+/// A live exclusive borrow of a tracked entry.
+/// At most one can exist, so &mut can be handed out.
 pub struct ExclusiveCheckout {
     entry: Arc<EntryInner>,
 }
 
 impl Drop for ExclusiveCheckout {
     fn drop(&mut self) {
-        self.entry.claims.store(0, Ordering::Release);
+        self.entry.borrow_state.store(0, Ordering::Release);
     }
 }
 
-/// A shared borrow of a `T` behind a handle. Dereferences to `&T` only.
+/// A shared borrow of a `T` behind a handle.
+/// Dereferences to `&T` only.
 pub struct TypedShared<T> {
     inner: SharedCheckout,
     // Not PhantomData<*mut T>: that would make the guard !Send and break
-    // multi-threaded callers for no benefit. fn() -> T is covariant in T and
-    // carries no Send/Sync implications of its own.
+    // multi-threaded callers.
+    // fn() -> T is covariant in T and has no Send/Sync implications.
     _marker: PhantomData<fn() -> T>,
 }
 
-/// An exclusive borrow of a `T` behind a handle. Dereferences to `&mut T`.
+/// An exclusive borrow of a `T` behind a handle.
+/// Dereferences to `&mut T`.
 pub struct TypedExclusive<T> {
     inner: ExclusiveCheckout,
     _marker: PhantomData<fn() -> T>,
@@ -220,8 +229,7 @@ pub struct TypedExclusive<T> {
 impl<T> Deref for TypedShared<T> {
     type Target = T;
     fn deref(&self) -> &T {
-        // SAFETY: the entry was type-checked at checkout, and the shared claim
-        // held by this guard prevents any exclusive borrow from coexisting.
+        // SAFETY: the entry was type-checked at checkout.
         unsafe { &*(self.inner.entry.real_addr as *const T) }
     }
 }
@@ -236,8 +244,8 @@ impl<T> Deref for TypedExclusive<T> {
 
 impl<T> DerefMut for TypedExclusive<T> {
     fn deref_mut(&mut self) -> &mut T {
-        // SAFETY: the exclusive claim guarantees no other borrow of this entry
-        // exists, so this is the only reference to the object.
+        // SAFETY: the exclusive claim guarantees no other borrow of this entry exists.
+        // This is the only reference to the object.
         unsafe { &mut *(self.inner.entry.real_addr as *mut T) }
     }
 }
@@ -251,59 +259,22 @@ const ID_MULTIPLIER: usize = 0x9e3779b9;
 #[cfg(not(any(target_pointer_width = "64", target_pointer_width = "32")))]
 compile_error!("PointerRegistry's handle scrambling needs a 32- or 64-bit usize");
 
-/// Bits of each id reserved for the instance tag, which names the loaded copy
-/// of this crate that minted it.
-const TAG_BITS: u32 = 8;
-
-/// Where the tag sits once the counter's top bit is folded away by the
-/// `2c + 1` step.
-const TAG_SHIFT: u32 = usize::BITS - 1 - TAG_BITS;
-
-/// Largest counter value that fits below the tag.
-const MAX_COUNTER: usize = (1usize << TAG_SHIFT) - 1;
-
-/// Multiplicative inverse of `ID_MULTIPLIER` modulo `2^usize::BITS`, which
-/// exists because the multiplier is odd. Recovers the tag from an id.
-const ID_MULTIPLIER_INVERSE: usize = {
-    // Newton iteration: each step doubles the number of correct bits, and the
-    // seed is already correct to 3 bits, so 5 steps cover 64.
-    let mut inverse = ID_MULTIPLIER;
-    let mut step = 0;
-    while step < 5 {
-        inverse = inverse.wrapping_mul(2usize.wrapping_sub(ID_MULTIPLIER.wrapping_mul(inverse)));
-        step += 1;
-    }
-    inverse
-};
-
-/// Turns an instance tag and a sequential counter value into a scrambled,
-/// always-odd handle id.
+/// Turns a plain sequential counter value into a scrambled, always-odd
+/// handle id.
 ///
 /// - **Always odd (and therefore never zero)**: real Rust allocations
 ///   always land on at least a 2-byte boundary, so their addresses are
 ///   always even. An odd id can therefore never collide with a real tracked
 ///   buffer address (see `track_by_address`).
-/// - **Carries its minting registry's tag**, recoverable with
-///   `tag_of_id`, so a handle from another loaded copy of this crate can be
-///   named rather than reported as untracked.
-/// - **Distinct within a `2^TAG_SHIFT` window, not fully bijective**:
-///   `counter * 2 + 1` folds the top bit, and the tag occupies the
-///   `TAG_BITS` below it, so ids repeat after `2^TAG_SHIFT` allocations —
-///   2^55 on 64-bit (unreachable) and 2^23, about 8.4 million, on 32-bit.
-///   `track_by_id` asserts against that bound.
-fn scramble_to_odd_id(tag: u16, counter: usize) -> usize {
-    let packed = ((tag as usize) << TAG_SHIFT) | (counter & MAX_COUNTER);
-    let odd = packed.wrapping_mul(2).wrapping_add(1);
+/// - **Distinct within a `2^(usize::BITS - 1)` window, not fully bijective**:
+///   `counter * 2 + 1` folds the counter's top bit, so `counter` and
+///   `counter + 2^(usize::BITS - 1)` scramble to the same id. Ids repeat after
+///   `2^(usize::BITS - 1)` allocations — 2^63 on 64-bit (unreachable), ~2.1
+///   billion on 32-bit (wasm32 included). `track_by_id` asserts against that
+///   bound on 32-bit.
+fn scramble_to_odd_id(counter: usize) -> usize {
+    let odd = counter.wrapping_mul(2).wrapping_add(1);
     odd.wrapping_mul(ID_MULTIPLIER)
-}
-
-/// Recovers the instance tag from an id minted by `scramble_to_odd_id`.
-///
-/// Meaningful only for a genuine id. An arbitrary integer decodes to some tag
-/// too, so this distinguishes handles, it does not validate them.
-fn tag_of_id(id: usize) -> u16 {
-    let packed = id.wrapping_mul(ID_MULTIPLIER_INVERSE).wrapping_sub(1) / 2;
-    ((packed >> TAG_SHIFT) & ((1 << TAG_BITS) - 1)) as u16
 }
 
 /// Registry that tracks pointers allocated from Rust and passed to C.
@@ -335,8 +306,6 @@ pub struct PointerRegistry {
     next_id: AtomicUsize,
     /// The process that created the registry.
     owner_pid: u32,
-    /// Names this loaded copy of the crate in every id.
-    instance_tag: u16,
 }
 
 impl PointerRegistry {
@@ -345,7 +314,6 @@ impl PointerRegistry {
             tracked: Mutex::new(HashMap::new()),
             next_id: AtomicUsize::new(0),
             owner_pid: current_pid(),
-            instance_tag: LocalCounter.claim_tag(),
         }
     }
 
@@ -364,17 +332,17 @@ impl PointerRegistry {
             return 0;
         }
         let counter = self.next_id.fetch_add(1, Ordering::Relaxed);
-        // The tag steals bits from the counter, so the wraparound bound is
-        // tighter than the old usize::MAX >> 1: past MAX_COUNTER the counter
-        // folds back and ids repeat. Unreachable on 64-bit (2^55) and about
-        // 8.4 million on 32-bit.
-        assert!(counter <= MAX_COUNTER, "PointerRegistry id space exhausted");
-        let id = scramble_to_odd_id(self.instance_tag, counter);
+        #[cfg(target_pointer_width = "32")]
+        assert!(
+            counter < (usize::MAX >> 1),
+            "PointerRegistry id space exhausted"
+        );
+        let id = scramble_to_odd_id(counter);
         let entry = Arc::new(EntryInner {
             real_addr,
             type_id,
             wrapper,
-            claims: AtomicUsize::new(0),
+            borrow_state: AtomicUsize::new(0),
             cleanup: Mutex::new(Some(cleanup)),
             owner_pid: current_pid(),
         });
@@ -399,10 +367,10 @@ impl PointerRegistry {
     fn track_by_address(&self, real_addr: usize, type_id: TypeId, cleanup: CleanupFn) {
         if real_addr != 0 {
             // The odd/even split between the two key kinds is what guarantees an
-            // address key can never alias a handle id. Rust aligns real
-            // allocations, so this holds for every type tracked here, but a
-            // zero-sized type allocates at 0x1 and a custom global allocator
-            // need not align at all. Fail loudly rather than alias silently.
+            // address key can never alias a handle id.
+            // Rust aligns real allocations, so this holds for every type tracked here,
+            // but a ero-sized type allocates at 0x1 and a custom global allocator don't need to align.
+            // Fail loudly rather than alias if something goes wrong here.
             assert!(
                 real_addr.is_multiple_of(2),
                 "tracked buffer address must be even; odd addresses collide with handle ids"
@@ -411,7 +379,7 @@ impl PointerRegistry {
                 real_addr,
                 type_id,
                 wrapper: Wrapper::Boxed,
-                claims: AtomicUsize::new(0),
+                borrow_state: AtomicUsize::new(0),
                 cleanup: Mutex::new(Some(cleanup)),
                 owner_pid: current_pid(),
             });
@@ -419,15 +387,13 @@ impl PointerRegistry {
                 if let Some(previous) = tracked.insert(real_addr, entry) {
                     // The allocator returned an address that is still tracked,
                     // so something freed the memory without untracking it. The
-                    // stale cleanup closure now points at an allocation it no
-                    // longer owns, so defuse it and report rather than let it
-                    // free memory the new entry owns.
+                    // The stale cleanup closure now points at an allocation it no
+                    // longer owns, so mitigate and report.
                     if let Ok(mut cleanup) = previous.cleanup.lock() {
                         cleanup.take();
                     }
                     eprintln!(
-                        "c2pa: address 0x{real_addr:x} was re-tracked while still tracked; \
-                         the earlier entry was freed without being untracked"
+                        "c2pa: address 0x{real_addr:x} was re-tracked while still tracked"
                     );
                 }
             }
@@ -455,17 +421,14 @@ impl PointerRegistry {
         }
     }
 
-    /// Refuse a registry call made from a process that did not create the
-    /// registry, which happens after `fork()` without an `exec()`.
+    /// Refuse a registry call made from a process that did not create the registry,
+    /// which happens after `fork()` without an `exec()`.
     ///
-    /// Call this *before* taking the `tracked` lock. A child of a
-    /// multi-threaded fork inherits the mutex in whatever state it had at fork
-    /// time; if another thread held it, no thread in the child can ever release
-    /// it, so taking the lock is itself the hazard.
-    ///
-    /// This covers only the methods that call it. Cleanup runs from
-    /// `EntryInner::drop`, which takes no lock and needs no registry call, so
-    /// it carries its own per-entry check.
+    /// Call this *before* taking the `tracked` lock.
+    /// A child of a multi-threaded fork inherits the mutex
+    /// in whatever state it had at fork time.
+    /// If another thread held it, no thread in the child can ever release it,
+    /// iso taking the lock can deadlock.
     fn check_same_process(&self) -> Result<(), Error> {
         if self.owner_pid != current_pid() {
             return Err(Error::from(CimplError::foreign_process()));
@@ -487,19 +450,7 @@ impl PointerRegistry {
         match tracked.get(&id) {
             Some(entry) if entry.type_id == expected_type => Ok(Arc::clone(entry)),
             Some(_) => Err(Error::from(CimplError::wrong_pointer_type(id as u64))),
-            None => Err(self.miss_error(id)),
-        }
-    }
-
-    /// Explains a lookup miss. An id carrying another copy's tag was minted by
-    /// a different registry, which is a different fault from a stale handle and
-    /// would otherwise be indistinguishable from one.
-    fn miss_error(&self, id: usize) -> Error {
-        let tag = tag_of_id(id);
-        if tag == self.instance_tag {
-            Error::from(CimplError::untracked_pointer(id as u64))
-        } else {
-            Error::from(CimplError::foreign_registry_pointer(tag))
+            None => Err(Error::from(CimplError::untracked_pointer(id as u64))),
         }
     }
 
@@ -510,12 +461,12 @@ impl PointerRegistry {
         let entry = self.lookup(id, expected_type)?;
         // Retry while another reader changes the count; give up only when the
         // entry is exclusively borrowed.
-        let mut current = entry.claims.load(Ordering::Acquire);
+        let mut current = entry.borrow_state.load(Ordering::Acquire);
         loop {
             if current == EXCLUSIVE {
                 return Err(Error::from(CimplError::pointer_in_use()));
             }
-            match entry.claims.compare_exchange_weak(
+            match entry.borrow_state.compare_exchange_weak(
                 current,
                 current + 1,
                 Ordering::AcqRel,
@@ -536,7 +487,7 @@ impl PointerRegistry {
         expected_type: TypeId,
     ) -> Result<ExclusiveCheckout, Error> {
         let entry = self.lookup(id, expected_type)?;
-        match entry.claims.compare_exchange(
+        match entry.borrow_state.compare_exchange(
             0,
             EXCLUSIVE,
             Ordering::AcqRel,
@@ -592,9 +543,9 @@ impl PointerRegistry {
             Some(entry) if entry.type_id == expected_type => {
                 // Ownership cannot move while the object is borrowed: the
                 // caller would reconstruct and drop it under a live guard.
-                // Test `claims`, never Arc::strong_count -- a transient clone
+                // Test `borrow_state`, never Arc::strong_count -- a transient clone
                 // inflates the refcount without any borrow existing.
-                if entry.claims.load(Ordering::Acquire) != 0 {
+                if entry.borrow_state.load(Ordering::Acquire) != 0 {
                     return Err(Error::from(CimplError::pointer_in_use()));
                 }
                 // Check the wrapper before removing, so a rejection does not
@@ -788,9 +739,9 @@ pub fn track_arc_mutex<T: 'static + MaybeSend>(ptr: *mut Mutex<T>) -> *mut Mutex
     id as *mut Mutex<T>
 }
 
-/// Validate that a pointer is tracked and has the expected type, returning
-/// the real pointer to dereference (the value passed in is an opaque handle
-/// id, not the real address — see `PointerRegistry::track_by_id`).
+/// Validate that a pointer is tracked and has the expected type,
+/// returning the real pointer to dereference.
+// (The value passed in is an opaque handle id, not the real address).
 #[must_use = "the handle passed in is not a usable pointer, only the returned one is"]
 pub fn validate_pointer<T: 'static>(ptr: *mut T) -> Result<*mut T, Error> {
     let real_addr = get_registry().resolve(ptr as usize, TypeId::of::<T>())?;
@@ -838,7 +789,7 @@ pub fn checkout_exclusive<T: 'static>(ptr: *mut T) -> Result<TypedExclusive<T>, 
 /// on `cimpl_free()` or a false leak warning at shutdown.
 ///
 /// After this call, the pointer is no longer managed by the registry. The
-/// caller owns the underlying allocation and must drop it — typically by
+/// caller owns the underlying allocation and must drop it, typically by
 /// calling `Box::from_raw()` on the *returned* real pointer immediately after
 /// untracking (the value passed in is an opaque handle id, not the real
 /// address). The `untrack_or_return_*!` macros do this for you, yielding the
@@ -1303,64 +1254,24 @@ mod tests {
             .expect("just tracked");
 
         let free = format!("{entry:?}");
-        assert!(free.contains("claims: \"free\""), "got {free}");
+        assert!(free.contains("borrow_state: \"free\""), "got {free}");
         assert!(free.contains("cleanup: \"armed\""), "got {free}");
 
         let guard = checkout_shared::<i32>(ptr).unwrap();
         let shared = format!("{entry:?}");
-        assert!(shared.contains("claims: \"1 shared\""), "got {shared}");
+        assert!(shared.contains("borrow_state: \"1 shared\""), "got {shared}");
         drop(guard);
 
         let guard = checkout_exclusive::<i32>(ptr).unwrap();
         let exclusive = format!("{entry:?}");
-        assert!(exclusive.contains("claims: \"exclusive\""), "got {exclusive}");
+        assert!(exclusive.contains("borrow_state: \"exclusive\""), "got {exclusive}");
         drop(guard);
 
         drop(entry);
         cimpl_free(ptr as *mut std::ffi::c_void);
     }
 
-    #[test]
-    fn test_id_carries_its_instance_tag() {
-        // Every tag must survive the scramble, for counters across the range.
-        for tag in [0u16, 1, 7, 255] {
-            for counter in [0usize, 1, 2, 1000, 1 << 20, MAX_COUNTER] {
-                let id = scramble_to_odd_id(tag, counter);
-                assert_eq!(tag_of_id(id), tag, "tag {tag} lost at counter {counter}");
-                assert_eq!(id % 2, 1, "id must stay odd to avoid address keys");
-            }
-        }
-    }
 
-    #[test]
-    fn test_foreign_tag_reported_as_foreign_not_untracked() {
-        // A handle from another loaded copy is a different fault from a stale
-        // one, and reporting it as untracked sends the reader hunting a
-        // lifetime bug that is not there.
-        let own_tag = get_registry().instance_tag;
-        let foreign_id = scramble_to_odd_id(own_tag.wrapping_add(1), 42);
-
-        let Err(err) = checkout_shared::<i32>(foreign_id as *mut i32) else {
-            panic!("a foreign id must not resolve");
-        };
-        assert!(
-            err.to_string().starts_with("ForeignRegistryPointer:"),
-            "expected ForeignRegistryPointer, got {err}"
-        );
-
-        // An id with our own tag that was never tracked stays untracked.
-        let stale_id = scramble_to_odd_id(own_tag, MAX_COUNTER - 1);
-        let Err(err) = checkout_shared::<i32>(stale_id as *mut i32) else {
-            panic!("an untracked id must not resolve");
-        };
-        // Code 3 has no C2paError variant, so it arrives wrapped as Other.
-        // That is pre-existing and not what this test is about; what matters is
-        // that it is not reported as foreign.
-        assert!(
-            err.to_string().contains("UntrackedPointer:"),
-            "expected UntrackedPointer, got {err}"
-        );
-    }
 
     #[test]
     fn test_tag_does_not_collide_with_tracked_addresses() {

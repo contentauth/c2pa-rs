@@ -65,7 +65,6 @@ pub mod utils;
 // Then macros that depend on them
 #[macro_use]
 pub mod macros;
-pub(crate) mod shared_counter;
 
 // Re-export internal utilities (for macro use only - not part of public API)
 #[doc(hidden)]
