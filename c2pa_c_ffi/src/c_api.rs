@@ -2837,7 +2837,11 @@ unsafe fn c2pa_mime_types_to_c_array(strs: Vec<String>, count: *mut usize) -> *c
 
 #[cfg(test)]
 mod tests {
-    use std::{ffi::CString, io::Seek, panic::catch_unwind};
+    use std::{
+        ffi::{CStr, CString},
+        io::Seek,
+        panic::catch_unwind,
+    };
 
     use super::*;
     use crate::TestStream;
@@ -2918,7 +2922,13 @@ mod tests {
         let signer = unsafe { c2pa_signer_from_info(&signer_info) };
         assert!(signer.is_null());
         let error = unsafe { c2pa_error() };
-        let error = unsafe { CString::from_raw(error) };
+        // Copy the string out, then release it through the registry that
+        // allocated it. CString::from_raw would free the memory while the
+        // registry entry survives, leaving a stale entry whose address the
+        // allocator can hand out again.
+        let error_owned = unsafe { CStr::from_ptr(error) }.to_owned();
+        unsafe { c2pa_free(error as *const c_void) };
+        let error = error_owned;
         assert_eq!(error.to_str().unwrap(), "Other: Invalid signing algorithm");
     }
 
@@ -3006,7 +3016,12 @@ mod tests {
 
         let json = unsafe { c2pa_reader_json(reader) };
         assert!(!json.is_null());
-        let json_str = unsafe { CString::from_raw(json) };
+        // Copy the string out, then release it through the registry that
+        // allocated it. CString::from_raw would free the memory while the
+        // registry entry survives, leaving a stale entry whose address the
+        // allocator can hand out again.
+        let json_str = unsafe { CStr::from_ptr(json) }.to_owned();
+        unsafe { c2pa_free(json as *const c_void) };
         let json_content = json_str.to_str().unwrap();
 
         assert!(json_content.contains("manifest"));
@@ -3063,7 +3078,17 @@ mod tests {
         let json = unsafe { c2pa_reader_json(reader) };
         assert!(!json.is_null());
 
-        let json_str = unsafe { CString::from_raw(json) };
+        // Copy the string out, then release it through the registry that
+
+        // allocated it. CString::from_raw would free the memory while the
+
+        // registry entry survives, leaving a stale entry whose address the
+
+        // allocator can hand out again.
+
+        let json_str = unsafe { CStr::from_ptr(json) }.to_owned();
+
+        unsafe { c2pa_free(json as *const c_void) };
         let json_content = json_str.to_str().unwrap();
 
         assert!(json_content.contains("c2pa.created"));
@@ -3127,7 +3152,17 @@ mod tests {
         let json = unsafe { c2pa_reader_json(reader) };
         assert!(!json.is_null());
 
-        let json_str = unsafe { CString::from_raw(json) };
+        // Copy the string out, then release it through the registry that
+
+        // allocated it. CString::from_raw would free the memory while the
+
+        // registry entry survives, leaving a stale entry whose address the
+
+        // allocator can hand out again.
+
+        let json_str = unsafe { CStr::from_ptr(json) }.to_owned();
+
+        unsafe { c2pa_free(json as *const c_void) };
         let json_content = json_str.to_str().unwrap();
 
         assert!(json_content.contains("c2pa.created"));
@@ -3186,7 +3221,12 @@ mod tests {
 
         let json = unsafe { c2pa_reader_json(reader) };
         assert!(!json.is_null());
-        let json_str = unsafe { CString::from_raw(json) };
+        // Copy the string out, then release it through the registry that
+        // allocated it. CString::from_raw would free the memory while the
+        // registry entry survives, leaving a stale entry whose address the
+        // allocator can hand out again.
+        let json_str = unsafe { CStr::from_ptr(json) }.to_owned();
+        unsafe { c2pa_free(json as *const c_void) };
         let json_content = json_str.to_str().unwrap();
 
         assert!(json_content.contains("c2pa.opened"));
@@ -3215,7 +3255,13 @@ mod tests {
         let result = unsafe { c2pa_builder_set_remote_url(builder, remote_url.as_ptr()) };
         assert_eq!(result, -1);
         let error = unsafe { c2pa_error() };
-        let error = unsafe { CString::from_raw(error) };
+        // Copy the string out, then release it through the registry that
+        // allocated it. CString::from_raw would free the memory while the
+        // registry entry survives, leaving a stale entry whose address the
+        // allocator can hand out again.
+        let error_owned = unsafe { CStr::from_ptr(error) }.to_owned();
+        unsafe { c2pa_free(error as *const c_void) };
+        let error = error_owned;
         assert_eq!(error.to_str().unwrap(), "NullParameter: builder_ptr");
     }
 
@@ -3233,7 +3279,12 @@ mod tests {
     fn test_c2pa_version() {
         let version = unsafe { c2pa_version() };
         assert!(!version.is_null());
-        let version_str = unsafe { CString::from_raw(version) };
+        // Copy the string out, then release it through the registry that
+        // allocated it. CString::from_raw would free the memory while the
+        // registry entry survives, leaving a stale entry whose address the
+        // allocator can hand out again.
+        let version_str = unsafe { CStr::from_ptr(version) }.to_owned();
+        unsafe { c2pa_free(version as *const c_void) };
         assert!(!version_str.to_str().unwrap().is_empty());
     }
 
@@ -3241,7 +3292,12 @@ mod tests {
     fn test_c2pa_error_no_error() {
         let error = unsafe { c2pa_error() };
         assert!(!error.is_null());
-        let error_str = unsafe { CString::from_raw(error) };
+        // Copy the string out, then release it through the registry that
+        // allocated it. CString::from_raw would free the memory while the
+        // registry entry survives, leaving a stale entry whose address the
+        // allocator can hand out again.
+        let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
+        unsafe { c2pa_free(error as *const c_void) };
         assert_eq!(error_str.to_str().unwrap(), "");
     }
 
@@ -3299,7 +3355,12 @@ mod tests {
         let result = unsafe { c2pa_reader_from_stream(std::ptr::null(), stream.as_ptr()) };
         assert!(result.is_null());
         let error = unsafe { c2pa_error() };
-        let error_str = unsafe { CString::from_raw(error) };
+        // Copy the string out, then release it through the registry that
+        // allocated it. CString::from_raw would free the memory while the
+        // registry entry survives, leaving a stale entry whose address the
+        // allocator can hand out again.
+        let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
+        unsafe { c2pa_free(error as *const c_void) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: format");
     }
 
@@ -3341,7 +3402,12 @@ mod tests {
 
         let json = unsafe { c2pa_reader_json(configured_reader) };
         assert!(!json.is_null());
-        let json_str = unsafe { CString::from_raw(json) };
+        // Copy the string out, then release it through the registry that
+        // allocated it. CString::from_raw would free the memory while the
+        // registry entry survives, leaving a stale entry whose address the
+        // allocator can hand out again.
+        let json_str = unsafe { CStr::from_ptr(json) }.to_owned();
+        unsafe { c2pa_free(json as *const c_void) };
         assert!(json_str.to_str().unwrap().contains("Silly Cats 929"));
         assert!(json_str
             .to_str()
@@ -3398,7 +3464,12 @@ mod tests {
         // Verify we can read the manifest
         let json = unsafe { c2pa_reader_json(configured_reader) };
         assert!(!json.is_null());
-        let json_str = unsafe { CString::from_raw(json) };
+        // Copy the string out, then release it through the registry that
+        // allocated it. CString::from_raw would free the memory while the
+        // registry entry survives, leaving a stale entry whose address the
+        // allocator can hand out again.
+        let json_str = unsafe { CStr::from_ptr(json) }.to_owned();
+        unsafe { c2pa_free(json as *const c_void) };
         let json_content = json_str.to_str().unwrap();
         // Verify the manifest has expected content (the fixture contains Adobe claims)
         assert!(
@@ -3498,7 +3569,12 @@ mod tests {
         let result = unsafe { c2pa_reader_json(std::ptr::null_mut()) };
         assert!(result.is_null());
         let error = unsafe { c2pa_error() };
-        let error_str = unsafe { CString::from_raw(error) };
+        // Copy the string out, then release it through the registry that
+        // allocated it. CString::from_raw would free the memory while the
+        // registry entry survives, leaving a stale entry whose address the
+        // allocator can hand out again.
+        let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
+        unsafe { c2pa_free(error as *const c_void) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: reader_ptr");
     }
 
@@ -3513,7 +3589,12 @@ mod tests {
             unsafe { c2pa_builder_add_resource(builder, std::ptr::null(), stream.as_ptr()) };
         assert_eq!(result, -1);
         let error = unsafe { c2pa_error() };
-        let error_str = unsafe { CString::from_raw(error) };
+        // Copy the string out, then release it through the registry that
+        // allocated it. CString::from_raw would free the memory while the
+        // registry entry survives, leaving a stale entry whose address the
+        // allocator can hand out again.
+        let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
+        unsafe { c2pa_free(error as *const c_void) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: uri");
         unsafe { c2pa_builder_free(builder) };
     }
@@ -3527,7 +3608,12 @@ mod tests {
         let result = unsafe { c2pa_builder_to_archive(builder, std::ptr::null_mut()) };
         assert_eq!(result, -1);
         let error = unsafe { c2pa_error() };
-        let error_str = unsafe { CString::from_raw(error) };
+        // Copy the string out, then release it through the registry that
+        // allocated it. CString::from_raw would free the memory while the
+        // registry entry survives, leaving a stale entry whose address the
+        // allocator can hand out again.
+        let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
+        unsafe { c2pa_free(error as *const c_void) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: stream");
         unsafe { c2pa_builder_free(builder) };
     }
@@ -3542,7 +3628,12 @@ mod tests {
             unsafe { c2pa_builder_add_ingredient_from_archive(builder, std::ptr::null_mut()) };
         assert_eq!(result, -1);
         let error = unsafe { c2pa_error() };
-        let error_str = unsafe { CString::from_raw(error) };
+        // Copy the string out, then release it through the registry that
+        // allocated it. CString::from_raw would free the memory while the
+        // registry entry survives, leaving a stale entry whose address the
+        // allocator can hand out again.
+        let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
+        unsafe { c2pa_free(error as *const c_void) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: stream");
         unsafe { c2pa_builder_free(builder) };
     }
@@ -3573,7 +3664,12 @@ mod tests {
         };
         assert_eq!(result, -1);
         let error = unsafe { c2pa_error() };
-        let error_str = unsafe { CString::from_raw(error) };
+        // Copy the string out, then release it through the registry that
+        // allocated it. CString::from_raw would free the memory while the
+        // registry entry survives, leaving a stale entry whose address the
+        // allocator can hand out again.
+        let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
+        unsafe { c2pa_free(error as *const c_void) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: stream");
         unsafe { c2pa_builder_free(builder) };
     }
@@ -3591,7 +3687,12 @@ mod tests {
         };
         assert_eq!(result, -1);
         let error = unsafe { c2pa_error() };
-        let error_str = unsafe { CString::from_raw(error) };
+        // Copy the string out, then release it through the registry that
+        // allocated it. CString::from_raw would free the memory while the
+        // registry entry survives, leaving a stale entry whose address the
+        // allocator can hand out again.
+        let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
+        unsafe { c2pa_free(error as *const c_void) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: ingredient_id");
         unsafe { c2pa_builder_free(builder) };
     }
@@ -3798,7 +3899,12 @@ mod tests {
 
         let json = unsafe { c2pa_reader_json(reader) };
         assert!(!json.is_null());
-        let json_str = unsafe { CString::from_raw(json) };
+        // Copy the string out, then release it through the registry that
+        // allocated it. CString::from_raw would free the memory while the
+        // registry entry survives, leaving a stale entry whose address the
+        // allocator can hand out again.
+        let json_str = unsafe { CStr::from_ptr(json) }.to_owned();
+        unsafe { c2pa_free(json as *const c_void) };
         let json_content = json_str.to_str().unwrap();
 
         assert!(json_content.contains("manifest"));
@@ -3829,13 +3935,23 @@ mod tests {
         let reader = unsafe { c2pa_reader_from_file(path.as_ptr()) };
         if reader.is_null() {
             let error = unsafe { c2pa_error() };
-            let error_str = unsafe { CString::from_raw(error) };
+            // Copy the string out, then release it through the registry that
+            // allocated it. CString::from_raw would free the memory while the
+            // registry entry survives, leaving a stale entry whose address the
+            // allocator can hand out again.
+            let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
+            unsafe { c2pa_free(error as *const c_void) };
             panic!("Failed to create reader: {}", error_str.to_str().unwrap());
         }
         assert!(!reader.is_null());
         let json = unsafe { c2pa_reader_json(reader) };
         assert!(!json.is_null());
-        let json_str = unsafe { CString::from_raw(json) };
+        // Copy the string out, then release it through the registry that
+        // allocated it. CString::from_raw would free the memory while the
+        // registry entry survives, leaving a stale entry whose address the
+        // allocator can hand out again.
+        let json_str = unsafe { CStr::from_ptr(json) }.to_owned();
+        unsafe { c2pa_free(json as *const c_void) };
         println!("JSON Report: {}", json_str.to_str().unwrap());
         let json_report = json_str.to_str().unwrap();
         assert!(json_report.contains("cawg.identity"));
@@ -4664,7 +4780,12 @@ verify_after_sign = true
             !error.is_null(),
             "Error should be retrievable after set_last"
         );
-        let error_str = unsafe { CString::from_raw(error) };
+        // Copy the string out, then release it through the registry that
+        // allocated it. CString::from_raw would free the memory while the
+        // registry entry survives, leaving a stale entry whose address the
+        // allocator can hand out again.
+        let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
+        unsafe { c2pa_free(error as *const c_void) };
         // Error messages are prefixed with "Other: "
         assert_eq!(
             error_str.to_str().unwrap(),
@@ -4774,7 +4895,12 @@ verify_after_sign = true
 
         assert!(reader.is_null(), "Reader should be null for null format");
         let error = unsafe { c2pa_error() };
-        let error_str = unsafe { CString::from_raw(error) };
+        // Copy the string out, then release it through the registry that
+        // allocated it. CString::from_raw would free the memory while the
+        // registry entry survives, leaving a stale entry whose address the
+        // allocator can hand out again.
+        let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
+        unsafe { c2pa_free(error as *const c_void) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: format");
     }
 
@@ -4829,7 +4955,12 @@ verify_after_sign = true
             "resource_to_stream should return -1 for null reader"
         );
         let error = unsafe { c2pa_error() };
-        let error_str = unsafe { CString::from_raw(error) };
+        // Copy the string out, then release it through the registry that
+        // allocated it. CString::from_raw would free the memory while the
+        // registry entry survives, leaving a stale entry whose address the
+        // allocator can hand out again.
+        let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
+        unsafe { c2pa_free(error as *const c_void) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: reader_ptr");
     }
 
@@ -5290,7 +5421,12 @@ verify_after_sign = true
 
         let json_ptr = unsafe { c2pa_reader_json(reader) };
         assert!(!json_ptr.is_null());
-        let json_str = unsafe { CString::from_raw(json_ptr) };
+        // Copy the string out, then release it through the registry that
+        // allocated it. CString::from_raw would free the memory while the
+        // registry entry survives, leaving a stale entry whose address the
+        // allocator can hand out again.
+        let json_str = unsafe { CStr::from_ptr(json_ptr) }.to_owned();
+        unsafe { c2pa_free(json_ptr as *const c_void) };
         let json = json_str.to_str().unwrap();
 
         assert!(
@@ -5324,6 +5460,11 @@ verify_after_sign = true
 
         let error = unsafe { c2pa_error() };
         assert!(!error.is_null());
-        let _ = unsafe { CString::from_raw(error) };
+        // Copy the string out, then release it through the registry that
+        // allocated it. CString::from_raw would free the memory while the
+        // registry entry survives, leaving a stale entry whose address the
+        // allocator can hand out again.
+        let _ = unsafe { CStr::from_ptr(error) }.to_owned();
+        unsafe { c2pa_free(error as *const c_void) };
     }
 }

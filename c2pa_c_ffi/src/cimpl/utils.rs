@@ -22,6 +22,7 @@ use std::{
     any::TypeId,
     collections::HashMap,
     os::raw::c_uchar,
+    panic::AssertUnwindSafe,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc, Mutex,
@@ -35,6 +36,57 @@ use crate::{cimpl::cimpl_error::CimplError, error::Error, maybe_send_sync::Maybe
 // ============================================================================
 
 type CleanupFn = Box<dyn FnMut() + Send>;
+
+/// Marks how a tracked allocation was created, so ownership can only ever be
+/// reconstructed with the matching allocator.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Wrapper {
+    Boxed,
+    Arced,
+}
+
+/// One tracked entry, held behind an `Arc` so a borrow can keep the object
+/// alive past a concurrent free.
+struct EntryInner {
+    real_addr: usize,
+    type_id: TypeId,
+    /// Read by `untrack_owned`, which must not hand an `Arc`-tracked entry to
+    /// `Box::from_raw`.
+    #[allow(dead_code)] // Read from step 2 on.
+    wrapper: Wrapper,
+    /// Borrow claim: 0 is free, n is n shared readers, `EXCLUSIVE` is one
+    /// writer. Gates aliasing and untrack, never cleanup timing, which belongs
+    /// to the `Arc`. Do not infer it from `Arc::strong_count`: a transient
+    /// clone inflates that count without any borrow existing.
+    #[allow(dead_code)] // Read from step 2 on.
+    claims: AtomicUsize,
+    /// `Option` so `untrack` can take the closure out through a shared `Arc`,
+    /// leaving nothing for `Drop` to run.
+    cleanup: Mutex<Option<CleanupFn>>,
+}
+
+/// Sentinel `claims` value for a single exclusive borrow.
+#[allow(dead_code)] // Read by the checkout paths added in step 2.
+const EXCLUSIVE: usize = usize::MAX;
+
+impl Drop for EntryInner {
+    fn drop(&mut self) {
+        // Never drop an Arc<EntryInner> while holding the registry lock.
+        // Dropping the last one runs a cleanup closure, and a closure that
+        // re-enters the registry then deadlocks against the non-reentrant
+        // Mutex. Collect entries, release the lock, and let them drop after.
+        if let Some(mut cleanup) = self.cleanup.get_mut().ok().and_then(|c| c.take()) {
+            // A cleanup closure runs caller-supplied code. Unwinding out of
+            // here would cross the extern "C" boundary, which is undefined
+            // behavior, and a panic raised while another thread holds the
+            // registry lock poisons it for the rest of the process. Leaking
+            // the allocation is the bounded outcome.
+            if std::panic::catch_unwind(AssertUnwindSafe(&mut cleanup)).is_err() {
+                eprintln!("c2pa: panic while freeing a tracked pointer; leaking it");
+            }
+        }
+    }
+}
 
 // Odd, per-pointer-width multiplicative constant (2^N / golden ratio) used by
 // `scramble_to_odd_id`. Must be odd on whichever width `usize` actually is.
@@ -82,8 +134,13 @@ fn scramble_to_odd_id(counter: usize) -> usize {
 /// Both kinds share one map and one `cimpl_free()` path since freeing only
 /// needs the key, not which kind it is — the odd/even split guarantees they
 /// can never collide with each other.
+/// Addresses are stored as `usize` and cast back on resolve, which loses
+/// pointer provenance. That is undefined behavior under strict provenance and
+/// is diagnosable by Miri even where it works in practice. Storing `*mut ()`
+/// would fix it but changes the map's `Send`/`Sync` story, so it is recorded
+/// here rather than changed.
 pub struct PointerRegistry {
-    tracked: Mutex<HashMap<usize, (usize, TypeId, CleanupFn)>>,
+    tracked: Mutex<HashMap<usize, Arc<EntryInner>>>,
     next_id: AtomicUsize,
 }
 
@@ -99,7 +156,13 @@ impl PointerRegistry {
     /// value handed to C is never the real address (and so can never alias a
     /// different object that later reuses that address). Returns the id, or 0
     /// if `real_addr` is null.
-    fn track_by_id(&self, real_addr: usize, type_id: TypeId, cleanup: CleanupFn) -> usize {
+    fn track_by_id(
+        &self,
+        real_addr: usize,
+        type_id: TypeId,
+        wrapper: Wrapper,
+        cleanup: CleanupFn,
+    ) -> usize {
         if real_addr == 0 {
             return 0;
         }
@@ -107,8 +170,23 @@ impl PointerRegistry {
         #[cfg(target_pointer_width = "32")]
         assert!(counter < (usize::MAX >> 1), "PointerRegistry id space exhausted");
         let id = scramble_to_odd_id(counter);
+        let entry = Arc::new(EntryInner {
+            real_addr,
+            type_id,
+            wrapper,
+            claims: AtomicUsize::new(0),
+            cleanup: Mutex::new(Some(cleanup)),
+        });
         if let Ok(mut tracked) = self.tracked.lock() {
-            tracked.insert(id, (real_addr, type_id, cleanup));
+            // Ids come from a counter that never repeats within its period, so
+            // an occupied slot means that guarantee broke. Dropping the
+            // returned entry would run its cleanup under the lock and leave the
+            // next free aimed at the wrong object.
+            let previous = tracked.insert(id, entry);
+            assert!(
+                previous.is_none(),
+                "PointerRegistry minted a duplicate handle id"
+            );
         }
         // Silently ignore poisoned mutex - this is a best-effort tracking system
         id
@@ -119,8 +197,37 @@ impl PointerRegistry {
     /// returned pointer must remain a real, readable address.
     fn track_by_address(&self, real_addr: usize, type_id: TypeId, cleanup: CleanupFn) {
         if real_addr != 0 {
+            // The odd/even split between the two key kinds is what guarantees an
+            // address key can never alias a handle id. Rust aligns real
+            // allocations, so this holds for every type tracked here, but a
+            // zero-sized type allocates at 0x1 and a custom global allocator
+            // need not align at all. Fail loudly rather than alias silently.
+            assert!(
+                real_addr.is_multiple_of(2),
+                "tracked buffer address must be even; odd addresses collide with handle ids"
+            );
+            let entry = Arc::new(EntryInner {
+                real_addr,
+                type_id,
+                wrapper: Wrapper::Boxed,
+                claims: AtomicUsize::new(0),
+                cleanup: Mutex::new(Some(cleanup)),
+            });
             if let Ok(mut tracked) = self.tracked.lock() {
-                tracked.insert(real_addr, (real_addr, type_id, cleanup));
+                if let Some(previous) = tracked.insert(real_addr, entry) {
+                    // The allocator returned an address that is still tracked,
+                    // so something freed the memory without untracking it. The
+                    // stale cleanup closure now points at an allocation it no
+                    // longer owns, so defuse it and report rather than let it
+                    // free memory the new entry owns.
+                    if let Ok(mut cleanup) = previous.cleanup.lock() {
+                        cleanup.take();
+                    }
+                    eprintln!(
+                        "c2pa: address 0x{real_addr:x} was re-tracked while still tracked; \
+                         the earlier entry was freed without being untracked"
+                    );
+                }
             }
             // Silently ignore poisoned mutex - this is a best-effort tracking system
         }
@@ -139,7 +246,7 @@ impl PointerRegistry {
             .lock()
             .map_err(|_| Error::from(CimplError::mutex_poisoned()))?;
         match tracked.get(&id) {
-            Some((real_addr, actual_type, _)) if *actual_type == expected_type => Ok(*real_addr),
+            Some(entry) if entry.type_id == expected_type => Ok(entry.real_addr),
             Some(_) => Err(Error::from(CimplError::wrong_pointer_type(id as u64))),
             None => Err(Error::from(CimplError::untracked_pointer(id as u64))),
         }
@@ -177,8 +284,17 @@ impl PointerRegistry {
             .map_err(|_| Error::from(CimplError::mutex_poisoned()))?;
 
         match tracked.get(&id) {
-            Some((_, actual_type, _)) if *actual_type == expected_type => {
-                let (real_addr, _, _) = tracked.remove(&id).expect("checked Some above");
+            Some(entry) if entry.type_id == expected_type => {
+                let entry = tracked.remove(&id).expect("checked Some above");
+                let real_addr = entry.real_addr;
+                // Take the cleanup closure out before the entry can drop.
+                // Ownership is moving to the caller, so running it here would
+                // free memory the caller is about to reconstruct.
+                if let Ok(mut cleanup) = entry.cleanup.lock() {
+                    cleanup.take();
+                }
+                drop(tracked); // Release before the Arc drops.
+                drop(entry);
                 Ok(real_addr)
             }
             Some(_) => Err(Error::from(CimplError::wrong_pointer_type(id as u64))),
@@ -192,18 +308,21 @@ impl PointerRegistry {
             return Ok(()); // NULL is always safe
         }
 
-        let mut cleanup = {
+        let entry = {
             let mut tracked = self
                 .tracked
                 .lock()
                 .map_err(|_| Error::from(CimplError::mutex_poisoned()))?;
             match tracked.remove(&key) {
-                Some((_, _, cleanup)) => cleanup,
+                Some(entry) => entry,
                 None => return Err(Error::from(CimplError::untracked_pointer(key as u64))),
             }
-        }; // Release lock before cleanup
+        }; // Release lock before the entry drops.
 
-        cleanup(); // Run the cleanup function
+        // Dropping the last Arc runs the cleanup closure in EntryInner::drop.
+        // It must happen outside the critical section above: a closure that
+        // re-enters the registry would otherwise deadlock on the same Mutex.
+        drop(entry);
         Ok(())
     }
 }
@@ -226,14 +345,27 @@ impl PointerRegistry {
 /// memory management bugs during development and integration testing.
 impl Drop for PointerRegistry {
     fn drop(&mut self) {
-        let tracked = self.tracked.lock().unwrap_or_else(|e| e.into_inner());
-        if !tracked.is_empty() {
+        // Take the entries out and release the lock before they drop: each one
+        // may run a cleanup closure that re-enters the registry.
+        let leaked = {
+            let mut tracked = self.tracked.lock().unwrap_or_else(|e| e.into_inner());
+            std::mem::take(&mut *tracked)
+        };
+        if !leaked.is_empty() {
             eprintln!(
                 "\n⚠️  WARNING: {} pointer(s) were not freed at shutdown!",
-                tracked.len()
+                leaked.len()
             );
             eprintln!("This indicates C code did not properly free all allocated pointers.");
             eprintln!("Each pointer should be freed exactly once with cimpl_free().\n");
+        }
+        // Leak what C never freed, as before. Running cleanup at shutdown would
+        // be a behavior change: these closures can touch other statics that may
+        // already be gone, and the process is exiting anyway.
+        for (_, entry) in leaked {
+            if let Ok(mut cleanup) = entry.cleanup.lock() {
+                cleanup.take();
+            }
         }
     }
 }
@@ -267,7 +399,12 @@ pub fn track_box<T: 'static + MaybeSend>(ptr: *mut T) -> *mut T {
     let cleanup = move || unsafe {
         drop(Box::from_raw(ptr_val as *mut T));
     };
-    let id = get_registry().track_by_id(ptr_val, TypeId::of::<T>(), Box::new(cleanup));
+    let id = get_registry().track_by_id(
+        ptr_val,
+        TypeId::of::<T>(),
+        Wrapper::Boxed,
+        Box::new(cleanup),
+    );
     id as *mut T
 }
 
@@ -289,7 +426,12 @@ pub fn track_arc<T: 'static + MaybeSend>(ptr: *mut T) -> *mut T {
     let cleanup = move || unsafe {
         drop(Arc::from_raw(ptr_val as *const T));
     };
-    let id = get_registry().track_by_id(ptr_val, TypeId::of::<T>(), Box::new(cleanup));
+    let id = get_registry().track_by_id(
+        ptr_val,
+        TypeId::of::<T>(),
+        Wrapper::Arced,
+        Box::new(cleanup),
+    );
     id as *mut T
 }
 
@@ -311,7 +453,12 @@ pub fn track_arc_mutex<T: 'static + MaybeSend>(ptr: *mut Mutex<T>) -> *mut Mutex
     let cleanup = move || unsafe {
         drop(Arc::from_raw(ptr_val as *const Mutex<T>));
     };
-    let id = get_registry().track_by_id(ptr_val, TypeId::of::<Mutex<T>>(), Box::new(cleanup));
+    let id = get_registry().track_by_id(
+        ptr_val,
+        TypeId::of::<Mutex<T>>(),
+        Wrapper::Arced,
+        Box::new(cleanup),
+    );
     id as *mut Mutex<T>
 }
 
