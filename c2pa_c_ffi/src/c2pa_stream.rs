@@ -293,6 +293,18 @@ impl Drop for TestStream {
 /// * `seek` - a SeekCallback to seek in the stream
 /// * `write` - a WriteCallback to write to the stream
 ///
+/// # Callback contract
+///
+/// A callback must not block indefinitely. While one runs, the handles the
+/// operation borrowed stay borrowed, so a callback that never returns leaves
+/// them unfreeable for the life of the process — and no other thread can
+/// recover them, because only the blocked callback can end the wait.
+///
+/// Apply your own timeout inside the callback and return a negative value when
+/// it expires. That path is already handled: the error propagates out, each
+/// borrow is released as its guard drops, and every handle stays tracked and
+/// freeable.
+///
 /// # Safety
 /// The context must remain valid for the lifetime of the C2paStream.
 ///
