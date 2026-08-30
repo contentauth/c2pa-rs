@@ -45,7 +45,7 @@ use crate::{
         cose::{
             cert_chain_from_sign1, fetch_and_check_ocsp_response,
             fetch_and_check_ocsp_response_async, parse_cose_sign1, CertificateTrustPolicy,
-            TimeStampStorage,
+            TimeStampStorage, TrustAnchorType,
         },
         hash::sha256,
         ocsp::OcspResponse,
@@ -72,7 +72,9 @@ use crate::{
     log_item,
     manifest_store_report::ManifestStoreReport,
     maybe_send_sync::MaybeSend,
-    settings::{builder::OcspFetchScope, get_thread_local_settings, Settings, MAX_ASSERTIONS},
+    settings::{
+        builder::OcspFetchScope, get_thread_local_settings, Settings, TrustListKind, MAX_ASSERTIONS,
+    },
     status_tracker::{ErrorBehavior, StatusTracker},
     utils::{
         hash_utils::HashRange,
@@ -166,21 +168,46 @@ impl Store {
         let mut store = Store::new();
         let settings = context.settings();
 
-        // load the trust handler settings, don't worry about status as these are checked during setting generation
-        if let Some(ta) = &settings.trust.trust_anchors {
-            let _v = store.add_trust(ta.as_bytes());
-        }
+        // use the incoming trust settings
+        store.ctp.clear();
 
-        if let Some(pa) = &settings.trust.user_anchors {
-            let _v = store.add_user_trust_anchors(pa.as_bytes());
+        // Add all of the trust anchors
+        if let Some(anchors) = &settings.trust.anchors {
+            for anchor in anchors {
+                let trust_list_uri = match &anchor.trust_uri {
+                    Some(uri) => uri.to_string(),
+                    None => format!(
+                        "https://c2pa-rs/unknown_trust_list_{}",
+                        extfmt::Hexlify(&hash_by_alg(
+                            "sha256",
+                            anchor.trust_anchors.as_bytes(),
+                            None
+                        ))
+                    ),
+                };
+
+                let trust_list_type = match anchor.trust_kind {
+                    TrustListKind::Manifest => TrustAnchorType::Manifest,
+                    TrustListKind::TSA => TrustAnchorType::TSA,
+                    TrustListKind::CAWG => TrustAnchorType::CAWG,
+                };
+
+                // Anchors are pre-validated when loading the settings
+                let _v = store.add_trust_anchor(
+                    anchor.trust_anchors.as_bytes(),
+                    &trust_list_uri,
+                    trust_list_type,
+                    anchor.trust_config.clone(),
+                );
+
+                if let Some(al) = &anchor.allowed_list {
+                    let _v = store.add_trust_allowed_list(al.as_bytes());
+                }
+            }
         }
 
         if let Some(tc) = &settings.trust.trust_config {
             let _v = store.add_trust_config(tc.as_bytes());
-        }
-
-        if let Some(al) = &settings.trust.allowed_list {
-            let _v = store.add_trust_allowed_list(al.as_bytes());
         }
 
         store
@@ -209,17 +236,21 @@ impl Store {
         self.embedded
     }
 
-    /// Load set of trust anchors used for certificate validation. [u8] containing the
-    /// trust anchors is passed in the trust_vec variable.
-    pub fn add_trust(&mut self, trust_vec: &[u8]) -> Result<()> {
-        Ok(self.ctp.add_trust_anchors(trust_vec)?)
-    }
-
-    // Load set of user trust anchors used for certificate validation. [u8] to the
-    /// user trust anchors is passed in the trust_vec variable.  This can be called multiple times
-    /// if there are additional trust stores.
-    pub fn add_user_trust_anchors(&mut self, trust_vec: &[u8]) -> Result<()> {
-        Ok(self.ctp.add_user_trust_anchors(trust_vec)?)
+    /// Load named trust anchor sets. [u8] containing the
+    /// trust anchors is passed in the trust_vec variable.  The trust_list_uri
+    /// is the URI of the trust list per C2PA specification. The TrustAnchorType
+    /// indicates the intended use.  trust_config is an optional byte array containing
+    /// the trust configuration data for this trust list.
+    pub fn add_trust_anchor(
+        &mut self,
+        trust_vec: &[u8],
+        trust_list_uri: &str,
+        trust_list_type: TrustAnchorType,
+        trust_config: Option<String>,
+    ) -> Result<()> {
+        Ok(self
+            .ctp
+            .add_trust_anchors(trust_vec, trust_list_uri, trust_list_type, trust_config)?)
     }
 
     pub fn add_trust_config(&mut self, trust_vec: &[u8]) -> Result<()> {
@@ -2095,7 +2126,7 @@ impl Store {
 
         let validation_results = ValidationResults::from_store(self, &validation_log);
         if validation_results.validation_state() == ValidationState::Invalid {
-            return Err(Error::InvalidManifest(validation_results));
+            return Err(Error::InvalidManifest(Box::new(validation_results)));
         }
 
         Ok(())
@@ -4397,6 +4428,7 @@ pub mod tests {
     use crate::{
         assertions::{Action, Actions, Uuid},
         claim::AssertionStoreJsonFormat,
+        settings::SettingsValidate,
         status_tracker::{LogItem, StatusTracker},
         utils::{
             patch::patch_bytes,
@@ -6212,6 +6244,69 @@ pub mod tests {
 
         // should not have any errors
         assert!(!report.has_any_error());
+    }
+
+    #[test]
+    fn test_bad_update_manifest_v1() {
+        use crate::{hashed_uri::HashedUri, utils::test::create_test_store_v1};
+
+        let context = crate::context::Context::new();
+
+        let (format, mut input_stream, mut output_stream) =
+            create_test_streams("earth_apollo17.jpg");
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // get default store with default claim
+        let mut store = create_test_store_v1().unwrap();
+
+        // save to output
+        store
+            .save_to_stream(
+                format,
+                &mut input_stream,
+                &mut output_stream,
+                signer.as_ref(),
+                &context,
+            )
+            .unwrap();
+
+        let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        // read back in
+        output_stream.rewind().unwrap();
+        let restored_store =
+            Store::from_stream(format, &mut output_stream, &mut report, &context).unwrap();
+        let pc = restored_store.provenance_claim().unwrap();
+
+        // should be a regular manifest
+        assert!(!pc.update_manifest());
+
+        // create a new update manifest
+        let mut claim = Claim::new("adobe unit test", Some("update_manifest"), 1);
+        output_stream.rewind().unwrap();
+        let mut new_store = Store::load_ingredient_to_claim(
+            &mut claim,
+            &load_jumbf_from_stream(format, &mut output_stream).unwrap(),
+            None,
+            &context,
+        )
+        .unwrap();
+
+        let ingredient_hashes = new_store.get_manifest_box_hashes(pc);
+        let parent_hashed_uri = HashedUri::new(
+            restored_store.provenance_path().unwrap(),
+            Some(pc.alg().to_string()),
+            &ingredient_hashes.manifest_box_hash,
+        );
+
+        // missing signature Hashed URI.  Should fail
+        let ingredient = Ingredient::new_v3(Relationship::ParentOf)
+            .set_parent()
+            .set_c2pa_manifest_from_hashed_uri(Some(parent_hashed_uri));
+
+        claim.add_assertion(&ingredient).unwrap();
+
+        // won't serialize because it must have activeManifest
+        assert!(new_store.commit_update_manifest(claim).is_err());
     }
 
     ///Test for Update Manifest V2
@@ -9801,5 +9896,42 @@ pub mod tests {
             validated <= 4 * DEPTH,
             "shared ingredient subtrees must be verified only once"
         );
+    }
+
+    #[test]
+    fn test_custom_anchor_ekus() {
+        let mut context = crate::context::Context::new();
+
+        // test adding to actual image
+        let ap = fixture_path("C.jpg");
+
+        let mut stream = std::fs::File::open(&ap).unwrap();
+        let format = "image/jpeg";
+
+        let (manifest_bytes, _remote_url) =
+            Store::load_jumbf_from_stream(format, &mut stream, &context).unwrap();
+
+        let mut log = StatusTracker::default();
+        let _store = Store::from_jumbf_with_context(&manifest_bytes, &mut log, &context).unwrap();
+
+        assert!(!log.has_any_error());
+
+        // modify the settings so that the default EKUs are in the anchors
+        let mut settings = Settings::default();
+        let ekus = settings.trust.trust_config.take();
+
+        let anchors = settings.trust.anchors.as_mut().unwrap();
+        assert!(anchors.len() == 1); // this test expects one anchor set
+        anchors[0].trust_config = ekus;
+        settings.validate().unwrap();
+        context.set_settings(settings).unwrap();
+
+        stream.rewind().unwrap();
+
+        // with alternate Context
+        log = StatusTracker::default();
+        let _store = Store::from_stream(format, &mut stream, &mut log, &context).unwrap();
+
+        assert!(!log.has_any_error());
     }
 }
