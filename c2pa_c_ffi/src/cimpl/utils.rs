@@ -53,6 +53,17 @@ enum Wrapper {
 /// handle the registry drops its own `Arc`, but a thread still using the object
 /// holds another, and cleanup runs only when the last one goes.
 struct EntryInner {
+    /// Where the object actually lives, as a plain integer.
+    ///
+    /// Every checkout casts this back to a `*mut T` to hand out a reference.
+    /// A pointer carries an address, but also permission to reach that particular allocation.
+    /// Casting to an integer discards that permission, and casting
+    /// back produces a pointer the compiler believes is allowed to reach nothing.
+    ///
+    /// Storing a `*mut ()` would keep the permission.
+    /// It would also make the registry map neither `Send` nor `Sync`,
+    /// but we need those here (alternative would be to impl them specifically).
+    /// This might be reported by checkers as UB.
     real_addr: usize,
     type_id: TypeId,
     /// Which allocator created this object, so `untrack_owned` reconstructs it
@@ -168,13 +179,12 @@ impl Drop for EntryInner {
             return;
         }
         if let Some(mut cleanup) = self.cleanup.get_mut().ok().and_then(|c| c.take()) {
-            // A cleanup closure runs caller-supplied code. Unwinding out of
-            // here would cross the extern "C" boundary, which is undefined
-            // behavior, and a panic raised while another thread holds the
-            // registry lock poisons it for the rest of the process. Leaking
-            // the allocation is the bounded outcome.
+            // A cleanup closure runs caller-supplied code.
+            // Unwinding out of here would cross the extern "C" boundary,
+            // which is undefined behavior, and a panic raised while another thread
+            // holds the registry lock poisons it for the rest of the process.
             if std::panic::catch_unwind(AssertUnwindSafe(&mut cleanup)).is_err() {
-                eprintln!("c2pa: panic while freeing a tracked pointer; leaking it");
+                eprintln!("c2pa: panic while freeing a tracked pointer, leaking pointer");
             }
         }
     }
@@ -182,17 +192,17 @@ impl Drop for EntryInner {
 
 /// A live shared borrow of a tracked entry.
 ///
-/// Holding one keeps the object alive even if C frees the handle from another
-/// thread: the registry drops its `Arc`, but cleanup runs only when the last
-/// one goes, which is this guard.
+/// Holding one keeps the object alive even if C frees the handle from another thread:
+/// the registry drops its `Arc`, but cleanup runs only when the last one goes,
+/// which is this guard.
 pub struct SharedCheckout {
     entry: Arc<EntryInner>,
 }
 
 impl Drop for SharedCheckout {
     fn drop(&mut self) {
-        // Releasing the claim is separate from dropping the Arc. Without it a
-        // handle stays borrowed forever and every later checkout fails.
+        // Releasing this is separate from dropping the Arc.
+        // Without it a handle stays borrowed forever and every later checkout fails.
         self.entry.borrow_state.fetch_sub(1, Ordering::AcqRel);
     }
 }
@@ -213,8 +223,7 @@ impl Drop for ExclusiveCheckout {
 /// Dereferences to `&T` only.
 pub struct TypedShared<T> {
     inner: SharedCheckout,
-    // Not PhantomData<*mut T>: that would make the guard !Send and break
-    // multi-threaded callers.
+    // Not PhantomData<*mut T>: that would make the guard !Send and break multi-threaded callers.
     // fn() -> T is covariant in T and has no Send/Sync implications.
     _marker: PhantomData<fn() -> T>,
 }
@@ -296,11 +305,6 @@ fn scramble_to_odd_id(counter: usize) -> usize {
 /// Both kinds share one map and one `cimpl_free()` path since freeing only
 /// needs the key, not which kind it is — the odd/even split guarantees they
 /// can never collide with each other.
-/// Addresses are stored as `usize` and cast back on resolve, which loses
-/// pointer provenance. That is undefined behavior under strict provenance and
-/// is diagnosable by Miri even where it works in practice. Storing `*mut ()`
-/// would fix it but changes the map's `Send`/`Sync` story, so it is recorded
-/// here rather than changed.
 pub struct PointerRegistry {
     tracked: Mutex<HashMap<usize, Arc<EntryInner>>>,
     next_id: AtomicUsize,
@@ -347,10 +351,10 @@ impl PointerRegistry {
             owner_pid: current_pid(),
         });
         if let Ok(mut tracked) = self.tracked.lock() {
-            // Ids come from a counter that never repeats within its period, so
-            // an occupied slot means that guarantee broke. Dropping the
-            // returned entry would run its cleanup under the lock and leave the
-            // next free aimed at the wrong object.
+            // Ids come from a counter that never repeats within its period,
+            // so an occupied slot means that guarantee broke.
+            // Dropping the returned entry would run its cleanup under the lock,
+            // and leave the next free aimed at the wrong object.
             let previous = tracked.insert(id, entry);
             assert!(
                 previous.is_none(),
