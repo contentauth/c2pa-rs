@@ -114,7 +114,9 @@ impl C2paError {
             | CertificateTrustError(_)
             | InvalidCertificateError(_)
             | InvalidEcdsaSignature => Self::Signature(err_str),
-            RemoteManifestFetch(_) | RemoteManifestUrl(_) => Self::RemoteManifest(err_str),
+            RemoteManifestFetch(_) | RemoteManifestUrl(_) | SoftBindingResolutionFetch(_) => {
+                Self::RemoteManifest(err_str)
+            }
             JumbfNotFound => Self::ManifestNotFound(err_str),
             IoError(_) => Self::Io(err_str),
             JsonError(e) => Self::Json(err_str),
@@ -349,6 +351,15 @@ mod tests {
             "C2paException in c2pa-c checks for 'Remote:' prefix; got: {}",
             msg
         );
+    }
+
+    #[test]
+    fn test_soft_binding_resolution_fetch_maps_to_remote_manifest() {
+        let c2pa_err =
+            c2pa::Error::SoftBindingResolutionFetch("request to endpoint failed".to_string());
+        let c2pa_c_err = C2paError::from_c2pa_error(c2pa_err);
+        assert_eq!(c2pa_c_err.code(), 112);
+        assert!(matches!(c2pa_c_err, C2paError::RemoteManifest(_)));
     }
 
     #[test]
