@@ -21,6 +21,8 @@
 use std::{
     any::TypeId,
     collections::HashMap,
+    marker::PhantomData,
+    ops::{Deref, DerefMut},
     os::raw::c_uchar,
     panic::AssertUnwindSafe,
     sync::{
@@ -85,6 +87,75 @@ impl Drop for EntryInner {
                 eprintln!("c2pa: panic while freeing a tracked pointer; leaking it");
             }
         }
+    }
+}
+
+/// A live shared borrow of a tracked entry.
+///
+/// Holding one keeps the object alive even if C frees the handle from another
+/// thread: the registry drops its `Arc`, but cleanup runs only when the last
+/// one goes, which is this guard.
+pub struct SharedCheckout {
+    entry: Arc<EntryInner>,
+}
+
+impl Drop for SharedCheckout {
+    fn drop(&mut self) {
+        // Releasing the claim is separate from dropping the Arc. Without it a
+        // handle stays borrowed forever and every later checkout fails.
+        self.entry.claims.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// A live exclusive borrow of a tracked entry. At most one can exist, which is
+/// what makes handing out `&mut T` sound.
+pub struct ExclusiveCheckout {
+    entry: Arc<EntryInner>,
+}
+
+impl Drop for ExclusiveCheckout {
+    fn drop(&mut self) {
+        self.entry.claims.store(0, Ordering::Release);
+    }
+}
+
+/// A shared borrow of a `T` behind a handle. Dereferences to `&T` only.
+pub struct TypedShared<T> {
+    inner: SharedCheckout,
+    // Not PhantomData<*mut T>: that would make the guard !Send and break
+    // multi-threaded callers for no benefit. fn() -> T is covariant in T and
+    // carries no Send/Sync implications of its own.
+    _marker: PhantomData<fn() -> T>,
+}
+
+/// An exclusive borrow of a `T` behind a handle. Dereferences to `&mut T`.
+pub struct TypedExclusive<T> {
+    inner: ExclusiveCheckout,
+    _marker: PhantomData<fn() -> T>,
+}
+
+impl<T> Deref for TypedShared<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        // SAFETY: the entry was type-checked at checkout, and the shared claim
+        // held by this guard prevents any exclusive borrow from coexisting.
+        unsafe { &*(self.inner.entry.real_addr as *const T) }
+    }
+}
+
+impl<T> Deref for TypedExclusive<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        // SAFETY: as TypedShared, and this guard holds the sole claim.
+        unsafe { &*(self.inner.entry.real_addr as *const T) }
+    }
+}
+
+impl<T> DerefMut for TypedExclusive<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        // SAFETY: the exclusive claim guarantees no other borrow of this entry
+        // exists, so this is the only reference to the object.
+        unsafe { &mut *(self.inner.entry.real_addr as *mut T) }
     }
 }
 
@@ -249,6 +320,67 @@ impl PointerRegistry {
             Some(entry) if entry.type_id == expected_type => Ok(entry.real_addr),
             Some(_) => Err(Error::from(CimplError::wrong_pointer_type(id as u64))),
             None => Err(Error::from(CimplError::untracked_pointer(id as u64))),
+        }
+    }
+
+    /// Look up an entry and clone its `Arc`, checking the expected type.
+    /// Shared by both checkout paths so the lock is taken once.
+    fn lookup(&self, id: usize, expected_type: TypeId) -> Result<Arc<EntryInner>, Error> {
+        if id == 0 {
+            return Err(Error::from(CimplError::null_parameter("pointer")));
+        }
+        let tracked = self
+            .tracked
+            .lock()
+            .map_err(|_| Error::from(CimplError::mutex_poisoned()))?;
+        match tracked.get(&id) {
+            Some(entry) if entry.type_id == expected_type => Ok(Arc::clone(entry)),
+            Some(_) => Err(Error::from(CimplError::wrong_pointer_type(id as u64))),
+            None => Err(Error::from(CimplError::untracked_pointer(id as u64))),
+        }
+    }
+
+    /// Take a shared borrow. Any number may coexist; only an outstanding
+    /// exclusive borrow refuses one.
+    #[must_use = "the borrow ends when the returned guard is dropped"]
+    fn checkout_shared(&self, id: usize, expected_type: TypeId) -> Result<SharedCheckout, Error> {
+        let entry = self.lookup(id, expected_type)?;
+        // Retry while another reader changes the count; give up only when the
+        // entry is exclusively borrowed.
+        let mut current = entry.claims.load(Ordering::Acquire);
+        loop {
+            if current == EXCLUSIVE {
+                return Err(Error::from(CimplError::pointer_in_use()));
+            }
+            match entry.claims.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Ok(SharedCheckout { entry }),
+                Err(observed) => current = observed,
+            }
+        }
+    }
+
+    /// Take the exclusive borrow. Refused while any other borrow is
+    /// outstanding, which is what makes `&mut T` from a handle sound.
+    #[must_use = "the borrow ends when the returned guard is dropped"]
+    fn checkout_exclusive(
+        &self,
+        id: usize,
+        expected_type: TypeId,
+    ) -> Result<ExclusiveCheckout, Error> {
+        let entry = self.lookup(id, expected_type)?;
+        match entry.claims.compare_exchange(
+            0,
+            EXCLUSIVE,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => Ok(ExclusiveCheckout { entry }),
+            Err(_) => Err(Error::from(CimplError::pointer_in_use())),
         }
     }
 
@@ -469,6 +601,39 @@ pub fn track_arc_mutex<T: 'static + MaybeSend>(ptr: *mut Mutex<T>) -> *mut Mutex
 pub fn validate_pointer<T: 'static>(ptr: *mut T) -> Result<*mut T, Error> {
     let real_addr = get_registry().resolve(ptr as usize, TypeId::of::<T>())?;
     Ok(real_addr as *mut T)
+}
+
+/// Borrow a tracked object for reading, keeping it alive for as long as the
+/// returned guard lives.
+///
+/// Unlike `validate_pointer`, which returns a bare pointer whose validity ends
+/// with the call, the guard holds a claim on the entry: a concurrent
+/// `cimpl_free` from another thread removes the handle but cannot free the
+/// object until every guard is dropped.
+///
+/// Fails with `pointer_in_use` if the object is exclusively borrowed.
+#[must_use = "the borrow ends when the returned guard is dropped"]
+pub fn checkout_shared<T: 'static>(ptr: *mut T) -> Result<TypedShared<T>, Error> {
+    let inner = get_registry().checkout_shared(ptr as usize, TypeId::of::<T>())?;
+    Ok(TypedShared {
+        inner,
+        _marker: PhantomData,
+    })
+}
+
+/// Borrow a tracked object for writing. At most one borrow of any kind can be
+/// outstanding, so the returned `&mut T` cannot alias.
+///
+/// Fails with `pointer_in_use` if any other borrow exists — including a caller
+/// passing the same handle twice to one function, which was previously
+/// undefined behavior.
+#[must_use = "the borrow ends when the returned guard is dropped"]
+pub fn checkout_exclusive<T: 'static>(ptr: *mut T) -> Result<TypedExclusive<T>, Error> {
+    let inner = get_registry().checkout_exclusive(ptr as usize, TypeId::of::<T>())?;
+    Ok(TypedExclusive {
+        inner,
+        _marker: PhantomData,
+    })
 }
 
 /// Remove a pointer from tracking without running its cleanup function.
@@ -821,6 +986,175 @@ mod tests {
         assert!(result.is_err());
 
         unsafe { drop(Box::from_raw(real_ptr)) };
+    }
+
+    #[test]
+    fn test_free_while_checked_out_defers_cleanup() {
+        use std::sync::atomic::AtomicBool;
+
+        static DROPPED: AtomicBool = AtomicBool::new(false);
+        struct Tracked;
+        impl Drop for Tracked {
+            fn drop(&mut self) {
+                DROPPED.store(true, Ordering::SeqCst);
+            }
+        }
+
+        DROPPED.store(false, Ordering::SeqCst);
+        let ptr = track_box(Box::into_raw(Box::new(Tracked)));
+        let guard = checkout_shared::<Tracked>(ptr).unwrap();
+
+        // C frees the handle while the borrow is live.
+        assert_eq!(cimpl_free(ptr as *mut std::ffi::c_void), 0);
+        assert!(!DROPPED.load(Ordering::SeqCst), "freed while borrowed");
+
+        drop(guard);
+        assert!(DROPPED.load(Ordering::SeqCst), "not freed after last borrow");
+    }
+
+    #[test]
+    fn test_cleanup_reentering_registry_does_not_deadlock() {
+        // The cleanup closure of one entry frees another. If any entry were
+        // dropped while the registry lock was held, this would deadlock.
+        let inner = track_box(Box::into_raw(Box::new(7i32)));
+        let inner_addr = inner as usize;
+
+        struct Reenter(usize);
+        impl Drop for Reenter {
+            fn drop(&mut self) {
+                cimpl_free(self.0 as *mut std::ffi::c_void);
+            }
+        }
+
+        let outer = track_box(Box::into_raw(Box::new(Reenter(inner_addr))));
+        assert_eq!(cimpl_free(outer as *mut std::ffi::c_void), 0);
+
+        // The inner entry was freed by the outer's cleanup.
+        assert!(validate_pointer::<i32>(inner).is_err());
+    }
+
+    #[test]
+    fn test_second_exclusive_checkout_refused_then_released() {
+        let ptr = track_box(Box::into_raw(Box::new(1i32)));
+
+        let first = checkout_exclusive::<i32>(ptr).unwrap();
+        assert!(
+            checkout_exclusive::<i32>(ptr).is_err(),
+            "two exclusive borrows must not coexist"
+        );
+
+        drop(first);
+        assert!(
+            checkout_exclusive::<i32>(ptr).is_ok(),
+            "claim must be released on drop"
+        );
+
+        cimpl_free(ptr as *mut std::ffi::c_void);
+    }
+
+    #[test]
+    fn test_nested_checkout_of_different_ids_succeeds() {
+        // The reentrancy pattern used by C2paStream: a guard on one handle held
+        // while checking out a second, different handle.
+        let outer = track_box(Box::into_raw(Box::new(1i32)));
+        let inner = track_box(Box::into_raw(Box::new(2i32)));
+
+        let outer_guard = checkout_exclusive::<i32>(outer).unwrap();
+        let inner_guard = checkout_exclusive::<i32>(inner).unwrap();
+        assert_eq!(*outer_guard, 1);
+        assert_eq!(*inner_guard, 2);
+
+        drop(inner_guard);
+        drop(outer_guard);
+        cimpl_free(outer as *mut std::ffi::c_void);
+        cimpl_free(inner as *mut std::ffi::c_void);
+    }
+
+    #[test]
+    fn test_concurrent_shared_checkouts_all_succeed() {
+        let ptr = track_box(Box::into_raw(Box::new(42i32)));
+        let addr = ptr as usize;
+
+        let failures = std::sync::Arc::new(AtomicUsize::new(0));
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                let failures = std::sync::Arc::clone(&failures);
+                scope.spawn(move || {
+                    for _ in 0..5_000 {
+                        match checkout_shared::<i32>(addr as *mut i32) {
+                            Ok(guard) => assert_eq!(*guard, 42),
+                            Err(_) => {
+                                failures.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                    }
+                });
+            }
+        });
+
+        assert_eq!(
+            failures.load(Ordering::Relaxed),
+            0,
+            "shared borrows must never refuse each other"
+        );
+        cimpl_free(ptr as *mut std::ffi::c_void);
+    }
+
+    #[test]
+    fn test_guards_are_send() {
+        // A guard that is !Send would break work-stealing runtimes. This fails
+        // to compile rather than at runtime if PhantomData<*mut T> creeps back.
+        fn assert_send<T: Send>() {}
+        assert_send::<TypedShared<i32>>();
+        assert_send::<TypedExclusive<i32>>();
+    }
+
+    #[test]
+    fn test_guard_outliving_free_across_threads_cleans_up_once() {
+        use std::sync::atomic::AtomicUsize as Counter;
+
+        static CLEANUPS: Counter = Counter::new(0);
+        struct Counted;
+        impl Drop for Counted {
+            fn drop(&mut self) {
+                CLEANUPS.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        CLEANUPS.store(0, Ordering::SeqCst);
+        let ptr = track_box(Box::into_raw(Box::new(Counted)));
+        let addr = ptr as usize;
+
+        // Created on this thread, freed on a second, dropped on a third.
+        let guard = checkout_shared::<Counted>(ptr).unwrap();
+        std::thread::spawn(move || {
+            cimpl_free(addr as *mut std::ffi::c_void);
+        })
+        .join()
+        .unwrap();
+        std::thread::spawn(move || drop(guard)).join().unwrap();
+
+        assert_eq!(CLEANUPS.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_panicking_cleanup_is_contained() {
+        struct Panics;
+        impl Drop for Panics {
+            fn drop(&mut self) {
+                panic!("cleanup panic");
+            }
+        }
+
+        let ptr = track_box(Box::into_raw(Box::new(Panics)));
+        // Without catch_unwind in EntryInner::drop this aborts the process,
+        // because a panic escaping a Drop during unwinding cannot unwind again.
+        assert_eq!(cimpl_free(ptr as *mut std::ffi::c_void), 0);
+
+        // The registry lock survived, so later calls still work.
+        let after = track_box(Box::into_raw(Box::new(5i32)));
+        assert!(validate_pointer::<i32>(after).is_ok());
+        cimpl_free(after as *mut std::ffi::c_void);
     }
 
     #[test]

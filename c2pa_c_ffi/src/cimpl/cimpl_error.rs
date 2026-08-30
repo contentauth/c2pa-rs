@@ -118,6 +118,16 @@ impl CimplError {
         Self::new(5, format!("Other: {}", msg.into()))
     }
 
+    /// The handle is tracked, but another borrow of it is still outstanding.
+    /// Returned when an exclusive borrow is requested while any borrow exists,
+    /// or when a shared borrow is requested during an exclusive one.
+    ///
+    /// The message carries no handle value: an id is opaque to the caller, so
+    /// printing it identifies nothing and puts a token into logs.
+    pub fn pointer_in_use() -> Self {
+        Self::new(8, "PointerInUse: handle is already borrowed".to_string())
+    }
+
     /// Peeks at the last error message without clearing it
     ///
     /// Returns None if no error is set. This does not clear the error.

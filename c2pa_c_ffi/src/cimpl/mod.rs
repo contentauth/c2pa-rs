@@ -71,6 +71,7 @@ pub mod macros;
 pub use cimpl_error::CimplError;
 #[doc(hidden)]
 pub use utils::{
-    cimpl_free, safe_slice_from_raw_parts, to_c_bytes, to_c_string, track_arc, track_arc_mutex,
-    track_box, untrack_pointer, validate_pointer,
+    checkout_exclusive, checkout_shared, cimpl_free, safe_slice_from_raw_parts, to_c_bytes,
+    to_c_string, track_arc, track_arc_mutex, track_box, untrack_pointer, validate_pointer,
+    ExclusiveCheckout, SharedCheckout, TypedExclusive, TypedShared,
 };
