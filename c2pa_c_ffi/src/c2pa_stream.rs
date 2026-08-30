@@ -114,9 +114,9 @@ impl C2paStream {
     /// on `c_stream.context`.
     pub fn extract_context(&mut self) -> Box<StreamContext> {
         let context_ptr = std::mem::replace(&mut self.context, std::ptr::null_mut());
-        let real_ptr =
-            crate::untrack_pointer::<StreamContext>(context_ptr).expect("always box_tracked!");
-        unsafe { Box::from_raw(real_ptr) }
+        let context =
+            crate::untrack_owned::<StreamContext>(context_ptr).expect("always box_tracked!");
+        Box::new(context)
     }
 }
 

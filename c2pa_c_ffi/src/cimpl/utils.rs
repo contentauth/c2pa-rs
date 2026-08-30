@@ -405,8 +405,17 @@ impl PointerRegistry {
     /// - `c2pa_context_builder_build`: builder is consumed to produce a context
     /// - `c2pa_reader_with_stream`: reader is consumed to produce a new reader
     /// - `c2pa_builder_with_definition`: builder is consumed to produce a new builder
+    ///
+    /// `required` is the wrapper kind the caller can reconstruct. The entry is
+    /// removed only when every check passes, so a rejected call leaves the
+    /// handle tracked and freeable.
     #[must_use = "dropping the returned address leaks the allocation"]
-    pub fn untrack(&self, id: usize, expected_type: TypeId) -> Result<usize, Error> {
+    fn untrack(
+        &self,
+        id: usize,
+        expected_type: TypeId,
+        required: Option<Wrapper>,
+    ) -> Result<(usize, Wrapper), Error> {
         if id == 0 {
             return Err(Error::from(CimplError::null_parameter("pointer")));
         }
@@ -418,17 +427,31 @@ impl PointerRegistry {
 
         match tracked.get(&id) {
             Some(entry) if entry.type_id == expected_type => {
+                // Ownership cannot move while the object is borrowed: the
+                // caller would reconstruct and drop it under a live guard.
+                // Test `claims`, never Arc::strong_count -- a transient clone
+                // inflates the refcount without any borrow existing.
+                if entry.claims.load(Ordering::Acquire) != 0 {
+                    return Err(Error::from(CimplError::pointer_in_use()));
+                }
+                // Check the wrapper before removing, so a rejection does not
+                // consume the entry and leak the allocation.
+                if required.is_some_and(|required| required != entry.wrapper) {
+                    return Err(Error::from(CimplError::wrong_wrapper_kind()));
+                }
+
                 let entry = tracked.remove(&id).expect("checked Some above");
                 let real_addr = entry.real_addr;
-                // Take the cleanup closure out before the entry can drop.
-                // Ownership is moving to the caller, so running it here would
-                // free memory the caller is about to reconstruct.
+                let wrapper = entry.wrapper;
+                // Defuse before the entry can drop. Ownership is moving to the
+                // caller, so running cleanup here would free memory the caller
+                // is about to reconstruct.
                 if let Ok(mut cleanup) = entry.cleanup.lock() {
                     cleanup.take();
                 }
                 drop(tracked); // Release before the Arc drops.
                 drop(entry);
-                Ok(real_addr)
+                Ok((real_addr, wrapper))
             }
             Some(_) => Err(Error::from(CimplError::wrong_pointer_type(id as u64))),
             None => Err(Error::from(CimplError::untracked_pointer(id as u64))),
@@ -660,9 +683,33 @@ pub fn checkout_exclusive<T: 'static>(ptr: *mut T) -> Result<TypedExclusive<T>, 
 /// // C2paSigner wrapper dropped here — no double-free risk
 /// ```
 #[must_use = "dropping the returned pointer leaks the allocation"]
+#[deprecated(
+    note = "returns a raw pointer the caller must pair with the right allocator; use untrack_owned, which yields the value itself"
+)]
 pub fn untrack_pointer<T: 'static>(ptr: *mut T) -> Result<*mut T, Error> {
-    let real_addr = get_registry().untrack(ptr as usize, TypeId::of::<T>())?;
+    let (real_addr, _wrapper) = get_registry().untrack(ptr as usize, TypeId::of::<T>(), None)?;
     Ok(real_addr as *mut T)
+}
+
+/// Take ownership of a tracked object, removing it from the registry and
+/// returning the value itself.
+///
+/// This is the only place an allocation is reconstructed, so no caller has to
+/// decide between `Box::from_raw` and `Arc::from_raw` — picking wrong is
+/// undefined behavior, and returning the value instead of a pointer makes the
+/// choice unrepresentable.
+///
+/// Fails if the object is currently borrowed (`PointerInUse`), if the handle is
+/// untracked or the wrong type, or if it was tracked as an `Arc`
+/// (`WrongWrapperKind`), where other clones may exist so no single owner can be
+/// handed back.
+pub fn untrack_owned<T: 'static>(ptr: *mut T) -> Result<T, Error> {
+    let (real_addr, _) =
+        get_registry().untrack(ptr as usize, TypeId::of::<T>(), Some(Wrapper::Boxed))?;
+    // SAFETY: the entry was tracked by track_box, so the allocation came from
+    // Box::into_raw with this exact T, and untrack removed it and defused its
+    // cleanup only after confirming the wrapper, making this the sole owner.
+    Ok(*unsafe { Box::from_raw(real_addr as *mut T) })
 }
 
 /// Universal free function for any tracked pointer
@@ -883,6 +930,9 @@ pub fn to_c_bytes(bytes: Vec<u8>) -> *const c_uchar {
 }
 
 #[cfg(test)]
+// untrack_pointer and validate_pointer are deprecated but still supported, so
+// their coverage stays.
+#[allow(deprecated)]
 mod tests {
     use super::*;
 
@@ -987,6 +1037,67 @@ mod tests {
         assert!(result.is_err());
 
         unsafe { drop(Box::from_raw(real_ptr)) };
+    }
+
+    #[test]
+    fn test_untrack_refused_while_checked_out() {
+        let ptr = track_box(Box::into_raw(Box::new(42i32)));
+        let guard = checkout_shared::<i32>(ptr).unwrap();
+
+        assert!(
+            untrack_owned::<i32>(ptr).is_err(),
+            "ownership must not move while borrowed"
+        );
+        // The refusal must leave the entry tracked, not half-removed.
+        assert!(validate_pointer::<i32>(ptr).is_ok());
+
+        drop(guard);
+        assert_eq!(untrack_owned::<i32>(ptr).unwrap(), 42);
+    }
+
+    #[test]
+    fn test_untrack_owned_round_trip_defuses_cleanup() {
+        use std::sync::atomic::AtomicUsize as Counter;
+
+        static CLEANUPS: Counter = Counter::new(0);
+        struct Counted(i32);
+        impl Drop for Counted {
+            fn drop(&mut self) {
+                CLEANUPS.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        CLEANUPS.store(0, Ordering::SeqCst);
+        let ptr = track_box(Box::into_raw(Box::new(Counted(7))));
+
+        let value = untrack_owned::<Counted>(ptr).unwrap();
+        assert_eq!(value.0, 7);
+        // Still alive: ownership moved to the caller, cleanup was defused.
+        assert_eq!(CLEANUPS.load(Ordering::SeqCst), 0);
+
+        // Freeing the handle afterwards is an error, not a double free.
+        assert_eq!(cimpl_free(ptr as *mut std::ffi::c_void), -1);
+        assert_eq!(CLEANUPS.load(Ordering::SeqCst), 0);
+
+        drop(value);
+        assert_eq!(CLEANUPS.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_untrack_owned_rejects_arc_tracked_entry() {
+        // An Arc-tracked entry may have other clones, so no single owner can be
+        // handed back. Reconstructing it with Box::from_raw would be UB.
+        let arc = Arc::new(5i32);
+        let ptr = track_arc(Arc::into_raw(arc) as *mut i32);
+
+        let err = untrack_owned::<i32>(ptr).unwrap_err();
+        assert!(
+            err.to_string().starts_with("WrongWrapperKind:"),
+            "expected WrongWrapperKind, got {err}"
+        );
+
+        // Rejected, so the entry is still tracked and still freeable.
+        assert_eq!(cimpl_free(ptr as *mut std::ffi::c_void), 0);
     }
 
     #[test]

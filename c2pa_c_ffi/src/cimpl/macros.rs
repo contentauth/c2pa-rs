@@ -641,10 +641,14 @@ macro_rules! arc_tracked {
 /// let builder = untrack_or_return_null!(builder, C2paContextBuilder);
 /// box_tracked!(builder.into_shared())
 /// ```
+#[deprecated(
+    note = "assumes Box tracking and moves ownership out even while the object is borrowed; use take_owned_or_return!, which checks both"
+)]
 #[macro_export]
 macro_rules! untrack_or_return {
     ($ptr:expr, $type:ty, $err_val:expr) => {{
         $crate::ptr_or_return!($ptr, $err_val);
+        #[allow(deprecated)]
         match $crate::untrack_pointer::<$type>($ptr) {
             Ok(real_ptr) => *Box::from_raw(real_ptr as *mut $type),
             Err(e) => {
@@ -656,18 +660,82 @@ macro_rules! untrack_or_return {
 }
 
 /// Untrack a pointer and take ownership of the pointee, returning -1 on error.
+#[deprecated(note = "use take_owned_or_return_int!")]
 #[macro_export]
 macro_rules! untrack_or_return_int {
     ($ptr:expr, $type:ty) => {{
+        #[allow(deprecated)]
         $crate::untrack_or_return!($ptr, $type, -1)
     }};
 }
 
 /// Untrack a pointer and take ownership of the pointee, returning NULL on error.
+#[deprecated(note = "use take_owned_or_return_null!")]
 #[macro_export]
 macro_rules! untrack_or_return_null {
     ($ptr:expr, $type:ty) => {{
+        #[allow(deprecated)]
         $crate::untrack_or_return!($ptr, $type, std::ptr::null_mut())
+    }};
+}
+
+// ----------------------------------------------------------------------------
+// Take-Ownership Macros - Move a tracked object out of the registry
+// ----------------------------------------------------------------------------
+//
+// These replace the `untrack_*` family. Two differences: ownership is refused
+// while the object is borrowed, and the allocator is chosen from the wrapper
+// the entry was tracked with rather than assumed to be `Box`. The expansion
+// contains no `unsafe`, so unlike `untrack_or_return!` these do not need to sit
+// inside an `unsafe` block.
+
+/// Take ownership of a tracked object, yielding it by value, or early-return
+/// with a custom value.
+///
+/// Removes the entry from the registry so it can't be double-freed or flagged
+/// as a leak, and reconstructs it through `untrack_owned`, which uses the
+/// allocator the object was tracked with. Because the result is an owned value
+/// rather than a pointer, any early return written *after* this macro drops it
+/// via ordinary scope-exit `Drop`, so the input is consumed the same way on
+/// every failure path.
+///
+/// Fails if the object is currently borrowed (`PointerInUse`) or was tracked
+/// as an `Arc` (`WrongWrapperKind`), where other clones may exist.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// // In c2pa_context_builder_set_signer — signer is moved into the builder:
+/// let signer = take_owned_or_return_int!(signer_ptr, C2paSigner);
+/// builder.set_signer(signer.signer);
+/// ```
+#[macro_export]
+macro_rules! take_owned_or_return {
+    ($ptr:expr, $type:ty, $err_val:expr) => {{
+        $crate::ptr_or_return!($ptr, $err_val);
+        match $crate::untrack_owned::<$type>($ptr) {
+            Ok(value) => value,
+            Err(e) => {
+                $crate::CimplError::from(e).set_last();
+                return $err_val;
+            }
+        }
+    }};
+}
+
+/// Take ownership of a tracked object, returning -1 on error.
+#[macro_export]
+macro_rules! take_owned_or_return_int {
+    ($ptr:expr, $type:ty) => {{
+        $crate::take_owned_or_return!($ptr, $type, -1)
+    }};
+}
+
+/// Take ownership of a tracked object, returning NULL on error.
+#[macro_export]
+macro_rules! take_owned_or_return_null {
+    ($ptr:expr, $type:ty) => {{
+        $crate::take_owned_or_return!($ptr, $type, std::ptr::null_mut())
     }};
 }
 

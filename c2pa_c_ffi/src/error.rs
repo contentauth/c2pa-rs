@@ -41,6 +41,10 @@ pub enum C2paError {
     /// for example the same stream given as both source and destination.
     #[error("PointerInUse: {0}")]
     PointerInUse(String),
+    /// Ownership was requested for a handle whose allocation is shared, so no
+    /// single owner can be handed back.
+    #[error("WrongWrapperKind: {0}")]
+    WrongWrapperKind(String),
     #[error("NullParameter: {0}")]
     NullParameter(String),
     #[error("Remote: {0}")]
@@ -74,6 +78,7 @@ impl C2paError {
             Self::NullParameter(_) => 111,
             // Matches CimplError::pointer_in_use, so the round trip is stable.
             Self::PointerInUse(_) => 8,
+            Self::WrongWrapperKind(_) => 9,
             Self::RemoteManifest(_) => 112,
             Self::ResourceNotFound(_) => 113,
             Self::Signature(_) => 114,
@@ -162,6 +167,7 @@ impl C2paError {
             "Other" => Self::Other(error_message),
             "NullParameter" => Self::NullParameter(error_message),
             "PointerInUse" => Self::PointerInUse(error_message),
+            "WrongWrapperKind" => Self::WrongWrapperKind(error_message),
             "Remote" => Self::RemoteManifest(error_message),
             "ResourceNotFound" => Self::ResourceNotFound(error_message),
             "Signature" => Self::Signature(error_message),
@@ -207,7 +213,12 @@ impl From<crate::cimpl::CimplError> for C2paError {
             3 => C2paError::Other(err.message().to_string()), // InvalidHandle
             4 => C2paError::Other(err.message().to_string()), // WrongHandleType
             5 => C2paError::Other(err.message().to_string()), // Other
-            8 => C2paError::from(err.message()),  // PointerInUse
+            // These two differ from the codes above: they have their own
+            // variants, so parse the message back into one. Wrapping them in
+            // Other would prepend a second "Other: " to a message that already
+            // names its type.
+            8 => C2paError::from(err.message()), // PointerInUse
+            9 => C2paError::from(err.message()), // WrongWrapperKind
             // Codes 100+ are C2paError codes - parse the message to reconstruct
             code if code >= 100 => {
                 // The message format is "ErrorType: message"
@@ -319,6 +330,7 @@ mod tests {
             (C2paError::Other("test".into()), 110),
             (C2paError::NullParameter("test".into()), 111),
             (C2paError::PointerInUse("test".into()), 8),
+            (C2paError::WrongWrapperKind("test".into()), 9),
             (C2paError::RemoteManifest("test".into()), 112),
             (C2paError::ResourceNotFound("test".into()), 113),
             (C2paError::Signature("test".into()), 114),

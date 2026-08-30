@@ -118,6 +118,15 @@ impl CimplError {
         Self::new(5, format!("Other: {}", msg.into()))
     }
 
+    /// Ownership was requested for a handle tracked as an `Arc`, where other
+    /// clones may exist, so no single owner can be handed back.
+    pub fn wrong_wrapper_kind() -> Self {
+        Self::new(
+            9,
+            "WrongWrapperKind: handle is Arc-tracked and cannot yield an owned value".to_string(),
+        )
+    }
+
     /// The handle is tracked, but another borrow of it is still outstanding.
     /// Returned when an exclusive borrow is requested while any borrow exists,
     /// or when a shared borrow is requested during an exclusive one.

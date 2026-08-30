@@ -729,7 +729,7 @@ pub unsafe extern "C" fn c2pa_context_builder_set_signer(
     let mut builder = checkout_mut_or_return_int!(builder, C2paContextBuilder);
     // Untrack the signer before taking ownership.
     // This prevents double-free if C code later calls c2pa_signer_free().
-    let c2pa_signer = untrack_or_return_int!(signer_ptr, C2paSigner);
+    let c2pa_signer = take_owned_or_return_int!(signer_ptr, C2paSigner);
     let result = builder.set_signer(c2pa_signer.signer);
     ok_or_return_int!(result);
     0
@@ -836,7 +836,7 @@ pub unsafe extern "C" fn c2pa_context_builder_set_http_resolver(
     resolver_ptr: *mut C2paHttpResolver,
 ) -> c_int {
     let mut builder = checkout_mut_or_return_int!(builder, C2paContextBuilder);
-    let c2pa_resolver = untrack_or_return_int!(resolver_ptr, C2paHttpResolver);
+    let c2pa_resolver = take_owned_or_return_int!(resolver_ptr, C2paHttpResolver);
     let result = builder.set_resolver(c2pa_resolver);
     ok_or_return_int!(result);
     0
@@ -861,7 +861,7 @@ pub unsafe extern "C" fn c2pa_context_builder_set_http_resolver(
 pub unsafe extern "C" fn c2pa_context_builder_build(
     builder: *mut C2paContextBuilder,
 ) -> *mut C2paContext {
-    let context = untrack_or_return_null!(builder, C2paContextBuilder);
+    let context = take_owned_or_return_null!(builder, C2paContextBuilder);
     box_tracked!(context.into_shared())
 }
 
@@ -1124,7 +1124,7 @@ pub unsafe extern "C" fn c2pa_reader_with_stream(
     // Rust's ordinary scope-exit `Drop`, so a validation failure here invalidates
     // `reader` exactly like a failure in `with_stream` itself would -- the caller
     // never needs to free the passed-in reader themselves, success or failure.
-    let reader = untrack_or_return_null!(reader, C2paReader);
+    let reader = take_owned_or_return_null!(reader, C2paReader);
 
     let format = cstr_or_return_null!(format);
     let mut stream = checkout_mut_or_return_null!(stream, C2paStream);
@@ -1162,7 +1162,7 @@ pub unsafe extern "C" fn c2pa_reader_with_manifest_data_and_stream(
 ) -> *mut C2paReader {
     // Take ownership of `reader` first so every early return below (ours or
     // `with_manifest_data_and_stream`'s) drops it uniformly via scope-exit `Drop`.
-    let reader = untrack_or_return_null!(reader, C2paReader);
+    let reader = take_owned_or_return_null!(reader, C2paReader);
 
     let format = cstr_or_return_null!(format);
     let mut stream = checkout_mut_or_return_null!(stream, C2paStream);
@@ -1207,7 +1207,7 @@ pub unsafe extern "C" fn c2pa_reader_with_fragment(
 ) -> *mut C2paReader {
     // Take ownership of `reader` first so every early return below (ours or
     // `with_fragment`'s) drops it uniformly via scope-exit `Drop`.
-    let reader = untrack_or_return_null!(reader, C2paReader);
+    let reader = take_owned_or_return_null!(reader, C2paReader);
 
     let format = cstr_or_return_null!(format);
     let mut stream = checkout_mut_or_return_null!(stream, C2paStream);
@@ -1582,7 +1582,7 @@ pub unsafe extern "C" fn c2pa_builder_with_definition(
 ) -> *mut C2paBuilder {
     // Take ownership of `builder` first so every early return below (ours or
     // `with_definition`'s) drops it uniformly via scope-exit `Drop`.
-    let builder = untrack_or_return_null!(builder, C2paBuilder);
+    let builder = take_owned_or_return_null!(builder, C2paBuilder);
 
     let manifest_json = cstr_or_return_null!(manifest_json);
 
@@ -1619,7 +1619,7 @@ pub unsafe extern "C" fn c2pa_builder_with_archive(
 ) -> *mut C2paBuilder {
     // Take ownership of `builder` first so every early return below (ours or
     // `with_archive`'s) drops it uniformly via scope-exit `Drop`.
-    let builder = untrack_or_return_null!(builder, C2paBuilder);
+    let builder = take_owned_or_return_null!(builder, C2paBuilder);
 
     let mut stream = checkout_mut_or_return_null!(stream, C2paStream);
 
@@ -2649,8 +2649,8 @@ pub unsafe extern "C" fn c2pa_identity_signer_create(
     referenced_assertions: *const *const c_char,
     roles: *const *const c_char,
 ) -> *mut C2paSigner {
-    let c2pa_signer = untrack_or_return_null!(c2pa_signer_ptr, C2paSigner);
-    let identity_signer = untrack_or_return_null!(identity_signer_ptr, C2paSigner);
+    let c2pa_signer = take_owned_or_return_null!(c2pa_signer_ptr, C2paSigner);
+    let identity_signer = take_owned_or_return_null!(identity_signer_ptr, C2paSigner);
 
     let referenced_assertions = cstr_array_or_return_null!(referenced_assertions);
     let roles = cstr_array_or_return_null!(roles);
