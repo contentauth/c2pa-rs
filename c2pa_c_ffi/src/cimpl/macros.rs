@@ -243,8 +243,12 @@
 #[macro_export]
 macro_rules! deref_or_return {
     ($ptr:expr, $type:ty, $err_val:expr) => {{
-        $crate::ptr_or_return!($ptr, $err_val);
-        match $crate::validate_pointer::<$type>($ptr) {
+        let ptr = $ptr;
+        if ptr.is_null() {
+            $crate::CimplError::null_parameter(stringify!($ptr)).set_last();
+            return $err_val;
+        }
+        match $crate::validate_pointer::<$type>(ptr) {
             Ok(real_ptr) => unsafe { &*(real_ptr as *const $type) },
             Err(e) => {
                 $crate::CimplError::from(e).set_last();
@@ -299,8 +303,12 @@ macro_rules! deref_or_return_false {
 #[macro_export]
 macro_rules! deref_mut_or_return {
     ($ptr:expr, $type:ty, $err_val:expr) => {{
-        $crate::ptr_or_return!($ptr, $err_val);
-        match $crate::validate_pointer::<$type>($ptr) {
+        let ptr = $ptr;
+        if ptr.is_null() {
+            $crate::CimplError::null_parameter(stringify!($ptr)).set_last();
+            return $err_val;
+        }
+        match $crate::validate_pointer::<$type>(ptr) {
             Ok(real_ptr) => unsafe { &mut *(real_ptr as *mut $type) },
             Err(e) => {
                 $crate::CimplError::from(e).set_last();

@@ -52,11 +52,12 @@ compile_error!("PointerRegistry's handle scrambling needs a 32- or 64-bit usize"
 ///   always land on at least a 2-byte boundary, so their addresses are
 ///   always even. An odd id can therefore never collide with a real tracked
 ///   buffer address (see `track_by_address`).
-/// - **Bijective, not just well-mixed**: multiplying by a fixed odd constant
-///   is invertible modulo `2^usize::BITS`, and the product of two odd numbers
-///   is always odd regardless of truncation — so distinct counter values are
-///   mathematically guaranteed to scramble to distinct odd ids, not just
-///   unlikely to collide the way a hash could.
+/// - **Distinct within a `2^(usize::BITS - 1)` window, not fully bijective**:
+///   `counter * 2 + 1` folds the counter's top bit, so `counter` and
+///   `counter + 2^(usize::BITS - 1)` scramble to the same id. Ids repeat after
+///   `2^(usize::BITS - 1)` allocations — 2^63 on 64-bit (unreachable), ~2.1
+///   billion on 32-bit (wasm32 included). `track_by_id` asserts against that
+///   bound on 32-bit.
 fn scramble_to_odd_id(counter: usize) -> usize {
     let odd = counter.wrapping_mul(2).wrapping_add(1);
     odd.wrapping_mul(ID_MULTIPLIER)
@@ -103,6 +104,8 @@ impl PointerRegistry {
             return 0;
         }
         let counter = self.next_id.fetch_add(1, Ordering::Relaxed);
+        #[cfg(target_pointer_width = "32")]
+        assert!(counter < (usize::MAX >> 1), "PointerRegistry id space exhausted");
         let id = scramble_to_odd_id(counter);
         if let Ok(mut tracked) = self.tracked.lock() {
             tracked.insert(id, (real_addr, type_id, cleanup));
@@ -125,6 +128,7 @@ impl PointerRegistry {
 
     /// Resolve a handle id to its real address, validating it is tracked
     /// with the expected type.
+    #[must_use = "the id passed in is not a usable pointer, only the returned address is"]
     pub fn resolve(&self, id: usize, expected_type: TypeId) -> Result<usize, Error> {
         if id == 0 {
             return Err(Error::from(CimplError::null_parameter("pointer")));
@@ -161,6 +165,7 @@ impl PointerRegistry {
     /// - `c2pa_context_builder_build`: builder is consumed to produce a context
     /// - `c2pa_reader_with_stream`: reader is consumed to produce a new reader
     /// - `c2pa_builder_with_definition`: builder is consumed to produce a new builder
+    #[must_use = "dropping the returned address leaks the allocation"]
     pub fn untrack(&self, id: usize, expected_type: TypeId) -> Result<usize, Error> {
         if id == 0 {
             return Err(Error::from(CimplError::null_parameter("pointer")));
@@ -313,6 +318,7 @@ pub fn track_arc_mutex<T: 'static + MaybeSend>(ptr: *mut Mutex<T>) -> *mut Mutex
 /// Validate that a pointer is tracked and has the expected type, returning
 /// the real pointer to dereference (the value passed in is an opaque handle
 /// id, not the real address — see `PointerRegistry::track_by_id`).
+#[must_use = "the handle passed in is not a usable pointer, only the returned one is"]
 pub fn validate_pointer<T: 'static>(ptr: *mut T) -> Result<*mut T, Error> {
     let real_addr = get_registry().resolve(ptr as usize, TypeId::of::<T>())?;
     Ok(real_addr as *mut T)
@@ -340,6 +346,7 @@ pub fn validate_pointer<T: 'static>(ptr: *mut T) -> Result<*mut T, Error> {
 /// builder.set_signer(signer.signer);                           // inner value moved into builder
 /// // C2paSigner wrapper dropped here — no double-free risk
 /// ```
+#[must_use = "dropping the returned pointer leaks the allocation"]
 pub fn untrack_pointer<T: 'static>(ptr: *mut T) -> Result<*mut T, Error> {
     let real_addr = get_registry().untrack(ptr as usize, TypeId::of::<T>())?;
     Ok(real_addr as *mut T)
@@ -667,5 +674,20 @@ mod tests {
         assert!(result.is_err());
 
         unsafe { drop(Box::from_raw(real_ptr)) };
+    }
+
+    #[test]
+    fn test_stale_handle_does_not_alias_new_allocation() {
+        let ptr1 = track_box(Box::into_raw(Box::new(1i32)));
+        assert!(validate_pointer::<i32>(ptr1).is_ok());
+        assert_eq!(cimpl_free(ptr1 as *mut std::ffi::c_void), 0);
+
+        let ptr2 = track_box(Box::into_raw(Box::new(2i32)));
+
+        assert_ne!(ptr1, ptr2);
+        assert!(validate_pointer::<i32>(ptr1).is_err());
+        assert!(validate_pointer::<i32>(ptr2).is_ok());
+
+        cimpl_free(ptr2 as *mut std::ffi::c_void);
     }
 }
