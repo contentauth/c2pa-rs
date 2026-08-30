@@ -47,13 +47,14 @@ enum Wrapper {
     Arced,
 }
 
-/// One tracked entry, held behind an `Arc` so a borrow can keep the object
-/// alive past a concurrent free.
+/// One tracked entry, held behind an `Arc` for borrow semantics.
+/// Arc will help us handle lifetimes of pointers.
 struct EntryInner {
     real_addr: usize,
     type_id: TypeId,
-    /// Read by `untrack_owned`, which must not hand an `Arc`-tracked entry to
-    /// `Box::from_raw`.
+    /// Read by `untrack_owned`,
+    /// which must not hand an `Arc`-tracked entry to `Box::from_raw`,
+    /// for correct reconstruction of handle type .
     #[allow(dead_code)] // Read from step 2 on.
     wrapper: Wrapper,
     /// Borrow claim: 0 is free, n is n shared readers, `EXCLUSIVE` is one

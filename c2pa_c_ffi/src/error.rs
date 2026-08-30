@@ -37,6 +37,10 @@ pub enum C2paError {
     NotSupported(String),
     #[error("Other: {0}")]
     Other(String),
+    /// A handle was passed while another borrow of it was still outstanding,
+    /// for example the same stream given as both source and destination.
+    #[error("PointerInUse: {0}")]
+    PointerInUse(String),
     #[error("NullParameter: {0}")]
     NullParameter(String),
     #[error("Remote: {0}")]
@@ -68,6 +72,8 @@ impl C2paError {
             Self::NotSupported(_) => 109,
             Self::Other(_) => 110,
             Self::NullParameter(_) => 111,
+            // Matches CimplError::pointer_in_use, so the round trip is stable.
+            Self::PointerInUse(_) => 8,
             Self::RemoteManifest(_) => 112,
             Self::ResourceNotFound(_) => 113,
             Self::Signature(_) => 114,
@@ -155,6 +161,7 @@ impl C2paError {
             "NotSupported" => Self::NotSupported(error_message),
             "Other" => Self::Other(error_message),
             "NullParameter" => Self::NullParameter(error_message),
+            "PointerInUse" => Self::PointerInUse(error_message),
             "Remote" => Self::RemoteManifest(error_message),
             "ResourceNotFound" => Self::ResourceNotFound(error_message),
             "Signature" => Self::Signature(error_message),
@@ -200,6 +207,7 @@ impl From<crate::cimpl::CimplError> for C2paError {
             3 => C2paError::Other(err.message().to_string()), // InvalidHandle
             4 => C2paError::Other(err.message().to_string()), // WrongHandleType
             5 => C2paError::Other(err.message().to_string()), // Other
+            8 => C2paError::from(err.message()),  // PointerInUse
             // Codes 100+ are C2paError codes - parse the message to reconstruct
             code if code >= 100 => {
                 // The message format is "ErrorType: message"
@@ -310,6 +318,7 @@ mod tests {
             (C2paError::NotSupported("test".into()), 109),
             (C2paError::Other("test".into()), 110),
             (C2paError::NullParameter("test".into()), 111),
+            (C2paError::PointerInUse("test".into()), 8),
             (C2paError::RemoteManifest("test".into()), 112),
             (C2paError::ResourceNotFound("test".into()), 113),
             (C2paError::Signature("test".into()), 114),
