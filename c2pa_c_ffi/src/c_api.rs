@@ -28,8 +28,8 @@ use crate::safe_slice_from_raw_parts;
 #[allow(unused_imports)] // Usage varies by feature flags and test/non-test builds
 use crate::{
     box_tracked, bytes_or_return_int, bytes_or_return_null, c2pa_stream::C2paStream, cimpl_free,
-    cstr_or_return_int, cstr_or_return_null, checkout_mut_option_or_return_int, checkout_mut_or_return,
-    checkout_mut_or_return_int, checkout_mut_or_return_null, checkout_or_return_int, checkout_or_return_null,
+    cstr_or_return_int, cstr_or_return_null, deref_mut_option_or_return_int, deref_mut_or_return,
+    deref_mut_or_return_int, deref_mut_or_return_null, deref_or_return_int, deref_or_return_null,
     error::Error, ok_or_return_int, ok_or_return_null, option_to_c_string, ptr_or_return_int,
     signer_info::SignerInfo, to_c_bytes, to_c_string, CimplError,
 };
@@ -568,7 +568,7 @@ pub unsafe extern "C" fn c2pa_settings_update_from_string(
     settings_str: *const c_char,
     format: *const c_char,
 ) -> c_int {
-    let mut settings = checkout_mut_or_return_int!(settings, C2paSettings);
+    let mut settings = deref_mut_or_return_int!(settings, C2paSettings);
     let settings_str = cstr_or_return_int!(settings_str);
     let format = cstr_or_return_int!(format);
     let result = settings.update_from_str(&settings_str, &format);
@@ -598,7 +598,7 @@ pub unsafe extern "C" fn c2pa_settings_set_value(
     path: *const c_char,
     value: *const c_char,
 ) -> c_int {
-    let mut settings = checkout_mut_or_return_int!(settings, C2paSettings);
+    let mut settings = deref_mut_or_return_int!(settings, C2paSettings);
     let path = cstr_or_return_int!(path);
     let value_str = cstr_or_return_int!(value);
 
@@ -696,8 +696,8 @@ pub unsafe extern "C" fn c2pa_context_builder_set_settings(
     builder: *mut C2paContextBuilder,
     settings: *mut C2paSettings,
 ) -> c_int {
-    let mut builder = checkout_mut_or_return_int!(builder, C2paContextBuilder);
-    let settings = checkout_or_return_int!(settings, C2paSettings);
+    let mut builder = deref_mut_or_return_int!(builder, C2paContextBuilder);
+    let settings = deref_or_return_int!(settings, C2paSettings);
     let result = builder.set_settings(&*settings);
     ok_or_return_int!(result);
     0
@@ -726,10 +726,10 @@ pub unsafe extern "C" fn c2pa_context_builder_set_signer(
     builder: *mut C2paContextBuilder,
     signer_ptr: *mut C2paSigner,
 ) -> c_int {
-    let mut builder = checkout_mut_or_return_int!(builder, C2paContextBuilder);
+    let mut builder = deref_mut_or_return_int!(builder, C2paContextBuilder);
     // Untrack the signer before taking ownership.
     // This prevents double-free if C code later calls c2pa_signer_free().
-    let c2pa_signer = take_owned_or_return_int!(signer_ptr, C2paSigner);
+    let c2pa_signer = untrack_or_return_int!(signer_ptr, C2paSigner);
     let result = builder.set_signer(c2pa_signer.signer);
     ok_or_return_int!(result);
     0
@@ -783,7 +783,7 @@ pub unsafe extern "C" fn c2pa_context_builder_set_progress_callback(
     user_data: *const c_void,
     callback: ProgressCCallback,
 ) -> c_int {
-    let mut builder = checkout_mut_or_return_int!(builder, C2paContextBuilder);
+    let mut builder = deref_mut_or_return_int!(builder, C2paContextBuilder);
     let ud = user_data as usize;
     let c_callback = move |phase: ProgressPhase, step: u32, total: u32| unsafe {
         (callback)(ud as *const c_void, phase.into(), step, total) != 0
@@ -835,8 +835,8 @@ pub unsafe extern "C" fn c2pa_context_builder_set_http_resolver(
     builder: *mut C2paContextBuilder,
     resolver_ptr: *mut C2paHttpResolver,
 ) -> c_int {
-    let mut builder = checkout_mut_or_return_int!(builder, C2paContextBuilder);
-    let c2pa_resolver = take_owned_or_return_int!(resolver_ptr, C2paHttpResolver);
+    let mut builder = deref_mut_or_return_int!(builder, C2paContextBuilder);
+    let c2pa_resolver = untrack_or_return_int!(resolver_ptr, C2paHttpResolver);
     let result = builder.set_resolver(c2pa_resolver);
     ok_or_return_int!(result);
     0
@@ -861,7 +861,7 @@ pub unsafe extern "C" fn c2pa_context_builder_set_http_resolver(
 pub unsafe extern "C" fn c2pa_context_builder_build(
     builder: *mut C2paContextBuilder,
 ) -> *mut C2paContext {
-    let context = take_owned_or_return_null!(builder, C2paContextBuilder);
+    let context = untrack_or_return_null!(builder, C2paContextBuilder);
     box_tracked!(context.into_shared())
 }
 
@@ -905,7 +905,7 @@ pub unsafe extern "C" fn c2pa_context_new() -> *mut C2paContext {
 /// `ctx` must be a valid pointer and must not be freed concurrently with this call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_context_cancel(ctx: *mut C2paContext) -> c_int {
-    let ctx = checkout_or_return_int!(ctx, C2paContext);
+    let ctx = deref_or_return_int!(ctx, C2paContext);
     ctx.cancel();
     0
 }
@@ -1064,7 +1064,7 @@ pub unsafe extern "C" fn c2pa_reader_new() -> *mut C2paReader {
 /// A pointer to a newly allocated C2paReader, or NULL on error.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_from_context(context: *mut C2paContext) -> *mut C2paReader {
-    let context = checkout_or_return_null!(context, C2paContext);
+    let context = deref_or_return_null!(context, C2paContext);
     box_tracked!(C2paReader::from_shared_context(&context))
 }
 
@@ -1090,7 +1090,7 @@ pub unsafe extern "C" fn c2pa_reader_from_stream(
     stream: *mut C2paStream,
 ) -> *mut C2paReader {
     let format = cstr_or_return_null!(format);
-    let mut stream = checkout_mut_or_return_null!(stream, C2paStream);
+    let mut stream = deref_mut_or_return_null!(stream, C2paStream);
 
     // Legacy C API: inherits thread-local settings set by c2pa_load_settings.
     // Prefer c2pa_reader_from_context for new C API usage.
@@ -1124,10 +1124,10 @@ pub unsafe extern "C" fn c2pa_reader_with_stream(
     // Rust's ordinary scope-exit `Drop`, so a validation failure here invalidates
     // `reader` exactly like a failure in `with_stream` itself would -- the caller
     // never needs to free the passed-in reader themselves, success or failure.
-    let reader = take_owned_or_return_null!(reader, C2paReader);
+    let reader = untrack_or_return_null!(reader, C2paReader);
 
     let format = cstr_or_return_null!(format);
-    let mut stream = checkout_mut_or_return_null!(stream, C2paStream);
+    let mut stream = deref_mut_or_return_null!(stream, C2paStream);
 
     let reader = ok_or_return_null!(reader.with_stream(&format, &mut *stream));
     box_tracked!(reader)
@@ -1162,10 +1162,10 @@ pub unsafe extern "C" fn c2pa_reader_with_manifest_data_and_stream(
 ) -> *mut C2paReader {
     // Take ownership of `reader` first so every early return below (ours or
     // `with_manifest_data_and_stream`'s) drops it uniformly via scope-exit `Drop`.
-    let reader = take_owned_or_return_null!(reader, C2paReader);
+    let reader = untrack_or_return_null!(reader, C2paReader);
 
     let format = cstr_or_return_null!(format);
-    let mut stream = checkout_mut_or_return_null!(stream, C2paStream);
+    let mut stream = deref_mut_or_return_null!(stream, C2paStream);
     let manifest_bytes = bytes_or_return_null!(manifest_data, manifest_size, "manifest_data");
 
     let reader =
@@ -1207,11 +1207,11 @@ pub unsafe extern "C" fn c2pa_reader_with_fragment(
 ) -> *mut C2paReader {
     // Take ownership of `reader` first so every early return below (ours or
     // `with_fragment`'s) drops it uniformly via scope-exit `Drop`.
-    let reader = take_owned_or_return_null!(reader, C2paReader);
+    let reader = untrack_or_return_null!(reader, C2paReader);
 
     let format = cstr_or_return_null!(format);
-    let mut stream = checkout_mut_or_return_null!(stream, C2paStream);
-    let mut fragment = checkout_mut_or_return_null!(fragment, C2paStream);
+    let mut stream = deref_mut_or_return_null!(stream, C2paStream);
+    let mut fragment = deref_mut_or_return_null!(fragment, C2paStream);
 
     let reader = ok_or_return_null!(reader.with_fragment(&format, &mut *stream, &mut *fragment));
     box_tracked!(reader)
@@ -1291,7 +1291,7 @@ pub unsafe extern "C" fn c2pa_reader_from_manifest_data_and_stream(
     manifest_size: usize,
 ) -> *mut C2paReader {
     let format = cstr_or_return_null!(format);
-    let mut stream = checkout_mut_or_return_null!(stream, C2paStream);
+    let mut stream = deref_mut_or_return_null!(stream, C2paStream);
 
     let manifest_bytes = bytes_or_return_null!(manifest_data, manifest_size, "manifest_data");
 
@@ -1325,7 +1325,7 @@ pub unsafe extern "C" fn c2pa_reader_free(reader_ptr: *mut C2paReader) {
 /// and it is no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_json(reader_ptr: *mut C2paReader) -> *mut c_char {
-    let c2pa_reader = checkout_or_return_null!(reader_ptr, C2paReader);
+    let c2pa_reader = deref_or_return_null!(reader_ptr, C2paReader);
     to_c_string(c2pa_reader.json())
 }
 
@@ -1336,7 +1336,7 @@ pub unsafe extern "C" fn c2pa_reader_json(reader_ptr: *mut C2paReader) -> *mut c
 /// and it is no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_detailed_json(reader_ptr: *mut C2paReader) -> *mut c_char {
-    let c2pa_reader = checkout_or_return_null!(reader_ptr, C2paReader);
+    let c2pa_reader = deref_or_return_null!(reader_ptr, C2paReader);
     to_c_string(c2pa_reader.detailed_json())
 }
 
@@ -1347,7 +1347,7 @@ pub unsafe extern "C" fn c2pa_reader_detailed_json(reader_ptr: *mut C2paReader) 
 /// and it is no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_crjson(reader_ptr: *mut C2paReader) -> *mut c_char {
-    let c2pa_reader = checkout_or_return_null!(reader_ptr, C2paReader);
+    let c2pa_reader = deref_or_return_null!(reader_ptr, C2paReader);
     to_c_string(c2pa_reader.crjson())
 }
 
@@ -1360,7 +1360,7 @@ pub unsafe extern "C" fn c2pa_reader_crjson(reader_ptr: *mut C2paReader) -> *mut
 /// reader_ptr must be a valid pointer to a C2paReader.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_remote_url(reader_ptr: *mut C2paReader) -> *const c_char {
-    let c2pa_reader = checkout_or_return_null!(reader_ptr, C2paReader);
+    let c2pa_reader = deref_or_return_null!(reader_ptr, C2paReader);
 
     option_to_c_string!(c2pa_reader.remote_url())
 }
@@ -1374,7 +1374,7 @@ pub unsafe extern "C" fn c2pa_reader_remote_url(reader_ptr: *mut C2paReader) -> 
 /// reader_ptr must be a valid pointer to a C2paReader.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_is_embedded(reader_ptr: *mut C2paReader) -> bool {
-    let c2pa_reader = checkout_or_return_false!(reader_ptr, C2paReader);
+    let c2pa_reader = deref_or_return_false!(reader_ptr, C2paReader);
 
     c2pa_reader.is_embedded()
 }
@@ -1410,8 +1410,8 @@ pub unsafe extern "C" fn c2pa_reader_resource_to_stream(
     stream: *mut C2paStream,
 ) -> i64 {
     let uri = cstr_or_return_int!(uri);
-    let reader = checkout_mut_or_return_int!(reader_ptr, C2paReader);
-    let mut stream = checkout_mut_or_return_int!(stream, C2paStream);
+    let reader = deref_mut_or_return_int!(reader_ptr, C2paReader);
+    let mut stream = deref_mut_or_return_int!(stream, C2paStream);
     let result = reader.resource_to_stream(&uri, &mut (*stream));
     let len = ok_or_return_int!(result);
     len as i64
@@ -1489,7 +1489,7 @@ pub unsafe extern "C" fn c2pa_builder_from_json(manifest_json: *const c_char) ->
 /// ```
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_builder_from_context(context: *mut C2paContext) -> *mut C2paBuilder {
-    let context = checkout_or_return_null!(context, C2paContext);
+    let context = deref_or_return_null!(context, C2paContext);
     box_tracked!(C2paBuilder::from_shared_context(&context))
 }
 
@@ -1517,7 +1517,7 @@ pub unsafe extern "C" fn c2pa_builder_from_context(context: *mut C2paContext) ->
 #[deprecated(note = "Use c2pa_builder_from_context() then c2pa_builder_with_archive() instead.")]
 #[allow(deprecated)]
 pub unsafe extern "C" fn c2pa_builder_from_archive(stream: *mut C2paStream) -> *mut C2paBuilder {
-    let mut stream = checkout_mut_or_return_null!(stream, C2paStream);
+    let mut stream = deref_mut_or_return_null!(stream, C2paStream);
     box_tracked!(ok_or_return_null!(C2paBuilder::from_archive(
         &mut (*stream)
     )))
@@ -1582,7 +1582,7 @@ pub unsafe extern "C" fn c2pa_builder_with_definition(
 ) -> *mut C2paBuilder {
     // Take ownership of `builder` first so every early return below (ours or
     // `with_definition`'s) drops it uniformly via scope-exit `Drop`.
-    let builder = take_owned_or_return_null!(builder, C2paBuilder);
+    let builder = untrack_or_return_null!(builder, C2paBuilder);
 
     let manifest_json = cstr_or_return_null!(manifest_json);
 
@@ -1619,9 +1619,9 @@ pub unsafe extern "C" fn c2pa_builder_with_archive(
 ) -> *mut C2paBuilder {
     // Take ownership of `builder` first so every early return below (ours or
     // `with_archive`'s) drops it uniformly via scope-exit `Drop`.
-    let builder = take_owned_or_return_null!(builder, C2paBuilder);
+    let builder = untrack_or_return_null!(builder, C2paBuilder);
 
-    let mut stream = checkout_mut_or_return_null!(stream, C2paStream);
+    let mut stream = deref_mut_or_return_null!(stream, C2paStream);
 
     let builder = ok_or_return_null!(builder.with_archive(&mut *stream));
     box_tracked!(builder)
@@ -1656,7 +1656,7 @@ pub unsafe extern "C" fn c2pa_builder_set_intent(
     intent: C2paBuilderIntent,
     digital_source_type: C2paDigitalSourceType,
 ) -> c_int {
-    let mut builder = checkout_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let mut builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
 
     let builder_intent = match intent {
         C2paBuilderIntent::Create => c2pa::BuilderIntent::Create(digital_source_type.into()),
@@ -1678,7 +1678,7 @@ pub unsafe extern "C" fn c2pa_builder_set_intent(
 #[no_mangle]
 #[allow(clippy::unused_unit)] // clippy doesn't like the () return type on the macro
 pub unsafe extern "C" fn c2pa_builder_set_no_embed(builder_ptr: *mut C2paBuilder) {
-    let mut builder = checkout_mut_or_return!(builder_ptr, C2paBuilder, ());
+    let mut builder = deref_mut_or_return!(builder_ptr, C2paBuilder, ());
     builder.set_no_embed(true);
 }
 
@@ -1698,7 +1698,7 @@ pub unsafe extern "C" fn c2pa_builder_set_remote_url(
     builder_ptr: *mut C2paBuilder,
     remote_url: *const c_char,
 ) -> c_int {
-    let mut builder = checkout_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let mut builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
     let remote_url = cstr_or_return_int!(remote_url);
     builder.set_remote_url(&remote_url);
     0 as c_int
@@ -1723,7 +1723,7 @@ pub unsafe extern "C" fn c2pa_builder_set_base_path(
     builder_ptr: *mut C2paBuilder,
     base_path: *const c_char,
 ) -> c_int {
-    let mut builder = checkout_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let mut builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
     let base_path = cstr_or_return_int!(base_path);
     builder.set_base_path(&base_path);
     0 as c_int
@@ -1749,9 +1749,9 @@ pub unsafe extern "C" fn c2pa_builder_add_resource(
     uri: *const c_char,
     stream: *mut C2paStream,
 ) -> c_int {
-    let mut builder = checkout_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let mut builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
     let uri = cstr_or_return_int!(uri);
-    let mut stream = checkout_mut_or_return_int!(stream, C2paStream);
+    let mut stream = deref_mut_or_return_int!(stream, C2paStream);
     let result = builder.add_resource(&uri, &mut (*stream));
     ok_or_return_int!(result);
     0 // returns 0 on success
@@ -1778,10 +1778,10 @@ pub unsafe extern "C" fn c2pa_builder_add_ingredient_from_stream(
     format: *const c_char,
     source: *mut C2paStream,
 ) -> c_int {
-    let mut builder = checkout_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let mut builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
     let ingredient_json = cstr_or_return_int!(ingredient_json);
     let format = cstr_or_return_int!(format);
-    let mut source = checkout_mut_or_return_int!(source, C2paStream);
+    let mut source = deref_mut_or_return_int!(source, C2paStream);
     let result = builder.add_ingredient_from_stream(&ingredient_json, &format, &mut (*source));
     ok_or_return_int!(result);
     0 // returns 0 on success
@@ -1845,7 +1845,7 @@ pub unsafe extern "C" fn c2pa_builder_add_action(
     builder_ptr: *mut C2paBuilder,
     action_json: *const c_char,
 ) -> c_int {
-    let mut builder = checkout_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let mut builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
     let action_json = cstr_or_return_int!(action_json);
 
     // Parse the JSON into a serde Value to use with the Builder
@@ -1883,8 +1883,8 @@ pub unsafe extern "C" fn c2pa_builder_to_archive(
     builder_ptr: *mut C2paBuilder,
     stream: *mut C2paStream,
 ) -> c_int {
-    let builder = checkout_mut_or_return_int!(builder_ptr, C2paBuilder);
-    let mut stream = checkout_mut_or_return_int!(stream, C2paStream);
+    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let mut stream = deref_mut_or_return_int!(stream, C2paStream);
     let result = builder.to_archive(&mut *stream);
     ok_or_return_int!(result);
     0 // returns 0 on success
@@ -1922,8 +1922,8 @@ pub unsafe extern "C" fn c2pa_builder_add_ingredient_from_archive(
     builder_ptr: *mut C2paBuilder,
     stream: *mut C2paStream,
 ) -> c_int {
-    let mut builder = checkout_mut_or_return_int!(builder_ptr, C2paBuilder);
-    let mut stream = checkout_mut_or_return_int!(stream, C2paStream);
+    let mut builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let mut stream = deref_mut_or_return_int!(stream, C2paStream);
     let result = builder.add_ingredient_from_archive(&mut *stream);
     ok_or_return_int!(result);
     0 // returns 0 on success
@@ -1963,9 +1963,9 @@ pub unsafe extern "C" fn c2pa_builder_write_ingredient_archive(
     ingredient_id: *const c_char,
     stream: *mut C2paStream,
 ) -> c_int {
-    let builder = checkout_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
     let ingredient_id = cstr_or_return_int!(ingredient_id);
-    let mut stream = checkout_mut_or_return_int!(stream, C2paStream);
+    let mut stream = deref_mut_or_return_int!(stream, C2paStream);
     let result = builder.write_ingredient_archive(&ingredient_id, &mut *stream);
     ok_or_return_int!(result);
     0 // returns 0 on success
@@ -1998,11 +1998,11 @@ pub unsafe extern "C" fn c2pa_builder_sign(
     signer_ptr: *mut C2paSigner,
     manifest_bytes_ptr: *mut *const c_uchar,
 ) -> i64 {
-    let mut builder = checkout_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let mut builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
     let format = cstr_or_return_int!(format);
-    let mut source = checkout_mut_or_return_int!(source, C2paStream);
-    let mut dest = checkout_mut_or_return_int!(dest, C2paStream);
-    let c2pa_signer = checkout_mut_or_return_int!(signer_ptr, C2paSigner);
+    let mut source = deref_mut_or_return_int!(source, C2paStream);
+    let mut dest = deref_mut_or_return_int!(dest, C2paStream);
+    let c2pa_signer = deref_mut_or_return_int!(signer_ptr, C2paSigner);
     ptr_or_return_int!(manifest_bytes_ptr);
 
     let result = builder.sign(
@@ -2052,10 +2052,10 @@ pub unsafe extern "C" fn c2pa_builder_sign_context(
     dest: *mut C2paStream,
     manifest_bytes_ptr: *mut *const c_uchar,
 ) -> i64 {
-    let mut builder = checkout_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let mut builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
     let format = cstr_or_return_int!(format);
-    let mut source = checkout_mut_or_return_int!(source, C2paStream);
-    let mut dest = checkout_mut_or_return_int!(dest, C2paStream);
+    let mut source = deref_mut_or_return_int!(source, C2paStream);
+    let mut dest = deref_mut_or_return_int!(dest, C2paStream);
     ptr_or_return_int!(manifest_bytes_ptr);
 
     let result = builder.save_to_stream(&format, &mut *source, &mut *dest);
@@ -2105,7 +2105,7 @@ pub unsafe extern "C" fn c2pa_builder_data_hashed_placeholder(
     manifest_bytes_ptr: *mut *const c_uchar,
 ) -> i64 {
     ptr_or_return_int!(manifest_bytes_ptr);
-    let mut builder = checkout_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let mut builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
     let format = cstr_or_return_int!(format);
     let result = builder.data_hashed_placeholder(reserved_size, &format);
     let manifest_bytes = ok_or_return_int!(result);
@@ -2145,8 +2145,8 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
     asset: *mut C2paStream,
     manifest_bytes_ptr: *mut *const c_uchar,
 ) -> i64 {
-    let mut builder = checkout_mut_or_return_int!(builder_ptr, C2paBuilder);
-    let c2pa_signer = checkout_mut_or_return_int!(signer_ptr, C2paSigner);
+    let mut builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let c2pa_signer = deref_mut_or_return_int!(signer_ptr, C2paSigner);
     let data_hash_json = cstr_or_return_int!(data_hash);
     let format = cstr_or_return_int!(format);
     ptr_or_return_int!(manifest_bytes_ptr);
@@ -2154,7 +2154,7 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
     let mut data_hash: DataHash = ok_or_return_int!(serde_json::from_str(&data_hash_json)
         .map_err(|e| Error::from_c2pa_error(c2pa::Error::JsonError(e))));
 
-    if let Some(mut asset) = checkout_mut_option_or_return_int!(asset, C2paStream) {
+    if let Some(mut asset) = deref_mut_option_or_return_int!(asset, C2paStream) {
         // calc hashes from the asset stream
         ok_or_return_int!(data_hash
             .gen_hash_from_stream(&mut *asset)
@@ -2189,7 +2189,7 @@ pub unsafe extern "C" fn c2pa_builder_needs_placeholder(
     builder_ptr: *mut C2paBuilder,
     format: *const c_char,
 ) -> c_int {
-    let builder = checkout_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
     let format = cstr_or_return_int!(format);
     if builder.needs_placeholder(&format) {
         1
@@ -2216,7 +2216,7 @@ pub unsafe extern "C" fn c2pa_builder_hash_type(
     format: *const c_char,
     out_hash_type: *mut C2paHashType,
 ) -> c_int {
-    let builder = checkout_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
     let format = cstr_or_return_int!(format);
     if out_hash_type.is_null() {
         return -1;
@@ -2260,7 +2260,7 @@ pub unsafe extern "C" fn c2pa_builder_placeholder(
     format: *const c_char,
     manifest_bytes_ptr: *mut *const c_uchar,
 ) -> i64 {
-    let mut builder = checkout_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let mut builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
     let format = cstr_or_return_int!(format);
     let result = builder.placeholder(&format);
     let manifest_bytes = ok_or_return_int!(result);
@@ -2306,7 +2306,7 @@ pub unsafe extern "C" fn c2pa_builder_sign_embeddable(
     manifest_bytes_ptr: *mut *const c_uchar,
 ) -> i64 {
     ptr_or_return_int!(manifest_bytes_ptr);
-    let builder = checkout_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
     let format = cstr_or_return_int!(format);
     let result = builder.sign_embeddable(&format);
     let manifest_bytes = ok_or_return_int!(result);
@@ -2348,7 +2348,7 @@ pub unsafe extern "C" fn c2pa_builder_set_data_hash_exclusions(
     exclusions_ptr: *const u64,
     exclusion_count: usize,
 ) -> c_int {
-    let mut builder = checkout_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let mut builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
 
     if exclusion_count == 0 || exclusions_ptr.is_null() {
         ok_or_return_int!(builder.set_data_hash_exclusions(vec![]));
@@ -2386,7 +2386,7 @@ pub unsafe extern "C" fn c2pa_builder_set_fixed_size_merkle(
     builder_ptr: *mut C2paBuilder,
     fixed_size_kb: usize,
 ) -> c_int {
-    let mut builder = checkout_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let mut builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
 
     builder.set_bmff_hash_fixed_leaf_size(fixed_size_kb);
 
@@ -2432,7 +2432,7 @@ pub unsafe extern "C" fn c2pa_builder_hash_mdat_bytes(
 
     let data = bytes_or_return_int!(data_ptr, data_len, "mdat_data");
 
-    let mut builder = checkout_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let mut builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
 
     // save to hasher to build Merkle trees during final save
     ok_or_return_int!(builder.hash_bmff_mdat_bytes(mdat_id, data, large_size));
@@ -2476,9 +2476,9 @@ pub unsafe extern "C" fn c2pa_builder_update_hash_from_stream(
     format: *const c_char,
     stream: *mut C2paStream,
 ) -> c_int {
-    let mut builder = checkout_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let mut builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
     let format = cstr_or_return_int!(format);
-    let mut stream = checkout_mut_or_return_int!(stream, C2paStream);
+    let mut stream = deref_mut_or_return_int!(stream, C2paStream);
     ok_or_return_int!(builder.update_hash_from_stream(&format, &mut *stream));
     0
 }
@@ -2662,8 +2662,8 @@ pub unsafe extern "C" fn c2pa_identity_signer_create(
     referenced_assertions: *const *const c_char,
     roles: *const *const c_char,
 ) -> *mut C2paSigner {
-    let c2pa_signer = take_owned_or_return_null!(c2pa_signer_ptr, C2paSigner);
-    let identity_signer = take_owned_or_return_null!(identity_signer_ptr, C2paSigner);
+    let c2pa_signer = untrack_or_return_null!(c2pa_signer_ptr, C2paSigner);
+    let identity_signer = untrack_or_return_null!(identity_signer_ptr, C2paSigner);
 
     let referenced_assertions = cstr_array_or_return_null!(referenced_assertions);
     let roles = cstr_array_or_return_null!(roles);
@@ -2761,7 +2761,7 @@ pub unsafe extern "C" fn c2pa_signer_from_settings() -> *mut C2paSigner {
 /// The signer_ptr must be a valid pointer to a C2paSigner.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_signer_reserve_size(signer_ptr: *mut C2paSigner) -> i64 {
-    let c2pa_signer = checkout_mut_or_return_int!(signer_ptr, C2paSigner);
+    let c2pa_signer = deref_mut_or_return_int!(signer_ptr, C2paSigner);
     c2pa_signer.signer.reserve_size() as i64
 }
 
@@ -4686,7 +4686,7 @@ verify_after_sign = true
 
     #[test]
     fn test_c2pa_reader_is_embedded_null() {
-        // Test null pointer - should return false via checkout_or_return_false!
+        // Test null pointer - should return false via deref_or_return_false!
         let result = unsafe { c2pa_reader_is_embedded(std::ptr::null_mut()) };
         assert!(!result, "Null reader should return false");
     }

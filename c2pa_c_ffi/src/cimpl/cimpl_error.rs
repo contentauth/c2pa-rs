@@ -118,6 +118,15 @@ impl CimplError {
         Self::new(5, format!("Other: {}", msg.into()))
     }
 
+    /// A handle minted by a different loaded copy of this crate was passed in.
+    /// Each copy has its own registry, so the handle is meaningless here.
+    pub fn foreign_registry_pointer(issuing_copy: u16) -> Self {
+        Self::new(
+            11,
+            format!("ForeignRegistryPointer: handle was minted by loaded copy {issuing_copy}"),
+        )
+    }
+
     /// A registry call was made from a process that did not create the
     /// registry, which happens after `fork()` without an `exec()`.
     pub fn foreign_process() -> Self {

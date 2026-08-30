@@ -240,226 +240,8 @@
 /// ```rust,ignore
 /// let value = deref_or_return!(ptr, Type, -1);
 /// ```
-#[deprecated(
-    note = "yields a reference whose validity ends with the call; use checkout_or_return!, which holds the object alive for the borrow"
-)]
 #[macro_export]
 macro_rules! deref_or_return {
-    ($ptr:expr, $type:ty, $err_val:expr) => {{
-        let ptr = $ptr;
-        if ptr.is_null() {
-            $crate::CimplError::null_parameter(stringify!($ptr)).set_last();
-            return $err_val;
-        }
-        match $crate::validate_pointer::<$type>(ptr) {
-            Ok(real_ptr) => unsafe { &*(real_ptr as *const $type) },
-            Err(e) => {
-                $crate::CimplError::from(e).set_last();
-                return $err_val;
-            }
-        }
-    }};
-}
-
-/// Validate pointer and dereference immutably, returning reference
-/// Returns NULL on error
-/// # Examples
-/// ```rust,ignore
-/// let value = deref_or_return_null!(ptr, Type);
-/// ```
-#[deprecated(
-    note = "yields a reference whose validity ends with the call; use checkout_or_return_null!, which holds the object alive for the borrow"
-)]
-#[macro_export]
-macro_rules! deref_or_return_null {
-    ($ptr:expr, $type:ty) => {{
-        $crate::deref_or_return!($ptr, $type, std::ptr::null_mut())
-    }};
-}
-
-/// Validate pointer and dereference immutably, returning reference
-/// Returns -1 on error
-#[deprecated(
-    note = "yields a reference whose validity ends with the call; use checkout_or_return_int!, which holds the object alive for the borrow"
-)]
-#[macro_export]
-macro_rules! deref_or_return_int {
-    ($ptr:expr, $type:ty) => {{
-        $crate::deref_or_return!($ptr, $type, -1)
-    }};
-}
-
-/// Validate pointer and dereference immutably, returning reference
-/// Returns 0 on error
-#[deprecated(
-    note = "yields a reference whose validity ends with the call; use checkout_or_return_zero!, which holds the object alive for the borrow"
-)]
-#[macro_export]
-macro_rules! deref_or_return_zero {
-    ($ptr:expr, $type:ty) => {{
-        $crate::deref_or_return!($ptr, $type, 0)
-    }};
-}
-
-/// Validate pointer and dereference immutably, returning reference
-/// Returns false on error
-#[deprecated(
-    note = "yields a reference whose validity ends with the call; use checkout_or_return_false!, which holds the object alive for the borrow"
-)]
-#[macro_export]
-macro_rules! deref_or_return_false {
-    ($ptr:expr, $type:ty) => {{
-        $crate::deref_or_return!($ptr, $type, false)
-    }};
-}
-
-/// Validate pointer and dereference mutably, returning reference
-/// Returns early with custom value on error
-#[deprecated(
-    note = "yields a reference whose validity ends with the call; use checkout_mut_or_return!, which holds the object alive for the borrow"
-)]
-#[macro_export]
-macro_rules! deref_mut_or_return {
-    ($ptr:expr, $type:ty, $err_val:expr) => {{
-        let ptr = $ptr;
-        if ptr.is_null() {
-            $crate::CimplError::null_parameter(stringify!($ptr)).set_last();
-            return $err_val;
-        }
-        match $crate::validate_pointer::<$type>(ptr) {
-            Ok(real_ptr) => unsafe { &mut *(real_ptr as *mut $type) },
-            Err(e) => {
-                $crate::CimplError::from(e).set_last();
-                return $err_val;
-            }
-        }
-    }};
-}
-
-/// Validate pointer and dereference mutably, returning reference
-/// Returns NULL on error
-#[deprecated(
-    note = "yields a reference whose validity ends with the call; use checkout_mut_or_return_null!, which holds the object alive for the borrow"
-)]
-#[macro_export]
-macro_rules! deref_mut_or_return_null {
-    ($ptr:expr, $type:ty) => {{
-        $crate::deref_mut_or_return!($ptr, $type, std::ptr::null_mut())
-    }};
-}
-
-/// Validate pointer and dereference mutably, returning reference
-/// Returns -1 on error
-#[deprecated(
-    note = "yields a reference whose validity ends with the call; use checkout_mut_or_return_int!, which holds the object alive for the borrow"
-)]
-#[macro_export]
-macro_rules! deref_mut_or_return_int {
-    ($ptr:expr, $type:ty) => {{
-        $crate::deref_mut_or_return!($ptr, $type, -1)
-    }};
-}
-
-/// Resolve a tracked pointer to its real address and dereference it
-/// mutably, returning `None` for NULL, untracked, or wrong-type pointers —
-/// no error is set, no early return happens.
-///
-/// This is for internal code (tests, cleanup paths) that decides for itself
-/// how to handle a missing value. FFI entry points taking pointers from C
-/// should use `deref_mut_or_return!` (NULL is an error) or
-/// `deref_mut_option_or_return!` (NULL is a legitimate "not provided")
-/// instead, so C gets a proper error for a genuinely bad pointer.
-///
-/// # Examples
-/// ```rust,ignore
-/// let stream = deref_mut_option!(ptr, C2paStream).expect("always tracked here");
-/// ```
-#[deprecated(
-    note = "yields a reference whose validity ends with the call; use checkout_mut_option!, which holds the object alive for the borrow"
-)]
-#[macro_export]
-macro_rules! deref_mut_option {
-    ($ptr:expr, $type:ty) => {{
-        let ptr = $ptr;
-        if ptr.is_null() {
-            None
-        } else {
-            $crate::validate_pointer::<$type>(ptr)
-                .ok()
-                .map(|real_ptr| unsafe { &mut *(real_ptr as *mut $type) })
-        }
-    }};
-}
-
-/// Validate pointer and dereference mutably, returning `None` if the
-/// pointer is NULL. Unlike `deref_mut_or_return!`, NULL is not treated as an
-/// error — this is for parameters that are genuinely optional. A non-NULL
-/// but untracked/wrong-type pointer is still an early-return error.
-///
-/// # Examples
-/// ```rust,ignore
-/// if let Some(asset) = deref_mut_option_or_return!(asset_ptr, C2paStream, -1) {
-///     asset.do_something();
-/// }
-/// ```
-#[deprecated(
-    note = "yields a reference whose validity ends with the call; use checkout_mut_option_or_return!, which holds the object alive for the borrow"
-)]
-#[macro_export]
-macro_rules! deref_mut_option_or_return {
-    ($ptr:expr, $type:ty, $err_val:expr) => {{
-        let ptr = $ptr;
-        if ptr.is_null() {
-            None
-        } else {
-            match $crate::validate_pointer::<$type>(ptr) {
-                Ok(real_ptr) => Some(unsafe { &mut *(real_ptr as *mut $type) }),
-                Err(e) => {
-                    $crate::CimplError::from(e).set_last();
-                    return $err_val;
-                }
-            }
-        }
-    }};
-}
-
-/// Validate pointer and dereference mutably as an `Option`; NULL is `None`,
-/// any other error returns -1.
-#[deprecated(
-    note = "yields a reference whose validity ends with the call; use checkout_mut_option_or_return_int!, which holds the object alive for the borrow"
-)]
-#[macro_export]
-macro_rules! deref_mut_option_or_return_int {
-    ($ptr:expr, $type:ty) => {{
-        $crate::deref_mut_option_or_return!($ptr, $type, -1)
-    }};
-}
-
-// ----------------------------------------------------------------------------
-// Checkout Macros
-// Borrow a tracked object behind a guard
-// ----------------------------------------------------------------------------
-//
-// These replace the `deref_*` family. The difference is lifetime:
-// `deref_*` yields a plain reference whose validity ends
-// when the registry lock is released.
-// A checkout guard holds a claim on the entry, so the object stays alive until the guard drops.
-//
-// The guard derefs to the object, so `x.method()` and `&mut *x`.
-// Two differences at the call site: bind with `let mut` to call an `&mut self` method,
-// and reborrow with `&mut *x` when passing to a function with a trait bound such as `Read` or `Seek`.
-
-/// Borrow a tracked object for reading, or early-return with a custom value.
-///
-/// Yields a guard that derefs to `&$type`.
-// The borrow ends when the guard drops.
-///
-/// # Examples
-/// ```rust,ignore
-/// let value = checkout_or_return!(ptr, Type, -1);
-/// ```
-#[macro_export]
-macro_rules! checkout_or_return {
     ($ptr:expr, $type:ty, $err_val:expr) => {{
         let ptr = $ptr;
         if ptr.is_null() {
@@ -476,46 +258,50 @@ macro_rules! checkout_or_return {
     }};
 }
 
-/// Borrow a tracked object for reading, returning NULL on error.
+/// Validate pointer and dereference immutably, returning reference
+/// Returns NULL on error
+/// # Examples
+/// ```rust,ignore
+/// let value = deref_or_return_null!(ptr, Type);
+/// ```
 #[macro_export]
-macro_rules! checkout_or_return_null {
+macro_rules! deref_or_return_null {
     ($ptr:expr, $type:ty) => {{
-        $crate::checkout_or_return!($ptr, $type, std::ptr::null_mut())
+        $crate::deref_or_return!($ptr, $type, std::ptr::null_mut())
     }};
 }
 
-/// Borrow a tracked object for reading, returning -1 on error.
+/// Validate pointer and dereference immutably, returning reference
+/// Returns -1 on error
 #[macro_export]
-macro_rules! checkout_or_return_int {
+macro_rules! deref_or_return_int {
     ($ptr:expr, $type:ty) => {{
-        $crate::checkout_or_return!($ptr, $type, -1)
+        $crate::deref_or_return!($ptr, $type, -1)
     }};
 }
 
-/// Borrow a tracked object for reading, returning 0 on error.
+/// Validate pointer and dereference immutably, returning reference
+/// Returns 0 on error
 #[macro_export]
-macro_rules! checkout_or_return_zero {
+macro_rules! deref_or_return_zero {
     ($ptr:expr, $type:ty) => {{
-        $crate::checkout_or_return!($ptr, $type, 0)
+        $crate::deref_or_return!($ptr, $type, 0)
     }};
 }
 
-/// Borrow a tracked object for reading, returning false on error.
+/// Validate pointer and dereference immutably, returning reference
+/// Returns false on error
 #[macro_export]
-macro_rules! checkout_or_return_false {
+macro_rules! deref_or_return_false {
     ($ptr:expr, $type:ty) => {{
-        $crate::checkout_or_return!($ptr, $type, false)
+        $crate::deref_or_return!($ptr, $type, false)
     }};
 }
 
-/// Borrow a tracked object for writing, or early-return with a custom value.
-///
-/// Yields a guard that derefs to `&mut $type`.
-/// At most one borrow of any kind can exist at a time,
-///  so passing the same handle twice to one function
-/// fails with `PointerInUse` instead of aliasing.
+/// Validate pointer and dereference mutably, returning reference
+/// Returns early with custom value on error
 #[macro_export]
-macro_rules! checkout_mut_or_return {
+macro_rules! deref_mut_or_return {
     ($ptr:expr, $type:ty, $err_val:expr) => {{
         let ptr = $ptr;
         if ptr.is_null() {
@@ -532,30 +318,40 @@ macro_rules! checkout_mut_or_return {
     }};
 }
 
-/// Borrow a tracked object for writing, returning NULL on error.
+/// Validate pointer and dereference mutably, returning reference
+/// Returns NULL on error
 #[macro_export]
-macro_rules! checkout_mut_or_return_null {
+macro_rules! deref_mut_or_return_null {
     ($ptr:expr, $type:ty) => {{
-        $crate::checkout_mut_or_return!($ptr, $type, std::ptr::null_mut())
+        $crate::deref_mut_or_return!($ptr, $type, std::ptr::null_mut())
     }};
 }
 
-/// Borrow a tracked object for writing, returning -1 on error.
+/// Validate pointer and dereference mutably, returning reference
+/// Returns -1 on error
 #[macro_export]
-macro_rules! checkout_mut_or_return_int {
+macro_rules! deref_mut_or_return_int {
     ($ptr:expr, $type:ty) => {{
-        $crate::checkout_mut_or_return!($ptr, $type, -1)
+        $crate::deref_mut_or_return!($ptr, $type, -1)
     }};
 }
 
-/// Borrow a tracked object for writing, yielding `None` for a NULL, untracked,
-/// or wrong-type pointer. No error is set and no early return happens.
+/// Resolve a tracked pointer to its real address and dereference it
+/// mutably, returning `None` for NULL, untracked, or wrong-type pointers —
+/// no error is set, no early return happens.
 ///
-/// This is for internal code that decides for itself how to handle a missing
-/// value. FFI entry points should use `checkout_mut_or_return!` or
-/// `checkout_mut_option_or_return!` so C gets a proper error.
+/// This is for internal code (tests, cleanup paths) that decides for itself
+/// how to handle a missing value. FFI entry points taking pointers from C
+/// should use `checkout_mut_or_return!` (NULL is an error) or
+/// `deref_mut_option_or_return!` (NULL is a legitimate "not provided")
+/// instead, so C gets a proper error for a genuinely bad pointer.
+///
+/// # Examples
+/// ```rust,ignore
+/// let stream = deref_mut_option!(ptr, C2paStream).expect("always tracked here");
+/// ```
 #[macro_export]
-macro_rules! checkout_mut_option {
+macro_rules! deref_mut_option {
     ($ptr:expr, $type:ty) => {{
         let ptr = $ptr;
         if ptr.is_null() {
@@ -567,11 +363,19 @@ macro_rules! checkout_mut_option {
 }
 
 /// Borrow a tracked object for writing, yielding `None` if the pointer is
-/// NULL. Unlike `checkout_mut_or_return!`, NULL is not an error — this is for
-/// genuinely optional parameters. A non-NULL but invalid pointer still
-/// early-returns.
+/// NULL. Unlike `checkout_mut_or_return!`, NULL is not treated as an error —
+/// this is for parameters that are genuinely optional. A non-NULL but
+/// untracked, wrong-type, or already-borrowed pointer is still an early-return
+/// error.
+///
+/// # Examples
+/// ```rust,ignore
+/// if let Some(asset) = deref_mut_option_or_return!(asset_ptr, C2paStream, -1) {
+///     asset.do_something();
+/// }
+/// ```
 #[macro_export]
-macro_rules! checkout_mut_option_or_return {
+macro_rules! deref_mut_option_or_return {
     ($ptr:expr, $type:ty, $err_val:expr) => {{
         let ptr = $ptr;
         if ptr.is_null() {
@@ -591,9 +395,9 @@ macro_rules! checkout_mut_option_or_return {
 /// Borrow a tracked object for writing as an `Option`; NULL is `None`, any
 /// other error returns -1.
 #[macro_export]
-macro_rules! checkout_mut_option_or_return_int {
+macro_rules! deref_mut_option_or_return_int {
     ($ptr:expr, $type:ty) => {{
-        $crate::checkout_mut_option_or_return!($ptr, $type, -1)
+        $crate::deref_mut_option_or_return!($ptr, $type, -1)
     }};
 }
 
@@ -641,76 +445,8 @@ macro_rules! arc_tracked {
 /// let builder = untrack_or_return_null!(builder, C2paContextBuilder);
 /// box_tracked!(builder.into_shared())
 /// ```
-#[deprecated(
-    note = "assumes Box tracking and moves ownership out even while the object is borrowed; use take_owned_or_return!, which checks both"
-)]
 #[macro_export]
 macro_rules! untrack_or_return {
-    ($ptr:expr, $type:ty, $err_val:expr) => {{
-        $crate::ptr_or_return!($ptr, $err_val);
-        #[allow(deprecated)]
-        match $crate::untrack_pointer::<$type>($ptr) {
-            Ok(real_ptr) => *Box::from_raw(real_ptr as *mut $type),
-            Err(e) => {
-                $crate::CimplError::from(e).set_last();
-                return $err_val;
-            }
-        }
-    }};
-}
-
-/// Untrack a pointer and take ownership of the pointee, returning -1 on error.
-#[deprecated(note = "use take_owned_or_return_int!")]
-#[macro_export]
-macro_rules! untrack_or_return_int {
-    ($ptr:expr, $type:ty) => {{
-        #[allow(deprecated)]
-        $crate::untrack_or_return!($ptr, $type, -1)
-    }};
-}
-
-/// Untrack a pointer and take ownership of the pointee, returning NULL on error.
-#[deprecated(note = "use take_owned_or_return_null!")]
-#[macro_export]
-macro_rules! untrack_or_return_null {
-    ($ptr:expr, $type:ty) => {{
-        #[allow(deprecated)]
-        $crate::untrack_or_return!($ptr, $type, std::ptr::null_mut())
-    }};
-}
-
-// ----------------------------------------------------------------------------
-// Take-Ownership Macros - Move a tracked object out of the registry
-// ----------------------------------------------------------------------------
-//
-// These replace the `untrack_*` family. Two differences: ownership is refused
-// while the object is borrowed, and the allocator is chosen from the wrapper
-// the entry was tracked with rather than assumed to be `Box`. The expansion
-// contains no `unsafe`, so unlike `untrack_or_return!` these do not need to sit
-// inside an `unsafe` block.
-
-/// Take ownership of a tracked object, yielding it by value, or early-return
-/// with a custom value.
-///
-/// Removes the entry from the registry so it can't be double-freed or flagged
-/// as a leak, and reconstructs it through `untrack_owned`, which uses the
-/// allocator the object was tracked with. Because the result is an owned value
-/// rather than a pointer, any early return written *after* this macro drops it
-/// via ordinary scope-exit `Drop`, so the input is consumed the same way on
-/// every failure path.
-///
-/// Fails if the object is currently borrowed (`PointerInUse`) or was tracked
-/// as an `Arc` (`WrongWrapperKind`), where other clones may exist.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// // In c2pa_context_builder_set_signer — signer is moved into the builder:
-/// let signer = take_owned_or_return_int!(signer_ptr, C2paSigner);
-/// builder.set_signer(signer.signer);
-/// ```
-#[macro_export]
-macro_rules! take_owned_or_return {
     ($ptr:expr, $type:ty, $err_val:expr) => {{
         $crate::ptr_or_return!($ptr, $err_val);
         match $crate::untrack_owned::<$type>($ptr) {
@@ -723,21 +459,24 @@ macro_rules! take_owned_or_return {
     }};
 }
 
-/// Take ownership of a tracked object, returning -1 on error.
+/// Untrack a pointer and take ownership of the pointee, returning -1 on error.
 #[macro_export]
-macro_rules! take_owned_or_return_int {
+macro_rules! untrack_or_return_int {
     ($ptr:expr, $type:ty) => {{
-        $crate::take_owned_or_return!($ptr, $type, -1)
+        $crate::untrack_or_return!($ptr, $type, -1)
     }};
 }
 
-/// Take ownership of a tracked object, returning NULL on error.
+/// Untrack a pointer and take ownership of the pointee, returning NULL on error.
 #[macro_export]
-macro_rules! take_owned_or_return_null {
+macro_rules! untrack_or_return_null {
     ($ptr:expr, $type:ty) => {{
-        $crate::take_owned_or_return!($ptr, $type, std::ptr::null_mut())
+        $crate::untrack_or_return!($ptr, $type, std::ptr::null_mut())
     }};
 }
+
+
+
 
 /// Maximum length for C strings when using bounded conversion (64KB)
 pub const MAX_CSTRING_LEN: usize = 1048576;

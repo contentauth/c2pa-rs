@@ -31,7 +31,14 @@ use std::{
     },
 };
 
-use crate::{cimpl::cimpl_error::CimplError, error::Error, maybe_send_sync::MaybeSend};
+use crate::{
+    cimpl::{
+        cimpl_error::CimplError,
+        shared_counter::{fallback::LocalCounter, SharedCounter},
+    },
+    error::Error,
+    maybe_send_sync::MaybeSend,
+};
 
 // ============================================================================
 // Pointer Registry - Tracks pointers with their cleanup functions
@@ -91,6 +98,45 @@ fn current_pid() -> u32 {
 /// Sentinel `claims` value for a single exclusive borrow.
 #[allow(dead_code)] // Read by the checkout paths added in step 2.
 const EXCLUSIVE: usize = usize::MAX;
+
+// Hand-written because a cleanup closure has no Debug. Reports whether the
+// closure is still armed rather than trying to show it, and prints the real
+// address so a debugger session can be pointed at the object behind a handle.
+impl std::fmt::Debug for EntryInner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let claims = self.claims.load(Ordering::Relaxed);
+        f.debug_struct("EntryInner")
+            .field("real_addr", &format_args!("0x{:x}", self.real_addr))
+            .field("type_id", &self.type_id)
+            .field("wrapper", &self.wrapper)
+            .field(
+                "claims",
+                &match claims {
+                    0 => "free".to_string(),
+                    EXCLUSIVE => "exclusive".to_string(),
+                    n => format!("{n} shared"),
+                },
+            )
+            .field(
+                "cleanup",
+                // try_lock: Debug must never block, and a poisoned or contended
+                // lock is itself worth seeing in a dump.
+                &match self.cleanup.try_lock() {
+                    Ok(guard) => {
+                        if guard.is_some() {
+                            "armed"
+                        } else {
+                            "defused"
+                        }
+                    }
+                    Err(std::sync::TryLockError::Poisoned(_)) => "poisoned",
+                    Err(std::sync::TryLockError::WouldBlock) => "locked",
+                },
+            )
+            .field("owner_pid", &self.owner_pid)
+            .finish()
+    }
+}
 
 impl Drop for EntryInner {
     fn drop(&mut self) {
@@ -205,22 +251,59 @@ const ID_MULTIPLIER: usize = 0x9e3779b9;
 #[cfg(not(any(target_pointer_width = "64", target_pointer_width = "32")))]
 compile_error!("PointerRegistry's handle scrambling needs a 32- or 64-bit usize");
 
-/// Turns a plain sequential counter value into a scrambled, always-odd
-/// handle id.
+/// Bits of each id reserved for the instance tag, which names the loaded copy
+/// of this crate that minted it.
+const TAG_BITS: u32 = 8;
+
+/// Where the tag sits once the counter's top bit is folded away by the
+/// `2c + 1` step.
+const TAG_SHIFT: u32 = usize::BITS - 1 - TAG_BITS;
+
+/// Largest counter value that fits below the tag.
+const MAX_COUNTER: usize = (1usize << TAG_SHIFT) - 1;
+
+/// Multiplicative inverse of `ID_MULTIPLIER` modulo `2^usize::BITS`, which
+/// exists because the multiplier is odd. Recovers the tag from an id.
+const ID_MULTIPLIER_INVERSE: usize = {
+    // Newton iteration: each step doubles the number of correct bits, and the
+    // seed is already correct to 3 bits, so 5 steps cover 64.
+    let mut inverse = ID_MULTIPLIER;
+    let mut step = 0;
+    while step < 5 {
+        inverse = inverse.wrapping_mul(2usize.wrapping_sub(ID_MULTIPLIER.wrapping_mul(inverse)));
+        step += 1;
+    }
+    inverse
+};
+
+/// Turns an instance tag and a sequential counter value into a scrambled,
+/// always-odd handle id.
 ///
 /// - **Always odd (and therefore never zero)**: real Rust allocations
 ///   always land on at least a 2-byte boundary, so their addresses are
 ///   always even. An odd id can therefore never collide with a real tracked
 ///   buffer address (see `track_by_address`).
-/// - **Distinct within a `2^(usize::BITS - 1)` window, not fully bijective**:
-///   `counter * 2 + 1` folds the counter's top bit, so `counter` and
-///   `counter + 2^(usize::BITS - 1)` scramble to the same id. Ids repeat after
-///   `2^(usize::BITS - 1)` allocations — 2^63 on 64-bit (unreachable), ~2.1
-///   billion on 32-bit (wasm32 included). `track_by_id` asserts against that
-///   bound on 32-bit.
-fn scramble_to_odd_id(counter: usize) -> usize {
-    let odd = counter.wrapping_mul(2).wrapping_add(1);
+/// - **Carries its minting registry's tag**, recoverable with
+///   `tag_of_id`, so a handle from another loaded copy of this crate can be
+///   named rather than reported as untracked.
+/// - **Distinct within a `2^TAG_SHIFT` window, not fully bijective**:
+///   `counter * 2 + 1` folds the top bit, and the tag occupies the
+///   `TAG_BITS` below it, so ids repeat after `2^TAG_SHIFT` allocations —
+///   2^55 on 64-bit (unreachable) and 2^23, about 8.4 million, on 32-bit.
+///   `track_by_id` asserts against that bound.
+fn scramble_to_odd_id(tag: u16, counter: usize) -> usize {
+    let packed = ((tag as usize) << TAG_SHIFT) | (counter & MAX_COUNTER);
+    let odd = packed.wrapping_mul(2).wrapping_add(1);
     odd.wrapping_mul(ID_MULTIPLIER)
+}
+
+/// Recovers the instance tag from an id minted by `scramble_to_odd_id`.
+///
+/// Meaningful only for a genuine id. An arbitrary integer decodes to some tag
+/// too, so this distinguishes handles, it does not validate them.
+fn tag_of_id(id: usize) -> u16 {
+    let packed = id.wrapping_mul(ID_MULTIPLIER_INVERSE).wrapping_sub(1) / 2;
+    ((packed >> TAG_SHIFT) & ((1 << TAG_BITS) - 1)) as u16
 }
 
 /// Registry that tracks pointers allocated from Rust and passed to C.
@@ -250,9 +333,10 @@ fn scramble_to_odd_id(counter: usize) -> usize {
 pub struct PointerRegistry {
     tracked: Mutex<HashMap<usize, Arc<EntryInner>>>,
     next_id: AtomicUsize,
-    /// The process that created the registry, so a forked child can refuse
-    /// every operation rather than corrupting shared state.
+    /// The process that created the registry.
     owner_pid: u32,
+    /// Names this loaded copy of the crate in every id.
+    instance_tag: u16,
 }
 
 impl PointerRegistry {
@@ -261,6 +345,7 @@ impl PointerRegistry {
             tracked: Mutex::new(HashMap::new()),
             next_id: AtomicUsize::new(0),
             owner_pid: current_pid(),
+            instance_tag: LocalCounter.claim_tag(),
         }
     }
 
@@ -279,9 +364,12 @@ impl PointerRegistry {
             return 0;
         }
         let counter = self.next_id.fetch_add(1, Ordering::Relaxed);
-        #[cfg(target_pointer_width = "32")]
-        assert!(counter < (usize::MAX >> 1), "PointerRegistry id space exhausted");
-        let id = scramble_to_odd_id(counter);
+        // The tag steals bits from the counter, so the wraparound bound is
+        // tighter than the old usize::MAX >> 1: past MAX_COUNTER the counter
+        // folds back and ids repeat. Unreachable on 64-bit (2^55) and about
+        // 8.4 million on 32-bit.
+        assert!(counter <= MAX_COUNTER, "PointerRegistry id space exhausted");
+        let id = scramble_to_odd_id(self.instance_tag, counter);
         let entry = Arc::new(EntryInner {
             real_addr,
             type_id,
@@ -350,9 +438,6 @@ impl PointerRegistry {
     /// Resolve a handle id to its real address, validating it is tracked
     /// with the expected type.
     #[must_use = "the id passed in is not a usable pointer, only the returned address is"]
-    #[deprecated(
-        note = "the returned address stops being valid when this call returns; use checkout_shared or checkout_exclusive, which hold the object alive for the borrow"
-    )]
     pub fn resolve(&self, id: usize, expected_type: TypeId) -> Result<usize, Error> {
         self.check_same_process()?;
         if id == 0 {
@@ -402,7 +487,19 @@ impl PointerRegistry {
         match tracked.get(&id) {
             Some(entry) if entry.type_id == expected_type => Ok(Arc::clone(entry)),
             Some(_) => Err(Error::from(CimplError::wrong_pointer_type(id as u64))),
-            None => Err(Error::from(CimplError::untracked_pointer(id as u64))),
+            None => Err(self.miss_error(id)),
+        }
+    }
+
+    /// Explains a lookup miss. An id carrying another copy's tag was minted by
+    /// a different registry, which is a different fault from a stale handle and
+    /// would otherwise be indistinguishable from one.
+    fn miss_error(&self, id: usize) -> Error {
+        let tag = tag_of_id(id);
+        if tag == self.instance_tag {
+            Error::from(CimplError::untracked_pointer(id as u64))
+        } else {
+            Error::from(CimplError::foreign_registry_pointer(tag))
         }
     }
 
@@ -695,11 +792,7 @@ pub fn track_arc_mutex<T: 'static + MaybeSend>(ptr: *mut Mutex<T>) -> *mut Mutex
 /// the real pointer to dereference (the value passed in is an opaque handle
 /// id, not the real address — see `PointerRegistry::track_by_id`).
 #[must_use = "the handle passed in is not a usable pointer, only the returned one is"]
-#[deprecated(
-    note = "the returned pointer stops being valid when this call returns, so a concurrent free can leave it dangling; use checkout_shared or checkout_exclusive"
-)]
 pub fn validate_pointer<T: 'static>(ptr: *mut T) -> Result<*mut T, Error> {
-    #[allow(deprecated)] // Both are superseded together.
     let real_addr = get_registry().resolve(ptr as usize, TypeId::of::<T>())?;
     Ok(real_addr as *mut T)
 }
@@ -760,9 +853,6 @@ pub fn checkout_exclusive<T: 'static>(ptr: *mut T) -> Result<TypedExclusive<T>, 
 /// // C2paSigner wrapper dropped here — no double-free risk
 /// ```
 #[must_use = "dropping the returned pointer leaks the allocation"]
-#[deprecated(
-    note = "returns a raw pointer the caller must pair with the right allocator; use untrack_owned, which yields the value itself"
-)]
 pub fn untrack_pointer<T: 'static>(ptr: *mut T) -> Result<*mut T, Error> {
     let (real_addr, _wrapper) = get_registry().untrack(ptr as usize, TypeId::of::<T>(), None)?;
     Ok(real_addr as *mut T)
@@ -1007,9 +1097,6 @@ pub fn to_c_bytes(bytes: Vec<u8>) -> *const c_uchar {
 }
 
 #[cfg(test)]
-// untrack_pointer and validate_pointer are deprecated but still supported, so
-// their coverage stays.
-#[allow(deprecated)]
 mod tests {
     use super::*;
 
@@ -1202,6 +1289,87 @@ mod tests {
         assert!(!FREED.load(Ordering::SeqCst));
         assert_eq!(cimpl_free(ptr as *mut std::ffi::c_void), 0);
         assert!(FREED.load(Ordering::SeqCst), "parent free stopped working");
+    }
+
+    #[test]
+    fn test_entry_debug_reports_claim_and_cleanup_state() {
+        let ptr = track_box(Box::into_raw(Box::new(1i32)));
+        let entry = get_registry()
+            .tracked
+            .lock()
+            .unwrap()
+            .get(&(ptr as usize))
+            .cloned()
+            .expect("just tracked");
+
+        let free = format!("{entry:?}");
+        assert!(free.contains("claims: \"free\""), "got {free}");
+        assert!(free.contains("cleanup: \"armed\""), "got {free}");
+
+        let guard = checkout_shared::<i32>(ptr).unwrap();
+        let shared = format!("{entry:?}");
+        assert!(shared.contains("claims: \"1 shared\""), "got {shared}");
+        drop(guard);
+
+        let guard = checkout_exclusive::<i32>(ptr).unwrap();
+        let exclusive = format!("{entry:?}");
+        assert!(exclusive.contains("claims: \"exclusive\""), "got {exclusive}");
+        drop(guard);
+
+        drop(entry);
+        cimpl_free(ptr as *mut std::ffi::c_void);
+    }
+
+    #[test]
+    fn test_id_carries_its_instance_tag() {
+        // Every tag must survive the scramble, for counters across the range.
+        for tag in [0u16, 1, 7, 255] {
+            for counter in [0usize, 1, 2, 1000, 1 << 20, MAX_COUNTER] {
+                let id = scramble_to_odd_id(tag, counter);
+                assert_eq!(tag_of_id(id), tag, "tag {tag} lost at counter {counter}");
+                assert_eq!(id % 2, 1, "id must stay odd to avoid address keys");
+            }
+        }
+    }
+
+    #[test]
+    fn test_foreign_tag_reported_as_foreign_not_untracked() {
+        // A handle from another loaded copy is a different fault from a stale
+        // one, and reporting it as untracked sends the reader hunting a
+        // lifetime bug that is not there.
+        let own_tag = get_registry().instance_tag;
+        let foreign_id = scramble_to_odd_id(own_tag.wrapping_add(1), 42);
+
+        let Err(err) = checkout_shared::<i32>(foreign_id as *mut i32) else {
+            panic!("a foreign id must not resolve");
+        };
+        assert!(
+            err.to_string().starts_with("ForeignRegistryPointer:"),
+            "expected ForeignRegistryPointer, got {err}"
+        );
+
+        // An id with our own tag that was never tracked stays untracked.
+        let stale_id = scramble_to_odd_id(own_tag, MAX_COUNTER - 1);
+        let Err(err) = checkout_shared::<i32>(stale_id as *mut i32) else {
+            panic!("an untracked id must not resolve");
+        };
+        // Code 3 has no C2paError variant, so it arrives wrapped as Other.
+        // That is pre-existing and not what this test is about; what matters is
+        // that it is not reported as foreign.
+        assert!(
+            err.to_string().contains("UntrackedPointer:"),
+            "expected UntrackedPointer, got {err}"
+        );
+    }
+
+    #[test]
+    fn test_tag_does_not_collide_with_tracked_addresses() {
+        // The odd/even split still holds with a tag packed in: a tagged id must
+        // never look like a real allocation address.
+        let ptr = track_box(Box::into_raw(Box::new(1i32)));
+        assert_eq!(ptr as usize % 2, 1, "handle ids must be odd");
+        assert!(validate_pointer::<i32>(ptr).is_ok());
+        cimpl_free(ptr as *mut std::ffi::c_void);
     }
 
     #[test]
