@@ -118,6 +118,15 @@ impl CimplError {
         Self::new(5, format!("Other: {}", msg.into()))
     }
 
+    /// A registry call was made from a process that did not create the
+    /// registry, which happens after `fork()` without an `exec()`.
+    pub fn foreign_process() -> Self {
+        Self::new(
+            10,
+            "ForeignProcess: handles cannot be used in a forked child".to_string(),
+        )
+    }
+
     /// Ownership was requested for a handle tracked as an `Arc`, where other
     /// clones may exist, so no single owner can be handed back.
     pub fn wrong_wrapper_kind() -> Self {

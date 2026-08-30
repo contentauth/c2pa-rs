@@ -66,6 +66,26 @@ struct EntryInner {
     /// `Option` so `untrack` can take the closure out through a shared `Arc`,
     /// leaving nothing for `Drop` to run.
     cleanup: Mutex<Option<CleanupFn>>,
+    /// The process that created this entry. A forked child inherits the map by
+    /// copy-on-write, so without this it would free memory the parent still
+    /// owns. Plain `u32`: written once at construction, read-only after.
+    owner_pid: u32,
+}
+
+/// The current process id.
+///
+/// Never cache this. It costs roughly 2.4ns (*measured*), and a cached value
+/// returns the parent's id in a forked child, silently defeating every check
+/// below. On wasm32 there is no fork, so a constant is correct.
+#[cfg(not(target_arch = "wasm32"))]
+fn current_pid() -> u32 {
+    // SAFETY: getpid takes no arguments and cannot fail.
+    unsafe { libc::getpid() as u32 }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn current_pid() -> u32 {
+    0
 }
 
 /// Sentinel `claims` value for a single exclusive borrow.
@@ -74,10 +94,26 @@ const EXCLUSIVE: usize = usize::MAX;
 
 impl Drop for EntryInner {
     fn drop(&mut self) {
-        // Never drop an Arc<EntryInner> while holding the registry lock.
-        // Dropping the last one runs a cleanup closure, and a closure that
-        // re-enters the registry then deadlocks against the non-reentrant
+        // Callers: never drop an Arc<EntryInner> while holding the registry
+        // lock. Dropping the last one runs a cleanup closure, and a closure
+        // that re-enters the registry then deadlocks against the non-reentrant
         // Mutex. Collect entries, release the lock, and let them drop after.
+
+        // A forked child inherits every entry. Running cleanup here would free
+        // an allocation the parent still owns and release external resources
+        // (file descriptors, sockets) twice. This check is separate from the
+        // one on PointerRegistry because this path reaches Drop by dropping an
+        // inherited Arc, without any registry call to intercept.
+        //
+        // Skipping is bounded: an exec() replaces the address space, exit
+        // reclaims it, and a long-lived child retains only what it inherited at
+        // fork time.
+        if self.owner_pid != current_pid() {
+            if let Ok(mut cleanup) = self.cleanup.lock() {
+                std::mem::forget(cleanup.take());
+            }
+            return;
+        }
         if let Some(mut cleanup) = self.cleanup.get_mut().ok().and_then(|c| c.take()) {
             // A cleanup closure runs caller-supplied code. Unwinding out of
             // here would cross the extern "C" boundary, which is undefined
@@ -214,6 +250,9 @@ fn scramble_to_odd_id(counter: usize) -> usize {
 pub struct PointerRegistry {
     tracked: Mutex<HashMap<usize, Arc<EntryInner>>>,
     next_id: AtomicUsize,
+    /// The process that created the registry, so a forked child can refuse
+    /// every operation rather than corrupting shared state.
+    owner_pid: u32,
 }
 
 impl PointerRegistry {
@@ -221,6 +260,7 @@ impl PointerRegistry {
         Self {
             tracked: Mutex::new(HashMap::new()),
             next_id: AtomicUsize::new(0),
+            owner_pid: current_pid(),
         }
     }
 
@@ -248,6 +288,7 @@ impl PointerRegistry {
             wrapper,
             claims: AtomicUsize::new(0),
             cleanup: Mutex::new(Some(cleanup)),
+            owner_pid: current_pid(),
         });
         if let Ok(mut tracked) = self.tracked.lock() {
             // Ids come from a counter that never repeats within its period, so
@@ -284,6 +325,7 @@ impl PointerRegistry {
                 wrapper: Wrapper::Boxed,
                 claims: AtomicUsize::new(0),
                 cleanup: Mutex::new(Some(cleanup)),
+                owner_pid: current_pid(),
             });
             if let Ok(mut tracked) = self.tracked.lock() {
                 if let Some(previous) = tracked.insert(real_addr, entry) {
@@ -308,7 +350,11 @@ impl PointerRegistry {
     /// Resolve a handle id to its real address, validating it is tracked
     /// with the expected type.
     #[must_use = "the id passed in is not a usable pointer, only the returned address is"]
+    #[deprecated(
+        note = "the returned address stops being valid when this call returns; use checkout_shared or checkout_exclusive, which hold the object alive for the borrow"
+    )]
     pub fn resolve(&self, id: usize, expected_type: TypeId) -> Result<usize, Error> {
+        self.check_same_process()?;
         if id == 0 {
             return Err(Error::from(CimplError::null_parameter("pointer")));
         }
@@ -324,9 +370,28 @@ impl PointerRegistry {
         }
     }
 
+    /// Refuse a registry call made from a process that did not create the
+    /// registry, which happens after `fork()` without an `exec()`.
+    ///
+    /// Call this *before* taking the `tracked` lock. A child of a
+    /// multi-threaded fork inherits the mutex in whatever state it had at fork
+    /// time; if another thread held it, no thread in the child can ever release
+    /// it, so taking the lock is itself the hazard.
+    ///
+    /// This covers only the methods that call it. Cleanup runs from
+    /// `EntryInner::drop`, which takes no lock and needs no registry call, so
+    /// it carries its own per-entry check.
+    fn check_same_process(&self) -> Result<(), Error> {
+        if self.owner_pid != current_pid() {
+            return Err(Error::from(CimplError::foreign_process()));
+        }
+        Ok(())
+    }
+
     /// Look up an entry and clone its `Arc`, checking the expected type.
     /// Shared by both checkout paths so the lock is taken once.
     fn lookup(&self, id: usize, expected_type: TypeId) -> Result<Arc<EntryInner>, Error> {
+        self.check_same_process()?;
         if id == 0 {
             return Err(Error::from(CimplError::null_parameter("pointer")));
         }
@@ -416,6 +481,7 @@ impl PointerRegistry {
         expected_type: TypeId,
         required: Option<Wrapper>,
     ) -> Result<(usize, Wrapper), Error> {
+        self.check_same_process()?;
         if id == 0 {
             return Err(Error::from(CimplError::null_parameter("pointer")));
         }
@@ -460,6 +526,7 @@ impl PointerRegistry {
 
     /// Free a tracked entry by calling its cleanup function
     pub fn free(&self, key: usize) -> Result<(), Error> {
+        self.check_same_process()?;
         if key == 0 {
             return Ok(()); // NULL is always safe
         }
@@ -501,6 +568,12 @@ impl PointerRegistry {
 /// memory management bugs during development and integration testing.
 impl Drop for PointerRegistry {
     fn drop(&mut self) {
+        // A forked child inherits the whole map. Reporting it would print a
+        // spurious leak report from every child, and the entries are not this
+        // process's to account for.
+        if self.owner_pid != current_pid() {
+            return;
+        }
         // Take the entries out and release the lock before they drop: each one
         // may run a cleanup closure that re-enters the registry.
         let leaked = {
@@ -622,7 +695,11 @@ pub fn track_arc_mutex<T: 'static + MaybeSend>(ptr: *mut Mutex<T>) -> *mut Mutex
 /// the real pointer to dereference (the value passed in is an opaque handle
 /// id, not the real address — see `PointerRegistry::track_by_id`).
 #[must_use = "the handle passed in is not a usable pointer, only the returned one is"]
+#[deprecated(
+    note = "the returned pointer stops being valid when this call returns, so a concurrent free can leave it dangling; use checkout_shared or checkout_exclusive"
+)]
 pub fn validate_pointer<T: 'static>(ptr: *mut T) -> Result<*mut T, Error> {
+    #[allow(deprecated)] // Both are superseded together.
     let real_addr = get_registry().resolve(ptr as usize, TypeId::of::<T>())?;
     Ok(real_addr as *mut T)
 }
@@ -1037,6 +1114,94 @@ mod tests {
         assert!(result.is_err());
 
         unsafe { drop(Box::from_raw(real_ptr)) };
+    }
+
+    /// Runs `child` in a forked process and returns its exit code.
+    ///
+    /// Deliberately does not exec: that is the case these tests are about, and
+    /// what `multiprocessing`'s default start method does on Linux.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn in_forked_child(child: impl FnOnce()) -> i32 {
+        // SAFETY: the child only runs the closure and exits.
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0, "fork failed");
+        if pid == 0 {
+            child();
+            // _exit, not exit: skip atexit handlers and static destructors, so
+            // the child cannot run the parent's cleanup on the way out.
+            unsafe { libc::_exit(0) };
+        }
+        let mut status = 0;
+        // SAFETY: pid is a child of this process and status is a valid pointer.
+        unsafe { libc::waitpid(pid, &mut status, 0) };
+        assert!(libc::WIFEXITED(status), "child did not exit normally");
+        libc::WEXITSTATUS(status)
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn test_forked_child_registry_calls_are_refused() {
+        let ptr = track_box(Box::into_raw(Box::new(1i32)));
+        let addr = ptr as usize;
+
+        let code = in_forked_child(move || {
+            let ptr = addr as *mut i32;
+            // Every entry point must refuse rather than take the inherited
+            // lock, which may have been held by another thread at fork time.
+            if checkout_shared::<i32>(ptr).is_ok() {
+                unsafe { libc::_exit(1) };
+            }
+            if untrack_owned::<i32>(ptr).is_ok() {
+                unsafe { libc::_exit(2) };
+            }
+            if cimpl_free(ptr as *mut std::ffi::c_void) == 0 {
+                unsafe { libc::_exit(3) };
+            }
+        });
+
+        assert_eq!(code, 0, "a child call succeeded instead of being refused");
+        // The parent's handle is untouched.
+        assert_eq!(cimpl_free(ptr as *mut std::ffi::c_void), 0);
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn test_forked_child_dropping_inherited_entry_does_not_free() {
+        // The load-bearing case: a child that makes no registry call at all.
+        // Dropping any inherited Arc reaches EntryInner::drop directly, so an
+        // entry-point-only check would miss this and free the parent's memory.
+        use std::sync::atomic::AtomicBool;
+
+        static FREED: AtomicBool = AtomicBool::new(false);
+        struct Sentinel;
+        impl Drop for Sentinel {
+            fn drop(&mut self) {
+                FREED.store(true, Ordering::SeqCst);
+            }
+        }
+
+        FREED.store(false, Ordering::SeqCst);
+        let ptr = track_box(Box::into_raw(Box::new(Sentinel)));
+        let addr = ptr as usize;
+
+        let code = in_forked_child(move || {
+            // Force the entry to drop in the child by taking the last Arc out
+            // of the inherited map, bypassing the entry-point checks entirely.
+            {
+                let mut tracked = get_registry().tracked.lock().unwrap();
+                let entry = tracked.remove(&addr);
+                drop(tracked);
+                drop(entry); // EntryInner::drop runs here, in the child.
+            }
+            if FREED.load(Ordering::SeqCst) {
+                unsafe { libc::_exit(1) };
+            }
+        });
+
+        assert_eq!(code, 0, "the child ran cleanup on the parent's allocation");
+        assert!(!FREED.load(Ordering::SeqCst));
+        assert_eq!(cimpl_free(ptr as *mut std::ffi::c_void), 0);
+        assert!(FREED.load(Ordering::SeqCst), "parent free stopped working");
     }
 
     #[test]
