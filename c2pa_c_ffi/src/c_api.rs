@@ -2549,6 +2549,19 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
 /// enough, possibly being re-used and called multiple times. The callback is logically
 /// owned by the host/caller.
 ///
+/// # Callback contract
+///
+/// The callback must not block indefinitely. While it runs, the handles the
+/// signing operation borrowed stay borrowed, so a callback that never returns
+/// leaves them unfreeable for the life of the process — and no other thread can
+/// recover them, because only the blocked callback can end the wait. This
+/// matters most here, where a signing callback often performs network work.
+///
+/// Apply your own timeout inside the callback and return a negative value when
+/// it expires. That path is already handled: the error propagates out, each
+/// borrow is released as its guard drops, and every handle stays tracked and
+/// freeable.
+///
 /// # Example
 /// ```c
 /// auto result = c2pa_signer_create(callback, alg, certs, tsa_url);
@@ -2930,6 +2943,71 @@ mod tests {
         unsafe { c2pa_free(error as *const c_void) };
         let error = error_owned;
         assert_eq!(error.to_str().unwrap(), "Other: Invalid signing algorithm");
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_failing_callback_leaves_handles_freeable() {
+        // A callback that fails mid-operation is the path a caller-side timeout
+        // takes. Every borrow must be released and every handle still freeable,
+        // otherwise a timeout would trade a hang for a leak.
+        use crate::{c2pa_create_stream, checkout_exclusive, C2paSeekMode, StreamContext};
+
+        unsafe extern "C" fn failing_read(
+            _ctx: *mut StreamContext,
+            _data: *mut u8,
+            _len: isize,
+        ) -> isize {
+            -1
+        }
+        unsafe extern "C" fn noop_seek(
+            _ctx: *mut StreamContext,
+            _offset: isize,
+            _mode: C2paSeekMode,
+        ) -> isize {
+            0
+        }
+        unsafe extern "C" fn noop_write(
+            _ctx: *mut StreamContext,
+            _data: *const u8,
+            len: isize,
+        ) -> isize {
+            len
+        }
+        unsafe extern "C" fn noop_flush(_ctx: *mut StreamContext) -> isize {
+            0
+        }
+
+        let context = box_tracked!(()) as *mut StreamContext;
+        let source = unsafe {
+            c2pa_create_stream(context, failing_read, noop_seek, noop_write, noop_flush)
+        };
+        let mut dest_stream = TestStream::new(Vec::new());
+
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+
+        let format = CString::new("image/jpeg").unwrap();
+        let mut manifest_bytes_ptr = std::ptr::null();
+        let result = unsafe {
+            c2pa_builder_sign(
+                builder,
+                format.as_ptr(),
+                source,
+                dest_stream.as_ptr(),
+                signer,
+                &mut manifest_bytes_ptr,
+            )
+        };
+        assert_eq!(result, -1, "a failing read callback must fail the sign");
+
+        // Borrows were released, so each handle can still be checked out and
+        // freed. A leaked borrow would make these fail.
+        assert!(checkout_exclusive::<C2paBuilder>(builder).is_ok());
+        assert!(checkout_exclusive::<C2paSigner>(signer).is_ok());
+        assert_eq!(unsafe { c2pa_free(source as *const c_void) }, 0);
+        assert_eq!(unsafe { c2pa_free(context as *const c_void) }, 0);
+        unsafe { c2pa_builder_free(builder) };
+        unsafe { c2pa_signer_free(signer) };
     }
 
     #[test]
