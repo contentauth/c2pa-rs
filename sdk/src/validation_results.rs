@@ -21,7 +21,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     assertion::AssertionBase,
     assertions::Ingredient,
-    jumbf::labels::manifest_label_from_uri,
+    jumbf::labels::{self, manifest_label_from_uri},
+    spec_versions::C2PA_VALIDATOR_VERSION,
     status_tracker::{LogKind, StatusTracker},
     store::Store,
     validation_status::{self, log_kind, ValidationStatus},
@@ -104,7 +105,7 @@ impl StatusCodes {
 ///
 /// The map contains the validation results for the active manifest and any ingredient deltas.
 /// It is normal for there to be many
-#[derive(Clone, Serialize, Default, Deserialize, Debug, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct ValidationResults {
     /// Validation status codes for the ingredient's active manifest. Present if ingredient is a C2PA
@@ -117,9 +118,58 @@ pub struct ValidationResults {
     #[serde(rename = "ingredientDeltas", skip_serializing_if = "Option::is_none")]
     ingredient_deltas: Option<Vec<IngredientDeltaValidationResult>>,
 
+    /// The version of the specification against which the validation was performed (SemVer formatted string).
+    #[serde(rename = "specVersion", skip_serializing_if = "Option::is_none")]
+    spec_version: Option<String>,
+
+    /// URI to the trust list that was used to validate manifests signing certificate.
+    #[serde(rename = "trustListUri", skip_serializing_if = "Option::is_none")]
+    trust_list_uri: Option<String>,
+
+    /// URI to the trust list use to validate the time-stamp.
+    #[serde(rename = "timestampTrustListUri", skip_serializing)]
+    timestamp_trust_list_uri: Option<String>,
+
     /// Time when the validation was performed (RFC 3339 date-time). Used only for document-level validationInfo; not serialized in validationResults (e.g. ingredient assertions).
     #[serde(rename = "validationTime", skip_serializing)]
     validation_time: Option<String>,
+}
+
+impl Default for ValidationResults {
+    fn default() -> Self {
+        Self {
+            active_manifest: None,
+            ingredient_deltas: None,
+            spec_version: Some(C2PA_VALIDATOR_VERSION.to_string()),
+            trust_list_uri: None,
+            validation_time: None,
+            timestamp_trust_list_uri: None,
+        }
+    }
+}
+
+/// Prefix shared by every CAWG X.509 identity assertion status code (for
+/// example, `cawg.x509.credential.untrusted`, `cawg.x509.signature.mismatch`).
+const CAWG_X509_STATUS_PREFIX: &str = "cawg.x509.";
+
+/// Returns `true` if a failure with `code` is scoped to an individual
+/// credential or CAWG identity assertion and does not by itself render the
+/// enclosing manifest invalid.
+///
+/// This covers the C2PA claim signature's untrusted-credential failure
+/// (`signingCredential.untrusted`) and every CAWG X.509 identity assertion
+/// failure code (all of which share the `cawg.x509.` prefix). A CAWG X.509
+/// identity assertion is supplementary content layered on top of the C2PA
+/// manifest -- much like a CAWG identity claims aggregation (ICA) issuer-trust
+/// failure (`cawg.ica.untrusted_issuer`, which is scoped out via its
+/// `LogKind::Informational` rather than appearing in `.failure()` at all) --
+/// so none of its failures should, by themselves, make the enclosing
+/// manifest invalid.
+///
+/// See [`ValidationResults::validation_state`] and [`ValidationFailureSummary`].
+fn is_tolerated_manifest_failure_code(code: &str) -> bool {
+    code == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
+        || code.starts_with(CAWG_X509_STATUS_PREFIX)
 }
 
 impl ValidationResults {
@@ -131,6 +181,26 @@ impl ValidationResults {
             .iter()
             .filter_map(ValidationStatus::from_log_item)
             .collect();
+
+        // Find out the trust list URI for trusted signing credentials or TSA
+        for status in &statuses {
+            if status.code() == validation_status::SIGNING_CREDENTIAL_TRUSTED {
+                if let Some(trust_list_uri) = status.trust_list_uri() {
+                    if let Some(item_uri) = status.url() {
+                        // Filter out CAWG results
+                        if item_uri.ends_with(labels::SIGNATURE) {
+                            results.trust_list_uri = Some(trust_list_uri.into());
+                        }
+                    }
+                }
+            }
+
+            if status.code() == validation_status::TIMESTAMP_TRUSTED {
+                if let Some(timestamp_trust_list_uri) = status.trust_list_uri() {
+                    results.timestamp_trust_list_uri = Some(timestamp_trust_list_uri.into());
+                }
+            }
+        }
 
         // Filter out any status that is already captured in an ingredient assertion.
         // There is always an active manifest in a manifest store; ensure active_manifest is set
@@ -250,6 +320,11 @@ impl ValidationResults {
             // credential's `cawg.ica.credential_valid` success code is withheld),
             // so it never appears among the failures examined below.
             //
+            // An untrusted C2PA claim signature credential
+            // (`signingCredential.untrusted`), and every CAWG X.509 identity
+            // assertion failure code, is likewise tolerated here -- see
+            // [`is_tolerated_manifest_failure_code`].
+            //
             // https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_valid_manifest
             let is_valid = active_manifest
                 // First check if the claim is valid and the certificate hasn't expired.
@@ -259,20 +334,23 @@ impl ValidationResults {
                 && active_manifest.success().iter().any(|status| {
                     status.code() == validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY
                 })
-                // Then check if the manifest contains either no failures or that it's only untrusted.
+                // Then check if the manifest contains either no failures or that they're
+                // all tolerated failures.
                 && (active_manifest.failure().is_empty()
-                    || active_manifest.failure().iter().all(|status| {
-                        status.code() == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
-                    }))
-                // Finally check if the ingredients contain either no failures or the only failure is
-                // that the ingredient is untrusted.
+                    || active_manifest
+                        .failure()
+                        .iter()
+                        .all(|status| is_tolerated_manifest_failure_code(status.code())))
+                // Finally check if the ingredients contain either no failures or the only
+                // failures are tolerated failures.
                 && self.ingredient_deltas.as_ref().iter().all(|deltas| {
                     deltas.iter().all(|idv| {
                         let deltas = idv.validation_deltas();
                         deltas.failure().is_empty()
-                            || deltas.failure().iter().all(|status| {
-                                status.code() == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
-                            })
+                            || deltas
+                                .failure()
+                                .iter()
+                                .all(|status| is_tolerated_manifest_failure_code(status.code()))
                     })
                 });
 
@@ -419,8 +497,23 @@ impl ValidationResults {
 
 impl Display for ValidationResults {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let spec_version = self.spec_version.as_deref().unwrap_or("unknown");
+        writeln!(f, "spec validation version: {spec_version}")?;
+
         let state = self.validation_state();
-        writeln!(f, "state: {state:?}")?;
+        if state == ValidationState::Trusted {
+            writeln!(
+                f,
+                "state: {state:?}, trustListUri: {}",
+                self.trust_list_uri.as_deref().unwrap_or("none")
+            )?;
+        } else {
+            writeln!(f, "state: {state:?}")?;
+        }
+
+        if let Some(timestamp_trust_list_uri) = self.timestamp_trust_list_uri.as_deref() {
+            writeln!(f, "timestamp trust list URI: {timestamp_trust_list_uri}")?;
+        }
 
         if let Some(active_manifest) = self.active_manifest.as_ref() {
             if !active_manifest.success.is_empty() {
@@ -488,7 +581,7 @@ impl Display for ValidationFailureSummary<'_> {
             let failures = active_manifest
                 .failure
                 .iter()
-                .filter(|status| status.code() != validation_status::SIGNING_CREDENTIAL_UNTRUSTED)
+                .filter(|status| !is_tolerated_manifest_failure_code(status.code()))
                 .collect::<Vec<_>>();
             if !failures.is_empty() {
                 output_lines.push("failures:".to_string());
@@ -506,9 +599,7 @@ impl Display for ValidationFailureSummary<'_> {
                     .validation_deltas()
                     .failure
                     .iter()
-                    .filter(|status| {
-                        status.code() != validation_status::SIGNING_CREDENTIAL_UNTRUSTED
-                    })
+                    .filter(|status| !is_tolerated_manifest_failure_code(status.code()))
                     .collect::<Vec<_>>();
                 if !failures.is_empty() {
                     output_lines.push(format!(
@@ -628,11 +719,23 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a C2PA assertion.
     pub const ASSERTION_BMFFHASH_MATCH: &str = "assertion.bmffHash.match";
 
+    /// Additional exclusions are present in the BMFF hash assertion.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    pub const ASSERTION_BMFFHASH_ADDITIONAL_EXCLUSIONS: &str =
+        "assertion.bmffHash.additionalExclusionsPresent";
+
     /// Hash of a box-based asset matches the hash declared in the General Box
     /// Hash assertion.
     ///
     /// Any corresponding URL should point to a C2PA assertion.
     pub const ASSERTION_BOXHASH_MATCH: &str = "assertion.boxesHash.match";
+
+    /// Additional exclusions are present in the BMFF hash assertion.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    pub const ASSERTION_BOXESHASH_ADDITIONAL_EXCLUSIONS: &str =
+        "assertion.boxesHash.additionalExclusionsPresent";
 
     /// Hash of all assets contained in collection match hashes declared
     /// in Collection Data
@@ -819,6 +922,64 @@ pub mod validation_codes {
     ///
     /// Any corresponding URL should point to a CAWG identity assertion.
     pub const CAWG_ICA_UNTRUSTED_ISSUER: &str = "cawg.ica.untrusted_issuer";
+
+    /// A chain of trust from the CAWG identity assertion's X.509 signing
+    /// certificate to a trust anchor configuration was verified.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_X509_CREDENTIAL_TRUSTED: &str = "cawg.x509.credential.trusted";
+
+    /// A chain of trust could not be verified from the CAWG identity
+    /// assertion's X.509 signing certificate to any configured trust anchor,
+    /// or a CA certificate in the chain was determined to be revoked.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_X509_CREDENTIAL_UNTRUSTED: &str = "cawg.x509.credential.untrusted";
+
+    /// The CAWG identity assertion's X.509 signing certificate (or its
+    /// certificate chain) does not meet the certificate profile requirements
+    /// defined in the C2PA technical specification -- for example, an invalid
+    /// EKU, an unsupported algorithm, or a disallowed self-signed certificate.
+    ///
+    /// This is distinct from [`CAWG_X509_CREDENTIAL_UNTRUSTED`]: a credential
+    /// can fail to meet the certificate profile even when the underlying
+    /// cryptographic signature is otherwise valid and independent of whether
+    /// a trust chain could be established.
+    ///
+    /// This code is not yet part of the ratified CAWG identity assertion
+    /// specification, which currently has no code distinct from
+    /// [`CAWG_X509_CREDENTIAL_UNTRUSTED`] for this condition (CAI-13385 tracks
+    /// proposing this addition upstream).
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_X509_CREDENTIAL_INVALID: &str = "cawg.x509.credential.invalid";
+
+    /// The cryptographic signature over a CAWG identity assertion using an
+    /// X.509 credential was validated against the signing certificate.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_X509_SIGNATURE_VALIDATED: &str = "cawg.x509.signature.validated";
+
+    /// The cryptographic signature over a CAWG identity assertion using an
+    /// X.509 credential could not be validated against the signing
+    /// certificate.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_X509_SIGNATURE_MISMATCH: &str = "cawg.x509.signature.mismatch";
+
+    /// The signature algorithm used to sign a CAWG identity assertion using
+    /// an X.509 credential is not on the allowed or deprecated list defined
+    /// in the C2PA technical specification.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_X509_ALGORITHM_UNSUPPORTED: &str = "cawg.x509.algorithm.unsupported";
+
+    /// The time of signing falls outside the validity period of the named
+    /// actor's X.509 certificate or one of the CA certificates up to the
+    /// trust anchor.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_X509_SIGNATURE_OUTSIDE_VALIDITY: &str = "cawg.x509.signature.outside_validity";
 
     /// The signing credential is not valid for signing.
     ///
@@ -1009,6 +1170,12 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a C2PA assertion box.
     pub const ASSERTION_DATAHASH_REDACTED: &str = "assertion.dataHash.redacted";
 
+    /// A hard binding assertion was redacted when the claim was created.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion box. Replaces ASSERTION_DATAHASH_REDACTED
+    /// in 2.3 forward
+    pub const ASSERTION_HARDBINDING_REDACTED: &str = "assertion.hardBinding.redacted";
+
     /// A BMFF hash assertion is malformed.
     ///
     /// Any corresponding URL should point to a C2PA assertion box.
@@ -1134,7 +1301,9 @@ pub mod validation_codes {
             | ASSERTION_COLLECTIONHASH_MATCH
             | INGREDIENT_MANIFEST_VALIDATED
             | INGREDIENT_MANIFEST_MISSING
-            | INGREDIENT_CLAIM_SIGNATURE_VALIDATED => LogKind::Success,
+            | INGREDIENT_CLAIM_SIGNATURE_VALIDATED
+            | CAWG_X509_CREDENTIAL_TRUSTED
+            | CAWG_X509_SIGNATURE_VALIDATED => LogKind::Success,
             SIGNING_CREDENTIAL_OCSP_SKIPPED
             | SIGNING_CREDENTIAL_OCSP_INACCESSIBLE
             | SIGNING_CREDENTIAL_OCSP_UNKNOWN
@@ -1147,6 +1316,8 @@ pub mod validation_codes {
             | TIME_OF_SIGNING_INSIDE_VALIDITY
             | INGREDIENT_PROVENANCE_UNKNOWN
             | ASSERTION_DATAHASH_ADDITIONAL_EXCLUSIONS
+            | ASSERTION_BMFFHASH_ADDITIONAL_EXCLUSIONS
+            | ASSERTION_BOXESHASH_ADDITIONAL_EXCLUSIONS
             | CAWG_ICA_UNTRUSTED_ISSUER => LogKind::Informational,
             _ => LogKind::Failure,
         }
@@ -1164,8 +1335,10 @@ pub mod tests {
         jumbf::labels,
         log_item,
         validation_status::{
-            ASSERTION_ACTION_MALFORMED, ASSERTION_DATAHASH_MISMATCH, ASSERTION_HASHEDURI_MISMATCH,
-            ASSERTION_INGREDIENT_MALFORMED, CLAIM_MALFORMED, CLAIM_SIGNATURE_INSIDE_VALIDITY,
+            ASSERTION_DATAHASH_MISMATCH, ASSERTION_HASHEDURI_MISMATCH,
+            CAWG_X509_ALGORITHM_UNSUPPORTED, CAWG_X509_CREDENTIAL_INVALID,
+            CAWG_X509_CREDENTIAL_UNTRUSTED, CAWG_X509_SIGNATURE_MISMATCH,
+            CAWG_X509_SIGNATURE_OUTSIDE_VALIDITY, CLAIM_MALFORMED, CLAIM_SIGNATURE_INSIDE_VALIDITY,
             CLAIM_SIGNATURE_VALIDATED, SIGNING_CREDENTIAL_TRUSTED, SIGNING_CREDENTIAL_UNTRUSTED,
         },
         HashedUri, Relationship,
@@ -1211,6 +1384,40 @@ pub mod tests {
             validation_results.validation_state(),
             ValidationState::Valid
         );
+    }
+
+    #[test]
+    fn not_trusted_state_with_cawg_x509_failure() {
+        // No CAWG X.509 identity assertion failure code -- whatever the
+        // underlying problem -- should by itself render the enclosing
+        // manifest invalid; each is scoped to that identity assertion.
+        for code in [
+            CAWG_X509_ALGORITHM_UNSUPPORTED,
+            CAWG_X509_CREDENTIAL_UNTRUSTED,
+            CAWG_X509_CREDENTIAL_INVALID,
+            CAWG_X509_SIGNATURE_MISMATCH,
+            CAWG_X509_SIGNATURE_OUTSIDE_VALIDITY,
+        ] {
+            let mut validation_results = ValidationResults::default();
+
+            validation_results.add_status(
+                ValidationStatus::new(CLAIM_SIGNATURE_VALIDATED).set_kind(LogKind::Success),
+            );
+            validation_results.add_status(
+                ValidationStatus::new(CLAIM_SIGNATURE_INSIDE_VALIDITY).set_kind(LogKind::Success),
+            );
+            validation_results.add_status(
+                ValidationStatus::new(SIGNING_CREDENTIAL_TRUSTED).set_kind(LogKind::Success),
+            );
+
+            validation_results.add_status(ValidationStatus::new_failure(code));
+
+            assert_eq!(
+                validation_results.validation_state(),
+                ValidationState::Valid,
+                "expected Valid state for failure code {code}"
+            );
+        }
     }
 
     #[test]
@@ -1478,6 +1685,7 @@ pub mod tests {
         assert_eq!(
             validation_results.to_string(),
             concat!(
+                "spec validation version: 2.3.0\n",
                 "state: Invalid\n",
                 "  success: claimSignature.validated, claimSignature.insideValidity\n",
                 "  informational:\n",

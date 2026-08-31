@@ -797,9 +797,9 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "chacha20"
-version = "0.10.1"
+version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d524456ba66e72eb8b115ff89e01e497f8e6d11d78b70b1aa13c0fbd97540a81"
+checksum = "65c35e4b699c7e15ccbe7ee35c005e4fc0a278d22238a2857e6ce2dadeda1b06"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",
@@ -2543,9 +2543,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.186"
+version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
+checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
 name = "libm"
@@ -3607,9 +3607,9 @@ dependencies = [
 
 [[package]]
 name = "rasn-cms"
-version = "0.28.13"
+version = "0.28.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37feeda266abb6b1a2dbc2cdf7158b3769ae62222fbab5f350010d62ec82e35b"
+checksum = "7b4abf4c2fe5537b99e2bf3099a7ad26e40bd9cf51bc003600ed58dbbff69a1c"
 dependencies = [
  "rasn",
  "rasn-pkix",
