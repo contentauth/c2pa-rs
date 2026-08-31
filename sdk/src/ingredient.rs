@@ -17,7 +17,7 @@ use std::path::Path;
 use std::{borrow::Cow, io::Cursor, sync::Arc};
 
 use async_generic::async_generic;
-use log::{debug, error};
+use log::debug;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -1073,7 +1073,7 @@ impl Ingredient {
                 }
                 None => {
                     if !store.is_uri_redacted(claim_label, &hashed_uri.url()) {
-                        error!("failed to get {} from {}", hashed_uri.url(), ingredient_uri);
+                        debug!("failed to get {} from {}", hashed_uri.url(), ingredient_uri);
                         validation_status.push(
                             ValidationStatus::new_failure(
                                 validation_status::ASSERTION_MISSING.to_string(),
@@ -1107,7 +1107,7 @@ impl Ingredient {
                 }
                 None => {
                     if !store.is_uri_redacted(claim_label, &data_uri.url()) {
-                        error!("failed to get {} from {}", data_uri.url(), ingredient_uri);
+                        debug!("failed to get {} from {}", data_uri.url(), ingredient_uri);
                         validation_status.push(
                             ValidationStatus::new_failure(
                                 validation_status::ASSERTION_MISSING.to_string(),
