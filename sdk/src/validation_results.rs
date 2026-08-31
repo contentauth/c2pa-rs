@@ -21,7 +21,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     assertion::AssertionBase,
     assertions::Ingredient,
-    jumbf::labels::manifest_label_from_uri,
+    jumbf::labels::{self, manifest_label_from_uri},
+    spec_versions::C2PA_VALIDATOR_VERSION,
     status_tracker::{LogKind, StatusTracker},
     store::Store,
     validation_status::{self, log_kind, ValidationStatus},
@@ -104,7 +105,7 @@ impl StatusCodes {
 ///
 /// The map contains the validation results for the active manifest and any ingredient deltas.
 /// It is normal for there to be many
-#[derive(Clone, Serialize, Default, Deserialize, Debug, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct ValidationResults {
     /// Validation status codes for the ingredient's active manifest. Present if ingredient is a C2PA
@@ -117,9 +118,34 @@ pub struct ValidationResults {
     #[serde(rename = "ingredientDeltas", skip_serializing_if = "Option::is_none")]
     ingredient_deltas: Option<Vec<IngredientDeltaValidationResult>>,
 
+    /// The version of the specification against which the validation was performed (SemVer formatted string).
+    #[serde(rename = "specVersion", skip_serializing_if = "Option::is_none")]
+    spec_version: Option<String>,
+
+    /// URI to the trust list that was used to validate manifests signing certificate.
+    #[serde(rename = "trustListUri", skip_serializing_if = "Option::is_none")]
+    trust_list_uri: Option<String>,
+
+    /// URI to the trust list use to validate the time-stamp.
+    #[serde(rename = "timestampTrustListUri", skip_serializing)]
+    timestamp_trust_list_uri: Option<String>,
+
     /// Time when the validation was performed (RFC 3339 date-time). Used only for document-level validationInfo; not serialized in validationResults (e.g. ingredient assertions).
     #[serde(rename = "validationTime", skip_serializing)]
     validation_time: Option<String>,
+}
+
+impl Default for ValidationResults {
+    fn default() -> Self {
+        Self {
+            active_manifest: None,
+            ingredient_deltas: None,
+            spec_version: Some(C2PA_VALIDATOR_VERSION.to_string()),
+            trust_list_uri: None,
+            validation_time: None,
+            timestamp_trust_list_uri: None,
+        }
+    }
 }
 
 /// Prefix shared by every CAWG X.509 identity assertion status code (for
@@ -155,6 +181,26 @@ impl ValidationResults {
             .iter()
             .filter_map(ValidationStatus::from_log_item)
             .collect();
+
+        // Find out the trust list URI for trusted signing credentials or TSA
+        for status in &statuses {
+            if status.code() == validation_status::SIGNING_CREDENTIAL_TRUSTED {
+                if let Some(trust_list_uri) = status.trust_list_uri() {
+                    if let Some(item_uri) = status.url() {
+                        // Filter out CAWG results
+                        if item_uri.ends_with(labels::SIGNATURE) {
+                            results.trust_list_uri = Some(trust_list_uri.into());
+                        }
+                    }
+                }
+            }
+
+            if status.code() == validation_status::TIMESTAMP_TRUSTED {
+                if let Some(timestamp_trust_list_uri) = status.trust_list_uri() {
+                    results.timestamp_trust_list_uri = Some(timestamp_trust_list_uri.into());
+                }
+            }
+        }
 
         // Filter out any status that is already captured in an ingredient assertion.
         // There is always an active manifest in a manifest store; ensure active_manifest is set
@@ -428,8 +474,23 @@ impl ValidationResults {
 
 impl Display for ValidationResults {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let spec_version = self.spec_version.as_deref().unwrap_or("unknown");
+        writeln!(f, "spec validation version: {spec_version}")?;
+
         let state = self.validation_state();
-        writeln!(f, "state: {state:?}")?;
+        if state == ValidationState::Trusted {
+            writeln!(
+                f,
+                "state: {state:?}, trustListUri: {}",
+                self.trust_list_uri.as_deref().unwrap_or("none")
+            )?;
+        } else {
+            writeln!(f, "state: {state:?}")?;
+        }
+
+        if let Some(timestamp_trust_list_uri) = self.timestamp_trust_list_uri.as_deref() {
+            writeln!(f, "timestamp trust list URI: {timestamp_trust_list_uri}")?;
+        }
 
         if let Some(active_manifest) = self.active_manifest.as_ref() {
             if !active_manifest.success.is_empty() {
@@ -635,11 +696,23 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a C2PA assertion.
     pub const ASSERTION_BMFFHASH_MATCH: &str = "assertion.bmffHash.match";
 
+    /// Additional exclusions are present in the BMFF hash assertion.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    pub const ASSERTION_BMFFHASH_ADDITIONAL_EXCLUSIONS: &str =
+        "assertion.bmffHash.additionalExclusionsPresent";
+
     /// Hash of a box-based asset matches the hash declared in the General Box
     /// Hash assertion.
     ///
     /// Any corresponding URL should point to a C2PA assertion.
     pub const ASSERTION_BOXHASH_MATCH: &str = "assertion.boxesHash.match";
+
+    /// Additional exclusions are present in the General Box Hash assertion.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    pub const ASSERTION_BOXHASH_ADDITIONAL_EXCLUSIONS: &str =
+        "assertion.boxesHash.additionalExclusionsPresent";
 
     /// Hash of all assets contained in collection match hashes declared
     /// in Collection Data
@@ -1074,6 +1147,12 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a C2PA assertion box.
     pub const ASSERTION_DATAHASH_REDACTED: &str = "assertion.dataHash.redacted";
 
+    /// A hard binding assertion was redacted when the claim was created.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion box. Replaces ASSERTION_DATAHASH_REDACTED
+    /// in 2.3 forward
+    pub const ASSERTION_HARDBINDING_REDACTED: &str = "assertion.hardBinding.redacted";
+
     /// A BMFF hash assertion is malformed.
     ///
     /// Any corresponding URL should point to a C2PA assertion box.
@@ -1214,6 +1293,8 @@ pub mod validation_codes {
             | TIME_OF_SIGNING_INSIDE_VALIDITY
             | INGREDIENT_PROVENANCE_UNKNOWN
             | ASSERTION_DATAHASH_ADDITIONAL_EXCLUSIONS
+            | ASSERTION_BMFFHASH_ADDITIONAL_EXCLUSIONS
+            | ASSERTION_BOXHASH_ADDITIONAL_EXCLUSIONS
             | CAWG_ICA_UNTRUSTED_ISSUER => LogKind::Informational,
             _ => LogKind::Failure,
         }
@@ -1581,6 +1662,7 @@ pub mod tests {
         assert_eq!(
             validation_results.to_string(),
             concat!(
+                "spec validation version: 2.3.0\n",
                 "state: Invalid\n",
                 "  success: claimSignature.validated, claimSignature.insideValidity\n",
                 "  informational:\n",
