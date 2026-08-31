@@ -123,7 +123,7 @@ impl CimplError {
     pub fn foreign_process() -> Self {
         Self::new(
             10,
-            "ForeignProcess: handles cannot be used in a forked child".to_string(),
+            "ForeignProcess: handles cannot be created or used in a forked child".to_string(),
         )
     }
 

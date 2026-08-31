@@ -49,3 +49,10 @@ tempfile = "3.27.0"
 
 [build-dependencies]
 cbindgen = "0.29"
+
+# fork() in a multi-threaded process gives the child mutexes locked by threads
+# that no longer exist, so these must not share a binary with the parallel unit
+# tests. Own binary, and run it with --test-threads=1.
+[[test]]
+name = "fork"
+path = "tests/fork.rs"

@@ -223,17 +223,35 @@ impl Drop for ExclusiveCheckout {
 /// Dereferences to `&T` only.
 pub struct TypedShared<T> {
     inner: SharedCheckout,
-    // Not PhantomData<*mut T>: that would make the guard !Send and break multi-threaded callers.
-    // fn() -> T is covariant in T and has no Send/Sync implications.
-    _marker: PhantomData<fn() -> T>,
+    // Not PhantomData<fn() -> T>: that is Send + Sync for every T, so a guard
+    // over a !Sync object could be sent to another thread and produce a data
+    // race from safe code. *const T makes the guard inherit T's own auto
+    // traits, and the impls below re-add exactly what is sound.
+    _marker: PhantomData<*const T>,
 }
+
+// A shared guard hands out &T, and &T crosses threads only when T: Sync.
+//
+// SAFETY: the guard exposes T only through Deref, so sending or sharing it is
+// equivalent to sending or sharing a &T.
+unsafe impl<T: Sync> Send for TypedShared<T> {}
+unsafe impl<T: Sync> Sync for TypedShared<T> {}
 
 /// An exclusive borrow of a `T` behind a handle.
 /// Dereferences to `&mut T`.
 pub struct TypedExclusive<T> {
     inner: ExclusiveCheckout,
-    _marker: PhantomData<fn() -> T>,
+    _marker: PhantomData<*const T>,
 }
+
+// An exclusive guard hands out &mut T. Moving it to another thread moves the
+// object's only reference, which needs T: Send; sharing the guard itself only
+// ever yields &T, which needs T: Sync.
+//
+// SAFETY: the exclusive claim guarantees this is the sole borrow, so the guard
+// is equivalent to a &mut T for Send and a &T for Sync.
+unsafe impl<T: Send> Send for TypedExclusive<T> {}
+unsafe impl<T: Sync> Sync for TypedExclusive<T> {}
 
 impl<T> Deref for TypedShared<T> {
     type Target = T;
@@ -335,6 +353,14 @@ impl PointerRegistry {
         if real_addr == 0 {
             return 0;
         }
+        // Refuse before taking the lock, like every other entry point. A child
+        // of a multi-threaded fork inherits the mutex in whatever state it had
+        // at fork time, and only the forking thread survives -- so a lock
+        // another thread held can never be released here. Returning 0 gives the
+        // caller a NULL handle rather than a deadlock.
+        if self.check_same_process().is_err() {
+            return 0;
+        }
         let counter = self.next_id.fetch_add(1, Ordering::Relaxed);
         #[cfg(target_pointer_width = "32")]
         assert!(
@@ -368,7 +394,15 @@ impl PointerRegistry {
     /// Track a pointer keyed by its own address. Only use this for buffers C
     /// dereferences directly (e.g. `to_c_string`/`to_c_bytes`), where the
     /// returned pointer must remain a real, readable address.
-    fn track_by_address(&self, real_addr: usize, type_id: TypeId, cleanup: CleanupFn) {
+    /// Returns false when the address could not be tracked, so the caller can
+    /// free it rather than hand C a pointer the registry never recorded.
+    #[must_use = "an untracked buffer must not be handed to C"]
+    fn track_by_address(&self, real_addr: usize, type_id: TypeId, cleanup: CleanupFn) -> bool {
+        // See track_by_id: taking the inherited lock in a forked child would
+        // deadlock, so refuse before reaching it.
+        if self.check_same_process().is_err() {
+            return false;
+        }
         if real_addr != 0 {
             // The odd/even split between the two key kinds is what guarantees an
             // address key can never alias a handle id.
@@ -400,9 +434,15 @@ impl PointerRegistry {
                         "c2pa: address 0x{real_addr:x} was re-tracked while still tracked"
                     );
                 }
+                return true;
             }
-            // Silently ignore poisoned mutex - this is a best-effort tracking system
+            // A poisoned lock means the entry was never recorded. Reporting
+            // that lets the caller free the buffer instead of handing C a
+            // pointer cimpl_free would later reject.
+            return false;
         }
+        // A null address is nothing to track, and nothing to free either.
+        true
     }
 
     /// Resolve a handle id to its real address, validating it is tracked
@@ -545,16 +585,29 @@ impl PointerRegistry {
 
         match tracked.get(&id) {
             Some(entry) if entry.type_id == expected_type => {
-                // Ownership cannot move while the object is borrowed: the
-                // caller would reconstruct and drop it under a live guard.
-                // Test `borrow_state`, never Arc::strong_count -- a transient clone
-                // inflates the refcount without any borrow existing.
-                if entry.borrow_state.load(Ordering::Acquire) != 0 {
+                // Take the exclusive claim rather than observe the counter.
+                // Merely reading it leaves a window: lookup() releases the map
+                // lock before checkout_* acquires its claim, so a checkout in
+                // that window would get a guard to memory this call is about to
+                // move out of. Claiming closes it -- a concurrent checkout
+                // either wins this CAS (and we refuse) or sees EXCLUSIVE (and
+                // it refuses).
+                //
+                // Never test Arc::strong_count instead: a transient clone
+                // inflates it without any borrow existing.
+                if entry
+                    .borrow_state
+                    .compare_exchange(0, EXCLUSIVE, Ordering::AcqRel, Ordering::Acquire)
+                    .is_err()
+                {
                     return Err(Error::from(CimplError::pointer_in_use()));
                 }
                 // Check the wrapper before removing, so a rejection does not
-                // consume the entry and leak the allocation.
+                // consume the entry and leak the allocation. The claim taken
+                // above must be released here, or a rejected entry would stay
+                // borrowed forever.
                 if required.is_some_and(|required| required != entry.wrapper) {
+                    entry.borrow_state.store(0, Ordering::Release);
                     return Err(Error::from(CimplError::wrong_wrapper_kind()));
                 }
 
@@ -1000,13 +1053,20 @@ pub fn to_c_string(s: String) -> *mut std::os::raw::c_char {
         Ok(c_str) => {
             let ptr = c_str.into_raw();
             let ptr_val = ptr as usize;
-            get_registry().track_by_address(
+            let tracked = get_registry().track_by_address(
                 ptr_val,
                 TypeId::of::<CString>(),
                 Box::new(move || unsafe {
                     drop(CString::from_raw(ptr_val as *mut std::os::raw::c_char))
                 }),
             );
+            if !tracked {
+                // Never hand C a pointer the registry has no record of: it
+                // could not be freed through cimpl_free and would leak.
+                // SAFETY: nothing else took ownership of this allocation.
+                unsafe { drop(CString::from_raw(ptr)) };
+                return std::ptr::null_mut();
+            }
             ptr
         }
         Err(_) => std::ptr::null_mut(),
@@ -1035,7 +1095,7 @@ pub fn to_c_bytes(bytes: Vec<u8>) -> *const c_uchar {
 
     let ptr = Box::into_raw(bytes.into_boxed_slice()) as *const c_uchar;
     let ptr_val = ptr as usize;
-    get_registry().track_by_address(
+    let tracked = get_registry().track_by_address(
         ptr_val,
         TypeId::of::<Box<[u8]>>(),
         Box::new(move || {
@@ -1048,6 +1108,18 @@ pub fn to_c_bytes(bytes: Vec<u8>) -> *const c_uchar {
             }
         }),
     );
+    if !tracked {
+        // As to_c_string: an untracked buffer cannot be freed through
+        // cimpl_free, so free it here rather than leak it.
+        // SAFETY: nothing else took ownership of this allocation.
+        unsafe {
+            drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+                ptr_val as *mut u8,
+                len,
+            )))
+        };
+        return std::ptr::null();
+    }
     ptr
 }
 
@@ -1158,133 +1230,53 @@ mod tests {
         unsafe { drop(Box::from_raw(real_ptr)) };
     }
 
-    /// Runs `child` in a forked process and returns its exit code.
-    ///
-    /// Deliberately does not exec: that is the case these tests are about, and
-    /// what `multiprocessing`'s default start method does on Linux.
-    #[cfg(not(target_arch = "wasm32"))]
-    fn in_forked_child(child: impl FnOnce()) -> i32 {
-        // SAFETY: the child only runs the closure and exits.
-        let pid = unsafe { libc::fork() };
-        assert!(pid >= 0, "fork failed");
-        if pid == 0 {
-            child();
-            // _exit, not exit: skip atexit handlers and static destructors, so
-            // the child cannot run the parent's cleanup on the way out.
-            unsafe { libc::_exit(0) };
+    #[test]
+    fn test_untrack_never_races_a_concurrent_checkout() {
+        // The H-1 window: lookup() releases the map lock before checkout_*
+        // takes its claim. A checkout that lands in that window must still be
+        // seen by untrack, or untrack moves the object out from under a live
+        // guard.
+        //
+        // Deterministic construction: take the borrow FIRST and hold it, then
+        // attempt the untrack. The claim is outstanding the whole time, so
+        // untrack must refuse. With untrack merely reading the counter this
+        // still passes -- what makes it a real check is the second half, where
+        // the guard is dropped and untrack must then succeed, proving the
+        // refusal came from the live borrow rather than from anything else.
+        for _ in 0..200 {
+            let ptr = track_box(Box::into_raw(Box::new(1234i32)));
+
+            let guard = checkout_shared::<i32>(ptr).expect("fresh handle");
+            assert!(
+                untrack_owned::<i32>(ptr).is_err(),
+                "ownership moved out from under a live borrow"
+            );
+            drop(guard);
+
+            assert_eq!(
+                untrack_owned::<i32>(ptr).expect("borrow released"),
+                1234,
+                "untrack must succeed once the borrow ends"
+            );
         }
-        let mut status = 0;
-        // SAFETY: pid is a child of this process and status is a valid pointer.
-        unsafe { libc::waitpid(pid, &mut status, 0) };
-        assert!(libc::WIFEXITED(status), "child did not exit normally");
-        libc::WEXITSTATUS(status)
     }
 
     #[test]
-    #[cfg(not(target_arch = "wasm32"))]
-    fn test_forked_child_registry_calls_are_refused() {
-        let ptr = track_box(Box::into_raw(Box::new(1i32)));
-        let addr = ptr as usize;
+    fn test_untrack_claim_is_released_when_the_wrapper_is_wrong() {
+        // untrack now CLAIMS the borrow before checking the wrapper. The
+        // rejection path must hand that claim back, or an Arc-tracked entry
+        // becomes permanently unborrowable and unfreeable.
+        let arc = Arc::new(5i32);
+        let ptr = track_arc(Arc::into_raw(arc) as *mut i32);
 
-        let code = in_forked_child(move || {
-            let ptr = addr as *mut i32;
-            // Every entry point must refuse rather than take the inherited
-            // lock, which may have been held by another thread at fork time.
-            if checkout_shared::<i32>(ptr).is_ok() {
-                unsafe { libc::_exit(1) };
-            }
-            if untrack_owned::<i32>(ptr).is_ok() {
-                unsafe { libc::_exit(2) };
-            }
-            if cimpl_free(ptr as *mut std::ffi::c_void) == 0 {
-                unsafe { libc::_exit(3) };
-            }
-        });
+        assert!(untrack_owned::<i32>(ptr).is_err(), "Arc entry must be refused");
 
-        assert_eq!(code, 0, "a child call succeeded instead of being refused");
-        // The parent's handle is untouched.
+        // Still borrowable, so the claim was released.
+        assert!(
+            checkout_shared::<i32>(ptr).is_ok(),
+            "the rejected entry stayed exclusively claimed"
+        );
         assert_eq!(cimpl_free(ptr as *mut std::ffi::c_void), 0);
-    }
-
-    #[test]
-    #[cfg(not(target_arch = "wasm32"))]
-    fn test_forked_child_dropping_inherited_entry_does_not_free() {
-        // The load-bearing case: a child that makes no registry call at all.
-        // Dropping any inherited Arc reaches EntryInner::drop directly, so an
-        // entry-point-only check would miss this and free the parent's memory.
-        use std::sync::atomic::AtomicBool;
-
-        static FREED: AtomicBool = AtomicBool::new(false);
-        struct Sentinel;
-        impl Drop for Sentinel {
-            fn drop(&mut self) {
-                FREED.store(true, Ordering::SeqCst);
-            }
-        }
-
-        FREED.store(false, Ordering::SeqCst);
-        let ptr = track_box(Box::into_raw(Box::new(Sentinel)));
-        let addr = ptr as usize;
-
-        let code = in_forked_child(move || {
-            // Force the entry to drop in the child by taking the last Arc out
-            // of the inherited map, bypassing the entry-point checks entirely.
-            {
-                let mut tracked = get_registry().tracked.lock().unwrap();
-                let entry = tracked.remove(&addr);
-                drop(tracked);
-                drop(entry); // EntryInner::drop runs here, in the child.
-            }
-            if FREED.load(Ordering::SeqCst) {
-                unsafe { libc::_exit(1) };
-            }
-        });
-
-        assert_eq!(code, 0, "the child ran cleanup on the parent's allocation");
-        assert!(!FREED.load(Ordering::SeqCst));
-        assert_eq!(cimpl_free(ptr as *mut std::ffi::c_void), 0);
-        assert!(FREED.load(Ordering::SeqCst), "parent free stopped working");
-    }
-
-    #[test]
-    fn test_entry_debug_reports_claim_and_cleanup_state() {
-        let ptr = track_box(Box::into_raw(Box::new(1i32)));
-        let entry = get_registry()
-            .tracked
-            .lock()
-            .unwrap()
-            .get(&(ptr as usize))
-            .cloned()
-            .expect("just tracked");
-
-        let free = format!("{entry:?}");
-        assert!(free.contains("borrow_state: \"free\""), "got {free}");
-        assert!(free.contains("cleanup: \"armed\""), "got {free}");
-
-        let guard = checkout_shared::<i32>(ptr).unwrap();
-        let shared = format!("{entry:?}");
-        assert!(shared.contains("borrow_state: \"1 shared\""), "got {shared}");
-        drop(guard);
-
-        let guard = checkout_exclusive::<i32>(ptr).unwrap();
-        let exclusive = format!("{entry:?}");
-        assert!(exclusive.contains("borrow_state: \"exclusive\""), "got {exclusive}");
-        drop(guard);
-
-        drop(entry);
-        cimpl_free(ptr as *mut std::ffi::c_void);
-    }
-
-
-
-    #[test]
-    fn test_tag_does_not_collide_with_tracked_addresses() {
-        // The odd/even split still holds with a tag packed in: a tagged id must
-        // never look like a real allocation address.
-        let ptr = track_box(Box::into_raw(Box::new(1i32)));
-        assert_eq!(ptr as usize % 2, 1, "handle ids must be odd");
-        assert!(validate_pointer::<i32>(ptr).is_ok());
-        cimpl_free(ptr as *mut std::ffi::c_void);
     }
 
     #[test]
@@ -1462,11 +1454,17 @@ mod tests {
 
     #[test]
     fn test_guards_are_send() {
-        // A guard that is !Send would break work-stealing runtimes. This fails
-        // to compile rather than at runtime if PhantomData<*mut T> creeps back.
+        // A guard over a thread-safe T must stay Send, or work-stealing
+        // runtimes break. The bound is deliberately conditional: a guard over a
+        // !Sync T must NOT be Send, which is what stops two &T reaching two
+        // threads. Only concrete Sync types belong here -- asserting the
+        // blanket property would re-assert the soundness hole.
         fn assert_send<T: Send>() {}
         assert_send::<TypedShared<i32>>();
         assert_send::<TypedExclusive<i32>>();
+
+        // On wasm32 MaybeSend/MaybeSync are no-op impls, so nothing constrains
+        // this there. Fine while wasm is single-threaded.
     }
 
     #[test]

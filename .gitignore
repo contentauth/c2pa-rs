@@ -19,7 +19,3 @@ cli/target
 .cursor/rules/manifest.json
 .cursor/rules/security-global/*
 .cursor/rules/security-lang/*
-
-pointer-registry-pitfalls.md
-registry.md
-current-plan.md
