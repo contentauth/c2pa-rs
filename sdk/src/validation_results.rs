@@ -21,7 +21,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
     assertion::AssertionBase,
     assertions::Ingredient,
-    jumbf::labels::manifest_label_from_uri,
+    jumbf::labels::{self, manifest_label_from_uri},
+    spec_versions::C2PA_VALIDATOR_VERSION,
     status_tracker::{LogKind, StatusTracker},
     store::Store,
     validation_status::{self, log_kind, ValidationStatus},
@@ -104,7 +105,7 @@ impl StatusCodes {
 ///
 /// The map contains the validation results for the active manifest and any ingredient deltas.
 /// It is normal for there to be many
-#[derive(Clone, Serialize, Default, Deserialize, Debug, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema))]
 pub struct ValidationResults {
     /// Validation status codes for the ingredient's active manifest. Present if ingredient is a C2PA
@@ -117,9 +118,34 @@ pub struct ValidationResults {
     #[serde(rename = "ingredientDeltas", skip_serializing_if = "Option::is_none")]
     ingredient_deltas: Option<Vec<IngredientDeltaValidationResult>>,
 
+    /// The version of the specification against which the validation was performed (SemVer formatted string).
+    #[serde(rename = "specVersion", skip_serializing_if = "Option::is_none")]
+    spec_version: Option<String>,
+
+    /// URI to the trust list that was used to validate manifests signing certificate.
+    #[serde(rename = "trustListUri", skip_serializing_if = "Option::is_none")]
+    trust_list_uri: Option<String>,
+
+    /// URI to the trust list use to validate the time-stamp.
+    #[serde(rename = "timestampTrustListUri", skip_serializing)]
+    timestamp_trust_list_uri: Option<String>,
+
     /// Time when the validation was performed (RFC 3339 date-time). Used only for document-level validationInfo; not serialized in validationResults (e.g. ingredient assertions).
     #[serde(rename = "validationTime", skip_serializing)]
     validation_time: Option<String>,
+}
+
+impl Default for ValidationResults {
+    fn default() -> Self {
+        Self {
+            active_manifest: None,
+            ingredient_deltas: None,
+            spec_version: Some(C2PA_VALIDATOR_VERSION.to_string()),
+            trust_list_uri: None,
+            validation_time: None,
+            timestamp_trust_list_uri: None,
+        }
+    }
 }
 
 /// Prefix shared by every CAWG X.509 identity assertion status code (for
@@ -156,6 +182,26 @@ impl ValidationResults {
             .filter_map(ValidationStatus::from_log_item)
             .collect();
 
+        // Find out the trust list URI for trusted signing credentials or TSA
+        for status in &statuses {
+            if status.code() == validation_status::SIGNING_CREDENTIAL_TRUSTED {
+                if let Some(trust_list_uri) = status.trust_list_uri() {
+                    if let Some(item_uri) = status.url() {
+                        // Filter out CAWG results
+                        if item_uri.ends_with(labels::SIGNATURE) {
+                            results.trust_list_uri = Some(trust_list_uri.into());
+                        }
+                    }
+                }
+            }
+
+            if status.code() == validation_status::TIMESTAMP_TRUSTED {
+                if let Some(timestamp_trust_list_uri) = status.trust_list_uri() {
+                    results.timestamp_trust_list_uri = Some(timestamp_trust_list_uri.into());
+                }
+            }
+        }
+
         // Filter out any status that is already captured in an ingredient assertion.
         // There is always an active manifest in a manifest store; ensure active_manifest is set
         // so serialization (e.g. crJSON) always includes activeManifest when validationResults exist.
@@ -165,7 +211,8 @@ impl ValidationResults {
                 .get_or_insert_with(StatusCodes::default);
             let active_manifest = Some(claim.label().to_string());
 
-            // This closure returns true if the URI references the store's active manifest.
+            // Returns true if `uri` names an assertion (or box) inside the store's active
+            // manifest, e.g. `self#jumbf=/c2pa/<active-label>/...`.
             let is_active_manifest = |uri: Option<&str>| {
                 uri.is_some_and(|uri| manifest_label_from_uri(uri) == active_manifest)
             };
@@ -209,9 +256,13 @@ impl ValidationResults {
                 })
             };
 
-            // We only need to do the more detailed filtering if there are any status
-            // reports that reference ingredients.
-            if statuses.iter().any(|s| !is_active_manifest(s.url())) {
+            // We only need to do the more detailed filtering if there are any statuses that
+            // could actually be de-duplicated, i.e. statuses logged inside an ingredient scope
+            // that are not about the active manifest.
+            if statuses
+                .iter()
+                .any(|s| s.ingredient_uri().is_some() && !is_active_manifest(s.url()))
+            {
                 // Collect all the ValidationStatus records from all the ingredients in the store.
                 // Since we need to process v1,v2 and v3 ingredients, we process all in the same format.
                 let ingredient_statuses: Vec<ValidationStatus> = store
@@ -223,9 +274,27 @@ impl ValidationResults {
                     .flatten()
                     .collect();
 
-                // Filter statuses to only contain those from the active manifest and those not found in any ingredient.
+                // Drop a status only if it is a genuine re-report of what an ingredient already
+                // attested: it must be scoped to an ingredient AND not describe the active
+                // manifest AND match an ingredient attestation. Any status describing the active
+                // manifest is kept unconditionally so an attacker-authored ingredient assertion
+                // cannot cancel a genuine active-manifest failure.
+                //
+                // Two independent signals identify an active-manifest status, and each covers a
+                // gap in the other:
+                //  - `ingredient_uri().is_none()` — the validator logged the status outside any
+                //    ingredient-recursion scope. This catches failures recorded against the bare
+                //    manifest-label form (`urn:c2pa:...`), which URL parsing does not resolve to
+                //    the active manifest.
+                //  - `is_active_manifest(s.url())` — the URL names a box inside the active
+                //    manifest. This catches active-manifest findings that `ingredient_checks`
+                //    logs while an ingredient URI is pushed (so `ingredient_uri` is set), e.g.
+                //    `assertion.ingredient.malformed`.
+                // Neither signal can be forged by ingredient assertion content.
                 statuses.retain(|s| {
-                    is_active_manifest(s.url()) || !ingredient_statuses.iter().any(|i| i == s)
+                    s.ingredient_uri().is_none()
+                        || is_active_manifest(s.url())
+                        || !ingredient_statuses.iter().any(|i| i == s)
                 })
             }
             for status in statuses {
@@ -428,8 +497,23 @@ impl ValidationResults {
 
 impl Display for ValidationResults {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let spec_version = self.spec_version.as_deref().unwrap_or("unknown");
+        writeln!(f, "spec validation version: {spec_version}")?;
+
         let state = self.validation_state();
-        writeln!(f, "state: {state:?}")?;
+        if state == ValidationState::Trusted {
+            writeln!(
+                f,
+                "state: {state:?}, trustListUri: {}",
+                self.trust_list_uri.as_deref().unwrap_or("none")
+            )?;
+        } else {
+            writeln!(f, "state: {state:?}")?;
+        }
+
+        if let Some(timestamp_trust_list_uri) = self.timestamp_trust_list_uri.as_deref() {
+            writeln!(f, "timestamp trust list URI: {timestamp_trust_list_uri}")?;
+        }
 
         if let Some(active_manifest) = self.active_manifest.as_ref() {
             if !active_manifest.success.is_empty() {
@@ -635,11 +719,23 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a C2PA assertion.
     pub const ASSERTION_BMFFHASH_MATCH: &str = "assertion.bmffHash.match";
 
+    /// Additional exclusions are present in the BMFF hash assertion.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    pub const ASSERTION_BMFFHASH_ADDITIONAL_EXCLUSIONS: &str =
+        "assertion.bmffHash.additionalExclusionsPresent";
+
     /// Hash of a box-based asset matches the hash declared in the General Box
     /// Hash assertion.
     ///
     /// Any corresponding URL should point to a C2PA assertion.
     pub const ASSERTION_BOXHASH_MATCH: &str = "assertion.boxesHash.match";
+
+    /// Additional exclusions are present in the General Box Hash assertion.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    pub const ASSERTION_BOXHASH_ADDITIONAL_EXCLUSIONS: &str =
+        "assertion.boxesHash.additionalExclusionsPresent";
 
     /// Hash of all assets contained in collection match hashes declared
     /// in Collection Data
@@ -1074,6 +1170,12 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a C2PA assertion box.
     pub const ASSERTION_DATAHASH_REDACTED: &str = "assertion.dataHash.redacted";
 
+    /// A hard binding assertion was redacted when the claim was created.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion box. Replaces ASSERTION_DATAHASH_REDACTED
+    /// in 2.3 forward
+    pub const ASSERTION_HARDBINDING_REDACTED: &str = "assertion.hardBinding.redacted";
+
     /// A BMFF hash assertion is malformed.
     ///
     /// Any corresponding URL should point to a C2PA assertion box.
@@ -1214,6 +1316,8 @@ pub mod validation_codes {
             | TIME_OF_SIGNING_INSIDE_VALIDITY
             | INGREDIENT_PROVENANCE_UNKNOWN
             | ASSERTION_DATAHASH_ADDITIONAL_EXCLUSIONS
+            | ASSERTION_BMFFHASH_ADDITIONAL_EXCLUSIONS
+            | ASSERTION_BOXHASH_ADDITIONAL_EXCLUSIONS
             | CAWG_ICA_UNTRUSTED_ISSUER => LogKind::Informational,
             _ => LogKind::Failure,
         }
@@ -1231,11 +1335,12 @@ pub mod tests {
         jumbf::labels,
         log_item,
         validation_status::{
-            ASSERTION_DATAHASH_MISMATCH, ASSERTION_HASHEDURI_MISMATCH,
-            CAWG_X509_ALGORITHM_UNSUPPORTED, CAWG_X509_CREDENTIAL_INVALID,
-            CAWG_X509_CREDENTIAL_UNTRUSTED, CAWG_X509_SIGNATURE_MISMATCH,
-            CAWG_X509_SIGNATURE_OUTSIDE_VALIDITY, CLAIM_MALFORMED, CLAIM_SIGNATURE_INSIDE_VALIDITY,
-            CLAIM_SIGNATURE_VALIDATED, SIGNING_CREDENTIAL_TRUSTED, SIGNING_CREDENTIAL_UNTRUSTED,
+            ASSERTION_ACTION_MALFORMED, ASSERTION_DATAHASH_MISMATCH, ASSERTION_HASHEDURI_MISMATCH,
+            ASSERTION_INGREDIENT_MALFORMED, CAWG_X509_ALGORITHM_UNSUPPORTED,
+            CAWG_X509_CREDENTIAL_INVALID, CAWG_X509_CREDENTIAL_UNTRUSTED,
+            CAWG_X509_SIGNATURE_MISMATCH, CAWG_X509_SIGNATURE_OUTSIDE_VALIDITY, CLAIM_MALFORMED,
+            CLAIM_SIGNATURE_INSIDE_VALIDITY, CLAIM_SIGNATURE_VALIDATED, SIGNING_CREDENTIAL_TRUSTED,
+            SIGNING_CREDENTIAL_UNTRUSTED,
         },
         HashedUri, Relationship,
     };
@@ -1581,6 +1686,7 @@ pub mod tests {
         assert_eq!(
             validation_results.to_string(),
             concat!(
+                "spec validation version: 2.3.0\n",
                 "state: Invalid\n",
                 "  success: claimSignature.validated, claimSignature.insideValidity\n",
                 "  informational:\n",
@@ -1653,5 +1759,180 @@ pub mod tests {
 
         // check that there are no failures since they were attested to
         assert!(delta_failures.is_empty());
+    }
+
+    #[test]
+    fn from_store_ingredient_cannot_suppress_active_manifest_failure() {
+        // CAI-12751: an attacker-authored ingredient assertion must not be able to cancel a
+        // genuine failure of the *active* manifest by attesting a status with the same
+        // code + url. The active manifest's failure is logged against its bare claim label
+        // (`urn:c2pa:...`) with no `ingredient_uri`, so it must survive de-duplication
+        // against ingredient-attested statuses (whereas the sibling test above confirms a
+        // genuinely ingredient-scoped failure is still deduped).
+
+        let mut outer_claim = Claim::new("test-generator", None, 2);
+        let outer_label = outer_claim.label().to_string();
+
+        // Attacker plants a validation status inside an ingredient that "attests" the exact
+        // failure (code + url) the active manifest will produce live during validation.
+        let mut attested = ValidationResults::default();
+        attested.add_status(
+            ValidationStatus::new_failure(ASSERTION_ACTION_MALFORMED).set_url(&outer_label),
+        );
+        let inner_manifest_uri = labels::to_manifest_uri("urn:uuid:inner-test");
+        let ingredient = Ingredient {
+            relationship: Relationship::ComponentOf,
+            version: 3,
+            active_manifest: Some(HashedUri::new(
+                inner_manifest_uri,
+                Some("sha256".into()),
+                &[0u8; 32],
+            )),
+            validation_results: Some(attested),
+            ..Default::default()
+        };
+        outer_claim.add_assertion(&ingredient).unwrap();
+
+        let mut store = Store::new();
+        store.insert_restored_claim(outer_label.clone(), outer_claim);
+
+        let mut tracker = StatusTracker::default();
+
+        // Active-manifest signature checks pass, so the malformed-actions failure is the only
+        // thing keeping this asset out of the `Valid` state.
+        log_item!(outer_label.clone(), "claim signature valid", "verify")
+            .validation_status(CLAIM_SIGNATURE_VALIDATED)
+            .success(&mut tracker);
+        log_item!(
+            outer_label.clone(),
+            "claim signature inside validity",
+            "verify"
+        )
+        .validation_status(CLAIM_SIGNATURE_INSIDE_VALIDITY)
+        .success(&mut tracker);
+
+        // A benign ingredient-scoped status ensures the de-duplication path actually runs (it
+        // only runs when some status references an ingredient), so this test exercises the
+        // retain filter rather than the early-out.
+        let ingredient_uri = labels::to_assertion_uri(&outer_label, assertions::labels::INGREDIENT);
+        tracker.push_ingredient_uri(ingredient_uri.clone());
+        log_item!(
+            ingredient_uri.clone(),
+            "ingredient signature valid",
+            "verify"
+        )
+        .validation_status(CLAIM_SIGNATURE_VALIDATED)
+        .success(&mut tracker);
+        tracker.pop_ingredient_uri();
+
+        // The genuine active-manifest failure, logged against the bare claim label with no
+        // ingredient_uri — the exact status the attacker's attestation tries to cancel.
+        let _ = log_item!(
+            outer_label.clone(),
+            "first action must be created or opened",
+            "verify_actions"
+        )
+        .validation_status(ASSERTION_ACTION_MALFORMED)
+        .failure(&mut tracker, "malformed actions");
+
+        let results = ValidationResults::from_store(&store, &tracker);
+
+        // The active-manifest failure must be retained (not suppressed by the ingredient)...
+        let active_failures: Vec<&str> = results
+            .active_manifest
+            .as_ref()
+            .map(|sc| sc.failure().iter().map(|s| s.code()).collect())
+            .unwrap_or_default();
+        assert!(
+            active_failures.contains(&ASSERTION_ACTION_MALFORMED),
+            "active-manifest failure was suppressed by ingredient attestation: {active_failures:?}"
+        );
+
+        // ...so the overall state stays Invalid rather than being upgraded to Valid.
+        assert_eq!(results.validation_state(), ValidationState::Invalid);
+    }
+
+    #[test]
+    fn from_store_ingredient_cannot_suppress_active_manifest_ingredient_failure() {
+        // `Store::ingredient_checks` logs some active-manifest failures
+        // (e.g. `assertion.ingredient.malformed`) *while an ingredient URI is pushed*, so they
+        // carry `ingredient_uri = Some` together with a URL pointing inside the active manifest.
+        // Such a failure must not be cancellable by an ingredient that attests a matching
+        // code + url, even though it was logged inside an ingredient scope. This is the corner
+        // that a purely `ingredient_uri`-based guard would miss.
+
+        let mut outer_claim = Claim::new("test-generator", None, 2);
+        let outer_label = outer_claim.label().to_string();
+
+        // The active manifest's own finding is recorded against one of its ingredient
+        // assertions — this is the URL `ingredient_checks` uses.
+        let active_ingredient_uri =
+            labels::to_assertion_uri(&outer_label, assertions::labels::INGREDIENT);
+
+        // Attacker adds an ingredient whose attested status carries the exact code + url of that
+        // active-manifest finding.
+        let mut attested = ValidationResults::default();
+        attested.add_status(
+            ValidationStatus::new_failure(ASSERTION_INGREDIENT_MALFORMED)
+                .set_url(&active_ingredient_uri),
+        );
+        let ingredient = Ingredient {
+            relationship: Relationship::ComponentOf,
+            version: 3,
+            active_manifest: Some(HashedUri::new(
+                labels::to_manifest_uri("urn:uuid:attacker-inner"),
+                Some("sha256".into()),
+                &[0u8; 32],
+            )),
+            validation_results: Some(attested),
+            ..Default::default()
+        };
+        outer_claim.add_assertion(&ingredient).unwrap();
+
+        let mut store = Store::new();
+        store.insert_restored_claim(outer_label.clone(), outer_claim);
+
+        let mut tracker = StatusTracker::default();
+
+        // Active-manifest signature checks pass, so the ingredient-malformed finding is the only
+        // thing keeping the asset out of `Valid`.
+        log_item!(outer_label.clone(), "claim signature valid", "verify")
+            .validation_status(CLAIM_SIGNATURE_VALIDATED)
+            .success(&mut tracker);
+        log_item!(
+            outer_label.clone(),
+            "claim signature inside validity",
+            "verify"
+        )
+        .validation_status(CLAIM_SIGNATURE_INSIDE_VALIDITY)
+        .success(&mut tracker);
+
+        // The genuine active-manifest finding, logged exactly the way `ingredient_checks` logs
+        // it: inside an ingredient push, with a URL inside the active manifest.
+        tracker.push_ingredient_uri(active_ingredient_uri.clone());
+        let _ = log_item!(
+            active_ingredient_uri.clone(),
+            "ingredient V3 must have validation results",
+            "ingredient_checks"
+        )
+        .validation_status(ASSERTION_INGREDIENT_MALFORMED)
+        .failure(&mut tracker, "ingredient V3 missing validation status");
+        tracker.pop_ingredient_uri();
+
+        let results = ValidationResults::from_store(&store, &tracker);
+
+        // The finding must survive de-duplication (it lands in ingredientDeltas because it is
+        // scoped to an ingredient)...
+        let failures = results.validation_errors().unwrap_or_default();
+        assert!(
+            failures
+                .iter()
+                .any(|s| s.code() == ASSERTION_INGREDIENT_MALFORMED),
+            "active-manifest ingredient failure was suppressed by ingredient attestation: {:?}",
+            failures.iter().map(|s| s.code()).collect::<Vec<_>>()
+        );
+
+        // ...so the overall state stays Invalid rather than being upgraded to Valid.
+        assert_eq!(results.validation_state(), ValidationState::Invalid);
     }
 }
