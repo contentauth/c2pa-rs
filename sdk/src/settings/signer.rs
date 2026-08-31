@@ -75,6 +75,18 @@ pub enum SignerSettings {
     },
 }
 
+fn cert_chain_pem_to_der(cert_chain_pem: &[u8]) -> crate::Result<Vec<Vec<u8>>> {
+    let fixed = String::from_utf8_lossy(cert_chain_pem).replace("\\n", "\n");
+
+    x509_parser::pem::Pem::iter_from_buffer(fixed.as_bytes())
+        .map(|maybe_pem| {
+            maybe_pem
+                .map(|pem| pem.contents)
+                .map_err(|_| crate::Error::CoseInvalidCert)
+        })
+        .collect()
+}
+
 impl SignerSettings {
     // TODO: add async signer
     /// Returns the constructed signer from the [Settings::signer] field.
@@ -126,13 +138,17 @@ impl SignerSettings {
                 tsa_url,
                 referenced_assertions: _,
                 roles: _,
-            } => Ok(Box::new(RemoteSigner {
-                url,
-                alg,
-                reserve_size: 10000 + sign_cert.len(),
-                certs: vec![sign_cert.into_bytes()],
-                tsa_url,
-            })),
+            } => {
+                let certs = cert_chain_pem_to_der(sign_cert.as_bytes())?;
+                let reserve_size = 10000 + certs.iter().map(|c| c.len()).sum::<usize>();
+                Ok(Box::new(RemoteSigner {
+                    url,
+                    alg,
+                    reserve_size,
+                    certs,
+                    tsa_url,
+                }))
+            }
         }
     }
 
@@ -391,7 +407,11 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
     #![allow(clippy::expect_used)]
 
-    use crate::{settings::Settings, utils::test_signer, Signer, SigningAlg};
+    use crate::{
+        settings::{signer::cert_chain_pem_to_der, Settings},
+        utils::test_signer,
+        Signer, SigningAlg,
+    };
 
     #[cfg(not(target_arch = "wasm32"))]
     fn remote_signer_mock_server<'a>(
@@ -553,5 +573,113 @@ pub mod tests {
         assert_eq!(signer.sign(&[1, 2, 3]).unwrap(), signed_bytes);
 
         mock.assert();
+
+        // certs() must return DER-encoded certs (not raw PEM text), matching the
+        // Local variant's behavior via create_signer::from_keys.
+        let der_certs = signer.certs().unwrap();
+        assert!(!der_certs.is_empty());
+        let pem_text = String::from_utf8(sign_cert.to_vec()).unwrap();
+        let expected_der = cert_chain_pem_to_der(pem_text.as_bytes()).unwrap();
+        assert_eq!(der_certs, expected_der);
+        for der in &der_certs {
+            assert_ne!(der.as_slice(), pem_text.as_bytes());
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_make_remote_signer_json_escaped_pem() {
+        use httpmock::MockServer;
+
+        use crate::create_signer;
+
+        let alg = SigningAlg::Ps384;
+        let (sign_cert, private_key) = test_signer::cert_chain_and_private_key_for_alg(alg);
+
+        let signer = create_signer::from_keys(sign_cert, private_key, alg, None).unwrap();
+        let signed_bytes = signer.sign(&[1, 2, 3]).unwrap();
+
+        let server = MockServer::start();
+        let mock = remote_signer_mock_server(&server, &signed_bytes);
+
+        // Simulate a cert chain delivered with literal "\n" escapes, as happens
+        // when a PEM cert is embedded in a JSON config value.
+        let pem_text = String::from_utf8(sign_cert.to_vec()).unwrap();
+        let escaped_pem = pem_text.replace('\n', "\\n");
+
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [signer.remote]
+                    url = (server.base_url())
+                    alg = (alg.to_string())
+                    sign_cert = (escaped_pem)
+                }
+                .to_string(),
+            )
+            .unwrap();
+
+        let signer_settings = settings.signer.expect("signer settings should be present");
+        let signer = signer_settings.c2pa_signer().unwrap();
+        assert_eq!(signer.alg(), alg);
+        assert_eq!(signer.sign(&[1, 2, 3]).unwrap(), signed_bytes);
+
+        let der_certs = signer.certs().unwrap();
+        assert!(!der_certs.is_empty());
+        let expected_der = cert_chain_pem_to_der(pem_text.as_bytes()).unwrap();
+        assert_eq!(der_certs, expected_der);
+
+        mock.assert();
+    }
+
+    #[test]
+    fn test_make_remote_signer_malformed_pem_errors() {
+        let alg = SigningAlg::Ps384;
+
+        // Has BEGIN/END markers (so the parser attempts to decode a block) but
+        // the body is not valid base64, so decoding must fail with an error
+        // rather than silently producing an empty cert list.
+        let malformed_pem =
+            "-----BEGIN CERTIFICATE-----\nnot-valid-base64!!!\n-----END CERTIFICATE-----\n";
+
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [signer.remote]
+                    url = "https://example.com/sign"
+                    alg = (alg.to_string())
+                    sign_cert = (malformed_pem)
+                }
+                .to_string(),
+            )
+            .unwrap();
+
+        let signer_settings = settings.signer.expect("signer settings should be present");
+        assert!(signer_settings.c2pa_signer().is_err());
+    }
+
+    #[test]
+    fn test_make_remote_signer_no_pem_blocks_yields_empty_certs() {
+        // No BEGIN/END markers at all: the underlying parser treats this as
+        // "no blocks found" and returns an empty cert list rather than an
+        // error. This documents that behavior so a future change can't
+        // silently alter it without a failing test.
+        let alg = SigningAlg::Ps384;
+
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [signer.remote]
+                    url = "https://example.com/sign"
+                    alg = (alg.to_string())
+                    sign_cert = "not a pem cert chain at all"
+                }
+                .to_string(),
+            )
+            .unwrap();
+
+        let signer_settings = settings.signer.expect("signer settings should be present");
+        let signer = signer_settings.c2pa_signer().unwrap();
+        assert_eq!(signer.certs().unwrap(), Vec::<Vec<u8>>::new());
     }
 }

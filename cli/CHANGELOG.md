@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.16](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.27.15...c2patool-v0.27.16)
+_27 August 2026_
+
+## [0.27.15](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.27.14...c2patool-v0.27.15)
+_13 August 2026_
+
+## [0.27.14](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.27.13...c2patool-v0.27.14)
+_13 August 2026_
+
+## [0.27.13](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.27.12...c2patool-v0.27.13)
+_13 August 2026_
+
+## [0.27.12](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.27.11...c2patool-v0.27.12)
+_12 August 2026_
+
+## [0.27.11](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.27.10...c2patool-v0.27.11)
+_12 August 2026_
+
+## [0.27.10](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.27.9...c2patool-v0.27.10)
+_10 August 2026_
+
+## [0.27.9](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.27.8...c2patool-v0.27.9)
+_10 August 2026_
+
+## [0.27.8](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.27.7...c2patool-v0.27.8)
+_07 August 2026_
+
+## [0.27.7](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.27.6...c2patool-v0.27.7)
+_07 August 2026_
+
+## [0.27.6](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.27.5...c2patool-v0.27.6)
+_06 August 2026_
+
+## [0.27.5](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.27.4...c2patool-v0.27.5)
+_05 August 2026_
+
+## [0.27.4](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.27.3...c2patool-v0.27.4)
+_04 August 2026_
+
 ## [0.27.3](https://github.com/contentauth/c2pa-rs/compare/c2patool-v0.27.2...c2patool-v0.27.3)
 _24 July 2026_
 

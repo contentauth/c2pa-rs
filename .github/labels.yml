@@ -11,6 +11,10 @@
   color: "0e8a16"
   description: "release-plz release PR; runs the full Tier 1A+1B+2 suite"
 
+- name: safe to test
+  color: "0e8a16"
+  description: "Maintainer trusts this fork PR; allow secret-dependent CI to run"
+
 - name: check-release
   color: "1d76db"
   description: "Force the full Tier 1A+1B+2 suite on this PR"
@@ -18,6 +22,10 @@
 - name: backport-stable
   color: "5319e7"
   description: "Cherry-pick this merged main PR onto the stable release line"
+
+- name: do-not-backport
+  color: "6a737d"
+  description: "Deliberately not backported onto stable (e.g. incompatible behavior change)"
 
 - name: release-train
   color: "fbca04"

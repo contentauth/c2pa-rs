@@ -46,7 +46,7 @@ use crate::{
     utils::hash_utils::hash_to_b64,
     validation_results::{ValidationResults, ValidationState},
     validation_status::{ValidationStatus, ASSERTION_MISSING, ASSERTION_NOT_REDACTED},
-    Ingredient, Manifest, ManifestAssertion,
+    Ingredient, Manifest, ManifestAssertion, ManifestAssertionKind,
 };
 
 /// MaybeSend allows for no Send bound on wasm32 targets
@@ -1237,7 +1237,24 @@ impl Reader {
                     builder.add_ingredient(ingredient);
                 }
                 for assertion in manifest.assertions.iter() {
-                    builder.add_assertion(assertion.label(), assertion.value()?)?;
+                    // Archive bookkeeping, not part of the manifest being edited.
+                    if assertion
+                        .label()
+                        .starts_with(crate::assertions::labels::ARCHIVE_METADATA)
+                    {
+                        continue;
+                    }
+                    // For archive roundtrip: keep created/gathered attribution and kind
+                    let kind = match assertion.kind() {
+                        ManifestAssertionKind::Json => Some(ManifestAssertionKind::Json),
+                        _ => None,
+                    };
+                    builder.add_assertion_impl(
+                        assertion.label(),
+                        assertion.value()?,
+                        kind,
+                        assertion.created(),
+                    )?;
                 }
             }
         }

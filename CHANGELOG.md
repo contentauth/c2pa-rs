@@ -9,6 +9,133 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.90.16](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.15...c2pa-v0.90.16)
+_27 August 2026_
+
+### Added
+
+* Add `Error::AssertionEncoding` error source to error message (backport #2544) ([#2549](https://github.com/contentauth/c2pa-rs/pull/2549))
+
+### Fixed
+
+* Remove `validationResults` requires `activeManifest` when serializing v3 ingredients (backport #2429) ([#2537](https://github.com/contentauth/c2pa-rs/pull/2537))
+* Remove dbg! call used for testing (backport #2551) ([#2552](https://github.com/contentauth/c2pa-rs/pull/2552))
+* Filter functions did not consider `ingredient` parameter (backport #2541) ([#2546](https://github.com/contentauth/c2pa-rs/pull/2546))
+* Reject BMFF Merkle map location that overflows u32 chunk index (CAI-12884) (backport #2445) ([#2500](https://github.com/contentauth/c2pa-rs/pull/2500))
+
+## [0.90.15](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.14...c2pa-v0.90.15)
+_13 August 2026_
+
+### Fixed
+
+* Hardening against potential deep recursion in update manifests with parent cycles (backport #2493) ([#2501](https://github.com/contentauth/c2pa-rs/pull/2501))
+
+## [0.90.14](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.13...c2pa-v0.90.14)
+_13 August 2026_
+
+### Fixed
+
+* Diamond inputTo manifest exponential reverifications depending on ingredient paths reachability (backport #2492) ([#2498](https://github.com/contentauth/c2pa-rs/pull/2498))
+
+## [0.90.13](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.12...c2pa-v0.90.13)
+_13 August 2026_
+
+### Fixed
+
+* *(sdk)* Parse PEM cert chain to DER for RemoteSigner (backport #2414) ([#2481](https://github.com/contentauth/c2pa-rs/pull/2481))
+
+## [0.90.12](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.11...c2pa-v0.90.12)
+_12 August 2026_
+
+### Fixed
+
+* Preserve identity assertions in split-signing paths (backport #2421) ([#2465](https://github.com/contentauth/c2pa-rs/pull/2465))
+* Avoid QoS runtime detection warning (backport #2467) ([#2482](https://github.com/contentauth/c2pa-rs/pull/2482))
+* *(sdk)* Validate inputTo ingredients against manifest tampering (#2… ([#2476](https://github.com/contentauth/c2pa-rs/pull/2476))
+
+### Updated dependencies
+
+* Bump sha1 from 0.10.7 to 0.11.0 (backport #2456) ([#2473](https://github.com/contentauth/c2pa-rs/pull/2473))
+
+## [0.90.11](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.10...c2pa-v0.90.11)
+_12 August 2026_
+
+### Fixed
+
+* *(sdk)* Prevent panic on out-of-range timestamp in GeneralizedTime conversion (backport #2469) ([#2474](https://github.com/contentauth/c2pa-rs/pull/2474))
+
+## [0.90.10](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.9...c2pa-v0.90.10)
+_10 August 2026_
+
+### Fixed
+
+* Relax field restriction requirements on ingredients (backport #2450) ([#2458](https://github.com/contentauth/c2pa-rs/pull/2458))
+* `created` and `kind` flags should roundtrip in Builder archives (backport #2460) ([#2464](https://github.com/contentauth/c2pa-rs/pull/2464))
+
+## [0.90.9](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.8...c2pa-v0.90.9)
+_10 August 2026_
+
+### Added
+
+* *(sdk)* Read support for c2md (JUMBF data) manifests (backport #2380) ([#2461](https://github.com/contentauth/c2pa-rs/pull/2461))
+
+## [0.90.8](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.7...c2pa-v0.90.8)
+_07 August 2026_
+
+### Fixed
+
+* Ensure inception action is only auto-added once (backport #2438) ([#2444](https://github.com/contentauth/c2pa-rs/pull/2444))
+* Chain resources in `Builder::add_ingredient_from_stream` (backport #2432) ([#2442](https://github.com/contentauth/c2pa-rs/pull/2442))
+
+## [0.90.7](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.6...c2pa-v0.90.7)
+_07 August 2026_
+
+### Fixed
+
+* Gate lopdf's rayon feature by real thread availability (backport #2428) ([#2439](https://github.com/contentauth/c2pa-rs/pull/2439))
+
+## [0.90.6](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.5...c2pa-v0.90.6)
+_06 August 2026_
+
+### Fixed
+
+* *(sdk)* Reject did:web documents whose id doesn't match the requested DID (backport #2411) ([#2427](https://github.com/contentauth/c2pa-rs/pull/2427))
+* Upgrade lopdf to 0.44.0 and drop ttf-parser advisory exemption (backport #2417) ([#2418](https://github.com/contentauth/c2pa-rs/pull/2418))
+
+## [0.90.5](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.4...c2pa-v0.90.5)
+_05 August 2026_
+
+### Fixed
+
+* Make sure the closure variables are evaluated at the right time in filter_ingredients (unstable_builder_filter) (backport #2413) ([#2415](https://github.com/contentauth/c2pa-rs/pull/2415))
+* Integer underflow panic in read_desc_box via JUMD toggle-driven field size mismatch (backport #2334) ([#2385](https://github.com/contentauth/c2pa-rs/pull/2385))
+
+## [0.90.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.3...c2pa-v0.90.4)
+_04 August 2026_
+
+### Added
+
+* New builder method to combine filtering of actions and ingredients ([#2379](https://github.com/contentauth/c2pa-rs/pull/2379)) ([#2401](https://github.com/contentauth/c2pa-rs/pull/2401))
+
+### Documented
+
+* Doc how to generate bench fixtures (backport #2366) ([#2370](https://github.com/contentauth/c2pa-rs/pull/2370))
+
+### Fixed
+
+* Make URI checks for (data)boxes when going through redactions mo… ([#2404](https://github.com/contentauth/c2pa-rs/pull/2404))
+* Remove archive assertions when constructing builder from archive (backport #2374) ([#2408](https://github.com/contentauth/c2pa-rs/pull/2408))
+* Thumbnails silently dropped when format string has uppercase mimetype (backport #2365) ([#2407](https://github.com/contentauth/c2pa-rs/pull/2407))
+* Unify partially-applied feature name change
+* Replace mp4 crate with hardened native BMFF sample reader (CAI-12277) (backport #2357) ([#2402](https://github.com/contentauth/c2pa-rs/pull/2402))
+* Reject timed-media BMFF Merkle maps that verify against no track (backport #2369) ([#2400](https://github.com/contentauth/c2pa-rs/pull/2400))
+* Validate c2pa.translated action for source and target languages params (backport #2378) ([#2393](https://github.com/contentauth/c2pa-rs/pull/2393))
+* Harden against integer underflow attacks in  ID3 v2.3 frame decoder (backport #2284) ([#2389](https://github.com/contentauth/c2pa-rs/pull/2389))
+
+### Other
+
+**IMPORTANT:** An experimental feature was renamed from `experimental_builder_filter` to `unstable_builder_filter`. Strictly speaking in Rust SemVer, this is a breaking change, but since it was previously expressed that experimental features were exempt from SemVer, we decided not to bump the version.
+
 ## [0.90.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.2...c2pa-v0.90.3)
 _24 July 2026_
 
