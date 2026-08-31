@@ -542,10 +542,17 @@ fn error_message_fallback(message: &str) -> *mut c_char {
 /// longer valid after that call.
 ///
 /// One exception: when the message itself could not be allocated, the returned
-/// pointer is this thread's fallback storage rather than a tracked buffer. It
-/// must not be freed, it stays valid only until this thread's next c2pa_error
-/// call, and passing it to c2pa_free is harmless but returns -1. A caller that
-/// frees unconditionally is still correct; it simply gets that -1.
+/// pointer is this thread's fallback storage rather than a tracked buffer.
+/// Three consequences, all of which the usual copy-then-free pattern already
+/// satisfies:
+///
+/// - It must not be freed. Passing it to c2pa_free is harmless and returns -1,
+///   so a caller that frees unconditionally is still correct.
+/// - The next c2pa_error call on the same thread overwrites it in place. Copy
+///   the message before calling again; a pointer held across a second call
+///   reads the second message, not the first.
+/// - It is per-thread, so a pointer returned on one thread must not be read
+///   from another.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_error() -> *mut c_char {
     let message = Error::last_message();
@@ -2103,9 +2110,12 @@ pub unsafe extern "C" fn c2pa_builder_sign(
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
         // Publish only on success: see "Returning byte buffers" in the
-        // module docs.
+        // module docs. to_c_bytes also returns NULL for an empty buffer, which
+        // is success with nothing to hand back -- Builder::placeholder does
+        // exactly that for a format needing no placeholder -- so only a NULL
+        // with a non-zero length is a refusal.
         let bytes = to_c_bytes(manifest_bytes);
-        if bytes.is_null() {
+        if bytes.is_null() && len > 0 {
             return -1;
         }
         *manifest_bytes_ptr = bytes;
@@ -2166,9 +2176,12 @@ pub unsafe extern "C" fn c2pa_builder_sign_context(
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
         // Publish only on success: see "Returning byte buffers" in the
-        // module docs.
+        // module docs. to_c_bytes also returns NULL for an empty buffer, which
+        // is success with nothing to hand back -- Builder::placeholder does
+        // exactly that for a format needing no placeholder -- so only a NULL
+        // with a non-zero length is a refusal.
         let bytes = to_c_bytes(manifest_bytes);
-        if bytes.is_null() {
+        if bytes.is_null() && len > 0 {
             return -1;
         }
         *manifest_bytes_ptr = bytes;
@@ -2221,9 +2234,12 @@ pub unsafe extern "C" fn c2pa_builder_data_hashed_placeholder(
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
         // Publish only on success: see "Returning byte buffers" in the
-        // module docs.
+        // module docs. to_c_bytes also returns NULL for an empty buffer, which
+        // is success with nothing to hand back -- Builder::placeholder does
+        // exactly that for a format needing no placeholder -- so only a NULL
+        // with a non-zero length is a refusal.
         let bytes = to_c_bytes(manifest_bytes);
-        if bytes.is_null() {
+        if bytes.is_null() && len > 0 {
             return -1;
         }
         *manifest_bytes_ptr = bytes;
@@ -2283,9 +2299,12 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
         // Publish only on success: see "Returning byte buffers" in the
-        // module docs.
+        // module docs. to_c_bytes also returns NULL for an empty buffer, which
+        // is success with nothing to hand back -- Builder::placeholder does
+        // exactly that for a format needing no placeholder -- so only a NULL
+        // with a non-zero length is a refusal.
         let bytes = to_c_bytes(manifest_bytes);
-        if bytes.is_null() {
+        if bytes.is_null() && len > 0 {
             return -1;
         }
         *manifest_bytes_ptr = bytes;
@@ -2388,9 +2407,12 @@ pub unsafe extern "C" fn c2pa_builder_placeholder(
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
         // Publish only on success: see "Returning byte buffers" in the
-        // module docs.
+        // module docs. to_c_bytes also returns NULL for an empty buffer, which
+        // is success with nothing to hand back -- Builder::placeholder does
+        // exactly that for a format needing no placeholder -- so only a NULL
+        // with a non-zero length is a refusal.
         let bytes = to_c_bytes(manifest_bytes);
-        if bytes.is_null() {
+        if bytes.is_null() && len > 0 {
             return -1;
         }
         *manifest_bytes_ptr = bytes;
@@ -2440,9 +2462,12 @@ pub unsafe extern "C" fn c2pa_builder_sign_embeddable(
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
         // Publish only on success: see "Returning byte buffers" in the
-        // module docs.
+        // module docs. to_c_bytes also returns NULL for an empty buffer, which
+        // is success with nothing to hand back -- Builder::placeholder does
+        // exactly that for a format needing no placeholder -- so only a NULL
+        // with a non-zero length is a refusal.
         let bytes = to_c_bytes(manifest_bytes);
-        if bytes.is_null() {
+        if bytes.is_null() && len > 0 {
             return -1;
         }
         *manifest_bytes_ptr = bytes;
@@ -2657,10 +2682,10 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
     let result_bytes = ok_or_return_int!(result);
     let len = result_bytes.len() as i64;
     if !result_bytes_ptr.is_null() {
-        // Publish only on success: see "Returning byte buffers" in the
-        // module docs.
+        // Publish only on success, and treat an empty buffer as success:
+        // see the manifest_bytes_ptr sites and the module docs.
         let bytes = to_c_bytes(result_bytes);
-        if bytes.is_null() {
+        if bytes.is_null() && len > 0 {
             return -1;
         }
         *result_bytes_ptr = bytes;
@@ -3600,6 +3625,50 @@ mod tests {
         let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
         unsafe { c2pa_free(error as *const c_void) };
         assert_eq!(error_str.to_str().unwrap(), "");
+    }
+
+    #[test]
+    fn test_error_fallback_is_reused_by_the_next_call_on_this_thread() {
+        // Pins the documented contract: the fallback is one per-thread buffer,
+        // so a second call overwrites what the first returned. Callers copy
+        // before calling again; this test exists so a change that silently
+        // alters that shows up here rather than in a binding.
+        let first = error_message_fallback("FIRST: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        assert_eq!(
+            unsafe { CStr::from_ptr(first) }.to_str().unwrap(),
+            "FIRST: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        );
+
+        let second = error_message_fallback("SECOND: b");
+        assert_eq!(first, second, "the fallback is a single per-thread buffer");
+        assert_eq!(
+            unsafe { CStr::from_ptr(first) }.to_str().unwrap(),
+            "SECOND: b",
+            "the second call overwrites the first message in place"
+        );
+
+        // A shorter message must not leave the tail of the longer one behind.
+        assert_eq!(
+            unsafe { CStr::from_ptr(second) }.to_str().unwrap(),
+            "SECOND: b"
+        );
+    }
+
+    #[test]
+    fn test_error_fallback_truncates_on_a_char_boundary() {
+        // Multi-byte characters straddling the limit must not produce a C
+        // string that ends mid-character.
+        let long = "\u{4e00}".repeat(200); // 3 bytes each, 600 total
+        let ptr = error_message_fallback(&long);
+        let bytes = unsafe { CStr::from_ptr(ptr) }.to_bytes();
+        assert!(
+            bytes.len() < ERROR_FALLBACK_LEN,
+            "must fit the buffer with room for the NUL"
+        );
+        assert!(
+            std::str::from_utf8(bytes).is_ok(),
+            "truncation split a character"
+        );
     }
 
     #[test]
@@ -5420,6 +5489,73 @@ verify_after_sign = true
 
     #[test]
 
+    fn test_placeholder_returns_zero_not_error_when_none_is_needed() {
+        // Builder::placeholder returns Ok(Vec::new()) when the format needs no
+        // placeholder -- a documented success, not a failure. to_c_bytes maps an
+        // empty buffer to NULL, so a NULL check alone turns that success into
+        // -1 and breaks a working caller path.
+        const SETTINGS: &str = include_str!(fixture_path!("test_settings.json"));
+
+        let settings = unsafe { c2pa_settings_new() };
+        assert!(!settings.is_null());
+        let json_str = CString::new(SETTINGS).unwrap();
+        let fmt = CString::new("json").unwrap();
+        assert_eq!(
+            unsafe { c2pa_settings_update_from_string(settings, json_str.as_ptr(), fmt.as_ptr()) },
+            0
+        );
+
+        // prefer_box_hash plus a BoxHash-capable format is what makes
+        // needs_placeholder false.
+        let box_hash = CString::new(r#"{"builder":{"prefer_box_hash":true}}"#).unwrap();
+        assert_eq!(
+            unsafe { c2pa_settings_update_from_string(settings, box_hash.as_ptr(), fmt.as_ptr()) },
+            0
+        );
+
+        let ctx_builder = unsafe { c2pa_context_builder_new() };
+        assert!(!ctx_builder.is_null());
+        assert_eq!(
+            unsafe { c2pa_context_builder_set_settings(ctx_builder, settings) },
+            0
+        );
+        let context = unsafe { c2pa_context_builder_build(ctx_builder) };
+        assert!(!context.is_null());
+
+        let builder = unsafe { c2pa_builder_from_context(context) };
+        assert!(!builder.is_null());
+
+        let format = CString::new("image/jpeg").unwrap();
+        let needs = unsafe { c2pa_builder_needs_placeholder(builder, format.as_ptr()) };
+        assert_eq!(
+            needs, 0,
+            "expected a format that needs no placeholder; the empty-placeholder \
+             path is unreachable otherwise and this test proves nothing"
+        );
+
+        let mut placeholder_ptr: *const c_uchar = std::ptr::null();
+        let len =
+            unsafe { c2pa_builder_placeholder(builder, format.as_ptr(), &mut placeholder_ptr) };
+        assert_eq!(
+            len,
+            0,
+            "an empty placeholder is success: got {len}, error {:?}",
+            unsafe { CStr::from_ptr(c2pa_error()) }
+        );
+        assert!(
+            placeholder_ptr.is_null(),
+            "an empty placeholder has no bytes to publish"
+        );
+
+        unsafe {
+            c2pa_free(builder as *mut c_void);
+            c2pa_free(context as *mut c_void);
+            c2pa_free(settings as *mut c_void);
+            c2pa_free(ctx_builder as *mut c_void);
+        }
+    }
+
+    #[test]
     fn test_bmff_embeddable_workflow_with_mdat_hashes() {
         // Build a context with signer + Merkle chunk size for the external-mdat-hash workflow.
         const SETTINGS: &str = include_str!(fixture_path!("test_settings.json"));

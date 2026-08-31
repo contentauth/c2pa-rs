@@ -176,6 +176,43 @@ impl EntryInner {
     }
 }
 
+/// Disarms an entry that was built but never recorded, then drops it.
+///
+/// Both `track_*` paths return "the caller still owns the allocation" when the
+/// registry lock is poisoned. The entry they built is still armed at that
+/// point, so letting it drop would run the cleanup and free the object the
+/// caller is being told to free itself -- a double free.
+///
+/// `Arc::into_inner` yields the value only when this is the last reference. It
+/// is, at both call sites: the `Arc` is created locally and the only clone
+/// would come from the map insert, which the poisoned path never reaches.
+///
+/// The `None` arm reports rather than hides. It cannot disarm the entry --
+/// whoever holds the other reference owns it now, and the cleanup runs when
+/// they drop it -- so all this can do is say that the invariant broke.
+fn defuse_untracked_entry(entry: Arc<EntryInner>) {
+    match Arc::into_inner(entry) {
+        Some(mut entry) => {
+            // take() alone disarms: dropping a Box<dyn FnMut()> drops the
+            // closure's captures without running its body.
+            if let Ok(cleanup) = entry.cleanup.get_mut() {
+                cleanup.take();
+            }
+        }
+        None => {
+            // Unreachable today. Nothing can be done here: the other holder
+            // owns the entry and will run its cleanup on drop, which is the
+            // double free this function exists to prevent. Report it rather
+            // than panic, since a panic would cross the extern "C" boundary.
+            debug_assert!(false, "an untracked entry had an unexpected clone");
+            eprintln!(
+                "c2pa: an untracked registry entry was still referenced; its cleanup \
+                 may double free"
+            );
+        }
+    }
+}
+
 // Log/Debug helper for registry entries.
 impl std::fmt::Debug for EntryInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -458,12 +495,7 @@ impl PointerRegistry {
         // entry drops: running the cleanup here would free the object while the
         // caller is being told it still owns it. Defusing rather than forgetting
         // also releases the Arc and its boxed closure instead of leaking them.
-        let mut entry = entry;
-        if let Some(entry) = Arc::get_mut(&mut entry) {
-            if let Ok(cleanup) = entry.cleanup.get_mut() {
-                cleanup.take();
-            }
-        }
+        defuse_untracked_entry(entry);
         CimplError::tracking_refused("registry lock poisoned").set_last();
         None
     }
@@ -521,12 +553,7 @@ impl PointerRegistry {
             // the entry drops: running the cleanup here would free the buffer,
             // and the caller frees it again on false. Defusing rather than
             // forgetting also releases the Arc and its boxed closure.
-            let mut entry = entry;
-            if let Some(entry) = Arc::get_mut(&mut entry) {
-                if let Ok(cleanup) = entry.cleanup.get_mut() {
-                    cleanup.take();
-                }
-            }
+            defuse_untracked_entry(entry);
             CimplError::tracking_refused("registry lock poisoned").set_last();
             return false;
         }

@@ -347,6 +347,7 @@ mod tests {
             (C2paError::PointerInUse("test".into()), 8),
             (C2paError::WrongWrapperKind("test".into()), 9),
             (C2paError::ForeignProcess("test".into()), 10),
+            (C2paError::TrackingRefused("test".into()), 11),
             (C2paError::RemoteManifest("test".into()), 112),
             (C2paError::ResourceNotFound("test".into()), 113),
             (C2paError::Signature("test".into()), 114),
