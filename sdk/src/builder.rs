@@ -2568,7 +2568,9 @@ impl Builder {
                 self.bmff_hasher.alg = ph_alg.to_string();
 
                 let mut placeholder_bmff = BmffHash::new("jumbf manifest", ph_alg, None);
-                placeholder_bmff.set_default_exclusions();
+                // Baked into this assertion's exclusions now; later setting
+                // changes won't affect this placeholder or its signed hash.
+                placeholder_bmff.set_default_exclusions_with_options(self.context.settings());
                 placeholder_bmff.add_place_holder_hash()?;
                 let assertion_label = placeholder_bmff.to_assertion()?.label();
                 self.add_assertion(&assertion_label, &placeholder_bmff)?;
@@ -3755,12 +3757,15 @@ enum UriRewrite {
 
 /// Ingredient ids that `action` references, both symbolically (`ingredientIds` /
 /// `org.cai.ingredientIds` / `instanceId` / deprecated `instance_id`) and positionally
-/// (`parameters.ingredients` `HashedUri`s resolved against `pre_filter_ids`).
+/// (the v1 singular `parameters.ingredient` and v2/v3 plural `parameters.ingredients`
+/// `HashedUri`s, both resolved against `pre_filter_ids`).
 #[cfg(feature = "unstable_builder_filter")]
 fn action_ingredient_ref_ids(action: &Action, pre_filter_ids: &[String]) -> Vec<String> {
     let mut ids = action.ingredient_ids();
-    if let Some(uris) = action.parameters().and_then(|p| p.ingredients.as_ref()) {
-        for uri in uris {
+    if let Some(params) = action.parameters() {
+        let singular = params.ingredient.as_ref().into_iter();
+        let plural = params.ingredients.iter().flatten();
+        for uri in singular.chain(plural) {
             if let Some(label) = assertion_label_from_uri(&uri.url()) {
                 let (_, idx) = parse_positional_label(&label);
                 if let Some(id) = pre_filter_ids.get(idx) {
@@ -3803,11 +3808,13 @@ fn rewrite_one_ingredient_uri(
     UriRewrite::Rewritten(HashedUri::new(new_url, hu.alg(), &hu.hash()))
 }
 
-/// Rewrites `parameters.ingredients[].url` on every action so positional labels
-/// (`c2pa.ingredient.v3__N`) point at the new positions of the surviving ingredients.
+/// Rewrites `parameters.ingredient.url` and `parameters.ingredients[].url` on every action so
+/// positional labels (`c2pa.ingredient.v3__N`) point at the new positions of the surviving
+/// ingredients.
 ///
 /// Required after any ingredient is pruned: `to_claim` re-emits the surviving ingredients
-/// positionally at sign time, so any stale `__N` reference would otherwise dangle.
+/// positionally at sign time, so any stale `__N` reference would otherwise dangle. Both the v1
+/// singular `ingredient` and v2/v3 plural `ingredients` reference shapes are handled.
 #[cfg(feature = "unstable_builder_filter")]
 fn rewrite_action_ingredient_urls(
     actions: &mut Actions,
@@ -3815,19 +3822,18 @@ fn rewrite_action_ingredient_urls(
     id_to_new_idx: &HashMap<&str, usize>,
 ) -> Result<()> {
     let mut rewritten = Vec::with_capacity(actions.actions.len());
-    for action in actions.actions.drain(..) {
-        let Some(ingredient_uris) = action.parameters().and_then(|p| p.ingredients.as_ref()) else {
+    for mut action in actions.actions.drain(..) {
+        let Some(params) = action.parameters() else {
             rewritten.push(action);
             continue;
         };
+        let singular = params.ingredient.clone();
+        let plural = params.ingredients.clone();
 
-        let mut changed = false;
-        let mut remapped_uris: Vec<HashedUri> = Vec::with_capacity(ingredient_uris.len());
-        for uri in ingredient_uris {
-            match rewrite_one_ingredient_uri(uri, pre_filter_ids, id_to_new_idx) {
+        if let Some(uri) = singular {
+            match rewrite_one_ingredient_uri(&uri, pre_filter_ids, id_to_new_idx) {
                 UriRewrite::Rewritten(new) => {
-                    changed = true;
-                    remapped_uris.push(new);
+                    action = action.set_parameter("ingredient", new)?;
                 }
                 UriRewrite::Stale => {
                     log::warn!(
@@ -3835,18 +3841,39 @@ fn rewrite_action_ingredient_urls(
                         action.action(),
                         label_segment_from_uri(&uri.url()),
                     );
-                    remapped_uris.push(uri.clone());
                 }
-                UriRewrite::Unchanged => remapped_uris.push(uri.clone()),
+                UriRewrite::Unchanged => {}
             }
         }
 
-        if changed {
-            // Propagate rather than swallow: a failed remap would silently dangle references.
-            rewritten.push(action.set_parameter("ingredients", remapped_uris)?);
-        } else {
-            rewritten.push(action);
+        if let Some(ingredient_uris) = plural {
+            let mut changed = false;
+            let mut remapped_uris: Vec<HashedUri> = Vec::with_capacity(ingredient_uris.len());
+            for uri in &ingredient_uris {
+                match rewrite_one_ingredient_uri(uri, pre_filter_ids, id_to_new_idx) {
+                    UriRewrite::Rewritten(new) => {
+                        changed = true;
+                        remapped_uris.push(new);
+                    }
+                    UriRewrite::Stale => {
+                        log::warn!(
+                            "action '{}' has stale ingredient ref '{}'",
+                            action.action(),
+                            label_segment_from_uri(&uri.url()),
+                        );
+                        remapped_uris.push(uri.clone());
+                    }
+                    UriRewrite::Unchanged => remapped_uris.push(uri.clone()),
+                }
+            }
+
+            if changed {
+                // Propagate rather than swallow: a failed remap would silently dangle references.
+                action = action.set_parameter("ingredients", remapped_uris)?;
+            }
         }
+
+        rewritten.push(action);
     }
     actions.actions = rewritten;
     Ok(())
@@ -5831,6 +5858,106 @@ mod tests {
         let reader = Reader::default().with_stream("video/mp4", &mut output_stream)?;
         println!("{reader}");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        Ok(())
+    }
+
+    /// End-to-end sign + re-read for the `bmff_hash_exclude_free_and_skip_boxes`
+    /// setting, in both positions. `TEST_VIDEO_MP4` has a real, pre-existing
+    /// top-level `/free` box unrelated to the placeholder (which is inserted
+    /// right after `ftyp`), so tampering with that box's payload after signing
+    /// proves whether it was actually covered by the hash.
+    #[test]
+    fn test_bmff_hash_exclude_free_and_skip_boxes_setting() -> Result<()> {
+        use std::io::{Seek, SeekFrom, Write};
+
+        // Finds the byte offset of a top-level box's payload by walking
+        // 4-byte-size + 4-byte-type headers from the start of the stream.
+        fn find_top_level_box_payload_offset(data: &[u8], want_type: &[u8; 4]) -> Option<usize> {
+            let mut pos = 0;
+            while pos + 8 <= data.len() {
+                let size = u32::from_be_bytes(data[pos..pos + 4].try_into().unwrap()) as usize;
+                if &data[pos + 4..pos + 8] == want_type {
+                    return Some(pos + 8);
+                }
+                if size < 8 {
+                    break;
+                }
+                pos += size;
+            }
+            None
+        }
+
+        // Builds, embeds, hashes, signs, and patches the fixture MP4 under the
+        // given setting, returning the final asset bytes.
+        fn sign_with_setting(exclude_free_and_skip: bool) -> Result<Vec<u8>> {
+            let context = Context::new().with_settings(
+                serde_json::json!({
+                    "builder": { "bmff_hash_exclude_free_and_skip_boxes": exclude_free_and_skip }
+                })
+                .to_string(),
+            )?;
+            let mut builder =
+                Builder::from_context(context).with_definition(simple_manifest_json().as_str())?;
+
+            let composed_placeholder = builder.placeholder("video/mp4")?;
+
+            let bmff_hash: BmffHash = builder.find_assertion(BmffHash::LABEL)?;
+            assert_eq!(
+                bmff_hash.exclusions().iter().any(|e| e.xpath == "/free"),
+                exclude_free_and_skip
+            );
+
+            let mut input_stream = Cursor::new(TEST_VIDEO_MP4);
+            let mut output_stream = Cursor::new(Vec::new());
+            let offset = write_bmff_placeholder_stream(
+                &composed_placeholder,
+                &mut input_stream,
+                &mut output_stream,
+            )?;
+
+            output_stream.rewind()?;
+            builder.update_hash_from_stream("video/mp4", &mut output_stream)?;
+
+            let signed_manifest = builder.sign_embeddable("video/mp4")?;
+
+            output_stream.seek(SeekFrom::Start(offset as u64))?;
+            output_stream.write_all(&signed_manifest)?;
+
+            Ok(output_stream.into_inner())
+        }
+
+        fn is_trusted(data: &[u8]) -> bool {
+            let mut stream = Cursor::new(data.to_vec());
+            let reader = Reader::default()
+                .with_stream("video/mp4", &mut stream)
+                .unwrap();
+            reader.validation_state() == ValidationState::Trusted
+        }
+
+        for exclude_free_and_skip in [true, false] {
+            let mut signed = sign_with_setting(exclude_free_and_skip)?;
+            assert!(
+                is_trusted(&signed),
+                "clean asset (exclude_free_and_skip={exclude_free_and_skip}) must verify as trusted"
+            );
+
+            let free_payload_offset = find_top_level_box_payload_offset(&signed, b"free")
+                .expect("fixture must contain a top-level /free box");
+            signed[free_payload_offset + 100] ^= 0xff;
+
+            if exclude_free_and_skip {
+                assert!(
+                    is_trusted(&signed),
+                    "/free is excluded from the hash, so tampering it must not be detected"
+                );
+            } else {
+                assert!(
+                    !is_trusted(&signed),
+                    "/free is included in the hash, so tampering it must be detected"
+                );
+            }
+        }
 
         Ok(())
     }
@@ -11142,6 +11269,13 @@ mod tests {
                 .map(|u| u.url())
         }
 
+        /// The url of an action's singular positional ingredient reference, if any.
+        fn singular_ing_url(a: &Action) -> Option<String> {
+            a.parameters()
+                .and_then(|p| p.ingredient.as_ref())
+                .map(|u| u.url())
+        }
+
         /// A componentOf ingredient (label == instance_id) referenced by positional URL tests.
         fn positional_ingredient(label: &str) -> serde_json::Value {
             json!({
@@ -11164,6 +11298,24 @@ mod tests {
                         "alg": "sha256",
                         "hash": [1, 2, 3, 4],
                     }]
+                }
+            })
+        }
+
+        /// A `c2pa.placed` action referencing a single positional ingredient label via the v1
+        /// singular `parameters.ingredient` HashedUri, rather than the v2/v3 plural
+        /// `parameters.ingredients` array used by [`positional_placed`]. Neither shape is
+        /// deprecated, so both must resolve identically for rescue and URL-rewrite purposes.
+        fn positional_placed_singular(idx: usize) -> serde_json::Value {
+            let label = Claim::label_with_instance("c2pa.ingredient.v3", idx);
+            json!({
+                "action": "c2pa.placed",
+                "parameters": {
+                    "ingredient": {
+                        "url": format!("self#jumbf=c2pa.assertions/{label}"),
+                        "alg": "sha256",
+                        "hash": [1, 2, 3, 4],
+                    }
                 }
             })
         }
@@ -11737,6 +11889,95 @@ mod tests {
                 .actions
                 .iter()
                 .any(|a| a.action() == "c2pa.edited"));
+        }
+
+        // Regression test: a `c2pa.placed` action linking an ingredient via the v1 singular
+        // `parameters.ingredient` HashedUri must be rescued the same way one linking via the
+        // v2/v3 plural `parameters.ingredients` array is. Previously `action_ingredient_ref_ids`
+        // only inspected the plural array, so a singular-only reference was invisible to the
+        // rescue check and the action was silently dropped even though its ingredient survived.
+        #[test]
+        fn filter_actions_and_ingredients_rescues_via_singular_ingredient_reference() {
+            let def = json!({
+                "ingredients": [
+                    positional_ingredient("my_ing"),
+                ],
+                "assertions": [{ "label": "c2pa.actions.v2", "data": { "actions": [
+                    created_action(),
+                    positional_placed_singular(0),
+                ]}}]
+            });
+
+            // The action predicate alone would drop `c2pa.placed`; only the singular-reference
+            // rescue of `my_ing` should save it.
+            let mut b = removal_builder(def);
+            b.filter_actions_and_ingredients(
+                |a| a.action() != "c2pa.placed",
+                |ing| ing.label() == Some("my_ing"),
+            )
+            .unwrap();
+
+            assert_eq!(b.definition.ingredients.len(), 1);
+            assert!(builder_actions(&b)
+                .actions
+                .iter()
+                .any(|a| a.action() == "c2pa.placed"));
+        }
+
+        // Contrast case: an unrescued singular reference is dropped like any other, confirming
+        // the rescue above is due to the ingredient predicate rather than some blanket keep.
+        #[test]
+        fn filter_actions_and_ingredients_drops_unrescued_singular_ingredient_reference() {
+            let def = json!({
+                "ingredients": [
+                    positional_ingredient("not_my_ing"),
+                ],
+                "assertions": [{ "label": "c2pa.actions.v2", "data": { "actions": [
+                    created_action(),
+                    positional_placed_singular(0),
+                ]}}]
+            });
+
+            let mut b = removal_builder(def);
+            b.filter_actions_and_ingredients(|a| a.action() != "c2pa.placed", |_| false)
+                .unwrap();
+
+            assert!(b.definition.ingredients.is_empty());
+            assert!(!builder_actions(&b)
+                .actions
+                .iter()
+                .any(|a| a.action() == "c2pa.placed"));
+        }
+
+        // The singular `parameters.ingredient` URL must be repointed to a surviving ingredient's
+        // new position after pruning shifts indices, the same way the plural array is
+        // (`filter_ingredients_parent_of_nonzero_index` covers the plural case).
+        #[test]
+        fn filter_actions_and_ingredients_rewrites_singular_ingredient_reference_after_prune() {
+            let mut b = removal_builder(json!({
+                "ingredients": [
+                    positional_ingredient("orphan"), // idx0, pruned
+                    positional_ingredient("kept"),    // idx1, referenced by the singular form
+                ],
+                "assertions": [{ "label": "c2pa.actions.v2", "data": { "actions": [
+                    created_action(),
+                    positional_placed_singular(1),
+                ]}}]
+            }));
+
+            b.filter_actions_and_ingredients(|_| true, |ing| ing.label() == Some("kept"))
+                .unwrap();
+
+            assert_eq!(b.definition.ingredients.len(), 1);
+            assert_eq!(b.definition.ingredients[0].label(), Some("kept"));
+            // The reference moved from idx1 to idx0 as "orphan" was pruned.
+            let url = builder_actions(&b)
+                .actions
+                .iter()
+                .find(|a| a.action() == "c2pa.placed")
+                .and_then(singular_ing_url)
+                .unwrap();
+            assert!(url.ends_with("c2pa.ingredient.v3"));
         }
 
         // Two ingredients with neither a `label` nor an `instance_id` both fall back to the same

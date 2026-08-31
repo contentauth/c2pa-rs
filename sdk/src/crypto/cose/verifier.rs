@@ -98,18 +98,35 @@ impl Verifier<'_> {
             return Err(CoseError::InvalidEcdsaSignature);
         }
 
-        if _sync {
-            self.verify_profile(&sign1, tst_info, validation_log)
-        } else {
-            self.verify_profile_async(&sign1, tst_info, validation_log)
-                .await
-        }
-        .ok(); // Ignore errors here - they have already been logged.
-
-        if _sync {
+        // check the trust for this item
+        let result = if _sync {
             self.verify_trust(&sign1, tst_info, validation_log)
         } else {
             self.verify_trust_async(&sign1, tst_info, validation_log)
+                .await
+        }; // Ignore errors here - they have already been logged.
+
+        // see if this trusted anchor set had custom EKU overrides
+        let override_ekus = match result {
+            // only case where we have named trust sets
+            Ok((trust_type, Some(trust_uri))) => match self {
+                Self::VerifyTrustPolicy(ref ctp) => {
+                    if let Some(anchor) = ctp.get_anchor_set(trust_type, &trust_uri) {
+                        anchor.trust_config.clone()
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+
+        // check the profile of the cert
+        if _sync {
+            self.verify_profile(&sign1, tst_info, override_ekus, validation_log)
+        } else {
+            self.verify_profile_async(&sign1, tst_info, override_ekus, validation_log)
                 .await
         }
         .ok(); // Ignore errors here - they have already been logged.
@@ -163,6 +180,7 @@ impl Verifier<'_> {
         &self,
         sign1: &CoseSign1,
         tst_info: Option<&TstInfo>,
+        additional_ekus: Option<String>,
         validation_log: &mut StatusTracker,
     ) -> Result<(), CoseError> {
         let ctp = match self {
@@ -176,33 +194,45 @@ impl Verifier<'_> {
         let certs = cert_chain_from_sign1(sign1)?;
         let end_entity_cert_der = &certs[0];
 
-        Ok(check_end_entity_certificate_profile(
-            end_entity_cert_der,
-            ctp.as_ref(),
-            validation_log,
-            tst_info,
-        )?)
+        if let Some(ekus) = additional_ekus {
+            let mut adjusted_ctp = ctp.clone();
+            adjusted_ctp.to_mut().add_valid_ekus(ekus.as_bytes());
+
+            Ok(check_end_entity_certificate_profile(
+                end_entity_cert_der,
+                adjusted_ctp.as_ref(),
+                validation_log,
+                tst_info,
+            )?)
+        } else {
+            Ok(check_end_entity_certificate_profile(
+                end_entity_cert_der,
+                ctp.as_ref(),
+                validation_log,
+                tst_info,
+            )?)
+        }
     }
 
-    /// Verify certificate profile if so configured.
+    /// Verify certificate trust if so configured.
     #[async_generic]
     pub(crate) fn verify_trust(
         &self,
         sign1: &CoseSign1,
         tst_info_res: Option<&TstInfo>,
         validation_log: &mut StatusTracker,
-    ) -> Result<TrustAnchorType, CoseError> {
-        // IMPORTANT: This function assumes that verify_profile has already been called.
+    ) -> Result<(TrustAnchorType, Option<String>), CoseError> {
+        // should be used in conjunction with verify_profile in most cases
 
         let ctp = match self {
             Self::VerifyTrustPolicy(ref ctp) => ctp,
 
             Self::VerifyCertificateProfileOnly(ref _ctp) => {
-                return Ok(TrustAnchorType::NoCheck);
+                return Ok((TrustAnchorType::NoCheck, None));
             }
 
             Self::IgnoreProfileAndTrustPolicy => {
-                return Ok(TrustAnchorType::NoCheck);
+                return Ok((TrustAnchorType::NoCheck, None));
             }
         };
 
@@ -223,19 +253,20 @@ impl Verifier<'_> {
         };
 
         match verify_result {
-            Ok(tat) => {
+            Ok((tat, trust_uri)) => {
                 log_item!(
                     "",
                     format!(
-                        "signing certificate trusted, found in {:?} trust anchors",
-                        tat
+                        "signing certificate trusted, found in [{}] trust anchors",
+                        &trust_uri
                     ),
                     "verify_cose"
                 )
                 .validation_status(SIGNING_CREDENTIAL_TRUSTED)
+                .set_trust_list_uri(&trust_uri)
                 .success(validation_log);
 
-                Ok(tat)
+                Ok((tat, Some(trust_uri)))
             }
             Err(e) => Err(
                 log_item!("", "signing certificate untrusted", "verify_cose")
