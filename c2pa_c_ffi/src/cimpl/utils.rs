@@ -128,26 +128,25 @@ fn current_pid() -> u32 {
 /// every reader holds a live guard, so that many would need more memory than the address space has.
 const EXCLUSIVE: usize = usize::MAX;
 
-// Log/Debug helper for registry entries.
-impl std::fmt::Debug for EntryInner {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl EntryInner {
+    /// Formats an entry, hiding the real address when `hide_address` is set.
+    ///
+    /// Split out from `Debug` and taking the flag explicitly so both branches
+    /// are reachable in one build: `cargo test` always compiles with
+    /// `debug_assertions` on, and no CI job runs `cargo test --release`, so a
+    /// `cfg!`-only branch here would never execute anywhere.
+    fn debug_fmt(&self, f: &mut std::fmt::Formatter<'_>, hide_address: bool) -> std::fmt::Result {
         let borrow_state = self.borrow_state.load(Ordering::Relaxed);
-        f.debug_struct("EntryInner")
-            // The real address is what the opaque handle id exists to hide, so
-            // it is printed only in debug builds. A release build that logs an
-            // entry (a panic message, a tracing span) must not leak it.
-            .field(
-                "real_addr",
-                &format_args!(
-                    "{}",
-                    if cfg!(debug_assertions) {
-                        format!("0x{:x}", self.real_addr)
-                    } else {
-                        "<hidden>".to_string()
-                    }
-                ),
-            )
-            .field("type_id", &self.type_id)
+        let mut out = f.debug_struct("EntryInner");
+        // The real address is what the opaque handle id exists to hide, so a
+        // release build that logs an entry (a panic message, a tracing span)
+        // must not leak it.
+        if hide_address {
+            out.field("real_addr", &format_args!("<hidden>"));
+        } else {
+            out.field("real_addr", &format_args!("0x{:x}", self.real_addr));
+        }
+        out.field("type_id", &self.type_id)
             .field("wrapper", &self.wrapper)
             .field(
                 "borrow_state",
@@ -174,6 +173,13 @@ impl std::fmt::Debug for EntryInner {
             )
             .field("owner_pid", &self.owner_pid)
             .finish()
+    }
+}
+
+// Log/Debug helper for registry entries.
+impl std::fmt::Debug for EntryInner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.debug_fmt(f, !cfg!(debug_assertions))
     }
 }
 
@@ -362,7 +368,7 @@ fn scramble_to_odd_id(counter: usize) -> usize {
 /// a stale buffer pointer whose memory has been freed and reallocated to
 /// another tracked buffer resolves to the new entry. C must not use a buffer
 /// pointer after freeing it; the registry cannot detect that case.
-pub struct PointerRegistry {
+pub(crate) struct PointerRegistry {
     tracked: Mutex<HashMap<usize, Arc<EntryInner>>>,
     next_id: AtomicUsize,
     /// The process that created the registry.
@@ -416,6 +422,7 @@ impl PointerRegistry {
         #[cfg(target_pointer_width = "32")]
         if counter >= (usize::MAX >> 1) {
             eprintln!("c2pa: PointerRegistry id space exhausted");
+            CimplError::tracking_refused("handle id space exhausted").set_last();
             return None;
         }
         let id = scramble_to_odd_id(counter);
@@ -447,10 +454,17 @@ impl PointerRegistry {
             }
             return Some(id);
         }
-        // A poisoned lock means the entry was never recorded. Forget the entry
-        // rather than dropping it: dropping would run its cleanup here and free
-        // the object, while the caller is being told it still owns it.
-        std::mem::forget(entry);
+        // A poisoned lock means the entry was never recorded. Defuse before the
+        // entry drops: running the cleanup here would free the object while the
+        // caller is being told it still owns it. Defusing rather than forgetting
+        // also releases the Arc and its boxed closure instead of leaking them.
+        let mut entry = entry;
+        if let Some(entry) = Arc::get_mut(&mut entry) {
+            if let Ok(cleanup) = entry.cleanup.get_mut() {
+                cleanup.take();
+            }
+        }
+        CimplError::tracking_refused("registry lock poisoned").set_last();
         None
     }
 
@@ -478,6 +492,8 @@ impl PointerRegistry {
                 eprintln!(
                     "c2pa: refusing to track odd address 0x{real_addr:x}, it would collide with a handle id"
                 );
+                CimplError::tracking_refused("buffer address would collide with a handle id")
+                    .set_last();
                 return false;
             }
             let entry = Arc::new(EntryInner {
@@ -501,10 +517,17 @@ impl PointerRegistry {
                 }
                 return true;
             }
-            // A poisoned lock means the entry was never recorded. Forget the
-            // entry rather than dropping it: dropping would run its cleanup and
-            // free the buffer here, and the caller frees it again on false.
-            std::mem::forget(entry);
+            // A poisoned lock means the entry was never recorded. Defuse before
+            // the entry drops: running the cleanup here would free the buffer,
+            // and the caller frees it again on false. Defusing rather than
+            // forgetting also releases the Arc and its boxed closure.
+            let mut entry = entry;
+            if let Some(entry) = Arc::get_mut(&mut entry) {
+                if let Ok(cleanup) = entry.cleanup.get_mut() {
+                    cleanup.take();
+                }
+            }
+            CimplError::tracking_refused("registry lock poisoned").set_last();
             return false;
         }
         // A null address is nothing to track, and nothing to free either.
@@ -534,8 +557,14 @@ impl PointerRegistry {
 
     /// Resolve a handle id to its real address, validating it is tracked
     /// with the expected type.
+    ///
+    /// Only `resolve_typed` calls this. Production code borrows through
+    /// `checkout_shared`/`checkout_exclusive`, which hold a claim on the entry
+    /// for the guard's lifetime; a bare address resolved here carries none, so
+    /// a concurrent `cimpl_free` can free the object while the caller holds it.
+    #[cfg(test)]
     #[must_use = "the id passed in is not a usable pointer, only the returned address is"]
-    pub fn resolve(&self, id: usize, expected_type: TypeId) -> Result<usize, Error> {
+    fn resolve(&self, id: usize, expected_type: TypeId) -> Result<usize, Error> {
         self.check_same_process()?;
         if id == 0 {
             return Err(Error::from(CimplError::null_parameter("pointer")));
@@ -1696,6 +1725,13 @@ mod tests {
             0,
             "track_by_id must not free; the caller still owns the allocation"
         );
+        // The refusal records why, rather than leaving a stale message from an
+        // unrelated call for C to read. This test writes the thread-local error
+        // slot as a result, which is deliberate.
+        assert!(
+            CimplError::last_message().is_some_and(|message| message.contains("ForeignProcess")),
+            "the refusal must record its reason"
+        );
 
         // What track_box does with that None:
         unsafe { drop(Box::from_raw(raw)) };
@@ -1704,35 +1740,6 @@ mod tests {
             1,
             "the caller's reclaim is the one and only free"
         );
-    }
-
-    #[test]
-    fn test_track_box_reclaims_the_object_when_the_registry_refuses() {
-        // N-1 end to end through the public entry point: box_tracked! has
-        // already done Box::into_raw, so a refusal that returns without
-        // reclaiming leaves the allocation unowned and unreachable forever.
-        static DROPS: AtomicUsize = AtomicUsize::new(0);
-        struct Payload(#[allow(dead_code)] u64);
-        impl Drop for Payload {
-            fn drop(&mut self) {
-                DROPS.fetch_add(1, Ordering::SeqCst);
-            }
-        }
-
-        DROPS.store(0, Ordering::SeqCst);
-        // Drive track_box's None arm directly: a null pointer is the one
-        // refusal reachable without a fork or a poisoned lock, and it takes the
-        // same path every other refusal does.
-        let refused = track_box(std::ptr::null_mut::<Payload>());
-        assert!(refused.is_null(), "a refused track must return NULL");
-
-        // The success path still tracks and frees exactly once, so the reclaim
-        // did not turn into a double free.
-        let ptr = track_box(Box::into_raw(Box::new(Payload(7))));
-        assert!(!ptr.is_null(), "tracking must succeed here");
-        assert_eq!(DROPS.load(Ordering::SeqCst), 0, "not freed while tracked");
-        cimpl_free(ptr as *mut std::ffi::c_void);
-        assert_eq!(DROPS.load(Ordering::SeqCst), 1, "freed exactly once");
     }
 
     #[test]
@@ -1763,6 +1770,12 @@ mod tests {
             FREED.load(Ordering::SeqCst),
             0,
             "the refusal path must leave the buffer for the caller to free"
+        );
+        // As above: the refusal records its reason, and this test writes the
+        // thread-local error slot as a result.
+        assert!(
+            CimplError::last_message().is_some_and(|message| message.contains("ForeignProcess")),
+            "the refusal must record its reason"
         );
     }
 
@@ -1908,6 +1921,13 @@ mod tests {
 
     #[test]
     fn test_entry_debug_reports_borrow_state_and_cleanup() {
+        struct Shown<'a>(&'a EntryInner, bool);
+        impl std::fmt::Debug for Shown<'_> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                self.0.debug_fmt(f, self.1)
+            }
+        }
+
         let entry = EntryInner {
             real_addr: 0x1000,
             type_id: TypeId::of::<i32>(),
@@ -1916,31 +1936,48 @@ mod tests {
             cleanup: Mutex::new(Some(Box::new(|| {}))),
             owner_pid: current_pid(),
         };
+
         let free = format!("{entry:?}");
-        assert!(free.contains("free"), "expected borrow_state free: {free}");
-        assert!(free.contains("armed"), "expected cleanup armed: {free}");
+        assert!(
+            free.contains(r#"borrow_state: "free""#),
+            "expected borrow_state free: {free}"
+        );
+        assert!(
+            free.contains(r#"cleanup: "armed""#),
+            "expected cleanup armed: {free}"
+        );
 
         entry.borrow_state.store(EXCLUSIVE, Ordering::Relaxed);
         let exclusive = format!("{entry:?}");
         assert!(
-            exclusive.contains("exclusive"),
+            exclusive.contains(r#"borrow_state: "exclusive""#),
             "expected borrow_state exclusive: {exclusive}"
         );
 
         entry.borrow_state.store(3, Ordering::Relaxed);
         let shared = format!("{entry:?}");
         assert!(
-            shared.contains("3 shared"),
+            shared.contains(r#"borrow_state: "3 shared""#),
             "expected 3 shared readers: {shared}"
         );
 
-        // The real address is hidden outside debug builds so logging an entry
-        // cannot undo the opacity the handle id provides.
-        if cfg!(debug_assertions) {
-            assert!(shared.contains("0x1000"), "debug build shows it: {shared}");
-        } else {
-            assert!(shared.contains("<hidden>"), "release hides it: {shared}");
-            assert!(!shared.contains("0x1000"), "release hides it: {shared}");
-        }
+        // Both address branches, in one build. The release behaviour is the one
+        // with the security rationale, and no CI job runs a release test, so
+        // asserting it through cfg! alone would assert nothing.
+        let shown = format!("{:?}", Shown(&entry, false));
+        assert!(
+            shown.contains(r#"real_addr: 0x1000"#),
+            "the visible branch must print the address: {shown}"
+        );
+
+        let hidden = format!("{:?}", Shown(&entry, true));
+        assert!(
+            hidden.contains(r#"real_addr: <hidden>"#),
+            "the hidden branch must mask the address: {hidden}"
+        );
+        assert!(
+            !hidden.contains("0x1000"),
+            "the hidden branch leaked the address: {hidden}"
+        );
     }
 }

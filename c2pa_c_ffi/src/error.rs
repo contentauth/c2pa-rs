@@ -54,6 +54,10 @@ pub enum C2paError {
     /// registry, which happens after `fork()` without an `exec()`.
     #[error("ForeignProcess: {0}")]
     ForeignProcess(String),
+    /// A pointer could not be recorded in the registry, so it was refused
+    /// rather than handed to C untracked.
+    #[error("TrackingRefused: {0}")]
+    TrackingRefused(String),
     #[error("NullParameter: {0}")]
     NullParameter(String),
     #[error("Remote: {0}")]
@@ -89,6 +93,7 @@ impl C2paError {
             Self::PointerInUse(_) => 8,
             Self::WrongWrapperKind(_) => 9,
             Self::ForeignProcess(_) => 10,
+            Self::TrackingRefused(_) => 11,
             Self::RemoteManifest(_) => 112,
             Self::ResourceNotFound(_) => 113,
             Self::Signature(_) => 114,
@@ -179,6 +184,7 @@ impl C2paError {
             "PointerInUse" => Self::PointerInUse(error_message),
             "WrongWrapperKind" => Self::WrongWrapperKind(error_message),
             "ForeignProcess" => Self::ForeignProcess(error_message),
+            "TrackingRefused" => Self::TrackingRefused(error_message),
             "Remote" => Self::RemoteManifest(error_message),
             "ResourceNotFound" => Self::ResourceNotFound(error_message),
             "Signature" => Self::Signature(error_message),
@@ -227,6 +233,7 @@ impl From<crate::cimpl::CimplError> for C2paError {
             8 => C2paError::from(err.message()),              // error variant: PointerInUse
             9 => C2paError::from(err.message()),              // error variant: WrongWrapperKind
             10 => C2paError::from(err.message()),             // error variant: ForeignProcess
+            11 => C2paError::from(err.message()),             // error variant: TrackingRefused
             // Codes 100+ are C2paError codes - parse the message to reconstruct
             code if code >= 100 => {
                 // The message format is "ErrorType: message"

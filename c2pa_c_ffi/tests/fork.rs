@@ -60,6 +60,7 @@ fn registry_refuses_every_path_in_a_forked_child() {
     read_paths_are_refused();
     inherited_entries_do_not_run_cleanup();
     write_paths_are_refused();
+    a_refused_track_reclaims_the_object();
 }
 
 /// Read and free paths must refuse before taking the inherited lock.
@@ -147,4 +148,39 @@ fn write_paths_are_refused() {
     });
 
     assert_eq!(code, 0, "a child write path did not refuse");
+}
+
+/// A refused `track_box` must free the object rather than leak it.
+///
+/// This is the only place that arm runs. `track_box` reclaims through
+/// `Box::from_raw` when the registry returns `None`, and every refusal that
+/// reaches it needs a foreign process or a poisoned lock -- a null pointer
+/// takes a different arm that has nothing to reclaim. Forking is what makes the
+/// global registry refuse, so the check belongs here.
+///
+/// The child asserts and reports through its exit code: `box_tracked!` has
+/// already done `Box::into_raw`, so without the reclaim the allocation is
+/// unowned and unreachable, and a multiprocessing worker leaks one object per
+/// call forever.
+fn a_refused_track_reclaims_the_object() {
+    static DROPPED: AtomicBool = AtomicBool::new(false);
+    struct Payload;
+    impl Drop for Payload {
+        fn drop(&mut self) {
+            DROPPED.store(true, Ordering::SeqCst);
+        }
+    }
+
+    let code = in_forked_child(|| {
+        let refused = track_box(Box::into_raw(Box::new(Payload)));
+        if !refused.is_null() {
+            unsafe { libc::_exit(1) };
+        }
+        if !DROPPED.load(Ordering::SeqCst) {
+            // The refusal returned without reclaiming: the object leaked.
+            unsafe { libc::_exit(2) };
+        }
+    });
+
+    assert_eq!(code, 0, "a refused track_box did not reclaim the object");
 }

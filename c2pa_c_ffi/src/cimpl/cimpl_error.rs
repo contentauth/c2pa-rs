@@ -136,6 +136,12 @@ impl CimplError {
         )
     }
 
+    /// The registry could not record a pointer, so it was refused rather than
+    /// handed to C untracked. `reason` names which check refused it.
+    pub fn tracking_refused(reason: &str) -> Self {
+        Self::new(11, format!("TrackingRefused: {reason}"))
+    }
+
     /// The handle is tracked, but another borrow of it is still outstanding.
     /// Returned when an exclusive borrow is requested while any borrow exists,
     /// or when a shared borrow is requested during an exclusive one.

@@ -11,8 +11,23 @@
 // specific language governing permissions and limitations under
 // each license.
 
+//! The exported C API.
+//!
+//! # Returning byte buffers
+//!
+//! `to_c_bytes` and `to_c_string` return NULL when the registry refuses the
+//! buffer -- a forked child, a poisoned registry lock, or an address that would
+//! collide with a handle id. Every function that hands C a buffer through an
+//! out-parameter assigns a local first and publishes it only on success:
+//! writing the NULL and still returning the length would give C a positive
+//! length with a NULL pointer, and the memcpy that follows segfaults. Checking
+//! a local also leaves the caller's out-parameter untouched when the call
+//! fails, rather than clobbering what it held.
+//!
+//! The reason for the refusal is in the error slot; see `c2pa_error`.
+
 use std::{
-    ffi::CStr,
+    cell::RefCell,
     os::raw::{c_char, c_int, c_uchar, c_void},
     sync::Arc,
 };
@@ -481,31 +496,70 @@ pub unsafe extern "C" fn c2pa_version() -> *mut c_char {
     to_c_string(version)
 }
 
+/// Fallback storage for `c2pa_error` when the message cannot be tracked.
+///
+/// Thread-local, so the returned pointer stays valid until this thread's next
+/// `c2pa_error` call and no other thread can race it. Being a `[u8; N]` rather
+/// than a string literal matters twice: the storage is writable, so a C caller
+/// that edits the string in place does not fault on read-only memory, and it is
+/// at least 2-aligned, so its address stays out of the odd handle-id keyspace
+/// that `track_by_address` protects.
+const ERROR_FALLBACK_LEN: usize = 256;
+thread_local! {
+    static ERROR_FALLBACK: RefCell<[u8; ERROR_FALLBACK_LEN]> =
+        const { RefCell::new([0; ERROR_FALLBACK_LEN]) };
+}
+
+/// Copies `message` into this thread's fallback buffer and returns its pointer.
+///
+/// Interior NUL bytes are replaced rather than rejected: a message containing
+/// one is precisely why `CString::new` failed, and dropping the message here
+/// would lose the diagnosis a second time. The result is truncated on a UTF-8
+/// boundary so the C string never ends mid-character.
+fn error_message_fallback(message: &str) -> *mut c_char {
+    ERROR_FALLBACK.with(|slot| {
+        let mut buffer = slot.borrow_mut();
+        let limit = ERROR_FALLBACK_LEN - 1;
+        let mut end = message.len().min(limit);
+        while end > 0 && !message.is_char_boundary(end) {
+            end -= 1;
+        }
+
+        let copied = &message.as_bytes()[..end];
+        for (slot, byte) in buffer.iter_mut().zip(copied) {
+            *slot = if *byte == 0 { b'?' } else { *byte };
+        }
+        buffer[end] = 0;
+
+        buffer.as_mut_ptr() as *mut c_char
+    })
+}
+
 /// Returns the last error message.
 ///
 /// # Safety
-/// The returned value MUST be released by calling release_string
-/// and it is no longer valid after that call.
+/// The returned value MUST be released by calling c2pa_free, and it is no
+/// longer valid after that call.
+///
+/// One exception: when the message itself could not be allocated, the returned
+/// pointer is this thread's fallback storage rather than a tracked buffer. It
+/// must not be freed, it stays valid only until this thread's next c2pa_error
+/// call, and passing it to c2pa_free is harmless but returns -1. A caller that
+/// frees unconditionally is still correct; it simply gets that -1.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_error() -> *mut c_char {
-    let ptr = to_c_string(Error::last_message());
+    let message = Error::last_message();
+    let ptr = to_c_string(message.clone());
     if ptr.is_null() {
-        // to_c_string could not track the buffer, which happens in a forked
-        // child. The error reporter is the one function that must not fail:
-        // C code does printf("%s", c2pa_error()) without a null check, and a
-        // child that cannot allocate still needs to see why. Hand back a
-        // static string, which c2pa_free rejects as untracked and never frees.
-        return UNREPORTABLE_ERROR.as_ptr() as *mut c_char;
+        // to_c_string returns NULL for four different reasons -- a forked
+        // child, a poisoned registry lock, an odd buffer address, and a
+        // message containing an interior NUL. Report the message that is
+        // actually in the slot rather than guessing which one happened; the
+        // error reporter must not invent a diagnosis.
+        return error_message_fallback(&message);
     }
     ptr
 }
-
-/// Returned by `c2pa_error` when the message itself cannot be allocated.
-///
-/// `static`, so it outlives any caller and is never freed. `c2pa_free` refuses
-/// it the way it refuses any pointer the registry does not know.
-static UNREPORTABLE_ERROR: &CStr =
-    c"ForeignProcess: handles cannot be created or used in a forked child";
 
 /// Sets the last error message.
 /// This is used by callbacks so they can set a return error message.
@@ -2010,6 +2064,15 @@ pub unsafe extern "C" fn c2pa_builder_write_ingredient_archive(
 /// Returns -1 if there were errors, otherwise returns the size of the c2pa data.
 /// The error string can be retrieved by calling c2pa_error.
 ///
+/// # Returning -1 after the asset is written
+///
+/// A -1 does not always mean nothing happened. Signing writes to `dest` before
+/// the manifest bytes are handed back, so a failure to return those bytes -- a
+/// refused buffer, see "Returning byte buffers" in the module docs -- reports
+/// -1 with `dest` already holding a complete, valid signed asset. Do not retry
+/// blindly on -1: a retry signs the asset a second time. Check `c2pa_error` and
+/// inspect `dest` before deciding.
+///
 /// # Safety
 /// Reads from NULL-terminated C strings
 /// If manifest_bytes_ptr is not NULL, the returned value MUST be released by calling c2pa_free
@@ -2039,13 +2102,13 @@ pub unsafe extern "C" fn c2pa_builder_sign(
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
-        *manifest_bytes_ptr = to_c_bytes(manifest_bytes);
-        if (*manifest_bytes_ptr).is_null() {
-            // to_c_bytes could not track the buffer and freed it, so there is
-            // nothing for C to read. Returning len here would hand back a
-            // positive length with a NULL pointer. The error is already set.
+        // Publish only on success: see "Returning byte buffers" in the
+        // module docs.
+        let bytes = to_c_bytes(manifest_bytes);
+        if bytes.is_null() {
             return -1;
         }
+        *manifest_bytes_ptr = bytes;
     }
     len
 }
@@ -2066,6 +2129,15 @@ pub unsafe extern "C" fn c2pa_builder_sign(
 /// * `source` - pointer to a readable C2paStream.
 /// * `dest` - pointer to a read+write+seek C2paStream.
 /// * `manifest_bytes_ptr` - out-pointer for the manifest bytes.
+///
+/// # Returning -1 after the asset is written
+///
+/// A -1 does not always mean nothing happened. Signing writes to `dest` before
+/// the manifest bytes are handed back, so a failure to return those bytes -- a
+/// refused buffer, see "Returning byte buffers" in the module docs -- reports
+/// -1 with `dest` already holding a complete, valid signed asset. Do not retry
+/// blindly on -1: a retry signs the asset a second time. Check `c2pa_error` and
+/// inspect `dest` before deciding.
 ///
 /// # Safety
 ///
@@ -2093,13 +2165,13 @@ pub unsafe extern "C" fn c2pa_builder_sign_context(
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
-        *manifest_bytes_ptr = to_c_bytes(manifest_bytes);
-        if (*manifest_bytes_ptr).is_null() {
-            // to_c_bytes could not track the buffer and freed it, so there is
-            // nothing for C to read. Returning len here would hand back a
-            // positive length with a NULL pointer. The error is already set.
+        // Publish only on success: see "Returning byte buffers" in the
+        // module docs.
+        let bytes = to_c_bytes(manifest_bytes);
+        if bytes.is_null() {
             return -1;
         }
+        *manifest_bytes_ptr = bytes;
     }
     len
 }
@@ -2148,13 +2220,13 @@ pub unsafe extern "C" fn c2pa_builder_data_hashed_placeholder(
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
-        *manifest_bytes_ptr = to_c_bytes(manifest_bytes);
-        if (*manifest_bytes_ptr).is_null() {
-            // to_c_bytes could not track the buffer and freed it, so there is
-            // nothing for C to read. Returning len here would hand back a
-            // positive length with a NULL pointer. The error is already set.
+        // Publish only on success: see "Returning byte buffers" in the
+        // module docs.
+        let bytes = to_c_bytes(manifest_bytes);
+        if bytes.is_null() {
             return -1;
         }
+        *manifest_bytes_ptr = bytes;
     }
     len
 }
@@ -2210,13 +2282,13 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
-        *manifest_bytes_ptr = to_c_bytes(manifest_bytes);
-        if (*manifest_bytes_ptr).is_null() {
-            // to_c_bytes could not track the buffer and freed it, so there is
-            // nothing for C to read. Returning len here would hand back a
-            // positive length with a NULL pointer. The error is already set.
+        // Publish only on success: see "Returning byte buffers" in the
+        // module docs.
+        let bytes = to_c_bytes(manifest_bytes);
+        if bytes.is_null() {
             return -1;
         }
+        *manifest_bytes_ptr = bytes;
     }
     len
 }
@@ -2315,13 +2387,13 @@ pub unsafe extern "C" fn c2pa_builder_placeholder(
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
-        *manifest_bytes_ptr = to_c_bytes(manifest_bytes);
-        if (*manifest_bytes_ptr).is_null() {
-            // to_c_bytes could not track the buffer and freed it, so there is
-            // nothing for C to read. Returning len here would hand back a
-            // positive length with a NULL pointer. The error is already set.
+        // Publish only on success: see "Returning byte buffers" in the
+        // module docs.
+        let bytes = to_c_bytes(manifest_bytes);
+        if bytes.is_null() {
             return -1;
         }
+        *manifest_bytes_ptr = bytes;
     }
     len
 }
@@ -2367,13 +2439,13 @@ pub unsafe extern "C" fn c2pa_builder_sign_embeddable(
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
-        *manifest_bytes_ptr = to_c_bytes(manifest_bytes);
-        if (*manifest_bytes_ptr).is_null() {
-            // to_c_bytes could not track the buffer and freed it, so there is
-            // nothing for C to read. Returning len here would hand back a
-            // positive length with a NULL pointer. The error is already set.
+        // Publish only on success: see "Returning byte buffers" in the
+        // module docs.
+        let bytes = to_c_bytes(manifest_bytes);
+        if bytes.is_null() {
             return -1;
         }
+        *manifest_bytes_ptr = bytes;
     }
     len
 }
@@ -2585,11 +2657,13 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
     let result_bytes = ok_or_return_int!(result);
     let len = result_bytes.len() as i64;
     if !result_bytes_ptr.is_null() {
-        *result_bytes_ptr = to_c_bytes(result_bytes);
-        if (*result_bytes_ptr).is_null() {
-            // See the manifest_bytes_ptr sites: never a length with a NULL.
+        // Publish only on success: see "Returning byte buffers" in the
+        // module docs.
+        let bytes = to_c_bytes(result_bytes);
+        if bytes.is_null() {
             return -1;
         }
+        *result_bytes_ptr = bytes;
     }
     len
 }
@@ -2894,6 +2968,10 @@ pub unsafe extern "C" fn c2pa_signature_free(signature_ptr: *const u8) {
 /// # Note
 /// This should be used internally. We don't want to support this as a public API.
 unsafe fn c2pa_mime_types_to_c_array(strs: Vec<String>, count: *mut usize) -> *const *const c_char {
+    // Both writes below dereference this, so check once here.
+    if count.is_null() {
+        return std::ptr::null();
+    }
     // Even if the array is exposed as a `*const *const c_char` for read-only access,
     // the underlying memory must be allocated as `*mut *mut c_char` because freeing
     // or deallocating memory requires a mutable pointer. This ensures the caller can
@@ -3522,6 +3600,44 @@ mod tests {
         let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
         unsafe { c2pa_free(error as *const c_void) };
         assert_eq!(error_str.to_str().unwrap(), "");
+    }
+
+    #[test]
+    fn test_c2pa_error_reports_a_message_containing_an_interior_nul() {
+        // A message with a NUL in it makes CString::new fail, so to_c_string
+        // returns NULL with no fork and no registry involved. The reporter must
+        // hand back this message rather than name some other cause.
+        let raw = "BadParam: label \u{0}injected by an asset";
+        CimplError::new(0, raw.to_string()).set_last();
+
+        let error = unsafe { c2pa_error() };
+        assert!(!error.is_null(), "the error reporter must not return NULL");
+
+        // The fallback buffer must stay out of the odd handle-id keyspace, or a
+        // stray c2pa_free on it could collide with a live handle.
+        assert_eq!(
+            error as usize % 2,
+            0,
+            "fallback pointer 0x{:x} is odd and could alias a handle id",
+            error as usize
+        );
+
+        let reported = unsafe { CStr::from_ptr(error) }
+            .to_str()
+            .unwrap()
+            .to_owned();
+        assert!(
+            reported.contains("injected by an asset"),
+            "the real message was lost: {reported}"
+        );
+        assert!(
+            !reported.to_lowercase().contains("fork"),
+            "the reporter invented a cause: {reported}"
+        );
+
+        // Freeing the fallback is harmless and reports failure rather than
+        // corrupting the registry.
+        assert_eq!(unsafe { c2pa_free(error as *const c_void) }, -1);
     }
 
     #[test]
