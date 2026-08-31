@@ -105,19 +105,6 @@ impl C2paStream {
             flusher,
         }
     }
-
-    /// Extracts the context from the C2paStream (used for testing in Rust).
-    ///
-    /// # Safety
-    ///
-    /// The context must be a `box_tracked!` pointer, per `drop_c_stream`'s invariant
-    /// on `c_stream.context`.
-    pub fn extract_context(&mut self) -> Box<StreamContext> {
-        let context_ptr = std::mem::replace(&mut self.context, std::ptr::null_mut());
-        let context =
-            crate::untrack_owned::<StreamContext>(context_ptr).expect("always box_tracked!");
-        Box::new(context)
-    }
 }
 
 impl Read for C2paStream {

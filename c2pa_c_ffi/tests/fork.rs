@@ -100,7 +100,10 @@ fn forked_child_does_not_run_cleanup_for_inherited_entries() {
     });
 
     assert_eq!(code, 0, "the child ran cleanup on an inherited entry");
-    assert!(!FREED.load(Ordering::SeqCst), "cleanup ran in the parent early");
+    assert!(
+        !FREED.load(Ordering::SeqCst),
+        "cleanup ran in the parent early"
+    );
 
     // The parent still owns it, and freeing here does run cleanup.
     assert_eq!(cimpl_free(ptr as *mut std::ffi::c_void), 0);

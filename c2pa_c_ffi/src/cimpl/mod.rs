@@ -72,6 +72,8 @@ pub use cimpl_error::CimplError;
 #[doc(hidden)]
 pub use utils::{
     checkout_exclusive, checkout_shared, cimpl_free, safe_slice_from_raw_parts, to_c_bytes,
-    to_c_string, track_arc, track_arc_mutex, track_box, untrack_owned, untrack_pointer,
-    validate_pointer, ExclusiveCheckout, SharedCheckout, TypedExclusive, TypedShared,
+    to_c_string, track_arc, track_arc_mutex, track_box, untrack_owned, ExclusiveCheckout,
+    SharedCheckout, TypedExclusive, TypedShared,
 };
+// validate_pointer and untrack_pointer are deliberately not exported: both
+// return bare pointers that bypass the borrow model. See their doc comments.

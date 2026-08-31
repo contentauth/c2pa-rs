@@ -1173,8 +1173,11 @@ pub unsafe extern "C" fn c2pa_reader_with_manifest_data_and_stream(
     let mut stream = deref_mut_or_return_null!(stream, C2paStream);
     let manifest_bytes = bytes_or_return_null!(manifest_data, manifest_size, "manifest_data");
 
-    let reader =
-        ok_or_return_null!(reader.with_manifest_data_and_stream(manifest_bytes, &format, &mut *stream));
+    let reader = ok_or_return_null!(reader.with_manifest_data_and_stream(
+        manifest_bytes,
+        &format,
+        &mut *stream
+    ));
     box_tracked!(reader)
 }
 
@@ -1415,7 +1418,7 @@ pub unsafe extern "C" fn c2pa_reader_resource_to_stream(
     stream: *mut C2paStream,
 ) -> i64 {
     let uri = cstr_or_return_int!(uri);
-    let reader = deref_mut_or_return_int!(reader_ptr, C2paReader);
+    let reader = deref_or_return_int!(reader_ptr, C2paReader);
     let mut stream = deref_mut_or_return_int!(stream, C2paStream);
     let result = reader.resource_to_stream(&uri, &mut (*stream));
     let len = ok_or_return_int!(result);
@@ -1888,7 +1891,7 @@ pub unsafe extern "C" fn c2pa_builder_to_archive(
     builder_ptr: *mut C2paBuilder,
     stream: *mut C2paStream,
 ) -> c_int {
-    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let builder = deref_or_return_int!(builder_ptr, C2paBuilder);
     let mut stream = deref_mut_or_return_int!(stream, C2paStream);
     let result = builder.to_archive(&mut *stream);
     ok_or_return_int!(result);
@@ -1968,7 +1971,7 @@ pub unsafe extern "C" fn c2pa_builder_write_ingredient_archive(
     ingredient_id: *const c_char,
     stream: *mut C2paStream,
 ) -> c_int {
-    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let builder = deref_or_return_int!(builder_ptr, C2paBuilder);
     let ingredient_id = cstr_or_return_int!(ingredient_id);
     let mut stream = deref_mut_or_return_int!(stream, C2paStream);
     let result = builder.write_ingredient_archive(&ingredient_id, &mut *stream);
@@ -2007,7 +2010,7 @@ pub unsafe extern "C" fn c2pa_builder_sign(
     let format = cstr_or_return_int!(format);
     let mut source = deref_mut_or_return_int!(source, C2paStream);
     let mut dest = deref_mut_or_return_int!(dest, C2paStream);
-    let c2pa_signer = deref_mut_or_return_int!(signer_ptr, C2paSigner);
+    let c2pa_signer = deref_or_return_int!(signer_ptr, C2paSigner);
     ptr_or_return_int!(manifest_bytes_ptr);
 
     let result = builder.sign(
@@ -2151,7 +2154,7 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
     manifest_bytes_ptr: *mut *const c_uchar,
 ) -> i64 {
     let mut builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
-    let c2pa_signer = deref_mut_or_return_int!(signer_ptr, C2paSigner);
+    let c2pa_signer = deref_or_return_int!(signer_ptr, C2paSigner);
     let data_hash_json = cstr_or_return_int!(data_hash);
     let format = cstr_or_return_int!(format);
     ptr_or_return_int!(manifest_bytes_ptr);
@@ -2194,7 +2197,7 @@ pub unsafe extern "C" fn c2pa_builder_needs_placeholder(
     builder_ptr: *mut C2paBuilder,
     format: *const c_char,
 ) -> c_int {
-    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let builder = deref_or_return_int!(builder_ptr, C2paBuilder);
     let format = cstr_or_return_int!(format);
     if builder.needs_placeholder(&format) {
         1
@@ -2221,7 +2224,7 @@ pub unsafe extern "C" fn c2pa_builder_hash_type(
     format: *const c_char,
     out_hash_type: *mut C2paHashType,
 ) -> c_int {
-    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let builder = deref_or_return_int!(builder_ptr, C2paBuilder);
     let format = cstr_or_return_int!(format);
     if out_hash_type.is_null() {
         return -1;
@@ -2311,7 +2314,7 @@ pub unsafe extern "C" fn c2pa_builder_sign_embeddable(
     manifest_bytes_ptr: *mut *const c_uchar,
 ) -> i64 {
     ptr_or_return_int!(manifest_bytes_ptr);
-    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let builder = deref_or_return_int!(builder_ptr, C2paBuilder);
     let format = cstr_or_return_int!(format);
     let result = builder.sign_embeddable(&format);
     let manifest_bytes = ok_or_return_int!(result);
@@ -2766,7 +2769,7 @@ pub unsafe extern "C" fn c2pa_signer_from_settings() -> *mut C2paSigner {
 /// The signer_ptr must be a valid pointer to a C2paSigner.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_signer_reserve_size(signer_ptr: *mut C2paSigner) -> i64 {
-    let c2pa_signer = deref_mut_or_return_int!(signer_ptr, C2paSigner);
+    let c2pa_signer = deref_or_return_int!(signer_ptr, C2paSigner);
     c2pa_signer.signer.reserve_size() as i64
 }
 
@@ -3016,9 +3019,8 @@ mod tests {
         }
 
         let context = box_tracked!(()) as *mut StreamContext;
-        let source = unsafe {
-            c2pa_create_stream(context, failing_read, noop_seek, noop_write, noop_flush)
-        };
+        let source =
+            unsafe { c2pa_create_stream(context, failing_read, noop_seek, noop_write, noop_flush) };
         let mut dest_stream = TestStream::new(Vec::new());
 
         let (signer, builder) = setup_signer_and_builder_for_signing_tests();
@@ -4790,6 +4792,37 @@ verify_after_sign = true
 
         let size = unsafe { c2pa_signer_reserve_size(signer) };
         assert!(size > 0, "Reserve size should be positive");
+
+        unsafe {
+            c2pa_free(signer as *mut c_void);
+            c2pa_free(builder as *mut c_void);
+        }
+    }
+
+    #[test]
+    fn test_signer_reserve_size_is_concurrent_across_threads() {
+        // reserve_size takes &self, so one signer handle must serve any number of
+        // threads at once. Binding it exclusively would make the second caller fail
+        // with PointerInUse.
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+
+        let signer_addr = signer as usize;
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                std::thread::spawn(move || unsafe {
+                    c2pa_signer_reserve_size(signer_addr as *mut C2paSigner)
+                })
+            })
+            .collect();
+
+        for handle in threads {
+            let size = handle.join().expect("thread panicked");
+            assert!(
+                size > 0,
+                "concurrent reserve_size returned {size}: {:?}",
+                unsafe { CStr::from_ptr(c2pa_error()) }
+            );
+        }
 
         unsafe {
             c2pa_free(signer as *mut c_void);

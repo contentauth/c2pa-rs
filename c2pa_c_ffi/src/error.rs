@@ -14,6 +14,11 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 /// Defines all possible errors that can occur in this library
+///
+/// `#[non_exhaustive]`: a downstream `match` must carry a wildcard arm, so
+/// adding a variant here is not a breaking change. In-crate matches are
+/// unaffected and stay exhaustive.
+#[non_exhaustive]
 pub enum C2paError {
     #[error("Assertion: {0}")]
     Assertion(String),
@@ -219,9 +224,9 @@ impl From<crate::cimpl::CimplError> for C2paError {
             3 => C2paError::Other(err.message().to_string()), // InvalidHandle
             4 => C2paError::Other(err.message().to_string()), // WrongHandleType
             5 => C2paError::Other(err.message().to_string()), // Other
-            8 => C2paError::from(err.message()), // error variant: PointerInUse
-            9 => C2paError::from(err.message()), // error variant: WrongWrapperKind
-            10 => C2paError::from(err.message()), // error variant: ForeignProcess
+            8 => C2paError::from(err.message()),              // error variant: PointerInUse
+            9 => C2paError::from(err.message()),              // error variant: WrongWrapperKind
+            10 => C2paError::from(err.message()),             // error variant: ForeignProcess
             // Codes 100+ are C2paError codes - parse the message to reconstruct
             code if code >= 100 => {
                 // The message format is "ErrorType: message"

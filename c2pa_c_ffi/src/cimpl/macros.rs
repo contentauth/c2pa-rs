@@ -84,16 +84,16 @@
 //!
 //! ```text
 //! ❌ if ptr.is_null() { Error::...; return -1; }
-//! ✅ checkout_mut_or_return_int!(ptr, Type)
+//! ✅ deref_mut_or_return_int!(ptr, Type)
 //!
 //! ❌ match result { Ok(v) => ..., Err(e) => { Error::...; return null } }
 //! ✅ ok_or_return_null!(result.map_err(InternalError::from))
 //!
 //! ❌ unsafe { if ptr.is_null() { ... } &mut *ptr }
-//! ✅ checkout_mut_or_return_int!(ptr, Type)
+//! ✅ deref_mut_or_return_int!(ptr, Type)
 //!
 //! ❌ unsafe { &*ptr } or unsafe { &mut *ptr }
-//! ✅ checkout_or_return_int!(ptr, Type) or checkout_mut_or_return_int!(ptr, Type)
+//! ✅ deref_or_return_int!(ptr, Type) or deref_mut_or_return_int!(ptr, Type)
 //!
 //! ❌ Manual string length checks and conversion
 //! ✅ cstr_or_return!(ptr, -1)
@@ -102,15 +102,15 @@
 //! **Literal strings to search for in your code:**
 //! - `if ptr.is_null()` or `if ctx.is_null()` → Use a macro
 //! - `match result { Ok` → Use `ok_or_return!`
-//! - `unsafe { &*` → Use `checkout_or_return!`
-//! - `unsafe { &mut *` → Use `checkout_mut_or_return!`
+//! - `unsafe { &*` → Use `deref_or_return!`
+//! - `unsafe { &mut *` → Use `deref_mut_or_return!`
 //!
 //! If you see ANY of these patterns, **STOP and use the appropriate macro below.**
 //!
 //! # Quick Reference: Which Macro to Use?
 //!
 //! ## Input Validation (from C)
-//! - **Pointer from C**: `checkout_or_return_null!(ptr, Type)` → borrows the object as `&Type` for the guard's lifetime
+//! - **Pointer from C**: `deref_or_return_null!(ptr, Type)` → borrows the object as `&Type` for the guard's lifetime
 //! - **String from C**: `cstr_or_return_null!(c_str)` → converts C string to Rust `String`
 //! - **String array from C**: `cstr_array_or_return_null!(ptr)` → converts NULL-terminated `*const *const c_char` to `Vec<String>`
 //! - **Byte array from C**: `bytes_or_return_null!(ptr, len, "name")` → validates & converts to `&[u8]`
@@ -136,7 +136,7 @@
 //!
 //! | Rust Type              | C receives      | Macro to use                      | Example |
 //! |------------------------|-----------------|-----------------------------------|---------|
-//! | `*mut T` (from C)      | -               | `checkout_or_return_null!(ptr, T)`| Getting object from C |
+//! | `*mut T` (from C)      | -               | `deref_or_return_null!(ptr, T)`| Getting object from C |
 //! | `*const c_char` (from C)| -              | `cstr_or_return_null!(s)`         | Getting string from C |
 //! | `*const c_uchar` + len | -               | `bytes_or_return_null!(p, len, "name")` | Getting byte array from C |
 //! | `Result<T, ExtErr>`    | pointer/int     | `ok_or_return_null!(r)`           | External crate errors (From trait) |
@@ -191,7 +191,7 @@
 //! ```rust,ignore
 //! #[no_mangle]
 //! pub extern "C" fn thing_add(thing: *mut Thing, value: i32) -> i32 {
-//!     let obj = checkout_or_return_int!(thing, Thing);
+//!     let obj = deref_or_return_int!(thing, Thing);
 //!     obj.add(value)
 //! }
 //! ```
@@ -200,7 +200,7 @@
 //! ```rust,ignore
 //! #[no_mangle]
 //! pub extern "C" fn date_add_days(date: *mut Date, days: i64) -> *mut Date {
-//!     let obj = checkout_or_return_null!(date, Date);
+//!     let obj = deref_or_return_null!(date, Date);
 //!     let new_date = some_or_return_other_null!(
 //!         obj.checked_add_days(days),
 //!         "Date overflow"
@@ -342,7 +342,7 @@ macro_rules! deref_mut_or_return_int {
 ///
 /// This is for internal code (tests, cleanup paths) that decides for itself
 /// how to handle a missing value. FFI entry points taking pointers from C
-/// should use `checkout_mut_or_return!` (NULL is an error) or
+/// should use `deref_mut_or_return!` (NULL is an error) or
 /// `deref_mut_option_or_return!` (NULL is a legitimate "not provided")
 /// instead, so C gets a proper error for a genuinely bad pointer.
 ///
@@ -363,7 +363,7 @@ macro_rules! deref_mut_option {
 }
 
 /// Borrow a tracked object for writing, yielding `None` if the pointer is
-/// NULL. Unlike `checkout_mut_or_return!`, NULL is not treated as an error —
+/// NULL. Unlike `deref_mut_or_return!`, NULL is not treated as an error —
 /// this is for parameters that are genuinely optional. A non-NULL but
 /// untracked, wrong-type, or already-borrowed pointer is still an early-return
 /// error.
@@ -474,9 +474,6 @@ macro_rules! untrack_or_return_null {
         $crate::untrack_or_return!($ptr, $type, std::ptr::null_mut())
     }};
 }
-
-
-
 
 /// Maximum length for C strings when using bounded conversion (64KB)
 pub const MAX_CSTRING_LEN: usize = 1048576;

@@ -44,6 +44,10 @@ type CleanupFn = Box<dyn FnMut() + Send>;
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Wrapper {
     Boxed,
+    /// No production call site tracks an `Arc` today: `track_arc` and
+    /// `arc_tracked!` are used only by tests. The variant and the checks that
+    /// reference it exist so that adding one later cannot silently reconstruct
+    /// an `Arc`-tracked entry with `Box::from_raw`.
     Arced,
 }
 
@@ -72,15 +76,15 @@ struct EntryInner {
     wrapper: Wrapper,
     /// Which borrows of this object are outstanding right now.
     ///
-    /// A C caller holds an opaque id, not a reference.
-    // This counter is what makes handing out `&mut T` manageable:
-    /// a borrow is refused unless the counter permits it.
+    /// A C caller holds an opaque id, not a reference. This counter is what
+    /// makes handing out `&mut T` manageable: a borrow is refused unless the
+    /// counter permits it.
     ///
     /// - `0`: nobody is using the object, so any borrow may start.
-    /// - `1..EXCLUSIVE`: that many readers hold a `TypedShared`.
-    //     More readers may join; a writer may not.
-    /// - `EXCLUSIVE`: one writer holds a `TypedExclusive`.
-    //     No other borrow of any kind may start until it drops.
+    /// - `1..EXCLUSIVE`: that many readers hold a `TypedShared`. More readers
+    ///   may join; a writer may not.
+    /// - `EXCLUSIVE`: one writer holds a `TypedExclusive`. No other borrow of
+    ///   any kind may start until it drops.
     ///
     /// `untrack` also refuses while this is non-zero, since ownership cannot
     /// move out from under a live borrow.
@@ -125,7 +129,20 @@ impl std::fmt::Debug for EntryInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let borrow_state = self.borrow_state.load(Ordering::Relaxed);
         f.debug_struct("EntryInner")
-            .field("real_addr", &format_args!("0x{:x}", self.real_addr))
+            // The real address is what the opaque handle id exists to hide, so
+            // it is printed only in debug builds. A release build that logs an
+            // entry (a panic message, a tracing span) must not leak it.
+            .field(
+                "real_addr",
+                &format_args!(
+                    "{}",
+                    if cfg!(debug_assertions) {
+                        format!("0x{:x}", self.real_addr)
+                    } else {
+                        "<hidden>".to_string()
+                    }
+                ),
+            )
             .field("type_id", &self.type_id)
             .field("wrapper", &self.wrapper)
             .field(
@@ -163,15 +180,22 @@ impl Drop for EntryInner {
         // that re-enters the registry then deadlocks against the non-reentrant
         // Mutex. Collect entries, release the lock, and let them drop after.
 
-        // A forked child inherits every entry. Running cleanup here would free
-        // an allocation the parent still owns and release external resources
-        // (file descriptors, sockets) twice. This check is separate from the
-        // one on PointerRegistry because this path reaches Drop by dropping an
-        // inherited Arc, without any registry call to intercept.
+        // A forked child inherits every entry. Memory is not the reason to skip
+        // cleanup here: fork() gives the child a private copy-on-write address
+        // space, so freeing there cannot touch the parent's heap. The reason is
+        // a cleanup closure that releases a resource the two processes share --
+        // a file descriptor, an flock, a shared memory segment -- which the
+        // child would release out from under the parent. No closure in this
+        // crate does that today, so this is future-proofing for a caller-
+        // supplied cleanup that does.
         //
-        // Skipping is bounded: an exec() replaces the address space, exit
-        // reclaims it, and a long-lived child retains only what it inherited at
-        // fork time.
+        // This check is separate from the one on PointerRegistry because this
+        // path reaches Drop by dropping an inherited Arc, without any registry
+        // call to intercept.
+        //
+        // Skipping leaks the child's private copy. That is bounded: an exec()
+        // replaces the address space, exit reclaims it, and a long-lived child
+        // retains only what it inherited at fork time.
         if self.owner_pid != current_pid() {
             if let Ok(mut cleanup) = self.cleanup.lock() {
                 std::mem::forget(cleanup.take());
@@ -255,6 +279,7 @@ unsafe impl<T: Sync> Sync for TypedExclusive<T> {}
 
 impl<T> Deref for TypedShared<T> {
     type Target = T;
+
     fn deref(&self) -> &T {
         // SAFETY: the entry was type-checked at checkout.
         unsafe { &*(self.inner.entry.real_addr as *const T) }
@@ -263,6 +288,7 @@ impl<T> Deref for TypedShared<T> {
 
 impl<T> Deref for TypedExclusive<T> {
     type Target = T;
+
     fn deref(&self) -> &T {
         // SAFETY: as TypedShared, and this guard holds the sole claim.
         unsafe { &*(self.inner.entry.real_addr as *const T) }
@@ -321,8 +347,14 @@ fn scramble_to_odd_id(counter: usize) -> usize {
 ///   handed to C must be a genuine, readable address. These are always even.
 ///
 /// Both kinds share one map and one `cimpl_free()` path since freeing only
-/// needs the key, not which kind it is — the odd/even split guarantees they
-/// can never collide with each other.
+/// needs the key, not which kind it is — the odd/even split guarantees a key
+/// of one kind can never be mistaken for the other.
+///
+/// The protection against reused addresses covers the handle-id half only.
+/// Address-keyed buffers are keyed by the address the allocator returned, so
+/// a stale buffer pointer whose memory has been freed and reallocated to
+/// another tracked buffer resolves to the new entry. C must not use a buffer
+/// pointer after freeing it; the registry cannot detect that case.
 pub struct PointerRegistry {
     tracked: Mutex<HashMap<usize, Arc<EntryInner>>>,
     next_id: AtomicUsize,
@@ -362,11 +394,14 @@ impl PointerRegistry {
             return 0;
         }
         let counter = self.next_id.fetch_add(1, Ordering::Relaxed);
+        // Past this point the scramble no longer yields distinct ids. Refusing
+        // with a NULL handle is recoverable; a panic here would cross the
+        // extern "C" boundary and abort the host application.
         #[cfg(target_pointer_width = "32")]
-        assert!(
-            counter < (usize::MAX >> 1),
-            "PointerRegistry id space exhausted"
-        );
+        if counter >= (usize::MAX >> 1) {
+            eprintln!("c2pa: PointerRegistry id space exhausted");
+            return 0;
+        }
         let id = scramble_to_odd_id(counter);
         let entry = Arc::new(EntryInner {
             real_addr,
@@ -377,18 +412,27 @@ impl PointerRegistry {
             owner_pid: current_pid(),
         });
         if let Ok(mut tracked) = self.tracked.lock() {
-            // Ids come from a counter that never repeats within its period,
-            // so an occupied slot means that guarantee broke.
-            // Dropping the returned entry would run its cleanup under the lock,
-            // and leave the next free aimed at the wrong object.
-            let previous = tracked.insert(id, entry);
-            assert!(
-                previous.is_none(),
-                "PointerRegistry minted a duplicate handle id"
-            );
+            if let Some(previous) = tracked.insert(id, entry) {
+                // Ids come from a counter that never repeats within its period,
+                // so an occupied slot means that guarantee broke. Defuse the
+                // displaced entry rather than dropping it: its cleanup would
+                // otherwise run here, under the lock, where a closure that
+                // re-enters the registry deadlocks against the non-reentrant
+                // Mutex. Leaking it keeps the process alive; a panic crossing
+                // extern "C" would not.
+                if let Ok(mut cleanup) = previous.cleanup.lock() {
+                    std::mem::forget(cleanup.take());
+                }
+                eprintln!(
+                    "c2pa: handle id 0x{id:x} was minted twice, leaking the displaced object"
+                );
+            }
+            return id;
         }
-        // Silently ignore poisoned mutex - this is a best-effort tracking system
-        id
+        // A poisoned lock means the entry was never recorded. Returning 0 gives
+        // the caller a NULL handle instead of one the registry cannot resolve
+        // and cimpl_free would later reject.
+        0
     }
 
     /// Track a pointer keyed by its own address. Only use this for buffers C
@@ -406,13 +450,16 @@ impl PointerRegistry {
         if real_addr != 0 {
             // The odd/even split between the two key kinds is what guarantees an
             // address key can never alias a handle id.
-            // Rust aligns real allocations, so this holds for every type tracked here,
-            // but a ero-sized type allocates at 0x1 and a custom global allocator don't need to align.
-            // Fail loudly rather than alias if something goes wrong here.
-            assert!(
-                real_addr.is_multiple_of(2),
-                "tracked buffer address must be even; odd addresses collide with handle ids"
-            );
+            // Rust aligns real allocations, so this holds for every type tracked
+            // here, but a zero-sized type allocates at 0x1 and a custom global
+            // allocator need not align. Refuse rather than alias: the caller
+            // frees the buffer, where a panic would cross extern "C" and abort.
+            if !real_addr.is_multiple_of(2) {
+                eprintln!(
+                    "c2pa: refusing to track odd address 0x{real_addr:x}, it would collide with a handle id"
+                );
+                return false;
+            }
             let entry = Arc::new(EntryInner {
                 real_addr,
                 type_id,
@@ -430,9 +477,7 @@ impl PointerRegistry {
                     if let Ok(mut cleanup) = previous.cleanup.lock() {
                         cleanup.take();
                     }
-                    eprintln!(
-                        "c2pa: address 0x{real_addr:x} was re-tracked while still tracked"
-                    );
+                    eprintln!("c2pa: address 0x{real_addr:x} was re-tracked while still tracked");
                 }
                 return true;
             }
@@ -531,12 +576,10 @@ impl PointerRegistry {
         expected_type: TypeId,
     ) -> Result<ExclusiveCheckout, Error> {
         let entry = self.lookup(id, expected_type)?;
-        match entry.borrow_state.compare_exchange(
-            0,
-            EXCLUSIVE,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        ) {
+        match entry
+            .borrow_state
+            .compare_exchange(0, EXCLUSIVE, Ordering::AcqRel, Ordering::Acquire)
+        {
             Ok(_) => Ok(ExclusiveCheckout { entry }),
             Err(_) => Err(Error::from(CimplError::pointer_in_use())),
         }
@@ -798,9 +841,15 @@ pub fn track_arc_mutex<T: 'static + MaybeSend>(ptr: *mut Mutex<T>) -> *mut Mutex
 
 /// Validate that a pointer is tracked and has the expected type,
 /// returning the real pointer to dereference.
-// (The value passed in is an opaque handle id, not the real address).
+/// (The value passed in is an opaque handle id, not the real address).
+///
+/// `pub(crate)` because the returned pointer carries no claim on the entry:
+/// another thread's `cimpl_free` can free the object while the caller still
+/// holds it. FFI code borrows through `checkout_shared` or
+/// `checkout_exclusive`, which keep the object alive for the guard's lifetime.
 #[must_use = "the handle passed in is not a usable pointer, only the returned one is"]
-pub fn validate_pointer<T: 'static>(ptr: *mut T) -> Result<*mut T, Error> {
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn validate_pointer<T: 'static>(ptr: *mut T) -> Result<*mut T, Error> {
     let real_addr = get_registry().resolve(ptr as usize, TypeId::of::<T>())?;
     Ok(real_addr as *mut T)
 }
@@ -860,8 +909,12 @@ pub fn checkout_exclusive<T: 'static>(ptr: *mut T) -> Result<TypedExclusive<T>, 
 /// builder.set_signer(signer.signer);                           // inner value moved into builder
 /// // C2paSigner wrapper dropped here — no double-free risk
 /// ```
+/// `pub(crate)` because it hands back a bare pointer the caller must
+/// reconstruct by hand. `untrack_owned` does that reconstruction in one place
+/// and returns the value itself, which is what FFI code uses.
 #[must_use = "dropping the returned pointer leaks the allocation"]
-pub fn untrack_pointer<T: 'static>(ptr: *mut T) -> Result<*mut T, Error> {
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn untrack_pointer<T: 'static>(ptr: *mut T) -> Result<*mut T, Error> {
     let (real_addr, _wrapper) = get_registry().untrack(ptr as usize, TypeId::of::<T>(), None)?;
     Ok(real_addr as *mut T)
 }
@@ -1269,7 +1322,10 @@ mod tests {
         let arc = Arc::new(5i32);
         let ptr = track_arc(Arc::into_raw(arc) as *mut i32);
 
-        assert!(untrack_owned::<i32>(ptr).is_err(), "Arc entry must be refused");
+        assert!(
+            untrack_owned::<i32>(ptr).is_err(),
+            "Arc entry must be refused"
+        );
 
         // Still borrowable, so the claim was released.
         assert!(
@@ -1361,7 +1417,10 @@ mod tests {
         assert!(!DROPPED.load(Ordering::SeqCst), "freed while borrowed");
 
         drop(guard);
-        assert!(DROPPED.load(Ordering::SeqCst), "not freed after last borrow");
+        assert!(
+            DROPPED.load(Ordering::SeqCst),
+            "not freed after last borrow"
+        );
     }
 
     #[test]
@@ -1505,8 +1564,9 @@ mod tests {
         }
 
         let ptr = track_box(Box::into_raw(Box::new(Panics)));
-        // Without catch_unwind in EntryInner::drop this aborts the process,
-        // because a panic escaping a Drop during unwinding cannot unwind again.
+        // cimpl_free is reached from C, so without catch_unwind in
+        // EntryInner::drop the panic from the cleanup closure would unwind
+        // across the extern "C" boundary and abort the process.
         assert_eq!(cimpl_free(ptr as *mut std::ffi::c_void), 0);
 
         // The registry lock survived, so later calls still work.
