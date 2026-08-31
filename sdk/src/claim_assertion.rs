@@ -77,7 +77,6 @@ pub struct ClaimAssertionBuilder<'a> {
     content_type: Option<String>,
     stream: Option<(String, &'a mut dyn CAIRead)>,
     c2pa_data: Option<Vec<u8>>,
-    exclusions: Option<Vec<HashRange>>,
 }
 
 impl ClaimAssertionBuilder<'static> {
@@ -93,7 +92,6 @@ impl ClaimAssertionBuilder<'static> {
             content_type: None,
             stream: None,
             c2pa_data: None,
-            exclusions: None,
         }
     }
 }
@@ -139,7 +137,6 @@ impl<'a> ClaimAssertionBuilder<'a> {
             content_type: self.content_type,
             stream: Some((format.into(), stream)),
             c2pa_data: self.c2pa_data,
-            exclusions: self.exclusions,
         }
     }
 
@@ -158,13 +155,6 @@ impl<'a> ClaimAssertionBuilder<'a> {
     /// [`crate::assertions::IngredientAssertion::LABEL`] only.
     pub fn with_c2pa_data(mut self, c2pa_data: Vec<u8>) -> Self {
         self.c2pa_data = Some(c2pa_data);
-        self
-    }
-
-    /// Sets the byte ranges to exclude when hashing — the region where the caller embedded the
-    /// manifest placeholder. `DataHash::LABEL` only.
-    pub fn with_exclusions(mut self, exclusions: Vec<HashRange>) -> Self {
-        self.exclusions = Some(exclusions);
         self
     }
 
@@ -190,7 +180,6 @@ impl<'a> ClaimAssertionBuilder<'a> {
             content_type,
             stream,
             c2pa_data,
-            exclusions,
         } = self;
         if let Some(assertion) = assertion {
             return Ok(GeneratedAssertion::Assertion(assertion));
@@ -200,18 +189,16 @@ impl<'a> ClaimAssertionBuilder<'a> {
         match match_label {
             DataHash::LABEL => {
                 let (_, stream) = require_stream(stream, match_label)?;
-                let dh = generate_data_hash(exclusions.unwrap_or_default(), context, stream)?;
+                let dh = generate_data_hash(Vec::new(), context, stream)?;
                 Ok(GeneratedAssertion::DataHash(dh))
             }
             BmffHash::LABEL => {
-                reject_exclusions(exclusions, BmffHash::LABEL)?;
                 let (_, stream) = require_stream(stream, match_label)?;
                 let mut bh = generate_bmff_hash(context, stream)?;
                 bh.set_bmff_version(version);
                 Ok(GeneratedAssertion::BmffHash(bh))
             }
             BoxHash::LABEL => {
-                reject_exclusions(exclusions, BoxHash::LABEL)?;
                 let (format, stream) = require_stream(stream, match_label)?;
                 let bh = generate_box_hash(&format, context, stream)?;
                 Ok(GeneratedAssertion::BoxHash(bh))
@@ -256,18 +243,6 @@ fn require_stream<'a>(
             "'{label}' requires with_stream (the asset to hash)"
         ))
     })
-}
-
-/// `with_exclusions` is only meaningful for `DataHash` — reject it for any other hard-binding
-/// label instead of silently ignoring it.
-fn reject_exclusions(exclusions: Option<Vec<HashRange>>, label: &str) -> Result<()> {
-    if exclusions.is_some() {
-        return Err(Error::BadParam(format!(
-            "with_exclusions is only valid for '{}', not '{label}'",
-            DataHash::LABEL
-        )));
-    }
-    Ok(())
 }
 
 /// Fixed hash algorithm used for hard-binding generation (independent of
