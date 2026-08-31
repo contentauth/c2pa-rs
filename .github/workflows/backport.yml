@@ -26,7 +26,10 @@ permissions:
 jobs:
   backport:
     name: Backport merged PR
-    if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'main'
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == 'main' &&
+      contains(join(github.event.pull_request.labels.*.name, ','), 'backport-')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
