@@ -11,6 +11,14 @@
   color: "0e8a16"
   description: "release-plz release PR; runs the full Tier 1A+1B+2 suite"
 
+- name: safe to test
+  color: "0e8a16"
+  description: "Maintainer trusts this fork PR; allow secret-dependent CI to run"
+
+- name: awaiting-cla-signature
+  color: "d93f0b"
+  description: "Third-party PR is blocked until the author signs the Adobe CLA"
+
 - name: check-release
   color: "1d76db"
   description: "Force the full Tier 1A+1B+2 suite on this PR"

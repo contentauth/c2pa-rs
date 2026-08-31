@@ -150,19 +150,19 @@ The `Settings` definition has the following top-level structure:
 {
   "version": 1,
   "trust": { ... },
-  "cawg_trust": { ... },
   "core": { ... },
   "verify": { ... },
   "builder": { ... },
   "signer": { ... },
-  "cawg_x509_signer": { ... }
+  "cawg_x509_signer": { ... },
+  "soft_binding": { ... }
 }
 ```
 
 > [!NOTE]
-> - All properties are optional. If you do not specify a value, the SDK will use the default value, if any.
-> - If you specify a value of `null`, then the property will be set to `null`, not the default.
-> - Do not quote Boolean property values (for example, use `true` not `"true"`).
+> All properties are optional. If you do not specify a value, the SDK will use the default value, if any.
+> If you specify a value of `null`, then the property will be set to `null`, not the default.
+> Do not quote Boolean property values (for example, use `true` not `"true"`).
 
 For a complete reference to all the `Settings` properties, see the [SDK object reference: Settings](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema).
 
@@ -170,12 +170,12 @@ For a complete reference to all the `Settings` properties, see the [SDK object r
 |----------|-------------|
 | `version` | Settings format version (integer). The default and only supported value is 1. |
 | [`builder`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#buildersettings) | Configuration for [Builder](https://docs.rs/c2pa/latest/c2pa/struct.Builder.html). |
-| [`cawg_trust`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#trust) | Configuration for CAWG trust lists. |
 | [`cawg_x509_signer`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#signersettings) | Configuration for the [CAWG x.509 signer](https://docs.rs/c2pa/latest/c2pa/struct.Settings.html#structfield.signer). |
 | [`core`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#core) | Configuration for core features. |
 | [`signer`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#signersettings) | Configuration for the base [C2PA signer](https://docs.rs/c2pa/latest/c2pa/struct.Settings.html#structfield.signer). |
-| [`trust`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#trust) | Configuration for C2PA trust lists. |
+| [`trust`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#trust) | Configuration for C2PA claim generator trust lists, CAWG trust lists & TSA time-stamp trust lists |
 | [`verify`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#verify) | Configuration for verification (validation). |
+| [`soft_binding`](https://opensource.contentauthenticity.org/docs/manifest/json-ref/settings-schema#soft_binding)  | Configure allowed set of soft bindings |
 
 ### Default configuration
 
@@ -217,13 +217,6 @@ Here's the `Settings` JSON with all default values:
       "quality": "medium"
     },
   },
-  "cawg_trust": {
-    "verify_trust_list": true,
-    "user_anchors": null,
-    "trust_anchors": null,
-    "trust_config": null,
-    "allowed_list": null
-  },
   "cawg_x509_signer": null,
   "core": {
     "merkle_tree_chunk_size_in_kb": null,
@@ -234,11 +227,18 @@ Here's the `Settings` JSON with all default values:
     "max_decompressed_manifest_size_in_mb": 32
   },
   "signer": null,
-  "trust": {
-    "user_anchors": null,
-    "trust_anchors": null,
-    "trust_config": null,
-    "allowed_list": null
+  "trust":{ 
+    "anchors": [
+        {
+          "trust_uri": null,
+          "trust_kind": "manifest"
+          "trust_anchors": null,
+          "trust_config": null,
+          "allowed_list": null,
+          "trusted_ica_issuers": null
+        }
+    ]
+    "trust_config": null
   },
   "verify": {
     "verify_after_reading": true,
@@ -249,6 +249,18 @@ Here's the `Settings` JSON with all default values:
     "remote_manifest_fetch": true,
     "skip_ingredient_conflict_resolution": false,
     "strict_v1_validation": false
+  },
+  "soft_binding": {
+      "soft_binding_algorithms": [
+        "com.digimarc.validate.1",
+        "org.atsc.a336",
+        "io.iscc.v0",
+        "com.adobe.trustmark.Q",
+        "com.adobe.trustmark.C",
+        "com.adobe.icn.dense",
+        "ai.steg.api",
+        "..."
+      ]
   }
 }
 ```
@@ -350,8 +362,16 @@ Here's the `Settings` JSON with all default values:
 {
   "version": 1,
   "trust": {
-    "trust_anchors": "-----BEGIN CERTIFICATE-----\n...",
-    "trust_config": "1.3.6.1.5.5.7.3.4\n1.3.6.1.5.5.7.3.36"
+      "anchors": [
+          {
+            "trust_anchors": "-----BEGIN CERTIFICATE-----\n...",
+            "trust_config": "1.3.6.1.5.5.7.3.4\n1.3.6.1.5.5.7.3.36",
+            "trust_kind": "manifest",
+            "trust_uri": "https://c2pa-rs/test_cert_trust_list",
+            "trusted_ica_issuers": ["did:jwk:eyJhbGciOiJFZERTQSIs..."]
+          }
+      ],
+      "trust_config": "1.3.6.1.5.5.7.3.4\n1.3.6.1.5.5.7.3.36"
   },
   "core": {
     "backing_store_memory_threshold_in_mb": 1024
@@ -362,6 +382,18 @@ Here's the `Settings` JSON with all default values:
       "long_edge": 512,
       "quality": "high"
     }
+  },
+  "soft_binding": {
+      "soft_binding_algorithms": [
+        "com.digimarc.validate.1",
+        "org.atsc.a336",
+        "io.iscc.v0",
+        "com.adobe.trustmark.Q",
+        "com.adobe.trustmark.C",
+        "com.adobe.icn.dense",
+        "ai.steg.api",
+        "..."
+      ]
   }
 }
 ```

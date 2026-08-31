@@ -17,7 +17,7 @@ use std::io::{Read, Seek};
 use schemars::JsonSchema;
 use serde::{de::Deserializer, ser::SerializeStruct, Deserialize, Serialize, Serializer};
 
-use super::AssetType;
+use super::{AssetType, DigitalSourceType};
 use crate::{
     assertion::{
         Assertion, AssertionBase, AssertionData, AssertionDecodeError, AssertionDecodeErrorCause,
@@ -83,6 +83,7 @@ pub struct Ingredient {
 
     pub validation_results: Option<ValidationResults>,
     pub active_manifest: Option<HashedUri>,
+    pub digital_source_type: Option<DigitalSourceType>,
     pub claim_signature: Option<HashedUri>,
 
     pub soft_bindings_matched: Option<bool>,
@@ -225,6 +226,7 @@ impl Ingredient {
             && self.validation_results.is_none() // V3 exclusive params
             && self.active_manifest.is_none()
             && self.claim_signature.is_none()
+            && self.digital_source_type.is_none()
     }
 
     /// determines if an ingredient is a v2 ingredient
@@ -234,6 +236,7 @@ impl Ingredient {
         && self.validation_results.is_none() // V3 exclusive params
         && self.active_manifest.is_none()
         && self.claim_signature.is_none()
+        && self.digital_source_type.is_none()
     }
 
     fn is_v3_compatible(&self) -> bool {
@@ -490,15 +493,14 @@ impl Ingredient {
             ? "informationalURI": tstr .size (1..max-tstr-length), ; URI to an informational page about the ingredient or its data
             ? "softBindingsMatched": bool, ; Whether soft bindings were matched
             ? "softBindingAlgorithmsMatched": [1* tstr] ; Array of algorithm names used for discovering the active manifest
+            ? "digitalSourceType": tstr .size (1..max-tstr-length), ; One of the source types defined at https://cv.iptc.org/newscodes/digitalsourcetype/ or in this specification. Cannot be combined with `activeManifest`.
             ? "metadata": $assertion-metadata-map ; additional information about the assertion
         */
 
         // check rules
-        if self.active_manifest.is_none() && self.validation_results.is_some()
-            || self.active_manifest.is_some() && self.validation_results.is_none()
-        {
+        if self.active_manifest.is_some() && self.validation_results.is_none() {
             return Err(serde::ser::Error::custom(
-                "Ingredient v3 activeManifest and validationResults must both be present or absent",
+                "Ingredient v3 activeManifest requires validationResults to be present",
             ));
         }
 
@@ -522,6 +524,9 @@ impl Ingredient {
             ingredient_map_len += 1
         }
         if self.active_manifest.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.digital_source_type.is_some() {
             ingredient_map_len += 1
         }
         if self.claim_signature.is_some() {
@@ -572,6 +577,9 @@ impl Ingredient {
         }
         if let Some(am) = &self.active_manifest {
             ingredient_map.serialize_field("activeManifest", am)?;
+        }
+        if let Some(dst) = &self.digital_source_type {
+            ingredient_map.serialize_field("digitalSourceType", dst)?;
         }
         if let Some(cs) = &self.claim_signature {
             ingredient_map.serialize_field("claimSignature", cs)?;
@@ -740,75 +748,9 @@ impl AssertionBase for Ingredient {
 
         let version = assertion.get_ver();
 
-        static V1_FIELDS: [&str; 9] = [
-            "dc:title",
-            "dc:format",
-            "documentID",
-            "instanceID",
-            "relationship",
-            "c2pa_manifest",
-            "thumbnail",
-            "validationStatus",
-            "metadata",
-        ];
-
-        static V2_FIELDS: [&str; 13] = [
-            "dc:title",
-            "dc:format",
-            "relationship",
-            "documentID",
-            "instanceID",
-            "data",
-            "data_types",
-            "c2pa_manifest",
-            "thumbnail",
-            "validationStatus",
-            "description",
-            "informational_URI",
-            "metadata",
-        ];
-
-        static V3_FIELDS: [&str; 15] = [
-            "dc:title",
-            "dc:format",
-            "relationship",
-            "validationResults",
-            "instanceID",
-            "data",
-            "dataTypes",
-            "activeManifest",
-            "claimSignature",
-            "thumbnail",
-            "description",
-            "informationalURI",
-            "softBindingsMatched",
-            "softBindingAlgorithmsMatched",
-            "metadata",
-        ];
-
-        // make sure decoded matches expected fields
+        // Only the fields required by the CDDL for each version are enforced.
         let decoded = match version {
             1 => {
-                // make sure only V1 fields are present
-                if let c2pa_cbor::Value::Map(m) = &ingredient_value {
-                    if !m.keys().all(|v| match v {
-                        c2pa_cbor::Value::Text(t) => V1_FIELDS.contains(&t.as_str()),
-                        _ => false,
-                    }) {
-                        return Err(to_decoding_err(
-                            &assertion.label(),
-                            assertion.get_ver(),
-                            "invalid field found in Ingredient assertion",
-                        ));
-                    }
-                } else {
-                    return Err(to_decoding_err(
-                        &assertion.label(),
-                        assertion.get_ver(),
-                        "invalid field found in Ingredient assertion",
-                    ));
-                }
-
                 // add mandatory field
                 let title: String = map_cbor_to_type("dc:title", &ingredient_value).ok_or(
                     to_decoding_err(&assertion.label(), assertion.get_ver(), "dc:title"),
@@ -851,26 +793,6 @@ impl AssertionBase for Ingredient {
                 }
             }
             2 => {
-                // make sure only V2 fields are present
-                if let c2pa_cbor::Value::Map(m) = &ingredient_value {
-                    if !m.keys().all(|v| match v {
-                        c2pa_cbor::Value::Text(t) => V2_FIELDS.contains(&t.as_str()),
-                        _ => false,
-                    }) {
-                        return Err(to_decoding_err(
-                            &assertion.label(),
-                            assertion.get_ver(),
-                            "invalid field found in Ingredient assertion",
-                        ));
-                    }
-                } else {
-                    return Err(to_decoding_err(
-                        &assertion.label(),
-                        assertion.get_ver(),
-                        "invalid field found in Ingredient assertion",
-                    ));
-                }
-
                 // add mandatory field
                 let title: String = map_cbor_to_type("dc:title", &ingredient_value).ok_or(
                     to_decoding_err(&assertion.label(), assertion.get_ver(), "dc:title"),
@@ -922,26 +844,6 @@ impl AssertionBase for Ingredient {
                 }
             }
             3 => {
-                // make sure only V3 fields are present
-                if let c2pa_cbor::Value::Map(m) = &ingredient_value {
-                    if !m.keys().all(|v| match v {
-                        c2pa_cbor::Value::Text(t) => V3_FIELDS.contains(&t.as_str()),
-                        _ => false,
-                    }) {
-                        return Err(to_decoding_err(
-                            &assertion.label(),
-                            assertion.get_ver(),
-                            "invalid field found in Ingredient assertion",
-                        ));
-                    }
-                } else {
-                    return Err(to_decoding_err(
-                        &assertion.label(),
-                        assertion.get_ver(),
-                        "invalid field found in Ingredient assertion",
-                    ));
-                }
-
                 // add mandatory field
                 let relationship: Relationship =
                     map_cbor_to_type("relationship", &ingredient_value).ok_or(to_decoding_err(
@@ -961,6 +863,8 @@ impl AssertionBase for Ingredient {
                     map_cbor_to_type("dataTypes", &ingredient_value);
                 let active_manifest: Option<HashedUri> =
                     map_cbor_to_type("activeManifest", &ingredient_value);
+                let digital_source_type: Option<DigitalSourceType> =
+                    map_cbor_to_type("digitalSourceType", &ingredient_value);
                 let claim_signature: Option<HashedUri> =
                     map_cbor_to_type("claimSignature", &ingredient_value);
                 let thumbnail: Option<HashedUri> = map_cbor_to_type("thumbnail", &ingredient_value);
@@ -988,6 +892,7 @@ impl AssertionBase for Ingredient {
                     informational_uri,
                     data_types,
                     active_manifest,
+                    digital_source_type,
                     claim_signature,
                     soft_bindings_matched,
                     soft_binding_algorithms_matched,
@@ -1214,6 +1119,7 @@ pub mod tests {
             data_types: Some(data_types.clone()),
             validation_results: Some(validation_results.clone()),
             active_manifest: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
+            digital_source_type: None,
             claim_signature: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.signature".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
             soft_bindings_matched: Some(true),
             soft_binding_algorithms_matched: Some(vec!["alg1".to_owned(), "alg2".to_owned()]),
@@ -1300,6 +1206,69 @@ pub mod tests {
         assert!(!v3_decoded.is_v1_compatible());
         assert!(!v3_decoded.is_v2_compatible());
         assert!(v3_decoded.is_v3_compatible());
+    }
+
+    #[test]
+    fn test_digital_source_type_round_trip() {
+        let ingredient = Ingredient {
+            digital_source_type: Some(DigitalSourceType::TrainedAlgorithmicData),
+            relationship: Relationship::InputTo,
+            version: 3,
+            ..Default::default()
+        };
+
+        let assertion = ingredient.to_assertion().unwrap();
+        let decoded = Ingredient::from_assertion(&assertion).unwrap();
+        assert_eq!(ingredient.digital_source_type, decoded.digital_source_type);
+    }
+
+    #[test]
+    fn test_validation_results_without_active_manifest() {
+        let ingredient = Ingredient {
+            validation_results: Some(ValidationResults::default()),
+            ..Ingredient::new_v3(Relationship::ParentOf)
+        };
+        assert!(ingredient.to_assertion().is_ok());
+
+        let ingredient = Ingredient {
+            active_manifest: Some(HashedUri::new(
+                "self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(),
+                Some("sha256".to_owned()),
+                &[1, 2, 3, 4, 5, 6, 7, 8, 9, 0],
+            )),
+            ..Ingredient::new_v3(Relationship::ParentOf)
+        };
+        assert!(ingredient.to_assertion().is_err());
+    }
+
+    #[test]
+    fn test_unknown_field_does_not_break_decoding() {
+        let ingredients = [
+            Ingredient::new("title", "image/jpeg", "instance_id", None),
+            Ingredient::new_v2("title", "image/jpeg"),
+            Ingredient::new_v3(Relationship::ParentOf),
+        ];
+
+        for ingredient in ingredients {
+            let version = ingredient.version;
+            let assertion = ingredient.to_assertion().unwrap();
+
+            let mut value: c2pa_cbor::Value = c2pa_cbor::from_slice(assertion.data()).unwrap();
+            if let c2pa_cbor::Value::Map(map) = &mut value {
+                map.insert(
+                    c2pa_cbor::Value::Text("someFutureField".to_owned()),
+                    c2pa_cbor::Value::Text("unrecognized".to_owned()),
+                );
+            } else {
+                panic!("expected a CBOR map");
+            }
+            let data = c2pa_cbor::to_vec(&value).unwrap();
+            let assertion_with_unknown_field =
+                Assertion::new(Ingredient::LABEL, Some(version), AssertionData::Cbor(data));
+
+            let decoded = Ingredient::from_assertion(&assertion_with_unknown_field).unwrap();
+            assert_eq!(decoded.version, version);
+        }
     }
 
     #[test]

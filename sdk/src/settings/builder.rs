@@ -393,6 +393,18 @@ pub struct ActionsSettings {
     /// field.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub all_actions_included: Option<bool>,
+    /// Whether to automatically set [Actions::all_actions_included][crate::assertions::Actions::all_actions_included]
+    /// to `true` when the manifest's sole recorded action is `c2pa.opened` — i.e. the asset was
+    /// opened only to record that action and immediately re-saved without any other changes,
+    /// as required by the
+    /// [C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_all_actions_included).
+    ///
+    /// Disabled by default: the builder can only see changes that were recorded as an
+    /// [`Action`], so enabling this is an assertion by the caller that every change made to
+    /// the asset in this workflow is in fact tracked as an action.
+    /// Takes priority over `all_actions_included` when it applies, but never overrides a value
+    /// the caller explicitly set on the actions assertion data itself.
+    pub auto_all_actions_included: bool,
     /// Templates to be added to the [Actions::templates][crate::assertions::Actions::templates] field.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) templates: Option<Vec<ActionTemplateSettings>>,
@@ -423,6 +435,7 @@ impl Default for ActionsSettings {
     fn default() -> Self {
         ActionsSettings {
             all_actions_included: None,
+            auto_all_actions_included: false,
             templates: None,
             actions: None,
             auto_created_action: AutoActionSettings {
@@ -595,6 +608,15 @@ pub struct BuilderSettings {
     ///
     /// [`TimeStamp`]: crate::assertions::TimeStamp
     pub auto_timestamp_assertion: TimeStampSettings,
+    /// Whether `/free` and `/skip` boxes are excluded from the BMFF/MP4 hard-binding hash.
+    ///
+    /// `/free` and `/skip` are reserved/padding space that apps commonly rewrite after
+    /// signing (e.g. to reclaim or repurpose it), so the C2PA spec permits excluding
+    /// them. Set to `false` to fold their content into the hash instead, so any later
+    /// edit to either box invalidates the hard binding like any other content change.
+    ///
+    /// The default value is `true`.
+    pub bmff_hash_exclude_free_and_skip_boxes: bool,
 }
 
 impl Default for BuilderSettings {
@@ -612,6 +634,7 @@ impl Default for BuilderSettings {
             prefer_box_hash: false,
             generate_c2pa_archive: Some(true),
             auto_timestamp_assertion: TimeStampSettings::default(),
+            bmff_hash_exclude_free_and_skip_boxes: true,
         }
     }
 }
