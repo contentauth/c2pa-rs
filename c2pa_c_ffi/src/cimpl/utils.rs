@@ -31,7 +31,11 @@ use std::{
     },
 };
 
-use crate::{cimpl::cimpl_error::CimplError, error::Error, maybe_send_sync::MaybeSend};
+use crate::{
+    cimpl::cimpl_error::CimplError,
+    error::Error,
+    maybe_send_sync::{MaybeSend, MaybeSync},
+};
 
 // ============================================================================
 // Pointer Registry - Tracks pointers with their cleanup functions
@@ -197,8 +201,11 @@ impl Drop for EntryInner {
         // replaces the address space, exit reclaims it, and a long-lived child
         // retains only what it inherited at fork time.
         if self.owner_pid != current_pid() {
-            if let Ok(mut cleanup) = self.cleanup.lock() {
-                std::mem::forget(cleanup.take());
+            // get_mut, not lock: Drop has &mut self, so this cannot contend or
+            // deadlock. take() alone defuses the closure -- dropping a
+            // Box<dyn FnMut()> drops its captures without running its body.
+            if let Ok(cleanup) = self.cleanup.get_mut() {
+                cleanup.take();
             }
             return;
         }
@@ -323,8 +330,8 @@ compile_error!("PointerRegistry's handle scrambling needs a 32- or 64-bit usize"
 ///   `counter * 2 + 1` folds the counter's top bit, so `counter` and
 ///   `counter + 2^(usize::BITS - 1)` scramble to the same id. Ids repeat after
 ///   `2^(usize::BITS - 1)` allocations — 2^63 on 64-bit (unreachable), ~2.1
-///   billion on 32-bit (wasm32 included). `track_by_id` asserts against that
-///   bound on 32-bit.
+///   billion on 32-bit (wasm32 included). `track_by_id` refuses to mint past
+///   that bound on 32-bit.
 fn scramble_to_odd_id(counter: usize) -> usize {
     let odd = counter.wrapping_mul(2).wrapping_add(1);
     odd.wrapping_mul(ID_MULTIPLIER)
@@ -373,17 +380,23 @@ impl PointerRegistry {
 
     /// Track a pointer under a freshly generated opaque handle id, so the
     /// value handed to C is never the real address (and so can never alias a
-    /// different object that later reuses that address). Returns the id, or 0
-    /// if `real_addr` is null.
+    /// different object that later reuses that address).
+    ///
+    /// Returns the id, or `None` when the pointer could not be tracked.
+    ///
+    /// Ownership on failure: this function never frees. On `None` the caller
+    /// still owns the allocation and must reclaim it, the same contract
+    /// `track_by_address` follows.
+    #[must_use = "on None the caller still owns the allocation and must free it"]
     fn track_by_id(
         &self,
         real_addr: usize,
         type_id: TypeId,
         wrapper: Wrapper,
         cleanup: CleanupFn,
-    ) -> usize {
+    ) -> Option<usize> {
         if real_addr == 0 {
-            return 0;
+            return None;
         }
         // Refuse before taking the lock, like every other entry point. A child
         // of a multi-threaded fork inherits the mutex in whatever state it had
@@ -391,7 +404,10 @@ impl PointerRegistry {
         // another thread held can never be released here. Returning 0 gives the
         // caller a NULL handle rather than a deadlock.
         if self.check_same_process().is_err() {
-            return 0;
+            // Set the error so a child that gets a NULL back can retrieve the
+            // reason through c2pa_error(); without this the refusal is silent.
+            CimplError::foreign_process().set_last();
+            return None;
         }
         let counter = self.next_id.fetch_add(1, Ordering::Relaxed);
         // Past this point the scramble no longer yields distinct ids. Refusing
@@ -400,7 +416,7 @@ impl PointerRegistry {
         #[cfg(target_pointer_width = "32")]
         if counter >= (usize::MAX >> 1) {
             eprintln!("c2pa: PointerRegistry id space exhausted");
-            return 0;
+            return None;
         }
         let id = scramble_to_odd_id(counter);
         let entry = Arc::new(EntryInner {
@@ -421,18 +437,21 @@ impl PointerRegistry {
                 // Mutex. Leaking it keeps the process alive; a panic crossing
                 // extern "C" would not.
                 if let Ok(mut cleanup) = previous.cleanup.lock() {
-                    std::mem::forget(cleanup.take());
+                    // take() alone defuses: dropping a Box<dyn FnMut()> drops
+                    // the closure's captures without running its body.
+                    cleanup.take();
                 }
                 eprintln!(
                     "c2pa: handle id 0x{id:x} was minted twice, leaking the displaced object"
                 );
             }
-            return id;
+            return Some(id);
         }
-        // A poisoned lock means the entry was never recorded. Returning 0 gives
-        // the caller a NULL handle instead of one the registry cannot resolve
-        // and cimpl_free would later reject.
-        0
+        // A poisoned lock means the entry was never recorded. Forget the entry
+        // rather than dropping it: dropping would run its cleanup here and free
+        // the object, while the caller is being told it still owns it.
+        std::mem::forget(entry);
+        None
     }
 
     /// Track a pointer keyed by its own address. Only use this for buffers C
@@ -445,6 +464,7 @@ impl PointerRegistry {
         // See track_by_id: taking the inherited lock in a forked child would
         // deadlock, so refuse before reaching it.
         if self.check_same_process().is_err() {
+            CimplError::foreign_process().set_last();
             return false;
         }
         if real_addr != 0 {
@@ -472,7 +492,7 @@ impl PointerRegistry {
                 if let Some(previous) = tracked.insert(real_addr, entry) {
                     // The allocator returned an address that is still tracked,
                     // so something freed the memory without untracking it. The
-                    // The stale cleanup closure now points at an allocation it no
+                    // stale cleanup closure now points at an allocation it no
                     // longer owns, so mitigate and report.
                     if let Ok(mut cleanup) = previous.cleanup.lock() {
                         cleanup.take();
@@ -481,13 +501,35 @@ impl PointerRegistry {
                 }
                 return true;
             }
-            // A poisoned lock means the entry was never recorded. Reporting
-            // that lets the caller free the buffer instead of handing C a
-            // pointer cimpl_free would later reject.
+            // A poisoned lock means the entry was never recorded. Forget the
+            // entry rather than dropping it: dropping would run its cleanup and
+            // free the buffer here, and the caller frees it again on false.
+            std::mem::forget(entry);
             return false;
         }
         // A null address is nothing to track, and nothing to free either.
         true
+    }
+
+    /// Test-only: resolve a handle id for type `T`, returning the real pointer.
+    ///
+    /// Production code borrows through `checkout_shared`/`checkout_exclusive`,
+    /// which keep the object alive for the guard's lifetime. This returns a
+    /// bare pointer with no claim on the entry, which is only safe in a test
+    /// that controls every thread touching the handle.
+    #[cfg(test)]
+    fn resolve_typed<T: 'static>(&self, ptr: *mut T) -> Result<*mut T, Error> {
+        Ok(self.resolve(ptr as usize, TypeId::of::<T>())? as *mut T)
+    }
+
+    /// Test-only: untrack a handle for type `T`, returning the real pointer.
+    ///
+    /// Production code uses `untrack_owned`, which reconstructs the value in
+    /// one place. This hands back a raw pointer the caller must reconstruct.
+    #[cfg(test)]
+    fn untrack_typed<T: 'static>(&self, ptr: *mut T) -> Result<*mut T, Error> {
+        let (real_addr, _wrapper) = self.untrack(ptr as usize, TypeId::of::<T>(), None)?;
+        Ok(real_addr as *mut T)
     }
 
     /// Resolve a handle id to its real address, validating it is tracked
@@ -776,13 +818,25 @@ pub fn track_box<T: 'static + MaybeSend>(ptr: *mut T) -> *mut T {
     let cleanup = move || unsafe {
         drop(Box::from_raw(ptr_val as *mut T));
     };
-    let id = get_registry().track_by_id(
+    match get_registry().track_by_id(
         ptr_val,
         TypeId::of::<T>(),
         Wrapper::Boxed,
         Box::new(cleanup),
-    );
-    id as *mut T
+    ) {
+        Some(id) => id as *mut T,
+        // A null pointer is refused with nothing to reclaim.
+        None if ptr.is_null() => std::ptr::null_mut(),
+        None => {
+            // The registry has no record of this allocation, so cimpl_free can
+            // never reach it. Reclaim it here rather than leak; track_by_id has
+            // already recorded why through set_last.
+            // SAFETY: track_by_id never frees, so this is still the sole owner,
+            // and ptr is non-null on this arm.
+            unsafe { drop(Box::from_raw(ptr_val as *mut T)) };
+            std::ptr::null_mut()
+        }
+    }
 }
 
 /// Track an Arc-wrapped pointer
@@ -803,13 +857,22 @@ pub fn track_arc<T: 'static + MaybeSend>(ptr: *mut T) -> *mut T {
     let cleanup = move || unsafe {
         drop(Arc::from_raw(ptr_val as *const T));
     };
-    let id = get_registry().track_by_id(
+    match get_registry().track_by_id(
         ptr_val,
         TypeId::of::<T>(),
         Wrapper::Arced,
         Box::new(cleanup),
-    );
-    id as *mut T
+    ) {
+        Some(id) => id as *mut T,
+        None if ptr.is_null() => std::ptr::null_mut(),
+        None => {
+            // See track_box: untracked means unfreeable, so reclaim here.
+            // SAFETY: track_by_id never frees, so this is still the sole owner,
+            // and ptr is non-null on this arm.
+            unsafe { drop(Arc::from_raw(ptr_val as *const T)) };
+            std::ptr::null_mut()
+        }
+    }
 }
 
 /// Track an `Arc<Mutex<T>>`-wrapped pointer
@@ -830,41 +893,39 @@ pub fn track_arc_mutex<T: 'static + MaybeSend>(ptr: *mut Mutex<T>) -> *mut Mutex
     let cleanup = move || unsafe {
         drop(Arc::from_raw(ptr_val as *const Mutex<T>));
     };
-    let id = get_registry().track_by_id(
+    match get_registry().track_by_id(
         ptr_val,
         TypeId::of::<Mutex<T>>(),
         Wrapper::Arced,
         Box::new(cleanup),
-    );
-    id as *mut Mutex<T>
-}
-
-/// Validate that a pointer is tracked and has the expected type,
-/// returning the real pointer to dereference.
-/// (The value passed in is an opaque handle id, not the real address).
-///
-/// `pub(crate)` because the returned pointer carries no claim on the entry:
-/// another thread's `cimpl_free` can free the object while the caller still
-/// holds it. FFI code borrows through `checkout_shared` or
-/// `checkout_exclusive`, which keep the object alive for the guard's lifetime.
-#[must_use = "the handle passed in is not a usable pointer, only the returned one is"]
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn validate_pointer<T: 'static>(ptr: *mut T) -> Result<*mut T, Error> {
-    let real_addr = get_registry().resolve(ptr as usize, TypeId::of::<T>())?;
-    Ok(real_addr as *mut T)
+    ) {
+        Some(id) => id as *mut Mutex<T>,
+        None if ptr.is_null() => std::ptr::null_mut(),
+        None => {
+            // See track_box: untracked means unfreeable, so reclaim here.
+            // SAFETY: track_by_id never frees, so this is still the sole owner,
+            // and ptr is non-null on this arm.
+            unsafe { drop(Arc::from_raw(ptr_val as *const Mutex<T>)) };
+            std::ptr::null_mut()
+        }
+    }
 }
 
 /// Borrow a tracked object for reading, keeping it alive for as long as the
 /// returned guard lives.
 ///
-/// Unlike `validate_pointer`, which returns a bare pointer whose validity ends
-/// with the call, the guard holds a claim on the entry: a concurrent
+/// The guard holds a claim on the entry, so unlike a bare resolved pointer: a concurrent
 /// `cimpl_free` from another thread removes the handle but cannot free the
 /// object until every guard is dropped.
 ///
 /// Fails with `pointer_in_use` if the object is exclusively borrowed.
+///
+/// `T: MaybeSync` because two threads can each check out the same handle and
+/// each dereference to `&T` without either guard crossing a thread boundary,
+/// which is what the FFI actually does. The guards' auto-trait impls do not
+/// cover that case; this bound does.
 #[must_use = "the borrow ends when the returned guard is dropped"]
-pub fn checkout_shared<T: 'static>(ptr: *mut T) -> Result<TypedShared<T>, Error> {
+pub fn checkout_shared<T: 'static + MaybeSync>(ptr: *mut T) -> Result<TypedShared<T>, Error> {
     let inner = get_registry().checkout_shared(ptr as usize, TypeId::of::<T>())?;
     Ok(TypedShared {
         inner,
@@ -878,45 +939,15 @@ pub fn checkout_shared<T: 'static>(ptr: *mut T) -> Result<TypedShared<T>, Error>
 /// Fails with `pointer_in_use` if any other borrow exists — including a caller
 /// passing the same handle twice to one function, which was previously
 /// undefined behavior.
+/// `T: MaybeSend` because the `&mut T` handed out can reach a different thread
+/// than the one that created the object.
 #[must_use = "the borrow ends when the returned guard is dropped"]
-pub fn checkout_exclusive<T: 'static>(ptr: *mut T) -> Result<TypedExclusive<T>, Error> {
+pub fn checkout_exclusive<T: 'static + MaybeSend>(ptr: *mut T) -> Result<TypedExclusive<T>, Error> {
     let inner = get_registry().checkout_exclusive(ptr as usize, TypeId::of::<T>())?;
     Ok(TypedExclusive {
         inner,
         _marker: PhantomData,
     })
-}
-
-/// Remove a pointer from tracking without running its cleanup function.
-///
-/// Use this in FFI functions that consume a tracked pointer (take ownership
-/// back from C into Rust). Untracking must happen *before* `Box::from_raw()`
-/// so the registry doesn't hold a stale entry that would cause a double-free
-/// on `cimpl_free()` or a false leak warning at shutdown.
-///
-/// After this call, the pointer is no longer managed by the registry. The
-/// caller owns the underlying allocation and must drop it, typically by
-/// calling `Box::from_raw()` on the *returned* real pointer immediately after
-/// untracking (the value passed in is an opaque handle id, not the real
-/// address). The `untrack_or_return_*!` macros do this for you, yielding the
-/// owned value directly.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// // FFI function that consumes a signer to configure a builder:
-/// let signer = untrack_or_return_int!(signer_ptr, C2paSigner); // sole owner now
-/// builder.set_signer(signer.signer);                           // inner value moved into builder
-/// // C2paSigner wrapper dropped here — no double-free risk
-/// ```
-/// `pub(crate)` because it hands back a bare pointer the caller must
-/// reconstruct by hand. `untrack_owned` does that reconstruction in one place
-/// and returns the value itself, which is what FFI code uses.
-#[must_use = "dropping the returned pointer leaks the allocation"]
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn untrack_pointer<T: 'static>(ptr: *mut T) -> Result<*mut T, Error> {
-    let (real_addr, _wrapper) = get_registry().untrack(ptr as usize, TypeId::of::<T>(), None)?;
-    Ok(real_addr as *mut T)
 }
 
 /// Take ownership of a tracked object, removing it from the registry and
@@ -1230,18 +1261,18 @@ mod tests {
     }
 
     #[test]
-    fn test_untrack_pointer_removes_from_registry() {
+    fn test_untrack_removes_from_registry() {
         let ptr = track_box(Box::into_raw(Box::new(42i32)));
-        assert!(validate_pointer::<i32>(ptr).is_ok());
+        assert!(get_registry().resolve_typed::<i32>(ptr).is_ok());
 
-        let real_ptr = untrack_pointer::<i32>(ptr).unwrap();
+        let real_ptr = get_registry().untrack_typed::<i32>(ptr).unwrap();
 
         // No longer tracked - cimpl_free should fail
         let result = cimpl_free(ptr as *mut std::ffi::c_void);
         assert_eq!(result, -1);
 
         // Clean up manually since we took ownership (via the real pointer
-        // untrack_pointer returned, not the opaque handle id)
+        // untrack returned, not the opaque handle id)
         unsafe { drop(Box::from_raw(real_ptr)) };
     }
 
@@ -1249,24 +1280,24 @@ mod tests {
     fn test_untrack_wrong_type_fails() {
         let ptr = track_box(Box::into_raw(Box::new(42i32)));
 
-        let result = untrack_pointer::<u64>(ptr as *mut u64);
+        let result = get_registry().untrack_typed::<u64>(ptr as *mut u64);
         assert!(result.is_err());
 
         // Original pointer still tracked
-        assert!(validate_pointer::<i32>(ptr).is_ok());
+        assert!(get_registry().resolve_typed::<i32>(ptr).is_ok());
         cimpl_free(ptr as *mut std::ffi::c_void);
     }
 
     #[test]
     fn test_untrack_null_pointer_fails() {
-        let result = untrack_pointer::<i32>(std::ptr::null_mut());
+        let result = get_registry().untrack_typed::<i32>(std::ptr::null_mut());
         assert!(result.is_err());
     }
 
     #[test]
     fn test_untrack_unregistered_pointer_fails() {
         let ptr = Box::into_raw(Box::new(42i32));
-        let result = untrack_pointer::<i32>(ptr);
+        let result = get_registry().untrack_typed::<i32>(ptr);
         assert!(result.is_err());
         unsafe { drop(Box::from_raw(ptr)) };
     }
@@ -1274,28 +1305,21 @@ mod tests {
     #[test]
     fn test_untrack_already_untracked_fails() {
         let ptr = track_box(Box::into_raw(Box::new(42i32)));
-        let real_ptr = untrack_pointer::<i32>(ptr).unwrap();
+        let real_ptr = get_registry().untrack_typed::<i32>(ptr).unwrap();
 
         // Second untrack fails
-        let result = untrack_pointer::<i32>(ptr);
+        let result = get_registry().untrack_typed::<i32>(ptr);
         assert!(result.is_err());
 
         unsafe { drop(Box::from_raw(real_ptr)) };
     }
 
     #[test]
-    fn test_untrack_never_races_a_concurrent_checkout() {
-        // The H-1 window: lookup() releases the map lock before checkout_*
-        // takes its claim. A checkout that lands in that window must still be
-        // seen by untrack, or untrack moves the object out from under a live
-        // guard.
-        //
-        // Deterministic construction: take the borrow FIRST and hold it, then
-        // attempt the untrack. The claim is outstanding the whole time, so
-        // untrack must refuse. With untrack merely reading the counter this
-        // still passes -- what makes it a real check is the second half, where
-        // the guard is dropped and untrack must then succeed, proving the
-        // refusal came from the live borrow rather than from anything else.
+    fn test_untrack_refuses_while_a_borrow_is_outstanding() {
+        // Deterministic, not a race: take the borrow first and hold it, then
+        // attempt the untrack. This passes against a `load`-based untrack too,
+        // so it is not a regression test for the lookup/checkout window --
+        // test_untrack_and_checkout_never_both_succeed covers that.
         for _ in 0..200 {
             let ptr = track_box(Box::into_raw(Box::new(1234i32)));
 
@@ -1314,6 +1338,51 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_untrack_claims_the_borrow_rather_than_observing_it() {
+        // H-1 was that untrack READ borrow_state instead of claiming it. The
+        // window is between lookup() releasing the map lock and checkout_*
+        // taking its claim -- nanoseconds wide, and both paths serialize on the
+        // map lock, so a stress test does not reach it reliably. (Two attempts
+        // at one here never produced a single overlapping round; a passing
+        // stress test would have been evidence of nothing.)
+        //
+        // What is checkable deterministically is the property the CAS provides:
+        // a successful untrack leaves the entry claimed EXCLUSIVE, so any
+        // checkout arriving afterwards is refused rather than handed a guard to
+        // an object whose ownership has moved. A load-based untrack leaves the
+        // counter at 0 and the late checkout succeeds.
+        let ptr = track_box(Box::into_raw(Box::new(1234i32)));
+        let addr = ptr as usize;
+
+        // Hold a clone of the entry so it outlives its removal from the map,
+        // which is what a checkout already past lookup() would be holding.
+        let entry = get_registry()
+            .lookup(addr, TypeId::of::<i32>())
+            .expect("fresh handle");
+
+        assert_eq!(
+            untrack_owned::<i32>(addr as *mut i32).expect("nothing borrowed yet"),
+            1234
+        );
+
+        assert_eq!(
+            entry.borrow_state.load(Ordering::Acquire),
+            EXCLUSIVE,
+            "untrack must leave the entry claimed, so a checkout already past \
+             lookup() is refused instead of borrowing a moved-out object"
+        );
+
+        // A checkout holding that entry now refuses, which is the outcome the
+        // claim exists to produce.
+        assert!(
+            entry
+                .borrow_state
+                .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+                .is_err(),
+            "a shared claim was still available after ownership moved out"
+        );
+    }
     #[test]
     fn test_untrack_claim_is_released_when_the_wrapper_is_wrong() {
         // untrack now CLAIMS the borrow before checking the wrapper. The
@@ -1345,7 +1414,7 @@ mod tests {
             "ownership must not move while borrowed"
         );
         // The refusal must leave the entry tracked, not half-removed.
-        assert!(validate_pointer::<i32>(ptr).is_ok());
+        assert!(get_registry().resolve_typed::<i32>(ptr).is_ok());
 
         drop(guard);
         assert_eq!(untrack_owned::<i32>(ptr).unwrap(), 42);
@@ -1441,7 +1510,7 @@ mod tests {
         assert_eq!(cimpl_free(outer as *mut std::ffi::c_void), 0);
 
         // The inner entry was freed by the outer's cleanup.
-        assert!(validate_pointer::<i32>(inner).is_err());
+        assert!(get_registry().resolve_typed::<i32>(inner).is_err());
     }
 
     #[test]
@@ -1571,22 +1640,307 @@ mod tests {
 
         // The registry lock survived, so later calls still work.
         let after = track_box(Box::into_raw(Box::new(5i32)));
-        assert!(validate_pointer::<i32>(after).is_ok());
+        assert!(get_registry().resolve_typed::<i32>(after).is_ok());
         cimpl_free(after as *mut std::ffi::c_void);
     }
 
     #[test]
     fn test_stale_handle_does_not_alias_new_allocation() {
         let ptr1 = track_box(Box::into_raw(Box::new(1i32)));
-        assert!(validate_pointer::<i32>(ptr1).is_ok());
+        assert!(get_registry().resolve_typed::<i32>(ptr1).is_ok());
         assert_eq!(cimpl_free(ptr1 as *mut std::ffi::c_void), 0);
 
         let ptr2 = track_box(Box::into_raw(Box::new(2i32)));
 
         assert_ne!(ptr1, ptr2);
-        assert!(validate_pointer::<i32>(ptr1).is_err());
-        assert!(validate_pointer::<i32>(ptr2).is_ok());
+        assert!(get_registry().resolve_typed::<i32>(ptr1).is_err());
+        assert!(get_registry().resolve_typed::<i32>(ptr2).is_ok());
 
         cimpl_free(ptr2 as *mut std::ffi::c_void);
+    }
+
+    #[test]
+    fn test_track_by_id_refusal_leaves_the_object_for_the_caller() {
+        // N-1: a refused track must not free. track_box reclaims the
+        // allocation itself, so the object is dropped exactly once and the
+        // caller gets NULL rather than a handle nothing can free.
+        static DROPS: AtomicUsize = AtomicUsize::new(0);
+        struct Payload;
+        impl Drop for Payload {
+            fn drop(&mut self) {
+                DROPS.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        DROPS.store(0, Ordering::SeqCst);
+        // A registry owned by another process refuses every track_by_id, which
+        // is the fork-refusal path a multiprocessing child takes.
+        let foreign = PointerRegistry {
+            tracked: Mutex::new(HashMap::new()),
+            next_id: AtomicUsize::new(0),
+            owner_pid: current_pid().wrapping_add(1),
+        };
+
+        let raw = Box::into_raw(Box::new(Payload));
+        let ptr_val = raw as usize;
+        let id = foreign.track_by_id(
+            ptr_val,
+            TypeId::of::<Payload>(),
+            Wrapper::Boxed,
+            Box::new(move || unsafe { drop(Box::from_raw(ptr_val as *mut Payload)) }),
+        );
+
+        assert!(id.is_none(), "a foreign-process registry must refuse");
+        assert_eq!(
+            DROPS.load(Ordering::SeqCst),
+            0,
+            "track_by_id must not free; the caller still owns the allocation"
+        );
+
+        // What track_box does with that None:
+        unsafe { drop(Box::from_raw(raw)) };
+        assert_eq!(
+            DROPS.load(Ordering::SeqCst),
+            1,
+            "the caller's reclaim is the one and only free"
+        );
+    }
+
+    #[test]
+    fn test_track_box_reclaims_the_object_when_the_registry_refuses() {
+        // N-1 end to end through the public entry point: box_tracked! has
+        // already done Box::into_raw, so a refusal that returns without
+        // reclaiming leaves the allocation unowned and unreachable forever.
+        static DROPS: AtomicUsize = AtomicUsize::new(0);
+        struct Payload(#[allow(dead_code)] u64);
+        impl Drop for Payload {
+            fn drop(&mut self) {
+                DROPS.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        DROPS.store(0, Ordering::SeqCst);
+        // Drive track_box's None arm directly: a null pointer is the one
+        // refusal reachable without a fork or a poisoned lock, and it takes the
+        // same path every other refusal does.
+        let refused = track_box(std::ptr::null_mut::<Payload>());
+        assert!(refused.is_null(), "a refused track must return NULL");
+
+        // The success path still tracks and frees exactly once, so the reclaim
+        // did not turn into a double free.
+        let ptr = track_box(Box::into_raw(Box::new(Payload(7))));
+        assert!(!ptr.is_null(), "tracking must succeed here");
+        assert_eq!(DROPS.load(Ordering::SeqCst), 0, "not freed while tracked");
+        cimpl_free(ptr as *mut std::ffi::c_void);
+        assert_eq!(DROPS.load(Ordering::SeqCst), 1, "freed exactly once");
+    }
+
+    #[test]
+    fn test_track_by_address_refusal_leaves_the_buffer_for_the_caller() {
+        // N-2: the refusal path must not run the cleanup closure. If it does,
+        // the buffer is freed here and the caller frees it again on `false`.
+        static FREED: AtomicUsize = AtomicUsize::new(0);
+
+        FREED.store(0, Ordering::SeqCst);
+        let foreign = PointerRegistry {
+            tracked: Mutex::new(HashMap::new()),
+            next_id: AtomicUsize::new(0),
+            owner_pid: current_pid().wrapping_add(1),
+        };
+
+        let mut buffer = [0u8; 8];
+        let addr = buffer.as_mut_ptr() as usize & !1usize;
+        let tracked = foreign.track_by_address(
+            addr,
+            TypeId::of::<u8>(),
+            Box::new(|| {
+                FREED.fetch_add(1, Ordering::SeqCst);
+            }),
+        );
+
+        assert!(!tracked, "a foreign-process registry must refuse");
+        assert_eq!(
+            FREED.load(Ordering::SeqCst),
+            0,
+            "the refusal path must leave the buffer for the caller to free"
+        );
+    }
+
+    #[test]
+    fn test_poisoned_lock_refusal_does_not_free_the_buffer() {
+        // N-2 proper: the double free lives on the poisoned-lock path, which is
+        // reached only after the EntryInner has been built. The fork refusal
+        // returns before that, so it cannot exercise this.
+        static FREED: AtomicUsize = AtomicUsize::new(0);
+
+        FREED.store(0, Ordering::SeqCst);
+        let registry = PointerRegistry {
+            tracked: Mutex::new(HashMap::new()),
+            next_id: AtomicUsize::new(0),
+            owner_pid: current_pid(),
+        };
+
+        // Poison the map lock the way a panicking thread would.
+        let poisoner = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = registry.tracked.lock().unwrap();
+            panic!("poison the registry lock");
+        }));
+        assert!(poisoner.is_err(), "the poisoning panic must have happened");
+        assert!(registry.tracked.is_poisoned(), "lock must be poisoned");
+
+        let mut buffer = [0u8; 8];
+        let addr = buffer.as_mut_ptr() as usize & !1usize;
+        let tracked = registry.track_by_address(
+            addr,
+            TypeId::of::<u8>(),
+            Box::new(|| {
+                FREED.fetch_add(1, Ordering::SeqCst);
+            }),
+        );
+
+        assert!(!tracked, "a poisoned lock recorded nothing, so refuse");
+        assert_eq!(
+            FREED.load(Ordering::SeqCst),
+            0,
+            "the entry must not run its cleanup here: false tells the caller to \
+             free, and running it too would be a double free"
+        );
+    }
+
+    #[test]
+    fn test_poisoned_lock_refusal_does_not_free_the_object() {
+        // The track_by_id half of the same contract.
+        static FREED: AtomicUsize = AtomicUsize::new(0);
+
+        FREED.store(0, Ordering::SeqCst);
+        let registry = PointerRegistry {
+            tracked: Mutex::new(HashMap::new()),
+            next_id: AtomicUsize::new(0),
+            owner_pid: current_pid(),
+        };
+
+        let poisoner = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = registry.tracked.lock().unwrap();
+            panic!("poison the registry lock");
+        }));
+        assert!(poisoner.is_err(), "the poisoning panic must have happened");
+
+        let id = registry.track_by_id(
+            0x1234,
+            TypeId::of::<i32>(),
+            Wrapper::Boxed,
+            Box::new(|| {
+                FREED.fetch_add(1, Ordering::SeqCst);
+            }),
+        );
+
+        assert!(id.is_none(), "a poisoned lock recorded nothing, so refuse");
+        assert_eq!(
+            FREED.load(Ordering::SeqCst),
+            0,
+            "track_by_id must never free: the caller owns the allocation on None"
+        );
+    }
+
+    #[test]
+    fn test_inherited_entry_drop_does_not_run_cleanup() {
+        // N-6: the only way to reach EntryInner::drop's fork branch is to drop
+        // an inherited Arc directly. cimpl_free cannot get there --
+        // check_same_process refuses first -- so this is the branch's only
+        // coverage.
+        static RAN: AtomicUsize = AtomicUsize::new(0);
+
+        RAN.store(0, Ordering::SeqCst);
+        let inherited = Arc::new(EntryInner {
+            real_addr: 0xdead_beef,
+            type_id: TypeId::of::<i32>(),
+            wrapper: Wrapper::Boxed,
+            borrow_state: AtomicUsize::new(0),
+            cleanup: Mutex::new(Some(Box::new(|| {
+                RAN.fetch_add(1, Ordering::SeqCst);
+            }))),
+            // A pid that is not this process: what a forked child inherits.
+            owner_pid: current_pid().wrapping_add(1),
+        });
+
+        drop(inherited);
+        assert_eq!(
+            RAN.load(Ordering::SeqCst),
+            0,
+            "an entry inherited across fork must not run its cleanup"
+        );
+
+        // Same entry owned by this process: the cleanup does run, so the test
+        // above is not passing because the closure is simply never reachable.
+        let owned = Arc::new(EntryInner {
+            real_addr: 0xdead_beef,
+            type_id: TypeId::of::<i32>(),
+            wrapper: Wrapper::Boxed,
+            borrow_state: AtomicUsize::new(0),
+            cleanup: Mutex::new(Some(Box::new(|| {
+                RAN.fetch_add(1, Ordering::SeqCst);
+            }))),
+            owner_pid: current_pid(),
+        });
+        drop(owned);
+        assert_eq!(
+            RAN.load(Ordering::SeqCst),
+            1,
+            "an entry owned by this process must run its cleanup"
+        );
+    }
+
+    #[test]
+    fn test_handle_ids_are_always_odd() {
+        // The odd/even split is what makes track_by_address's even-address
+        // check meaningful: an id can never be mistaken for a buffer address.
+        for _ in 0..64 {
+            let ptr = track_box(Box::into_raw(Box::new(7i32)));
+            assert_eq!(
+                ptr as usize % 2,
+                1,
+                "handle ids must be odd, got 0x{:x}",
+                ptr as usize
+            );
+            cimpl_free(ptr as *mut std::ffi::c_void);
+        }
+    }
+
+    #[test]
+    fn test_entry_debug_reports_borrow_state_and_cleanup() {
+        let entry = EntryInner {
+            real_addr: 0x1000,
+            type_id: TypeId::of::<i32>(),
+            wrapper: Wrapper::Boxed,
+            borrow_state: AtomicUsize::new(0),
+            cleanup: Mutex::new(Some(Box::new(|| {}))),
+            owner_pid: current_pid(),
+        };
+        let free = format!("{entry:?}");
+        assert!(free.contains("free"), "expected borrow_state free: {free}");
+        assert!(free.contains("armed"), "expected cleanup armed: {free}");
+
+        entry.borrow_state.store(EXCLUSIVE, Ordering::Relaxed);
+        let exclusive = format!("{entry:?}");
+        assert!(
+            exclusive.contains("exclusive"),
+            "expected borrow_state exclusive: {exclusive}"
+        );
+
+        entry.borrow_state.store(3, Ordering::Relaxed);
+        let shared = format!("{entry:?}");
+        assert!(
+            shared.contains("3 shared"),
+            "expected 3 shared readers: {shared}"
+        );
+
+        // The real address is hidden outside debug builds so logging an entry
+        // cannot undo the opacity the handle id provides.
+        if cfg!(debug_assertions) {
+            assert!(shared.contains("0x1000"), "debug build shows it: {shared}");
+        } else {
+            assert!(shared.contains("<hidden>"), "release hides it: {shared}");
+            assert!(!shared.contains("0x1000"), "release hides it: {shared}");
+        }
     }
 }

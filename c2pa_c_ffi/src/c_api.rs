@@ -12,6 +12,7 @@
 // each license.
 
 use std::{
+    ffi::CStr,
     os::raw::{c_char, c_int, c_uchar, c_void},
     sync::Arc,
 };
@@ -487,8 +488,24 @@ pub unsafe extern "C" fn c2pa_version() -> *mut c_char {
 /// and it is no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_error() -> *mut c_char {
-    to_c_string(Error::last_message())
+    let ptr = to_c_string(Error::last_message());
+    if ptr.is_null() {
+        // to_c_string could not track the buffer, which happens in a forked
+        // child. The error reporter is the one function that must not fail:
+        // C code does printf("%s", c2pa_error()) without a null check, and a
+        // child that cannot allocate still needs to see why. Hand back a
+        // static string, which c2pa_free rejects as untracked and never frees.
+        return UNREPORTABLE_ERROR.as_ptr() as *mut c_char;
+    }
+    ptr
 }
+
+/// Returned by `c2pa_error` when the message itself cannot be allocated.
+///
+/// `static`, so it outlives any caller and is never freed. `c2pa_free` refuses
+/// it the way it refuses any pointer the registry does not know.
+static UNREPORTABLE_ERROR: &CStr =
+    c"ForeignProcess: handles cannot be created or used in a forked child";
 
 /// Sets the last error message.
 /// This is used by callbacks so they can set a return error message.
@@ -2023,6 +2040,12 @@ pub unsafe extern "C" fn c2pa_builder_sign(
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
         *manifest_bytes_ptr = to_c_bytes(manifest_bytes);
+        if (*manifest_bytes_ptr).is_null() {
+            // to_c_bytes could not track the buffer and freed it, so there is
+            // nothing for C to read. Returning len here would hand back a
+            // positive length with a NULL pointer. The error is already set.
+            return -1;
+        }
     }
     len
 }
@@ -2071,6 +2094,12 @@ pub unsafe extern "C" fn c2pa_builder_sign_context(
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
         *manifest_bytes_ptr = to_c_bytes(manifest_bytes);
+        if (*manifest_bytes_ptr).is_null() {
+            // to_c_bytes could not track the buffer and freed it, so there is
+            // nothing for C to read. Returning len here would hand back a
+            // positive length with a NULL pointer. The error is already set.
+            return -1;
+        }
     }
     len
 }
@@ -2120,6 +2149,12 @@ pub unsafe extern "C" fn c2pa_builder_data_hashed_placeholder(
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
         *manifest_bytes_ptr = to_c_bytes(manifest_bytes);
+        if (*manifest_bytes_ptr).is_null() {
+            // to_c_bytes could not track the buffer and freed it, so there is
+            // nothing for C to read. Returning len here would hand back a
+            // positive length with a NULL pointer. The error is already set.
+            return -1;
+        }
     }
     len
 }
@@ -2176,6 +2211,12 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
         *manifest_bytes_ptr = to_c_bytes(manifest_bytes);
+        if (*manifest_bytes_ptr).is_null() {
+            // to_c_bytes could not track the buffer and freed it, so there is
+            // nothing for C to read. Returning len here would hand back a
+            // positive length with a NULL pointer. The error is already set.
+            return -1;
+        }
     }
     len
 }
@@ -2275,6 +2316,12 @@ pub unsafe extern "C" fn c2pa_builder_placeholder(
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
         *manifest_bytes_ptr = to_c_bytes(manifest_bytes);
+        if (*manifest_bytes_ptr).is_null() {
+            // to_c_bytes could not track the buffer and freed it, so there is
+            // nothing for C to read. Returning len here would hand back a
+            // positive length with a NULL pointer. The error is already set.
+            return -1;
+        }
     }
     len
 }
@@ -2321,6 +2368,12 @@ pub unsafe extern "C" fn c2pa_builder_sign_embeddable(
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
         *manifest_bytes_ptr = to_c_bytes(manifest_bytes);
+        if (*manifest_bytes_ptr).is_null() {
+            // to_c_bytes could not track the buffer and freed it, so there is
+            // nothing for C to read. Returning len here would hand back a
+            // positive length with a NULL pointer. The error is already set.
+            return -1;
+        }
     }
     len
 }
@@ -2533,6 +2586,10 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
     let len = result_bytes.len() as i64;
     if !result_bytes_ptr.is_null() {
         *result_bytes_ptr = to_c_bytes(result_bytes);
+        if (*result_bytes_ptr).is_null() {
+            // See the manifest_bytes_ptr sites: never a length with a NULL.
+            return -1;
+        }
     }
     len
 }
@@ -2842,6 +2899,20 @@ unsafe fn c2pa_mime_types_to_c_array(strs: Vec<String>, count: *mut usize) -> *c
     // or deallocating memory requires a mutable pointer. This ensures the caller can
     // safely release ownership of both the array and its strings.
     let mut mime_ptrs: Vec<*mut c_char> = strs.into_iter().map(to_c_string).collect();
+
+    // to_c_string returns NULL when it cannot track the buffer. A NULL element
+    // in a count-delimited array crashes any caller that iterates and reads it,
+    // so free what was built and report failure instead of returning a
+    // partially valid array.
+    if mime_ptrs.iter().any(|p| p.is_null()) {
+        for ptr in mime_ptrs {
+            if !ptr.is_null() {
+                cimpl_free(ptr as *mut c_void);
+            }
+        }
+        *count = 0;
+        return std::ptr::null();
+    }
     mime_ptrs.shrink_to_fit();
 
     // verify that the length and capacity of the vector are identitical, as we rely on this later

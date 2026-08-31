@@ -51,8 +51,9 @@ tempfile = "3.27.0"
 cbindgen = "0.29"
 
 # fork() in a multi-threaded process gives the child mutexes locked by threads
-# that no longer exist, so these must not share a binary with the parallel unit
-# tests. Own binary, and run it with --test-threads=1.
+# that no longer exist, so this must not share a binary with the parallel unit
+# tests. Everything in it is one #[test] so libtest cannot run two forks at
+# once; see the module docs in tests/fork.rs.
 [[test]]
 name = "fork"
 path = "tests/fork.rs"

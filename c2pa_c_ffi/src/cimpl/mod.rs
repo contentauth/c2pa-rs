@@ -75,5 +75,3 @@ pub use utils::{
     to_c_string, track_arc, track_arc_mutex, track_box, untrack_owned, ExclusiveCheckout,
     SharedCheckout, TypedExclusive, TypedShared,
 };
-// validate_pointer and untrack_pointer are deliberately not exported: both
-// return bare pointers that bypass the borrow model. See their doc comments.

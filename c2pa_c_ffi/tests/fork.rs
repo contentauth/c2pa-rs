@@ -20,10 +20,15 @@
 //! run in parallel and hammer the global registry, which makes that near
 //! certain rather than merely possible.
 //!
-//! Running here, single-threaded, means no other thread can hold the registry
-//! lock when the fork happens.
+//! Everything lives in one `#[test]` so libtest cannot run any of it
+//! concurrently: a second test thread forking while this one holds a lock is
+//! the same hazard from the other side. The child also allocates, which is not
+//! async-signal-safe after `fork()` in a multi-threaded process, so keeping the
+//! forking thread the only thread is what makes that safe here.
 
-#![cfg(not(target_arch = "wasm32"))]
+// fork, waitpid, WIFEXITED and WEXITSTATUS are Unix-only. Windows is a Tier-1
+// target that builds this test target, so gate on the platform, not on wasm.
+#![cfg(unix)]
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -51,13 +56,19 @@ fn in_forked_child(child: impl FnOnce()) -> i32 {
 }
 
 #[test]
-fn forked_child_registry_calls_are_refused() {
+fn registry_refuses_every_path_in_a_forked_child() {
+    read_paths_are_refused();
+    inherited_entries_do_not_run_cleanup();
+    write_paths_are_refused();
+}
+
+/// Read and free paths must refuse before taking the inherited lock.
+fn read_paths_are_refused() {
     let ptr = track_box(Box::into_raw(Box::new(1i32)));
     let addr = ptr as usize;
 
     let code = in_forked_child(move || {
         let ptr = addr as *mut i32;
-        // Every entry point must refuse before taking the inherited lock.
         if checkout_shared::<i32>(ptr).is_ok() {
             unsafe { libc::_exit(1) };
         }
@@ -74,12 +85,14 @@ fn forked_child_registry_calls_are_refused() {
     assert_eq!(cimpl_free(ptr as *mut std::ffi::c_void), 0);
 }
 
-#[test]
-fn forked_child_does_not_run_cleanup_for_inherited_entries() {
-    // The load-bearing case: dropping an inherited Arc reaches EntryInner::drop
-    // without any registry call, so an entry-point-only check would miss it.
-    // The child frees through the public API, which is refused before the lock;
-    // what this proves is that no cleanup ran in the child regardless of path.
+/// A child must not run cleanup for anything it inherited.
+///
+/// This goes through the public free path, which `check_same_process` refuses
+/// before the drop is reached. The drop path itself -- an inherited `Arc` going
+/// out of scope with no registry call to intercept it -- is covered by
+/// `test_inherited_entry_drop_does_not_run_cleanup` in `cimpl::utils`, which
+/// can reach it because the entry's fields are private to that module.
+fn inherited_entries_do_not_run_cleanup() {
     static FREED: AtomicBool = AtomicBool::new(false);
     struct Sentinel;
     impl Drop for Sentinel {
@@ -92,7 +105,6 @@ fn forked_child_does_not_run_cleanup_for_inherited_entries() {
     let addr = ptr as usize;
 
     let code = in_forked_child(move || {
-        // Exercise the free path, then confirm the sentinel never ran.
         let _ = cimpl_free(addr as *mut std::ffi::c_void);
         if FREED.load(Ordering::SeqCst) {
             unsafe { libc::_exit(1) };
@@ -110,34 +122,20 @@ fn forked_child_does_not_run_cleanup_for_inherited_entries() {
     assert!(FREED.load(Ordering::SeqCst), "parent free stopped working");
 }
 
-#[test]
-fn forked_child_can_create_handles_without_deadlocking() {
-    // The hazard this guard exists for: fork() while another thread holds the
-    // registry lock. Only the forking thread survives, so that lock can never
-    // be released in the child -- any path that takes it blocks forever.
-    //
-    // This is the multiprocessing-on-Linux case. The child here exercises the
-    // two WRITE paths (track_by_id via track_box, track_by_address via
-    // to_c_string), which is what a child calling c2pa_reader_new() or
-    // c2pa_error() would hit. Both must refuse rather than block.
-    let holder_ready = std::sync::Arc::new(std::sync::Barrier::new(2));
-    let holder_gate = std::sync::Arc::clone(&holder_ready);
-
-    // A background thread holds the registry lock across the fork, by keeping a
-    // checkout alive -- the public way to pin registry state from another
-    // thread.
-    let pinned = track_box(Box::into_raw(Box::new(99i32)));
-    let pinned_addr = pinned as usize;
-    let holder = std::thread::spawn(move || {
-        let guard = checkout_shared::<i32>(pinned_addr as *mut i32).expect("fresh handle");
-        holder_gate.wait();
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        drop(guard);
-    });
-    holder_ready.wait();
-
+/// Both write paths must refuse rather than take the inherited lock.
+///
+/// This is what a child calling `c2pa_reader_new()` (track_by_id, through
+/// `track_box`) or `c2pa_error()` (track_by_address, through `to_c_string`)
+/// would hit.
+///
+/// The check being verified is a precondition, not a lock-contention fix: no
+/// public API holds the registry lock across a call, so a caller cannot
+/// construct the fork-while-locked interleaving from outside the crate. That is
+/// the point of checking the pid rather than trying to make the lock
+/// fork-safe. What this asserts is the observable half -- both paths refuse,
+/// and neither returns a handle the child could go on to use.
+fn write_paths_are_refused() {
     let code = in_forked_child(|| {
-        // Both write paths must return without taking the inherited lock.
         let p = track_box(Box::into_raw(Box::new(7i32)));
         if !p.is_null() {
             unsafe { libc::_exit(1) };
@@ -149,6 +147,4 @@ fn forked_child_can_create_handles_without_deadlocking() {
     });
 
     assert_eq!(code, 0, "a child write path did not refuse");
-    holder.join().unwrap();
-    assert_eq!(cimpl_free(pinned as *mut std::ffi::c_void), 0);
 }

@@ -213,7 +213,6 @@
 #[doc(hidden)]
 #[allow(unused_imports)]
 // May not be directly used but needed for macro expansion
-//pub use crate::utils::validate_pointer;
 //
 // ============================================================================
 // Pointer Management Macros
