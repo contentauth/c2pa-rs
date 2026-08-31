@@ -203,8 +203,9 @@ fn defuse_untracked_entry(entry: Arc<EntryInner>) {
             // Unreachable today. Nothing can be done here: the other holder
             // owns the entry and will run its cleanup on drop, which is the
             // double free this function exists to prevent. Report it rather
-            // than panic, since a panic would cross the extern "C" boundary.
-            debug_assert!(false, "an untracked entry had an unexpected clone");
+            // than panic -- including in debug builds, which is what the
+            // bindings load during development, and where a panic crossing the
+            // extern "C" boundary would abort the host process.
             eprintln!(
                 "c2pa: an untracked registry entry was still referenced; its cleanup \
                  may double free"

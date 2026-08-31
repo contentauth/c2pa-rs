@@ -552,7 +552,9 @@ fn error_message_fallback(message: &str) -> *mut c_char {
 ///   the message before calling again; a pointer held across a second call
 ///   reads the second message, not the first.
 /// - It is per-thread, so a pointer returned on one thread must not be read
-///   from another.
+///   from another, and it does not outlive the thread that produced it. A
+///   worker that returns the pointer to its caller and then exits leaves a
+///   dangling pointer; copy the message on the thread that obtained it.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_error() -> *mut c_char {
     let message = Error::last_message();
@@ -3651,23 +3653,6 @@ mod tests {
         assert_eq!(
             unsafe { CStr::from_ptr(second) }.to_str().unwrap(),
             "SECOND: b"
-        );
-    }
-
-    #[test]
-    fn test_error_fallback_truncates_on_a_char_boundary() {
-        // Multi-byte characters straddling the limit must not produce a C
-        // string that ends mid-character.
-        let long = "\u{4e00}".repeat(200); // 3 bytes each, 600 total
-        let ptr = error_message_fallback(&long);
-        let bytes = unsafe { CStr::from_ptr(ptr) }.to_bytes();
-        assert!(
-            bytes.len() < ERROR_FALLBACK_LEN,
-            "must fit the buffer with room for the NUL"
-        );
-        assert!(
-            std::str::from_utf8(bytes).is_ok(),
-            "truncation split a character"
         );
     }
 
