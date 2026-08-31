@@ -2682,6 +2682,20 @@ impl Claim {
         Ok(())
     }
 
+    /// Classifies a hash-verification failure into its format's `malformed`
+    /// or `mismatch` validation-status constant, based on whether `e` carries
+    /// that format's own `malformed` code.
+    fn classify_hash_verification_error(
+        e: &Error,
+        malformed: &'static str,
+        mismatch: &'static str,
+    ) -> &'static str {
+        match e {
+            Error::C2PAValidation(es) if es == malformed => malformed,
+            _ => mismatch,
+        }
+    }
+
     pub(crate) fn verify_hash_binding(
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
@@ -2942,26 +2956,21 @@ impl Claim {
                             continue;
                         }
                         Err(e) => {
-                            let err_str = match e {
-                                Error::C2PAValidation(es) => {
-                                    if es == validation_status::ASSERTION_BMFFHASH_MALFORMED {
-                                        validation_status::ASSERTION_BMFFHASH_MALFORMED
-                                    } else {
-                                        validation_status::ASSERTION_BMFFHASH_MISMATCH
-                                    }
-                                }
-                                _ => validation_status::ASSERTION_BMFFHASH_MISMATCH,
-                            };
+                            let err_str = Self::classify_hash_verification_error(
+                                &e,
+                                validation_status::ASSERTION_BMFFHASH_MALFORMED,
+                                validation_status::ASSERTION_BMFFHASH_MISMATCH,
+                            );
 
                             log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
-                                format!("asset hash error, name: {name}, error: {}", err_str),
+                                format!("asset hash error, name: {name}, error: {e}"),
                                 "verify_internal"
                             )
                             .validation_status(err_str)
                             .failure(
                                 validation_log,
-                                Error::HashMismatch(format!("Asset hash failure: {err_str}")),
+                                Error::HashMismatch(format!("Asset hash failure: {e}")),
                             )?;
                         }
                     }
@@ -3030,7 +3039,19 @@ impl Claim {
                     };
 
                     match hash_result {
-                        Ok(_a) => {
+                        Ok(metadata_exclusion_used) => {
+                            if metadata_exclusion_used {
+                                log_item!(
+                                    claim.assertion_uri(&hash_binding_assertion.label()),
+                                    "additional box hash exclusions found",
+                                    "verify_internal"
+                                )
+                                .validation_status(
+                                    validation_status::ASSERTION_BOXHASH_ADDITIONAL_EXCLUSIONS,
+                                )
+                                .informational(validation_log);
+                            }
+
                             log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
                                 "boxes hash valid",
@@ -3042,12 +3063,18 @@ impl Claim {
                             continue;
                         }
                         Err(e) => {
+                            let err_str = Self::classify_hash_verification_error(
+                                &e,
+                                validation_status::ASSERTION_BOXESHASH_MALFORMED,
+                                validation_status::ASSERTION_BOXHASH_MISMATCH,
+                            );
+
                             log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
                                 format!("asset hash error: {e}"),
                                 "verify_internal"
                             )
-                            .validation_status(validation_status::ASSERTION_BOXHASH_MISMATCH)
+                            .validation_status(err_str)
                             .failure(
                                 validation_log,
                                 Error::HashMismatch(format!("Asset hash failure: {e}")),
