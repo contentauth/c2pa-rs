@@ -47,7 +47,7 @@ use crate::{
     cstr_or_return_int, cstr_or_return_null, deref_mut_option_or_return_int, deref_mut_or_return,
     deref_mut_or_return_int, deref_mut_or_return_null, deref_or_return_int, deref_or_return_null,
     error::Error, ok_or_return_int, ok_or_return_null, option_to_c_string, ptr_or_return_int,
-    signer_info::SignerInfo, to_c_bytes, to_c_string, CimplError,
+    signer_info::SignerInfo, to_c_bytes, to_c_string, validate_handle, CimplError,
 };
 
 /// Validates that a buffer size is within safe bounds and doesn't cause integer overflow
@@ -2802,9 +2802,16 @@ pub unsafe extern "C" fn c2pa_signer_create(
 /// # Errors
 /// Returns NULL if either signer pointer is NULL; call `c2pa_error` to retrieve the error string.
 ///
+/// The two signer handles must be different objects. Both are consumed, and one
+/// signer cannot serve as both the C2PA signer and the identity signer.
+///
+/// On failure nothing is consumed: both handles are validated before either is
+/// taken, so a rejected call leaves the caller owning both, still freeable.
+///
 /// # Safety
 /// Both signer pointers must have been created by a `c2pa_signer_*` function and not yet freed.
-/// After this call they are invalid — do NOT pass them to `c2pa_free`.
+/// After a successful call they are invalid — do NOT pass them to `c2pa_free`.
+/// If this returns NULL, both remain valid and the caller still owns them.
 /// The returned value MUST be released by calling `c2pa_free`.
 /// `referenced_assertions` and `roles`, if non-NULL, must each point to a NULL-terminated array
 /// of NULL-terminated UTF-8 strings that remain valid for the duration of this call.
@@ -2828,11 +2835,28 @@ pub unsafe extern "C" fn c2pa_identity_signer_create(
     referenced_assertions: *const *const c_char,
     roles: *const *const c_char,
 ) -> *mut C2paSigner {
-    let c2pa_signer = untrack_or_return_null!(c2pa_signer_ptr, C2paSigner);
-    let identity_signer = untrack_or_return_null!(identity_signer_ptr, C2paSigner);
+    // Validate both handles before consuming either. untrack_owned is
+    // irreversible, so taking the first and then failing on the second would
+    // destroy the caller's signer while reporting failure -- and the caller
+    // could not tell that apart from nothing having happened. Passing the same
+    // handle twice is the reachable case: the first call removes the entry, so
+    // the second fails with UntrackedPointer.
+    ok_or_return_null!(validate_handle::<C2paSigner>(c2pa_signer_ptr));
+    ok_or_return_null!(validate_handle::<C2paSigner>(identity_signer_ptr));
+    if std::ptr::eq(c2pa_signer_ptr, identity_signer_ptr) {
+        // Both validated, so a duplicate is the only way the second untrack can
+        // still fail. Refuse before consuming anything.
+        CimplError::from(Error::from(CimplError::pointer_in_use())).set_last();
+        return std::ptr::null_mut();
+    }
 
+    // Argument parsing before the untracks, so a bad array cannot strand a
+    // consumed signer either.
     let referenced_assertions = cstr_array_or_return_null!(referenced_assertions);
     let roles = cstr_array_or_return_null!(roles);
+
+    let c2pa_signer = untrack_or_return_null!(c2pa_signer_ptr, C2paSigner);
+    let identity_signer = untrack_or_return_null!(identity_signer_ptr, C2paSigner);
 
     let refs: Vec<&str> = referenced_assertions.iter().map(|s| s.as_str()).collect();
     let role_refs: Vec<&str> = roles.iter().map(|s| s.as_str()).collect();
@@ -3614,6 +3638,58 @@ mod tests {
         let version_str = unsafe { CStr::from_ptr(version) }.to_owned();
         unsafe { c2pa_free(version as *const c_void) };
         assert!(!version_str.to_str().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_identity_signer_create_rejects_one_handle_for_both_roles() {
+        // untrack_owned is irreversible: consuming the first signer and then
+        // failing on the second would destroy it while reporting failure, and
+        // the caller could not tell that apart from nothing having happened.
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+        let empty: [*const c_char; 1] = [std::ptr::null()];
+
+        let out =
+            unsafe { c2pa_identity_signer_create(signer, signer, empty.as_ptr(), empty.as_ptr()) };
+        assert!(out.is_null(), "one signer cannot fill both roles");
+
+        // Nothing was consumed: the caller still owns a working handle.
+        assert!(
+            unsafe { c2pa_signer_reserve_size(signer) } > 0,
+            "the signer was destroyed by a call that reported failure: {:?}",
+            unsafe { CStr::from_ptr(c2pa_error()) }
+        );
+        assert_eq!(
+            unsafe { c2pa_free(signer as *mut c_void) },
+            0,
+            "the caller's handle must still be freeable"
+        );
+
+        unsafe { c2pa_free(builder as *mut c_void) };
+    }
+
+    #[test]
+    fn test_identity_signer_create_rejects_an_untracked_second_handle() {
+        // The general case the validation covers: the second handle is bad, so
+        // the first must not be consumed.
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+        let empty: [*const c_char; 1] = [std::ptr::null()];
+        let bogus = 0x9e3779b97f4a7c15usize as *mut C2paSigner;
+
+        let out =
+            unsafe { c2pa_identity_signer_create(signer, bogus, empty.as_ptr(), empty.as_ptr()) };
+        assert!(
+            out.is_null(),
+            "an untracked identity signer must be refused"
+        );
+        assert!(
+            unsafe { c2pa_signer_reserve_size(signer) } > 0,
+            "the first signer was consumed despite the call failing"
+        );
+
+        unsafe {
+            c2pa_free(signer as *mut c_void);
+            c2pa_free(builder as *mut c_void);
+        }
     }
 
     #[test]

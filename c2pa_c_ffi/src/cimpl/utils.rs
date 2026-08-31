@@ -1007,6 +1007,22 @@ pub fn checkout_exclusive<T: 'static + MaybeSend>(ptr: *mut T) -> Result<TypedEx
     })
 }
 
+/// Checks that a handle is tracked and holds a `T`, without consuming it or
+/// taking a borrow.
+///
+/// For functions that consume more than one handle: untracking is irreversible,
+/// so a second `untrack_owned` failing after the first succeeded destroys the
+/// first object while reporting failure. Validating every handle first turns
+/// that into a clean refusal with nothing consumed.
+///
+/// This grants no claim on the entry, so it proves nothing about a later call
+/// on another thread. It is for ordering checks within one function, not for
+/// deciding that a handle is safe to use.
+pub fn validate_handle<T: 'static>(ptr: *mut T) -> Result<(), Error> {
+    get_registry().lookup(ptr as usize, TypeId::of::<T>())?;
+    Ok(())
+}
+
 /// Take ownership of a tracked object, removing it from the registry and
 /// returning the value itself.
 ///
