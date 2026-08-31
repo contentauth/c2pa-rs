@@ -2503,7 +2503,7 @@ pub unsafe extern "C" fn c2pa_builder_update_hash_from_stream(
 /// and it is no longer valid after that call.
 #[no_mangle]
 #[deprecated(
-    note = "Use c2pa_builder_composed_manifest() instead, so custom asset I/O handlers registered on the builder's Context are consulted."
+    note = "Use c2pa_builder_composed_manifest() instead, so custom asset I/O handlers registered on the builder's Context are consulted. This function will be removed by Nov 12, 2026."
 )]
 pub unsafe extern "C" fn c2pa_format_embeddable(
     format: *const c_char,
@@ -2538,10 +2538,6 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
 /// This method converts the raw manifest into an embeddable version that can be
 /// embedded into an asset.
 ///
-/// Unlike [`c2pa_format_embeddable`], this uses the builder's `Context` to look up the
-/// asset I/O handler, so a handler registered via `Context::with_io_handler` is consulted
-/// instead of only the built-in global registry.
-///
 /// # Parameters
 /// * builder_ptr: pointer to a Builder.
 /// * format: pointer to a C string with the mime type or extension.
@@ -2558,7 +2554,7 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
 /// The returned value MUST be released by calling c2pa_free
 /// and it is no longer valid after that call.
 #[no_mangle]
-pub unsafe extern "C" fn c2pa_builder_composed_manifest(
+pub unsafe extern "C" fn c2pa_builder_compose_manifest(
     builder_ptr: *mut C2paBuilder,
     format: *const c_char,
     manifest_bytes_ptr: *const c_uchar,
@@ -2576,7 +2572,7 @@ pub unsafe extern "C" fn c2pa_builder_composed_manifest(
         "manifest_bytes_ptr"
     );
 
-    let result = builder.composed_manifest_with_context(bytes, &format);
+    let result = builder.compose_manifest(bytes, &format);
     let result_bytes = ok_or_return_int!(result);
     let len = result_bytes.len() as i64;
     if !result_bytes_ptr.is_null() {

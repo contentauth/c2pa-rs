@@ -540,13 +540,15 @@ impl Context {
     /// let context = Context::new().with_io_handler(MyCustomHandler::new(""));
     /// let reader = c2pa::Reader::from_context(context);
     /// ```
-    pub fn with_io_handler(mut self, handler: impl AssetIO + 'static) -> Self {
+    #[allow(unused)] // not public yet, but used in tests
+    pub(crate) fn with_io_handler(mut self, handler: impl AssetIO + 'static) -> Self {
         self.io.add_handler(handler);
         self
     }
 
     /// Register a custom IO handler on this Context (mutable variant).
-    pub fn add_io_handler(&mut self, handler: impl AssetIO + 'static) {
+    #[allow(unused)] // not public yet, but used in tests
+    pub(crate) fn add_io_handler(&mut self, handler: impl AssetIO + 'static) {
         self.io.add_handler(handler);
     }
 
@@ -556,7 +558,7 @@ impl Context {
     /// Custom handlers registered via [`with_io_handler`](Self::with_io_handler) are searched
     /// before the built-in global registry; last-registered wins when two handlers claim the
     /// same format.
-    pub fn io(&self) -> &HandlerRegistry {
+    pub(crate) fn io(&self) -> &HandlerRegistry {
         &self.io
     }
 

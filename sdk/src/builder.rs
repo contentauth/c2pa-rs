@@ -3614,10 +3614,6 @@ impl Builder {
     /// This wraps the bytes in the container format of the specified format.
     /// So that it can be directly embedded into a stream of that format.
     ///
-    /// Unlike [`Builder::composed_manifest`], this uses this builder's [`Context`] to look up
-    /// the asset I/O handler, so a handler registered via [`Context::with_io_handler`] is
-    /// consulted instead of only the built-in global registry.
-    ///
     /// # Arguments
     /// * `manifest_bytes` - The bytes of the manifest to convert.
     /// * `format` - The format to convert to.
@@ -3625,11 +3621,7 @@ impl Builder {
     /// * The bytes of the composed manifest.
     /// # Errors
     /// * Returns an [`Error`] if the manifest cannot be converted.
-    pub fn composed_manifest_with_context(
-        &self,
-        manifest_bytes: &[u8],
-        format: &str,
-    ) -> Result<Vec<u8>> {
+    pub fn compose_manifest(&self, manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
         Store::get_composed_manifest(manifest_bytes, format, self.context())
     }
 

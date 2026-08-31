@@ -100,7 +100,7 @@ impl BoxHash {
     pub const LABEL: &'static str = labels::BOX_HASH;
 
     /// Builds an unhashed placeholder [`BoxHash`] straight from
-    /// [`AssetBoxHash::get_box_map`]'s output, with every entry's `hash` left
+    /// `AssetBoxHash::get_box_map`'s output, with every entry's `hash` left
     /// empty and `alg` unset.
     ///
     /// Used to size and reserve space for a `c2pa.hash.boxes` assertion before
@@ -108,7 +108,7 @@ impl BoxHash {
     /// store signed over an empty asset. Call
     /// [`generate_box_hash_from_stream`](Self::generate_box_hash_from_stream)
     /// separately to fill in real hashes once the asset is available.
-    pub fn from_box_map(boxes: Vec<AssetBoxMap>) -> Self {
+    pub(crate) fn from_box_map(boxes: Vec<AssetBoxMap>) -> Self {
         BoxHash {
             boxes: boxes
                 .into_iter()

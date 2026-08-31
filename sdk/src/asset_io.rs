@@ -37,7 +37,7 @@
 //! A minimal custom handler needs a [`C2paReader`] and [`C2paWriter`] impl and an
 //! [`AssetIO`] impl that ties them together:
 //!
-//! ```
+//! ```ignore
 //! use std::path::Path;
 //!
 //! use c2pa::{
@@ -255,6 +255,7 @@ pub trait AssetIO: Sync + Send {
     ///
     /// The default implementation opens `asset_path` and delegates to
     /// [`get_reader`](AssetIO::get_reader)'s [`C2paReader::read_c2pa`].
+    #[cfg(test)] // this is only used in test, remove when tests are updated
     fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
         let mut input_stream = fs::OpenOptions::new()
             .read(true)
@@ -271,6 +272,7 @@ pub trait AssetIO: Sync + Send {
     /// temporary file, and moves the result into place with [`rename_or_move`].
     /// Returns [`Error::UnsupportedType`] if [`get_writer`](AssetIO::get_writer)
     /// returns `None`.
+    #[allow(dead_code)] // file-backed helper; not required on all targets
     fn save_c2pa_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
         let ext = asset_path
             .extension()
@@ -293,6 +295,7 @@ pub trait AssetIO: Sync + Send {
     ///
     /// The default implementation mirrors [`save_c2pa_store`](AssetIO::save_c2pa_store),
     /// calling [`C2paWriter::remove_c2pa`] instead.
+    #[allow(dead_code)] // file-backed helper; not required on all targets
     fn remove_c2pa_store(&self, asset_path: &Path) -> Result<()> {
         let ext = asset_path
             .extension()
@@ -349,6 +352,7 @@ pub trait AssetIO: Sync + Send {
 
     /// Returns this handler's [`AssetPatch`] implementation, if it supports
     /// in-place patching of an existing manifest store.
+    #[allow(dead_code)] // optional capability; not all targets use the file patch path
     fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
         None
     }
@@ -374,6 +378,7 @@ pub trait AssetIO: Sync + Send {
     /// Returns this handler's [`WriteXmp`] implementation, if it supports writing
     /// an exact XMP packet (as opposed to [`RemoteManifestUrl`], which always
     /// merges a URL into the *current* XMP).
+    #[allow(unused)] // Not public yet
     fn write_xmp_ref(&self) -> Option<&dyn WriteXmp> {
         None
     }
@@ -392,6 +397,7 @@ pub trait AssetPatch {
     ///
     /// The default implementation opens `asset_path` for reading and writing and
     /// delegates to [`patch_c2pa`](Self::patch_c2pa).
+    #[allow(dead_code)] // file-backed patch helper; not required on all targets
     fn patch_c2pa_file(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
         let mut file = fs::OpenOptions::new()
             .read(true)
@@ -421,7 +427,7 @@ pub trait AssetPatch {
 }
 
 /// The well-known box/chunk name every format's C2PA manifest store is reported
-/// under in a [`BoxMap`], regardless of the format's native naming (e.g. PNG's
+/// under in a `BoxMap`, regardless of the format's native naming (e.g. PNG's
 /// `caBX` chunk, a BMFF `uuid` box, ...).
 pub const C2PA_BOXHASH: &str = "C2PA";
 
@@ -507,6 +513,7 @@ pub trait RemoteManifestUrl {
     /// [`WriteXmp`] overrides this to extract the URL from XMP, since that's
     /// where `write_remote_manifest_url` puts it. Implement this directly if
     /// your format stores the remote manifest URL somewhere other than XMP.
+    #[allow(unused)] // Not public yet
     fn read_manifest_url(&self, _input_stream: &mut dyn ReadSeek) -> Option<String> {
         None
     }
@@ -521,6 +528,7 @@ pub trait RemoteManifestUrl {
     /// The default implementation returns [`Error::NotImplemented`]. The
     /// blanket impl for [`WriteXmp`] overrides this to read the current XMP,
     /// strip the reference, and write the result back.
+    #[allow(unused)] // Not public yet
     fn remove_remote_manifest_url(
         &self,
         _input_stream: &mut dyn ReadSeek,
@@ -569,6 +577,7 @@ impl<T: WriteXmp + C2paReader> RemoteManifestUrl for T {
             .and_then(extract_provenance)
     }
 
+    #[allow(unused)] // Not public yet
     fn remove_remote_manifest_url(
         &self,
         input_stream: &mut dyn ReadSeek,
@@ -635,12 +644,14 @@ impl HandlerRegistry {
     }
 
     /// Registers `handler`, returning `self` for chaining.
+    #[allow(unused)] // Not public yet
     pub fn with_handler(mut self, handler: impl AssetIO + 'static) -> Self {
         self.add_handler(handler);
         self
     }
 
     /// Registers `handler` for every format string in its [`AssetIO::supported_types`].
+    #[allow(unused)] // Not public yet
     pub fn add_handler(&mut self, handler: impl AssetIO + 'static) {
         self.add_boxed_handler(Box::new(handler));
     }
@@ -708,6 +719,7 @@ impl HandlerRegistry {
     }
 
     /// Returns the (lowercased) file extension of `path` if a handler supports it.
+    #[allow(dead_code)] // optional registry helper; not used on every target configuration
     pub fn supported_extension(&self, path: &Path) -> Option<String> {
         let ext = path.extension()?.to_str()?.to_lowercase();
         self.handler(&ext).is_some().then_some(ext)
@@ -773,6 +785,7 @@ impl HandlerRegistry {
     ///
     /// Derived from the registered handlers' [`AssetIO::mime_type_map`], so it's only known
     /// for a format string some registered handler actually supports.
+    #[allow(dead_code)] // registry helper; warnings are expected on non-file_io builds
     pub fn mime_for(&self, format: &str) -> Option<&str> {
         let key = normalize_format(format);
         match self.mimes.get(&key) {
@@ -785,6 +798,7 @@ impl HandlerRegistry {
     /// registered handler (via [`Self::mime_for`]) so a custom handler's format is
     /// recognized. Returns `format` itself (trimmed and lowercased) when no registered
     /// handler recognizes it.
+    #[allow(dead_code)] // registry helper; warnings are expected on non-file_io builds
     pub fn format_to_mime(&self, format: &str) -> String {
         match self.mime_for(format) {
             Some(mime) => mime.to_string(),
@@ -794,6 +808,7 @@ impl HandlerRegistry {
 
     /// Returns the MIME type for the file at `path`, based on its extension. See
     /// [`Self::format_to_mime`].
+    #[allow(dead_code)] // registry helper; warnings are expected on non-file_io builds
     pub fn format_from_path<P: AsRef<Path>>(&self, path: P) -> Option<String> {
         let ext = path.as_ref().extension()?.to_string_lossy();
         Some(self.format_to_mime(&ext))
@@ -1045,6 +1060,7 @@ fn sniff_container_from_stream<R: Read + Seek>(stream: &mut R) -> Option<&'stati
     None
 }
 
+#[allow(dead_code)] // file-backed helper used only when file I/O is enabled
 fn tempfile_builder<T: AsRef<OsStr> + Sized>(prefix: T) -> Result<NamedTempFile> {
     #[cfg(all(target_os = "wasi", target_env = "p1"))]
     return Err(Error::NotImplemented(
@@ -1071,6 +1087,7 @@ fn tempfile_builder<T: AsRef<OsStr> + Sized>(prefix: T) -> Result<NamedTempFile>
 ///
 /// If the rename is not possible due to cross volume references, the file will be copied to the
 /// final and then the temp file we be deleted.
+#[allow(dead_code)] // file-backed helper used only when file I/O is enabled
 pub fn rename_or_move<P>(temp_file: NamedTempFile, asset_path: P) -> Result<()>
 where
     P: AsRef<Path>,
