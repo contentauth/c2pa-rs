@@ -24,7 +24,6 @@ use tempfile::{tempdir, Builder, NamedTempFile, SpooledTempFile, TempDir};
 
 #[cfg(feature = "file_io")]
 use crate::utils::path_utils::sanitize_archive_path;
-
 use crate::{asset_io::rename_or_move, Error, Result};
 
 // Replace data at arbitrary location and len in a file.

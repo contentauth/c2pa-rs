@@ -40,10 +40,9 @@ use std::{
 };
 
 use byteorder::{BigEndian, ReadBytesExt};
-use serde_bytes::ByteBuf;
 
 use crate::{
-    assertions::{BoxMap, C2PA_BOXHASH},
+    assertions::{AllowedExclusion, BoxMap, C2PA_BOXHASH},
     asset_io::{
         rename_or_move, AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
         ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
@@ -76,7 +75,6 @@ const BOX_BROB: [u8; 4] = *b"brob"; // Brotli-compressed metadata box
 const BOX_FTYP: [u8; 4] = *b"ftyp"; // File type box
 const BOX_JXLC: [u8; 4] = *b"jxlc"; // JPEG XL codestream
 const BOX_JXLP: [u8; 4] = *b"jxlp"; // JPEG XL partial codestream
-#[cfg(test)]
 const BOX_EXIF: [u8; 4] = *b"Exif"; // Exif metadata
 
 const BOX_HEADER_SIZE: u64 = 8; // 4-byte size + 4-byte type
@@ -819,6 +817,52 @@ impl RemoteRefEmbed for JpegXlIO {
     }
 }
 
+// `header_size`/`data_size` already separate a JXL box's header (4-byte size
+// + 4-byte type, or the 16-byte extended form) from its payload, so the
+// permitted range is exactly the data span - no header/length field overlap
+// to account for.
+// `brob_inner_type` is the 4-byte embedded type field a "brob" box's payload
+// starts with (identifying what's compressed inside), peeked by the caller -
+// `None` if this box isn't "brob" or that field couldn't be read.
+fn classify_jxl_allowed_exclusions(
+    name: &str,
+    header_size: u64,
+    data_size: u64,
+    brob_inner_type: Option<[u8; 4]>,
+) -> Vec<AllowedExclusion> {
+    match name {
+        C2PA_BOXHASH => vec![AllowedExclusion::whole_box(header_size + data_size)],
+        // A bare `Exif` box's payload is prefixed by a mandatory 4-byte
+        // big-endian `exif_tiff_header_offset` field (the same convention
+        // HEIF uses for its Exif item, per ISO/IEC 23008-12 Annex A) before
+        // the actual TIFF/Exif data - a structural field that must stay
+        // hashed, the same as the embedded-type field the "brob" case below
+        // skips. `xml ` (raw XMP text) has no such field.
+        "Exif" => vec![AllowedExclusion::after_header(
+            header_size + 4,
+            header_size + data_size,
+        )],
+        "xml " => vec![AllowedExclusion::after_header(
+            header_size,
+            header_size + data_size,
+        )],
+        // "brob" (Brotli-compressed) may wrap either Exif or XMP, per spec's
+        // own §18.7.4 JXL example - but the box type alone doesn't prove
+        // that: it wraps an arbitrary embedded type, so only a recognized
+        // one is excludable, and only past the 4-byte embedded type field
+        // itself (which must stay hashed - it's what identifies the wrapped
+        // content, the same kind of structural field that must never be
+        // excludable).
+        "brob" if matches!(brob_inner_type, Some(t) if t == BOX_EXIF || t == BOX_XML) => {
+            vec![AllowedExclusion::after_header(
+                header_size + 4,
+                header_size + data_size,
+            )]
+        }
+        _ => Vec::new(),
+    }
+}
+
 impl AssetBoxHash for JpegXlIO {
     fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
         let file_len = stream_len(input_stream)?;
@@ -847,15 +891,30 @@ impl AssetBoxHash for JpegXlIO {
             } else {
                 b.type_str()
             };
+            let brob_inner_type = if b.box_type == BOX_BROB {
+                let mut inner_type = [0u8; 4];
+                input_stream.seek(SeekFrom::Start(b.data_offset()))?;
+                if input_stream.read_exact(&mut inner_type).is_ok() {
+                    Some(inner_type)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            let allowed_exclusions = classify_jxl_allowed_exclusions(
+                &name,
+                b.header_size,
+                b.data_size(file_len),
+                brob_inner_type,
+            );
 
             box_maps.push(BoxMap {
                 names: vec![name],
-                alg: None,
-                hash: ByteBuf::from(Vec::new()),
-                excluded: None,
-                pad: ByteBuf::from(Vec::new()),
+                allowed_exclusions,
                 range_start: b.offset,
                 range_len: total,
+                ..Default::default()
             });
         }
 
@@ -870,12 +929,9 @@ impl AssetBoxHash for JpegXlIO {
 
             let c2pa_box = BoxMap {
                 names: vec![C2PA_BOXHASH.to_string()],
-                alg: None,
-                hash: ByteBuf::from(Vec::new()),
-                excluded: None,
-                pad: ByteBuf::from(Vec::new()),
+                allowed_exclusions: classify_jxl_allowed_exclusions(C2PA_BOXHASH, 0, 0, None),
                 range_start, // will be patched to correct offset by add_required_jumb_to_stream
-                range_len: 0,
+                ..Default::default()
             };
 
             // Insert the C2PA box after ftyp.
@@ -1022,6 +1078,7 @@ pub mod tests {
 
     use super::*;
     use crate::{
+        assertions::ExclusionKind,
         utils::{io_utils::tempdirectory, test::test_context},
         Builder, CallbackSigner, Reader, SigningAlg,
     };
@@ -1044,6 +1101,61 @@ pub mod tests {
         let mut jumb_payload = build_jumd_box(b"c2pa\0");
         jumb_payload.extend_from_slice(extra);
         build_box(&BOX_JUMB, &jumb_payload)
+    }
+
+    #[test]
+    fn test_classify_jxl_allowed_exclusions() {
+        assert_eq!(
+            classify_jxl_allowed_exclusions(C2PA_BOXHASH, 8, 12, None),
+            vec![AllowedExclusion {
+                start: 0,
+                length: 20,
+                kind: ExclusionKind::ManifestOrPadding,
+            }]
+        );
+        // A bare `Exif` box's payload starts with a 4-byte
+        // `exif_tiff_header_offset` field, so the excludable range starts
+        // 4 bytes further in than `xml `'s (which has no such field).
+        assert_eq!(
+            classify_jxl_allowed_exclusions("Exif", 8, 12, None),
+            vec![AllowedExclusion {
+                start: 12,
+                length: 8,
+                kind: ExclusionKind::AssetMetadata,
+            }]
+        );
+        assert_eq!(
+            classify_jxl_allowed_exclusions("xml ", 8, 12, None),
+            vec![AllowedExclusion {
+                start: 8,
+                length: 12,
+                kind: ExclusionKind::AssetMetadata,
+            }]
+        );
+        // "brob" is only excludable (and only past its 4-byte embedded type
+        // field) when that field is a recognized metadata type.
+        assert_eq!(
+            classify_jxl_allowed_exclusions("brob", 8, 12, Some(BOX_EXIF)),
+            vec![AllowedExclusion {
+                start: 12,
+                length: 8,
+                kind: ExclusionKind::AssetMetadata,
+            }]
+        );
+        assert_eq!(
+            classify_jxl_allowed_exclusions("brob", 8, 12, Some(BOX_XML)),
+            vec![AllowedExclusion {
+                start: 12,
+                length: 8,
+                kind: ExclusionKind::AssetMetadata,
+            }]
+        );
+        // Unrecognized embedded type, or unable to read it at all - fail closed.
+        assert!(classify_jxl_allowed_exclusions("brob", 8, 12, Some(BOX_JUMB)).is_empty());
+        assert!(classify_jxl_allowed_exclusions("brob", 8, 12, None).is_empty());
+        assert!(classify_jxl_allowed_exclusions("ftyp", 8, 12, None).is_empty());
+        // JPEG-XL box types are vendor-extensible - unrecognized, not excludable.
+        assert!(classify_jxl_allowed_exclusions("zzzz", 8, 12, None).is_empty());
     }
 
     // ─── Spec compliance: Section A.3.9 - JPEG XL container validation ───
