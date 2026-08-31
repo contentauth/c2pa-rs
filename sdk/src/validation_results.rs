@@ -135,10 +135,17 @@ impl ValidationResults {
         // Filter out any status that is already captured in an ingredient assertion.
         // There is always an active manifest in a manifest store; ensure active_manifest is set
         // so serialization (e.g. crJSON) always includes activeManifest when validationResults exist.
-        if store.provenance_claim().is_some() {
+        if let Some(claim) = store.provenance_claim() {
             let _ = results
                 .active_manifest
                 .get_or_insert_with(StatusCodes::default);
+            let active_manifest = Some(claim.label().to_string());
+
+            // Returns true if `uri` names an assertion (or box) inside the store's active
+            // manifest, e.g. `self#jumbf=/c2pa/<active-label>/...`.
+            let is_active_manifest = |uri: Option<&str>| {
+                uri.is_some_and(|uri| manifest_label_from_uri(uri) == active_manifest)
+            };
 
             // Returns a flat list of validation statuses from the ingredient with absolute URIs.
             let get_statuses = |i: Ingredient| {
@@ -179,9 +186,13 @@ impl ValidationResults {
                 })
             };
 
-            // We only need to do the more detailed filtering if there are any status
-            // reports that reference ingredients.
-            if statuses.iter().any(|s| s.ingredient_uri().is_some()) {
+            // We only need to do the more detailed filtering if there are any statuses that
+            // could actually be de-duplicated, i.e. statuses logged inside an ingredient scope
+            // that are not about the active manifest.
+            if statuses
+                .iter()
+                .any(|s| s.ingredient_uri().is_some() && !is_active_manifest(s.url()))
+            {
                 // Collect all the ValidationStatus records from all the ingredients in the store.
                 // Since we need to process v1,v2 and v3 ingredients, we process all in the same format.
                 let ingredient_statuses: Vec<ValidationStatus> = store
@@ -193,20 +204,27 @@ impl ValidationResults {
                     .flatten()
                     .collect();
 
-                // Keep a status if it belongs to the active manifest, or if no ingredient has
-                // attested an identical one; drop only ingredient statuses that duplicate an
-                // attestation.
+                // Drop a status only if it is a genuine re-report of what an ingredient already
+                // attested: it must be scoped to an ingredient AND not describe the active
+                // manifest AND match an ingredient attestation. Any status describing the active
+                // manifest is kept unconditionally so an attacker-authored ingredient assertion
+                // cannot cancel a genuine active-manifest failure.
                 //
-                // Active-manifest membership is decided by `ingredient_uri`, which the status
-                // tracker sets only while inside an ingredient's recursive-validation scope. A
-                // `None` value therefore reliably identifies a status the validator produced for
-                // the active manifest itself, and cannot be influenced by ingredient assertion
-                // content. Deciding membership by parsing the status URL would be unsafe: an
-                // active-manifest failure can carry the bare manifest-label form (`urn:c2pa:...`),
-                // which does not resolve to the active manifest, so it would be misclassified as
-                // an ingredient status and could be cancelled by a matching attestation.
+                // Two independent signals identify an active-manifest status, and each covers a
+                // gap in the other:
+                //  - `ingredient_uri().is_none()` — the validator logged the status outside any
+                //    ingredient-recursion scope. This catches failures recorded against the bare
+                //    manifest-label form (`urn:c2pa:...`), which URL parsing does not resolve to
+                //    the active manifest.
+                //  - `is_active_manifest(s.url())` — the URL names a box inside the active
+                //    manifest. This catches active-manifest findings that `ingredient_checks`
+                //    logs while an ingredient URI is pushed (so `ingredient_uri` is set), e.g.
+                //    `assertion.ingredient.malformed`.
+                // Neither signal can be forged by ingredient assertion content.
                 statuses.retain(|s| {
-                    s.ingredient_uri().is_none() || !ingredient_statuses.iter().any(|i| i == s)
+                    s.ingredient_uri().is_none()
+                        || is_active_manifest(s.url())
+                        || !ingredient_statuses.iter().any(|i| i == s)
                 })
             }
             for status in statuses {
@@ -1147,8 +1165,8 @@ pub mod tests {
         log_item,
         validation_status::{
             ASSERTION_ACTION_MALFORMED, ASSERTION_DATAHASH_MISMATCH, ASSERTION_HASHEDURI_MISMATCH,
-            CLAIM_MALFORMED, CLAIM_SIGNATURE_INSIDE_VALIDITY, CLAIM_SIGNATURE_VALIDATED,
-            SIGNING_CREDENTIAL_TRUSTED, SIGNING_CREDENTIAL_UNTRUSTED,
+            ASSERTION_INGREDIENT_MALFORMED, CLAIM_MALFORMED, CLAIM_SIGNATURE_INSIDE_VALIDITY,
+            CLAIM_SIGNATURE_VALIDATED, SIGNING_CREDENTIAL_TRUSTED, SIGNING_CREDENTIAL_UNTRUSTED,
         },
         HashedUri, Relationship,
     };
@@ -1619,6 +1637,90 @@ pub mod tests {
         assert!(
             active_failures.contains(&ASSERTION_ACTION_MALFORMED),
             "active-manifest failure was suppressed by ingredient attestation: {active_failures:?}"
+        );
+
+        // ...so the overall state stays Invalid rather than being upgraded to Valid.
+        assert_eq!(results.validation_state(), ValidationState::Invalid);
+    }
+
+    #[test]
+    fn from_store_ingredient_cannot_suppress_active_manifest_ingredient_failure() {
+        // `Store::ingredient_checks` logs some active-manifest failures
+        // (e.g. `assertion.ingredient.malformed`) *while an ingredient URI is pushed*, so they
+        // carry `ingredient_uri = Some` together with a URL pointing inside the active manifest.
+        // Such a failure must not be cancellable by an ingredient that attests a matching
+        // code + url, even though it was logged inside an ingredient scope. This is the corner
+        // that a purely `ingredient_uri`-based guard would miss.
+
+        let mut outer_claim = Claim::new("test-generator", None, 2);
+        let outer_label = outer_claim.label().to_string();
+
+        // The active manifest's own finding is recorded against one of its ingredient
+        // assertions — this is the URL `ingredient_checks` uses.
+        let active_ingredient_uri =
+            labels::to_assertion_uri(&outer_label, assertions::labels::INGREDIENT);
+
+        // Attacker adds an ingredient whose attested status carries the exact code + url of that
+        // active-manifest finding.
+        let mut attested = ValidationResults::default();
+        attested.add_status(
+            ValidationStatus::new_failure(ASSERTION_INGREDIENT_MALFORMED)
+                .set_url(&active_ingredient_uri),
+        );
+        let ingredient = Ingredient {
+            relationship: Relationship::ComponentOf,
+            version: 3,
+            active_manifest: Some(HashedUri::new(
+                labels::to_manifest_uri("urn:uuid:attacker-inner"),
+                Some("sha256".into()),
+                &[0u8; 32],
+            )),
+            validation_results: Some(attested),
+            ..Default::default()
+        };
+        outer_claim.add_assertion(&ingredient).unwrap();
+
+        let mut store = Store::new();
+        store.insert_restored_claim(outer_label.clone(), outer_claim);
+
+        let mut tracker = StatusTracker::default();
+
+        // Active-manifest signature checks pass, so the ingredient-malformed finding is the only
+        // thing keeping the asset out of `Valid`.
+        log_item!(outer_label.clone(), "claim signature valid", "verify")
+            .validation_status(CLAIM_SIGNATURE_VALIDATED)
+            .success(&mut tracker);
+        log_item!(
+            outer_label.clone(),
+            "claim signature inside validity",
+            "verify"
+        )
+        .validation_status(CLAIM_SIGNATURE_INSIDE_VALIDITY)
+        .success(&mut tracker);
+
+        // The genuine active-manifest finding, logged exactly the way `ingredient_checks` logs
+        // it: inside an ingredient push, with a URL inside the active manifest.
+        tracker.push_ingredient_uri(active_ingredient_uri.clone());
+        let _ = log_item!(
+            active_ingredient_uri.clone(),
+            "ingredient V3 must have validation results",
+            "ingredient_checks"
+        )
+        .validation_status(ASSERTION_INGREDIENT_MALFORMED)
+        .failure(&mut tracker, "ingredient V3 missing validation status");
+        tracker.pop_ingredient_uri();
+
+        let results = ValidationResults::from_store(&store, &tracker);
+
+        // The finding must survive de-duplication (it lands in ingredientDeltas because it is
+        // scoped to an ingredient)...
+        let failures = results.validation_errors().unwrap_or_default();
+        assert!(
+            failures
+                .iter()
+                .any(|s| s.code() == ASSERTION_INGREDIENT_MALFORMED),
+            "active-manifest ingredient failure was suppressed by ingredient attestation: {:?}",
+            failures.iter().map(|s| s.code()).collect::<Vec<_>>()
         );
 
         // ...so the overall state stays Invalid rather than being upgraded to Valid.
