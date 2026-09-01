@@ -876,9 +876,9 @@ impl PointerRegistry {
 
     /// Free a tracked entry by running its cleanup function.
     ///
-    /// This is what every `c2pa_free` call reaches. A key the registry does not
-    /// know is an error, not a no-op, so a double free is reported rather than
-    /// acted on.
+    /// This is what every `c2pa_free` call reaches. A non-null key the registry
+    /// does not know is an error, not a no-op, so a double free is reported
+    /// rather than acted on. A null key is a success no-op.
     pub fn free(&self, key: usize) -> Result<(), Error> {
         self.check_same_process()?;
         if key == 0 {
@@ -1588,7 +1588,7 @@ mod tests {
             "Arc entry must be refused"
         );
 
-        // Still borrowable, so the claim was released.
+        // Still borrowable, so the rejection left the entry untouched.
         assert!(
             checkout_shared::<i32>(ptr).is_ok(),
             "the rejected entry was left claimed"

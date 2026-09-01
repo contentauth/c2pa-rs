@@ -513,10 +513,14 @@ const ERROR_FALLBACK_LEN: usize = 256;
 /// odd and `track_by_address` refuses odd addresses so the two keyspaces cannot
 /// collide; this buffer's address is handed to C, so it has to stay even. A
 /// bare `[u8; N]` has alignment 1 and guarantees nothing -- the evenness would
-/// then come from whatever `RefCell` happens to lay out around it, which
-/// `repr(Rust)` leaves unspecified.
+/// then come from whatever the enclosing `UnsafeCell` happens to lay out
+/// around it, which `repr(Rust)` leaves unspecified.
 #[repr(align(2))]
-struct ErrorFallback([u8; ERROR_FALLBACK_LEN]);
+struct ErrorFallback(
+    // Only ever reached through a raw pointer derived from the enclosing
+    // UnsafeCell, so the compiler sees no read of the field itself.
+    #[allow(dead_code)] [u8; ERROR_FALLBACK_LEN],
+);
 
 // Fallback storage for `c2pa_error` when the message cannot be tracked.
 // Thread-local, so the returned pointer stays valid until this thread's next
@@ -535,39 +539,47 @@ thread_local! {
 /// would lose the diagnosis a second time. The result is truncated on a UTF-8
 /// boundary so the C string never ends mid-character.
 fn error_message_fallback(message: &str) -> *mut c_char {
+    // Compute the cut before touching the cell, so no borrow of it is live
+    // across anything that could re-enter.
+    let limit = ERROR_FALLBACK_LEN - 1;
+    let mut end = message.len().min(limit);
+    while end > 0 && !message.is_char_boundary(end) {
+        end -= 1;
+    }
+
     ERROR_FALLBACK.with(|slot| {
-        // UnsafeCell, not RefCell. A thread_local is single-threaded by
-        // construction, so a borrow flag guards against exactly one thing: a
-        // re-entrant call from a signal handler or a callback running mid-call.
-        // Paying for that with a failure arm meant returning a second, never-
-        // written buffer -- and an immutable static lands in read-only memory,
-        // so writing through the *mut it yields faults, which is the hazard
-        // this function moved off string literals to avoid.
+        // Raw writes only: no `&mut` to the buffer is ever formed. Two reasons,
+        // both of which a `&mut` breaks.
         //
-        // Without the flag a re-entrant call overwrites this buffer instead:
-        // the outer caller may read a torn or replaced message, which is the
-        // same hazard the "overwritten by the next call on this thread" rule in
-        // c2pa_error's docs already describes. A torn message beats a fault.
+        // A `&mut` asserts unique access for its lifetime. This is a
+        // thread_local, so the only way to violate that is a re-entrant call --
+        // a signal handler, or a callback running mid-call -- and the compiler
+        // is entitled to optimise on the assumption it cannot happen. Writing
+        // through the raw pointer instead makes a re-entrant call interleave
+        // bytes rather than alias a `&mut`: the caller may read a torn or
+        // replaced message, which is the hazard c2pa_error's "overwritten by
+        // the next call on this thread" rule already describes.
         //
-        // SAFETY: the reference is confined to this closure and cannot alias --
-        // nothing called between here and the return re-enters this function.
-        let buffer = unsafe { &mut (*slot.get()).0 };
-        let limit = ERROR_FALLBACK_LEN - 1;
-        let mut end = message.len().min(limit);
-        while end > 0 && !message.is_char_boundary(end) {
-            end -= 1;
+        // A `&mut` also invalidates the pointer returned by the previous call.
+        // Under Stacked Borrows the retag pops the earlier raw tag, so a caller
+        // holding that pointer across a second call reads through an
+        // invalidated one. Deriving from the cell directly keeps the provenance
+        // valid, which costs nothing here.
+        //
+        // SAFETY: `ErrorFallback` is `#[repr(align(2))]` with the array at
+        // offset 0, so `slot.get()` is the first byte. Every write below is at
+        // an index <= end <= ERROR_FALLBACK_LEN - 1, so all are in bounds, and
+        // the thread_local data outlives this call.
+        let base = slot.get() as *mut u8;
+        for (i, byte) in message.as_bytes()[..end].iter().enumerate() {
+            unsafe { base.add(i).write(if *byte == 0 { b'?' } else { *byte }) };
         }
+        unsafe { base.add(end).write(0) };
 
-        let copied = &message.as_bytes()[..end];
-        for (slot, byte) in buffer.iter_mut().zip(copied) {
-            *slot = if *byte == 0 { b'?' } else { *byte };
-        }
-        buffer[end] = 0;
-
-        // The pointer outlives this borrow, which is sound: the thread_local
-        // data lives as long as the thread, and c2pa_error's docs already tell
+        // The pointer outlives this call, which is sound: the thread_local data
+        // lives as long as the thread, and c2pa_error's docs already tell
         // callers the buffer is valid only until this thread's next call.
-        buffer.as_mut_ptr() as *mut c_char
+        base as *mut c_char
     })
 }
 
@@ -586,8 +598,7 @@ fn error_message_fallback(message: &str) -> *mut c_char {
 ///   tracked case -- that failing free REPLACES the error slot with
 ///   "UntrackedPointer", discarding the very message this pointer was created
 ///   to preserve. Read the message before freeing. Changing c2pa_free's error
-///   behaviour is out of scope here: it reports every failure through the slot,
-///   and callers depend on that for untracked pointers too.
+///   behaviour is out of scope for this change.
 /// - The next c2pa_error call on the same thread overwrites it in place. Copy
 ///   the message before calling again; a pointer held across a second call
 ///   reads the second message, not the first.
