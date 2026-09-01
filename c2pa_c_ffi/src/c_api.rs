@@ -518,8 +518,8 @@ const ERROR_FALLBACK_LEN: usize = 256;
 ///   1, which would leave the evenness to whatever the enclosing `UnsafeCell`
 ///   happens to lay out around it.
 /// - `repr(C)` fixes the field at offset 0. Alignment alone says nothing about
-///   field placement, and `repr(Rust)` leaves offsets unspecified -- rustc does
-///   move fields when it is free to, which `-Zrandomize-layout` demonstrates.
+///   field placement, and `repr(Rust)` leaves offsets unspecified, so a safety
+///   argument must not rest on one.
 ///
 /// Even struct address plus offset 0 means the field's address is even by
 /// construction rather than by the compiler's current choice.

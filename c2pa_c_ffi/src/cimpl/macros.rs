@@ -209,11 +209,6 @@
 //! }
 //! ```
 
-// Re-export types/functions that macros need
-#[doc(hidden)]
-#[allow(unused_imports)]
-// May not be directly used but needed for macro expansion
-//
 // ============================================================================
 // Pointer Management Macros
 // ============================================================================
