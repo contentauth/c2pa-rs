@@ -581,4 +581,40 @@ mod tests {
         let uri_ranges = zip_uri_ranges(&mut with_manifest).unwrap();
         assert!(!uri_ranges.contains_key(Path::new(MANIFEST_PATH)));
     }
+
+    #[test]
+    fn test_write_preserves_existing_entry_bytes() {
+        fn read_range<R: Read + Seek>(stream: &mut R, range: &HashRange) -> Vec<u8> {
+            stream.seek(SeekFrom::Start(range.start())).unwrap();
+
+            let mut bytes = vec![0; range.length() as usize];
+            stream.read_exact(&mut bytes).unwrap();
+
+            bytes
+        }
+
+        let zip_io = ZipIO {};
+
+        let mut src = Cursor::new(SAMPLES[0].to_vec());
+        let input_ranges = zip_uri_ranges(&mut src).unwrap();
+
+        let mut src_with_manifest = Cursor::new(Vec::new());
+        zip_io
+            .write_cai(&mut src, &mut src_with_manifest, &[1, 2, 3])
+            .unwrap();
+        let output_ranges = zip_uri_ranges(&mut src_with_manifest).unwrap();
+
+        assert_eq!(input_ranges.len(), output_ranges.len());
+
+        for (path, input_range) in input_ranges {
+            let output_range = output_ranges.get(&path).unwrap();
+
+            assert_eq!(
+                read_range(&mut src, &input_range),
+                read_range(&mut src_with_manifest, output_range),
+                "entry `{}` bytes changed after embedding the manifest",
+                path.display()
+            );
+        }
+    }
 }

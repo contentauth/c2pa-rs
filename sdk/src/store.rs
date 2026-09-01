@@ -55,7 +55,7 @@ use crate::{
         AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
     },
     error::{Error, Result},
-    hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
+    hash_utils::{hash_by_alg, hash_size_by_alg, vec_compare, verify_by_alg},
     hashed_uri::HashedUri,
     jumbf::{
         self,
@@ -2158,12 +2158,7 @@ impl Store {
             dh.gen_hash_from_stream_with_progress(stream, progress)?;
         } else {
             // First signing pass: zero-filled placeholder hash (to get to end size)
-            match alg {
-                "sha256" => dh.set_hash([0u8; 32].to_vec()),
-                "sha384" => dh.set_hash([0u8; 48].to_vec()),
-                "sha512" => dh.set_hash([0u8; 64].to_vec()),
-                _ => return Err(Error::UnsupportedType),
-            }
+            dh.set_hash(vec![0u8; hash_size_by_alg(alg)?]);
         }
 
         hashes.push(dh);
@@ -2179,12 +2174,7 @@ impl Store {
         dh.set_default_exclusions();
 
         // fill in temporary hash
-        match alg {
-            "sha256" => dh.set_hash([0u8; 32].to_vec()),
-            "sha384" => dh.set_hash([0u8; 48].to_vec()),
-            "sha512" => dh.set_hash([0u8; 64].to_vec()),
-            _ => return Err(Error::UnsupportedType),
-        }
+        dh.set_hash(vec![0u8; hash_size_by_alg(alg)?]);
 
         Ok(dh)
     }
@@ -3263,39 +3253,61 @@ impl Store {
                 ));
             }
 
-            let mut needs_hashing = false;
+            // hash all of the existing files and embed a placeholder central directory hash.
+            // this is okay because adding new file entries does not change the hashes of existing
+            // file entries. when we insert the real manifest we can go back and hash the central directory.
+            let mut new_collection_hash = None;
             if pc.hash_assertions().is_empty() {
-                let mut collection = CollectionHash::new(pc.alg().to_owned());
+                let mut placeholder_collection_hash = CollectionHash::new(pc.alg().to_owned());
                 if source_is_intermediate {
                     intermediate_stream.rewind()?;
-                    collection.gen_hash_from_zip_stream(&mut intermediate_stream)?;
+                    placeholder_collection_hash.gen_zip_uri_hashes(&mut intermediate_stream)?;
                 } else {
                     input_stream.rewind()?;
-                    collection.gen_hash_from_zip_stream(input_stream)?;
+                    placeholder_collection_hash.gen_zip_uri_hashes(input_stream)?;
                 }
-                pc.add_assertion(&collection)?;
-                needs_hashing = true;
+
+                placeholder_collection_hash.set_placeholder_zip_central_directory_hash()?;
+                pc.add_assertion(&placeholder_collection_hash)?;
+
+                new_collection_hash = Some(placeholder_collection_hash);
             }
 
             data = self.to_jumbf_internal(reserve_size)?;
             jumbf_size = data.len();
 
-            if needs_hashing && !remove_manifests {
-                let mut scratch = io_utils::stream_with_fs_fallback(threshold, input_len)?;
-                if source_is_intermediate {
-                    intermediate_stream.rewind()?;
-                    save_jumbf_to_stream(format, &mut intermediate_stream, &mut scratch, &data)?;
+            // we only need to compute the central directory hash here because everything else is
+            // already hashed in the previous step.
+            if let Some(mut collection_hash) = new_collection_hash {
+                if !remove_manifests {
+                    let mut scratch = io_utils::stream_with_fs_fallback(threshold, input_len)?;
+                    if source_is_intermediate {
+                        intermediate_stream.rewind()?;
+                        save_jumbf_to_stream(
+                            format,
+                            &mut intermediate_stream,
+                            &mut scratch,
+                            &data,
+                        )?;
+                    } else {
+                        input_stream.rewind()?;
+                        save_jumbf_to_stream(format, input_stream, &mut scratch, &data)?;
+                    }
+
+                    scratch.rewind()?;
+                    collection_hash.gen_zip_central_directory_hash(&mut scratch)?;
                 } else {
-                    input_stream.rewind()?;
-                    save_jumbf_to_stream(format, input_stream, &mut scratch, &data)?;
+                    if source_is_intermediate {
+                        intermediate_stream.rewind()?;
+                        collection_hash.gen_zip_central_directory_hash(&mut intermediate_stream)?;
+                    } else {
+                        input_stream.rewind()?;
+                        collection_hash.gen_zip_central_directory_hash(input_stream)?;
+                    }
                 }
 
-                scratch.rewind()?;
-
                 let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-                let mut collection = CollectionHash::new(pc.alg().to_owned());
-                collection.gen_hash_from_zip_stream(&mut scratch)?;
-                pc.replace_assertion(collection.to_assertion()?)?;
+                pc.replace_assertion(collection_hash.to_assertion()?)?;
             }
 
             if source_is_intermediate {

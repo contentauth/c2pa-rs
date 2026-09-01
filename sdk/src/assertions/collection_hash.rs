@@ -12,7 +12,7 @@ use crate::{
     assertions::{labels::COLLECTION_HASH, AssetType},
     asset_handlers::zip_io::{zip_central_directory_range, zip_uri_ranges},
     hash_stream_by_alg,
-    hash_utils::verify_stream_by_alg,
+    hash_utils::{hash_size_by_alg, verify_stream_by_alg},
     utils::mime,
     validation_status::{
         ASSERTION_COLLECTIONHASH_INCORRECT_FILE_COUNT, ASSERTION_COLLECTIONHASH_INVALID_URI,
@@ -203,15 +203,20 @@ impl CollectionHash {
     where
         R: Read + Seek + ?Sized,
     {
-        let zip_central_directory_inclusions = zip_central_directory_range(stream)?;
-        let zip_central_directory_hash = hash_stream_by_alg(
-            &self.alg,
-            stream,
-            Some(zip_central_directory_inclusions),
-            false,
-        )?;
-        self.zip_central_directory_hash = Some(zip_central_directory_hash);
+        self.gen_zip_central_directory_hash(stream)?;
+        self.gen_zip_uri_hashes(stream)?;
 
+        Ok(())
+    }
+
+    /// Generate the hash for each file entry in a ZIP stream.
+    ///
+    /// Use [`gen_zip_central_directory_hash`](Self::gen_zip_central_directory_hash) to compute
+    /// the central directory hash.
+    pub fn gen_zip_uri_hashes<R>(&mut self, stream: &mut R) -> Result<()>
+    where
+        R: Read + Seek + ?Sized,
+    {
         self.uris = HashMap::new();
         for (path, hash_range) in zip_uri_ranges(stream)? {
             let hash =
@@ -229,6 +234,34 @@ impl CollectionHash {
             );
         }
 
+        Ok(())
+    }
+
+    /// Generate the ZIP central directory hash.
+    ///
+    /// Use [`gen_zip_uri_hashes`](Self::gen_zip_uri_hashes) to generate the per-file hashes.
+    pub fn gen_zip_central_directory_hash<R>(&mut self, stream: &mut R) -> Result<()>
+    where
+        R: Read + Seek + ?Sized,
+    {
+        let zip_central_directory_inclusions = zip_central_directory_range(stream)?;
+        self.zip_central_directory_hash = Some(hash_stream_by_alg(
+            &self.alg,
+            stream,
+            Some(zip_central_directory_inclusions),
+            false,
+        )?);
+
+        Ok(())
+    }
+
+    /// Set a zero-filled placeholder for the ZIP central directory hash based on the
+    /// collection hash's algorithm.
+    ///
+    /// Use [`gen_zip_central_directory_hash`](Self::gen_zip_central_directory_hash) to generate
+    /// the finalized hash over the central directory.
+    pub fn set_placeholder_zip_central_directory_hash(&mut self) -> Result<()> {
+        self.zip_central_directory_hash = Some(vec![0u8; hash_size_by_alg(&self.alg)?]);
         Ok(())
     }
 
