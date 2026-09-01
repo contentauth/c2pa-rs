@@ -43,6 +43,10 @@ use crate::{
 
 type CleanupFn = Box<dyn FnMut() + Send>;
 
+/// A tracked allocation handed back by `untrack`: its real address and the
+/// allocator that produced it.
+type TakenEntry = (usize, Wrapper);
+
 /// Marks how a tracked allocation was created, so ownership can only ever be
 /// reconstructed with the matching allocator.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -772,6 +776,99 @@ impl PointerRegistry {
     }
 
     /// Free a tracked entry by calling its cleanup function
+    /// Take ownership of two handles atomically: either both are removed, or
+    /// neither is and the registry is left exactly as it was.
+    ///
+    /// Validating two handles and then untracking them one at a time cannot
+    /// give this. Between the checks and the removals another thread can free
+    /// the second, so the first untrack succeeds, the second fails, and the
+    /// caller's first object is dropped by the very call that reports failure.
+    /// Holding the map lock across both claims and both removals closes that
+    /// window, the same way `untrack` closes the lookup/checkout window.
+    ///
+    /// The two handles must differ. One object cannot be consumed twice, and
+    /// rejecting it here means callers do not have to compare handles
+    /// themselves.
+    fn untrack_pair(
+        &self,
+        first: usize,
+        second: usize,
+        expected_type: TypeId,
+        required: Option<Wrapper>,
+    ) -> Result<(TakenEntry, TakenEntry), Error> {
+        self.check_same_process()?;
+        if first == 0 || second == 0 {
+            return Err(Error::from(CimplError::null_parameter("pointer")));
+        }
+        if first == second {
+            // One object cannot be handed over twice. Refusing before the lock
+            // keeps the claim bookkeeping below single-entry.
+            return Err(Error::from(CimplError::tracking_refused(
+                "the same handle was passed for two parameters",
+            )));
+        }
+
+        let mut tracked = self
+            .tracked
+            .lock()
+            .map_err(|_| Error::from(CimplError::mutex_poisoned()))?;
+
+        // Validate both before claiming either, so a rejection needs no undo.
+        for id in [first, second] {
+            match tracked.get(&id) {
+                Some(entry) if entry.type_id == expected_type => {
+                    if required.is_some_and(|required| required != entry.wrapper) {
+                        return Err(Error::from(CimplError::wrong_wrapper_kind()));
+                    }
+                }
+                Some(_) => return Err(Error::from(CimplError::wrong_pointer_type(id as u64))),
+                None => return Err(Error::from(CimplError::untracked_pointer(id as u64))),
+            }
+        }
+
+        // Claim both. A failure on the second must hand the first back, or a
+        // refused handle would stay borrowed for the life of the process.
+        let claim = |id: usize| -> bool {
+            tracked
+                .get(&id)
+                .expect("validated above, and the lock has been held since")
+                .borrow_state
+                .compare_exchange(0, EXCLUSIVE, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+        };
+        if !claim(first) {
+            return Err(Error::from(CimplError::pointer_in_use()));
+        }
+        if !claim(second) {
+            tracked
+                .get(&first)
+                .expect("claimed above, and the lock has been held since")
+                .borrow_state
+                .store(0, Ordering::Release);
+            return Err(Error::from(CimplError::pointer_in_use()));
+        }
+
+        // Both claimed: from here nothing can fail, so both removals commit.
+        let mut taken = Vec::with_capacity(2);
+        for id in [first, second] {
+            let entry = tracked.remove(&id).expect("claimed above");
+            // Defuse before the entry can drop. Ownership is moving to the
+            // caller, so running cleanup here would free memory the caller is
+            // about to reconstruct.
+            if let Ok(mut cleanup) = entry.cleanup.lock() {
+                cleanup.take();
+            }
+            taken.push((entry.real_addr, entry.wrapper, entry));
+        }
+        drop(tracked); // Release before the Arcs drop.
+
+        let (second_addr, second_wrapper, second_entry) = taken.pop().expect("two pushed");
+        let (first_addr, first_wrapper, first_entry) = taken.pop().expect("two pushed");
+        drop(second_entry);
+        drop(first_entry);
+        Ok(((first_addr, first_wrapper), (second_addr, second_wrapper)))
+    }
+
     pub fn free(&self, key: usize) -> Result<(), Error> {
         self.check_same_process()?;
         if key == 0 {
@@ -1007,20 +1104,30 @@ pub fn checkout_exclusive<T: 'static + MaybeSend>(ptr: *mut T) -> Result<TypedEx
     })
 }
 
-/// Checks that a handle is tracked and holds a `T`, without consuming it or
-/// taking a borrow.
+/// Take ownership of two tracked objects at once, removing both from the
+/// registry and returning the values themselves.
 ///
-/// For functions that consume more than one handle: untracking is irreversible,
-/// so a second `untrack_owned` failing after the first succeeded destroys the
-/// first object while reporting failure. Validating every handle first turns
-/// that into a clean refusal with nothing consumed.
+/// Use this wherever one FFI call consumes two handles. Calling
+/// `untrack_owned` twice cannot be made safe by validating first: between the
+/// checks and the second removal another thread can free the second handle, and
+/// the first object is then dropped by the call that reports failure. This
+/// removes both under one lock acquisition or neither.
 ///
-/// This grants no claim on the entry, so it proves nothing about a later call
-/// on another thread. It is for ordering checks within one function, not for
-/// deciding that a handle is safe to use.
-pub fn validate_handle<T: 'static>(ptr: *mut T) -> Result<(), Error> {
-    get_registry().lookup(ptr as usize, TypeId::of::<T>())?;
-    Ok(())
+/// The two handles must differ; passing one handle for both is refused.
+pub fn untrack_owned_pair<T: 'static>(first: *mut T, second: *mut T) -> Result<(T, T), Error> {
+    let ((first_addr, _), (second_addr, _)) = get_registry().untrack_pair(
+        first as usize,
+        second as usize,
+        TypeId::of::<T>(),
+        Some(Wrapper::Boxed),
+    )?;
+    // SAFETY: both entries were tracked by track_box, so each allocation came
+    // from Box::into_raw with this exact T, and untrack_pair removed both and
+    // defused their cleanups only after confirming the wrapper -- making these
+    // the sole owners.
+    Ok((*unsafe { Box::from_raw(first_addr as *mut T) }, *unsafe {
+        Box::from_raw(second_addr as *mut T)
+    }))
 }
 
 /// Take ownership of a tracked object, removing it from the registry and
@@ -2023,5 +2130,91 @@ mod tests {
             !hidden.contains("0x1000"),
             "the hidden branch leaked the address: {hidden}"
         );
+    }
+
+    #[test]
+    fn test_untrack_pair_refuses_the_same_handle_twice() {
+        let ptr = track_box(Box::into_raw(Box::new(11i32)));
+        assert!(
+            untrack_owned_pair::<i32>(ptr, ptr).is_err(),
+            "one object cannot be consumed twice"
+        );
+        // The refusal must leave the entry usable, not half-consumed.
+        assert_eq!(
+            untrack_owned::<i32>(ptr).expect("still tracked after the refusal"),
+            11
+        );
+    }
+
+    #[test]
+    fn test_untrack_pair_leaves_the_first_when_the_second_is_gone() {
+        // The concurrency case: another thread freed the second handle. Doing
+        // this with two untrack_owned calls consumes the first and then fails,
+        // dropping the caller's object inside the call that reports failure.
+        let first = track_box(Box::into_raw(Box::new(22i32)));
+        let second = track_box(Box::into_raw(Box::new(33i32)));
+        assert_eq!(cimpl_free(second as *mut std::ffi::c_void), 0);
+
+        assert!(
+            untrack_owned_pair::<i32>(first, second).is_err(),
+            "an untracked second handle must be refused"
+        );
+        assert_eq!(
+            untrack_owned::<i32>(first).expect("the first must survive a refusal"),
+            22,
+            "the first object was consumed by a call that reported failure"
+        );
+    }
+
+    #[test]
+    fn test_untrack_pair_takes_both_or_neither() {
+        let first = track_box(Box::into_raw(Box::new(44i32)));
+        let second = track_box(Box::into_raw(Box::new(55i32)));
+
+        let (a, b) = untrack_owned_pair::<i32>(first, second).expect("both tracked");
+        assert_eq!((a, b), (44, 55), "values came back in argument order");
+
+        // Both entries are gone: neither handle resolves any more.
+        assert!(untrack_owned::<i32>(first).is_err());
+        assert!(untrack_owned::<i32>(second).is_err());
+    }
+
+    #[test]
+    fn test_untrack_pair_releases_the_first_claim_when_the_second_is_borrowed() {
+        // A live borrow on the second handle must refuse the pair AND hand the
+        // first handle's claim back, or the first would stay borrowed forever.
+        let first = track_box(Box::into_raw(Box::new(66i32)));
+        let second = track_box(Box::into_raw(Box::new(77i32)));
+        let guard = checkout_shared::<i32>(second).expect("fresh handle");
+
+        assert!(
+            untrack_owned_pair::<i32>(first, second).is_err(),
+            "a borrowed second handle must refuse the pair"
+        );
+        drop(guard);
+
+        // The first must still be borrowable, which it is not if its claim leaked.
+        {
+            let borrow = checkout_shared::<i32>(first).expect("the first claim was not released");
+            assert_eq!(*borrow, 66);
+        }
+        assert_eq!(untrack_owned::<i32>(first).expect("still tracked"), 66);
+        assert_eq!(untrack_owned::<i32>(second).expect("still tracked"), 77);
+    }
+
+    #[test]
+    fn test_to_c_bytes_maps_empty_to_null() {
+        // The contract the seven c_api sites depend on, pinned where it lives
+        // rather than through an SDK behaviour this crate does not own: an
+        // empty buffer is success with nothing to hand back, so the sites must
+        // test `is_null() && len > 0` and not `is_null()` alone.
+        assert!(
+            to_c_bytes(Vec::new()).is_null(),
+            "an empty buffer has no pointer to publish"
+        );
+
+        let ptr = to_c_bytes(vec![7u8]);
+        assert!(!ptr.is_null(), "a non-empty buffer must be tracked");
+        cimpl_free(ptr as *mut std::ffi::c_void);
     }
 }

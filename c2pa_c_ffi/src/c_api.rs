@@ -24,6 +24,11 @@
 //! a local also leaves the caller's out-parameter untouched when the call
 //! fails, rather than clobbering what it held.
 //!
+//! `to_c_bytes` also returns NULL for an *empty* buffer, which is success with
+//! nothing to hand back -- `Builder::placeholder` does exactly that for a format
+//! needing no placeholder. Only a NULL with a non-zero length is a refusal,
+//! which is why every site tests `bytes.is_null() && len > 0`.
+//!
 //! The reason for the refusal is in the error slot; see `c2pa_error`.
 
 use std::{
@@ -47,7 +52,7 @@ use crate::{
     cstr_or_return_int, cstr_or_return_null, deref_mut_option_or_return_int, deref_mut_or_return,
     deref_mut_or_return_int, deref_mut_or_return_null, deref_or_return_int, deref_or_return_null,
     error::Error, ok_or_return_int, ok_or_return_null, option_to_c_string, ptr_or_return_int,
-    signer_info::SignerInfo, to_c_bytes, to_c_string, validate_handle, CimplError,
+    signer_info::SignerInfo, to_c_bytes, to_c_string, untrack_owned_pair, CimplError,
 };
 
 /// Validates that a buffer size is within safe bounds and doesn't cause integer overflow
@@ -481,8 +486,12 @@ impl c2pa::http::SyncHttpResolver for C2paHttpResolver {
 
 /// Returns a version string for logging.
 ///
+/// Returns NULL if the string could not be tracked -- in a forked child, under
+/// a poisoned registry lock, or if the allocator returns an odd address.
+/// Bindings that call this at load time to smoke-test the library must check.
+///
 /// # Safety
-/// The returned value MUST be released by calling release_string
+/// The returned value MUST be released by calling c2pa_free
 /// and it is no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_version() -> *mut c_char {
@@ -496,18 +505,33 @@ pub unsafe extern "C" fn c2pa_version() -> *mut c_char {
     to_c_string(version)
 }
 
-/// Fallback storage for `c2pa_error` when the message cannot be tracked.
-///
-/// Thread-local, so the returned pointer stays valid until this thread's next
-/// `c2pa_error` call and no other thread can race it. Being a `[u8; N]` rather
-/// than a string literal matters twice: the storage is writable, so a C caller
-/// that edits the string in place does not fault on read-only memory, and it is
-/// at least 2-aligned, so its address stays out of the odd handle-id keyspace
-/// that `track_by_address` protects.
 const ERROR_FALLBACK_LEN: usize = 256;
+
+/// Storage for `c2pa_error`'s fallback message.
+///
+/// `#[repr(align(2))]` is load-bearing, not decoration. Handle ids are always
+/// odd and `track_by_address` refuses odd addresses so the two keyspaces cannot
+/// collide; this buffer's address is handed to C, so it has to stay even. A
+/// bare `[u8; N]` has alignment 1 and guarantees nothing -- the evenness would
+/// then come from whatever `RefCell` happens to lay out around it, which
+/// `repr(Rust)` leaves unspecified.
+#[repr(align(2))]
+struct ErrorFallback([u8; ERROR_FALLBACK_LEN]);
+
+/// Returned when the fallback buffer is already borrowed on this thread.
+///
+/// Aligned for the same reason as `ErrorFallback`: its address reaches C, so it
+/// must stay out of the odd handle-id keyspace.
+static EMPTY_FALLBACK: ErrorFallback = ErrorFallback([0; ERROR_FALLBACK_LEN]);
+
+// Fallback storage for `c2pa_error` when the message cannot be tracked.
+// Thread-local, so the returned pointer stays valid until this thread's next
+// c2pa_error call and no other thread can race it. Writable, unlike a string
+// literal, so a C caller that edits the string in place does not fault on
+// read-only memory.
 thread_local! {
-    static ERROR_FALLBACK: RefCell<[u8; ERROR_FALLBACK_LEN]> =
-        const { RefCell::new([0; ERROR_FALLBACK_LEN]) };
+    static ERROR_FALLBACK: RefCell<ErrorFallback> =
+        const { RefCell::new(ErrorFallback([0; ERROR_FALLBACK_LEN])) };
 }
 
 /// Copies `message` into this thread's fallback buffer and returns its pointer.
@@ -518,7 +542,14 @@ thread_local! {
 /// boundary so the C string never ends mid-character.
 fn error_message_fallback(message: &str) -> *mut c_char {
     ERROR_FALLBACK.with(|slot| {
-        let mut buffer = slot.borrow_mut();
+        // try_borrow_mut, not borrow_mut: a re-entrant c2pa_error -- from a
+        // signal handler, or a callback invoked mid-call -- would find the
+        // borrow live, and a panic here would cross the extern "C" boundary.
+        // An empty string is a poor message; aborting the host is worse.
+        let Ok(mut fallback) = slot.try_borrow_mut() else {
+            return EMPTY_FALLBACK.0.as_ptr() as *mut c_char;
+        };
+        let buffer = &mut fallback.0;
         let limit = ERROR_FALLBACK_LEN - 1;
         let mut end = message.len().min(limit);
         while end > 0 && !message.is_char_boundary(end) {
@@ -531,6 +562,9 @@ fn error_message_fallback(message: &str) -> *mut c_char {
         }
         buffer[end] = 0;
 
+        // The pointer outlives this RefMut, which is sound: the borrow flag
+        // guards access to the RefCell, not the lifetime of the thread_local
+        // data behind it, and that data lives as long as the thread.
         buffer.as_mut_ptr() as *mut c_char
     })
 }
@@ -546,8 +580,13 @@ fn error_message_fallback(message: &str) -> *mut c_char {
 /// Three consequences, all of which the usual copy-then-free pattern already
 /// satisfies:
 ///
-/// - It must not be freed. Passing it to c2pa_free is harmless and returns -1,
-///   so a caller that frees unconditionally is still correct.
+/// - It must not be freed. c2pa_free returns -1 for it, and -- unlike the
+///   tracked case -- that failing free REPLACES the error slot with
+///   "UntrackedPointer", discarding the very message this pointer was created
+///   to preserve. Read the message before freeing. The behaviour stays because
+///   c2pa_free setting an error for an untracked pointer is relied on
+///   elsewhere, including by bindings that probe the slot deliberately; the
+///   trade is made here rather than in the free path.
 /// - The next c2pa_error call on the same thread overwrites it in place. Copy
 ///   the message before calling again; a pointer held across a second call
 ///   reads the second message, not the first.
@@ -2111,11 +2150,7 @@ pub unsafe extern "C" fn c2pa_builder_sign(
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
-        // Publish only on success: see "Returning byte buffers" in the
-        // module docs. to_c_bytes also returns NULL for an empty buffer, which
-        // is success with nothing to hand back -- Builder::placeholder does
-        // exactly that for a format needing no placeholder -- so only a NULL
-        // with a non-zero length is a refusal.
+        // See "Returning byte buffers" in the module docs.
         let bytes = to_c_bytes(manifest_bytes);
         if bytes.is_null() && len > 0 {
             return -1;
@@ -2177,11 +2212,7 @@ pub unsafe extern "C" fn c2pa_builder_sign_context(
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
-        // Publish only on success: see "Returning byte buffers" in the
-        // module docs. to_c_bytes also returns NULL for an empty buffer, which
-        // is success with nothing to hand back -- Builder::placeholder does
-        // exactly that for a format needing no placeholder -- so only a NULL
-        // with a non-zero length is a refusal.
+        // See "Returning byte buffers" in the module docs.
         let bytes = to_c_bytes(manifest_bytes);
         if bytes.is_null() && len > 0 {
             return -1;
@@ -2235,11 +2266,7 @@ pub unsafe extern "C" fn c2pa_builder_data_hashed_placeholder(
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
-        // Publish only on success: see "Returning byte buffers" in the
-        // module docs. to_c_bytes also returns NULL for an empty buffer, which
-        // is success with nothing to hand back -- Builder::placeholder does
-        // exactly that for a format needing no placeholder -- so only a NULL
-        // with a non-zero length is a refusal.
+        // See "Returning byte buffers" in the module docs.
         let bytes = to_c_bytes(manifest_bytes);
         if bytes.is_null() && len > 0 {
             return -1;
@@ -2300,11 +2327,7 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
-        // Publish only on success: see "Returning byte buffers" in the
-        // module docs. to_c_bytes also returns NULL for an empty buffer, which
-        // is success with nothing to hand back -- Builder::placeholder does
-        // exactly that for a format needing no placeholder -- so only a NULL
-        // with a non-zero length is a refusal.
+        // See "Returning byte buffers" in the module docs.
         let bytes = to_c_bytes(manifest_bytes);
         if bytes.is_null() && len > 0 {
             return -1;
@@ -2408,11 +2431,7 @@ pub unsafe extern "C" fn c2pa_builder_placeholder(
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
-        // Publish only on success: see "Returning byte buffers" in the
-        // module docs. to_c_bytes also returns NULL for an empty buffer, which
-        // is success with nothing to hand back -- Builder::placeholder does
-        // exactly that for a format needing no placeholder -- so only a NULL
-        // with a non-zero length is a refusal.
+        // See "Returning byte buffers" in the module docs.
         let bytes = to_c_bytes(manifest_bytes);
         if bytes.is_null() && len > 0 {
             return -1;
@@ -2463,11 +2482,7 @@ pub unsafe extern "C" fn c2pa_builder_sign_embeddable(
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
-        // Publish only on success: see "Returning byte buffers" in the
-        // module docs. to_c_bytes also returns NULL for an empty buffer, which
-        // is success with nothing to hand back -- Builder::placeholder does
-        // exactly that for a format needing no placeholder -- so only a NULL
-        // with a non-zero length is a refusal.
+        // See "Returning byte buffers" in the module docs.
         let bytes = to_c_bytes(manifest_bytes);
         if bytes.is_null() && len > 0 {
             return -1;
@@ -2684,8 +2699,7 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
     let result_bytes = ok_or_return_int!(result);
     let len = result_bytes.len() as i64;
     if !result_bytes_ptr.is_null() {
-        // Publish only on success, and treat an empty buffer as success:
-        // see the manifest_bytes_ptr sites and the module docs.
+        // See "Returning byte buffers" in the module docs.
         let bytes = to_c_bytes(result_bytes);
         if bytes.is_null() && len > 0 {
             return -1;
@@ -2835,28 +2849,20 @@ pub unsafe extern "C" fn c2pa_identity_signer_create(
     referenced_assertions: *const *const c_char,
     roles: *const *const c_char,
 ) -> *mut C2paSigner {
-    // Validate both handles before consuming either. untrack_owned is
-    // irreversible, so taking the first and then failing on the second would
-    // destroy the caller's signer while reporting failure -- and the caller
-    // could not tell that apart from nothing having happened. Passing the same
-    // handle twice is the reachable case: the first call removes the entry, so
-    // the second fails with UntrackedPointer.
-    ok_or_return_null!(validate_handle::<C2paSigner>(c2pa_signer_ptr));
-    ok_or_return_null!(validate_handle::<C2paSigner>(identity_signer_ptr));
-    if std::ptr::eq(c2pa_signer_ptr, identity_signer_ptr) {
-        // Both validated, so a duplicate is the only way the second untrack can
-        // still fail. Refuse before consuming anything.
-        CimplError::from(Error::from(CimplError::pointer_in_use())).set_last();
-        return std::ptr::null_mut();
-    }
-
-    // Argument parsing before the untracks, so a bad array cannot strand a
-    // consumed signer either.
+    // Parse the arrays first: a bad array must not strand a consumed signer.
     let referenced_assertions = cstr_array_or_return_null!(referenced_assertions);
     let roles = cstr_array_or_return_null!(roles);
 
-    let c2pa_signer = untrack_or_return_null!(c2pa_signer_ptr, C2paSigner);
-    let identity_signer = untrack_or_return_null!(identity_signer_ptr, C2paSigner);
+    // Both signers are consumed together or not at all. Untracking them one at
+    // a time cannot be made safe by validating first: another thread freeing
+    // the second handle in between leaves the first already moved out of the
+    // registry and dropped by this very call. untrack_owned_pair holds the map
+    // lock across both claims and both removals, and refuses a duplicate handle
+    // itself.
+    let (c2pa_signer, identity_signer) = ok_or_return_null!(untrack_owned_pair::<C2paSigner>(
+        c2pa_signer_ptr,
+        identity_signer_ptr
+    ));
 
     let refs: Vec<&str> = referenced_assertions.iter().map(|s| s.as_str()).collect();
     let role_refs: Vec<&str> = roles.iter().map(|s| s.as_str()).collect();
@@ -3693,6 +3699,24 @@ mod tests {
     }
 
     #[test]
+    fn test_error_fallback_truncates_on_a_char_boundary() {
+        // 4-byte characters, deliberately: the limit is 255 and 255 % 3 == 0,
+        // so 3-byte characters always land on a boundary and never exercise the
+        // walk. 255 % 4 == 3, so these do.
+        let long = "\u{1F600}".repeat(100);
+        let ptr = error_message_fallback(&long);
+        let bytes = unsafe { CStr::from_ptr(ptr) }.to_bytes();
+        assert!(
+            bytes.len() < ERROR_FALLBACK_LEN,
+            "must fit the buffer with room for the NUL"
+        );
+        assert!(
+            std::str::from_utf8(bytes).is_ok(),
+            "truncation split a character"
+        );
+    }
+
+    #[test]
     fn test_c2pa_error_no_error() {
         let error = unsafe { c2pa_error() };
         assert!(!error.is_null());
@@ -3738,7 +3762,7 @@ mod tests {
         // returns NULL with no fork and no registry involved. The reporter must
         // hand back this message rather than name some other cause.
         let raw = "BadParam: label \u{0}injected by an asset";
-        CimplError::new(0, raw.to_string()).set_last();
+        CimplError::other(raw.to_string()).set_last();
 
         let error = unsafe { c2pa_error() };
         assert!(!error.is_null(), "the error reporter must not return NULL");
