@@ -312,6 +312,7 @@ pub(crate) mod reader;
 pub(crate) mod resource_store;
 pub(crate) mod salt;
 pub(crate) mod signer;
+pub(crate) mod spec_versions;
 pub(crate) mod store;
 
 pub(crate) mod utils;

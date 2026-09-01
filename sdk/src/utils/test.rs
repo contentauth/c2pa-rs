@@ -32,7 +32,7 @@ use crate::{
     },
     claim::Claim,
     context::Context,
-    crypto::cose::CertificateTrustPolicy,
+    crypto::cose::{CertificateTrustPolicy, TrustAnchorType},
     hash_utils::Hasher,
     jumbf_io::get_assetio_handler,
     read_seek::ReadWriteSeek,
@@ -654,9 +654,12 @@ pub fn temp_signer_file() -> Box<dyn crate::Signer> {
 /// [`CertificateTrustPolicy`]: crate::crypto::cose::CertificateTrustPolicy
 pub fn test_certificate_acceptance_policy() -> CertificateTrustPolicy {
     let mut ctp = CertificateTrustPolicy::default();
-    ctp.add_trust_anchors(include_bytes!(
-        "../../tests/fixtures/certs/trust/test_cert_root_bundle.pem"
-    ))
+    ctp.add_trust_anchors(
+        include_bytes!("../../tests/fixtures/certs/trust/test_cert_root_bundle.pem"),
+        "https://c2pa-rs/unknown_tl",
+        TrustAnchorType::Manifest,
+        None,
+    )
     .unwrap();
     ctp
 }

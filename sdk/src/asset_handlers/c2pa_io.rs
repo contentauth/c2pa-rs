@@ -15,8 +15,8 @@ use std::path::Path;
 
 use crate::{
     asset_io::{
-        AssetBoxHash, AssetIO, BoxMap, C2paReader, C2paWriter, ComposedManifestRef,
-        ObjectLocations, ReadSeek, ReadWriteSeek, C2PA_BOXHASH,
+        AllowedExclusion, AssetBoxHash, AssetIO, BoxMap, C2paReader, C2paWriter,
+        ComposedManifestRef, ObjectLocations, ReadSeek, ReadWriteSeek, C2PA_BOXHASH,
     },
     error::{Error, Result},
 };
@@ -125,7 +125,10 @@ impl AssetBoxHash for C2paIO {
     fn get_box_map(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<BoxMap>> {
         // creates a box map with only a C2PA box.
         input_stream.rewind()?;
-        Ok(vec![BoxMap::new(vec![C2PA_BOXHASH.to_string()], 0, 0)])
+        Ok(vec![BoxMap::new(vec![C2PA_BOXHASH.to_string()], 0, 0)
+            .with_allowed_exclusions(vec![
+                AllowedExclusion::whole_box(0),
+            ])])
     }
 }
 

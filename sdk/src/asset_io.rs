@@ -449,6 +449,12 @@ pub struct BoxMap {
     pub range_start: u64,
     /// Length in bytes of the region.
     pub range_len: u64,
+    /// Byte ranges within this box that are safe to exclude from its hash —
+    /// e.g. asset metadata, or the C2PA store/padding itself. Always derived
+    /// here from the *live* asset, never trusted from an assertion, so a
+    /// `c2pa.hash.boxes` assertion's own exclusions can be checked against it
+    /// during verification.
+    pub allowed_exclusions: Vec<AllowedExclusion>,
 }
 
 impl BoxMap {
@@ -459,6 +465,7 @@ impl BoxMap {
             excluded: None,
             range_start,
             range_len,
+            allowed_exclusions: vec![],
         }
     }
 
@@ -466,6 +473,75 @@ impl BoxMap {
     pub fn excluded(mut self) -> Self {
         self.excluded = Some(true);
         self
+    }
+
+    /// Attaches the ranges a handler considers safe to exclude from this box's hash.
+    pub fn with_allowed_exclusions(mut self, allowed_exclusions: Vec<AllowedExclusion>) -> Self {
+        self.allowed_exclusions = allowed_exclusions;
+        self
+    }
+}
+
+/// What a permitted exclusion range represents, per spec §15.12.3.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExclusionKind {
+    /// The C2PA Manifest Store itself, or padding.
+    ManifestOrPadding,
+    /// Asset metadata (EXIF/XMP/IPTC-equivalent) per spec §9.2.6.
+    AssetMetadata,
+}
+
+/// A box-relative byte range a format handler has determined is safe to
+/// exclude from a [`BoxMap`]'s hash.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AllowedExclusion {
+    pub start: u64,
+    pub length: u64,
+    pub kind: ExclusionKind,
+}
+
+impl AllowedExclusion {
+    /// The box's entire content is excludable - e.g. the C2PA store itself,
+    /// or a format's dedicated padding box.
+    pub fn whole_box(len: u64) -> Self {
+        AllowedExclusion {
+            start: 0,
+            length: len,
+            kind: ExclusionKind::ManifestOrPadding,
+        }
+    }
+
+    /// Everything past a fixed-size structural header is excludable asset
+    /// metadata (EXIF/XMP/IPTC-equivalent per spec §9.2.6). `total_len` is
+    /// the box's own full length, and `header_len` the number of leading
+    /// bytes (marker/length/type/CRC-adjacent fields, as applicable per
+    /// format) that must stay hashed.
+    pub fn after_header(header_len: u64, total_len: u64) -> Self {
+        AllowedExclusion {
+            start: header_len,
+            length: total_len.saturating_sub(header_len),
+            kind: ExclusionKind::AssetMetadata,
+        }
+    }
+
+    /// Whether `[range_start, range_end)` is fully contained within this
+    /// permitted range.
+    pub(crate) fn contains(&self, range_start: u64, range_end: u64) -> bool {
+        self.end()
+            .is_some_and(|end| range_start >= self.start && range_end <= end)
+    }
+
+    /// Whether this permitted range itself stays within its box's real
+    /// length - a defense against a buggy or malicious `AssetBoxHash`
+    /// implementor reporting a range that reaches past the box it's
+    /// attached to. `AllowedExclusion` is otherwise trusted as already
+    /// self-bounded, so this is checked independently rather than assumed.
+    pub(crate) fn is_bounded_by(&self, box_len: u64) -> bool {
+        self.end().is_some_and(|end| end <= box_len)
+    }
+
+    fn end(&self) -> Option<u64> {
+        self.start.checked_add(self.length)
     }
 }
 

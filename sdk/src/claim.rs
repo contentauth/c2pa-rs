@@ -37,7 +37,7 @@ use crate::{
             DATABOX_STORE, METADATA_LABEL_REGEX,
         },
         Action, Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, DataBox, DataHash,
-        Ingredient, Metadata, Relationship, V2_DEPRECATED_ACTIONS,
+        DataMap, Ingredient, Metadata, Relationship, V2_DEPRECATED_ACTIONS,
     },
     cbor_types::map_cbor_to_type,
     context::{Context, ProgressPhase},
@@ -250,6 +250,7 @@ const ALG_SOFT_F: &str = "alg_soft";
 const METADATA_F: &str = "metadata";
 const CREATED_ASSERTIONS_F: &str = "created_assertions";
 const GATHERED_ASSERTIONS_F: &str = "gathered_assertions";
+const SPEC_VERSION_F: &str = "specVersion";
 
 /// A `Claim` gathers together all the `Assertion`s about an asset
 /// from an actor at a given time, and may also include one or more
@@ -335,6 +336,8 @@ pub struct Claim {
     data_boxes: Vec<(HashedUri, DataBox)>, /* list of the data boxes and their hashed URIs found for this manifest */
 
     claim_version: usize,
+
+    spec_version: Option<String>, // The version of the specification against which the validation was performed (SemVer formatted string)
 
     // Optional context for settings access (set when created from Builder)
     context: Option<Arc<Context>>,
@@ -464,6 +467,7 @@ impl Claim {
             created_assertions: Vec::new(),
             gathered_assertions: None,
             context: None,
+            spec_version: None,
         }
     }
 
@@ -565,6 +569,7 @@ impl Claim {
             created_assertions: Vec::new(),
             gathered_assertions: None,
             context: None,
+            spec_version: None,
         })
     }
 
@@ -700,6 +705,7 @@ impl Claim {
                 created_assertions: Vec::new(),
                 gathered_assertions: None,
                 context: None,
+                spec_version: None,
             })
         } else {
             /* Claim V2 fields
@@ -713,37 +719,9 @@ impl Claim {
             ? "alg": tstr .size (1..max-tstr-length),
             ? "alg_soft": tstr .size (1..max-tstr-length),
             ? "metadata": $assertion-metadata-map,
+            ? "spec_version": semver-string,
+            ? any unknown fields
             */
-
-            static V2_FIELDS: [&str; 10] = [
-                INSTANCE_ID_F,
-                CLAIM_GENERATOR_INFO_F,
-                SIGNATURE_F,
-                CREATED_ASSERTIONS_F,
-                GATHERED_ASSERTIONS_F,
-                DC_TITLE_F,
-                REDACTED_ASSERTIONS_F,
-                ALG_F,
-                ALG_SOFT_F,
-                METADATA_F,
-            ];
-
-            // make sure only V2 fields are present
-            if let c2pa_cbor::Value::Map(m) = &claim_value {
-                for v in m.keys() {
-                    if let c2pa_cbor::Value::Text(t) = v {
-                        if !V2_FIELDS.contains(&t.as_str()) {
-                            return Err(Error::ClaimDecoding(format!(
-                                "unknown V2 claim field: {t}",
-                            )));
-                        }
-                    } else {
-                        return Err(Error::ClaimDecoding("non-text key in V2 claim".to_string()));
-                    }
-                }
-            } else {
-                return Err(Error::ClaimDecoding("claim is not an object".to_string()));
-            }
 
             let instance_id = map_cbor_to_type(INSTANCE_ID_F, &claim_value).ok_or(
                 Error::ClaimDecoding("instanceID is missing or invalid".to_string()),
@@ -770,6 +748,7 @@ impl Claim {
             let alg_soft: Option<String> = map_cbor_to_type(ALG_SOFT_F, &claim_value);
             let metadata: Option<Vec<AssertionMetadata>> =
                 map_cbor_to_type(METADATA_F, &claim_value);
+            let spec_version: Option<String> = map_cbor_to_type(SPEC_VERSION_F, &claim_value);
 
             // create merged list of created and gathered assertions for processing compatibility
             // created are added first with highest priority than gathered
@@ -809,6 +788,7 @@ impl Claim {
                 claim_version,
                 created_assertions,
                 gathered_assertions,
+                spec_version,
                 context: None,
             })
         }
@@ -901,6 +881,7 @@ impl Claim {
         ? "redacted_assertions": [1* jumbf-uri-type],
         ? "alg": tstr .size (1..max-tstr-length),
         ? "alg_soft": tstr .size (1..max-tstr-length),
+        ? "spec_version": semver-string,
         ? "metadata": $assertion-metadata-map,
         */
 
@@ -922,6 +903,9 @@ impl Claim {
             claim_map_len += 1
         }
         if self.metadata.is_some() {
+            claim_map_len += 1
+        }
+        if self.spec_version.is_some() {
             claim_map_len += 1
         }
 
@@ -963,6 +947,9 @@ impl Claim {
         }
         if let Some(md) = self.metadata() {
             claim_map.serialize_field(METADATA_F, md)?;
+        }
+        if let Some(spec_version) = self.spec_version() {
+            claim_map.serialize_field(SPEC_VERSION_F, spec_version)?;
         }
 
         claim_map.end()
@@ -1260,6 +1247,14 @@ impl Claim {
 
     pub fn metadata(&self) -> Option<&[AssertionMetadata]> {
         self.metadata.as_deref()
+    }
+
+    pub fn spec_version(&self) -> Option<&String> {
+        self.spec_version.as_ref()
+    }
+
+    pub fn set_spec_version(&mut self, spec_version: Option<String>) {
+        self.spec_version = spec_version;
     }
 
     pub fn add_claim_generator_hint(&mut self, hint_key: &str, hint_value: Value) {
@@ -2632,6 +2627,82 @@ impl Claim {
                     }
                 }
 
+                // 2.f if the action’s parameters field exists and contains a relatedAssertions field
+                if let Some(related_assertions) = action.related_assertions() {
+                    // 2.f.i if the value of relatedAssertions is not an array with at least one element,
+                    //       the claim shall be rejected with a failure code of assertion.action.malformed
+                    if related_assertions.is_empty() {
+                        log_item!(
+                            label.clone(),
+                            "relatedAssertions must contain at least one entry",
+                            "verify_actions"
+                        )
+                        .validation_status(validation_status::ASSERTION_ACTION_MALFORMED)
+                        .failure_no_throw(
+                            validation_log,
+                            Error::ValidationRule(
+                                "relatedAssertions must contain at least one entry".into(),
+                            ),
+                        );
+                    }
+
+                    for related in related_assertions {
+                        let url = related.url();
+
+                        // 2.f.ii.B resolve the hashed URI to locate the referenced assertion
+                        let (target_label, instance) = Claim::assertion_label_from_link(&url);
+
+                        // 2.f.ii.C if the referenced assertion cannot be resolved, or does not
+                        //          resolve to an assertion within the current manifest, the claim
+                        //          shall be rejected with a failure code of assertion.action.malformed
+                        let in_current_manifest = if related.is_relative_url() {
+                            true
+                        } else {
+                            manifest_label_from_uri(&url).as_deref() == Some(claim.label())
+                        };
+                        let assertion = if in_current_manifest {
+                            claim.get_claim_assertion(&target_label, instance)
+                        } else {
+                            None
+                        };
+
+                        if assertion.is_none() {
+                            log_item!(
+                                url.clone(),
+                                format!("relatedAssertions reference could not be resolved within the current manifest: {url}"),
+                                "verify_actions"
+                            )
+                            .validation_status(validation_status::ASSERTION_ACTION_MALFORMED)
+                            .failure_no_throw(
+                                validation_log,
+                                Error::ValidationRule(
+                                format!("relatedAssertions reference could not be resolved within the current manifest: {url}"),
+                                ),
+                            );
+                        }
+
+                        // 2.f.ii.D If the referenced assertion is of of type c2pa.ingredients,
+                        //          c2pa.ingredients.v2, c2pa.ingredients.v3, c2pa.actions, or
+                        //          c2pa.actions.v2, the claim shall be rejected with a failure
+                        //          code of assertion.action.malformed.
+                        let base = labels::base(&target_label);
+                        if base == labels::ACTIONS || base == labels::INGREDIENT {
+                            log_item!(
+                                url.clone(),
+                                format!("relatedAssertions must not reference an actions or ingredient assertion: {url}"),
+                                "verify_actions"
+                            )
+                            .validation_status(validation_status::ASSERTION_ACTION_MALFORMED)
+                            .failure_no_throw(
+                                validation_log,
+                                Error::ValidationRule(
+                                format!("relatedAssertions must not reference an actions or ingredient assertion: {url}"),
+                                ),
+                            );
+                        }
+                    }
+                }
+
                 // 2.h check softwareAgent icons
                 let mut icons = Vec::new();
                 if let Some(assertions::SoftwareAgent::ClaimGeneratorInfo(cgi)) =
@@ -2684,6 +2755,20 @@ impl Claim {
             }
         }
         Ok(())
+    }
+
+    /// Classifies a hash-verification failure into its format's `malformed`
+    /// or `mismatch` validation-status constant, based on whether `e` carries
+    /// that format's own `malformed` code.
+    fn classify_hash_verification_error(
+        e: &Error,
+        malformed: &'static str,
+        mismatch: &'static str,
+    ) -> &'static str {
+        match e {
+            Error::C2PAValidation(es) if es == malformed => malformed,
+            _ => mismatch,
+        }
     }
 
     pub(crate) fn verify_hash_binding(
@@ -2857,10 +2942,42 @@ impl Claim {
                     .label_raw()
                     .starts_with(BmffHash::LABEL)
                 {
+                    let cp2a_id: [u8; 16] = [
+                        216, 254, 195, 214, 27, 14, 72, 60, 146, 151, 88, 40, 135, 126, 196, 129,
+                    ];
+                    let c2pa_dm = DataMap {
+                        offset: 8,
+                        value: cp2a_id.to_vec(), // C2PA identifier
+                    };
+
                     // handle BMFF data hashes
                     let dh = BmffHash::from_assertion(hash_binding_assertion.assertion())?;
 
                     let name = dh.name().map_or("unnamed".to_string(), default_str);
+
+                    // are there addtional exclusions that are not manifests or ftyp
+                    if dh.exclusions().iter().any(|e| {
+                        if e.xpath == "/uuid" {
+                            match &e.data {
+                                Some(dm_vec) if dm_vec.len() == 1 => !(dm_vec[0] == c2pa_dm),
+                                _ => true,
+                            }
+                        } else if e.xpath == "/ftyp" || e.xpath == "/mfra" {
+                            false
+                        } else {
+                            true // not ftyp, mfra or uuid
+                        }
+                    }) {
+                        log_item!(
+                            claim.assertion_uri(&hash_binding_assertion.label()),
+                            "extra BMFF hash exclusion(s) found",
+                            "verify_internal"
+                        )
+                        .validation_status(
+                            validation_status::ASSERTION_BMFFHASH_ADDITIONAL_EXCLUSIONS,
+                        )
+                        .informational(validation_log);
+                    }
 
                     let mut step = 0u32;
                     let mut cb = |_s: u32, t: u32| {
@@ -2914,26 +3031,21 @@ impl Claim {
                             continue;
                         }
                         Err(e) => {
-                            let err_str = match e {
-                                Error::C2PAValidation(es) => {
-                                    if es == validation_status::ASSERTION_BMFFHASH_MALFORMED {
-                                        validation_status::ASSERTION_BMFFHASH_MALFORMED
-                                    } else {
-                                        validation_status::ASSERTION_BMFFHASH_MISMATCH
-                                    }
-                                }
-                                _ => validation_status::ASSERTION_BMFFHASH_MISMATCH,
-                            };
+                            let err_str = Self::classify_hash_verification_error(
+                                &e,
+                                validation_status::ASSERTION_BMFFHASH_MALFORMED,
+                                validation_status::ASSERTION_BMFFHASH_MISMATCH,
+                            );
 
                             log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
-                                format!("asset hash error, name: {name}, error: {}", err_str),
+                                format!("asset hash error, name: {name}, error: {e}"),
                                 "verify_internal"
                             )
                             .validation_status(err_str)
                             .failure(
                                 validation_log,
-                                Error::HashMismatch(format!("Asset hash failure: {err_str}")),
+                                Error::HashMismatch(format!("Asset hash failure: {e}")),
                             )?;
                         }
                     }
@@ -3005,7 +3117,19 @@ impl Claim {
                     };
 
                     match hash_result {
-                        Ok(_a) => {
+                        Ok(metadata_exclusion_used) => {
+                            if metadata_exclusion_used {
+                                log_item!(
+                                    claim.assertion_uri(&hash_binding_assertion.label()),
+                                    "additional box hash exclusions found",
+                                    "verify_internal"
+                                )
+                                .validation_status(
+                                    validation_status::ASSERTION_BOXHASH_ADDITIONAL_EXCLUSIONS,
+                                )
+                                .informational(validation_log);
+                            }
+
                             log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
                                 "boxes hash valid",
@@ -3017,12 +3141,18 @@ impl Claim {
                             continue;
                         }
                         Err(e) => {
+                            let err_str = Self::classify_hash_verification_error(
+                                &e,
+                                validation_status::ASSERTION_BOXESHASH_MALFORMED,
+                                validation_status::ASSERTION_BOXHASH_MISMATCH,
+                            );
+
                             log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
                                 format!("asset hash error: {e}"),
                                 "verify_internal"
                             )
-                            .validation_status(validation_status::ASSERTION_BOXHASH_MISMATCH)
+                            .validation_status(err_str)
                             .failure(
                                 validation_log,
                                 Error::HashMismatch(format!("Asset hash failure: {e}")),
@@ -3142,7 +3272,7 @@ impl Claim {
                         "redaction of disallowed hash assertion",
                         "verify_internal"
                     )
-                    .validation_status(validation_status::ASSERTION_DATAHASH_REDACTED)
+                    .validation_status(validation_status::ASSERTION_HARDBINDING_REDACTED)
                     .failure(validation_log, Error::ClaimDisallowedRedaction)?;
                 }
             }
@@ -3154,7 +3284,11 @@ impl Claim {
             .iter()
             .filter(|a| {
                 if let Ok(ingredient) = Ingredient::from_assertion(a.assertion()) {
-                    return ingredient.relationship == Relationship::ParentOf;
+                    let version = ingredient.version().unwrap_or(1);
+                    let has_valid_parent = version <= 2 && ingredient.c2pa_manifest().is_some()
+                        || ingredient.c2pa_manifest().is_some() && ingredient.signature().is_some();
+
+                    return has_valid_parent && ingredient.relationship == Relationship::ParentOf;
                 }
                 false
             })
@@ -4400,7 +4534,7 @@ pub mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::{resource_store::UriOrResource, utils::test::create_test_claim};
+    use crate::{resource_store::UriOrResource, utils::test::create_test_claim, DigitalSourceType};
 
     #[test]
     fn test_build_claim() {
@@ -5378,6 +5512,98 @@ pub mod tests {
         assert!(
             !log.has_status(validation_status::ASSERTION_ACTION_MALFORMED),
             "c2pa.translated with both languages should not be malformed"
+        );
+    }
+
+    fn verify_related_assertions(claim: &mut Claim, related: Vec<HashedUri>) -> StatusTracker {
+        let edited = Action::new(c2pa_action::EDITED)
+            .set_parameter("relatedAssertions", related)
+            .unwrap();
+        let actions = Actions::new()
+            .add_action(
+                Action::new(c2pa_action::CREATED)
+                    .set_source_type(DigitalSourceType::AlgorithmicMedia),
+            )
+            .add_action(edited);
+        claim.add_assertion(&actions).unwrap();
+
+        let svi = StoreValidationInfo::default();
+        let settings = Settings::default();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+        Claim::verify_actions(claim, &svi, &mut validation_log, &settings).unwrap();
+
+        validation_log
+    }
+
+    #[test]
+    fn test_verify_related_assertions_empty_rejected() {
+        let mut claim = Claim::new("test", Some("test"), 2);
+        let log = verify_related_assertions(&mut claim, vec![]);
+        assert!(
+            log.has_status(validation_status::ASSERTION_ACTION_MALFORMED),
+            "empty relatedAssertions should be malformed"
+        );
+    }
+
+    #[test]
+    fn test_verify_related_assertions_unresolvable_rejected() {
+        let mut claim = Claim::new("test", Some("test"), 2);
+        let uri = HashedUri::new(
+            to_assertion_uri(claim.label(), "com.example.missing"),
+            Some("sha256".to_string()),
+            b"hash",
+        );
+        let log = verify_related_assertions(&mut claim, vec![uri]);
+        assert!(
+            log.has_status(validation_status::ASSERTION_ACTION_MALFORMED),
+            "unresolvable relatedAssertions reference should be malformed"
+        );
+    }
+
+    #[test]
+    fn test_verify_related_assertions_references_actions_rejected() {
+        let mut claim = Claim::new("test", Some("test"), 2);
+        let uri = HashedUri::new(
+            to_assertion_uri(claim.label(), Actions::LABEL_VERSIONED),
+            Some("sha256".to_string()),
+            b"hash",
+        );
+        let log = verify_related_assertions(&mut claim, vec![uri]);
+        assert!(
+            log.has_status(validation_status::ASSERTION_ACTION_MALFORMED),
+            "relatedAssertions referencing an actions assertion should be malformed"
+        );
+    }
+
+    #[test]
+    fn test_verify_related_assertions_references_ingredient_rejected() {
+        let mut claim = Claim::new("test", Some("test"), 2);
+        let ingredient_uri = claim
+            .add_assertion(&Ingredient::new_v3(Relationship::ComponentOf))
+            .unwrap();
+        let log = verify_related_assertions(&mut claim, vec![ingredient_uri]);
+        assert!(
+            log.has_status(validation_status::ASSERTION_ACTION_MALFORMED),
+            "relatedAssertions referencing an ingredient assertion should be malformed"
+        );
+    }
+
+    #[test]
+    fn test_verify_related_assertions_valid() {
+        use crate::assertions::UserCbor;
+
+        let mut claim = Claim::new("test", Some("test"), 2);
+        let uri = claim
+            .add_assertion(&UserCbor::new(
+                "com.example.related",
+                c2pa_cbor::to_vec(&"related payload").unwrap(),
+            ))
+            .unwrap();
+        let log = verify_related_assertions(&mut claim, vec![uri]);
+        assert!(
+            !log.has_status(validation_status::ASSERTION_ACTION_MALFORMED),
+            "relatedAssertions referencing an allowed assertion should not be malformed"
         );
     }
 

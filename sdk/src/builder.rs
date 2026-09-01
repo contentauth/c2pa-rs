@@ -192,7 +192,7 @@ pub struct ManifestDefinition {
 }
 
 fn default_instance_id() -> String {
-    format!("xmp:iid:{}", Uuid::new_v4())
+    format!("xmp.iid:{}", Uuid::new_v4())
 }
 
 fn default_format() -> String {
@@ -2440,7 +2440,7 @@ impl Builder {
             self.add_assertion(labels::DATA_HASH, &ph)?;
         }
         self.definition.format = format.to_string();
-        self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
+        self.definition.instance_id = format!("xmp.iid:{}", Uuid::new_v4());
         let mut store = self.to_store()?;
         let placeholder =
             store.get_data_hashed_manifest_placeholder(reserve_size, format, self.context())?;
@@ -3205,7 +3205,7 @@ impl Builder {
         signer: &dyn Signer,
         format: &str,
     ) -> Result<Vec<u8>> {
-        self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
+        self.definition.instance_id = format!("xmp.iid:{}", Uuid::new_v4());
 
         let mut store = self.to_store()?;
         let bytes = if _sync {
@@ -3390,7 +3390,7 @@ impl Builder {
             .io()
             .format_from_path(path)
             .ok_or(crate::Error::UnsupportedType)?;
-        self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
+        self.definition.instance_id = format!("xmp.iid:{}", Uuid::new_v4());
         if self.definition.title.is_none() {
             if let Some(title) = path.file_name() {
                 self.definition.title = Some(title.to_string_lossy().to_string());
