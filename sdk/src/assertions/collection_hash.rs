@@ -308,15 +308,7 @@ impl AssertionBase for CollectionHash {
         Self::from_cbor_assertion(assertion)
     }
 
-    // we don't need to check if the zip_central_directory_hash exists, because if it is a zip
-    // and one of the uri maps hashes don't exist, then that means the central dir hash doesn't exist
     fn to_assertion(&self) -> Result<Assertion> {
-        if self.uris.iter().any(|(_, uri_map)| uri_map.hash.is_none()) {
-            return Err(Error::BadParam(
-                "no hash found, ensure gen_hash is called".to_string(),
-            ));
-        }
-
         Self::to_cbor_assertion(self)
     }
 }
