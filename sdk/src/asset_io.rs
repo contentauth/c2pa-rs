@@ -492,7 +492,7 @@ pub enum ExclusionKind {
 }
 
 /// A box-relative byte range a format handler has determined is safe to
-/// exclude from a [`BoxMap`]'s hash.
+/// exclude from a `BoxMap`'s hash.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AllowedExclusion {
     pub start: u64,
