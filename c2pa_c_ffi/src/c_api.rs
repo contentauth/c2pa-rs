@@ -509,19 +509,22 @@ const ERROR_FALLBACK_LEN: usize = 256;
 
 /// Storage for `c2pa_error`'s fallback message.
 ///
-/// `#[repr(align(2))]` is load-bearing, not decoration. Handle ids are always
-/// odd and `track_by_address` refuses odd addresses so the two keyspaces cannot
-/// collide; this buffer's address is handed to C, so it has to stay even. A
-/// bare `[u8; N]` has alignment 1 and guarantees nothing -- the evenness would
-/// then come from whatever the enclosing `UnsafeCell` happens to lay out
-/// around it, which `repr(Rust)` leaves unspecified.
-#[repr(align(2))]
+/// `#[repr(C, align(2))]` is load-bearing, not decoration. Handle ids are
+/// always odd and `track_by_address` refuses odd addresses so the two keyspaces
+/// cannot collide; what reaches C here is the *field's* address, so that has to
+/// stay even. Both halves of the attribute are needed for it:
+///
+/// - `align(2)` makes the struct's address even. A bare `[u8; N]` has alignment
+///   1, which would leave the evenness to whatever the enclosing `UnsafeCell`
+///   happens to lay out around it.
+/// - `repr(C)` fixes the field at offset 0. Alignment alone says nothing about
+///   field placement, and `repr(Rust)` leaves offsets unspecified -- rustc does
+///   move fields when it is free to, which `-Zrandomize-layout` demonstrates.
+///
+/// Even struct address plus offset 0 means the field's address is even by
+/// construction rather than by the compiler's current choice.
+#[repr(C, align(2))]
 struct ErrorFallback([u8; ERROR_FALLBACK_LEN]);
-
-// The writes below index up to ERROR_FALLBACK_LEN - 1 from the field's address,
-// so the type must not be smaller than the array it wraps. Alignment padding
-// could only grow it, but pin it rather than assume it.
-const _: () = assert!(size_of::<ErrorFallback>() >= ERROR_FALLBACK_LEN);
 
 // Fallback storage for `c2pa_error` when the message cannot be tracked.
 // Thread-local, so the returned pointer stays valid until this thread's next
@@ -568,11 +571,13 @@ fn error_message_fallback(message: &str) -> *mut c_char {
         // valid, which costs nothing here.
         //
         // SAFETY: addr_of_mut! computes the array's address without forming a
-        // reference, so this holds whatever offset the layout gives the field --
-        // `#[repr(align(2))]` constrains alignment, not field placement, and the
-        // struct is otherwise `repr(Rust)`. Every write below is at an index
-        // <= end <= ERROR_FALLBACK_LEN - 1, so all are in bounds, and the
-        // thread_local data outlives this call.
+        // reference, which is what keeps successive calls from popping each
+        // other's tags. `ErrorFallback` is `#[repr(C, align(2))]`, so that
+        // address is the struct's -- offset 0 -- and even, which is what keeps
+        // it out of the odd handle-id keyspace. Every write below is at an
+        // index <= end <= ERROR_FALLBACK_LEN - 1, so all are in bounds of the
+        // field's own `[u8; ERROR_FALLBACK_LEN]`, and the thread_local data
+        // outlives this call.
         let base = unsafe { std::ptr::addr_of_mut!((*slot.get()).0) } as *mut u8;
         for (i, byte) in message.as_bytes()[..end].iter().enumerate() {
             unsafe { base.add(i).write(if *byte == 0 { b'?' } else { *byte }) };
