@@ -6,7 +6,10 @@ use std::{
 };
 
 use tempfile::Builder;
-use zip::{result::ZipResult, write::SimpleFileOptions, CompressionMethod, ZipArchive, ZipWriter};
+use zip::{
+    result::ZipResult, write::SimpleFileOptions, CompressionMethod, HasZipMetadata, ZipArchive,
+    ZipWriter,
+};
 
 use crate::{
     asset_io::{
@@ -17,10 +20,12 @@ use crate::{
     Error, HashRange,
 };
 
-pub(crate) const MANIFEST_PATH: &str = "META-INF/content_credential.c2pa";
+const MANIFEST_PATH: &str = "META-INF/content_credential.c2pa";
 
-pub(crate) const CENTRAL_DIRECTORY_CRC_OFFSET: u64 = 16;
-pub(crate) const CRC_LEN: u64 = 4;
+const CENTRAL_DIRECTORY_CRC_OFFSET: u64 = 16;
+const CRC_LEN: u64 = 4;
+
+const DATA_DESCRIPTOR_SIGNATURE: [u8; 4] = [0x50, 0x4b, 0x07, 0x08];
 
 pub struct ZipIO {}
 
@@ -271,36 +276,84 @@ where
     Ok(range)
 }
 
-/// Computes the byte ranges for each file entry in a ZIP stream, from local header entry to end of data.
+/// Location of a single ZIP entry gathered from the central directory.
+struct ZipUriEntry {
+    path: PathBuf,
+    header_start: u64,
+    data_end: u64,
+    using_data_descriptor: bool,
+    large_file: bool,
+}
+
+/// Collects the location of each file entry in a ZIP stream from the central directory.
+fn zip_uri_entries<R>(stream: &mut R) -> Result<Vec<ZipUriEntry>>
+where
+    R: Read + Seek + ?Sized,
+{
+    let mut reader = ZipArchive::new(&mut *stream).map_err(ZipError::Read)?;
+    let file_names: Vec<String> = reader.file_names().map(|name| name.to_owned()).collect();
+
+    let mut entries = Vec::new();
+    for file_name in file_names {
+        let file = reader.by_name(&file_name).map_err(ZipError::Read)?;
+
+        if file.is_dir() {
+            continue;
+        }
+
+        let path = match file.enclosed_name() {
+            Some(path) => path,
+            None => return Err(ZipError::InvalidPath(file_name).into()),
+        };
+
+        let header_start = file.header_start();
+        let data_start = file
+            .data_start()
+            .ok_or_else(|| ZipError::MissingDataStart(file_name.clone()))?;
+        let metadata = file.get_metadata();
+        entries.push(ZipUriEntry {
+            path,
+            header_start,
+            data_end: data_start + file.compressed_size(),
+            using_data_descriptor: metadata.using_data_descriptor,
+            large_file: metadata.large_file,
+        });
+    }
+
+    Ok(entries)
+}
+
+/// Computes the byte ranges for each file entry in a ZIP stream.
 pub(crate) fn zip_uri_ranges<R>(stream: &mut R) -> Result<HashMap<PathBuf, HashRange>>
 where
     R: Read + Seek + ?Sized,
 {
-    let mut reader = ZipArchive::new(stream).map_err(ZipError::Read)?;
-
     let mut ranges = HashMap::new();
-    let file_names: Vec<String> = reader.file_names().map(|n| n.to_owned()).collect();
-    for file_name in file_names {
-        let file = reader.by_name(&file_name).map_err(ZipError::Read)?;
-
-        if !file.is_dir() {
-            match file.enclosed_name() {
-                Some(path) => {
-                    if path != Path::new(MANIFEST_PATH) {
-                        let header_start = file.header_start();
-                        let data_start = file.data_start().ok_or(Error::JumbfNotFound)?;
-                        let len = (data_start + file.compressed_size()) - header_start;
-                        ranges.insert(path, HashRange::new(header_start, len));
-                    }
-                }
-                None => {
-                    return Err(Error::BadParam(format!(
-                        "Invalid stored path `{}` in zip file",
-                        file_name
-                    )))
-                }
-            }
+    for entry in zip_uri_entries(stream)? {
+        if entry.path == Path::new(MANIFEST_PATH) {
+            continue;
         }
+
+        // https://en.wikipedia.org/wiki/ZIP_(file_format)#Data_descriptor
+        let mut end = entry.data_end;
+        if entry.using_data_descriptor {
+            stream.seek(SeekFrom::Start(entry.data_end))?;
+            let mut signature = [0; DATA_DESCRIPTOR_SIGNATURE.len()];
+            stream.read_exact(&mut signature)?;
+
+            let signature_len: u64 = if signature == DATA_DESCRIPTOR_SIGNATURE {
+                DATA_DESCRIPTOR_SIGNATURE.len() as u64
+            } else {
+                0
+            };
+            let size_field_len: u64 = if entry.large_file { 8 } else { 4 };
+
+            end += signature_len + CRC_LEN + (2 * size_field_len);
+        }
+        ranges.insert(
+            entry.path,
+            HashRange::new(entry.header_start, end - entry.header_start),
+        );
     }
 
     Ok(ranges)
@@ -324,10 +377,21 @@ pub enum ZipError {
     /// Data hashing (object locations) is not supported for ZIP.
     #[error("data hashing is not supported for ZIP, use a collection hash instead")]
     ObjectLocationsUnsupported,
+
+    /// A ZIP entry has an invalid or unrepresentable stored path.
+    #[error("invalid stored path `{0}` in the ZIP")]
+    InvalidPath(String),
+
+    /// The data start offset for a ZIP entry could not be located.
+    #[error("could not locate the data start for `{0}` in the ZIP")]
+    MissingDataStart(String),
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+    use std::io::Write;
+
     use io::{Cursor, Seek};
 
     use super::*;
@@ -339,7 +403,7 @@ mod tests {
     ];
 
     #[test]
-    fn test_write_bytes() -> Result<()> {
+    fn test_write_bytes() {
         for sample in SAMPLES {
             let mut stream = Cursor::new(sample);
 
@@ -352,17 +416,17 @@ mod tests {
 
             let mut output_stream = Cursor::new(Vec::with_capacity(sample.len() + 7));
             let random_bytes = [1, 2, 3, 4, 3, 2, 1];
-            zip_io.write_cai(&mut stream, &mut output_stream, &random_bytes)?;
+            zip_io
+                .write_cai(&mut stream, &mut output_stream, &random_bytes)
+                .unwrap();
 
-            let data_written = zip_io.read_cai(&mut output_stream)?;
+            let data_written = zip_io.read_cai(&mut output_stream).unwrap();
             assert_eq!(data_written, random_bytes);
         }
-
-        Ok(())
     }
 
     #[test]
-    fn test_write_bytes_replace() -> Result<()> {
+    fn test_write_bytes_replace() {
         for sample in SAMPLES {
             let mut stream = Cursor::new(sample);
 
@@ -375,47 +439,51 @@ mod tests {
 
             let mut output_stream1 = Cursor::new(Vec::with_capacity(sample.len() + 7));
             let random_bytes = [1, 2, 3, 4, 3, 2, 1];
-            zip_io.write_cai(&mut stream, &mut output_stream1, &random_bytes)?;
+            zip_io
+                .write_cai(&mut stream, &mut output_stream1, &random_bytes)
+                .unwrap();
 
-            let data_written = zip_io.read_cai(&mut output_stream1)?;
+            let data_written = zip_io.read_cai(&mut output_stream1).unwrap();
             assert_eq!(data_written, random_bytes);
 
             let mut output_stream2 = Cursor::new(Vec::with_capacity(sample.len() + 5));
             let random_bytes = [3, 2, 1, 2, 3];
-            zip_io.write_cai(&mut output_stream1, &mut output_stream2, &random_bytes)?;
+            zip_io
+                .write_cai(&mut output_stream1, &mut output_stream2, &random_bytes)
+                .unwrap();
 
-            let data_written = zip_io.read_cai(&mut output_stream2)?;
+            let data_written = zip_io.read_cai(&mut output_stream2).unwrap();
             assert_eq!(data_written, random_bytes);
 
             let mut bytes = Vec::new();
-            stream.rewind()?;
-            stream.read_to_end(&mut bytes)?;
+            stream.rewind().unwrap();
+            stream.read_to_end(&mut bytes).unwrap();
             assert_eq!(sample, bytes);
         }
-
-        Ok(())
     }
 
     #[test]
-    fn test_remove_cai_store() -> Result<()> {
+    fn test_remove_cai_store() {
         for sample in SAMPLES {
             let zip_io = ZipIO {};
 
             let mut input = Cursor::new(sample);
             let mut with_manifest = Cursor::new(Vec::new());
-            zip_io.write_cai(&mut input, &mut with_manifest, &[1, 2, 3])?;
-            assert_eq!(zip_io.read_cai(&mut with_manifest)?, [1, 2, 3]);
+            zip_io
+                .write_cai(&mut input, &mut with_manifest, &[1, 2, 3])
+                .unwrap();
+            assert_eq!(zip_io.read_cai(&mut with_manifest).unwrap(), [1, 2, 3]);
 
             let mut removed = Cursor::new(Vec::new());
-            zip_io.remove_cai_store_from_stream(&mut with_manifest, &mut removed)?;
+            zip_io
+                .remove_cai_store_from_stream(&mut with_manifest, &mut removed)
+                .unwrap();
 
             assert!(matches!(
                 zip_io.read_cai(&mut removed),
                 Err(Error::JumbfNotFound)
             ));
         }
-
-        Ok(())
     }
 
     #[test]
@@ -441,20 +509,18 @@ mod tests {
     }
 
     #[test]
-    fn test_zip_central_directory_range_no_manifest() -> Result<()> {
+    fn test_zip_central_directory_range_no_manifest() {
         let mut stream = Cursor::new(SAMPLES[0]);
         assert_eq!(
-            zip_central_directory_range(&mut stream)?,
+            zip_central_directory_range(&mut stream).unwrap(),
             vec![HashRange::new(369, 727)]
         );
-
-        Ok(())
     }
 
     #[test]
-    fn test_zip_uri_ranges() -> Result<()> {
+    fn test_zip_uri_ranges() {
         let mut stream = Cursor::new(SAMPLES[0]);
-        let ranges = zip_uri_ranges(&mut stream)?;
+        let ranges = zip_uri_ranges(&mut stream).unwrap();
 
         assert_eq!(ranges.len(), 5);
         assert_eq!(
@@ -465,23 +531,54 @@ mod tests {
             ranges.get(Path::new("sample1/test2.txt")),
             Some(&HashRange::new(313, 56))
         );
-
-        Ok(())
     }
 
     #[test]
-    fn test_central_directory_range_skips_manifest_crc() -> Result<()> {
+    fn test_zip_uri_ranges_data_descriptor_length() {
+        let mut writer = ZipWriter::new_stream(Vec::new());
+        writer
+            .start_file("only.txt", SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(b"hello").unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+
+        let mut stream = Cursor::new(bytes);
+
+        let (header_start, data_end) = {
+            let mut archive = ZipArchive::new(&mut stream).unwrap();
+            let file = archive.by_name("only.txt").unwrap();
+            (
+                file.header_start(),
+                file.data_start().unwrap() + file.compressed_size(),
+            )
+        };
+
+        let data_descriptor_len = 16;
+
+        let ranges = zip_uri_ranges(&mut stream).unwrap();
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(
+            ranges.get(Path::new("only.txt")),
+            Some(&HashRange::new(
+                header_start,
+                (data_end + data_descriptor_len) - header_start
+            ))
+        );
+    }
+
+    #[test]
+    fn test_central_directory_range_skips_manifest_crc() {
         let zip_io = ZipIO {};
         let mut input = Cursor::new(SAMPLES[0]);
         let mut with_manifest = Cursor::new(Vec::new());
-        zip_io.write_cai(&mut input, &mut with_manifest, &[1, 2, 3])?;
+        zip_io
+            .write_cai(&mut input, &mut with_manifest, &[1, 2, 3])
+            .unwrap();
 
-        let ranges = zip_central_directory_range(&mut with_manifest)?;
+        let ranges = zip_central_directory_range(&mut with_manifest).unwrap();
         assert_eq!(ranges.len(), 2);
 
-        let uri_ranges = zip_uri_ranges(&mut with_manifest)?;
+        let uri_ranges = zip_uri_ranges(&mut with_manifest).unwrap();
         assert!(!uri_ranges.contains_key(Path::new(MANIFEST_PATH)));
-
-        Ok(())
     }
 }
