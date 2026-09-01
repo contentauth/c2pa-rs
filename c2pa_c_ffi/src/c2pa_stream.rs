@@ -65,7 +65,7 @@ type FlushCallback = unsafe extern "C" fn(context: *mut StreamContext) -> isize;
 
 /// A C2paStream is a Rust Read/Write/Seek stream that can be created and used in C.
 ///
-/// DNot `#[repr(C)]`, so cbindgen emits an opaque forward declaration
+/// Not `#[repr(C)]`, so cbindgen emits an opaque forward declaration
 /// rather than the field list.
 /// C now receives an opaque handle id, not an address, so dereferencing it is undefined.
 #[derive(Debug)]
