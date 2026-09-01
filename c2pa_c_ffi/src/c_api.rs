@@ -32,7 +32,7 @@
 //! The reason for the refusal is in the error slot; see `c2pa_error`.
 
 use std::{
-    cell::RefCell,
+    cell::UnsafeCell,
     os::raw::{c_char, c_int, c_uchar, c_void},
     sync::Arc,
 };
@@ -518,20 +518,14 @@ const ERROR_FALLBACK_LEN: usize = 256;
 #[repr(align(2))]
 struct ErrorFallback([u8; ERROR_FALLBACK_LEN]);
 
-/// Returned when the fallback buffer is already borrowed on this thread.
-///
-/// Aligned for the same reason as `ErrorFallback`: its address reaches C, so it
-/// must stay out of the odd handle-id keyspace.
-static EMPTY_FALLBACK: ErrorFallback = ErrorFallback([0; ERROR_FALLBACK_LEN]);
-
 // Fallback storage for `c2pa_error` when the message cannot be tracked.
 // Thread-local, so the returned pointer stays valid until this thread's next
 // c2pa_error call and no other thread can race it. Writable, unlike a string
 // literal, so a C caller that edits the string in place does not fault on
 // read-only memory.
 thread_local! {
-    static ERROR_FALLBACK: RefCell<ErrorFallback> =
-        const { RefCell::new(ErrorFallback([0; ERROR_FALLBACK_LEN])) };
+    static ERROR_FALLBACK: UnsafeCell<ErrorFallback> =
+        const { UnsafeCell::new(ErrorFallback([0; ERROR_FALLBACK_LEN])) };
 }
 
 /// Copies `message` into this thread's fallback buffer and returns its pointer.
@@ -542,14 +536,22 @@ thread_local! {
 /// boundary so the C string never ends mid-character.
 fn error_message_fallback(message: &str) -> *mut c_char {
     ERROR_FALLBACK.with(|slot| {
-        // try_borrow_mut, not borrow_mut: a re-entrant c2pa_error -- from a
-        // signal handler, or a callback invoked mid-call -- would find the
-        // borrow live, and a panic here would cross the extern "C" boundary.
-        // An empty string is a poor message; aborting the host is worse.
-        let Ok(mut fallback) = slot.try_borrow_mut() else {
-            return EMPTY_FALLBACK.0.as_ptr() as *mut c_char;
-        };
-        let buffer = &mut fallback.0;
+        // UnsafeCell, not RefCell. A thread_local is single-threaded by
+        // construction, so a borrow flag guards against exactly one thing: a
+        // re-entrant call from a signal handler or a callback running mid-call.
+        // Paying for that with a failure arm meant returning a second, never-
+        // written buffer -- and an immutable static lands in read-only memory,
+        // so writing through the *mut it yields faults, which is the hazard
+        // this function moved off string literals to avoid.
+        //
+        // Without the flag a re-entrant call overwrites this buffer instead:
+        // the outer caller may read a torn or replaced message, which is the
+        // same hazard the "overwritten by the next call on this thread" rule in
+        // c2pa_error's docs already describes. A torn message beats a fault.
+        //
+        // SAFETY: the reference is confined to this closure and cannot alias --
+        // nothing called between here and the return re-enters this function.
+        let buffer = unsafe { &mut (*slot.get()).0 };
         let limit = ERROR_FALLBACK_LEN - 1;
         let mut end = message.len().min(limit);
         while end > 0 && !message.is_char_boundary(end) {
@@ -562,9 +564,9 @@ fn error_message_fallback(message: &str) -> *mut c_char {
         }
         buffer[end] = 0;
 
-        // The pointer outlives this RefMut, which is sound: the borrow flag
-        // guards access to the RefCell, not the lifetime of the thread_local
-        // data behind it, and that data lives as long as the thread.
+        // The pointer outlives this borrow, which is sound: the thread_local
+        // data lives as long as the thread, and c2pa_error's docs already tell
+        // callers the buffer is valid only until this thread's next call.
         buffer.as_mut_ptr() as *mut c_char
     })
 }
@@ -583,10 +585,9 @@ fn error_message_fallback(message: &str) -> *mut c_char {
 /// - It must not be freed. c2pa_free returns -1 for it, and -- unlike the
 ///   tracked case -- that failing free REPLACES the error slot with
 ///   "UntrackedPointer", discarding the very message this pointer was created
-///   to preserve. Read the message before freeing. The behaviour stays because
-///   c2pa_free setting an error for an untracked pointer is relied on
-///   elsewhere, including by bindings that probe the slot deliberately; the
-///   trade is made here rather than in the free path.
+///   to preserve. Read the message before freeing. Changing c2pa_free's error
+///   behaviour is out of scope here: it reports every failure through the slot,
+///   and callers depend on that for untracked pointers too.
 /// - The next c2pa_error call on the same thread overwrites it in place. Copy
 ///   the message before calling again; a pointer held across a second call
 ///   reads the second message, not the first.

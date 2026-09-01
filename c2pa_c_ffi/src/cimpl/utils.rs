@@ -731,6 +731,13 @@ impl PointerRegistry {
 
         match tracked.get(&id) {
             Some(entry) if entry.type_id == expected_type => {
+                // Check the wrapper BEFORE claiming, the way untrack_pair does:
+                // a rejection that has taken no claim needs no undo, and an
+                // undo that is ever missed leaves the entry borrowed for the
+                // life of the process.
+                if required.is_some_and(|required| required != entry.wrapper) {
+                    return Err(Error::from(CimplError::wrong_wrapper_kind()));
+                }
                 // Take the exclusive claim rather than observe the counter.
                 // Merely reading it leaves a window: lookup() releases the map
                 // lock before checkout_* acquires its claim, so a checkout in
@@ -747,14 +754,6 @@ impl PointerRegistry {
                     .is_err()
                 {
                     return Err(Error::from(CimplError::pointer_in_use()));
-                }
-                // Check the wrapper before removing, so a rejection does not
-                // consume the entry and leak the allocation. The claim taken
-                // above must be released here, or a rejected entry would stay
-                // borrowed forever.
-                if required.is_some_and(|required| required != entry.wrapper) {
-                    entry.borrow_state.store(0, Ordering::Release);
-                    return Err(Error::from(CimplError::wrong_wrapper_kind()));
                 }
 
                 let entry = tracked.remove(&id).expect("checked Some above");
@@ -775,7 +774,6 @@ impl PointerRegistry {
         }
     }
 
-    /// Free a tracked entry by calling its cleanup function
     /// Take ownership of two handles atomically: either both are removed, or
     /// neither is and the registry is left exactly as it was.
     ///
@@ -789,6 +787,7 @@ impl PointerRegistry {
     /// The two handles must differ. One object cannot be consumed twice, and
     /// rejecting it here means callers do not have to compare handles
     /// themselves.
+    #[must_use = "dropping the returned addresses leaks both allocations"]
     fn untrack_pair(
         &self,
         first: usize,
@@ -828,18 +827,22 @@ impl PointerRegistry {
 
         // Claim both. A failure on the second must hand the first back, or a
         // refused handle would stay borrowed for the life of the process.
-        let claim = |id: usize| -> bool {
-            tracked
-                .get(&id)
-                .expect("validated above, and the lock has been held since")
-                .borrow_state
-                .compare_exchange(0, EXCLUSIVE, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-        };
-        if !claim(first) {
+        let claimed_first = tracked
+            .get(&first)
+            .expect("validated above, and the lock has been held since")
+            .borrow_state
+            .compare_exchange(0, EXCLUSIVE, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok();
+        if !claimed_first {
             return Err(Error::from(CimplError::pointer_in_use()));
         }
-        if !claim(second) {
+        let claimed_second = tracked
+            .get(&second)
+            .expect("validated above, and the lock has been held since")
+            .borrow_state
+            .compare_exchange(0, EXCLUSIVE, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok();
+        if !claimed_second {
             tracked
                 .get(&first)
                 .expect("claimed above, and the lock has been held since")
@@ -849,26 +852,33 @@ impl PointerRegistry {
         }
 
         // Both claimed: from here nothing can fail, so both removals commit.
-        let mut taken = Vec::with_capacity(2);
-        for id in [first, second] {
-            let entry = tracked.remove(&id).expect("claimed above");
-            // Defuse before the entry can drop. Ownership is moving to the
-            // caller, so running cleanup here would free memory the caller is
-            // about to reconstruct.
-            if let Ok(mut cleanup) = entry.cleanup.lock() {
-                cleanup.take();
-            }
-            taken.push((entry.real_addr, entry.wrapper, entry));
+        // Defuse each before it can drop -- ownership is moving to the caller,
+        // so running cleanup here would free memory the caller is about to
+        // reconstruct.
+        let first_entry = tracked.remove(&first).expect("claimed above");
+        if let Ok(mut cleanup) = first_entry.cleanup.lock() {
+            cleanup.take();
         }
-        drop(tracked); // Release before the Arcs drop.
+        let second_entry = tracked.remove(&second).expect("claimed above");
+        if let Ok(mut cleanup) = second_entry.cleanup.lock() {
+            cleanup.take();
+        }
+        let taken = (
+            (first_entry.real_addr, first_entry.wrapper),
+            (second_entry.real_addr, second_entry.wrapper),
+        );
 
-        let (second_addr, second_wrapper, second_entry) = taken.pop().expect("two pushed");
-        let (first_addr, first_wrapper, first_entry) = taken.pop().expect("two pushed");
-        drop(second_entry);
+        drop(tracked); // Release before the Arcs drop.
         drop(first_entry);
-        Ok(((first_addr, first_wrapper), (second_addr, second_wrapper)))
+        drop(second_entry);
+        Ok(taken)
     }
 
+    /// Free a tracked entry by running its cleanup function.
+    ///
+    /// This is what every `c2pa_free` call reaches. A key the registry does not
+    /// know is an error, not a no-op, so a double free is reported rather than
+    /// acted on.
     pub fn free(&self, key: usize) -> Result<(), Error> {
         self.check_same_process()?;
         if key == 0 {
@@ -1564,10 +1574,12 @@ mod tests {
         );
     }
     #[test]
-    fn test_untrack_claim_is_released_when_the_wrapper_is_wrong() {
-        // untrack now CLAIMS the borrow before checking the wrapper. The
-        // rejection path must hand that claim back, or an Arc-tracked entry
-        // becomes permanently unborrowable and unfreeable.
+    fn test_untrack_leaves_a_rejected_entry_borrowable() {
+        // A wrapper mismatch is rejected before any claim is taken, so the
+        // entry must come out untouched. Asserting the outcome rather than the
+        // ordering keeps this honest if the ordering changes again: what must
+        // never happen is an Arc-tracked entry left permanently unborrowable
+        // and unfreeable by a call that refused it.
         let arc = Arc::new(5i32);
         let ptr = track_arc(Arc::into_raw(arc) as *mut i32);
 
@@ -1579,7 +1591,7 @@ mod tests {
         // Still borrowable, so the claim was released.
         assert!(
             checkout_shared::<i32>(ptr).is_ok(),
-            "the rejected entry stayed exclusively claimed"
+            "the rejected entry was left claimed"
         );
         assert_eq!(cimpl_free(ptr as *mut std::ffi::c_void), 0);
     }
