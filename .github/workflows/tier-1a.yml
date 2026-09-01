@@ -24,11 +24,6 @@ on:
   schedule:
     - cron: '0 8 * * *'
   pull_request:
-    branches:
-      - main
-      - stable
-      - 'v0.*'
-      - '*-rc*'
     types:
       - opened
       - reopened
