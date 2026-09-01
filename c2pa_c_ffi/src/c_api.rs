@@ -516,11 +516,12 @@ const ERROR_FALLBACK_LEN: usize = 256;
 /// then come from whatever the enclosing `UnsafeCell` happens to lay out
 /// around it, which `repr(Rust)` leaves unspecified.
 #[repr(align(2))]
-struct ErrorFallback(
-    // Only ever reached through a raw pointer derived from the enclosing
-    // UnsafeCell, so the compiler sees no read of the field itself.
-    #[allow(dead_code)] [u8; ERROR_FALLBACK_LEN],
-);
+struct ErrorFallback([u8; ERROR_FALLBACK_LEN]);
+
+// The writes below index up to ERROR_FALLBACK_LEN - 1 from the field's address,
+// so the type must not be smaller than the array it wraps. Alignment padding
+// could only grow it, but pin it rather than assume it.
+const _: () = assert!(size_of::<ErrorFallback>() >= ERROR_FALLBACK_LEN);
 
 // Fallback storage for `c2pa_error` when the message cannot be tracked.
 // Thread-local, so the returned pointer stays valid until this thread's next
@@ -566,11 +567,13 @@ fn error_message_fallback(message: &str) -> *mut c_char {
         // invalidated one. Deriving from the cell directly keeps the provenance
         // valid, which costs nothing here.
         //
-        // SAFETY: `ErrorFallback` is `#[repr(align(2))]` with the array at
-        // offset 0, so `slot.get()` is the first byte. Every write below is at
-        // an index <= end <= ERROR_FALLBACK_LEN - 1, so all are in bounds, and
-        // the thread_local data outlives this call.
-        let base = slot.get() as *mut u8;
+        // SAFETY: addr_of_mut! computes the array's address without forming a
+        // reference, so this holds whatever offset the layout gives the field --
+        // `#[repr(align(2))]` constrains alignment, not field placement, and the
+        // struct is otherwise `repr(Rust)`. Every write below is at an index
+        // <= end <= ERROR_FALLBACK_LEN - 1, so all are in bounds, and the
+        // thread_local data outlives this call.
+        let base = unsafe { std::ptr::addr_of_mut!((*slot.get()).0) } as *mut u8;
         for (i, byte) in message.as_bytes()[..end].iter().enumerate() {
             unsafe { base.add(i).write(if *byte == 0 { b'?' } else { *byte }) };
         }
