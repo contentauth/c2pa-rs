@@ -13,6 +13,7 @@ use crate::{
     asset_handlers::zip_io::{zip_central_directory_range, zip_uri_ranges},
     hash_stream_by_alg,
     hash_utils::verify_stream_by_alg,
+    utils::mime,
     validation_status::{
         ASSERTION_COLLECTIONHASH_INCORRECT_FILE_COUNT, ASSERTION_COLLECTIONHASH_INVALID_URI,
         ASSERTION_COLLECTIONHASH_MALFORMED,
@@ -104,7 +105,7 @@ impl CollectionHash {
             }
         }
 
-        let format = crate::format_from_path(&path);
+        let format = mime::mime_from_path(&path);
         let metadata = fs::metadata(&path)?;
         self.uris.insert(
             path,
@@ -216,7 +217,7 @@ impl CollectionHash {
             let hash =
                 hash_stream_by_alg(&self.alg, stream, Some(vec![hash_range.clone()]), false)?;
 
-            let format = crate::format_from_path(&path);
+            let format = mime::mime_from_path(&path);
             self.uris.insert(
                 path,
                 UriHashedDataMap {
@@ -536,7 +537,7 @@ mod tests {
                     106, 248, 168, 169, 245, 207, 172, 29, 204, 80, 155, 37, 30, 186, 60
                 ]),
                 size: Some(47),
-                dc_format: Some("txt".to_string()),
+                dc_format: None,
                 data_types: None,
             })
         );
@@ -548,7 +549,7 @@ mod tests {
                     63, 175, 25, 6, 118, 200, 12, 188, 128, 67, 78, 249, 182, 242, 156
                 ]),
                 size: Some(57),
-                dc_format: Some("txt".to_string()),
+                dc_format: None,
                 data_types: None,
             })
         );
@@ -560,7 +561,7 @@ mod tests {
                     187, 230, 19, 242, 52, 212, 181, 104, 99, 179, 177, 81, 150, 33
                 ]),
                 size: Some(53),
-                dc_format: Some("txt".to_string()),
+                dc_format: None,
                 data_types: None,
             })
         );
@@ -572,7 +573,7 @@ mod tests {
                     106, 204, 158, 142, 176, 247, 251, 174, 145, 243, 12, 22, 151, 116
                 ]),
                 size: Some(68),
-                dc_format: Some("txt".to_string()),
+                dc_format: None,
                 data_types: None,
             })
         );
@@ -584,7 +585,7 @@ mod tests {
                     36, 28, 55, 23, 62, 109, 143, 182, 233, 99, 144, 23, 139, 9, 118
                 ]),
                 size: Some(56),
-                dc_format: Some("txt".to_string()),
+                dc_format: None,
                 data_types: None,
             })
         );
