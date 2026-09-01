@@ -74,12 +74,12 @@ impl CollectionHash {
     ///
     /// The base path (the root that URIs are resolved against when hashing) is supplied to
     /// [`gen_hash`](Self::gen_hash) and [`verify_hash`](Self::verify_hash).
-    pub fn new(alg: String) -> Result<Self> {
-        Ok(Self {
+    pub fn new(alg: String) -> Self {
+        Self {
             uris: HashMap::new(),
             alg,
             zip_central_directory_hash: None,
-        })
+        }
     }
 
     /// Adds a new file to the collection hash.
@@ -328,7 +328,7 @@ mod tests {
 
     fn gen_zip_collection_hash() -> Result<CollectionHash> {
         let mut stream = Cursor::new(ZIP_SAMPLE1);
-        let mut collection = CollectionHash::new("sha256".to_owned())?;
+        let mut collection = CollectionHash::new("sha256".to_owned());
         collection.gen_hash_from_zip_stream(&mut stream)?;
 
         Ok(collection)
@@ -340,7 +340,7 @@ mod tests {
         fs::create_dir(dir.path().join("sub"))?;
         fs::write(dir.path().join("sub").join("b.txt"), b"world")?;
 
-        let mut collection = CollectionHash::new("sha256".to_owned())?;
+        let mut collection = CollectionHash::new("sha256".to_owned());
         for uri in ["a.txt", "sub/b.txt"] {
             collection.uris.insert(
                 PathBuf::from(uri),
@@ -497,7 +497,7 @@ mod tests {
         let file = dir.path().join("a.txt");
         fs::write(&file, b"hello")?;
 
-        let mut collection = CollectionHash::new("sha256".to_owned())?;
+        let mut collection = CollectionHash::new("sha256".to_owned());
         assert!(matches!(
             collection.gen_hash(&file),
             Err(Error::BadParam(_))

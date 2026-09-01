@@ -3265,7 +3265,7 @@ impl Store {
 
             let mut needs_hashing = false;
             if pc.hash_assertions().is_empty() {
-                let mut collection = CollectionHash::new(pc.alg().to_owned())?;
+                let mut collection = CollectionHash::new(pc.alg().to_owned());
                 if source_is_intermediate {
                     intermediate_stream.rewind()?;
                     collection.gen_hash_from_zip_stream(&mut intermediate_stream)?;
@@ -3293,7 +3293,7 @@ impl Store {
                 scratch.rewind()?;
 
                 let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-                let mut collection = CollectionHash::new(pc.alg().to_owned())?;
+                let mut collection = CollectionHash::new(pc.alg().to_owned());
                 collection.gen_hash_from_zip_stream(&mut scratch)?;
                 pc.replace_assertion(collection.to_assertion()?)?;
             }
@@ -9268,7 +9268,7 @@ pub mod tests {
     fn test_store_verify_zip_collection_hash() {
         let mut claim = create_test_claim().unwrap();
 
-        let mut collection = CollectionHash::new(claim.alg().to_owned()).unwrap();
+        let mut collection = CollectionHash::new(claim.alg().to_owned());
         collection
             .gen_hash_from_zip_stream(&mut Cursor::new(COLLECTION_ZIP))
             .unwrap();
