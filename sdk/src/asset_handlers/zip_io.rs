@@ -276,6 +276,42 @@ where
     Ok(range)
 }
 
+/// Computes the byte ranges for each file entry in a ZIP stream.
+pub(crate) fn zip_uri_ranges<R>(stream: &mut R) -> Result<HashMap<PathBuf, HashRange>>
+where
+    R: Read + Seek + ?Sized,
+{
+    let mut ranges = HashMap::new();
+    for entry in zip_uri_entries(stream)? {
+        if entry.path == Path::new(MANIFEST_PATH) {
+            continue;
+        }
+
+        // https://en.wikipedia.org/wiki/ZIP_(file_format)#Data_descriptor
+        let mut end = entry.data_end;
+        if entry.using_data_descriptor {
+            stream.seek(SeekFrom::Start(entry.data_end))?;
+            let mut signature = [0; DATA_DESCRIPTOR_SIGNATURE.len()];
+            stream.read_exact(&mut signature)?;
+
+            let signature_len: u64 = if signature == DATA_DESCRIPTOR_SIGNATURE {
+                DATA_DESCRIPTOR_SIGNATURE.len() as u64
+            } else {
+                0
+            };
+            let size_field_len: u64 = if entry.large_file { 8 } else { 4 };
+
+            end += signature_len + CRC_LEN + (2 * size_field_len);
+        }
+        ranges.insert(
+            entry.path,
+            HashRange::new(entry.header_start, end - entry.header_start),
+        );
+    }
+
+    Ok(ranges)
+}
+
 /// Location of a single ZIP entry gathered from the central directory.
 struct ZipUriEntry {
     path: PathBuf,
@@ -321,42 +357,6 @@ where
     }
 
     Ok(entries)
-}
-
-/// Computes the byte ranges for each file entry in a ZIP stream.
-pub(crate) fn zip_uri_ranges<R>(stream: &mut R) -> Result<HashMap<PathBuf, HashRange>>
-where
-    R: Read + Seek + ?Sized,
-{
-    let mut ranges = HashMap::new();
-    for entry in zip_uri_entries(stream)? {
-        if entry.path == Path::new(MANIFEST_PATH) {
-            continue;
-        }
-
-        // https://en.wikipedia.org/wiki/ZIP_(file_format)#Data_descriptor
-        let mut end = entry.data_end;
-        if entry.using_data_descriptor {
-            stream.seek(SeekFrom::Start(entry.data_end))?;
-            let mut signature = [0; DATA_DESCRIPTOR_SIGNATURE.len()];
-            stream.read_exact(&mut signature)?;
-
-            let signature_len: u64 = if signature == DATA_DESCRIPTOR_SIGNATURE {
-                DATA_DESCRIPTOR_SIGNATURE.len() as u64
-            } else {
-                0
-            };
-            let size_field_len: u64 = if entry.large_file { 8 } else { 4 };
-
-            end += signature_len + CRC_LEN + (2 * size_field_len);
-        }
-        ranges.insert(
-            entry.path,
-            HashRange::new(entry.header_start, end - entry.header_start),
-        );
-    }
-
-    Ok(ranges)
 }
 
 /// Errors that can occur while handling C2PA data in a ZIP-based asset.
