@@ -20,7 +20,7 @@
 //! ## `ClaimAssertionBuilder`: owning the stream instead of borrowing it
 //!
 //! [`c2pa::ClaimAssertionBuilder`] is a Rust-side builder — `with_json`/`with_stream`/
-//! `with_c2pa_data`/`with_exclusions` — and `with_stream` *borrows* the caller's stream
+//! `with_c2pa_data` — and `with_stream` *borrows* the caller's stream
 //! (`ClaimAssertionBuilder<'a>` -> `ClaimAssertionBuilder<'b>`). A borrow can't be split across separate FFI
 //! calls the way `C2paBuilder`'s methods are (`cimpl`'s pointer registry keys on `TypeId`, which
 //! requires `T: 'static` — see `track_box`'s bound in `cimpl/utils.rs` — so a non-`'static`
@@ -47,7 +47,7 @@ use std::{
     sync::Arc,
 };
 
-use c2pa::{ClaimAssertionBuilder, ClaimBuilder as C2paClaimBuilder, Context, HashRange};
+use c2pa::{ClaimAssertionBuilder, ClaimBuilder as C2paClaimBuilder, Context};
 
 // Import macros and utilities from cimpl — same pattern (and same reason for the
 // `allow(unused_imports)`) as c_api.rs: `#[macro_use] mod cimpl;` in lib.rs already puts these
@@ -87,7 +87,6 @@ pub(crate) struct C2paClaimAssertion {
     as_json: bool,
     stream: Option<(String, C2paStream)>,
     c2pa_data: Option<Vec<u8>>,
-    exclusions: Option<Vec<HashRange>>,
 }
 
 impl C2paClaimAssertion {
@@ -98,7 +97,6 @@ impl C2paClaimAssertion {
             as_json: false,
             stream: None,
             c2pa_data: None,
-            exclusions: None,
         }
     }
 }
@@ -190,24 +188,6 @@ pub unsafe extern "C" fn c2pa_claim_assertion_with_c2pa_data(
     let assertion = deref_mut_or_return_int!(assertion_ptr, C2paClaimAssertion);
     let data = bytes_or_return_int!(data, len, "c2pa_data");
     assertion.c2pa_data = Some(data.to_vec());
-    0
-}
-
-/// Sets the byte ranges to exclude when hashing — the region where the caller embedded the
-/// manifest placeholder. `exclusions_json` is a JSON array of `{"start": u64, "length": u64}`.
-/// See [`ClaimAssertionBuilder::with_exclusions`].
-///
-/// # Safety
-/// Reads a NULL-terminated C string. Returns -1 if there were errors, otherwise 0.
-#[no_mangle]
-pub unsafe extern "C" fn c2pa_claim_assertion_with_exclusions(
-    assertion_ptr: *mut C2paClaimAssertion,
-    exclusions_json: *const c_char,
-) -> c_int {
-    let assertion = deref_mut_or_return_int!(assertion_ptr, C2paClaimAssertion);
-    let exclusions_json = cstr_or_return_int!(exclusions_json);
-    let exclusions: Vec<HashRange> = ok_or_return_int!(serde_json::from_str(&exclusions_json));
-    assertion.exclusions = Some(exclusions);
     0
 }
 
@@ -386,23 +366,15 @@ unsafe fn add_claim_assertion(
         if let Some(data) = state.c2pa_data {
             assertion = assertion.with_c2pa_data(data);
         }
-        if let Some(exclusions) = state.exclusions {
-            assertion = assertion.with_exclusions(exclusions);
-        }
         if created {
             ok_or_return_null!(builder.add_created_assertion(assertion))
         } else {
             ok_or_return_null!(builder.add_gathered_assertion(assertion))
         }
+    } else if created {
+        ok_or_return_null!(builder.add_created_assertion(assertion))
     } else {
-        if let Some(exclusions) = state.exclusions {
-            assertion = assertion.with_exclusions(exclusions);
-        }
-        if created {
-            ok_or_return_null!(builder.add_created_assertion(assertion))
-        } else {
-            ok_or_return_null!(builder.add_gathered_assertion(assertion))
-        }
+        ok_or_return_null!(builder.add_gathered_assertion(assertion))
     };
 
     let json = ok_or_return_null!(serde_json::to_string(&hashed_uri));

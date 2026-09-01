@@ -711,16 +711,17 @@ mod tests {
             )
             .expect("set hard binding");
 
-        // Extra exclusions make this replacement's encoded size strictly larger.
-        let mut stream2 = Cursor::new(vec![2u8; 100]);
+        // `ClaimAssertionBuilder` has no exclusions support — a caller who needs exclusions
+        // constructs the `DataHash` directly (as below) and adds it via `with_assertion`/
+        // `with_json` instead of `with_stream`. Exercise `ClaimBuilder`'s own reject-if-larger
+        // check directly against a hand-built `DataHash` whose exclusions make it strictly
+        // larger than the existing one.
+        let mut larger = DataHash::new("jumbf manifest", "sha256");
+        larger.set_hash(vec![0u8; 32]);
+        larger.add_exclusion(HashRange::new(0, 10));
+        larger.add_exclusion(HashRange::new(20, 10));
         assert!(
-            claim_builder
-                .add_created_assertion(
-                    ClaimAssertionBuilder::new(DataHash::LABEL)
-                        .with_stream("image/jpeg", &mut stream2)
-                        .with_exclusions(vec![HashRange::new(0, 10), HashRange::new(20, 10)]),
-                )
-                .is_err(),
+            claim_builder.insert_data_hash(larger).is_err(),
             "a strictly larger replacement should be rejected"
         );
     }
