@@ -1383,10 +1383,7 @@ mod tests {
 
     #[test]
     fn test_untrack_refuses_while_a_borrow_is_outstanding() {
-        // Deterministic, not a race: take the borrow first and hold it, then
-        // attempt the untrack. This passes against a `load`-based untrack too,
-        // so it is not a regression test for the lookup/checkout window --
-        // test_untrack_and_checkout_never_both_succeed covers that.
+        // Take the borrow first and hold it, then attempt the untrack.
         for _ in 0..200 {
             let ptr = track_box(Box::into_raw(Box::new(1234i32)));
 
@@ -1407,18 +1404,6 @@ mod tests {
 
     #[test]
     fn test_untrack_claims_the_borrow_rather_than_observing_it() {
-        // H-1 was that untrack READ borrow_state instead of claiming it. The
-        // window is between lookup() releasing the map lock and checkout_*
-        // taking its claim -- nanoseconds wide, and both paths serialize on the
-        // map lock, so a stress test does not reach it reliably. (Two attempts
-        // at one here never produced a single overlapping round; a passing
-        // stress test would have been evidence of nothing.)
-        //
-        // What is checkable deterministically is the property the CAS provides:
-        // a successful untrack leaves the entry claimed EXCLUSIVE, so any
-        // checkout arriving afterwards is refused rather than handed a guard to
-        // an object whose ownership has moved. A load-based untrack leaves the
-        // counter at 0 and the late checkout succeeds.
         let ptr = track_box(Box::into_raw(Box::new(1234i32)));
         let addr = ptr as usize;
 
@@ -1453,10 +1438,7 @@ mod tests {
     #[test]
     fn test_untrack_leaves_a_rejected_entry_borrowable() {
         // A wrapper mismatch is rejected before any claim is taken, so the
-        // entry must come out untouched. Asserting the outcome rather than the
-        // ordering keeps this honest if the ordering changes again: what must
-        // never happen is an Arc-tracked entry left permanently unborrowable
-        // and unfreeable by a call that refused it.
+        // entry must come out untouched.
         let arc = Arc::new(5i32);
         let ptr = track_arc(Arc::into_raw(arc) as *mut i32);
 
@@ -1519,8 +1501,9 @@ mod tests {
 
     #[test]
     fn test_untrack_owned_rejects_arc_tracked_entry() {
-        // An Arc-tracked entry may have other clones, so no single owner can be
-        // handed back. Reconstructing it with Box::from_raw would be UB.
+        // An Arc-tracked entry may have other clones,
+        // so no single owner can be handed back.
+        // Reconstructing it with Box::from_raw would be UB.
         let arc = Arc::new(5i32);
         let ptr = track_arc(Arc::into_raw(arc) as *mut i32);
 
@@ -1563,8 +1546,7 @@ mod tests {
 
     #[test]
     fn test_cleanup_reentering_registry_does_not_deadlock() {
-        // The cleanup closure of one entry frees another. If any entry were
-        // dropped while the registry lock was held, this would deadlock.
+        // The cleanup closure of one entry frees another.
         let inner = track_box(Box::into_raw(Box::new(7i32)));
         let inner_addr = inner as usize;
 
@@ -1603,8 +1585,8 @@ mod tests {
 
     #[test]
     fn test_nested_checkout_of_different_ids_succeeds() {
-        // The reentrancy pattern used by C2paStream: a guard on one handle held
-        // while checking out a second, different handle.
+        // The reentrancy pattern used by C2paStream:
+        // a guard on one handle held while checking out a second, different handle.
         let outer = track_box(Box::into_raw(Box::new(1i32)));
         let inner = track_box(Box::into_raw(Box::new(2i32)));
 
@@ -1653,15 +1635,13 @@ mod tests {
     fn test_guards_are_send() {
         // A guard over a thread-safe T must stay Send, or work-stealing
         // runtimes break. The bound is deliberately conditional: a guard over a
-        // !Sync T must NOT be Send, which is what stops two &T reaching two
-        // threads. Only concrete Sync types belong here -- asserting the
-        // blanket property would re-assert the soundness hole.
+        // !Sync T must NOT be Send, which is what stops two &T reaching two threads.
         fn assert_send<T: Send>() {}
         assert_send::<TypedShared<i32>>();
         assert_send::<TypedExclusive<i32>>();
 
-        // On wasm32 MaybeSend/MaybeSync are no-op impls, so nothing constrains
-        // this there. Fine while wasm is single-threaded.
+        // On wasm32 MaybeSend/MaybeSync are no-op impls, so nothing constrains this there.
+        // Fine while wasm is single-threaded.
     }
 
     #[test]
@@ -1702,9 +1682,7 @@ mod tests {
         }
 
         let ptr = track_box(Box::into_raw(Box::new(Panics)));
-        // cimpl_free is reached from C, so without catch_unwind in
-        // EntryInner::drop the panic from the cleanup closure would unwind
-        // across the extern "C" boundary and abort the process.
+        // cimpl_free is reached from C.
         assert_eq!(cimpl_free(ptr as *mut std::ffi::c_void), 0);
 
         // The registry lock survived, so later calls still work.
@@ -1730,9 +1708,7 @@ mod tests {
 
     #[test]
     fn test_track_by_id_refusal_leaves_the_object_for_the_caller() {
-        // N-1: a refused track must not free. track_box reclaims the
-        // allocation itself, so the object is dropped exactly once and the
-        // caller gets NULL rather than a handle nothing can free.
+        // A refused track must not free.
         static DROPS: AtomicUsize = AtomicUsize::new(0);
         struct Payload;
         impl Drop for Payload {
@@ -1742,8 +1718,8 @@ mod tests {
         }
 
         DROPS.store(0, Ordering::SeqCst);
-        // A registry owned by another process refuses every track_by_id, which
-        // is the fork-refusal path a multiprocessing child takes.
+        // A registry owned by another process refuses every track_by_id,
+        // which is the fork-refusal path a multiprocessing child takes.
         let foreign = PointerRegistry {
             tracked: Mutex::new(HashMap::new()),
             next_id: AtomicUsize::new(0),
@@ -1765,9 +1741,7 @@ mod tests {
             0,
             "track_by_id must not free; the caller still owns the allocation"
         );
-        // The refusal records why, rather than leaving a stale message from an
-        // unrelated call for C to read. This test writes the thread-local error
-        // slot as a result, which is deliberate.
+        // The refusal records why, rather than leaving a stale message.
         assert!(
             CimplError::last_message().is_some_and(|message| message.contains("ForeignProcess")),
             "the refusal must record its reason"
@@ -1784,8 +1758,7 @@ mod tests {
 
     #[test]
     fn test_track_by_address_refusal_leaves_the_buffer_for_the_caller() {
-        // N-2: the refusal path must not run the cleanup closure. If it does,
-        // the buffer is freed here and the caller frees it again on `false`.
+        // The refusal path must not run the cleanup closure.
         static FREED: AtomicUsize = AtomicUsize::new(0);
 
         FREED.store(0, Ordering::SeqCst);
@@ -1811,8 +1784,6 @@ mod tests {
             0,
             "the refusal path must leave the buffer for the caller to free"
         );
-        // As above: the refusal records its reason, and this test writes the
-        // thread-local error slot as a result.
         assert!(
             CimplError::last_message().is_some_and(|message| message.contains("ForeignProcess")),
             "the refusal must record its reason"
@@ -1821,9 +1792,6 @@ mod tests {
 
     #[test]
     fn test_poisoned_lock_refusal_does_not_free_the_buffer() {
-        // N-2 proper: the double free lives on the poisoned-lock path, which is
-        // reached only after the EntryInner has been built. The fork refusal
-        // returns before that, so it cannot exercise this.
         static FREED: AtomicUsize = AtomicUsize::new(0);
 
         FREED.store(0, Ordering::SeqCst);
@@ -1855,8 +1823,7 @@ mod tests {
         assert_eq!(
             FREED.load(Ordering::SeqCst),
             0,
-            "the entry must not run its cleanup here: false tells the caller to \
-             free, and running it too would be a double free"
+            "the entry must not run its cleanup here"
         );
     }
 
@@ -1897,10 +1864,6 @@ mod tests {
 
     #[test]
     fn test_inherited_entry_drop_does_not_run_cleanup() {
-        // N-6: the only way to reach EntryInner::drop's fork branch is to drop
-        // an inherited Arc directly. cimpl_free cannot get there --
-        // check_same_process refuses first -- so this is the branch's only
-        // coverage.
         static RAN: AtomicUsize = AtomicUsize::new(0);
 
         RAN.store(0, Ordering::SeqCst);
@@ -1923,8 +1886,7 @@ mod tests {
             "an entry inherited across fork must not run its cleanup"
         );
 
-        // Same entry owned by this process: the cleanup does run, so the test
-        // above is not passing because the closure is simply never reachable.
+        // Same entry owned by this process: the cleanup does run.
         let owned = Arc::new(EntryInner {
             real_addr: 0xdead_beef,
             type_id: TypeId::of::<i32>(),
@@ -1945,8 +1907,8 @@ mod tests {
 
     #[test]
     fn test_handle_ids_are_always_odd() {
-        // The odd/even split is what makes track_by_address's even-address
-        // check meaningful: an id can never be mistaken for a buffer address.
+        // The odd/even split is what makes it so that an id can never
+        // be mistaken for a buffer address.
         for _ in 0..64 {
             let ptr = track_box(Box::into_raw(Box::new(7i32)));
             assert_eq!(
@@ -2001,9 +1963,6 @@ mod tests {
             "expected 3 shared readers: {shared}"
         );
 
-        // Both address branches, in one build. The release behaviour is the one
-        // with the security rationale, and no CI job runs a release test, so
-        // asserting it through cfg! alone would assert nothing.
         let shown = format!("{:?}", Shown(&entry, false));
         assert!(
             shown.contains(r#"real_addr: 0x1000"#),
@@ -2037,9 +1996,6 @@ mod tests {
 
     #[test]
     fn test_untrack_pair_leaves_the_first_when_the_second_is_gone() {
-        // The concurrency case: another thread freed the second handle. Doing
-        // this with two untrack_owned calls consumes the first and then fails,
-        // dropping the caller's object inside the call that reports failure.
         let first = track_box(Box::into_raw(Box::new(22i32)));
         let second = track_box(Box::into_raw(Box::new(33i32)));
         assert_eq!(cimpl_free(second as *mut std::ffi::c_void), 0);
@@ -2070,7 +2026,7 @@ mod tests {
 
     #[test]
     fn test_untrack_pair_releases_the_first_claim_when_the_second_is_borrowed() {
-        // A live borrow on the second handle must refuse the pair AND hand the
+        // A live borrow on the second handle must refuse the pair and hand the
         // first handle's claim back, or the first would stay borrowed forever.
         let first = track_box(Box::into_raw(Box::new(66i32)));
         let second = track_box(Box::into_raw(Box::new(77i32)));
@@ -2093,10 +2049,8 @@ mod tests {
 
     #[test]
     fn test_to_c_bytes_maps_empty_to_null() {
-        // The contract the seven c_api sites depend on, pinned where it lives
-        // rather than through an SDK behaviour this crate does not own: an
-        // empty buffer is success with nothing to hand back, so the sites must
-        // test `is_null() && len > 0` and not `is_null()` alone.
+        // An empty buffer is success with nothing to hand back,
+        // so the callers must test `is_null() && len > 0` and not `is_null()` alone.
         assert!(
             to_c_bytes(Vec::new()).is_null(),
             "an empty buffer has no pointer to publish"
