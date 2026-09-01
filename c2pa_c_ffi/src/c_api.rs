@@ -11,26 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! The exported C API.
-//!
-//! # Returning byte buffers
-//!
-//! `to_c_bytes` and `to_c_string` return NULL when the registry refuses the
-//! buffer -- a forked child, a poisoned registry lock, or an address that would
-//! collide with a handle id. Every function that hands C a buffer through an
-//! out-parameter assigns a local first and publishes it only on success:
-//! writing the NULL and still returning the length would give C a positive
-//! length with a NULL pointer, and the memcpy that follows segfaults. Checking
-//! a local also leaves the caller's out-parameter untouched when the call
-//! fails, rather than clobbering what it held.
-//!
-//! `to_c_bytes` also returns NULL for an *empty* buffer, which is success with
-//! nothing to hand back -- `Builder::placeholder` does exactly that for a format
-//! needing no placeholder. Only a NULL with a non-zero length is a refusal,
-//! which is why every site tests `bytes.is_null() && len > 0`.
-//!
-//! The reason for the refusal is in the error slot; see `c2pa_error`.
-
 use std::{
     cell::UnsafeCell,
     os::raw::{c_char, c_int, c_uchar, c_void},
@@ -486,9 +466,9 @@ impl c2pa::http::SyncHttpResolver for C2paHttpResolver {
 
 /// Returns a version string for logging.
 ///
-/// Returns NULL if the string could not be tracked -- in a forked child, under
-/// a poisoned registry lock, or if the allocator returns an odd address.
-/// Bindings that call this at load time to smoke-test the library must check.
+/// Returns NULL if the string could not be tracked.
+/// In a forked child, under a poisoned registry lock,
+/// or if the allocator returns an odd address.
 ///
 /// # Safety
 /// The returned value MUST be released by calling c2pa_free
@@ -509,42 +489,27 @@ const ERROR_FALLBACK_LEN: usize = 256;
 
 /// Storage for `c2pa_error`'s fallback message.
 ///
-/// `#[repr(C, align(2))]` is load-bearing, not decoration. Handle ids are
-/// always odd and `track_by_address` refuses odd addresses so the two keyspaces
-/// cannot collide; what reaches C here is the *field's* address, so that has to
-/// stay even. Both halves of the attribute are needed for it:
+/// Handle ids are always odd and `track_by_address` refuses odd addresses
+/// so the two keyspaces cannot collide.
+/// What reaches C here is the *field's* address, so that has to stay even.
 ///
 /// - `align(2)` makes the struct's address even. A bare `[u8; N]` has alignment
 ///   1, which would leave the evenness to whatever the enclosing `UnsafeCell`
 ///   happens to lay out around it.
-/// - `repr(C)` fixes the field at offset 0. Alignment alone says nothing about
-///   field placement, and `repr(Rust)` leaves offsets unspecified, so a safety
-///   argument must not rest on one.
+/// - `repr(C)` fixes the field at offset 0.
 ///
-/// Even struct address plus offset 0 means the field's address is even by
-/// construction rather than by the compiler's current choice.
+/// Even struct address plus offset 0 means the field's address is even by construction.
 #[repr(C, align(2))]
 struct ErrorFallback([u8; ERROR_FALLBACK_LEN]);
 
 // Fallback storage for `c2pa_error` when the message cannot be tracked.
-// Thread-local, so the returned pointer stays valid until this thread's next
-// c2pa_error call and no other thread can race it. Writable, unlike a string
-// literal, so a C caller that edits the string in place does not fault on
-// read-only memory.
 thread_local! {
     static ERROR_FALLBACK: UnsafeCell<ErrorFallback> =
         const { UnsafeCell::new(ErrorFallback([0; ERROR_FALLBACK_LEN])) };
 }
 
 /// Copies `message` into this thread's fallback buffer and returns its pointer.
-///
-/// Interior NUL bytes are replaced rather than rejected: a message containing
-/// one is precisely why `CString::new` failed, and dropping the message here
-/// would lose the diagnosis a second time. The result is truncated on a UTF-8
-/// boundary so the C string never ends mid-character.
 fn error_message_fallback(message: &str) -> *mut c_char {
-    // Compute the cut before touching the cell, so no borrow of it is live
-    // across anything that could re-enter.
     let limit = ERROR_FALLBACK_LEN - 1;
     let mut end = message.len().min(limit);
     while end > 0 && !message.is_char_boundary(end) {
@@ -552,41 +517,19 @@ fn error_message_fallback(message: &str) -> *mut c_char {
     }
 
     ERROR_FALLBACK.with(|slot| {
-        // Raw writes only: no `&mut` to the buffer is ever formed. Two reasons,
-        // both of which a `&mut` breaks.
+        // Raw writes only: no `&mut` to the buffer is ever made.
         //
-        // A `&mut` asserts unique access for its lifetime. This is a
-        // thread_local, so the only way to violate that is a re-entrant call --
-        // a signal handler, or a callback running mid-call -- and the compiler
-        // is entitled to optimise on the assumption it cannot happen. Writing
-        // through the raw pointer instead makes a re-entrant call interleave
-        // bytes rather than alias a `&mut`: the caller may read a torn or
-        // replaced message, which is the hazard c2pa_error's "overwritten by
-        // the next call on this thread" rule already describes.
-        //
-        // A `&mut` also invalidates the pointer returned by the previous call.
-        // Under Stacked Borrows the retag pops the earlier raw tag, so a caller
-        // holding that pointer across a second call reads through an
-        // invalidated one. Deriving from the cell directly keeps the provenance
-        // valid, which costs nothing here.
-        //
-        // SAFETY: addr_of_mut! computes the array's address without forming a
-        // reference, which is what keeps successive calls from popping each
-        // other's tags. `ErrorFallback` is `#[repr(C, align(2))]`, so that
-        // address is the struct's -- offset 0 -- and even, which is what keeps
-        // it out of the odd handle-id keyspace. Every write below is at an
-        // index <= end <= ERROR_FALLBACK_LEN - 1, so all are in bounds of the
-        // field's own `[u8; ERROR_FALLBACK_LEN]`, and the thread_local data
-        // outlives this call.
+        // SAFETY:
+        // addr_of_mut! computes the array's address without creating a
+        // reference, keeping successive calls from popping each other's tags.
         let base = unsafe { std::ptr::addr_of_mut!((*slot.get()).0) } as *mut u8;
         for (i, byte) in message.as_bytes()[..end].iter().enumerate() {
             unsafe { base.add(i).write(if *byte == 0 { b'?' } else { *byte }) };
         }
         unsafe { base.add(end).write(0) };
 
-        // The pointer outlives this call, which is sound: the thread_local data
-        // lives as long as the thread, and c2pa_error's docs already tell
-        // callers the buffer is valid only until this thread's next call.
+        // The pointer outlives this call:
+        // the thread_local data lives as long as the thread.
         base as *mut c_char
     })
 }
@@ -594,36 +537,16 @@ fn error_message_fallback(message: &str) -> *mut c_char {
 /// Returns the last error message.
 ///
 /// # Safety
-/// The returned value MUST be released by calling c2pa_free, and it is no
-/// longer valid after that call.
+/// The returned value MUST be released by calling c2pa_free,
+/// and it is no longer valid after that call.
 ///
-/// One exception: when the message itself could not be allocated, the returned
+/// When the message itself could not be allocated, the returned
 /// pointer is this thread's fallback storage rather than a tracked buffer.
-/// Three consequences, all of which the usual copy-then-free pattern already
-/// satisfies:
-///
-/// - It must not be freed. c2pa_free returns -1 for it, and -- unlike the
-///   tracked case -- that failing free REPLACES the error slot with
-///   "UntrackedPointer", discarding the very message this pointer was created
-///   to preserve. Read the message before freeing. Changing c2pa_free's error
-///   behaviour is out of scope for this change.
-/// - The next c2pa_error call on the same thread overwrites it in place. Copy
-///   the message before calling again; a pointer held across a second call
-///   reads the second message, not the first.
-/// - It is per-thread, so a pointer returned on one thread must not be read
-///   from another, and it does not outlive the thread that produced it. A
-///   worker that returns the pointer to its caller and then exits leaves a
-///   dangling pointer; copy the message on the thread that obtained it.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_error() -> *mut c_char {
     let message = Error::last_message();
     let ptr = to_c_string(message.clone());
     if ptr.is_null() {
-        // to_c_string returns NULL for four different reasons -- a forked
-        // child, a poisoned registry lock, an odd buffer address, and a
-        // message containing an interior NUL. Report the message that is
-        // actually in the slot rather than guessing which one happened; the
-        // error reporter must not invent a diagnosis.
         return error_message_fallback(&message);
     }
     ptr
@@ -855,7 +778,7 @@ pub unsafe extern "C" fn c2pa_context_builder_set_settings(
 ///
 /// * `builder` must be a valid C2paContextBuilder pointer (not yet built).
 /// * `signer_ptr` must be a valid C2paSigner pointer. It is consumed by this
-///   call and must not be used or freed afterward — unless `builder` itself is
+///   call and must not be used or freed afterward, unless `builder` itself is
 ///   rejected, which happens before the signer is touched. In that case the
 ///   signer is untouched and the caller still owns it.
 ///
@@ -966,7 +889,7 @@ pub unsafe extern "C" fn c2pa_http_resolver_create(
 /// # Safety
 ///
 /// * `builder` must be a valid C2paContextBuilder pointer (not yet built).
-/// * `resolver_ptr` is consumed and must not be used or freed afterward —
+/// * `resolver_ptr` is consumed and must not be used or freed afterwards,
 ///   unless `builder` itself is rejected, which happens before the resolver is
 ///   touched. In that case the resolver is untouched and the caller still owns
 ///   it.
@@ -2134,12 +2057,11 @@ pub unsafe extern "C" fn c2pa_builder_write_ingredient_archive(
 ///
 /// # Returning -1 after the asset is written
 ///
-/// A -1 does not always mean nothing happened. Signing writes to `dest` before
-/// the manifest bytes are handed back, so a failure to return those bytes -- a
-/// refused buffer, see "Returning byte buffers" in the module docs -- reports
-/// -1 with `dest` already holding a complete, valid signed asset. Do not retry
-/// blindly on -1: a retry signs the asset a second time. Check `c2pa_error` and
-/// inspect `dest` before deciding.
+/// A -1 does not always mean nothing happened.
+/// Signing writes to `dest` before the manifest bytes are handed back,
+/// so a failure to return those bytes (e.g. a refused buffer) reports
+/// -1 with `dest` already holding a complete, valid signed asset.
+/// Check `c2pa_error` and inspect `dest` before deciding.
 ///
 /// # Safety
 /// Reads from NULL-terminated C strings
@@ -2170,7 +2092,6 @@ pub unsafe extern "C" fn c2pa_builder_sign(
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
-        // See "Returning byte buffers" in the module docs.
         let bytes = to_c_bytes(manifest_bytes);
         if bytes.is_null() && len > 0 {
             return -1;
@@ -2199,12 +2120,11 @@ pub unsafe extern "C" fn c2pa_builder_sign(
 ///
 /// # Returning -1 after the asset is written
 ///
-/// A -1 does not always mean nothing happened. Signing writes to `dest` before
-/// the manifest bytes are handed back, so a failure to return those bytes -- a
-/// refused buffer, see "Returning byte buffers" in the module docs -- reports
-/// -1 with `dest` already holding a complete, valid signed asset. Do not retry
-/// blindly on -1: a retry signs the asset a second time. Check `c2pa_error` and
-/// inspect `dest` before deciding.
+/// A -1 does not always mean nothing happened.
+/// Signing writes to `dest` before the manifest bytes are handed back,
+/// so a failure to return those bytes (e.g. a refused buffer) reports
+/// -1 with `dest` already holding a complete, valid signed asset.
+/// Check `c2pa_error` and inspect `dest` before deciding.
 ///
 /// # Safety
 ///
@@ -2232,7 +2152,6 @@ pub unsafe extern "C" fn c2pa_builder_sign_context(
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
-        // See "Returning byte buffers" in the module docs.
         let bytes = to_c_bytes(manifest_bytes);
         if bytes.is_null() && len > 0 {
             return -1;
@@ -2286,7 +2205,6 @@ pub unsafe extern "C" fn c2pa_builder_data_hashed_placeholder(
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
-        // See "Returning byte buffers" in the module docs.
         let bytes = to_c_bytes(manifest_bytes);
         if bytes.is_null() && len > 0 {
             return -1;
@@ -2347,7 +2265,6 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
-        // See "Returning byte buffers" in the module docs.
         let bytes = to_c_bytes(manifest_bytes);
         if bytes.is_null() && len > 0 {
             return -1;
@@ -2451,7 +2368,6 @@ pub unsafe extern "C" fn c2pa_builder_placeholder(
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
-        // See "Returning byte buffers" in the module docs.
         let bytes = to_c_bytes(manifest_bytes);
         if bytes.is_null() && len > 0 {
             return -1;
@@ -2502,7 +2418,6 @@ pub unsafe extern "C" fn c2pa_builder_sign_embeddable(
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
     if !manifest_bytes_ptr.is_null() {
-        // See "Returning byte buffers" in the module docs.
         let bytes = to_c_bytes(manifest_bytes);
         if bytes.is_null() && len > 0 {
             return -1;
@@ -2719,7 +2634,6 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
     let result_bytes = ok_or_return_int!(result);
     let len = result_bytes.len() as i64;
     if !result_bytes_ptr.is_null() {
-        // See "Returning byte buffers" in the module docs.
         let bytes = to_c_bytes(result_bytes);
         if bytes.is_null() && len > 0 {
             return -1;
@@ -2836,15 +2750,15 @@ pub unsafe extern "C" fn c2pa_signer_create(
 /// # Errors
 /// Returns NULL if either signer pointer is NULL; call `c2pa_error` to retrieve the error string.
 ///
-/// The two signer handles must be different objects. Both are consumed, and one
-/// signer cannot serve as both the C2PA signer and the identity signer.
+/// The two signer handles must be different objects.
+/// Both are consumed, and one signer cannot serve as both the C2PA signer and the identity signer.
 ///
-/// On failure nothing is consumed: both handles are validated before either is
-/// taken, so a rejected call leaves the caller owning both, still freeable.
+/// On failure nothing is consumed: both handles are validated before either is taken,
+/// so a rejected call leaves the caller owning both, still freeable.
 ///
 /// # Safety
 /// Both signer pointers must have been created by a `c2pa_signer_*` function and not yet freed.
-/// After a successful call they are invalid — do NOT pass them to `c2pa_free`.
+/// After a successful call they are invalid: do NOT pass them to `c2pa_free`.
 /// If this returns NULL, both remain valid and the caller still owns them.
 /// The returned value MUST be released by calling `c2pa_free`.
 /// `referenced_assertions` and `roles`, if non-NULL, must each point to a NULL-terminated array
@@ -2873,12 +2787,7 @@ pub unsafe extern "C" fn c2pa_identity_signer_create(
     let referenced_assertions = cstr_array_or_return_null!(referenced_assertions);
     let roles = cstr_array_or_return_null!(roles);
 
-    // Both signers are consumed together or not at all. Untracking them one at
-    // a time cannot be made safe by validating first: another thread freeing
-    // the second handle in between leaves the first already moved out of the
-    // registry and dropped by this very call. untrack_owned_pair holds the map
-    // lock across both claims and both removals, and refuses a duplicate handle
-    // itself.
+    // Both signers are consumed together or not at all.
     let (c2pa_signer, identity_signer) = ok_or_return_null!(untrack_owned_pair::<C2paSigner>(
         c2pa_signer_ptr,
         identity_signer_ptr
@@ -3055,10 +2964,8 @@ unsafe fn c2pa_mime_types_to_c_array(strs: Vec<String>, count: *mut usize) -> *c
     // safely release ownership of both the array and its strings.
     let mut mime_ptrs: Vec<*mut c_char> = strs.into_iter().map(to_c_string).collect();
 
-    // to_c_string returns NULL when it cannot track the buffer. A NULL element
-    // in a count-delimited array crashes any caller that iterates and reads it,
-    // so free what was built and report failure instead of returning a
-    // partially valid array.
+    // to_c_string returns NULL when it cannot track the buffer.
+    // Here, we report a failure.
     if mime_ptrs.iter().any(|p| p.is_null()) {
         for ptr in mime_ptrs {
             if !ptr.is_null() {
@@ -3169,10 +3076,6 @@ mod tests {
         let signer = unsafe { c2pa_signer_from_info(&signer_info) };
         assert!(signer.is_null());
         let error = unsafe { c2pa_error() };
-        // Copy the string out, then release it through the registry that
-        // allocated it. CString::from_raw would free the memory while the
-        // registry entry survives, leaving a stale entry whose address the
-        // allocator can hand out again.
         let error_owned = unsafe { CStr::from_ptr(error) }.to_owned();
         unsafe { c2pa_free(error as *const c_void) };
         let error = error_owned;
@@ -3181,9 +3084,8 @@ mod tests {
 
     #[test]
     fn test_set_signer_leaves_signer_owned_when_builder_is_invalid() {
-        // The builder is validated before the signer is consumed, so a bad
-        // builder must leave the signer tracked and freeable. The docs promise
-        // this; without it a caller told "the signer is consumed" would leak it.
+        // The builder is validated before the signer is consumed,
+        // a broken builder must leave the signer tracked and freeable.
         let certs = include_str!(fixture_path!("certs/ed25519.pub"));
         let private_key = include_bytes!(fixture_path!("certs/ed25519.pem"));
         let alg = CString::new("Ed25519").unwrap();
@@ -3214,8 +3116,8 @@ mod tests {
     #[test]
     #[allow(deprecated)]
     fn test_failing_callback_leaves_handles_freeable() {
-        // A callback that fails mid-operation is the path a caller-side timeout
-        // takes. Every borrow must be released and every handle still freeable,
+        // In callbacks:
+        // Every borrow must be released and every handle still freeable,
         // otherwise a timeout would trade a hang for a leak.
         use crate::{c2pa_create_stream, checkout_exclusive, C2paSeekMode, StreamContext};
 
@@ -3265,8 +3167,8 @@ mod tests {
         };
         assert_eq!(result, -1, "a failing read callback must fail the sign");
 
-        // Borrows were released, so each handle can still be checked out and
-        // freed. A leaked borrow would make these fail.
+        // Borrows were released, so each handle can still be checked out and freed.
+        // A leaked borrow would make these fail.
         assert!(checkout_exclusive::<C2paBuilder>(builder).is_ok());
         assert!(checkout_exclusive::<C2paSigner>(signer).is_ok());
         assert_eq!(unsafe { c2pa_free(source as *const c_void) }, 0);
@@ -3279,8 +3181,8 @@ mod tests {
     #[allow(deprecated)]
     fn test_sign_rejects_same_stream_as_source_and_dest() {
         // Passing one stream as both source and dest would previously produce
-        // two &mut to the same object. The exclusive borrow now refuses the
-        // second checkout instead.
+        // two &mut to the same object.
+        // The exclusive borrow now refuses the second checkout instead.
         let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
         let mut stream = TestStream::new(source_image.to_vec());
 
@@ -3394,10 +3296,6 @@ mod tests {
 
         let json = unsafe { c2pa_reader_json(reader) };
         assert!(!json.is_null());
-        // Copy the string out, then release it through the registry that
-        // allocated it. CString::from_raw would free the memory while the
-        // registry entry survives, leaving a stale entry whose address the
-        // allocator can hand out again.
         let json_str = unsafe { CStr::from_ptr(json) }.to_owned();
         unsafe { c2pa_free(json as *const c_void) };
         let json_content = json_str.to_str().unwrap();
@@ -3455,14 +3353,6 @@ mod tests {
 
         let json = unsafe { c2pa_reader_json(reader) };
         assert!(!json.is_null());
-
-        // Copy the string out, then release it through the registry that
-
-        // allocated it. CString::from_raw would free the memory while the
-
-        // registry entry survives, leaving a stale entry whose address the
-
-        // allocator can hand out again.
 
         let json_str = unsafe { CStr::from_ptr(json) }.to_owned();
 
@@ -3530,14 +3420,6 @@ mod tests {
         let json = unsafe { c2pa_reader_json(reader) };
         assert!(!json.is_null());
 
-        // Copy the string out, then release it through the registry that
-
-        // allocated it. CString::from_raw would free the memory while the
-
-        // registry entry survives, leaving a stale entry whose address the
-
-        // allocator can hand out again.
-
         let json_str = unsafe { CStr::from_ptr(json) }.to_owned();
 
         unsafe { c2pa_free(json as *const c_void) };
@@ -3599,10 +3481,6 @@ mod tests {
 
         let json = unsafe { c2pa_reader_json(reader) };
         assert!(!json.is_null());
-        // Copy the string out, then release it through the registry that
-        // allocated it. CString::from_raw would free the memory while the
-        // registry entry survives, leaving a stale entry whose address the
-        // allocator can hand out again.
         let json_str = unsafe { CStr::from_ptr(json) }.to_owned();
         unsafe { c2pa_free(json as *const c_void) };
         let json_content = json_str.to_str().unwrap();
@@ -3633,10 +3511,6 @@ mod tests {
         let result = unsafe { c2pa_builder_set_remote_url(builder, remote_url.as_ptr()) };
         assert_eq!(result, -1);
         let error = unsafe { c2pa_error() };
-        // Copy the string out, then release it through the registry that
-        // allocated it. CString::from_raw would free the memory while the
-        // registry entry survives, leaving a stale entry whose address the
-        // allocator can hand out again.
         let error_owned = unsafe { CStr::from_ptr(error) }.to_owned();
         unsafe { c2pa_free(error as *const c_void) };
         let error = error_owned;
@@ -3657,10 +3531,6 @@ mod tests {
     fn test_c2pa_version() {
         let version = unsafe { c2pa_version() };
         assert!(!version.is_null());
-        // Copy the string out, then release it through the registry that
-        // allocated it. CString::from_raw would free the memory while the
-        // registry entry survives, leaving a stale entry whose address the
-        // allocator can hand out again.
         let version_str = unsafe { CStr::from_ptr(version) }.to_owned();
         unsafe { c2pa_free(version as *const c_void) };
         assert!(!version_str.to_str().unwrap().is_empty());
@@ -3668,9 +3538,7 @@ mod tests {
 
     #[test]
     fn test_identity_signer_create_rejects_one_handle_for_both_roles() {
-        // untrack_owned is irreversible: consuming the first signer and then
-        // failing on the second would destroy it while reporting failure, and
-        // the caller could not tell that apart from nothing having happened.
+        // untrack_owned is irreversible.
         let (signer, builder) = setup_signer_and_builder_for_signing_tests();
         let empty: [*const c_char; 1] = [std::ptr::null()];
 
@@ -3695,8 +3563,7 @@ mod tests {
 
     #[test]
     fn test_identity_signer_create_rejects_an_untracked_second_handle() {
-        // The general case the validation covers: the second handle is bad, so
-        // the first must not be consumed.
+        // The second handle is bad, so the first must not be consumed.
         let (signer, builder) = setup_signer_and_builder_for_signing_tests();
         let empty: [*const c_char; 1] = [std::ptr::null()];
         let bogus = 0x9e3779b97f4a7c15usize as *mut C2paSigner;
@@ -3720,9 +3587,8 @@ mod tests {
 
     #[test]
     fn test_error_fallback_truncates_on_a_char_boundary() {
-        // 4-byte characters, deliberately: the limit is 255 and 255 % 3 == 0,
-        // so 3-byte characters always land on a boundary and never exercise the
-        // walk. 255 % 4 == 3, so these do.
+        // This is for the error fallback when an error string
+        // can't be tracked.
         let long = "\u{1F600}".repeat(100);
         let ptr = error_message_fallback(&long);
         let bytes = unsafe { CStr::from_ptr(ptr) }.to_bytes();
@@ -3740,10 +3606,6 @@ mod tests {
     fn test_c2pa_error_no_error() {
         let error = unsafe { c2pa_error() };
         assert!(!error.is_null());
-        // Copy the string out, then release it through the registry that
-        // allocated it. CString::from_raw would free the memory while the
-        // registry entry survives, leaving a stale entry whose address the
-        // allocator can hand out again.
         let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
         unsafe { c2pa_free(error as *const c_void) };
         assert_eq!(error_str.to_str().unwrap(), "");
@@ -3751,10 +3613,8 @@ mod tests {
 
     #[test]
     fn test_error_fallback_is_reused_by_the_next_call_on_this_thread() {
-        // Pins the documented contract: the fallback is one per-thread buffer,
-        // so a second call overwrites what the first returned. Callers copy
-        // before calling again; this test exists so a change that silently
-        // alters that shows up here rather than in a binding.
+        // The fallback is one per-thread buffer,
+        // so a second call overwrites what the first returned.
         let first = error_message_fallback("FIRST: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
         assert_eq!(
             unsafe { CStr::from_ptr(first) }.to_str().unwrap(),
@@ -3868,10 +3728,6 @@ mod tests {
         let result = unsafe { c2pa_reader_from_stream(std::ptr::null(), stream.as_ptr()) };
         assert!(result.is_null());
         let error = unsafe { c2pa_error() };
-        // Copy the string out, then release it through the registry that
-        // allocated it. CString::from_raw would free the memory while the
-        // registry entry survives, leaving a stale entry whose address the
-        // allocator can hand out again.
         let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
         unsafe { c2pa_free(error as *const c_void) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: format");
@@ -3915,10 +3771,6 @@ mod tests {
 
         let json = unsafe { c2pa_reader_json(configured_reader) };
         assert!(!json.is_null());
-        // Copy the string out, then release it through the registry that
-        // allocated it. CString::from_raw would free the memory while the
-        // registry entry survives, leaving a stale entry whose address the
-        // allocator can hand out again.
         let json_str = unsafe { CStr::from_ptr(json) }.to_owned();
         unsafe { c2pa_free(json as *const c_void) };
         assert!(json_str.to_str().unwrap().contains("Silly Cats 929"));
@@ -3977,10 +3829,6 @@ mod tests {
         // Verify we can read the manifest
         let json = unsafe { c2pa_reader_json(configured_reader) };
         assert!(!json.is_null());
-        // Copy the string out, then release it through the registry that
-        // allocated it. CString::from_raw would free the memory while the
-        // registry entry survives, leaving a stale entry whose address the
-        // allocator can hand out again.
         let json_str = unsafe { CStr::from_ptr(json) }.to_owned();
         unsafe { c2pa_free(json as *const c_void) };
         let json_content = json_str.to_str().unwrap();
@@ -4082,10 +3930,6 @@ mod tests {
         let result = unsafe { c2pa_reader_json(std::ptr::null_mut()) };
         assert!(result.is_null());
         let error = unsafe { c2pa_error() };
-        // Copy the string out, then release it through the registry that
-        // allocated it. CString::from_raw would free the memory while the
-        // registry entry survives, leaving a stale entry whose address the
-        // allocator can hand out again.
         let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
         unsafe { c2pa_free(error as *const c_void) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: reader_ptr");
@@ -4102,10 +3946,6 @@ mod tests {
             unsafe { c2pa_builder_add_resource(builder, std::ptr::null(), stream.as_ptr()) };
         assert_eq!(result, -1);
         let error = unsafe { c2pa_error() };
-        // Copy the string out, then release it through the registry that
-        // allocated it. CString::from_raw would free the memory while the
-        // registry entry survives, leaving a stale entry whose address the
-        // allocator can hand out again.
         let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
         unsafe { c2pa_free(error as *const c_void) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: uri");
@@ -4121,10 +3961,6 @@ mod tests {
         let result = unsafe { c2pa_builder_to_archive(builder, std::ptr::null_mut()) };
         assert_eq!(result, -1);
         let error = unsafe { c2pa_error() };
-        // Copy the string out, then release it through the registry that
-        // allocated it. CString::from_raw would free the memory while the
-        // registry entry survives, leaving a stale entry whose address the
-        // allocator can hand out again.
         let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
         unsafe { c2pa_free(error as *const c_void) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: stream");
@@ -4141,10 +3977,6 @@ mod tests {
             unsafe { c2pa_builder_add_ingredient_from_archive(builder, std::ptr::null_mut()) };
         assert_eq!(result, -1);
         let error = unsafe { c2pa_error() };
-        // Copy the string out, then release it through the registry that
-        // allocated it. CString::from_raw would free the memory while the
-        // registry entry survives, leaving a stale entry whose address the
-        // allocator can hand out again.
         let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
         unsafe { c2pa_free(error as *const c_void) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: stream");
@@ -4177,10 +4009,6 @@ mod tests {
         };
         assert_eq!(result, -1);
         let error = unsafe { c2pa_error() };
-        // Copy the string out, then release it through the registry that
-        // allocated it. CString::from_raw would free the memory while the
-        // registry entry survives, leaving a stale entry whose address the
-        // allocator can hand out again.
         let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
         unsafe { c2pa_free(error as *const c_void) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: stream");
@@ -4200,10 +4028,6 @@ mod tests {
         };
         assert_eq!(result, -1);
         let error = unsafe { c2pa_error() };
-        // Copy the string out, then release it through the registry that
-        // allocated it. CString::from_raw would free the memory while the
-        // registry entry survives, leaving a stale entry whose address the
-        // allocator can hand out again.
         let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
         unsafe { c2pa_free(error as *const c_void) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: ingredient_id");
@@ -4412,10 +4236,6 @@ mod tests {
 
         let json = unsafe { c2pa_reader_json(reader) };
         assert!(!json.is_null());
-        // Copy the string out, then release it through the registry that
-        // allocated it. CString::from_raw would free the memory while the
-        // registry entry survives, leaving a stale entry whose address the
-        // allocator can hand out again.
         let json_str = unsafe { CStr::from_ptr(json) }.to_owned();
         unsafe { c2pa_free(json as *const c_void) };
         let json_content = json_str.to_str().unwrap();
@@ -4448,10 +4268,6 @@ mod tests {
         let reader = unsafe { c2pa_reader_from_file(path.as_ptr()) };
         if reader.is_null() {
             let error = unsafe { c2pa_error() };
-            // Copy the string out, then release it through the registry that
-            // allocated it. CString::from_raw would free the memory while the
-            // registry entry survives, leaving a stale entry whose address the
-            // allocator can hand out again.
             let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
             unsafe { c2pa_free(error as *const c_void) };
             panic!("Failed to create reader: {}", error_str.to_str().unwrap());
@@ -4459,10 +4275,6 @@ mod tests {
         assert!(!reader.is_null());
         let json = unsafe { c2pa_reader_json(reader) };
         assert!(!json.is_null());
-        // Copy the string out, then release it through the registry that
-        // allocated it. CString::from_raw would free the memory while the
-        // registry entry survives, leaving a stale entry whose address the
-        // allocator can hand out again.
         let json_str = unsafe { CStr::from_ptr(json) }.to_owned();
         unsafe { c2pa_free(json as *const c_void) };
         println!("JSON Report: {}", json_str.to_str().unwrap());
@@ -5162,9 +4974,8 @@ verify_after_sign = true
 
     #[test]
     fn test_signer_reserve_size_is_concurrent_across_threads() {
-        // reserve_size takes &self, so one signer handle must serve any number of
-        // threads at once. Binding it exclusively would make the second caller fail
-        // with PointerInUse.
+        // reserve_size takes &self, so one signer handle must serve any number of threads at once.
+        // Binding it exclusively would make the second caller fail with PointerInUse.
         let (signer, builder) = setup_signer_and_builder_for_signing_tests();
 
         let signer_addr = signer as usize;
@@ -5324,10 +5135,6 @@ verify_after_sign = true
             !error.is_null(),
             "Error should be retrievable after set_last"
         );
-        // Copy the string out, then release it through the registry that
-        // allocated it. CString::from_raw would free the memory while the
-        // registry entry survives, leaving a stale entry whose address the
-        // allocator can hand out again.
         let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
         unsafe { c2pa_free(error as *const c_void) };
         // Error messages are prefixed with "Other: "
@@ -5439,10 +5246,6 @@ verify_after_sign = true
 
         assert!(reader.is_null(), "Reader should be null for null format");
         let error = unsafe { c2pa_error() };
-        // Copy the string out, then release it through the registry that
-        // allocated it. CString::from_raw would free the memory while the
-        // registry entry survives, leaving a stale entry whose address the
-        // allocator can hand out again.
         let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
         unsafe { c2pa_free(error as *const c_void) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: format");
@@ -5499,10 +5302,6 @@ verify_after_sign = true
             "resource_to_stream should return -1 for null reader"
         );
         let error = unsafe { c2pa_error() };
-        // Copy the string out, then release it through the registry that
-        // allocated it. CString::from_raw would free the memory while the
-        // registry entry survives, leaving a stale entry whose address the
-        // allocator can hand out again.
         let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
         unsafe { c2pa_free(error as *const c_void) };
         assert_eq!(error_str.to_str().unwrap(), "NullParameter: reader_ptr");
@@ -5593,12 +5392,7 @@ verify_after_sign = true
     }
 
     #[test]
-
     fn test_placeholder_returns_zero_not_error_when_none_is_needed() {
-        // Builder::placeholder returns Ok(Vec::new()) when the format needs no
-        // placeholder -- a documented success, not a failure. to_c_bytes maps an
-        // empty buffer to NULL, so a NULL check alone turns that success into
-        // -1 and breaks a working caller path.
         const SETTINGS: &str = include_str!(fixture_path!("test_settings.json"));
 
         let settings = unsafe { c2pa_settings_new() };
@@ -6032,10 +5826,6 @@ verify_after_sign = true
 
         let json_ptr = unsafe { c2pa_reader_json(reader) };
         assert!(!json_ptr.is_null());
-        // Copy the string out, then release it through the registry that
-        // allocated it. CString::from_raw would free the memory while the
-        // registry entry survives, leaving a stale entry whose address the
-        // allocator can hand out again.
         let json_str = unsafe { CStr::from_ptr(json_ptr) }.to_owned();
         unsafe { c2pa_free(json_ptr as *const c_void) };
         let json = json_str.to_str().unwrap();
@@ -6071,10 +5861,6 @@ verify_after_sign = true
 
         let error = unsafe { c2pa_error() };
         assert!(!error.is_null());
-        // Copy the string out, then release it through the registry that
-        // allocated it. CString::from_raw would free the memory while the
-        // registry entry survives, leaving a stale entry whose address the
-        // allocator can hand out again.
         let _ = unsafe { CStr::from_ptr(error) }.to_owned();
         unsafe { c2pa_free(error as *const c_void) };
     }
