@@ -249,8 +249,9 @@ impl TestStream {
         Self(TestC2paStream::new(data).into_c_stream())
     }
 
-    /// Borrows the underlying C2paStream. The guard keeps the stream alive for
-    /// as long as it is held; callers use it through `Deref`/`DerefMut`.
+    /// Borrows the underlying C2paStream.
+    /// The guard keeps the stream alive for as long as it is held.
+    /// Callers use it through `Deref`/`DerefMut`.
     pub fn stream_mut(&mut self) -> crate::TypedExclusive<C2paStream> {
         deref_mut_option!(self.0, C2paStream).expect("TestStream always wraps a tracked C2paStream")
     }
@@ -282,15 +283,16 @@ impl Drop for TestStream {
 ///
 /// # Callback contract
 ///
-/// A callback must not block indefinitely. While one runs, the handles the
-/// operation borrowed stay borrowed, so a callback that never returns leaves
-/// them unfreeable for the life of the process — and no other thread can
-/// recover them, because only the blocked callback can end the wait.
+/// A callback must not block indefinitely.
+/// While one runs, the handles the operation borrowed stay borrowed,
+/// so a callback that never returns leaves them unfreeable for the
+/// life of the process, and no other thread can recover them,
+/// because only the blocked callback can end the wait.
 ///
 /// Apply your own timeout inside the callback and return a negative value when
-/// it expires. That path is already handled: the error propagates out, each
-/// borrow is released as its guard drops, and every handle stays tracked and
-/// freeable.
+/// it expires.
+/// Then, the error propagates, each borrow is released as its guard drops,
+/// and every handle stays tracked and freeable.
 ///
 /// # Safety
 /// The context must remain valid for the lifetime of the C2paStream.
@@ -416,11 +418,11 @@ impl TestC2paStream {
     /// - If non-null, `c_stream.context` must also be a tracked pointer allocated via `box_tracked!`.
     /// - Must not be called more than once for the same pointer.
     pub unsafe fn drop_c_stream(c_stream: *mut C2paStream) {
-        // The `if let` scope must end before the outer cimpl_free: the guard
-        // holds a borrow on the stream, and freeing a borrowed handle defers
-        // cleanup until the guard drops. Reading the context inside the scope
-        // and freeing the stream outside it is what keeps the two frees
-        // ordered.
+        // The `if let` scope must end before the outer cimpl_free:
+        // the guard holds a borrow on the stream,
+        // and freeing a borrowed handle defers cleanup until the guard drops.
+        // Reading the context inside the scope and freeing the stream outside it
+        // is what keeps the two frees ordered (and ordering is important here).
         if let Some(real_stream) = deref_mut_option!(c_stream, C2paStream) {
             cimpl_free(real_stream.context as *mut std::ffi::c_void);
         }

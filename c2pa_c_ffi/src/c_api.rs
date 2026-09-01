@@ -2751,16 +2751,16 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
 ///
 /// # Callback contract
 ///
-/// The callback must not block indefinitely. While it runs, the handles the
-/// signing operation borrowed stay borrowed, so a callback that never returns
-/// leaves them unfreeable for the life of the process — and no other thread can
-/// recover them, because only the blocked callback can end the wait. This
-/// matters most here, where a signing callback often performs network work.
+/// A callback must not block indefinitely.
+/// While one runs, the handles the operation borrowed stay borrowed,
+/// so a callback that never returns leaves them unfreeable for the
+/// life of the process, and no other thread can recover them,
+/// because only the blocked callback can end the wait.
 ///
 /// Apply your own timeout inside the callback and return a negative value when
-/// it expires. That path is already handled: the error propagates out, each
-/// borrow is released as its guard drops, and every handle stays tracked and
-/// freeable.
+/// it expires.
+/// Then, the error propagates, each borrow is released as its guard drops,
+/// and every handle stays tracked and freeable.
 ///
 /// # Example
 /// ```c

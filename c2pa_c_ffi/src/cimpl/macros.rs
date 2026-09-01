@@ -356,11 +356,11 @@ macro_rules! deref_mut_option {
     }};
 }
 
-/// Borrow a tracked object for writing, yielding `None` if the pointer is
-/// NULL. Unlike `deref_mut_or_return!`, NULL is not treated as an error —
-/// this is for parameters that are genuinely optional. A non-NULL but
-/// untracked, wrong-type, or already-borrowed pointer is still an early-return
-/// error.
+/// Borrow a tracked object for writing, yielding `None` if the pointer is NULL.
+/// Unlike `deref_mut_or_return!`, NULL is not treated as an error:
+/// this is for parameters that are genuinely optional.
+/// A non-NULL but untracked, wrong-type, or already-borrowed pointer
+/// is still an early-return error.
 ///
 /// # Examples
 /// ```rust,ignore

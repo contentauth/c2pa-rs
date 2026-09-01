@@ -50,20 +50,18 @@ pub enum C2paError {
     /// single owner can be handed back.
     #[error("WrongWrapperKind: {0}")]
     WrongWrapperKind(String),
-    /// A registry call was made from a process that did not create the
-    /// registry, which happens after `fork()` without an `exec()`.
+    /// A registry call was made from a process that did not create the registry,
+    /// which happens after `fork()` without an `exec()`.
     #[error("ForeignProcess: {0}")]
     ForeignProcess(String),
     /// A pointer could not be recorded in the registry, so it was refused
-    /// rather than handed to C untracked.
+    /// instead of being handed to C untracked.
     #[error("TrackingRefused: {0}")]
     TrackingRefused(String),
-    /// A lock was poisoned by a panic on another thread, so the state it
-    /// guards can no longer be trusted.
+    /// A lock was poisoned by a panic on another thread.
     #[error("MutexPoisoned: {0}")]
     MutexPoisoned(String),
-    /// A buffer size was rejected as unsafe, for example one that would
-    /// overflow when used in pointer arithmetic.
+    /// A buffer size was rejected as unsafe.
     #[error("InvalidBufferSize: {0}")]
     InvalidBufferSize(String),
     #[error("NullParameter: {0}")]
@@ -434,10 +432,7 @@ mod tests {
         let err: C2paError = CimplError::other("generic error").into();
         assert!(matches!(err, C2paError::Other(_)));
 
-        // Codes 6 and 7 are NOT in this group: they have their own variants, so
-        // their type survives the round trip instead of collapsing into Other
-        // with a doubled "Other: MutexPoisoned: ..." message. See
-        // test_cimpl_typed_errors_keep_their_type.
+        // Codes 6 and 7 have their own variants.
     }
 
     #[test]

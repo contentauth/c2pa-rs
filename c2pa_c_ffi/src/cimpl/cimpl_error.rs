@@ -136,8 +136,9 @@ impl CimplError {
         )
     }
 
-    /// The registry could not record a pointer, so it was refused rather than
-    /// handed to C untracked. `reason` names which check refused it.
+    /// The registry could not record a pointer,
+    /// so it was refused rather than handed to C untracked.
+    /// `reason` names which check refused it.
     pub fn tracking_refused(reason: &str) -> Self {
         Self::new(11, format!("TrackingRefused: {reason}"))
     }
