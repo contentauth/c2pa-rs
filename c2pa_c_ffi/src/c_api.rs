@@ -3308,17 +3308,29 @@ mod tests {
     fn test_c2pa_reader_from_stream_cawg() {
         // This fixture's identity claims aggregation (ICA) credential is signed
         // by a `did:jwk` issuer. ICA issuers are untrusted by default, so we must
-        // add that issuer to `cawg_trust.trusted_ica_issuers` for the credential
-        // to be reported as valid.
+        // add that issuer to `trust.anchors[n].trusted_ica_issuers` for the credential
+        // to be reported as valid. You can do this by adding to the trust list anchors.
         let builder = unsafe { c2pa_context_builder_new() };
         let settings = unsafe { c2pa_settings_new() };
 
-        let path = CString::new("cawg_trust.trusted_ica_issuers").unwrap();
+        let format = CString::new("json").unwrap();
         let value = CString::new(
-            r#"["did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9"]"#,
+            r#"{
+                "trust": {
+                    "anchors": [
+                        {
+                            "trust_anchors": "",
+                            "trust_uri": "custom_ica_trust_anchor",
+                            "trust_kind": "cawg",
+                            "trusted_ica_issuers": ["did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9"] 
+                        }
+                    ]
+                }
+            }"#,
         )
         .unwrap();
-        let result = unsafe { c2pa_settings_set_value(settings, path.as_ptr(), value.as_ptr()) };
+        let result =
+            unsafe { c2pa_settings_update_from_string(settings, value.as_ptr(), format.as_ptr()) };
         assert_eq!(result, 0);
 
         let result = unsafe { c2pa_context_builder_set_settings(builder, settings) };
