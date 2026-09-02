@@ -35,6 +35,13 @@ add_thumbnails = ["dep:image"]
 # the crate's usual semantic-versioning stability guarantees and may change or be removed in any
 # release. See docs/experimental-features.md.
 unstable_builder_filter = []
+# Experimental C2PA Live Video support (spec section 19): per-segment C2PA Manifest Box
+# (§19.3) and Verifiable Segment Info (§19.4) signing and validation. No new dependencies;
+# builds entirely on coset/ed25519-dalek/c2pa_cbor/x509-parser, already required by the
+# core signing/validation paths. Experimental feature: exempt from the crate's usual
+# semantic-versioning stability guarantees and may change or be removed in any release.
+# See docs/experimental-features.md and https://github.com/contentauth/c2pa-rs/issues/2507.
+unstable_live_video = []
 file_io = []
 fetch_remote_manifests = ["dep:wasi"]
 json_schema = ["dep:schemars"]

@@ -71,6 +71,30 @@ const FULL_BOX_TYPES: &[&str; 80] = &[
     "txtC", "mime", "uri ", "uriI", "hmhd", "sthd", "vvhd", "medc",
 ];
 
+// "m4s" (fragmented media segment) is recognized only when the unstable_live_video
+// feature is enabled, per the experimental features policy: a build without the
+// flag must behave identically to one without the live video code at all.
+#[cfg(feature = "unstable_live_video")]
+static SUPPORTED_TYPES: [&str; 16] = [
+    "avif",
+    "heif",
+    "heic",
+    "mp4",
+    "m4a",
+    "m4s",
+    "mov",
+    "m4v",
+    "application/mp4",
+    "audio/mp4",
+    "image/avif",
+    "image/heic",
+    "image/heif",
+    "video/mp4",
+    "video/quicktime",
+    "video/x-m4v",
+];
+
+#[cfg(not(feature = "unstable_live_video"))]
 static SUPPORTED_TYPES: [&str; 15] = [
     "avif",
     "heif",
@@ -268,17 +292,17 @@ impl XpathFetch for BMFFArena {
 }
 
 macro_rules! boxtype {
-    ($( $name:ident => $value:expr ),*) => {
+    ($( $(#[$meta:meta])* $name:ident => $value:expr ),*) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub enum BoxType {
-            $( $name, )*
+            $( $(#[$meta])* $name, )*
             UnknownBox(u32),
         }
 
         impl From<u32> for BoxType {
             fn from(t: u32) -> BoxType {
                 match t {
-                    $( $value => BoxType::$name, )*
+                    $( $(#[$meta])* $value => BoxType::$name, )*
                     _ => BoxType::UnknownBox(t),
                 }
             }
@@ -287,7 +311,7 @@ macro_rules! boxtype {
         impl From<BoxType> for u32 {
             fn from(t: BoxType) -> u32 {
                 match t {
-                    $( BoxType::$name => $value, )*
+                    $( $(#[$meta])* BoxType::$name => $value, )*
                     BoxType::UnknownBox(t) => t,
                 }
             }
@@ -352,7 +376,12 @@ boxtype! {
     IlocBox => 0x696C6F63,
     MfroBox => 0x6d66726f,
     TfraBox => 0x74667261,
-    SaioBox => 0x7361696f
+    SaioBox => 0x7361696f,
+    // Segment Type Box (media segments); recognized only when unstable_live_video is
+    // enabled. Without the feature, 0x73747970 falls through to BoxType::UnknownBox,
+    // matching pre-feature behavior.
+    #[cfg(feature = "unstable_live_video")]
+    StypBox => 0x73747970
 }
 
 struct BoxHeaderLite {
@@ -1908,10 +1937,16 @@ impl CAIReader for BmffIO {
         let mut header = [0u8; 4];
         reader.read_exact(&mut header)?;
 
-        if header[..4] != *b"ftyp" {
+        let is_styp = cfg!(feature = "unstable_live_video") && header[..4] == *b"styp";
+        if header[..4] != *b"ftyp" && !is_styp {
             return Err(BmffError::InvalidFileSignature {
                 reason: format!(
-                    "invalid BMFF structure: expected box type \"ftyp\" at offset 4, found {}",
+                    "invalid BMFF structure: expected box type \"ftyp\"{} at offset 4, found {}",
+                    if cfg!(feature = "unstable_live_video") {
+                        " or \"styp\""
+                    } else {
+                        ""
+                    },
                     String::from_utf8_lossy(&header[..4])
                 ),
             }
@@ -2156,12 +2191,21 @@ impl CAIWriter for BmffIO {
 
         // since we reached this point we must have an ordinary manifest store so we may need to truncate off
         // the update manifest
-        // get ftyp location
-        // start after ftyp
-        let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
-        let ftyp_info = &bmff_tree.as_ref()[ftyp_token[0]].data;
-        let ftyp_offset = ftyp_info.offset;
-        let ftyp_size = ftyp_info.size;
+        // get leading type box location (ftyp for complete files; styp for media segments,
+        // recognized only when the unstable_live_video feature is enabled)
+        let type_box_token = bmff_map
+            .get("/ftyp")
+            .or_else(|| {
+                if cfg!(feature = "unstable_live_video") {
+                    bmff_map.get("/styp")
+                } else {
+                    None
+                }
+            })
+            .ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
+        let type_box_info = &bmff_tree.as_ref()[type_box_token[0]].data;
+        let type_box_offset = type_box_info.offset;
+        let type_box_size = type_box_info.size;
 
         // get position to insert c2pa primary manifest store
         let (c2pa_start, c2pa_length) = match get_uuid_token(
@@ -2175,7 +2219,7 @@ impl CAIWriter for BmffIO {
 
                 (uuid_info.offset, Some(uuid_info.size))
             }
-            Err(Error::NotFound) => ((ftyp_offset + ftyp_size), None),
+            Err(Error::NotFound) => ((type_box_offset + type_box_size), None),
             Err(e) => return Err(e),
         };
 
@@ -2446,14 +2490,23 @@ impl RemoteRefEmbed for BmffIO {
                 let (xmp_start, xmp_length) = match &c2pa_boxes.xmp {
                     Some(_xmp) => (c2pa_boxes.xmp_box_offset, Some(c2pa_boxes.xmp_box_size)),
                     None => {
-                        // get ftyp location
-                        // start after ftyp
-                        let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
-                        let ftyp_info = &bmff_tree.as_ref()[ftyp_token[0]].data;
-                        let ftyp_offset = ftyp_info.offset;
-                        let ftyp_size = ftyp_info.size;
+                        // get leading type box location (ftyp for complete files; styp for media
+                        // segments, recognized only when the unstable_live_video feature is enabled)
+                        let type_box_token = bmff_map
+                            .get("/ftyp")
+                            .or_else(|| {
+                                if cfg!(feature = "unstable_live_video") {
+                                    bmff_map.get("/styp")
+                                } else {
+                                    None
+                                }
+                            })
+                            .ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
+                        let type_box_info = &bmff_tree.as_ref()[type_box_token[0]].data;
+                        let type_box_offset = type_box_info.offset;
+                        let type_box_size = type_box_info.size;
 
-                        ((ftyp_offset + ftyp_size), None)
+                        ((type_box_offset + type_box_size), None)
                     }
                 };
 

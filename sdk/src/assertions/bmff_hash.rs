@@ -3206,3 +3206,27 @@ pub mod tests {
     }
 }
 */
+
+#[cfg(test)]
+mod bmff_version_tests {
+    #![allow(clippy::unwrap_used)]
+
+    use crate::{assertion::AssertionCbor, assertions::BmffHash};
+
+    // Not gated behind `unstable_live_video`: `ASSERTION_CREATION_VERSION` is core, always-on
+    // SDK behavior (added in #1253, unrelated to this feature flag) that every BmffHash
+    // consumer depends on, not just live video. Live video's §19.3 exclusive hashing semantics
+    // require v3, which is what motivated adding this regression guard, but the invariant it
+    // protects is general — it belongs in the standard test tiers, not gated with the flag.
+    #[test]
+    fn bmff_hash_assertion_label_uses_v3() {
+        let bmff_hash = BmffHash::new("", "sha256", None);
+        let assertion = bmff_hash.to_cbor_assertion().unwrap();
+
+        assert_eq!(
+            assertion.label(),
+            "c2pa.hash.bmff.v3",
+            "BmffHash must use assertion creation version 3"
+        );
+    }
+}

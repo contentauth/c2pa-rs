@@ -269,6 +269,12 @@ pub struct AssertionDefinition {
     /// True if this assertion is attributed to the signer (defaults to false)
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub created: bool,
+    /// Pre-encoded CBOR bytes that bypass the `Value` intermediate representation.
+    /// When set, these bytes are used directly instead of serializing `data` via `to_vec`.
+    /// This preserves CBOR features that `c2pa_cbor::Value` cannot represent (e.g. tags).
+    #[cfg(feature = "unstable_live_video")]
+    #[serde(skip)]
+    pub(crate) cbor_override: Option<Vec<u8>>,
 }
 
 impl<'de> Deserialize<'de> for AssertionDefinition {
@@ -308,6 +314,8 @@ impl<'de> Deserialize<'de> for AssertionDefinition {
             data,
             kind: helper.kind,
             created: helper.created,
+            #[cfg(feature = "unstable_live_video")]
+            cbor_override: None,
         })
     }
 }
@@ -876,6 +884,8 @@ impl Builder {
             data: assertion_data,
             kind,
             created,
+            #[cfg(feature = "unstable_live_video")]
+            cbor_override: None,
         });
         Ok(self)
     }
@@ -893,6 +903,31 @@ impl Builder {
         T: Serialize,
     {
         self.add_assertion_impl(label, data, None, false)
+    }
+
+    /// Adds a CBOR assertion using pre-encoded bytes that preserve CBOR features
+    /// (such as tags) that `c2pa_cbor::Value` cannot represent.
+    ///
+    /// The data is first serialized to CBOR via the binary encoder (which handles
+    /// CBOR tags), and those bytes are stored as an override. A `Value` copy is
+    /// also kept for metadata/inspection, though it may lose tag information.
+    #[cfg(feature = "unstable_live_video")]
+    pub(crate) fn add_assertion_cbor<S, T>(&mut self, label: S, data: &T) -> Result<&mut Self>
+    where
+        S: Into<String>,
+        T: Serialize,
+    {
+        let cbor_bytes =
+            c2pa_cbor::to_vec(data).map_err(|err| Error::AssertionEncoding(err.to_string()))?;
+        let value = c2pa_cbor::value::to_value(data)?;
+        self.definition.assertions.push(AssertionDefinition {
+            label: label.into(),
+            data: AssertionData::Cbor(value),
+            kind: None,
+            created: false,
+            cbor_override: Some(cbor_bytes),
+        });
+        Ok(self)
     }
 
     /// Adds a JSON assertion to the manifest.
@@ -1904,11 +1939,20 @@ impl Builder {
                         &User::new(manifest_assertion.label(), &serde_json::to_string(&value)?),
                         manifest_assertion.created(),
                     ),
-                    AssertionData::Cbor(value) => add_assertion(
-                        &mut claim,
-                        &UserCbor::new(manifest_assertion.label(), c2pa_cbor::to_vec(value)?),
-                        manifest_assertion.created(),
-                    ),
+                    AssertionData::Cbor(value) => {
+                        #[cfg(feature = "unstable_live_video")]
+                        let cbor_bytes = match &manifest_assertion.cbor_override {
+                            Some(bytes) => bytes.clone(),
+                            None => c2pa_cbor::to_vec(value)?,
+                        };
+                        #[cfg(not(feature = "unstable_live_video"))]
+                        let cbor_bytes = c2pa_cbor::to_vec(value)?;
+                        add_assertion(
+                            &mut claim,
+                            &UserCbor::new(manifest_assertion.label(), cbor_bytes),
+                            manifest_assertion.created(),
+                        )
+                    }
                 },
             }?;
         }

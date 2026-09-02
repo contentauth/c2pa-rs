@@ -221,6 +221,9 @@ pub mod identity;
 /// The `jumbf_io` module contains the definitions for the JUMBF data in assets.
 pub mod jumbf_io;
 
+#[cfg(feature = "unstable_live_video")]
+pub mod live_video;
+
 /// The settings module provides a way to configure the C2PA SDK.
 pub mod settings;
 

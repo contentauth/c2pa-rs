@@ -54,6 +54,25 @@ The following manifest properties are specific to C2PA Tool and used for signing
 - `sign_cert`: Signing certificate to use. Default: `es256_certs.pem`
 - `ta_url`:  Time Authority URL for getting a time-stamp (for example, `http://timestamp.digicert.com`). A time-stamp provides a way to confirm that the manifest was signed when the certificate was valid, even if the certificate has since expired. However, the Time Authority URL requires a live online connection for confirmation, which may not always be available.
 
+## Live video (experimental)
+
+The manifest definition passed to `live-video-sign` (§19.3, per-segment C2PA Manifest Box) must include a `c2pa.livevideo.segment` assertion with a `streamId`:
+
+```json
+{
+    "assertions": [
+        {
+          "label": "c2pa.livevideo.segment",
+          "data": {
+            "streamId": "my-live-stream"
+          }
+        }
+    ]
+}
+```
+
+`sequenceNumber`, `continuityMethod`, and `previousManifestId` are managed automatically by the signer and don't need to be set in the manifest definition. See [Using C2PA Tool](usage.md#signing-and-validating-live-video-streams-experimental) for the `live-video-sign`/`live-video` subcommands. This feature requires a build with the `unstable_live_video` Cargo feature enabled.
+
 ## Example
 
 The example below is a minimal manifest definition that uses a default testing certificate in the [sample folder](https://github.com/contentauth/c2pa-rs/tree/main/cli/sample) that are also built into the `c2patool` binary.
