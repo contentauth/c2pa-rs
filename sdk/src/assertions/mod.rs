@@ -98,3 +98,6 @@ pub use soft_binding::{SoftBinding, SoftBindingBlock, SoftBindingScope};
 
 mod cloud_data;
 pub use cloud_data::{CloudData, HashedExtUri};
+
+mod external_reference;
+pub use external_reference::{ExternalReference, ExternalReferenceLocation, UnhashedExtUri};

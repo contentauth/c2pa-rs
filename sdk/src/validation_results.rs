@@ -1035,6 +1035,11 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a C2PA assertion.
     pub const ACTION_ASSERTION_REDACTED: &str = "assertion.action.redacted";
 
+    /// An `action` assertion missing required soft binding
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    pub const ACTION_ASSERTION_SOFTBINDING_MISSING: &str = "assertion.action.softBindingMissing";
+
     /// The hash of a byte range of the asset does not match the
     /// hash declared in the data hash assertion.
     ///
@@ -1069,6 +1074,17 @@ pub mod validation_codes {
     ///
     /// Any corresponding URL should point to a C2PA assertion.
     pub const ASSERTION_CLOUD_DATA_ACTIONS: &str = "assertion.cloud-data.actions";
+
+    /// A cloud data assertion was incomplete or malformed.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    pub const ASSERTION_CLOUD_DATA_MALFORMED: &str = "assertion.cloud-data.malformed";
+
+    /// An external reference assertion was incomplete or malformed.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    pub const ASSERTION_EXTERNAL_REFERENCE_MALFORMED: &str =
+        "assertion.external-reference.malformed";
 
     /// The value of an `alg` header, or other header that specifies an
     /// algorithm used to compute the value of another field, is unknown
@@ -1162,11 +1178,6 @@ pub mod validation_codes {
     ///
     /// Any corresponding URL should point to a C2PA assertion box.
     pub const ASSERTION_BOXESHASH_MALFORMED: &str = "assertion.boxesHash.malformed";
-
-    /// The cloud-data assertion was incomplete.
-    ///
-    /// Any corresponding URL should point to a C2PA assertion box.
-    pub const ASSERTION_CLOUD_DATA_MALFORMED: &str = "assertion.cloud-data.malformed";
 
     /// A hash of an asset in the collection does not match hash declared in
     /// the collection data hash assertion.
@@ -1662,7 +1673,7 @@ pub mod tests {
         assert_eq!(
             validation_results.to_string(),
             concat!(
-                "spec validation version: 2.3.0\n",
+                "spec validation version: 2.4.0\n",
                 "state: Invalid\n",
                 "  success: claimSignature.validated, claimSignature.insideValidity\n",
                 "  informational:\n",

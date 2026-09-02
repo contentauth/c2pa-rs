@@ -214,6 +214,7 @@ impl TryFrom<ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
                     ClaimGeneratorInfoOperatingSystem::Other(name) => name,
                 })
             },
+            spec_version: None,
             other: value
                 .other
                 .into_iter()
@@ -246,6 +247,7 @@ impl TryFrom<&ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
                     ClaimGeneratorInfoOperatingSystem::Other(name) => name.clone(),
                 })
             },
+            spec_version: None,
             other: value
                 .other
                 .iter()

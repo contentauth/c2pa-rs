@@ -78,6 +78,7 @@ pub struct Ingredient {
     pub description: Option<String>,
     pub informational_uri: Option<String>,
     pub data_types: Option<Vec<AssetType>>,
+    pub digital_source_type: Option<String>,
 
     pub validation_results: Option<ValidationResults>,
     pub active_manifest: Option<HashedUri>,
@@ -165,6 +166,7 @@ impl Ingredient {
             && self.validation_results.is_none() // V3 exclusive params
             && self.active_manifest.is_none()
             && self.claim_signature.is_none()
+            && self.digital_source_type.is_none()
     }
 
     /// determines if an ingredient is a v2 ingredient
@@ -174,6 +176,7 @@ impl Ingredient {
         && self.validation_results.is_none() // V3 exclusive params
         && self.active_manifest.is_none()
         && self.claim_signature.is_none()
+        && self.digital_source_type.is_none()
     }
 
     fn is_v3_compatible(&self) -> bool {
@@ -181,8 +184,6 @@ impl Ingredient {
             && self.validation_status.is_none()
             && self.c2pa_manifest.is_none()
             && self.validation_results.is_some()
-            && self.active_manifest.is_some()
-            && self.claim_signature.is_some()
     }
 
     pub fn set_title<S: Into<String>>(mut self, title: S) -> Self {
@@ -228,6 +229,11 @@ impl Ingredient {
 
     pub fn set_thumbnail(mut self, hashed_uri: Option<&HashedUri>) -> Self {
         self.thumbnail = hashed_uri.map(|h| h.to_owned());
+        self
+    }
+
+    pub fn set_digital_source_type(mut self, dst: Option<String>) -> Self {
+        self.digital_source_type = dst;
         self
     }
 
@@ -430,6 +436,7 @@ impl Ingredient {
             ? "informationalURI": tstr .size (1..max-tstr-length), ; URI to an informational page about the ingredient or its data
             ? "softBindingsMatched": bool, ; Whether soft bindings were matched
             ? "softBindingAlgorithmsMatched": [1* tstr] ; Array of algorithm names used for discovering the active manifest
+            ? "digitalSourceType": tstr .size (1..max-tstr-length), ; One of the source types defined at https://cv.iptc.org/newscodes/digitalsourcetype/ or in this specification. Cannot be combined with `activeManifest`.
             ? "metadata": $assertion-metadata-map ; additional information about the assertion
         */
 
@@ -437,6 +444,12 @@ impl Ingredient {
         if self.active_manifest.is_some() && self.validation_results.is_none() {
             return Err(serde::ser::Error::custom(
                 "Ingredient v3 activeManifest requires validationResults to be present",
+            ));
+        }
+
+        if self.active_manifest.is_some() && self.digital_source_type.is_some() {
+            return Err(serde::ser::Error::custom(
+                "Ingredient v3 activeManifest and digitalSourceType cannot both be present",
             ));
         }
 
@@ -481,6 +494,9 @@ impl Ingredient {
             ingredient_map_len += 1
         }
         if self.metadata.is_some() {
+            ingredient_map_len += 1
+        }
+        if self.digital_source_type.is_some() {
             ingredient_map_len += 1
         }
 
@@ -528,6 +544,9 @@ impl Ingredient {
         }
         if let Some(sba) = &self.soft_binding_algorithms_matched {
             ingredient_map.serialize_field("softBindingAlgorithmsMatched", sba)?;
+        }
+        if let Some(dst) = &self.digital_source_type {
+            ingredient_map.serialize_field("digitalSourceType", dst)?;
         }
         if let Some(md) = &self.metadata {
             ingredient_map.serialize_field("metadata", md)?;
@@ -804,6 +823,8 @@ impl AssertionBase for Ingredient {
                     map_cbor_to_type("softBindingsMatched", &ingredient_value);
                 let soft_binding_algorithms_matched: Option<Vec<String>> =
                     map_cbor_to_type("softBindingAlgorithmsMatched", &ingredient_value);
+                let digital_source_type: Option<String> =
+                    map_cbor_to_type("digitalSourceType", &ingredient_value);
                 let metadata: Option<AssertionMetadata> =
                     map_cbor_to_type("metadata", &ingredient_value);
 
@@ -823,6 +844,7 @@ impl AssertionBase for Ingredient {
                     claim_signature,
                     soft_bindings_matched,
                     soft_binding_algorithms_matched,
+                    digital_source_type,
                     version,
                     ..Default::default()
                 }
@@ -1030,6 +1052,8 @@ pub mod tests {
             Some("1.0.0".into()),
         )];
 
+        let digital_source_type = Some("some dst".to_string());
+
         let mut all_vals = Ingredient {
             title: Some("test_title".to_owned()),
             format: Some("image/jpeg".to_owned()),
@@ -1049,6 +1073,7 @@ pub mod tests {
             claim_signature: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.signature".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
             soft_bindings_matched: Some(true),
             soft_binding_algorithms_matched: Some(vec!["alg1".to_owned(), "alg2".to_owned()]),
+            digital_source_type,
             version: 1,
         };
 
@@ -1061,6 +1086,7 @@ pub mod tests {
 
         // Save as V3
         all_vals.version = 3;
+        all_vals.active_manifest = None;
         let v3 = all_vals.to_assertion().unwrap();
 
         // test v1
@@ -1120,15 +1146,16 @@ pub mod tests {
             description: Some("Some ingredient description".to_owned()),
             informational_uri: Some("https://tfhub.dev/deepmind/bigbigan-resnet50/1".to_owned()),
             data_types: Some(data_types),
-            validation_results: Some(validation_results),
-            active_manifest: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
+            validation_results: Some(validation_results.clone()),
+            active_manifest: None,
             claim_signature: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.signature".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
             soft_bindings_matched: Some(true),
             soft_binding_algorithms_matched: Some(vec!["alg1".to_owned(), "alg2".to_owned()]),
+            digital_source_type: Some("some dst".to_string()),
             version: 3,
             ..Default::default()
         };
-        assert_eq!(v3_decoded, v3_expected);
+        assert!(v3_decoded == v3_expected);
         assert!(!v3_decoded.is_v1_compatible());
         assert!(!v3_decoded.is_v2_compatible());
         assert!(v3_decoded.is_v3_compatible());

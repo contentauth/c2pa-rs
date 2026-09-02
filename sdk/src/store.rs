@@ -1677,6 +1677,23 @@ impl Store {
                 .failure_as_err(validation_log, e)
             })?;
 
+            if ingredient_assertion.active_manifest.is_some()
+                && ingredient_assertion.digital_source_type.is_some()
+            {
+                log_item!(
+                            jumbf::labels::to_assertion_uri(claim.label(), &i.label()),
+                            "ingredient assertion cannot have both activeManifest and digitalSourceType",
+                            "ingredient_checks"
+                        )
+                        .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
+                        .failure(
+                            validation_log,
+                            Error::HashMismatch(
+                                "ingredient assertion cannot have both activeManifest and digitalSourceType".to_string(),
+                            ),
+                        )?;
+            }
+
             validation_log
                 .push_ingredient_uri(jumbf::labels::to_assertion_uri(claim.label(), &i.label()));
 
