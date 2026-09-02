@@ -162,7 +162,7 @@ pub struct Ingredient {
 }
 
 fn default_instance_id() -> String {
-    format!("xmp:iid:{}", Uuid::new_v4())
+    format!("xmp.iid:{}", Uuid::new_v4())
 }
 
 fn default_relationship() -> Relationship {
