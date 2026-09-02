@@ -616,9 +616,14 @@ pub struct BuilderSettings {
     /// Whether to ignore errors encountered while loading or validating an [`Ingredient`]'s
     /// manifest (e.g. invalid file format).
     ///
+    /// When enabled, a hard error is reported as a `general.error` in the ingredient's
+    /// [`validation_results`] instead of being returned, so the [`Ingredient`] still loads
+    /// and callers can inspect what went wrong.
+    ///
     /// The default value is false.
     ///
     /// [`Ingredient`]: crate::Ingredient
+    /// [`validation_results`]: crate::Ingredient::validation_results
     pub ignore_ingredient_errors: bool,
 }
 

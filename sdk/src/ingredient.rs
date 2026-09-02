@@ -745,13 +745,20 @@ impl Ingredient {
                 self.validation_status = Some(vec![status]);
                 Ok(())
             }
-            Err(err) => {
-                if context.settings().builder.ignore_ingredient_errors {
+            Err(err) => match context.settings().builder.ignore_ingredient_errors {
+                true => {
                     debug!("ignoring ingredient error: {err:?}");
-                    return Ok(());
+
+                    let status = ValidationStatus::from_error(&err);
+                    let mut results = ValidationResults::default();
+                    results.add_status(status.clone());
+                    self.validation_status = Some(vec![status]);
+                    self.validation_results = Some(results);
+
+                    Ok(())
                 }
-                Err(err)
-            }
+                false => Err(err),
+            },
         }
     }
 
@@ -1929,7 +1936,8 @@ mod tests {
         .expect("ingredient should load even with a bad manifest");
 
         assert_eq!(ingredient.format(), Some(format));
-        assert_eq!(ingredient.validation_status(), None);
+        let statuses = ingredient.validation_status().unwrap();
+        assert_eq!(statuses[0].code(), validation_status::GENERAL_ERROR);
     }
 
     #[test]
