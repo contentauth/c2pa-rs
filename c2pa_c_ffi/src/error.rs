@@ -37,6 +37,18 @@ pub enum C2paError {
     NotSupported(String),
     #[error("Other: {0}")]
     Other(String),
+    #[error("PointerInUse: {0}")]
+    PointerInUse(String),
+    #[error("WrongWrapperKind: {0}")]
+    WrongWrapperKind(String),
+    #[error("ForeignProcess: {0}")]
+    ForeignProcess(String),
+    #[error("TrackingRefused: {0}")]
+    TrackingRefused(String),
+    #[error("MutexPoisoned: {0}")]
+    MutexPoisoned(String),
+    #[error("InvalidBufferSize: {0}")]
+    InvalidBufferSize(String),
     #[error("NullParameter: {0}")]
     NullParameter(String),
     #[error("Remote: {0}")]
@@ -68,6 +80,13 @@ impl C2paError {
             Self::NotSupported(_) => 109,
             Self::Other(_) => 110,
             Self::NullParameter(_) => 111,
+            // Matches CimplError::pointer_in_use, so the round trip is stable.
+            Self::PointerInUse(_) => 8,
+            Self::WrongWrapperKind(_) => 9,
+            Self::ForeignProcess(_) => 10,
+            Self::TrackingRefused(_) => 11,
+            Self::MutexPoisoned(_) => 6,
+            Self::InvalidBufferSize(_) => 7,
             Self::RemoteManifest(_) => 112,
             Self::ResourceNotFound(_) => 113,
             Self::Signature(_) => 114,
@@ -155,6 +174,12 @@ impl C2paError {
             "NotSupported" => Self::NotSupported(error_message),
             "Other" => Self::Other(error_message),
             "NullParameter" => Self::NullParameter(error_message),
+            "PointerInUse" => Self::PointerInUse(error_message),
+            "WrongWrapperKind" => Self::WrongWrapperKind(error_message),
+            "ForeignProcess" => Self::ForeignProcess(error_message),
+            "TrackingRefused" => Self::TrackingRefused(error_message),
+            "MutexPoisoned" => Self::MutexPoisoned(error_message),
+            "InvalidBufferSize" => Self::InvalidBufferSize(error_message),
             "Remote" => Self::RemoteManifest(error_message),
             "ResourceNotFound" => Self::ResourceNotFound(error_message),
             "Signature" => Self::Signature(error_message),
@@ -200,6 +225,12 @@ impl From<crate::cimpl::CimplError> for C2paError {
             3 => C2paError::Other(err.message().to_string()), // InvalidHandle
             4 => C2paError::Other(err.message().to_string()), // WrongHandleType
             5 => C2paError::Other(err.message().to_string()), // Other
+            6 => C2paError::from(err.message()),              // error variant: MutexPoisoned
+            7 => C2paError::from(err.message()),              // error variant: InvalidBufferSize
+            8 => C2paError::from(err.message()),              // error variant: PointerInUse
+            9 => C2paError::from(err.message()),              // error variant: WrongWrapperKind
+            10 => C2paError::from(err.message()),             // error variant: ForeignProcess
+            11 => C2paError::from(err.message()),             // error variant: TrackingRefused
             // Codes 100+ are C2paError codes - parse the message to reconstruct
             code if code >= 100 => {
                 // The message format is "ErrorType: message"
@@ -310,6 +341,12 @@ mod tests {
             (C2paError::NotSupported("test".into()), 109),
             (C2paError::Other("test".into()), 110),
             (C2paError::NullParameter("test".into()), 111),
+            (C2paError::PointerInUse("test".into()), 8),
+            (C2paError::WrongWrapperKind("test".into()), 9),
+            (C2paError::ForeignProcess("test".into()), 10),
+            (C2paError::TrackingRefused("test".into()), 11),
+            (C2paError::MutexPoisoned("test".into()), 6),
+            (C2paError::InvalidBufferSize("test".into()), 7),
             (C2paError::RemoteManifest("test".into()), 112),
             (C2paError::ResourceNotFound("test".into()), 113),
             (C2paError::Signature("test".into()), 114),
@@ -379,13 +416,18 @@ mod tests {
         // Other (code 5)
         let err: C2paError = CimplError::other("generic error").into();
         assert!(matches!(err, C2paError::Other(_)));
+    }
 
-        // MutexPoisoned (code 6)
+    #[test]
+    fn test_cimpl_typed_errors_keep_their_type() {
         let err: C2paError = CimplError::mutex_poisoned().into();
-        assert!(matches!(err, C2paError::Other(_)));
+        assert!(matches!(err, C2paError::MutexPoisoned(_)), "got {err}");
+        assert_eq!(err.code(), 6);
+        assert_eq!(err.to_string(), "MutexPoisoned: thread panic detected");
 
-        // InvalidBufferSize (code 7)
         let err: C2paError = CimplError::invalid_buffer_size(999, "data").into();
-        assert!(matches!(err, C2paError::Other(_)));
+        assert!(matches!(err, C2paError::InvalidBufferSize(_)), "got {err}");
+        assert_eq!(err.code(), 7);
+        assert_eq!(err.to_string(), "InvalidBufferSize: 999 for 'data'");
     }
 }

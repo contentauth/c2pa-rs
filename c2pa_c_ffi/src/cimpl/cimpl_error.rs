@@ -118,6 +118,34 @@ impl CimplError {
         Self::new(5, format!("Other: {}", msg.into()))
     }
 
+    /// Registry call made from a process that did not create it itself.
+    pub fn foreign_process() -> Self {
+        Self::new(
+            10,
+            "ForeignProcess: forked child can't access a registry it doesn't own".to_string(),
+        )
+    }
+
+    /// Handle is tracked as `Arc` and single ownership was demanded through the registry,
+    /// but other clones of `Arc` may exist so single ownership can't be guaranteed.
+    pub fn wrong_wrapper_kind() -> Self {
+        Self::new(
+            9,
+            "WrongWrapperKind: Arc-backed handle can't have single ownership".to_string(),
+        )
+    }
+
+    /// A pointer could not be recorded by the registry and was rejected.
+    /// `cause` lists the error.
+    pub fn tracking_refused(cause: &str) -> Self {
+        Self::new(11, format!("TrackingRefused: {cause}"))
+    }
+
+    /// An exclusive borrow is already in-flight for this handle.
+    pub fn pointer_in_use() -> Self {
+        Self::new(8, "PointerInUse: handle already in (exclusive) use".to_string())
+    }
+
     /// Peeks at the last error message without clearing it
     ///
     /// Returns None if no error is set. This does not clear the error.

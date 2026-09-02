@@ -110,7 +110,7 @@
 //! # Quick Reference: Which Macro to Use?
 //!
 //! ## Input Validation (from C)
-//! - **Pointer from C**: `deref_or_return_null!(ptr, Type)` → validates & dereferences to `&Type`
+//! - **Pointer from C**: `deref_or_return_null!(ptr, Type)` → borrows the object as `&Type` for the guard's lifetime
 //! - **String from C**: `cstr_or_return_null!(c_str)` → converts C string to Rust `String`
 //! - **String array from C**: `cstr_array_or_return_null!(ptr)` → converts NULL-terminated `*const *const c_char` to `Vec<String>`
 //! - **Byte array from C**: `bytes_or_return_null!(ptr, len, "name")` → validates & converts to `&[u8]`
@@ -136,7 +136,7 @@
 //!
 //! | Rust Type              | C receives      | Macro to use                      | Example |
 //! |------------------------|-----------------|-----------------------------------|---------|
-//! | `*mut T` (from C)      | -               | `deref_or_return_null!(ptr, T)`   | Getting object from C |
+//! | `*mut T` (from C)      | -               | `deref_or_return_null!(ptr, T)`| Getting object from C |
 //! | `*const c_char` (from C)| -              | `cstr_or_return_null!(s)`         | Getting string from C |
 //! | `*const c_uchar` + len | -               | `bytes_or_return_null!(p, len, "name")` | Getting byte array from C |
 //! | `Result<T, ExtErr>`    | pointer/int     | `ok_or_return_null!(r)`           | External crate errors (From trait) |
@@ -209,12 +209,6 @@
 //! }
 //! ```
 
-// Re-export types/functions that macros need
-#[doc(hidden)]
-#[allow(unused_imports)]
-// May not be directly used but needed for macro expansion
-//pub use crate::utils::validate_pointer;
-//
 // ============================================================================
 // Pointer Management Macros
 // ============================================================================
@@ -243,9 +237,13 @@
 #[macro_export]
 macro_rules! deref_or_return {
     ($ptr:expr, $type:ty, $err_val:expr) => {{
-        $crate::ptr_or_return!($ptr, $err_val);
-        match $crate::validate_pointer::<$type>($ptr) {
-            Ok(real_ptr) => unsafe { &*(real_ptr as *const $type) },
+        let ptr = $ptr;
+        if ptr.is_null() {
+            $crate::CimplError::null_parameter(stringify!($ptr)).set_last();
+            return $err_val;
+        }
+        match $crate::checkout_shared::<$type>(ptr) {
+            Ok(guard) => guard,
             Err(e) => {
                 $crate::CimplError::from(e).set_last();
                 return $err_val;
@@ -299,9 +297,13 @@ macro_rules! deref_or_return_false {
 #[macro_export]
 macro_rules! deref_mut_or_return {
     ($ptr:expr, $type:ty, $err_val:expr) => {{
-        $crate::ptr_or_return!($ptr, $err_val);
-        match $crate::validate_pointer::<$type>($ptr) {
-            Ok(real_ptr) => unsafe { &mut *(real_ptr as *mut $type) },
+        let ptr = $ptr;
+        if ptr.is_null() {
+            $crate::CimplError::null_parameter(stringify!($ptr)).set_last();
+            return $err_val;
+        }
+        match $crate::checkout_exclusive::<$type>(ptr) {
+            Ok(guard) => guard,
             Err(e) => {
                 $crate::CimplError::from(e).set_last();
                 return $err_val;
@@ -349,17 +351,15 @@ macro_rules! deref_mut_option {
         if ptr.is_null() {
             None
         } else {
-            $crate::validate_pointer::<$type>(ptr)
-                .ok()
-                .map(|real_ptr| unsafe { &mut *(real_ptr as *mut $type) })
+            $crate::checkout_exclusive::<$type>(ptr).ok()
         }
     }};
 }
 
-/// Validate pointer and dereference mutably, returning `None` if the
-/// pointer is NULL. Unlike `deref_mut_or_return!`, NULL is not treated as an
-/// error — this is for parameters that are genuinely optional. A non-NULL
-/// but untracked/wrong-type pointer is still an early-return error.
+/// Borrow the handle/object for a write operation,
+/// return `None` on NULL pointers.
+/// NULL in this case is not a showstopper error,
+/// since nulls may represent optional parameters.
 ///
 /// # Examples
 /// ```rust,ignore
@@ -374,8 +374,8 @@ macro_rules! deref_mut_option_or_return {
         if ptr.is_null() {
             None
         } else {
-            match $crate::validate_pointer::<$type>(ptr) {
-                Ok(real_ptr) => Some(unsafe { &mut *(real_ptr as *mut $type) }),
+            match $crate::checkout_exclusive::<$type>(ptr) {
+                Ok(guard) => Some(guard),
                 Err(e) => {
                     $crate::CimplError::from(e).set_last();
                     return $err_val;
@@ -385,8 +385,9 @@ macro_rules! deref_mut_option_or_return {
     }};
 }
 
-/// Validate pointer and dereference mutably as an `Option`; NULL is `None`,
-/// any other error returns -1.
+/// Borrow for a write operation for `Option`.
+/// NULL is `None`
+/// Errors return -1.
 #[macro_export]
 macro_rules! deref_mut_option_or_return_int {
     ($ptr:expr, $type:ty) => {{
@@ -442,8 +443,8 @@ macro_rules! arc_tracked {
 macro_rules! untrack_or_return {
     ($ptr:expr, $type:ty, $err_val:expr) => {{
         $crate::ptr_or_return!($ptr, $err_val);
-        match $crate::untrack_pointer::<$type>($ptr) {
-            Ok(real_ptr) => *Box::from_raw(real_ptr as *mut $type),
+        match $crate::untrack_owned::<$type>($ptr) {
+            Ok(value) => value,
             Err(e) => {
                 $crate::CimplError::from(e).set_last();
                 return $err_val;
