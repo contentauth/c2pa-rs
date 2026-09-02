@@ -12,7 +12,6 @@
 // each license.
 
 use std::{
-    cell::UnsafeCell,
     os::raw::{c_char, c_int, c_uchar, c_void},
     sync::Arc,
 };
@@ -442,7 +441,7 @@ impl c2pa::http::SyncHttpResolver for C2paHttpResolver {
 ///
 /// # Safety
 /// The returned value must be released by calling c2pa_free,
-/// and is no longer valid after that call.
+/// and it is no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_version() -> *mut c_char {
     let version = format!(
@@ -455,49 +454,17 @@ pub unsafe extern "C" fn c2pa_version() -> *mut c_char {
     to_c_string(version)
 }
 
-const ERROR_FALLBACK_LEN: usize = 256;
-
-/// `c2pa_error`'s fallback message in case the error string could not be tracked.
-#[repr(C, align(2))]
-struct ErrorFallback([u8; ERROR_FALLBACK_LEN]);
-
-thread_local! {
-    static ERROR_FALLBACK: UnsafeCell<ErrorFallback> =
-        const { UnsafeCell::new(ErrorFallback([0; ERROR_FALLBACK_LEN])) };
-}
-
-/// Keep the error message in local storage if error string was not trackable.
-fn error_message_fallback(message: &str) -> *mut c_char {
-    let limit = ERROR_FALLBACK_LEN - 1;
-    let mut end = message.len().min(limit);
-    while end > 0 && !message.is_char_boundary(end) {
-        end -= 1;
-    }
-
-    ERROR_FALLBACK.with(|slot| {
-        let base = unsafe { std::ptr::addr_of_mut!((*slot.get()).0) } as *mut u8;
-        for (i, byte) in message.as_bytes()[..end].iter().enumerate() {
-            unsafe { base.add(i).write(if *byte == 0 { b'?' } else { *byte }) };
-        }
-        unsafe { base.add(end).write(0) };
-
-        base as *mut c_char
-    })
-}
-
 /// Returns the last error message.
+///
+/// # Returns
+/// A newly allocated C string, or NULL when no message could be allocated.
 ///
 /// # Safety
 /// The returned value must be released by calling c2pa_free,
 /// and it is no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_error() -> *mut c_char {
-    let message = Error::last_message();
-    let ptr = to_c_string(message.clone());
-    if ptr.is_null() {
-        return error_message_fallback(&message);
-    }
-    ptr
+    to_c_string(Error::last_message())
 }
 
 /// Sets the last error message.
@@ -1191,6 +1158,7 @@ pub unsafe extern "C" fn c2pa_reader_with_manifest_data_and_stream(
 /// * `format` must be a valid null-terminated string with the MIME type.
 /// * `stream` must be a valid pointer to a C2paStream (the main asset stream).
 /// * `fragment` must be a valid pointer to a C2paStream (the fragment stream).
+/// * `stream` and `fragment` must be distinct handles.
 /// * After calling this function, the `reader` pointer is INVALID.
 ///
 /// # Returns
@@ -1215,6 +1183,7 @@ pub unsafe extern "C" fn c2pa_reader_with_fragment(
     // `with_fragment`'s) drops it uniformly via scope-exit `Drop`.
     let reader = untrack_or_return_null!(reader, C2paReader);
 
+    distinct_or_return_null!(stream, fragment);
     let format = cstr_or_return_null!(format);
     let mut stream = deref_mut_or_return_null!(stream, C2paStream);
     let mut fragment = deref_mut_or_return_null!(fragment, C2paStream);
@@ -1984,6 +1953,7 @@ pub unsafe extern "C" fn c2pa_builder_write_ingredient_archive(
 /// * format: pointer to a C string with the mime type or extension.
 /// * source: pointer to a C2paStream.
 /// * dest: pointer to a writable C2paStream.
+/// * (source and dest must be distinct handles)
 /// * signer: pointer to a C2paSigner.
 /// * c2pa_bytes_ptr: pointer to a pointer to a c_uchar to return manifest_bytes (optional, can be NULL).
 ///
@@ -1993,8 +1963,8 @@ pub unsafe extern "C" fn c2pa_builder_write_ingredient_archive(
 ///
 /// # Safety
 /// Reads from NULL-terminated C strings
-/// If manifest_bytes_ptr is not NULL, the returned value MUST be released by calling c2pa_free
-/// and it is no longer valid after that call.
+/// If manifest_bytes_ptr is not NULL, the returned value must be released by calling c2pa_free,
+/// and it is no longer valid after the c2pa_free call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_builder_sign(
     builder_ptr: *mut C2paBuilder,
@@ -2004,12 +1974,12 @@ pub unsafe extern "C" fn c2pa_builder_sign(
     signer_ptr: *mut C2paSigner,
     manifest_bytes_ptr: *mut *const c_uchar,
 ) -> i64 {
+    distinct_or_return_int!(source, dest);
     let mut builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
     let format = cstr_or_return_int!(format);
     let mut source = deref_mut_or_return_int!(source, C2paStream);
     let mut dest = deref_mut_or_return_int!(dest, C2paStream);
-    let c2pa_signer = deref_or_return_int!(signer_ptr, C2paSigner);
-    ptr_or_return_int!(manifest_bytes_ptr);
+    let c2pa_signer = deref_mut_or_return_int!(signer_ptr, C2paSigner);
 
     let result = builder.sign(
         c2pa_signer.signer.as_ref(),
@@ -2018,15 +1988,7 @@ pub unsafe extern "C" fn c2pa_builder_sign(
         &mut *dest,
     );
     let manifest_bytes = ok_or_return_int!(result);
-    let len = manifest_bytes.len() as i64;
-    if !manifest_bytes_ptr.is_null() {
-        let bytes = to_c_bytes(manifest_bytes);
-        if bytes.is_null() && len > 0 {
-            return -1;
-        }
-        *manifest_bytes_ptr = bytes;
-    }
-    len
+    out_bytes_or_return_int!(manifest_bytes, manifest_bytes_ptr)
 }
 
 /// Sign using the Signer from the Context.
@@ -2044,12 +2006,14 @@ pub unsafe extern "C" fn c2pa_builder_sign(
 /// * `format` - MIME type or file extension (null-terminated C string).
 /// * `source` - pointer to a readable C2paStream.
 /// * `dest` - pointer to a read+write+seek C2paStream.
+/// * (`source` and `dest` must be distinct handles)
 /// * `manifest_bytes_ptr` - out-pointer for the manifest bytes.
 ///
 /// # Safety
 ///
 /// Reads from NULL-terminated C strings.
-/// The returned bytes MUST be released by calling `c2pa_free`.
+/// If `manifest_bytes_ptr` is not NULL, the returned bytes MUST be released by
+/// calling `c2pa_free`.
 ///
 /// # Returns
 ///
@@ -2062,23 +2026,15 @@ pub unsafe extern "C" fn c2pa_builder_sign_context(
     dest: *mut C2paStream,
     manifest_bytes_ptr: *mut *const c_uchar,
 ) -> i64 {
+    distinct_or_return_int!(source, dest);
     let mut builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
     let format = cstr_or_return_int!(format);
     let mut source = deref_mut_or_return_int!(source, C2paStream);
     let mut dest = deref_mut_or_return_int!(dest, C2paStream);
-    ptr_or_return_int!(manifest_bytes_ptr);
 
     let result = builder.save_to_stream(&format, &mut *source, &mut *dest);
     let manifest_bytes = ok_or_return_int!(result);
-    let len = manifest_bytes.len() as i64;
-    if !manifest_bytes_ptr.is_null() {
-        let bytes = to_c_bytes(manifest_bytes);
-        if bytes.is_null() && len > 0 {
-            return -1;
-        }
-        *manifest_bytes_ptr = bytes;
-    }
-    len
+    out_bytes_or_return_int!(manifest_bytes, manifest_bytes_ptr)
 }
 
 /// Frees a C2PA manifest returned by c2pa_builder_sign.
@@ -2102,6 +2058,7 @@ pub unsafe extern "C" fn c2pa_manifest_bytes_free(manifest_bytes_ptr: *const c_u
 /// * reserved_size: the size required for a signature from the intended signer.
 /// * format: pointer to a C string with the mime type or extension.
 /// * manifest_bytes_ptr: pointer to a pointer to a c_uchar to return manifest_bytes.
+/// * (pass NULL to query only the length; nothing is allocated or written)
 ///
 /// # Errors
 /// Returns -1 if there were errors, otherwise returns the size of the manifest_bytes.
@@ -2118,20 +2075,11 @@ pub unsafe extern "C" fn c2pa_builder_data_hashed_placeholder(
     format: *const c_char,
     manifest_bytes_ptr: *mut *const c_uchar,
 ) -> i64 {
-    ptr_or_return_int!(manifest_bytes_ptr);
     let mut builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
     let format = cstr_or_return_int!(format);
     let result = builder.data_hashed_placeholder(reserved_size, &format);
     let manifest_bytes = ok_or_return_int!(result);
-    let len = manifest_bytes.len() as i64;
-    if !manifest_bytes_ptr.is_null() {
-        let bytes = to_c_bytes(manifest_bytes);
-        if bytes.is_null() && len > 0 {
-            return -1;
-        }
-        *manifest_bytes_ptr = bytes;
-    }
-    len
+    out_bytes_or_return_int!(manifest_bytes, manifest_bytes_ptr)
 }
 
 /// Sign a Builder using the specified signer and data hash.
@@ -2144,7 +2092,8 @@ pub unsafe extern "C" fn c2pa_builder_data_hashed_placeholder(
 /// * data_hash: pointer to a C string with the JSON data hash.
 /// * format: pointer to a C string with the mime type or extension.
 /// * asset: pointer to a C2paStream (may be NULL to use pre calculated hashes).
-/// * manifest_bytes_ptr: pointer to a pointer to a c_uchar to return manifest_bytes (optional, can be NULL).
+/// * manifest_bytes_ptr: pointer to a pointer to a c_uchar to return manifest_bytes.
+/// * (pass NULL to query only the length; nothing is allocated or written)
 ///
 /// # Errors
 /// Returns -1 if there were errors, otherwise returns the size of the manifest_bytes.
@@ -2164,10 +2113,9 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
     manifest_bytes_ptr: *mut *const c_uchar,
 ) -> i64 {
     let mut builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
-    let c2pa_signer = deref_or_return_int!(signer_ptr, C2paSigner);
+    let c2pa_signer = deref_mut_or_return_int!(signer_ptr, C2paSigner);
     let data_hash_json = cstr_or_return_int!(data_hash);
     let format = cstr_or_return_int!(format);
-    ptr_or_return_int!(manifest_bytes_ptr);
 
     let mut data_hash: DataHash = ok_or_return_int!(serde_json::from_str(&data_hash_json)
         .map_err(|e| Error::from_c2pa_error(c2pa::Error::JsonError(e))));
@@ -2183,15 +2131,7 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
         builder.sign_data_hashed_embeddable(c2pa_signer.signer.as_ref(), &data_hash, &format);
 
     let manifest_bytes = ok_or_return_int!(result);
-    let len = manifest_bytes.len() as i64;
-    if !manifest_bytes_ptr.is_null() {
-        let bytes = to_c_bytes(manifest_bytes);
-        if bytes.is_null() && len > 0 {
-            return -1;
-        }
-        *manifest_bytes_ptr = bytes;
-    }
-    len
+    out_bytes_or_return_int!(manifest_bytes, manifest_bytes_ptr)
 }
 
 /// Returns whether a placeholder manifest is required for the given format.
@@ -2267,7 +2207,7 @@ pub unsafe extern "C" fn c2pa_builder_hash_type(
 /// * builder_ptr: pointer to a Builder.
 /// * format: pointer to a C string with the mime type or extension.
 /// * manifest_bytes_ptr: pointer to a pointer to a c_uchar to return the composed placeholder bytes.
-/// * (the pointer may be NULL if the caller does not want to receive the bytes)
+/// * (pass NULL to query only the length; nothing is allocated or written)
 ///
 /// # Errors
 /// Returns -1 on error (call c2pa_error() for the message).
@@ -2275,7 +2215,7 @@ pub unsafe extern "C" fn c2pa_builder_hash_type(
 ///
 /// # Safety
 /// Reads from NULL-terminated C strings.
-/// The returned bytes MUST be released by calling c2pa_free.
+/// If manifest_bytes_ptr is not NULL, the returned bytes MUST be released by calling c2pa_free.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_builder_placeholder(
     builder_ptr: *mut C2paBuilder,
@@ -2286,15 +2226,7 @@ pub unsafe extern "C" fn c2pa_builder_placeholder(
     let format = cstr_or_return_int!(format);
     let result = builder.placeholder(&format);
     let manifest_bytes = ok_or_return_int!(result);
-    let len = manifest_bytes.len() as i64;
-    if !manifest_bytes_ptr.is_null() {
-        let bytes = to_c_bytes(manifest_bytes);
-        if bytes.is_null() && len > 0 {
-            return -1;
-        }
-        *manifest_bytes_ptr = bytes;
-    }
-    len
+    out_bytes_or_return_int!(manifest_bytes, manifest_bytes_ptr)
 }
 
 /// Signs the manifest and returns composed bytes ready for embedding.
@@ -2316,6 +2248,7 @@ pub unsafe extern "C" fn c2pa_builder_placeholder(
 /// * builder_ptr: pointer to a Builder.
 /// * format: pointer to a C string with the mime type or extension.
 /// * manifest_bytes_ptr: pointer to a pointer to a c_uchar to return the signed manifest bytes.
+/// * (pass NULL to query only the length; nothing is allocated or written)
 ///
 /// # Errors
 /// Returns -1 on error (call c2pa_error() for the message).
@@ -2324,27 +2257,18 @@ pub unsafe extern "C" fn c2pa_builder_placeholder(
 ///
 /// # Safety
 /// Reads from NULL-terminated C strings.
-/// The returned bytes MUST be released by calling c2pa_free.
+/// If manifest_bytes_ptr is not NULL, the returned bytes MUST be released by calling c2pa_free.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_builder_sign_embeddable(
     builder_ptr: *mut C2paBuilder,
     format: *const c_char,
     manifest_bytes_ptr: *mut *const c_uchar,
 ) -> i64 {
-    ptr_or_return_int!(manifest_bytes_ptr);
     let builder = deref_or_return_int!(builder_ptr, C2paBuilder);
     let format = cstr_or_return_int!(format);
     let result = builder.sign_embeddable(&format);
     let manifest_bytes = ok_or_return_int!(result);
-    let len = manifest_bytes.len() as i64;
-    if !manifest_bytes_ptr.is_null() {
-        let bytes = to_c_bytes(manifest_bytes);
-        if bytes.is_null() && len > 0 {
-            return -1;
-        }
-        *manifest_bytes_ptr = bytes;
-    }
-    len
+    out_bytes_or_return_int!(manifest_bytes, manifest_bytes_ptr)
 }
 
 /// Sets the byte exclusion ranges on the DataHash assertion in a Builder.
@@ -2537,6 +2461,7 @@ pub unsafe extern "C" fn c2pa_builder_update_hash_from_stream(
 /// * manifest_bytes_ptr: pointer to a c_uchar with the raw manifest bytes.
 /// * manifest_bytes_size: the size of the manifest_bytes.
 /// * result_bytes_ptr: pointer to a pointer to a c_uchar to return the embeddable manifest bytes.
+/// * (pass NULL to query only the length; nothing is allocated or written)
 ///
 /// # Errors
 /// Returns -1 if there were errors, otherwise returns the size of the result_bytes.
@@ -2555,7 +2480,6 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
 ) -> i64 {
     let format = cstr_or_return_int!(format);
     ptr_or_return_int!(manifest_bytes_ptr);
-    ptr_or_return_int!(result_bytes_ptr);
 
     let bytes = bytes_or_return_int!(
         manifest_bytes_ptr,
@@ -2565,15 +2489,7 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
 
     let result = c2pa::Builder::composed_manifest(bytes, &format);
     let result_bytes = ok_or_return_int!(result);
-    let len = result_bytes.len() as i64;
-    if !result_bytes_ptr.is_null() {
-        let bytes = to_c_bytes(result_bytes);
-        if bytes.is_null() && len > 0 {
-            return -1;
-        }
-        *result_bytes_ptr = bytes;
-    }
-    len
+    out_bytes_or_return_int!(result_bytes, result_bytes_ptr)
 }
 
 /// Creates a C2paSigner from a callback and configuration.
@@ -2595,7 +2511,7 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
 /// When binding through the C API to other languages, the callback must live long
 /// enough, possibly being re-used and called multiple times. The callback is logically
 /// owned by the host/caller.
-
+///
 /// # Callback contract
 ///
 /// A callback must not block forever:
@@ -2604,6 +2520,10 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
 ///
 /// Apply a timeout inside the callback, to avoid spinning forever.
 /// Return -1 to propagate an error on failure.
+///
+/// A signer gets borrowed exclusively for the duration of the sign call
+/// (so callbacks do not run in parallel). If a signer is shared across multiple
+/// calls, they serialize to make sure they can't interfere with each other.
 ///
 /// # Example
 /// ```c
@@ -2715,7 +2635,9 @@ pub unsafe extern "C" fn c2pa_identity_signer_create(
     let referenced_assertions = cstr_array_or_return_null!(referenced_assertions);
     let roles = cstr_array_or_return_null!(roles);
 
-    // Consume both signer, or none.
+    ok_or_return_null!(crate::cimpl::ensure_trackable());
+
+    // Consume both signers, or none.
     let (c2pa_signer, identity_signer) = ok_or_return_null!(untrack_owned_pair::<C2paSigner>(
         c2pa_signer_ptr,
         identity_signer_ptr
@@ -2898,13 +2820,24 @@ unsafe fn c2pa_mime_types_to_c_array(strs: Vec<String>, count: *mut usize) -> *c
                 cimpl_free(ptr as *mut c_void);
             }
         }
+        CimplError::other("could not allocate mime type strings").set_last();
+        *count = 0;
+        return std::ptr::null();
+    }
+
+    if mime_ptrs.is_empty() {
         *count = 0;
         return std::ptr::null();
     }
 
     let len = mime_ptrs.len();
     let ptr = crate::cimpl::track_string_array(mime_ptrs);
-    *count = if ptr.is_null() { 0 } else { len };
+    if ptr.is_null() {
+        CimplError::other("could not track mime type array").set_last();
+        *count = 0;
+        return ptr;
+    }
+    *count = len;
     ptr
 }
 
@@ -3897,10 +3830,7 @@ mod tests {
         let first_string = unsafe { *mime_types };
 
         assert_eq!(unsafe { c2pa_free(mime_types as *mut c_void) }, 0);
-        assert_eq!(
-            unsafe { c2pa_free(first_string as *mut c_void) },
-            -1
-        );
+        assert_eq!(unsafe { c2pa_free(first_string as *mut c_void) }, -1);
     }
 
     #[test]

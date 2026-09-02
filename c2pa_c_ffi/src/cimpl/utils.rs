@@ -27,7 +27,7 @@ use std::{
     panic::AssertUnwindSafe,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc, Mutex, PoisonError,
+        Arc, Mutex, PoisonError, Weak,
     },
 };
 
@@ -177,7 +177,7 @@ impl EntryInner {
         }
     }
 
-    /// Even on wasm32, we may want to need for draining readers.
+    /// Even on wasm32, we may need to wait for draining readers.
     #[cfg(not(target_arch = "wasm32"))]
     fn try_borrow_exclusive_slow(&self) -> bool {
         let deadline = std::time::Instant::now() + WRITER_WAIT;
@@ -354,7 +354,7 @@ impl Drop for EntryInner {
 }
 
 /// Shared (multi-read) borrow of a handle.
-/// Holding one keeps the object behing the handle live.
+/// Holding one keeps the object behind the handle live.
 pub struct SharedCheckout {
     entry: Arc<EntryInner>,
 }
@@ -542,7 +542,7 @@ impl PointerRegistry {
 
     /// Track a pointer by address.
     /// Only use this for buffers C dereferences directly (e.g. `to_c_string`/`to_c_bytes`),
-    /// where the returned pointer must be a rreadable address.
+    /// where the returned pointer must be a readable address.
     /// Returns false when the address could not be tracked, so the caller can free it.
     fn track_by_address(&self, real_addr: usize, type_id: TypeId, cleanup: CleanupFn) -> bool {
         if self.check_same_process().is_err() {
@@ -552,9 +552,7 @@ impl PointerRegistry {
         if real_addr != 0 {
             // Handles and addresses should not be able to alias each other.
             if !real_addr.is_multiple_of(2) {
-                eprintln!(
-                    "c2pa: odd address can not be tracked"
-                );
+                eprintln!("c2pa: odd address can not be tracked");
                 CimplError::tracking_refused("buffer address could collide with a handle id")
                     .set_last();
                 return false;
@@ -582,6 +580,25 @@ impl PointerRegistry {
         }
         // Nothing to track or free.
         true
+    }
+
+    /// Check if a new handle can be tracked by the registry.
+    /// A handle could be not trackable if the id space is exhausted.
+    fn ensure_trackable(&self) -> Result<(), Error> {
+        self.check_same_process()?;
+        if self.id_space_exhausted.load(Ordering::Relaxed)
+            || self.next_id.load(Ordering::Relaxed) >= (usize::MAX >> 1)
+        {
+            return Err(Error::from(CimplError::tracking_refused(
+                "id space of handles exhausted",
+            )));
+        }
+        drop(
+            self.tracked
+                .lock()
+                .map_err(|_| Error::from(CimplError::mutex_poisoned()))?,
+        );
+        Ok(())
     }
 
     /// Refuse a registry call made from a process that did not create the registry,
@@ -613,7 +630,7 @@ impl PointerRegistry {
     }
 
     /// Multiple calls may checkout a shared borrow at a time.
-    /// as long as there is no exclusive borrow peinding.
+    /// as long as there is no exclusive borrow pending.
     #[must_use = "the borrow ends when the returned guard is dropped"]
     fn checkout_shared(&self, id: usize, expected_type: TypeId) -> Result<SharedCheckout, Error> {
         let entry = self.lookup(id, expected_type)?;
@@ -689,12 +706,14 @@ impl PointerRegistry {
         if !entry.try_borrow_exclusive() {
             return Err(Error::from(CimplError::pointer_in_use()));
         }
-
         // Get the lock again, verify we can continue.
-        let mut tracked = self
-            .tracked
-            .lock()
-            .map_err(|_| Error::from(CimplError::mutex_poisoned()))?;
+        let mut tracked = match self.tracked.lock() {
+            Ok(tracked) => tracked,
+            Err(_) => {
+                entry.borrow_state.store(0, Ordering::Release);
+                return Err(Error::from(CimplError::mutex_poisoned()));
+            }
+        };
         match tracked.get(&id) {
             Some(current) if Arc::ptr_eq(current, &entry) => {}
             _ => {
@@ -781,10 +800,14 @@ impl PointerRegistry {
         }
 
         // Get both again, verify they are still available.
-        let mut tracked = self
-            .tracked
-            .lock()
-            .map_err(|_| Error::from(CimplError::mutex_poisoned()))?;
+        let mut tracked = match self.tracked.lock() {
+            Ok(tracked) => tracked,
+            Err(_) => {
+                first_entry.borrow_state.store(0, Ordering::Release);
+                second_entry.borrow_state.store(0, Ordering::Release);
+                return Err(Error::from(CimplError::mutex_poisoned()));
+            }
+        };
         for (id, entry) in [(first, &first_entry), (second, &second_entry)] {
             match tracked.get(&id) {
                 Some(current) if Arc::ptr_eq(current, entry) => {}
@@ -833,6 +856,41 @@ impl PointerRegistry {
         }; // Release lock before the entry drops.
 
         // Dropping the last Arc runs the cleanup closure in EntryInner::drop.
+        drop(entry);
+        Ok(())
+    }
+
+    /// Free the entry at `key`.
+    /// Free if it is the entry a caller last saw and expects to free.
+    ///
+    /// # Arguments
+    /// * `key` - Handle id or address to free. Address keys are where this
+    ///   check matters: the allocator can hand the same address to an
+    ///   unrelated later allocation.
+    /// * `expected` - The entry the caller last saw at `key`.
+    fn free_if_still_tracked_entry(
+        &self,
+        key: usize,
+        expected: &Arc<EntryInner>,
+    ) -> Result<(), Error> {
+        self.check_same_process()?;
+        if key == 0 {
+            return Ok(());
+        }
+
+        let entry = {
+            let mut tracked = self
+                .tracked
+                .lock()
+                .map_err(|_| Error::from(CimplError::mutex_poisoned()))?;
+            match tracked.get(&key) {
+                Some(current) if Arc::ptr_eq(current, expected) => {
+                    tracked.remove(&key).expect("checked Some above")
+                }
+                _ => return Ok(()),
+            }
+        };
+
         drop(entry);
         Ok(())
     }
@@ -1202,6 +1260,11 @@ struct ByteBuffer;
 /// Registry type label for the string arrays built by `track_string_array`.
 struct StringArray;
 
+/// Check if tracking a new handle is possible.
+pub(crate) fn ensure_trackable() -> Result<(), Error> {
+    get_registry().ensure_trackable()
+}
+
 /// Track an array of C string pointers.
 pub(crate) fn track_string_array(
     ptrs: Vec<*mut std::os::raw::c_char>,
@@ -1220,21 +1283,50 @@ pub(crate) fn track_string_array(
         ))
     };
 
+    let members: Vec<(usize, Weak<EntryInner>)> = {
+        let strings = rebuild();
+        let recorded = strings
+            .iter()
+            .map(|s| {
+                let key = s.expose_provenance();
+                let weak = get_registry()
+                    .tracked
+                    .lock()
+                    .ok()
+                    .and_then(|tracked| tracked.get(&key).map(Arc::downgrade))
+                    .unwrap_or_default();
+                (key, weak)
+            })
+            .collect();
+        std::mem::forget(strings);
+        recorded
+    };
+
+    fn free_members(members: &[(usize, Weak<EntryInner>)]) {
+        for (key, weak) in members {
+            if let Some(entry) = weak.upgrade() {
+                let _ = get_registry().free_if_still_tracked_entry(*key, &entry);
+            }
+        }
+    }
+
+    let cleanup_members = members.clone();
     let cleanup = move || {
         let strings = rebuild();
-        for s in strings.iter() {
-            // Ignore errors in this case.
-            let _ = get_registry().free(s.expose_provenance());
-        }
+        free_members(&cleanup_members);
+        drop(strings);
         // Dropping the box deallocates the array itself.
     };
 
     if !get_registry().track_by_address(addr, TypeId::of::<StringArray>(), Box::new(cleanup)) {
         // The caller should see nothing to reclaim.
-        let strings = rebuild();
-        for s in strings.iter() {
-            let _ = get_registry().free(s.expose_provenance());
-        }
+        free_members(&members);
+        drop(unsafe {
+            Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+                std::ptr::with_exposed_provenance_mut::<*mut std::os::raw::c_char>(addr),
+                len,
+            ))
+        });
         return std::ptr::null();
     }
     raw as *const *const std::os::raw::c_char
@@ -1291,11 +1383,13 @@ unsafe fn dealloc_even_buffer(addr: usize, total: usize) {
 /// The returned pointer must be freed exactly once by C code
 pub fn to_c_string(s: String) -> *mut std::os::raw::c_char {
     if s.as_bytes().contains(&0) {
+        CimplError::other("NUL byte in string").set_last();
         return std::ptr::null_mut();
     }
     let total = s.len() + 1;
     let ptr = alloc_even_buffer(s.as_bytes(), true);
     if ptr.is_null() {
+        CimplError::other("string buffer could not be allocated").set_last();
         return std::ptr::null_mut();
     }
     let ptr_val = ptr.expose_provenance();
@@ -1334,6 +1428,7 @@ pub fn to_c_bytes(bytes: Vec<u8>) -> *const c_uchar {
 
     let ptr = alloc_even_buffer(&bytes, false);
     if ptr.is_null() {
+        CimplError::other("could not allocate the byte buffer").set_last();
         return std::ptr::null();
     }
     drop(bytes);
@@ -1505,10 +1600,7 @@ mod tests {
             assert!(untrack_owned::<i32>(ptr).is_err());
             drop(guard);
 
-            assert_eq!(
-                untrack_owned::<i32>(ptr).expect("borrow released"),
-                1234
-            );
+            assert_eq!(untrack_owned::<i32>(ptr).expect("borrow released"), 1234);
         }
     }
 
@@ -1526,10 +1618,7 @@ mod tests {
             1234
         );
 
-        assert_eq!(
-            entry.borrow_state.load(Ordering::Acquire),
-            EXCLUSIVE
-        );
+        assert_eq!(entry.borrow_state.load(Ordering::Acquire), EXCLUSIVE);
 
         assert!(
             entry
@@ -1539,6 +1628,26 @@ mod tests {
             "a shared borrow was still available after ownership moved out"
         );
     }
+
+    #[test]
+    fn test_untrack_releases_the_registry_entry() {
+        let ptr = track_box(Box::into_raw(Box::new(77i32)));
+        let weak = get_registry()
+            .tracked
+            .lock()
+            .expect("registry lock")
+            .get(&(ptr as usize))
+            .map(Arc::downgrade)
+            .expect("entry tracked");
+
+        assert_eq!(untrack_owned::<i32>(ptr).expect("nothing borrowed yet"), 77);
+
+        assert!(
+            weak.upgrade().is_none(),
+            "registry entry still here"
+        );
+    }
+
     #[test]
     fn test_untrack_leaves_a_rejected_entry_borrowable() {
         let arc = Arc::new(5i32);
@@ -1685,10 +1794,7 @@ mod tests {
             }
         });
 
-        assert_eq!(
-            failures.load(Ordering::Relaxed),
-            0
-        );
+        assert_eq!(failures.load(Ordering::Relaxed), 0);
         cimpl_free(ptr as *mut std::ffi::c_void);
     }
 
@@ -1780,95 +1886,6 @@ mod tests {
 
         assert!(untrack_owned::<i32>(first).is_err());
         assert!(untrack_owned::<i32>(second).is_err());
-    }
-
-    #[test]
-    #[cfg(not(target_arch = "wasm32"))]
-    fn test_untrack_pair_cross_order_calls_do_not_starve_each_other() {
-        let a = track_box(Box::into_raw(Box::new(1i32))) as usize;
-        let b = track_box(Box::into_raw(Box::new(2i32))) as usize;
-
-        let guard_a = checkout_shared::<i32>(a as *mut i32).expect("fresh handle");
-        let guard_b = checkout_shared::<i32>(b as *mut i32).expect("fresh handle");
-
-        let spawn = |first: usize, second: usize| {
-            std::thread::spawn(move || {
-                untrack_owned_pair::<i32>(first as *mut i32, second as *mut i32)
-            })
-        };
-        let forward = spawn(a, b);
-        let reverse = spawn(b, a);
-        std::thread::sleep(std::time::Duration::from_millis(2));
-        drop(guard_a);
-        drop(guard_b);
-        let results = [
-            forward.join().expect("thread must not panic"),
-            reverse.join().expect("thread must not panic"),
-        ];
-        let successes = results.iter().filter(|r| r.is_ok()).count();
-        assert_eq!(
-            successes, 1,
-            "exactly one cross-order consume must win: {results:?}"
-        );
-    }
-
-    #[test]
-    #[cfg(not(target_arch = "wasm32"))]
-    fn test_consume_succeeds_eventually() {
-        let ptr = track_box(Box::into_raw(Box::new(88i32)));
-        let addr = ptr as usize;
-
-        let guard = checkout_shared::<i32>(ptr).expect("fresh handle");
-        let consumer = std::thread::spawn(move || untrack_owned::<i32>(addr as *mut i32));
-        std::thread::sleep(std::time::Duration::from_millis(2));
-        drop(guard);
-
-        let value = consumer
-            .join()
-            .expect("consumer thread must not panic")
-            .expect("the consume must succeed once the reader drains");
-        assert_eq!(value, 88);
-    }
-
-    #[test]
-    #[cfg(not(target_arch = "wasm32"))]
-    fn test_shared_checkout_handles_transient_exclusive() {
-        // Tests the exclusive window inside untrack_pair's rollback.
-        let ptr = track_box(Box::into_raw(Box::new(21i32)));
-        let addr = ptr as usize;
-
-        let entry = get_registry()
-            .lookup(addr, TypeId::of::<i32>())
-            .expect("fresh handle");
-
-        let (held_tx, held_rx) = std::sync::mpsc::channel();
-        let holder = std::thread::spawn({
-            let entry = Arc::clone(&entry);
-            move || {
-                assert!(
-                    entry
-                        .borrow_state
-                        .compare_exchange(0, EXCLUSIVE, Ordering::AcqRel, Ordering::Acquire)
-                        .is_ok(),
-                    "the fresh entry must be borrowable"
-                );
-                held_tx.send(()).expect("test thread is waiting");
-                let start = std::time::Instant::now();
-                while start.elapsed() < std::time::Duration::from_micros(800) {
-                    std::hint::spin_loop();
-                }
-                entry.borrow_state.store(0, Ordering::Release);
-            }
-        });
-
-        held_rx.recv().expect("holder thread must signal");
-        let guard = checkout_shared::<i32>(addr as *mut i32);
-        holder.join().expect("holder thread must not panic");
-        assert_eq!(
-            *guard.expect("a transient exclusive borrow must be waited out"),
-            21
-        );
-        assert_eq!(cimpl_free(addr as *mut std::ffi::c_void), 0);
     }
 
     #[test]

@@ -16,8 +16,10 @@ use std::{
     slice,
 };
 
+#[cfg(test)]
+use crate::deref_mut_option;
 use crate::{
-    box_tracked, cimpl_free, deref_mut_option, deref_mut_or_return_int, error::C2paError,
+    box_tracked, cimpl::untrack_owned, cimpl_free, deref_mut_or_return_int, error::C2paError,
     ok_or_return_int, CimplError,
 };
 
@@ -65,9 +67,8 @@ type FlushCallback = unsafe extern "C" fn(context: *mut StreamContext) -> isize;
 
 /// A C2paStream is a Rust Read/Write/Seek stream that can be created and used in C.
 ///
-/// Not `#[repr(C)]`
-/// cbindgen must write an opaque forward declaration.
-/// The C FFI now handles opaque ids, and we shouldn't dereference anything directly anymore.
+/// Not `#[repr(C)]`, so cbindgen writes an opaque forward declaration: the C FFI
+/// now handles opaque ids, and we shouldn't dereference anything directly anymore.
 #[derive(Debug)]
 pub struct C2paStream {
     context: *mut StreamContext,
@@ -264,7 +265,7 @@ impl TestStream {
         Self(TestC2paStream::new(data).into_c_stream())
     }
 
-    /// Borrow the C2paStream, with the guard keeping it alive as long a needed.
+    /// Borrow the C2paStream, with the guard keeping it alive as long as needed.
     /// Used through `Deref`/`DerefMut`.
     pub fn stream_mut(&mut self) -> crate::TypedExclusive<C2paStream> {
         deref_mut_option!(self.0, C2paStream).expect("TestStream always wraps a tracked C2paStream")
@@ -430,11 +431,10 @@ impl TestC2paStream {
     /// - If non-null, `c_stream.context` must also be a tracked pointer allocated via `box_tracked!`.
     /// - Must not be called more than once for the same pointer.
     pub unsafe fn drop_c_stream(c_stream: *mut C2paStream) {
-        // Ordering of frees here is important.
-        if let Some(real_stream) = deref_mut_option!(c_stream, C2paStream) {
-            cimpl_free(real_stream.context as *mut std::ffi::c_void);
-        }
-        cimpl_free(c_stream as *mut std::ffi::c_void);
+        let Ok(real_stream) = untrack_owned::<C2paStream>(c_stream) else {
+            return;
+        };
+        cimpl_free(real_stream.context as *mut std::ffi::c_void);
     }
 }
 

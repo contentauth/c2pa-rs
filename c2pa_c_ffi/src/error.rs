@@ -12,6 +12,8 @@
 
 use thiserror::Error;
 
+use crate::cimpl::cimpl_error::codes;
+
 #[derive(Error, Debug)]
 /// Defines all possible errors that can occur in this library
 pub enum C2paError {
@@ -218,19 +220,28 @@ impl From<serde_json::Error> for crate::cimpl::CimplError {
 
 impl From<crate::cimpl::CimplError> for C2paError {
     fn from(err: crate::cimpl::CimplError) -> Self {
+        let cause = |prefix: &str| {
+            err.message()
+                .strip_prefix(prefix)
+                .unwrap_or(err.message())
+                .to_string()
+        };
+
         // Map CimplError codes to appropriate C2paError variants
         match err.code() {
-            1 => C2paError::NullParameter(err.message().to_string()),
-            2 => C2paError::Other(err.message().to_string()), // StringTooLong
-            3 => C2paError::Other(err.message().to_string()), // InvalidHandle
-            4 => C2paError::Other(err.message().to_string()), // WrongHandleType
-            5 => C2paError::Other(err.message().to_string()), // Other
-            6 => C2paError::from(err.message()),              // error variant: MutexPoisoned
-            7 => C2paError::from(err.message()),              // error variant: InvalidBufferSize
-            8 => C2paError::from(err.message()),              // error variant: PointerInUse
-            9 => C2paError::from(err.message()),              // error variant: WrongWrapperKind
-            10 => C2paError::from(err.message()),             // error variant: ForeignProcess
-            11 => C2paError::from(err.message()),             // error variant: TrackingRefused
+            codes::NULL_PARAMETER => C2paError::NullParameter(err.message().to_string()),
+            codes::STRING_TOO_LONG => C2paError::Other(err.message().to_string()),
+            codes::UNTRACKED_POINTER => C2paError::Other(err.message().to_string()),
+            codes::WRONG_POINTER_TYPE => C2paError::Other(err.message().to_string()),
+            codes::OTHER => C2paError::Other(err.message().to_string()),
+            codes::MUTEX_POISONED => C2paError::MutexPoisoned(cause("MutexPoisoned: ")),
+            codes::INVALID_BUFFER_SIZE => {
+                C2paError::InvalidBufferSize(cause("InvalidBufferSize: "))
+            }
+            codes::POINTER_IN_USE => C2paError::PointerInUse(cause("PointerInUse: ")),
+            codes::WRONG_WRAPPER_KIND => C2paError::WrongWrapperKind(cause("WrongWrapperKind: ")),
+            codes::FOREIGN_PROCESS => C2paError::ForeignProcess(cause("ForeignProcess: ")),
+            codes::TRACKING_REFUSED => C2paError::TrackingRefused(cause("TrackingRefused: ")),
             // Codes 100+ are C2paError codes - parse the message to reconstruct
             code if code >= 100 => {
                 // The message format is "ErrorType: message"
@@ -429,5 +440,20 @@ mod tests {
         assert!(matches!(err, C2paError::InvalidBufferSize(_)), "got {err}");
         assert_eq!(err.code(), 7);
         assert_eq!(err.to_string(), "InvalidBufferSize: 999 for 'data'");
+    }
+
+    #[test]
+    fn test_cimpl_code_decides_the_variant_not_the_message_prefix() {
+        let cimpl = CimplError::new(
+            codes::TRACKING_REFUSED,
+            "refused: TrackingRefused: lock poisoned".to_string(),
+        );
+
+        let err: C2paError = cimpl.into();
+        assert!(
+            matches!(err, C2paError::TrackingRefused(_)),
+            "code 11 must map to TrackingRefused, got {err}"
+        );
+        assert_eq!(err.code(), 11);
     }
 }

@@ -718,6 +718,59 @@ macro_rules! ptr_or_return_int {
     };
 }
 
+/// Two stream arguments naming the same handle would check it out twice and
+/// block until the borrow deadline, then fail with the wrong error. Compare
+/// first and fail immediately instead.
+#[macro_export]
+macro_rules! distinct_or_return {
+    ($first : expr, $second : expr, $err_val : expr) => {
+        if !$first.is_null() && std::ptr::eq($first, $second) {
+            $crate::CimplError::other(concat!(
+                stringify!($first),
+                " and ",
+                stringify!($second),
+                " must be distinct handles"
+            ))
+            .set_last();
+            return $err_val;
+        }
+    };
+}
+
+/// As `distinct_or_return!`, returning -1.
+#[macro_export]
+macro_rules! distinct_or_return_int {
+    ($first : expr, $second : expr) => {
+        $crate::distinct_or_return!($first, $second, -1)
+    };
+}
+
+/// As `distinct_or_return!`, returning null.
+#[macro_export]
+macro_rules! distinct_or_return_null {
+    ($first : expr, $second : expr) => {
+        $crate::distinct_or_return!($first, $second, std::ptr::null_mut())
+    };
+}
+
+/// Gets a buffer to the caller as out-parameter (returns the length).
+/// Returns -1 if the bytes could not be allocated,
+#[macro_export]
+macro_rules! out_bytes_or_return_int {
+    ($bytes : expr, $out_ptr : expr) => {{
+        let bytes = $bytes;
+        let len = bytes.len() as i64;
+        if !$out_ptr.is_null() {
+            let allocated = $crate::cimpl::to_c_bytes(bytes);
+            if allocated.is_null() && len > 0 {
+                return -1;
+            }
+            *$out_ptr = allocated;
+        }
+        len
+    }};
+}
+
 /// If the expression is null, set the last error and return std::ptr::null_mut().
 #[macro_export]
 macro_rules! cstr_or_return_null {

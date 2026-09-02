@@ -69,7 +69,6 @@ pub mod macros;
 // Re-export internal utilities (for macro use only - not part of public API)
 #[doc(hidden)]
 pub use cimpl_error::CimplError;
-pub(crate) use utils::track_string_array;
 #[doc(hidden)]
 pub use utils::{
     checkout_exclusive, checkout_shared, cimpl_free, is_safe_buffer_size,
@@ -77,3 +76,4 @@ pub use utils::{
     untrack_owned, untrack_owned_pair, ExclusiveCheckout, SharedCheckout, TypedExclusive,
     TypedShared,
 };
+pub(crate) use utils::{ensure_trackable, track_string_array};
