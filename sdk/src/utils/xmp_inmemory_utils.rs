@@ -331,13 +331,13 @@ pub fn add_provenance(xmp: &str, provenance: &str) -> Result<String> {
     add_xmp_key(&xmp, "dcterms:provenance", provenance)
 }
 
-/// Remove the dc:provenance value from xmp, if present, leaving everything
+/// Remove the dc:provenance value from XMP, if present, leaving everything
 /// else in the packet untouched. The inverse of `add_provenance`.
 pub fn remove_provenance(xmp: &str) -> Result<String> {
     remove_xmp_key(xmp, "dcterms:provenance")
 }
 
-/// Add or replace the xmpMM:InstanceID value in xmp, including the xmpMM
+/// Add or replace the xmpMM:InstanceID value in XMP, including the xmpMM
 /// namespace declaration if needed.
 pub(crate) fn set_instance_id(xmp: &str, instance_id: &str) -> Result<String> {
     let xmp = add_xmp_key(xmp, "xmlns:xmpMM", "http://ns.adobe.com/xap/1.0/mm/")?;

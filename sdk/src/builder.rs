@@ -3602,7 +3602,7 @@ impl Builder {
     /// # Errors
     /// * Returns an [`Error`] if the manifest cannot be converted.
     #[deprecated(
-        note = "Use `Builder::composed_manifest_with_context` on a `Builder` instance instead; without a `Context`, custom asset I/O handlers registered via `Context::with_io_handler` are not consulted."
+        note = "Use `Builder::compose_manifest` on a `Builder` instance instead; without a `Context`, custom asset I/O handlers registered via `Context::with_io_handler` are not consulted. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     pub fn composed_manifest(manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
         // Legacy behavior: no Context available, so only the built-in global registry is used.

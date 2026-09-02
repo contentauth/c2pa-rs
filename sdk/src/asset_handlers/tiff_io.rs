@@ -2962,7 +2962,7 @@ pub mod tests {
         // write_xmp_ref must be wired up for this handler.
         assert!(tiff_io.write_xmp_ref().is_some());
 
-        // embed a remote manifest url reference.
+        // embed a remote manifest URL reference.
         let eh = tiff_io.remote_manifest_url_ref().unwrap();
         let mut input_stream = std::fs::File::open(&output).unwrap();
         let mut embed_stream = Cursor::new(Vec::new());

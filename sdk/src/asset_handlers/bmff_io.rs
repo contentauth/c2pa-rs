@@ -2380,7 +2380,7 @@ impl WriteXmp for BmffIO {
 
         let c2pa_boxes = c2pa_boxes_from_tree_and_map(input_stream, &bmff_tree, &bmff_map)?;
 
-        // get position to insert xmp
+        // get position to insert XMP
         let (xmp_start, xmp_length) = match &c2pa_boxes.xmp {
             Some(_xmp) => (c2pa_boxes.xmp_box_offset, Some(c2pa_boxes.xmp_box_size)),
             None => {
@@ -2408,7 +2408,7 @@ impl WriteXmp for BmffIO {
 
             (start, end)
         } else {
-            // insert new c2pa
+            // insert new C2PA
             let end = usize::try_from(xmp_start)
                 .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 

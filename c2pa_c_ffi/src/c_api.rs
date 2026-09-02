@@ -2503,7 +2503,7 @@ pub unsafe extern "C" fn c2pa_builder_update_hash_from_stream(
 /// and it is no longer valid after that call.
 #[no_mangle]
 #[deprecated(
-    note = "Use c2pa_builder_composed_manifest() instead, so custom asset I/O handlers registered on the builder's Context are consulted. This function will be removed by Nov 12, 2026."
+    note = "Use c2pa_builder_compose_manifest() instead, so custom asset I/O handlers registered on the builder's Context are consulted. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
 )]
 pub unsafe extern "C" fn c2pa_format_embeddable(
     format: *const c_char,
@@ -2532,7 +2532,7 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
     len
 }
 
-/// Convert a binary c2pa manifest into an embeddable version for the given format.
+/// Convert a binary C2PA manifest into an embeddable version for the given format.
 /// A raw manifest (in application/c2pa format) can be uploaded to the cloud but
 /// it cannot be embedded directly into an asset without extra processing.
 /// This method converts the raw manifest into an embeddable version that can be
