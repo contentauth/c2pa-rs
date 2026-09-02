@@ -40,10 +40,9 @@ use std::{
 };
 
 use byteorder::{BigEndian, ReadBytesExt};
-use serde_bytes::ByteBuf;
 
 use crate::{
-    assertions::{BoxMap, C2PA_BOXHASH},
+    assertions::{AllowedExclusion, BoxMap, C2PA_BOXHASH},
     asset_io::{
         rename_or_move, AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
         ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
@@ -76,7 +75,6 @@ const BOX_BROB: [u8; 4] = *b"brob"; // Brotli-compressed metadata box
 const BOX_FTYP: [u8; 4] = *b"ftyp"; // File type box
 const BOX_JXLC: [u8; 4] = *b"jxlc"; // JPEG XL codestream
 const BOX_JXLP: [u8; 4] = *b"jxlp"; // JPEG XL partial codestream
-#[cfg(test)]
 const BOX_EXIF: [u8; 4] = *b"Exif"; // Exif metadata
 
 const BOX_HEADER_SIZE: u64 = 8; // 4-byte size + 4-byte type
@@ -199,7 +197,14 @@ fn parse_all_boxes(reader: &mut dyn CAIRead) -> Result<Vec<JxlBoxInfo>> {
                 let next_pos = if info.total_size == 0 {
                     file_len
                 } else {
-                    info.offset.saturating_add(info.total_size)
+                    // A box can never legitimately extend past the file.
+                    let box_end = info.offset.saturating_add(info.total_size);
+                    if box_end > file_len {
+                        return Err(Error::InvalidAsset(
+                            "JPEG XL box size extends beyond asset bounds".to_string(),
+                        ));
+                    }
+                    box_end
                 };
 
                 if boxes.len() >= MAX_JXL_BOX_COUNT {
@@ -812,6 +817,52 @@ impl RemoteRefEmbed for JpegXlIO {
     }
 }
 
+// `header_size`/`data_size` already separate a JXL box's header (4-byte size
+// + 4-byte type, or the 16-byte extended form) from its payload, so the
+// permitted range is exactly the data span - no header/length field overlap
+// to account for.
+// `brob_inner_type` is the 4-byte embedded type field a "brob" box's payload
+// starts with (identifying what's compressed inside), peeked by the caller -
+// `None` if this box isn't "brob" or that field couldn't be read.
+fn classify_jxl_allowed_exclusions(
+    name: &str,
+    header_size: u64,
+    data_size: u64,
+    brob_inner_type: Option<[u8; 4]>,
+) -> Vec<AllowedExclusion> {
+    match name {
+        C2PA_BOXHASH => vec![AllowedExclusion::whole_box(header_size + data_size)],
+        // A bare `Exif` box's payload is prefixed by a mandatory 4-byte
+        // big-endian `exif_tiff_header_offset` field (the same convention
+        // HEIF uses for its Exif item, per ISO/IEC 23008-12 Annex A) before
+        // the actual TIFF/Exif data - a structural field that must stay
+        // hashed, the same as the embedded-type field the "brob" case below
+        // skips. `xml ` (raw XMP text) has no such field.
+        "Exif" => vec![AllowedExclusion::after_header(
+            header_size + 4,
+            header_size + data_size,
+        )],
+        "xml " => vec![AllowedExclusion::after_header(
+            header_size,
+            header_size + data_size,
+        )],
+        // "brob" (Brotli-compressed) may wrap either Exif or XMP, per spec's
+        // own §18.7.4 JXL example - but the box type alone doesn't prove
+        // that: it wraps an arbitrary embedded type, so only a recognized
+        // one is excludable, and only past the 4-byte embedded type field
+        // itself (which must stay hashed - it's what identifies the wrapped
+        // content, the same kind of structural field that must never be
+        // excludable).
+        "brob" if matches!(brob_inner_type, Some(t) if t == BOX_EXIF || t == BOX_XML) => {
+            vec![AllowedExclusion::after_header(
+                header_size + 4,
+                header_size + data_size,
+            )]
+        }
+        _ => Vec::new(),
+    }
+}
+
 impl AssetBoxHash for JpegXlIO {
     fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
         let file_len = stream_len(input_stream)?;
@@ -840,15 +891,30 @@ impl AssetBoxHash for JpegXlIO {
             } else {
                 b.type_str()
             };
+            let brob_inner_type = if b.box_type == BOX_BROB {
+                let mut inner_type = [0u8; 4];
+                input_stream.seek(SeekFrom::Start(b.data_offset()))?;
+                if input_stream.read_exact(&mut inner_type).is_ok() {
+                    Some(inner_type)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            let allowed_exclusions = classify_jxl_allowed_exclusions(
+                &name,
+                b.header_size,
+                b.data_size(file_len),
+                brob_inner_type,
+            );
 
             box_maps.push(BoxMap {
                 names: vec![name],
-                alg: None,
-                hash: ByteBuf::from(Vec::new()),
-                excluded: None,
-                pad: ByteBuf::from(Vec::new()),
+                allowed_exclusions,
                 range_start: b.offset,
                 range_len: total,
+                ..Default::default()
             });
         }
 
@@ -863,12 +929,9 @@ impl AssetBoxHash for JpegXlIO {
 
             let c2pa_box = BoxMap {
                 names: vec![C2PA_BOXHASH.to_string()],
-                alg: None,
-                hash: ByteBuf::from(Vec::new()),
-                excluded: None,
-                pad: ByteBuf::from(Vec::new()),
+                allowed_exclusions: classify_jxl_allowed_exclusions(C2PA_BOXHASH, 0, 0, None),
                 range_start, // will be patched to correct offset by add_required_jumb_to_stream
-                range_len: 0,
+                ..Default::default()
             };
 
             // Insert the C2PA box after ftyp.
@@ -1015,6 +1078,7 @@ pub mod tests {
 
     use super::*;
     use crate::{
+        assertions::ExclusionKind,
         utils::{io_utils::tempdirectory, test::test_context},
         Builder, CallbackSigner, Reader, SigningAlg,
     };
@@ -1037,6 +1101,61 @@ pub mod tests {
         let mut jumb_payload = build_jumd_box(b"c2pa\0");
         jumb_payload.extend_from_slice(extra);
         build_box(&BOX_JUMB, &jumb_payload)
+    }
+
+    #[test]
+    fn test_classify_jxl_allowed_exclusions() {
+        assert_eq!(
+            classify_jxl_allowed_exclusions(C2PA_BOXHASH, 8, 12, None),
+            vec![AllowedExclusion {
+                start: 0,
+                length: 20,
+                kind: ExclusionKind::ManifestOrPadding,
+            }]
+        );
+        // A bare `Exif` box's payload starts with a 4-byte
+        // `exif_tiff_header_offset` field, so the excludable range starts
+        // 4 bytes further in than `xml `'s (which has no such field).
+        assert_eq!(
+            classify_jxl_allowed_exclusions("Exif", 8, 12, None),
+            vec![AllowedExclusion {
+                start: 12,
+                length: 8,
+                kind: ExclusionKind::AssetMetadata,
+            }]
+        );
+        assert_eq!(
+            classify_jxl_allowed_exclusions("xml ", 8, 12, None),
+            vec![AllowedExclusion {
+                start: 8,
+                length: 12,
+                kind: ExclusionKind::AssetMetadata,
+            }]
+        );
+        // "brob" is only excludable (and only past its 4-byte embedded type
+        // field) when that field is a recognized metadata type.
+        assert_eq!(
+            classify_jxl_allowed_exclusions("brob", 8, 12, Some(BOX_EXIF)),
+            vec![AllowedExclusion {
+                start: 12,
+                length: 8,
+                kind: ExclusionKind::AssetMetadata,
+            }]
+        );
+        assert_eq!(
+            classify_jxl_allowed_exclusions("brob", 8, 12, Some(BOX_XML)),
+            vec![AllowedExclusion {
+                start: 12,
+                length: 8,
+                kind: ExclusionKind::AssetMetadata,
+            }]
+        );
+        // Unrecognized embedded type, or unable to read it at all - fail closed.
+        assert!(classify_jxl_allowed_exclusions("brob", 8, 12, Some(BOX_JUMB)).is_empty());
+        assert!(classify_jxl_allowed_exclusions("brob", 8, 12, None).is_empty());
+        assert!(classify_jxl_allowed_exclusions("ftyp", 8, 12, None).is_empty());
+        // JPEG-XL box types are vendor-extensible - unrecognized, not excludable.
+        assert!(classify_jxl_allowed_exclusions("zzzz", 8, 12, None).is_empty());
     }
 
     // ─── Spec compliance: Section A.3.9 - JPEG XL container validation ───
@@ -2391,6 +2510,107 @@ pub mod tests {
         );
     }
 
+    /// A legitimate box whose declared `total_size` correctly lands exactly
+    /// at EOF must parse normally - the boundary itself isn't rejected.
+    #[test]
+    fn test_box_info_end_and_data_size_trust_declared_size() {
+        let file_len = 44;
+
+        let exact = JxlBoxInfo {
+            box_type: BOX_XML,
+            offset: 20,
+            header_size: BOX_HEADER_SIZE,
+            total_size: 24, // offset(20) + total_size(24) == file_len(44)
+        };
+        assert_eq!(exact.end(file_len), file_len);
+        assert_eq!(exact.data_size(file_len), file_len - exact.data_offset());
+    }
+
+    /// Reproduces the reported vulnerability: an `xml ` box declares a size
+    /// far larger than the actual file. `parse_all_boxes` must reject this
+    /// outright (matching how every other format handler in this codebase -
+    /// BMFF, RIFF, PNG, TIFF - treats a declared size that exceeds the file)
+    /// rather than clamping it and continuing, so `find_xmp_data` returns
+    /// `None` without ever allocating a buffer sized from the attacker-
+    /// controlled declared size.
+    #[test]
+    fn test_find_xmp_data_rejects_oversized_header() {
+        let ftyp_box = build_box(&BOX_FTYP, b"jxl \0\0\0\0jxl ");
+
+        let xmp = "abc";
+        let mut xml_box = Vec::new();
+        xml_box.extend_from_slice(&500_000_000u32.to_be_bytes()); // lie: declares ~500MB
+        xml_box.extend_from_slice(&BOX_XML);
+        xml_box.extend_from_slice(xmp.as_bytes());
+
+        let mut container = JXL_CONTAINER_MAGIC.to_vec();
+        container.extend_from_slice(&ftyp_box);
+        container.extend_from_slice(&xml_box);
+
+        let mut reader = Cursor::new(container);
+        let result = find_xmp_data(&mut reader);
+
+        assert_eq!(
+            result, None,
+            "an oversized declared box size must be rejected, not clamped and recovered"
+        );
+    }
+
+    /// Sibling of the above for the C2PA `jumb` box path: `find_jumb_data`
+    /// (via `parse_all_boxes`) is rejected by the same bounds check.
+    #[test]
+    fn test_find_jumb_data_rejects_oversized_header() {
+        let ftyp_box = build_box(&BOX_FTYP, b"jxl \0\0\0\0jxl ");
+
+        let jumd = build_jumd_box(b"c2pa\0");
+        let mut jumb_box = Vec::new();
+        jumb_box.extend_from_slice(&500_000_000u32.to_be_bytes()); // lie: declares ~500MB
+        jumb_box.extend_from_slice(&BOX_JUMB);
+        jumb_box.extend_from_slice(&jumd);
+
+        let mut container = JXL_CONTAINER_MAGIC.to_vec();
+        container.extend_from_slice(&ftyp_box);
+        container.extend_from_slice(&jumb_box);
+
+        let mut reader = Cursor::new(container);
+        let result = find_jumb_data(&mut reader);
+
+        assert!(
+            matches!(result, Err(Error::InvalidAsset(_))),
+            "an oversized declared box size must be rejected, not clamped and recovered: {result:?}"
+        );
+    }
+
+    /// Same as `test_find_jumb_data_rejects_oversized_header`, but the lie is
+    /// told via the 64-bit ISOBMFF `largesize` form (size field == 1,
+    /// followed by an 8-byte size) rather than the 32-bit size field. This
+    /// form can declare sizes far beyond `u32::MAX` from a ~58-byte file, so
+    /// it must be rejected identically.
+    #[test]
+    fn test_find_jumb_data_rejects_oversized_largesize_header() {
+        let ftyp_box = build_box(&BOX_FTYP, b"jxl \0\0\0\0jxl ");
+
+        let jumd = build_jumd_box(b"c2pa\0");
+        let mut jumb_box = Vec::new();
+        jumb_box.extend_from_slice(&1u32.to_be_bytes()); // size=1 -> large-size form
+        jumb_box.extend_from_slice(&BOX_JUMB);
+        jumb_box.extend_from_slice(&(1_500_000_000u64).to_be_bytes()); // lie: ~1.5 GB
+        jumb_box.extend_from_slice(&jumd);
+
+        let mut container = JXL_CONTAINER_MAGIC.to_vec();
+        container.extend_from_slice(&ftyp_box);
+        container.extend_from_slice(&jumb_box);
+
+        let mut reader = Cursor::new(container);
+        let result = find_jumb_data(&mut reader);
+
+        assert!(
+            matches!(result, Err(Error::InvalidAsset(_))),
+            "an oversized declared box size must be rejected even when declared \
+             via the 64-bit largesize form: {result:?}"
+        );
+    }
+
     /// An ISOBMFF box with a crafted `total_size` that would overflow `offset +
     /// total_size` must not cause `parse_all_boxes` to loop or panic.
     #[test]
@@ -2412,13 +2632,12 @@ pub mod tests {
         container.extend_from_slice(&overflow_box);
 
         let mut reader = Cursor::new(container);
-        // Must terminate without panic or infinite loop; result may be Ok or Err.
+        // Must terminate without panic or infinite loop, and must be rejected:
+        // saturating_add(12, u64::MAX) = u64::MAX, which is far past file_len.
         let result = parse_all_boxes(&mut reader);
-        // The box is parsed and next_pos = saturating_add(12, u64::MAX) = u64::MAX
-        // which is >= file_len, so the loop breaks after one box.
         assert!(
-            result.is_ok(),
-            "parse_all_boxes should handle overflow-sized box gracefully: {result:?}"
+            matches!(result, Err(Error::InvalidAsset(_))),
+            "overflow-sized box must be rejected, not silently tolerated: {result:?}"
         );
     }
 

@@ -245,6 +245,13 @@ pub mod c2pa_action {
     /// Does not include any adjustments that would affect the "editorial" meaning of the content.
     pub const TRANSCODED: &str = "c2pa.transcoded";
 
+    /// Changes to the language of the content.
+    ///
+    /// Per the C2PA spec (18.15.4.7, Parameters), a `c2pa.translated` action's
+    /// `parameters` object shall contain `sourceLanguage` and `targetLanguage`
+    /// BCP-47 (RFC 5646) language codes.
+    pub const TRANSLATED: &str = "c2pa.translated";
+
     /// Something happened, but the claim_generator cannot specify what.
     pub const UNKNOWN: &str = "c2pa.unknown";
 }
@@ -415,6 +422,9 @@ pub struct ActionParameters {
     /// Was this action performed multiple times.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub multiple_instances: Option<bool>,
+    /// Hashed JUMBF URI(s) to assertion(s) related to this action that are neither ingredients nor actions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub related_assertions: Option<Vec<HashedUri>>,
 
     /// Anything from the common parameters.
     #[serde(flatten)]
@@ -600,6 +610,13 @@ impl Action {
     /// See [Related actions - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_related_actions).
     pub fn related(&self) -> Option<&[Action]> {
         self.related.as_deref()
+    }
+
+    /// Returns the list of hashed URIs to assertions related to this action.
+    pub fn related_assertions(&self) -> Option<&[HashedUri]> {
+        self.parameters
+            .as_ref()
+            .and_then(|parameters| parameters.related_assertions.as_deref())
     }
 
     /// Returns the reason why this action was performed.
@@ -885,7 +902,11 @@ pub struct Actions {
     #[serde(rename = "softwareAgents", skip_serializing_if = "Option::is_none")]
     pub software_agents: Option<Vec<ClaimGeneratorInfo>>,
 
-    /// If present & true, indicates that no actions took place that were not included in the actions list.
+    /// If `true`, indicates that all actions performed on the asset are described in the
+    /// actions assertion(s). If `false`, additional, unrecorded actions may have been
+    /// performed. An omitted value should be interpreted the same as `false`.
+    ///
+    /// See [All actions included - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_all_actions_included)
     #[serde(rename = "allActionsIncluded", skip_serializing_if = "Option::is_none")]
     pub all_actions_included: Option<bool>,
 

@@ -170,6 +170,10 @@ struct CrJsonClaim {
 #[derive(Serialize)]
 struct CrJsonManifest {
     label: String,
+    #[serde(rename = "isUpdateManifest")]
+    is_update_manifest: bool,
+    #[serde(rename = "isCompressedManifest")]
+    is_compressed_manifest: bool,
     /// Assertions map: `label -> assertion value`. Keys may include instance suffixes
     /// such as `c2pa.actions__2`.
     assertions: Map<String, Value>,
@@ -281,6 +285,8 @@ impl<'a> CrJsonExporter<'a> {
 
         Ok(CrJsonManifest {
             label: label.to_string(),
+            is_update_manifest: claim.update_manifest(),
+            is_compressed_manifest: claim.compressed(),
             assertions,
             claim_v1,
             claim_v2,
@@ -302,13 +308,14 @@ impl<'a> CrJsonExporter<'a> {
             alg: Some(claim.alg().to_string()),
             alg_soft: claim.alg_soft().map(|s| s.to_string()),
             title: claim.title().map(|s| s.to_string()),
-            redacted_assertions: claim.redactions().and_then(|r| {
-                if r.is_empty() {
-                    None
-                } else {
-                    Some(r.to_vec())
-                }
-            }),
+            redacted_assertions: if is_v1 {
+                claim
+                    .redactions()
+                    .and_then(|r| if r.is_empty() { None } else { Some(r.to_vec()) })
+            } else {
+                // crJSON 3.5.1: absent redactions are still serialised, as an empty array.
+                Some(claim.redactions().map(|r| r.to_vec()).unwrap_or_default())
+            },
             metadata: claim.metadata().and_then(|m| {
                 if m.is_empty() {
                     None

@@ -41,15 +41,15 @@ c2patool image_to_sign.jpg -m manifest.json -o signed_with_icon.jpg
 > [!NOTE]
 > [ACA Inspect](https://inspect.cr/) will only display an icon for a signing certificate if the certificate can be traced back to a root certificate on the [C2PA trust list](https://opensource.contentauthenticity.org/docs/conformance/trust-lists#c2pa-trust-list).
 
-## `claim_generator_info` (optional)
+## claim_generator_info (optional)
 
-If you omit this property, or set it to an empty array `[]`, the SDK fills in a default when the claim is built: it uses `builder.claim_generator_info` from your [Context settings](../../docs/context-settings.md#with-builder) if you configured one, otherwise a built-in default for the `c2pa` library.
+If you omit this property, or set it to an empty array `[]`, the SDK fills in a default when the claim is built: it uses `builder.claim_generator_info` from your [Context settings](https://opensource.contentauthenticity.org/docs/rust-sdk/docs/context-settings/#with-builder) if you configured one, otherwise a built-in default for the `c2pa` library.
 
 ## Special properties used by C2PA Tool
 
 The following manifest properties are specific to C2PA Tool and used for signing manifests:
 
-- `alg`: Signing algorithm to use. See [Creating and using an X.509 certificate](x_509.md) for possible values. Default: `es256`.
+- `alg`: Signing algorithm to use. See [Supported algorithms](signing.md#supported-algorithms) for possible values. Default: `es256`.
 - `private_key`: Private key to use. Default: `es256_private.key`
 - `sign_cert`: Signing certificate to use. Default: `es256_certs.pem`
 - `ta_url`:  Time Authority URL for getting a time-stamp (for example, `http://timestamp.digicert.com`). A time-stamp provides a way to confirm that the manifest was signed when the certificate was valid, even if the certificate has since expired. However, the Time Authority URL requires a live online connection for confirmation, which may not always be available.
@@ -61,7 +61,7 @@ The example below is a minimal manifest definition that uses a default testing c
 > [!NOTE]
 > When you don't specify a key or certificate in the manifest `private_key` and `sign_cert` fields, the tool will use the built-in key and cert. You'll see a warning message, since they are meant for development purposes only.
 
-For actual use, provide a permanent key and certificate in the manifest definition or environment variables; see [Creating and using an X.509 certificate](x_509.md). 
+For actual use, provide a permanent key and certificate in the manifest definition or environment variables; see [Signing assets](signing.md#signing-with-settings-only). 
 
 ```json
 {

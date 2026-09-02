@@ -11,9 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use asn1_rs::FromDer;
 use async_generic::async_generic;
 use chrono::{DateTime, Utc};
 use coset::{cbor::value::Value, CoseSign1, Label};
+use x509_parser::prelude::X509Certificate;
 
 use crate::{
     context::Context,
@@ -30,7 +32,7 @@ use crate::{
     status_tracker::StatusTracker,
     validation_status::{
         self, SIGNING_CREDENTIAL_NOT_REVOKED, SIGNING_CREDENTIAL_OCSP_INACCESSIBLE,
-        SIGNING_CREDENTIAL_REVOKED,
+        SIGNING_CREDENTIAL_OCSP_SKIPPED, SIGNING_CREDENTIAL_REVOKED,
     },
 };
 
@@ -207,9 +209,17 @@ pub fn check_ocsp_status(
                             .await
                         }
                     } else {
+                        log_item!("", "OCSP fetching skipped", "check_ocsp_status")
+                            .validation_status(SIGNING_CREDENTIAL_OCSP_SKIPPED)
+                            .informational(validation_log);
+
                         Ok(OcspResponse::default())
                     }
                 } else {
+                    log_item!("", "OCSP fetching skipped", "check_ocsp_status")
+                        .validation_status(SIGNING_CREDENTIAL_OCSP_SKIPPED)
+                        .informational(validation_log);
+
                     Ok(OcspResponse::default())
                 }
             }
@@ -371,9 +381,9 @@ fn check_stapled_ocsp_response(
         };
 
         // make sure this is an OCSP signing EKU
-        let mut new_ctp = ctp.clone();
+        let mut new_ctp = CertificateTrustPolicy::default();
         new_ctp.clear_ekus();
-        new_ctp.add_valid_ekus(OCSP_OID_STR.as_bytes()); // ocsp signing EKU
+        new_ctp.add_mandatory_ekus(OCSP_OID_STR.as_bytes()); // ocsp signing EKU
         if check_end_entity_certificate_profile(
             first_cert,
             &new_ctp,
@@ -385,9 +395,15 @@ fn check_stapled_ocsp_response(
             return Ok(OcspResponse::default());
         }
 
-        // validate the trust
-        if new_ctp
-            .check_certificate_trust(ocsp_certs, first_cert, signing_time.map(|t| t.timestamp()))
+        // validate the trust; complete the responder's path from the signer's
+        // x5chain if the response does not embed the responder's issuing CA
+        let ocsp_cert_chain = extend_ocsp_cert_chain(ocsp_certs, &signing_cert_chain);
+        if ctp
+            .check_certificate_trust(
+                &ocsp_cert_chain,
+                first_cert,
+                signing_time.map(|t| t.timestamp()),
+            )
             .is_err()
         {
             return Ok(OcspResponse::default());
@@ -399,6 +415,35 @@ fn check_stapled_ocsp_response(
     // only append usable OCSP responses to validation_log
     validation_log.append(&current_validation_log);
     Ok(ocsp_data)
+}
+
+/// Extends the certificates embedded in an OCSP response with the signer's
+/// issuing CA certificates so the responder's path can be validated.
+///
+/// OCSP responses often embed only the responder certificate itself. A
+/// delegated responder is issued directly by the CA that issued the
+/// certificate in question (RFC 6960, section 4.2.2.2) — here the signer's
+/// issuing CA, which is required to be present in the signer's `x5chain`
+/// ([§14.5, X.509 Certificates]). So when the response embeds exactly the
+/// responder certificate and its issuer name matches the signer's issuing CA,
+/// complete the responder's path with `signing_cert_chain[1..]` (ordered
+/// end-entity upward per RFC 9360); otherwise return `ocsp_certs` unchanged.
+/// The `x5chain` is untrusted path-building input; trust is still established
+/// solely by [`CertificateTrustPolicy::check_certificate_trust`].
+///
+/// [§14.5, X.509 Certificates]: https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#x509_certificates
+fn extend_ocsp_cert_chain(ocsp_certs: &[Vec<u8>], signing_cert_chain: &[Vec<u8>]) -> Vec<Vec<u8>> {
+    if let ([responder_der], [_, issuer_der, ..]) = (ocsp_certs, signing_cert_chain) {
+        if let (Ok((_, responder)), Ok((_, issuer))) = (
+            X509Certificate::from_der(responder_der),
+            X509Certificate::from_der(issuer_der),
+        ) {
+            if responder.issuer().as_raw() == issuer.subject().as_raw() {
+                return [ocsp_certs, &signing_cert_chain[1..]].concat();
+            }
+        }
+    }
+    ocsp_certs.to_vec()
 }
 
 /// Fetches and validates an OCSP response for the given COSE signature.
@@ -472,10 +517,9 @@ pub(crate) fn fetch_and_check_ocsp_response(
         };
 
         // make sure this is an OCSP signing EKU
-        let mut new_ctp = ctp.clone();
+        let mut new_ctp = CertificateTrustPolicy::default();
         new_ctp.clear_ekus();
-        new_ctp.add_valid_ekus(OCSP_OID_STR.as_bytes()); // ocsp signing EKU
-
+        new_ctp.add_mandatory_ekus(OCSP_OID_STR.as_bytes()); // ocsp signing EKU
         if check_end_entity_certificate_profile(first_cert, &new_ctp, validation_log, None).is_err()
         {
             return Ok(OcspResponse::default());
@@ -519,4 +563,27 @@ pub fn get_ocsp_der(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
             None
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::extend_ocsp_cert_chain;
+    use crate::crypto::cert_chain_pem_to_der;
+
+    // es256.pub is a two-certificate chain: [signing leaf, intermediate CA]
+    fn leaf_and_intermediate() -> Vec<Vec<u8>> {
+        let pem = include_bytes!("../../../tests/fixtures/certs/es256.pub");
+        cert_chain_pem_to_der(pem).unwrap()
+    }
+
+    #[test]
+    fn extends_chain_only_when_responder_issued_by_signing_ca() {
+        let chain = leaf_and_intermediate();
+        // the leaf stands in for a responder issued by the signer's issuing CA
+        assert_eq!(extend_ocsp_cert_chain(&chain[..1], &chain), chain);
+        // the intermediate's issuer is the (absent) root: no extension
+        assert_eq!(extend_ocsp_cert_chain(&chain[1..], &chain), &chain[1..]);
+    }
 }
