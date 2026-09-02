@@ -1688,7 +1688,7 @@ impl Store {
                         .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
                         .failure(
                             validation_log,
-                            Error::HashMismatch(
+                            Error::ValidationRule(
                                 "ingredient assertion cannot have both activeManifest and digitalSourceType".to_string(),
                             ),
                         )?;
@@ -1711,7 +1711,7 @@ impl Store {
                         .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
                         .failure(
                             validation_log,
-                            Error::HashMismatch(
+                            Error::ValidationRule(
                                 "ingredient V3 missing validation status".to_string(),
                             ),
                         )?;
@@ -1796,7 +1796,7 @@ impl Store {
                                 )
                                 .failure_as_err(
                                     validation_log,
-                                    Error::HashMismatch(
+                                    Error::ValidationRule(
                                         "ingredient claimSignature missing".to_string(),
                                     ),
                                 )
@@ -1827,7 +1827,7 @@ impl Store {
                             )
                             .failure(
                                 validation_log,
-                                Error::HashMismatch(
+                                Error::ValidationRule(
                                     "ingredient claimSignature mismatch".to_string(),
                                 ),
                             )?;
