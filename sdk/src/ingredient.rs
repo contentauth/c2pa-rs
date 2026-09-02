@@ -749,10 +749,22 @@ impl Ingredient {
                 true => {
                     debug!("ignoring ingredient error: {err:?}");
 
-                    let status = ValidationStatus::from_error(&err);
+                    let statuses: Vec<ValidationStatus> = validation_log
+                        .logged_items()
+                        .iter()
+                        .filter_map(ValidationStatus::from_log_item)
+                        .collect();
+
                     let mut results = ValidationResults::default();
-                    results.add_status(status.clone());
-                    self.validation_status = Some(vec![status]);
+                    for status in statuses {
+                        results.add_status(status);
+                    }
+
+                    // this is a hard error, which means it was never logged as a validation
+                    // status, so convert the error itself into a `general.error` status
+                    results.add_status(ValidationStatus::from_error(&err));
+
+                    self.validation_status = results.validation_errors();
                     self.validation_results = Some(results);
 
                     Ok(())
