@@ -134,7 +134,8 @@ impl ExternalReference {
     ///
     /// For the hashed form, `alg` and `hash` must both be present and non-empty.
     /// If a `label` is present, it must not be one of the forbidden assertion labels.
-    pub fn validate(&self) -> Result<()> {
+    #[allow(unused)]
+    pub(crate) fn validate(&self) -> Result<()> {
         let url = match &self.location {
             ExternalReferenceLocation::Hashed(h) => h.url.as_str(),
             ExternalReferenceLocation::Unhashed(u) => u.url.as_str(),
@@ -158,7 +159,7 @@ impl ExternalReference {
         }
 
         if let Some(label) = &self.label {
-            let forbidden = [
+            const FORBIDDEN: [&str; 14] = [
                 "c2pa.action",
                 "c2pa.actions",
                 "c2pa.actions.v2",
@@ -175,7 +176,7 @@ impl ExternalReference {
                 "c2pa.ingredient.v3",
             ];
 
-            if forbidden.contains(&label.as_str()) {
+            if FORBIDDEN.contains(&label.as_str()) {
                 return Err(Error::ValidationRule(format!(
                     "external reference label '{}' is forbidden per C2PA 2.4",
                     label

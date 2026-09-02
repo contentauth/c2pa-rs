@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
+use c2pa_cbor::Value;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use super::labels;
 use crate::{
@@ -44,7 +44,7 @@ pub struct SoftBinding {
 
     /// Additional metadata of the soft binding. Useful for binding-specific information.
     #[serde(rename = "bindingMetadata", skip_serializing_if = "Option::is_none")]
-    pub binding_metadata: Option<SoftBindingMetdata>,
+    pub binding_metadata: Option<SoftBindingMetadata>,
 
     #[serde(skip_serializing)]
     url: Option<UriT>,
@@ -126,7 +126,7 @@ pub struct SoftBindingTimespan {
 
 /// Soft binding metadata.
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
-pub struct SoftBindingMetdata {
+pub struct SoftBindingMetadata {
     /// Additional description of the implementation or author of the binding or the algorithm.
     pub description: Option<String>,
 
@@ -139,7 +139,7 @@ pub struct SoftBindingMetdata {
 
     /// Uses flatten to allow these fields to be serialized at the same level as known fields.
     #[serde(flatten, skip_serializing_if = "HashMap::is_empty")]
-    additional_fields: HashMap<String, Value>,
+    pub additional_fields: HashMap<String, Value>,
 }
 
 // A parsed C2PA soft binding algorithm registry.

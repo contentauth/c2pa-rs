@@ -148,9 +148,10 @@ impl CloudData {
         labels::base(&self.label) == labels::ACTIONS
     }
 
-    /// Validates the Cloud Data assertion according to the C2PA 2.4 rules for
+    /// Validates structure of the Cloud Data assertion according to the C2PA 2.4 rules for
     /// `c2pa.cloud-data` assertions.
-    pub fn validate(&self) -> Result<()> {
+    #[allow(unused)]
+    pub(crate) fn validate(&self) -> Result<()> {
         if self.label.trim().is_empty() {
             return Err(Error::ValidationRule(
                 "cloud data assertion label must not be empty".to_owned(),
@@ -203,7 +204,7 @@ impl CloudData {
         // Per C2PA 2.4 §15.10.3.2.1, the referenced assertion must not be any
         // of the forbidden label types, including hard bindings and the cloud-data
         // assertion itself.
-        let forbidden = [
+        const FORBIDDEN: [&str; 7] = [
             "c2pa.action",
             "c2pa.actions",
             "c2pa.actions.v2",
@@ -213,7 +214,7 @@ impl CloudData {
             "c2pa.ingredient.v3",
         ];
 
-        if forbidden.contains(&self.label.as_str()) {
+        if FORBIDDEN.contains(&self.label.as_str()) {
             return Err(Error::ValidationRule(format!(
                 "cloud data assertion must not reference forbidden label '{}', per C2PA 2.4",
                 self.label

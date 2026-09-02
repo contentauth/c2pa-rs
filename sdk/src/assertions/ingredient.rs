@@ -498,9 +498,6 @@ impl Ingredient {
         if self.metadata.is_some() {
             ingredient_map_len += 1
         }
-        if self.digital_source_type.is_some() {
-            ingredient_map_len += 1
-        }
 
         let mut ingredient_map = serializer.serialize_struct("Ingredient", ingredient_map_len)?;
 
@@ -549,9 +546,6 @@ impl Ingredient {
         }
         if let Some(sba) = &self.soft_binding_algorithms_matched {
             ingredient_map.serialize_field("softBindingAlgorithmsMatched", sba)?;
-        }
-        if let Some(dst) = &self.digital_source_type {
-            ingredient_map.serialize_field("digitalSourceType", dst)?;
         }
         if let Some(md) = &self.metadata {
             ingredient_map.serialize_field("metadata", md)?;
