@@ -28,3 +28,5 @@ pub mod tiff_io;
 pub(crate) mod pdf;
 #[cfg(feature = "pdf")]
 pub mod pdf_io;
+#[cfg(feature = "unstable_pdf_oxide")]
+pub(crate) mod pdf_oxide;

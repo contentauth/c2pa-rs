@@ -14,7 +14,7 @@
 use std::{fs::File, path::Path};
 
 use crate::{
-    asset_handlers::pdf::{C2paPdf, Pdf},
+    asset_handlers::pdf::{AnyPdf, C2paPdf},
     asset_io::{AssetIO, CAIRead, CAIReader, CAIWriter, ComposedManifestRef, HashObjectPositions},
     Error::{self, JumbfNotFound, NotImplemented, PdfReadError},
 };
@@ -22,13 +22,40 @@ use crate::{
 static SUPPORTED_TYPES: [&str; 2] = ["pdf", "application/pdf"];
 static WRITE_NOT_IMPLEMENTED: &str = "PDF write functionality will be added in a future release";
 
+/// Selects which PDF backend implementation handles PDF assets.
+///
+/// Set via the `core.pdf_backend` settings value, e.g.
+/// `Settings::new().with_json(r#"{"core": {"pdf_backend": "pdf_oxide"}}"#)` (see
+/// [`crate::settings`]). Like the rest of the SDK's thread-local settings, `AssetIO`
+/// implementations such as [`PdfIO`] read the thread-local settings directly (there is no
+/// `Context` threaded down to this layer), so this is set via
+/// [`crate::settings::Settings::set_thread_local_value`] rather than per-`Context`.
+#[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PdfBackend {
+    /// The default, stable backend, built on `lopdf`. Supports both reading and writing.
+    #[default]
+    Lopdf,
+    /// Experimental backend built on `pdf_oxide` (feature `unstable_pdf_oxide`). Read-only: see
+    /// `docs/experimental-features.md`.
+    #[cfg(feature = "unstable_pdf_oxide")]
+    PdfOxide,
+}
+
+/// Returns the currently-selected [`PdfBackend`] from the thread-local settings.
+pub(crate) fn pdf_backend() -> PdfBackend {
+    crate::settings::get_thread_local_settings().core.pdf_backend
+}
+
 pub struct PdfIO {}
 
 impl CAIReader for PdfIO {
     fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> crate::Result<Vec<u8>> {
         asset_reader.rewind()?;
 
-        let pdf = Pdf::from_reader(asset_reader).map_err(|e| Error::InvalidAsset(e.to_string()))?;
+        let pdf =
+            AnyPdf::from_reader(asset_reader).map_err(|e| Error::InvalidAsset(e.to_string()))?;
         self.read_manifest_bytes(pdf)
     }
 
@@ -37,7 +64,7 @@ impl CAIReader for PdfIO {
             return None;
         }
 
-        let Ok(pdf) = Pdf::from_reader(asset_reader) else {
+        let Ok(pdf) = AnyPdf::from_reader(asset_reader) else {
             return None;
         };
 
@@ -239,6 +266,55 @@ pub mod tests {
 
     #[test]
     fn test_read_cai_express_pdf_finds_single_manifest_store() {
+        let source = include_bytes!("../../tests/fixtures/express-signed.pdf");
+        let pdf_io = PdfIO::new("pdf");
+        let mut pdf_stream = Cursor::new(source.to_vec());
+        assert!(pdf_io.read_cai(&mut pdf_stream).is_ok());
+    }
+
+    #[test]
+    fn test_pdf_backend_defaults_to_lopdf() {
+        assert_eq!(super::pdf_backend(), super::PdfBackend::Lopdf);
+    }
+
+    #[cfg(feature = "unstable_pdf_oxide")]
+    #[test]
+    fn test_set_pdf_backend_switches_backend() {
+        crate::settings::set_settings_value("core.pdf_backend", "pdf_oxide").unwrap();
+        assert_eq!(super::pdf_backend(), super::PdfBackend::PdfOxide);
+    }
+
+    #[cfg(feature = "unstable_pdf_oxide")]
+    #[test]
+    fn test_pdf_oxide_backend_cai_read_finds_no_manifest() {
+        crate::settings::set_settings_value("core.pdf_backend", "pdf_oxide").unwrap();
+
+        let source = crate::utils::test::fixture_path("basic.pdf");
+        let pdf_io = PdfIO::new("pdf");
+
+        assert!(matches!(
+            pdf_io.read_cai_store(&source),
+            Err(crate::Error::JumbfNotFound)
+        ));
+    }
+
+    #[cfg(feature = "unstable_pdf_oxide")]
+    #[test]
+    fn test_pdf_oxide_backend_cai_read_xmp_finds_xmp_data() {
+        crate::settings::set_settings_value("core.pdf_backend", "pdf_oxide").unwrap();
+
+        let source = include_bytes!("../../tests/fixtures/basic.pdf");
+        let mut stream = Cursor::new(source.to_vec());
+
+        let pdf_io = PdfIO::new("pdf");
+        assert!(pdf_io.read_xmp(&mut stream).is_some());
+    }
+
+    #[cfg(feature = "unstable_pdf_oxide")]
+    #[test]
+    fn test_pdf_oxide_backend_read_cai_express_pdf_finds_single_manifest_store() {
+        crate::settings::set_settings_value("core.pdf_backend", "pdf_oxide").unwrap();
+
         let source = include_bytes!("../../tests/fixtures/express-signed.pdf");
         let pdf_io = PdfIO::new("pdf");
         let mut pdf_stream = Cursor::new(source.to_vec());

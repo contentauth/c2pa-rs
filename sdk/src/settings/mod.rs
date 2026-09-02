@@ -492,6 +492,12 @@ pub struct Core {
     /// See more information in the spec here:
     /// [Compressed manifests - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_compressed_boxes)
     pub prefer_compress_manifests: bool,
+    /// Selects which PDF backend implementation handles PDF assets: the default, stable
+    /// `lopdf`-based implementation, or the experimental `pdf_oxide`-based one (feature
+    /// `unstable_pdf_oxide`). See [`crate::asset_handlers::pdf_io::PdfBackend`] and
+    /// `docs/experimental-features.md`.
+    #[cfg(feature = "pdf")]
+    pub pdf_backend: crate::asset_handlers::pdf_io::PdfBackend,
     /// Maximum size in megabytes of a Brotli-decompressed JUMBF manifest.
     /// Limits memory consumption from decompression bomb attacks.
     ///
@@ -509,6 +515,8 @@ impl Default for Core {
             allowed_network_hosts: None,
             allow_redirects: true,
             prefer_compress_manifests: false,
+            #[cfg(feature = "pdf")]
+            pdf_backend: Default::default(),
             max_decompressed_manifest_size_in_mb: 32,
         }
     }

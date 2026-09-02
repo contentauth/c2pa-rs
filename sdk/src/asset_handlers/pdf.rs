@@ -42,6 +42,28 @@ pub enum Error {
     #[error(transparent)]
     UnableToReadPdf(#[from] lopdf::Error),
 
+    /// Error occurred while reading the PDF via the experimental `pdf_oxide` backend. Look into
+    /// the wrapped `pdf_oxide::Error` for more information on the cause.
+    #[cfg(feature = "unstable_pdf_oxide")]
+    #[error(transparent)]
+    UnableToReadPdfOxide(#[from] pdf_oxide::Error),
+
+    /// Error occurred while buffering a reader for the experimental `pdf_oxide` backend, which
+    /// (unlike `lopdf`) only accepts an in-memory buffer rather than an arbitrary reader.
+    #[cfg(feature = "unstable_pdf_oxide")]
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+
+    /// Writing (or removing) a manifest is not yet supported by the experimental `pdf_oxide`
+    /// backend: `pdf_oxide`'s public API has no support for the PDF Associated Files (`/AF`)
+    /// array that C2PA embedding requires. Tracked as follow-up work.
+    #[cfg(feature = "unstable_pdf_oxide")]
+    #[error(
+        "Writing PDFs is not yet supported by the experimental pdf_oxide backend. Switch to the \
+         lopdf backend to write or remove a manifest."
+    )]
+    PdfOxideWriteNotSupported,
+
     /// No Manifest is present in the PDF.
     #[error("No manifest is present in the PDF.")]
     NoManifest,
@@ -91,6 +113,103 @@ pub(crate) trait C2paPdf: Sized {
 
 pub(crate) struct Pdf {
     document: Document,
+}
+
+/// Dispatches to whichever PDF backend is selected via
+/// [`crate::asset_handlers::pdf_io::pdf_backend`]: the stable `lopdf`-based [`Pdf`], or the
+/// experimental `pdf_oxide`-based [`super::pdf_oxide::PdfOxideDoc`] (feature `unstable_pdf_oxide`).
+///
+/// `C2paPdf::save_to` is generic (`fn save_to<W: Write + 'static>`), which makes the trait
+/// non-object-safe — there is no `Box<dyn C2paPdf>`. This enum is the dispatch mechanism instead.
+pub(crate) enum AnyPdf {
+    Lopdf(Box<Pdf>),
+    #[cfg(feature = "unstable_pdf_oxide")]
+    Oxide(Box<super::pdf_oxide::PdfOxideDoc>),
+}
+
+impl AnyPdf {
+    pub fn from_reader<R: Read>(source: R) -> Result<Self, Error> {
+        match super::pdf_io::pdf_backend() {
+            super::pdf_io::PdfBackend::Lopdf => {
+                Ok(Self::Lopdf(Box::new(Pdf::from_reader(source)?)))
+            }
+            #[cfg(feature = "unstable_pdf_oxide")]
+            super::pdf_io::PdfBackend::PdfOxide => Ok(Self::Oxide(Box::new(
+                super::pdf_oxide::PdfOxideDoc::from_reader(source)?,
+            ))),
+        }
+    }
+}
+
+impl C2paPdf for AnyPdf {
+    fn save_to<W: Write + 'static>(&mut self, writer: &mut W) -> Result<(), std::io::Error> {
+        match self {
+            Self::Lopdf(pdf) => pdf.save_to(writer),
+            #[cfg(feature = "unstable_pdf_oxide")]
+            Self::Oxide(_) => Err(std::io::Error::other(
+                "writing PDFs is not yet supported by the experimental pdf_oxide backend",
+            )),
+        }
+    }
+
+    fn is_password_protected(&self) -> bool {
+        match self {
+            Self::Lopdf(pdf) => pdf.is_password_protected(),
+            #[cfg(feature = "unstable_pdf_oxide")]
+            Self::Oxide(pdf) => pdf.is_password_protected(),
+        }
+    }
+
+    fn has_c2pa_manifest(&self) -> bool {
+        match self {
+            Self::Lopdf(pdf) => pdf.has_c2pa_manifest(),
+            #[cfg(feature = "unstable_pdf_oxide")]
+            Self::Oxide(pdf) => pdf.has_c2pa_manifest(),
+        }
+    }
+
+    // TODO: implement once the pdf_oxide backend supports writing (tracked as follow-up work;
+    // pdf_oxide's public API has no support for the PDF Associated Files (/AF) array that C2PA
+    // embedding requires).
+    fn write_manifest_as_embedded_file(&mut self, bytes: Vec<u8>) -> Result<(), Error> {
+        match self {
+            Self::Lopdf(pdf) => pdf.write_manifest_as_embedded_file(bytes),
+            #[cfg(feature = "unstable_pdf_oxide")]
+            Self::Oxide(_) => Err(Error::PdfOxideWriteNotSupported),
+        }
+    }
+
+    fn write_manifest_as_annotation(&mut self, bytes: Vec<u8>) -> Result<(), Error> {
+        match self {
+            Self::Lopdf(pdf) => pdf.write_manifest_as_annotation(bytes),
+            #[cfg(feature = "unstable_pdf_oxide")]
+            Self::Oxide(_) => Err(Error::PdfOxideWriteNotSupported),
+        }
+    }
+
+    fn read_manifest_bytes(&self) -> Result<Option<Vec<&[u8]>>, Error> {
+        match self {
+            Self::Lopdf(pdf) => pdf.read_manifest_bytes(),
+            #[cfg(feature = "unstable_pdf_oxide")]
+            Self::Oxide(pdf) => pdf.read_manifest_bytes(),
+        }
+    }
+
+    fn remove_manifest_bytes(&mut self) -> Result<(), Error> {
+        match self {
+            Self::Lopdf(pdf) => pdf.remove_manifest_bytes(),
+            #[cfg(feature = "unstable_pdf_oxide")]
+            Self::Oxide(_) => Err(Error::PdfOxideWriteNotSupported),
+        }
+    }
+
+    fn read_xmp(&self) -> Option<String> {
+        match self {
+            Self::Lopdf(pdf) => pdf.read_xmp(),
+            #[cfg(feature = "unstable_pdf_oxide")]
+            Self::Oxide(pdf) => pdf.read_xmp(),
+        }
+    }
 }
 
 impl C2paPdf for Pdf {

@@ -56,6 +56,11 @@ http_reqwest = ["dep:reqwest"]
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
 diagnostics = []
+# Experimental alternate PDF backend built on `pdf_oxide` instead of `lopdf`, selectable at
+# runtime via settings. Experimental feature: exempt from the crate's usual semantic-versioning
+# stability guarantees and may change or be removed in any release. See
+# docs/experimental-features.md.
+unstable_pdf_oxide = ["dep:pdf_oxide", "pdf"]
 
 [[example]]
 name = "cawg_identity"
@@ -128,6 +133,7 @@ memchr = "2.8.1"
 nom = "7.1.3"
 non-empty-string = { version = "0.2.6", features = ["serde"] }
 nonempty-collections = { version = "1.3.0", features = ["serde"] }
+pdf_oxide = { version = "0.3.77", optional = true, default-features = false }
 pem = "4.0.0"
 pkcs8 = "0.10.2"
 png_pong = "0.10.0"
