@@ -151,7 +151,7 @@ impl CimplError {
         Self::new(codes::OTHER, format!("Other: {}", msg.into()))
     }
 
-    /// Registry call made from a process that did not create it itself.
+    /// Registry call made from a process that did not create the registry.
     pub fn foreign_process() -> Self {
         Self::new(
             codes::FOREIGN_PROCESS,

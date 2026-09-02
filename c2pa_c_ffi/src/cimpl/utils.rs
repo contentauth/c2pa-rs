@@ -49,7 +49,7 @@ type CleanupFn = Box<dyn FnMut() + Send>;
 type TakenEntry = (usize, Wrapper);
 
 /// The allocator/creator needs to be known,
-/// to properly build types back and free them.
+/// to reconstruct the concrete type and free it.
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Wrapper {
     Boxed,
@@ -87,7 +87,7 @@ struct EntryInner {
     /// The `Arc`'s refcount frees the object; this field and the refcount
     /// move independently.
     /// It can't be inferred from `Arc::strong_count` either,
-    /// since any transient clone increases without a borrow existing.
+    /// since any transient clone increases the strong count without a borrow existing.
     borrow_state: AtomicUsize,
     /// `Option` so `untrack` can take the closure out through a shared `Arc`,
     /// leaving nothing for `Drop` to run.
@@ -109,15 +109,15 @@ fn current_pid() -> u32 {
     0
 }
 
-/// usize::MAX used as write-only marker,
-/// since usize::MAX should not be reachable only in read
+/// usize::MAX is used as the exclusive-write marker,
+/// since a read-only borrow count should never reach usize::MAX
 /// (would need more memory than available).
 const EXCLUSIVE: usize = usize::MAX;
 
 /// A writer is waiting for this handle.
 const WRITER_PENDING: usize = 1 << (usize::BITS - 1);
 
-/// Timeout to wait for a handle, to avoid livelocks/demands collisions.
+/// Timeout to wait for a handle, to avoid livelocks/demand collisions.
 #[cfg(not(target_arch = "wasm32"))]
 const WRITER_WAIT: std::time::Duration = std::time::Duration::from_millis(10);
 
@@ -254,8 +254,7 @@ impl EntryInner {
             .take();
     }
 
-    /// Take a clean up closure but do not run it (avoid double-free),
-    /// but for exclusive access cases.
+    /// As `cancel_cleanup`, for exclusive access.
     fn cancel_cleanup_mut(&mut self) {
         self.cleanup
             .get_mut()
@@ -612,7 +611,7 @@ impl PointerRegistry {
         Ok(())
     }
 
-    /// Lookup the registry entry (behind and `Arc`).
+    /// Lookup the registry entry (behind an `Arc`).
     fn lookup(&self, id: usize, expected_type: TypeId) -> Result<Arc<EntryInner>, Error> {
         self.check_same_process()?;
         if id == 0 {
@@ -629,8 +628,8 @@ impl PointerRegistry {
         }
     }
 
-    /// Multiple calls may checkout a shared borrow at a time.
-    /// as long as there is no exclusive borrow pending.
+    /// Multiple calls may check out a shared borrow at once, as long as no
+    /// exclusive borrow is pending.
     #[must_use = "the borrow ends when the returned guard is dropped"]
     fn checkout_shared(&self, id: usize, expected_type: TypeId) -> Result<SharedCheckout, Error> {
         let entry = self.lookup(id, expected_type)?;
@@ -860,8 +859,8 @@ impl PointerRegistry {
         Ok(())
     }
 
-    /// Free the entry at `key`.
-    /// Free if it is the entry a caller last saw and expects to free.
+    /// Free the entry at `key`, but only if it is still the entry the
+    /// caller last saw.
     ///
     /// # Arguments
     /// * `key` - Handle id or address to free. Address keys are where this
@@ -1070,9 +1069,9 @@ pub fn track_arc_mutex<T: 'static + MaybeSend>(ptr: *mut Mutex<T>) -> *mut Mutex
 
 /// Borrow a tracked object for reading (keeps it alive for how long it is used).
 ///
-/// The guard holds a borrow on the entry, so unlike a bare resolved pointer: a concurrent
-/// `cimpl_free` from another thread removes the handle but cannot free the
-/// object until every guard is dropped.
+/// Unlike a bare resolved pointer, the guard holds a borrow on the entry: a
+/// concurrent `cimpl_free` from another thread removes the handle but cannot
+/// free the object until every guard is dropped.
 #[must_use = "the borrow ends when the returned guard is dropped"]
 pub fn checkout_shared<T: 'static + MaybeSync>(ptr: *mut T) -> Result<TypedShared<T>, Error> {
     let inner = get_registry().checkout_shared(ptr as usize, TypeId::of::<T>())?;
@@ -1671,7 +1670,7 @@ mod tests {
             untrack_owned::<i32>(ptr).is_err(),
             "ownership must not move while borrowed"
         );
-        // All of nothing, no half-states.
+        // All or nothing, no half-states.
         assert!(get_registry().resolve_typed::<i32>(ptr).is_ok());
 
         drop(guard);
@@ -1680,7 +1679,7 @@ mod tests {
 
     #[test]
     fn test_untrack_owned_rejects_arc_tracked_entry() {
-        // An Arc entry may have other clones, so can be single-owned.
+        // An Arc entry may have other clones, so it cannot be treated as single-owned.
         let arc = Arc::new(5i32);
         let ptr = track_arc(Arc::into_raw(arc) as *mut i32);
 
@@ -1890,7 +1889,7 @@ mod tests {
 
     #[test]
     fn test_c_buffers_have_even_addresses() {
-        // Odd/even key split requires even buffer addresses to avoid confusions.
+        // Odd/even key split requires even buffer addresses to avoid confusion.
         for i in 0..8 {
             let s = to_c_string(format!("even {i}"));
             assert!(!s.is_null(), "tracking must not refuse the address");

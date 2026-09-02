@@ -436,8 +436,7 @@ impl c2pa::http::SyncHttpResolver for C2paHttpResolver {
 //     }
 // }
 
-/// Returns a version string for logging,
-/// null if the string can't be tracked.
+/// Returns a version string for logging, or NULL if the string can't be tracked.
 ///
 /// # Safety
 /// The returned value must be released by calling c2pa_free,
@@ -692,7 +691,8 @@ pub unsafe extern "C" fn c2pa_context_builder_set_settings(
 /// # Safety
 ///
 /// * `builder` must be a valid C2paContextBuilder pointer (not yet built).
-/// * `signer_ptr` must be a valid C2paSigner pointer and consumed by the call.
+/// * `signer_ptr` must be a valid C2paSigner pointer. It is consumed by this
+///   call and must not be used or freed afterward.
 ///
 /// # Returns
 ///
@@ -801,8 +801,7 @@ pub unsafe extern "C" fn c2pa_http_resolver_create(
 /// # Safety
 ///
 /// * `builder` must be a valid C2paContextBuilder pointer (not yet built).
-/// * `resolver_ptr` is consumed and must not be used or freed afterwards,
-///   except if `builder` was rejected too.
+/// * `resolver_ptr` is consumed and must not be used or freed afterward.
 ///
 /// # Returns
 ///
@@ -985,7 +984,7 @@ pub unsafe extern "C" fn c2pa_string_free(s: *mut c_char) {
     cimpl_free!(s);
 }
 
-/// Frees an array of char* pointers created by Rust and all content.
+/// Frees an array of char* pointers created by Rust, and all of their contents.
 ///
 /// # Parameters
 /// * ptr: pointer to the array of char* pointers.
@@ -1964,7 +1963,7 @@ pub unsafe extern "C" fn c2pa_builder_write_ingredient_archive(
 /// # Safety
 /// Reads from NULL-terminated C strings
 /// If manifest_bytes_ptr is not NULL, the returned value must be released by calling c2pa_free,
-/// and it is no longer valid after the c2pa_free call.
+/// and it is no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_builder_sign(
     builder_ptr: *mut C2paBuilder,
@@ -2599,16 +2598,13 @@ pub unsafe extern "C" fn c2pa_signer_create(
 /// # Errors
 /// Returns NULL if either signer pointer is NULL; call `c2pa_error` to retrieve the error string.
 ///
-/// The two signer handles must be different objects.
-/// Both are consumed. One signer can't be both signer and identity signer at the same time.
-///
-/// On failure nothing is consumed: both handles are validated before either is taken,
-/// so a rejected call leaves the caller owning both, still freeable.
-///
 /// # Safety
 /// Both signer pointers must have been created by a `c2pa_signer_*` function and not yet freed.
-/// Both signers are invalid after a successful call.
-/// If this returns NULL, both remain valid and the caller still owns them.
+/// The two signer handles must be different objects; one signer can't be both
+/// signer and identity signer at the same time.
+/// Both are consumed by a successful call and are invalid afterward. On
+/// failure nothing is consumed: both handles are validated before either is
+/// taken, so a rejected call leaves the caller owning both, still freeable.
 /// The returned value MUST be released by calling `c2pa_free`.
 /// `referenced_assertions` and `roles`, if non-NULL, must each point to a NULL-terminated array
 /// of NULL-terminated UTF-8 strings that remain valid for the duration of this call.
@@ -2956,7 +2952,7 @@ mod tests {
         let result = unsafe { c2pa_context_builder_set_signer(bogus_builder, signer) };
         assert_eq!(result, -1, "an invalid builder must be rejected");
 
-        // Signer must be still usable.
+        // Signer must still be usable.
         assert_eq!(
             unsafe { c2pa_free(signer as *const c_void) },
             0,

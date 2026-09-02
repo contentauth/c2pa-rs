@@ -385,9 +385,7 @@ macro_rules! deref_mut_option_or_return {
     }};
 }
 
-/// Borrow for a write operation for `Option`.
-/// NULL is `None`
-/// Errors return -1.
+/// As `deref_mut_option_or_return!`, returning -1.
 #[macro_export]
 macro_rules! deref_mut_option_or_return_int {
     ($ptr:expr, $type:ty) => {{
@@ -754,7 +752,7 @@ macro_rules! distinct_or_return_null {
 }
 
 /// Gets a buffer to the caller as out-parameter (returns the length).
-/// Returns -1 if the bytes could not be allocated,
+/// Returns -1 if the bytes could not be allocated.
 #[macro_export]
 macro_rules! out_bytes_or_return_int {
     ($bytes : expr, $out_ptr : expr) => {{
