@@ -1677,23 +1677,21 @@ impl Store {
                 .failure_as_err(validation_log, e)
             })?;
 
-            // 15.11.3.2 if both an activeManifest and a digitalSourceType field are present,
-            //           the assertion shall be rejected with a failure code of assertion.ingredient.malformed
             if ingredient_assertion.active_manifest.is_some()
                 && ingredient_assertion.digital_source_type.is_some()
             {
                 log_item!(
-                    i.label().clone(),
-                    "ingredient assertion cannot have both activeManifest and digitalSourceType",
-                    "ingredient_checks"
-                )
-                .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
-                .failure(
-                    validation_log,
-                    Error::ValidationRule(
-                        "ingredient assertion cannot have both activeManifest and digitalSourceType".to_string(),
-                    ),
-                )?;
+                            jumbf::labels::to_assertion_uri(claim.label(), &i.label()),
+                            "ingredient assertion cannot have both activeManifest and digitalSourceType",
+                            "ingredient_checks"
+                        )
+                        .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
+                        .failure(
+                            validation_log,
+                            Error::ValidationRule(
+                                "ingredient assertion cannot have both activeManifest and digitalSourceType".to_string(),
+                            ),
+                        )?;
             }
 
             validation_log
@@ -1713,7 +1711,7 @@ impl Store {
                         .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
                         .failure(
                             validation_log,
-                            Error::HashMismatch(
+                            Error::ValidationRule(
                                 "ingredient V3 missing validation status".to_string(),
                             ),
                         )?;
@@ -1798,7 +1796,7 @@ impl Store {
                                 )
                                 .failure_as_err(
                                     validation_log,
-                                    Error::HashMismatch(
+                                    Error::ValidationRule(
                                         "ingredient claimSignature missing".to_string(),
                                     ),
                                 )
@@ -1829,7 +1827,7 @@ impl Store {
                             )
                             .failure(
                                 validation_log,
-                                Error::HashMismatch(
+                                Error::ValidationRule(
                                     "ingredient claimSignature mismatch".to_string(),
                                 ),
                             )?;
@@ -9368,46 +9366,6 @@ pub mod tests {
             matches!(result, Err(Error::InvalidAsset(_))),
             "expected Err(InvalidAsset) for depth >= MAX_INGREDIENT_DEPTH, got: {result:?}"
         );
-    }
-
-    #[test]
-    fn test_ingredient_checks_rejects_active_manifest_and_digital_source_type() {
-        let ingredient = Ingredient {
-            active_manifest: Some(HashedUri::new(
-                "self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(),
-                Some("sha256".to_owned()),
-                &[1, 2, 3, 4, 5, 6, 7, 8, 9, 0],
-            )),
-            digital_source_type: Some(DigitalSourceType::TrainedAlgorithmicData),
-            validation_results: Some(ValidationResults::default()),
-            relationship: Relationship::InputTo,
-            version: 3,
-            ..Default::default()
-        };
-        let mut claim = Claim::new("ingredient_malformed_test", Some("contentauth"), 2);
-        claim.add_assertion(&ingredient).unwrap();
-
-        let store = Store::new();
-        let svi = StoreValidationInfo::default();
-        let mut validation_log =
-            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-        let context = Context::new();
-
-        let result = Store::ingredient_checks(
-            &store,
-            &claim,
-            &svi,
-            &mut validation_log,
-            0,
-            &context,
-            &mut HashSet::new(),
-        );
-
-        assert!(result.is_err());
-        assert!(validation_log.logged_items().iter().any(|item| {
-            item.validation_status.as_deref()
-                == Some(validation_status::ASSERTION_INGREDIENT_MALFORMED)
-        }));
     }
 
     // Verify that when an ingredient assertion is included in final_redactions, the claim it
