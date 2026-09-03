@@ -193,7 +193,7 @@ pub struct ManifestDefinition {
 }
 
 fn default_instance_id() -> String {
-    format!("xmp:iid:{}", Uuid::new_v4())
+    format!("xmp.iid:{}", Uuid::new_v4())
 }
 
 fn default_format() -> String {
@@ -2441,7 +2441,7 @@ impl Builder {
             self.add_assertion(labels::DATA_HASH, &ph)?;
         }
         self.definition.format = format.to_string();
-        self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
+        self.definition.instance_id = format!("xmp.iid:{}", Uuid::new_v4());
         let mut store = self.to_store()?;
         let placeholder = store.get_data_hashed_manifest_placeholder(reserve_size, format)?;
         Ok(placeholder)
@@ -3198,7 +3198,7 @@ impl Builder {
         signer: &dyn Signer,
         format: &str,
     ) -> Result<Vec<u8>> {
-        self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
+        self.definition.instance_id = format!("xmp.iid:{}", Uuid::new_v4());
 
         let mut store = self.to_store()?;
         let bytes = if _sync {
@@ -3380,7 +3380,7 @@ impl Builder {
 
         self.definition.format =
             crate::format_from_path(path).ok_or(crate::Error::UnsupportedType)?;
-        self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
+        self.definition.instance_id = format!("xmp.iid:{}", Uuid::new_v4());
         if self.definition.title.is_none() {
             if let Some(title) = path.file_name() {
                 self.definition.title = Some(title.to_string_lossy().to_string());
@@ -3757,12 +3757,15 @@ enum UriRewrite {
 
 /// Ingredient ids that `action` references, both symbolically (`ingredientIds` /
 /// `org.cai.ingredientIds` / `instanceId` / deprecated `instance_id`) and positionally
-/// (`parameters.ingredients` `HashedUri`s resolved against `pre_filter_ids`).
+/// (the v1 singular `parameters.ingredient` and v2/v3 plural `parameters.ingredients`
+/// `HashedUri`s, both resolved against `pre_filter_ids`).
 #[cfg(feature = "unstable_builder_filter")]
 fn action_ingredient_ref_ids(action: &Action, pre_filter_ids: &[String]) -> Vec<String> {
     let mut ids = action.ingredient_ids();
-    if let Some(uris) = action.parameters().and_then(|p| p.ingredients.as_ref()) {
-        for uri in uris {
+    if let Some(params) = action.parameters() {
+        let singular = params.ingredient.as_ref().into_iter();
+        let plural = params.ingredients.iter().flatten();
+        for uri in singular.chain(plural) {
             if let Some(label) = assertion_label_from_uri(&uri.url()) {
                 let (_, idx) = parse_positional_label(&label);
                 if let Some(id) = pre_filter_ids.get(idx) {
@@ -3805,11 +3808,13 @@ fn rewrite_one_ingredient_uri(
     UriRewrite::Rewritten(HashedUri::new(new_url, hu.alg(), &hu.hash()))
 }
 
-/// Rewrites `parameters.ingredients[].url` on every action so positional labels
-/// (`c2pa.ingredient.v3__N`) point at the new positions of the surviving ingredients.
+/// Rewrites `parameters.ingredient.url` and `parameters.ingredients[].url` on every action so
+/// positional labels (`c2pa.ingredient.v3__N`) point at the new positions of the surviving
+/// ingredients.
 ///
 /// Required after any ingredient is pruned: `to_claim` re-emits the surviving ingredients
-/// positionally at sign time, so any stale `__N` reference would otherwise dangle.
+/// positionally at sign time, so any stale `__N` reference would otherwise dangle. Both the v1
+/// singular `ingredient` and v2/v3 plural `ingredients` reference shapes are handled.
 #[cfg(feature = "unstable_builder_filter")]
 fn rewrite_action_ingredient_urls(
     actions: &mut Actions,
@@ -3817,19 +3822,18 @@ fn rewrite_action_ingredient_urls(
     id_to_new_idx: &HashMap<&str, usize>,
 ) -> Result<()> {
     let mut rewritten = Vec::with_capacity(actions.actions.len());
-    for action in actions.actions.drain(..) {
-        let Some(ingredient_uris) = action.parameters().and_then(|p| p.ingredients.as_ref()) else {
+    for mut action in actions.actions.drain(..) {
+        let Some(params) = action.parameters() else {
             rewritten.push(action);
             continue;
         };
+        let singular = params.ingredient.clone();
+        let plural = params.ingredients.clone();
 
-        let mut changed = false;
-        let mut remapped_uris: Vec<HashedUri> = Vec::with_capacity(ingredient_uris.len());
-        for uri in ingredient_uris {
-            match rewrite_one_ingredient_uri(uri, pre_filter_ids, id_to_new_idx) {
+        if let Some(uri) = singular {
+            match rewrite_one_ingredient_uri(&uri, pre_filter_ids, id_to_new_idx) {
                 UriRewrite::Rewritten(new) => {
-                    changed = true;
-                    remapped_uris.push(new);
+                    action = action.set_parameter("ingredient", new)?;
                 }
                 UriRewrite::Stale => {
                     log::warn!(
@@ -3837,18 +3841,39 @@ fn rewrite_action_ingredient_urls(
                         action.action(),
                         label_segment_from_uri(&uri.url()),
                     );
-                    remapped_uris.push(uri.clone());
                 }
-                UriRewrite::Unchanged => remapped_uris.push(uri.clone()),
+                UriRewrite::Unchanged => {}
             }
         }
 
-        if changed {
-            // Propagate rather than swallow: a failed remap would silently dangle references.
-            rewritten.push(action.set_parameter("ingredients", remapped_uris)?);
-        } else {
-            rewritten.push(action);
+        if let Some(ingredient_uris) = plural {
+            let mut changed = false;
+            let mut remapped_uris: Vec<HashedUri> = Vec::with_capacity(ingredient_uris.len());
+            for uri in &ingredient_uris {
+                match rewrite_one_ingredient_uri(uri, pre_filter_ids, id_to_new_idx) {
+                    UriRewrite::Rewritten(new) => {
+                        changed = true;
+                        remapped_uris.push(new);
+                    }
+                    UriRewrite::Stale => {
+                        log::warn!(
+                            "action '{}' has stale ingredient ref '{}'",
+                            action.action(),
+                            label_segment_from_uri(&uri.url()),
+                        );
+                        remapped_uris.push(uri.clone());
+                    }
+                    UriRewrite::Unchanged => remapped_uris.push(uri.clone()),
+                }
+            }
+
+            if changed {
+                // Propagate rather than swallow: a failed remap would silently dangle references.
+                action = action.set_parameter("ingredients", remapped_uris)?;
+            }
         }
+
+        rewritten.push(action);
     }
     actions.actions = rewritten;
     Ok(())
@@ -4216,6 +4241,49 @@ mod tests {
         assert_eq!(manifest.title().unwrap(), "Test_Manifest");
         let test_assertion: TestAssertion = manifest.find_assertion("org.life.meaning").unwrap();
         assert_eq!(test_assertion.answer, 42);
+    }
+
+    #[test]
+    fn test_builder_incorrect_ingredient_format_errors() {
+        let mut source = Cursor::new(TEST_IMAGE);
+
+        let ingredient_json = json!({
+            "title": "CA.jpg",
+            "format": "image/jpeg",
+        })
+        .to_string();
+
+        let mut builder = Builder::default()
+            .with_definition(simple_manifest_json())
+            .unwrap();
+
+        // pass incorrect format
+        let result = builder.add_ingredient_from_stream(ingredient_json, "image/png", &mut source);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_builder_incorrect_ingredient_format_ignore_ingredient_errors() {
+        let mut source = Cursor::new(TEST_IMAGE);
+
+        let ingredient_json = json!({
+            "title": "CA.jpg",
+            "format": "image/jpeg",
+        })
+        .to_string();
+
+        let settings = Settings::default()
+            .with_value("builder.ignore_ingredient_errors", true)
+            .unwrap();
+        let context = Context::default().with_settings(settings).unwrap();
+
+        let mut builder = Builder::from_context(context)
+            .with_definition(simple_manifest_json())
+            .unwrap();
+
+        // pass incorrect format, but ignore_ingredient_errors should prevent an error
+        let result = builder.add_ingredient_from_stream(ingredient_json, "image/png", &mut source);
+        assert!(result.is_ok());
     }
 
     // Ensure multiple `c2pa.placed` actions aren't created.
@@ -6560,6 +6628,31 @@ mod tests {
         let m = reader.active_manifest().unwrap();
         assert_eq!(m.ingredients().len(), 1);
         assert!(m.ingredients()[0].active_manifest().is_some());
+    }
+
+    #[c2pa_test_async]
+    async fn test_add_cloud_ingredient_ignore_ingredient_errors() {
+        let mut cloud_image = Cursor::new(TEST_IMAGE_CLOUD);
+
+        let settings = Settings::default()
+            .with_value("verify.remote_manifest_fetch", false)
+            .unwrap();
+        let context = Context::default().with_settings(settings).unwrap();
+
+        let mut builder = Builder::from_context(context);
+
+        let ingredient = builder
+            .add_ingredient_from_stream_async(parent_json(), "image/jpeg", &mut cloud_image)
+            .await
+            .unwrap();
+
+        let validation_results = ingredient.validation_results().unwrap();
+        assert!(validation_results
+            .active_manifest()
+            .unwrap()
+            .failure()
+            .iter()
+            .any(|status| status.code() == crate::validation_status::MANIFEST_INACCESSIBLE));
     }
 
     #[test]
@@ -11244,6 +11337,13 @@ mod tests {
                 .map(|u| u.url())
         }
 
+        /// The url of an action's singular positional ingredient reference, if any.
+        fn singular_ing_url(a: &Action) -> Option<String> {
+            a.parameters()
+                .and_then(|p| p.ingredient.as_ref())
+                .map(|u| u.url())
+        }
+
         /// A componentOf ingredient (label == instance_id) referenced by positional URL tests.
         fn positional_ingredient(label: &str) -> serde_json::Value {
             json!({
@@ -11266,6 +11366,24 @@ mod tests {
                         "alg": "sha256",
                         "hash": [1, 2, 3, 4],
                     }]
+                }
+            })
+        }
+
+        /// A `c2pa.placed` action referencing a single positional ingredient label via the v1
+        /// singular `parameters.ingredient` HashedUri, rather than the v2/v3 plural
+        /// `parameters.ingredients` array used by [`positional_placed`]. Neither shape is
+        /// deprecated, so both must resolve identically for rescue and URL-rewrite purposes.
+        fn positional_placed_singular(idx: usize) -> serde_json::Value {
+            let label = Claim::label_with_instance("c2pa.ingredient.v3", idx);
+            json!({
+                "action": "c2pa.placed",
+                "parameters": {
+                    "ingredient": {
+                        "url": format!("self#jumbf=c2pa.assertions/{label}"),
+                        "alg": "sha256",
+                        "hash": [1, 2, 3, 4],
+                    }
                 }
             })
         }
@@ -11839,6 +11957,95 @@ mod tests {
                 .actions
                 .iter()
                 .any(|a| a.action() == "c2pa.edited"));
+        }
+
+        // Regression test: a `c2pa.placed` action linking an ingredient via the v1 singular
+        // `parameters.ingredient` HashedUri must be rescued the same way one linking via the
+        // v2/v3 plural `parameters.ingredients` array is. Previously `action_ingredient_ref_ids`
+        // only inspected the plural array, so a singular-only reference was invisible to the
+        // rescue check and the action was silently dropped even though its ingredient survived.
+        #[test]
+        fn filter_actions_and_ingredients_rescues_via_singular_ingredient_reference() {
+            let def = json!({
+                "ingredients": [
+                    positional_ingredient("my_ing"),
+                ],
+                "assertions": [{ "label": "c2pa.actions.v2", "data": { "actions": [
+                    created_action(),
+                    positional_placed_singular(0),
+                ]}}]
+            });
+
+            // The action predicate alone would drop `c2pa.placed`; only the singular-reference
+            // rescue of `my_ing` should save it.
+            let mut b = removal_builder(def);
+            b.filter_actions_and_ingredients(
+                |a| a.action() != "c2pa.placed",
+                |ing| ing.label() == Some("my_ing"),
+            )
+            .unwrap();
+
+            assert_eq!(b.definition.ingredients.len(), 1);
+            assert!(builder_actions(&b)
+                .actions
+                .iter()
+                .any(|a| a.action() == "c2pa.placed"));
+        }
+
+        // Contrast case: an unrescued singular reference is dropped like any other, confirming
+        // the rescue above is due to the ingredient predicate rather than some blanket keep.
+        #[test]
+        fn filter_actions_and_ingredients_drops_unrescued_singular_ingredient_reference() {
+            let def = json!({
+                "ingredients": [
+                    positional_ingredient("not_my_ing"),
+                ],
+                "assertions": [{ "label": "c2pa.actions.v2", "data": { "actions": [
+                    created_action(),
+                    positional_placed_singular(0),
+                ]}}]
+            });
+
+            let mut b = removal_builder(def);
+            b.filter_actions_and_ingredients(|a| a.action() != "c2pa.placed", |_| false)
+                .unwrap();
+
+            assert!(b.definition.ingredients.is_empty());
+            assert!(!builder_actions(&b)
+                .actions
+                .iter()
+                .any(|a| a.action() == "c2pa.placed"));
+        }
+
+        // The singular `parameters.ingredient` URL must be repointed to a surviving ingredient's
+        // new position after pruning shifts indices, the same way the plural array is
+        // (`filter_ingredients_parent_of_nonzero_index` covers the plural case).
+        #[test]
+        fn filter_actions_and_ingredients_rewrites_singular_ingredient_reference_after_prune() {
+            let mut b = removal_builder(json!({
+                "ingredients": [
+                    positional_ingredient("orphan"), // idx0, pruned
+                    positional_ingredient("kept"),    // idx1, referenced by the singular form
+                ],
+                "assertions": [{ "label": "c2pa.actions.v2", "data": { "actions": [
+                    created_action(),
+                    positional_placed_singular(1),
+                ]}}]
+            }));
+
+            b.filter_actions_and_ingredients(|_| true, |ing| ing.label() == Some("kept"))
+                .unwrap();
+
+            assert_eq!(b.definition.ingredients.len(), 1);
+            assert_eq!(b.definition.ingredients[0].label(), Some("kept"));
+            // The reference moved from idx1 to idx0 as "orphan" was pruned.
+            let url = builder_actions(&b)
+                .actions
+                .iter()
+                .find(|a| a.action() == "c2pa.placed")
+                .and_then(singular_ing_url)
+                .unwrap();
+            assert!(url.ends_with("c2pa.ingredient.v3"));
         }
 
         // Two ingredients with neither a `label` nor an `instance_id` both fall back to the same

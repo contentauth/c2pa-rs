@@ -32,7 +32,7 @@ use crate::{
     status_tracker::StatusTracker,
     validation_status::{
         self, SIGNING_CREDENTIAL_NOT_REVOKED, SIGNING_CREDENTIAL_OCSP_INACCESSIBLE,
-        SIGNING_CREDENTIAL_REVOKED,
+        SIGNING_CREDENTIAL_OCSP_SKIPPED, SIGNING_CREDENTIAL_REVOKED,
     },
 };
 
@@ -209,9 +209,17 @@ pub fn check_ocsp_status(
                             .await
                         }
                     } else {
+                        log_item!("", "OCSP fetching skipped", "check_ocsp_status")
+                            .validation_status(SIGNING_CREDENTIAL_OCSP_SKIPPED)
+                            .informational(validation_log);
+
                         Ok(OcspResponse::default())
                     }
                 } else {
+                    log_item!("", "OCSP fetching skipped", "check_ocsp_status")
+                        .validation_status(SIGNING_CREDENTIAL_OCSP_SKIPPED)
+                        .informational(validation_log);
+
                     Ok(OcspResponse::default())
                 }
             }
@@ -373,9 +381,9 @@ fn check_stapled_ocsp_response(
         };
 
         // make sure this is an OCSP signing EKU
-        let mut new_ctp = ctp.clone();
+        let mut new_ctp = CertificateTrustPolicy::default();
         new_ctp.clear_ekus();
-        new_ctp.add_valid_ekus(OCSP_OID_STR.as_bytes()); // ocsp signing EKU
+        new_ctp.add_mandatory_ekus(OCSP_OID_STR.as_bytes()); // ocsp signing EKU
         if check_end_entity_certificate_profile(
             first_cert,
             &new_ctp,
@@ -390,7 +398,7 @@ fn check_stapled_ocsp_response(
         // validate the trust; complete the responder's path from the signer's
         // x5chain if the response does not embed the responder's issuing CA
         let ocsp_cert_chain = extend_ocsp_cert_chain(ocsp_certs, &signing_cert_chain);
-        if new_ctp
+        if ctp
             .check_certificate_trust(
                 &ocsp_cert_chain,
                 first_cert,
@@ -518,10 +526,9 @@ pub(crate) fn fetch_and_check_ocsp_response(
         };
 
         // make sure this is an OCSP signing EKU
-        let mut new_ctp = ctp.clone();
+        let mut new_ctp = CertificateTrustPolicy::default();
         new_ctp.clear_ekus();
-        new_ctp.add_valid_ekus(OCSP_OID_STR.as_bytes()); // ocsp signing EKU
-
+        new_ctp.add_mandatory_ekus(OCSP_OID_STR.as_bytes()); // ocsp signing EKU
         if check_end_entity_certificate_profile(first_cert, &new_ctp, validation_log, None).is_err()
         {
             return Ok(OcspResponse::default());
