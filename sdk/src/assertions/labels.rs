@@ -62,6 +62,11 @@ pub const SOFT_BINDING: &str = "c2pa.soft-binding";
 /// See [Cloud data - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_cloud_data).
 pub const CLOUD_DATA: &str = "c2pa.cloud-data";
 
+/// Label for an external reference assertion.
+///
+/// See [External reference - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_external_reference).
+pub const EXTERNAL_REFERENCE: &str = "c2pa.external-reference";
+
 /// Label prefix for a thumbnail assertion.
 ///
 /// See [Thumbnail - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_thumbnail).
