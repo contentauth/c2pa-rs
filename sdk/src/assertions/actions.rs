@@ -252,6 +252,15 @@ pub mod c2pa_action {
     /// BCP-47 (RFC 5646) language codes.
     pub const TRANSLATED: &str = "c2pa.translated";
 
+    /// Watermarking was applied to this area for the purpose of soft binding.  2.3 and earlier.
+    pub const WATERMARKED: &str = "c2pa.watermarked";
+
+    /// Watermarking was applied to this area for the purpose of soft binding. 2.4 or later.
+    pub const WATERMARKED_BOUND: &str = "c2pa.watermarked.bound";
+
+    /// Watermarking was applied to this area without creating a soft binding. 2.4 or later.
+    pub const WATERMARKED_UNBOUND: &str = "c2pa.watermarked.unbound";
+
     /// Something happened, but the claim_generator cannot specify what.
     pub const UNKNOWN: &str = "c2pa.unknown";
 }
