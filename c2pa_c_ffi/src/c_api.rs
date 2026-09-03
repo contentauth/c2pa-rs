@@ -2846,7 +2846,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::TestStream;
+    use crate::{c2pa_create_stream, checkout_exclusive, C2paSeekMode, StreamContext, TestStream};
 
     macro_rules! fixture_path {
         ($path:expr) => {
@@ -2963,8 +2963,6 @@ mod tests {
     #[test]
     #[allow(deprecated)]
     fn test_failing_callback_leaves_handles_alone() {
-        use crate::{c2pa_create_stream, checkout_exclusive, C2paSeekMode, StreamContext};
-
         unsafe extern "C" fn failing_read(
             _ctx: *mut StreamContext,
             _data: *mut u8,

@@ -1641,10 +1641,7 @@ mod tests {
 
         assert_eq!(untrack_owned::<i32>(ptr).expect("nothing borrowed yet"), 77);
 
-        assert!(
-            weak.upgrade().is_none(),
-            "registry entry still here"
-        );
+        assert!(weak.upgrade().is_none(), "registry entry still here");
     }
 
     #[test]
@@ -1694,8 +1691,6 @@ mod tests {
 
     #[test]
     fn test_free_while_checked_out_defers_cleanup() {
-        use std::sync::atomic::AtomicBool;
-
         static DROPPED: AtomicBool = AtomicBool::new(false);
         struct Tracked;
         impl Drop for Tracked {
@@ -1807,9 +1802,7 @@ mod tests {
 
     #[test]
     fn test_guard_cleans_up_once() {
-        use std::sync::atomic::AtomicUsize as Counter;
-
-        static CLEANUPS: Counter = Counter::new(0);
+        static CLEANUPS: AtomicUsize = AtomicUsize::new(0);
         struct Counted;
         impl Drop for Counted {
             fn drop(&mut self) {
