@@ -232,8 +232,7 @@ pub const NON_REDACTABLE_LABELS: [&str; 5] =
     [ACTIONS, DATA_HASH, BOX_HASH, BMFF_HASH, COLLECTION_HASH];
 
 /// Returns `true` if `label` names a hard binding assertion (`c2pa.hash.data`,
-/// any `c2pa.hash.bmff.*`, `c2pa.hash.boxes`, `c2pa.hash.collection.data`, or
-/// `c2pa.hash.multi-asset`).
+/// any `c2pa.hash.bmff.*`, `c2pa.hash.boxes`, or `c2pa.hash.collection.data`).
 ///
 /// `BMFF_HASH` is matched by prefix since it's the only one of these still at
 /// creation version > 1, so it's the only one that carries a version suffix
@@ -242,7 +241,6 @@ pub(crate) fn is_hard_binding_label(label: &str) -> bool {
     label == DATA_HASH
         || label == BOX_HASH
         || label == COLLECTION_HASH
-        || label == MULTI_ASSET_HASH
         || label.starts_with(BMFF_HASH)
 }
 
@@ -506,7 +504,6 @@ mod tests {
             DATA_HASH,
             BOX_HASH,
             COLLECTION_HASH,
-            MULTI_ASSET_HASH,
             BMFF_HASH,
             "c2pa.hash.bmff.v2",
             "c2pa.hash.bmff.v3",
