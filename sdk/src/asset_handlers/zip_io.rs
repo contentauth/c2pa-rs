@@ -26,6 +26,8 @@ const CENTRAL_DIRECTORY_CRC_OFFSET: u64 = 16;
 const CRC_LEN: u64 = 4;
 
 const DATA_DESCRIPTOR_SIGNATURE: [u8; 4] = [0x50, 0x4b, 0x07, 0x08];
+const LOCAL_FILE_HEADER_SIGNATURE: [u8; 4] = [0x50, 0x4b, 0x03, 0x04];
+const CENTRAL_DIRECTORY_HEADER_SIGNATURE: [u8; 4] = [0x50, 0x4b, 0x01, 0x02];
 
 pub struct ZipIO {}
 
@@ -294,14 +296,28 @@ where
             let mut signature = [0; DATA_DESCRIPTOR_SIGNATURE.len()];
             stream.read_exact(&mut signature)?;
 
-            let signature_len: u64 = if signature == DATA_DESCRIPTOR_SIGNATURE {
-                DATA_DESCRIPTOR_SIGNATURE.len() as u64
-            } else {
-                0
-            };
-            let size_field_len: u64 = if entry.large_file { 8 } else { 4 };
+            // the `zip2` crate writes the data descriptor flag on the local file header of
+            // directories, yet it doesn't write a data descriptor. if the next entry is not
+            // a local file header or the start of the central directory, then there must be
+            // a data descriptor present (or an incorrect zip). note the data descriptor
+            // signature is optional.
+            //
+            // we handle it here in case we run into it in the wild, althoughh the bug only occurs
+            // when generating zips with the zip crate.
+            //
+            // https://github.com/zip-rs/zip2/issues/971
+            if signature != LOCAL_FILE_HEADER_SIGNATURE
+                && signature != CENTRAL_DIRECTORY_HEADER_SIGNATURE
+            {
+                let signature_len: u64 = if signature == DATA_DESCRIPTOR_SIGNATURE {
+                    DATA_DESCRIPTOR_SIGNATURE.len() as u64
+                } else {
+                    0
+                };
+                let size_field_len: u64 = if entry.large_file { 8 } else { 4 };
 
-            end += signature_len + CRC_LEN + (2 * size_field_len);
+                end += signature_len + CRC_LEN + (2 * size_field_len);
+            }
         }
         ranges.insert(
             entry.path,
@@ -332,10 +348,6 @@ where
     let mut entries = Vec::new();
     for file_name in file_names {
         let file = reader.by_name(&file_name).map_err(ZipError::Read)?;
-
-        if file.is_dir() {
-            continue;
-        }
 
         let path = match file.enclosed_name() {
             Some(path) => path,
@@ -518,11 +530,11 @@ mod tests {
     }
 
     #[test]
-    fn test_zip_uri_ranges() {
+    fn test_zip_uri_ranges1() {
         let mut stream = Cursor::new(SAMPLES[0]);
         let ranges = zip_uri_ranges(&mut stream).unwrap();
 
-        assert_eq!(ranges.len(), 5);
+        assert_eq!(ranges.len(), 7);
         assert_eq!(
             ranges.get(Path::new("sample1/test1.txt")),
             Some(&HashRange::new(44, 47))
@@ -567,6 +579,28 @@ mod tests {
     }
 
     #[test]
+    fn test_zip_uri_ranges_includes_directory_local_header() {
+        let mut writer = ZipWriter::new_stream(Vec::new());
+        writer
+            .add_directory("mydir", SimpleFileOptions::default())
+            .unwrap();
+        writer
+            .start_file("mydir/file.txt", SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(b"hello").unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+
+        let ranges = zip_uri_ranges(&mut Cursor::new(bytes)).unwrap();
+
+        assert_eq!(ranges.len(), 2);
+
+        let dir_range = ranges.get(Path::new("mydir/")).unwrap();
+        let file_range = ranges.get(Path::new("mydir/file.txt")).unwrap();
+        assert_eq!(dir_range.start(), 0);
+        assert_eq!(dir_range.start() + dir_range.length(), file_range.start());
+    }
+
+    #[test]
     fn test_central_directory_range_skips_manifest_crc() {
         let zip_io = ZipIO {};
         let mut input = Cursor::new(SAMPLES[0]);
@@ -604,7 +638,7 @@ mod tests {
             .unwrap();
         let output_ranges = zip_uri_ranges(&mut src_with_manifest).unwrap();
 
-        assert_eq!(input_ranges.len(), output_ranges.len());
+        assert_eq!(output_ranges.len(), input_ranges.len() + 1);
 
         for (path, input_range) in input_ranges {
             let output_range = output_ranges.get(&path).unwrap();

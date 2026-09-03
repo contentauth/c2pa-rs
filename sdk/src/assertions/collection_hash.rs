@@ -629,6 +629,31 @@ mod tests {
                 data_types: None,
             })
         );
+        assert_eq!(
+            collection.uris.get(Path::new("sample1/test1")),
+            Some(&UriHashedDataMap {
+                hash: Some(vec![
+                    199, 134, 99, 174, 54, 178, 120, 199, 28, 217, 185, 86, 200, 187, 5, 90, 182,
+                    134, 28, 246, 5, 219, 189, 243, 221, 164, 149, 198, 146, 113, 183, 219
+                ]),
+                size: Some(44),
+                dc_format: None,
+                data_types: None,
+            })
+        );
+        assert_eq!(
+            collection.uris.get(Path::new("sample1/test2")),
+            Some(&UriHashedDataMap {
+                hash: Some(vec![
+                    9, 26, 48, 179, 113, 110, 125, 60, 147, 43, 208, 136, 111, 196, 48, 16, 226,
+                    74, 37, 100, 184, 237, 36, 219, 220, 156, 240, 35, 129, 155, 171, 14
+                ]),
+                size: Some(44),
+                dc_format: None,
+                data_types: None,
+            })
+        );
+        assert_eq!(collection.uris.len(), 7);
 
         Ok(())
     }
