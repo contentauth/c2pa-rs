@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
+    assertions::assertion_metadata::AssetType,
     assertions::{cloud_data::HashedExtUri, labels, AssertionMetadata},
     error::{Error, Result},
 };
@@ -35,7 +36,7 @@ pub struct UnhashedExtUri {
 
     /// Optional asset type classifications for the referenced data.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub data_types: Option<Vec<crate::assertions::assertion_metadata::AssetType>>,
+    pub data_types: Option<Vec<AssetType>>,
 }
 
 impl UnhashedExtUri {

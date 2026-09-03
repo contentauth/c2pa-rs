@@ -128,13 +128,15 @@ pub struct SoftBindingTimespan {
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct SoftBindingMetadata {
     /// Additional description of the implementation or author of the binding or the algorithm.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 
     /// Contact information for the implementation or author of the binding or the algorithm.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub contact: Option<String>,
 
     /// A web page containing more details about the implementation or author of the binding or the algorithm.
-    #[serde(rename = "informationalUrl")]
+    #[serde(rename = "informationalUrl", skip_serializing_if = "Option::is_none")]
     pub informational_url: Option<String>,
 
     /// Uses flatten to allow these fields to be serialized at the same level as known fields.

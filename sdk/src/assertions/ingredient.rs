@@ -442,15 +442,11 @@ impl Ingredient {
             ));
         }
 
-        /*
-        For now we will not enforce this rule, but we should consider enforcing it in the future.
-        This is caught in the verify_ingredient function, but it would be better to prevent it here.
         if self.active_manifest.is_some() && self.digital_source_type.is_some() {
             return Err(serde::ser::Error::custom(
                 "Ingredient v3 activeManifest and digitalSourceType cannot both be present",
             ));
         }
-        */
 
         let mut ingredient_map_len = 1;
         if self.title.is_some() {
