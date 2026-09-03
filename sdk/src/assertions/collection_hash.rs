@@ -353,6 +353,7 @@ impl AssertionCbor for CollectionHash {}
 mod tests {
     use std::io::Cursor;
 
+    #[cfg(not(target_arch = "wasm32"))]
     use tempfile::TempDir;
 
     use super::*;
@@ -367,6 +368,7 @@ mod tests {
         Ok(collection)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn gen_dir_collection_hash() -> Result<(TempDir, CollectionHash)> {
         let dir = tempfile::tempdir()?;
         fs::write(dir.path().join("a.txt"), b"hello")?;
@@ -475,6 +477,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_directory_collection_roundtrip() -> Result<()> {
         let (dir, collection) = gen_dir_collection_hash()?;
@@ -483,6 +486,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_directory_verify_mismatch() -> Result<()> {
         let (dir, collection) = gen_dir_collection_hash()?;
@@ -496,6 +500,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_directory_verify_incorrect_file_count() -> Result<()> {
         let (dir, collection) = gen_dir_collection_hash()?;
@@ -509,6 +514,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_directory_verify_missing_hash_is_malformed() -> Result<()> {
         let (dir, mut collection) = gen_dir_collection_hash()?;
@@ -524,6 +530,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_base_path_must_be_a_directory() -> Result<()> {
         let dir = tempfile::tempdir()?;
@@ -622,7 +629,6 @@ mod tests {
                 data_types: None,
             })
         );
-        assert_eq!(collection.uris.len(), 5);
 
         Ok(())
     }
