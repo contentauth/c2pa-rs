@@ -3327,7 +3327,7 @@ impl Store {
             // this is okay because adding new file entries does not change the hashes of existing
             // file entries. when we insert the real manifest we can go back and hash the central directory.
             let mut new_collection_hash = None;
-            if pc.hash_assertions().is_empty() {
+            if pc.collection_hash_assertions().is_empty() {
                 let mut placeholder_collection_hash = CollectionHash::new(pc.alg().to_owned());
                 if source_is_intermediate {
                     intermediate_stream.rewind()?;
