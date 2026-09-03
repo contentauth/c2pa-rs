@@ -71,6 +71,21 @@ pub struct CimplError {
     message: String,
 }
 
+/// Error codes crossing C FFI.
+pub(crate) mod codes {
+    pub(crate) const NULL_PARAMETER: i32 = 1;
+    pub(crate) const STRING_TOO_LONG: i32 = 2;
+    pub(crate) const UNTRACKED_POINTER: i32 = 3;
+    pub(crate) const WRONG_POINTER_TYPE: i32 = 4;
+    pub(crate) const OTHER: i32 = 5;
+    pub(crate) const MUTEX_POISONED: i32 = 6;
+    pub(crate) const INVALID_BUFFER_SIZE: i32 = 7;
+    pub(crate) const POINTER_IN_USE: i32 = 8;
+    pub(crate) const WRONG_WRAPPER_KIND: i32 = 9;
+    pub(crate) const FOREIGN_PROCESS: i32 = 10;
+    pub(crate) const TRACKING_REFUSED: i32 = 11;
+}
+
 impl CimplError {
     /// Creates a new error with the given code and message
     pub fn new<S: Into<String>>(code: i32, message: S) -> Self {
@@ -91,31 +106,80 @@ impl CimplError {
     }
 
     pub fn null_parameter<S: Into<String>>(param: S) -> Self {
-        Self::new(1, format!("NullParameter: {}", param.into()))
+        Self::new(
+            codes::NULL_PARAMETER,
+            format!("NullParameter: {}", param.into()),
+        )
     }
 
     pub fn string_too_long<S: Into<String>>(param: S) -> Self {
-        Self::new(2, format!("StringTooLong: {}", param.into()))
+        Self::new(
+            codes::STRING_TOO_LONG,
+            format!("StringTooLong: {}", param.into()),
+        )
     }
 
     pub fn untracked_pointer(ptr: u64) -> Self {
-        Self::new(3, format!("UntrackedPointer: 0x{:x}", ptr))
+        Self::new(
+            codes::UNTRACKED_POINTER,
+            format!("UntrackedPointer: 0x{:x}", ptr),
+        )
     }
 
     pub fn wrong_pointer_type(ptr: u64) -> Self {
-        Self::new(4, format!("WrongPointerType: 0x{:x}", ptr))
+        Self::new(
+            codes::WRONG_POINTER_TYPE,
+            format!("WrongPointerType: 0x{:x}", ptr),
+        )
     }
 
     pub fn mutex_poisoned() -> Self {
-        Self::new(6, "MutexPoisoned: thread panic detected".to_string())
+        Self::new(
+            codes::MUTEX_POISONED,
+            "MutexPoisoned: thread panic detected".to_string(),
+        )
     }
 
     pub fn invalid_buffer_size(size: usize, param: &str) -> Self {
-        Self::new(7, format!("InvalidBufferSize: {} for '{}'", size, param))
+        Self::new(
+            codes::INVALID_BUFFER_SIZE,
+            format!("InvalidBufferSize: {} for '{}'", size, param),
+        )
     }
 
     pub fn other<S: Into<String>>(msg: S) -> Self {
-        Self::new(5, format!("Other: {}", msg.into()))
+        Self::new(codes::OTHER, format!("Other: {}", msg.into()))
+    }
+
+    /// Registry call made from a process that did not create the registry.
+    pub fn foreign_process() -> Self {
+        Self::new(
+            codes::FOREIGN_PROCESS,
+            "ForeignProcess: forked child can't access a registry it doesn't own".to_string(),
+        )
+    }
+
+    /// Handle is tracked as `Arc` and single ownership was demanded through the registry,
+    /// but other clones of `Arc` may exist so single ownership can't be guaranteed.
+    pub fn wrong_wrapper_kind() -> Self {
+        Self::new(
+            codes::WRONG_WRAPPER_KIND,
+            "WrongWrapperKind: Arc-backed handle can't have single ownership".to_string(),
+        )
+    }
+
+    /// A pointer could not be recorded by the registry and was rejected.
+    /// `cause` lists the error.
+    pub fn tracking_refused(cause: &str) -> Self {
+        Self::new(codes::TRACKING_REFUSED, format!("TrackingRefused: {cause}"))
+    }
+
+    /// An exclusive borrow is already in-flight for this handle.
+    pub fn pointer_in_use() -> Self {
+        Self::new(
+            codes::POINTER_IN_USE,
+            "PointerInUse: handle already in (exclusive) use".to_string(),
+        )
     }
 
     /// Peeks at the last error message without clearing it
