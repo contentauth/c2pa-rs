@@ -1819,6 +1819,13 @@ impl CAIReader for BmffIO {
                     "original manifest without update manifest".to_string(),
                 ));
             }
+        } else if c2pa_boxes.update_bytes.is_some() {
+            // `update` only ever exists paired with `original` (spec Annex
+            // A.5.3). Falling through here would silently drop a
+            // still-signed update manifest instead of erroring.
+            return Err(Error::C2PAValidation(
+                "update manifest without original manifest".to_string(),
+            ));
         }
 
         c2pa_boxes.manifest_bytes.ok_or(Error::JumbfNotFound)
@@ -3632,6 +3639,77 @@ pub mod tests {
             get_uuid_box_purpose(&mut reader, node),
             Err(Error::InvalidAsset(_))
         ));
+    }
+
+    // Regression tests for the `original`/`update` box_purpose pairing.
+    //
+    // Per C2PA spec Annex A.5.3, `original` and `update` boxes always travel
+    // together. `read_cai` must reject either appearing without its pair
+    // rather than silently falling back to `manifest_bytes` and dropping a
+    // still-signed manifest.
+
+    fn minimal_ftyp() -> Vec<u8> {
+        let mut data = Vec::new();
+        // ftyp box (16 bytes): size=16, type='ftyp', major_brand='mp41', minor_version=0
+        data.extend_from_slice(&16u32.to_be_bytes());
+        data.extend_from_slice(b"ftyp");
+        data.extend_from_slice(b"mp41");
+        data.extend_from_slice(&0u32.to_be_bytes());
+        data
+    }
+
+    #[test]
+    fn test_read_cai_rejects_update_without_original() {
+        let mut data = minimal_ftyp();
+        // Simulates the retagged asset: the box that should be `original` has
+        // been retagged to plain `manifest`, but the paired `update` box is
+        // still present and untouched.
+        write_c2pa_box(&mut data, b"dummy manifest bytes", MANIFEST, &[], 0).unwrap();
+        write_c2pa_box(&mut data, b"dummy update bytes", UPDATE, &[], 0).unwrap();
+
+        let bmff_io = BmffIO::new("mp4");
+        let mut source = Cursor::new(data);
+        let result = bmff_io.read_cai(&mut source);
+        assert!(
+            matches!(
+                result,
+                Err(Error::C2PAValidation(ref m)) if m == "update manifest without original manifest"
+            ),
+            "expected update-without-original to be rejected, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_read_cai_rejects_original_without_update() {
+        let mut data = minimal_ftyp();
+        write_c2pa_box(&mut data, b"dummy original bytes", ORIGINAL, &[], 0).unwrap();
+
+        let bmff_io = BmffIO::new("mp4");
+        let mut source = Cursor::new(data);
+        let result = bmff_io.read_cai(&mut source);
+        assert!(
+            matches!(
+                result,
+                Err(Error::C2PAValidation(ref m)) if m == "original manifest without update manifest"
+            ),
+            "expected original-without-update to be rejected, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_read_cai_accepts_ordinary_manifest_alone() {
+        // A plain, never-updated asset has only a `manifest`-purposed box -
+        // neither pairing check should fire for it.
+        let mut data = minimal_ftyp();
+        write_c2pa_box(&mut data, b"dummy manifest bytes", MANIFEST, &[], 0).unwrap();
+
+        let bmff_io = BmffIO::new("mp4");
+        let mut source = Cursor::new(data);
+        let result = bmff_io.read_cai(&mut source);
+        assert!(
+            matches!(result, Ok(ref bytes) if bytes == b"dummy manifest bytes"),
+            "expected ordinary manifest-only asset to be read as-is, got {result:?}"
+        );
     }
 
     // Regression: `_skip_bytes(reader, size)` used `size as i64`, which wraps
