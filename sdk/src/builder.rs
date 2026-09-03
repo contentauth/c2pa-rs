@@ -4243,6 +4243,49 @@ mod tests {
         assert_eq!(test_assertion.answer, 42);
     }
 
+    #[test]
+    fn test_builder_incorrect_ingredient_format_errors() {
+        let mut source = Cursor::new(TEST_IMAGE);
+
+        let ingredient_json = json!({
+            "title": "CA.jpg",
+            "format": "image/jpeg",
+        })
+        .to_string();
+
+        let mut builder = Builder::default()
+            .with_definition(simple_manifest_json())
+            .unwrap();
+
+        // pass incorrect format
+        let result = builder.add_ingredient_from_stream(ingredient_json, "image/png", &mut source);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_builder_incorrect_ingredient_format_ignore_ingredient_errors() {
+        let mut source = Cursor::new(TEST_IMAGE);
+
+        let ingredient_json = json!({
+            "title": "CA.jpg",
+            "format": "image/jpeg",
+        })
+        .to_string();
+
+        let settings = Settings::default()
+            .with_value("builder.ignore_ingredient_errors", true)
+            .unwrap();
+        let context = Context::default().with_settings(settings).unwrap();
+
+        let mut builder = Builder::from_context(context)
+            .with_definition(simple_manifest_json())
+            .unwrap();
+
+        // pass incorrect format, but ignore_ingredient_errors should prevent an error
+        let result = builder.add_ingredient_from_stream(ingredient_json, "image/png", &mut source);
+        assert!(result.is_ok());
+    }
+
     // Ensure multiple `c2pa.placed` actions aren't created.
     // Source: https://github.com/contentauth/c2pa-rs/pull/1458
     // This makes a created Manifest and includes two ingredients.
@@ -6585,6 +6628,31 @@ mod tests {
         let m = reader.active_manifest().unwrap();
         assert_eq!(m.ingredients().len(), 1);
         assert!(m.ingredients()[0].active_manifest().is_some());
+    }
+
+    #[c2pa_test_async]
+    async fn test_add_cloud_ingredient_ignore_ingredient_errors() {
+        let mut cloud_image = Cursor::new(TEST_IMAGE_CLOUD);
+
+        let settings = Settings::default()
+            .with_value("verify.remote_manifest_fetch", false)
+            .unwrap();
+        let context = Context::default().with_settings(settings).unwrap();
+
+        let mut builder = Builder::from_context(context);
+
+        let ingredient = builder
+            .add_ingredient_from_stream_async(parent_json(), "image/jpeg", &mut cloud_image)
+            .await
+            .unwrap();
+
+        let validation_results = ingredient.validation_results().unwrap();
+        assert!(validation_results
+            .active_manifest()
+            .unwrap()
+            .failure()
+            .iter()
+            .any(|status| status.code() == crate::validation_status::MANIFEST_INACCESSIBLE));
     }
 
     #[test]
