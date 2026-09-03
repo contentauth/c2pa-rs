@@ -472,7 +472,7 @@ impl SettingsValidate for ActionsSettings {
 pub enum TimeStampFetchScope {
     /// Fetch timestamps for only the parent manifest.
     Parent,
-    /// Fetch timestmaps for all manifests in the manifest store.
+    /// Fetch timestamps for all manifests in the manifest store.
     All,
 }
 
@@ -613,6 +613,18 @@ pub struct BuilderSettings {
     ///
     /// The default value is `true`.
     pub bmff_hash_exclude_free_and_skip_boxes: bool,
+    /// Whether to ignore errors encountered while loading or validating an [`Ingredient`]'s
+    /// manifest (e.g. invalid file format).
+    ///
+    /// When enabled, a hard error is reported as a `general.error` in the ingredient's
+    /// [`validation_results`] instead of being returned, so the [`Ingredient`] still loads
+    /// and callers can inspect what went wrong.
+    ///
+    /// The default value is false.
+    ///
+    /// [`Ingredient`]: crate::Ingredient
+    /// [`validation_results`]: crate::Ingredient::validation_results
+    pub ignore_ingredient_errors: bool,
 }
 
 impl Default for BuilderSettings {
@@ -630,6 +642,7 @@ impl Default for BuilderSettings {
             generate_c2pa_archive: Some(true),
             auto_timestamp_assertion: TimeStampSettings::default(),
             bmff_hash_exclude_free_and_skip_boxes: true,
+            ignore_ingredient_errors: false,
         }
     }
 }
