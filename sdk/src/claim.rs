@@ -2780,7 +2780,9 @@ impl Claim {
                         .validation_status(validation_status::ACTION_ASSERTION_SOFTBINDING_MISSING)
                         .failure_no_throw(
                             validation_log,
-                            Error::ValidationRule("the assertion was not redacted".into()),
+                            Error::ValidationRule(
+                                "watermark action missing soft binding assertion".into(),
+                            ),
                         );
                     }
                 }
