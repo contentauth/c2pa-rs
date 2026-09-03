@@ -292,14 +292,7 @@ impl CollectionHash {
 
         let uri_ranges = zip_uri_ranges(stream)?;
         for (path, uri_map) in &self.uris {
-            if path
-                .components()
-                .any(|component| matches!(component, Component::CurDir | Component::ParentDir))
-            {
-                return Err(Error::C2PAValidation(
-                    ASSERTION_COLLECTIONHASH_INVALID_URI.to_string(),
-                ));
-            }
+            Self::validate_uri(path)?;
 
             let hash = uri_map.hash.as_ref().ok_or_else(|| {
                 Error::C2PAValidation(ASSERTION_COLLECTIONHASH_MALFORMED.to_string())
