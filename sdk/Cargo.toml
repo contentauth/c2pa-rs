@@ -132,7 +132,7 @@ pem = "4.0.0"
 pkcs8 = "0.10.2"
 png_pong = "0.10.0"
 quick-xml = "0.41.0"
-rand = "0.8.6"
+rand = "0.10.2"
 rand_chacha = { version = "0.9.0", features = ["os_rng"] }
 range-set = "0.1.0"
 rasn = "0.28.13"
