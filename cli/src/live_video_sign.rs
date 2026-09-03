@@ -155,6 +155,7 @@ pub struct VsiSignArgs<'a> {
     pub session_key_path: &'a Path,
     pub signer: &'a dyn Signer,
     pub min_sequence_number: Option<u64>,
+    pub session_key_validity: u64,
 }
 
 /// Signs a sequence of media segments using the Verifiable Segment Info method (§19.4).
@@ -182,6 +183,7 @@ pub fn sign_live_video_vsi(args: VsiSignArgs) -> Result<()> {
         session_key_path,
         signer,
         min_sequence_number,
+        session_key_validity,
     } = args;
 
     fs::create_dir_all(output_dir)
@@ -205,7 +207,7 @@ pub fn sign_live_video_vsi(args: VsiSignArgs) -> Result<()> {
         session_key,
         b"session-key-1".to_vec(),
         min_sequence_number,
-        3600,
+        session_key_validity,
     )
     .context("Failed to initialize VSI signer")?;
 
@@ -530,6 +532,45 @@ mod tests {
     }
 
     #[test]
+    fn session_key_validity_reaches_the_signed_assertion() {
+        for validity in [60, 3600, 86_400] {
+            let (_guard, segments_dir, output_dir, init_path) = setup_vsi_dirs(1);
+            let key_path = segments_dir.join("session.key");
+            fs::write(&key_path, [0x42u8; 32]).unwrap();
+            let signer = test_signer();
+
+            sign_live_video_vsi(VsiSignArgs {
+                segments_dir: &segments_dir,
+                segments_glob: Path::new("seg_*.m4s"),
+                init_path: &init_path,
+                previous_segment_path: None,
+                manifest_json: vsi_manifest_json(),
+                output_dir: &output_dir,
+                session_key_path: &key_path,
+                signer: signer.as_ref(),
+                min_sequence_number: Some(1),
+                session_key_validity: validity,
+            })
+            .unwrap();
+
+            let signed_init = fs::read(output_dir.join("init.mp4")).unwrap();
+            let reader = c2pa::Reader::from_context(c2pa::Context::new())
+                .with_stream("video/mp4", std::io::Cursor::new(&signed_init))
+                .unwrap();
+            let keys: c2pa::assertions::SessionKeys = reader
+                .active_manifest()
+                .unwrap()
+                .find_assertion(c2pa::assertions::SessionKeys::LABEL)
+                .unwrap();
+
+            assert_eq!(
+                keys.keys[0].validity_period, validity,
+                "the signed validityPeriod must be what --session-key-validity asked for"
+            );
+        }
+    }
+
+    #[test]
     fn vsi_signs_init_and_media_segments() {
         let (_guard, segments_dir, output_dir, init_path) = setup_vsi_dirs(2);
         let key_path = segments_dir.join("session.key");
@@ -546,6 +587,7 @@ mod tests {
             session_key_path: &key_path,
             signer: signer.as_ref(),
             min_sequence_number: Some(1),
+            session_key_validity: 3600,
         })
         .unwrap();
 
@@ -589,6 +631,7 @@ mod tests {
             session_key_path: &key_path,
             signer: signer.as_ref(),
             min_sequence_number: Some(1),
+            session_key_validity: 3600,
         })
         .unwrap();
         let first_id = signed_segment_manifest_id(&output_dir.join("seg_001.m4s"));
@@ -607,6 +650,7 @@ mod tests {
             session_key_path: &key_path,
             signer: signer.as_ref(),
             min_sequence_number: Some(1),
+            session_key_validity: 3600,
         })
         .unwrap();
 
@@ -647,6 +691,7 @@ mod tests {
             session_key_path: &key_path,
             signer: signer.as_ref(),
             min_sequence_number: Some(1),
+            session_key_validity: 3600,
         })
         .unwrap();
 
@@ -661,6 +706,7 @@ mod tests {
             session_key_path: &key_path,
             signer: signer.as_ref(),
             min_sequence_number: Some(1),
+            session_key_validity: 3600,
         })
         .unwrap_err();
 
