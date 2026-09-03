@@ -9,6 +9,14 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.90.17](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.16...c2pa-v0.90.17)
+_03 September 2026_
+
+### Fixed
+
+* Merge vulnerability fixes ([#2579](https://github.com/contentauth/c2pa-rs/pull/2579))
+* Do not log::error! validation error when hashed URI is dangling, instead log::debug! (backport #2555) ([#2565](https://github.com/contentauth/c2pa-rs/pull/2565))
+
 ## [0.90.16](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.15...c2pa-v0.90.16)
 _27 August 2026_
 
