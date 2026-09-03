@@ -1265,7 +1265,7 @@ impl Claim {
         }
     }
 
-    /// Decpricated in  C2PA 2.4 or greater compatibile manifests.  Replaced by equivelent value in ClaimGeneratorInfo.
+    /// Deprecated in  C2PA 2.4 or greater compatible manifests. Replaced by equiveaent value in ClaimGeneratorInfo.
     pub fn set_spec_version(&mut self, spec_version: Option<String>) {
         self.spec_version = spec_version;
     }
