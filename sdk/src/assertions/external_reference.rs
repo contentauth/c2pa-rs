@@ -15,8 +15,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
-    assertions::assertion_metadata::AssetType,
-    assertions::{cloud_data::HashedExtUri, labels, AssertionMetadata},
+    assertions::{
+        assertion_metadata::AssetType, cloud_data::HashedExtUri, labels, AssertionMetadata,
+    },
     error::{Error, Result},
 };
 
