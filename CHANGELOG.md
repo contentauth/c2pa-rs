@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.90.20](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.19...c2pa-v0.90.20)
+_04 September 2026_
+
+### Added
+
+* Add ZIP support (+ EPUB, Office Open XML, Open Document, and OpenXPS) and Collection Data Hash assertion (backport #499) ([#2596](https://github.com/contentauth/c2pa-rs/pull/2596))
+
 ## [0.90.19](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.18...c2pa-v0.90.19)
 _04 September 2026_
 
