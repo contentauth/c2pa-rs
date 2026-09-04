@@ -62,6 +62,11 @@ pub const SOFT_BINDING: &str = "c2pa.soft-binding";
 /// See [Cloud data - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_cloud_data).
 pub const CLOUD_DATA: &str = "c2pa.cloud-data";
 
+/// Label for an external reference assertion.
+///
+/// See [External reference - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_external_reference).
+pub const EXTERNAL_REFERENCE: &str = "c2pa.external-reference";
+
 /// Label prefix for a thumbnail assertion.
 ///
 /// See [Thumbnail - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_thumbnail).
@@ -252,15 +257,15 @@ pub const NON_REDACTABLE_LABELS: [&str; 5] =
 /// any `c2pa.hash.bmff.*`, `c2pa.hash.boxes`, `c2pa.hash.collection.data`, or
 /// `c2pa.hash.multi-asset`).
 ///
-/// `BMFF_HASH` is matched by prefix since it's the only one of these still at
-/// creation version > 1, so it's the only one that carries a version suffix
-/// (e.g. `.v3`) in practice; the others are compared exactly.
+/// `BMFF_HASH` is matched on its base label (version/instance suffix stripped)
+/// so it accepts `.v2`/`.v3` variants without accepting a fake like
+/// `c2pa.hash.bmfffake`; the others are compared exactly.
 pub(crate) fn is_hard_binding_label(label: &str) -> bool {
     label == DATA_HASH
         || label == BOX_HASH
         || label == COLLECTION_HASH
         || label == MULTI_ASSET_HASH
-        || label.starts_with(BMFF_HASH)
+        || base(label) == BMFF_HASH
 }
 
 /// Must have a label that ends in '.metadata' and is preceded by an entity-specific namespace.
@@ -537,6 +542,12 @@ mod tests {
             "c2pa.hash.",
             "c2pa.hash.databoxes",
             "c2pa.actions",
+            // BMFF must match on its base, not a bare prefix. A trailing
+            // segment is only stripped when it's a real version token
+            // (`.vN`), so these fakes stay distinct from the base.
+            "c2pa.hash.bmfffake",
+            "c2pa.hash.bmff.fake",
+            "c2pa.hash.bmff.vfake",
         ] {
             assert!(
                 !is_hard_binding_label(label),

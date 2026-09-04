@@ -97,7 +97,10 @@ pub use embedded_data::EmbeddedData;
 pub mod region_of_interest;
 
 mod soft_binding;
-pub use soft_binding::{SoftBinding, SoftBindingBlock, SoftBindingScope};
+pub use soft_binding::{SoftBinding, SoftBindingBlock, SoftBindingMetadata, SoftBindingScope};
 
 mod cloud_data;
 pub use cloud_data::{CloudData, HashedExtUri};
+
+mod external_reference;
+pub use external_reference::{ExternalReference, ExternalReferenceLocation, UnhashedExtUri};
