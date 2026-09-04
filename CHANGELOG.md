@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.90.19](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.18...c2pa-v0.90.19)
+_04 September 2026_
+
+### Fixed
+
+* Handling ingredient manifest label collisions (spec v2.4, 18.16.12) (backport #2585) ([#2595](https://github.com/contentauth/c2pa-rs/pull/2595))
+
 ## [0.90.18](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.17...c2pa-v0.90.18)
 _04 September 2026_
 
