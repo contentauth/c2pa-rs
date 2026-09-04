@@ -234,14 +234,11 @@ pub const NON_REDACTABLE_LABELS: [&str; 5] =
 /// Returns `true` if `label` names a hard binding assertion (`c2pa.hash.data`,
 /// any `c2pa.hash.bmff.*`, `c2pa.hash.boxes`, or `c2pa.hash.collection.data`).
 ///
-/// `BMFF_HASH` is matched by prefix since it's the only one of these still at
-/// creation version > 1, so it's the only one that carries a version suffix
-/// (e.g. `.v3`) in practice; the others are compared exactly.
+/// `BMFF_HASH` is matched on its base label (version/instance suffix stripped)
+/// so it accepts `.v2`/`.v3` variants without accepting a fake like
+/// `c2pa.hash.bmfffake`; the others are compared exactly.
 pub(crate) fn is_hard_binding_label(label: &str) -> bool {
-    label == DATA_HASH
-        || label == BOX_HASH
-        || label == COLLECTION_HASH
-        || label.starts_with(BMFF_HASH)
+    label == DATA_HASH || label == BOX_HASH || label == COLLECTION_HASH || base(label) == BMFF_HASH
 }
 
 /// Must have a label that ends in '.metadata' and is preceded by an entity-specific namespace.
@@ -517,6 +514,9 @@ mod tests {
             "c2pa.hash.",
             "c2pa.hash.databoxes",
             "c2pa.actions",
+            // BMFF must match on its base, not a bare prefix.
+            "c2pa.hash.bmfffake",
+            "c2pa.hash.bmff.vfake",
         ] {
             assert!(
                 !is_hard_binding_label(label),
