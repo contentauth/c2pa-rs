@@ -15,14 +15,7 @@
 
 use thiserror::Error;
 
-#[cfg(feature = "pdf")]
-use crate::asset_handlers::pdf_io::PdfError;
 use crate::{
-    asset_handlers::{
-        bmff_io::BmffError, flac_io::FlacError, gif_io::GifError, jpeg_io::JpegError,
-        mp3_io::Mp3Error, png_io::PngError, riff_io::RiffError, svg_io::SvgError,
-        tiff_io::TiffError, zip_io::ZipError,
-    },
     crypto::{cose::CoseError, time_stamp::TimeStampError},
     http::HttpResolverError,
     ValidationResults,
@@ -324,40 +317,6 @@ pub enum Error {
 
     #[error("manifest failed validation with: {}", .0.failure_summary())]
     InvalidManifest(Box<ValidationResults>),
-
-    #[error("error parsing BMFF: {0}")]
-    BmffError(#[from] BmffError),
-
-    #[error("error parsing GIF: {0}")]
-    GifError(#[from] GifError),
-
-    #[error("error parsing JPEG: {0}")]
-    JpegError(#[from] JpegError),
-
-    #[error("error parsing MP3: {0}")]
-    Mp3Error(#[from] Mp3Error),
-
-    #[error("error parsing FLAC: {0}")]
-    FlacError(#[from] FlacError),
-
-    #[cfg(feature = "pdf")]
-    #[error("error parsing PDF: {0}")]
-    PdfError(#[from] PdfError),
-
-    #[error("error parsing PNG: {0}")]
-    PngError(#[from] PngError),
-
-    #[error("error parsing RIFF: {0}")]
-    RiffError(#[from] RiffError),
-
-    #[error("error parsing SVG: {0}")]
-    SvgError(#[from] SvgError),
-
-    #[error("error parsing TIFF: {0}")]
-    TiffError(#[from] TiffError),
-
-    #[error(transparent)]
-    ZipError(#[from] ZipError),
 }
 
 /// A specialized `Result` type for C2PA toolkit operations.

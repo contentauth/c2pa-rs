@@ -39,7 +39,6 @@ use crate::{
         Action, Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, CollectionHash, DataBox,
         DataHash, DataMap, Ingredient, Metadata, Relationship, V2_DEPRECATED_ACTIONS,
     },
-    asset_io::CAIRead,
     cbor_types::map_cbor_to_type,
     context::{Context, ProgressPhase},
     cose_validator::{
@@ -70,8 +69,8 @@ use crate::{
             DATABOX, DATABOXES, SIGNATURE,
         },
     },
-    jumbf_io::{get_assetio_handler, is_zip_format},
     log_item,
+    read_seek::ReadSeek,
     resource_store::UriOrResource,
     salt::{DefaultSalt, SaltGenerator},
     settings::{Settings, MAX_ASSERTIONS},
@@ -114,10 +113,10 @@ pub enum ClaimAssetData<'a> {
     #[cfg(feature = "file_io")]
     Path(&'a Path),
     Bytes(&'a [u8], &'a str),
-    Stream(&'a mut dyn CAIRead, &'a str),
-    StreamFragment(&'a mut dyn CAIRead, &'a mut dyn CAIRead, &'a str),
+    Stream(&'a mut dyn ReadSeek, &'a str),
+    StreamFragment(&'a mut dyn ReadSeek, &'a mut dyn ReadSeek, &'a str),
     #[cfg(feature = "file_io")]
-    StreamFragments(&'a mut dyn CAIRead, &'a Vec<std::path::PathBuf>, &'a str),
+    StreamFragments(&'a mut dyn ReadSeek, &'a Vec<std::path::PathBuf>, &'a str),
 }
 
 impl ClaimAssetData<'_> {
@@ -3149,13 +3148,12 @@ impl Claim {
                     let hash_result = match asset_data {
                         #[cfg(feature = "file_io")]
                         ClaimAssetData::Path(asset_path) => {
-                            let box_hash_processor =
-                                crate::jumbf_io::get_assetio_handler_from_path(asset_path)
-                                    .ok_or(Error::UnsupportedType)?
-                                    .asset_box_hash_ref()
-                                    .ok_or(Error::HashMismatch(
-                                        "Box hash not supported".to_string(),
-                                    ))?;
+                            let box_hash_processor = context
+                                .io()
+                                .handler_from_path(asset_path)
+                                .ok_or(Error::UnsupportedType)?
+                                .asset_box_hash_ref()
+                                .ok_or(Error::HashMismatch("Box hash not supported".to_string()))?;
 
                             let mut file = std::fs::File::open(asset_path)?;
                             bh.verify_stream_hash_with_progress(
@@ -3166,7 +3164,9 @@ impl Claim {
                             )
                         }
                         ClaimAssetData::Bytes(asset_bytes, asset_type) => {
-                            let box_hash_processor = get_assetio_handler(asset_type)
+                            let box_hash_processor = context
+                                .io()
+                                .handler(asset_type)
                                 .ok_or(Error::UnsupportedType)?
                                 .asset_box_hash_ref()
                                 .ok_or(Error::HashMismatch(format!(
@@ -3182,7 +3182,9 @@ impl Claim {
                             )
                         }
                         ClaimAssetData::Stream(stream_data, asset_type) => {
-                            let box_hash_processor = get_assetio_handler(asset_type)
+                            let box_hash_processor = context
+                                .io()
+                                .handler(asset_type)
                                 .ok_or(Error::UnsupportedType)?
                                 .asset_box_hash_ref()
                                 .ok_or(Error::HashMismatch(format!(
@@ -3249,7 +3251,10 @@ impl Claim {
                     let collection_hash =
                         CollectionHash::from_assertion(hash_binding_assertion.assertion())?;
 
-                    let verify_result = if asset_data.format().as_deref().is_some_and(is_zip_format)
+                    let verify_result = if asset_data
+                        .format()
+                        .as_deref()
+                        .is_some_and(|f| context.io().is_zip_format(f))
                     {
                         match asset_data {
                             #[cfg(feature = "file_io")]

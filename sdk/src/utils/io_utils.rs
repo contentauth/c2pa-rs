@@ -11,41 +11,16 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::io::{Read, Seek, SeekFrom, Write};
 #[cfg(feature = "file_io")]
 use std::path::PathBuf;
-use std::{
-    ffi::OsStr,
-    io::{Read, Seek, SeekFrom, Write},
-    path::Path,
-};
 
 #[allow(unused)] // different code path for WASI
-use tempfile::{tempdir, Builder, NamedTempFile, SpooledTempFile, TempDir};
+use tempfile::{tempdir, SpooledTempFile, TempDir};
 
 #[cfg(feature = "file_io")]
 use crate::utils::path_utils::sanitize_archive_path;
-use crate::{asset_io::rename_or_move, Error, Result};
-
-// Replace data at arbitrary location and len in a file.
-// start_location is where the replacement data will start
-// replace_len is how many bytes from source to replaced starting a start_location
-// data is the data that will be inserted at start_location
-#[allow(dead_code)]
-pub(crate) fn patch_data_in_file(
-    source_path: &Path,
-    start_location: u64,
-    replace_len: u64,
-    data: &[u8],
-) -> Result<()> {
-    let mut source = std::fs::File::open(source_path)?;
-    let mut dest = tempfile_builder("c2pa_temp")?;
-
-    patch_stream(&mut source, &mut dest, start_location, replace_len, data)?;
-
-    rename_or_move(dest, source_path)?;
-
-    Ok(())
-}
+use crate::{Error, Result};
 
 // Insert data at arbitrary location in a stream.
 // location is from the start of the source stream
@@ -242,27 +217,6 @@ impl<R: Read + Seek> ReaderUtils for R {
 
         Ok(output)
     }
-}
-
-pub(crate) fn tempfile_builder<T: AsRef<OsStr> + Sized>(prefix: T) -> Result<NamedTempFile> {
-    #[cfg(all(target_os = "wasi", target_env = "p1"))]
-    return Err(Error::NotImplemented(
-        "tempfile_builder requires wasip2 or later".to_string(),
-    ));
-
-    #[cfg(all(target_os = "wasi", not(target_env = "p1")))]
-    return Builder::new()
-        .prefix(&prefix)
-        .rand_bytes(5)
-        .tempfile_in("/")
-        .map_err(Error::IoError);
-
-    #[cfg(not(target_os = "wasi"))]
-    return Builder::new()
-        .prefix(&prefix)
-        .rand_bytes(5)
-        .tempfile()
-        .map_err(Error::IoError);
 }
 
 #[allow(dead_code)] // used in tests

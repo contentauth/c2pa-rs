@@ -11,11 +11,11 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{fs::File, path::Path};
+use std::path::Path;
 
 use crate::{
     asset_handlers::pdf::{C2paPdf, Pdf},
-    asset_io::{AssetIO, CAIRead, CAIReader, CAIWriter, ComposedManifestRef, HashObjectPositions},
+    asset_io::{AssetIO, C2paReader, C2paWriter, ComposedManifestRef, ReadSeek},
     Error::{self, JumbfNotFound, NotImplemented, PdfReadError},
 };
 
@@ -24,20 +24,20 @@ static WRITE_NOT_IMPLEMENTED: &str = "PDF write functionality will be added in a
 
 pub struct PdfIO {}
 
-impl CAIReader for PdfIO {
-    fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> crate::Result<Vec<u8>> {
-        asset_reader.rewind()?;
+impl C2paReader for PdfIO {
+    fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> crate::Result<Vec<u8>> {
+        input_stream.rewind()?;
 
-        let pdf = Pdf::from_reader(asset_reader).map_err(|e| Error::InvalidAsset(e.to_string()))?;
+        let pdf = Pdf::from_reader(input_stream).map_err(|e| Error::InvalidAsset(e.to_string()))?;
         self.read_manifest_bytes(pdf)
     }
 
-    fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String> {
-        if asset_reader.rewind().is_err() {
+    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Option<String> {
+        if input_stream.rewind().is_err() {
             return None;
         }
 
-        let Ok(pdf) = Pdf::from_reader(asset_reader) else {
+        let Ok(pdf) = Pdf::from_reader(input_stream) else {
             return None;
         };
 
@@ -80,28 +80,19 @@ impl AssetIO for PdfIO {
         Box::new(PdfIO::new(asset_type))
     }
 
-    fn get_reader(&self) -> &dyn CAIReader {
+    fn get_reader(&self) -> &dyn C2paReader {
         self
     }
 
-    fn get_writer(&self, _asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+    fn get_writer(&self, _asset_type: &str) -> Option<Box<dyn C2paWriter>> {
         None
     }
 
-    fn read_cai_store(&self, asset_path: &Path) -> crate::Result<Vec<u8>> {
-        let mut f = File::open(asset_path)?;
-        self.read_cai(&mut f)
-    }
-
-    fn save_cai_store(&self, _asset_path: &Path, _store_bytes: &[u8]) -> crate::Result<()> {
+    fn save_c2pa_store(&self, _asset_path: &Path, _store_bytes: &[u8]) -> crate::Result<()> {
         Err(NotImplemented(WRITE_NOT_IMPLEMENTED.into()))
     }
 
-    fn get_object_locations(&self, _asset_path: &Path) -> crate::Result<Vec<HashObjectPositions>> {
-        Err(NotImplemented(WRITE_NOT_IMPLEMENTED.into()))
-    }
-
-    fn remove_cai_store(&self, _asset_path: &Path) -> crate::Result<()> {
+    fn remove_c2pa_store(&self, _asset_path: &Path) -> crate::Result<()> {
         Err(NotImplemented(WRITE_NOT_IMPLEMENTED.into()))
     }
 
@@ -121,12 +112,6 @@ impl ComposedManifestRef for PdfIO {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum PdfError {
-    #[error("invalid file signature: {reason}")]
-    InvalidFileSignature { reason: String },
-}
-
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::panic)]
@@ -137,7 +122,7 @@ pub mod tests {
     use crate::{
         asset_handlers,
         asset_handlers::{pdf::MockC2paPdf, pdf_io::PdfIO},
-        asset_io::{AssetIO, CAIReader},
+        asset_io::{AssetIO, C2paReader},
     };
 
     static MANIFEST_BYTES: &[u8; 2] = &[10u8, 20u8];
@@ -221,9 +206,10 @@ pub mod tests {
     fn test_cai_read_finds_no_manifest() {
         let source = crate::utils::test::fixture_path("basic.pdf");
         let pdf_io = PdfIO::new("pdf");
+        let mut f = std::fs::File::open(&source).unwrap();
 
         assert!(matches!(
-            pdf_io.read_cai_store(&source),
+            pdf_io.read_c2pa(&mut f),
             Err(crate::Error::JumbfNotFound)
         ));
     }
@@ -242,6 +228,6 @@ pub mod tests {
         let source = include_bytes!("../../tests/fixtures/express-signed.pdf");
         let pdf_io = PdfIO::new("pdf");
         let mut pdf_stream = Cursor::new(source.to_vec());
-        assert!(pdf_io.read_cai(&mut pdf_stream).is_ok());
+        assert!(pdf_io.read_c2pa(&mut pdf_stream).is_ok());
     }
 }

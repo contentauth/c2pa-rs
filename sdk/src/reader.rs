@@ -38,7 +38,7 @@ use crate::{
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
-    jumbf_io, log_item,
+    log_item,
     manifest::StoreOptions,
     manifest_store_report::ManifestStoreReport,
     status_tracker::StatusTracker,
@@ -228,7 +228,7 @@ impl Reader {
 
         // Prefer the caller's format hint when it identifies the same container as the
         // stream bytes (e.g. "dng" stays "dng" rather than being widened to "image/tiff").
-        let format_owned = jumbf_io::format_from_stream(format, &mut stream);
+        let format_owned = self.context.io().format_from_stream(format, &mut stream);
         let format = format_owned.as_str();
 
         self.context.check_progress(ProgressPhase::Reading, 1, 1)?;
@@ -306,8 +306,8 @@ impl Reader {
     pub fn with_file<P: AsRef<std::path::Path>>(mut self, path: P) -> Result<Self> {
         let path = path.as_ref();
         let mut file = File::open(path)?;
-        let path_fmt = crate::format_from_path(path).unwrap_or_default();
-        let format = jumbf_io::format_from_stream(&path_fmt, &mut file);
+        let path_fmt = self.context.io().format_from_path(path).unwrap_or_default();
+        let format = self.context.io().format_from_stream(&path_fmt, &mut file);
 
         // Try loading from stream first
         let mut validation_log = StatusTracker::default();
@@ -584,7 +584,10 @@ impl Reader {
     ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
 
-        let asset_type = jumbf_io::get_supported_file_extension(path.as_ref())
+        let asset_type = self
+            .context
+            .io()
+            .supported_extension(path.as_ref())
             .ok_or(crate::Error::UnsupportedType)?;
 
         let mut init_segment = std::fs::File::open(path.as_ref())?;
@@ -622,7 +625,7 @@ impl Reader {
 
     /// Returns a [Vec] of mime types that [c2pa-rs] is able to read.
     pub fn supported_mime_types() -> Vec<String> {
-        jumbf_io::supported_reader_mime_types()
+        Context::default().io().reader_mime_types()
     }
 
     /// replace assertion values in the reader json with the values from the assertion_values map

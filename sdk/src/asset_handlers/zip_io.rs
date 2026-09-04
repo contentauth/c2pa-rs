@@ -1,21 +1,16 @@
 use std::{
     collections::HashMap,
-    fs::{self, File},
     io::{self, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
 };
 
-use tempfile::Builder;
 use zip::{
     result::ZipResult, write::SimpleFileOptions, CompressionMethod, HasZipMetadata, ZipArchive,
     ZipWriter,
 };
 
 use crate::{
-    asset_io::{
-        self, AssetIO, CAIRead, CAIReadWrapper, CAIReadWrite, CAIReadWriteWrapper, CAIReader,
-        CAIWriter, HashObjectPositions,
-    },
+    asset_io::{AssetIO, C2paReader, C2paWriter, ObjectLocations, ReadSeek, ReadWriteSeek},
     error::Result,
     Error, HashRange,
 };
@@ -31,21 +26,27 @@ const CENTRAL_DIRECTORY_HEADER_SIGNATURE: [u8; 4] = [0x50, 0x4b, 0x01, 0x02];
 
 pub struct ZipIO {}
 
-impl CAIWriter for ZipIO {
-    fn write_cai(
+impl C2paWriter for ZipIO {
+    fn write_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         mut store_bytes: &[u8],
     ) -> Result<()> {
-        let mut writer = self
-            .writer(input_stream, output_stream)
-            .map_err(ZipError::Write)?;
+        let mut writer = self.writer(input_stream, output_stream).map_err(|e| {
+            Error::InvalidAsset(format!(
+                "could not embed the C2PA manifest into the ZIP: {e}"
+            ))
+        })?;
 
         match writer.add_directory("META-INF", SimpleFileOptions::DEFAULT) {
             Err(zip::result::ZipError::InvalidArchive(err))
                 if err.starts_with("Duplicate filename") => {}
-            Err(source) => return Err(ZipError::Write(source).into()),
+            Err(source) => {
+                return Err(Error::InvalidAsset(format!(
+                    "could not embed the C2PA manifest into the ZIP: {source}"
+                )))
+            }
             _ => {}
         }
 
@@ -56,61 +57,97 @@ impl CAIWriter for ZipIO {
             Err(zip::result::ZipError::InvalidArchive(err))
                 if err.starts_with("Duplicate filename") =>
             {
-                writer.abort_file().map_err(ZipError::Write)?;
+                writer.abort_file().map_err(|e| {
+                    Error::InvalidAsset(format!(
+                        "could not embed the C2PA manifest into the ZIP: {e}"
+                    ))
+                })?;
                 writer
                     .start_file_from_path(
                         Path::new(MANIFEST_PATH),
                         SimpleFileOptions::DEFAULT.compression_method(CompressionMethod::Stored),
                     )
-                    .map_err(ZipError::Write)?;
+                    .map_err(|e| {
+                        Error::InvalidAsset(format!(
+                            "could not embed the C2PA manifest into the ZIP: {e}"
+                        ))
+                    })?;
             }
-            Err(source) => return Err(ZipError::Write(source).into()),
+            Err(source) => {
+                return Err(Error::InvalidAsset(format!(
+                    "could not embed the C2PA manifest into the ZIP: {source}"
+                )))
+            }
             _ => {}
         }
 
         io::copy(&mut store_bytes, &mut writer)?;
-        writer.finish().map_err(ZipError::Write)?;
+        writer.finish().map_err(|e| {
+            Error::InvalidAsset(format!(
+                "could not embed the C2PA manifest into the ZIP: {e}"
+            ))
+        })?;
 
         Ok(())
     }
 
-    fn get_object_locations_from_stream(
+    fn get_object_locations(
         &self,
-        _input_stream: &mut dyn CAIRead,
-    ) -> Result<Vec<HashObjectPositions>> {
-        Err(ZipError::ObjectLocationsUnsupported.into())
+        _input_stream: &mut dyn ReadSeek,
+    ) -> Result<Vec<ObjectLocations>> {
+        Err(Error::NotImplemented(
+            "data hashing is not supported for ZIP, use a collection hash instead".to_string(),
+        ))
     }
 
-    fn remove_cai_store_from_stream(
+    fn remove_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
     ) -> Result<()> {
-        let mut writer = self
-            .writer(input_stream, output_stream)
-            .map_err(ZipError::Remove)?;
+        let mut writer = self.writer(input_stream, output_stream).map_err(|e| {
+            Error::InvalidAsset(format!(
+                "could not remove the C2PA manifest from the ZIP: {e}"
+            ))
+        })?;
 
         match writer.start_file_from_path(Path::new(MANIFEST_PATH), SimpleFileOptions::default()) {
             Err(zip::result::ZipError::InvalidArchive(err))
                 if err.starts_with("Duplicate filename") => {}
-            Err(source) => return Err(ZipError::Remove(source).into()),
+            Err(source) => {
+                return Err(Error::InvalidAsset(format!(
+                    "could not remove the C2PA manifest from the ZIP: {source}"
+                )))
+            }
             _ => {}
         }
-        writer.abort_file().map_err(ZipError::Remove)?;
-        writer.finish().map_err(ZipError::Remove)?;
+        writer.abort_file().map_err(|e| {
+            Error::InvalidAsset(format!(
+                "could not remove the C2PA manifest from the ZIP: {e}"
+            ))
+        })?;
+        writer.finish().map_err(|e| {
+            Error::InvalidAsset(format!(
+                "could not remove the C2PA manifest from the ZIP: {e}"
+            ))
+        })?;
 
         Ok(())
     }
 }
 
-impl CAIReader for ZipIO {
-    fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
-        let mut reader = self.reader(asset_reader).map_err(ZipError::Read)?;
+impl C2paReader for ZipIO {
+    fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>> {
+        let mut reader = self
+            .reader(input_stream)
+            .map_err(|e| Error::InvalidAsset(format!("could not read the ZIP: {e}")))?;
 
         let index = reader
             .index_for_path(Path::new(MANIFEST_PATH))
             .ok_or(Error::JumbfNotFound)?;
-        let mut file = reader.by_index(index).map_err(ZipError::Read)?;
+        let mut file = reader
+            .by_index(index)
+            .map_err(|e| Error::InvalidAsset(format!("could not read the ZIP: {e}")))?;
 
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
@@ -118,7 +155,7 @@ impl CAIReader for ZipIO {
         Ok(bytes)
     }
 
-    fn read_xmp(&self, _asset_reader: &mut dyn CAIRead) -> Option<String> {
+    fn read_xmp(&self, _input_stream: &mut dyn ReadSeek) -> Option<String> {
         None
     }
 }
@@ -135,53 +172,12 @@ impl AssetIO for ZipIO {
         Box::new(ZipIO::new(asset_type))
     }
 
-    fn get_reader(&self) -> &dyn CAIReader {
+    fn get_reader(&self) -> &dyn C2paReader {
         self
     }
 
-    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn C2paWriter>> {
         Some(Box::new(ZipIO::new(asset_type)))
-    }
-
-    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
-        let mut f = File::open(asset_path)?;
-        self.read_cai(&mut f)
-    }
-
-    fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
-        let mut stream = fs::OpenOptions::new()
-            .read(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        let mut temp_file = Builder::new()
-            .prefix("c2pa_temp")
-            .rand_bytes(5)
-            .tempfile()?;
-
-        self.write_cai(&mut stream, &mut temp_file, store_bytes)?;
-
-        asset_io::rename_or_move(temp_file, asset_path)
-    }
-
-    fn get_object_locations(&self, _asset_path: &Path) -> Result<Vec<HashObjectPositions>> {
-        Err(ZipError::ObjectLocationsUnsupported.into())
-    }
-
-    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
-        let mut stream = fs::OpenOptions::new()
-            .read(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        let mut temp_file = Builder::new()
-            .prefix("c2pa_temp")
-            .rand_bytes(5)
-            .tempfile()?;
-
-        self.remove_cai_store_from_stream(&mut stream, &mut temp_file)?;
-
-        asset_io::rename_or_move(temp_file, asset_path)
     }
 
     fn supported_types(&self) -> &[&str] {
@@ -232,24 +228,20 @@ impl AssetIO for ZipIO {
 impl ZipIO {
     fn reader<'a>(
         &self,
-        input_stream: &'a mut dyn CAIRead,
-    ) -> ZipResult<ZipArchive<CAIReadWrapper<'a>>> {
-        ZipArchive::new(CAIReadWrapper {
-            reader: input_stream,
-        })
+        input_stream: &'a mut dyn ReadSeek,
+    ) -> ZipResult<ZipArchive<&'a mut dyn ReadSeek>> {
+        ZipArchive::new(input_stream)
     }
 
     fn writer<'a>(
         &self,
-        input_stream: &'a mut dyn CAIRead,
-        output_stream: &'a mut dyn CAIReadWrite,
-    ) -> ZipResult<ZipWriter<CAIReadWriteWrapper<'a>>> {
+        input_stream: &'a mut dyn ReadSeek,
+        output_stream: &'a mut dyn ReadWriteSeek,
+    ) -> ZipResult<ZipWriter<&'a mut dyn ReadWriteSeek>> {
         input_stream.rewind()?;
         io::copy(input_stream, output_stream)?;
 
-        ZipWriter::new_append(CAIReadWriteWrapper {
-            reader_writer: output_stream,
-        })
+        ZipWriter::new_append(output_stream)
     }
 }
 
@@ -259,13 +251,16 @@ where
     R: Read + Seek + ?Sized,
 {
     let length = reader.seek(SeekFrom::End(0))?;
-    let mut reader = ZipArchive::new(reader).map_err(ZipError::Read)?;
+    let mut reader = ZipArchive::new(reader)
+        .map_err(|e| Error::InvalidAsset(format!("could not read the ZIP: {e}")))?;
 
     let start = reader.central_directory_start();
 
     let range = match reader.index_for_path(Path::new(MANIFEST_PATH)) {
         Some(index) => {
-            let file = reader.by_index(index).map_err(ZipError::Read)?;
+            let file = reader
+                .by_index(index)
+                .map_err(|e| Error::InvalidAsset(format!("could not read the ZIP: {e}")))?;
             let crc_start = file.central_header_start() + CENTRAL_DIRECTORY_CRC_OFFSET;
             vec![
                 HashRange::new(start, crc_start - start),
@@ -342,22 +337,31 @@ fn zip_uri_entries<R>(stream: &mut R) -> Result<Vec<ZipUriEntry>>
 where
     R: Read + Seek + ?Sized,
 {
-    let mut reader = ZipArchive::new(&mut *stream).map_err(ZipError::Read)?;
+    let mut reader = ZipArchive::new(&mut *stream)
+        .map_err(|e| Error::InvalidAsset(format!("could not read the ZIP: {e}")))?;
     let file_names: Vec<String> = reader.file_names().map(|name| name.to_owned()).collect();
 
     let mut entries = Vec::new();
     for file_name in file_names {
-        let file = reader.by_name(&file_name).map_err(ZipError::Read)?;
+        let file = reader
+            .by_name(&file_name)
+            .map_err(|e| Error::InvalidAsset(format!("could not read the ZIP: {e}")))?;
 
         let path = match file.enclosed_name() {
             Some(path) => path,
-            None => return Err(ZipError::InvalidPath(file_name).into()),
+            None => {
+                return Err(Error::InvalidAsset(format!(
+                    "invalid stored path `{file_name}` in the ZIP"
+                )))
+            }
         };
 
         let header_start = file.header_start();
-        let data_start = file
-            .data_start()
-            .ok_or_else(|| ZipError::MissingDataStart(file_name.clone()))?;
+        let data_start = file.data_start().ok_or_else(|| {
+            Error::InvalidAsset(format!(
+                "could not locate the data start for `{file_name}` in the ZIP"
+            ))
+        })?;
         let metadata = file.get_metadata();
         entries.push(ZipUriEntry {
             path,
@@ -369,34 +373,6 @@ where
     }
 
     Ok(entries)
-}
-
-/// Errors that can occur while handling C2PA data in a ZIP-based asset.
-#[derive(Debug, thiserror::Error)]
-pub enum ZipError {
-    /// The asset could not be read as a ZIP container.
-    #[error("could not read the ZIP")]
-    Read(#[source] zip::result::ZipError),
-
-    /// The C2PA manifest could not be embedded into the ZIP.
-    #[error("could not embed the C2PA manifest into the ZIP")]
-    Write(#[source] zip::result::ZipError),
-
-    /// The C2PA manifest could not be removed from the ZIP.
-    #[error("could not remove the C2PA manifest from the ZIP")]
-    Remove(#[source] zip::result::ZipError),
-
-    /// Data hashing (object locations) is not supported for ZIP.
-    #[error("data hashing is not supported for ZIP, use a collection hash instead")]
-    ObjectLocationsUnsupported,
-
-    /// A ZIP entry has an invalid or unrepresentable stored path.
-    #[error("invalid stored path `{0}` in the ZIP")]
-    InvalidPath(String),
-
-    /// The data start offset for a ZIP entry could not be located.
-    #[error("could not locate the data start for `{0}` in the ZIP")]
-    MissingDataStart(String),
 }
 
 #[cfg(test)]
@@ -422,17 +398,17 @@ mod tests {
             let zip_io = ZipIO {};
 
             assert!(matches!(
-                zip_io.read_cai(&mut stream),
+                zip_io.read_c2pa(&mut stream),
                 Err(Error::JumbfNotFound)
             ));
 
             let mut output_stream = Cursor::new(Vec::with_capacity(sample.len() + 7));
             let random_bytes = [1, 2, 3, 4, 3, 2, 1];
             zip_io
-                .write_cai(&mut stream, &mut output_stream, &random_bytes)
+                .write_c2pa(&mut stream, &mut output_stream, &random_bytes)
                 .unwrap();
 
-            let data_written = zip_io.read_cai(&mut output_stream).unwrap();
+            let data_written = zip_io.read_c2pa(&mut output_stream).unwrap();
             assert_eq!(data_written, random_bytes);
         }
     }
@@ -445,26 +421,26 @@ mod tests {
             let zip_io = ZipIO {};
 
             assert!(matches!(
-                zip_io.read_cai(&mut stream),
+                zip_io.read_c2pa(&mut stream),
                 Err(Error::JumbfNotFound)
             ));
 
             let mut output_stream1 = Cursor::new(Vec::with_capacity(sample.len() + 7));
             let random_bytes = [1, 2, 3, 4, 3, 2, 1];
             zip_io
-                .write_cai(&mut stream, &mut output_stream1, &random_bytes)
+                .write_c2pa(&mut stream, &mut output_stream1, &random_bytes)
                 .unwrap();
 
-            let data_written = zip_io.read_cai(&mut output_stream1).unwrap();
+            let data_written = zip_io.read_c2pa(&mut output_stream1).unwrap();
             assert_eq!(data_written, random_bytes);
 
             let mut output_stream2 = Cursor::new(Vec::with_capacity(sample.len() + 5));
             let random_bytes = [3, 2, 1, 2, 3];
             zip_io
-                .write_cai(&mut output_stream1, &mut output_stream2, &random_bytes)
+                .write_c2pa(&mut output_stream1, &mut output_stream2, &random_bytes)
                 .unwrap();
 
-            let data_written = zip_io.read_cai(&mut output_stream2).unwrap();
+            let data_written = zip_io.read_c2pa(&mut output_stream2).unwrap();
             assert_eq!(data_written, random_bytes);
 
             let mut bytes = Vec::new();
@@ -482,17 +458,17 @@ mod tests {
             let mut input = Cursor::new(sample);
             let mut with_manifest = Cursor::new(Vec::new());
             zip_io
-                .write_cai(&mut input, &mut with_manifest, &[1, 2, 3])
+                .write_c2pa(&mut input, &mut with_manifest, &[1, 2, 3])
                 .unwrap();
-            assert_eq!(zip_io.read_cai(&mut with_manifest).unwrap(), [1, 2, 3]);
+            assert_eq!(zip_io.read_c2pa(&mut with_manifest).unwrap(), [1, 2, 3]);
 
             let mut removed = Cursor::new(Vec::new());
             zip_io
-                .remove_cai_store_from_stream(&mut with_manifest, &mut removed)
+                .remove_c2pa(&mut with_manifest, &mut removed)
                 .unwrap();
 
             assert!(matches!(
-                zip_io.read_cai(&mut removed),
+                zip_io.read_c2pa(&mut removed),
                 Err(Error::JumbfNotFound)
             ));
         }
@@ -504,8 +480,8 @@ mod tests {
         let mut not_a_zip = Cursor::new(b"i am a zip".to_vec());
 
         assert!(matches!(
-            zip_io.read_cai(&mut not_a_zip),
-            Err(Error::ZipError(ZipError::Read(_)))
+            zip_io.read_c2pa(&mut not_a_zip),
+            Err(Error::InvalidAsset(_))
         ));
     }
 
@@ -515,8 +491,8 @@ mod tests {
         let mut stream = Cursor::new(SAMPLES[0]);
 
         assert!(matches!(
-            zip_io.get_object_locations_from_stream(&mut stream),
-            Err(Error::ZipError(ZipError::ObjectLocationsUnsupported))
+            zip_io.get_object_locations(&mut stream),
+            Err(Error::NotImplemented(_))
         ));
     }
 
@@ -606,7 +582,7 @@ mod tests {
         let mut input = Cursor::new(SAMPLES[0]);
         let mut with_manifest = Cursor::new(Vec::new());
         zip_io
-            .write_cai(&mut input, &mut with_manifest, &[1, 2, 3])
+            .write_c2pa(&mut input, &mut with_manifest, &[1, 2, 3])
             .unwrap();
 
         let ranges = zip_central_directory_range(&mut with_manifest).unwrap();
@@ -634,7 +610,7 @@ mod tests {
 
         let mut src_with_manifest = Cursor::new(Vec::new());
         zip_io
-            .write_cai(&mut src, &mut src_with_manifest, &[1, 2, 3])
+            .write_c2pa(&mut src, &mut src_with_manifest, &[1, 2, 3])
             .unwrap();
         let output_ranges = zip_uri_ranges(&mut src_with_manifest).unwrap();
 

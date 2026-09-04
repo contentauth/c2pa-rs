@@ -30,12 +30,12 @@ use crate::{
         labels, Action, Actions, DigitalSourceType, EmbeddedData, Ingredient, Relationship,
         ReviewRating, Thumbnail, User,
     },
-    asset_io::CAIReadWrite,
     claim::Claim,
     context::Context,
     crypto::cose::{CertificateTrustPolicy, TrustAnchorType},
     hash_utils::Hasher,
     jumbf_io::get_assetio_handler,
+    read_seek::ReadWriteSeek,
     resource_store::UriOrResource,
     store::Store,
     utils::{io_utils::tempdirectory, mime::extension_to_mime},
@@ -668,7 +668,7 @@ pub fn test_certificate_acceptance_policy() -> CertificateTrustPolicy {
 pub fn write_jpeg_placeholder_file(
     placeholder: &[u8],
     input: &Path,
-    output_file: &mut dyn CAIReadWrite,
+    output_file: &mut dyn ReadWriteSeek,
     hasher: Option<&mut Hasher>,
 ) -> Result<usize> {
     let mut f = std::fs::File::open(input).unwrap();
@@ -680,7 +680,7 @@ pub fn write_jpeg_placeholder_stream<R>(
     placeholder: &[u8],
     format: &str,
     input: &mut R,
-    output_file: &mut dyn CAIReadWrite,
+    output_file: &mut dyn ReadWriteSeek,
     mut hasher: Option<&mut Hasher>,
 ) -> Result<usize>
 where
@@ -735,7 +735,7 @@ where
 pub fn write_bmff_placeholder_stream<R>(
     placeholder: &[u8],
     input: &mut R,
-    output_file: &mut dyn CAIReadWrite,
+    output_file: &mut dyn ReadWriteSeek,
 ) -> Result<usize>
 where
     R: Read + std::io::Seek + Send,

@@ -49,7 +49,7 @@ use crate::{
         bmff_to_jumbf_exclusions, read_bmff_c2pa_boxes, BmffSampleReader, BoxInfoLite,
         C2PABmffBoxes,
     },
-    asset_io::CAIRead,
+    asset_io::ReadSeek,
     cbor_types::UriT,
     settings::Settings,
     utils::{
@@ -404,7 +404,7 @@ impl BmffHash {
 
     pub fn add_merkle_map_for_mdats(
         &mut self,
-        asset_stream: &mut dyn CAIRead,
+        asset_stream: &mut dyn ReadSeek,
         merkle_chunk_size: usize,
         max_proofs: usize,
     ) -> crate::error::Result<()> {
@@ -1221,7 +1221,7 @@ impl BmffHash {
     */
     pub fn verify_stream_hash(
         &self,
-        reader: &mut dyn CAIRead,
+        reader: &mut dyn ReadSeek,
         alg: Option<&str>,
     ) -> crate::error::Result<()> {
         self.verify_stream_hash_with_progress(reader, alg, &mut |_, _| Ok(()))
@@ -1238,7 +1238,7 @@ impl BmffHash {
     /// known until the file structure is parsed.
     pub(crate) fn verify_stream_hash_with_progress<F>(
         &self,
-        reader: &mut dyn CAIRead,
+        reader: &mut dyn ReadSeek,
         alg: Option<&str>,
         progress: &mut F,
     ) -> crate::error::Result<()>
@@ -1560,7 +1560,7 @@ impl BmffHash {
     #[cfg(feature = "file_io")]
     pub fn verify_stream_segments(
         &self,
-        init_stream: &mut dyn CAIRead,
+        init_stream: &mut dyn ReadSeek,
         fragment_paths: &Vec<std::path::PathBuf>,
         alg: Option<&str>,
     ) -> crate::Result<()> {
@@ -1572,7 +1572,7 @@ impl BmffHash {
     #[cfg(feature = "file_io")]
     pub(crate) fn verify_stream_segments_with_progress<F>(
         &self,
-        init_stream: &mut dyn CAIRead,
+        init_stream: &mut dyn ReadSeek,
         fragment_paths: &Vec<std::path::PathBuf>,
         alg: Option<&str>,
         progress: &mut F,
@@ -1700,8 +1700,8 @@ impl BmffHash {
     // Used to verify fragmented BMFF assets spread across multiple file.
     pub fn verify_stream_segment(
         &self,
-        init_stream: &mut dyn CAIRead,
-        fragment_stream: &mut dyn CAIRead,
+        init_stream: &mut dyn ReadSeek,
+        fragment_stream: &mut dyn ReadSeek,
         alg: Option<&str>,
     ) -> crate::Result<()> {
         self.verify_stream_segment_with_progress(init_stream, fragment_stream, alg, &mut |_, _| {
@@ -1711,8 +1711,8 @@ impl BmffHash {
 
     pub(crate) fn verify_stream_segment_with_progress<F>(
         &self,
-        init_stream: &mut dyn CAIRead,
-        fragment_stream: &mut dyn CAIRead,
+        init_stream: &mut dyn ReadSeek,
+        fragment_stream: &mut dyn ReadSeek,
         alg: Option<&str>,
         progress: &mut F,
     ) -> crate::Result<()>
@@ -2062,7 +2062,7 @@ impl BmffHash {
     // create Merkle tree for MerkleMap
     fn create_merkle_tree_for_merkle_map(
         &self,
-        reader: &mut dyn CAIRead,
+        reader: &mut dyn ReadSeek,
         box_info: &BoxInfoLite,
         merkle_map: &mut MerkleMap,
     ) -> crate::Result<C2PAMerkleTree> {
@@ -2143,7 +2143,7 @@ impl BmffHash {
     // create a MerkleMap for a specific range of mdat box
     pub(crate) fn create_merkle_map_for_mdat_box(
         &self,
-        reader: &mut dyn CAIRead,
+        reader: &mut dyn ReadSeek,
         box_info: &BoxInfoLite,
         merkle_map: &mut MerkleMap,
         max_proofs: usize,
@@ -2233,7 +2233,7 @@ impl BmffHash {
     // validate the MerkleMap for the mdat box
     pub(crate) fn validate_merkle_maps_mdat_boxes(
         &self,
-        reader: &mut dyn CAIRead,
+        reader: &mut dyn ReadSeek,
         c2pa_boxes: &C2PABmffBoxes,
     ) -> crate::Result<()> {
         let mm_vec = self
@@ -2547,7 +2547,7 @@ mod bmff_hash_tests {
         let bmff_hash = BmffHash::new("test", "sha256", None);
         let box_info = small_mdat_box_info();
         let mut merkle_map = minimal_merkle_map();
-        let mut reader: Box<dyn CAIRead> = Box::new(Cursor::new(vec![0u8; 64]));
+        let mut reader: Box<dyn ReadSeek> = Box::new(Cursor::new(vec![0u8; 64]));
 
         // Must not panic or arithmetic-overflow regardless of the result.
         let _ = bmff_hash.create_merkle_tree_for_merkle_map(
@@ -2676,7 +2676,7 @@ mod bmff_hash_tests {
     fn test_split_bmff_merkle_map_count_exceeds_entries_no_panic() {
         let bmff_hash = make_bmff_hash_with_count(2);
         let c2pa_boxes = make_c2pa_boxes(make_bmff_merkle_entries(1));
-        let mut reader: Box<dyn CAIRead> = Box::new(Cursor::new(vec![0u8; 64]));
+        let mut reader: Box<dyn ReadSeek> = Box::new(Cursor::new(vec![0u8; 64]));
         let result = bmff_hash.validate_merkle_maps_mdat_boxes(reader.as_mut(), &c2pa_boxes);
         assert!(matches!(result, Err(Error::HashMismatch(_))));
     }
@@ -2686,7 +2686,7 @@ mod bmff_hash_tests {
     fn test_split_bmff_merkle_map_count_equals_entries_no_panic() {
         let bmff_hash = make_bmff_hash_with_count(1);
         let c2pa_boxes = make_c2pa_boxes(make_bmff_merkle_entries(1));
-        let mut reader: Box<dyn CAIRead> = Box::new(Cursor::new(vec![0u8; 64]));
+        let mut reader: Box<dyn ReadSeek> = Box::new(Cursor::new(vec![0u8; 64]));
         // Result may be an error (hash mismatch on fake data) but must not panic.
         let _ = bmff_hash.validate_merkle_maps_mdat_boxes(reader.as_mut(), &c2pa_boxes);
     }
@@ -2696,7 +2696,7 @@ mod bmff_hash_tests {
     fn test_split_bmff_merkle_map_count_less_than_entries_no_panic() {
         let bmff_hash = make_bmff_hash_with_count(1);
         let c2pa_boxes = make_c2pa_boxes(make_bmff_merkle_entries(2));
-        let mut reader: Box<dyn CAIRead> = Box::new(Cursor::new(vec![0u8; 64]));
+        let mut reader: Box<dyn ReadSeek> = Box::new(Cursor::new(vec![0u8; 64]));
         // Result may be an error (hash mismatch on fake data) but must not panic.
         let _ = bmff_hash.validate_merkle_maps_mdat_boxes(reader.as_mut(), &c2pa_boxes);
     }
@@ -2725,7 +2725,7 @@ mod bmff_hash_tests {
             xmp_box_size: 0,
         };
 
-        let mut reader: Box<dyn CAIRead> = Box::new(Cursor::new(vec![0u8; 64]));
+        let mut reader: Box<dyn ReadSeek> = Box::new(Cursor::new(vec![0u8; 64]));
         // Must not panic or arithmetic-overflow regardless of the result.
         let _ = bmff_hash.validate_merkle_maps_mdat_boxes(reader.as_mut(), &c2pa_boxes);
     }
@@ -2777,7 +2777,7 @@ mod bmff_hash_tests {
             xmp_box_offset: 0,
         };
 
-        let mut reader: Box<dyn CAIRead> = Box::new(Cursor::new(vec![0u8; 128]));
+        let mut reader: Box<dyn ReadSeek> = Box::new(Cursor::new(vec![0u8; 128]));
         // Must return HashMismatch rather than panic with index-out-of-bounds.
         let result = bmff_hash.validate_merkle_maps_mdat_boxes(reader.as_mut(), &c2pa_boxes);
         assert!(
@@ -2815,7 +2815,7 @@ mod bmff_hash_tests {
             variable_block_sizes: None,
         };
         let bmff_hash = BmffHash::new("test", "sha512", None);
-        let mut reader: Box<dyn CAIRead> =
+        let mut reader: Box<dyn ReadSeek> =
             Box::new(Cursor::new(vec![0u8; (NUM_LEAVES + 16) as usize]));
         let result = bmff_hash.create_merkle_tree_for_merkle_map(
             reader.as_mut(),
@@ -2863,7 +2863,7 @@ mod bmff_hash_tests {
             xmp_box_size: 0,
             xmp_box_offset: 0,
         };
-        let mut reader2: Box<dyn CAIRead> =
+        let mut reader2: Box<dyn ReadSeek> =
             Box::new(Cursor::new(vec![0u8; (bytes_left + 16) as usize]));
         let result2 = bmff_hash2.validate_merkle_maps_mdat_boxes(reader2.as_mut(), &c2pa_boxes2);
         assert!(
@@ -2897,7 +2897,7 @@ mod bmff_hash_tests {
         };
 
         let bmff_hash = BmffHash::new("test", "sha512", None);
-        let mut reader: Box<dyn CAIRead> = Box::new(Cursor::new(vec![0u8; box_size as usize]));
+        let mut reader: Box<dyn ReadSeek> = Box::new(Cursor::new(vec![0u8; box_size as usize]));
         let result = bmff_hash.create_merkle_tree_for_merkle_map(
             reader.as_mut(),
             &oversized_box,
