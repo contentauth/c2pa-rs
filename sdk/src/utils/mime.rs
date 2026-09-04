@@ -112,6 +112,17 @@ pub fn format_from_path<P: AsRef<std::path::Path>>(path: P) -> Option<String> {
     })
 }
 
+/// Return a MIME type given a file path, using the file extension.
+///
+/// Unlike [`format_from_path`], this returns `None` when the extension is missing
+/// or has no known MIME type, rather than falling back to the raw extension.
+pub fn mime_from_path<P: AsRef<std::path::Path>>(path: P) -> Option<String> {
+    path.as_ref()
+        .extension()
+        .and_then(|ext| extension_to_mime(&ext.to_string_lossy()))
+        .map(|mime| mime.to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

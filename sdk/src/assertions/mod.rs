@@ -42,6 +42,9 @@ pub use box_hash::{
 mod data_hash;
 pub use data_hash::DataHash;
 
+mod collection_hash;
+pub use collection_hash::{CollectionHash, UriHashedDataMap};
+
 mod certificate_status;
 pub(crate) use certificate_status::CertificateStatus;
 
