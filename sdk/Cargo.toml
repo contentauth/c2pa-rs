@@ -129,7 +129,7 @@ nom = "7.1.3"
 non-empty-string = { version = "0.2.6", features = ["serde"] }
 nonempty-collections = { version = "1.3.0", features = ["serde"] }
 pem = "4.0.0"
-pkcs8 = "0.10.2"
+pkcs8 = "0.11.0"
 png_pong = "0.10.0"
 quick-xml = "0.41.0"
 rand = "0.10.2"
