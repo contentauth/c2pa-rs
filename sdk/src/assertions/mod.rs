@@ -55,10 +55,11 @@ mod exif;
 #[allow(deprecated)]
 pub use exif::Exif;
 
-#[allow(dead_code)] // will become public later
+#[allow(dead_code)]
+// some v1/v2-compat helpers are only reachable via IngredientAssertion's public API
 mod ingredient;
 pub(crate) use ingredient::Ingredient;
-pub use ingredient::Relationship;
+pub use ingredient::{Ingredient as IngredientAssertion, Relationship};
 
 pub mod labels;
 
