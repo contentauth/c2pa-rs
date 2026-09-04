@@ -108,7 +108,7 @@ der = { version = "0.8.1", features = ["alloc", "std", "oid"] }
 extfmt = "0.2.0"
 getrandom = { version = "0.3.4", default-features = false, features = ["std"] }
 glob = "0.3.3"
-ed25519-dalek = { version = "2.2.0", features = [
+ed25519-dalek = { version = "3.0.0", features = [
     "alloc",
     "digest",
     "pem",
