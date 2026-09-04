@@ -6936,7 +6936,9 @@ pub mod tests {
 
         let signed_ingredient = |variant: &str| -> Vec<u8> {
             let mut store = Store::from_context(&Context::new());
-            let mut claim = Claim::new_with_user_guid("ingredient label conflict test", shared_label, 2).unwrap();
+            let mut claim =
+                Claim::new_with_user_guid("ingredient label conflict test", shared_label, 2)
+                    .unwrap();
             claim.add_claim_generator_info(ClaimGeneratorInfo::new("conflict_test"));
             claim
                 .add_databox("text/plain", variant.as_bytes().to_vec(), None)
@@ -6961,7 +6963,11 @@ pub mod tests {
         let bytes_b = signed_ingredient("variant-b");
         let bytes_c = signed_ingredient("variant-c");
 
-        let mut claim = Claim::new("ingredient label conflict test top level", Some("c2pa-rs-sdk-test"), 2);
+        let mut claim = Claim::new(
+            "ingredient label conflict test top level",
+            Some("c2pa-rs-sdk-test"),
+            2,
+        );
         claim.add_claim_generator_info(ClaimGeneratorInfo::new("outer"));
 
         // No conflict on this load...
