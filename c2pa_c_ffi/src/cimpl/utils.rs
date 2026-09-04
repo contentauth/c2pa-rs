@@ -22,7 +22,10 @@ use std::{
     any::TypeId,
     collections::HashMap,
     os::raw::c_uchar,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
 };
 
 use crate::{cimpl::cimpl_error::CimplError, error::Error, maybe_send_sync::MaybeSend};
@@ -33,33 +36,97 @@ use crate::{cimpl::cimpl_error::CimplError, error::Error, maybe_send_sync::Maybe
 
 type CleanupFn = Box<dyn FnMut() + Send>;
 
+// Odd, per-pointer-width multiplicative constant (2^N / golden ratio) used by
+// `scramble_to_odd_id`. Must be odd on whichever width `usize` actually is.
+#[cfg(target_pointer_width = "64")]
+const ID_MULTIPLIER: usize = 0x9e3779b97f4a7c15;
+#[cfg(target_pointer_width = "32")]
+const ID_MULTIPLIER: usize = 0x9e3779b9;
+#[cfg(not(any(target_pointer_width = "64", target_pointer_width = "32")))]
+compile_error!("PointerRegistry's handle scrambling needs a 32- or 64-bit usize");
+
+/// Turns a plain sequential counter value into a scrambled, always-odd
+/// handle id.
+///
+/// - **Always odd (and therefore never zero)**: real Rust allocations
+///   always land on at least a 2-byte boundary, so their addresses are
+///   always even. An odd id can therefore never collide with a real tracked
+///   buffer address (see `track_by_address`).
+/// - **Bijective, not just well-mixed**: multiplying by a fixed odd constant
+///   is invertible modulo `2^usize::BITS`, and the product of two odd numbers
+///   is always odd regardless of truncation — so distinct counter values are
+///   mathematically guaranteed to scramble to distinct odd ids, not just
+///   unlikely to collide the way a hash could.
+fn scramble_to_odd_id(counter: usize) -> usize {
+    let odd = counter.wrapping_mul(2).wrapping_add(1);
+    odd.wrapping_mul(ID_MULTIPLIER)
+}
+
 /// Registry that tracks pointers allocated from Rust and passed to C.
-/// Each pointer is associated with its type and a cleanup function,
-/// enabling type validation and universal freeing via `cimpl_free()`.
+/// Each entry is associated with its real address, type, and a cleanup
+/// function, enabling type validation and universal freeing via `cimpl_free()`.
+///
+/// Entries are stored under one of two kinds of key:
+/// - An opaque, scrambled handle id (see `track_by_id`), used for objects C
+///   only ever passes back into other FFI calls (`C2paBuilder`, `C2paSigner`,
+///   `C2paStream`, ...). Because ids are never reused and are always odd, a
+///   handle that outlives its object (e.g. a stale copy raced against
+///   `cimpl_free` on another thread) can never alias a *different*,
+///   newly-allocated object at a reused address — the
+///   lookup simply fails.
+/// - The real address itself (see `track_by_address`), used for buffers C
+///   dereferences directly (`to_c_string`, `to_c_bytes`), where the pointer
+///   handed to C must be a genuine, readable address. These are always even.
+///
+/// Both kinds share one map and one `cimpl_free()` path since freeing only
+/// needs the key, not which kind it is — the odd/even split guarantees they
+/// can never collide with each other.
 pub struct PointerRegistry {
-    tracked: Mutex<HashMap<usize, (TypeId, CleanupFn)>>,
+    tracked: Mutex<HashMap<usize, (usize, TypeId, CleanupFn)>>,
+    next_id: AtomicUsize,
 }
 
 impl PointerRegistry {
     fn new() -> Self {
         Self {
             tracked: Mutex::new(HashMap::new()),
+            next_id: AtomicUsize::new(0),
         }
     }
 
-    /// Track a pointer with its type and cleanup function
-    fn track(&self, ptr: usize, type_id: TypeId, cleanup: CleanupFn) {
-        if ptr != 0 {
+    /// Track a pointer under a freshly generated opaque handle id, so the
+    /// value handed to C is never the real address (and so can never alias a
+    /// different object that later reuses that address). Returns the id, or 0
+    /// if `real_addr` is null.
+    fn track_by_id(&self, real_addr: usize, type_id: TypeId, cleanup: CleanupFn) -> usize {
+        if real_addr == 0 {
+            return 0;
+        }
+        let counter = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let id = scramble_to_odd_id(counter);
+        if let Ok(mut tracked) = self.tracked.lock() {
+            tracked.insert(id, (real_addr, type_id, cleanup));
+        }
+        // Silently ignore poisoned mutex - this is a best-effort tracking system
+        id
+    }
+
+    /// Track a pointer keyed by its own address. Only use this for buffers C
+    /// dereferences directly (e.g. `to_c_string`/`to_c_bytes`), where the
+    /// returned pointer must remain a real, readable address.
+    fn track_by_address(&self, real_addr: usize, type_id: TypeId, cleanup: CleanupFn) {
+        if real_addr != 0 {
             if let Ok(mut tracked) = self.tracked.lock() {
-                tracked.insert(ptr, (type_id, cleanup));
+                tracked.insert(real_addr, (real_addr, type_id, cleanup));
             }
             // Silently ignore poisoned mutex - this is a best-effort tracking system
         }
     }
 
-    /// Validate that a pointer is tracked and has the expected type
-    pub fn validate(&self, ptr: usize, expected_type: TypeId) -> Result<(), Error> {
-        if ptr == 0 {
+    /// Resolve a handle id to its real address, validating it is tracked
+    /// with the expected type.
+    pub fn resolve(&self, id: usize, expected_type: TypeId) -> Result<usize, Error> {
+        if id == 0 {
             return Err(Error::from(CimplError::null_parameter("pointer")));
         }
 
@@ -67,14 +134,15 @@ impl PointerRegistry {
             .tracked
             .lock()
             .map_err(|_| Error::from(CimplError::mutex_poisoned()))?;
-        match tracked.get(&ptr) {
-            Some((actual_type, _)) if *actual_type == expected_type => Ok(()),
-            Some(_) => Err(Error::from(CimplError::wrong_pointer_type(ptr as u64))),
-            None => Err(Error::from(CimplError::untracked_pointer(ptr as u64))),
+        match tracked.get(&id) {
+            Some((real_addr, actual_type, _)) if *actual_type == expected_type => Ok(*real_addr),
+            Some(_) => Err(Error::from(CimplError::wrong_pointer_type(id as u64))),
+            None => Err(Error::from(CimplError::untracked_pointer(id as u64))),
         }
     }
 
-    /// Remove a pointer from tracking without running its cleanup function.
+    /// Remove a handle id from tracking without running its cleanup function,
+    /// returning the real address it referred to.
     ///
     /// Use this when an FFI function consumes a tracked pointer by calling
     /// `Box::from_raw()` — the pointer must be untracked first so the registry
@@ -93,8 +161,8 @@ impl PointerRegistry {
     /// - `c2pa_context_builder_build`: builder is consumed to produce a context
     /// - `c2pa_reader_with_stream`: reader is consumed to produce a new reader
     /// - `c2pa_builder_with_definition`: builder is consumed to produce a new builder
-    pub fn untrack(&self, ptr: usize, expected_type: TypeId) -> Result<(), Error> {
-        if ptr == 0 {
+    pub fn untrack(&self, id: usize, expected_type: TypeId) -> Result<usize, Error> {
+        if id == 0 {
             return Err(Error::from(CimplError::null_parameter("pointer")));
         }
 
@@ -103,19 +171,19 @@ impl PointerRegistry {
             .lock()
             .map_err(|_| Error::from(CimplError::mutex_poisoned()))?;
 
-        match tracked.get(&ptr) {
-            Some((actual_type, _)) if *actual_type == expected_type => {
-                tracked.remove(&ptr);
-                Ok(())
+        match tracked.get(&id) {
+            Some((_, actual_type, _)) if *actual_type == expected_type => {
+                let (real_addr, _, _) = tracked.remove(&id).expect("checked Some above");
+                Ok(real_addr)
             }
-            Some(_) => Err(Error::from(CimplError::wrong_pointer_type(ptr as u64))),
-            None => Err(Error::from(CimplError::untracked_pointer(ptr as u64))),
+            Some(_) => Err(Error::from(CimplError::wrong_pointer_type(id as u64))),
+            None => Err(Error::from(CimplError::untracked_pointer(id as u64))),
         }
     }
 
-    /// Free a tracked pointer by calling its cleanup function
-    pub fn free(&self, ptr: usize) -> Result<(), Error> {
-        if ptr == 0 {
+    /// Free a tracked entry by calling its cleanup function
+    pub fn free(&self, key: usize) -> Result<(), Error> {
+        if key == 0 {
             return Ok(()); // NULL is always safe
         }
 
@@ -124,9 +192,9 @@ impl PointerRegistry {
                 .tracked
                 .lock()
                 .map_err(|_| Error::from(CimplError::mutex_poisoned()))?;
-            match tracked.remove(&ptr) {
-                Some((_, cleanup)) => cleanup,
-                None => return Err(Error::from(CimplError::untracked_pointer(ptr as u64))),
+            match tracked.remove(&key) {
+                Some((_, _, cleanup)) => cleanup,
+                None => return Err(Error::from(CimplError::untracked_pointer(key as u64))),
             }
         }; // Release lock before cleanup
 
@@ -182,7 +250,8 @@ pub(crate) fn get_registry() -> &'static PointerRegistry {
 /// The pointer will be freed with `Box::from_raw()` when `cimpl_free()` is called.
 ///
 /// # Returns
-/// Returns the same pointer for convenient chaining
+/// Returns an opaque handle id disguised as `*mut T`, not the real pointer —
+/// see `PointerRegistry::track_by_id`.
 ///
 /// # Example
 /// ```ignore
@@ -193,8 +262,8 @@ pub fn track_box<T: 'static + MaybeSend>(ptr: *mut T) -> *mut T {
     let cleanup = move || unsafe {
         drop(Box::from_raw(ptr_val as *mut T));
     };
-    get_registry().track(ptr as usize, TypeId::of::<T>(), Box::new(cleanup));
-    ptr
+    let id = get_registry().track_by_id(ptr_val, TypeId::of::<T>(), Box::new(cleanup));
+    id as *mut T
 }
 
 /// Track an Arc-wrapped pointer
@@ -203,7 +272,8 @@ pub fn track_box<T: 'static + MaybeSend>(ptr: *mut T) -> *mut T {
 /// The pointer will be freed with `Arc::from_raw()` when `cimpl_free()` is called.
 ///
 /// # Returns
-/// Returns the same pointer for convenient chaining
+/// Returns an opaque handle id disguised as `*mut T`, not the real pointer —
+/// see `PointerRegistry::track_by_id`.
 ///
 /// # Example
 /// ```ignore
@@ -214,8 +284,8 @@ pub fn track_arc<T: 'static + MaybeSend>(ptr: *mut T) -> *mut T {
     let cleanup = move || unsafe {
         drop(Arc::from_raw(ptr_val as *const T));
     };
-    get_registry().track(ptr as usize, TypeId::of::<T>(), Box::new(cleanup));
-    ptr
+    let id = get_registry().track_by_id(ptr_val, TypeId::of::<T>(), Box::new(cleanup));
+    id as *mut T
 }
 
 /// Track an `Arc<Mutex<T>>`-wrapped pointer
@@ -224,7 +294,8 @@ pub fn track_arc<T: 'static + MaybeSend>(ptr: *mut T) -> *mut T {
 /// The pointer will be freed with `Arc::from_raw()` when `cimpl_free()` is called.
 ///
 /// # Returns
-/// Returns the same pointer for convenient chaining
+/// Returns an opaque handle id disguised as `*mut Mutex<T>`, not the real
+/// pointer — see `PointerRegistry::track_by_id`.
 ///
 /// # Example
 /// ```ignore
@@ -235,13 +306,16 @@ pub fn track_arc_mutex<T: 'static + MaybeSend>(ptr: *mut Mutex<T>) -> *mut Mutex
     let cleanup = move || unsafe {
         drop(Arc::from_raw(ptr_val as *const Mutex<T>));
     };
-    get_registry().track(ptr as usize, TypeId::of::<Mutex<T>>(), Box::new(cleanup));
-    ptr
+    let id = get_registry().track_by_id(ptr_val, TypeId::of::<Mutex<T>>(), Box::new(cleanup));
+    id as *mut Mutex<T>
 }
 
-/// Validate that a pointer is tracked and has the expected type
-pub fn validate_pointer<T: 'static>(ptr: *mut T) -> Result<(), Error> {
-    get_registry().validate(ptr as usize, TypeId::of::<T>())
+/// Validate that a pointer is tracked and has the expected type, returning
+/// the real pointer to dereference (the value passed in is an opaque handle
+/// id, not the real address — see `PointerRegistry::track_by_id`).
+pub fn validate_pointer<T: 'static>(ptr: *mut T) -> Result<*mut T, Error> {
+    let real_addr = get_registry().resolve(ptr as usize, TypeId::of::<T>())?;
+    Ok(real_addr as *mut T)
 }
 
 /// Remove a pointer from tracking without running its cleanup function.
@@ -253,8 +327,10 @@ pub fn validate_pointer<T: 'static>(ptr: *mut T) -> Result<(), Error> {
 ///
 /// After this call, the pointer is no longer managed by the registry. The
 /// caller owns the underlying allocation and must drop it — typically by
-/// calling `Box::from_raw()` immediately after untracking. The
-/// `untrack_or_return_*!` macros do this for you, yielding the owned value directly.
+/// calling `Box::from_raw()` on the *returned* real pointer immediately after
+/// untracking (the value passed in is an opaque handle id, not the real
+/// address). The `untrack_or_return_*!` macros do this for you, yielding the
+/// owned value directly.
 ///
 /// # Example
 ///
@@ -264,8 +340,9 @@ pub fn validate_pointer<T: 'static>(ptr: *mut T) -> Result<(), Error> {
 /// builder.set_signer(signer.signer);                           // inner value moved into builder
 /// // C2paSigner wrapper dropped here — no double-free risk
 /// ```
-pub fn untrack_pointer<T: 'static>(ptr: *mut T) -> Result<(), Error> {
-    get_registry().untrack(ptr as usize, TypeId::of::<T>())
+pub fn untrack_pointer<T: 'static>(ptr: *mut T) -> Result<*mut T, Error> {
+    let real_addr = get_registry().untrack(ptr as usize, TypeId::of::<T>())?;
+    Ok(real_addr as *mut T)
 }
 
 /// Universal free function for any tracked pointer
@@ -434,7 +511,7 @@ pub fn to_c_string(s: String) -> *mut std::os::raw::c_char {
         Ok(c_str) => {
             let ptr = c_str.into_raw();
             let ptr_val = ptr as usize;
-            get_registry().track(
+            get_registry().track_by_address(
                 ptr_val,
                 TypeId::of::<CString>(),
                 Box::new(move || unsafe {
@@ -469,7 +546,7 @@ pub fn to_c_bytes(bytes: Vec<u8>) -> *const c_uchar {
 
     let ptr = Box::into_raw(bytes.into_boxed_slice()) as *const c_uchar;
     let ptr_val = ptr as usize;
-    get_registry().track(
+    get_registry().track_by_address(
         ptr_val,
         TypeId::of::<Box<[u8]>>(),
         Box::new(move || {
@@ -543,14 +620,15 @@ mod tests {
         let ptr = track_box(Box::into_raw(Box::new(42i32)));
         assert!(validate_pointer::<i32>(ptr).is_ok());
 
-        assert!(untrack_pointer::<i32>(ptr).is_ok());
+        let real_ptr = untrack_pointer::<i32>(ptr).unwrap();
 
         // No longer tracked - cimpl_free should fail
         let result = cimpl_free(ptr as *mut std::ffi::c_void);
         assert_eq!(result, -1);
 
-        // Clean up manually since we took ownership
-        unsafe { drop(Box::from_raw(ptr)) };
+        // Clean up manually since we took ownership (via the real pointer
+        // untrack_pointer returned, not the opaque handle id)
+        unsafe { drop(Box::from_raw(real_ptr)) };
     }
 
     #[test]
@@ -582,12 +660,12 @@ mod tests {
     #[test]
     fn test_untrack_already_untracked_fails() {
         let ptr = track_box(Box::into_raw(Box::new(42i32)));
-        assert!(untrack_pointer::<i32>(ptr).is_ok());
+        let real_ptr = untrack_pointer::<i32>(ptr).unwrap();
 
         // Second untrack fails
         let result = untrack_pointer::<i32>(ptr);
         assert!(result.is_err());
 
-        unsafe { drop(Box::from_raw(ptr)) };
+        unsafe { drop(Box::from_raw(real_ptr)) };
     }
 }

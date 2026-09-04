@@ -245,7 +245,7 @@ macro_rules! deref_or_return {
     ($ptr:expr, $type:ty, $err_val:expr) => {{
         $crate::ptr_or_return!($ptr, $err_val);
         match $crate::validate_pointer::<$type>($ptr) {
-            Ok(()) => unsafe { &*($ptr as *const $type) },
+            Ok(real_ptr) => unsafe { &*(real_ptr as *const $type) },
             Err(e) => {
                 $crate::CimplError::from(e).set_last();
                 return $err_val;
@@ -301,7 +301,7 @@ macro_rules! deref_mut_or_return {
     ($ptr:expr, $type:ty, $err_val:expr) => {{
         $crate::ptr_or_return!($ptr, $err_val);
         match $crate::validate_pointer::<$type>($ptr) {
-            Ok(()) => unsafe { &mut *($ptr as *mut $type) },
+            Ok(real_ptr) => unsafe { &mut *(real_ptr as *mut $type) },
             Err(e) => {
                 $crate::CimplError::from(e).set_last();
                 return $err_val;
@@ -325,6 +325,72 @@ macro_rules! deref_mut_or_return_null {
 macro_rules! deref_mut_or_return_int {
     ($ptr:expr, $type:ty) => {{
         $crate::deref_mut_or_return!($ptr, $type, -1)
+    }};
+}
+
+/// Resolve a tracked pointer to its real address and dereference it
+/// mutably, returning `None` for NULL, untracked, or wrong-type pointers —
+/// no error is set, no early return happens.
+///
+/// This is for internal code (tests, cleanup paths) that decides for itself
+/// how to handle a missing value. FFI entry points taking pointers from C
+/// should use `deref_mut_or_return!` (NULL is an error) or
+/// `deref_mut_option_or_return!` (NULL is a legitimate "not provided")
+/// instead, so C gets a proper error for a genuinely bad pointer.
+///
+/// # Examples
+/// ```rust,ignore
+/// let stream = deref_mut_option!(ptr, C2paStream).expect("always tracked here");
+/// ```
+#[macro_export]
+macro_rules! deref_mut_option {
+    ($ptr:expr, $type:ty) => {{
+        let ptr = $ptr;
+        if ptr.is_null() {
+            None
+        } else {
+            $crate::validate_pointer::<$type>(ptr)
+                .ok()
+                .map(|real_ptr| unsafe { &mut *(real_ptr as *mut $type) })
+        }
+    }};
+}
+
+/// Validate pointer and dereference mutably, returning `None` if the
+/// pointer is NULL. Unlike `deref_mut_or_return!`, NULL is not treated as an
+/// error — this is for parameters that are genuinely optional. A non-NULL
+/// but untracked/wrong-type pointer is still an early-return error.
+///
+/// # Examples
+/// ```rust,ignore
+/// if let Some(asset) = deref_mut_option_or_return!(asset_ptr, C2paStream, -1) {
+///     asset.do_something();
+/// }
+/// ```
+#[macro_export]
+macro_rules! deref_mut_option_or_return {
+    ($ptr:expr, $type:ty, $err_val:expr) => {{
+        let ptr = $ptr;
+        if ptr.is_null() {
+            None
+        } else {
+            match $crate::validate_pointer::<$type>(ptr) {
+                Ok(real_ptr) => Some(unsafe { &mut *(real_ptr as *mut $type) }),
+                Err(e) => {
+                    $crate::CimplError::from(e).set_last();
+                    return $err_val;
+                }
+            }
+        }
+    }};
+}
+
+/// Validate pointer and dereference mutably as an `Option`; NULL is `None`,
+/// any other error returns -1.
+#[macro_export]
+macro_rules! deref_mut_option_or_return_int {
+    ($ptr:expr, $type:ty) => {{
+        $crate::deref_mut_option_or_return!($ptr, $type, -1)
     }};
 }
 
@@ -377,7 +443,7 @@ macro_rules! untrack_or_return {
     ($ptr:expr, $type:ty, $err_val:expr) => {{
         $crate::ptr_or_return!($ptr, $err_val);
         match $crate::untrack_pointer::<$type>($ptr) {
-            Ok(()) => *Box::from_raw($ptr as *mut $type),
+            Ok(real_ptr) => *Box::from_raw(real_ptr as *mut $type),
             Err(e) => {
                 $crate::CimplError::from(e).set_last();
                 return $err_val;
