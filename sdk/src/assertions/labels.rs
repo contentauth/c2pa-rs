@@ -542,8 +542,11 @@ mod tests {
             "c2pa.hash.",
             "c2pa.hash.databoxes",
             "c2pa.actions",
-            // BMFF must match on its base, not a bare prefix.
+            // BMFF must match on its base, not a bare prefix. A trailing
+            // segment is only stripped when it's a real version token
+            // (`.vN`), so these fakes stay distinct from the base.
             "c2pa.hash.bmfffake",
+            "c2pa.hash.bmff.fake",
             "c2pa.hash.bmff.vfake",
         ] {
             assert!(
