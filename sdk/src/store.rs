@@ -6918,7 +6918,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_ingredient_labels_versdioned_on_conflict() {
+    fn test_ingredient_labels_versioned_on_conflict() {
         // A manifest URN identifies a manifest, not its bytes.
         // The same manifest can reach one asset by two routes
         // and have only one of the copies change along the way.
