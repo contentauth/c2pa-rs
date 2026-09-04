@@ -6926,13 +6926,13 @@ pub mod tests {
         // then carry the same label with different (bytes) content.
         //
         // See https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_copying_existing_manifests
-        // (C2PA spec 2.4 section 18.16.12.1)
+        // (C2PA spec 2.4 section 18.16.12)
         //
         // Here the three ingredients differ by databox content, so the relabeling path runs.
         // The first conflict must start at version 1 instead of erroring.
         let context = Context::new();
         let signer = test_signer(SigningAlg::Ps256);
-        let shared_label = "urn:c2pa:550e8400-e29b-41d4-a716-446655440000";
+        let shared_label = "urn:c2pa:11111111-2222-4333-8444-555555555555";
 
         let signed_ingredient = |variant: &str| -> Vec<u8> {
             let mut store = Store::from_context(&Context::new());
@@ -6981,6 +6981,91 @@ pub mod tests {
             has(&format!("{shared_label}::2_1")),
             "second conflict must relabel to version 2: {keys:?}"
         );
+    }
+
+    #[test]
+    fn test_ingredient_conflict_tampered_nested_manifest_relabeled() {
+        // Second example from the spec:
+        // https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_copying_existing_manifests
+        // (C2PA spec 2.4 section 18.16.12.2): manifest A is nested inside both ingredient B
+        use crate::utils::patch::patch_bytes;
+
+        let context = Context::new();
+        let signer = test_signer(SigningAlg::Ps256);
+        let a_label = "urn:c2pa:11111111-2222-4333-8444-555555555555";
+
+        // Databox payload of A, and the search target when corrupting C's copy. The
+        // replacement is the same length, so JUMBF box sizes stay valid and the difference
+        // shows up as a hash mismatch rather than a parse failure.
+        const A_PAYLOAD: &str = "nested-manifest-a-original";
+        const A_TAMPERED: &str = "nested-manifest-a-TAMPERED";
+
+        // Manifest A.
+        let mut store_a = Store::from_context(&Context::new());
+        let mut claim_a = Claim::new_with_user_guid("nested test", a_label, 2).unwrap();
+        claim_a.add_claim_generator_info(ClaimGeneratorInfo::new("manifest_a"));
+        claim_a
+            .add_databox("text/plain", A_PAYLOAD.as_bytes().to_vec(), None)
+            .unwrap();
+        let actions = Actions::new()
+            .add_action(Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty));
+        claim_a.add_assertion(&actions).unwrap();
+        store_a.commit_claim(claim_a).unwrap();
+
+        let (format, mut input, mut output) = create_test_streams("earth_apollo17.jpg");
+        store_a
+            .save_to_stream(format, &mut input, &mut output, signer.as_ref(), &context)
+            .unwrap();
+        output.rewind().unwrap();
+        let (bytes_a, _) = Store::load_jumbf_from_stream(format, &mut output, &context).unwrap();
+
+        // Ingredients B and C, each carrying A in its manifest store. commit_claim moves the
+        // claim's ingredients into the store, so A is signed into both.
+        let wrapper = |tag: &str| -> Vec<u8> {
+            let mut store = Store::from_context(&Context::new());
+            let mut claim = Claim::new(tag, Some("adobe"), 2);
+            claim.add_claim_generator_info(ClaimGeneratorInfo::new(tag));
+            let actions = Actions::new()
+                .add_action(Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty));
+            claim.add_assertion(&actions).unwrap();
+            Store::load_ingredient_to_claim(&mut claim, &bytes_a, None, &context).unwrap();
+            store.commit_claim(claim).unwrap();
+
+            let (format, mut input, mut output) = create_test_streams("earth_apollo17.jpg");
+            store
+                .save_to_stream(format, &mut input, &mut output, signer.as_ref(), &context)
+                .unwrap();
+            output.rewind().unwrap();
+            let (bytes, _) = Store::load_jumbf_from_stream(format, &mut output, &context).unwrap();
+            bytes
+        };
+
+        let bytes_b = wrapper("ingredient b");
+        let mut bytes_c = wrapper("ingredient c");
+
+        // Corrupt A inside C. patch_bytes errors when the search bytes are absent, so a
+        // successful call is itself the evidence that the tampering landed.
+        patch_bytes(&mut bytes_c, A_PAYLOAD.as_bytes(), A_TAMPERED.as_bytes()).unwrap();
+
+        // Asset D takes both ingredients.
+        let mut claim_d = Claim::new("asset d", Some("adobe"), 2);
+        claim_d.add_claim_generator_info(ClaimGeneratorInfo::new("asset_d"));
+        Store::load_ingredient_to_claim(&mut claim_d, &bytes_b, None, &context).unwrap();
+        Store::load_ingredient_to_claim(&mut claim_d, &bytes_c, None, &context).unwrap();
+
+        let keys: Vec<&String> = claim_d.claim_ingredient_store().keys().collect();
+        assert!(
+            keys.iter().any(|k| k.as_str() == a_label),
+            "original manifest A missing: {keys:?}"
+        );
+        assert!(
+            keys.iter().any(|k| k.as_str() == format!("{a_label}::1_1")),
+            "tampered copy of A must be relabeled to version 1 reason 1: {keys:?}"
+        );
+
+        // Both copies survive: neither overwrites the other.
+        let a_copies = keys.iter().filter(|k| k.starts_with(a_label)).count();
+        assert_eq!(a_copies, 2, "expected both copies of A: {keys:?}");
     }
 
     #[test]
