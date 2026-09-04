@@ -27,8 +27,8 @@ use crate::{
     assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError},
     assertions::{
         labels::{self, CLAIM},
-        BmffHash, BoxHash, CertificateStatus, DataBox, DataHash, Ingredient, Relationship,
-        TimeStamp, User, UserCbor,
+        BmffHash, BoxHash, CertificateStatus, CollectionHash, DataBox, DataHash, Ingredient,
+        Relationship, TimeStamp, User, UserCbor,
     },
     asset_io::{
         CAIRead, CAIReadWrite, HashBlockObjectType, HashObjectPositions, RemoteRefEmbedType,
@@ -55,7 +55,7 @@ use crate::{
         AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
     },
     error::{Error, Result},
-    hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
+    hash_utils::{hash_by_alg, hash_size_by_alg, vec_compare, verify_by_alg},
     hashed_uri::HashedUri,
     jumbf::{
         self,
@@ -66,8 +66,8 @@ use crate::{
         },
     },
     jumbf_io::{
-        get_assetio_handler, is_bmff_format, load_jumbf_from_stream, object_locations_from_stream,
-        save_jumbf_to_stream,
+        get_assetio_handler, is_bmff_format, is_zip_format, load_jumbf_from_stream,
+        object_locations_from_stream, save_jumbf_to_stream,
     },
     log_item,
     manifest_store_report::ManifestStoreReport,
@@ -2183,12 +2183,7 @@ impl Store {
             dh.gen_hash_from_stream_with_progress(stream, progress)?;
         } else {
             // First signing pass: zero-filled placeholder hash (to get to end size)
-            match alg {
-                "sha256" => dh.set_hash([0u8; 32].to_vec()),
-                "sha384" => dh.set_hash([0u8; 48].to_vec()),
-                "sha512" => dh.set_hash([0u8; 64].to_vec()),
-                _ => return Err(Error::UnsupportedType),
-            }
+            dh.set_hash(vec![0u8; hash_size_by_alg(alg)?]);
         }
 
         hashes.push(dh);
@@ -2204,12 +2199,7 @@ impl Store {
         dh.set_default_exclusions();
 
         // fill in temporary hash
-        match alg {
-            "sha256" => dh.set_hash([0u8; 32].to_vec()),
-            "sha384" => dh.set_hash([0u8; 48].to_vec()),
-            "sha512" => dh.set_hash([0u8; 64].to_vec()),
-            _ => return Err(Error::UnsupportedType),
-        }
+        dh.set_hash(vec![0u8; hash_size_by_alg(alg)?]);
 
         Ok(dh)
     }
@@ -3055,6 +3045,7 @@ impl Store {
         let io_handler = get_assetio_handler(format);
 
         let is_bmff = is_bmff_format(format);
+        let is_zip = is_zip_format(format);
         // fast_path applies to all formats: when there is no XMP embed and no manifest removal,
         // we can pass input_stream directly to the write/hash steps, skipping one full-file copy.
         let fast_path = url.is_none() && !remove_manifests;
@@ -3129,13 +3120,12 @@ impl Store {
         let mut data;
         let jumbf_size;
 
-        // Check to see if manifest compression is requested, BMFF is not supported for compression since the manifest
-        // needs to be in a specific location and compression would change the size of the manifest which
-        // would break the offsets
+        // Check to see if manifest compression is requested, BMFF and ZIP are not supported for compression since the manifest
+        // needs to be in a specific location and compression would change the size of the manifest which would break the offsets
         if pc.compressed() {
-            // If compression is desired use BoxHashing for compatibile formats, otherwise fall back to regular hashing.
+            // If compression is desired use BoxHashing for compatible formats, otherwise fall back to regular hashing.
             match io_handler.and_then(|h| h.asset_box_hash_ref()) {
-                Some(box_hash_handler) if !is_bmff => {
+                Some(box_hash_handler) if !is_bmff && !is_zip => {
                     // if the user already has a box hash assertion we use that and ignore the compression setting
                     if pc.box_hash_assertions().is_empty() {
                         // no user box hash assertion, so use box hashing
@@ -3271,6 +3261,81 @@ impl Store {
                     pc.update_bmff_hash(bmff_hash)?;
                 }
             }
+        } else if is_zip {
+            if pc.update_manifest() {
+                // as of 08/28/2026, ZIP embedding does not support update manifests because it will
+                // move the rest of the file down, changing offsets, and breaking the hashes
+                return Err(Error::BadParam(
+                    "update manifests are not supported for ZIP-based assets".to_string(),
+                ));
+            }
+
+            // hash all of the existing files and embed a placeholder central directory hash.
+            // this is okay because adding new file entries does not change the hashes of existing
+            // file entries. when we insert the real manifest we can go back and hash the central directory.
+            let mut new_collection_hash = None;
+            if pc.collection_hash_assertions().is_empty() {
+                let mut placeholder_collection_hash = CollectionHash::new(pc.alg().to_owned());
+                if source_is_intermediate {
+                    intermediate_stream.rewind()?;
+                    placeholder_collection_hash.gen_zip_uri_hashes(&mut intermediate_stream)?;
+                } else {
+                    input_stream.rewind()?;
+                    placeholder_collection_hash.gen_zip_uri_hashes(input_stream)?;
+                }
+
+                placeholder_collection_hash.set_placeholder_zip_central_directory_hash()?;
+                pc.add_assertion(&placeholder_collection_hash)?;
+
+                new_collection_hash = Some(placeholder_collection_hash);
+            }
+
+            data = self.to_jumbf_internal(reserve_size)?;
+            jumbf_size = data.len();
+
+            // we only need to compute the central directory hash here because everything else is
+            // already hashed in the previous step.
+            if let Some(mut collection_hash) = new_collection_hash {
+                if !remove_manifests {
+                    let mut scratch = io_utils::stream_with_fs_fallback(threshold, input_len)?;
+                    if source_is_intermediate {
+                        intermediate_stream.rewind()?;
+                        save_jumbf_to_stream(
+                            format,
+                            &mut intermediate_stream,
+                            &mut scratch,
+                            &data,
+                        )?;
+                    } else {
+                        input_stream.rewind()?;
+                        save_jumbf_to_stream(format, input_stream, &mut scratch, &data)?;
+                    }
+
+                    scratch.rewind()?;
+                    collection_hash.gen_zip_central_directory_hash(&mut scratch)?;
+                } else {
+                    if source_is_intermediate {
+                        intermediate_stream.rewind()?;
+                        collection_hash.gen_zip_central_directory_hash(&mut intermediate_stream)?;
+                    } else {
+                        input_stream.rewind()?;
+                        collection_hash.gen_zip_central_directory_hash(input_stream)?;
+                    }
+                }
+
+                let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+                pc.replace_assertion(collection_hash.to_assertion()?)?;
+            }
+
+            if source_is_intermediate {
+                intermediate_stream.rewind()?;
+                std::io::copy(&mut intermediate_stream, output_stream)?;
+            } else {
+                input_stream.rewind()?;
+                std::io::copy(input_stream, output_stream)?;
+            }
+
+            context.check_progress(ProgressPhase::Writing, 2, 2)?;
         } else {
             // we will not do automatic hashing if we detect a box hash present
             let mut needs_hashing = false;
