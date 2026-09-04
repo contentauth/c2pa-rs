@@ -24,11 +24,6 @@ on:
   schedule:
     - cron: '0 8 * * *'
   pull_request:
-    branches:
-      - main
-      - stable
-      - 'v0.*'
-      - '*-rc*'
     types:
       - opened
       - reopened
@@ -485,7 +480,11 @@ jobs:
 
       - name: Install wasmtime
         run: |
-          curl https://wasmtime.dev/install.sh -sSf | bash
+          # Pinned to v47.0.3: v48.0.0 sends malformed wasi-http requests that
+          # some servers (e.g. GitHub Pages) answer with 400 Bad Request instead
+          # of reaching the real response, breaking did:web resolution tests.
+          # See https://github.com/contentauth/c2pa-rs/issues/2530.
+          curl https://wasmtime.dev/install.sh -sSf | bash -s -- --version v47.0.3
           echo "$HOME/.wasmtime/bin" >> $GITHUB_PATH
 
       - name: Install clang

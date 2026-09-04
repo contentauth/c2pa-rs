@@ -28,7 +28,7 @@ use crate::{
 /// Validates a CAWG identity assertion.
 ///
 /// A `CawgValidator` carries the [`Context`] that governs CAWG validation,
-/// including the `cawg_trust.trusted_ica_issuers` allow-list. Construct one with
+/// including the `trust.trusted_ica_issuers` allow-list. Construct one with
 /// [`CawgValidator::new`] to validate under a specific [`Context`].
 pub struct CawgValidator<'a> {
     context: &'a Context,
@@ -70,13 +70,17 @@ impl AsyncPostValidator for CawgValidator<'_> {
 mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
-    use std::io::Cursor;
+    use std::io::{Cursor, Read};
 
+    use async_trait::async_trait;
     use c2pa_macros::c2pa_test_async;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
-    use crate::{Reader, ValidationState};
+    use crate::{
+        http::{AsyncHttpResolver, HttpResolverError},
+        Context, Reader, ValidationState,
+    };
 
     const CONNECTED_IDENTITIES_VALID: &[u8] =
         include_bytes!("tests/fixtures/claim_aggregation/adobe_connected_identities.jpg");
@@ -90,9 +94,32 @@ mod tests {
     // DID document for the `did:web` issuer that both Adobe-signed fixtures above
     // were signed against. Served by a local mock so validation does not depend on
     // reaching the Adobe stage server over the network.
-    #[cfg(not(target_arch = "wasm32"))]
     const CONNECTED_IDENTITIES_DID: &str =
         include_str!("tests/fixtures/claim_aggregation/connected_identities_did.json");
+
+    /// Serves [`CONNECTED_IDENTITIES_DID`] for any request, without opening a
+    /// real socket. `httpmock` (used by [`mock_connected_identities_did`]) needs
+    /// a real TCP listener, which isn't available under WASI, so this resolver
+    /// is what keeps `did:web` resolution hermetic there.
+    struct MockDidResolver;
+
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    impl AsyncHttpResolver for MockDidResolver {
+        async fn http_resolve_async(
+            &self,
+            _request: http::Request<Vec<u8>>,
+        ) -> Result<http::Response<Box<dyn Read>>, HttpResolverError> {
+            Ok(http::Response::builder()
+                .status(200)
+                .header("content-type", "application/did+json")
+                .body(
+                    Box::new(Cursor::new(CONNECTED_IDENTITIES_DID.as_bytes().to_vec()))
+                        as Box<dyn Read>,
+                )
+                .unwrap())
+        }
+    }
 
     /// Start a local mock server that serves the issuer DID document and redirect
     /// `did:web` resolution for the Adobe stage domain to it. The returned
@@ -120,18 +147,43 @@ mod tests {
     #[c2pa_test_async]
     async fn test_connected_identities_valid() {
         crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
+        crate::settings::set_settings_value(
+            "soft_binding.soft_binding_algorithms",
+            [
+                "com.adobe.trustmark.P".to_string(),
+                "com.adobe.icn.dense".to_string(),
+            ],
+        )
+        .unwrap();
+        let mut settings = crate::settings::get_thread_local_settings();
+        // add a CAWG specific trust anchor set
+        let anchors = &mut settings.trust.anchors.unwrap();
+        let mut cawg_anchor: crate::settings::TrustAnchor = anchors[0].clone();
+        cawg_anchor.trust_kind = crate::settings::TrustListKind::CAWG;
+        cawg_anchor.trust_uri = Some("cawg_trust".to_string());
+        cawg_anchor.trusted_ica_issuers = Some(vec![
+                "did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9".to_string(),
+                "did:web:connected-identities.identity-stage.adobe.com".to_string(),
+            ]);
+        anchors.push(cawg_anchor);
+        settings.trust.anchors = Some(anchors.clone());
 
-        #[cfg(not(target_arch = "wasm32"))]
-        let _did_server = mock_connected_identities_did();
+        // Serve did:web resolution from an in-process resolver rather than a real
+        // network connection, so this test is hermetic on every target (including
+        // WASI, which has no compatible TCP-based mock server).
+        let context = Context::default()
+            .with_settings(settings)
+            .unwrap()
+            .with_resolver_async(MockDidResolver);
 
         let mut stream = Cursor::new(CONNECTED_IDENTITIES_VALID);
 
-        let reader = Reader::default()
+        let reader = Reader::from_context(context)
             .with_stream_async("image/jpeg", &mut stream)
             .await
             .unwrap();
 
-        //println!("validation results: {}", reader);
+        println!("validation results: {}", reader);
 
         assert!(reader
             .validation_results()
@@ -155,10 +207,10 @@ mod tests {
         )
         .unwrap();
         let settings = crate::settings::get_thread_local_settings();
-        let context = crate::Context::new().with_settings(settings).unwrap();
-
-        #[cfg(not(target_arch = "wasm32"))]
-        let _did_server = mock_connected_identities_did();
+        let context = Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .with_resolver_async(MockDidResolver);
 
         let mut stream = Cursor::new(MULTIPLE_IDENTITIES_VALID);
 
@@ -184,7 +236,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[c2pa_test_async]
     async fn ica_issuer_untrusted_does_not_affect_manifest_state() {
-        use crate::{Context, Settings};
+        use crate::Settings;
 
         let _did_server = mock_connected_identities_did();
 

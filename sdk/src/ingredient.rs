@@ -17,7 +17,7 @@ use std::path::Path;
 use std::{borrow::Cow, io::Cursor, sync::Arc};
 
 use async_generic::async_generic;
-use log::{debug, error};
+use log::debug;
 #[cfg(feature = "json_schema")]
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -28,9 +28,9 @@ use crate::Manifest;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionData},
     assertions::{
-        self, labels, AssertionMetadata, AssetType, CertificateStatus, EmbeddedData, Relationship,
+        self, labels, AssertionMetadata, AssetType, CertificateStatus, DigitalSourceType,
+        EmbeddedData, Relationship,
     },
-    asset_io::CAIRead,
     claim::{Claim, ClaimAssetData},
     context::Context,
     crypto::base64,
@@ -44,6 +44,7 @@ use crate::{
         },
     },
     log_item,
+    read_seek::ReadSeek,
     resource_store::{ResourceRef, ResourceStore, StoreResolver},
     settings::get_thread_local_settings,
     status_tracker::StatusTracker,
@@ -108,6 +109,11 @@ pub struct Ingredient {
     #[serde(skip_serializing_if = "Option::is_none")]
     active_manifest: Option<String>,
 
+    /// One of the source types defined at <https://cv.iptc.org/newscodes/digitalsourcetype/>
+    /// or in this specification. Cannot be combined with `activeManifest`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    digital_source_type: Option<DigitalSourceType>,
+
     /// Validation status (Ingredient v1 & v2)
     #[serde(skip_serializing_if = "Option::is_none")]
     validation_status: Option<Vec<ValidationStatus>>,
@@ -156,7 +162,7 @@ pub struct Ingredient {
 }
 
 fn default_instance_id() -> String {
-    format!("xmp:iid:{}", Uuid::new_v4())
+    format!("xmp.iid:{}", Uuid::new_v4())
 }
 
 fn default_relationship() -> Relationship {
@@ -350,6 +356,11 @@ impl Ingredient {
         self.active_manifest.as_deref()
     }
 
+    /// Returns the [`DigitalSourceType`] of this ingredient, if one exists.
+    pub fn digital_source_type(&self) -> Option<&DigitalSourceType> {
+        self.digital_source_type.as_ref()
+    }
+
     /// Returns a reference to C2PA manifest data if it exists.
     ///
     /// manifest_data is the binary form of a manifest store in .c2pa format.
@@ -485,6 +496,14 @@ impl Ingredient {
     /// Sets the label for the active manifest in the manifest data.
     pub fn set_active_manifest<S: Into<String>>(&mut self, label: S) -> &mut Self {
         self.active_manifest = Some(label.into());
+        self
+    }
+
+    /// Sets the [`DigitalSourceType`] for this ingredient.
+    ///
+    /// Cannot be combined with an active manifest.
+    pub fn set_digital_source_type(&mut self, digital_source_type: DigitalSourceType) -> &mut Self {
+        self.digital_source_type = Some(digital_source_type);
         self
     }
 
@@ -629,7 +648,7 @@ impl Ingredient {
     }
 
     /// Generates an `Ingredient` from a stream, including XMP info.
-    pub fn from_stream_info<F, S>(stream: &mut dyn CAIRead, format: F, title: S) -> Self
+    pub fn from_stream_info<F, S>(stream: &mut dyn ReadSeek, format: F, title: S) -> Self
     where
         F: Into<String>,
         S: Into<String>,
@@ -660,6 +679,7 @@ impl Ingredient {
         result: Result<Store>,
         manifest_bytes: Option<Vec<u8>>,
         validation_log: &StatusTracker,
+        context: &Context,
     ) -> Result<()> {
         match result {
             Ok(store) => {
@@ -725,25 +745,32 @@ impl Ingredient {
                 self.validation_status = Some(vec![status]);
                 Ok(())
             }
-            Err(e) => {
-                // we can ignore the error here because it should have a log entry corresponding to it
-                debug!("ingredient {e:?}");
+            Err(err) => match context.settings().builder.ignore_ingredient_errors {
+                true => {
+                    debug!("ignoring ingredient error: {err:?}");
 
-                let mut results = ValidationResults::default();
-                // convert any other error to a validation status
-                let statuses: Vec<ValidationStatus> = validation_log
-                    .logged_items()
-                    .iter()
-                    .filter_map(ValidationStatus::from_log_item)
-                    .collect();
+                    let statuses: Vec<ValidationStatus> = validation_log
+                        .logged_items()
+                        .iter()
+                        .filter_map(ValidationStatus::from_log_item)
+                        .collect();
 
-                for status in statuses {
-                    results.add_status(status.clone());
+                    let mut results = ValidationResults::default();
+                    for status in statuses {
+                        results.add_status(status);
+                    }
+
+                    // this is a hard error, which means it was never logged as a validation
+                    // status, so convert the error itself into a `general.error` status
+                    results.add_status(ValidationStatus::from_error(&err));
+
+                    self.validation_status = results.validation_errors();
+                    self.validation_results = Some(results);
+
+                    Ok(())
                 }
-                self.validation_status = results.validation_errors();
-                self.validation_results = Some(results);
-                Ok(())
-            }
+                false => Err(err),
+            },
         }
     }
 
@@ -759,7 +786,7 @@ impl Ingredient {
     ///
     /// Pass an explicit [`Context`](crate::Context) via `add_stream_internal` instead.
     #[deprecated(note = "Use with_stream with an explicit Context instead")]
-    pub fn from_stream(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
+    pub fn from_stream(format: &str, stream: &mut dyn ReadSeek) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
         let settings = get_thread_local_settings();
         let context = Context::new().with_settings(settings)?;
@@ -784,7 +811,7 @@ impl Ingredient {
     pub(crate) fn with_stream<S: Into<String>>(
         mut self,
         format: S,
-        stream: &mut dyn CAIRead,
+        stream: &mut dyn ReadSeek,
         context: &Context,
     ) -> Result<Self> {
         let format = format.into();
@@ -829,7 +856,7 @@ impl Ingredient {
     fn add_stream_internal(
         mut self,
         format: &str,
-        stream: &mut dyn CAIRead,
+        stream: &mut dyn ReadSeek,
         context: &Context,
     ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
@@ -892,7 +919,7 @@ impl Ingredient {
         }
 
         // set validation status from result and log
-        self.update_validation_status(result, manifest_bytes, &validation_log)?;
+        self.update_validation_status(result, manifest_bytes, &validation_log, context)?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
@@ -925,7 +952,7 @@ impl Ingredient {
     #[deprecated(
         note = "Use with_stream_async with an explicit Context instead of relying on thread-local settings."
     )]
-    pub async fn from_stream_async(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
+    pub async fn from_stream_async(format: &str, stream: &mut dyn ReadSeek) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
         let settings = get_thread_local_settings();
         let context = Context::new().with_settings(settings)?;
@@ -934,7 +961,7 @@ impl Ingredient {
 
     pub(crate) async fn from_stream_async_with_settings(
         format: &str,
-        stream: &mut dyn CAIRead,
+        stream: &mut dyn ReadSeek,
         context: &Context,
     ) -> Result<Self> {
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
@@ -982,7 +1009,7 @@ impl Ingredient {
             };
 
         // set validation status from result and log
-        ingredient.update_validation_status(result, manifest_bytes, &validation_log)?;
+        ingredient.update_validation_status(result, manifest_bytes, &validation_log, context)?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
@@ -1029,6 +1056,7 @@ impl Ingredient {
             document_id: ingredient_assertion.document_id,
             relationship: ingredient_assertion.relationship,
             active_manifest,
+            digital_source_type: ingredient_assertion.digital_source_type,
             validation_results: ingredient_assertion.validation_results,
             metadata: ingredient_assertion.metadata,
             description: ingredient_assertion.description,
@@ -1073,7 +1101,7 @@ impl Ingredient {
                 }
                 None => {
                     if !store.is_uri_redacted(claim_label, &hashed_uri.url()) {
-                        error!("failed to get {} from {}", hashed_uri.url(), ingredient_uri);
+                        debug!("failed to get {} from {}", hashed_uri.url(), ingredient_uri);
                         validation_status.push(
                             ValidationStatus::new_failure(
                                 validation_status::ASSERTION_MISSING.to_string(),
@@ -1107,7 +1135,7 @@ impl Ingredient {
                 }
                 None => {
                     if !store.is_uri_redacted(claim_label, &data_uri.url()) {
-                        error!("failed to get {} from {}", data_uri.url(), ingredient_uri);
+                        debug!("failed to get {} from {}", data_uri.url(), ingredient_uri);
                         validation_status.push(
                             ValidationStatus::new_failure(
                                 validation_status::ASSERTION_MISSING.to_string(),
@@ -1371,6 +1399,7 @@ impl Ingredient {
                 ingredient_assertion.active_manifest = active_manifest;
                 ingredient_assertion.claim_signature = claim_signature;
                 ingredient_assertion.validation_results = self.validation_results.clone();
+                ingredient_assertion.digital_source_type = self.digital_source_type.clone();
             }
             _ => {}
         }
@@ -1434,7 +1463,7 @@ impl Ingredient {
     pub async fn from_manifest_and_asset_stream_async<M: Into<Vec<u8>>>(
         manifest_bytes: M,
         format: &str,
-        stream: &mut dyn CAIRead,
+        stream: &mut dyn ReadSeek,
     ) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
         let settings = get_thread_local_settings();
@@ -1474,7 +1503,12 @@ impl Ingredient {
             };
 
         // set validation status from result and log
-        ingredient.update_validation_status(result, Some(manifest_bytes), &validation_log)?;
+        ingredient.update_validation_status(
+            result,
+            Some(manifest_bytes),
+            &validation_log,
+            &context,
+        )?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
@@ -1729,6 +1763,18 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_digital_source_type() {
+        let mut ingredient = Ingredient::new("title", "format", "instance_id");
+        assert_eq!(ingredient.digital_source_type(), None);
+
+        ingredient.set_digital_source_type(DigitalSourceType::TrainedAlgorithmicData);
+        assert_eq!(
+            ingredient.digital_source_type(),
+            Some(&DigitalSourceType::TrainedAlgorithmicData)
+        );
+    }
+
     #[c2pa_test_async]
     async fn test_stream_async_jpg() {
         let title = "Test Image";
@@ -1888,6 +1934,8 @@ mod tests {
 
     #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory_and_bad_manifest() {
+        crate::settings::set_settings_value("builder.ignore_ingredient_errors", true).unwrap();
+
         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let bad_manifest_bytes = b"not a real c2pa manifest".to_vec();
         let format = "image/jpeg";
@@ -1900,7 +1948,8 @@ mod tests {
         .expect("ingredient should load even with a bad manifest");
 
         assert_eq!(ingredient.format(), Some(format));
-        assert!(ingredient.validation_status().is_some());
+        let statuses = ingredient.validation_status().unwrap();
+        assert_eq!(statuses[0].code(), validation_status::GENERAL_ERROR);
     }
 
     #[test]
@@ -2061,20 +2110,8 @@ mod tests {
     #[cfg(all(feature = "file_io", feature = "add_thumbnails"))]
     fn test_jpg_prerelease() {
         const PRERELEASE_JPEG: &str = "prerelease.jpg";
-        let ingredient = load_ingredient(PRERELEASE_JPEG).expect("load_ingredient");
-        stats(&ingredient);
-
-        println!("ingredient = {ingredient}");
-        assert_eq!(ingredient.title(), Some(PRERELEASE_JPEG));
-        assert_eq!(ingredient.format(), Some("image/jpeg"));
-        test_thumbnail(&ingredient, "image/jpeg");
-        assert!(ingredient.provenance().is_some());
-        assert_eq!(ingredient.manifest_data(), None);
-        assert!(ingredient.validation_status().is_some());
-        assert_eq!(
-            ingredient.validation_status().unwrap()[0].code(),
-            validation_status::STATUS_PRERELEASE
-        );
+        let ingredient = load_ingredient(PRERELEASE_JPEG);
+        assert!(matches!(ingredient, Err(Error::PrereleaseError)));
     }
 
     #[test]
@@ -2089,8 +2126,7 @@ mod tests {
     #[test]
     #[cfg(feature = "fetch_remote_manifests")]
     fn test_jpg_cloud_failure() {
-        let ingredient = load_ingredient("cloudx.jpg").expect("load_ingredient");
-        println!("ingredient = {ingredient}");
+        let ingredient = load_ingredient("cloudx.jpg").unwrap();
         assert!(ingredient.validation_status().is_some());
         assert_eq!(
             ingredient.validation_status().unwrap()[0].code(),

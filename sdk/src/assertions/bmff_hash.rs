@@ -42,20 +42,6 @@ const MAX_MDAT_BOXES: usize = 4;
 /// scenarios
 const MAX_MERKLE_LEAVES_SIZE: u64 = 32 * 1024 * 1024;
 
-/// Output size in bytes for a BmffHash-supported hash algorithm, derived from
-/// the actual `sha2` hasher types via the `Digest` trait so the values stay in
-/// sync with what `hash_stream_by_alg` produces.
-fn hash_alg_size_in_bytes(alg: &str) -> crate::Result<u64> {
-    match alg {
-        "sha256" => Ok(<Sha256 as Digest>::output_size() as u64),
-        "sha384" => Ok(<Sha384 as Digest>::output_size() as u64),
-        "sha512" => Ok(<Sha512 as Digest>::output_size() as u64),
-        other => Err(Error::BadParam(format!(
-            "unsupported hash alg for Merkle leaf sizing: {other}"
-        ))),
-    }
-}
-
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
@@ -63,12 +49,13 @@ use crate::{
         bmff_to_jumbf_exclusions, read_bmff_c2pa_boxes, BmffSampleReader, BoxInfoLite,
         C2PABmffBoxes,
     },
-    asset_io::CAIRead,
+    asset_io::ReadSeek,
     cbor_types::UriT,
+    settings::Settings,
     utils::{
         hash_utils::{
-            concat_and_hash, hash_stream_by_alg, hash_stream_by_alg_with_progress, vec_compare,
-            verify_stream_by_alg, HashRange, Hasher,
+            concat_and_hash, hash_size_by_alg, hash_stream_by_alg,
+            hash_stream_by_alg_with_progress, vec_compare, verify_stream_by_alg, HashRange, Hasher,
         },
         io_utils::stream_len,
         merkle::{C2PAMerkleTree, MerkleNode},
@@ -417,7 +404,7 @@ impl BmffHash {
 
     pub fn add_merkle_map_for_mdats(
         &mut self,
-        asset_stream: &mut dyn CAIRead,
+        asset_stream: &mut dyn ReadSeek,
         merkle_chunk_size: usize,
         max_proofs: usize,
     ) -> crate::error::Result<()> {
@@ -520,12 +507,7 @@ impl BmffHash {
         }
 
         let alg = self.alg.clone().unwrap_or_else(|| "sha256".to_string());
-        let hash_len = match alg.as_str() {
-            "sha256" => 32,
-            "sha384" => 48,
-            "sha512" => 64,
-            _ => return Err(Error::UnsupportedType),
-        };
+        let hash_len = hash_size_by_alg(&alg)?;
         let fixed_block_size = if chunk_size_kb > 0 {
             Some(1024 * chunk_size_kb as u64)
         } else {
@@ -635,6 +617,15 @@ impl BmffHash {
 
     // Adds default exclusion ranges for BMFF hashes.  Add as needed.
     pub fn set_default_exclusions(&mut self) -> &[ExclusionsMap] {
+        self.set_default_exclusions_with_options(&Settings::default())
+    }
+
+    /// Like [`set_default_exclusions`](Self::set_default_exclusions), but takes
+    /// the full [`Settings`] so new BMFF-hash-related options can be added
+    /// without another signature change. Currently only
+    /// [`BuilderSettings::bmff_hash_exclude_free_and_skip_boxes`](crate::settings::builder::BuilderSettings::bmff_hash_exclude_free_and_skip_boxes)
+    /// is consulted.
+    pub fn set_default_exclusions_with_options(&mut self, settings: &Settings) -> &[ExclusionsMap] {
         let exclusions = &mut self.exclusions;
 
         let cp2a_id: [u8; 16] = [
@@ -668,16 +659,18 @@ impl BmffHash {
             exclusions.push(mfra);
         }
 
-        // /free exclusion
-        if !exclusions.iter().any(|e| e.xpath == "/free") {
-            let free = ExclusionsMap::new("/free".to_owned());
-            exclusions.push(free);
-        }
+        if settings.builder.bmff_hash_exclude_free_and_skip_boxes {
+            // /free exclusion
+            if !exclusions.iter().any(|e| e.xpath == "/free") {
+                let free = ExclusionsMap::new("/free".to_owned());
+                exclusions.push(free);
+            }
 
-        // /skip exclusion
-        if !exclusions.iter().any(|e| e.xpath == "/skip") {
-            let skip = ExclusionsMap::new("/skip".to_owned());
-            exclusions.push(skip);
+            // /skip exclusion
+            if !exclusions.iter().any(|e| e.xpath == "/skip") {
+                let skip = ExclusionsMap::new("/skip".to_owned());
+                exclusions.push(skip);
+            }
         }
 
         /*  no longer mandatory
@@ -738,12 +731,7 @@ impl BmffHash {
     pub fn add_place_holder_hash(&mut self) -> crate::error::Result<()> {
         // make sure hash space is reserved
         if let Some(alg) = &self.alg {
-            match alg.as_str() {
-                "sha256" => self.set_hash([0u8; 32].to_vec()),
-                "sha384" => self.set_hash([0u8; 48].to_vec()),
-                "sha512" => self.set_hash([0u8; 64].to_vec()),
-                _ => return Err(Error::UnsupportedType),
-            }
+            self.set_hash(vec![0u8; hash_size_by_alg(alg)?]);
         }
         Ok(())
     }
@@ -1233,7 +1221,7 @@ impl BmffHash {
     */
     pub fn verify_stream_hash(
         &self,
-        reader: &mut dyn CAIRead,
+        reader: &mut dyn ReadSeek,
         alg: Option<&str>,
     ) -> crate::error::Result<()> {
         self.verify_stream_hash_with_progress(reader, alg, &mut |_, _| Ok(()))
@@ -1250,7 +1238,7 @@ impl BmffHash {
     /// known until the file structure is parsed.
     pub(crate) fn verify_stream_hash_with_progress<F>(
         &self,
-        reader: &mut dyn CAIRead,
+        reader: &mut dyn ReadSeek,
         alg: Option<&str>,
         progress: &mut F,
     ) -> crate::error::Result<()>
@@ -1572,7 +1560,7 @@ impl BmffHash {
     #[cfg(feature = "file_io")]
     pub fn verify_stream_segments(
         &self,
-        init_stream: &mut dyn CAIRead,
+        init_stream: &mut dyn ReadSeek,
         fragment_paths: &Vec<std::path::PathBuf>,
         alg: Option<&str>,
     ) -> crate::Result<()> {
@@ -1584,7 +1572,7 @@ impl BmffHash {
     #[cfg(feature = "file_io")]
     pub(crate) fn verify_stream_segments_with_progress<F>(
         &self,
-        init_stream: &mut dyn CAIRead,
+        init_stream: &mut dyn ReadSeek,
         fragment_paths: &Vec<std::path::PathBuf>,
         alg: Option<&str>,
         progress: &mut F,
@@ -1712,8 +1700,8 @@ impl BmffHash {
     // Used to verify fragmented BMFF assets spread across multiple file.
     pub fn verify_stream_segment(
         &self,
-        init_stream: &mut dyn CAIRead,
-        fragment_stream: &mut dyn CAIRead,
+        init_stream: &mut dyn ReadSeek,
+        fragment_stream: &mut dyn ReadSeek,
         alg: Option<&str>,
     ) -> crate::Result<()> {
         self.verify_stream_segment_with_progress(init_stream, fragment_stream, alg, &mut |_, _| {
@@ -1723,8 +1711,8 @@ impl BmffHash {
 
     pub(crate) fn verify_stream_segment_with_progress<F>(
         &self,
-        init_stream: &mut dyn CAIRead,
-        fragment_stream: &mut dyn CAIRead,
+        init_stream: &mut dyn ReadSeek,
+        fragment_stream: &mut dyn ReadSeek,
         alg: Option<&str>,
         progress: &mut F,
     ) -> crate::Result<()>
@@ -2030,13 +2018,8 @@ impl BmffHash {
             local_id,
             count: fragment_paths.len(),
             alg: Some(alg.to_owned()),
-            init_hash: match alg {
-                // placeholder init hash to be filled once manifest is inserted into init segment
-                "sha256" => Some(ByteBuf::from([0u8; 32].to_vec())),
-                "sha384" => Some(ByteBuf::from([0u8; 48].to_vec())),
-                "sha512" => Some(ByteBuf::from([0u8; 64].to_vec())),
-                _ => return Err(Error::UnsupportedType),
-            },
+            // placeholder init hash to be filled once manifest is inserted into init segment
+            init_hash: Some(ByteBuf::from(vec![0u8; hash_size_by_alg(alg)?])),
             hashes: VecByteBuf(hashes),
             fixed_block_size: None,
             variable_block_sizes: None,
@@ -2067,7 +2050,7 @@ impl BmffHash {
             .as_ref()
             .or(self.alg.as_ref())
             .ok_or(Error::BadParam("alg is required".to_string()))?;
-        let leaf_size = hash_alg_size_in_bytes(alg)?;
+        let leaf_size = hash_size_by_alg(alg)? as u64;
         if num_leaves.saturating_mul(leaf_size) > MAX_MERKLE_LEAVES_SIZE {
             return Err(Error::InvalidAsset(format!(
                 "Merkle tree leaf memory ({num_leaves} leaves × {leaf_size} B) exceeds maximum ({MAX_MERKLE_LEAVES_SIZE} bytes)"
@@ -2079,7 +2062,7 @@ impl BmffHash {
     // create Merkle tree for MerkleMap
     fn create_merkle_tree_for_merkle_map(
         &self,
-        reader: &mut dyn CAIRead,
+        reader: &mut dyn ReadSeek,
         box_info: &BoxInfoLite,
         merkle_map: &mut MerkleMap,
     ) -> crate::Result<C2PAMerkleTree> {
@@ -2160,7 +2143,7 @@ impl BmffHash {
     // create a MerkleMap for a specific range of mdat box
     pub(crate) fn create_merkle_map_for_mdat_box(
         &self,
-        reader: &mut dyn CAIRead,
+        reader: &mut dyn ReadSeek,
         box_info: &BoxInfoLite,
         merkle_map: &mut MerkleMap,
         max_proofs: usize,
@@ -2250,7 +2233,7 @@ impl BmffHash {
     // validate the MerkleMap for the mdat box
     pub(crate) fn validate_merkle_maps_mdat_boxes(
         &self,
-        reader: &mut dyn CAIRead,
+        reader: &mut dyn ReadSeek,
         c2pa_boxes: &C2PABmffBoxes,
     ) -> crate::Result<()> {
         let mm_vec = self
@@ -2506,6 +2489,32 @@ mod bmff_hash_tests {
     use super::*;
     use crate::asset_handlers::bmff_io::{BoxInfoLite, C2PABmffBoxes};
 
+    /// `set_default_exclusions` (no args) must keep excluding `/free`/`/skip`,
+    /// matching its existing, documented default behavior.
+    #[test]
+    fn set_default_exclusions_excludes_free_and_skip() {
+        let mut bmff_hash = BmffHash::new("test", "sha256", None);
+        let exclusions = bmff_hash.set_default_exclusions();
+        assert!(exclusions.iter().any(|e| e.xpath == "/free"));
+        assert!(exclusions.iter().any(|e| e.xpath == "/skip"));
+    }
+
+    /// `set_default_exclusions_with_options` with the setting off must omit
+    /// `/free`/`/skip` from the exclusion list, so their content is folded
+    /// into the hash.
+    #[test]
+    fn set_default_exclusions_with_options_false_keeps_free_and_skip_hashed() {
+        let mut bmff_hash = BmffHash::new("test", "sha256", None);
+        let mut settings = Settings::default();
+        settings.builder.bmff_hash_exclude_free_and_skip_boxes = false;
+        let exclusions = bmff_hash.set_default_exclusions_with_options(&settings);
+        assert!(!exclusions.iter().any(|e| e.xpath == "/free"));
+        assert!(!exclusions.iter().any(|e| e.xpath == "/skip"));
+        // Other mandatory exclusions are unaffected.
+        assert!(exclusions.iter().any(|e| e.xpath == "/ftyp"));
+        assert!(exclusions.iter().any(|e| e.xpath == "/mfra"));
+    }
+
     fn small_mdat_box_info() -> BoxInfoLite {
         // A standard BMFF mdat box with an 8-byte header and no payload (size = 8).
         // The C2PA spec exclusion always skips 16 bytes; saturating_sub handles the case
@@ -2538,7 +2547,7 @@ mod bmff_hash_tests {
         let bmff_hash = BmffHash::new("test", "sha256", None);
         let box_info = small_mdat_box_info();
         let mut merkle_map = minimal_merkle_map();
-        let mut reader: Box<dyn CAIRead> = Box::new(Cursor::new(vec![0u8; 64]));
+        let mut reader: Box<dyn ReadSeek> = Box::new(Cursor::new(vec![0u8; 64]));
 
         // Must not panic or arithmetic-overflow regardless of the result.
         let _ = bmff_hash.create_merkle_tree_for_merkle_map(
@@ -2667,7 +2676,7 @@ mod bmff_hash_tests {
     fn test_split_bmff_merkle_map_count_exceeds_entries_no_panic() {
         let bmff_hash = make_bmff_hash_with_count(2);
         let c2pa_boxes = make_c2pa_boxes(make_bmff_merkle_entries(1));
-        let mut reader: Box<dyn CAIRead> = Box::new(Cursor::new(vec![0u8; 64]));
+        let mut reader: Box<dyn ReadSeek> = Box::new(Cursor::new(vec![0u8; 64]));
         let result = bmff_hash.validate_merkle_maps_mdat_boxes(reader.as_mut(), &c2pa_boxes);
         assert!(matches!(result, Err(Error::HashMismatch(_))));
     }
@@ -2677,7 +2686,7 @@ mod bmff_hash_tests {
     fn test_split_bmff_merkle_map_count_equals_entries_no_panic() {
         let bmff_hash = make_bmff_hash_with_count(1);
         let c2pa_boxes = make_c2pa_boxes(make_bmff_merkle_entries(1));
-        let mut reader: Box<dyn CAIRead> = Box::new(Cursor::new(vec![0u8; 64]));
+        let mut reader: Box<dyn ReadSeek> = Box::new(Cursor::new(vec![0u8; 64]));
         // Result may be an error (hash mismatch on fake data) but must not panic.
         let _ = bmff_hash.validate_merkle_maps_mdat_boxes(reader.as_mut(), &c2pa_boxes);
     }
@@ -2687,7 +2696,7 @@ mod bmff_hash_tests {
     fn test_split_bmff_merkle_map_count_less_than_entries_no_panic() {
         let bmff_hash = make_bmff_hash_with_count(1);
         let c2pa_boxes = make_c2pa_boxes(make_bmff_merkle_entries(2));
-        let mut reader: Box<dyn CAIRead> = Box::new(Cursor::new(vec![0u8; 64]));
+        let mut reader: Box<dyn ReadSeek> = Box::new(Cursor::new(vec![0u8; 64]));
         // Result may be an error (hash mismatch on fake data) but must not panic.
         let _ = bmff_hash.validate_merkle_maps_mdat_boxes(reader.as_mut(), &c2pa_boxes);
     }
@@ -2716,7 +2725,7 @@ mod bmff_hash_tests {
             xmp_box_size: 0,
         };
 
-        let mut reader: Box<dyn CAIRead> = Box::new(Cursor::new(vec![0u8; 64]));
+        let mut reader: Box<dyn ReadSeek> = Box::new(Cursor::new(vec![0u8; 64]));
         // Must not panic or arithmetic-overflow regardless of the result.
         let _ = bmff_hash.validate_merkle_maps_mdat_boxes(reader.as_mut(), &c2pa_boxes);
     }
@@ -2768,7 +2777,7 @@ mod bmff_hash_tests {
             xmp_box_offset: 0,
         };
 
-        let mut reader: Box<dyn CAIRead> = Box::new(Cursor::new(vec![0u8; 128]));
+        let mut reader: Box<dyn ReadSeek> = Box::new(Cursor::new(vec![0u8; 128]));
         // Must return HashMismatch rather than panic with index-out-of-bounds.
         let result = bmff_hash.validate_merkle_maps_mdat_boxes(reader.as_mut(), &c2pa_boxes);
         assert!(
@@ -2806,7 +2815,7 @@ mod bmff_hash_tests {
             variable_block_sizes: None,
         };
         let bmff_hash = BmffHash::new("test", "sha512", None);
-        let mut reader: Box<dyn CAIRead> =
+        let mut reader: Box<dyn ReadSeek> =
             Box::new(Cursor::new(vec![0u8; (NUM_LEAVES + 16) as usize]));
         let result = bmff_hash.create_merkle_tree_for_merkle_map(
             reader.as_mut(),
@@ -2854,7 +2863,7 @@ mod bmff_hash_tests {
             xmp_box_size: 0,
             xmp_box_offset: 0,
         };
-        let mut reader2: Box<dyn CAIRead> =
+        let mut reader2: Box<dyn ReadSeek> =
             Box::new(Cursor::new(vec![0u8; (bytes_left + 16) as usize]));
         let result2 = bmff_hash2.validate_merkle_maps_mdat_boxes(reader2.as_mut(), &c2pa_boxes2);
         assert!(
@@ -2888,7 +2897,7 @@ mod bmff_hash_tests {
         };
 
         let bmff_hash = BmffHash::new("test", "sha512", None);
-        let mut reader: Box<dyn CAIRead> = Box::new(Cursor::new(vec![0u8; box_size as usize]));
+        let mut reader: Box<dyn ReadSeek> = Box::new(Cursor::new(vec![0u8; box_size as usize]));
         let result = bmff_hash.create_merkle_tree_for_merkle_map(
             reader.as_mut(),
             &oversized_box,

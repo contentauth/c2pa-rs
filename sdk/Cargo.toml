@@ -137,7 +137,7 @@ pem = "4.0.0"
 pkcs8 = "0.10.2"
 png_pong = "0.10.0"
 quick-xml = "0.41.0"
-rand = "0.8.6"
+rand = "0.10.2"
 rand_chacha = { version = "0.9.0", features = ["os_rng"] }
 range-set = "0.1.0"
 rasn = "0.28.13"
@@ -224,6 +224,11 @@ getrandom = { version = "0.3.4", features = ["wasm_js"] }
 # Also enable getrandom 0.2 with js feature for other dependencies (rand, tempfile, config)
 # This is needed until all dependencies migrate to getrandom 0.3
 getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
+# `rand` 0.10 depends on getrandom 0.4, which also needs the wasm_js feature
+# enabled for wasm32 support.
+getrandom_04 = { package = "getrandom", version = "0.4", features = [
+    "wasm_js",
+] }
 uuid = { version = "1.23.2", features = ["serde", "v4", "js"] }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
@@ -254,8 +259,15 @@ glob = "0.3.3"
 hex-literal = "1.1.0"
 jumbf = "0.7.0"
 c2pa_macros = { path = "../macros" }
-mockall = "0.14.0"
-jsonschema = { version = "0.45.1", default-features = false }
+mockall = "0.15.0"
+jsonschema = { version = "0.49.4", default-features = false }
+
+# `ed25519-dalek`'s `SigningKey::generate` requires an `rand_core` 0.6 RNG,
+# which is older than the `rand`/`rand_core` version used elsewhere in this
+# crate. The `getrandom` feature is required for `rand_core_06::OsRng`.
+rand_core_06 = { package = "rand_core", version = "0.6.4", features = [
+    "getrandom",
+] }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dev-dependencies]
 wasm-bindgen-test = "0.3.72"

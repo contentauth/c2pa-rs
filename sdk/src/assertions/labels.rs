@@ -62,6 +62,11 @@ pub const SOFT_BINDING: &str = "c2pa.soft-binding";
 /// See [Cloud data - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_cloud_data).
 pub const CLOUD_DATA: &str = "c2pa.cloud-data";
 
+/// Label for an external reference assertion.
+///
+/// See [External reference - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_external_reference).
+pub const EXTERNAL_REFERENCE: &str = "c2pa.external-reference";
+
 /// Label prefix for a thumbnail assertion.
 ///
 /// See [Thumbnail - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_thumbnail).
@@ -247,6 +252,21 @@ pub const HASH_LABELS: [&str; 4] = [DATA_HASH, BOX_HASH, BMFF_HASH, COLLECTION_H
 /// Array of all non-redactable labels
 pub const NON_REDACTABLE_LABELS: [&str; 5] =
     [ACTIONS, DATA_HASH, BOX_HASH, BMFF_HASH, COLLECTION_HASH];
+
+/// Returns `true` if `label` names a hard binding assertion (`c2pa.hash.data`,
+/// any `c2pa.hash.bmff.*`, `c2pa.hash.boxes`, `c2pa.hash.collection.data`, or
+/// `c2pa.hash.multi-asset`).
+///
+/// `BMFF_HASH` is matched on its base label (version/instance suffix stripped)
+/// so it accepts `.v2`/`.v3` variants without accepting a fake like
+/// `c2pa.hash.bmfffake`; the others are compared exactly.
+pub(crate) fn is_hard_binding_label(label: &str) -> bool {
+    label == DATA_HASH
+        || label == BOX_HASH
+        || label == COLLECTION_HASH
+        || label == MULTI_ASSET_HASH
+        || base(label) == BMFF_HASH
+}
 
 /// Must have a label that ends in '.metadata' and is preceded by an entity-specific namespace.
 /// For example, a 'com.litware.metadata' assertion would be valid.
@@ -495,5 +515,44 @@ mod tests {
             parse_label("c2pa.ingredient.V2"),
             ("c2pa.ingredient.V2", 1, 0)
         );
+    }
+
+    /// Regression: only the real hard-binding assertion types (and BMFF's
+    /// versioned variants) count, not any label with a `c2pa.hash.` prefix.
+    /// A fake label like `c2pa.hash.fake` must be rejected - this used to be
+    /// accepted by a naive `starts_with("c2pa.hash.")` check in the CAWG
+    /// identity assertion's hard-binding-presence check.
+    #[test]
+    fn test_is_hard_binding_label() {
+        for label in [
+            DATA_HASH,
+            BOX_HASH,
+            COLLECTION_HASH,
+            MULTI_ASSET_HASH,
+            BMFF_HASH,
+            "c2pa.hash.bmff.v2",
+            "c2pa.hash.bmff.v3",
+        ] {
+            assert!(is_hard_binding_label(label), "expected {label} to match");
+        }
+
+        for label in [
+            "c2pa.hash.fake",
+            "c2pa.hash",
+            "c2pa.hash.",
+            "c2pa.hash.databoxes",
+            "c2pa.actions",
+            // BMFF must match on its base, not a bare prefix. A trailing
+            // segment is only stripped when it's a real version token
+            // (`.vN`), so these fakes stay distinct from the base.
+            "c2pa.hash.bmfffake",
+            "c2pa.hash.bmff.fake",
+            "c2pa.hash.bmff.vfake",
+        ] {
+            assert!(
+                !is_hard_binding_label(label),
+                "expected {label} to be rejected"
+            );
+        }
     }
 }

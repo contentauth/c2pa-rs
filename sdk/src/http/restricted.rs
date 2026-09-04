@@ -40,14 +40,17 @@
 //! ["Features"]: crate#features
 //! [`Core::allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
 
-use std::io::Read;
+use std::{
+    io::Read,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+};
 
 use async_trait::async_trait;
 use http::{Request, Response, Uri};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
-    http::{AsyncHttpResolver, HttpResolverError, SyncHttpResolver},
+    http::{sanitize_for_log, AsyncHttpResolver, HttpResolverError, SyncHttpResolver},
     Result,
 };
 
@@ -107,7 +110,7 @@ impl<T: SyncHttpResolver> SyncHttpResolver for RestrictedResolver<T> {
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
         if !self.is_uri_allowed(request.uri()) {
             return Err(HttpResolverError::UriDisallowed {
-                uri: request.uri().to_string(),
+                uri: sanitize_for_log(&request.uri().to_string()),
             });
         }
         self.inner.http_resolve(request)
@@ -123,7 +126,7 @@ impl<T: AsyncHttpResolver + Sync> AsyncHttpResolver for RestrictedResolver<T> {
     ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
         if !self.is_uri_allowed(request.uri()) {
             return Err(HttpResolverError::UriDisallowed {
-                uri: request.uri().to_string(),
+                uri: sanitize_for_log(&request.uri().to_string()),
             });
         }
         self.inner.http_resolve_async(request).await
@@ -279,6 +282,287 @@ pub(crate) fn is_uri_allowed(patterns: &[HostPattern], uri: &Uri) -> bool {
     }
 
     false
+}
+
+/// Maximum number of HTTP redirects [`RedirectResolver`] will follow before giving up.
+const MAX_REDIRECTS: usize = 10;
+
+/// Resolver wrapper that follows HTTP redirects at the SDK layer, validating each hop.
+///
+/// The underlying client is configured not to follow redirects on its own (`max_redirects(0)` /
+/// `redirect::Policy::none()`), so each 3xx surfaces here as a bare response. This wrapper then:
+///
+/// - if `allow_redirects` is `false`, returns [`HttpResolverError::RedirectDisallowed`] rather than
+///   following;
+/// - otherwise resolves the `Location` (relative locations are resolved against the current URL)
+///   and, if the target is a non-globally-routable/internal address ([`host_is_non_global`]),
+///   returns [`HttpResolverError::RedirectTargetDisallowed`] (SSRF protection, CAI-12574);
+/// - otherwise re-issues the request to the target through the wrapped resolver, preserving the
+///   method and body, up to [`MAX_REDIRECTS`] hops.
+///
+/// This wrapper sits *outside* [`RestrictedResolver`], so each re-issued hop passes back through the
+/// allow-list (when one is configured) as well as the internal-address check above.
+#[derive(Debug)]
+pub(crate) struct RedirectResolver<T> {
+    inner: T,
+    allow_redirects: bool,
+}
+
+impl<T> RedirectResolver<T> {
+    /// Wraps `inner`. If `allow_redirects` is false, no redirect is followed.
+    pub(crate) fn new(inner: T, allow_redirects: bool) -> Self {
+        Self {
+            inner,
+            allow_redirects,
+        }
+    }
+
+    /// Inspects a response and decides what to do next.
+    ///
+    /// Returns `Ok(None)` if the response is not a redirect (the caller returns it as-is), or
+    /// `Ok(Some(target))` with the validated redirect target to re-issue. Errors if redirects are
+    /// disabled or the target is disallowed.
+    fn redirect_target<B>(
+        &self,
+        from_uri: &Uri,
+        response: &Response<B>,
+    ) -> Result<Option<Uri>, HttpResolverError> {
+        let Some(location) = redirect_location(response) else {
+            return Ok(None);
+        };
+
+        if !self.allow_redirects {
+            return Err(HttpResolverError::RedirectDisallowed {
+                uri: sanitize_for_log(&from_uri.to_string()),
+                location: sanitize_for_log(&location),
+            });
+        }
+
+        let target = resolve_redirect_target(from_uri, &location)?;
+        if host_is_non_global(&target) {
+            return Err(HttpResolverError::RedirectTargetDisallowed {
+                uri: sanitize_for_log(&from_uri.to_string()),
+                location: sanitize_for_log(&target.to_string()),
+            });
+        }
+
+        Ok(Some(target))
+    }
+}
+
+impl<T: SyncHttpResolver> SyncHttpResolver for RedirectResolver<T> {
+    fn http_resolve(
+        &self,
+        mut request: Request<Vec<u8>>,
+    ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+        for _ in 0..=MAX_REDIRECTS {
+            let from_uri = request.uri().clone();
+            let method = request.method().clone();
+            let headers = request.headers().clone();
+            let body = request.body().clone();
+
+            let response = self.inner.http_resolve(request)?;
+
+            match self.redirect_target(&from_uri, &response)? {
+                None => return Ok(response),
+                Some(target) => {
+                    request = build_redirected_request(method, headers, body, target)?;
+                }
+            }
+        }
+
+        Err(HttpResolverError::TooManyRedirects {
+            uri: sanitize_for_log(&request.uri().to_string()),
+        })
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl<T: AsyncHttpResolver + Sync> AsyncHttpResolver for RedirectResolver<T> {
+    async fn http_resolve_async(
+        &self,
+        mut request: Request<Vec<u8>>,
+    ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+        for _ in 0..=MAX_REDIRECTS {
+            let from_uri = request.uri().clone();
+            let method = request.method().clone();
+            let headers = request.headers().clone();
+            let body = request.body().clone();
+
+            let response = self.inner.http_resolve_async(request).await?;
+
+            match self.redirect_target(&from_uri, &response)? {
+                None => return Ok(response),
+                Some(target) => {
+                    request = build_redirected_request(method, headers, body, target)?;
+                }
+            }
+        }
+
+        Err(HttpResolverError::TooManyRedirects {
+            uri: sanitize_for_log(&request.uri().to_string()),
+        })
+    }
+}
+
+/// Returns the redirect target from a response's `Location` header if it is an HTTP redirect (a 3xx
+/// status carrying a `Location`), otherwise `None`. A 3xx without a `Location` (e.g.
+/// `304 Not Modified`) is not treated as a redirect.
+fn redirect_location<B>(response: &Response<B>) -> Option<String> {
+    if !response.status().is_redirection() {
+        return None;
+    }
+
+    response
+        .headers()
+        .get(http::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_owned())
+}
+
+/// Resolves a redirect `Location` (absolute or relative) against the request's current URI.
+fn resolve_redirect_target(base: &Uri, location: &str) -> Result<Uri, HttpResolverError> {
+    let base_url =
+        url::Url::parse(&base.to_string()).map_err(|e| HttpResolverError::Other(Box::new(e)))?;
+
+    let target = base_url
+        .join(location)
+        .map_err(|e| HttpResolverError::Other(Box::new(e)))?;
+
+    target
+        .as_str()
+        .parse::<Uri>()
+        .map_err(|e| HttpResolverError::Http(http::Error::from(e)))
+}
+
+/// Builds the follow-up request for a redirect, preserving the original method and body.
+///
+/// `Host` is dropped so the client recomputes it for the new authority. Credential-bearing headers
+/// (`Authorization`, `Cookie`, `Proxy-Authorization`) are also dropped: a redirect can cross origins,
+/// and forwarding credentials to the redirect target would leak them to a different host.
+fn build_redirected_request(
+    method: http::Method,
+    headers: http::HeaderMap,
+    body: Vec<u8>,
+    target: Uri,
+) -> Result<Request<Vec<u8>>, HttpResolverError> {
+    let mut builder = Request::builder().method(method).uri(target);
+
+    for (name, value) in headers.iter() {
+        let drop = name == http::header::HOST
+            || name == http::header::AUTHORIZATION
+            || name == http::header::COOKIE
+            || name == http::header::PROXY_AUTHORIZATION;
+        if !drop {
+            builder = builder.header(name, value);
+        }
+    }
+
+    builder.body(body).map_err(HttpResolverError::Http)
+}
+
+/// Returns true if `uri`'s host is not globally routable (loopback, private, link-local /
+/// cloud-metadata, unique-local, CGNAT, etc.) and must therefore not be used as a redirect target.
+///
+/// This is a URI-string check: it normalizes the host and rejects obfuscated/malformed numeric
+/// forms. Filtering on the *resolved* IP address (to defeat DNS names that point at internal
+/// addresses, i.e. DNS rebinding) is tracked separately in
+/// <https://github.com/contentauth/c2pa-rs/issues/2430>.
+pub(crate) fn host_is_non_global(uri: &Uri) -> bool {
+    let Some(host) = uri.host() else {
+        // A request with no host is malformed; reject it under the strict policy.
+        return true;
+    };
+
+    let host = normalize_host(host);
+
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return ip_is_non_global(ip);
+    }
+
+    // Reject numeric hosts that did not parse as a standard IP address. These are obfuscated or
+    // malformed IPv4 forms (e.g. `2130706433`, `127.1`, `0x7f.0.0.1`) that an OS resolver may still
+    // route to an internal address, so we fail closed. Comprehensive resolved-IP filtering is
+    // tracked in <https://github.com/contentauth/c2pa-rs/issues/2430>.
+    if looks_like_obfuscated_ip(&host) {
+        return true;
+    }
+
+    // Otherwise treat it as a DNS name. Block the loopback host name; DNS names that resolve to
+    // internal addresses are handled by resolved-IP filtering (see above).
+    host == "localhost" || host.ends_with(".localhost")
+}
+
+/// Normalizes a URI host for comparison: strips IPv6 brackets and a fully-qualified trailing dot,
+/// and lower-cases the result.
+fn normalize_host(host: &str) -> String {
+    let host = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
+
+    let host = host.strip_suffix('.').unwrap_or(host);
+
+    host.to_ascii_lowercase()
+}
+
+/// Returns true if `host` looks like a numeric IPv4 address in a non-standard/obfuscated form:
+/// all digits and dots (decimal / octal-looking forms such as `2130706433`, `127.1`, `0177.0.0.1`),
+/// or any dot-separated component in `0x`/`0X` hex form. The hex form may appear in *any* position,
+/// not just the first (e.g. `127.0x1` or `0x7f.0x0.0x0.0x1`). Standard addresses are handled by
+/// `IpAddr::parse` before this is called; this only catches forms that parse failed on.
+fn looks_like_obfuscated_ip(host: &str) -> bool {
+    if host.is_empty() {
+        return false;
+    }
+
+    // Purely decimal / dotted-decimal (and octal-looking) numeric forms.
+    if host.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
+        return true;
+    }
+
+    // A hex-form octet in any position.
+    host.split('.')
+        .any(|label| label.starts_with("0x") || label.starts_with("0X"))
+}
+
+/// Returns true if `ip` is not a globally routable unicast address and should therefore be blocked
+/// by the default network policy.
+fn ip_is_non_global(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => ipv4_is_non_global(v4),
+        IpAddr::V6(v6) => ipv6_is_non_global(v6),
+    }
+}
+
+fn ipv4_is_non_global(ip: Ipv4Addr) -> bool {
+    let [a, b, ..] = ip.octets();
+
+    ip.is_unspecified()          // 0.0.0.0
+        || a == 0                // 0.0.0.0/8 "this network"
+        || ip.is_loopback()      // 127.0.0.0/8
+        || ip.is_private()       // 10/8, 172.16/12, 192.168/16
+        || ip.is_link_local()    // 169.254.0.0/16 (includes 169.254.169.254)
+        || ip.is_broadcast()     // 255.255.255.255
+        || ip.is_documentation() // 192.0.2/24, 198.51.100/24, 203.0.113/24
+        || ip.is_multicast()     // 224.0.0.0/4
+        || (a == 100 && (b & 0xc0) == 64) // 100.64.0.0/10 CGNAT / shared address space
+}
+
+fn ipv6_is_non_global(ip: Ipv6Addr) -> bool {
+    // Unwrap IPv4-mapped addresses (e.g. ::ffff:169.254.169.254) and apply the IPv4 rules.
+    if let Some(v4) = ip.to_ipv4_mapped() {
+        return ipv4_is_non_global(v4);
+    }
+
+    let segments = ip.segments();
+
+    ip.is_unspecified()                     // ::
+        || ip.is_loopback()                 // ::1
+        || ip.is_multicast()                // ff00::/8
+        || (segments[0] & 0xfe00) == 0xfc00 // fc00::/7 unique local
+        || (segments[0] & 0xffc0) == 0xfe80 // fe80::/10 link local
 }
 
 #[cfg(test)]
@@ -566,5 +850,191 @@ mod test {
             result,
             Err(HttpResolverError::UriDisallowed { .. })
         ));
+    }
+
+    #[test]
+    fn non_global_hosts_are_rejected_as_redirect_targets() {
+        for uri in [
+            "http://169.254.169.254/latest/meta-data/", // link-local / cloud metadata
+            "http://127.0.0.1/",                        // IPv4 loopback
+            "http://127.1.2.3/",                        // IPv4 loopback (whole /8)
+            "http://10.0.0.1/",                         // RFC1918
+            "http://172.16.5.4/",                       // RFC1918
+            "http://192.168.1.1/",                      // RFC1918
+            "http://100.64.0.1/",                       // CGNAT / shared
+            "http://0.0.0.0/",                          // unspecified
+            "http://[::1]/",                            // IPv6 loopback
+            "http://[fe80::1]/",                        // IPv6 link-local
+            "http://[fc00::1]/",                        // IPv6 unique-local
+            "http://[::ffff:169.254.169.254]/",         // IPv4-mapped link-local
+            "http://localhost/",                        // loopback host name
+            "http://api.localhost/",                    // loopback host name suffix
+            "http://LOCALHOST/",                        // case-insensitive host name
+            "http://127.0.0.1./",                       // trailing-dot FQDN form of loopback
+            "http://2130706433/",                       // obfuscated decimal 127.0.0.1
+            "http://0x7f000001/",                       // obfuscated hex 127.0.0.1
+            "http://127.0x1/",                          // hex octet in a non-leading position
+            "http://0x7f.0x0.0x0.0x1/",                 // dotted all-hex form of 127.0.0.1
+            "http://127.1/",                            // short-form IPv4 loopback
+        ] {
+            assert!(
+                host_is_non_global(&Uri::from_static(uri)),
+                "expected {uri} to be denied"
+            );
+        }
+    }
+
+    #[test]
+    fn global_hosts_are_allowed_as_redirect_targets() {
+        for uri in [
+            "http://93.184.216.34/",            // public IPv4 literal
+            "https://contentauthenticity.org/", // public host name
+            "https://sub.example.com/path",
+            "http://[2606:2800:220:1:248:1893:25c8:1946]/", // public IPv6 literal
+            "http://cafe.example.com/", // hex-looking label is a normal host name
+        ] {
+            assert!(
+                !host_is_non_global(&Uri::from_static(uri)),
+                "expected {uri} to be allowed"
+            );
+        }
+    }
+
+    // A scripted resolver used to exercise the `RedirectResolver` loop without real networking. It
+    // returns a canned response based on the request path.
+    struct ScriptedChain;
+
+    impl ScriptedChain {
+        fn response(uri: &str) -> Response<Box<dyn Read>> {
+            let empty = || Box::new(std::io::empty()) as Box<dyn Read>;
+            let redirect_to = |location: &str| {
+                Response::builder()
+                    .status(302)
+                    .header(http::header::LOCATION, location)
+                    .body(empty())
+                    .unwrap()
+            };
+
+            if uri.contains("/final") {
+                Response::builder().status(200).body(empty()).unwrap()
+            } else if uri.contains("/to-public") {
+                redirect_to("http://example.com/final")
+            } else if uri.contains("/to-internal") {
+                redirect_to("http://169.254.169.254/latest/meta-data/")
+            } else if uri.contains("/loop") {
+                redirect_to("http://example.com/loop")
+            } else {
+                Response::builder().status(404).body(empty()).unwrap()
+            }
+        }
+    }
+
+    impl SyncHttpResolver for ScriptedChain {
+        fn http_resolve(
+            &self,
+            request: Request<Vec<u8>>,
+        ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+            Ok(Self::response(&request.uri().to_string()))
+        }
+    }
+
+    fn scripted_get(
+        resolver: &impl SyncHttpResolver,
+        uri: &'static str,
+    ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+        resolver.http_resolve(
+            Request::get(Uri::from_static(uri))
+                .body(Vec::new())
+                .unwrap(),
+        )
+    }
+
+    #[test]
+    fn redirect_resolver_follows_redirect_to_public_host() {
+        let resolver = RedirectResolver::new(ScriptedChain, true);
+        let response = scripted_get(&resolver, "http://example.com/to-public").unwrap();
+        assert_eq!(response.status(), 200);
+    }
+
+    #[test]
+    fn redirect_resolver_blocks_redirect_to_internal_host() {
+        let resolver = RedirectResolver::new(ScriptedChain, true);
+        let result = scripted_get(&resolver, "http://example.com/to-internal");
+        assert!(matches!(
+            result,
+            Err(HttpResolverError::RedirectTargetDisallowed { .. })
+        ));
+    }
+
+    #[test]
+    fn redirect_resolver_refuses_redirect_when_disabled() {
+        let resolver = RedirectResolver::new(ScriptedChain, false);
+        let result = scripted_get(&resolver, "http://example.com/to-public");
+        assert!(matches!(
+            result,
+            Err(HttpResolverError::RedirectDisallowed { .. })
+        ));
+    }
+
+    #[test]
+    fn redirect_resolver_caps_redirect_chain() {
+        let resolver = RedirectResolver::new(ScriptedChain, true);
+        let result = scripted_get(&resolver, "http://example.com/loop");
+        assert!(matches!(
+            result,
+            Err(HttpResolverError::TooManyRedirects { .. })
+        ));
+    }
+
+    #[test]
+    fn resolve_redirect_target_handles_relative_locations() {
+        let base = Uri::from_static("https://example.com/a/b");
+        let target = resolve_redirect_target(&base, "/c/d").unwrap();
+        assert_eq!(target.to_string(), "https://example.com/c/d");
+
+        let target = resolve_redirect_target(&base, "https://other.example.org/x").unwrap();
+        assert_eq!(target.to_string(), "https://other.example.org/x");
+    }
+
+    #[test]
+    fn sanitize_for_log_escapes_control_chars_and_truncates() {
+        // CR/LF are escaped so a crafted URL can't inject lines into logs.
+        let out = sanitize_for_log("http://x/\r\nSet-Cookie: evil");
+        assert!(!out.contains('\n') && !out.contains('\r'));
+        assert!(out.contains("\\r") && out.contains("\\n"));
+
+        // Overlong values are truncated with an ellipsis marker.
+        let out = sanitize_for_log(&"a".repeat(1000));
+        assert!(out.ends_with('…'));
+        assert!(out.chars().count() <= 257);
+    }
+
+    #[test]
+    fn build_redirected_request_drops_credential_headers() {
+        use http::header;
+
+        let mut headers = http::HeaderMap::new();
+        headers.insert(header::AUTHORIZATION, "Bearer secret".parse().unwrap());
+        headers.insert(header::COOKIE, "sid=secret".parse().unwrap());
+        headers.insert(header::HOST, "old.example.com".parse().unwrap());
+        headers.insert(header::ACCEPT, "application/json".parse().unwrap());
+
+        let req = build_redirected_request(
+            http::Method::GET,
+            headers,
+            Vec::new(),
+            Uri::from_static("https://new.example.com/x"),
+        )
+        .unwrap();
+
+        // Credential-bearing and host headers are not forwarded across the redirect.
+        assert!(req.headers().get(header::AUTHORIZATION).is_none());
+        assert!(req.headers().get(header::COOKIE).is_none());
+        assert!(req.headers().get(header::HOST).is_none());
+        // Non-sensitive headers are preserved.
+        assert_eq!(
+            req.headers().get(header::ACCEPT).unwrap(),
+            "application/json"
+        );
     }
 }

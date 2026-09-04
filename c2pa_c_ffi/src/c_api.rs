@@ -2355,7 +2355,9 @@ pub unsafe extern "C" fn c2pa_builder_set_data_hash_exclusions(
 
     let flat = std::slice::from_raw_parts(exclusions_ptr, exclusion_count * 2);
     let exclusions: Vec<c2pa::HashRange> = flat
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| c2pa::HashRange::new(pair[0], pair[1]))
         .collect();
 
@@ -2500,6 +2502,9 @@ pub unsafe extern "C" fn c2pa_builder_update_hash_from_stream(
 /// The returned value MUST be released by calling c2pa_free
 /// and it is no longer valid after that call.
 #[no_mangle]
+#[deprecated(
+    note = "Use c2pa_builder_compose_manifest() instead, so custom asset I/O handlers registered on the builder's Context are consulted. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+)]
 pub unsafe extern "C" fn c2pa_format_embeddable(
     format: *const c_char,
     manifest_bytes_ptr: *const c_uchar,
@@ -2516,7 +2521,58 @@ pub unsafe extern "C" fn c2pa_format_embeddable(
         "manifest_bytes_ptr"
     );
 
+    // Legacy C API: no Builder/Context available, so only the built-in global registry is used.
+    #[allow(deprecated)]
     let result = c2pa::Builder::composed_manifest(bytes, &format);
+    let result_bytes = ok_or_return_int!(result);
+    let len = result_bytes.len() as i64;
+    if !result_bytes_ptr.is_null() {
+        *result_bytes_ptr = to_c_bytes(result_bytes);
+    }
+    len
+}
+
+/// Convert a binary C2PA manifest into an embeddable version for the given format.
+/// A raw manifest (in application/c2pa format) can be uploaded to the cloud but
+/// it cannot be embedded directly into an asset without extra processing.
+/// This method converts the raw manifest into an embeddable version that can be
+/// embedded into an asset.
+///
+/// # Parameters
+/// * builder_ptr: pointer to a Builder.
+/// * format: pointer to a C string with the mime type or extension.
+/// * manifest_bytes_ptr: pointer to a c_uchar with the raw manifest bytes.
+/// * manifest_bytes_size: the size of the manifest_bytes.
+/// * result_bytes_ptr: pointer to a pointer to a c_uchar to return the embeddable manifest bytes.
+///
+/// # Errors
+/// Returns -1 if there were errors, otherwise returns the size of the result_bytes.
+/// The error string can be retrieved by calling c2pa_error.
+///
+/// # Safety
+/// Reads from NULL-terminated C strings.
+/// The returned value MUST be released by calling c2pa_free
+/// and it is no longer valid after that call.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_compose_manifest(
+    builder_ptr: *mut C2paBuilder,
+    format: *const c_char,
+    manifest_bytes_ptr: *const c_uchar,
+    manifest_bytes_size: usize,
+    result_bytes_ptr: *mut *const c_uchar,
+) -> i64 {
+    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let format = cstr_or_return_int!(format);
+    ptr_or_return_int!(manifest_bytes_ptr);
+    ptr_or_return_int!(result_bytes_ptr);
+
+    let bytes = bytes_or_return_int!(
+        manifest_bytes_ptr,
+        manifest_bytes_size,
+        "manifest_bytes_ptr"
+    );
+
+    let result = builder.compose_manifest(bytes, &format);
     let result_bytes = ok_or_return_int!(result);
     let len = result_bytes.len() as i64;
     if !result_bytes_ptr.is_null() {
@@ -3304,17 +3360,29 @@ mod tests {
     fn test_c2pa_reader_from_stream_cawg() {
         // This fixture's identity claims aggregation (ICA) credential is signed
         // by a `did:jwk` issuer. ICA issuers are untrusted by default, so we must
-        // add that issuer to `cawg_trust.trusted_ica_issuers` for the credential
-        // to be reported as valid.
+        // add that issuer to `trust.anchors[n].trusted_ica_issuers` for the credential
+        // to be reported as valid. You can do this by adding to the trust list anchors.
         let builder = unsafe { c2pa_context_builder_new() };
         let settings = unsafe { c2pa_settings_new() };
 
-        let path = CString::new("cawg_trust.trusted_ica_issuers").unwrap();
+        let format = CString::new("json").unwrap();
         let value = CString::new(
-            r#"["did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9"]"#,
+            r#"{
+                "trust": {
+                    "anchors": [
+                        {
+                            "trust_anchors": "",
+                            "trust_uri": "custom_ica_trust_anchor",
+                            "trust_kind": "cawg",
+                            "trusted_ica_issuers": ["did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9"] 
+                        }
+                    ]
+                }
+            }"#,
         )
         .unwrap();
-        let result = unsafe { c2pa_settings_set_value(settings, path.as_ptr(), value.as_ptr()) };
+        let result =
+            unsafe { c2pa_settings_update_from_string(settings, value.as_ptr(), format.as_ptr()) };
         assert_eq!(result, 0);
 
         let result = unsafe { c2pa_context_builder_set_settings(builder, settings) };
@@ -4225,6 +4293,7 @@ verify_after_sign = true
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_c2pa_format_embeddable() {
         // This function requires manifest bytes, which is complex to set up.
         // For now, test with minimal setup to verify it doesn't crash

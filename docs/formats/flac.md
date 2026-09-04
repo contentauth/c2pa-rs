@@ -30,7 +30,7 @@ The FLAC stream is validated by checking that the first 4 bytes after the option
 
 - **Module**: `sdk/src/asset_handlers/flac_io.rs`.
 - **Handler**: `FlacIO` with `supported_types()` returning `["flac", "audio/flac"]`.
-- **Traits**: `CAIReader`, `CAIWriter`, `AssetIO`, `AssetPatch`, `RemoteRefEmbed` (XMP in ID3 PRIV frame, same as MP3).
+- **Traits**: `C2paReader`, `C2paWriter`, `AssetIO`, `AssetPatch`, `RemoteRefEmbed` (XMP in ID3 PRIV frame, same as MP3).
 - **Shared ID3 logic**: The bulk of ID3 read/write operations (GEOB frame handling, XMP embedding, object-location computation, patching) is delegated to `sdk/src/asset_handlers/id3_helper.rs`, which is shared with the MP3 handler. `FlacIO` only adds FLAC-specific header detection and stream validation on top.
 - **Flow**:
   - **Read**: Detect ID3 vs pure FLAC via `read_header()`; if ID3, use `id3_helper` to find the GEOB frame and extract the manifest; if no ID3 or no GEOB, return no manifest. After the optional ID3, the first 4 bytes of the remainder are checked for the `fLaC` marke
