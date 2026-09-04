@@ -394,6 +394,15 @@ enum Commands {
         /// that field on the first media segment (most live packagers don't start at 1).
         #[arg(long = "min-sequence-number")]
         min_sequence_number: Option<u64>,
+
+        /// How long (in seconds) the VSI session key stays valid (§18.25.2's
+        /// `validityPeriod`). Only used with --method vsi on the first invocation; a resumed
+        /// session reuses the already-signed init segment's session key.
+        ///
+        /// Validators reject segments once the key is past this window, so a stream that runs
+        /// longer than the period must re-sign its init segment with a fresh key before then.
+        #[arg(long = "session-key-validity", default_value_t = 3600)]
+        session_key_validity: u64,
     },
 }
 
@@ -1187,6 +1196,7 @@ fn main() -> Result<()> {
             method,
             session_key,
             min_sequence_number,
+            session_key_validity,
         }) = &args.command
         {
             let manifest_json = std::fs::read_to_string(manifest)
@@ -1226,6 +1236,7 @@ fn main() -> Result<()> {
                     session_key_path,
                     signer,
                     min_sequence_number: *min_sequence_number,
+                    session_key_validity: *session_key_validity,
                 });
             }
 

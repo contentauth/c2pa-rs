@@ -509,6 +509,7 @@ The `trust` subcommand's `--trust_anchors`, `--allowed_list` and `--trust_config
 | `--method` | `manifest` &#124; `vsi` | Signing method for `live-video-sign` (default `manifest`). |
 | `--session-key` | `<key_file>` | Required with `--method vsi`: an Ed25519 session key, as a 32-byte raw seed file. Reused across all invocations for the same live video session. |
 | `--min-sequence-number` | `<n>` | With `--method vsi`, the VSI session key's starting `minSequenceNumber`. Only used on the first invocation (no `--previous-segment`); if omitted, it's inferred from the first media segment's own `moof/mfhd.sequence_number`. |
+| `--session-key-validity` | `<seconds>` | With `--method vsi`, how long the session key stays valid (§18.25.2's `validityPeriod`), default 3600. Only used on the first invocation (no `--previous-segment`), since a resumed session reuses the already-signed init segment's key. Validators reject segments once the key is past this window, so a stream that runs longer must re-sign its init segment with a fresh key before then. |
 
 ## WASI
 
