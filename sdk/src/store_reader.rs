@@ -37,7 +37,7 @@ use async_generic::async_generic;
 use serde_json::Value;
 
 use crate::{
-    claim_assertion::{Claim, ClaimAssertion, ClaimAssertionKind},
+    claim_assertion::{Claim, ClaimAssertion, ClaimAssertionAttribution},
     context::Context,
     error::{Error, Result},
     jumbf_io,
@@ -276,9 +276,9 @@ impl StoreReader {
 /// [`ClaimAssertion`].
 fn claim_assertion_from_store(ca: &crate::claim::ClaimAssertion) -> ClaimAssertion {
     let kind = match ca.assertion_type() {
-        crate::claim::ClaimAssertionType::V1 => ClaimAssertionKind::V1,
-        crate::claim::ClaimAssertionType::Created => ClaimAssertionKind::Created,
-        crate::claim::ClaimAssertionType::Gathered => ClaimAssertionKind::Gathered,
+        crate::claim::ClaimAssertionType::V1 => ClaimAssertionAttribution::V1,
+        crate::claim::ClaimAssertionType::Created => ClaimAssertionAttribution::Created,
+        crate::claim::ClaimAssertionType::Gathered => ClaimAssertionAttribution::Gathered,
     };
     ClaimAssertion::new(
         ca.label(),
@@ -338,9 +338,8 @@ mod tests {
         let action = Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty);
         claim_builder
             .add_gathered_assertion(
-                ClaimAssertionBuilder::new(Actions::LABEL)
-                    .with_assertion(&Actions::new().add_action(action))
-                    .expect("with_assertion"),
+                ClaimAssertionBuilder::from_assertion(&Actions::new().add_action(action))
+                    .expect("from_assertion"),
             )
             .expect("add actions assertion");
 
@@ -409,9 +408,8 @@ mod tests {
         let action = Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty);
         claim_builder
             .add_gathered_assertion(
-                ClaimAssertionBuilder::new(Actions::LABEL)
-                    .with_assertion(&Actions::new().add_action(action))
-                    .expect("with_assertion"),
+                ClaimAssertionBuilder::from_assertion(&Actions::new().add_action(action))
+                    .expect("from_assertion"),
             )
             .expect("add actions assertion");
         claim_builder

@@ -245,7 +245,9 @@ pub use assertions::Relationship;
 pub use builder::{Builder, BuilderIntent, HashType, ManifestDefinition};
 pub use c2pa_raw_crypto::{RawSignatureValidationError, RawSigner, RawSignerError, SigningAlg};
 pub use callback_signer::{CallbackFunc, CallbackSigner};
-pub use claim_assertion::{Claim, ClaimAssertion, ClaimAssertionBuilder, ClaimAssertionKind};
+pub use claim_assertion::{
+    Claim, ClaimAssertion, ClaimAssertionAttribution, ClaimAssertionBuilder,
+};
 pub use claim_builder::ClaimBuilder;
 pub use claim_generator_info::ClaimGeneratorInfo;
 #[doc(inline)]

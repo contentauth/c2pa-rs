@@ -469,9 +469,7 @@ mod tests {
             .set_thumbnail(Some(&thumb_uri));
         let ing_uri = claim_builder
             .add_gathered_assertion(
-                ClaimAssertionBuilder::new(IngredientAssertion::LABEL)
-                    .with_json(&ing_assertion)
-                    .expect("with_json"),
+                ClaimAssertionBuilder::from_assertion(&ing_assertion).expect("from_assertion"),
             )
             .expect("add ingredient assertion");
 
@@ -480,9 +478,7 @@ mod tests {
         let actions = Actions::new().add_action(action);
         claim_builder
             .add_gathered_assertion(
-                ClaimAssertionBuilder::new(Actions::LABEL)
-                    .with_assertion(&actions)
-                    .expect("with_assertion"),
+                ClaimAssertionBuilder::from_assertion(&actions).expect("from_assertion"),
             )
             .expect("add actions assertion");
 
@@ -553,9 +549,8 @@ mod tests {
         let action = Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty);
         claim_builder
             .add_gathered_assertion(
-                ClaimAssertionBuilder::new(Actions::LABEL)
-                    .with_assertion(&Actions::new().add_action(action))
-                    .expect("with_assertion"),
+                ClaimAssertionBuilder::from_assertion(&Actions::new().add_action(action))
+                    .expect("from_assertion"),
             )
             .expect("add actions assertion");
 
@@ -614,9 +609,8 @@ mod tests {
         let action = Action::new(c2pa_action::OPENED).add_ingredient_ref(ing_uri.clone());
         claim_builder
             .add_gathered_assertion(
-                ClaimAssertionBuilder::new(Actions::LABEL)
-                    .with_assertion(&Actions::new().add_action(action))
-                    .expect("with_assertion"),
+                ClaimAssertionBuilder::from_assertion(&Actions::new().add_action(action))
+                    .expect("from_assertion"),
             )
             .expect("add actions assertion");
 
@@ -711,17 +705,25 @@ mod tests {
             )
             .expect("set hard binding");
 
-        // `ClaimAssertionBuilder` has no exclusions support — a caller who needs exclusions
-        // constructs the `DataHash` directly (as below) and adds it via `with_assertion`/
-        // `with_json` instead of `with_stream`. Exercise `ClaimBuilder`'s own reject-if-larger
-        // check directly against a hand-built `DataHash` whose exclusions make it strictly
-        // larger than the existing one.
+        // `ClaimAssertionBuilder` has no dedicated exclusions setter — a caller who needs
+        // exclusions constructs the `DataHash` directly (as below) and seeds it via `with_json`
+        // (not `from_assertion`, which would short-circuit `generate()` straight to a generic
+        // `Assertion` and skip `ClaimBuilder`'s hard-binding size check entirely). Exercise
+        // `ClaimBuilder`'s own reject-if-larger check against a hand-built `DataHash` whose
+        // exclusions make it strictly larger than the existing one.
         let mut larger = DataHash::new("jumbf manifest", "sha256");
-        larger.set_hash(vec![0u8; 32]);
         larger.add_exclusion(HashRange::new(0, 10));
         larger.add_exclusion(HashRange::new(20, 10));
+        stream1.set_position(0);
         assert!(
-            claim_builder.insert_data_hash(larger).is_err(),
+            claim_builder
+                .add_created_assertion(
+                    ClaimAssertionBuilder::new(DataHash::LABEL)
+                        .with_json(&larger)
+                        .expect("with_json")
+                        .with_stream("image/jpeg", &mut stream1),
+                )
+                .is_err(),
             "a strictly larger replacement should be rejected"
         );
     }

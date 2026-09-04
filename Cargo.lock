@@ -657,6 +657,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "c2pa-claim-builder"
+version = "0.91.0-dev"
+dependencies = [
+ "c2pa",
+]
+
+[[package]]
 name = "c2pa_cbor"
 version = "0.77.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -15,8 +15,8 @@
 //!
 //! [`ClaimAssertionBuilder`] is the write side, used to add an assertion to a
 //! [`crate::ClaimBuilder`]: start with [`ClaimAssertionBuilder::new`] and a label, then attach
-//! whichever of `with_json`/`with_assertion`/`with_stream`/`with_c2pa_data`/`with_exclusions`
-//! that label needs. `with_assertion` takes a concrete type that already knows how to encode
+//! whichever of `with_json`/`from_assertion`/`with_stream`/`with_c2pa_data`/`with_exclusions`
+//! that label needs. `from_assertion` takes a concrete type that already knows how to encode
 //! itself (e.g. [`crate::assertions::Actions`]) — this module never needs to know about it by
 //! name, which keeps assertion types free to live anywhere, including outside this crate.
 //! Nothing is validated or converted until [`ClaimAssertionBuilder::generate`] runs — called by
@@ -51,7 +51,7 @@ use crate::{
     store::Store,
     store_reader::StoreReader,
     utils::mime::format_to_mime,
-    HashRange, ValidationResults,
+    ValidationResults,
 };
 
 /// One assertion to add via [`crate::ClaimBuilder::add_gathered_assertion`]/
@@ -59,13 +59,12 @@ use crate::{
 ///
 /// Which `with_*` calls are valid depends on `label`:
 /// * `DataHash`/`BmffHash`/`BoxHash` labels require [`ClaimAssertionBuilder::with_stream`] (the asset to
-///   hash) and accept [`ClaimAssertionBuilder::with_exclusions`] (`DataHash` only — the placeholder
-///   region to exclude from hashing).
+///   hash).
 /// * [`crate::assertions::IngredientAssertion::LABEL`] requires [`ClaimAssertionBuilder::with_json`]
 ///   (the ingredient's own metadata) and accepts [`ClaimAssertionBuilder::with_stream`] (the
 ///   ingredient's own asset, to extract its provenance) plus [`ClaimAssertionBuilder::with_c2pa_data`]
 ///   (a sidecar/remote manifest for that asset, when its provenance isn't embedded in-band).
-/// * Everything else takes [`ClaimAssertionBuilder::with_assertion`] (a concrete type that
+/// * Everything else takes [`ClaimAssertionBuilder::from_assertion`] (a concrete type that
 ///   encodes itself, e.g. [`crate::assertions::Actions`]), [`ClaimAssertionBuilder::with_json`]
 ///   (structured data with no Rust type, wrapped generically), or
 ///   [`ClaimAssertionBuilder::with_stream`] (binary data, e.g. a thumbnail — wrapped in `EmbeddedData`).
@@ -97,25 +96,31 @@ impl ClaimAssertionBuilder<'static> {
 }
 
 impl<'a> ClaimAssertionBuilder<'a> {
+    /// Sets this assertion's data from a concrete type that already knows how to encode itself
+    /// (label, version, and content type included) — e.g. [`crate::assertions::Actions`] or
+    /// [`crate::assertions::Metadata`]. This is what lets any assertion type — including ones this crate has never heard of
+    /// — define its own serialization instead of being packed into a generic `User`/`UserCbor`
+    /// wrapper.
+    pub fn from_assertion<T: AssertionBase>(data: &T) -> Result<Self> {
+        let assertion = data.to_assertion()?;
+        Ok(Self {
+            label: assertion.label().to_string(),
+            value: None,
+            assertion: Some(assertion),
+            json: false,
+            content_type: None,
+            stream: None,
+            c2pa_data: None,
+        })
+    }
+
     /// Sets structured data for this assertion, wrapped generically under `label` — CBOR by
     /// default, or JSON if [`ClaimAssertionBuilder::as_json`] is set. Use
-    /// [`ClaimAssertionBuilder::with_assertion`] instead for a label with a known Rust type
+    /// [`ClaimAssertionBuilder::from_assertion`] instead for a label with a known Rust type
     /// (e.g. [`crate::assertions::Actions`]), so it's stored with its own native schema/encoding
     /// rather than generically.
     pub fn with_json<T: Serialize>(mut self, data: &T) -> Result<Self> {
         self.value = Some(c2pa_cbor::value::to_value(data)?);
-        Ok(self)
-    }
-
-    /// Sets this assertion's data from a concrete type that already knows how to encode itself
-    /// (label, version, and content type included) — e.g. [`crate::assertions::Actions`] or
-    /// [`crate::assertions::Metadata`]. Takes priority over
-    /// [`ClaimAssertionBuilder::with_json`]/[`ClaimAssertionBuilder::with_stream`] if both are
-    /// set. This is what lets any assertion type — including ones this crate has never heard of
-    /// — define its own serialization instead of being packed into a generic `User`/`UserCbor`
-    /// wrapper.
-    pub fn with_assertion<T: AssertionBase>(mut self, data: &T) -> Result<Self> {
-        self.assertion = Some(data.to_assertion()?);
         Ok(self)
     }
 
@@ -159,7 +164,7 @@ impl<'a> ClaimAssertionBuilder<'a> {
     }
 
     /// Requests JSON encoding (instead of the default CBOR) for a [`ClaimAssertionBuilder::with_json`]
-    /// assertion. Has no effect on [`ClaimAssertionBuilder::with_assertion`] (which has its own
+    /// assertion. Has no effect on [`ClaimAssertionBuilder::from_assertion`] (which has its own
     /// fixed encoding) or [`ClaimAssertionBuilder::with_stream`] (binary content has its own MIME
     /// type).
     pub fn as_json(mut self) -> Self {
@@ -189,7 +194,7 @@ impl<'a> ClaimAssertionBuilder<'a> {
         match match_label {
             DataHash::LABEL => {
                 let (_, stream) = require_stream(stream, match_label)?;
-                let dh = generate_data_hash(Vec::new(), context, stream)?;
+                let dh = generate_data_hash(context, value, stream)?;
                 Ok(GeneratedAssertion::DataHash(dh))
             }
             BmffHash::LABEL => {
@@ -252,30 +257,16 @@ const HARD_BINDING_ALG: &str = "sha256";
 /// Reads `stream` (the finished asset, with the manifest placeholder already embedded) and
 /// computes a `DataHash` over it, excluding `exclusions` (the placeholder region).
 fn generate_data_hash(
-    exclusions: Vec<HashRange>,
     context: &Context,
+    value: Option<c2pa_cbor::Value>,
     stream: &mut dyn CAIRead,
 ) -> Result<DataHash> {
-    let exclusion_arg = if exclusions.is_empty() {
-        None
-    } else {
-        Some(exclusions.clone())
+    let mut dh = match value {
+        Some(value) => c2pa_cbor::from_value(value)?,
+        None => DataHash::new("jumbf manifest", HARD_BINDING_ALG),
     };
     let mut cb = |step, total| context.check_progress(ProgressPhase::Hashing, step, total);
-    let hash = crate::utils::hash_utils::hash_stream_by_alg_with_progress(
-        HARD_BINDING_ALG,
-        stream,
-        exclusion_arg,
-        true,
-        &mut cb,
-    )?;
-
-    let mut dh = DataHash::new("jumbf manifest", HARD_BINDING_ALG);
-    for exclusion in exclusions {
-        dh.add_exclusion(exclusion);
-    }
-    dh.set_hash(hash);
-
+    dh.gen_hash_from_stream_with_progress(stream, &mut cb)?;
     Ok(dh)
 }
 
@@ -389,11 +380,11 @@ fn generate_ingredient(
 }
 
 /// Everything that isn't a hard binding, an ingredient, or set via
-/// [`ClaimAssertionBuilder::with_assertion`]: binary data (wrapped in `EmbeddedData`) if `stream`
+/// [`ClaimAssertionBuilder::from_assertion`]: binary data (wrapped in `EmbeddedData`) if `stream`
 /// is attached, otherwise structured data from `value`, wrapped generically under `label` (JSON
 /// if [`ClaimAssertionBuilder::as_json`] was set, else CBOR). A label with a known Rust type
 /// (e.g. `c2pa.actions`, or a custom `.metadata`-suffixed one) should go through
-/// [`ClaimAssertionBuilder::with_assertion`] instead, so it keeps its own native schema/encoding
+/// [`ClaimAssertionBuilder::from_assertion`] instead, so it keeps its own native schema/encoding
 /// rather than this generic wrap.
 fn generate_generic(
     label: &str,
@@ -415,7 +406,7 @@ fn generate_generic(
 
     let Some(value) = value else {
         return Err(Error::BadParam(format!(
-            "assertion '{label}' requires with_json, with_assertion, or with_stream"
+            "assertion '{label}' requires with_json, from_assertion, or with_stream"
         )));
     };
 
@@ -435,7 +426,7 @@ fn generate_generic(
 /// [`crate::ClaimBuilder::add_created_assertion`]/[`crate::ClaimBuilder::add_gathered_assertion`]
 /// for what created/gathered means when writing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ClaimAssertionKind {
+pub enum ClaimAssertionAttribution {
     V1,
     Created,
     Gathered,
@@ -447,7 +438,7 @@ pub enum ClaimAssertionKind {
 #[derive(Debug, Clone)]
 pub struct ClaimAssertion {
     label: String,
-    kind: ClaimAssertionKind,
+    attribution: ClaimAssertionAttribution,
     content_type: String,
     data: Vec<u8>,
 }
@@ -455,13 +446,13 @@ pub struct ClaimAssertion {
 impl ClaimAssertion {
     pub(crate) fn new(
         label: String,
-        kind: ClaimAssertionKind,
+        attribution: ClaimAssertionAttribution,
         content_type: String,
         data: Vec<u8>,
     ) -> Self {
         Self {
             label,
-            kind,
+            attribution,
             content_type,
             data,
         }
@@ -474,8 +465,8 @@ impl ClaimAssertion {
     }
 
     /// Whether this is a v1 assertion, or (v2+) created vs. gathered.
-    pub fn kind(&self) -> ClaimAssertionKind {
-        self.kind
+    pub fn kind(&self) -> ClaimAssertionAttribution {
+        self.attribution
     }
 
     /// The content type (MIME type) of this assertion's stored data.
@@ -582,13 +573,13 @@ mod tests {
     use std::io::Cursor;
 
     use super::*;
-    use crate::{assertions::Actions, utils::test::test_context};
+    use crate::{assertions::Actions, utils::test::test_context, HashRange};
 
     const TEST_IMAGE_CLEAN: &[u8] = include_bytes!("../tests/fixtures/IMG_0003.jpg");
 
     #[test]
     fn test_generate_generic_with_json_wraps_generically_regardless_of_label() {
-        // with_json has no label-based special-casing (that's what with_assertion is for) — a
+        // with_json has no label-based special-casing (that's what from_assertion is for) — a
         // `.metadata`-suffixed label gets the same generic CBOR wrap as any other custom label.
         let context = Arc::new(test_context());
         let value = serde_json::json!({
@@ -610,16 +601,15 @@ mod tests {
     }
 
     #[test]
-    fn test_with_assertion_uses_native_schema_and_version() {
+    fn test_from_assertion_uses_native_schema_and_version() {
         // Actions has its own fixed encoding/version (content type "application/cbor", label
-        // suffixed ".v2") — with_assertion should preserve that instead of the generic wrap
+        // suffixed ".v2") — from_assertion should preserve that instead of the generic wrap
         // with_json would produce.
         let context = Arc::new(test_context());
         let actions = Actions::new();
 
-        let generated = ClaimAssertionBuilder::new(Actions::LABEL)
-            .with_assertion(&actions)
-            .expect("with_assertion")
+        let generated = ClaimAssertionBuilder::from_assertion(&actions)
+            .expect("from_assertion")
             .generate(&context)
             .expect("generate");
 
@@ -668,7 +658,7 @@ mod tests {
         let context = test_context();
         let mut stream = Cursor::new(b"arbitrary asset bytes, not a real jpeg".to_vec());
 
-        let dh = generate_data_hash(vec![], &context, &mut stream).expect("generate DataHash");
+        let dh = generate_data_hash(&context, None, &mut stream).expect("generate DataHash");
         assert!(!dh.hash.is_empty(), "hash should be computed");
     }
 
@@ -677,8 +667,11 @@ mod tests {
         let context = test_context();
         let mut stream = Cursor::new(vec![0u8; 100]);
 
-        let dh = generate_data_hash(vec![HashRange::new(0, 10)], &context, &mut stream)
-            .expect("generate DataHash with exclusions");
+        let mut initial = DataHash::new("jumbf manifest", HARD_BINDING_ALG);
+        initial.add_exclusion(HashRange::new(10, 10));
+        let value = c2pa_cbor::value::to_value(initial).expect("to_value");
+
+        let dh = generate_data_hash(&context, Some(value), &mut stream).expect("generate DataHash");
         assert_eq!(dh.exclusions.as_ref().map(|e| e.len()), Some(1));
     }
 
