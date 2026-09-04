@@ -555,7 +555,7 @@ dependencies = [
  "async-generic",
  "async-trait",
  "atree",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bcder",
  "brotli",
  "byteorder",
