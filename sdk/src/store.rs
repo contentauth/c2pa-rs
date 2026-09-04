@@ -5908,11 +5908,17 @@ pub mod tests {
             create_test_streams("unsupported_type.txt");
         let mut report = StatusTracker::default();
         let result = Store::from_stream(format, &mut input_stream, &mut report, &context);
-        assert!(matches!(result, Err(Error::UnsupportedType)));
+        // `unsupported_type.txt` is `.txt`/`text/plain`: unsupported by default, but a real
+        // (unsigned) type once the experimental plain-text handler registers that extension.
+        if cfg!(feature = "unstable_plain_text") {
+            assert!(matches!(result, Err(Error::JumbfNotFound)));
+            assert!(report.has_error(Error::JumbfNotFound));
+        } else {
+            assert!(matches!(result, Err(Error::UnsupportedType)));
+            assert!(report.has_error(Error::UnsupportedType));
+        }
         println!("Error report: {report:?}");
         assert!(!report.logged_items().is_empty());
-
-        assert!(report.has_error(Error::UnsupportedType));
     }
 
     fn make_brotli_bomb_jumbf(decompressed_size: usize) -> Vec<u8> {
