@@ -101,6 +101,12 @@ impl CollectionHash {
                         path.display()
                     )));
                 }
+                Component::RootDir | Component::Prefix(_) => {
+                    return Err(Error::BadParam(format!(
+                        "URI `{}` must be relative, not absolute",
+                        path.display()
+                    )));
+                }
                 _ => {}
             }
         }
@@ -313,11 +319,22 @@ impl CollectionHash {
     }
 
     /// Validates a collection URI per the C2PA spec.
+    ///
+    /// Ensures the only components in the new path are "normal," such that
+    /// they do not reference absolute paths outside of the base path. The reason
+    /// for this is due to the behavior of [`Path::join`] potentially overwriting
+    /// the base path with absolute paths given certain conditions (see examples
+    /// in docs).
     fn validate_uri(uri: &Path) -> Result<()> {
-        if uri
-            .components()
-            .any(|component| matches!(component, Component::CurDir | Component::ParentDir))
-        {
+        if uri.components().any(|component| {
+            matches!(
+                component,
+                Component::CurDir
+                    | Component::ParentDir
+                    | Component::RootDir
+                    | Component::Prefix(_)
+            )
+        }) {
             return Err(Error::C2PAValidation(
                 ASSERTION_COLLECTIONHASH_INVALID_URI.to_string(),
             ));
@@ -444,6 +461,30 @@ mod tests {
             collection.verify_zip_stream_hash(&mut stream, None),
             Err(Error::C2PAValidation(code)) if code == ASSERTION_COLLECTIONHASH_INVALID_URI
         ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_verify_zip_absolute_uri() -> Result<()> {
+        for evil in ["/etc/passwd", "/tmp/evil.txt"] {
+            let mut collection = gen_zip_collection_hash()?;
+            collection.uris.insert(
+                PathBuf::from(evil),
+                UriHashedDataMap {
+                    hash: Some(vec![0; 32]),
+                    size: Some(0),
+                    dc_format: None,
+                    data_types: None,
+                },
+            );
+
+            let mut stream = Cursor::new(ZIP_SAMPLE1);
+            assert!(matches!(
+                collection.verify_zip_stream_hash(&mut stream, None),
+                Err(Error::C2PAValidation(code)) if code == ASSERTION_COLLECTIONHASH_INVALID_URI
+            ));
+        }
 
         Ok(())
     }
