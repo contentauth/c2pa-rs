@@ -4123,22 +4123,13 @@ impl Store {
                                 to_both.append(&mut differences);
                             }
                         } else {
-                            let new_version = match claim
+                            // First conflict for this label starts at version 1
+                            let new_version = claim
                                 .claim_ingredient_store()
                                 .keys()
-                                .filter_map(|label| match manifest_label_to_parts(label) {
-                                    Some(mp) => mp.version,
-                                    None => None,
-                                })
+                                .filter_map(|label| manifest_label_to_parts(label)?.version)
                                 .max()
-                            {
-                                Some(last_conflict_version) => last_conflict_version + 1,
-                                None => {
-                                    return Err(Error::OtherError(
-                                        "ingredient label malformed".into(),
-                                    ))
-                                }
-                            };
+                                .map_or(1, |last_conflict_version| last_conflict_version + 1);
 
                             // make new ingredient label
                             let mut new_mp = manifest_label_to_parts(&conflict_label)
@@ -6924,6 +6915,59 @@ pub mod tests {
         assert!(redacted_claim
             .get_assertion(labels::SCHEMA_ORG_INTERNAL, 0)
             .is_none());
+    }
+
+    #[test]
+    fn test_ingredient_conflict_first_collision_versions_label() {
+        // Two ingredients sharing a manifest label but differing in content (not by
+        // redaction) must relabel the second starting at version 1, not error.
+        let context = Context::new();
+        let signer = test_signer(SigningAlg::Ps256);
+        let shared_label = "urn:c2pa:550e8400-e29b-41d4-a716-446655440000";
+
+        let signed_ingredient = |variant: &str| -> Vec<u8> {
+            let mut store = Store::from_context(&Context::new());
+            let mut claim = Claim::new_with_user_guid("conflict test", shared_label, 2).unwrap();
+            claim.add_claim_generator_info(ClaimGeneratorInfo::new("conflict_test"));
+            claim
+                .add_databox("text/plain", variant.as_bytes().to_vec(), None)
+                .unwrap();
+            let actions = Actions::new()
+                .add_action(Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty));
+            claim.add_assertion(&actions).unwrap();
+            store.commit_claim(claim).unwrap();
+
+            let (format, mut input, mut output) = create_test_streams("earth_apollo17.jpg");
+            store
+                .save_to_stream(format, &mut input, &mut output, signer.as_ref(), &context)
+                .unwrap();
+            output.rewind().unwrap();
+            let (bytes, _) = Store::load_jumbf_from_stream(format, &mut output, &context).unwrap();
+            bytes
+        };
+
+        let bytes_a = signed_ingredient("variant-a");
+        let bytes_b = signed_ingredient("variant-b");
+        let bytes_c = signed_ingredient("variant-c");
+
+        let mut claim = Claim::new("outer conflict test", Some("adobe"), 2);
+        claim.add_claim_generator_info(ClaimGeneratorInfo::new("outer"));
+
+        Store::load_ingredient_to_claim(&mut claim, &bytes_a, None, &context).unwrap();
+        Store::load_ingredient_to_claim(&mut claim, &bytes_b, None, &context).unwrap();
+        Store::load_ingredient_to_claim(&mut claim, &bytes_c, None, &context).unwrap();
+
+        let keys: Vec<&String> = claim.claim_ingredient_store().keys().collect();
+        let has = |label: &str| keys.iter().any(|k| k.as_str() == label);
+        assert!(has(shared_label), "base label missing: {keys:?}");
+        assert!(
+            has(&format!("{shared_label}::1_1")),
+            "first conflict must relabel to version 1: {keys:?}"
+        );
+        assert!(
+            has(&format!("{shared_label}::2_1")),
+            "second conflict must relabel to version 2: {keys:?}"
+        );
     }
 
     #[test]
