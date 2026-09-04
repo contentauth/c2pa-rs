@@ -856,6 +856,12 @@ impl HandlerRegistry {
         self.container_for(format) == self.container_for("avif")
     }
 
+    /// Returns whether `format` belongs to the same container family as `"zip"` (i.e. the
+    /// ZIP family: ZIP, EPUB, Office Open XML, Open Document, OpenXPS, ...).
+    pub fn is_zip_format(&self, format: &str) -> bool {
+        self.container_for(format) == self.container_for("zip")
+    }
+
     /// Returns the MIME type for `format` (an extension or MIME type), checking `fallback`
     /// if this registry has no match.
     ///
@@ -1334,6 +1340,18 @@ mod tests {
         assert!(reg.is_bmff_format("heic"));
         assert!(!reg.is_bmff_format("tif"));
         assert!(!reg.is_bmff_format("nonexistent/format"));
+    }
+
+    #[test]
+    fn test_is_zip_format() {
+        let reg = HandlerRegistry::new()
+            .with_handler(handler(&["tif", "dng"], b"tiff"))
+            .with_handler(handler(&["zip", "epub", "docx"], b"zip"));
+
+        assert!(reg.is_zip_format("epub"));
+        assert!(reg.is_zip_format("docx"));
+        assert!(!reg.is_zip_format("tif"));
+        assert!(!reg.is_zip_format("nonexistent/format"));
     }
 
     #[test]

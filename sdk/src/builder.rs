@@ -3939,7 +3939,7 @@ mod tests {
     };
 
     use c2pa_macros::c2pa_test_async;
-    use rand::Rng;
+    use rand::RngExt;
     use serde_json::json;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
@@ -4290,6 +4290,49 @@ mod tests {
         assert_eq!(manifest.title().unwrap(), "Test_Manifest");
         let test_assertion: TestAssertion = manifest.find_assertion("org.life.meaning").unwrap();
         assert_eq!(test_assertion.answer, 42);
+    }
+
+    #[test]
+    fn test_builder_incorrect_ingredient_format_errors() {
+        let mut source = Cursor::new(TEST_IMAGE);
+
+        let ingredient_json = json!({
+            "title": "CA.jpg",
+            "format": "image/jpeg",
+        })
+        .to_string();
+
+        let mut builder = Builder::default()
+            .with_definition(simple_manifest_json())
+            .unwrap();
+
+        // pass incorrect format
+        let result = builder.add_ingredient_from_stream(ingredient_json, "image/png", &mut source);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_builder_incorrect_ingredient_format_ignore_ingredient_errors() {
+        let mut source = Cursor::new(TEST_IMAGE);
+
+        let ingredient_json = json!({
+            "title": "CA.jpg",
+            "format": "image/jpeg",
+        })
+        .to_string();
+
+        let settings = Settings::default()
+            .with_value("builder.ignore_ingredient_errors", true)
+            .unwrap();
+        let context = Context::default().with_settings(settings).unwrap();
+
+        let mut builder = Builder::from_context(context)
+            .with_definition(simple_manifest_json())
+            .unwrap();
+
+        // pass incorrect format, but ignore_ingredient_errors should prevent an error
+        let result = builder.add_ingredient_from_stream(ingredient_json, "image/png", &mut source);
+        assert!(result.is_ok());
     }
 
     // Ensure multiple `c2pa.placed` actions aren't created.
@@ -6072,7 +6115,7 @@ mod tests {
             // break the mdat into 7 random chunks and hash each chunks
             let mut remaining = mdat_box.size - 8; // subtract 8 bytes to get to actual content size for non-largesize box.  For largesize we will account for the larger header below.
             let offset = mdat_box.offset;
-            let mut rng = rand::thread_rng();
+            let mut rng = rand::rng();
 
             // for a non largesize box the actual mdat data starts after the 8 byte header, for a largesize box it starts
             // after 16 bytes.  So we need to account for that when seeking to the start of the mdat content.
@@ -6082,7 +6125,7 @@ mod tests {
 
             while remaining > 0 {
                 // Generate a random size between 10% and the remaining length
-                let mut chunk_size = rng.gen_range((remaining / 10)..=remaining);
+                let mut chunk_size = rng.random_range((remaining / 10)..=remaining);
 
                 // eat up rest of mdat if 0 is generated for some reason so we don't have random 0 leaves
                 if chunk_size == 0 {
@@ -6624,6 +6667,31 @@ mod tests {
         let m = reader.active_manifest().unwrap();
         assert_eq!(m.ingredients().len(), 1);
         assert!(m.ingredients()[0].active_manifest().is_some());
+    }
+
+    #[c2pa_test_async]
+    async fn test_add_cloud_ingredient_ignore_ingredient_errors() {
+        let mut cloud_image = Cursor::new(TEST_IMAGE_CLOUD);
+
+        let settings = Settings::default()
+            .with_value("verify.remote_manifest_fetch", false)
+            .unwrap();
+        let context = Context::default().with_settings(settings).unwrap();
+
+        let mut builder = Builder::from_context(context);
+
+        let ingredient = builder
+            .add_ingredient_from_stream_async(parent_json(), "image/jpeg", &mut cloud_image)
+            .await
+            .unwrap();
+
+        let validation_results = ingredient.validation_results().unwrap();
+        assert!(validation_results
+            .active_manifest()
+            .unwrap()
+            .failure()
+            .iter()
+            .any(|status| status.code() == crate::validation_status::MANIFEST_INACCESSIBLE));
     }
 
     #[test]

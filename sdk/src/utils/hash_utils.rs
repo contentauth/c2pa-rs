@@ -154,6 +154,16 @@ impl Hasher {
     }
 }
 
+/// Output size in bytes of a digest produced by the given hash algorithm.
+pub fn hash_size_by_alg(alg: &str) -> Result<usize> {
+    match alg {
+        "sha256" => Ok(<Sha256 as Digest>::output_size()),
+        "sha384" => Ok(<Sha384 as Digest>::output_size()),
+        "sha512" => Ok(<Sha512 as Digest>::output_size()),
+        _ => Err(Error::UnsupportedType),
+    }
+}
+
 // Return hash bytes for desired hashing algorithm.
 pub fn hash_by_alg(alg: &str, data: &[u8], exclusions: Option<Vec<HashRange>>) -> Vec<u8> {
     let mut reader = Cursor::new(data);

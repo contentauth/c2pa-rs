@@ -679,6 +679,7 @@ impl Ingredient {
         result: Result<Store>,
         manifest_bytes: Option<Vec<u8>>,
         validation_log: &StatusTracker,
+        context: &Context,
     ) -> Result<()> {
         match result {
             Ok(store) => {
@@ -744,25 +745,32 @@ impl Ingredient {
                 self.validation_status = Some(vec![status]);
                 Ok(())
             }
-            Err(e) => {
-                // we can ignore the error here because it should have a log entry corresponding to it
-                debug!("ingredient {e:?}");
+            Err(err) => match context.settings().builder.ignore_ingredient_errors {
+                true => {
+                    debug!("ignoring ingredient error: {err:?}");
 
-                let mut results = ValidationResults::default();
-                // convert any other error to a validation status
-                let statuses: Vec<ValidationStatus> = validation_log
-                    .logged_items()
-                    .iter()
-                    .filter_map(ValidationStatus::from_log_item)
-                    .collect();
+                    let statuses: Vec<ValidationStatus> = validation_log
+                        .logged_items()
+                        .iter()
+                        .filter_map(ValidationStatus::from_log_item)
+                        .collect();
 
-                for status in statuses {
-                    results.add_status(status.clone());
+                    let mut results = ValidationResults::default();
+                    for status in statuses {
+                        results.add_status(status);
+                    }
+
+                    // this is a hard error, which means it was never logged as a validation
+                    // status, so convert the error itself into a `general.error` status
+                    results.add_status(ValidationStatus::from_error(&err));
+
+                    self.validation_status = results.validation_errors();
+                    self.validation_results = Some(results);
+
+                    Ok(())
                 }
-                self.validation_status = results.validation_errors();
-                self.validation_results = Some(results);
-                Ok(())
-            }
+                false => Err(err),
+            },
         }
     }
 
@@ -911,7 +919,7 @@ impl Ingredient {
         }
 
         // set validation status from result and log
-        self.update_validation_status(result, manifest_bytes, &validation_log)?;
+        self.update_validation_status(result, manifest_bytes, &validation_log, context)?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
@@ -1001,7 +1009,7 @@ impl Ingredient {
             };
 
         // set validation status from result and log
-        ingredient.update_validation_status(result, manifest_bytes, &validation_log)?;
+        ingredient.update_validation_status(result, manifest_bytes, &validation_log, context)?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
@@ -1495,7 +1503,12 @@ impl Ingredient {
             };
 
         // set validation status from result and log
-        ingredient.update_validation_status(result, Some(manifest_bytes), &validation_log)?;
+        ingredient.update_validation_status(
+            result,
+            Some(manifest_bytes),
+            &validation_log,
+            &context,
+        )?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
@@ -1921,6 +1934,8 @@ mod tests {
 
     #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory_and_bad_manifest() {
+        crate::settings::set_settings_value("builder.ignore_ingredient_errors", true).unwrap();
+
         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let bad_manifest_bytes = b"not a real c2pa manifest".to_vec();
         let format = "image/jpeg";
@@ -1933,7 +1948,8 @@ mod tests {
         .expect("ingredient should load even with a bad manifest");
 
         assert_eq!(ingredient.format(), Some(format));
-        assert!(ingredient.validation_status().is_some());
+        let statuses = ingredient.validation_status().unwrap();
+        assert_eq!(statuses[0].code(), validation_status::GENERAL_ERROR);
     }
 
     #[test]
@@ -2094,20 +2110,8 @@ mod tests {
     #[cfg(all(feature = "file_io", feature = "add_thumbnails"))]
     fn test_jpg_prerelease() {
         const PRERELEASE_JPEG: &str = "prerelease.jpg";
-        let ingredient = load_ingredient(PRERELEASE_JPEG).expect("load_ingredient");
-        stats(&ingredient);
-
-        println!("ingredient = {ingredient}");
-        assert_eq!(ingredient.title(), Some(PRERELEASE_JPEG));
-        assert_eq!(ingredient.format(), Some("image/jpeg"));
-        test_thumbnail(&ingredient, "image/jpeg");
-        assert!(ingredient.provenance().is_some());
-        assert_eq!(ingredient.manifest_data(), None);
-        assert!(ingredient.validation_status().is_some());
-        assert_eq!(
-            ingredient.validation_status().unwrap()[0].code(),
-            validation_status::STATUS_PRERELEASE
-        );
+        let ingredient = load_ingredient(PRERELEASE_JPEG);
+        assert!(matches!(ingredient, Err(Error::PrereleaseError)));
     }
 
     #[test]
@@ -2122,8 +2126,7 @@ mod tests {
     #[test]
     #[cfg(feature = "fetch_remote_manifests")]
     fn test_jpg_cloud_failure() {
-        let ingredient = load_ingredient("cloudx.jpg").expect("load_ingredient");
-        println!("ingredient = {ingredient}");
+        let ingredient = load_ingredient("cloudx.jpg").unwrap();
         assert!(ingredient.validation_status().is_some());
         assert_eq!(
             ingredient.validation_status().unwrap()[0].code(),

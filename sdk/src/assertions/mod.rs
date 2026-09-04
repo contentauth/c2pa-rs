@@ -41,6 +41,9 @@ pub use crate::asset_io::{AllowedExclusion, ExclusionKind, C2PA_BOXHASH};
 mod data_hash;
 pub use data_hash::DataHash;
 
+mod collection_hash;
+pub use collection_hash::{CollectionHash, UriHashedDataMap};
+
 mod certificate_status;
 pub(crate) use certificate_status::CertificateStatus;
 
@@ -93,7 +96,10 @@ pub use embedded_data::EmbeddedData;
 pub mod region_of_interest;
 
 mod soft_binding;
-pub use soft_binding::{SoftBinding, SoftBindingBlock, SoftBindingScope};
+pub use soft_binding::{SoftBinding, SoftBindingBlock, SoftBindingMetadata, SoftBindingScope};
 
 mod cloud_data;
 pub use cloud_data::{CloudData, HashedExtUri};
+
+mod external_reference;
+pub use external_reference::{ExternalReference, ExternalReferenceLocation, UnhashedExtUri};

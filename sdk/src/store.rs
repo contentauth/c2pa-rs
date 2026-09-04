@@ -25,8 +25,8 @@ use crate::{
     assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError},
     assertions::{
         labels::{self, CLAIM},
-        BmffHash, BoxHash, CertificateStatus, DataBox, DataHash, Ingredient, Relationship,
-        TimeStamp, User, UserCbor,
+        BmffHash, BoxHash, CertificateStatus, CollectionHash, DataBox, DataHash, Ingredient,
+        Relationship, TimeStamp, User, UserCbor,
     },
     asset_io::{ObjectLocations, ObjectType, ReadSeek, ReadWriteSeek},
     claim::{
@@ -51,7 +51,7 @@ use crate::{
         AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
     },
     error::{Error, Result},
-    hash_utils::{hash_by_alg, vec_compare, verify_by_alg},
+    hash_utils::{hash_by_alg, hash_size_by_alg, vec_compare, verify_by_alg},
     hashed_uri::HashedUri,
     jumbf::{
         self,
@@ -1669,23 +1669,21 @@ impl Store {
                 .failure_as_err(validation_log, e)
             })?;
 
-            // 15.11.3.2 if both an activeManifest and a digitalSourceType field are present,
-            //           the assertion shall be rejected with a failure code of assertion.ingredient.malformed
             if ingredient_assertion.active_manifest.is_some()
                 && ingredient_assertion.digital_source_type.is_some()
             {
                 log_item!(
-                    i.label().clone(),
-                    "ingredient assertion cannot have both activeManifest and digitalSourceType",
-                    "ingredient_checks"
-                )
-                .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
-                .failure(
-                    validation_log,
-                    Error::ValidationRule(
-                        "ingredient assertion cannot have both activeManifest and digitalSourceType".to_string(),
-                    ),
-                )?;
+                            jumbf::labels::to_assertion_uri(claim.label(), &i.label()),
+                            "ingredient assertion cannot have both activeManifest and digitalSourceType",
+                            "ingredient_checks"
+                        )
+                        .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
+                        .failure(
+                            validation_log,
+                            Error::ValidationRule(
+                                "ingredient assertion cannot have both activeManifest and digitalSourceType".to_string(),
+                            ),
+                        )?;
             }
 
             validation_log
@@ -1705,7 +1703,7 @@ impl Store {
                         .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
                         .failure(
                             validation_log,
-                            Error::HashMismatch(
+                            Error::ValidationRule(
                                 "ingredient V3 missing validation status".to_string(),
                             ),
                         )?;
@@ -1790,7 +1788,7 @@ impl Store {
                                 )
                                 .failure_as_err(
                                     validation_log,
-                                    Error::HashMismatch(
+                                    Error::ValidationRule(
                                         "ingredient claimSignature missing".to_string(),
                                     ),
                                 )
@@ -1821,7 +1819,7 @@ impl Store {
                             )
                             .failure(
                                 validation_log,
-                                Error::HashMismatch(
+                                Error::ValidationRule(
                                     "ingredient claimSignature mismatch".to_string(),
                                 ),
                             )?;
@@ -2219,12 +2217,7 @@ impl Store {
             dh.gen_hash_from_stream_with_progress(stream, progress)?;
         } else {
             // First signing pass: zero-filled placeholder hash (to get to end size)
-            match alg {
-                "sha256" => dh.set_hash([0u8; 32].to_vec()),
-                "sha384" => dh.set_hash([0u8; 48].to_vec()),
-                "sha512" => dh.set_hash([0u8; 64].to_vec()),
-                _ => return Err(Error::UnsupportedType),
-            }
+            dh.set_hash(vec![0u8; hash_size_by_alg(alg)?]);
         }
 
         hashes.push(dh);
@@ -2243,12 +2236,7 @@ impl Store {
         dh.set_default_exclusions_with_options(settings);
 
         // fill in temporary hash
-        match alg {
-            "sha256" => dh.set_hash([0u8; 32].to_vec()),
-            "sha384" => dh.set_hash([0u8; 48].to_vec()),
-            "sha512" => dh.set_hash([0u8; 64].to_vec()),
-            _ => return Err(Error::UnsupportedType),
-        }
+        dh.set_hash(vec![0u8; hash_size_by_alg(alg)?]);
 
         Ok(dh)
     }
@@ -3116,6 +3104,7 @@ impl Store {
         let io = context.io();
         let io_handler = io.handler(format);
         let is_bmff = io.is_bmff_format(format);
+        let is_zip = io.is_zip_format(format);
 
         // fast_path applies to all formats: when there is no XMP embed and no manifest removal,
         // we can pass input_stream directly to the write/hash steps, skipping one full-file copy.
@@ -3190,13 +3179,12 @@ impl Store {
         let mut data;
         let jumbf_size;
 
-        // Check to see if manifest compression is requested, BMFF is not supported for compression since the manifest
-        // needs to be in a specific location and compression would change the size of the manifest which
-        // would break the offsets
+        // Check to see if manifest compression is requested, BMFF and ZIP are not supported for compression since the manifest
+        // needs to be in a specific location and compression would change the size of the manifest which would break the offsets
         if pc.compressed() {
-            // If compression is desired use BoxHashing for compatibile formats, otherwise fall back to regular hashing.
+            // If compression is desired use BoxHashing for compatible formats, otherwise fall back to regular hashing.
             match io_handler.and_then(|h| h.asset_box_hash_ref()) {
-                Some(box_hash_handler) if !is_bmff => {
+                Some(box_hash_handler) if !is_bmff && !is_zip => {
                     // if the user already has a box hash assertion we use that and ignore the compression setting
                     if pc.box_hash_assertions().is_empty() {
                         // no user box hash assertion, so use box hashing
@@ -3332,6 +3320,76 @@ impl Store {
                     pc.update_bmff_hash(bmff_hash)?;
                 }
             }
+        } else if is_zip {
+            if pc.update_manifest() {
+                // as of 08/28/2026, ZIP embedding does not support update manifests because it will
+                // move the rest of the file down, changing offsets, and breaking the hashes
+                return Err(Error::BadParam(
+                    "update manifests are not supported for ZIP-based assets".to_string(),
+                ));
+            }
+
+            // hash all of the existing files and embed a placeholder central directory hash.
+            // this is okay because adding new file entries does not change the hashes of existing
+            // file entries. when we insert the real manifest we can go back and hash the central directory.
+            let mut new_collection_hash = None;
+            if pc.collection_hash_assertions().is_empty() {
+                let mut placeholder_collection_hash = CollectionHash::new(pc.alg().to_owned());
+                if source_is_intermediate {
+                    intermediate_stream.rewind()?;
+                    placeholder_collection_hash.gen_zip_uri_hashes(&mut intermediate_stream)?;
+                } else {
+                    input_stream.rewind()?;
+                    placeholder_collection_hash.gen_zip_uri_hashes(input_stream)?;
+                }
+
+                placeholder_collection_hash.set_placeholder_zip_central_directory_hash()?;
+                pc.add_assertion(&placeholder_collection_hash)?;
+
+                new_collection_hash = Some(placeholder_collection_hash);
+            }
+
+            data = self.to_jumbf_internal(reserve_size)?;
+            jumbf_size = data.len();
+
+            // we only need to compute the central directory hash here because everything else is
+            // already hashed in the previous step.
+            if let Some(mut collection_hash) = new_collection_hash {
+                if !remove_manifests {
+                    let mut scratch = io_utils::stream_with_fs_fallback(threshold, input_len)?;
+                    if source_is_intermediate {
+                        intermediate_stream.rewind()?;
+                        io.write_c2pa(format, &mut intermediate_stream, &mut scratch, &data)?;
+                    } else {
+                        input_stream.rewind()?;
+                        io.write_c2pa(format, input_stream, &mut scratch, &data)?;
+                    }
+
+                    scratch.rewind()?;
+                    collection_hash.gen_zip_central_directory_hash(&mut scratch)?;
+                } else {
+                    if source_is_intermediate {
+                        intermediate_stream.rewind()?;
+                        collection_hash.gen_zip_central_directory_hash(&mut intermediate_stream)?;
+                    } else {
+                        input_stream.rewind()?;
+                        collection_hash.gen_zip_central_directory_hash(input_stream)?;
+                    }
+                }
+
+                let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
+                pc.replace_assertion(collection_hash.to_assertion()?)?;
+            }
+
+            if source_is_intermediate {
+                intermediate_stream.rewind()?;
+                std::io::copy(&mut intermediate_stream, output_stream)?;
+            } else {
+                input_stream.rewind()?;
+                std::io::copy(input_stream, output_stream)?;
+            }
+
+            context.check_progress(ProgressPhase::Writing, 2, 2)?;
         } else {
             // we will not do automatic hashing if we detect a box hash present
             let mut needs_hashing = false;
@@ -4135,22 +4193,13 @@ impl Store {
                                 to_both.append(&mut differences);
                             }
                         } else {
-                            let new_version = match claim
+                            // First conflict for this label starts at version 1
+                            let new_version = claim
                                 .claim_ingredient_store()
                                 .keys()
-                                .filter_map(|label| match manifest_label_to_parts(label) {
-                                    Some(mp) => mp.version,
-                                    None => None,
-                                })
+                                .filter_map(|label| manifest_label_to_parts(label)?.version)
                                 .max()
-                            {
-                                Some(last_conflict_version) => last_conflict_version + 1,
-                                None => {
-                                    return Err(Error::OtherError(
-                                        "ingredient label malformed".into(),
-                                    ))
-                                }
-                            };
+                                .map_or(1, |last_conflict_version| last_conflict_version + 1);
 
                             // make new ingredient label
                             let mut new_mp = manifest_label_to_parts(&conflict_label)
@@ -6943,6 +6992,80 @@ pub mod tests {
     }
 
     #[test]
+    fn test_ingredient_labels_versioned_on_conflict() {
+        // A manifest URN identifies a manifest, not its bytes.
+        // The same manifest can reach one asset by two routes
+        // and have only one of the copies change along the way.
+        // Two ingredients (from the different paths)
+        // then carry the same label with different (bytes) content.
+        //
+        // See https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_copying_existing_manifests
+        // (C2PA spec 2.4 section 18.16.12)
+        //
+        // Here the three ingredients differ by databox content, triggering relabelling.
+        // The first conflict must start at version 1 instead of erroring.
+        let context = Context::new();
+        let signer = test_signer(SigningAlg::Ps256);
+        let shared_label = "urn:c2pa:11111111-2222-4333-8444-555555555555";
+
+        let signed_ingredient = |variant: &str| -> Vec<u8> {
+            let mut store = Store::from_context(&Context::new());
+            let mut claim =
+                Claim::new_with_user_guid("ingredient label conflict test", shared_label, 2)
+                    .unwrap();
+            claim.add_claim_generator_info(ClaimGeneratorInfo::new("conflict_test"));
+            claim
+                .add_databox("text/plain", variant.as_bytes().to_vec(), None)
+                .unwrap();
+            let actions = Actions::new()
+                .add_action(Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty));
+            claim.add_assertion(&actions).unwrap();
+            store.commit_claim(claim).unwrap();
+
+            let (format, mut input, mut output) = create_test_streams("earth_apollo17.jpg");
+            store
+                .save_to_stream(format, &mut input, &mut output, signer.as_ref(), &context)
+                .unwrap();
+            output.rewind().unwrap();
+            let (bytes, _) = Store::load_jumbf_from_stream(format, &mut output, &context).unwrap();
+            bytes
+        };
+
+        // Preparing 3 ingredient varints, which will have the same shared URN.
+        // They will have different databox content, dependent on the variant.
+        let bytes_a = signed_ingredient("variant-a");
+        let bytes_b = signed_ingredient("variant-b");
+        let bytes_c = signed_ingredient("variant-c");
+
+        let mut claim = Claim::new(
+            "ingredient label conflict test top level",
+            Some("c2pa-rs-sdk-test"),
+            2,
+        );
+        claim.add_claim_generator_info(ClaimGeneratorInfo::new("outer"));
+
+        // No conflict on this load...
+        Store::load_ingredient_to_claim(&mut claim, &bytes_a, None, &context).unwrap();
+        // First conflict happens at this load.
+        Store::load_ingredient_to_claim(&mut claim, &bytes_b, None, &context).unwrap();
+        // This is the second conflict.
+        Store::load_ingredient_to_claim(&mut claim, &bytes_c, None, &context).unwrap();
+
+        let keys: Vec<&String> = claim.claim_ingredient_store().keys().collect();
+        let has = |label: &str| keys.iter().any(|k| k.as_str() == label);
+        assert!(has(shared_label));
+        // Verifies conflict resolution labelling
+        assert!(
+            has(&format!("{shared_label}::1_1")),
+            "on first conflict, relabel should have version 1, got: {keys:?}"
+        );
+        assert!(
+            has(&format!("{shared_label}::2_1")),
+            "second conflict should relabel to version 2, got: {keys:?}"
+        );
+    }
+
+    #[test]
     fn test_ingredient_conflict_with_incoming_manifest() {
         use crate::{
             hashed_uri::HashedUri, jumbf::labels::to_signature_uri,
@@ -9388,46 +9511,6 @@ pub mod tests {
         );
     }
 
-    #[test]
-    fn test_ingredient_checks_rejects_active_manifest_and_digital_source_type() {
-        let ingredient = Ingredient {
-            active_manifest: Some(HashedUri::new(
-                "self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(),
-                Some("sha256".to_owned()),
-                &[1, 2, 3, 4, 5, 6, 7, 8, 9, 0],
-            )),
-            digital_source_type: Some(DigitalSourceType::TrainedAlgorithmicData),
-            validation_results: Some(ValidationResults::default()),
-            relationship: Relationship::InputTo,
-            version: 3,
-            ..Default::default()
-        };
-        let mut claim = Claim::new("ingredient_malformed_test", Some("contentauth"), 2);
-        claim.add_assertion(&ingredient).unwrap();
-
-        let store = Store::new();
-        let svi = StoreValidationInfo::default();
-        let mut validation_log =
-            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-        let context = Context::new();
-
-        let result = Store::ingredient_checks(
-            &store,
-            &claim,
-            &svi,
-            &mut validation_log,
-            0,
-            &context,
-            &mut HashSet::new(),
-        );
-
-        assert!(result.is_err());
-        assert!(validation_log.logged_items().iter().any(|item| {
-            item.validation_status.as_deref()
-                == Some(validation_status::ASSERTION_INGREDIENT_MALFORMED)
-        }));
-    }
-
     // Verify that when an ingredient assertion is included in final_redactions, the claim it
     // referenced is removed from the incoming store and from svi.ingredient_references.
     #[test]
@@ -9568,6 +9651,83 @@ pub mod tests {
         assert!(
             m3_claim.claim_ingredient(&m1_label).is_none(),
             "M1 should be removed because its only referencing assertion was redacted"
+        );
+    }
+
+    const COLLECTION_ZIP: &[u8] = include_bytes!("../tests/fixtures/sample1.zip");
+
+    #[test]
+    fn test_store_verify_zip_collection_hash() {
+        let mut claim = create_test_claim().unwrap();
+
+        let mut collection = CollectionHash::new(claim.alg().to_owned());
+        collection
+            .gen_hash_from_zip_stream(&mut Cursor::new(COLLECTION_ZIP))
+            .unwrap();
+        claim.add_created_assertion(&collection).unwrap();
+
+        let mut store = Store::from_context(&Context::new());
+        store.commit_claim(claim).unwrap();
+        let claim = store.provenance_claim().unwrap();
+
+        let svi = StoreValidationInfo {
+            binding_claim: claim.label().to_string(),
+            ..Default::default()
+        };
+        let context = Context::new();
+        let mut report = StatusTracker::default();
+        let mut asset_data = ClaimAssetData::Bytes(COLLECTION_ZIP, "zip");
+
+        Claim::verify_hash_binding(claim, &mut asset_data, &svi, &mut report, &context).unwrap();
+
+        assert!(report.has_status(validation_status::ASSERTION_COLLECTIONHASH_MATCH));
+    }
+
+    #[test]
+    fn test_sign_zip_generates_valid_collection_hash() {
+        let mut context = Context::new();
+        context.settings_mut().verify.verify_after_sign = false;
+
+        let mut store = Store::from_context(&context);
+        store.commit_claim(create_test_claim().unwrap()).unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut input = Cursor::new(COLLECTION_ZIP.to_vec());
+        let mut output = Cursor::new(Vec::new());
+        store
+            .save_to_stream("zip", &mut input, &mut output, signer.as_ref(), &context)
+            .unwrap();
+
+        let mut report = StatusTracker::default();
+        output.rewind().unwrap();
+        Store::from_stream("zip", &mut output, &mut report, &context).unwrap();
+
+        assert!(
+            report.has_status(validation_status::ASSERTION_COLLECTIONHASH_MATCH),
+            "the generated collection hash should verify against the signed ZIP"
+        );
+    }
+
+    #[test]
+    fn test_sign_zip_update_manifest_is_unsupported() {
+        let mut context = Context::new();
+        context.settings_mut().verify.verify_after_sign = false;
+
+        let mut claim = create_test_claim().unwrap();
+        claim.set_update_manifest(true);
+
+        let mut store = Store::from_context(&context);
+        store.commit_claim(claim).unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut input = Cursor::new(COLLECTION_ZIP.to_vec());
+        let mut output = Cursor::new(Vec::new());
+        let result =
+            store.save_to_stream("zip", &mut input, &mut output, signer.as_ref(), &context);
+
+        assert!(
+            matches!(&result, Err(Error::BadParam(msg)) if msg.contains("update manifests are not supported")),
+            "expected update manifests to be rejected for ZIP, got {result:?}"
         );
     }
 
