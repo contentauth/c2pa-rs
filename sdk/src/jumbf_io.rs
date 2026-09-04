@@ -29,7 +29,7 @@ use crate::{
     asset_handlers::{
         bmff_io::BmffIO, c2pa_io::C2paIO, flac_io::FlacIO, gif_io::GifIO, jpeg_io::JpegIO,
         jpegxl_io::JpegXlIO, mp3_io::Mp3IO, png_io::PngIO, riff_io::RiffIO, svg_io::SvgIO,
-        tiff_io::TiffIO,
+        tiff_io::TiffIO, zip_io::ZipIO,
     },
     asset_io::{AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions},
     error::{Error, Result},
@@ -53,6 +53,7 @@ lazy_static! {
         Box::new(Mp3IO::new("")),
         Box::new(GifIO::new("")),
         Box::new(FlacIO::new("")),
+        Box::new(ZipIO::new("")),
     ];
 
     static ref CAI_READERS: HashMap<String, Box<dyn AssetIO>> = {
@@ -98,6 +99,10 @@ lazy_static! {
 
 pub(crate) fn is_bmff_format(asset_type: &str) -> bool {
     container_from_format(asset_type) == container_from_format("avif")
+}
+
+pub(crate) fn is_zip_format(asset_type: &str) -> bool {
+    container_from_format(asset_type) == container_from_format("zip")
 }
 
 /// Returns the container ID for a given format string (extension or MIME type), if known.
@@ -504,6 +509,7 @@ pub mod tests {
             Box::new(TiffIO::new("")),
             Box::new(SvgIO::new("")),
             Box::new(Mp3IO::new("")),
+            Box::new(ZipIO::new("")),
             Box::new(FlacIO::new("")),
         ];
 
@@ -530,6 +536,7 @@ pub mod tests {
             Box::new(TiffIO::new("")),
             Box::new(SvgIO::new("")),
             Box::new(Mp3IO::new("")),
+            Box::new(ZipIO::new("")),
             Box::new(FlacIO::new("")),
         ];
 
@@ -549,6 +556,7 @@ pub mod tests {
             Box::new(JpegXlIO::new("")),
             Box::new(PngIO::new("")),
             Box::new(Mp3IO::new("")),
+            Box::new(ZipIO::new("")),
             Box::new(FlacIO::new("")),
             Box::new(SvgIO::new("")),
             Box::new(RiffIO::new("")),

@@ -36,8 +36,8 @@ use crate::{
             self, ACTIONS, ASSERTION_METADATA, ASSERTION_STORE, BMFF_HASH, CLAIM_THUMBNAIL,
             DATABOX_STORE, METADATA_LABEL_REGEX,
         },
-        Action, Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, DataBox, DataHash,
-        Ingredient, Metadata, Relationship, V2_DEPRECATED_ACTIONS,
+        Action, Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, CollectionHash, DataBox,
+        DataHash, Ingredient, Metadata, Relationship, V2_DEPRECATED_ACTIONS,
     },
     asset_io::CAIRead,
     cbor_types::map_cbor_to_type,
@@ -70,7 +70,7 @@ use crate::{
             DATABOX, DATABOXES, SIGNATURE,
         },
     },
-    jumbf_io::get_assetio_handler,
+    jumbf_io::{get_assetio_handler, is_zip_format},
     log_item,
     resource_store::UriOrResource,
     salt::{DefaultSalt, SaltGenerator},
@@ -118,6 +118,21 @@ pub enum ClaimAssetData<'a> {
     StreamFragment(&'a mut dyn CAIRead, &'a mut dyn CAIRead, &'a str),
     #[cfg(feature = "file_io")]
     StreamFragments(&'a mut dyn CAIRead, &'a Vec<std::path::PathBuf>, &'a str),
+}
+
+impl ClaimAssetData<'_> {
+    /// Returns the asset's format (MIME type or extension), if it can be determined.
+    pub(crate) fn format(&self) -> Option<String> {
+        match self {
+            #[cfg(feature = "file_io")]
+            ClaimAssetData::Path(path) => crate::format_from_path(path),
+            ClaimAssetData::Bytes(_, asset_type)
+            | ClaimAssetData::Stream(_, asset_type)
+            | ClaimAssetData::StreamFragment(_, _, asset_type) => Some((*asset_type).to_owned()),
+            #[cfg(feature = "file_io")]
+            ClaimAssetData::StreamFragments(_, _, asset_type) => Some((*asset_type).to_owned()),
+        }
+    }
 }
 
 #[derive(PartialEq, Debug, Eq, Clone, Hash)]
@@ -3027,6 +3042,87 @@ impl Claim {
                             )?;
                         }
                     }
+                } else if hash_binding_assertion
+                    .label_raw()
+                    .starts_with(CollectionHash::LABEL)
+                {
+                    let collection_hash =
+                        CollectionHash::from_assertion(hash_binding_assertion.assertion())?;
+
+                    let verify_result = if asset_data.format().as_deref().is_some_and(is_zip_format)
+                    {
+                        match asset_data {
+                            #[cfg(feature = "file_io")]
+                            ClaimAssetData::Path(asset_path) => {
+                                let mut file = std::fs::File::open(asset_path)?;
+                                collection_hash.verify_zip_stream_hash(&mut file, Some(claim.alg()))
+                            }
+                            ClaimAssetData::Bytes(asset_bytes, _) => {
+                                let mut cursor = std::io::Cursor::new(*asset_bytes);
+                                collection_hash
+                                    .verify_zip_stream_hash(&mut cursor, Some(claim.alg()))
+                            }
+                            ClaimAssetData::Stream(stream_data, _) => collection_hash
+                                .verify_zip_stream_hash(*stream_data, Some(claim.alg())),
+                            _ => return Err(Error::UnsupportedType),
+                        }
+                    } else {
+                        // we don't support multiple streams as input so the only option is paths for non-ZIP-based assets.
+                        match asset_data {
+                            #[cfg(feature = "file_io")]
+                            ClaimAssetData::Path(asset_path) => collection_hash
+                                .verify_hash(asset_path.parent().unwrap_or(asset_path)),
+                            _ => return Err(Error::UnsupportedType),
+                        }
+                    };
+
+                    match verify_result {
+                        Ok(_) => {
+                            log_item!(
+                                claim.assertion_uri(&hash_binding_assertion.label()),
+                                "collection hash valid",
+                                "verify_internal"
+                            )
+                            .validation_status(validation_status::ASSERTION_COLLECTIONHASH_MATCH)
+                            .success(validation_log);
+
+                            continue;
+                        }
+                        Err(err) => {
+                            let err_str = match &err {
+                                Error::C2PAValidation(code)
+                                    if code
+                                        == validation_status::ASSERTION_COLLECTIONHASH_MALFORMED =>
+                                {
+                                    validation_status::ASSERTION_COLLECTIONHASH_MALFORMED
+                                }
+                                Error::C2PAValidation(code)
+                                    if code
+                                        == validation_status::ASSERTION_COLLECTIONHASH_INVALID_URI =>
+                                {
+                                    validation_status::ASSERTION_COLLECTIONHASH_INVALID_URI
+                                }
+                                Error::C2PAValidation(code)
+                                    if code
+                                        == validation_status::ASSERTION_COLLECTIONHASH_INCORRECT_FILE_COUNT =>
+                                {
+                                    validation_status::ASSERTION_COLLECTIONHASH_INCORRECT_FILE_COUNT
+                                }
+                                _ => validation_status::ASSERTION_COLLECTIONHASH_MISMATCH,
+                            };
+
+                            log_item!(
+                                claim.assertion_uri(&hash_binding_assertion.label()),
+                                format!("collection hash error: {err_str}"),
+                                "verify_internal"
+                            )
+                            .validation_status(err_str)
+                            .failure(
+                                validation_log,
+                                Error::HashMismatch(format!("asset hash failure: {err}")),
+                            )?;
+                        }
+                    }
                 } else {
                     log_item!(
                         claim.assertion_uri(&hash_binding_assertion.label()),
@@ -3433,6 +3529,15 @@ impl Claim {
         let dummy_box_hash = Assertion::new(assertions::labels::BOX_HASH, None, dummy_box_data);
         data_hashes.append(&mut self.assertions_by_type(&dummy_box_hash, None));
 
+        // add in collection hashes
+        let dummy_collection_data = AssertionData::Cbor(Vec::new());
+        let dummy_collection_hash = Assertion::new(
+            assertions::labels::COLLECTION_HASH,
+            None,
+            dummy_collection_data,
+        );
+        data_hashes.append(&mut self.assertions_by_type(&dummy_collection_hash, None));
+
         // remove any multipart hashes, those are handled elsewhere
         data_hashes.retain(|x| !x.label_raw().ends_with(assertions::labels::PART));
 
@@ -3447,7 +3552,6 @@ impl Claim {
     }
 
     pub fn data_hash_assertions(&self) -> Vec<&ClaimAssertion> {
-        // add in an BMFF hashes
         let dummy_hash_data = AssertionData::Cbor(Vec::new());
         let dummy_data_hash = Assertion::new(assertions::labels::DATA_HASH, None, dummy_hash_data);
         self.assertions_by_type(&dummy_data_hash, None)
@@ -3458,6 +3562,16 @@ impl Claim {
         let dummy_box_data = AssertionData::Cbor(Vec::new());
         let dummy_box_hash = Assertion::new(assertions::labels::BOX_HASH, None, dummy_box_data);
         self.assertions_by_type(&dummy_box_hash, None)
+    }
+
+    pub fn collection_hash_assertions(&self) -> Vec<&ClaimAssertion> {
+        let dummy_collection_data = AssertionData::Cbor(Vec::new());
+        let dummy_collection_hash = Assertion::new(
+            assertions::labels::COLLECTION_HASH,
+            None,
+            dummy_collection_data,
+        );
+        self.assertions_by_type(&dummy_collection_hash, None)
     }
 
     /// Return list of ingredient assertions. This function

@@ -42,20 +42,6 @@ const MAX_MDAT_BOXES: usize = 4;
 /// scenarios
 const MAX_MERKLE_LEAVES_SIZE: u64 = 32 * 1024 * 1024;
 
-/// Output size in bytes for a BmffHash-supported hash algorithm, derived from
-/// the actual `sha2` hasher types via the `Digest` trait so the values stay in
-/// sync with what `hash_stream_by_alg` produces.
-fn hash_alg_size_in_bytes(alg: &str) -> crate::Result<u64> {
-    match alg {
-        "sha256" => Ok(<Sha256 as Digest>::output_size() as u64),
-        "sha384" => Ok(<Sha384 as Digest>::output_size() as u64),
-        "sha512" => Ok(<Sha512 as Digest>::output_size() as u64),
-        other => Err(Error::BadParam(format!(
-            "unsupported hash alg for Merkle leaf sizing: {other}"
-        ))),
-    }
-}
-
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
@@ -67,8 +53,8 @@ use crate::{
     cbor_types::UriT,
     utils::{
         hash_utils::{
-            concat_and_hash, hash_stream_by_alg, hash_stream_by_alg_with_progress, vec_compare,
-            verify_stream_by_alg, HashRange, Hasher,
+            concat_and_hash, hash_size_by_alg, hash_stream_by_alg,
+            hash_stream_by_alg_with_progress, vec_compare, verify_stream_by_alg, HashRange, Hasher,
         },
         io_utils::stream_len,
         merkle::{C2PAMerkleTree, MerkleNode},
@@ -520,12 +506,7 @@ impl BmffHash {
         }
 
         let alg = self.alg.clone().unwrap_or_else(|| "sha256".to_string());
-        let hash_len = match alg.as_str() {
-            "sha256" => 32,
-            "sha384" => 48,
-            "sha512" => 64,
-            _ => return Err(Error::UnsupportedType),
-        };
+        let hash_len = hash_size_by_alg(&alg)?;
         let fixed_block_size = if chunk_size_kb > 0 {
             Some(1024 * chunk_size_kb as u64)
         } else {
@@ -738,12 +719,7 @@ impl BmffHash {
     pub fn add_place_holder_hash(&mut self) -> crate::error::Result<()> {
         // make sure hash space is reserved
         if let Some(alg) = &self.alg {
-            match alg.as_str() {
-                "sha256" => self.set_hash([0u8; 32].to_vec()),
-                "sha384" => self.set_hash([0u8; 48].to_vec()),
-                "sha512" => self.set_hash([0u8; 64].to_vec()),
-                _ => return Err(Error::UnsupportedType),
-            }
+            self.set_hash(vec![0u8; hash_size_by_alg(alg)?]);
         }
         Ok(())
     }
@@ -2030,13 +2006,8 @@ impl BmffHash {
             local_id,
             count: fragment_paths.len(),
             alg: Some(alg.to_owned()),
-            init_hash: match alg {
-                // placeholder init hash to be filled once manifest is inserted into init segment
-                "sha256" => Some(ByteBuf::from([0u8; 32].to_vec())),
-                "sha384" => Some(ByteBuf::from([0u8; 48].to_vec())),
-                "sha512" => Some(ByteBuf::from([0u8; 64].to_vec())),
-                _ => return Err(Error::UnsupportedType),
-            },
+            // placeholder init hash to be filled once manifest is inserted into init segment
+            init_hash: Some(ByteBuf::from(vec![0u8; hash_size_by_alg(alg)?])),
             hashes: VecByteBuf(hashes),
             fixed_block_size: None,
             variable_block_sizes: None,
@@ -2067,7 +2038,7 @@ impl BmffHash {
             .as_ref()
             .or(self.alg.as_ref())
             .ok_or(Error::BadParam("alg is required".to_string()))?;
-        let leaf_size = hash_alg_size_in_bytes(alg)?;
+        let leaf_size = hash_size_by_alg(alg)? as u64;
         if num_leaves.saturating_mul(leaf_size) > MAX_MERKLE_LEAVES_SIZE {
             return Err(Error::InvalidAsset(format!(
                 "Merkle tree leaf memory ({num_leaves} leaves × {leaf_size} B) exceeds maximum ({MAX_MERKLE_LEAVES_SIZE} bytes)"
