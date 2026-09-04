@@ -548,7 +548,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa"
-version = "0.90.17"
+version = "0.90.18"
 dependencies = [
  "anyhow",
  "asn1-rs",
@@ -652,7 +652,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa-c-ffi"
-version = "0.90.17"
+version = "0.90.18"
 dependencies = [
  "c2pa",
  "cbindgen",
@@ -666,9 +666,9 @@ dependencies = [
 
 [[package]]
 name = "c2pa_cbor"
-version = "0.77.2"
+version = "0.77.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a32d9f47773390b9e3400021ddd9ef7a8d61b8a6501cf72aecd6409d6d447c89"
+checksum = "0b057a673824daf7a5bff38680744d7a082b61edc012c8a6dc0ebfc04c79a08c"
 dependencies = [
  "half",
  "serde",
@@ -677,7 +677,7 @@ dependencies = [
 
 [[package]]
 name = "c2pa_macros"
-version = "0.90.17"
+version = "0.90.18"
 dependencies = [
  "quote",
  "syn 2.0.119",
@@ -685,7 +685,7 @@ dependencies = [
 
 [[package]]
 name = "c2patool"
-version = "0.27.17"
+version = "0.27.18"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1513,7 +1513,7 @@ dependencies = [
 
 [[package]]
 name = "export_schema"
-version = "0.90.17"
+version = "0.90.18"
 dependencies = [
  "anyhow",
  "c2pa",
@@ -2605,7 +2605,7 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 
 [[package]]
 name = "make_test_images"
-version = "0.90.17"
+version = "0.90.18"
 dependencies = [
  "anyhow",
  "c2pa",
@@ -4624,9 +4624,9 @@ dependencies = [
 
 [[package]]
 name = "tinyvec"
-version = "1.12.0"
+version = "1.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb4ebadaa0af04fab11ae01eb5f9fdb5f9c5b875506e210e71c07873528baa7f"
+checksum = "4cf0ded5c4e56918d8f8a339e1bb67d038d3bc6d144ac407904015ba2e4cde9b"
 dependencies = [
  "tinyvec_macros",
 ]

@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.90.18](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.17...c2pa-v0.90.18)
+_04 September 2026_
+
+### Fixed
+
+* Harden against invalid  labels as CAWG identity hard bindings (backport #2538) ([#2581](https://github.com/contentauth/c2pa-rs/pull/2581))
+
 ## [0.90.17](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.16...c2pa-v0.90.17)
 _03 September 2026_
 
