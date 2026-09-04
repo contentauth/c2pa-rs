@@ -42,20 +42,6 @@ const MAX_MDAT_BOXES: usize = 4;
 /// scenarios
 const MAX_MERKLE_LEAVES_SIZE: u64 = 32 * 1024 * 1024;
 
-/// Output size in bytes for a BmffHash-supported hash algorithm, derived from
-/// the actual `sha2` hasher types via the `Digest` trait so the values stay in
-/// sync with what `hash_stream_by_alg` produces.
-fn hash_alg_size_in_bytes(alg: &str) -> crate::Result<u64> {
-    match alg {
-        "sha256" => Ok(<Sha256 as Digest>::output_size() as u64),
-        "sha384" => Ok(<Sha384 as Digest>::output_size() as u64),
-        "sha512" => Ok(<Sha512 as Digest>::output_size() as u64),
-        other => Err(Error::BadParam(format!(
-            "unsupported hash alg for Merkle leaf sizing: {other}"
-        ))),
-    }
-}
-
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
@@ -65,10 +51,11 @@ use crate::{
     },
     asset_io::CAIRead,
     cbor_types::UriT,
+    settings::Settings,
     utils::{
         hash_utils::{
-            concat_and_hash, hash_stream_by_alg, hash_stream_by_alg_with_progress, vec_compare,
-            verify_stream_by_alg, HashRange, Hasher,
+            concat_and_hash, hash_size_by_alg, hash_stream_by_alg,
+            hash_stream_by_alg_with_progress, vec_compare, verify_stream_by_alg, HashRange, Hasher,
         },
         io_utils::stream_len,
         merkle::{C2PAMerkleTree, MerkleNode},
@@ -520,12 +507,7 @@ impl BmffHash {
         }
 
         let alg = self.alg.clone().unwrap_or_else(|| "sha256".to_string());
-        let hash_len = match alg.as_str() {
-            "sha256" => 32,
-            "sha384" => 48,
-            "sha512" => 64,
-            _ => return Err(Error::UnsupportedType),
-        };
+        let hash_len = hash_size_by_alg(&alg)?;
         let fixed_block_size = if chunk_size_kb > 0 {
             Some(1024 * chunk_size_kb as u64)
         } else {
@@ -635,6 +617,15 @@ impl BmffHash {
 
     // Adds default exclusion ranges for BMFF hashes.  Add as needed.
     pub fn set_default_exclusions(&mut self) -> &[ExclusionsMap] {
+        self.set_default_exclusions_with_options(&Settings::default())
+    }
+
+    /// Like [`set_default_exclusions`](Self::set_default_exclusions), but takes
+    /// the full [`Settings`] so new BMFF-hash-related options can be added
+    /// without another signature change. Currently only
+    /// [`BuilderSettings::bmff_hash_exclude_free_and_skip_boxes`](crate::settings::builder::BuilderSettings::bmff_hash_exclude_free_and_skip_boxes)
+    /// is consulted.
+    pub fn set_default_exclusions_with_options(&mut self, settings: &Settings) -> &[ExclusionsMap] {
         let exclusions = &mut self.exclusions;
 
         let cp2a_id: [u8; 16] = [
@@ -668,16 +659,18 @@ impl BmffHash {
             exclusions.push(mfra);
         }
 
-        // /free exclusion
-        if !exclusions.iter().any(|e| e.xpath == "/free") {
-            let free = ExclusionsMap::new("/free".to_owned());
-            exclusions.push(free);
-        }
+        if settings.builder.bmff_hash_exclude_free_and_skip_boxes {
+            // /free exclusion
+            if !exclusions.iter().any(|e| e.xpath == "/free") {
+                let free = ExclusionsMap::new("/free".to_owned());
+                exclusions.push(free);
+            }
 
-        // /skip exclusion
-        if !exclusions.iter().any(|e| e.xpath == "/skip") {
-            let skip = ExclusionsMap::new("/skip".to_owned());
-            exclusions.push(skip);
+            // /skip exclusion
+            if !exclusions.iter().any(|e| e.xpath == "/skip") {
+                let skip = ExclusionsMap::new("/skip".to_owned());
+                exclusions.push(skip);
+            }
         }
 
         /*  no longer mandatory
@@ -738,12 +731,7 @@ impl BmffHash {
     pub fn add_place_holder_hash(&mut self) -> crate::error::Result<()> {
         // make sure hash space is reserved
         if let Some(alg) = &self.alg {
-            match alg.as_str() {
-                "sha256" => self.set_hash([0u8; 32].to_vec()),
-                "sha384" => self.set_hash([0u8; 48].to_vec()),
-                "sha512" => self.set_hash([0u8; 64].to_vec()),
-                _ => return Err(Error::UnsupportedType),
-            }
+            self.set_hash(vec![0u8; hash_size_by_alg(alg)?]);
         }
         Ok(())
     }
@@ -1502,10 +1490,24 @@ impl BmffHash {
                             }
                         }
 
+                        // Look up by `mm.local_id`, the key this group was actually
+                        // inserted under in `split_bmff_merkle_map` (not `track_id`,
+                        // which only coincidentally matches it).
+                        let chunk_bmff_mms = track_to_bmff_merkle_map
+                            .get(&mm.local_id)
+                            .ok_or(Error::HashMismatch("Merkle location not found".to_owned()))?;
+
                         // finalize leaf hashes
                         let mut leaf_hashes = Vec::new();
-                        for chunk_bmff_mm in &track_to_bmff_merkle_map[&(track_id as usize)] {
-                            match chunk_hash_map.remove(&(chunk_bmff_mm.location as u32 + 1)) {
+                        for chunk_bmff_mm in chunk_bmff_mms {
+                            // `location` is attacker-controlled (deserialized from the
+                            // file's uuid merkle box), so both the u32 conversion and the
+                            // +1 must be checked rather than wrapping/panicking.
+                            let chunk_id = u32::try_from(chunk_bmff_mm.location)
+                                .ok()
+                                .and_then(|loc| loc.checked_add(1));
+
+                            match chunk_id.and_then(|id| chunk_hash_map.remove(&id)) {
                                 Some(h) => {
                                     let h = Hasher::finalize(h);
                                     leaf_hashes.push(h);
@@ -1518,7 +1520,7 @@ impl BmffHash {
                             }
                         }
 
-                        for chunk_bmff_mm in &track_to_bmff_merkle_map[&(track_id as usize)] {
+                        for chunk_bmff_mm in chunk_bmff_mms {
                             if chunk_bmff_mm.location >= leaf_hashes.len() {
                                 return Err(Error::HashMismatch(
                                     "BmffMerkleMap location exceeds leaf hash count".to_string(),
@@ -2016,13 +2018,8 @@ impl BmffHash {
             local_id,
             count: fragment_paths.len(),
             alg: Some(alg.to_owned()),
-            init_hash: match alg {
-                // placeholder init hash to be filled once manifest is inserted into init segment
-                "sha256" => Some(ByteBuf::from([0u8; 32].to_vec())),
-                "sha384" => Some(ByteBuf::from([0u8; 48].to_vec())),
-                "sha512" => Some(ByteBuf::from([0u8; 64].to_vec())),
-                _ => return Err(Error::UnsupportedType),
-            },
+            // placeholder init hash to be filled once manifest is inserted into init segment
+            init_hash: Some(ByteBuf::from(vec![0u8; hash_size_by_alg(alg)?])),
             hashes: VecByteBuf(hashes),
             fixed_block_size: None,
             variable_block_sizes: None,
@@ -2053,7 +2050,7 @@ impl BmffHash {
             .as_ref()
             .or(self.alg.as_ref())
             .ok_or(Error::BadParam("alg is required".to_string()))?;
-        let leaf_size = hash_alg_size_in_bytes(alg)?;
+        let leaf_size = hash_size_by_alg(alg)? as u64;
         if num_leaves.saturating_mul(leaf_size) > MAX_MERKLE_LEAVES_SIZE {
             return Err(Error::InvalidAsset(format!(
                 "Merkle tree leaf memory ({num_leaves} leaves × {leaf_size} B) exceeds maximum ({MAX_MERKLE_LEAVES_SIZE} bytes)"
@@ -2491,6 +2488,32 @@ mod bmff_hash_tests {
 
     use super::*;
     use crate::asset_handlers::bmff_io::{BoxInfoLite, C2PABmffBoxes};
+
+    /// `set_default_exclusions` (no args) must keep excluding `/free`/`/skip`,
+    /// matching its existing, documented default behavior.
+    #[test]
+    fn set_default_exclusions_excludes_free_and_skip() {
+        let mut bmff_hash = BmffHash::new("test", "sha256", None);
+        let exclusions = bmff_hash.set_default_exclusions();
+        assert!(exclusions.iter().any(|e| e.xpath == "/free"));
+        assert!(exclusions.iter().any(|e| e.xpath == "/skip"));
+    }
+
+    /// `set_default_exclusions_with_options` with the setting off must omit
+    /// `/free`/`/skip` from the exclusion list, so their content is folded
+    /// into the hash.
+    #[test]
+    fn set_default_exclusions_with_options_false_keeps_free_and_skip_hashed() {
+        let mut bmff_hash = BmffHash::new("test", "sha256", None);
+        let mut settings = Settings::default();
+        settings.builder.bmff_hash_exclude_free_and_skip_boxes = false;
+        let exclusions = bmff_hash.set_default_exclusions_with_options(&settings);
+        assert!(!exclusions.iter().any(|e| e.xpath == "/free"));
+        assert!(!exclusions.iter().any(|e| e.xpath == "/skip"));
+        // Other mandatory exclusions are unaffected.
+        assert!(exclusions.iter().any(|e| e.xpath == "/ftyp"));
+        assert!(exclusions.iter().any(|e| e.xpath == "/mfra"));
+    }
 
     fn small_mdat_box_info() -> BoxInfoLite {
         // A standard BMFF mdat box with an 8-byte header and no payload (size = 8).
@@ -3066,6 +3089,30 @@ mod bmff_hash_tests {
             matches!(err, Error::HashMismatch(_)),
             "unexpected error: {err:?}"
         );
+    }
+
+    /// A `local_id` that exceeds `u32::MAX` but truncates to a real track id
+    /// (here, track 1) must not panic. Before the fix, the group built by
+    /// `split_bmff_merkle_map` was keyed by the full `local_id`, while the
+    /// verify loop looked it back up by the real track's `u32` id widened to
+    /// `usize` - those never match once `local_id > u32::MAX`, so the
+    /// panicking `HashMap` index crashed here. The data is otherwise
+    /// legitimate (the sample truly hashes to `root`), so once the lookup
+    /// uses the same key it was inserted under, verification just succeeds.
+    ///
+    /// Gated to 64-bit targets: on a 32-bit `usize` (wasm32, wasi), a value
+    /// "exceeding `u32::MAX`" can't exist, and the shift below is a
+    /// compile-time overflow rather than a runtime scenario to test.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn timed_media_oversized_local_id_matching_real_track_does_not_panic() {
+        let (file, root) = build_timed_media(b"hello sample data", true);
+        let oversized_local_id = (1usize << 32) | 1; // truncates to the real track id, 1
+        let bmff_hash = tm_assertion(root, oversized_local_id);
+        let mut reader = Cursor::new(file);
+        bmff_hash
+            .verify_stream_hash(&mut reader, Some("sha256"))
+            .expect("oversized-but-consistent local_id should verify, not panic");
     }
 }
 
