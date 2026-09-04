@@ -6919,8 +6919,17 @@ pub mod tests {
 
     #[test]
     fn test_ingredient_conflict_first_collision_versions_label() {
-        // Two ingredients sharing a manifest label but differing in content (not by
-        // redaction) must relabel the second starting at version 1, not error.
+        // A manifest URN identifies a manifest, not its bytes.
+        // The same manifest can reach one asset by two routes
+        // and have only one of the copies change along the way.
+        // Two ingredients (from the different paths)
+        // then carry the same label with different (bytes) content.
+        //
+        // See https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_copying_existing_manifests
+        // (C2PA spec 2.4 section 18.16.12.1)
+        //
+        // Here the three ingredients differ by databox content, so the relabeling path runs.
+        // The first conflict must start at version 1 instead of erroring.
         let context = Context::new();
         let signer = test_signer(SigningAlg::Ps256);
         let shared_label = "urn:c2pa:550e8400-e29b-41d4-a716-446655440000";
@@ -6932,6 +6941,10 @@ pub mod tests {
             claim
                 .add_databox("text/plain", variant.as_bytes().to_vec(), None)
                 .unwrap();
+            // Every standard manifest needs an actions assertion, and one created de novo
+            // leads with c2pa.created carrying a digitalSourceType (C2PA spec 2.4 section
+            // 18.15.2). Required to make the fixture a valid manifest; unrelated to the
+            // label conflict under test.
             let actions = Actions::new()
                 .add_action(Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty));
             claim.add_assertion(&actions).unwrap();
