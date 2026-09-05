@@ -250,10 +250,10 @@ mod tests {
         },
         status_tracker::{LogKind, StatusTracker},
         validation_status::{
-            CAWG_X509_CREDENTIAL_UNTRUSTED, CAWG_X509_SIGNATURE_MISMATCH,
-            CAWG_X509_SIGNATURE_VALIDATED,
+            CAWG_X509_CREDENTIAL_TRUSTED, CAWG_X509_CREDENTIAL_UNTRUSTED,
+            CAWG_X509_SIGNATURE_MISMATCH, CAWG_X509_SIGNATURE_VALIDATED,
         },
-        Builder, SigningAlg,
+        Builder, Context, Reader, SigningAlg,
     };
 
     const TEST_IMAGE: &[u8] = include_bytes!("../../../tests/fixtures/CA.jpg");
@@ -480,6 +480,93 @@ mod tests {
                 .unwrap()
                 .as_ref() as &str,
             CAWG_X509_SIGNATURE_MISMATCH
+        );
+    }
+
+    /// Regression test for #2599: the CAWG trust settings on the caller's
+    /// `Context` must reach the X.509 identity trust check that runs while a
+    /// `Reader` decodes identity assertions (`validate_partial_claim`). We put
+    /// the identity certificate on a CAWG trust anchor's `allowed_list` and
+    /// expect the reader to report it as trusted through the end-entity list,
+    /// which is only possible if the caller's settings were consulted (the
+    /// default policy would find it in the test trust anchors instead).
+    #[c2pa_test_async]
+    async fn reader_uses_context_cawg_trust_settings() {
+        let format = "image/jpeg";
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
+        builder
+            .add_ingredient_from_stream(parent_json(), format, &mut source)
+            .unwrap();
+
+        builder
+            .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
+            .unwrap();
+
+        let mut c2pa_signer = IdentityAssertionSigner::from_test_credentials(SigningAlg::Ps256);
+
+        let (cawg_cert_chain, cawg_private_key) =
+            cert_chain_and_private_key_for_alg(SigningAlg::Ed25519);
+
+        let cawg_raw_signer =
+            c2pa_raw_crypto::signer_from_private_key(&cawg_private_key, SigningAlg::Ed25519)
+                .unwrap();
+
+        let x509_holder = X509CredentialHolder::from_raw_signer(
+            cawg_raw_signer,
+            crate::crypto::cert_chain_pem_to_der(&cawg_cert_chain).unwrap(),
+        );
+        let iab = IdentityAssertionBuilder::for_credential_holder(x509_holder);
+        c2pa_signer.add_identity_assertion(iab);
+
+        builder
+            .sign(&c2pa_signer, format, &mut source, &mut dest)
+            .unwrap();
+
+        dest.rewind().unwrap();
+
+        // Read back with the identity certificate on a CAWG allowed list.
+        let mut settings = crate::settings::Settings::default();
+        settings.core.decode_identity_assertions = true;
+        let anchors = settings.trust.anchors.get_or_insert_with(Vec::new);
+        anchors.push(crate::settings::TrustAnchor {
+            trust_anchors: String::new(),
+            trust_uri: Some("https://c2pa-rs/test_cawg_allowed_list".to_string()),
+            trust_kind: crate::settings::TrustListKind::CAWG,
+            trust_config: None,
+            allowed_list: Some(String::from_utf8(cawg_cert_chain).unwrap()),
+            trusted_ica_issuers: None,
+        });
+        let context = Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .into_shared();
+        let reader = Reader::from_shared_context(&context)
+            .with_stream_async(format, &mut dest)
+            .await
+            .unwrap();
+
+        let results = reader.validation_results().unwrap();
+        let active = results.active_manifest().unwrap();
+        // The identity certificate must be reported trusted for the cawg.identity assertion.
+        let trusted = active
+            .success()
+            .iter()
+            .find(|s| {
+                s.code() == CAWG_X509_CREDENTIAL_TRUSTED
+                    && s.url()
+                        .map(|u| u.ends_with("/cawg.identity"))
+                        .unwrap_or(false)
+            })
+            .unwrap();
+
+        // An allowed-list (end-entity) match reports an empty trust-list URI;
+        // a match against the default test anchors would name their URI instead.
+        assert_eq!(
+            trusted.explanation().unwrap_or(""),
+            "signing certificate trusted, found in [] trust anchors"
         );
     }
 }
