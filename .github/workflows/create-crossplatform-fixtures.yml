@@ -1,16 +1,6 @@
 name: Create cross-platform collection-hash fixtures
 
-# Temporary workflow. It produces the signed ZIP fixtures for the cross-platform
-# collection-hash comparison once, and is deleted after a human downloads the
-# artifacts and commits them under
-# sdk/tests/fixtures/collection-hash-crossplatform/.
-#
-# Runs on every pull request push. workflow_dispatch cannot start it while the file
-# is absent from the default branch: GitHub resolves a dispatch by the workflow's
-# path on the default branch, so the API answers 404 for a workflow that exists only
-# on a feature branch. The pull_request trigger has no such requirement, and runs
-# the version of the workflow from the pull request branch.
-
+# Temporary workflow. Cross-platform ZIP asset generation.
 on:
   pull_request:
   workflow_dispatch: {}
