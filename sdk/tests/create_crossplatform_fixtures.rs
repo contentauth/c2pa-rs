@@ -21,6 +21,7 @@ use std::{
 };
 
 use c2pa::{Builder, Result};
+use serde_json::json;
 use zip::{write::SimpleFileOptions, ZipWriter};
 
 mod common;
@@ -28,21 +29,37 @@ use common::{test_context, test_signer};
 
 /// Signed with a `c2pa.created` action carrying the empty digital source type,
 /// since these archives hold no captured content.
-const MANIFEST_JSON: &str = r#"{
-    "assertions": [
-        {
-            "label": "c2pa.actions",
-            "data": {
-                "actions": [
-                    {
-                        "action": "c2pa.created",
-                        "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
-                    }
-                ]
+///
+/// `claim_generator_info` is set here rather than inherited from
+/// `tests/fixtures/test_settings.toml`, whose values are shared with other tests.
+/// The operating system records the machine that signed the fixture.
+fn manifest_json() -> String {
+    let operating_system = format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS);
+
+    json!({
+        "claim_generator_info": [
+            {
+                "name": "c2pa-rs test",
+                "version": "0.1.0",
+                "operating_system": operating_system
             }
-        }
-    ]
-}"#;
+        ],
+        "assertions": [
+            {
+                "label": "c2pa.actions",
+                "data": {
+                    "actions": [
+                        {
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
+                        }
+                    ]
+                }
+            }
+        ]
+    })
+    .to_string()
+}
 
 /// Mirrors `tests/fixtures/sample1.zip`, plus a separator-free `test-file` entry
 /// that acts as the control: its key is identical on every operating system, so a
@@ -81,7 +98,7 @@ fn build_archive(entry_names: &[&str]) -> Vec<u8> {
 }
 
 fn sign_archive(unsigned: Vec<u8>, file_name: &str) -> Result<()> {
-    let mut builder = Builder::from_context(test_context()).with_definition(MANIFEST_JSON)?;
+    let mut builder = Builder::from_context(test_context()).with_definition(manifest_json())?;
 
     let mut source = Cursor::new(unsigned);
     let mut dest = Cursor::new(Vec::new());
