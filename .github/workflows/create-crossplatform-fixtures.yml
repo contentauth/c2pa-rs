@@ -5,10 +5,17 @@ name: Create cross-platform collection-hash fixtures
 # artifacts and commits them under
 # sdk/tests/fixtures/collection-hash-crossplatform/.
 #
-# Dispatch it from the branch that carries this file: the Actions UI branch
-# selector, or `gh workflow run create-crossplatform-fixtures.yml --ref <branch>`.
+# Runs on pull requests that touch it. workflow_dispatch cannot start it while the
+# file is absent from the default branch: GitHub resolves a dispatch by the
+# workflow's path on the default branch, so the API answers 404 for a workflow that
+# exists only on a feature branch. The pull_request trigger has no such
+# requirement, and runs the version of the workflow from the pull request branch.
 
 on:
+  pull_request:
+    paths:
+      - .github/workflows/create-crossplatform-fixtures.yml
+      - sdk/tests/create_crossplatform_fixtures.rs
   workflow_dispatch: {}
 
 jobs:
