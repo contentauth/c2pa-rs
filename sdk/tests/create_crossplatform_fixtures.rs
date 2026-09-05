@@ -106,7 +106,7 @@ fn sign_archive(unsigned: Vec<u8>, file_name: &str) -> Result<()> {
 }
 
 #[test]
-#[ignore = "run explicitly to regenerate the committed cross-platform fixtures"]
+#[ignore = "ignored since used only for test asset generation"]
 fn create_crossplatform_fixtures() -> Result<()> {
     let os = std::env::consts::OS;
     // Cross-platform tests.
