@@ -1,0 +1,43 @@
+name: Create cross-platform collection-hash fixtures
+
+# Temporary workflow. It produces the signed ZIP fixtures for the cross-platform
+# collection-hash comparison once, and is deleted after a human downloads the
+# artifacts and commits them under
+# sdk/tests/fixtures/collection-hash-crossplatform/.
+#
+# Dispatch it from the branch that carries this file: the Actions UI branch
+# selector, or `gh workflow run create-crossplatform-fixtures.yml --ref <branch>`.
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  create-fixtures:
+    name: Create ZIP fixtures on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+
+      - name: Create fixtures
+        run: cargo test -p c2pa --test create_crossplatform_fixtures -- --ignored --nocapture
+
+      - name: Upload fixtures
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: crossplatform-fixtures-${{ matrix.os }}
+          path: target/crossplatform-fixtures/*.zip
+          if-no-files-found: error
