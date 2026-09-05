@@ -27,13 +27,9 @@ use zip::{write::SimpleFileOptions, ZipWriter};
 mod common;
 use common::{test_context, test_signer};
 
-/// Signed with a `c2pa.created` action carrying the empty digital source type,
-/// since these archives hold no captured content.
-///
-/// `claim_generator_info` is set here rather than inherited from
-/// `tests/fixtures/test_settings.toml`, whose values are shared with other tests.
-/// The operating system records the machine that signed the fixture.
+/// Placeholder manifest for test asset.
 fn manifest_json() -> String {
+    // Record the generating OS in the manifest.
     let operating_system = format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS);
 
     json!({
@@ -61,9 +57,7 @@ fn manifest_json() -> String {
     .to_string()
 }
 
-/// Mirrors `tests/fixtures/sample1.zip`, plus a separator-free `test-file` entry
-/// that acts as the control: its key is identical on every operating system, so a
-/// difference in the other keys isolates to nested paths.
+/// Same struct as existing test fixture.
 const NESTED_ENTRIES: &[&str] = &[
     "test-file",
     "sample1/test1.txt",
@@ -73,18 +67,15 @@ const NESTED_ENTRIES: &[&str] = &[
     "sample1/test1/test3.txt",
 ];
 
-/// U+00E9 and U+00E8 as single code points.
+/// UTF variations of the same accentuated filename.
 const COMPOSED_NAME: &str = "sample1/éphémère.txt";
-
-/// The same name with each accent as a base letter followed by U+0301 / U+0300.
 const DECOMPOSED_NAME: &str = "sample1/e\u{301}phe\u{301}me\u{300}re.txt";
 
-/// Resolved from the manifest directory rather than the working directory, so the
-/// path is the same whether cargo is invoked from the workspace root or from `sdk`.
 fn output_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/crossplatform-fixtures")
 }
 
+/// Create an archive as test asset.
 fn build_archive(entry_names: &[&str]) -> Vec<u8> {
     let mut writer = ZipWriter::new_stream(Vec::new());
     for name in entry_names {
@@ -97,6 +88,7 @@ fn build_archive(entry_names: &[&str]) -> Vec<u8> {
     writer.finish().unwrap().into_inner()
 }
 
+/// Sign test ZIP.
 fn sign_archive(unsigned: Vec<u8>, file_name: &str) -> Result<()> {
     let mut builder = Builder::from_context(test_context()).with_definition(manifest_json())?;
 
@@ -117,11 +109,10 @@ fn sign_archive(unsigned: Vec<u8>, file_name: &str) -> Result<()> {
 #[ignore = "run explicitly to regenerate the committed cross-platform fixtures"]
 fn create_crossplatform_fixtures() -> Result<()> {
     let os = std::env::consts::OS;
+    // Cross-platform tests.
     sign_archive(build_archive(NESTED_ENTRIES), &format!("nested.{os}.zip"))?;
 
-    // Both spellings of the same logical name are signed wherever this runs: the
-    // stored bytes come from the input archive, so the operating system that signs
-    // them does not change the key.
+    // Accentuated characters tests.
     sign_archive(build_archive(&[COMPOSED_NAME]), "unicode-composed.zip")?;
     sign_archive(build_archive(&[DECOMPOSED_NAME]), "unicode-decomposed.zip")?;
 
