@@ -225,6 +225,10 @@ impl CollectionHash {
     {
         self.uris = HashMap::new();
         for (path, hash_range) in zip_uri_ranges(stream)? {
+            // Path needs to be a valid URI, so normalize.
+            // https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_fields_2
+            let path = PathBuf::from(path.to_string_lossy().replace('\\', "/"));
+
             let hash =
                 hash_stream_by_alg(&self.alg, stream, Some(vec![hash_range.clone()]), false)?;
 
@@ -298,7 +302,8 @@ impl CollectionHash {
 
         let uri_ranges = zip_uri_ranges(stream)?;
         for (path, uri_map) in &self.uris {
-            // Normalize paths to make them OS agnostic.
+            // Path needs to be a valid URI, so normalize.
+            // https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_fields_2
             let path = PathBuf::from(path.to_string_lossy().replace('\\', "/"));
             Self::validate_uri(&path)?;
 
@@ -419,6 +424,7 @@ mod tests {
     fn test_zip_uri_hash_separators_do_not_depend_on_operating_system() -> Result<()> {
         // PathBuf separator depends on the platform (operating system).
         // Here we run verification with paths having `/`, then `\`.
+        let nested = PathBuf::from("sample1/test1/test1.txt");
         for possible_separator in ['/', '\\'] {
             let mut hash_collection = gen_zip_collection_hash()?;
             hash_collection.uris = std::mem::take(&mut hash_collection.uris)
@@ -437,34 +443,34 @@ mod tests {
             let mut zip_sample_one_stream = Cursor::new(ZIP_SAMPLE1);
             // An error here means there is a parsing issue due to separators.
             hash_collection.verify_zip_stream_hash(&mut zip_sample_one_stream, None)?;
+
+            // Verify a hash mismatch is still detected.
+            let mut hash_collection = gen_zip_collection_hash()?;
+            let mut corrupted = false;
+            hash_collection.uris = std::mem::take(&mut hash_collection.uris)
+                .into_iter()
+                .map(|(path, mut uri_map)| {
+                    if path == nested {
+                        uri_map.hash = Some(vec![0; 32]);
+                        corrupted = true;
+                    }
+                    (
+                        PathBuf::from(
+                            path.to_string_lossy()
+                                .replace('/', &possible_separator.to_string()),
+                        ),
+                        uri_map,
+                    )
+                })
+                .collect();
+            assert!(corrupted);
+
+            let mut zip_sample_one_stream = Cursor::new(ZIP_SAMPLE1);
+            assert!(matches!(
+                hash_collection.verify_zip_stream_hash(&mut zip_sample_one_stream, None),
+                Err(Error::HashMismatch(_))
+            ));
         }
-
-        // Verify a hash mismatch failure can still trigger.
-        let mut hash_collection = gen_zip_collection_hash()?;
-        let nested = PathBuf::from("sample1/test1/test1.txt");
-        let mut corrupted = false;
-        hash_collection.uris = std::mem::take(&mut hash_collection.uris)
-            .into_iter()
-            .map(|(path, mut uri_map)| {
-                if path == nested {
-                    uri_map.hash = Some(vec![0; 32]);
-                    corrupted = true;
-                }
-                (
-                    PathBuf::from(path.to_string_lossy().replace('/', "\\")),
-                    uri_map,
-                )
-            })
-            .collect();
-        assert!(corrupted);
-
-        let mut zip_sample_one_stream = Cursor::new(ZIP_SAMPLE1);
-        // Due to the changed hash, an error is expected here.
-        // This is to verify path normalization doesn't erase hash mismatches when they happen.
-        assert!(matches!(
-            hash_collection.verify_zip_stream_hash(&mut zip_sample_one_stream, None),
-            Err(Error::HashMismatch(_))
-        ));
 
         Ok(())
     }
