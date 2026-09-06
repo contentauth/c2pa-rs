@@ -20,7 +20,7 @@ use std::{
     path::PathBuf,
 };
 
-use c2pa::{Builder, Result};
+use c2pa::{Builder, Reader, Result};
 use serde_json::json;
 use zip::{write::SimpleFileOptions, ZipWriter};
 
@@ -104,11 +104,21 @@ fn sign_archive(unsigned: Vec<u8>, file_name: &str) -> Result<()> {
     let mut dest = Cursor::new(Vec::new());
     builder.sign(&test_signer(), "zip", &mut source, &mut dest)?;
 
+    let signed = dest.into_inner();
     let dir = output_dir();
     fs::create_dir_all(&dir)?;
     let path = dir.join(file_name);
-    fs::write(&path, dest.into_inner())?;
+    fs::write(&path, &signed)?;
     println!("wrote {}", path.display());
+
+    log_reread_manifest(&signed, file_name)
+}
+
+/// Read signed manifest.
+fn log_reread_manifest(signed: &[u8], file_name: &str) -> Result<()> {
+    let mut stream = Cursor::new(signed);
+    let reader = Reader::from_context(test_context()).with_stream("zip", &mut stream)?;
+    println!("{file_name}:\n{}", reader.json());
 
     Ok(())
 }
