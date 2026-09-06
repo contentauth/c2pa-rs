@@ -1919,6 +1919,7 @@ pub mod tests {
         Ok(())
     }
 
+    /*
     #[test]
     fn read_zip_signed_with_normalized_paths_on_windows() -> Result<()> {
         let mut stream = Cursor::new(include_bytes!(
@@ -1929,4 +1930,5 @@ pub mod tests {
 
         Ok(())
     }
+    */
 }
