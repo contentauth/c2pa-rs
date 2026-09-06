@@ -298,14 +298,12 @@ impl CollectionHash {
 
         let uri_ranges = zip_uri_ranges(stream)?;
         for (path, uri_map) in &self.uris {
-            // Normalize paths to make them OS agnostic.
-            let path = PathBuf::from(path.to_string_lossy().replace('\\', "/"));
-            Self::validate_uri(&path)?;
+            Self::validate_uri(path)?;
 
             let hash = uri_map.hash.as_ref().ok_or_else(|| {
                 Error::C2PAValidation(ASSERTION_COLLECTIONHASH_MALFORMED.to_string())
             })?;
-            let hash_range = uri_ranges.get(&path).cloned().ok_or_else(|| {
+            let hash_range = uri_ranges.get(path).cloned().ok_or_else(|| {
                 Error::C2PAValidation(ASSERTION_COLLECTIONHASH_INCORRECT_FILE_COUNT.to_string())
             })?;
 
@@ -444,21 +442,23 @@ mod tests {
         let mut hash_collection = gen_zip_collection_hash()?;
         let nested = PathBuf::from("sample1/test1/test1.txt");
 
-        // Change the hash of an entry...
-        hash_collection
-            .uris
-            .get_mut(&nested)
-            .expect("sample1.zip has at least one nested entry")
-            .hash = Some(vec![0; 32]);
+        // Change the hash of that one entry while spelling every key the way a
+        // Windows signer would, so reaching it at all depends on the normalization.
+        let mut corrupted = false;
         hash_collection.uris = std::mem::take(&mut hash_collection.uris)
             .into_iter()
-            .map(|(path, uri_map)| {
+            .map(|(path, mut uri_map)| {
+                if path == nested {
+                    uri_map.hash = Some(vec![0; 32]);
+                    corrupted = true;
+                }
                 (
                     PathBuf::from(path.to_string_lossy().replace('/', "\\")),
                     uri_map,
                 )
             })
             .collect();
+        assert!(corrupted);
 
         let mut zip_sample_one_stream = Cursor::new(ZIP_SAMPLE1);
         // Due to the changed hash, an error is expected here.
