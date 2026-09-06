@@ -418,7 +418,7 @@ mod tests {
     #[test]
     fn test_zip_uri_hash_separators_do_not_depend_on_operating_system() -> Result<()> {
         // PathBuf separator depends on the platform (operating system).
-        // Here we switch to backslash explicitly for testing.
+        // Here we run verification with paths having `/`, then `\`.
         for possible_separator in ['/', '\\'] {
             let mut hash_collection = gen_zip_collection_hash()?;
             hash_collection.uris = std::mem::take(&mut hash_collection.uris)
@@ -435,17 +435,13 @@ mod tests {
                 .collect();
 
             let mut zip_sample_one_stream = Cursor::new(ZIP_SAMPLE1);
-
-            // An error here would indicate that there is a parsing issue with the separators.
+            // An error here means there is a parsing issue due to separators.
             hash_collection.verify_zip_stream_hash(&mut zip_sample_one_stream, None)?;
         }
 
         // Verify a hash mismatch failure can still trigger.
         let mut hash_collection = gen_zip_collection_hash()?;
         let nested = PathBuf::from("sample1/test1/test1.txt");
-
-        // Change the hash of that one entry while spelling every key the way a
-        // Windows signer would, so reaching it at all depends on the normalization.
         let mut corrupted = false;
         hash_collection.uris = std::mem::take(&mut hash_collection.uris)
             .into_iter()
@@ -464,6 +460,7 @@ mod tests {
 
         let mut zip_sample_one_stream = Cursor::new(ZIP_SAMPLE1);
         // Due to the changed hash, an error is expected here.
+        // This is to verify path normalization doesn't erase hash mismatches when they happen.
         assert!(matches!(
             hash_collection.verify_zip_stream_hash(&mut zip_sample_one_stream, None),
             Err(Error::HashMismatch(_))
