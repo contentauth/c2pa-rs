@@ -298,12 +298,14 @@ impl CollectionHash {
 
         let uri_ranges = zip_uri_ranges(stream)?;
         for (path, uri_map) in &self.uris {
-            Self::validate_uri(path)?;
+            // Normalize paths to make them OS agnostic.
+            let path = PathBuf::from(path.to_string_lossy().replace('\\', "/"));
+            Self::validate_uri(&path)?;
 
             let hash = uri_map.hash.as_ref().ok_or_else(|| {
                 Error::C2PAValidation(ASSERTION_COLLECTIONHASH_MALFORMED.to_string())
             })?;
-            let hash_range = uri_ranges.get(path).cloned().ok_or_else(|| {
+            let hash_range = uri_ranges.get(&path).cloned().ok_or_else(|| {
                 Error::C2PAValidation(ASSERTION_COLLECTIONHASH_INCORRECT_FILE_COUNT.to_string())
             })?;
 
