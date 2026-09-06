@@ -221,7 +221,7 @@ mod tests {
             IdentityAssertion,
         },
         status_tracker::{LogKind, StatusTracker},
-        Builder, SigningAlg,
+        Builder, Context, Reader, SigningAlg,
     };
 
     const TEST_IMAGE: &[u8] = include_bytes!("../../../tests/fixtures/CA.jpg");
@@ -308,6 +308,91 @@ mod tests {
         assert_eq!(
             log.validation_status.as_ref().unwrap().as_ref() as &str,
             "signingCredential.untrusted"
+        );
+    }
+
+    /// Regression test for #2599: the `cawg_trust` settings on the caller's
+    /// `Context` must reach the X.509 identity trust check performed while a
+    /// `Reader` decodes identity assertions. We put the identity certificate on
+    /// `cawg_trust.allowed_list` and expect the reader to report it as trusted
+    /// through the end-entity list, which is only possible if the caller's
+    /// settings were consulted (the default policy would find it in the test
+    /// user anchors instead).
+    #[c2pa_test_async]
+    async fn reader_uses_context_cawg_trust_settings() {
+        let format = "image/jpeg";
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
+        builder
+            .add_ingredient_from_stream(parent_json(), format, &mut source)
+            .unwrap();
+
+        builder
+            .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
+            .unwrap();
+
+        let mut c2pa_signer = IdentityAssertionSigner::from_test_credentials(SigningAlg::Ps256);
+
+        let (cawg_cert_chain, cawg_private_key) =
+            cert_chain_and_private_key_for_alg(SigningAlg::Ed25519);
+
+        let cawg_raw_signer = raw_signature::signer_from_cert_chain_and_private_key(
+            &cawg_cert_chain,
+            &cawg_private_key,
+            SigningAlg::Ed25519,
+            None,
+        )
+        .unwrap();
+
+        let x509_holder = X509CredentialHolder::from_raw_signer(cawg_raw_signer);
+        let iab = IdentityAssertionBuilder::for_credential_holder(x509_holder);
+        c2pa_signer.add_identity_assertion(iab);
+
+        builder
+            .sign(&c2pa_signer, format, &mut source, &mut dest)
+            .unwrap();
+
+        dest.rewind().unwrap();
+
+        // Read back with the identity certificate on the CAWG allowed list.
+        let settings = crate::settings::Settings::default()
+            .with_value("core.decode_identity_assertions", true)
+            .unwrap()
+            .with_value(
+                "cawg_trust.allowed_list",
+                String::from_utf8(cawg_cert_chain).unwrap(),
+            )
+            .unwrap();
+        let context = Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .into_shared();
+        let reader = Reader::from_shared_context(&context)
+            .with_stream_async(format, &mut dest)
+            .await
+            .unwrap();
+
+        let results = reader.validation_results().unwrap();
+        let active = results.active_manifest().unwrap();
+        // The identity certificate must be reported trusted for the cawg.identity assertion.
+        let trusted = active
+            .success()
+            .iter()
+            .find(|s| {
+                s.code() == "signingCredential.trusted"
+                    && s.url()
+                        .map(|u| u.ends_with("/cawg.identity"))
+                        .unwrap_or(false)
+            })
+            .unwrap();
+
+        // `Verifier::verify_trust` names the anchor list that matched.
+        assert!(
+            trusted.explanation().unwrap_or("").contains("EndEntity"),
+            "expected the allowed_list (EndEntity) match, got: {:?}",
+            trusted.explanation()
         );
     }
 }
