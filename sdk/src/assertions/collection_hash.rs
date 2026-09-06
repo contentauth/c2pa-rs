@@ -425,7 +425,10 @@ mod tests {
                 .into_iter()
                 .map(|(path, uri_map)| {
                     (
-                        PathBuf::from(path.to_string_lossy().replace('/', &possible_separator.to_string())),
+                        PathBuf::from(
+                            path.to_string_lossy()
+                                .replace('/', &possible_separator.to_string()),
+                        ),
                         uri_map,
                     )
                 })
@@ -460,7 +463,7 @@ mod tests {
         let mut zip_sample_one_stream = Cursor::new(ZIP_SAMPLE1);
         // Due to the changed hash, an error is expected here.
         assert!(matches!(
-            hashes_collection.verify_zip_stream_hash(&mut zip_sample_one_stream, None),
+            hash_collection.verify_zip_stream_hash(&mut zip_sample_one_stream, None),
             Err(Error::HashMismatch(_))
         ));
 
