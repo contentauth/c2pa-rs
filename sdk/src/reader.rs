@@ -1889,7 +1889,7 @@ pub mod tests {
     #[test]
     fn read_zip_signed_on_linux() -> Result<()> {
         let mut stream = Cursor::new(include_bytes!(
-            "../tests/fixtures/cross-compatibility-zip/nested.linux.zip"
+            "../tests/fixtures/cross-compatibility-zip/sample1.linux.zip"
         ));
         let reader = Reader::from_context(test_context()).with_stream("zip", &mut stream)?;
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
@@ -1900,7 +1900,7 @@ pub mod tests {
     #[test]
     fn read_zip_signed_on_macos() -> Result<()> {
         let mut stream = Cursor::new(include_bytes!(
-            "../tests/fixtures/cross-compatibility-zip/nested.macos.zip"
+            "../tests/fixtures/cross-compatibility-zip/sample1.macos.zip"
         ));
         let reader = Reader::from_context(test_context()).with_stream("zip", &mut stream)?;
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
@@ -1909,9 +1909,20 @@ pub mod tests {
     }
 
     #[test]
-    fn read_zip_signed_on_windows() -> Result<()> {
+    fn read_zip_signed_with_backslash_paths_on_windows() -> Result<()> {
         let mut stream = Cursor::new(include_bytes!(
-            "../tests/fixtures/cross-compatibility-zip/nested.windows.zip"
+            "../tests/fixtures/cross-compatibility-zip/sample1_backslash.windows.zip"
+        ));
+        let reader = Reader::from_context(test_context()).with_stream("zip", &mut stream)?;
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        Ok(())
+    }
+
+    #[test]
+    fn read_zip_signed_with_normalized_paths_on_windows() -> Result<()> {
+        let mut stream = Cursor::new(include_bytes!(
+            "../tests/fixtures/cross-compatibility-zip/sample1.windows.zip"
         ));
         let reader = Reader::from_context(test_context()).with_stream("zip", &mut stream)?;
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
