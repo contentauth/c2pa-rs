@@ -1,6 +1,7 @@
 name: Create cross-platform collection-hash fixtures
 
-# Temporary workflow. Cross-platform ZIP asset generation.
+# Temporary workflow.
+# Cross-platform ZIP asset generation.
 on:
   pull_request:
   workflow_dispatch: {}
