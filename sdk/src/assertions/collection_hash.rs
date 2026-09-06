@@ -416,6 +416,58 @@ mod tests {
     }
 
     #[test]
+    fn test_zip_uri_hash_separators_do_not_depend_on_operating_system() -> Result<()> {
+        // PathBuf separator depends on the platform (operating system).
+        // Here we switch to backslash explicitly for testing.
+        for possible_separator in ['/', '\\'] {
+            let mut hash_collection = gen_zip_collection_hash()?;
+            hash_collection.uris = std::mem::take(&mut hash_collection.uris)
+                .into_iter()
+                .map(|(path, uri_map)| {
+                    (
+                        PathBuf::from(path.to_string_lossy().replace('/', &possible_separator.to_string())),
+                        uri_map,
+                    )
+                })
+                .collect();
+
+            let mut zip_sample_one_stream = Cursor::new(ZIP_SAMPLE1);
+
+            // An error here would indicate that there is a parsing issue with the separators.
+            hash_collection.verify_zip_stream_hash(&mut zip_sample_one_stream, None)?;
+        }
+
+        // Verify a hash mismatch failure can still trigger.
+        let mut hash_collection = gen_zip_collection_hash()?;
+        let nested = PathBuf::from("sample1/test1/test1.txt");
+
+        // Change the hash of an entry...
+        hash_collection
+            .uris
+            .get_mut(&nested)
+            .expect("sample1.zip has at least one nested entry")
+            .hash = Some(vec![0; 32]);
+        hash_collection.uris = std::mem::take(&mut hash_collection.uris)
+            .into_iter()
+            .map(|(path, uri_map)| {
+                (
+                    PathBuf::from(path.to_string_lossy().replace('/', "\\")),
+                    uri_map,
+                )
+            })
+            .collect();
+
+        let mut zip_sample_one_stream = Cursor::new(ZIP_SAMPLE1);
+        // Due to the changed hash, an error is expected here.
+        assert!(matches!(
+            hashes_collection.verify_zip_stream_hash(&mut zip_sample_one_stream, None),
+            Err(Error::HashMismatch(_))
+        ));
+
+        Ok(())
+    }
+
+    #[test]
     fn test_verify_zip_stream_hash_mismatch() -> Result<()> {
         let mut collection = gen_zip_collection_hash()?;
         if let Some(entry) = collection.uris.values_mut().next() {
