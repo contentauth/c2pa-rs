@@ -1321,3 +1321,48 @@ fn fragment_with_no_init_hash_is_rejected() {
         "expected HashMismatch, got: {err:?}"
     );
 }
+
+/// Same regression for the multi-file `verify_stream_segments` path (fragments
+/// supplied as file paths).
+#[cfg(feature = "file_io")]
+#[test]
+fn fragment_files_with_no_init_hash_is_rejected() {
+    use std::io::Write;
+
+    let ftyp = build_box(b"ftyp", b"isom\x00\x00\x00\x00isom");
+    let fragment = [
+        ftyp.clone(),
+        build_merkle_uuid_box(1, 1, 0),
+        build_box(b"mdat", b"arbitrary attacker-controlled frame bytes"),
+    ]
+    .concat();
+
+    let dir = tempfile::tempdir().unwrap();
+    let frag_path = dir.path().join("frag.m4s");
+    std::fs::File::create(&frag_path)
+        .unwrap()
+        .write_all(&fragment)
+        .unwrap();
+
+    let mut bmff_hash = BmffHash::new("test", "sha256", None);
+    bmff_hash.add_exclusions(&mut vec![ExclusionsMap::new("/uuid".to_owned())]);
+    bmff_hash.set_merkle(vec![MerkleMap {
+        unique_id: 1,
+        local_id: 1,
+        count: 1,
+        alg: Some("sha256".into()),
+        init_hash: None,
+        hashes: VecByteBuf(vec![ByteBuf::from(vec![0xaau8; 32])]),
+        fixed_block_size: None,
+        variable_block_sizes: Some(vec![41]),
+    }]);
+
+    let mut init_stream = Cursor::new(ftyp);
+    let err = bmff_hash
+        .verify_stream_segments(&mut init_stream, &vec![frag_path], None)
+        .expect_err("a fragment matching an initHash-less MerkleMap must be rejected");
+    assert!(
+        matches!(err, c2pa::Error::HashMismatch(_)),
+        "expected HashMismatch, got: {err:?}"
+    );
+}
