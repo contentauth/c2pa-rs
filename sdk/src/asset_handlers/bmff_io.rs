@@ -3501,7 +3501,7 @@ pub mod tests {
 
         let bmff_io = BmffIO::new("mp4");
         let mut source = Cursor::new(data);
-        let result = bmff_io.read_cai(&mut source);
+        let result = bmff_io.read_c2pa(&mut source);
         assert!(
             matches!(
                 result,
@@ -3528,7 +3528,7 @@ pub mod tests {
 
         let bmff_io = BmffIO::new("mp4");
         let mut source = Cursor::new(data);
-        let result = bmff_io.read_cai(&mut source);
+        let result = bmff_io.read_c2pa(&mut source);
         assert!(
             matches!(
                 result,
@@ -3545,7 +3545,7 @@ pub mod tests {
         let data = minimal_ftyp();
         let bmff_io = BmffIO::new("mp4");
         let mut source = Cursor::new(data);
-        let result = bmff_io.read_cai(&mut source);
+        let result = bmff_io.read_c2pa(&mut source);
         assert!(
             matches!(result, Err(Error::JumbfNotFound)),
             "expected unsigned asset to report JumbfNotFound, got {result:?}"
