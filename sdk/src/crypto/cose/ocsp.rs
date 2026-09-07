@@ -725,6 +725,30 @@ mod tests {
             ocsp_signing_chain(&leaf, &CertificateTrustPolicy::new()),
             leaf
         );
+
+        // Empty chain and an unparseable leaf are returned unchanged.
+        assert!(ocsp_signing_chain(&[], &ctp).is_empty());
+        let junk_leaf = vec![vec![0xde, 0xad, 0xbe, 0xef]];
+        assert_eq!(ocsp_signing_chain(&junk_leaf, &ctp), junk_leaf);
+
+        // An unparseable cert at index 1 doesn't block issuer resolution.
+        let leaf_plus_junk = vec![chain[0].clone(), vec![0u8; 4]];
+        assert_eq!(
+            ocsp_signing_chain(&leaf_plus_junk, &ctp),
+            vec![chain[0].clone(), chain[1].clone(), vec![0u8; 4]]
+        );
+
+        // An unparseable trust-anchor cert is skipped.
+        let mut junk_ctp = CertificateTrustPolicy::new();
+        junk_ctp
+            .add_trust_anchors(
+                b"-----BEGIN CERTIFICATE-----\nAAAAAAAA\n-----END CERTIFICATE-----\n",
+                "https://c2pa-rs/test",
+                TrustAnchorType::Manifest,
+                None,
+            )
+            .unwrap();
+        assert_eq!(ocsp_signing_chain(&leaf, &junk_ctp), leaf);
     }
 
     // End-to-end: a revoked leaf whose issuer is the trust anchor (omitted from
