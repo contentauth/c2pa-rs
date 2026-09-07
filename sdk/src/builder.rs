@@ -10567,6 +10567,115 @@ mod tests {
         Ok(())
     }
 
+    // An archived ingredient cannot be linked to an action via
+    // `parameters.ingredientIds` + `instance_id`; only linking via `label` works today.
+    //
+    // Root cause: `write_ingredient_archive` keys the archive by the ingredient's
+    // `effective_id_internal()` (which falls back to `instance_id` when no label is set),
+    // and on read-back that key is materialized as the ingredient's `label`. From then on
+    // `effective_id_internal()` resolves through `label`, so an `instance_id` supplied when
+    // the archive is re-added is ignored for `ingredientIds` resolution and `to_claim()`
+    // raises `AssertionSpecificError("Action ingredientId not found: ...")`.
+    //
+    // This test asserts the DESIRED behavior (instance_id-based linking succeeds) and is
+    // ignored until CAI-11385 is fixed; removing `#[ignore]` turns it into a regression test.
+    #[test]
+    #[ignore = "CAI-11385: archived ingredients can't be linked via ingredientIds + instance_id"]
+    fn test_archive_ingredient_linked_via_instance_id() -> Result<()> {
+        let settings = Settings::new().with_value("builder.generate_c2pa_archive", true)?;
+        let context = Context::new().with_settings(settings)?.into_shared();
+
+        // Build an ingredient archive with NO label (so linking must go through instance_id).
+        let mut producer = Builder::from_shared_context(&context)
+            .with_definition(r#"{"title": "Producer manifest"}"#)?;
+        let mut src = Cursor::new(TEST_IMAGE);
+        producer.add_ingredient_from_stream(
+            json!({
+                "title": "Archived ingredient",
+                "format": "image/jpeg",
+                "relationship": "componentOf",
+            })
+            .to_string(),
+            "image/jpeg",
+            &mut src,
+        )?;
+        let archive_id = producer.definition.ingredients[0].effective_id_internal();
+        let mut archive = Cursor::new(Vec::new());
+        producer.write_ingredient_archive(&archive_id, &mut archive)?;
+        let archive_bytes = archive.into_inner();
+
+        // Final builder: re-add the archive, assigning it instance_id "linked-ing", and link
+        // it from a c2pa.placed action via ingredientIds (NOT via label).
+        let manifest_def = json!({
+            "claim_generator_info": [{ "name": "c2pa-test", "version": "1.0" }],
+            "title": "CAI-11385 signing manifest",
+            "assertions": [
+                {
+                    "label": "c2pa.actions.v2",
+                    "data": {
+                        "actions": [
+                            {
+                                "action": "c2pa.placed",
+                                "parameters": { "ingredientIds": ["linked-ing"] }
+                            }
+                        ]
+                    }
+                }
+            ]
+        });
+        let mut signing_builder =
+            Builder::from_shared_context(&context).with_definition(manifest_def.to_string())?;
+        signing_builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+        signing_builder.add_ingredient_from_stream(
+            json!({ "instance_id": "linked-ing" }).to_string(),
+            "application/c2pa",
+            &mut Cursor::new(archive_bytes),
+        )?;
+
+        // Signing resolves ingredientIds against the ingredient map; today this returns
+        // AssertionSpecificError("Action ingredientId not found: linked-ing").
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+        let signer = test_signer(SigningAlg::Ps256);
+        signing_builder.sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)?;
+
+        // Verify the placed action actually links to our archived ingredient.
+        dest.rewind()?;
+        let reader = Reader::from_shared_context(&context).with_stream("image/jpeg", &mut dest)?;
+        let manifest = reader.active_manifest().expect("active manifest present");
+        let placed_url: &str = manifest
+            .assertions()
+            .iter()
+            .find(|a| a.label().contains("c2pa.actions"))
+            .and_then(|a| a.value().ok())
+            .and_then(|v: &serde_json::Value| {
+                v["actions"]
+                    .as_array()?
+                    .iter()
+                    .find(|act| act["action"] == "c2pa.placed")?
+                    .get("parameters")?
+                    .get("ingredients")?
+                    .as_array()?
+                    .first()?
+                    .get("url")?
+                    .as_str()
+            })
+            .expect("placed action references an ingredient URL");
+        let target_label = placed_url.trim_start_matches("self#jumbf=c2pa.assertions/");
+        let linked_title = manifest
+            .ingredients()
+            .iter()
+            .find(|i| i.label() == Some(target_label))
+            .and_then(Ingredient::title)
+            .expect("ingredient with title present for resolved URL");
+        assert_eq!(
+            linked_title, "Archived ingredient",
+            "placed action must link the archived ingredient; got url {placed_url}"
+        );
+
+        Ok(())
+    }
+
     #[test]
     fn test_two_ingredient_archives_each_linked_componentof_placed() -> Result<()> {
         // 2 ingredient archives are linked componentOf via two distinct c2pa.placed
