@@ -1050,11 +1050,11 @@ impl Reader {
 
         let validation_results = ValidationResults::from_store(arc_store.as_ref(), validation_log);
 
-        // An assertion listed in `options.redacted_assertions` is not actually missing,
-        // whether its box was removed entirely or left in place with zeroed content —
-        // `Store::verify_store` already raises `assertion.notRedacted` for a present,
-        // non-zeroed box, so re-deriving that status here from presence alone would
-        // both duplicate a real failure and false-positive on a validly zeroed one.
+        // Report assertions the claim references but that aren't present, excluding any
+        // that were redacted: a redacted assertion is expected to be absent (removed) or
+        // zeroed, so it must not be reported as `assertion.missing`. Whether a redacted
+        // box is validly zeroed or forged with non-zero content is `Store::verify_store`'s
+        // concern (it raises `assertion.notRedacted`); here we only resolve missing vs. redacted.
         let mut missing = options.missing_assertions.clone();
         missing.retain(|item| !options.redacted_assertions.contains(item));
 
