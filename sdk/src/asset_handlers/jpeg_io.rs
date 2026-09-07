@@ -393,6 +393,14 @@ impl C2paWriter for JpegIO {
                         let is_cai_continuation = vec_compare(&cai_en, &en);
 
                         if cai_seg_cnt > 0 && is_cai_continuation {
+                            // Per C2PA 15.12.1 the exclusion must cover only the manifest
+                            // store; reject a non-contiguous continuation that would otherwise
+                            // enclose the intervening (foreign) bytes.
+                            if curr_offset != cai_loc.offset + cai_loc.length {
+                                return Err(Error::InvalidAsset(
+                                    "C2PA APP11 manifest segments are not contiguous".to_string(),
+                                ));
+                            }
                             cai_seg_cnt += 1;
                             cai_loc.length += seg.len_with_entropy() as u64;
                         } else {
@@ -1385,5 +1393,46 @@ pub mod tests {
         let mut output_stream = Cursor::new(output);
 
         let _ = jpeg_io.write_c2pa(&mut source_stream, &mut output_stream, &some_data);
+    }
+
+    // A foreign segment placed between two CAI APP11 segments breaks contiguity,
+    // which would otherwise let the manifest-store exclusion enclose non-manifest
+    // (unhashed) bytes. get_object_locations must reject it (C2PA 15.12.1).
+    #[test]
+    fn noncontiguous_cai_segments_rejected() {
+        let jpeg_io = JpegIO {};
+        let source = crate::utils::test::fixture_path("CA.jpg");
+        let mut buf = Vec::new();
+        std::fs::File::open(&source)
+            .unwrap()
+            .read_to_end(&mut buf)
+            .unwrap();
+
+        let mut jpeg = Jpeg::from_bytes(buf.clone().into()).unwrap();
+        let cai_segs = get_cai_segments(&jpeg).unwrap();
+        // CA.jpg's manifest spans multiple contiguous CAI APP11 segments.
+        assert!(cai_segs.len() >= 2);
+
+        // Positive: the untampered, contiguous manifest resolves normally.
+        let mut base_stream = Cursor::new(buf);
+        let base = jpeg_io.get_object_locations(&mut base_stream).unwrap();
+        assert!(base.iter().any(|o| o.htype == ObjectType::C2pa));
+
+        // Insert a foreign APP11 segment (different EN, non-c2pa body) between the
+        // first and second CAI segment, breaking contiguity.
+        let mut foreign = vec![0u8; 40];
+        foreign[2] = 0xab;
+        foreign[3] = 0xcd;
+        let foreign_seg = JpegSegment::new_with_contents(markers::APP11, Bytes::from(foreign));
+        jpeg.segments_mut().insert(cai_segs[1], foreign_seg);
+
+        let mut out = Cursor::new(Vec::new());
+        jpeg.encoder().write_to(&mut out).unwrap();
+        out.rewind().unwrap();
+
+        assert!(matches!(
+            jpeg_io.get_object_locations(&mut out),
+            Err(Error::InvalidAsset(_))
+        ));
     }
 }
