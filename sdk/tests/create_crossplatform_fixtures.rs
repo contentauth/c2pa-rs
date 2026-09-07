@@ -59,7 +59,7 @@ fn manifest_json() -> String {
 
 /// Same struct as existing test fixture.
 const NESTED_ENTRIES: &[&str] = &[
-    "test-file",
+    "test-file.txt",
     "sample1/test1.txt",
     "sample1/test2.txt",
     "sample1/test1/test1.txt",
