@@ -363,6 +363,8 @@ fn check_stapled_ocsp_response(
     // The OCSP response must pertain to the certificate that signed this
     // manifest, so bind it to that signer's certificate chain.
     let signing_cert_chain = cert_chain_from_sign1(sign1)?;
+    // Ensure the issuing CA is present (§14.5 lets the x5chain omit it).
+    let signing_cert_chain = ocsp_signing_chain(&signing_cert_chain, ctp);
 
     let mut current_validation_log = StatusTracker::default();
     let Ok(ocsp_data) = OcspResponse::from_der_checked(
@@ -446,6 +448,44 @@ fn extend_ocsp_cert_chain(ocsp_certs: &[Vec<u8>], signing_cert_chain: &[Vec<u8>]
     ocsp_certs.to_vec()
 }
 
+/// Returns the signer chain with its issuing CA at index 1, resolving the
+/// issuer from the signing trust anchors when the x5chain omits it (permitted
+/// by C2PA §14.5). OCSP request building and CertID matching both need it.
+fn ocsp_signing_chain(certs: &[Vec<u8>], ctp: &CertificateTrustPolicy) -> Vec<Vec<u8>> {
+    let Some(leaf_der) = certs.first() else {
+        return certs.to_vec();
+    };
+    let Ok((_, leaf)) = X509Certificate::from_der(leaf_der) else {
+        return certs.to_vec();
+    };
+    let leaf_issuer_raw = leaf.issuer().as_raw();
+
+    // Issuer already in the chain?
+    if let Some(next_der) = certs.get(1) {
+        if let Ok((_, next)) = X509Certificate::from_der(next_der) {
+            if next.subject().as_raw() == leaf_issuer_raw {
+                return certs.to_vec();
+            }
+        }
+    }
+
+    for anchor in ctp.signing_trust_anchors() {
+        for anchor_der in &anchor.trust_anchor_ders {
+            if let Ok((_, anchor_cert)) = X509Certificate::from_der(anchor_der) {
+                if anchor_cert.subject().as_raw() == leaf_issuer_raw {
+                    let mut chain = Vec::with_capacity(certs.len() + 1);
+                    chain.push(leaf_der.clone());
+                    chain.push(anchor_der.clone());
+                    chain.extend_from_slice(&certs[1..]);
+                    return chain;
+                }
+            }
+        }
+    }
+
+    certs.to_vec()
+}
+
 /// Fetches and validates an OCSP response for the given COSE signature.
 #[async_generic(async_signature(
     sign1: &CoseSign1,
@@ -464,6 +504,8 @@ pub(crate) fn fetch_and_check_ocsp_response(
     context: &crate::context::Context,
 ) -> Result<OcspResponse, CoseError> {
     let certs = cert_chain_from_sign1(sign1)?;
+    // Ensure the issuing CA is present (§14.5 lets the x5chain omit it).
+    let certs = ocsp_signing_chain(&certs, ctp);
 
     // use supplied override time if provided
     let signing_time: Option<DateTime<Utc>> = match tst_info {
@@ -658,6 +700,81 @@ mod tests {
     }
 
     #[test]
+    fn ocsp_signing_chain_resolves_issuer_from_anchor() {
+        use super::ocsp_signing_chain;
+        use crate::crypto::cose::{CertificateTrustPolicy, TrustAnchorType};
+
+        let chain = leaf_and_intermediate(); // [leaf, issuing CA]
+        let leaf = vec![chain[0].clone()];
+
+        let mut ctp = CertificateTrustPolicy::new();
+        ctp.add_trust_anchors(
+            include_bytes!("../../../tests/fixtures/certs/es256.pub"),
+            "https://c2pa-rs/test",
+            TrustAnchorType::Manifest,
+            None,
+        )
+        .unwrap();
+
+        // Lone leaf: the issuer (from the anchor) is inserted at index 1.
+        assert_eq!(ocsp_signing_chain(&leaf, &ctp), chain);
+        // Chain already carrying the issuer is unchanged.
+        assert_eq!(ocsp_signing_chain(&chain, &ctp), chain);
+        // No matching anchor: unchanged (still just the leaf).
+        assert_eq!(
+            ocsp_signing_chain(&leaf, &CertificateTrustPolicy::new()),
+            leaf
+        );
+    }
+
+    // End-to-end: a revoked leaf whose issuer is the trust anchor (omitted from
+    // the x5chain per §14.5) is missed with the lone leaf, but detected once the
+    // issuer is resolved from the anchor.
+    #[test]
+    fn revoked_lone_leaf_detected_after_issuer_resolved() {
+        use chrono::{TimeZone, Utc};
+
+        use super::ocsp_signing_chain;
+        use crate::{
+            crypto::{
+                cose::{CertificateTrustPolicy, TrustAnchorType},
+                ocsp::OcspResponse,
+            },
+            status_tracker::StatusTracker,
+            validation_status::SIGNING_CREDENTIAL_REVOKED,
+        };
+
+        let full_chain = cert_chain_pem_to_der(include_bytes!(
+            "../../../tests/fixtures/crypto/ocsp/ocsp_chain.pem"
+        ))
+        .unwrap();
+        let leaf = vec![full_chain[0].clone()];
+        let revoked = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_revoked.der");
+        let test_time = Utc.with_ymd_and_hms(2024, 2, 1, 8, 0, 0).unwrap();
+
+        // Without the issuer, the certId cannot be matched: revoked not applied.
+        let mut log = StatusTracker::default();
+        let _ = OcspResponse::from_der_checked(revoked, &leaf, Some(test_time), &mut log);
+        assert!(!log.has_status(SIGNING_CREDENTIAL_REVOKED));
+
+        // Resolve the issuer from the configured anchor, then it is detected.
+        let mut ctp = CertificateTrustPolicy::new();
+        ctp.add_trust_anchors(
+            include_bytes!("../../../tests/fixtures/crypto/ocsp/ocsp_chain.pem"),
+            "https://c2pa-rs/test",
+            TrustAnchorType::Manifest,
+            None,
+        )
+        .unwrap();
+
+        let resolved = ocsp_signing_chain(&leaf, &ctp);
+        assert_eq!(resolved, full_chain);
+
+        let mut log2 = StatusTracker::default();
+        let ocsp_data =
+            OcspResponse::from_der_checked(revoked, &resolved, Some(test_time), &mut log2).unwrap();
+        assert!(ocsp_data.revoked_at.is_some());
+        assert!(log2.has_status(SIGNING_CREDENTIAL_REVOKED));
     fn extend_ocsp_cert_chain_builds_from_subject_issuer() {
         // Regression: the responder path must be built from the subject's own
         // sub-chain (certs[i..]), whose [1] is the subject's real issuer -- not
