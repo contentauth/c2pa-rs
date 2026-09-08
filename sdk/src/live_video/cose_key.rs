@@ -22,6 +22,8 @@ use std::collections::BTreeMap;
 
 use c2pa_cbor::Value as CborValue;
 use ed25519_dalek::VerifyingKey;
+use rasn::types::{Any, BitString, ObjectIdentifier};
+use rasn_pkix::{AlgorithmIdentifier, SubjectPublicKeyInfo};
 
 use crate::SigningAlg;
 
@@ -48,21 +50,12 @@ const OKP_CRV: i128 = -1;
 const OKP_X: i128 = -2;
 const CRV_ED25519: i128 = 6;
 
-// DER-encoded OID constants for SubjectPublicKeyInfo construction.
-// ecPublicKey: 1.2.840.10045.2.1
-const EC_PUBLIC_KEY_OID: &[u8] = &[0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01];
-
-// P-256: 1.2.840.10045.3.1.7
-const P256_OID: &[u8] = &[0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07];
-
-// P-384: 1.3.132.0.34
-const P384_OID: &[u8] = &[0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22];
-
-// P-521: 1.3.132.0.35
-const P521_OID: &[u8] = &[0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x23];
-
-// Ed25519: 1.3.101.112
-const ED25519_OID: &[u8] = &[0x06, 0x03, 0x2b, 0x65, 0x70];
+// OIDs for SubjectPublicKeyInfo construction.
+const EC_PUBLIC_KEY_OID: &[u32] = &[1, 2, 840, 10045, 2, 1];
+const P256_OID: &[u32] = &[1, 2, 840, 10045, 3, 1, 7];
+const P384_OID: &[u32] = &[1, 3, 132, 0, 34];
+const P521_OID: &[u32] = &[1, 3, 132, 0, 35];
+const ED25519_OID: &[u32] = &[1, 3, 101, 112];
 
 /// Extracts the `kid` (key identifier) from a COSE_Key stored as a CBOR Value map.
 pub(crate) fn kid_from_cose_key(cose_key: &CborValue) -> Option<Vec<u8>> {
@@ -159,16 +152,14 @@ fn ec2_to_der(map: &BTreeMap<i128, &CborValue>) -> Option<Vec<u8>> {
     point.extend_from_slice(&x);
     point.extend_from_slice(&y);
 
-    // Build DER SubjectPublicKeyInfo:
-    //   SEQUENCE {
-    //     SEQUENCE { OID ecPublicKey, OID curve }
-    //     BIT STRING { uncompressed point }
-    //   }
-    let algorithm_seq = der_sequence(&[EC_PUBLIC_KEY_OID, curve_oid])?;
-    let bit_string = der_bit_string(&point)?;
-    let spki = der_sequence(&[&algorithm_seq, &bit_string])?;
-
-    Some(spki)
+    // AlgorithmIdentifier for ecPublicKey carries the curve OID as its parameter (RFC 5480 §2.1.1).
+    spki_to_der(
+        AlgorithmIdentifier {
+            algorithm: oid(EC_PUBLIC_KEY_OID)?,
+            parameters: Some(Any::new(rasn::der::encode(&oid(curve_oid)?).ok()?)),
+        },
+        &point,
+    )
 }
 
 fn okp_to_der(map: &BTreeMap<i128, &CborValue>) -> Option<Vec<u8>> {
@@ -180,16 +171,14 @@ fn okp_to_der(map: &BTreeMap<i128, &CborValue>) -> Option<Vec<u8>> {
 
     let x = cbor_as_bytes(map.get(&OKP_X)?)?;
 
-    // Build DER SubjectPublicKeyInfo:
-    //   SEQUENCE {
-    //     SEQUENCE { OID ed25519 }
-    //     BIT STRING { public key bytes }
-    //   }
-    let algorithm_seq = der_sequence(&[ED25519_OID])?;
-    let bit_string = der_bit_string(&x)?;
-    let spki = der_sequence(&[&algorithm_seq, &bit_string])?;
-
-    Some(spki)
+    // Ed25519 takes no AlgorithmIdentifier parameters (RFC 8410 §3).
+    spki_to_der(
+        AlgorithmIdentifier {
+            algorithm: oid(ED25519_OID)?,
+            parameters: None,
+        },
+        &x,
+    )
 }
 
 /// Left-pads `bytes` with zeros to exactly `len` bytes, or returns `None` if `bytes` is already
@@ -205,41 +194,16 @@ fn left_pad(bytes: &[u8], len: usize) -> Option<Vec<u8>> {
 
 // ── DER encoding helpers ────────────────────────────────────────────────────
 
-/// DER definite-length encoding, up to the two-byte long form (65535 bytes).
-///
-/// Returns `None` beyond that rather than silently truncating `len` into two bytes. Every key
-/// this module encodes is far below the limit (the largest, a P-521 SPKI, is a few hundred
-/// bytes), so this is a guard against a future caller rather than a reachable case today.
-fn der_length(len: usize) -> Option<Vec<u8>> {
-    if len < 128 {
-        Some(vec![len as u8])
-    } else if len < 256 {
-        Some(vec![0x81, len as u8])
-    } else if len < 65536 {
-        Some(vec![0x82, (len >> 8) as u8, (len & 0xff) as u8])
-    } else {
-        None
-    }
+fn oid(components: &[u32]) -> Option<ObjectIdentifier> {
+    ObjectIdentifier::new(components.to_vec())
 }
 
-fn der_sequence(items: &[&[u8]]) -> Option<Vec<u8>> {
-    let total: usize = items.iter().map(|i| i.len()).sum();
-    let mut out = vec![0x30]; // SEQUENCE tag
-    out.extend(der_length(total)?);
-    for item in items {
-        out.extend_from_slice(item);
-    }
-    Some(out)
-}
-
-fn der_bit_string(data: &[u8]) -> Option<Vec<u8>> {
-    // BIT STRING: tag 0x03, length = data.len() + 1 (for unused-bits byte), 0x00 (unused bits), data
-    let content_len = data.len() + 1;
-    let mut out = vec![0x03];
-    out.extend(der_length(content_len)?);
-    out.push(0x00); // zero unused bits
-    out.extend_from_slice(data);
-    Some(out)
+fn spki_to_der(algorithm: AlgorithmIdentifier, public_key: &[u8]) -> Option<Vec<u8>> {
+    rasn::der::encode(&SubjectPublicKeyInfo {
+        algorithm,
+        subject_public_key: BitString::from_slice(public_key),
+    })
+    .ok()
 }
 
 // ── CBOR helpers ────────────────────────────────────────────────────────────
@@ -362,13 +326,15 @@ mod tests {
         // DER should start with SEQUENCE tag.
         assert_eq!(der[0], 0x30);
 
-        // Should contain the EC public key OID.
-        assert!(der
-            .windows(EC_PUBLIC_KEY_OID.len())
-            .any(|w| w == EC_PUBLIC_KEY_OID));
-
-        // Should contain the P-256 curve OID.
-        assert!(der.windows(P256_OID.len()).any(|w| w == P256_OID));
+        // The AlgorithmIdentifier must name ecPublicKey, parameterised by the P-256 curve.
+        let spki: SubjectPublicKeyInfo = rasn::der::decode(&der).unwrap();
+        assert_eq!(spki.algorithm.algorithm, oid(EC_PUBLIC_KEY_OID).unwrap());
+        assert_eq!(
+            spki.algorithm.parameters.as_ref().unwrap().as_bytes(),
+            rasn::der::encode(&oid(P256_OID).unwrap())
+                .unwrap()
+                .as_slice()
+        );
 
         // Should contain the uncompressed point (0x04 || x || y).
         let mut expected_point = vec![0x04];
@@ -458,24 +424,6 @@ mod tests {
         assert!(cose_key_to_der(&CborValue::Map(map)).is_none());
     }
 
-    // ── DER length encoding ──────────────────────────────────────────────────
-
-    #[test]
-    fn der_length_covers_short_and_long_forms() {
-        assert_eq!(der_length(10).unwrap(), vec![10]); // short form
-        assert_eq!(der_length(200).unwrap(), vec![0x81, 200]); // one-byte long form
-        assert_eq!(der_length(1000).unwrap(), vec![0x82, 0x03, 0xe8]); // two-byte long form
-    }
-
-    /// The encoder tops out at the two-byte long form; beyond that it must refuse rather than
-    /// truncate the length into two bytes. Unreachable for these curves, but the guard is the
-    /// documented contract.
-    #[test]
-    fn der_length_refuses_beyond_two_byte_form() {
-        assert_eq!(der_length(65535).unwrap(), vec![0x82, 0xff, 0xff]);
-        assert!(der_length(65536).is_none());
-    }
-
     #[test]
     fn ec2_to_der_rejects_oversized_coordinate() {
         let oversized_x = [0xaa; 33]; // one byte over P-256's 32-byte field length
@@ -497,7 +445,9 @@ mod tests {
         let der = cose_key_to_der(&key).unwrap();
 
         assert_eq!(der[0], 0x30);
-        assert!(der.windows(ED25519_OID.len()).any(|w| w == ED25519_OID));
+        let spki: SubjectPublicKeyInfo = rasn::der::decode(&der).unwrap();
+        assert_eq!(spki.algorithm.algorithm, oid(ED25519_OID).unwrap());
+        assert!(spki.algorithm.parameters.is_none());
         assert!(der.windows(x.len()).any(|w| w == x));
     }
 
