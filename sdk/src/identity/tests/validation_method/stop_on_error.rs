@@ -383,11 +383,16 @@ mod invalid_sig_type {
 
         let mut test_image = Cursor::new(test_image);
 
-        // Initial read with default `Reader` should pass without issues.
+        // The default (decoding-enabled) `Reader` must surface the unrecognized
+        // sig_type as a failure.
         let reader = Reader::default()
             .with_stream(format, &mut test_image)
             .unwrap();
-        assert_eq!(reader.validation_status(), None);
+        assert!(reader
+            .validation_status()
+            .unwrap()
+            .iter()
+            .any(|s| s.code() == "cawg.identity.sig_type.unknown"));
 
         // Re-parse with identity assertion code should find extra assertion error.
         let mut status_tracker =
@@ -460,11 +465,16 @@ mod invalid_sig_type {
 
         let mut test_image = Cursor::new(test_image);
 
-        // Initial read with default `Reader` should pass without issues.
+        // The default (decoding-enabled) `Reader` must surface the unrecognized
+        // sig_type as a failure.
         let reader = Reader::default()
             .with_stream(format, &mut test_image)
             .unwrap();
-        assert_eq!(reader.validation_status(), None);
+        assert!(reader
+            .validation_status()
+            .unwrap()
+            .iter()
+            .any(|s| s.code() == "cawg.identity.sig_type.unknown"));
 
         // Re-parse with identity assertion code should find extra assertion error.
         let mut status_tracker =
