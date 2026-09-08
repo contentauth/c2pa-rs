@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    assertion::AssertionData, claim::Claim, crypto::base64, store::Store,
+    assertion::AssertionData, claim::Claim, crypto::base64, store::Store, utils::json_report,
     validation_results::ValidationResults, validation_status::ValidationStatus, Result,
     ValidationState,
 };
@@ -97,8 +97,11 @@ impl ManifestReport {
             let (label, instance) = Claim::assertion_label_from_link(&hashlink);
             let label = Claim::label_with_instance(&label, instance);
             let value = match claim_assertion.assertion().decode_data() {
-                AssertionData::Json(_) | AssertionData::Cbor(_) => {
-                    claim_assertion.assertion().as_json_object()? // todo:  this may cause data loss
+                AssertionData::Json(_) => claim_assertion.assertion().as_json_object()?,
+                AssertionData::Cbor(cbor) => {
+                    let mut value = claim_assertion.assertion().as_json_object()?;
+                    json_report::encode_cbor_byte_strings(cbor, &mut value)?;
+                    value
                 }
                 AssertionData::Binary(x) => {
                     serde_json::to_value(format!("<omitted> len = {}", x.len()))?
@@ -129,7 +132,7 @@ impl ManifestReport {
             },
             None => SignatureReport::default(),
         };
-        let mut claim_value = serde_json::to_value(claim)?; // todo:  this will lose tagging info
+        let mut claim_value = json_report::to_value(claim)?; // todo: this will lose tagging info
         if let Value::Object(map) = &mut claim_value {
             map.insert(
                 "claim_version".to_string(),

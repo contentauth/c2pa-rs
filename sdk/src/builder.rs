@@ -56,7 +56,7 @@ use crate::{
     settings::{builder::TimeStampFetchScope, MAX_ASSERTIONS},
     store::Store,
     utils::{
-        hash_utils::hash_to_b64, merkle::MerkleAccumulator, mime::format_to_mime,
+        json_report, merkle::MerkleAccumulator, mime::format_to_mime,
         path_utils::sanitize_archive_path, xmp_inmemory_utils::XmpInfo,
     },
     AsyncSigner, ClaimGeneratorInfo, EphemeralSigner, HashRange, HashedUri, Ingredient,
@@ -3786,8 +3786,7 @@ impl Builder {
 
 impl std::fmt::Display for Builder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut json = serde_json::to_value(self).map_err(|_| std::fmt::Error)?;
-        json = hash_to_b64(json);
+        let json = json_report::to_value(self).map_err(|_| std::fmt::Error)?;
         let output = serde_json::to_string_pretty(&json).map_err(|_| std::fmt::Error)?;
         f.write_str(&output)
     }
@@ -3970,6 +3969,217 @@ mod tests {
 
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+
+    fn json_report_reader(builder: &Builder) -> Result<Reader> {
+        let mut store = Store::new();
+        store.commit_claim(builder.to_claim()?)?;
+        let mut reader = Reader::from_shared_context(&builder.context);
+        reader.with_store(store, &mut crate::status_tracker::StatusTracker::default())?;
+        Ok(reader)
+    }
+
+    fn assert_json_report_data(
+        reader: &Reader,
+        label: &str,
+        expected: &serde_json::Value,
+    ) -> Result<()> {
+        let active = reader.active_label().expect("active manifest");
+        let report: serde_json::Value = serde_json::from_str(&reader.json_checked()?)?;
+        let assertion = report["manifests"][active]["assertions"]
+            .as_array()
+            .expect("assertions")
+            .iter()
+            .find(|assertion| assertion["label"] == label)
+            .expect("custom assertion");
+        assert_eq!(&assertion["data"], expected, "Reader::json_checked");
+
+        let detailed: serde_json::Value = serde_json::from_str(&reader.detailed_json_checked()?)?;
+        assert_eq!(
+            &detailed["manifests"][active]["assertion_store"][label], expected,
+            "Reader::detailed_json_checked"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_json_report_preserves_numeric_arrays() -> Result<()> {
+        const LABEL: &str = "org.example.numeric-array";
+        let cases = [
+            json!([96, 384]),
+            json!([0, 255, 256]),
+            json!([0, 255]),
+            json!([]),
+            json!([-1, i64::MIN, i64::MAX]),
+            json!([1.5, -2.5, 96]),
+            json!([96, "text", null, true]),
+            json!([[96, 384], [], [0, 255]]),
+            json!({"values": [96, 384], "hash": [0, 255], "nested": [{"values": []}]}),
+        ];
+
+        for kind in [None, Some(ManifestAssertionKind::Json)] {
+            for data in &cases {
+                let mut definition = json!({
+                    "assertions": [{"label": LABEL, "data": data}]
+                });
+                if let Some(kind) = &kind {
+                    definition["assertions"][0]["kind"] = serde_json::to_value(kind)?;
+                }
+                let builder = Builder::from_context(Context::new()).with_definition(definition)?;
+                let reader = json_report_reader(&builder)?;
+                let internal: serde_json::Value = reader
+                    .active_manifest()
+                    .expect("active manifest")
+                    .find_assertion(LABEL)?;
+                assert_eq!(&internal, data, "assertion data before reporting");
+                assert_json_report_data(&reader, LABEL, data)?;
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_json_report_preserves_cbor_bytes() -> Result<()> {
+        use c2pa_cbor::Value as CborValue;
+
+        const LABEL: &str = "org.example.binary-and-array";
+        let data = CborValue::Map(
+            [
+                (
+                    CborValue::Text("bytes".into()),
+                    CborValue::Bytes(vec![0, 255]),
+                ),
+                (
+                    CborValue::Text("empty_bytes".into()),
+                    CborValue::Bytes(vec![]),
+                ),
+                (
+                    CborValue::Text("values".into()),
+                    CborValue::Array(vec![CborValue::Integer(0), CborValue::Integer(255)]),
+                ),
+                (
+                    CborValue::Text("nested".into()),
+                    CborValue::Array(vec![
+                        CborValue::Bytes(vec![96, 128]),
+                        CborValue::Array(vec![]),
+                    ]),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        let mut builder = Builder::from_context(Context::new());
+        builder.add_assertion(LABEL, &data)?;
+        let reader = json_report_reader(&builder)?;
+        let expected = json!({
+            "bytes": "AP8=",
+            "empty_bytes": "",
+            "values": [0, 255],
+            "nested": ["YIA=", []]
+        });
+        assert_json_report_data(&reader, LABEL, &expected)?;
+
+        // Reporting must not alter the API representation used for typed decoding.
+        let internal: serde_json::Value = reader
+            .active_manifest()
+            .expect("active manifest")
+            .find_assertion(LABEL)?;
+        assert_eq!(internal, serde_json::to_value(&data)?);
+
+        let detailed: serde_json::Value = serde_json::from_str(&reader.detailed_json_checked()?)?;
+        let claim = &detailed["manifests"][reader.active_label().unwrap()]["claim"];
+        let references = claim["gathered_assertions"]
+            .as_array()
+            .expect("assertion references");
+        assert!(references
+            .iter()
+            .all(|reference| reference["hash"].is_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn test_json_report_preserves_builder_display() -> Result<()> {
+        let mut builder = Builder::from_context(Context::new()).with_definition(json!({
+            "assertions": [{"label": "org.example.array", "data": [96, 384]}]
+        }))?;
+        builder.add_assertion(
+            "org.example.bytes",
+            &serde_bytes::ByteBuf::from(vec![0, 255]),
+        )?;
+        let displayed: serde_json::Value = serde_json::from_str(&builder.to_string())?;
+        assert_eq!(displayed["assertions"][0]["data"], json!([96, 384]));
+        assert_eq!(displayed["assertions"][1]["data"], json!("AP8="));
+        assert_eq!(
+            serde_json::to_value(&builder)?["assertions"][1]["data"],
+            json!([0, 255])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_json_report_uses_each_assertion_instance() -> Result<()> {
+        const LABEL: &str = "org.example.multiple";
+        let mut builder = Builder::from_context(Context::new());
+        builder.add_assertion(LABEL, &json!([0, 255]))?;
+        builder.add_assertion(LABEL, &serde_bytes::ByteBuf::from(vec![0, 255]))?;
+        builder.add_assertion(LABEL, &serde_bytes::ByteBuf::from(vec![]))?;
+        let reader = json_report_reader(&builder)?;
+        let active = reader.active_label().expect("active manifest");
+        let report: serde_json::Value = serde_json::from_str(&reader.json_checked()?)?;
+        let assertions = report["manifests"][active]["assertions"]
+            .as_array()
+            .expect("assertions");
+        let values: Vec<_> = assertions
+            .iter()
+            .filter(|assertion| assertion["label"] == LABEL)
+            .map(|assertion| assertion["data"].clone())
+            .collect();
+        assert_eq!(values, vec![json!([0, 255]), json!("AP8="), json!("")]);
+
+        let detailed: serde_json::Value = serde_json::from_str(&reader.detailed_json_checked()?)?;
+        let assertions = &detailed["manifests"][active]["assertion_store"];
+        assert_eq!(assertions[LABEL], json!([0, 255]));
+        assert_eq!(assertions[format!("{LABEL}__1")], json!("AP8="));
+        assert_eq!(assertions[format!("{LABEL}__2")], json!(""));
+        Ok(())
+    }
+
+    #[test]
+    fn test_json_report_keeps_post_validation_values() -> Result<()> {
+        struct Validator;
+
+        impl crate::reader::PostValidator for Validator {
+            fn validate(
+                &self,
+                _label: &str,
+                _assertion: &crate::ManifestAssertion,
+                _uri: &str,
+                _claim: &crate::dynamic_assertion::PartialClaim,
+                _tracker: &mut crate::status_tracker::StatusTracker,
+            ) -> Result<Option<serde_json::Value>> {
+                Ok(Some(json!({"bytes": [0, 255], "values": [96, 384]})))
+            }
+        }
+
+        const LABEL: &str = "org.example.post-validation";
+        #[derive(Serialize)]
+        struct Data {
+            bytes: serde_bytes::ByteBuf,
+        }
+        let mut builder = Builder::from_context(Context::new());
+        builder.add_assertion(
+            LABEL,
+            &Data {
+                bytes: serde_bytes::ByteBuf::from(vec![0, 255]),
+            },
+        )?;
+        let mut reader = json_report_reader(&builder)?;
+        reader.post_validate(&Validator)?;
+        assert_json_report_data(
+            &reader,
+            LABEL,
+            &json!({"bytes": [0, 255], "values": [96, 384]}),
+        )
+    }
 
     fn parent_json() -> String {
         json!({

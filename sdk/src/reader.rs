@@ -33,7 +33,9 @@ use serde_with::skip_serializing_none;
 #[cfg(feature = "file_io")]
 use crate::utils::io_utils::uri_to_path;
 use crate::{
+    assertion::AssertionData,
     assertions::Metadata,
+    claim::Claim,
     context::{Context, ProgressPhase},
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
@@ -43,7 +45,7 @@ use crate::{
     manifest_store_report::ManifestStoreReport,
     status_tracker::StatusTracker,
     store::Store,
-    utils::hash_utils::hash_to_b64,
+    utils::json_report,
     validation_results::{ValidationResults, ValidationState},
     validation_status::{ValidationStatus, ASSERTION_MISSING, ASSERTION_NOT_REDACTED},
     Ingredient, Manifest, ManifestAssertion, ManifestAssertionKind,
@@ -628,42 +630,43 @@ impl Reader {
         Context::default().io().reader_mime_types()
     }
 
-    /// replace assertion values in the reader json with the values from the assertion_values map
-    /// # Arguments
-    /// * `reader_json` - The reader json to update
-    /// # Returns
-    /// The updated reader json
+    /// Format byte strings for reporting and apply post-validation results.
     fn to_json_formatted(&self) -> Result<Value> {
-        let mut json = serde_json::to_value(self).map_err(Error::JsonError)?;
+        let mut json = json_report::to_value(self)?;
 
-        // If we ran post-validation, we need to update the assertion values in the report
-        if !self.assertion_values.is_empty() {
-            if let Some(manifests) = json.get_mut("manifests").and_then(|m| m.as_object_mut()) {
-                for (manifest_label, manifest) in manifests.iter_mut() {
-                    // Get assertions array once instead of multiple lookups
-                    if let Some(assertions) = manifest
-                        .get_mut("assertions")
-                        .and_then(|a| a.as_array_mut())
-                    {
-                        for assertion in assertions.iter_mut() {
-                            // Get label once and reuse
-                            if let Some(label) = assertion.get("label").and_then(|l| l.as_str()) {
-                                let uri =
-                                    crate::jumbf::labels::to_assertion_uri(manifest_label, label);
-                                if let Some(value) = self.assertion_values.get(&uri) {
-                                    // Only create new string if we need to insert
-                                    if let Some(assertion_mut) = assertion.as_object_mut() {
-                                        assertion_mut.insert("data".to_string(), value.clone());
-                                    }
-                                }
-                            }
+        if let Some(manifests) = json.get_mut("manifests").and_then(|m| m.as_object_mut()) {
+            for (manifest_label, manifest) in manifests {
+                let Some(source_manifest) = self.manifests.get(manifest_label) else {
+                    continue;
+                };
+                let Some(assertions) = manifest.get_mut("assertions").and_then(Value::as_array_mut)
+                else {
+                    continue;
+                };
+                for (assertion, source) in assertions.iter_mut().zip(source_manifest.assertions()) {
+                    let Some(data) = assertion.get_mut("data") else {
+                        continue;
+                    };
+                    let uri =
+                        crate::jumbf::labels::to_assertion_uri(manifest_label, source.label());
+                    if let Some(value) = self.assertion_values.get(&uri) {
+                        *data = value.clone();
+                        continue;
+                    }
+
+                    // Keep the normalized API representation, using the original
+                    // assertion only to distinguish byte strings from arrays.
+                    let label = Claim::label_with_instance(source.label(), source.instance());
+                    let uri = crate::jumbf::labels::to_assertion_uri(manifest_label, &label);
+                    if let Some(original) = self.store.get_assertion_from_uri(&uri) {
+                        if let AssertionData::Cbor(cbor) = original.decode_data() {
+                            json_report::encode_cbor_byte_strings(cbor, data)?;
                         }
                     }
                 }
             }
         }
-        // Convert hash values to base64 strings
-        Ok(hash_to_b64(json))
+        Ok(json)
     }
 
     /// Convert the reader to a JSON value with detailed formatting.
@@ -694,8 +697,6 @@ impl Reader {
                 }
             }
         }
-        // Convert hash values to base64 strings
-        json = hash_to_b64(json);
         Ok(json)
     }
 
