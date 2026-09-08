@@ -15,9 +15,11 @@ use std::{borrow::Cow, io::Write};
 
 use asn1_rs::FromDer;
 use async_generic::async_generic;
-use c2pa_raw_crypto::{ec_utils::parse_ec_der_sig, validator_for_signing_alg, SigningAlg};
+use c2pa_raw_crypto::{
+    ec_utils::parse_ec_der_sig, validator_for_signing_alg, RawSignatureValidationError, SigningAlg,
+};
 use coset::CoseSign1;
-use x509_parser::prelude::X509Certificate;
+use x509_parser::{der_parser::oid, oid_registry::Oid, prelude::X509Certificate};
 
 use crate::{
     crypto::{
@@ -56,6 +58,25 @@ pub enum Verifier<'a> {
 
     /// Ignore both trust configuration and trust lists.
     IgnoreProfileAndTrustPolicy,
+}
+
+const EC_PUBLICKEY_OID: Oid<'static> = oid!(1.2.840 .10045 .2 .1);
+const RSA_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .1);
+const RSASSA_PSS_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .10);
+const ED25519_OID: Oid<'static> = oid!(1.3.101 .112);
+
+// Is the certificate's key algorithm the one the COSE `SigningAlg` implies?
+// Blocks algorithm substitution (e.g. an Ed448 key under the Ed25519 selection).
+// A future non-exhaustive variant defers to its own validator.
+fn spki_matches_signing_alg(alg: SigningAlg, spki_alg: &Oid) -> bool {
+    match alg {
+        SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => *spki_alg == EC_PUBLICKEY_OID,
+        SigningAlg::Ps256 | SigningAlg::Ps384 | SigningAlg::Ps512 => {
+            *spki_alg == RSA_OID || *spki_alg == RSASSA_PSS_OID
+        }
+        SigningAlg::Ed25519 => *spki_alg == ED25519_OID,
+        _ => true,
+    }
 }
 
 impl Verifier<'_> {
@@ -143,6 +164,25 @@ impl Verifier<'_> {
             .map_err(|_| CoseError::CborParsingError("invalid X509 certificate".to_string()))?;
         let pk = sign_cert.public_key();
         let pk_der = pk.raw;
+
+        // Reject a certificate whose key algorithm does not match the declared
+        // COSE signing algorithm (e.g. an Ed448 key under the Ed25519 selection).
+        if !spki_matches_signing_alg(alg, &pk.algorithm.algorithm) {
+            log_item!(
+                "Cose_Sign1",
+                "certificate key algorithm does not match COSE signing algorithm",
+                "verify_cose"
+            )
+            .validation_status(SIGNING_CREDENTIAL_INVALID)
+            .failure_no_throw(
+                validation_log,
+                CoseError::RawSignatureValidationError(
+                    RawSignatureValidationError::InvalidPublicKey,
+                ),
+            );
+
+            return Err(RawSignatureValidationError::InvalidPublicKey.into());
+        }
 
         // The built-in validators are pure-Rust and synchronous on every target
         // (including WASM), so the synchronous validator is used directly even on
@@ -316,4 +356,57 @@ fn dump_cert_chain(certs: &[Vec<u8>]) -> Result<Vec<u8>, CoseError> {
     }
 
     Ok(writer)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use c2pa_raw_crypto::SigningAlg;
+    use x509_parser::prelude::{FromDer, Pem, X509Certificate};
+
+    use super::spki_matches_signing_alg;
+
+    fn key_matches(cert_pem: &[u8], alg: SigningAlg) -> bool {
+        let pem = Pem::iter_from_buffer(cert_pem).next().unwrap().unwrap();
+        let (_, cert) = X509Certificate::from_der(&pem.contents).unwrap();
+        spki_matches_signing_alg(alg, &cert.public_key().algorithm.algorithm)
+    }
+
+    #[test]
+    fn ed448_key_rejected_under_ed25519() {
+        // The reported bypass: an Ed448 subject key must not match Ed25519.
+        assert!(!key_matches(
+            include_bytes!("../../../tests/fixtures/crypto/raw_signature/ed448.pub"),
+            SigningAlg::Ed25519
+        ));
+    }
+
+    #[test]
+    fn matching_keys_accepted() {
+        assert!(key_matches(
+            include_bytes!("../../../tests/fixtures/certs/ed25519.pub"),
+            SigningAlg::Ed25519
+        ));
+        assert!(key_matches(
+            include_bytes!("../../../tests/fixtures/crypto/raw_signature/es256.pub"),
+            SigningAlg::Es256
+        ));
+        assert!(key_matches(
+            include_bytes!("../../../tests/fixtures/crypto/raw_signature/ps256.pub"),
+            SigningAlg::Ps256
+        ));
+    }
+
+    #[test]
+    fn cross_algorithm_key_rejected() {
+        assert!(!key_matches(
+            include_bytes!("../../../tests/fixtures/crypto/raw_signature/es256.pub"),
+            SigningAlg::Ed25519
+        ));
+        assert!(!key_matches(
+            include_bytes!("../../../tests/fixtures/certs/ed25519.pub"),
+            SigningAlg::Es256
+        ));
+    }
 }
