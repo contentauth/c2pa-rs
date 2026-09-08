@@ -32,7 +32,7 @@ use crate::{
     status_tracker::StatusTracker,
     validation_status::{
         self, SIGNING_CREDENTIAL_NOT_REVOKED, SIGNING_CREDENTIAL_OCSP_INACCESSIBLE,
-        SIGNING_CREDENTIAL_OCSP_SKIPPED, SIGNING_CREDENTIAL_REVOKED,
+        SIGNING_CREDENTIAL_OCSP_SKIPPED, SIGNING_CREDENTIAL_REVOKED, SIGNING_CREDENTIAL_UNTRUSTED,
     },
 };
 
@@ -465,24 +465,6 @@ pub(crate) fn fetch_and_check_ocsp_response(
 ) -> Result<OcspResponse, CoseError> {
     let certs = cert_chain_from_sign1(sign1)?;
 
-    let ocsp_der = if _sync {
-        crate::crypto::ocsp::fetch_ocsp_response(&certs, context)
-    } else {
-        crate::crypto::ocsp::fetch_ocsp_response_async(&certs, context).await
-    };
-
-    let Some(ocsp_response_der) = ocsp_der else {
-        log_item!(
-            "",
-            "signing cert not fetched".to_string(),
-            "fetch_and_check_ocsp_response"
-        )
-        .validation_status(SIGNING_CREDENTIAL_OCSP_INACCESSIBLE)
-        .informational(validation_log);
-
-        return Ok(OcspResponse::default());
-    };
-
     // use supplied override time if provided
     let signing_time: Option<DateTime<Utc>> = match tst_info {
         Some(tst_info) => Some(tst_info.gen_time.clone().into()),
@@ -497,32 +479,87 @@ pub(crate) fn fetch_and_check_ocsp_response(
         .map(|tst_info| tst_info.gen_time.clone().into()),
     };
 
-    // Check the OCSP response, but only if it is well-formed.
-    // Revocation errors are reported in the validation log.
-    // `certs` is the signing certificate chain; bind the OCSP response to it.
-    //
-    // Status codes go to a scratch log until the responder has been accepted, then
-    // are appended below. RFC 6960 section 3.2 requires all of requirements 1-4
-    // before a response may be accepted, and C2PA 2.4 section 15.9.2 conditions
-    // `signingCredential.ocsp.notRevoked` on that acceptance -- but
-    // `from_der_checked` logs the success as soon as requirements 1 and 2 hold. With
-    // the caller's log passed in directly, an early return below discarded the
-    // response while leaving that success code behind.
-    let mut current_validation_log = StatusTracker::default();
-    let ocsp_data = match OcspResponse::from_der_checked(
+    // C2PA 2.4 section 15.9: a revoked issuing CA makes the credential untrusted.
+    // Query each CA against its own AIA responder (subject = certs[i], issuer =
+    // certs[i + 1]); the self-signed anchor at the end has no in-chain issuer.
+    for i in 1..certs.len().saturating_sub(1) {
+        let ca_der = if _sync {
+            crate::crypto::ocsp::fetch_ocsp_response(&certs, i, context)
+        } else {
+            crate::crypto::ocsp::fetch_ocsp_response_async(&certs, i, context).await
+        };
+        let Some(ca_der) = ca_der else {
+            continue;
+        };
+
+        let mut ca_log = StatusTracker::default();
+        let ca_response =
+            validate_fetched_ocsp(&ca_der, &certs[i..], &certs, signing_time, &mut ca_log);
+        if ca_response.revoked_at.is_some() {
+            log_item!("", "issuing CA revoked", "fetch_and_check_ocsp_response")
+                .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
+                .failure_no_throw(validation_log, CertificateTrustError::CertificateNotTrusted);
+
+            return Err(CoseError::CertificateTrustError(
+                CertificateTrustError::CertificateNotTrusted,
+            ));
+        }
+    }
+
+    let ocsp_der = if _sync {
+        crate::crypto::ocsp::fetch_ocsp_response(&certs, 0, context)
+    } else {
+        crate::crypto::ocsp::fetch_ocsp_response_async(&certs, 0, context).await
+    };
+
+    let Some(ocsp_response_der) = ocsp_der else {
+        log_item!(
+            "",
+            "signing cert not fetched".to_string(),
+            "fetch_and_check_ocsp_response"
+        )
+        .validation_status(SIGNING_CREDENTIAL_OCSP_INACCESSIBLE)
+        .informational(validation_log);
+
+        return Ok(OcspResponse::default());
+    };
+
+    Ok(validate_fetched_ocsp(
         &ocsp_response_der,
         &certs,
+        &certs,
+        signing_time,
+        validation_log,
+    ))
+}
+
+/// Validate a fetched OCSP response for the certificate identified by
+/// `subject_chain[0]` (with `subject_chain[1]` its issuer), completing the
+/// responder's path from `full_chain`. Returns the parsed response only if the
+/// responder is authorized (RFC 6960 section 3.2); status codes are appended to
+/// `validation_log` only on that acceptance.
+fn validate_fetched_ocsp(
+    ocsp_response_der: &[u8],
+    subject_chain: &[Vec<u8>],
+    full_chain: &[Vec<u8>],
+    signing_time: Option<DateTime<Utc>>,
+    validation_log: &mut StatusTracker,
+) -> OcspResponse {
+    let mut current_validation_log = StatusTracker::default();
+    let ocsp_data = match OcspResponse::from_der_checked(
+        ocsp_response_der,
+        subject_chain,
         signing_time,
         &mut current_validation_log,
     ) {
         Ok(data) => data,
-        Err(_) => return Ok(OcspResponse::default()),
+        Err(_) => return OcspResponse::default(),
     };
 
     // If we get a valid response validate the certs.
     if let Some(ocsp_certs) = &ocsp_data.ocsp_certs {
         let Some(first_cert) = ocsp_certs.first() else {
-            return Ok(OcspResponse::default());
+            return OcspResponse::default();
         };
 
         // make sure this is an OCSP signing EKU
@@ -531,7 +568,7 @@ pub(crate) fn fetch_and_check_ocsp_response(
         new_ctp.add_mandatory_ekus(OCSP_OID_STR.as_bytes()); // ocsp signing EKU
         if check_end_entity_certificate_profile(first_cert, &new_ctp, validation_log, None).is_err()
         {
-            return Ok(OcspResponse::default());
+            return OcspResponse::default();
         }
 
         // validate the trust; complete the responder's path from the signer's
@@ -542,7 +579,7 @@ pub(crate) fn fetch_and_check_ocsp_response(
         // EKU check above does not establish it: `check_certificate_profile`
         // inspects a single certificate and builds no path, so a self-signed
         // certificate carrying id-kp-OCSPSigning satisfies it.
-        let ocsp_cert_chain = extend_ocsp_cert_chain(ocsp_certs, &certs);
+        let ocsp_cert_chain = extend_ocsp_cert_chain(ocsp_certs, full_chain);
         if new_ctp
             .check_certificate_trust(
                 &ocsp_cert_chain,
@@ -551,16 +588,16 @@ pub(crate) fn fetch_and_check_ocsp_response(
             )
             .is_err()
         {
-            return Ok(OcspResponse::default());
+            return OcspResponse::default();
         }
     } else {
         // OCSP response must be signed by and the cert chain provided
-        return Ok(OcspResponse::default());
+        return OcspResponse::default();
     }
 
     // only append usable OCSP responses to validation_log
     validation_log.append(&current_validation_log);
-    Ok(ocsp_data)
+    ocsp_data
 }
 
 /// Returns the DER-encoded OCSP response from the "rVals" unprotected header in a COSE_Sign1 message.
