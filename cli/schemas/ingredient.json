@@ -7,7 +7,7 @@
         {
             "title": "C.jpg",
             "format": "image/jpeg",
-            "instance_id": "xmp:iid:01712cdc-26b8-4902-ad53-1cdbd5370b1b",
+            "instance_id": "xmp.iid:01712cdc-26b8-4902-ad53-1cdbd5370b1b",
             "relationship": "componentOf",
             "thumbnail": {
                 "format": "image/jpeg",

@@ -23,7 +23,7 @@ use c2pa::{
     assertions::{LiveVideoSegment, SessionKeys},
     format_from_path,
     live_video::LiveVideoValidator,
-    settings::Settings,
+    settings::{Settings, TrustAnchor},
     status_tracker::{LogItem, StatusTracker},
     validation_results::validation_codes::{LIVEVIDEO_INIT_INVALID, SIGNING_CREDENTIAL_UNTRUSTED},
     Context as C2paContext, Error, Manifest, Reader, ValidationState,
@@ -350,13 +350,13 @@ fn reader_invalid_reason(reader: &Reader, trust_configured: bool) -> Option<Stri
 /// fields are checked for presence alone, since [`Settings`] rejects unparseable or empty PEM
 /// material when it is constructed.
 fn trust_material_configured(settings: &Settings) -> bool {
-    [
-        "trust.trust_anchors",
-        "trust.user_anchors",
-        "trust.allowed_list",
-    ]
-    .iter()
-    .any(|path| matches!(settings.get_value::<Option<String>>(path), Ok(Some(_))))
+    // `Settings` folds the deprecated `trust.trust_anchors` and `trust.user_anchors` into
+    // `trust.anchors` when it is constructed, and an anchor's allowed list lives inside its
+    // own entry, so the anchor list is the only place left where trust material can appear.
+    matches!(
+        settings.get_value::<Option<Vec<TrustAnchor>>>("trust.anchors"),
+        Ok(Some(anchors)) if !anchors.is_empty()
+    )
 }
 
 /// Runs the init segment's own checks and detects the stream's validation method.
@@ -927,7 +927,8 @@ mod tests {
         )
         .unwrap();
 
-        for field in ["trust_anchors", "user_anchors", "allowed_list"] {
+        // The deprecated fields are folded into `trust.anchors` when `Settings` is built.
+        for field in ["trust_anchors", "user_anchors"] {
             let settings = Settings::new()
                 .with_toml(&format!("[trust]\n{field} = \"\"\"\n{pem}\"\"\"\n"))
                 .unwrap();
@@ -937,6 +938,28 @@ mod tests {
                 field
             );
         }
+
+        // The current form: an entry in the anchor list.
+        let settings = Settings::new()
+            .with_toml(&format!(
+                "[[trust.anchors]]\ntrust_kind = \"manifest\"\ntrust_anchors = \"\"\"\n{pem}\"\"\"\n"
+            ))
+            .unwrap();
+        assert!(
+            trust_material_configured(&settings),
+            "an anchor entry should count as trust material"
+        );
+
+        // An anchor's allowed list now lives inside the anchor rather than under `trust`.
+        let settings = Settings::new()
+            .with_toml(&format!(
+                "[[trust.anchors]]\ntrust_kind = \"manifest\"\ntrust_anchors = \"\"\"\n{pem}\"\"\"\nallowed_list = \"\"\"\n{pem}\"\"\"\n"
+            ))
+            .unwrap();
+        assert!(
+            trust_material_configured(&settings),
+            "an anchor carrying an allowed list should count as trust material"
+        );
     }
 
     /// `trust_config` lists allowed EKU OIDs rather than certificates, so it alone gives the

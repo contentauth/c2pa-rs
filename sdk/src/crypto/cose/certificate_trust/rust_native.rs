@@ -34,8 +34,8 @@ pub(crate) fn check_certificate_trust(
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
     signing_time_epoch: Option<i64>,
-) -> Result<TrustAnchorType, CertificateTrustError> {
-    if ctp.trust_anchor_ders().count() == 0 && ctp.user_trust_anchor_ders().count() == 0 {
+) -> Result<(TrustAnchorType, String), CertificateTrustError> {
+    if ctp.anchor_sets().count() == 0 {
         return Err(CertificateTrustError::CertificateNotTrusted);
     }
 
@@ -89,58 +89,28 @@ pub(crate) fn check_certificate_trust(
         }
     }
 
-    // Build anchors and check against trust anchors.
-    let anchors: Vec<(X509Certificate, &Vec<u8>)> = ctp
-        .trust_anchor_ders()
-        .filter_map(|anchor_der| {
-            let (_, cert) = X509Certificate::from_der(anchor_der)
-                .map_err(|_e| CertificateTrustError::CertificateNotTrusted)
-                .ok()?;
-            Some((cert, anchor_der))
-        })
-        .collect();
+    for anchor_set in ctp.anchor_sets() {
+        // Process each anchor set
 
-    // Build anchors and check against user provided trust anchors.
-    let user_anchors: Vec<(X509Certificate, &Vec<u8>)> = ctp
-        .user_trust_anchor_ders()
-        .filter_map(|anchor_der| {
-            let (_, cert) = X509Certificate::from_der(anchor_der)
-                .map_err(|_e| CertificateTrustError::CertificateNotTrusted)
-                .ok()?;
-            Some((cert, anchor_der))
-        })
-        .collect();
+        // Build anchors and check against trust anchors.
+        let anchors: Vec<(X509Certificate, &Vec<u8>)> = anchor_set
+            .trust_anchor_ders
+            .iter()
+            .filter_map(|anchor_der| {
+                let (_, cert) = X509Certificate::from_der(anchor_der)
+                    .map_err(|_e| CertificateTrustError::CertificateNotTrusted)
+                    .ok()?;
+                Some((cert, anchor_der))
+            })
+            .collect();
 
-    // Work back from last cert in chain against the trust anchors.
-    // (Validity was already checked for the whole chain above.)
-    for cert in full_chain.iter().rev() {
-        let (_, chain_cert) = X509Certificate::from_der(cert)
-            .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?;
+        // Work back from last cert in chain against the trust anchors.
+        for cert in full_chain.iter().rev() {
+            let (_, chain_cert) = X509Certificate::from_der(cert)
+                .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?;
 
-        // Check against C2PA trust anchors.
-        for (anchor_cert, anchor_der) in &anchors {
-            if chain_cert.issuer() == anchor_cert.subject() {
-                let data = chain_cert.tbs_certificate.as_ref();
-                let sig = chain_cert.signature_value.as_ref();
-
-                let sig_alg = cert_signing_alg(&chain_cert);
-
-                let result = verify_data(anchor_der, sig_alg, sig, data);
-
-                match result {
-                    Ok(b) => {
-                        if b {
-                            return Ok(TrustAnchorType::System);
-                        }
-                    }
-                    Err(_) => continue,
-                }
-            }
-        }
-
-        // Check against user provided trust anchors.
-        if !ctp.trust_anchors_only() {
-            for (anchor_cert, anchor_der) in &user_anchors {
+            // Check against trust anchors.
+            for (anchor_cert, anchor_der) in &anchors {
                 if chain_cert.issuer() == anchor_cert.subject() {
                     let data = chain_cert.tbs_certificate.as_ref();
                     let sig = chain_cert.signature_value.as_ref();
@@ -152,7 +122,10 @@ pub(crate) fn check_certificate_trust(
                     match result {
                         Ok(b) => {
                             if b {
-                                return Ok(TrustAnchorType::User);
+                                return Ok((
+                                    anchor_set.trust_anchor_type,
+                                    anchor_set.trust_anchor_uri.clone(),
+                                ));
                             }
                         }
                         Err(_) => continue,
