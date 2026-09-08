@@ -1323,8 +1323,8 @@ fn fragment_with_no_init_hash_is_rejected() {
 }
 
 /// Same regression for the multi-file `verify_stream_segments` path (fragments
-/// supplied as file paths).
-#[cfg(feature = "file_io")]
+/// supplied as file paths). Filesystem-based, so not run on wasm.
+#[cfg(all(feature = "file_io", not(target_arch = "wasm32")))]
 #[test]
 fn fragment_files_with_no_init_hash_is_rejected() {
     use std::io::Write;
