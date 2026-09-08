@@ -54,16 +54,6 @@ pub enum Error {
     #[error(transparent)]
     Io(#[from] std::io::Error),
 
-    /// Writing (or removing) a manifest is not yet supported by the experimental `pdf_oxide`
-    /// backend: `pdf_oxide`'s public API has no support for the PDF Associated Files (`/AF`)
-    /// array that C2PA embedding requires. Tracked as follow-up work.
-    #[cfg(feature = "unstable_pdf_oxide")]
-    #[error(
-        "Writing PDFs is not yet supported by the experimental pdf_oxide backend. Switch to the \
-         lopdf backend to write or remove a manifest."
-    )]
-    PdfOxideWriteNotSupported,
-
     /// No Manifest is present in the PDF.
     #[error("No manifest is present in the PDF.")]
     NoManifest,
@@ -146,9 +136,7 @@ impl C2paPdf for AnyPdf {
         match self {
             Self::Lopdf(pdf) => pdf.save_to(writer),
             #[cfg(feature = "unstable_pdf_oxide")]
-            Self::Oxide(_) => Err(std::io::Error::other(
-                "writing PDFs is not yet supported by the experimental pdf_oxide backend",
-            )),
+            Self::Oxide(pdf) => pdf.save_to(writer),
         }
     }
 
@@ -168,14 +156,11 @@ impl C2paPdf for AnyPdf {
         }
     }
 
-    // TODO: implement once the pdf_oxide backend supports writing (tracked as follow-up work;
-    // pdf_oxide's public API has no support for the PDF Associated Files (/AF) array that C2PA
-    // embedding requires).
     fn write_manifest_as_embedded_file(&mut self, bytes: Vec<u8>) -> Result<(), Error> {
         match self {
             Self::Lopdf(pdf) => pdf.write_manifest_as_embedded_file(bytes),
             #[cfg(feature = "unstable_pdf_oxide")]
-            Self::Oxide(_) => Err(Error::PdfOxideWriteNotSupported),
+            Self::Oxide(pdf) => pdf.write_manifest_as_embedded_file(bytes),
         }
     }
 
@@ -183,7 +168,7 @@ impl C2paPdf for AnyPdf {
         match self {
             Self::Lopdf(pdf) => pdf.write_manifest_as_annotation(bytes),
             #[cfg(feature = "unstable_pdf_oxide")]
-            Self::Oxide(_) => Err(Error::PdfOxideWriteNotSupported),
+            Self::Oxide(pdf) => pdf.write_manifest_as_annotation(bytes),
         }
     }
 
@@ -199,7 +184,7 @@ impl C2paPdf for AnyPdf {
         match self {
             Self::Lopdf(pdf) => pdf.remove_manifest_bytes(),
             #[cfg(feature = "unstable_pdf_oxide")]
-            Self::Oxide(_) => Err(Error::PdfOxideWriteNotSupported),
+            Self::Oxide(pdf) => pdf.remove_manifest_bytes(),
         }
     }
 
