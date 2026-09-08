@@ -39,5 +39,7 @@ jobs:
       - name: Run cargo-semver-checks
         uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2
         with:
-          # Public-API library crates. c2patool is a binary (no API surface).
-          package: c2pa, c2pa-c-ffi
+          # The only crate published to crates.io. c2pa-c-ffi is no longer
+          # published (see release-plz.toml), so there is no crates.io
+          # baseline left to check it against.
+          package: c2pa

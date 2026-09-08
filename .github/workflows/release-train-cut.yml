@@ -103,8 +103,8 @@ jobs:
           next_dev() { echo "$1" | awk -F. '{printf "0.%d.0-dev", $2+1}'; }
 
           meta() { cargo metadata --format-version=1 --no-deps | jq -r ".packages[]|select(.name==\"$1\")|.version"; }
-          CUR_C2PA=$(meta c2pa); CUR_TOOL=$(meta c2patool)
-          REL_C2PA=$(rel_minor "$CUR_C2PA"); REL_TOOL=$(rel_minor "$CUR_TOOL")
+          CUR_C2PA=$(meta c2pa)
+          REL_C2PA=$(rel_minor "$CUR_C2PA")
 
           # The RC branch is named "<version>-rc" (no numeric suffix): the number
           # belongs to each build (-rc.1, -rc.2, ...), not the branch. The name
@@ -114,9 +114,7 @@ jobs:
           DEV_C2PA=$(next_dev "$REL_C2PA")
           {
             echo "rel_c2pa=$REL_C2PA"
-            echo "rel_tool=$REL_TOOL"
             echo "dev_c2pa=$DEV_C2PA"
-            echo "dev_tool=$(next_dev "$REL_TOOL")"
             echo "dev_cycle=${DEV_C2PA%-dev}" # e.g. 0.91.0, for the commit message
             echo "branch=${REL_C2PA}-rc" # e.g. 0.90.0-rc
           } >> "$GITHUB_OUTPUT"
@@ -173,13 +171,12 @@ jobs:
         if: steps.exists.outputs.skip != 'true' && steps.empty.outputs.skip != 'true'
         run: |
           # The working tree is `main` (checked out above). set-version updates
-          # the workspace version (c2pa + c2pa-c-ffi), c2patool, the intra-repo
-          # dependency references, and Cargo.lock.
+          # the workspace version (c2pa + c2pa-c-ffi), the intra-repo dependency
+          # references, and Cargo.lock.
           cargo set-version -p c2pa "${{ steps.ver.outputs.dev_c2pa }}"
-          cargo set-version -p c2patool "${{ steps.ver.outputs.dev_tool }}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git commit -am "chore: begin ${{ steps.ver.outputs.dev_cycle }} dev cycle (c2pa ${{ steps.ver.outputs.dev_c2pa }}, c2patool ${{ steps.ver.outputs.dev_tool }})"
+          git commit -am "chore: begin ${{ steps.ver.outputs.dev_cycle }} dev cycle (c2pa ${{ steps.ver.outputs.dev_c2pa }})"
           git push origin HEAD:main
 
       - name: Open tracking issue for the train
@@ -188,9 +185,7 @@ jobs:
         with:
           script: |
             const relC2pa = '${{ steps.ver.outputs.rel_c2pa }}';
-            const relTool = '${{ steps.ver.outputs.rel_tool }}';
             const devC2pa = '${{ steps.ver.outputs.dev_c2pa }}';
-            const devTool = '${{ steps.ver.outputs.dev_tool }}';
             const branch  = '${{ steps.ver.outputs.branch }}';
             await github.rest.issues.create({
               owner: context.repo.owner,
@@ -201,14 +196,14 @@ jobs:
                 `Release-candidate branch \`${branch}\` was cut from \`main\` for the **${relC2pa}** train.`,
                 'It is **not** published to crates.io; it bakes under the Tier CI suites.',
                 '',
-                `The first build, **${relC2pa}-rc.1** (c2patool \`${relTool}-rc.1\`), is being cut automatically by \`release-rc.yml\`. Each build is tagged and gets a **prerelease GitHub release with binaries** so downstream binary consumers can validate during the bake.`,
+                `The first build, **${relC2pa}-rc.1**, is being cut automatically by \`release-rc.yml\`. Each build is tagged and gets a **prerelease GitHub release with binaries** so downstream binary consumers can validate during the bake.`,
                 '',
-                `\`main\` has been advanced automatically to the next dev cycle (**c2pa \`${devC2pa}\`, c2patool \`${devTool}\`**), so development stays numbered ahead of the baking line. No action needed unless that step failed.`,
+                `\`main\` has been advanced automatically to the next dev cycle (**c2pa \`${devC2pa}\`**), so development stays numbered ahead of the baking line. No action needed unless that step failed.`,
                 '',
                 '- Bake at least **3 business days**; hold longer if downstream validation needs it.',
                 '- Only **bugfixes** are accepted during the bake, upstream-first: fix on `main`, then cherry-pick onto the RC branch.',
                 `- To cut a fresh candidate build after fixes land, run the **Cut release-candidate build** workflow (\`release-rc.yml\`) on \`${branch}\` — it bumps to the next \`-rc.N\` and rebuilds the binaries.`,
-                `- When green, **manually promote**: snapshot the outgoing \`stable\` as \`v0.<old>\` (for backports), then merge the RC branch into \`stable\`. release-plz then publishes \`${relC2pa}\` (c2patool \`${relTool}\`).`,
+                `- When green, **manually promote**: snapshot the outgoing \`stable\` as \`v0.<old>\` (for backports), then merge the RC branch into \`stable\`. release-plz then publishes \`${relC2pa}\`.`,
                 '- The previous line is retired once this train ships.',
               ].join('\n'),
             });

@@ -52,19 +52,18 @@ release_always = false
 
 [[package]]
 name = "c2pa"
-version_group = "c2pa-rs"
 changelog_path = "./CHANGELOG.md"
 # This being the most important crate in the workspace,
 # we will leave the changelog in the repo root instead
 # of in the `sdk` folder (which would be the default).
 
 [[package]]
-name = "c2patool"
-
-[[package]]
 name = "c2pa-c-ffi"
-version_group = "c2pa-rs"
-publish_features = ["rust_native_crypto"]
+# Not published to crates.io -- its native-library builds ship as GitHub
+# release binaries (see library-release.yml), tag-driven off `c2pa`'s own
+# release, so release-plz does not need to manage its version or changelog.
+publish = false
+release = false
 
 [[package]]
 name = "c2pa_macros"
