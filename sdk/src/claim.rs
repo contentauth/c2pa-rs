@@ -1846,6 +1846,20 @@ impl Claim {
         )
     }
 
+    /// Replace the assertion with the same label as `replace_with` AND the
+    /// given instance number (0 = the first `label`, 1 = `label__1`, ...).
+    pub(crate) fn replace_assertion_instance(
+        &mut self,
+        replace_with: Assertion,
+        instance: usize,
+    ) -> Result<()> {
+        self.update_assertion(
+            replace_with,
+            |ca: &ClaimAssertion| ca.instance() == instance,
+            |_: &ClaimAssertion, a: Assertion| Ok(a),
+        )
+    }
+
     /// Redact an assertion from a given claim.
     /// This will remove the assertion from the JUMBF.
     fn redact_assertion(&mut self, assertion_uri: &str) -> Result<()> {
