@@ -176,10 +176,12 @@ jobs:
           echo "Releasing tag: $TAG_NAME"
           echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
 
-      # Generate the release notes ourselves, scoped to the previous `c2pa-v*`
-      # tag, rather than relying on GitHub's automatic "previous tag" (which is
-      # simply the chronologically previous tag repo-wide, not the previous tag
-      # for this crate).
+      # Generate the release notes ourselves, scoped to the previous tag of THIS
+      # crate. Tags are repo-global and interleaved across crates (c2pa-v*,
+      # c2pa-c-ffi-v*), and GitHub's automatic "previous tag" is the
+      # chronologically previous tag regardless of crate -- which would produce
+      # nonsense ranges. Picking the previous same-crate tag keeps the
+      # changelog within this crate's history.
       - name: Generate release notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
