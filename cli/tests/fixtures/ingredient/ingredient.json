@@ -1,7 +1,7 @@
 {
     "title": "test ingredient",
     "format": "image/jpeg",
-    "instance_id": "xmp:iid:a60dfda7-0606-42db-a4f0-398ab4fb79cf",
+    "instance_id": "xmp.iid:a60dfda7-0606-42db-a4f0-398ab4fb79cf",
     "thumbnail": {
       "format": "image/png",
       "identifier": "../libpng-test.png"

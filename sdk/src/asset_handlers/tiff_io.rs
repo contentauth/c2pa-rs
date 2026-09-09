@@ -18,7 +18,6 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fs::OpenOptions,
     io::{Cursor, Read, Seek, SeekFrom, Write},
-    path::Path,
     vec,
 };
 
@@ -28,15 +27,11 @@ use byteordered::{with_order, ByteOrdered, Endianness};
 
 use crate::{
     asset_io::{
-        rename_or_move, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
-        ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
-        RemoteRefEmbedType,
+        AssetIO, AssetPatch, C2paReader, C2paWriter, ComposedManifestRef, ObjectLocations,
+        ObjectType, ReadSeek, ReadWriteSeek, RemoteManifestUrl, WriteXmp,
     },
     error::{Error, Result},
-    utils::{
-        io_utils::{safe_vec, stream_len, tempfile_builder, ReaderUtils},
-        xmp_inmemory_utils::{add_provenance, MIN_XMP},
-    },
+    utils::io_utils::{safe_vec, stream_len, ReaderUtils},
 };
 
 const II: [u8; 2] = *b"II";
@@ -198,13 +193,10 @@ impl TiffStructure {
             II => Endianness::Little,
             MM => Endianness::Big,
             endianness => {
-                return Err(TiffError::InvalidFileSignature {
-                    reason: format!(
+                return Err(Error::InvalidAsset(format!(
                     "invalid header signature: expected endianness \"II\" or \"MM\", found \"{}\"",
                     String::from_utf8_lossy(&endianness)
-                ),
-                }
-                .into())
+                )))
             }
         };
 
@@ -217,27 +209,27 @@ impl TiffStructure {
                 // Read byte size of offsets, must be 8
                 let first_ifd_offset = byte_reader.read_u16()?;
                 if first_ifd_offset != 8 {
-                    return Err(TiffError::InvalidFileSignature {
-                        reason: format!(
+                    return Err(Error::InvalidAsset(
+                        format!(
                             "invalid header signature: expected first IFD offset for BigTiff to be \"8\", found \"{first_ifd_offset}\""
                         ),
-                    }.into());
+                    ));
                 }
                 // must currently be 0
                 let reserved = byte_reader.read_u16()?;
                 if reserved != 0 {
-                    return Err(TiffError::InvalidFileSignature {
-                        reason: format!(
+                    return Err(Error::InvalidAsset(
+                        format!(
                             "invalid header signature: expected bytes after first IFD offset for BigTiff to be \"0\", found \"{reserved}\""),
-                    }.into());
+                    ));
                 }
                 true
             }
             magic => {
-                return Err(TiffError::InvalidFileSignature {
-                    reason: format!(
+                return Err(Error::InvalidAsset(
+                    format!(
                         "invalid header signature: expected magic \"2A\" (TIFF) \"2B\" (BigTIFF), found \"{magic:02X}\""),
-                }.into());
+                ));
             }
         };
 
@@ -2257,12 +2249,12 @@ fn tiff_clone_with_tags<R: Read + Seek + ?Sized, W: Read + Write + Seek + ?Sized
     Ok(())
 }
 fn add_required_tags_to_stream(
-    input_stream: &mut dyn CAIRead,
-    output_stream: &mut dyn CAIReadWrite,
+    input_stream: &mut dyn ReadSeek,
+    output_stream: &mut dyn ReadWriteSeek,
 ) -> Result<()> {
     let tiff_io = TiffIO {};
 
-    match tiff_io.read_cai(input_stream) {
+    match tiff_io.read_c2pa(input_stream) {
         Ok(_) => {
             // just clone
             input_stream.rewind()?;
@@ -2274,7 +2266,7 @@ fn add_required_tags_to_stream(
             // allocate enough bytes so that value is not stored in offset field
             let some_bytes = vec![0u8; 10];
             let tio = TiffIO {};
-            tio.write_cai(input_stream, output_stream, &some_bytes)
+            tio.write_c2pa(input_stream, output_stream, &some_bytes)
         }
         Err(e) => Err(e),
     }
@@ -2353,14 +2345,14 @@ where
 
 pub struct TiffIO {}
 
-impl CAIReader for TiffIO {
-    fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
-        let cai_data = get_cai_data(asset_reader)?;
+impl C2paReader for TiffIO {
+    fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>> {
+        let cai_data = get_cai_data(input_stream)?;
         Ok(cai_data)
     }
 
-    fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String> {
-        let xmp_data = get_xmp_data(asset_reader)?;
+    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Option<String> {
+        let xmp_data = get_xmp_data(input_stream)?;
         String::from_utf8(xmp_data).ok()
     }
 }
@@ -2368,47 +2360,6 @@ impl CAIReader for TiffIO {
 impl AssetIO for TiffIO {
     fn asset_patch_ref(&self) -> Option<&dyn AssetPatch> {
         Some(self)
-    }
-
-    fn read_cai_store(&self, asset_path: &std::path::Path) -> Result<Vec<u8>> {
-        let mut reader = std::fs::File::open(asset_path)?;
-
-        self.read_cai(&mut reader)
-    }
-
-    fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
-        let mut input_stream = std::fs::OpenOptions::new()
-            .read(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        let mut temp_file = tempfile_builder("c2pa_temp")?;
-
-        self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
-
-        // copy temp file to asset
-        rename_or_move(temp_file, asset_path)
-    }
-
-    fn get_object_locations(
-        &self,
-        asset_path: &std::path::Path,
-    ) -> Result<Vec<crate::asset_io::HashObjectPositions>> {
-        let mut input_stream =
-            std::fs::File::open(asset_path).map_err(|_err| Error::EmbeddingError)?;
-
-        self.get_object_locations_from_stream(&mut input_stream)
-    }
-
-    fn remove_cai_store(&self, asset_path: &std::path::Path) -> Result<()> {
-        let mut input_file = std::fs::File::open(asset_path)?;
-
-        let mut temp_file = tempfile_builder("c2pa_temp")?;
-
-        self.remove_cai_store_from_stream(&mut input_file, &mut temp_file)?;
-
-        // copy temp file to asset
-        rename_or_move(temp_file, asset_path)
     }
 
     fn new(_asset_type: &str) -> Self
@@ -2422,11 +2373,11 @@ impl AssetIO for TiffIO {
         Box::new(TiffIO::new(asset_type))
     }
 
-    fn get_reader(&self) -> &dyn CAIReader {
+    fn get_reader(&self) -> &dyn C2paReader {
         self
     }
 
-    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn C2paWriter>> {
         if SUPPORTED_WRITER_TYPES.contains(&asset_type) {
             Some(Box::new(TiffIO::new(asset_type)))
         } else {
@@ -2434,7 +2385,11 @@ impl AssetIO for TiffIO {
         }
     }
 
-    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+    fn remote_manifest_url_ref(&self) -> Option<&dyn RemoteManifestUrl> {
+        Some(self)
+    }
+
+    fn write_xmp_ref(&self) -> Option<&dyn WriteXmp> {
         Some(self)
     }
 
@@ -2445,13 +2400,29 @@ impl AssetIO for TiffIO {
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
+
+    // TIFF, DNG, ARW, and NEF share the same magic bytes and handler, but each needs its
+    // own MIME type, so the default single-MIME derivation from `supported_types()`
+    // doesn't apply here.
+    fn mime_type_map(&self) -> Vec<(String, String)> {
+        [
+            ("tif", "image/tiff"),
+            ("tiff", "image/tiff"),
+            ("dng", "image/x-adobe-dng"),
+            ("arw", "image/x-sony-arw"),
+            ("nef", "image/x-nikon-nef"),
+        ]
+        .into_iter()
+        .map(|(ext, mime)| (ext.to_string(), mime.to_string()))
+        .collect()
+    }
 }
 
-impl CAIWriter for TiffIO {
-    fn write_cai(
+impl C2paWriter for TiffIO {
+    fn write_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         store_bytes: &[u8],
     ) -> Result<()> {
         let l = u64::try_from(store_bytes.len())
@@ -2467,10 +2438,10 @@ impl CAIWriter for TiffIO {
         tiff_clone_with_tags(output_stream, input_stream, vec![entry])
     }
 
-    fn get_object_locations_from_stream(
+    fn get_object_locations(
         &self,
-        input_stream: &mut dyn CAIRead,
-    ) -> Result<Vec<HashObjectPositions>> {
+        input_stream: &mut dyn ReadSeek,
+    ) -> Result<Vec<ObjectLocations>> {
         let len = stream_len(input_stream)?;
         let vec_cap = usize::try_from(len)
             .map_err(|_err| Error::InvalidAsset("value out of range".to_owned()))?;
@@ -2511,11 +2482,8 @@ impl CAIWriter for TiffIO {
             ));
         }
 
-        let decoded_offset = decode_offset(cai_ifd_entry.value_offset, e, big_tiff)?;
-        let manifest_offset = usize::try_from(decoded_offset)
-            .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?;
-        let manifest_len = usize::try_from(cai_ifd_entry.value_count)
-            .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?;
+        let manifest_offset = decode_offset(cai_ifd_entry.value_offset, e, big_tiff)?;
+        let manifest_len = cai_ifd_entry.value_count;
 
         // figure out count to exclude
         let c2p_entry_pos = last_page_ifd
@@ -2529,27 +2497,26 @@ impl CAIWriter for TiffIO {
                         + 4; // tag(2) + type(2)
 
         // size of the count field
-        let count_size = if big_tiff { 8 } else { 4 };
+        let count_size: u64 = if big_tiff { 8 } else { 4 };
 
         Ok(vec![
-            HashObjectPositions {
+            ObjectLocations {
                 offset: manifest_offset,
                 length: manifest_len,
-                htype: HashBlockObjectType::Cai,
+                htype: ObjectType::C2pa,
             },
-            HashObjectPositions {
-                offset: usize::try_from(count_offset)
-                    .map_err(|_err| Error::InvalidAsset("TIFF/DNG out of range".to_string()))?,
+            ObjectLocations {
+                offset: count_offset,
                 length: count_size,
-                htype: HashBlockObjectType::OtherExclusion,
+                htype: ObjectType::OtherExclusion,
             },
         ])
     }
 
-    fn remove_cai_store_from_stream(
+    fn remove_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
     ) -> Result<()> {
         let mapped = map_tiff(input_stream)?;
         let mut tiff_tree = mapped.tiff_tree;
@@ -2584,7 +2551,7 @@ impl CAIWriter for TiffIO {
 }
 
 impl AssetPatch for TiffIO {
-    fn patch_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
+    fn patch_c2pa_file(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
         let mut asset_io = OpenOptions::new()
             .write(true)
             .read(true)
@@ -2629,70 +2596,23 @@ impl AssetPatch for TiffIO {
     }
 }
 
-impl RemoteRefEmbed for TiffIO {
-    #[allow(unused_variables)]
-    fn embed_reference(
+impl WriteXmp for TiffIO {
+    fn write_xmp(
         &self,
-        asset_path: &Path,
-        embed_ref: crate::asset_io::RemoteRefEmbedType,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
+        xmp: &str,
     ) -> Result<()> {
-        match embed_ref {
-            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
-                let output_buf = Vec::new();
-                let mut output_stream = Cursor::new(output_buf);
+        let l = u64::try_from(xmp.len())
+            .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
 
-                // block so that source file is closed after embed
-                {
-                    let mut source_stream = std::fs::File::open(asset_path)?;
-                    self.embed_reference_to_stream(
-                        &mut source_stream,
-                        &mut output_stream,
-                        RemoteRefEmbedType::Xmp(manifest_uri),
-                    )?;
-                }
-
-                // write will replace exisiting contents
-                output_stream.rewind()?;
-                std::fs::write(asset_path, output_stream.into_inner())?;
-                Ok(())
-            }
-            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
-        }
-    }
-
-    fn embed_reference_to_stream(
-        &self,
-        source_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
-        embed_ref: RemoteRefEmbedType,
-    ) -> Result<()> {
-        match embed_ref {
-            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
-                let xmp = match self.get_reader().read_xmp(source_stream) {
-                    Some(xmp) => add_provenance(&xmp, &manifest_uri)?,
-                    None => {
-                        let xmp = MIN_XMP.to_string();
-                        add_provenance(&xmp, &manifest_uri)?
-                    }
-                };
-
-                let l = u64::try_from(xmp.len())
-                    .map_err(|_err| Error::InvalidAsset("value out of range".to_string()))?;
-
-                let entry = IfdClonedEntry {
-                    entry_tag: XMP_TAG,
-                    entry_type: IFDEntryType::Byte as u16,
-                    value_count: l,
-                    value_bytes: xmp.as_bytes().to_vec(),
-                };
-                tiff_clone_with_tags(output_stream, source_stream, vec![entry])
-            }
-            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
-        }
+        let entry = IfdClonedEntry {
+            entry_tag: XMP_TAG,
+            entry_type: IFDEntryType::Byte as u16,
+            value_count: l,
+            value_bytes: xmp.as_bytes().to_vec(),
+        };
+        tiff_clone_with_tags(output_stream, input_stream, vec![entry])
     }
 }
 
@@ -2701,12 +2621,6 @@ impl ComposedManifestRef for TiffIO {
     fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>> {
         Ok(manifest_data.to_vec())
     }
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum TiffError {
-    #[error("invalid file signature: {reason}")]
-    InvalidFileSignature { reason: String },
 }
 
 #[cfg(test)]
@@ -2735,7 +2649,7 @@ pub mod tests {
         let tiff_io = TiffIO {};
 
         // save data to tiff
-        tiff_io.save_cai_store(&output, data.as_bytes()).unwrap();
+        tiff_io.save_c2pa_store(&output, data.as_bytes()).unwrap();
 
         // read data back
         let loaded = tiff_io.read_cai_store(&output).unwrap();
@@ -2743,7 +2657,7 @@ pub mod tests {
         assert_eq!(&loaded, data.as_bytes());
 
         // test adding over existing
-        tiff_io.save_cai_store(&output, data2.as_bytes()).unwrap();
+        tiff_io.save_c2pa_store(&output, data2.as_bytes()).unwrap();
 
         // read data back
         let loaded = tiff_io.read_cai_store(&output).unwrap();
@@ -2751,7 +2665,7 @@ pub mod tests {
         assert_eq!(&loaded, data2.as_bytes());
 
         // let's remove the manifest
-        tiff_io.remove_cai_store(&output).unwrap();
+        tiff_io.remove_c2pa_store(&output).unwrap();
 
         // should not contain a manifest
         let result = tiff_io.read_cai_store(&output);
@@ -2773,7 +2687,7 @@ pub mod tests {
         let tiff_io = TiffIO {};
 
         // save data to tiff
-        tiff_io.save_cai_store(&output, data.as_bytes()).unwrap();
+        tiff_io.save_c2pa_store(&output, data.as_bytes()).unwrap();
 
         // read data back
         let loaded = tiff_io.read_cai_store(&output).unwrap();
@@ -2781,11 +2695,12 @@ pub mod tests {
         assert_eq!(&loaded, data.as_bytes());
 
         // test adding over existing
-        tiff_io
-            .remote_ref_writer_ref()
-            .unwrap()
-            .embed_reference(&output, RemoteRefEmbedType::Xmp(data2.to_string()))
+        let eh = tiff_io.remote_manifest_url_ref().unwrap();
+        let mut input_stream = std::fs::File::open(&output).unwrap();
+        let mut embed_stream = Cursor::new(Vec::new());
+        eh.write_remote_manifest_url(&mut input_stream, &mut embed_stream, data2)
             .unwrap();
+        std::fs::write(&output, embed_stream.into_inner()).unwrap();
 
         // read xmp data back
         let mut output_file = std::fs::File::open(&output).unwrap();
@@ -2799,7 +2714,7 @@ pub mod tests {
 
         // now test shrinking the manifest at the end of the file
         let data3 = "short";
-        tiff_io.save_cai_store(&output, data3.as_bytes()).unwrap();
+        tiff_io.save_c2pa_store(&output, data3.as_bytes()).unwrap();
 
         // read data back
         let loaded = tiff_io.read_cai_store(&output).unwrap();
@@ -2869,8 +2784,8 @@ pub mod tests {
         let tiff_io = TiffIO {};
 
         // save data to tiff
-        tiff_io.save_cai_store(&output, data.as_bytes()).unwrap();
-        tiff_io.save_cai_store(&output, data2.as_bytes()).unwrap();
+        tiff_io.save_c2pa_store(&output, data.as_bytes()).unwrap();
+        tiff_io.save_c2pa_store(&output, data2.as_bytes()).unwrap();
 
         // read data back
         let loaded = tiff_io.read_cai_store(&output).unwrap();
@@ -2892,7 +2807,7 @@ pub mod tests {
         let tiff_io = TiffIO {};
 
         // save data to tiff
-        tiff_io.save_cai_store(&output, data.as_bytes()).unwrap();
+        tiff_io.save_c2pa_store(&output, data.as_bytes()).unwrap();
 
         // read data back
         let loaded = tiff_io.read_cai_store(&output).unwrap();
@@ -2914,7 +2829,7 @@ pub mod tests {
         let tiff_io = TiffIO {};
 
         // save data to tiff
-        tiff_io.save_cai_store(&output, data.as_bytes()).unwrap();
+        tiff_io.save_c2pa_store(&output, data.as_bytes()).unwrap();
 
         // read data back
         let loaded = tiff_io.read_cai_store(&output).unwrap();
@@ -3015,12 +2930,15 @@ pub mod tests {
 
         // add a manifest first to stress this case
         // save data to tiff
-        tiff_io.save_cai_store(&output, data.as_bytes()).unwrap();
+        tiff_io.save_c2pa_store(&output, data.as_bytes()).unwrap();
 
         // save data to tiff
-        let eh = tiff_io.remote_ref_writer_ref().unwrap();
-        eh.embed_reference(&output, RemoteRefEmbedType::Xmp(data.to_string()))
+        let eh = tiff_io.remote_manifest_url_ref().unwrap();
+        let mut input_stream = std::fs::File::open(&output).unwrap();
+        let mut embed_stream = Cursor::new(Vec::new());
+        eh.write_remote_manifest_url(&mut input_stream, &mut embed_stream, data)
             .unwrap();
+        std::fs::write(&output, embed_stream.into_inner()).unwrap();
 
         // read data back
         let mut output_stream = std::fs::File::open(&output).unwrap();
@@ -3028,6 +2946,48 @@ pub mod tests {
         let loaded = crate::utils::xmp_inmemory_utils::extract_provenance(&xmp).unwrap();
 
         assert_eq!(&loaded, data);
+    }
+
+    #[test]
+    fn test_remove_remote_manifest_url() {
+        let url = "https://example.com/manifest.c2pa";
+
+        let source = crate::utils::test::fixture_path("TUSCANY.TIF");
+        let temp_dir = tempdirectory().unwrap();
+        let output = temp_dir_path(&temp_dir, "test.tif");
+        std::fs::copy(source, &output).unwrap();
+
+        let tiff_io = TiffIO {};
+
+        // write_xmp_ref must be wired up for this handler.
+        assert!(tiff_io.write_xmp_ref().is_some());
+
+        // embed a remote manifest URL reference.
+        let eh = tiff_io.remote_manifest_url_ref().unwrap();
+        let mut input_stream = std::fs::File::open(&output).unwrap();
+        let mut embed_stream = Cursor::new(Vec::new());
+        eh.write_remote_manifest_url(&mut input_stream, &mut embed_stream, url)
+            .unwrap();
+        std::fs::write(&output, embed_stream.into_inner()).unwrap();
+
+        let mut with_url_stream = std::fs::File::open(&output).unwrap();
+        let xmp = tiff_io.read_xmp(&mut with_url_stream).unwrap();
+        assert_eq!(
+            crate::utils::xmp_inmemory_utils::extract_provenance(&xmp).as_deref(),
+            Some(url)
+        );
+
+        // remove_remote_manifest_url strips just the reference, in one pass.
+        let mut input_stream = std::fs::File::open(&output).unwrap();
+        let mut stripped_stream = Cursor::new(Vec::new());
+        eh.remove_remote_manifest_url(&mut input_stream, &mut stripped_stream)
+            .unwrap();
+        stripped_stream.rewind().unwrap();
+        let xmp = tiff_io.read_xmp(&mut stripped_stream).unwrap();
+        assert_eq!(
+            crate::utils::xmp_inmemory_utils::extract_provenance(&xmp),
+            None
+        );
     }
 
     #[test]
@@ -3044,17 +3004,17 @@ pub mod tests {
         let tiff_io = TiffIO {};
 
         // first make sure that calling this without a manifest does not error
-        tiff_io.remove_cai_store(&output).unwrap();
+        tiff_io.remove_c2pa_store(&output).unwrap();
 
         // save data to tiff
-        tiff_io.save_cai_store(&output, data.as_bytes()).unwrap();
+        tiff_io.save_c2pa_store(&output, data.as_bytes()).unwrap();
 
         // read data back
         let loaded = tiff_io.read_cai_store(&output).unwrap();
 
         assert_eq!(&loaded, data.as_bytes());
 
-        tiff_io.remove_cai_store(&output).unwrap();
+        tiff_io.remove_c2pa_store(&output).unwrap();
 
         match tiff_io.read_cai_store(&output) {
             Err(Error::JumbfNotFound) => (),
@@ -3076,7 +3036,7 @@ pub mod tests {
         let tiff_io = TiffIO {};
 
         // save data to tiff
-        tiff_io.save_cai_store(&output, data.as_bytes()).unwrap();
+        tiff_io.save_c2pa_store(&output, data.as_bytes()).unwrap();
 
         // read data back
         let loaded = tiff_io.read_cai_store(&output).unwrap();
@@ -3084,13 +3044,14 @@ pub mod tests {
         assert_eq!(&loaded, data.as_bytes());
 
         let mut success = false;
-        if let Ok(locations) = tiff_io.get_object_locations(&output) {
+        let mut output_reader = std::fs::File::open(&output).unwrap();
+        if let Ok(locations) = tiff_io.get_object_locations(&mut output_reader) {
             for op in locations {
-                if op.htype == HashBlockObjectType::Cai {
+                if op.htype == ObjectType::C2pa {
                     let mut of = std::fs::File::open(&output).unwrap();
 
-                    let mut manifests_buf: Vec<u8> = vec![0u8; op.length];
-                    of.seek(SeekFrom::Start(op.offset as u64)).unwrap();
+                    let mut manifests_buf: Vec<u8> = vec![0u8; usize::try_from(op.length).unwrap()];
+                    of.seek(SeekFrom::Start(op.offset)).unwrap();
                     of.read_exact(manifests_buf.as_mut_slice()).unwrap();
                     if crate::hash_utils::vec_compare(&manifests_buf, data.as_bytes()) {
                         success = true;
@@ -3139,7 +3100,7 @@ pub mod tests {
 
         let tiff_io = TiffIO {};
 
-        let locations = tiff_io.get_object_locations_from_stream(&mut stream);
+        let locations = tiff_io.get_object_locations(&mut stream);
         assert!(matches!(locations, Err(Error::InvalidAsset(_))));
     }
 
@@ -3199,7 +3160,7 @@ pub mod tests {
 
         // Before the fix: this would panic (exit 101) in debug or silently overflow in release.
         // After the fix: must return Err(Error::InvalidAsset) without any panic.
-        let locations = tiff_io.get_object_locations_from_stream(&mut stream);
+        let locations = tiff_io.get_object_locations(&mut stream);
         assert!(matches!(locations, Err(Error::InvalidAsset(_))));
     }
 
@@ -3259,7 +3220,7 @@ pub mod tests {
 
         // Before the fix: this would OOM-kill an 8 GB Linux container.
         // After the fix: must return Err(Error::InvalidAsset) without any allocation.
-        let locations = tiff_io.get_object_locations_from_stream(&mut stream);
+        let locations = tiff_io.get_object_locations(&mut stream);
         assert!(matches!(locations, Err(Error::InvalidAsset(_))));
     }
 

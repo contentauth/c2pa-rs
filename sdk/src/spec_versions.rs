@@ -1,4 +1,4 @@
-// Copyright 2022 Adobe. All rights reserved.
+// Copyright 2026 Adobe. All rights reserved.
 // This file is licensed to you under the Apache License,
 // Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 // or the MIT license (http://opensource.org/licenses/MIT),
@@ -11,21 +11,15 @@
 // specific language governing permissions and limitations under
 // each license.
 
-pub mod bmff_io;
-pub mod c2pa_io;
-pub mod flac_io;
-pub mod gif_io;
-pub(crate) mod id3_helper;
-pub mod jpeg_io;
-pub mod jpegxl_io;
-pub mod mp3_io;
-pub mod png_io;
-pub mod riff_io;
-pub mod svg_io;
-pub mod tiff_io;
-pub mod zip_io;
+/// C2PA Generator Version
+#[allow(dead_code)]
+pub const C2PA_GENERATOR_VERSION: &str = "2.2.0";
+/// C2PA Validator Version
+pub const C2PA_VALIDATOR_VERSION: &str = "2.4.0";
 
-#[cfg(feature = "pdf")]
-pub(crate) mod pdf;
-#[cfg(feature = "pdf")]
-pub mod pdf_io;
+// C2PA TSA Trust URI
+#[allow(dead_code)]
+pub const C2PA_TSA_TRUST_URI: &str = "https://c2pa.org/trustlist-tsa";
+/// C2PA Trust URI
+#[allow(dead_code)]
+pub const C2PA_TRUST_URI: &str = "https://c2pa.org/trustlist";
