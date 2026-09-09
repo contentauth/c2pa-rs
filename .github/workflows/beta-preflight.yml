@@ -212,10 +212,10 @@ jobs:
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
 
-      - name: Extract wasm-bindgen version from Cargo.lock
+      - name: Extract wasm-bindgen version
         id: wasm-bindgen-version
         run: |
-          VERSION=$(cargo metadata --format-version 1 --locked | jq -r '.packages[] | select(.name == "wasm-bindgen") | .version')
+          VERSION=$(cargo metadata --format-version 1 | jq -r '.packages[] | select(.name == "wasm-bindgen") | .version')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Using wasm-bindgen version: $VERSION"
 

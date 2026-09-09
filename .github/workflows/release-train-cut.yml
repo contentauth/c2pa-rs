@@ -171,8 +171,9 @@ jobs:
         if: steps.exists.outputs.skip != 'true' && steps.empty.outputs.skip != 'true'
         run: |
           # The working tree is `main` (checked out above). set-version updates
-          # the workspace version (c2pa + c2pa-c-ffi), the intra-repo dependency
-          # references, and Cargo.lock.
+          # the workspace version (c2pa + c2pa-c-ffi) and the intra-repo
+          # dependency references. (Cargo.lock is no longer tracked, so there's
+          # nothing to commit there.)
           cargo set-version -p c2pa "${{ steps.ver.outputs.dev_c2pa }}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"

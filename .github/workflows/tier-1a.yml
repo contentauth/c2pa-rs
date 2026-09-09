@@ -359,23 +359,6 @@ jobs:
       - name: "`cargo check` with default features"
         run: cargo check
 
-  cargo-lock:
-    name: Cargo.lock is up to date
-
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
-        with:
-          toolchain: stable
-
-      - name: Check that Cargo.lock is up to date
-        run: cargo check --locked
-
   tests-wasm:
     name: Unit tests (Wasm)
     needs: get-features
@@ -397,7 +380,7 @@ jobs:
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
 
-      - name: Extract wasm-bindgen version from Cargo.lock
+      - name: Extract wasm-bindgen version
         id: wasm-bindgen-version
         run: |
           VERSION=$(cargo metadata --format-version 1 | jq -r '.packages[] | select(.name == "wasm-bindgen") | .version')
