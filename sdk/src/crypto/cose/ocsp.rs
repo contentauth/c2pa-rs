@@ -755,4 +755,84 @@ mod tests {
             fetch_and_check_ocsp_response(&sign1, b"payload", &ctp, None, &mut log, &context);
         assert!(result.is_ok());
     }
+
+    // Async variant of the full-path drive, covering the async-generated
+    // `fetch_and_check_ocsp_response_async` / `fetch_ocsp_response_async`.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn fetch_and_check_queries_leaf_and_ca_async() {
+        use std::io::{Cursor, Read};
+
+        use async_trait::async_trait;
+        use http::{Request, Response};
+
+        use crate::{
+            context::Context,
+            http::{AsyncHttpResolver, HttpResolverError},
+        };
+
+        struct OcspResolver;
+        #[async_trait]
+        impl AsyncHttpResolver for OcspResolver {
+            async fn http_resolve_async(
+                &self,
+                _request: Request<Vec<u8>>,
+            ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+                let der =
+                    include_bytes!("../../../tests/fixtures/crypto/ocsp/response_revoked.der")
+                        .to_vec();
+                Ok(Response::builder()
+                    .status(200)
+                    .body(Box::new(Cursor::new(der)) as Box<dyn Read>)
+                    .unwrap())
+            }
+        }
+
+        let sign1 = sign1_with_x5chain(&ca_chain());
+        let context = Context::new().with_resolver_async(OcspResolver);
+        let ctp = CertificateTrustPolicy::default();
+        let mut log = StatusTracker::default();
+
+        let result =
+            fetch_and_check_ocsp_response_async(&sign1, b"payload", &ctp, None, &mut log, &context)
+                .await;
+        assert!(result.is_ok());
+    }
+
+    // When every responder is unreachable, each CA fetch returns None (loop
+    // continues) and the leaf is reported inaccessible.
+    #[test]
+    fn fetch_and_check_handles_unreachable_responders() {
+        use std::io::Read;
+
+        use http::{Request, Response};
+
+        use crate::{
+            context::Context,
+            http::{HttpResolverError, SyncHttpResolver},
+        };
+
+        struct FailingResolver;
+        impl SyncHttpResolver for FailingResolver {
+            fn http_resolve(
+                &self,
+                _request: Request<Vec<u8>>,
+            ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+                Ok(Response::builder()
+                    .status(404)
+                    .body(Box::new(std::io::empty()) as Box<dyn Read>)
+                    .unwrap())
+            }
+        }
+
+        let sign1 = sign1_with_x5chain(&ca_chain());
+        let context = Context::new().with_resolver(FailingResolver);
+        let ctp = CertificateTrustPolicy::default();
+        let mut log = StatusTracker::default();
+
+        let result =
+            fetch_and_check_ocsp_response(&sign1, b"payload", &ctp, None, &mut log, &context);
+        assert!(result.is_ok());
+        assert!(log.has_status(SIGNING_CREDENTIAL_OCSP_INACCESSIBLE));
+    }
 }
