@@ -2625,8 +2625,14 @@ impl Store {
     }
 
     /// Write the dynamic assertions to the manifest.
-    /// Note: This assumes each dynamic assertion label is unique (no instance suffixes).
-    /// Multiple dynamic assertions with different labels are supported.
+    ///
+    /// Dynamic assertions are matched to the placeholders written by
+    /// [`add_dynamic_assertion_placeholders`] by label AND instance, in the
+    /// same order, so several dynamic assertions may share one label (for
+    /// example two `cawg.identity` assertions from different credential
+    /// holders, which become `cawg.identity` and `cawg.identity__1`).
+    ///
+    /// [`add_dynamic_assertion_placeholders`]: Self::add_dynamic_assertion_placeholders
     #[async_generic(async_signature(
         &mut self,
         dyn_assertions: &[Box<dyn AsyncDynamicAssertion>],
@@ -2644,10 +2650,18 @@ impl Store {
 
         let mut final_assertions = Vec::new();
 
+        // Placeholders were added in this same order, so the n-th dynamic
+        // assertion carrying a given label is instance n of that label.
+        let mut instances: HashMap<String, usize> = HashMap::new();
+
         for da in dyn_assertions.iter() {
-            // Use the dynamic assertion's label directly.
-            // This assumes each dynamic assertion label is unique (no instance suffixes needed).
-            let label = da.label();
+            let base_label = da.label();
+            let instance = match instances.get(&base_label) {
+                Some(n) => n + 1,
+                None => 0,
+            };
+            instances.insert(base_label.clone(), instance);
+            let label = Claim::label_with_instance(&base_label, instance);
 
             let da_size = da.reserve_size()?;
             let da_data = if _sync {
@@ -2658,10 +2672,12 @@ impl Store {
 
             match da_data {
                 DynamicAssertionContent::Cbor(data) => {
-                    final_assertions.push(UserCbor::new(&label, data).to_assertion()?);
+                    final_assertions
+                        .push((instance, UserCbor::new(&base_label, data).to_assertion()?));
                 }
                 DynamicAssertionContent::Json(data) => {
-                    final_assertions.push(User::new(&label, &data).to_assertion()?);
+                    final_assertions
+                        .push((instance, User::new(&base_label, &data).to_assertion()?));
                 }
                 DynamicAssertionContent::Binary(format, data) => {
                     //final_assertions.push(EmbeddedData::to_binary_assertion(&EmbeddedData::new(&label, format, data))?);
@@ -2670,8 +2686,8 @@ impl Store {
         }
 
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-        for assertion in final_assertions {
-            pc.replace_assertion(assertion)?;
+        for (instance, assertion) in final_assertions {
+            pc.replace_assertion_instance(assertion, instance)?;
         }
 
         // clear the provenance claim data since the contents are now different
@@ -8782,6 +8798,137 @@ pub mod tests {
 
         assert!(!report.has_any_error());
         // std::fs::write("target/test.jpg", result).unwrap();
+    }
+
+    /// Two dynamic assertions that share a label must each land in their own
+    /// placeholder (`label` and `label__1`) with their own content and size.
+    /// Before the instance-aware replacement, both contents were written into
+    /// the first placeholder, leaving the second one as zeros and, when the two
+    /// reserve sizes differed, shifting the manifest so the data hash no longer
+    /// matched.
+    #[test]
+    fn test_dynamic_assertions_same_label_twice() {
+        let context = crate::context::Context::new();
+
+        #[derive(Serialize)]
+        struct TestAssertion {
+            my_tag: String,
+        }
+
+        #[derive(Debug)]
+        struct TestDynamicAssertion {
+            tag: String,
+        }
+
+        impl DynamicAssertion for TestDynamicAssertion {
+            fn label(&self) -> String {
+                "com.mycompany.myassertion".to_string()
+            }
+
+            fn reserve_size(&self) -> Result<usize> {
+                let assertion = TestAssertion {
+                    my_tag: self.tag.clone(),
+                };
+                Ok(c2pa_cbor::to_vec(&assertion)?.len())
+            }
+
+            fn content(
+                &self,
+                label: &str,
+                _size: Option<usize>,
+                _claim: &PartialClaim,
+            ) -> Result<DynamicAssertionContent> {
+                // The label handed to us carries the instance suffix.
+                let expected = if self.tag.len() > 8 {
+                    "com.mycompany.myassertion__1"
+                } else {
+                    "com.mycompany.myassertion"
+                };
+                assert_eq!(label, expected);
+
+                let assertion = TestAssertion {
+                    my_tag: self.tag.clone(),
+                };
+
+                Ok(DynamicAssertionContent::Cbor(
+                    c2pa_cbor::to_vec(&assertion).unwrap(),
+                ))
+            }
+        }
+
+        struct DynamicSigner(Box<dyn Signer>);
+
+        impl crate::Signer for DynamicSigner {
+            fn sign(&self, data: &[u8]) -> crate::error::Result<Vec<u8>> {
+                self.0.sign(data)
+            }
+
+            fn alg(&self) -> SigningAlg {
+                self.0.alg()
+            }
+
+            fn certs(&self) -> crate::Result<Vec<Vec<u8>>> {
+                self.0.certs()
+            }
+
+            fn reserve_size(&self) -> usize {
+                self.0.reserve_size()
+            }
+
+            fn time_authority_url(&self) -> Option<String> {
+                self.0.time_authority_url()
+            }
+
+            fn ocsp_val(&self) -> Option<Vec<u8>> {
+                self.0.ocsp_val()
+            }
+
+            // Two dynamic assertions with the SAME label and DIFFERENT sizes.
+            fn dynamic_assertions(
+                &self,
+            ) -> Vec<Box<dyn crate::dynamic_assertion::DynamicAssertion>> {
+                vec![
+                    Box::new(TestDynamicAssertion {
+                        tag: "first".to_string(),
+                    }),
+                    Box::new(TestDynamicAssertion {
+                        tag: "second, and longer".to_string(),
+                    }),
+                ]
+            }
+        }
+
+        let file_buffer = include_bytes!("../tests/fixtures/earth_apollo17.jpg").to_vec();
+        let mut buf_io = Cursor::new(file_buffer);
+
+        let mut store = Store::from_context(&context);
+        let claim1 = create_test_claim().unwrap();
+        let signer = DynamicSigner(test_signer(SigningAlg::Ps256));
+        store.commit_claim(claim1).unwrap();
+
+        let mut result_stream = Cursor::new(Vec::new());
+        store
+            .save_to_stream("jpeg", &mut buf_io, &mut result_stream, &signer, &context)
+            .unwrap();
+        result_stream.rewind().unwrap();
+
+        let mut report = StatusTracker::default();
+        let new_store =
+            Store::from_stream("image/jpeg", &mut result_stream, &mut report, &context).unwrap();
+        assert!(!report.has_any_error(), "{report:?}");
+
+        let claim = new_store.provenance_claim().unwrap();
+        let mut tags = Vec::new();
+        for label in ["com.mycompany.myassertion", "com.mycompany.myassertion__1"] {
+            let ca = claim
+                .claim_assertion_store()
+                .iter()
+                .find(|ca| ca.label() == label)
+                .unwrap_or_else(|| panic!("missing {label}"));
+            let value: serde_json::Value = c2pa_cbor::from_slice(ca.assertion().data()).unwrap();
+            tags.push(value["my_tag"].as_str().unwrap().to_string());
+        }
+        assert_eq!(tags, vec!["first", "second, and longer"]);
     }
 
     #[c2pa_test_async]
