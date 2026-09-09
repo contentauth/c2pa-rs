@@ -1,5 +1,10 @@
 /target/
 
+# This is a library workspace, so the lockfile is not checked in: downstream
+# consumers resolve their own dependency versions via each published crate's
+# Cargo.toml, not ours.
+/Cargo.lock
+
 **/*.rs.bk
 **/*.tmp*
 
