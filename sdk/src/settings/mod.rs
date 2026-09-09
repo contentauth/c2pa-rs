@@ -1093,6 +1093,7 @@ impl Settings {
     #[deprecated(
         note = "Configure the signer via `Context` and pass it to `Builder::from_context` instead of using thread-local signer settings."
     )]
+    #[allow(deprecated)]
     pub fn signer() -> Result<crate::BoxedSigner> {
         SignerSettings::signer()
     }

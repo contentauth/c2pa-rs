@@ -1280,6 +1280,10 @@ impl Claim {
     }
 
     /// Deprecated in  C2PA 2.4 or greater compatible manifests. Replaced by equiveaent value in ClaimGeneratorInfo.
+    #[deprecated(
+        since = "0.91.0",
+        note = "The `specVersion` claim field is deprecated from C2PA spec version 2.4. Use `ClaimGeneratorInfo::set_spec_version` instead. Will be deleted on or after 2026-11-09."
+    )]
     pub fn set_spec_version(&mut self, spec_version: Option<String>) {
         self.spec_version = spec_version;
     }
@@ -2780,6 +2784,9 @@ impl Claim {
                 }
 
                 // check watermarks for required softbinding
+                // `c2pa_action::WATERMARKED` is deprecated for producing new content (spec 2.2+),
+                // but validators must still recognize it in older manifests.
+                #[allow(deprecated)]
                 if action.action() == c2pa_action::WATERMARKED
                     || action.action() == c2pa_action::WATERMARKED_BOUND
                 {
@@ -4767,6 +4774,7 @@ pub(crate) fn check_ocsp_status(
 pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
+    #![allow(deprecated)]
 
     use super::*;
     use crate::{resource_store::UriOrResource, utils::test::create_test_claim, DigitalSourceType};
