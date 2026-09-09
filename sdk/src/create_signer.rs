@@ -259,9 +259,11 @@ mod tests {
             fn sig_type(&self) -> &'static str {
                 self.0.sig_type()
             }
+
             fn reserve_size(&self) -> usize {
                 self.0.reserve_size()
             }
+
             fn sign(
                 &self,
                 signer_payload: &crate::identity::SignerPayload,
