@@ -34,13 +34,15 @@ pub use bmff_hash::{
 };
 
 mod box_hash;
-pub use box_hash::{
-    AllowedExclusion, BoxExclusion, BoxHash, BoxHashExclusionRequest, BoxMap, ExclusionKind,
-    C2PA_BOXHASH,
-};
+pub use box_hash::{BoxExclusion, BoxHash, BoxHashExclusionRequest, BoxMap};
+
+pub use crate::asset_io::{AllowedExclusion, ExclusionKind, C2PA_BOXHASH};
 
 mod data_hash;
 pub use data_hash::DataHash;
+
+mod collection_hash;
+pub use collection_hash::{CollectionHash, UriHashedDataMap};
 
 mod certificate_status;
 pub(crate) use certificate_status::CertificateStatus;

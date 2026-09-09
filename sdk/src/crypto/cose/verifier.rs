@@ -158,15 +158,14 @@ impl Verifier<'_> {
             .iter_organization()
             .map(|attr| attr.as_str())
             .last()
-            .ok_or(CoseError::MissingSigningCertificateChain)?
-            .map(|attr| attr.to_string())
-            .map_err(|_| CoseError::MissingSigningCertificateChain)?;
+            .and_then(|attr| attr.ok())
+            .map(|a| a.to_string());
 
         Ok(CertificateInfo {
             alg: Some(alg),
             date: tst_info.map(|t| t.gen_time.clone().into()),
             cert_serial_number: Some(sign_cert.serial.clone()),
-            issuer_org: Some(subject),
+            issuer_org: subject,
             validated: true,
             cert_chain: dump_cert_chain(&certs)?,
             revocation_status: Some(true),

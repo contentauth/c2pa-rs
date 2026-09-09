@@ -31,7 +31,6 @@ use crate::{
         self, labels, AssertionMetadata, AssetType, CertificateStatus, DigitalSourceType,
         EmbeddedData, Relationship,
     },
-    asset_io::CAIRead,
     claim::{Claim, ClaimAssetData},
     context::Context,
     crypto::base64,
@@ -45,6 +44,7 @@ use crate::{
         },
     },
     log_item,
+    read_seek::ReadSeek,
     resource_store::{ResourceRef, ResourceStore, StoreResolver},
     settings::get_thread_local_settings,
     status_tracker::StatusTracker,
@@ -648,7 +648,7 @@ impl Ingredient {
     }
 
     /// Generates an `Ingredient` from a stream, including XMP info.
-    pub fn from_stream_info<F, S>(stream: &mut dyn CAIRead, format: F, title: S) -> Self
+    pub fn from_stream_info<F, S>(stream: &mut dyn ReadSeek, format: F, title: S) -> Self
     where
         F: Into<String>,
         S: Into<String>,
@@ -786,7 +786,7 @@ impl Ingredient {
     ///
     /// Pass an explicit [`Context`](crate::Context) via `add_stream_internal` instead.
     #[deprecated(note = "Use with_stream with an explicit Context instead")]
-    pub fn from_stream(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
+    pub fn from_stream(format: &str, stream: &mut dyn ReadSeek) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
         let settings = get_thread_local_settings();
         let context = Context::new().with_settings(settings)?;
@@ -811,7 +811,7 @@ impl Ingredient {
     pub(crate) fn with_stream<S: Into<String>>(
         mut self,
         format: S,
-        stream: &mut dyn CAIRead,
+        stream: &mut dyn ReadSeek,
         context: &Context,
     ) -> Result<Self> {
         let format = format.into();
@@ -856,7 +856,7 @@ impl Ingredient {
     fn add_stream_internal(
         mut self,
         format: &str,
-        stream: &mut dyn CAIRead,
+        stream: &mut dyn ReadSeek,
         context: &Context,
     ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
@@ -952,7 +952,7 @@ impl Ingredient {
     #[deprecated(
         note = "Use with_stream_async with an explicit Context instead of relying on thread-local settings."
     )]
-    pub async fn from_stream_async(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
+    pub async fn from_stream_async(format: &str, stream: &mut dyn ReadSeek) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
         let settings = get_thread_local_settings();
         let context = Context::new().with_settings(settings)?;
@@ -961,7 +961,7 @@ impl Ingredient {
 
     pub(crate) async fn from_stream_async_with_settings(
         format: &str,
-        stream: &mut dyn CAIRead,
+        stream: &mut dyn ReadSeek,
         context: &Context,
     ) -> Result<Self> {
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
@@ -1463,7 +1463,7 @@ impl Ingredient {
     pub async fn from_manifest_and_asset_stream_async<M: Into<Vec<u8>>>(
         manifest_bytes: M,
         format: &str,
-        stream: &mut dyn CAIRead,
+        stream: &mut dyn ReadSeek,
     ) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
         let settings = get_thread_local_settings();
