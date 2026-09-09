@@ -19,7 +19,9 @@ use c2pa_raw_crypto::{
     ec_utils::parse_ec_der_sig, validator_for_signing_alg, RawSignatureValidationError, SigningAlg,
 };
 use coset::CoseSign1;
-use x509_parser::{der_parser::oid, oid_registry::Oid, prelude::X509Certificate};
+use x509_parser::{
+    der_parser::oid, oid_registry::Oid, prelude::X509Certificate, x509::AlgorithmIdentifier,
+};
 
 use crate::{
     crypto::{
@@ -64,18 +66,33 @@ const EC_PUBLICKEY_OID: Oid<'static> = oid!(1.2.840 .10045 .2 .1);
 const RSA_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .1);
 const RSASSA_PSS_OID: Oid<'static> = oid!(1.2.840 .113549 .1 .1 .10);
 const ED25519_OID: Oid<'static> = oid!(1.3.101 .112);
+const PRIME256V1_OID: Oid<'static> = oid!(1.2.840 .10045 .3 .1 .7);
+const SECP384R1_OID: Oid<'static> = oid!(1.3.132 .0 .34);
+const SECP521R1_OID: Oid<'static> = oid!(1.3.132 .0 .35);
 
-// Is the certificate's key algorithm the one the COSE `SigningAlg` implies?
-// Blocks algorithm substitution (e.g. an Ed448 key under the Ed25519 selection).
-// A future non-exhaustive variant defers to its own validator.
-fn spki_matches_signing_alg(alg: SigningAlg, spki_alg: &Oid) -> bool {
+// Does the certificate's key match the algorithm -- and, for EC, the curve --
+// implied by the COSE `SigningAlg` (RFC 8152: Es256/384/512 are P-256/384/521)?
+// Fails closed: an unmapped future `SigningAlg` is rejected so this map must be
+// updated when a new algorithm is added.
+fn spki_matches_signing_alg(alg: SigningAlg, spki: &AlgorithmIdentifier) -> bool {
+    let key_alg = &spki.algorithm;
+    let ec_named_curve_is = |curve: &Oid| {
+        *key_alg == EC_PUBLICKEY_OID
+            && spki
+                .parameters
+                .as_ref()
+                .and_then(|p| p.as_oid().ok())
+                .is_some_and(|c| c == *curve)
+    };
     match alg {
-        SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => *spki_alg == EC_PUBLICKEY_OID,
+        SigningAlg::Es256 => ec_named_curve_is(&PRIME256V1_OID),
+        SigningAlg::Es384 => ec_named_curve_is(&SECP384R1_OID),
+        SigningAlg::Es512 => ec_named_curve_is(&SECP521R1_OID),
         SigningAlg::Ps256 | SigningAlg::Ps384 | SigningAlg::Ps512 => {
-            *spki_alg == RSA_OID || *spki_alg == RSASSA_PSS_OID
+            *key_alg == RSA_OID || *key_alg == RSASSA_PSS_OID
         }
-        SigningAlg::Ed25519 => *spki_alg == ED25519_OID,
-        _ => true,
+        SigningAlg::Ed25519 => *key_alg == ED25519_OID,
+        _ => false,
     }
 }
 
@@ -167,7 +184,7 @@ impl Verifier<'_> {
 
         // Reject a certificate whose key algorithm does not match the declared
         // COSE signing algorithm (e.g. an Ed448 key under the Ed25519 selection).
-        if !spki_matches_signing_alg(alg, &pk.algorithm.algorithm) {
+        if !spki_matches_signing_alg(alg, &pk.algorithm) {
             log_item!(
                 "Cose_Sign1",
                 "certificate key algorithm does not match COSE signing algorithm",
@@ -367,46 +384,48 @@ mod tests {
 
     use super::spki_matches_signing_alg;
 
+    const ES256: &[u8] = include_bytes!("../../../tests/fixtures/crypto/raw_signature/es256.pub");
+    const ES384: &[u8] = include_bytes!("../../../tests/fixtures/crypto/raw_signature/es384.pub");
+    const ES512: &[u8] = include_bytes!("../../../tests/fixtures/crypto/raw_signature/es512.pub");
+    const PS256: &[u8] = include_bytes!("../../../tests/fixtures/crypto/raw_signature/ps256.pub");
+    const PS384: &[u8] = include_bytes!("../../../tests/fixtures/crypto/raw_signature/ps384.pub");
+    const ED25519: &[u8] = include_bytes!("../../../tests/fixtures/certs/ed25519.pub");
+    const ED448: &[u8] = include_bytes!("../../../tests/fixtures/crypto/raw_signature/ed448.pub");
+
     fn key_matches(cert_pem: &[u8], alg: SigningAlg) -> bool {
         let pem = Pem::iter_from_buffer(cert_pem).next().unwrap().unwrap();
         let (_, cert) = X509Certificate::from_der(&pem.contents).unwrap();
-        spki_matches_signing_alg(alg, &cert.public_key().algorithm.algorithm)
-    }
-
-    #[test]
-    fn ed448_key_rejected_under_ed25519() {
-        // The reported bypass: an Ed448 subject key must not match Ed25519.
-        assert!(!key_matches(
-            include_bytes!("../../../tests/fixtures/crypto/raw_signature/ed448.pub"),
-            SigningAlg::Ed25519
-        ));
+        spki_matches_signing_alg(alg, &cert.public_key().algorithm)
     }
 
     #[test]
     fn matching_keys_accepted() {
-        assert!(key_matches(
-            include_bytes!("../../../tests/fixtures/certs/ed25519.pub"),
-            SigningAlg::Ed25519
-        ));
-        assert!(key_matches(
-            include_bytes!("../../../tests/fixtures/crypto/raw_signature/es256.pub"),
-            SigningAlg::Es256
-        ));
-        assert!(key_matches(
-            include_bytes!("../../../tests/fixtures/crypto/raw_signature/ps256.pub"),
-            SigningAlg::Ps256
-        ));
+        assert!(key_matches(ED25519, SigningAlg::Ed25519));
+        assert!(key_matches(ES256, SigningAlg::Es256));
+        assert!(key_matches(ES384, SigningAlg::Es384));
+        assert!(key_matches(ES512, SigningAlg::Es512));
+        assert!(key_matches(PS256, SigningAlg::Ps256));
+        assert!(key_matches(PS384, SigningAlg::Ps384));
     }
 
     #[test]
-    fn cross_algorithm_key_rejected() {
-        assert!(!key_matches(
-            include_bytes!("../../../tests/fixtures/crypto/raw_signature/es256.pub"),
-            SigningAlg::Ed25519
-        ));
-        assert!(!key_matches(
-            include_bytes!("../../../tests/fixtures/certs/ed25519.pub"),
-            SigningAlg::Es256
-        ));
+    fn wrong_key_type_rejected() {
+        // The reported bypass: an Ed448 key must not match Ed25519.
+        assert!(!key_matches(ED448, SigningAlg::Ed25519));
+        // EC vs RSA vs Ed in either direction.
+        assert!(!key_matches(ES256, SigningAlg::Ed25519));
+        assert!(!key_matches(ED25519, SigningAlg::Es256));
+        assert!(!key_matches(PS256, SigningAlg::Es256));
+        assert!(!key_matches(ES256, SigningAlg::Ps256));
+        assert!(!key_matches(PS256, SigningAlg::Ed25519));
+    }
+
+    #[test]
+    fn wrong_ec_curve_rejected() {
+        // Right key type (EC) but the wrong curve for the declared alg.
+        assert!(!key_matches(ES256, SigningAlg::Es384));
+        assert!(!key_matches(ES256, SigningAlg::Es512));
+        assert!(!key_matches(ES384, SigningAlg::Es256));
+        assert!(!key_matches(ES512, SigningAlg::Es256));
     }
 }
