@@ -124,7 +124,7 @@ pub fn check_ocsp_status(
             // we only care about OCSP value log info if the result is OK
             if let Ok(ocsp_response) = result {
                 if ocsp_log.has_status(validation_status::SIGNING_CREDENTIAL_REVOKED) {
-                    log_item!(
+                    return Err(log_item!(
                         "",
                         format!(
                             "signing cert revoked: {}",
@@ -133,10 +133,11 @@ pub fn check_ocsp_status(
                         "check_ocsp_status"
                     )
                     .validation_status(SIGNING_CREDENTIAL_REVOKED)
-                    .informational(validation_log);
-
-                    return Err(CoseError::CertificateTrustError(
-                        CertificateTrustError::CertificateNotTrusted,
+                    .failure_as_err(
+                        validation_log,
+                        CoseError::CertificateTrustError(
+                            CertificateTrustError::CertificateNotTrusted,
+                        ),
                     ));
                 }
 
@@ -151,7 +152,7 @@ pub fn check_ocsp_status(
                         "check_ocsp_status"
                     )
                     .validation_status(SIGNING_CREDENTIAL_NOT_REVOKED)
-                    .informational(validation_log);
+                    .success(validation_log);
 
                     return Ok(ocsp_response);
                 }
@@ -265,7 +266,7 @@ fn process_ocsp_responses(
         } {
             // If certificate is revoked, return error immediately
             if current_validation_log.has_status(validation_status::SIGNING_CREDENTIAL_REVOKED) {
-                log_item!(
+                return Err(log_item!(
                     "",
                     format!(
                         "signing cert revoked: {}",
@@ -274,10 +275,9 @@ fn process_ocsp_responses(
                     "check_ocsp_status"
                 )
                 .validation_status(SIGNING_CREDENTIAL_REVOKED)
-                .informational(validation_log);
-
-                return Err(CoseError::CertificateTrustError(
-                    CertificateTrustError::CertificateNotTrusted,
+                .failure_as_err(
+                    validation_log,
+                    CoseError::CertificateTrustError(CertificateTrustError::CertificateNotTrusted),
                 ));
             }
             // If certificate is confirmed not revoked, return success
@@ -292,7 +292,7 @@ fn process_ocsp_responses(
                     "check_ocsp_status"
                 )
                 .validation_status(SIGNING_CREDENTIAL_NOT_REVOKED)
-                .informational(validation_log);
+                .success(validation_log);
 
                 return Ok(ocsp_response);
             }
