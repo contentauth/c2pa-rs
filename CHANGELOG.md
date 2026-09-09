@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.90.21](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.20...c2pa-v0.90.21)
+_09 September 2026_
+
+### Fixed
+
+* Identity assertion validation uses the caller's cawg_trust settings (stable backport, #2599) ([#2604](https://github.com/contentauth/c2pa-rs/pull/2604))
+
 ## [0.90.20](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.19...c2pa-v0.90.20)
 _04 September 2026_
 
