@@ -201,6 +201,10 @@ impl fmt::Display for DigitalSourceType {
 /// C2PA actions defined in the C2PA specification.
 pub mod c2pa_action {
     /// Changes to tone, saturation, etc.
+    #[deprecated(
+        since = "0.91.0",
+        note = "This action is deprecated from C2PA spec version 2.0. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub const COLOR_ADJUSTMENTS: &str = "c2pa.color_adjustments";
 
     /// The format of the asset was changed.
@@ -262,6 +266,10 @@ pub mod c2pa_action {
     pub const TRANSLATED: &str = "c2pa.translated";
 
     /// Watermarking was applied to this area for the purpose of soft binding.  2.3 and earlier.
+    #[deprecated(
+        since = "0.91.0",
+        note = "This action is deprecated from C2PA spec version 2.2. Use `WATERMARKED_BOUND` or `WATERMARKED_UNBOUND` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub const WATERMARKED: &str = "c2pa.watermarked";
 
     /// Watermarking was applied to this area for the purpose of soft binding. 2.4 or later.
@@ -633,6 +641,10 @@ impl Action {
     }
 
     /// An array of the [`Actor`]s that undertook this action.
+    #[deprecated(
+        since = "0.91.0",
+        note = "The `actors` field is deprecated from C2PA spec version 2.0. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn actors(&self) -> Option<&[Actor]> {
         self.actors.as_deref()
     }
@@ -682,6 +694,10 @@ impl Action {
 
     /// Sets the list of the parts of the resource that were changed
     /// since the previous event history.
+    #[deprecated(
+        since = "0.91.0",
+        note = "The `changed` field is deprecated from C2PA spec version 2.1. Use `changes` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn set_changed(mut self, changed: Option<&Vec<&str>>) -> Self {
         self.changed = changed.map(|v| v.join(";"));
         self
@@ -761,6 +777,10 @@ impl Action {
     }
 
     /// Sets the array of [`Actor`]s that undertook this action.
+    #[deprecated(
+        since = "0.91.0",
+        note = "The `actors` field is deprecated from C2PA spec version 2.0. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn set_actors(mut self, actors: Option<&Vec<Actor>>) -> Self {
         self.actors = actors.cloned();
         self
@@ -1125,6 +1145,7 @@ pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
+    #![allow(deprecated)]
 
     use super::*;
     use crate::{

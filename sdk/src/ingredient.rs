@@ -184,6 +184,13 @@ impl Ingredient {
     /// use c2pa::Ingredient;
     /// let ingredient = Ingredient::new("title", "image/jpeg", "ed610ae51f604002be3dbf0c589a2f1f");
     /// ```
+    ///
+    /// Use [`Builder::add_ingredient_from_stream`](crate::Builder::add_ingredient_from_stream)
+    /// to derive an `Ingredient` from an asset instead of constructing a standalone one from scratch.
+    #[deprecated(
+        since = "0.91.0",
+        note = "Building a standalone `Ingredient` from scratch is no longer the recommended pattern. Use `Builder::add_ingredient_from_stream` to derive an `Ingredient` from an asset instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn new<S>(title: S, format: S, instance_id: S) -> Self
     where
         S: Into<String>,
@@ -209,6 +216,13 @@ impl Ingredient {
     /// use c2pa::Ingredient;
     /// let ingredient = Ingredient::new_v2("title", "image/jpeg");
     /// ```
+    ///
+    /// Use [`Builder::add_ingredient_from_stream`](crate::Builder::add_ingredient_from_stream)
+    /// to derive an `Ingredient` from an asset instead of constructing a standalone one from scratch.
+    #[deprecated(
+        since = "0.91.0",
+        note = "Building a standalone `Ingredient` from scratch is no longer the recommended pattern. Use `Builder::add_ingredient_from_stream` to derive an `Ingredient` from an asset instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn new_v2<S1, S2>(title: S1, format: S2) -> Self
     where
         S1: Into<String>,
@@ -664,7 +678,12 @@ impl Ingredient {
             default_instance_id()
         };
 
-        let mut ingredient = Self::new(title.into(), format, id);
+        let mut ingredient = Self {
+            title: Some(title.into()),
+            format: Some(format),
+            instance_id: Some(id),
+            ..Default::default()
+        };
 
         ingredient.document_id = xmp_info.document_id; // use document id if one exists
         ingredient.provenance = xmp_info.provenance;

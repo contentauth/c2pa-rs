@@ -2428,6 +2428,10 @@ impl Builder {
     /// * The bytes of the `c2pa_manifest` placeholder.
     /// # Errors
     /// * Returns an [`Error`] if the placeholder cannot be created.
+    #[deprecated(
+        since = "0.91.0",
+        note = "Use `Builder::placeholder` instead, which also supports dynamic assertions (e.g., CAWG identity). Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn data_hashed_placeholder(
         &mut self,
         reserve_size: usize,
@@ -3154,6 +3158,10 @@ impl Builder {
     /// * `source` - The stream to read from.
     /// # Returns
     /// * The bytes of the `c2pa_manifest` that was created (prep-formatted).
+    #[deprecated(
+        since = "0.91.0",
+        note = "Use `Builder::update_hash_from_stream` and `Builder::sign_embeddable` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     #[async_generic(async_signature(
         &mut self,
         signer: &dyn AsyncSigner,
@@ -3198,6 +3206,10 @@ impl Builder {
     /// * `signer` - The signer to use.
     /// # Returns
     /// * The bytes of the c2pa_manifest that was created (prep-formatted).
+    #[deprecated(
+        since = "0.91.0",
+        note = "Use `Builder::update_hash_from_stream` and `Builder::sign_embeddable` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     #[async_generic(async_signature(
         &mut self,
         signer: &dyn AsyncSigner,

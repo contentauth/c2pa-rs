@@ -1103,6 +1103,7 @@ impl Settings {
         since = "0.79.4",
         note = "Configure the signer via `Context` and pass it to `Builder::from_context` instead of using thread-local signer settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
+    #[allow(deprecated)]
     pub fn signer() -> Result<crate::BoxedSigner> {
         SignerSettings::signer()
     }
