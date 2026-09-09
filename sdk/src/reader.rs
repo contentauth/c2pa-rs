@@ -258,7 +258,8 @@ impl Reader {
     /// # Note
     /// [CAWG identity assertions](https://cawg.io/identity/) require async calls for validation.
     #[deprecated(
-        note = "Use `Reader::from_context(context).with_stream(format, stream)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+        since = "0.79.4",
+        note = "Use `Reader::from_context(context).with_stream(format, stream)` instead, passing a `Context` explicitly rather than relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     #[async_generic]
     pub fn from_stream(format: &str, stream: impl Read + Seek + MaybeSend) -> Result<Reader> {
@@ -389,7 +390,8 @@ impl Reader {
     /// [CAWG identity assertions](https://cawg.io/identity/) require async calls for validation.
     #[cfg(feature = "file_io")]
     #[deprecated(
-        note = "Use `Reader::from_context(context).with_file(path)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+        since = "0.79.4",
+        note = "Use `Reader::from_context(context).with_file(path)` instead, passing a `Context` explicitly rather than relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     #[async_generic]
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Reader> {
@@ -473,7 +475,8 @@ impl Reader {
     /// This function returns an [`Error`] ef the c2pa_data is not valid, or severe errors occur in validation.
     /// You must check validation status for non-severe errors.
     #[deprecated(
-        note = "Use `Reader::from_context(context).with_manifest_data_and_stream(c2pa_data, format, stream)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+        since = "0.79.4",
+        note = "Use `Reader::from_context(context).with_manifest_data_and_stream(c2pa_data, format, stream)` instead, passing a `Context` explicitly rather than relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     #[async_generic]
     pub fn from_manifest_data_and_stream(
@@ -612,7 +615,8 @@ impl Reader {
     /// multiple separate asset files.
     #[cfg(feature = "file_io")]
     #[deprecated(
-        note = "Use `Reader::from_context(context).with_fragmented_files(path, fragments)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+        since = "0.79.4",
+        note = "Use `Reader::from_context(context).with_fragmented_files(path, fragments)` instead, passing a `Context` explicitly rather than relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     pub fn from_fragmented_files<P: AsRef<std::path::Path>>(
         path: P,
@@ -1336,6 +1340,7 @@ pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
+    #![allow(deprecated)]
     use std::io::Cursor;
 
     use super::*;
