@@ -223,12 +223,16 @@ pub struct Trust {
     /// certificates must have.
     pub trust_config: Option<String>,
 
-    // This is deprecated and will be removed not before 11/12/26. Use TrustAchors instead.
-    #[deprecated(note = "Use `anchors` to add a user TrustAnchor.")]
+    #[deprecated(
+        since = "0.91.0",
+        note = "Use `anchors` to add a user TrustAnchor. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub user_anchors: Option<String>,
 
-    // This is deprecated and will be removed not before 11/12/26. Use TrustAchors instead.
-    #[deprecated(note = "Use `anchors` to add a TrustAnchor.")]
+    #[deprecated(
+        since = "0.91.0",
+        note = "Use `anchors` to add a TrustAnchor. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub trust_anchors: Option<String>,
 }
 
@@ -695,7 +699,8 @@ impl Settings {
     /// which does not modify thread-local state.
     #[doc(hidden)]
     #[deprecated(
-        note = "Use `Settings::new().with_file(path)` instead, which does not modify thread-local state."
+        since = "0.79.4",
+        note = "Use `Settings::new().with_file(path)` instead, which does not modify thread-local state. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     #[allow(deprecated)]
     pub fn from_file<P: AsRef<Path>>(settings_path: P) -> Result<Self> {
@@ -717,7 +722,8 @@ impl Settings {
     /// which do not modify thread-local state.
     #[doc(hidden)]
     #[deprecated(
-        note = "Use `Settings::new().with_json(str)` or `Settings::new().with_toml(str)` instead, which do not modify thread-local state."
+        since = "0.79.4",
+        note = "Use `Settings::new().with_json(str)` or `Settings::new().with_toml(str)` instead, which do not modify thread-local state. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     pub fn from_string(settings_str: &str, format: &str) -> Result<Self> {
         let overlay = parse_to_value(settings_str, format)?;
@@ -737,7 +743,8 @@ impl Settings {
     /// Use [`Settings::new().with_toml()`](Settings::with_toml) instead,
     /// which does not modify thread-local state.
     #[deprecated(
-        note = "Use `Settings::new().with_toml(toml)` instead, which does not modify thread-local state."
+        since = "0.79.4",
+        note = "Use `Settings::new().with_toml(toml)` instead, which does not modify thread-local state. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     #[allow(deprecated)]
     pub fn from_toml(toml: &str) -> Result<()> {
@@ -1064,7 +1071,8 @@ impl Settings {
     /// Use `toml::to_string(&settings)` on a [`Settings`] instance instead.
     #[doc(hidden)]
     #[deprecated(
-        note = "Use `toml::to_string(&settings)` on a `Settings` instance instead of reading from thread-local state."
+        since = "0.79.4",
+        note = "Use `toml::to_string(&settings)` on a `Settings` instance instead of reading from thread-local state. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     pub fn to_toml() -> Result<String> {
         let settings = get_thread_local_settings();
@@ -1076,7 +1084,8 @@ impl Settings {
     /// Use `toml::to_string_pretty(&settings)` on a [`Settings`] instance instead.
     #[doc(hidden)]
     #[deprecated(
-        note = "Use `toml::to_string_pretty(&settings)` on a `Settings` instance instead of reading from thread-local state."
+        since = "0.79.4",
+        note = "Use `toml::to_string_pretty(&settings)` on a `Settings` instance instead of reading from thread-local state. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     pub fn to_pretty_toml() -> Result<String> {
         let settings = get_thread_local_settings();
@@ -1091,7 +1100,8 @@ impl Settings {
     /// [`Builder::from_context`](crate::Builder::from_context) instead.
     #[inline]
     #[deprecated(
-        note = "Configure the signer via `Context` and pass it to `Builder::from_context` instead of using thread-local signer settings."
+        since = "0.79.4",
+        note = "Configure the signer via `Context` and pass it to `Builder::from_context` instead of using thread-local signer settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     pub fn signer() -> Result<crate::BoxedSigner> {
         SignerSettings::signer()

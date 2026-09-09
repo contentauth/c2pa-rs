@@ -82,7 +82,10 @@ pub enum DigitalSourceType {
     )]
     Print,
     /// Minor augmentation or correction by a human, such as a digitally-retouched photo used in a magazine.
-    #[deprecated]
+    #[deprecated(
+        since = "0.67.1",
+        note = "Deprecated in the IPTC digital source type vocabulary; no longer recommended for new content. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     #[serde(
         alias = "minorHumanEdits",
         rename = "http://cv.iptc.org/newscodes/digitalsourcetype/minorHumanEdits"
@@ -109,14 +112,20 @@ pub enum DigitalSourceType {
     )]
     AlgorithmicallyEnhanced,
     /// The digital image was created by computer software.
-    #[deprecated]
+    #[deprecated(
+        since = "0.67.1",
+        note = "Deprecated in the IPTC digital source type vocabulary; no longer recommended for new content. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     #[serde(
         alias = "softwareImage",
         rename = "http://cv.iptc.org/newscodes/digitalsourcetype/softwareImage"
     )]
     SoftwareImage,
     /// Media created by a human using digital tools.
-    #[deprecated]
+    #[deprecated(
+        since = "0.67.1",
+        note = "Deprecated in the IPTC digital source type vocabulary; no longer recommended for new content. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     #[serde(
         alias = "digitalArt",
         rename = "http://cv.iptc.org/newscodes/digitalsourcetype/digitalArt"
@@ -268,22 +277,37 @@ pub mod c2pa_action {
 /// Deprecated string constants for C2PA action reasons.
 ///
 /// Use [`C2paReason`] enum variants instead.
-#[deprecated(since = "0.80.3", note = "Use `C2paReason` enum variants instead")]
+#[deprecated(
+    since = "0.80.3",
+    note = "Use `C2paReason` enum variants instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+)]
 pub mod c2pa_reason {
     /// Personally identifiable information is present.
-    #[deprecated(since = "0.80.3", note = "Use `C2paReason::PiiPresent`")]
+    #[deprecated(
+        since = "0.80.3",
+        note = "Use `C2paReason::PiiPresent` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub const PII_PRESENT: &str = "c2pa.PII.present";
 
     /// The data is invalid.
-    #[deprecated(since = "0.80.3", note = "Use `C2paReason::InvalidData`")]
+    #[deprecated(
+        since = "0.80.3",
+        note = "Use `C2paReason::InvalidData` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub const INVALID_DATA: &str = "c2pa.invalid.data";
 
     /// Trade secret information is present.
-    #[deprecated(since = "0.80.3", note = "Use `C2paReason::TradeSecretPresent`")]
+    #[deprecated(
+        since = "0.80.3",
+        note = "Use `C2paReason::TradeSecretPresent` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub const TRADE_SECRET_PRESENT: &str = "c2pa.trade-secret.present";
 
     /// Government classified or confidential information is present.
-    #[deprecated(since = "0.80.3", note = "Use `C2paReason::GovernmentConfidential`")]
+    #[deprecated(
+        since = "0.80.3",
+        note = "Use `C2paReason::GovernmentConfidential` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub const GOVERNMENT_CONFIDENTIAL: &str = "c2pa.government.confidential";
 }
 
@@ -481,7 +505,10 @@ pub struct Action {
 
     /// This is NOT the instanceID in the spec
     /// It is now deprecated but was previously used to map the action to an ingredient
-    #[deprecated(since = "0.37.0", note = "Use `parameters.ingredientIds[]` instead")]
+    #[deprecated(
+        since = "0.37.0",
+        note = "Use `parameters.ingredientIds[]` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     #[serde(skip_serializing)]
     #[serde(alias = "instanceId", alias = "instanceID")]
     pub(crate) instance_id: Option<String>,
@@ -550,7 +577,10 @@ impl Action {
 
     /// Returns the value of the `xmpMM:InstanceID` property for the modified
     /// (output) resource.
-    #[deprecated(since = "0.37.0", note = "Use `ingredient_ids()` instead")]
+    #[deprecated(
+        since = "0.37.0",
+        note = "Use `ingredient_ids()` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn instance_id(&self) -> Option<&str> {
         #[allow(deprecated)]
         self.instance_id.as_deref()
@@ -659,7 +689,10 @@ impl Action {
 
     /// Sets the value of the `xmpMM:InstanceID` property for the
     /// modified (output) resource.
-    #[deprecated(since = "0.37.0", note = "Use `add_ingredient_id()` instead")]
+    #[deprecated(
+        since = "0.37.0",
+        note = "Use `add_ingredient_id()` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn set_instance_id<S: Into<String>>(self, id: S) -> Self {
         #[allow(clippy::unwrap_used)]
         self.add_ingredient_id(&id.into()).unwrap() // Supporting deprecated feature.

@@ -785,7 +785,10 @@ impl Ingredient {
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
     ///
     /// Pass an explicit [`Context`](crate::Context) via `add_stream_internal` instead.
-    #[deprecated(note = "Use with_stream with an explicit Context instead")]
+    #[deprecated(
+        since = "0.88.0",
+        note = "Use `with_stream` with an explicit `Context` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn from_stream(format: &str, stream: &mut dyn ReadSeek) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
         let settings = get_thread_local_settings();
@@ -935,7 +938,8 @@ impl Ingredient {
     ///
     /// Use [`Builder::from_context`](crate::Builder::from_context) with an explicit [`Context`](crate::Context) instead.
     #[deprecated(
-        note = "Use with_stream with an explicit Context instead of relying on thread-local settings."
+        since = "0.79.4",
+        note = "Use `with_stream` with an explicit `Context` instead of relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     #[allow(deprecated)]
     pub async fn from_memory_async(format: &str, buffer: &[u8]) -> Result<Self> {
@@ -950,7 +954,8 @@ impl Ingredient {
     ///
     /// Use [`Builder::from_context`](crate::Builder::from_context) with an explicit [`Context`](crate::Context) instead.
     #[deprecated(
-        note = "Use with_stream_async with an explicit Context instead of relying on thread-local settings."
+        since = "0.79.4",
+        note = "Use `with_stream_async` with an explicit `Context` instead of relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     pub async fn from_stream_async(format: &str, stream: &mut dyn ReadSeek) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
@@ -1443,7 +1448,8 @@ impl Ingredient {
     /// }
     /// ```
     #[deprecated(
-        note = "Pass an explicit `Context` via `from_manifest_and_asset_stream_async` instead of relying on thread-local settings."
+        since = "0.79.4",
+        note = "Pass an explicit `Context` via `from_manifest_and_asset_stream_async` instead of relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     #[allow(deprecated)]
     pub async fn from_manifest_and_asset_bytes_async<M: Into<Vec<u8>>>(
@@ -1459,7 +1465,10 @@ impl Ingredient {
     /// using thread-local settings.
     ///
     /// Pass an explicit [`Context`](crate::Context) instead of relying on thread-local settings.
-    #[deprecated(note = "Pass an explicit `Context` instead of relying on thread-local settings.")]
+    #[deprecated(
+        since = "0.79.4",
+        note = "Pass an explicit `Context` instead of relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub async fn from_manifest_and_asset_stream_async<M: Into<Vec<u8>>>(
         manifest_bytes: M,
         format: &str,

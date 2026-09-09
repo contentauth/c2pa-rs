@@ -481,7 +481,8 @@ impl Builder {
     /// # Returns
     /// * A new [`Builder`].
     #[deprecated(
-        note = "Use `Builder::default()` for default settings, or `Builder::from_context(context)` and pass settings in the `Context`."
+        since = "0.79.4",
+        note = "Use `Builder::default()` for default settings, or `Builder::from_context(context)` and pass settings in the `Context`. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     pub fn new() -> Self {
         // Legacy behavior: explicitly get global settings for backward compatibility
@@ -624,7 +625,8 @@ impl Builder {
     /// # Errors
     /// * Returns an [`Error`] if the JSON is malformed or incorrect.
     #[deprecated(
-        note = "Use `Builder::from_context(context).with_definition(json)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+        since = "0.79.4",
+        note = "Use `Builder::from_context(context).with_definition(json)` instead, passing a `Context` explicitly rather than relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     pub fn from_json(json: &str) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
@@ -1607,7 +1609,8 @@ impl Builder {
     /// # }
     /// ```
     #[deprecated(
-        note = "Use `Builder::from_context(context).with_archive(stream)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+        since = "0.79.4",
+        note = "Use `Builder::from_context(context).with_archive(stream)` instead, passing a `Context` explicitly rather than relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     #[allow(deprecated)]
     pub fn from_archive(stream: impl Read + Seek + Send) -> Result<Self> {
@@ -3602,6 +3605,7 @@ impl Builder {
     /// # Errors
     /// * Returns an [`Error`] if the manifest cannot be converted.
     #[deprecated(
+        since = "0.91.0",
         note = "Use `Builder::compose_manifest` on a `Builder` instance instead; without a `Context`, custom asset I/O handlers registered via `Context::with_io_handler` are not consulted. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     pub fn composed_manifest(manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
