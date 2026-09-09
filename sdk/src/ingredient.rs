@@ -188,7 +188,7 @@ impl Ingredient {
     /// Use [`Builder::add_ingredient_from_stream`](crate::Builder::add_ingredient_from_stream)
     /// to derive an `Ingredient` from an asset instead of constructing a standalone one from scratch.
     #[deprecated(
-        note = "Building a standalone `Ingredient` from scratch is no longer the recommended pattern. Use `Builder::add_ingredient_from_stream` to derive an `Ingredient` from an asset instead."
+        note = "Building a standalone `Ingredient` from scratch is no longer the recommended pattern. Use `Builder::add_ingredient_from_stream` to derive an `Ingredient` from an asset instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     pub fn new<S>(title: S, format: S, instance_id: S) -> Self
     where
@@ -219,7 +219,7 @@ impl Ingredient {
     /// Use [`Builder::add_ingredient_from_stream`](crate::Builder::add_ingredient_from_stream)
     /// to derive an `Ingredient` from an asset instead of constructing a standalone one from scratch.
     #[deprecated(
-        note = "Building a standalone `Ingredient` from scratch is no longer the recommended pattern. Use `Builder::add_ingredient_from_stream` to derive an `Ingredient` from an asset instead."
+        note = "Building a standalone `Ingredient` from scratch is no longer the recommended pattern. Use `Builder::add_ingredient_from_stream` to derive an `Ingredient` from an asset instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     pub fn new_v2<S1, S2>(title: S1, format: S2) -> Self
     where

@@ -1186,7 +1186,7 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a C2PA assertion box.
     #[deprecated(
         since = "0.91.0",
-        note = "This status code is deprecated from C2PA spec version 2.3. Use `ASSERTION_HARDBINDING_REDACTED` instead. Will be deleted on or after 2026-11-09."
+        note = "This status code is deprecated from C2PA spec version 2.3. Use `ASSERTION_HARDBINDING_REDACTED` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     pub const ASSERTION_DATAHASH_REDACTED: &str = "assertion.dataHash.redacted";
 

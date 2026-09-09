@@ -2124,7 +2124,7 @@ pub unsafe extern "C" fn c2pa_manifest_bytes_free(manifest_bytes_ptr: *const c_u
 /// and it is no longer valid after that call.
 #[no_mangle]
 #[deprecated(
-    note = "Use c2pa_builder_placeholder() instead, which also supports dynamic assertions (e.g., CAWG identity)."
+    note = "Use c2pa_builder_placeholder() instead, which also supports dynamic assertions (e.g., CAWG identity). Will be removed in 0.92.0 (scheduled for mid-November 2026)."
 )]
 pub unsafe extern "C" fn c2pa_builder_data_hashed_placeholder(
     builder_ptr: *mut C2paBuilder,
@@ -2167,7 +2167,7 @@ pub unsafe extern "C" fn c2pa_builder_data_hashed_placeholder(
 /// and it is no longer valid after that call.
 #[no_mangle]
 #[deprecated(
-    note = "Use c2pa_builder_update_hash_from_stream() and c2pa_builder_sign_embeddable() instead."
+    note = "Use c2pa_builder_update_hash_from_stream() and c2pa_builder_sign_embeddable() instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
 )]
 pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
     builder_ptr: *mut C2paBuilder,

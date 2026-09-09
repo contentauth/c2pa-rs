@@ -86,7 +86,7 @@ impl SignerSettings {
     /// Configure the signer via a [`Context`](crate::Context) passed explicitly to
     /// [`Builder::from_context`](crate::Builder::from_context) instead.
     #[deprecated(
-        note = "Configure the signer via `Context` and pass it to `Builder::from_context` instead of using thread-local signer settings."
+        note = "Configure the signer via `Context` and pass it to `Builder::from_context` instead of using thread-local signer settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     pub fn signer() -> Result<BoxedSigner> {
         let signer_info = match Settings::get_thread_local_value::<Option<SignerSettings>>("signer")

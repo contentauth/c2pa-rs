@@ -256,7 +256,7 @@ pub struct RegionOfInterest {
     /// the role of a region among other regions.
     #[deprecated(
         since = "0.91.0",
-        note = "The `role` field is deprecated from C2PA spec version 2.1. Will be deleted on or after 2026-11-09."
+        note = "The `role` field is deprecated from C2PA spec version 2.1. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     pub role: Option<Role>,
     /// A free-text string.
