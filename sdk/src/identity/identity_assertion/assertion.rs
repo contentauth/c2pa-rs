@@ -306,7 +306,7 @@ impl IdentityAssertion {
         status_tracker: &mut StatusTracker,
         context: &Context,
     ) -> Result<serde_json::Value, ValidationError<String>> {
-        let settings = Context::new().settings().clone();
+        let settings = context.settings().clone();
         self.check_padding(status_tracker)?;
 
         self.signer_payload
