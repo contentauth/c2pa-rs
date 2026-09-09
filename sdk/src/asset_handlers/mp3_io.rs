@@ -11,15 +11,15 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{io::Cursor, path::Path};
+use std::io::Cursor;
 
 use id3::Tag;
 
 use crate::{
     asset_handlers::id3_helper::{self, ID3V2Header},
     asset_io::{
-        AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions,
-        RemoteRefEmbed, RemoteRefEmbedType,
+        AssetIO, AssetPatch, C2paReader, C2paWriter, ObjectLocations, ReadSeek, ReadWriteSeek,
+        RemoteManifestUrl, WriteXmp,
     },
     error::{Error, Result},
 };
@@ -38,7 +38,7 @@ static SUPPORTED_TYPES: [&str; 5] = [
 ///
 /// Falls back to checking for the MPEG audio frame sync word when the stream
 /// does not start with `"ID3"`, in which case `Ok(None)` is returned.
-fn read_header(reader: &mut dyn CAIRead) -> Result<Option<ID3V2Header>> {
+fn read_header(reader: &mut dyn ReadSeek) -> Result<Option<ID3V2Header>> {
     let mut buf = [0u8; 10];
     reader.read_exact(&mut buf)?;
 
@@ -62,12 +62,12 @@ fn read_header(reader: &mut dyn CAIRead) -> Result<Option<ID3V2Header>> {
 /// computed.
 fn add_required_frame(
     asset_type: &str,
-    input_stream: &mut dyn CAIRead,
-    output_stream: &mut dyn CAIReadWrite,
+    input_stream: &mut dyn ReadSeek,
+    output_stream: &mut dyn ReadWriteSeek,
 ) -> Result<()> {
     let mp3io = Mp3IO::new(asset_type);
     input_stream.rewind()?;
-    match mp3io.read_cai(input_stream) {
+    match mp3io.read_c2pa(input_stream) {
         Ok(_) => {
             input_stream.rewind()?;
             output_stream.rewind()?;
@@ -76,7 +76,7 @@ fn add_required_frame(
         }
         Err(Error::JumbfNotFound) => {
             input_stream.rewind()?;
-            mp3io.write_cai(input_stream, output_stream, &[1, 2, 3, 4])
+            mp3io.write_c2pa(input_stream, output_stream, &[1, 2, 3, 4])
         }
         Err(Error::TooManyManifestStores) => Ok(()),
         Err(e) => Err(e),
@@ -89,8 +89,8 @@ pub struct Mp3IO {
     _mp3_format: String,
 }
 
-impl CAIReader for Mp3IO {
-    fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
+impl C2paReader for Mp3IO {
+    fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>> {
         input_stream.rewind()?;
         let mut manifest: Option<Vec<u8>> = None;
         if let Ok(tag) = Tag::read_from2(input_stream) {
@@ -106,38 +106,22 @@ impl CAIReader for Mp3IO {
         manifest.ok_or(Error::JumbfNotFound)
     }
 
-    fn read_xmp(&self, input_stream: &mut dyn CAIRead) -> Option<String> {
+    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Option<String> {
         id3_helper::read_xmp_from_id3(input_stream).ok()?
     }
 }
 
-impl RemoteRefEmbed for Mp3IO {
-    fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()> {
-        id3_helper::embed_xmp_reference(self, asset_path, embed_ref)
-    }
-
-    fn embed_reference_to_stream(
+impl WriteXmp for Mp3IO {
+    fn write_xmp(
         &self,
-        source_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
-        embed_ref: RemoteRefEmbedType,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
+        xmp: &str,
     ) -> Result<()> {
-        match embed_ref {
-            RemoteRefEmbedType::Xmp(url) => {
-                source_stream.rewind()?;
-                let header = read_header(source_stream)?;
-                let id3_end = header.map_or(0, |h| h.get_size()) as u64;
-                let current_xmp = self.read_xmp(source_stream);
-                id3_helper::embed_xmp_to_id3_stream(
-                    source_stream,
-                    output_stream,
-                    url,
-                    id3_end,
-                    current_xmp,
-                )
-            }
-            _ => Err(Error::UnsupportedType),
-        }
+        input_stream.rewind()?;
+        let header = read_header(input_stream)?;
+        let id3_end = header.map_or(0, |h| h.get_size()) as u64;
+        id3_helper::write_xmp_to_id3_stream(input_stream, output_stream, xmp, id3_end)
     }
 }
 
@@ -152,11 +136,11 @@ impl AssetIO for Mp3IO {
         Box::new(Mp3IO::new(asset_type))
     }
 
-    fn get_reader(&self) -> &dyn CAIReader {
+    fn get_reader(&self) -> &dyn C2paReader {
         self
     }
 
-    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn C2paWriter>> {
         Some(Box::new(Mp3IO::new(asset_type)))
     }
 
@@ -164,23 +148,11 @@ impl AssetIO for Mp3IO {
         Some(self)
     }
 
-    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
-        id3_helper::read_cai_store_from_path(self, asset_path)
+    fn remote_manifest_url_ref(&self) -> Option<&dyn RemoteManifestUrl> {
+        Some(self)
     }
 
-    fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
-        id3_helper::save_cai_store_to_path(self, asset_path, store_bytes)
-    }
-
-    fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>> {
-        id3_helper::get_object_locations_from_path(self, asset_path)
-    }
-
-    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
-        self.save_cai_store(asset_path, &[])
-    }
-
-    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+    fn write_xmp_ref(&self) -> Option<&dyn WriteXmp> {
         Some(self)
     }
 
@@ -189,11 +161,11 @@ impl AssetIO for Mp3IO {
     }
 }
 
-impl CAIWriter for Mp3IO {
-    fn write_cai(
+impl C2paWriter for Mp3IO {
+    fn write_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         store_bytes: &[u8],
     ) -> Result<()> {
         input_stream.rewind()?;
@@ -202,32 +174,29 @@ impl CAIWriter for Mp3IO {
         id3_helper::write_cai_with_id3(input_stream, output_stream, store_bytes, id3_end)
     }
 
-    fn get_object_locations_from_stream(
+    fn get_object_locations(
         &self,
-        input_stream: &mut dyn CAIRead,
-    ) -> Result<Vec<HashObjectPositions>> {
+        input_stream: &mut dyn ReadSeek,
+    ) -> Result<Vec<ObjectLocations>> {
         let mut output_stream = Cursor::new(Vec::<u8>::new());
         add_required_frame(&self._mp3_format, input_stream, &mut output_stream)?;
         id3_helper::get_object_locations(&mut output_stream)
     }
 
-    fn remove_cai_store_from_stream(
+    fn remove_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
     ) -> Result<()> {
-        self.write_cai(input_stream, output_stream, &[])
+        self.write_c2pa(input_stream, output_stream, &[])
     }
 }
 
 impl AssetPatch for Mp3IO {
-    fn patch_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
-        id3_helper::patch_cai_in_id3_asset(asset_path, store_bytes)
+    fn patch_c2pa(&self, stream: &mut dyn ReadWriteSeek, store_bytes: &[u8]) -> Result<()> {
+        id3_helper::patch_cai_in_id3_stream(stream, store_bytes)
     }
 }
-
-#[derive(Debug, thiserror::Error)]
-pub enum Mp3Error {}
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
@@ -237,7 +206,7 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use std::{io::Cursor, path::Path};
+    use std::io::Cursor;
 
     use super::*;
     use crate::{
@@ -315,12 +284,6 @@ pub mod tests {
     }
 
     #[test]
-    fn test_embed_reference_unsupported() {
-        let handler = Mp3IO::new("mp3");
-        test_helpers::run_embed_reference_unsupported(&handler, &fixture());
-    }
-
-    #[test]
     fn test_supported_types() {
         let handler = Mp3IO::new("mp3");
         test_helpers::run_supported_types(&handler, "mp3", "audio/mpeg");
@@ -354,7 +317,7 @@ pub mod tests {
         let handler = mp3_io.get_handler("audio/mpeg");
         let reader = mp3_io.get_reader();
         let mut f = std::fs::File::open(fixture()).unwrap();
-        match reader.read_cai(&mut f) {
+        match reader.read_c2pa(&mut f) {
             Err(Error::JumbfNotFound) => {}
             other => panic!(
                 "unexpected result for fixture without manifest: {:?}",
@@ -362,15 +325,6 @@ pub mod tests {
             ),
         }
         assert!(handler.supported_types().contains(&"audio/mpeg"));
-    }
-
-    #[test]
-    fn test_read_cai_store_file_not_found() {
-        let mp3_io = Mp3IO::new("mp3");
-        match mp3_io.read_cai_store(Path::new("/nonexistent/sample.mp3")) {
-            Err(Error::IoError(_)) => {}
-            other => panic!("expected IoError for missing file, got {:?}", other),
-        }
     }
 
     // ── MP3-specific tests ───────────────────────────────────────────────────
@@ -403,7 +357,7 @@ pub mod tests {
             .chain(std::iter::repeat_n(0, 20))
             .collect();
         let mut cursor = Cursor::new(mpeg_stream);
-        match mp3_io.read_cai(&mut cursor) {
+        match mp3_io.read_c2pa(&mut cursor) {
             Err(Error::JumbfNotFound) => {}
             other => panic!(
                 "expected JumbfNotFound for bare MPEG stream, got {:?}",
@@ -418,7 +372,7 @@ pub mod tests {
         let mp3_io = Mp3IO::new("mp3");
         let mut input = Cursor::new(b"XXXX\x00\x00\x00\x00\x00\x00".to_vec());
         let mut output = Cursor::new(Vec::new());
-        match mp3_io.write_cai(&mut input, &mut output, &[1, 2, 3]) {
+        match mp3_io.write_c2pa(&mut input, &mut output, &[1, 2, 3]) {
             Err(Error::UnsupportedType) => {}
             other => panic!(
                 "expected UnsupportedType for unknown magic, got {:?}",
@@ -433,7 +387,7 @@ pub mod tests {
         let mp3_io = Mp3IO::new("mp3");
         let mut input = Cursor::new(b"abc".to_vec());
         let mut output = Cursor::new(Vec::new());
-        match mp3_io.write_cai(&mut input, &mut output, &[1, 2, 3]) {
+        match mp3_io.write_c2pa(&mut input, &mut output, &[1, 2, 3]) {
             Err(Error::IoError(_)) => {}
             other => panic!("expected IoError for short stream, got {:?}", other),
         }
@@ -446,7 +400,7 @@ pub mod tests {
         let mp3_io = Mp3IO::new("mp3");
         let mut input = Cursor::new(test_helpers::id3_header(1, 0).to_vec());
         let mut output = Cursor::new(Vec::new());
-        match mp3_io.write_cai(&mut input, &mut output, &[1, 2, 3]) {
+        match mp3_io.write_c2pa(&mut input, &mut output, &[1, 2, 3]) {
             Err(Error::UnsupportedType) => {}
             other => panic!("expected UnsupportedType for ID3v1 header, got {:?}", other),
         }

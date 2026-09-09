@@ -51,7 +51,6 @@ use crate::{
     error::{Error, Result},
     hash_utils::hash_by_alg,
     jumbf::labels::manifest_label_from_uri,
-    jumbf_io,
     maybe_send_sync::MaybeSend,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     settings::{builder::TimeStampFetchScope, MAX_ASSERTIONS},
@@ -685,7 +684,7 @@ impl Builder {
 
     /// Returns a [Vec] of MIME types that the API is able to sign.
     pub fn supported_mime_types() -> Vec<String> {
-        jumbf_io::supported_builder_mime_types()
+        Context::default().io().writer_mime_types()
     }
 
     /// Returns the claim version for this builder.
@@ -2443,7 +2442,8 @@ impl Builder {
         self.definition.format = format.to_string();
         self.definition.instance_id = format!("xmp.iid:{}", Uuid::new_v4());
         let mut store = self.to_store()?;
-        let placeholder = store.get_data_hashed_manifest_placeholder(reserve_size, format)?;
+        let placeholder =
+            store.get_data_hashed_manifest_placeholder(reserve_size, format, self.context())?;
         Ok(placeholder)
     }
 
@@ -2483,14 +2483,14 @@ impl Builder {
         }
 
         // BMFF formats always use BmffHash.
-        if jumbf_io::is_bmff_format(format) {
+        if self.context.io().is_bmff_format(format) {
             return HashType::Bmff;
         }
 
         // When prefer_box_hash is enabled and the format handler supports it,
         // use BoxHash (no placeholder needed).
         if self.context.settings().builder.prefer_box_hash {
-            if let Some(handler) = jumbf_io::get_assetio_handler(format) {
+            if let Some(handler) = self.context.io().handler(format) {
                 if handler.asset_box_hash_ref().is_some() {
                     return HashType::Box;
                 }
@@ -2560,7 +2560,7 @@ impl Builder {
 
         // If no hash exists, add an appropriate placeholder based on format
         if hash_count == 0 {
-            if crate::jumbf_io::is_bmff_format(format) {
+            if self.context().io().is_bmff_format(format) {
                 // For BMFF formats, add a placeholder BmffHash.
                 let ph_alg = self.definition.hash_alg.as_deref().unwrap_or("sha256");
 
@@ -2606,7 +2606,7 @@ impl Builder {
         // JUMBF to the same size, keeping the composed byte count identical.
         self.placeholder_jumbf_len = Some(jumbf.len());
         // Return composed bytes ready for the caller to embed into the asset.
-        Store::get_composed_manifest(&jumbf, format)
+        Store::get_composed_manifest(&jumbf, format, self.context())
     }
 
     /// Sets the exclusion object for the [`BmffHash`] assertion in the Builder.
@@ -2904,7 +2904,10 @@ impl Builder {
         let use_box_hash = has_box_hash
             || (!has_bmff_hash && {
                 self.context.settings().builder.prefer_box_hash
-                    && jumbf_io::get_assetio_handler(format)
+                    && self
+                        .context
+                        .io()
+                        .handler(format)
                         .and_then(|h| h.asset_box_hash_ref().map(|_| ()))
                         .is_some()
             });
@@ -2976,7 +2979,11 @@ impl Builder {
             self.add_assertion(&assertion_label, &bmff_hash)?;
         } else if use_box_hash {
             // BoxHash path: get the format's AssetBoxHash handler and compute box hashes.
-            let handler = jumbf_io::get_assetio_handler(format).ok_or(Error::UnsupportedType)?;
+            let handler = self
+                .context
+                .io()
+                .handler(format)
+                .ok_or(Error::UnsupportedType)?;
             let bhp = handler.asset_box_hash_ref().ok_or_else(|| {
                 Error::BadParam(format!("Format '{format}' does not support BoxHash"))
             })?;
@@ -3126,7 +3133,7 @@ impl Builder {
             }
         }
 
-        Store::get_composed_manifest(&jumbf, format)
+        Store::get_composed_manifest(&jumbf, format, self.context())
     }
 
     /// Create a signed data hashed embeddable manifest using a supplied signer.
@@ -3216,7 +3223,7 @@ impl Builder {
             }
         }
         // get composed version for embedding to JPEG
-        Store::get_composed_manifest(&bytes, format)
+        Store::get_composed_manifest(&bytes, format, &self.context)
     }
 
     /// Embed a signed manifest into a stream using a supplied signer.
@@ -3378,8 +3385,11 @@ impl Builder {
             ));
         };
 
-        self.definition.format =
-            crate::format_from_path(path).ok_or(crate::Error::UnsupportedType)?;
+        self.definition.format = self
+            .context()
+            .io()
+            .format_from_path(path)
+            .ok_or(crate::Error::UnsupportedType)?;
         self.definition.instance_id = format!("xmp.iid:{}", Uuid::new_v4());
         if self.definition.title.is_none() {
             if let Some(title) = path.file_name() {
@@ -3467,8 +3477,16 @@ impl Builder {
         self.set_asset_from_dest(dest)?;
 
         // formats must match but allow extensions to be slightly different (i.e. .jpeg vs .jpg)s
-        let format = crate::format_from_path(source).ok_or(crate::Error::UnsupportedType)?;
-        let format_dest = crate::format_from_path(dest).ok_or(crate::Error::UnsupportedType)?;
+        let format = self
+            .context()
+            .io()
+            .format_from_path(source)
+            .ok_or(crate::Error::UnsupportedType)?;
+        let format_dest = self
+            .context()
+            .io()
+            .format_from_path(dest)
+            .ok_or(crate::Error::UnsupportedType)?;
         if format != format_dest {
             return Err(crate::Error::BadParam(
                 "Source and destination file formats must match".to_string(),
@@ -3545,8 +3563,16 @@ impl Builder {
         self.set_asset_from_dest(dest)?;
 
         // formats must match but allow extensions to be slightly different (i.e. .jpeg vs .jpg)s
-        let format = crate::format_from_path(source).ok_or(crate::Error::UnsupportedType)?;
-        let format_dest = crate::format_from_path(dest).ok_or(crate::Error::UnsupportedType)?;
+        let format = self
+            .context()
+            .io()
+            .format_from_path(source)
+            .ok_or(crate::Error::UnsupportedType)?;
+        let format_dest = self
+            .context()
+            .io()
+            .format_from_path(dest)
+            .ok_or(crate::Error::UnsupportedType)?;
         if format != format_dest {
             return Err(crate::Error::BadParam(
                 "Source and destination file formats must match".to_string(),
@@ -3575,8 +3601,28 @@ impl Builder {
     /// * The bytes of the composed manifest.
     /// # Errors
     /// * Returns an [`Error`] if the manifest cannot be converted.
+    #[deprecated(
+        note = "Use `Builder::compose_manifest` on a `Builder` instance instead; without a `Context`, custom asset I/O handlers registered via `Context::with_io_handler` are not consulted. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn composed_manifest(manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
-        Store::get_composed_manifest(manifest_bytes, format)
+        // Legacy behavior: no Context available, so only the built-in global registry is used.
+        Store::get_composed_manifest(manifest_bytes, format, &Context::new())
+    }
+
+    /// Converts a manifest into a composed manifest with the specified format.
+    ///
+    /// This wraps the bytes in the container format of the specified format.
+    /// So that it can be directly embedded into a stream of that format.
+    ///
+    /// # Arguments
+    /// * `manifest_bytes` - The bytes of the manifest to convert.
+    /// * `format` - The format to convert to.
+    /// # Returns
+    /// * The bytes of the composed manifest.
+    /// # Errors
+    /// * Returns an [`Error`] if the manifest cannot be converted.
+    pub fn compose_manifest(&self, manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
+        Store::get_composed_manifest(manifest_bytes, format, self.context())
     }
 
     /// Add an ingredient to the manifest from a Reader.
@@ -3674,13 +3720,16 @@ impl Builder {
         // First we need to generate a `BoxHash` over an empty string.
         let mut empty_asset = std::io::Cursor::new("");
 
-        let boxes = jumbf_io::get_assetio_handler("application/c2pa")
+        let boxes = self
+            .context
+            .io()
+            .handler("application/c2pa")
             .ok_or(Error::UnsupportedType)?
             .asset_box_hash_ref()
             .ok_or(Error::UnsupportedType)?
             .get_box_map(&mut empty_asset)?;
 
-        let box_hash = BoxHash { boxes };
+        let box_hash = BoxHash::from_box_map(boxes);
 
         let mut claim = match &kind {
             ArchiveKind::Builder => self.to_claim()?,
@@ -3903,7 +3952,7 @@ mod tests {
         asset_handlers::bmff_io::{
             inject_manifest_into_free_box, inject_placeholder, read_bmff_c2pa_boxes,
         },
-        hash_stream_by_alg,
+        hash_stream_by_alg, jumbf_io,
         maybe_send_sync::MaybeSend,
         settings::Settings,
         utils::{
@@ -5542,7 +5591,7 @@ mod tests {
         let c2pa_io = jumbf_io::get_assetio_handler("application/c2pa").unwrap();
         let box_mapper = c2pa_io.asset_box_hash_ref().unwrap();
         let boxes = box_mapper.get_box_map(&mut reader).unwrap();
-        let bh = BoxHash { boxes };
+        let bh = BoxHash::from_box_map(boxes);
 
         builder.add_assertion(labels::BOX_HASH, &bh)?;
 
@@ -6129,7 +6178,7 @@ mod tests {
         let box_mapper = c2pa_io.asset_box_hash_ref().unwrap();
         let boxes = box_mapper.get_box_map(&mut reader).unwrap();
         // Create the BoxHash object
-        let bh = BoxHash { boxes };
+        let bh = BoxHash::from_box_map(boxes);
         // And generate the box hashes
         //bh.generate_box_hash_from_stream(&mut reader, "sha256", box_mapper, true).unwrap();
 
@@ -6158,7 +6207,7 @@ mod tests {
     async fn test_builder_box_hashed_embeddable() {
         use crate::{
             asset_handlers::jpeg_io::JpegIO,
-            asset_io::{CAIWriter, HashBlockObjectType},
+            asset_io::{C2paWriter, ObjectType},
         };
         const BOX_HASH_IMAGE: &[u8] = include_bytes!("../tests/fixtures/boxhash.jpg");
         const BOX_HASH: &[u8] = include_bytes!("../tests/fixtures/boxhash.json");
@@ -6183,22 +6232,17 @@ mod tests {
 
         // insert manifest into output asset
         let jpeg_io = JpegIO {};
-        let ol = jpeg_io
-            .get_object_locations_from_stream(&mut input_stream)
-            .unwrap();
+        let ol = jpeg_io.get_object_locations(&mut input_stream).unwrap();
         input_stream.rewind().unwrap();
 
-        let cai_loc = ol
-            .iter()
-            .find(|o| o.htype == HashBlockObjectType::Cai)
-            .unwrap();
+        let cai_loc = ol.iter().find(|o| o.htype == ObjectType::C2pa).unwrap();
 
         // build new asset in memory inserting new manifest
         let outbuf = Vec::new();
         let mut out_stream = Cursor::new(outbuf);
 
         // write before
-        let mut before = vec![0u8; cai_loc.offset];
+        let mut before = vec![0u8; usize::try_from(cai_loc.offset).unwrap()];
         input_stream.read_exact(before.as_mut_slice()).unwrap();
         out_stream.write_all(&before).unwrap();
 
@@ -6225,7 +6269,7 @@ mod tests {
     async fn test_builder_box_hashed_embeddable_with_exclusions() {
         use crate::{
             asset_handlers::jpeg_io::JpegIO,
-            asset_io::{CAIWriter, HashBlockObjectType},
+            asset_io::{C2paWriter, ObjectType},
         };
         const BOX_HASH_IMAGE: &[u8] = include_bytes!("../tests/fixtures/boxhash.jpg");
         const BOX_HASH: &[u8] = include_bytes!("../tests/fixtures/boxhash_with_exclusion.json");
@@ -6250,22 +6294,17 @@ mod tests {
 
         // insert manifest into output asset
         let jpeg_io = JpegIO {};
-        let ol = jpeg_io
-            .get_object_locations_from_stream(&mut input_stream)
-            .unwrap();
+        let ol = jpeg_io.get_object_locations(&mut input_stream).unwrap();
         input_stream.rewind().unwrap();
 
-        let cai_loc = ol
-            .iter()
-            .find(|o| o.htype == HashBlockObjectType::Cai)
-            .unwrap();
+        let cai_loc = ol.iter().find(|o| o.htype == ObjectType::C2pa).unwrap();
 
         // build new asset in memory inserting new manifest
         let outbuf = Vec::new();
         let mut out_stream = Cursor::new(outbuf);
 
         // write before
-        let mut before = vec![0u8; cai_loc.offset];
+        let mut before = vec![0u8; usize::try_from(cai_loc.offset).unwrap()];
         input_stream.read_exact(before.as_mut_slice()).unwrap();
         out_stream.write_all(&before).unwrap();
 

@@ -33,26 +33,18 @@
 //! `jumb` boxes. Only `brob`-wrapped `xml` (XMP) boxes are decompressed, as XMP is treated
 //! as opaque metadata.
 
-use std::{
-    fs::File,
-    io::{Cursor, Read, SeekFrom},
-    path::Path,
-};
+use std::io::{Cursor, Read, SeekFrom};
 
 use byteorder::{BigEndian, ReadBytesExt};
 
 use crate::{
-    assertions::{AllowedExclusion, BoxMap, C2PA_BOXHASH},
     asset_io::{
-        rename_or_move, AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
-        ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
-        RemoteRefEmbedType,
+        AllowedExclusion, AssetBoxHash, AssetIO, BoxMap, C2paReader, C2paWriter,
+        ComposedManifestRef, ObjectLocations, ObjectType, ReadSeek, ReadWriteSeek,
+        RemoteManifestUrl, WriteXmp, C2PA_BOXHASH,
     },
     error::{Error, Result},
-    utils::{
-        io_utils::{patch_stream, safe_vec, stream_len, tempfile_builder, BoundedVecWriter},
-        xmp_inmemory_utils::{add_provenance, MIN_XMP},
-    },
+    utils::io_utils::{patch_stream, safe_vec, stream_len, BoundedVecWriter},
 };
 
 // JPEG XL container signature (ISO/IEC 18181-2:2024, Clause 4.1)
@@ -129,7 +121,7 @@ impl JxlBoxInfo {
 }
 
 /// Validates that the stream starts with the JPEG XL container signature.
-fn is_jxl_container(reader: &mut dyn CAIRead) -> Result<bool> {
+fn is_jxl_container(reader: &mut dyn ReadSeek) -> Result<bool> {
     reader.rewind()?;
     let mut magic = [0u8; 12];
     match reader.read_exact(&mut magic) {
@@ -139,7 +131,7 @@ fn is_jxl_container(reader: &mut dyn CAIRead) -> Result<bool> {
 }
 
 /// Checks if the stream starts with the naked codestream signature.
-fn is_naked_codestream(reader: &mut dyn CAIRead) -> Result<bool> {
+fn is_naked_codestream(reader: &mut dyn ReadSeek) -> Result<bool> {
     reader.rewind()?;
     let mut sig = [0u8; 2];
     match reader.read_exact(&mut sig) {
@@ -150,7 +142,7 @@ fn is_naked_codestream(reader: &mut dyn CAIRead) -> Result<bool> {
 
 /// Reads a single box header from the current stream position.
 /// Returns None at EOF.
-fn read_box_header(reader: &mut dyn CAIRead) -> Result<Option<JxlBoxInfo>> {
+fn read_box_header(reader: &mut dyn ReadSeek) -> Result<Option<JxlBoxInfo>> {
     let offset = reader.stream_position()?;
 
     let size32 = match reader.read_u32::<BigEndian>() {
@@ -181,7 +173,7 @@ fn read_box_header(reader: &mut dyn CAIRead) -> Result<Option<JxlBoxInfo>> {
 
 /// Parses all top-level boxes in a JPEG XL container.
 /// The reader must be positioned at the start of the file.
-fn parse_all_boxes(reader: &mut dyn CAIRead) -> Result<Vec<JxlBoxInfo>> {
+fn parse_all_boxes(reader: &mut dyn ReadSeek) -> Result<Vec<JxlBoxInfo>> {
     let file_len = stream_len(reader)?;
     reader.rewind()?;
 
@@ -228,7 +220,7 @@ fn parse_all_boxes(reader: &mut dyn CAIRead) -> Result<Vec<JxlBoxInfo>> {
 
 /// If a `brob` box wraps content of the given target type, decompress and return it.
 /// The reader should be positioned at the start of the brob box's data area.
-fn decompress_brob(reader: &mut dyn CAIRead, data_size: u64) -> Result<([u8; 4], Vec<u8>)> {
+fn decompress_brob(reader: &mut dyn ReadSeek, data_size: u64) -> Result<([u8; 4], Vec<u8>)> {
     const MAX_DECOMPRESSED_BROB_SIZE: usize = 1024 * 1024; // 1 MiB
 
     let mut original_type = [0u8; 4];
@@ -317,7 +309,7 @@ fn compress_brob_box(inner_type: &[u8; 4], data: &[u8]) -> Result<Vec<u8>> {
 /// than one is found.  `box_size` is computed with `saturating_sub` so it is
 /// always safe to pass to `safe_vec`.
 fn find_c2pa_jumb_location(
-    reader: &mut dyn CAIRead,
+    reader: &mut dyn ReadSeek,
     boxes: &[JxlBoxInfo],
     file_len: u64,
 ) -> Result<Option<(u64, u64)>> {
@@ -345,7 +337,7 @@ fn find_c2pa_jumb_location(
     Ok(found)
 }
 
-fn find_jumb_data(reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
+fn find_jumb_data(reader: &mut dyn ReadSeek) -> Result<Vec<u8>> {
     let file_len = stream_len(reader)?;
 
     if !is_jxl_container(reader)? {
@@ -376,7 +368,7 @@ fn find_jumb_data(reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
 }
 
 /// Reads XMP data from the JPEG XL container (from `xml ` or `brob`-wrapped `xml ` boxes).
-fn find_xmp_data(reader: &mut dyn CAIRead) -> Option<String> {
+fn find_xmp_data(reader: &mut dyn ReadSeek) -> Option<String> {
     let file_len = stream_len(reader).ok()?;
 
     if !is_jxl_container(reader).ok()? {
@@ -456,7 +448,7 @@ fn build_box(box_type: &[u8; 4], data: &[u8]) -> Vec<u8> {
 
 /// Rewrites the container, omitting only the C2PA manifest store `jumb` box.
 /// Other `jumb` boxes (e.g. EXIF) and all non-`jumb` boxes are preserved.
-fn remove_c2pa_jumb_box(reader: &mut dyn CAIRead, writer: &mut dyn CAIReadWrite) -> Result<()> {
+fn remove_c2pa_jumb_box(reader: &mut dyn ReadSeek, writer: &mut dyn ReadWriteSeek) -> Result<()> {
     let file_len = stream_len(reader)?;
 
     if !is_jxl_container(reader)? {
@@ -488,7 +480,7 @@ fn remove_c2pa_jumb_box(reader: &mut dyn CAIRead, writer: &mut dyn CAIReadWrite)
 /// - `was_compressed` — `true` when the existing XMP resides in a `brob`-wrapped `xml `
 ///   box, so that the write path can preserve the original compression state.
 fn find_xmp_box_info(
-    reader: &mut dyn CAIRead,
+    reader: &mut dyn ReadSeek,
     boxes: &[JxlBoxInfo],
     file_len: u64,
 ) -> Result<(u64, u64, bool)> {
@@ -511,21 +503,21 @@ fn find_xmp_box_info(
 
 pub struct JpegXlIO {}
 
-impl CAIReader for JpegXlIO {
-    fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
-        find_jumb_data(asset_reader)
+impl C2paReader for JpegXlIO {
+    fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>> {
+        find_jumb_data(input_stream)
     }
 
-    fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String> {
-        find_xmp_data(asset_reader)
+    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Option<String> {
+        find_xmp_data(input_stream)
     }
 }
 
-impl CAIWriter for JpegXlIO {
-    fn write_cai(
+impl C2paWriter for JpegXlIO {
+    fn write_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         store_bytes: &[u8],
     ) -> Result<()> {
         let file_len = stream_len(input_stream)?;
@@ -566,10 +558,10 @@ impl CAIWriter for JpegXlIO {
         Ok(())
     }
 
-    fn get_object_locations_from_stream(
+    fn get_object_locations(
         &self,
-        input_stream: &mut dyn CAIRead,
-    ) -> Result<Vec<HashObjectPositions>> {
+        input_stream: &mut dyn ReadSeek,
+    ) -> Result<Vec<ObjectLocations>> {
         // Ensure there is a C2PA jumb placeholder in the output so that the
         // hashing layer has a correctly-sized Cai exclusion region to work with.
         let mut output_stream = Cursor::new(Vec::<u8>::new());
@@ -587,19 +579,19 @@ impl CAIWriter for JpegXlIO {
             .iter()
             .map(|b| {
                 let length = if b.total_size == 0 {
-                    (file_len - b.offset) as usize
+                    file_len - b.offset
                 } else {
-                    b.total_size as usize
+                    b.total_size
                 };
                 let htype = if Some(b.offset) == c2pa_offset {
-                    HashBlockObjectType::Cai
+                    ObjectType::C2pa
                 } else if b.box_type == BOX_XML {
-                    HashBlockObjectType::Xmp
+                    ObjectType::Xmp
                 } else {
-                    HashBlockObjectType::Other
+                    ObjectType::Other
                 };
-                HashObjectPositions {
-                    offset: b.offset as usize,
+                ObjectLocations {
+                    offset: b.offset,
                     length,
                     htype,
                 }
@@ -609,10 +601,10 @@ impl CAIWriter for JpegXlIO {
         Ok(positions)
     }
 
-    fn remove_cai_store_from_stream(
+    fn remove_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
     ) -> Result<()> {
         remove_c2pa_jumb_box(input_stream, output_stream)
     }
@@ -647,8 +639,8 @@ fn build_c2pa_jumd_placeholder() -> Vec<u8> {
 /// No full-file read is performed — only box headers and the 30-byte JUMD label
 /// peek are read from the input stream.
 fn add_required_jumb_to_stream(
-    input_stream: &mut dyn CAIRead,
-    output_stream: &mut dyn CAIReadWrite,
+    input_stream: &mut dyn ReadSeek,
+    output_stream: &mut dyn ReadWriteSeek,
 ) -> Result<()> {
     let file_len = stream_len(input_stream)?;
 
@@ -691,57 +683,23 @@ impl AssetIO for JpegXlIO {
         Box::new(JpegXlIO::new(asset_type))
     }
 
-    fn get_reader(&self) -> &dyn CAIReader {
+    fn get_reader(&self) -> &dyn C2paReader {
         self
     }
 
-    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn C2paWriter>> {
         Some(Box::new(JpegXlIO::new(asset_type)))
-    }
-
-    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
-        let mut f = File::open(asset_path)?;
-        self.read_cai(&mut f)
-    }
-
-    fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
-        let mut input_stream = std::fs::OpenOptions::new()
-            .read(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        let mut temp_file = tempfile_builder("c2pa_temp")?;
-
-        self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
-
-        rename_or_move(temp_file, asset_path)
-    }
-
-    fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>> {
-        let mut file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        self.get_object_locations_from_stream(&mut file)
-    }
-
-    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
-        let mut input_stream = File::open(asset_path).map_err(Error::IoError)?;
-
-        let mut temp_file = tempfile_builder("c2pa_temp")?;
-
-        remove_c2pa_jumb_box(&mut input_stream, &mut temp_file)?;
-
-        rename_or_move(temp_file, asset_path)
     }
 
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
 
-    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+    fn remote_manifest_url_ref(&self) -> Option<&dyn RemoteManifestUrl> {
+        Some(self)
+    }
+
+    fn write_xmp_ref(&self) -> Option<&dyn WriteXmp> {
         Some(self)
     }
 
@@ -754,66 +712,40 @@ impl AssetIO for JpegXlIO {
     }
 }
 
-impl RemoteRefEmbed for JpegXlIO {
-    #[allow(unused_variables)]
-    fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()> {
-        match &embed_ref {
-            RemoteRefEmbedType::Xmp(_) => {
-                let mut file = File::open(asset_path)?;
-                let mut temp = Cursor::new(Vec::new());
-                self.embed_reference_to_stream(&mut file, &mut temp, embed_ref)?;
-                std::fs::write(asset_path, temp.into_inner()).map_err(Error::IoError)?;
-                Ok(())
-            }
-            RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
-            RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
-            RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
-        }
-    }
-
-    fn embed_reference_to_stream(
+impl WriteXmp for JpegXlIO {
+    fn write_xmp(
         &self,
-        source_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
-        embed_ref: RemoteRefEmbedType,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
+        xmp: &str,
     ) -> Result<()> {
-        match embed_ref {
-            RemoteRefEmbedType::Xmp(manifest_uri) => {
-                let file_len = stream_len(source_stream)?;
+        let file_len = stream_len(input_stream)?;
 
-                if !is_jxl_container(source_stream)? {
-                    return Err(Error::InvalidAsset(
-                        "Not a valid JPEG XL container".to_string(),
-                    ));
-                }
-
-                // Parse only box headers — no full file read required.
-                let boxes = parse_all_boxes(source_stream)?;
-
-                let xmp = find_xmp_data(source_stream).unwrap_or_else(|| MIN_XMP.to_string());
-                let updated_xmp = add_provenance(&xmp, &manifest_uri)?;
-
-                let (xmp_offset, xmp_len, was_compressed) =
-                    find_xmp_box_info(source_stream, &boxes, file_len)?;
-
-                // Preserve the source file's compression state: if the original XMP
-                // was Brotli-compressed (brob-wrapped), write it back compressed.
-                let xmp_box = if was_compressed {
-                    compress_brob_box(&BOX_XML, updated_xmp.as_bytes())?
-                } else {
-                    build_box(&BOX_XML, updated_xmp.as_bytes())
-                };
-
-                // Use patch_stream to stream data directly without loading the entire
-                // file into memory.
-                patch_stream(source_stream, output_stream, xmp_offset, xmp_len, &xmp_box)?;
-
-                Ok(())
-            }
-            RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
-            RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
-            RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
+        if !is_jxl_container(input_stream)? {
+            return Err(Error::InvalidAsset(
+                "Not a valid JPEG XL container".to_string(),
+            ));
         }
+
+        // Parse only box headers — no full file read required.
+        let boxes = parse_all_boxes(input_stream)?;
+
+        let (xmp_offset, xmp_len, was_compressed) =
+            find_xmp_box_info(input_stream, &boxes, file_len)?;
+
+        // Preserve the source file's compression state: if the original XMP
+        // was Brotli-compressed (brob-wrapped), write it back compressed.
+        let xmp_box = if was_compressed {
+            compress_brob_box(&BOX_XML, xmp.as_bytes())?
+        } else {
+            build_box(&BOX_XML, xmp.as_bytes())
+        };
+
+        // Use patch_stream to stream data directly without loading the entire
+        // file into memory.
+        patch_stream(input_stream, output_stream, xmp_offset, xmp_len, &xmp_box)?;
+
+        Ok(())
     }
 }
 
@@ -864,7 +796,7 @@ fn classify_jxl_allowed_exclusions(
 }
 
 impl AssetBoxHash for JpegXlIO {
-    fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
+    fn get_box_map(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<BoxMap>> {
         let file_len = stream_len(input_stream)?;
 
         if !is_jxl_container(input_stream)? {
@@ -909,13 +841,10 @@ impl AssetBoxHash for JpegXlIO {
                 brob_inner_type,
             );
 
-            box_maps.push(BoxMap {
-                names: vec![name],
-                allowed_exclusions,
-                range_start: b.offset,
-                range_len: total,
-                ..Default::default()
-            });
+            box_maps.push(
+                BoxMap::new(vec![name], b.offset, total)
+                    .with_allowed_exclusions(allowed_exclusions),
+            );
         }
 
         // If there is no C2PA jumb box, add a placeholder to the box map so the hashing layer
@@ -927,12 +856,9 @@ impl AssetBoxHash for JpegXlIO {
         {
             let range_start = find_jumb_insertion_offset(&boxes);
 
-            let c2pa_box = BoxMap {
-                names: vec![C2PA_BOXHASH.to_string()],
-                allowed_exclusions: classify_jxl_allowed_exclusions(C2PA_BOXHASH, 0, 0, None),
-                range_start, // will be patched to correct offset by add_required_jumb_to_stream
-                ..Default::default()
-            };
+            // range_start will be patched to correct offset by add_required_jumb_to_stream
+            let c2pa_box = BoxMap::new(vec![C2PA_BOXHASH.to_string()], range_start, 0)
+                .with_allowed_exclusions(classify_jxl_allowed_exclusions(C2PA_BOXHASH, 0, 0, None));
 
             // Insert the C2PA box after ftyp.
             let ftyp_string = String::from("ftyp");
@@ -1078,8 +1004,8 @@ pub mod tests {
 
     use super::*;
     use crate::{
-        assertions::ExclusionKind,
-        utils::{io_utils::tempdirectory, test::test_context},
+        asset_io::ExclusionKind,
+        utils::{io_utils::tempdirectory, test::test_context, xmp_inmemory_utils::MIN_XMP},
         Builder, CallbackSigner, Reader, SigningAlg,
     };
 
@@ -1186,7 +1112,7 @@ pub mod tests {
         let naked = vec![0xff, 0x0a, 0x00, 0x00, 0x00];
         let mut cursor = Cursor::new(&naked);
         let jpegxl_io = JpegXlIO {};
-        let result = jpegxl_io.read_cai(&mut cursor);
+        let result = jpegxl_io.read_c2pa(&mut cursor);
         assert!(matches!(result, Err(Error::InvalidAsset(_))));
     }
 
@@ -1225,7 +1151,7 @@ pub mod tests {
 
         let mut cursor = Cursor::new(&container);
         let jpegxl_io = JpegXlIO {};
-        let result = jpegxl_io.read_cai(&mut cursor);
+        let result = jpegxl_io.read_c2pa(&mut cursor);
         assert!(matches!(result, Err(Error::JumbfNotFound)));
     }
 
@@ -1247,7 +1173,7 @@ pub mod tests {
 
         let mut cursor = Cursor::new(&container);
         let jpegxl_io = JpegXlIO {};
-        let result = jpegxl_io.read_cai(&mut cursor);
+        let result = jpegxl_io.read_c2pa(&mut cursor);
         assert!(matches!(result, Err(Error::TooManyManifestStores)));
     }
 
@@ -1278,15 +1204,13 @@ pub mod tests {
         // read_cai should return the complete C2PA jumb box
         let mut cursor = Cursor::new(&container);
         let jpegxl_io = JpegXlIO {};
-        let data = jpegxl_io.read_cai(&mut cursor).unwrap();
+        let data = jpegxl_io.read_c2pa(&mut cursor).unwrap();
         assert_eq!(data, c2pa_jumb);
 
         // remove_cai_store_from_stream should preserve the EXIF jumb
         let mut input = Cursor::new(container.clone());
         let mut output = Cursor::new(Vec::new());
-        jpegxl_io
-            .remove_cai_store_from_stream(&mut input, &mut output)
-            .unwrap();
+        jpegxl_io.remove_c2pa(&mut input, &mut output).unwrap();
         output.rewind().unwrap();
         let out_boxes = parse_all_boxes(&mut output).unwrap();
         let jumb_count = out_boxes.iter().filter(|b| b.box_type == BOX_JUMB).count();
@@ -1318,7 +1242,7 @@ pub mod tests {
         let mut input = Cursor::new(container);
         let mut output = Cursor::new(Vec::new());
         jpegxl_io
-            .write_cai(&mut input, &mut output, &c2pa_payload)
+            .write_c2pa(&mut input, &mut output, &c2pa_payload)
             .unwrap();
 
         output.rewind().unwrap();
@@ -1422,12 +1346,12 @@ pub mod tests {
 
         let jpegxl_io = JpegXlIO {};
         jpegxl_io
-            .write_cai(&mut input, &mut output, &store_bytes)
+            .write_c2pa(&mut input, &mut output, &store_bytes)
             .unwrap();
 
         // Read back
         output.rewind().unwrap();
-        let read_back = jpegxl_io.read_cai(&mut output).unwrap();
+        let read_back = jpegxl_io.read_c2pa(&mut output).unwrap();
         assert_eq!(read_back, store_bytes);
     }
 
@@ -1442,7 +1366,7 @@ pub mod tests {
         // Write first manifest
         let store1 = c2pa_store(b"first_manifest_store");
         jpegxl_io
-            .write_cai(&mut input, &mut intermediate, &store1)
+            .write_c2pa(&mut input, &mut intermediate, &store1)
             .unwrap();
 
         // Write second manifest (should replace)
@@ -1450,12 +1374,12 @@ pub mod tests {
         let mut final_output = Cursor::new(Vec::new());
         let store2 = c2pa_store(b"second_manifest_store_replaced");
         jpegxl_io
-            .write_cai(&mut intermediate, &mut final_output, &store2)
+            .write_c2pa(&mut intermediate, &mut final_output, &store2)
             .unwrap();
 
         // Read back - should only get the second manifest
         final_output.rewind().unwrap();
-        let read_back = jpegxl_io.read_cai(&mut final_output).unwrap();
+        let read_back = jpegxl_io.read_c2pa(&mut final_output).unwrap();
         assert_eq!(read_back, store2);
     }
 
@@ -1467,7 +1391,7 @@ pub mod tests {
 
         let jpegxl_io = JpegXlIO {};
         jpegxl_io
-            .write_cai(&mut input, &mut output, &c2pa_store(b""))
+            .write_c2pa(&mut input, &mut output, &c2pa_store(b""))
             .unwrap();
 
         // Verify output is still a valid JXL container
@@ -1493,7 +1417,7 @@ pub mod tests {
 
         let jpegxl_io = JpegXlIO {};
         jpegxl_io
-            .write_cai(&mut input, &mut output, &c2pa_store(b""))
+            .write_c2pa(&mut input, &mut output, &c2pa_store(b""))
             .unwrap();
 
         output.rewind().unwrap();
@@ -1520,19 +1444,19 @@ pub mod tests {
 
         // Add manifest
         jpegxl_io
-            .write_cai(&mut input, &mut with_manifest, &c2pa_store(b""))
+            .write_c2pa(&mut input, &mut with_manifest, &c2pa_store(b""))
             .unwrap();
 
         // Remove it
         with_manifest.rewind().unwrap();
         let mut without_manifest = Cursor::new(Vec::new());
         jpegxl_io
-            .remove_cai_store_from_stream(&mut with_manifest, &mut without_manifest)
+            .remove_c2pa(&mut with_manifest, &mut without_manifest)
             .unwrap();
 
         // Verify it's gone
         without_manifest.rewind().unwrap();
-        let result = jpegxl_io.read_cai(&mut without_manifest);
+        let result = jpegxl_io.read_c2pa(&mut without_manifest);
         assert!(matches!(result, Err(Error::JumbfNotFound)));
 
         // Verify the container is still valid
@@ -1547,9 +1471,7 @@ pub mod tests {
         let mut output = Cursor::new(Vec::new());
 
         let jpegxl_io = JpegXlIO {};
-        jpegxl_io
-            .remove_cai_store_from_stream(&mut input, &mut output)
-            .unwrap();
+        jpegxl_io.remove_c2pa(&mut input, &mut output).unwrap();
 
         // Output should still be a valid container
         output.rewind().unwrap();
@@ -1602,7 +1524,7 @@ pub mod tests {
         let mut cursor = Cursor::new(&container);
 
         let jpegxl_io = JpegXlIO {};
-        let result = jpegxl_io.read_cai(&mut cursor);
+        let result = jpegxl_io.read_c2pa(&mut cursor);
         assert!(
             matches!(result, Err(Error::JumbfNotFound)),
             "brob-wrapped jumb should not be read as a C2PA manifest"
@@ -1669,9 +1591,7 @@ pub mod tests {
         let mut output = Cursor::new(Vec::new());
 
         let jpegxl_io = JpegXlIO {};
-        jpegxl_io
-            .remove_cai_store_from_stream(&mut input, &mut output)
-            .unwrap();
+        jpegxl_io.remove_c2pa(&mut input, &mut output).unwrap();
 
         // The brob box should still be present (not removed)
         output.rewind().unwrap();
@@ -1698,17 +1618,13 @@ pub mod tests {
 
         let jpegxl_io = JpegXlIO {};
         jpegxl_io
-            .write_cai(&mut input, &mut output, &c2pa_store(b""))
+            .write_c2pa(&mut input, &mut output, &c2pa_store(b""))
             .unwrap();
 
         output.rewind().unwrap();
-        let locations = jpegxl_io
-            .get_object_locations_from_stream(&mut output)
-            .unwrap();
+        let locations = jpegxl_io.get_object_locations(&mut output).unwrap();
 
-        let cai_loc = locations
-            .iter()
-            .find(|l| l.htype == HashBlockObjectType::Cai);
+        let cai_loc = locations.iter().find(|l| l.htype == ObjectType::C2pa);
         assert!(cai_loc.is_some(), "Should have a Cai hash object");
         assert!(cai_loc.unwrap().length > 0);
     }
@@ -1721,13 +1637,11 @@ pub mod tests {
 
         let jpegxl_io = JpegXlIO {};
         jpegxl_io
-            .write_cai(&mut input, &mut output, &c2pa_store(b""))
+            .write_c2pa(&mut input, &mut output, &c2pa_store(b""))
             .unwrap();
 
         output.rewind().unwrap();
-        let locations = jpegxl_io
-            .get_object_locations_from_stream(&mut output)
-            .unwrap();
+        let locations = jpegxl_io.get_object_locations(&mut output).unwrap();
 
         // Verify no overlapping ranges
         for (i, loc_a) in locations.iter().enumerate() {
@@ -1756,7 +1670,7 @@ pub mod tests {
 
         let jpegxl_io = JpegXlIO {};
         jpegxl_io
-            .write_cai(&mut input, &mut output, &c2pa_store(b""))
+            .write_c2pa(&mut input, &mut output, &c2pa_store(b""))
             .unwrap();
 
         output.rewind().unwrap();
@@ -1775,7 +1689,7 @@ pub mod tests {
 
         let jpegxl_io = JpegXlIO {};
         jpegxl_io
-            .write_cai(&mut input, &mut output, &c2pa_store(b""))
+            .write_c2pa(&mut input, &mut output, &c2pa_store(b""))
             .unwrap();
 
         let file_len = output.get_ref().len() as u64;
@@ -1798,7 +1712,7 @@ pub mod tests {
 
         let jpegxl_io = JpegXlIO {};
         jpegxl_io
-            .write_cai(&mut input, &mut output, &c2pa_store(b""))
+            .write_c2pa(&mut input, &mut output, &c2pa_store(b""))
             .unwrap();
 
         output.rewind().unwrap();
@@ -1822,11 +1736,7 @@ pub mod tests {
 
         let jpegxl_io = JpegXlIO {};
         jpegxl_io
-            .embed_reference_to_stream(
-                &mut input,
-                &mut output,
-                RemoteRefEmbedType::Xmp("https://example.com/manifest".to_string()),
-            )
+            .write_remote_manifest_url(&mut input, &mut output, "https://example.com/manifest")
             .unwrap();
 
         // Read back XMP
@@ -1844,11 +1754,7 @@ pub mod tests {
 
         let jpegxl_io = JpegXlIO {};
         jpegxl_io
-            .embed_reference_to_stream(
-                &mut input,
-                &mut output,
-                RemoteRefEmbedType::Xmp("https://example.com/updated".to_string()),
-            )
+            .write_remote_manifest_url(&mut input, &mut output, "https://example.com/updated")
             .unwrap();
 
         output.rewind().unwrap();
@@ -1867,10 +1773,10 @@ pub mod tests {
 
         let jpegxl_io = JpegXlIO {};
         jpegxl_io
-            .embed_reference_to_stream(
+            .write_remote_manifest_url(
                 &mut input,
                 &mut output,
-                RemoteRefEmbedType::Xmp("https://example.com/brob-preserved".to_string()),
+                "https://example.com/brob-preserved",
             )
             .unwrap();
 
@@ -1897,21 +1803,6 @@ pub mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_embed_stego_unsupported() {
-        let container = build_minimal_jxl_container();
-        let mut input = Cursor::new(container);
-        let mut output = Cursor::new(Vec::new());
-
-        let jpegxl_io = JpegXlIO {};
-        let result = jpegxl_io.embed_reference_to_stream(
-            &mut input,
-            &mut output,
-            RemoteRefEmbedType::StegoS("test".to_string()),
-        );
-        assert!(matches!(result, Err(Error::UnsupportedType)));
-    }
-
     // ─── Composed manifest tests ───
 
     #[test]
@@ -1934,12 +1825,12 @@ pub mod tests {
         let mut input = Cursor::new(container);
         let mut with_manifest = Cursor::new(Vec::new());
         jpegxl_io
-            .write_cai(&mut input, &mut with_manifest, &original_manifest)
+            .write_c2pa(&mut input, &mut with_manifest, &original_manifest)
             .unwrap();
 
         // Read it back
         with_manifest.rewind().unwrap();
-        let curr_manifest = jpegxl_io.read_cai(&mut with_manifest).unwrap();
+        let curr_manifest = jpegxl_io.read_c2pa(&mut with_manifest).unwrap();
         assert_eq!(curr_manifest, original_manifest);
 
         // compose_manifest must return the jumb box unchanged — no re-wrapping.
@@ -1973,7 +1864,7 @@ pub mod tests {
     #[test]
     fn test_handler_provides_remote_ref() {
         let jpegxl_io = JpegXlIO {};
-        assert!(jpegxl_io.remote_ref_writer_ref().is_some());
+        assert!(jpegxl_io.remote_manifest_url_ref().is_some());
     }
 
     #[test]
@@ -1995,11 +1886,11 @@ pub mod tests {
         let minimal_store = c2pa_store(&[]);
         let jpegxl_io = JpegXlIO {};
         jpegxl_io
-            .write_cai(&mut input, &mut output, &minimal_store)
+            .write_c2pa(&mut input, &mut output, &minimal_store)
             .unwrap();
 
         output.rewind().unwrap();
-        let result = jpegxl_io.read_cai(&mut output).unwrap();
+        let result = jpegxl_io.read_c2pa(&mut output).unwrap();
         assert_eq!(result, minimal_store);
     }
 
@@ -2009,7 +1900,7 @@ pub mod tests {
         let mut cursor = Cursor::new(&container);
 
         let jpegxl_io = JpegXlIO {};
-        let result = jpegxl_io.read_cai(&mut cursor);
+        let result = jpegxl_io.read_c2pa(&mut cursor);
         assert!(matches!(result, Err(Error::JumbfNotFound)));
     }
 
@@ -2020,7 +1911,7 @@ pub mod tests {
         let mut output = Cursor::new(Vec::new());
 
         let jpegxl_io = JpegXlIO {};
-        let result = jpegxl_io.write_cai(&mut input, &mut output, b"test");
+        let result = jpegxl_io.write_c2pa(&mut input, &mut output, b"test");
         assert!(matches!(result, Err(Error::InvalidAsset(_))));
     }
 
@@ -2043,11 +1934,11 @@ pub mod tests {
         let store = c2pa_store(b"manifest_with_exif");
         let jpegxl_io = JpegXlIO {};
         jpegxl_io
-            .write_cai(&mut input, &mut output, &store)
+            .write_c2pa(&mut input, &mut output, &store)
             .unwrap();
 
         output.rewind().unwrap();
-        let result = jpegxl_io.read_cai(&mut output).unwrap();
+        let result = jpegxl_io.read_c2pa(&mut output).unwrap();
         assert_eq!(result, store);
 
         // Exif box should still be present
@@ -2076,7 +1967,7 @@ pub mod tests {
 
         let jpegxl_io = JpegXlIO {};
         jpegxl_io
-            .write_cai(&mut input, &mut output, &c2pa_store(b""))
+            .write_c2pa(&mut input, &mut output, &c2pa_store(b""))
             .unwrap();
 
         output.rewind().unwrap();
@@ -2099,11 +1990,11 @@ pub mod tests {
 
         let jpegxl_io = JpegXlIO {};
         jpegxl_io
-            .write_cai(&mut input, &mut output, &large_manifest)
+            .write_c2pa(&mut input, &mut output, &large_manifest)
             .unwrap();
 
         output.rewind().unwrap();
-        let result = jpegxl_io.read_cai(&mut output).unwrap();
+        let result = jpegxl_io.read_c2pa(&mut output).unwrap();
         assert_eq!(result, large_manifest);
     }
 
@@ -2119,9 +2010,10 @@ pub mod tests {
 
         let jpegxl_io = JpegXlIO {};
         let store_bytes = c2pa_store(b"file_based_manifest_store");
-        jpegxl_io.save_cai_store(&test_path, &store_bytes).unwrap();
+        jpegxl_io.save_c2pa_store(&test_path, &store_bytes).unwrap();
 
-        let read_back = jpegxl_io.read_cai_store(&test_path).unwrap();
+        let mut f = std::fs::File::open(&test_path).unwrap();
+        let read_back = jpegxl_io.read_c2pa(&mut f).unwrap();
         assert_eq!(read_back, store_bytes);
     }
 
@@ -2135,12 +2027,13 @@ pub mod tests {
 
         let jpegxl_io = JpegXlIO {};
         jpegxl_io
-            .save_cai_store(&test_path, &c2pa_store(b"to_be_removed"))
+            .save_c2pa_store(&test_path, &c2pa_store(b"to_be_removed"))
             .unwrap();
 
-        jpegxl_io.remove_cai_store(&test_path).unwrap();
+        jpegxl_io.remove_c2pa_store(&test_path).unwrap();
 
-        let result = jpegxl_io.read_cai_store(&test_path);
+        let mut f = std::fs::File::open(&test_path).unwrap();
+        let result = jpegxl_io.read_c2pa(&mut f);
         assert!(matches!(result, Err(Error::JumbfNotFound)));
     }
 
@@ -2154,13 +2047,12 @@ pub mod tests {
 
         let jpegxl_io = JpegXlIO {};
         jpegxl_io
-            .save_cai_store(&test_path, &c2pa_store(b"manifest_for_locations"))
+            .save_c2pa_store(&test_path, &c2pa_store(b"manifest_for_locations"))
             .unwrap();
 
-        let locations = jpegxl_io.get_object_locations(&test_path).unwrap();
-        assert!(locations
-            .iter()
-            .any(|l| l.htype == HashBlockObjectType::Cai));
+        let mut f = std::fs::File::open(&test_path).unwrap();
+        let locations = jpegxl_io.get_object_locations(&mut f).unwrap();
+        assert!(locations.iter().any(|l| l.htype == ObjectType::C2pa));
     }
 
     // ─── Spec compliance: container with jxlp (partial codestream) ───
@@ -2192,7 +2084,7 @@ pub mod tests {
 
         let jpegxl_io = JpegXlIO {};
         jpegxl_io
-            .write_cai(&mut input, &mut output, &c2pa_store(b"manifest_with_jxlp"))
+            .write_c2pa(&mut input, &mut output, &c2pa_store(b"manifest_with_jxlp"))
             .unwrap();
 
         // jumb should be inserted before the first jxlp
@@ -2203,7 +2095,7 @@ pub mod tests {
         assert!(jumb_idx < jxlp_idx);
 
         output.rewind().unwrap();
-        let result = jpegxl_io.read_cai(&mut output).unwrap();
+        let result = jpegxl_io.read_c2pa(&mut output).unwrap();
         assert_eq!(result, c2pa_store(b"manifest_with_jxlp"));
     }
 
@@ -2375,15 +2267,15 @@ pub mod tests {
         // Every byte of the final file must be assigned to exactly one hash
         // object (no gaps, no overlaps).  Exactly one object must carry the
         // `Cai` type (the embedded manifest store).
-        let locations = jpegxl_io.get_object_locations_from_stream(&mut cursor)?;
+        let locations = jpegxl_io.get_object_locations(&mut cursor)?;
 
         let mut sorted_locs: Vec<_> = locations.iter().collect();
         sorted_locs.sort_by_key(|l| l.offset);
 
         // Full coverage: sum of all lengths == file size.
-        let total_covered: usize = sorted_locs.iter().map(|l| l.length).sum();
+        let total_covered: u64 = sorted_locs.iter().map(|l| l.length).sum();
         assert_eq!(
-            total_covered, file_len as usize,
+            total_covered, file_len,
             "object locations must cover the entire file ({file_len} bytes total); \
              got {total_covered} bytes covered"
         );
@@ -2404,7 +2296,7 @@ pub mod tests {
         // Exactly one CAI slot (the manifest store jumb box).
         let cai_count = sorted_locs
             .iter()
-            .filter(|l| l.htype == HashBlockObjectType::Cai)
+            .filter(|l| l.htype == ObjectType::C2pa)
             .count();
         assert_eq!(
             cai_count, 1,
@@ -2416,10 +2308,10 @@ pub mod tests {
             assert!(
                 matches!(
                     loc.htype,
-                    HashBlockObjectType::Cai
-                        | HashBlockObjectType::Xmp
-                        | HashBlockObjectType::Other
-                        | HashBlockObjectType::OtherExclusion
+                    ObjectType::C2pa
+                        | ObjectType::Xmp
+                        | ObjectType::Other
+                        | ObjectType::OtherExclusion
                 ),
                 "unrecognised HashBlockObjectType {:?} at offset {}",
                 loc.htype,
