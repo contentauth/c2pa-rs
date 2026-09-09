@@ -2123,6 +2123,9 @@ pub unsafe extern "C" fn c2pa_manifest_bytes_free(manifest_bytes_ptr: *const c_u
 /// If manifest_bytes_ptr is not NULL, the returned value MUST be released by calling c2pa_free
 /// and it is no longer valid after that call.
 #[no_mangle]
+#[deprecated(
+    note = "Use c2pa_builder_placeholder() instead, which also supports dynamic assertions (e.g., CAWG identity). Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+)]
 pub unsafe extern "C" fn c2pa_builder_data_hashed_placeholder(
     builder_ptr: *mut C2paBuilder,
     reserved_size: usize,
@@ -2132,6 +2135,7 @@ pub unsafe extern "C" fn c2pa_builder_data_hashed_placeholder(
     ptr_or_return_int!(manifest_bytes_ptr);
     let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
     let format = cstr_or_return_int!(format);
+    #[allow(deprecated)]
     let result = builder.data_hashed_placeholder(reserved_size, &format);
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
@@ -2162,6 +2166,9 @@ pub unsafe extern "C" fn c2pa_builder_data_hashed_placeholder(
 /// If manifest_bytes_ptr is not NULL, the returned value MUST be released by calling c2pa_free
 /// and it is no longer valid after that call.
 #[no_mangle]
+#[deprecated(
+    note = "Use c2pa_builder_update_hash_from_stream() and c2pa_builder_sign_embeddable() instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+)]
 pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
     builder_ptr: *mut C2paBuilder,
     signer_ptr: *mut C2paSigner,
@@ -2186,6 +2193,7 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
             .map_err(Error::from_c2pa_error));
     }
 
+    #[allow(deprecated)]
     let result =
         builder.sign_data_hashed_embeddable(c2pa_signer.signer.as_ref(), &data_hash, &format);
 

@@ -1336,6 +1336,7 @@ pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
+    #![allow(deprecated)]
     use std::io::Cursor;
 
     use super::*;
