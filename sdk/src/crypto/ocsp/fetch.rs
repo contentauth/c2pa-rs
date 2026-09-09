@@ -60,9 +60,13 @@ fn extract_aia_responders(cert: &x509_parser::certificate::X509Certificate) -> O
 }
 
 // Common function to build OCSP request data
-fn build_ocsp_request(certs: &[Vec<u8>], responder_url: &str) -> Option<OcspRequestData> {
-    let subject: Certificate = rasn::der::decode(&certs[0]).ok()?;
-    let issuer: Certificate = rasn::der::decode(&certs[1]).ok()?;
+fn build_ocsp_request(
+    subject_der: &[u8],
+    issuer_der: &[u8],
+    responder_url: &str,
+) -> Option<OcspRequestData> {
+    let subject: Certificate = rasn::der::decode(subject_der).ok()?;
+    let issuer: Certificate = rasn::der::decode(issuer_der).ok()?;
 
     let issuer_name_raw = rasn::der::encode(&issuer.tbs_certificate.subject).ok()?;
     let issuer_key_raw = &issuer
@@ -118,19 +122,25 @@ fn build_ocsp_request(certs: &[Vec<u8>], responder_url: &str) -> Option<OcspRequ
     Some(OcspRequestData { request_str, url })
 }
 
-fn process_ocsp_responders(certs: &[Vec<u8>]) -> Option<Vec<OcspRequestData>> {
-    if certs.len() < 2 {
-        return None;
-    }
+// Build OCSP requests for the certificate at `subject_index`, read from its own
+// AIA responder(s) with `certs[subject_index + 1]` as the issuer. This lets each
+// certificate in the chain (the leaf and each issuing CA) be queried, not just
+// the leaf.
+fn process_ocsp_responders(
+    certs: &[Vec<u8>],
+    subject_index: usize,
+) -> Option<Vec<OcspRequestData>> {
+    let subject_der = certs.get(subject_index)?;
+    let issuer_der = certs.get(subject_index + 1)?;
 
-    let (_rem, cert) = X509Certificate::from_der(&certs[0]).ok()?;
+    let (_rem, cert) = X509Certificate::from_der(subject_der).ok()?;
 
     let requests: Vec<_> = extract_aia_responders(&cert)
         .into_iter()
         .flat_map(|responders| {
             responders
                 .into_iter()
-                .filter_map(|responder| build_ocsp_request(certs, &responder))
+                .filter_map(|responder| build_ocsp_request(subject_der, issuer_der, &responder))
         })
         .collect();
 
@@ -141,13 +151,17 @@ fn process_ocsp_responders(certs: &[Vec<u8>]) -> Option<Vec<OcspRequestData>> {
     }
 }
 
-/// Retrieve an OCSP response if available.
+/// Retrieve an OCSP response for the certificate at `subject_index` if available.
 ///
-/// Checks for an OCSP responder in the end-entity certificate. If found, it
-/// will attempt to retrieve the raw DER-encoded OCSP response.
+/// Checks for an OCSP responder in that certificate's AIA extension. If found,
+/// it will attempt to retrieve the raw DER-encoded OCSP response.
 #[async_generic]
-pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>], context: &Context) -> Option<Vec<u8>> {
-    let requests = process_ocsp_responders(certs)?;
+pub(crate) fn fetch_ocsp_response(
+    certs: &[Vec<u8>],
+    subject_index: usize,
+    context: &Context,
+) -> Option<Vec<u8>> {
+    let requests = process_ocsp_responders(certs, subject_index)?;
     let requests_len = requests.len() as u32;
     for (step, request_data) in (1..).zip(requests) {
         context
@@ -192,4 +206,41 @@ pub(crate) fn fetch_ocsp_response(certs: &[Vec<u8>], context: &Context) -> Optio
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::process_ocsp_responders;
+    use crate::crypto::cert_chain_pem_to_der;
+
+    // [leaf(AIA=leaf-ocsp.test), issuing CA(AIA=ca-ocsp.test), root].
+    fn ca_chain() -> Vec<Vec<u8>> {
+        let pem = include_bytes!("../../../tests/fixtures/crypto/ocsp/ocsp_ca_chain.pem");
+        cert_chain_pem_to_der(pem).unwrap()
+    }
+
+    fn responder_hosts(certs: &[Vec<u8>], subject_index: usize) -> Vec<String> {
+        process_ocsp_responders(certs, subject_index)
+            .unwrap()
+            .iter()
+            .filter_map(|r| r.url.host_str().map(|h| h.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn each_cert_is_queried_against_its_own_responder() {
+        let certs = ca_chain();
+
+        // The leaf is queried against its own responder...
+        let leaf_hosts = responder_hosts(&certs, 0);
+        assert!(leaf_hosts.iter().any(|h| h == "leaf-ocsp.test"));
+        assert!(!leaf_hosts.iter().any(|h| h == "ca-ocsp.test"));
+
+        // ...and the issuing CA against its own responder (the fix: previously
+        // the CA was never contacted, so a revoked CA went undetected).
+        let ca_hosts = responder_hosts(&certs, 1);
+        assert!(ca_hosts.iter().any(|h| h == "ca-ocsp.test"));
+    }
 }

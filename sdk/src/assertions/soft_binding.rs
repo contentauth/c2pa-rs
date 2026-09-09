@@ -56,7 +56,10 @@ impl SoftBinding {
     ///
     /// This is useful for cases where the data lives in a different file chunk or side-car
     /// than the claim.
-    #[deprecated = "deprecated in c2pa v1.3, use the asset reference assertion instead"]
+    #[deprecated(
+        since = "0.59.0",
+        note = "Use the asset reference assertion instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn url(&self) -> Option<&UriT> {
         self.url.as_ref()
     }
@@ -108,7 +111,10 @@ pub struct SoftBindingScope {
 #[allow(unused)]
 impl SoftBindingScope {
     /// In algorithm specific format, the part of the digital content over which the soft binding value has been computed.
-    #[deprecated = "deprecated in c2pa v2.1, use the `region` field instead"]
+    #[deprecated(
+        since = "0.59.0",
+        note = "Use the `region` field instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn extent(&self) -> Option<&[u8]> {
         self.extent.as_ref().map(|b| b.as_slice())
     }
