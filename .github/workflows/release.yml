@@ -16,10 +16,11 @@ name: Release-plz publish
 #
 # When the `c2pa` crate itself is among the packages published, this also
 # dispatches a cross-repo notification (repository_dispatch, authenticated
-# with the shared RELEASE_PLZ_ORG_TOKEN org token) so contentauth/c2patool can
-# immediately open a PR bumping its `stable` branch's `c2pa` dependency,
-# instead of waiting for a scheduled poll. See c2patool's
-# docs/release-process.md, "c2pa-rs release bump".
+# with the CROSS_ORG_PR_TOKEN org token -- RELEASE_PLZ_ORG_TOKEN is not scoped
+# for cross-repo calls) so contentauth/c2patool can immediately open a PR
+# bumping its `stable` branch's `c2pa` dependency, instead of waiting for a
+# scheduled poll. See c2patool's docs/release-process.md, "c2pa-rs release
+# bump".
 
 permissions:
   pull-requests: write
@@ -95,7 +96,11 @@ jobs:
       - name: Notify c2patool of a new c2pa release
         if: steps.release-plz.outputs.releases_created == 'true'
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLZ_ORG_TOKEN }}
+          # RELEASE_PLZ_ORG_TOKEN lacks repository_dispatch permission on
+          # contentauth/c2patool (confirmed empirically: it returns a 403).
+          # CROSS_ORG_PR_TOKEN is the org token actually scoped for this
+          # cross-repo call.
+          GH_TOKEN: ${{ secrets.CROSS_ORG_PR_TOKEN }}
           RELEASES: ${{ steps.release-plz.outputs.releases }}
         run: |
           VERSION=$(echo "$RELEASES" | jq -r '.[] | select(.package_name == "c2pa") | .version')
