@@ -253,7 +253,12 @@ impl CawgX509IdentitySigner {
         roles: Vec<String>,
     ) -> Result<Self> {
         let identity_cert_chain = cert_chain_pem_to_der(sign_cert)?;
-        let max_signature_size = 10_000 + identity_cert_chain.iter().map(Vec::len).sum::<usize>();
+
+        // `max_signature_size` must describe only the raw signature: the cert chain
+        // is already accounted for separately by `X509CredentialHolder::reserve_size()`
+        // (via `cose_reserve_size`). 10_000 bytes is a generous fixed upper bound since
+        // the remote endpoint's exact signature size isn't known locally.
+        let max_signature_size = 10_000;
 
         Ok(Self {
             c2pa_signer,
