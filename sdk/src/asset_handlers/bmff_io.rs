@@ -2173,16 +2173,36 @@ impl C2paWriter for BmffIO {
         // get leading type box location (ftyp for complete files; styp for media
         // segments, recognized only when the unstable_live_video feature is enabled)
         // start after that box
-        let ftyp_token = bmff_map
-            .get("/ftyp")
-            .or_else(|| {
-                if cfg!(feature = "unstable_live_video") {
-                    bmff_map.get("/styp")
-                } else {
-                    None
+        let ftyp_token = if let Some(t) = bmff_map.get("/ftyp") {
+            t
+        } else if cfg!(feature = "unstable_live_video") {
+            let t = bmff_map.get("/styp").ok_or(Error::UnsupportedType)?;
+
+            // Guard: fMP4 media segments (styp-headed) must carry a live-video assertion.
+            // Directly calling `Builder::sign()` on a media segment without going through
+            // `LiveVideoSigner` or `LiveVideoVsiSigner` produces a manifest that passes
+            // standard validation but fails the live-video continuity validator. Reject
+            // it here so the error is immediate and obvious.
+            #[cfg(feature = "unstable_live_video")]
+            {
+                use crate::assertions::labels::LIVE_VIDEO_SEGMENT;
+                let has_live_video_assertion = store_bytes
+                    .windows(LIVE_VIDEO_SEGMENT.len())
+                    .any(|w| w == LIVE_VIDEO_SEGMENT.as_bytes());
+                if !has_live_video_assertion {
+                    return Err(Error::BadParam(
+                        "fMP4 media segments must be signed via LiveVideoSigner or \
+                         LiveVideoVsiSigner; they must contain a c2pa.livevideo.segment \
+                         assertion"
+                            .into(),
+                    ));
                 }
-            })
-            .ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
+            }
+
+            t
+        } else {
+            return Err(Error::UnsupportedType);
+        }; // todo check ftyps to make sure we support any special format requirements
         let ftyp_info = &bmff_tree.as_ref()[ftyp_token[0]].data;
         let ftyp_offset = ftyp_info.offset;
         let ftyp_size = ftyp_info.size;

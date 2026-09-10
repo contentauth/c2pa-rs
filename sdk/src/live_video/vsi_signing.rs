@@ -20,17 +20,19 @@
 //! signer's end-entity certificate, proving the key is associated with the
 //! manifest signer (§18.25.2).
 
+use c2pa_raw_crypto::validator_for_signing_alg;
 use coset::{iana, CoseSign1Builder, HeaderBuilder, TaggedCborSerializable};
 use ed25519_dalek::{Signer as Ed25519Signer, SigningKey};
 
 use super::{
     box_walk::{box_payload, find_box},
-    cose_key::build_ed25519_cose_key,
+    cose_key::{build_ed25519_cose_key, cose_key_to_der, signing_alg_from_cose_key},
     verifiable_segment_info::{VSI_SCHEME_ID_URI, VSI_URI_OFFSET_IN_EMSG},
 };
 use crate::{
     assertions::{BmffHash, DataMap, ExclusionsMap, SessionKey, SessionKeys},
     builder::Builder,
+    crypto::cose::signing_alg_from_sign1,
     error::{Error, Result},
     live_video::verifiable_segment_info::SegmentInfoMap,
     Reader, Signer,
@@ -291,11 +293,48 @@ impl LiveVideoVsiSigner {
         })?;
 
         let parsed = parse_vsi(&vsi_bytes)?;
+
+        // Verify the COSE_Sign1 signature before trusting the deserialized sequence
+        // number. An attacker with write access to the output directory could otherwise
+        // inject a tampered sequence number to cause subsequent segments to be signed
+        // with an attacker-chosen value.
+        self.verify_vsi_sign1(&parsed.sign1)?;
+
         self.next_sequence_number = parsed.segment_info_map.sequence_number + 1;
         if !parsed.segment_info_map.manifest_id.is_empty() {
             self.active_manifest_id = Some(parsed.segment_info_map.manifest_id);
         }
         Ok(())
+    }
+
+    /// Verifies a VSI COSE_Sign1 against the signer's own session public key.
+    fn verify_vsi_sign1(&self, sign1: &coset::CoseSign1) -> Result<()> {
+        let key_alg = signing_alg_from_cose_key(&self.session_cose_key)
+            .ok_or_else(|| Error::BadParam("unsupported session key algorithm".into()))?;
+
+        let header_alg = signing_alg_from_sign1(sign1)
+            .map_err(|_| Error::BadParam("VSI COSE_Sign1 protected header missing `alg`".into()))?;
+
+        if header_alg != key_alg {
+            return Err(Error::BadParam(
+                format!(
+                    "VSI COSE_Sign1 `alg` ({header_alg:?}) does not match session key ({key_alg:?})"
+                )
+                .into(),
+            ));
+        }
+
+        let public_key_der = cose_key_to_der(&self.session_cose_key)
+            .ok_or_else(|| Error::BadParam("failed to convert session key to DER".into()))?;
+
+        let validator = validator_for_signing_alg(key_alg)
+            .ok_or_else(|| Error::BadParam(format!("no validator for {key_alg:?}").into()))?;
+
+        let tbs = sign1.tbs_data(b"");
+
+        validator
+            .validate(&sign1.signature, &tbs, &public_key_der)
+            .map_err(|e| Error::BadParam(format!("VSI signature verification failed: {e}").into()))
     }
 
     /// Reads back `signed_data`'s active manifest and, if it has a label, stores it as
@@ -401,13 +440,10 @@ fn build_signer_binding(
         .to_tagged_vec()
         .map_err(|e| Error::BadParam(format!("failed to encode signer binding: {e}")))?;
 
-    // Deserialize back to a Value so the COSE_Sign1 is embedded as a tagged
-    // CBOR structure (tag 18) rather than an opaque bstr.
-    c2pa_cbor::from_slice(&binding_bytes).map_err(|e| {
-        Error::BadParam(format!(
-            "failed to decode signer binding as CBOR Value: {e}"
-        ))
-    })
+    // Store the COSE_Sign1_Tagged bytes as an opaque bstr. Storing as Value::Bytes is
+    // what extract_signer_binding_bytes expects; JSON round-trips it as base64 (Text),
+    // which extract_signer_binding_bytes also handles.
+    Ok(c2pa_cbor::Value::Bytes(binding_bytes))
 }
 
 // ── VSI COSE_Sign1 construction ──────────────────────────────────────────────
@@ -425,7 +461,12 @@ fn build_vsi_cose_sign1(
     // against the session key's validity period using this claimed time rather than its own
     // wall-clock time, which matters for any validation run after the fact (e.g. archival/VOD
     // validation of a recording), since the key's validity window is anchored to createdAt.
+    //
+    // The label uses the text form `"iat"` rather than an integer because integer labels 1-7
+    // in a COSE protected header are reserved for core COSE parameters (RFC 9052 §3.1) and
+    // coset enforces this at runtime. Integer 6 in COSE is `partial_iv`, not `iat`.
     let iat = chrono::Utc::now().timestamp();
+
     let protected = HeaderBuilder::new()
         .algorithm(iana::Algorithm::EdDSA)
         .text_value("iat".to_string(), coset::cbor::value::Value::from(iat))
@@ -470,8 +511,16 @@ fn build_emsg_box(
     body.extend_from_slice(&id.to_be_bytes());
     body.extend_from_slice(cose_sign1_bytes);
 
-    // 8 bytes header + 4 bytes version/flags + body
-    let total_size = (8u32 + 4 + body.len() as u32).to_be_bytes();
+    // 8 bytes header + 4 bytes version/flags + body.
+    // Use checked arithmetic so an unexpectedly large COSE payload produces a
+    // panic in debug builds and a clear failure in release builds rather than a
+    // silently truncated size field (which the two-pass draft/final guard would
+    // not catch, since both passes share the same computation).
+    let total_size = 8u32
+        .checked_add(4)
+        .and_then(|n| n.checked_add(u32::try_from(body.len()).ok()?))
+        .expect("emsg box body exceeds u32 max")
+        .to_be_bytes();
 
     let mut emsg = Vec::new();
     emsg.extend_from_slice(&total_size);
@@ -997,12 +1046,33 @@ mod tests {
     #[test]
     fn resume_from_segment_advances_sequence_number() {
         let signer = make_test_signer();
-        let mut vsi_signer = make_vsi_signer_with_manifest_id(&signer, b"k", 1);
+        let session_key = make_test_signing_key();
+
+        let mut vsi_signer = LiveVideoVsiSigner::from_signing_key(
+            r#"{"assertions": []}"#,
+            &signer,
+            session_key.clone(),
+            b"k".to_vec(),
+            1,
+            3600,
+        )
+        .unwrap();
+        vsi_signer.active_manifest_id = Some(TEST_MANIFEST_ID.to_string());
 
         let seg1 = vsi_signer.sign_media_segment(&make_test_segment()).unwrap();
         assert_eq!(vsi_signer.next_sequence_number(), 2);
 
-        let mut resumed_signer = make_vsi_signer(&signer, b"k", 1);
+        // Use the same session key — resume_from_segment now verifies the signature
+        // on the resumed segment, which requires the same key that signed it.
+        let mut resumed_signer = LiveVideoVsiSigner::from_signing_key(
+            r#"{"assertions": []}"#,
+            &signer,
+            session_key,
+            b"k".to_vec(),
+            1,
+            3600,
+        )
+        .unwrap();
         resumed_signer.resume_from_segment(&seg1).unwrap();
         assert_eq!(resumed_signer.next_sequence_number(), 2);
     }

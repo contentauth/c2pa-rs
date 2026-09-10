@@ -271,8 +271,17 @@ pub struct AssertionDefinition {
     /// Pre-encoded CBOR bytes that bypass the `Value` intermediate representation.
     /// When set, these bytes are used directly instead of serializing `data` via `to_vec`.
     /// This preserves CBOR features that `c2pa_cbor::Value` cannot represent (e.g. tags).
+    ///
+    /// Serialized as a standard Base64 string so the override survives a JSON round-trip
+    /// (e.g. remote or embedded signing via `to_json()` + deserialization).
     #[cfg(feature = "unstable_live_video")]
-    #[serde(skip)]
+    #[serde(
+        rename = "cbor_override_b64",
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "crate::live_video::cbor_override_b64::serialize",
+        deserialize_with = "crate::live_video::cbor_override_b64::deserialize"
+    )]
     pub(crate) cbor_override: Option<Vec<u8>>,
 }
 
@@ -289,6 +298,14 @@ impl<'de> Deserialize<'de> for AssertionDefinition {
             kind: Option<ManifestAssertionKind>,
             #[serde(default)]
             created: bool,
+            /// Base64-encoded pre-encoded CBOR bytes; see `AssertionDefinition::cbor_override`.
+            #[cfg(feature = "unstable_live_video")]
+            #[serde(
+                rename = "cbor_override_b64",
+                default,
+                deserialize_with = "crate::live_video::cbor_override_b64::deserialize"
+            )]
+            cbor_override: Option<Vec<u8>>,
         }
 
         let helper = Helper::deserialize(deserializer)?;
@@ -314,7 +331,7 @@ impl<'de> Deserialize<'de> for AssertionDefinition {
             kind: helper.kind,
             created: helper.created,
             #[cfg(feature = "unstable_live_video")]
-            cbor_override: None,
+            cbor_override: helper.cbor_override,
         })
     }
 }

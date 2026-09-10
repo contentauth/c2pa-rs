@@ -171,6 +171,11 @@ fn okp_to_der(map: &BTreeMap<i128, &CborValue>) -> Option<Vec<u8>> {
 
     let x = cbor_as_bytes(map.get(&OKP_X)?)?;
 
+    // Ed25519 public keys are exactly 32 bytes (RFC 8032 §5.1.5). Use `left_pad`
+    // to enforce the length and reject both short and over-long `x` values,
+    // matching the same guard applied to EC coordinates in `ec2_to_der`.
+    let x = left_pad(&x, 32)?;
+
     // Ed25519 takes no AlgorithmIdentifier parameters (RFC 8410 §3).
     spki_to_der(
         AlgorithmIdentifier {

@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use c2pa_raw_crypto::validator_for_signing_alg;
+use c2pa_raw_crypto::{ec_utils::parse_ec_der_sig, validator_for_signing_alg};
 use coset::TaggedCborSerializable;
 
 use super::{
@@ -22,6 +22,7 @@ use super::{
 };
 use crate::{
     assertions::SessionKey,
+    crypto::cose::signing_alg_from_sign1,
     error::{Error, Result},
     status_tracker::StatusTracker,
     validation_results::validation_codes::{
@@ -107,18 +108,27 @@ impl LiveVideoValidator {
         manifest_id: &str,
         tracker: &mut StatusTracker,
     ) -> Result<()> {
-        if let Some(expected) = &self.expected_manifest_id {
-            if manifest_id != expected {
-                return fail_validation(
-                    format!(
-                        "segment-info-map manifestId ({manifest_id:?}) does not match the \
-                         verified manifest that carried the session keys ({expected:?})"
-                    ),
-                    LIVEVIDEO_SEGMENT_INVALID,
-                    tracker,
-                );
-            }
+        // `expected_manifest_id` is always set by `validate_session_keys` before any VSI
+        // segment can be validated (enforced by `require_session_keys`). A `None` here
+        // means the validator is in an unexpected state; fail explicitly rather than
+        // silently skipping the binding check.
+        let expected = self.expected_manifest_id.as_deref().ok_or_else(|| {
+            Error::BadParam(
+                "validate_session_keys must be called before validating VSI segments".into(),
+            )
+        })?;
+
+        if manifest_id != expected {
+            return fail_validation(
+                format!(
+                    "segment-info-map manifestId ({manifest_id:?}) does not match the \
+                     verified manifest that carried the session keys ({expected:?})"
+                ),
+                LIVEVIDEO_SEGMENT_INVALID,
+                tracker,
+            );
         }
+
         Ok(())
     }
 
@@ -334,14 +344,38 @@ impl LiveVideoValidator {
         sign1: &coset::CoseSign1,
         session_key: &SessionKey,
     ) -> std::result::Result<(), String> {
-        let alg = signing_alg_from_cose_key(&session_key.key)
+        let key_alg = signing_alg_from_cose_key(&session_key.key)
             .ok_or_else(|| "unsupported key type/curve in session key".to_string())?;
+
+        // RFC 9052 §3: the `alg` field in the protected header must be present and
+        // must match the algorithm implied by the session key.
+        let header_alg = signing_alg_from_sign1(sign1)
+            .map_err(|_| "COSE_Sign1 protected header missing or unrecognised `alg`".to_string())?;
+
+        if header_alg != key_alg {
+            return Err(format!(
+                "COSE_Sign1 `alg` header ({header_alg:?}) does not match session key algorithm ({key_alg:?})"
+            ));
+        }
+
+        // EC (P-256/P-384/P-521) signatures must be in IEEE P1363 r|s format, not DER.
+        // This mirrors the guard in `crypto::cose::verifier::Verifier::verify_signature`;
+        // without it an EC COSE_Sign1 with a DER-encoded signature would silently pass.
+        if matches!(
+            key_alg,
+            crate::SigningAlg::Es256 | crate::SigningAlg::Es384 | crate::SigningAlg::Es512
+        ) && parse_ec_der_sig(&sign1.signature).is_some()
+        {
+            return Err(
+                "EC signature is in DER format; COSE requires IEEE P1363 r|s format".to_string(),
+            );
+        }
 
         let public_key_der = cose_key_to_der(&session_key.key)
             .ok_or_else(|| "failed to convert session key to DER".to_string())?;
 
-        let validator = validator_for_signing_alg(alg)
-            .ok_or_else(|| format!("no validator available for {alg:?}"))?;
+        let validator = validator_for_signing_alg(key_alg)
+            .ok_or_else(|| format!("no validator available for {key_alg:?}"))?;
 
         let tbs = sign1.tbs_data(b"");
 
@@ -444,6 +478,9 @@ fn reject_signer_binding(msg: impl Into<String>, tracker: &mut StatusTracker) ->
 
 /// Extracts the `iat` ("claimed time of signing", §19.4.1/RFC 8392) protected header field, if
 /// present, as a Unix timestamp in seconds.
+///
+/// Uses the text label `"iat"` to match what the writer encodes (integer labels 1-7 are
+/// reserved for core COSE parameters in coset and cannot be set via `HeaderBuilder`).
 fn extract_iat(sign1: &coset::CoseSign1) -> Option<i64> {
     sign1
         .protected
@@ -1320,10 +1357,15 @@ mod tests {
 
         // Re-encoded as a tagged (tag 18) COSE_Sign1: starts with the tag-18 prefix.
         assert_eq!(extracted[0], 0xd2, "must be CBOR-tagged (tag 18)");
+
+        // Decoding a CBOR-tagged value yields Value::Tag(18, inner), not a bare Array.
         let decoded: c2pa_cbor::Value = c2pa_cbor::from_slice(&extracted).unwrap();
         match decoded {
-            c2pa_cbor::Value::Array(items) => assert_eq!(items.len(), 4),
-            other => panic!("expected a 4-element array, got {other:?}"),
+            c2pa_cbor::Value::Tag(18, inner) => match *inner {
+                c2pa_cbor::Value::Array(items) => assert_eq!(items.len(), 4),
+                other => panic!("expected a 4-element array inside tag 18, got {other:?}"),
+            },
+            other => panic!("expected a tag-18 COSE_Sign1, got {other:?}"),
         }
     }
 
