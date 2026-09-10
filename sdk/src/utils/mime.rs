@@ -44,6 +44,11 @@ pub fn extension_to_mime(extension: &str) -> Option<&'static str> {
         "arw" => "image/x-sony-arw",
         "nef" => "image/x-nikon-nef",
         "c2pa" | "application/x-c2pa-manifest-store" | "application/c2pa" => "application/c2pa",
+        // Plain text, handled by the experimental A.8 asset handler. Gated so a default build
+        // (feature disabled) resolves this extension exactly as before, with no handler
+        // registered for it. See docs/experimental-features.md.
+        #[cfg(feature = "unstable_plain_text")]
+        "txt" => "text/plain",
         _ => return None,
     })
 }

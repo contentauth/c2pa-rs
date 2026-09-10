@@ -35,6 +35,11 @@ add_thumbnails = ["dep:image"]
 # the crate's usual semantic-versioning stability guarantees and may change or be removed in any
 # release. See docs/experimental-features.md.
 unstable_builder_filter = []
+# Native plain-text asset handler (C2PA A.8 Unicode-variation-selector wrapper), implemented
+# in-tree with no third-party C2PA-text crate; the only dependency is unicode-normalization for
+# NFC. Experimental feature: exempt from the crate's usual semantic-versioning stability
+# guarantees and may change or be removed in any release. See docs/experimental-features.md.
+unstable_plain_text = ["dep:unicode-normalization"]
 file_io = []
 fetch_remote_manifests = ["dep:wasi"]
 json_schema = ["dep:schemars"]
@@ -155,6 +160,7 @@ tempfile = "3.27.0"
 thiserror = "2.0.18"
 toml = "1.1.2"
 url = "2.5.8"
+unicode-normalization = { version = "0.1", optional = true }
 uuid = { version = "1.23.2", features = ["serde", "v4"] }
 web-time = "1.1"
 x509-parser = "0.18.1"

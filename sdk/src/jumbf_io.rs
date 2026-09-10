@@ -19,6 +19,8 @@ use lazy_static::lazy_static;
 
 #[cfg(feature = "pdf")]
 use crate::asset_handlers::pdf_io::PdfIO;
+#[cfg(feature = "unstable_plain_text")]
+use crate::asset_handlers::plain_text_io::PlainTextIO;
 use crate::{
     asset_handlers::{
         bmff_io::BmffIO, c2pa_io::C2paIO, flac_io::FlacIO, gif_io::GifIO, jpeg_io::JpegIO,
@@ -47,6 +49,8 @@ lazy_static! {
         Box::new(Mp3IO::new("")),
         Box::new(GifIO::new("")),
         Box::new(FlacIO::new("")),
+        #[cfg(feature = "unstable_plain_text")]
+        Box::new(PlainTextIO::new("")),
         Box::new(ZipIO::new("")),
     ];
 
@@ -351,6 +355,9 @@ pub mod tests {
 
         let pdf_supported = supported.iter().any(|s| s == "pdf");
         assert_eq!(pdf_supported, cfg!(feature = "pdf"));
+
+        let plain_text_supported = supported.iter().any(|s| s == "txt");
+        assert_eq!(plain_text_supported, cfg!(feature = "unstable_plain_text"));
 
         assert!(supported.iter().any(|s| s == "jpg"));
         assert!(supported.iter().any(|s| s == "jpeg"));
