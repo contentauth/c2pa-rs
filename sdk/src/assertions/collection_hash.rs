@@ -225,6 +225,10 @@ impl CollectionHash {
     {
         self.uris = HashMap::new();
         for (path, hash_range) in zip_uri_ranges(stream)? {
+            // Path needs to be a valid URI, so normalize.
+            // https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_fields_2
+            let path = PathBuf::from(path.to_string_lossy().replace('\\', "/"));
+
             let hash =
                 hash_stream_by_alg(&self.alg, stream, Some(vec![hash_range.clone()]), false)?;
 
@@ -298,12 +302,15 @@ impl CollectionHash {
 
         let uri_ranges = zip_uri_ranges(stream)?;
         for (path, uri_map) in &self.uris {
-            Self::validate_uri(path)?;
+            // Path needs to be a valid URI, so normalize.
+            // https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_fields_2
+            let path = PathBuf::from(path.to_string_lossy().replace('\\', "/"));
+            Self::validate_uri(&path)?;
 
             let hash = uri_map.hash.as_ref().ok_or_else(|| {
                 Error::C2PAValidation(ASSERTION_COLLECTIONHASH_MALFORMED.to_string())
             })?;
-            let hash_range = uri_ranges.get(path).cloned().ok_or_else(|| {
+            let hash_range = uri_ranges.get(&path).cloned().ok_or_else(|| {
                 Error::C2PAValidation(ASSERTION_COLLECTIONHASH_INCORRECT_FILE_COUNT.to_string())
             })?;
 
@@ -409,6 +416,61 @@ mod tests {
 
         let mut stream = Cursor::new(ZIP_SAMPLE1);
         restored.verify_zip_stream_hash(&mut stream, None)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_zip_uri_hash_separators_do_not_depend_on_operating_system() -> Result<()> {
+        // PathBuf separator depends on the platform (operating system).
+        // Here we run verification with paths having `/`, then `\`.
+        let nested = PathBuf::from("sample1/test1/test1.txt");
+        for possible_separator in ['/', '\\'] {
+            let mut hash_collection = gen_zip_collection_hash()?;
+            hash_collection.uris = std::mem::take(&mut hash_collection.uris)
+                .into_iter()
+                .map(|(path, uri_map)| {
+                    (
+                        PathBuf::from(
+                            path.to_string_lossy()
+                                .replace('/', &possible_separator.to_string()),
+                        ),
+                        uri_map,
+                    )
+                })
+                .collect();
+
+            let mut zip_sample_one_stream = Cursor::new(ZIP_SAMPLE1);
+            // An error here means there is a parsing issue due to separators.
+            hash_collection.verify_zip_stream_hash(&mut zip_sample_one_stream, None)?;
+
+            // Verify a hash mismatch is still detected.
+            let mut hash_collection = gen_zip_collection_hash()?;
+            let mut corrupted = false;
+            hash_collection.uris = std::mem::take(&mut hash_collection.uris)
+                .into_iter()
+                .map(|(path, mut uri_map)| {
+                    if path == nested {
+                        uri_map.hash = Some(vec![0; 32]);
+                        corrupted = true;
+                    }
+                    (
+                        PathBuf::from(
+                            path.to_string_lossy()
+                                .replace('/', &possible_separator.to_string()),
+                        ),
+                        uri_map,
+                    )
+                })
+                .collect();
+            assert!(corrupted);
+
+            let mut zip_sample_one_stream = Cursor::new(ZIP_SAMPLE1);
+            assert!(matches!(
+                hash_collection.verify_zip_stream_hash(&mut zip_sample_one_stream, None),
+                Err(Error::HashMismatch(_))
+            ));
+        }
 
         Ok(())
     }
@@ -586,6 +648,14 @@ mod tests {
 
     #[test]
     fn test_zip_hash() -> Result<()> {
+        // With `unstable_plain_text` enabled, `.txt` resolves to a real MIME type (see
+        // `mime::extension_to_mime`); otherwise it stays unrecognized.
+        let txt_format = if cfg!(feature = "unstable_plain_text") {
+            Some("text/plain".to_string())
+        } else {
+            None
+        };
+
         let mut stream = Cursor::new(ZIP_SAMPLE1);
 
         let mut collection = CollectionHash {
@@ -611,7 +681,7 @@ mod tests {
                     106, 248, 168, 169, 245, 207, 172, 29, 204, 80, 155, 37, 30, 186, 60
                 ]),
                 size: Some(47),
-                dc_format: None,
+                dc_format: txt_format.clone(),
                 data_types: None,
             })
         );
@@ -623,7 +693,7 @@ mod tests {
                     63, 175, 25, 6, 118, 200, 12, 188, 128, 67, 78, 249, 182, 242, 156
                 ]),
                 size: Some(57),
-                dc_format: None,
+                dc_format: txt_format.clone(),
                 data_types: None,
             })
         );
@@ -635,7 +705,7 @@ mod tests {
                     187, 230, 19, 242, 52, 212, 181, 104, 99, 179, 177, 81, 150, 33
                 ]),
                 size: Some(53),
-                dc_format: None,
+                dc_format: txt_format.clone(),
                 data_types: None,
             })
         );
@@ -647,7 +717,7 @@ mod tests {
                     106, 204, 158, 142, 176, 247, 251, 174, 145, 243, 12, 22, 151, 116
                 ]),
                 size: Some(68),
-                dc_format: None,
+                dc_format: txt_format.clone(),
                 data_types: None,
             })
         );
@@ -659,7 +729,7 @@ mod tests {
                     36, 28, 55, 23, 62, 109, 143, 182, 233, 99, 144, 23, 139, 9, 118
                 ]),
                 size: Some(56),
-                dc_format: None,
+                dc_format: txt_format.clone(),
                 data_types: None,
             })
         );

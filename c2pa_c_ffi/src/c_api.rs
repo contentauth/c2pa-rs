@@ -544,7 +544,8 @@ pub unsafe extern "C" fn c2pa_error_set_last(error_str: *const c_char) -> c_int 
 /// Reads from NULL-terminated C strings.
 #[no_mangle]
 #[deprecated(
-    note = "Use c2pa_settings_new() and c2pa_context_builder_set_settings() to configure a context explicitly."
+    since = "0.79.4",
+    note = "Use `c2pa_settings_new()` and `c2pa_context_builder_set_settings()` to configure a context explicitly. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
 )]
 pub unsafe extern "C" fn c2pa_load_settings(
     settings: *const c_char,
@@ -958,7 +959,10 @@ pub struct C2paSignerInfo {
 /// The string must not have been modified in C.
 /// The string can only be freed once and is invalid after this call.
 #[no_mangle]
-#[deprecated(note = "Use c2pa_free() instead, which works for all pointer types.")]
+#[deprecated(
+    since = "0.79.4",
+    note = "Use `c2pa_free()` instead, which works for all pointer types. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+)]
 pub unsafe extern "C" fn c2pa_release_string(s: *mut c_char) {
     cimpl_free!(s);
 }
@@ -1030,7 +1034,10 @@ pub unsafe extern "C" fn c2pa_free(ptr: *const c_void) -> c_int {
 /// The string must not have been modified in C.
 /// The string can only be freed once and is invalid after this call.
 #[no_mangle]
-#[deprecated(note = "Use c2pa_free() instead, which works for all pointer types.")]
+#[deprecated(
+    since = "0.79.4",
+    note = "Use `c2pa_free()` instead, which works for all pointer types. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+)]
 pub unsafe extern "C" fn c2pa_string_free(s: *mut c_char) {
     cimpl_free!(s);
 }
@@ -1110,7 +1117,8 @@ pub unsafe extern "C" fn c2pa_reader_from_context(context: *mut C2paContext) -> 
 /// stream must be a valid pointer to a C2paStream.
 #[no_mangle]
 #[deprecated(
-    note = "Use c2pa_reader_from_context() with an explicit context instead of relying on thread-local settings."
+    since = "0.79.4",
+    note = "Use `c2pa_reader_from_context()` with an explicit context instead of relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
 )]
 pub unsafe extern "C" fn c2pa_reader_from_stream(
     format: *const c_char,
@@ -1281,7 +1289,8 @@ pub unsafe extern "C" fn c2pa_reader_with_fragment(
 #[cfg(feature = "file_io")]
 #[no_mangle]
 #[deprecated(
-    note = "Use c2pa_reader_from_context() with an explicit context instead of relying on thread-local settings."
+    since = "0.79.4",
+    note = "Use `c2pa_reader_from_context()` with an explicit context instead of relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
 )]
 #[allow(deprecated)]
 pub unsafe fn c2pa_reader_from_file(path: *const c_char) -> *mut C2paReader {
@@ -1309,7 +1318,8 @@ pub unsafe fn c2pa_reader_from_file(path: *const c_char) -> *mut C2paReader {
 /// and it is no longer valid after that call.
 #[no_mangle]
 #[deprecated(
-    note = "Use c2pa_reader_from_context() then c2pa_reader_with_manifest_data_and_stream() instead."
+    since = "0.79.4",
+    note = "Use `c2pa_reader_from_context()` then `c2pa_reader_with_manifest_data_and_stream()` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
 )]
 pub unsafe extern "C" fn c2pa_reader_from_manifest_data_and_stream(
     format: *const c_char,
@@ -1340,7 +1350,10 @@ pub unsafe extern "C" fn c2pa_reader_from_manifest_data_and_stream(
 /// # Safety
 /// The C2paReader can only be freed once and is invalid after this call.
 #[no_mangle]
-#[deprecated(note = "Use c2pa_free() instead, which works for all pointer types.")]
+#[deprecated(
+    since = "0.79.4",
+    note = "Use `c2pa_free()` instead, which works for all pointer types. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+)]
 pub unsafe extern "C" fn c2pa_reader_free(reader_ptr: *mut C2paReader) {
     cimpl_free!(reader_ptr);
 }
@@ -1480,7 +1493,10 @@ pub unsafe extern "C" fn c2pa_reader_supported_mime_types(
 /// }
 /// ```
 #[no_mangle]
-#[deprecated(note = "Use c2pa_builder_from_context() then c2pa_builder_set_definition() instead.")]
+#[deprecated(
+    since = "0.79.4",
+    note = "Use `c2pa_builder_from_context()` then `c2pa_builder_set_definition()` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+)]
 pub unsafe extern "C" fn c2pa_builder_from_json(manifest_json: *const c_char) -> *mut C2paBuilder {
     let manifest_json = cstr_or_return_null!(manifest_json);
     // Legacy C API: inherits thread-local settings set by c2pa_load_settings.
@@ -1540,7 +1556,10 @@ pub unsafe extern "C" fn c2pa_builder_from_context(context: *mut C2paContext) ->
 /// }
 /// ```
 #[no_mangle]
-#[deprecated(note = "Use c2pa_builder_from_context() then c2pa_builder_with_archive() instead.")]
+#[deprecated(
+    since = "0.79.4",
+    note = "Use `c2pa_builder_from_context()` then `c2pa_builder_with_archive()` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+)]
 #[allow(deprecated)]
 pub unsafe extern "C" fn c2pa_builder_from_archive(stream: *mut C2paStream) -> *mut C2paBuilder {
     let stream = deref_mut_or_return_null!(stream, C2paStream);
@@ -1573,7 +1592,10 @@ pub unsafe extern "C" fn c2pa_builder_supported_mime_types(
 /// # Safety
 /// The C2paBuilder can only be freed once and is invalid after this call.
 #[no_mangle]
-#[deprecated(note = "Use c2pa_free() instead, which works for all pointer types.")]
+#[deprecated(
+    since = "0.79.4",
+    note = "Use `c2pa_free()` instead, which works for all pointer types. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+)]
 pub unsafe extern "C" fn c2pa_builder_free(builder_ptr: *mut C2paBuilder) {
     cimpl_free!(builder_ptr);
 }
@@ -2100,7 +2122,10 @@ pub unsafe extern "C" fn c2pa_builder_sign_context(
 /// # Safety
 /// The bytes can only be freed once and are invalid after this call.
 #[no_mangle]
-#[deprecated(note = "Use c2pa_free() instead, which works for all pointer types.")]
+#[deprecated(
+    since = "0.79.4",
+    note = "Use `c2pa_free()` instead, which works for all pointer types. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+)]
 pub unsafe extern "C" fn c2pa_manifest_bytes_free(manifest_bytes_ptr: *const c_uchar) {
     cimpl_free!(manifest_bytes_ptr);
 }
@@ -2123,6 +2148,10 @@ pub unsafe extern "C" fn c2pa_manifest_bytes_free(manifest_bytes_ptr: *const c_u
 /// If manifest_bytes_ptr is not NULL, the returned value MUST be released by calling c2pa_free
 /// and it is no longer valid after that call.
 #[no_mangle]
+#[deprecated(
+    since = "0.91.0",
+    note = "Use `c2pa_builder_placeholder()` instead, which also supports dynamic assertions (e.g., CAWG identity). Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+)]
 pub unsafe extern "C" fn c2pa_builder_data_hashed_placeholder(
     builder_ptr: *mut C2paBuilder,
     reserved_size: usize,
@@ -2132,6 +2161,7 @@ pub unsafe extern "C" fn c2pa_builder_data_hashed_placeholder(
     ptr_or_return_int!(manifest_bytes_ptr);
     let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
     let format = cstr_or_return_int!(format);
+    #[allow(deprecated)]
     let result = builder.data_hashed_placeholder(reserved_size, &format);
     let manifest_bytes = ok_or_return_int!(result);
     let len = manifest_bytes.len() as i64;
@@ -2162,6 +2192,10 @@ pub unsafe extern "C" fn c2pa_builder_data_hashed_placeholder(
 /// If manifest_bytes_ptr is not NULL, the returned value MUST be released by calling c2pa_free
 /// and it is no longer valid after that call.
 #[no_mangle]
+#[deprecated(
+    since = "0.91.0",
+    note = "Use `c2pa_builder_update_hash_from_stream()` and `c2pa_builder_sign_embeddable()` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+)]
 pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
     builder_ptr: *mut C2paBuilder,
     signer_ptr: *mut C2paSigner,
@@ -2186,6 +2220,7 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
             .map_err(Error::from_c2pa_error));
     }
 
+    #[allow(deprecated)]
     let result =
         builder.sign_data_hashed_embeddable(c2pa_signer.signer.as_ref(), &data_hash, &format);
 
@@ -2530,7 +2565,8 @@ pub unsafe extern "C" fn c2pa_builder_update_hash_from_stream(
 /// and it is no longer valid after that call.
 #[no_mangle]
 #[deprecated(
-    note = "Use c2pa_builder_compose_manifest() instead, so custom asset I/O handlers registered on the builder's Context are consulted. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    since = "0.91.0",
+    note = "Use `c2pa_builder_compose_manifest()` instead, so custom asset I/O handlers registered on the builder's Context are consulted. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
 )]
 pub unsafe extern "C" fn c2pa_format_embeddable(
     format: *const c_char,
@@ -2964,7 +3000,8 @@ pub unsafe extern "C" fn c2pa_signer_from_info(signer_info: &C2paSignerInfo) -> 
 /// and it is no longer valid after that call.
 #[no_mangle]
 #[deprecated(
-    note = "Use c2pa_context_builder_set_signer() to configure a signer on a context instead."
+    since = "0.79.4",
+    note = "Use `c2pa_context_builder_set_signer()` to configure a signer on a context instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
 )]
 pub unsafe extern "C" fn c2pa_signer_from_settings() -> *mut C2paSigner {
     // Legacy C API: reads signer configuration from thread-local settings (set by c2pa_load_settings).
@@ -3000,7 +3037,10 @@ pub unsafe extern "C" fn c2pa_signer_reserve_size(signer_ptr: *mut C2paSigner) -
 /// # Safety
 /// The C2paSigner can only be freed once and is invalid after this call.
 #[no_mangle]
-#[deprecated(note = "Use c2pa_free() instead, which works for all pointer types.")]
+#[deprecated(
+    since = "0.79.4",
+    note = "Use `c2pa_free()` instead, which works for all pointer types. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+)]
 pub unsafe extern "C" fn c2pa_signer_free(signer_ptr: *const C2paSigner) {
     cimpl_free!(signer_ptr);
 }
@@ -3033,7 +3073,10 @@ pub unsafe extern "C" fn c2pa_ed25519_sign(
 ///
 /// # Safety
 /// The signature can only be freed once and is invalid after this call.
-#[deprecated(note = "Use c2pa_free() instead, which works for all pointer types.")]
+#[deprecated(
+    since = "0.79.4",
+    note = "Use `c2pa_free()` instead, which works for all pointer types. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+)]
 pub unsafe extern "C" fn c2pa_signature_free(signature_ptr: *const u8) {
     cimpl_free!(signature_ptr);
 }
