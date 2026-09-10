@@ -7,6 +7,7 @@ The following table summarizes the supported media (asset) file formats. This in
 > When the internal header/MIME disagrees with the extension, the SDK uses the extension, not the internal MIME/metadata.
 > If there is no file extension nor MIME type, then the SDK "sniffs the bytes" of the asset using [`infer`](https://docs.rs/infer/latest/infer/) to determine the asset type.
 
+`txt` requires the non-default `unstable_plain_text` feature.
 
 | Extensions      | MIME type                                                                      |
 | --------------- | ------------------------------------------------------------------------------- |
@@ -28,5 +29,6 @@ The following table summarizes the supported media (asset) file formats. This in
 | `png`           | `image/png`                                                                     |
 | `svg`           | `image/svg+xml`                                                                 |
 | `tif`, `tiff`   | `image/tiff`                                                                    |
+| `txt`           | `text/plain`                                                                    |
 | `wav`           | `audio/wav`                                                                     |
 | `webp`          | `image/webp`                                                                    |

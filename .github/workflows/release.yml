@@ -8,11 +8,11 @@ name: Release-plz publish
 # branches (which bake before promotion). A push to a release-line branch
 # happens when a release-plz release PR (see release-pr.yml) is merged.
 #
-# release-plz creates the `c2pa-v*` and `c2patool-v*` tags here; those tags then
-# drive the binary builds in library-release.yml and c2patool-release.yml. This
-# workflow no longer builds binaries itself -- keeping binary builds tag-driven
-# means release-candidate builds (which never reach this workflow) produce the
-# same binaries via release-rc.yml's tags.
+# release-plz creates the `c2pa-v*` tag here; that tag then drives the binary
+# builds in library-release.yml. This workflow no longer builds binaries
+# itself -- keeping binary builds tag-driven means release-candidate builds
+# (which never reach this workflow) produce the same binaries via
+# release-rc.yml's tags.
 
 permissions:
   pull-requests: write

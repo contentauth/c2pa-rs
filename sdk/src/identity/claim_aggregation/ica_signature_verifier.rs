@@ -35,6 +35,7 @@ use crate::{
         SignatureVerifier, SignerPayload, ValidationError,
     },
     log_current_item,
+    settings::TrustListKind,
     status_tracker::StatusTracker,
     validation_status::{
         TIMESTAMP_MALFORMED, TIMESTAMP_MISMATCH, TIMESTAMP_TRUSTED, TIMESTAMP_VALIDATED,
@@ -83,7 +84,7 @@ impl SignatureVerifier for IcaSignatureVerifier<'_> {
 
         let mut ok = true;
 
-        self.check_content_type(&sign1, status_tracker, &mut ok)?;
+        ok &= self.check_content_type(&sign1, status_tracker)?;
 
         let payload_bytes = self.payload_bytes(&sign1, status_tracker)?;
 
@@ -102,7 +103,7 @@ impl SignatureVerifier for IcaSignatureVerifier<'_> {
         // issuer is one we've been configured to trust. This is scoped to this
         // identity assertion and does not affect the enclosing manifest's state.
         if signature_ok {
-            self.check_issuer_trust(&ica_credential, status_tracker, &mut ok)?;
+            ok &= self.check_issuer_trust(&ica_credential, status_tracker)?;
         }
 
         let local_ctp = CertificateTrustPolicy::passthrough();
@@ -136,7 +137,7 @@ impl SignatureVerifier for IcaSignatureVerifier<'_> {
                 self.handle_non_fatal_error(err, status_tracker)
             })?;
 
-        self.cross_check_signer_payload(&ica_credential, signer_payload, status_tracker, &mut ok)?;
+        ok &= self.cross_check_signer_payload(&ica_credential, signer_payload, status_tracker)?;
 
         if ok {
             log_current_item!(
@@ -166,7 +167,7 @@ impl SignatureVerifier for IcaSignatureVerifier<'_> {
         // variable to keep track of whether any error statuses are logged.
         let mut ok = true;
 
-        self.check_content_type(&sign1, status_tracker, &mut ok)?;
+        ok &= self.check_content_type(&sign1, status_tracker)?;
 
         // Interpret the unprotected payload, which should be the raw VC.
         let payload_bytes = self.payload_bytes(&sign1, status_tracker)?;
@@ -190,7 +191,7 @@ impl SignatureVerifier for IcaSignatureVerifier<'_> {
         // issuer is one we've been configured to trust. This is scoped to this
         // identity assertion and does not affect the enclosing manifest's state.
         if signature_ok {
-            self.check_issuer_trust(&ica_credential, status_tracker, &mut ok)?;
+            ok &= self.check_issuer_trust(&ica_credential, status_tracker)?;
         }
 
         // todo: no trust list support yet for CAWG so passthrough for now
@@ -232,7 +233,7 @@ impl SignatureVerifier for IcaSignatureVerifier<'_> {
 
         // TO DO (CAI-7993): CAWG SDK should check ICA issuer revocation status.
 
-        self.cross_check_signer_payload(&ica_credential, signer_payload, status_tracker, &mut ok)?;
+        ok &= self.cross_check_signer_payload(&ica_credential, signer_payload, status_tracker)?;
 
         // TO DO (CAI-7994): CAWG SDK should inspect verifiedIdentities array.
 
@@ -349,8 +350,7 @@ impl<'a> IcaSignatureVerifier<'a> {
         &self,
         sign1: &CoseSign1,
         status_tracker: &mut StatusTracker,
-        ok: &mut bool,
-    ) -> Result<(), ValidationError<IcaValidationError>> {
+    ) -> Result<bool, ValidationError<IcaValidationError>> {
         if let Some(ref cty) = sign1.protected.header.content_type {
             match cty {
                 coset::ContentType::Text(ref cty) => {
@@ -366,7 +366,7 @@ impl<'a> IcaSignatureVerifier<'a> {
                         .validation_status("cawg.ica.invalid_content_type")
                         .failure(status_tracker, err.clone())?;
 
-                        *ok = false;
+                        return Ok(false);
                     }
                 }
 
@@ -382,7 +382,7 @@ impl<'a> IcaSignatureVerifier<'a> {
                     .validation_status("cawg.ica.invalid_content_type")
                     .failure(status_tracker, err.clone())?;
 
-                    *ok = false;
+                    return Ok(false);
                 }
             }
         } else {
@@ -395,10 +395,10 @@ impl<'a> IcaSignatureVerifier<'a> {
             .validation_status("cawg.ica.invalid_content_type")
             .failure(status_tracker, err.clone())?;
 
-            *ok = false;
+            return Ok(false);
         }
 
-        Ok(())
+        Ok(true)
     }
 
     fn payload_bytes<'b>(
@@ -600,22 +600,28 @@ impl<'a> IcaSignatureVerifier<'a> {
         &self,
         ica_credential: &IcaCredential,
         status_tracker: &mut StatusTracker,
-        ok: &mut bool,
-    ) -> Result<(), ValidationError<IcaValidationError>> {
+    ) -> Result<bool, ValidationError<IcaValidationError>> {
         let issuer_id = Did::new(&ica_credential.issuer)?;
         let (primary_did, _fragment) = issuer_id.split_fragment();
         let primary_did: &str = &primary_did;
 
-        if let Some(trusted_issuers) = &self.context.settings().cawg_trust.trusted_ica_issuers {
-            if trusted_issuers.iter().any(|t| t.as_str() == primary_did) {
-                return Ok(());
+        if let Some(anchors) = &self.context.settings().trust.anchors {
+            for anchor in anchors
+                .iter()
+                .filter(|a| a.trust_kind == TrustListKind::CAWG)
+            {
+                // check the installed CAWG anchors
+                if let Some(trusted_issuers) = &anchor.trusted_ica_issuers {
+                    if trusted_issuers.iter().any(|t| t.as_str() == primary_did) {
+                        return Ok(true);
+                    }
+                }
             }
         }
 
         // Withhold the `cawg.ica.credential_valid` success code so the identity
         // is not surfaced as validated...
-        *ok = false;
-
+        //
         // ...but record the untrusted issuer only informationally. It is scoped
         // to this identity assertion and must not, on its own, fail the enclosing
         // manifest (see [`ValidationResults::validation_state`]).
@@ -626,7 +632,7 @@ impl<'a> IcaSignatureVerifier<'a> {
         .validation_status("cawg.ica.untrusted_issuer")
         .informational(status_tracker);
 
-        Ok(())
+        Ok(false)
     }
 
     fn handle_signature_error(
@@ -866,8 +872,7 @@ impl<'a> IcaSignatureVerifier<'a> {
         ica_credential: &IcaCredential,
         signer_payload: &SignerPayload,
         status_tracker: &mut StatusTracker,
-        ok: &mut bool,
-    ) -> Result<(), ValidationError<IcaValidationError>> {
+    ) -> Result<bool, ValidationError<IcaValidationError>> {
         let subject = ica_credential.credential_subjects.first();
 
         // The `DynamicAssertion` mechanism doesn't always populate the `alg` field when
@@ -892,8 +897,6 @@ impl<'a> IcaSignatureVerifier<'a> {
         signer_payload.referenced_assertions = new_ras;
 
         if signer_payload != subject.c2pa_asset {
-            *ok = false;
-
             log_current_item!(
                 "c2paAsset does not match signer_payload",
                 "IcaSignatureVerifier::check_signature"
@@ -903,8 +906,10 @@ impl<'a> IcaSignatureVerifier<'a> {
                 status_tracker,
                 ValidationError::SignatureError(IcaValidationError::SignerPayloadMismatch),
             )?;
+
+            return Ok(false);
         }
 
-        Ok(())
+        Ok(true)
     }
 }
