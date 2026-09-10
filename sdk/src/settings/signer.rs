@@ -22,7 +22,11 @@ use crate::{
     crypto::cert_chain_pem_to_der,
     dynamic_assertion::DynamicAssertion,
     http::{SyncGenericResolver, SyncHttpResolver},
-    identity::{builder::IdentityAssertionBuilder, x509::X509CredentialHolder},
+    identity::{
+        builder::{CredentialHolder, IdentityAssertionBuilder, IdentityBuilderError},
+        x509::X509CredentialHolder,
+        SignerPayload,
+    },
     settings::{Settings, SettingsValidate},
     signer::OwnedSignerWrapper,
     BoxedSigner, Error, Result, Signer,
@@ -75,9 +79,15 @@ pub enum SignerSettings {
 
 impl SignerSettings {
     // TODO: add async signer
-    /// Returns the constructed signer from the [Settings::signer] field.
+    /// Returns the constructed signer from the thread-local `signer` settings field.
     ///
     /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings].
+    ///
+    /// Configure the signer via a [`Context`](crate::Context) passed explicitly to
+    /// [`Builder::from_context`](crate::Builder::from_context) instead.
+    #[deprecated(
+        note = "Configure the signer via `Context` and pass it to `Builder::from_context` instead of using thread-local signer settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn signer() -> Result<BoxedSigner> {
         let signer_info = match Settings::get_thread_local_value::<Option<SignerSettings>>("signer")
         {
@@ -315,6 +325,128 @@ impl Signer for CawgX509IdentitySigner {
         }
 
         vec![Box::new(iab)]
+    }
+}
+
+/// Shares one [`CredentialHolder`] between the identity assertion builders
+/// handed out on every [`Signer::dynamic_assertions`] call.
+struct ArcCredentialHolder(Arc<dyn CredentialHolder + Send + Sync>);
+
+impl CredentialHolder for ArcCredentialHolder {
+    fn sig_type(&self) -> &'static str {
+        self.0.sig_type()
+    }
+
+    fn reserve_size(&self) -> usize {
+        self.0.reserve_size()
+    }
+
+    fn sign(
+        &self,
+        signer_payload: &SignerPayload,
+    ) -> std::result::Result<Vec<u8>, IdentityBuilderError> {
+        self.0.sign(signer_payload)
+    }
+}
+
+/// A [`Signer`] that signs the C2PA claim with an inner signer and adds one
+/// CAWG identity assertion produced by an arbitrary [`CredentialHolder`]
+/// (for example an identity claims aggregation credential fetched from an
+/// issuer at signing time).
+///
+/// Unlike [`CawgX509IdentitySigner`], this wrapper keeps whatever dynamic
+/// assertions the inner signer already contributes, so wrapping an X.509
+/// identity signer yields a manifest with both identity assertions.
+pub(crate) struct CawgIdentitySigner {
+    c2pa_signer: BoxedSigner,
+    credential_holder: Arc<dyn CredentialHolder + Send + Sync>,
+    referenced_assertions: Vec<String>,
+    roles: Vec<String>,
+}
+
+impl CawgIdentitySigner {
+    pub(crate) fn new(
+        c2pa_signer: BoxedSigner,
+        credential_holder: Box<dyn CredentialHolder + Send + Sync>,
+        referenced_assertions: &[&str],
+        roles: &[&str],
+    ) -> Self {
+        Self {
+            c2pa_signer,
+            credential_holder: Arc::from(credential_holder),
+            referenced_assertions: referenced_assertions
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            roles: roles.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+}
+
+impl Signer for CawgIdentitySigner {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+        Signer::sign(&self.c2pa_signer, data)
+    }
+
+    fn alg(&self) -> SigningAlg {
+        Signer::alg(&self.c2pa_signer)
+    }
+
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        self.c2pa_signer.certs()
+    }
+
+    fn reserve_size(&self) -> usize {
+        Signer::reserve_size(&self.c2pa_signer)
+    }
+
+    fn time_authority_url(&self) -> Option<String> {
+        self.c2pa_signer.time_authority_url()
+    }
+
+    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        self.c2pa_signer.timestamp_request_headers()
+    }
+
+    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+        self.c2pa_signer.timestamp_request_body(message)
+    }
+
+    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        self.c2pa_signer.send_timestamp_request(message)
+    }
+
+    fn ocsp_val(&self) -> Option<Vec<u8>> {
+        self.c2pa_signer.ocsp_val()
+    }
+
+    fn direct_cose_handling(&self) -> bool {
+        self.c2pa_signer.direct_cose_handling()
+    }
+
+    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+        let mut assertions = self.c2pa_signer.dynamic_assertions();
+
+        let mut iab = IdentityAssertionBuilder::for_credential_holder(ArcCredentialHolder(
+            Arc::clone(&self.credential_holder),
+        ));
+
+        if !self.referenced_assertions.is_empty() {
+            let refs: Vec<&str> = self
+                .referenced_assertions
+                .iter()
+                .map(|s| s.as_str())
+                .collect();
+            iab.add_referenced_assertions(&refs);
+        }
+
+        if !self.roles.is_empty() {
+            let roles: Vec<&str> = self.roles.iter().map(|s| s.as_str()).collect();
+            iab.add_roles(&roles);
+        }
+
+        assertions.push(Box::new(iab));
+        assertions
     }
 }
 

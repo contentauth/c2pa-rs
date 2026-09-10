@@ -1280,6 +1280,10 @@ impl Claim {
     }
 
     /// Deprecated in  C2PA 2.4 or greater compatible manifests. Replaced by equiveaent value in ClaimGeneratorInfo.
+    #[deprecated(
+        since = "0.91.0",
+        note = "The `specVersion` claim field is deprecated from C2PA spec version 2.4. Use `ClaimGeneratorInfo::set_spec_version` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn set_spec_version(&mut self, spec_version: Option<String>) {
         self.spec_version = spec_version;
     }
@@ -1842,6 +1846,20 @@ impl Claim {
         self.update_assertion(
             replace_with,
             |_: &ClaimAssertion| true,
+            |_: &ClaimAssertion, a: Assertion| Ok(a),
+        )
+    }
+
+    /// Replace the assertion with the same label as `replace_with` AND the
+    /// given instance number (0 = the first `label`, 1 = `label__1`, ...).
+    pub(crate) fn replace_assertion_instance(
+        &mut self,
+        replace_with: Assertion,
+        instance: usize,
+    ) -> Result<()> {
+        self.update_assertion(
+            replace_with,
+            |ca: &ClaimAssertion| ca.instance() == instance,
             |_: &ClaimAssertion, a: Assertion| Ok(a),
         )
     }
@@ -2780,6 +2798,9 @@ impl Claim {
                 }
 
                 // check watermarks for required softbinding
+                // `c2pa_action::WATERMARKED` is deprecated for producing new content (spec 2.2+),
+                // but validators must still recognize it in older manifests.
+                #[allow(deprecated)]
                 if action.action() == c2pa_action::WATERMARKED
                     || action.action() == c2pa_action::WATERMARKED_BOUND
                 {
@@ -4767,6 +4788,7 @@ pub(crate) fn check_ocsp_status(
 pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
+    #![allow(deprecated)]
 
     use super::*;
     use crate::{resource_store::UriOrResource, utils::test::create_test_claim, DigitalSourceType};

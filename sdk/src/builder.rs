@@ -489,7 +489,8 @@ impl Builder {
     /// # Returns
     /// * A new [`Builder`].
     #[deprecated(
-        note = "Use `Builder::default()` for default settings, or `Builder::from_context(context)` and pass settings in the `Context`."
+        since = "0.79.4",
+        note = "Use `Builder::default()` for default settings, or `Builder::from_context(context)` and pass settings in the `Context`. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     pub fn new() -> Self {
         // Legacy behavior: explicitly get global settings for backward compatibility
@@ -632,7 +633,8 @@ impl Builder {
     /// # Errors
     /// * Returns an [`Error`] if the JSON is malformed or incorrect.
     #[deprecated(
-        note = "Use `Builder::from_context(context).with_definition(json)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+        since = "0.79.4",
+        note = "Use `Builder::from_context(context).with_definition(json)` instead, passing a `Context` explicitly rather than relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     pub fn from_json(json: &str) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
@@ -1642,7 +1644,8 @@ impl Builder {
     /// # }
     /// ```
     #[deprecated(
-        note = "Use `Builder::from_context(context).with_archive(stream)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+        since = "0.79.4",
+        note = "Use `Builder::from_context(context).with_archive(stream)` instead, passing a `Context` explicitly rather than relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     #[allow(deprecated)]
     pub fn from_archive(stream: impl Read + Seek + Send) -> Result<Self> {
@@ -2469,6 +2472,10 @@ impl Builder {
     /// * The bytes of the `c2pa_manifest` placeholder.
     /// # Errors
     /// * Returns an [`Error`] if the placeholder cannot be created.
+    #[deprecated(
+        since = "0.91.0",
+        note = "Use `Builder::placeholder` instead, which also supports dynamic assertions (e.g., CAWG identity). Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn data_hashed_placeholder(
         &mut self,
         reserve_size: usize,
@@ -3195,6 +3202,10 @@ impl Builder {
     /// * `source` - The stream to read from.
     /// # Returns
     /// * The bytes of the `c2pa_manifest` that was created (prep-formatted).
+    #[deprecated(
+        since = "0.91.0",
+        note = "Use `Builder::update_hash_from_stream` and `Builder::sign_embeddable` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     #[async_generic(async_signature(
         &mut self,
         signer: &dyn AsyncSigner,
@@ -3239,6 +3250,10 @@ impl Builder {
     /// * `signer` - The signer to use.
     /// # Returns
     /// * The bytes of the c2pa_manifest that was created (prep-formatted).
+    #[deprecated(
+        since = "0.91.0",
+        note = "Use `Builder::update_hash_from_stream` and `Builder::sign_embeddable` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     #[async_generic(async_signature(
         &mut self,
         signer: &dyn AsyncSigner,
@@ -3646,6 +3661,7 @@ impl Builder {
     /// # Errors
     /// * Returns an [`Error`] if the manifest cannot be converted.
     #[deprecated(
+        since = "0.91.0",
         note = "Use `Builder::compose_manifest` on a `Builder` instance instead; without a `Context`, custom asset I/O handlers registered via `Context::with_io_handler` are not consulted. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     pub fn composed_manifest(manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
@@ -5321,6 +5337,110 @@ mod tests {
         assert_eq!(
             manifest_store.active_manifest().unwrap().title().unwrap(),
             "Test_Manifest"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "unstable_plain_text")]
+    fn test_builder_sign_plain_text() {
+        let mut source = Cursor::new(b"Plain text provenance, end to end.\n".to_vec());
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
+        builder
+            .add_ingredient_from_stream(parent_json(), "text/plain", &mut source)
+            .unwrap();
+        builder
+            .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
+            .unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        builder
+            .sign(signer.as_ref(), "text/plain", &mut source, &mut dest)
+            .unwrap();
+
+        dest.rewind().unwrap();
+        let manifest_store = Reader::default()
+            .with_stream("text/plain", &mut dest)
+            .unwrap();
+        assert_eq!(
+            manifest_store.validation_state(),
+            ValidationState::Trusted,
+            "signed text/plain did not validate as Trusted"
+        );
+        assert_eq!(
+            manifest_store.active_manifest().unwrap().title().unwrap(),
+            "Test_Manifest"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "unstable_plain_text")]
+    fn test_tampered_plain_text_fails_validation() {
+        let mut source = Cursor::new(b"Original TAMPER_ME body.\n".to_vec());
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
+        builder
+            .add_ingredient_from_stream(parent_json(), "text/plain", &mut source)
+            .unwrap();
+        builder
+            .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
+            .unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+        builder
+            .sign(signer.as_ref(), "text/plain", &mut source, &mut dest)
+            .unwrap();
+
+        // Same-length replacement keeps the wrapper's byte offset stable, so only the
+        // visible content changes.
+        let signed = String::from_utf8(dest.into_inner()).unwrap();
+        let tampered = signed.replace("TAMPER_ME", "tampered!");
+        assert_ne!(tampered, signed, "replacement must change the bytes");
+
+        let mut tampered_stream = Cursor::new(tampered.into_bytes());
+        let manifest_store = Reader::default()
+            .with_stream("text/plain", &mut tampered_stream)
+            .unwrap();
+        assert_ne!(
+            manifest_store.validation_state(),
+            ValidationState::Trusted,
+            "tampered plain text must not validate as Trusted"
+        );
+    }
+
+    /// The reason `PlainTextIO::write_cai` normalizes to NFC before embedding: content
+    /// that arrives decomposed (NFD) must still sign and validate as `Trusted`, proving
+    /// the generic raw-byte hash engine agrees with the A.8-mandated NFC hash end to end
+    /// (asset_handlers::plain_text_io has the unit-level version of this argument).
+    #[test]
+    #[cfg(feature = "unstable_plain_text")]
+    fn test_builder_sign_plain_text_nfd_input_validates_trusted() {
+        // "café" written NFD: 'e' + U+0301 combining acute accent, instead of precomposed é.
+        let nfd_source = "cafe\u{0301} notes, decomposed on disk.\n";
+        let mut source = Cursor::new(nfd_source.as_bytes().to_vec());
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
+        builder
+            .add_ingredient_from_stream(parent_json(), "text/plain", &mut source)
+            .unwrap();
+        builder
+            .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
+            .unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+        builder
+            .sign(signer.as_ref(), "text/plain", &mut source, &mut dest)
+            .unwrap();
+
+        dest.rewind().unwrap();
+        let manifest_store = Reader::default()
+            .with_stream("text/plain", &mut dest)
+            .unwrap();
+        assert_eq!(
+            manifest_store.validation_state(),
+            ValidationState::Trusted,
+            "NFD-decomposed input must still validate as Trusted"
         );
     }
 

@@ -42,6 +42,11 @@ unstable_builder_filter = []
 # semantic-versioning stability guarantees and may change or be removed in any release.
 # See docs/experimental-features.md and https://github.com/contentauth/c2pa-rs/issues/2507.
 unstable_live_video = []
+# Native plain-text asset handler (C2PA A.8 Unicode-variation-selector wrapper), implemented
+# in-tree with no third-party C2PA-text crate; the only dependency is unicode-normalization for
+# NFC. Experimental feature: exempt from the crate's usual semantic-versioning stability
+# guarantees and may change or be removed in any release. See docs/experimental-features.md.
+unstable_plain_text = ["dep:unicode-normalization"]
 file_io = []
 fetch_remote_manifests = ["dep:wasi"]
 json_schema = ["dep:schemars"]
@@ -100,7 +105,7 @@ asn1-rs = "0.7.2"
 async-generic = "1.1"
 async-trait = "0.1.89"
 atree = "0.5.4"
-base64 = "0.22.1"
+base64 = "0.23.1"
 bcder = "0.7.6"
 bytes = "1.11.1"
 brotli = "7.0.0"
@@ -162,6 +167,7 @@ tempfile = "3.27.0"
 thiserror = "2.0.18"
 toml = "1.1.2"
 url = "2.5.8"
+unicode-normalization = { version = "0.1", optional = true }
 uuid = { version = "1.23.2", features = ["serde", "v4"] }
 web-time = "1.1"
 x509-parser = "0.18.1"
