@@ -1317,8 +1317,8 @@ fn fragment_with_no_init_hash_is_rejected() {
         .verify_stream_segment(&mut init_stream, &mut fragment_stream, None)
         .expect_err("a fragment matching an initHash-less MerkleMap must be rejected");
     assert!(
-        matches!(err, c2pa::Error::HashMismatch(_)),
-        "expected HashMismatch, got: {err:?}"
+        matches!(err, c2pa::Error::C2PAValidation(_)),
+        "expected C2PAValidation (bmffHash malformed), got: {err:?}"
     );
 }
 
@@ -1362,7 +1362,7 @@ fn fragment_files_with_no_init_hash_is_rejected() {
         .verify_stream_segments(&mut init_stream, &vec![frag_path], None)
         .expect_err("a fragment matching an initHash-less MerkleMap must be rejected");
     assert!(
-        matches!(err, c2pa::Error::HashMismatch(_)),
-        "expected HashMismatch, got: {err:?}"
+        matches!(err, c2pa::Error::C2PAValidation(_)),
+        "expected C2PAValidation (bmffHash malformed), got: {err:?}"
     );
 }

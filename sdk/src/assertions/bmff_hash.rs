@@ -1683,10 +1683,10 @@ impl BmffHash {
                                 return Err(Error::HashMismatch("Fragment not valid".to_string()));
                             }
                         } else {
-                            // A fragmented BMFF MerkleMap must carry an initHash; without
-                            // it the fragment would go entirely unverified.
-                            return Err(Error::HashMismatch(
-                                "BMFF fragment MerkleMap missing required initHash".to_string(),
+                            // A fragmented BMFF MerkleMap must carry an initHash; a
+                            // missing required field is a malformed assertion.
+                            return Err(Error::C2PAValidation(
+                                ASSERTION_BMFFHASH_MALFORMED.to_string(),
                             ));
                         }
                     } else {
@@ -1809,10 +1809,10 @@ impl BmffHash {
                             return Err(Error::HashMismatch("Fragment not valid".to_string()));
                         }
                     } else {
-                        // A fragmented BMFF MerkleMap must carry an initHash; without
-                        // it the fragment would go entirely unverified.
-                        return Err(Error::HashMismatch(
-                            "BMFF fragment MerkleMap missing required initHash".to_string(),
+                        // A fragmented BMFF MerkleMap must carry an initHash; a
+                        // missing required field is a malformed assertion.
+                        return Err(Error::C2PAValidation(
+                            ASSERTION_BMFFHASH_MALFORMED.to_string(),
                         ));
                     }
                 } else {
