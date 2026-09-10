@@ -164,48 +164,6 @@ jobs:
           verbose: true
           files: ./lcov-openssl.filtered.info,./lcov-rust_native_crypto.filtered.info
 
-  tests-cli:
-    name: Unit tests (c2patool)
-    needs: get-features
-
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
-        with:
-          toolchain: stable
-          components: llvm-tools-preview
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2.82.9
-        with:
-          tool: cargo-llvm-cov
-
-      - name: Generate code coverage
-        env:
-          RUST_BACKTRACE: "1"
-          FEATURES: ${{needs.get-features.outputs.openssl-features}}
-        run: |
-          cargo llvm-cov --bins --features "$FEATURES" --lcov --output-path lcov.info
-
-      # Tokens aren't available for PRs originating from forks,
-      # so we don't attempt to upload code coverage in that case.
-      - name: Upload code coverage results
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: true
-          verbose: true
-          files: ./lcov-openssl.info,./lcov-rust_native_crypto.info
-
   tests-windows-arm-openssl:
     name: Unit tests (Windows ARM, OpenSSL)
     needs: get-features
@@ -326,11 +284,6 @@ jobs:
           RUSTDOCFLAGS: -Dwarnings
         run: cargo doc -p c2pa-c-ffi --no-deps --all-features
 
-      - name: c2patool docs
-        env:
-          RUSTDOCFLAGS: -Dwarnings
-        run: cargo doc -p c2patool --no-deps --all-features
-
   doc-tests:
     name: Doc tests (requires nightly Rust)
     needs: get-features
@@ -406,23 +359,6 @@ jobs:
       - name: "`cargo check` with default features"
         run: cargo check
 
-  cargo-lock:
-    name: Cargo.lock is up to date
-
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
-        with:
-          toolchain: stable
-
-      - name: Check that Cargo.lock is up to date
-        run: cargo check --locked
-
   tests-wasm:
     name: Unit tests (Wasm)
     needs: get-features
@@ -444,7 +380,7 @@ jobs:
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
 
-      - name: Extract wasm-bindgen version from Cargo.lock
+      - name: Extract wasm-bindgen version
         id: wasm-bindgen-version
         run: |
           VERSION=$(cargo metadata --format-version 1 | jq -r '.packages[] | select(.name == "wasm-bindgen") | .version')
