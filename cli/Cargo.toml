@@ -20,6 +20,9 @@ default = ["networking"]
 networking = [
     "c2pa/default_http"
 ]
+# Experimental C2PA Live Video CLI subcommands (`live-video`, `live-video-sign`). Not
+# enabled by default; see docs/experimental-features.md in the workspace root.
+unstable_live_video = ["c2pa/unstable_live_video"]
 
 [dependencies]
 anyhow = "1.0"

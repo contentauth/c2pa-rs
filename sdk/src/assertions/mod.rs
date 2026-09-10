@@ -103,3 +103,13 @@ pub use cloud_data::{CloudData, HashedExtUri};
 
 mod external_reference;
 pub use external_reference::{ExternalReference, ExternalReferenceLocation, UnhashedExtUri};
+
+#[cfg(feature = "unstable_live_video")]
+mod live_video_segment;
+#[cfg(feature = "unstable_live_video")]
+pub use live_video_segment::{ContinuityMethod, LiveVideoSegment};
+
+#[cfg(feature = "unstable_live_video")]
+mod session_keys;
+#[cfg(feature = "unstable_live_video")]
+pub use session_keys::{SessionKey, SessionKeys};

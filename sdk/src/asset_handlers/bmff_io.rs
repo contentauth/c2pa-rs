@@ -69,6 +69,30 @@ const FULL_BOX_TYPES: &[&str; 80] = &[
     "txtC", "mime", "uri ", "uriI", "hmhd", "sthd", "vvhd", "medc",
 ];
 
+// "m4s" (fragmented media segment) is recognized only when the unstable_live_video
+// feature is enabled, per the experimental features policy: a build without the
+// flag must behave identically to one without the live video code at all.
+#[cfg(feature = "unstable_live_video")]
+static SUPPORTED_TYPES: [&str; 16] = [
+    "avif",
+    "heif",
+    "heic",
+    "mp4",
+    "m4a",
+    "m4s",
+    "mov",
+    "m4v",
+    "application/mp4",
+    "audio/mp4",
+    "image/avif",
+    "image/heic",
+    "image/heif",
+    "video/mp4",
+    "video/quicktime",
+    "video/x-m4v",
+];
+
+#[cfg(not(feature = "unstable_live_video"))]
 static SUPPORTED_TYPES: [&str; 15] = [
     "avif",
     "heif",
@@ -266,17 +290,17 @@ impl XpathFetch for BMFFArena {
 }
 
 macro_rules! boxtype {
-    ($( $name:ident => $value:expr ),*) => {
+    ($( $(#[$meta:meta])* $name:ident => $value:expr ),*) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
         pub enum BoxType {
-            $( $name, )*
+            $( $(#[$meta])* $name, )*
             UnknownBox(u32),
         }
 
         impl From<u32> for BoxType {
             fn from(t: u32) -> BoxType {
                 match t {
-                    $( $value => BoxType::$name, )*
+                    $( $(#[$meta])* $value => BoxType::$name, )*
                     _ => BoxType::UnknownBox(t),
                 }
             }
@@ -285,7 +309,7 @@ macro_rules! boxtype {
         impl From<BoxType> for u32 {
             fn from(t: BoxType) -> u32 {
                 match t {
-                    $( BoxType::$name => $value, )*
+                    $( $(#[$meta])* BoxType::$name => $value, )*
                     BoxType::UnknownBox(t) => t,
                 }
             }
@@ -350,7 +374,12 @@ boxtype! {
     IlocBox => 0x696C6F63,
     MfroBox => 0x6d66726f,
     TfraBox => 0x74667261,
-    SaioBox => 0x7361696f
+    SaioBox => 0x7361696f,
+    // Segment Type Box (media segments); recognized only when unstable_live_video is
+    // enabled. Without the feature, 0x73747970 falls through to BoxType::UnknownBox,
+    // matching pre-feature behavior.
+    #[cfg(feature = "unstable_live_video")]
+    StypBox => 0x73747970
 }
 
 struct BoxHeaderLite {
@@ -1906,9 +1935,15 @@ impl C2paReader for BmffIO {
         let mut header = [0u8; 4];
         input_stream.read_exact(&mut header)?;
 
-        if header[..4] != *b"ftyp" {
+        let is_styp = cfg!(feature = "unstable_live_video") && header[..4] == *b"styp";
+        if header[..4] != *b"ftyp" && !is_styp {
             return Err(Error::InvalidAsset(format!(
-                "invalid BMFF structure: expected box type \"ftyp\" at offset 4, found {}",
+                "invalid BMFF structure: expected box type \"ftyp\"{} at offset 4, found {}",
+                if cfg!(feature = "unstable_live_video") {
+                    " or \"styp\""
+                } else {
+                    ""
+                },
                 String::from_utf8_lossy(&header[..4])
             )));
         }
@@ -2135,9 +2170,39 @@ impl C2paWriter for BmffIO {
 
         // since we reached this point we must have an ordinary manifest store so we may need to truncate off
         // the update manifest
-        // get ftyp location
-        // start after ftyp
-        let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
+        // get leading type box location (ftyp for complete files; styp for media
+        // segments, recognized only when the unstable_live_video feature is enabled)
+        // start after that box
+        let ftyp_token = if let Some(t) = bmff_map.get("/ftyp") {
+            t
+        } else if cfg!(feature = "unstable_live_video") {
+            let t = bmff_map.get("/styp").ok_or(Error::UnsupportedType)?;
+
+            // Guard: fMP4 media segments (styp-headed) must carry a live-video assertion.
+            // Directly calling `Builder::sign()` on a media segment without going through
+            // `LiveVideoSigner` or `LiveVideoVsiSigner` produces a manifest that passes
+            // standard validation but fails the live-video continuity validator. Reject
+            // it here so the error is immediate and obvious.
+            #[cfg(feature = "unstable_live_video")]
+            {
+                use crate::assertions::labels::LIVE_VIDEO_SEGMENT;
+                let has_live_video_assertion = store_bytes
+                    .windows(LIVE_VIDEO_SEGMENT.len())
+                    .any(|w| w == LIVE_VIDEO_SEGMENT.as_bytes());
+                if !has_live_video_assertion {
+                    return Err(Error::BadParam(
+                        "fMP4 media segments must be signed via LiveVideoSigner or \
+                         LiveVideoVsiSigner; they must contain a c2pa.livevideo.segment \
+                         assertion"
+                            .into(),
+                    ));
+                }
+            }
+
+            t
+        } else {
+            return Err(Error::UnsupportedType);
+        }; // todo check ftyps to make sure we support any special format requirements
         let ftyp_info = &bmff_tree.as_ref()[ftyp_token[0]].data;
         let ftyp_offset = ftyp_info.offset;
         let ftyp_size = ftyp_info.size;
@@ -2384,9 +2449,19 @@ impl WriteXmp for BmffIO {
         let (xmp_start, xmp_length) = match &c2pa_boxes.xmp {
             Some(_xmp) => (c2pa_boxes.xmp_box_offset, Some(c2pa_boxes.xmp_box_size)),
             None => {
-                // get ftyp location
-                // start after ftyp
-                let ftyp_token = bmff_map.get("/ftyp").ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
+                // get leading type box location (ftyp for complete files; styp for media
+                // segments, recognized only when the unstable_live_video feature is enabled)
+                // start after that box
+                let ftyp_token = bmff_map
+                    .get("/ftyp")
+                    .or_else(|| {
+                        if cfg!(feature = "unstable_live_video") {
+                            bmff_map.get("/styp")
+                        } else {
+                            None
+                        }
+                    })
+                    .ok_or(Error::UnsupportedType)?; // todo check ftyps to make sure we support any special format requirements
                 let ftyp_info = &bmff_tree.as_ref()[ftyp_token[0]].data;
                 let ftyp_offset = ftyp_info.offset;
                 let ftyp_size = ftyp_info.size;
@@ -3132,6 +3207,41 @@ pub mod tests {
         io_utils::tempdirectory,
         test::{fixture_path, temp_dir_path},
     };
+
+    /// Regression guard for the merge that lost it. `m4s` is what makes the SDK recognise a
+    /// fragmented media segment by extension, and it is the only `SUPPORTED_TYPES` entry the
+    /// live-video feature adds. Without it every segment read fails with `Unsupported file
+    /// type`, while the crate still compiles and the rest of the suite still passes, because
+    /// nothing else reads an asset by that extension.
+    #[test]
+    fn m4s_is_supported_exactly_when_the_live_video_feature_is_enabled() {
+        let bmff = BmffIO::new("mp4");
+        let supported = bmff.supported_types();
+
+        assert!(
+            supported.contains(&"mp4"),
+            "the ordinary BMFF types must be present either way"
+        );
+        assert_eq!(
+            supported.contains(&"m4s"),
+            cfg!(feature = "unstable_live_video"),
+            "m4s must be recognised exactly when the live-video feature is enabled"
+        );
+    }
+
+    /// The `styp` box carries the file signature of a media segment, so the feature-gated
+    /// `StypBox` entry (and the `boxtype!` change that lets it be gated) has to survive any
+    /// rework of this file. Without the feature the same value falls through to `UnknownBox`.
+    #[test]
+    fn styp_box_type_is_gated_on_the_live_video_feature() {
+        const STYP: u32 = 0x73747970;
+
+        #[cfg(feature = "unstable_live_video")]
+        assert_eq!(BoxType::from(STYP), BoxType::StypBox);
+
+        #[cfg(not(feature = "unstable_live_video"))]
+        assert_eq!(BoxType::from(STYP), BoxType::UnknownBox(STYP));
+    }
 
     #[test]
     fn test_read_deep_nesting() {

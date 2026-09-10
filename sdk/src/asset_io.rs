@@ -1101,7 +1101,8 @@ fn sniff_container_from_stream<R: Read + Seek>(stream: &mut R) -> Option<&'stati
 
     // BMFF family: ISO 14496-12 "ftyp" box at bytes 4-7.
     // All BMFF subtypes (MP4, MOV, HEIC, HEIF, AVIF, …) share the same handler.
-    if n >= 8 && &buf[4..8] == b"ftyp" {
+    // fMP4 media segments use "styp" (Segment Type Box) instead of "ftyp".
+    if n >= 8 && (&buf[4..8] == b"ftyp" || &buf[4..8] == b"styp") {
         return Some("avif");
     }
 
