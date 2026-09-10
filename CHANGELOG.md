@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.90.22](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.21...c2pa-v0.90.22)
+_10 September 2026_
+
+### Fixed
+
+* Normalize path URIs on collection hash (backport #2605) ([#2625](https://github.com/contentauth/c2pa-rs/pull/2625))
+
 ## [0.90.21](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.20...c2pa-v0.90.21)
 _09 September 2026_
 
