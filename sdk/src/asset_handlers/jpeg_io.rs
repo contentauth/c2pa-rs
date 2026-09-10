@@ -389,14 +389,17 @@ impl C2paWriter for JpegIO {
                         let mut raw_vec = raw_bytes.to_vec();
                         let _ci = raw_vec.as_mut_slice()[0..2].to_vec();
                         let en = raw_vec.as_mut_slice()[2..4].to_vec();
+                        let mut z_vec = Cursor::new(raw_vec.as_mut_slice()[4..8].to_vec());
+                        let z = z_vec.read_u32::<BigEndian>()?;
 
                         let is_cai_continuation = vec_compare(&cai_en, &en);
 
                         if cai_seg_cnt > 0 && is_cai_continuation {
                             // Per C2PA 15.12.1 the exclusion must cover only the manifest
-                            // store; reject a non-contiguous continuation that would otherwise
-                            // enclose the intervening (foreign) bytes.
-                            if curr_offset != cai_loc.offset + cai_loc.length {
+                            // store; reject an out-of-sequence z index (mirrors read_c2pa) or
+                            // a non-contiguous continuation that would otherwise enclose the
+                            // intervening (foreign) bytes.
+                            if z <= cai_seg_cnt || curr_offset != cai_loc.offset + cai_loc.length {
                                 return Err(Error::InvalidAsset(
                                     "C2PA APP11 manifest segments are not contiguous".to_string(),
                                 ));
@@ -1434,5 +1437,45 @@ pub mod tests {
             jpeg_io.get_object_locations(&mut out),
             Err(Error::InvalidAsset(_))
         ));
+    }
+
+    // End-to-end: a signed update-manifest asset with a non-contiguous CAI
+    // injection must not validate as Valid/Trusted through the Reader.
+    #[test]
+    fn noncontiguous_cai_injection_rejected_by_reader() {
+        use crate::{Context, Reader, ValidationState};
+
+        let mut buf = Vec::new();
+        std::fs::File::open(crate::utils::test::fixture_path("update_manifest.jpg"))
+            .unwrap()
+            .read_to_end(&mut buf)
+            .unwrap();
+
+        // Baseline: the untampered update-manifest asset is not Invalid.
+        let base = Reader::from_context(Context::new())
+            .with_stream("image/jpeg", Cursor::new(buf.clone()))
+            .unwrap();
+        assert_ne!(base.validation_state(), ValidationState::Invalid);
+
+        // Inject [foreign APP11, CAI copy] after the single CAI segment so the
+        // manifest still reads from the first segment but the CAI segments are
+        // no longer contiguous.
+        let mut jpeg = Jpeg::from_bytes(buf.into()).unwrap();
+        let cai_idx = get_cai_segments(&jpeg).unwrap()[0];
+        let cai_copy = jpeg.segments()[cai_idx].clone();
+        let mut foreign = vec![0u8; 40];
+        foreign[2] = 0xab;
+        foreign[3] = 0xcd;
+        let foreign_seg = JpegSegment::new_with_contents(markers::APP11, Bytes::from(foreign));
+        jpeg.segments_mut().insert(cai_idx + 1, cai_copy);
+        jpeg.segments_mut().insert(cai_idx + 1, foreign_seg);
+
+        let mut out = Cursor::new(Vec::new());
+        jpeg.encoder().write_to(&mut out).unwrap();
+
+        let tampered = Reader::from_context(Context::new())
+            .with_stream("image/jpeg", out)
+            .unwrap();
+        assert_eq!(tampered.validation_state(), ValidationState::Invalid);
     }
 }
