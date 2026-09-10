@@ -19,10 +19,13 @@ pub(crate) mod id3_helper;
 pub mod jpeg_io;
 pub mod jpegxl_io;
 pub mod mp3_io;
+#[cfg(feature = "unstable_plain_text")]
+pub mod plain_text_io;
 pub mod png_io;
 pub mod riff_io;
 pub mod svg_io;
 pub mod tiff_io;
+pub mod zip_io;
 
 #[cfg(feature = "pdf")]
 pub(crate) mod pdf;

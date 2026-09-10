@@ -17,8 +17,8 @@ version = 1
 # trust_anchors = ""
 # # URI identifier for this trust list. If omitted, one is generated automatically.
 # trust_uri = ""
-# # Kind of trust list: "signer", "tsa", or "cawg". Defaults to "signer".
-# trust_kind = "signer"
+# # Kind of trust list: "manifest", "tsa", or "cawg". Defaults to "manifest".
+# trust_kind = "manifest"
 
 # Verification settings.
 [verify]
