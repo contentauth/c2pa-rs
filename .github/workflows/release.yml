@@ -16,11 +16,10 @@ name: Release-plz publish
 #
 # When the `c2pa` crate itself is among the packages published, this also
 # dispatches a cross-repo notification (repository_dispatch, authenticated
-# with the CROSS_ORG_PR_TOKEN org token -- RELEASE_PLZ_ORG_TOKEN is not scoped
-# for cross-repo calls) so contentauth/c2patool can immediately open a PR
-# bumping its `stable` branch's `c2pa` dependency, instead of waiting for a
-# scheduled poll. See c2patool's docs/release-process.md, "c2pa-rs release
-# bump".
+# with the CROSS_ORG_PR_TOKEN org token -- so contentauth/c2patool can
+# immediately open a PR bumping its `stable` branch's `c2pa` dependency,
+# instead of waiting for a scheduled poll. See c2patool's
+# docs/release-process.md, "c2pa-rs release bump".
 
 permissions:
   pull-requests: write
