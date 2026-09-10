@@ -469,6 +469,9 @@ fn ocsp_signing_chain(certs: &[Vec<u8>], ctp: &CertificateTrustPolicy) -> Vec<Ve
         }
     }
 
+    // Match the issuer by subject name and take the first hit. This assumes a
+    // single anchor per subject name; if the trust list ever holds two anchors
+    // sharing a subject (e.g. CA reissuance), the wrong key could be inserted.
     for anchor in ctp.signing_trust_anchors() {
         for anchor_der in &anchor.trust_anchor_ders {
             if let Ok((_, anchor_cert)) = X509Certificate::from_der(anchor_der) {
@@ -707,7 +710,7 @@ mod tests {
         let chain = leaf_and_intermediate(); // [leaf, issuing CA]
         let leaf = vec![chain[0].clone()];
 
-        let mut ctp = CertificateTrustPolicy::new();
+        let mut ctp = CertificateTrustPolicy::default();
         ctp.add_trust_anchors(
             include_bytes!("../../../tests/fixtures/certs/es256.pub"),
             "https://c2pa-rs/test",
@@ -799,6 +802,9 @@ mod tests {
             OcspResponse::from_der_checked(revoked, &resolved, Some(test_time), &mut log2).unwrap();
         assert!(ocsp_data.revoked_at.is_some());
         assert!(log2.has_status(SIGNING_CREDENTIAL_REVOKED));
+    }
+
+    #[test]
     fn extend_ocsp_cert_chain_builds_from_subject_issuer() {
         // Regression: the responder path must be built from the subject's own
         // sub-chain (certs[i..]), whose [1] is the subject's real issuer -- not
@@ -975,5 +981,191 @@ mod tests {
             fetch_and_check_ocsp_response(&sign1, b"payload", &ctp, None, &mut log, &context);
         assert!(result.is_ok());
         assert!(log.has_status(SIGNING_CREDENTIAL_OCSP_INACCESSIBLE));
+    }
+
+    // End-to-end through `check_ocsp_status` (stapled path): a lone-leaf x5chain
+    // + a stapled revoked response is only caught once the issuer is resolved
+    // from the anchor, proving `ocsp_signing_chain` is wired at the call site.
+    #[test]
+    fn check_ocsp_status_stapled_revoked_lone_leaf() {
+        use coset::{cbor::value::Value, CoseSign1, Header, Label, ProtectedHeader};
+
+        use super::{check_ocsp_status, OcspFetchPolicy};
+        use crate::{
+            context::Context,
+            crypto::cose::{CertificateTrustPolicy, TrustAnchorType},
+            status_tracker::StatusTracker,
+        };
+
+        let full_chain = cert_chain_pem_to_der(include_bytes!(
+            "../../../tests/fixtures/crypto/ocsp/ocsp_chain.pem"
+        ))
+        .unwrap();
+        let revoked =
+            include_bytes!("../../../tests/fixtures/crypto/ocsp/response_revoked.der").to_vec();
+
+        // CoseSign1: lone-leaf x5chain (issuer omitted) + stapled revoked response.
+        let mut unprotected = Header::default();
+        unprotected.rest.push((
+            Label::Text("x5chain".to_string()),
+            Value::Array(vec![Value::Bytes(full_chain[0].clone())]),
+        ));
+        unprotected.rest.push((
+            Label::Text("rVals".to_string()),
+            Value::Map(vec![(
+                Value::Text("ocspVals".to_string()),
+                Value::Array(vec![Value::Bytes(revoked)]),
+            )]),
+        ));
+        let sign1 = CoseSign1 {
+            protected: ProtectedHeader::default(),
+            unprotected,
+            payload: None,
+            signature: vec![0u8; 8],
+        };
+
+        // Trust the OCSP responder directly (an end-entity credential), so the
+        // response is authorized independent of the fixture chain's strict-path
+        // compliance; the issuer resolution under test is separate.
+        let responder = include_bytes!("../../../tests/fixtures/crypto/ocsp/ocsp_responder.pem");
+
+        // With the issuing CA as an anchor, the omitted issuer is resolved, the
+        // response's certId matches the leaf, and the revoked leaf is rejected.
+        let mut anchored = CertificateTrustPolicy::new();
+        anchored
+            .add_trust_anchors(
+                include_bytes!("../../../tests/fixtures/crypto/ocsp/ocsp_chain.pem"),
+                "https://c2pa-rs/test",
+                TrustAnchorType::Manifest,
+                None,
+            )
+            .unwrap();
+        anchored.add_end_entity_credentials(responder).unwrap();
+
+        let context = Context::new();
+        let mut log = StatusTracker::default();
+        let with_anchor = check_ocsp_status(
+            &sign1,
+            b"data",
+            OcspFetchPolicy::DoNotFetch,
+            &anchored,
+            None,
+            None,
+            &mut log,
+            &context,
+        );
+        assert!(with_anchor.is_err());
+
+        // Without the anchor the issuer can't be resolved, so the certId doesn't
+        // match and revocation is silently missed (the pre-fix behavior).
+        let mut no_anchor = CertificateTrustPolicy::new();
+        no_anchor.add_end_entity_credentials(responder).unwrap();
+        let mut log2 = StatusTracker::default();
+        let without_anchor = check_ocsp_status(
+            &sign1,
+            b"data",
+            OcspFetchPolicy::DoNotFetch,
+            &no_anchor,
+            None,
+            None,
+            &mut log2,
+            &context,
+        );
+        assert!(without_anchor.is_ok());
+    }
+
+    // Same wiring, through the fetch path (`fetch_and_check_ocsp_response`, the
+    // other `ocsp_signing_chain` call site): resolving the issuer is what lets
+    // the OCSP request be built, so the lone leaf is queried rather than skipped.
+    #[test]
+    fn check_ocsp_status_fetch_resolves_issuer_for_lone_leaf() {
+        use std::io::{Cursor, Read};
+
+        use coset::{cbor::value::Value, CoseSign1, Header, Label, ProtectedHeader};
+        use http::{Request, Response};
+
+        use super::{check_ocsp_status, OcspFetchPolicy};
+        use crate::{
+            context::Context,
+            crypto::cose::{CertificateTrustPolicy, TrustAnchorType},
+            http::{HttpResolverError, SyncHttpResolver},
+            status_tracker::StatusTracker,
+            validation_status::SIGNING_CREDENTIAL_OCSP_INACCESSIBLE,
+        };
+
+        let full_chain = cert_chain_pem_to_der(include_bytes!(
+            "../../../tests/fixtures/crypto/ocsp/ocsp_chain.pem"
+        ))
+        .unwrap();
+
+        // Lone-leaf x5chain, no stapled response, so the fetch path is used.
+        let mut unprotected = Header::default();
+        unprotected.rest.push((
+            Label::Text("x5chain".to_string()),
+            Value::Array(vec![Value::Bytes(full_chain[0].clone())]),
+        ));
+        let sign1 = CoseSign1 {
+            protected: ProtectedHeader::default(),
+            unprotected,
+            payload: None,
+            signature: vec![0u8; 8],
+        };
+
+        struct RevokedResolver;
+        impl SyncHttpResolver for RevokedResolver {
+            fn http_resolve(
+                &self,
+                _request: Request<Vec<u8>>,
+            ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+                let der =
+                    include_bytes!("../../../tests/fixtures/crypto/ocsp/response_revoked.der")
+                        .to_vec();
+                Ok(Response::builder()
+                    .status(200)
+                    .body(Box::new(Cursor::new(der)) as Box<dyn Read>)
+                    .unwrap())
+            }
+        }
+
+        let context = Context::new().with_resolver(RevokedResolver);
+
+        // With the issuing CA as anchor, the omitted issuer is resolved, so the
+        // OCSP request can be built and fetched (not reported inaccessible).
+        let mut anchored = CertificateTrustPolicy::new();
+        anchored
+            .add_trust_anchors(
+                include_bytes!("../../../tests/fixtures/crypto/ocsp/ocsp_chain.pem"),
+                "https://c2pa-rs/test",
+                TrustAnchorType::Manifest,
+                None,
+            )
+            .unwrap();
+        let mut log = StatusTracker::default();
+        let _ = check_ocsp_status(
+            &sign1,
+            b"data",
+            OcspFetchPolicy::FetchAllowed,
+            &anchored,
+            None,
+            None,
+            &mut log,
+            &context,
+        );
+        assert!(!log.has_status(SIGNING_CREDENTIAL_OCSP_INACCESSIBLE));
+
+        // Without it the issuer can't be resolved, no request is built, and the
+        // status is reported inaccessible.
+        let mut log2 = StatusTracker::default();
+        let _ = check_ocsp_status(
+            &sign1,
+            b"data",
+            OcspFetchPolicy::FetchAllowed,
+            &CertificateTrustPolicy::new(),
+            None,
+            None,
+            &mut log2,
+            &context,
+        );
+        assert!(log2.has_status(SIGNING_CREDENTIAL_OCSP_INACCESSIBLE));
     }
 }
