@@ -341,10 +341,7 @@ impl OcspResponse {
                 CertStatus::Unknown(_) => {
                     log_item!("OCSP_RESPONSE", "unknown certStatus", "check_ocsp_response")
                         .validation_status(validation_codes::SIGNING_CREDENTIAL_OCSP_UNKNOWN)
-                        .failure_no_throw(
-                            &mut internal_validation_log,
-                            OcspError::CertificateStatusUnknown,
-                        );
+                        .informational(&mut internal_validation_log);
                 }
             }
         }
@@ -494,7 +491,7 @@ mod tests {
 
     use crate::{
         crypto::ocsp::OcspResponse,
-        status_tracker::StatusTracker,
+        status_tracker::{LogKind, StatusTracker},
         validation_status::{
             SIGNING_CREDENTIAL_NOT_REVOKED, SIGNING_CREDENTIAL_OCSP_UNKNOWN,
             SIGNING_CREDENTIAL_REVOKED,
@@ -583,8 +580,14 @@ mod tests {
         .unwrap();
 
         assert!(ocsp_data.revoked_at.is_none());
-        assert!(validation_log.has_any_error());
         assert!(validation_log.has_status(SIGNING_CREDENTIAL_OCSP_UNKNOWN));
+
+        let item = validation_log
+            .logged_items()
+            .iter()
+            .find(|item| item.validation_status.as_deref() == Some(SIGNING_CREDENTIAL_OCSP_UNKNOWN))
+            .expect("SIGNING_CREDENTIAL_OCSP_UNKNOWN log item");
+        assert_eq!(item.kind, LogKind::Informational);
     }
 
     /// Crafted OcspResponse DER with `certs = Some([])` (present but empty).

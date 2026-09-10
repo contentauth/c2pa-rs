@@ -45,7 +45,6 @@ jobs:
           # these exact names:
           #
           #    * sdk (The primary C2PA Rust SDK)
-          #    * c2patool
           #    * c2pa_c_ffi
           #    * export_schema
           #    * make_test_images

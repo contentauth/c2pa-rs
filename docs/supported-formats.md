@@ -7,30 +7,31 @@ The following table summarizes the supported media (asset) file formats. This in
 > When the internal header/MIME disagrees with the extension, the SDK uses the extension, not the internal MIME/metadata.
 > If there is no file extension nor MIME type, then the SDK "sniffs the bytes" of the asset using [`infer`](https://docs.rs/infer/latest/infer/) to determine the asset type.
 
-| Extensions    | MIME type                                                                      |
-| ------------- | ------------------------------------------------------------------------------ |
-| `avi`         | `video/msvideo`, `video/x-msvideo`, `video/avi`, `application/x-troff-msvideo` |
-| `avif`        | `image/avif`                                                                   |
-| `c2pa`        | `application/x-c2pa-manifest-store`                                            |
-| `dng`         | `image/x-adobe-dng`                                                            |
-| `flac`        | `audio/flac`                                                                   |
-| `gif`         | `image/gif`                                                                    |
-| `heic`        | `image/heic`                                                                   |
-| `heif`        | `image/heif`                                                                   |
-| `jpg`, `jpeg` | `image/jpeg`                                                                   |
-| `jxl`         | `image/jxl`                                                                    |
-| `m4a`         | `audio/mp4`                                                                    |
-| `mp3`         | `audio/mpeg`                                                                   |
-| `mp4`         | `video/mp4`, `application/mp4`                                                 |
-| `mov`         | `video/quicktime`                                                              |
-| `pdf`         | `application/pdf` (**read-only**)                                              |
-| `png`         | `image/png`                                                                    |
-| `svg`         | `image/svg+xml`                                                                |
-| `tif`, `tiff` | `image/tiff`                                                                   |
-| `wav`         | `audio/wav`                                                                    |
-| `webp`        | `image/webp`                                                                   |
+`txt` requires the non-default `unstable_plain_text` feature.
 
-Fragmented MP4 (DASH) is supported only for file-based operations from the Rust library.
+| Extensions      | MIME type                                                                      |
+| --------------- | ------------------------------------------------------------------------------- |
+| `avi`           | `video/msvideo`, `video/x-msvideo`, `video/avi`, `application/x-troff-msvideo`  |
+| `avif`          | `image/avif`                                                                    |
+| `c2pa`          | `application/x-c2pa-manifest-store`                                             |
+| `dng`           | `image/x-adobe-dng`                                                             |
+| `flac`          | `audio/flac`                                                                    |
+| `gif`           | `image/gif`                                                                     |
+| `heic`          | `image/heic`                                                                    |
+| `heif`          | `image/heif`                                                                    |
+| `jpg`, `jpeg`   | `image/jpeg`                                                                    |
+| `jxl`           | `image/jxl`                                                                     |
+| `m4a`           | `audio/mp4`                                                                     |
+| `mp3`           | `audio/mpeg`                                                                    |
+| `mp4`           | `video/mp4`, `application/mp4` <br/>Fragmented MP4 (DASH) supported only for file-based operations from the Rust library. |
+| `mov`           | `video/quicktime`                                                               |
+| `pdf`           | `application/pdf` (**read-only**)                                              |
+| `png`           | `image/png`                                                                     |
+| `svg`           | `image/svg+xml`                                                                 |
+| `tif`, `tiff`   | `image/tiff`                                                                    |
+| `txt`           | `text/plain`                                                                    |
+| `wav`           | `audio/wav`                                                                     |
+| `webp`          | `image/webp`                                                                    |
 
 ## Experimental feature: Text formats
 

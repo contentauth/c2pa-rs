@@ -59,7 +59,7 @@ fn test_builder_ca_jpg() -> Result<()> {
     builder.save_to_stream(format, &mut source, &mut dest)?;
     // use this to update the known good
     // dest.set_position(0);
-    // let reader = Reader::from_stream(format, &mut dest)?;
+    // let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
     // std::fs::write("tests/known_good/CA_test.json", reader.json()).unwrap();
 
     dest.set_position(0);
