@@ -58,7 +58,7 @@ Breaking changes and larger refactors are batched onto a scheduled train:
 
 1. On the scheduled date, a release-candidate branch `0.(x+1).0-rc` is cut from `main`, and its first build `0.(x+1).0-rc.1` is cut immediately (versions set, tagged, prerelease binaries built). **RC branches are not published to crates.io** (their name keeps them off every crates.io publish trigger), but each build **does** get a prerelease GitHub release with binaries so downstream consumers that depend on pre-built binaries can validate during the bake. See [RC builds](#release-candidate-builds).
 2. **Bake period: minimum three business days.** Only bug fixes are accepted during the bake, and they follow upstream-first (fix on `main`, cherry-pick to the candidate). After fixes land, cut a fresh build (`-rc.2`, `-rc.3`, …) so downstream has updated binaries to test. Hold longer than three business days if needed to validate across the downstream projects we maintain.
-3. **Promote** (a deliberate, manual step): first snapshot the outgoing `stable` as `v0.<old>` so the retiring line is available for backports, then force-push the candidate onto `stable`. We force-push rather than merge so that `stable`'s history becomes exactly the coherent set of changes made on `main`, superseding whatever adaptations were needed while manually backporting Track 1 fixes onto the old `stable` line. `release-plz` then opens the `0.(x+1).0` version/changelog PR on `stable`; merging it publishes the breaking release.
+3. **Promote** (a deliberate step): dispatch [`promote.yml`](#release-promotion) on the RC branch. It snapshots the outgoing `stable` as `v0.<old>` (so the retiring line is available for backports), then force-pushes the candidate onto `stable` — force-pushed rather than merged so that `stable`'s history becomes exactly the coherent set of changes made on `main`, superseding whatever adaptations were needed while manually backporting Track 1 fixes onto the old `stable` line. The candidate's version is reset to the last published release as part of the promotion, so `release-plz` (via [`release-pr.yml`](#release-plz)) then opens the `0.(x+1).0` version/changelog PR on `stable`; merging **that** publishes the breaking release. See [Release promotion](#release-promotion) for why the version is reset rather than stripped.
 
 ### Cadence: scheduled, but not forced
 
@@ -130,7 +130,7 @@ We use [`release-plz`](https://release-plz.dev) (via the [GitHub Action wrapper]
 
 Binary builds are therefore entirely **tag-driven**, independent of how a tag was created:
 
-* [`library-release.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/library-release.yml) builds the `c2pa` / `c2pa-c-ffi` native libraries for every supported target on any `c2pa-v*` tag.
+* [`library-release.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/library-release.yml) builds the `c2pa` / `c2pa-c-ffi` native libraries for every supported target on any `c2pa-v*` (real release) or `c2pa-rc-v*` (RC build) tag.
 
 A tag whose name contains `-rc.` yields a **prerelease** GitHub release; nothing on this path publishes to crates.io.
 
@@ -177,9 +177,21 @@ By default, `cargo-semver-checks` ignores features named `unstable`, `nightly`, 
 
 ### Release-candidate builds
 
-[`release-rc.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/release-rc.yml) cuts a numbered candidate **build** (`-rc.1`, `-rc.2`, …) from a candidate **branch** (`0.N.0-rc`). It sets the `-rc.N` version on the branch (bumping `c2pa`, which `c2pa-c-ffi` follows via the shared workspace version), commits, and pushes the `c2pa-v…-rc.N` tag. That tag triggers the tag-driven binary workflow above, which publishes a **prerelease** GitHub release with binaries. Nothing here reaches crates.io: the build exists so downstream projects that consume pre-built binaries (rather than building from source) can validate the candidate during its bake.
+[`release-rc.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/release-rc.yml) cuts a numbered candidate **build** (`-rc.1`, `-rc.2`, …) from a candidate **branch** (`0.N.0-rc`). It sets the `-rc.N` version on the branch (bumping `c2pa`, which `c2pa-c-ffi` follows via the shared workspace version), commits, and pushes the `c2pa-rc-v…-rc.N` tag. That build tag lives in the `c2pa-rc-v*` namespace, deliberately **outside** the `c2pa-v*` namespace `release-plz` keys on — so `release-plz` never mistakes an RC build for a botched publish, and it baselines a promoted release's changelog on the last real release rather than on an RC build. The tag still triggers the tag-driven binary workflow above, which publishes a **prerelease** GitHub release with binaries. Nothing here reaches crates.io: the build exists so downstream projects that consume pre-built binaries (rather than building from source) can validate the candidate during its bake.
 
 The first build (`-rc.1`) is cut automatically when the train is cut. A maintainer re-runs this workflow (via `workflow_dispatch` on the RC branch) to cut a fresh build after bugfixes have been cherry-picked onto the branch during the bake. Tags are pushed with a PAT (`RELEASE_PLZ_TOKEN`) so the tag-driven binary workflows actually run: pushes made with the default `GITHUB_TOKEN` do not cascade into other workflows.
+
+### Release promotion
+
+[`promote.yml`](https://github.com/contentauth/c2pa-rs/blob/main/.github/workflows/promote.yml) automates the promotion step of the breaking train (Track 2, step 3). A maintainer dispatches it (via `workflow_dispatch`) on the baked RC branch, and it:
+
+1. **Snapshots** the outgoing `stable` as a `v0.<old>` branch, so the retiring line stays available for backports.
+2. **Resets** the candidate's version back to the last published release (`cargo set-version`, which also fixes intra-workspace deps), then **force-pushes** the baked train onto `stable`.
+3. Leaves the rest to the normal release machinery: the push to `stable` triggers [`release-pr.yml`](#release-plz), which opens the reviewed `0.(x+1).0` version + changelog PR. Merging **that** PR publishes.
+
+**Why reset the version rather than strip `-rc` to the final number.** A push to `stable` whose version is already ahead of crates.io makes [`release.yml`](#release-plz) run `release-plz release` and publish immediately — which would bypass the reviewed release PR and its generated changelog. Resetting to the last published version keeps `stable` level with the registry, so the bump and changelog are computed by `release-pr.yml` and land in a PR a human merges. If `release-plz` under-bumps (the train is breaking by policy but `cargo-semver-checks` detected no break), force the final number on that PR with [`release-plz set-version`](https://release-plz.dev/docs/usage/set-version).
+
+Promotion depends on RC build tags living outside the `c2pa-v*` namespace (see [RC builds](#release-candidate-builds)); otherwise `release-plz` would baseline the promoted changelog on an RC build tag and cover only the bake bugfixes. Force-pushing `stable` and creating the `v0.*` snapshot require the `RELEASE_PLZ_ORG_TOKEN` identity to be allowed to bypass those branches' protection (see [branch protection](#branch-protection)).
 
 ### Cross-repo canary
 
