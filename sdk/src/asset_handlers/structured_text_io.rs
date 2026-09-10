@@ -15,18 +15,13 @@
 //! host-format comment line (`-----BEGIN/END C2PA MANIFEST-----`) as a URL
 //! reference or `data:` URI. Hashed over raw bytes (no NFC).
 
-use std::{fs::File, path::Path};
-
 use crate::{
     asset_handlers::text_common::{
         self, encode_data_uri, parse_manifest_reference, ManifestReference, BEGIN_DELIMITER,
         END_DELIMITER,
     },
-    asset_io::{
-        rename_or_move, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashObjectPositions,
-    },
+    asset_io::{AssetIO, C2paReader, C2paWriter, ObjectLocations, ReadSeek, ReadWriteSeek},
     error::{Error, Result},
-    utils::io_utils::tempfile_builder,
 };
 
 #[derive(Clone, Copy)]
@@ -255,8 +250,8 @@ fn insert_block(cleaned: &str, reference: &str, style: CommentStyle, asset_type:
     format!("{block_line}{le}{cleaned}")
 }
 
-impl CAIReader for StructuredTextIO {
-    fn read_cai(&self, reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
+impl C2paReader for StructuredTextIO {
+    fn read_c2pa(&self, reader: &mut dyn ReadSeek) -> Result<Vec<u8>> {
         let text = text_common::read_text_stream(reader)?;
 
         // More than one block ⇒ treat as no manifest (A.9).
@@ -272,16 +267,16 @@ impl CAIReader for StructuredTextIO {
         }
     }
 
-    fn read_xmp(&self, _asset_reader: &mut dyn CAIRead) -> Option<String> {
+    fn read_xmp(&self, _asset_reader: &mut dyn ReadSeek) -> Option<String> {
         None
     }
 }
 
-impl CAIWriter for StructuredTextIO {
-    fn write_cai(
+impl C2paWriter for StructuredTextIO {
+    fn write_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         store_bytes: &[u8],
     ) -> Result<()> {
         let style = comment_style(&self.asset_type).ok_or(Error::UnsupportedType)?;
@@ -327,10 +322,10 @@ impl CAIWriter for StructuredTextIO {
         Ok(())
     }
 
-    fn get_object_locations_from_stream(
+    fn get_object_locations(
         &self,
-        input_stream: &mut dyn CAIRead,
-    ) -> Result<Vec<HashObjectPositions>> {
+        input_stream: &mut dyn ReadSeek,
+    ) -> Result<Vec<ObjectLocations>> {
         let text = text_common::read_text_stream(input_stream)?;
 
         let (full_len, block_start, block_len) = match locate_block(&text) {
@@ -356,10 +351,10 @@ impl CAIWriter for StructuredTextIO {
         ))
     }
 
-    fn remove_cai_store_from_stream(
+    fn remove_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
     ) -> Result<()> {
         let text = text_common::read_text_stream(input_stream)?;
         let cleaned = strip_blocks(&text);
@@ -380,36 +375,12 @@ impl AssetIO for StructuredTextIO {
         Box::new(StructuredTextIO::new(asset_type))
     }
 
-    fn get_reader(&self) -> &dyn CAIReader {
+    fn get_reader(&self) -> &dyn C2paReader {
         self
     }
 
-    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn C2paWriter>> {
         Some(Box::new(StructuredTextIO::new(asset_type)))
-    }
-
-    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
-        let mut f = File::open(asset_path)?;
-        self.read_cai(&mut f)
-    }
-
-    fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
-        let mut input_stream = File::open(asset_path).map_err(Error::IoError)?;
-        let mut temp_file = tempfile_builder("c2pa_temp")?;
-        self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
-        rename_or_move(temp_file, asset_path)
-    }
-
-    fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>> {
-        let mut input_stream = File::open(asset_path).map_err(|_err| Error::EmbeddingError)?;
-        self.get_object_locations_from_stream(&mut input_stream)
-    }
-
-    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
-        let mut input_file = File::open(asset_path)?;
-        let mut temp_file = tempfile_builder("c2pa_temp")?;
-        self.remove_cai_store_from_stream(&mut input_file, &mut temp_file)?;
-        rename_or_move(temp_file, asset_path)
     }
 
     fn supported_types(&self) -> &[&str] {
@@ -424,20 +395,20 @@ mod tests {
     use std::io::Cursor;
 
     use super::*;
-    use crate::asset_io::HashBlockObjectType;
+    use crate::asset_io::ObjectType;
 
     fn embed(asset_type: &str, source: &str, store: &[u8]) -> String {
         let io = StructuredTextIO::new(asset_type);
         let mut input = Cursor::new(source.as_bytes().to_vec());
         let mut output = Cursor::new(Vec::new());
-        io.write_cai(&mut input, &mut output, store).unwrap();
+        io.write_c2pa(&mut input, &mut output, store).unwrap();
         String::from_utf8(output.into_inner()).unwrap()
     }
 
     fn read_back(asset_type: &str, text: &str) -> Result<Vec<u8>> {
         let io = StructuredTextIO::new(asset_type);
         let mut input = Cursor::new(text.as_bytes().to_vec());
-        io.read_cai(&mut input)
+        io.read_c2pa(&mut input)
     }
 
     #[test]
@@ -484,17 +455,22 @@ mod tests {
         let out = embed("py", "#!/usr/bin/env python\nprint('hi')\n", b"store");
         let io = StructuredTextIO::new("py");
         let mut cursor = Cursor::new(out.clone().into_bytes());
-        let locations = io.get_object_locations_from_stream(&mut cursor).unwrap();
+        let locations = io.get_object_locations(&mut cursor).unwrap();
         let cai = locations
             .iter()
-            .find(|p| p.htype == HashBlockObjectType::Cai)
+            .find(|p| p.htype == ObjectType::C2pa)
             .unwrap();
-        let excluded = &out.as_bytes()[cai.offset..cai.offset + cai.length];
+        let excluded =
+            &out.as_bytes()[(cai.offset as usize)..(cai.offset as usize) + (cai.length as usize)];
         assert_eq!(
             excluded[0], b'\n',
             "exclusion must begin at the preceding newline"
         );
-        assert_eq!(cai.offset + cai.length, out.len(), "exclusion runs to EOF");
+        assert_eq!(
+            (cai.offset as usize) + (cai.length as usize),
+            out.len(),
+            "exclusion runs to EOF"
+        );
         let excluded = std::str::from_utf8(excluded).unwrap();
         assert!(excluded.contains(BEGIN_DELIMITER) && excluded.contains(END_DELIMITER));
     }
@@ -534,7 +510,7 @@ mod tests {
         let io = StructuredTextIO::new("toml");
         let mut input = Cursor::new(first.into_bytes());
         let mut output = Cursor::new(Vec::new());
-        io.write_cai(&mut input, &mut output, b"second").unwrap();
+        io.write_c2pa(&mut input, &mut output, b"second").unwrap();
         let replaced = String::from_utf8(output.into_inner()).unwrap();
         assert_eq!(count_blocks(&replaced), 1);
         assert_eq!(read_back("toml", &replaced).unwrap(), b"second");
@@ -542,8 +518,7 @@ mod tests {
         // Remove.
         let mut input = Cursor::new(replaced.into_bytes());
         let mut output = Cursor::new(Vec::new());
-        io.remove_cai_store_from_stream(&mut input, &mut output)
-            .unwrap();
+        io.remove_c2pa(&mut input, &mut output).unwrap();
         let removed = String::from_utf8(output.into_inner()).unwrap();
         assert_eq!(removed, "a = 1\n");
     }
@@ -558,7 +533,7 @@ mod tests {
         let io = StructuredTextIO::new("py");
         let mut input = Cursor::new(first.into_bytes());
         let mut output = Cursor::new(Vec::new());
-        io.write_cai(&mut input, &mut output, b"BBBB").unwrap();
+        io.write_c2pa(&mut input, &mut output, b"BBBB").unwrap();
         let replaced = String::from_utf8(output.into_inner()).unwrap();
 
         assert_eq!(count_blocks(&replaced), 1);
@@ -575,12 +550,13 @@ mod tests {
         let out = embed("md", "# Doc\n", b"store bytes");
         let io = StructuredTextIO::new("md");
         let mut cursor = Cursor::new(out.clone().into_bytes());
-        let locations = io.get_object_locations_from_stream(&mut cursor).unwrap();
+        let locations = io.get_object_locations(&mut cursor).unwrap();
         let cai = locations
             .iter()
-            .find(|p| p.htype == HashBlockObjectType::Cai)
+            .find(|p| p.htype == ObjectType::C2pa)
             .unwrap();
-        let excluded = &out.as_bytes()[cai.offset..cai.offset + cai.length];
+        let excluded =
+            &out.as_bytes()[(cai.offset as usize)..(cai.offset as usize) + (cai.length as usize)];
         let excluded = std::str::from_utf8(excluded).unwrap();
         assert!(excluded.contains(BEGIN_DELIMITER) && excluded.contains(END_DELIMITER));
     }
@@ -629,15 +605,15 @@ mod tests {
 
         let io = StructuredTextIO::new("yaml");
         let mut cursor = Cursor::new(out.clone().into_bytes());
-        let locations = io.get_object_locations_from_stream(&mut cursor).unwrap();
+        let locations = io.get_object_locations(&mut cursor).unwrap();
         let cai = locations
             .iter()
-            .find(|p| p.htype == HashBlockObjectType::Cai)
+            .find(|p| p.htype == ObjectType::C2pa)
             .unwrap();
-        let excluded = &out[cai.offset..cai.offset + cai.length];
+        let excluded = &out[(cai.offset as usize)..(cai.offset as usize) + (cai.length as usize)];
         assert!(excluded.contains(BEGIN_DELIMITER) && excluded.contains(END_DELIMITER));
         assert!(
-            !out[cai.offset + cai.length..].contains(BEGIN_DELIMITER),
+            !out[(cai.offset as usize) + (cai.length as usize)..].contains(BEGIN_DELIMITER),
             "exclusion must cover the whole block"
         );
     }
@@ -675,21 +651,21 @@ mod tests {
         let out = embed("md", "---\ntitle: T\n---\n\nbody\n", b"store");
         let io = StructuredTextIO::new("md");
         let mut cursor = Cursor::new(out.clone().into_bytes());
-        let locations = io.get_object_locations_from_stream(&mut cursor).unwrap();
+        let locations = io.get_object_locations(&mut cursor).unwrap();
         let cai = locations
             .iter()
-            .find(|p| p.htype == HashBlockObjectType::Cai)
+            .find(|p| p.htype == ObjectType::C2pa)
             .unwrap();
 
-        let excluded = &out[cai.offset..cai.offset + cai.length];
+        let excluded = &out[(cai.offset as usize)..(cai.offset as usize) + (cai.length as usize)];
         assert!(excluded.starts_with(BEGIN_DELIMITER), "got {excluded:?}");
         assert!(excluded.trim_end().ends_with(END_DELIMITER));
         // The fences and the front matter keys stay outside the excluded range.
         assert!(
-            out[..cai.offset].starts_with("---\n"),
+            out[..(cai.offset as usize)].starts_with("---\n"),
             "opening fence precedes the exclusion"
         );
-        assert!(out[cai.offset + cai.length..].contains("---"));
+        assert!(out[(cai.offset as usize) + (cai.length as usize)..].contains("---"));
         assert!(!excluded.contains("title: T"));
     }
 
@@ -700,7 +676,7 @@ mod tests {
         let io = StructuredTextIO::new("md");
         let mut input = Cursor::new(first.clone().into_bytes());
         let mut output = Cursor::new(Vec::new());
-        io.write_cai(&mut input, &mut output, b"BBBB").unwrap();
+        io.write_c2pa(&mut input, &mut output, b"BBBB").unwrap();
         let replaced = String::from_utf8(output.into_inner()).unwrap();
 
         assert_eq!(count_blocks(&replaced), 1);

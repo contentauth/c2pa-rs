@@ -15,7 +15,7 @@
 //! allocation, the `c2pa.hash.data` object layout, and A.9 delimiter / `data:` URI encoding.
 
 use crate::{
-    asset_io::{CAIRead, HashBlockObjectType, HashObjectPositions},
+    asset_io::{ObjectLocations, ObjectType, ReadSeek},
     crypto::base64,
     error::{Error, Result},
     utils::io_utils::{stream_len, ReaderUtils},
@@ -26,30 +26,30 @@ pub(crate) fn hash_positions(
     full_len: usize,
     region_start: usize,
     region_len: usize,
-) -> Vec<HashObjectPositions> {
+) -> Vec<ObjectLocations> {
     let region_end = region_start + region_len;
     vec![
-        HashObjectPositions {
-            offset: region_start,
-            length: region_len,
-            htype: HashBlockObjectType::Cai,
+        ObjectLocations {
+            offset: region_start as u64,
+            length: region_len as u64,
+            htype: ObjectType::C2pa,
         },
-        HashObjectPositions {
+        ObjectLocations {
             offset: 0,
-            length: region_start,
-            htype: HashBlockObjectType::Other,
+            length: region_start as u64,
+            htype: ObjectType::Other,
         },
-        HashObjectPositions {
-            offset: region_end,
-            length: full_len.saturating_sub(region_end),
-            htype: HashBlockObjectType::Other,
+        ObjectLocations {
+            offset: region_end as u64,
+            length: full_len.saturating_sub(region_end) as u64,
+            htype: ObjectType::Other,
         },
     ]
 }
 
 /// Reads a text asset into a `String`. The allocation is checked, so an oversized stream
 /// fails with `Error::InsufficientMemory` rather than aborting.
-pub(crate) fn read_text_stream(mut reader: &mut dyn CAIRead) -> Result<String> {
+pub(crate) fn read_text_stream(mut reader: &mut dyn ReadSeek) -> Result<String> {
     reader.rewind()?;
     let len = stream_len(reader)?;
     let bytes = reader.read_to_vec(len)?;
