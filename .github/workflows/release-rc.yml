@@ -16,6 +16,11 @@ name: Cut release-candidate build
 # This workflow only sets versions and pushes a tag. The tag then drives the
 # binary build in library-release.yml, which marks `-rc.` tags as prereleases.
 #
+# RC build tags live in their own `c2pa-rc-v*` namespace, deliberately OUTSIDE
+# the `c2pa-v*` namespace that release-plz keys on. That keeps release-plz from
+# ever mistaking an RC build tag for a botched publish, and lets it baseline the
+# promoted release's changelog on the last real release rather than an RC build.
+#
 # Publishing is gated by branch/tag names, not by this workflow: the tags
 # contain `-rc.` and never match a crates.io publish trigger (release.yml only
 # runs on `stable` / `v0.*` branch pushes), so an RC build can never reach
@@ -87,7 +92,7 @@ jobs:
           RC_C2PA="${BASE_C2PA}-rc.${N}"
           {
             echo "rc_c2pa=$RC_C2PA"
-            echo "tag_c2pa=c2pa-v${RC_C2PA}"
+            echo "tag_c2pa=c2pa-rc-v${RC_C2PA}"
           } >> "$GITHUB_OUTPUT"
           echo "Cutting c2pa $RC_C2PA (build #$N)."
 
