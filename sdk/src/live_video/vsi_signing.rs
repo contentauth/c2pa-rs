@@ -223,12 +223,7 @@ impl LiveVideoVsiSigner {
             };
             let cose_sign1_bytes =
                 build_vsi_cose_sign1(&segment_info_map, &self.session_signing_key, &self.kid)?;
-            Ok(build_emsg_box(
-                &cose_sign1_bytes,
-                timescale,
-                event_duration,
-                id,
-            ))
+            build_emsg_box(&cose_sign1_bytes, timescale, event_duration, id)
         };
 
         let draft_emsg_box = build_emsg(build_segment_bmff_hash_placeholder()?)?;
@@ -316,25 +311,22 @@ impl LiveVideoVsiSigner {
             .map_err(|_| Error::BadParam("VSI COSE_Sign1 protected header missing `alg`".into()))?;
 
         if header_alg != key_alg {
-            return Err(Error::BadParam(
-                format!(
-                    "VSI COSE_Sign1 `alg` ({header_alg:?}) does not match session key ({key_alg:?})"
-                )
-                .into(),
-            ));
+            return Err(Error::BadParam(format!(
+                "VSI COSE_Sign1 `alg` ({header_alg:?}) does not match session key ({key_alg:?})"
+            )));
         }
 
         let public_key_der = cose_key_to_der(&self.session_cose_key)
             .ok_or_else(|| Error::BadParam("failed to convert session key to DER".into()))?;
 
         let validator = validator_for_signing_alg(key_alg)
-            .ok_or_else(|| Error::BadParam(format!("no validator for {key_alg:?}").into()))?;
+            .ok_or_else(|| Error::BadParam(format!("no validator for {key_alg:?}")))?;
 
         let tbs = sign1.tbs_data(b"");
 
         validator
             .validate(&sign1.signature, &tbs, &public_key_der)
-            .map_err(|e| Error::BadParam(format!("VSI signature verification failed: {e}").into()))
+            .map_err(|e| Error::BadParam(format!("VSI signature verification failed: {e}")))
     }
 
     /// Reads back `signed_data`'s active manifest and, if it has a label, stores it as
@@ -499,7 +491,7 @@ fn build_emsg_box(
     timescale: u32,
     event_duration: u32,
     id: u32,
-) -> Vec<u8> {
+) -> Result<Vec<u8>> {
     let mut body = Vec::new();
     body.extend_from_slice(VSI_SCHEME_ID_URI.as_bytes());
     body.push(0); // null terminator
@@ -512,14 +504,17 @@ fn build_emsg_box(
     body.extend_from_slice(cose_sign1_bytes);
 
     // 8 bytes header + 4 bytes version/flags + body.
-    // Use checked arithmetic so an unexpectedly large COSE payload produces a
-    // panic in debug builds and a clear failure in release builds rather than a
-    // silently truncated size field (which the two-pass draft/final guard would
-    // not catch, since both passes share the same computation).
+    // Use checked arithmetic so an unexpectedly large COSE payload is caught
+    // rather than silently truncating the size field (which the two-pass
+    // draft/final guard would not catch, since both passes share the same
+    // computation).
+    let body_len =
+        u32::try_from(body.len()).map_err(|_| Error::BadParam("emsg body too large".into()))?;
+
     let total_size = 8u32
         .checked_add(4)
-        .and_then(|n| n.checked_add(u32::try_from(body.len()).ok()?))
-        .expect("emsg box body exceeds u32 max")
+        .and_then(|n| n.checked_add(body_len))
+        .ok_or_else(|| Error::BadParam("emsg box size overflows u32".into()))?
         .to_be_bytes();
 
     let mut emsg = Vec::new();
@@ -528,7 +523,7 @@ fn build_emsg_box(
     emsg.push(0); // version 0
     emsg.extend_from_slice(&[0u8; 3]); // flags
     emsg.extend_from_slice(&body);
-    emsg
+    Ok(emsg)
 }
 
 // ── minimal BMFF box lookups for emsg timing fields ──────────────────────────
