@@ -15,6 +15,7 @@
 
 .vscode
 .claude
+.scout
 
 /semver-checks/target/
 sdk/target/

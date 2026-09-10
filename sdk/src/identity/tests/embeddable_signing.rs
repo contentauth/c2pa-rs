@@ -158,6 +158,7 @@ fn sign_embeddable_includes_identity_assertion() {
 /// assertions, so signing with an [`IdentityAssertionSigner`] must fail loudly
 /// rather than silently emit a manifest without the identity assertion.
 #[test]
+#[allow(deprecated)]
 fn data_hashed_embeddable_rejects_identity_signer() {
     let format = "application/c2pa";
     let signer = identity_signer();
