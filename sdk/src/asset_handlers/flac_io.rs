@@ -11,18 +11,15 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{
-    io::{Cursor, SeekFrom},
-    path::Path,
-};
+use std::io::{Cursor, SeekFrom};
 
 use id3::Tag;
 
 use crate::{
     asset_handlers::id3_helper::{self, ID3V2Header},
     asset_io::{
-        AssetIO, AssetPatch, CAIRead, CAIReadWrapper, CAIReadWrite, CAIReader, CAIWriter,
-        HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
+        AssetIO, AssetPatch, C2paReader, C2paWriter, ObjectLocations, ReadSeek, ReadWriteSeek,
+        RemoteManifestUrl, WriteXmp,
     },
     error::{Error, Result},
 };
@@ -41,13 +38,13 @@ const ID3_HEADER: &[u8; 3] = b"ID3";
 ///   FLAC without an ID3 wrapper).
 /// * Returns `Err` for an unsupported ID3 version (mapped to
 ///   [`FlacError::InvalidId3Version`]) or an unrecognised header.
-fn read_header(reader: &mut dyn CAIRead) -> Result<Option<ID3V2Header>> {
+fn read_header(reader: &mut dyn ReadSeek) -> Result<Option<ID3V2Header>> {
     let mut buf = [0u8; 10];
     reader.read_exact(&mut buf).map_err(Error::IoError)?;
 
     if buf[0..3] == *ID3_HEADER {
         return ID3V2Header::parse_from_bytes(&buf)
-            .map_err(|_| Error::FlacError(FlacError::InvalidId3Version));
+            .map_err(|_| Error::InvalidAsset("invalid ID3 version for FLAC".into()));
     }
 
     if buf[0..4] == *FLAC_HEADER {
@@ -59,7 +56,7 @@ fn read_header(reader: &mut dyn CAIRead) -> Result<Option<ID3V2Header>> {
 
 /// Validates that the reader's current position is the start of a valid FLAC
 /// stream (i.e. starts with the `fLaC` marker).
-fn validate_flac_stream(reader: &mut dyn CAIRead) -> Result<()> {
+fn validate_flac_stream(reader: &mut dyn ReadSeek) -> Result<()> {
     let mut marker = [0u8; 4];
     reader.read_exact(&mut marker).map_err(Error::IoError)?;
     if &marker != b"fLaC" {
@@ -76,12 +73,12 @@ fn validate_flac_stream(reader: &mut dyn CAIRead) -> Result<()> {
 /// writing a placeholder if none exists, so that manifest positions can be
 /// computed.
 fn add_required_frame(
-    input_stream: &mut dyn CAIRead,
-    output_stream: &mut dyn CAIReadWrite,
+    input_stream: &mut dyn ReadSeek,
+    output_stream: &mut dyn ReadWriteSeek,
 ) -> Result<()> {
     let flac_io = FlacIO::new("flac");
     input_stream.rewind()?;
-    match flac_io.read_cai(input_stream) {
+    match flac_io.read_c2pa(input_stream) {
         Ok(_) => {
             input_stream.rewind()?;
             output_stream.rewind()?;
@@ -90,19 +87,11 @@ fn add_required_frame(
         }
         Err(Error::JumbfNotFound) => {
             input_stream.rewind()?;
-            flac_io.write_cai(input_stream, output_stream, &[1, 2, 3, 4])
+            flac_io.write_c2pa(input_stream, output_stream, &[1, 2, 3, 4])
         }
         Err(Error::TooManyManifestStores) => Ok(()),
         Err(e) => Err(e),
     }
-}
-
-// ── FlacError ────────────────────────────────────────────────────────────────
-
-#[derive(Debug, thiserror::Error)]
-pub enum FlacError {
-    #[error("invalid ID3 version for FLAC")]
-    InvalidId3Version,
 }
 
 // ── FlacIO ───────────────────────────────────────────────────────────────────
@@ -111,18 +100,15 @@ pub struct FlacIO {
     _asset_type: String,
 }
 
-impl CAIReader for FlacIO {
-    fn read_cai(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<u8>> {
+impl C2paReader for FlacIO {
+    fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>> {
         input_stream.rewind()?;
         let header = read_header(input_stream)?;
         input_stream.rewind()?;
 
         if let Some(h) = header {
             let mut manifest: Option<Vec<u8>> = None;
-            let reader = CAIReadWrapper {
-                reader: input_stream,
-            };
-            if let Ok(tag) = Tag::read_from2(reader) {
+            if let Ok(tag) = Tag::read_from2(&mut *input_stream) {
                 for eo in tag.encapsulated_objects() {
                     if id3_helper::is_c2pa_mime_type(&eo.mime_type) {
                         match &manifest {
@@ -144,7 +130,7 @@ impl CAIReader for FlacIO {
         Err(Error::JumbfNotFound)
     }
 
-    fn read_xmp(&self, input_stream: &mut dyn CAIRead) -> Option<String> {
+    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Option<String> {
         // XMP is only present when there is an ID3 tag.
         input_stream.rewind().ok()?;
         let header = read_header(input_stream).ok()?;
@@ -153,33 +139,17 @@ impl CAIReader for FlacIO {
     }
 }
 
-impl RemoteRefEmbed for FlacIO {
-    fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()> {
-        id3_helper::embed_xmp_reference(self, asset_path, embed_ref)
-    }
-
-    fn embed_reference_to_stream(
+impl WriteXmp for FlacIO {
+    fn write_xmp(
         &self,
-        source_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
-        embed_ref: RemoteRefEmbedType,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
+        xmp: &str,
     ) -> Result<()> {
-        match embed_ref {
-            RemoteRefEmbedType::Xmp(url) => {
-                source_stream.rewind()?;
-                let header = read_header(source_stream)?;
-                let id3_end = header.map_or(0, |h| h.get_size()) as u64;
-                let current_xmp = self.read_xmp(source_stream);
-                id3_helper::embed_xmp_to_id3_stream(
-                    source_stream,
-                    output_stream,
-                    url,
-                    id3_end,
-                    current_xmp,
-                )
-            }
-            _ => Err(Error::UnsupportedType),
-        }
+        input_stream.rewind()?;
+        let header = read_header(input_stream)?;
+        let id3_end = header.map_or(0, |h| h.get_size()) as u64;
+        id3_helper::write_xmp_to_id3_stream(input_stream, output_stream, xmp, id3_end)
     }
 }
 
@@ -194,11 +164,11 @@ impl AssetIO for FlacIO {
         Box::new(FlacIO::new(asset_type))
     }
 
-    fn get_reader(&self) -> &dyn CAIReader {
+    fn get_reader(&self) -> &dyn C2paReader {
         self
     }
 
-    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn C2paWriter>> {
         Some(Box::new(FlacIO::new(asset_type)))
     }
 
@@ -206,23 +176,11 @@ impl AssetIO for FlacIO {
         Some(self)
     }
 
-    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
-        id3_helper::read_cai_store_from_path(self, asset_path)
+    fn remote_manifest_url_ref(&self) -> Option<&dyn RemoteManifestUrl> {
+        Some(self)
     }
 
-    fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
-        id3_helper::save_cai_store_to_path(self, asset_path, store_bytes)
-    }
-
-    fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>> {
-        id3_helper::get_object_locations_from_path(self, asset_path)
-    }
-
-    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
-        self.save_cai_store(asset_path, &[])
-    }
-
-    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+    fn write_xmp_ref(&self) -> Option<&dyn WriteXmp> {
         Some(self)
     }
 
@@ -231,11 +189,11 @@ impl AssetIO for FlacIO {
     }
 }
 
-impl CAIWriter for FlacIO {
-    fn write_cai(
+impl C2paWriter for FlacIO {
+    fn write_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         store_bytes: &[u8],
     ) -> Result<()> {
         input_stream.rewind()?;
@@ -244,27 +202,27 @@ impl CAIWriter for FlacIO {
         id3_helper::write_cai_with_id3(input_stream, output_stream, store_bytes, id3_end)
     }
 
-    fn get_object_locations_from_stream(
+    fn get_object_locations(
         &self,
-        input_stream: &mut dyn CAIRead,
-    ) -> Result<Vec<HashObjectPositions>> {
+        input_stream: &mut dyn ReadSeek,
+    ) -> Result<Vec<ObjectLocations>> {
         let mut output_stream = Cursor::new(Vec::<u8>::new());
         add_required_frame(input_stream, &mut output_stream)?;
         id3_helper::get_object_locations(&mut output_stream)
     }
 
-    fn remove_cai_store_from_stream(
+    fn remove_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
     ) -> Result<()> {
-        self.write_cai(input_stream, output_stream, &[])
+        self.write_c2pa(input_stream, output_stream, &[])
     }
 }
 
 impl AssetPatch for FlacIO {
-    fn patch_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
-        id3_helper::patch_cai_in_id3_asset(asset_path, store_bytes)
+    fn patch_c2pa(&self, stream: &mut dyn ReadWriteSeek, store_bytes: &[u8]) -> Result<()> {
+        id3_helper::patch_cai_in_id3_stream(stream, store_bytes)
     }
 }
 
@@ -276,7 +234,7 @@ mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use std::{io::Cursor, path::Path};
+    use std::io::Cursor;
 
     use super::*;
     use crate::{
@@ -357,12 +315,6 @@ mod tests {
     }
 
     #[test]
-    fn test_embed_reference_to_stream_unsupported_type() {
-        let handler = FlacIO::new("flac");
-        test_helpers::run_embed_reference_unsupported(&handler, &fixture());
-    }
-
-    #[test]
     fn test_supported_types() {
         let handler = FlacIO::new("flac");
         test_helpers::run_supported_types(&handler, "flac", "audio/flac");
@@ -390,7 +342,7 @@ mod tests {
     fn test_read_cai_store_no_id3() {
         let flac_io = FlacIO::new("flac");
         let mut cursor = Cursor::new(MINIMAL_FLAC);
-        match flac_io.read_cai(&mut cursor) {
+        match flac_io.read_c2pa(&mut cursor) {
             Err(Error::JumbfNotFound) => {}
             other => panic!("expected JumbfNotFound for pure FLAC, got {:?}", other),
         }
@@ -407,9 +359,9 @@ mod tests {
         let mut buf = test_helpers::id3_header(1, 0).to_vec();
         buf.extend_from_slice(MINIMAL_FLAC);
         let mut cursor = Cursor::new(buf);
-        match flac_io.read_cai(&mut cursor) {
-            Err(Error::FlacError(FlacError::InvalidId3Version)) => {}
-            other => panic!("expected FlacError(InvalidId3Version), got {:?}", other),
+        match flac_io.read_c2pa(&mut cursor) {
+            Err(Error::InvalidAsset(_)) => {}
+            other => panic!("expected InvalidAsset, got {:?}", other),
         }
     }
 
@@ -425,7 +377,7 @@ mod tests {
         buf.extend_from_slice(b"XXXX");
         buf.extend_from_slice(MINIMAL_FLAC);
         let mut cursor = Cursor::new(buf);
-        match flac_io.read_cai(&mut cursor) {
+        match flac_io.read_c2pa(&mut cursor) {
             Err(_) => {}
             Ok(_) => panic!("expected error for ID3 followed by non-FLAC bytes"),
         }
@@ -442,20 +394,10 @@ mod tests {
         let handler = flac_io.get_handler("audio/flac");
         let reader = flac_io.get_reader();
         let mut cursor = Cursor::new(MINIMAL_FLAC);
-        match reader.read_cai(&mut cursor) {
+        match reader.read_c2pa(&mut cursor) {
             Err(Error::JumbfNotFound) => {}
             other => panic!("unexpected: {:?}", other),
         }
         assert!(handler.supported_types().contains(&"audio/flac"));
-    }
-
-    #[test]
-    fn test_read_cai_store_file_not_found() {
-        let flac_io = FlacIO::new("flac");
-        let path = Path::new("/nonexistent/sample.flac");
-        match flac_io.read_cai_store(path) {
-            Err(Error::IoError(_)) => {}
-            other => panic!("expected IoError for missing file, got {:?}", other),
-        }
     }
 }

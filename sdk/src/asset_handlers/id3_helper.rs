@@ -18,11 +18,7 @@
 //! live here so each format handler only needs format-specific logic (header
 //! validation, FLAC stream verification, …).
 
-use std::{
-    fs::{File, OpenOptions},
-    io::{Cursor, Seek, SeekFrom, Write},
-    path::Path,
-};
+use std::io::{Cursor, SeekFrom};
 
 use byteorder::{BigEndian, ReadBytesExt};
 use id3::{
@@ -32,15 +28,9 @@ use id3::{
 use memchr::memmem;
 
 use crate::{
-    asset_io::{
-        rename_or_move, CAIRead, CAIReadWrapper, CAIReadWrite, CAIReadWriteWrapper, CAIReader,
-        CAIWriter, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed, RemoteRefEmbedType,
-    },
+    asset_io::{ObjectLocations, ObjectType, ReadSeek, ReadWriteSeek},
     error::{Error, Result},
-    utils::{
-        io_utils::{stream_len, tempfile_builder, ReaderUtils},
-        xmp_inmemory_utils::{self, MIN_XMP},
-    },
+    utils::io_utils::{stream_len, ReaderUtils},
 };
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -112,17 +102,14 @@ pub(crate) fn is_c2pa_mime_type(mime_type: &str) -> bool {
 
 /// Returns `(manifest_byte_offset, manifest_byte_length)` within the stream's
 /// ID3 tag, or `None` when no single C2PA manifest GEOB frame is found.
-pub(crate) fn get_manifest_pos(mut input_stream: &mut dyn CAIRead) -> Result<Option<(u64, u32)>> {
+pub(crate) fn get_manifest_pos(mut input_stream: &mut dyn ReadSeek) -> Result<Option<(u64, u32)>> {
     input_stream.rewind()?;
     let mut buf = [0u8; 10];
     input_stream.read_exact(&mut buf)?;
     let header = ID3V2Header::parse_from_bytes(&buf)?;
     input_stream.rewind()?;
 
-    let reader = CAIReadWrapper {
-        reader: input_stream,
-    };
-    if let Ok(tag) = Tag::read_from2(reader) {
+    if let Ok(tag) = Tag::read_from2(&mut *input_stream) {
         let mut manifests = Vec::new();
         for eo in tag.encapsulated_objects() {
             if is_c2pa_mime_type(&eo.mime_type) {
@@ -141,12 +128,9 @@ pub(crate) fn get_manifest_pos(mut input_stream: &mut dyn CAIRead) -> Result<Opt
 }
 
 /// Reads the XMP string from the PRIV `"XMP"` frame in the ID3 tag, if any.
-pub(crate) fn read_xmp_from_id3(input_stream: &mut dyn CAIRead) -> Result<Option<String>> {
+pub(crate) fn read_xmp_from_id3(input_stream: &mut dyn ReadSeek) -> Result<Option<String>> {
     input_stream.rewind()?;
-    let reader = CAIReadWrapper {
-        reader: input_stream,
-    };
-    if let Ok(tag) = Tag::read_from2(reader) {
+    if let Ok(tag) = Tag::read_from2(&mut *input_stream) {
         for frame in tag.frames() {
             if let Content::Private(private) = frame.content() {
                 if private.owner_identifier == "XMP" {
@@ -165,17 +149,14 @@ pub(crate) fn read_xmp_from_id3(input_stream: &mut dyn CAIRead) -> Result<Option
 /// begins — i.e. `header.get_size() as u64` when a pre-existing ID3 tag was
 /// found, or `0` when there is none.
 pub(crate) fn write_cai_with_id3(
-    input_stream: &mut dyn CAIRead,
-    output_stream: &mut dyn CAIReadWrite,
+    input_stream: &mut dyn ReadSeek,
+    output_stream: &mut dyn ReadWriteSeek,
     store_bytes: &[u8],
     id3_end: u64,
 ) -> Result<()> {
     input_stream.rewind()?;
     let mut out_tag = Tag::new();
-    let reader = CAIReadWrapper {
-        reader: input_stream,
-    };
-    if let Ok(tag) = Tag::read_from2(reader) {
+    if let Ok(tag) = Tag::read_from2(&mut *input_stream) {
         for f in tag.frames() {
             match f.content() {
                 Content::EncapsulatedObject(eo) => {
@@ -201,37 +182,29 @@ pub(crate) fn write_cai_with_id3(
         );
         let _ = out_tag.add_frame(frame);
     }
-    let writer = CAIReadWriteWrapper {
-        reader_writer: output_stream,
-    };
     out_tag
-        .write_to(writer, Version::Id3v24)
+        .write_to(&mut *output_stream, Version::Id3v24)
         .map_err(|_| Error::EmbeddingError)?;
     input_stream.seek(SeekFrom::Start(id3_end))?;
     std::io::copy(input_stream, output_stream)?;
     Ok(())
 }
 
-/// Embeds an XMP remote reference into the ID3 tag then copies the audio
-/// payload unchanged.
+/// Writes `xmp` (a complete XMP packet, already final) into a PRIV frame in the
+/// ID3 tag, replacing any existing XMP PRIV frame, then appends the non-ID3
+/// payload from `source_stream` verbatim.
 ///
 /// `id3_end` — byte offset where the audio payload starts (see
 /// [`write_cai_with_id3`]).
-/// `current_xmp` — the existing XMP string, if any, used as the base for
-/// [`xmp_inmemory_utils::add_provenance`].
-pub(crate) fn embed_xmp_to_id3_stream(
-    source_stream: &mut dyn CAIRead,
-    output_stream: &mut dyn CAIReadWrite,
-    url: String,
+pub(crate) fn write_xmp_to_id3_stream(
+    source_stream: &mut dyn ReadSeek,
+    output_stream: &mut dyn ReadWriteSeek,
+    xmp: &str,
     id3_end: u64,
-    current_xmp: Option<String>,
 ) -> Result<()> {
     source_stream.rewind()?;
     let mut out_tag = Tag::new();
-    let reader = CAIReadWrapper {
-        reader: source_stream,
-    };
-    if let Ok(tag) = Tag::read_from2(reader) {
+    if let Ok(tag) = Tag::read_from2(&mut *source_stream) {
         for f in tag.frames() {
             match f.content() {
                 Content::Private(private) => {
@@ -245,23 +218,16 @@ pub(crate) fn embed_xmp_to_id3_stream(
             }
         }
     }
-    let xmp = xmp_inmemory_utils::add_provenance(
-        &current_xmp.unwrap_or_else(|| MIN_XMP.to_string()),
-        &url,
-    )?;
     let frame = Frame::with_content(
         "PRIV",
         Content::Private(Private {
             owner_identifier: "XMP".to_owned(),
-            private_data: xmp.into_bytes(),
+            private_data: xmp.as_bytes().to_vec(),
         }),
     );
     let _ = out_tag.add_frame(frame);
-    let writer = CAIReadWriteWrapper {
-        reader_writer: output_stream,
-    };
     out_tag
-        .write_to(writer, Version::Id3v24)
+        .write_to(&mut *output_stream, Version::Id3v24)
         .map_err(|_| Error::EmbeddingError)?;
     source_stream.seek(SeekFrom::Start(id3_end))?;
     std::io::copy(source_stream, output_stream)?;
@@ -272,35 +238,30 @@ pub(crate) fn embed_xmp_to_id3_stream(
 /// it, bytes after it) from a stream that already contains an ID3 tag with a
 /// C2PA manifest GEOB frame.
 pub(crate) fn get_object_locations(
-    output_stream: &mut dyn CAIRead,
-) -> Result<Vec<HashObjectPositions>> {
-    let mut positions: Vec<HashObjectPositions> = Vec::new();
+    output_stream: &mut dyn ReadSeek,
+) -> Result<Vec<ObjectLocations>> {
+    let mut positions: Vec<ObjectLocations> = Vec::new();
     let (manifest_pos, manifest_len) =
         get_manifest_pos(output_stream)?.ok_or(Error::EmbeddingError)?;
 
-    positions.push(HashObjectPositions {
-        offset: usize::try_from(manifest_pos)
-            .map_err(|_| Error::InvalidAsset("value out of range".to_string()))?,
-        length: usize::try_from(manifest_len)
-            .map_err(|_| Error::InvalidAsset("value out of range".to_string()))?,
-        htype: HashBlockObjectType::Cai,
+    positions.push(ObjectLocations {
+        offset: manifest_pos,
+        length: manifest_len as u64,
+        htype: ObjectType::C2pa,
     });
-    positions.push(HashObjectPositions {
+    positions.push(ObjectLocations {
         offset: 0,
-        length: usize::try_from(manifest_pos)
-            .map_err(|_| Error::InvalidAsset("value out of range".to_string()))?,
-        htype: HashBlockObjectType::Other,
+        length: manifest_pos,
+        htype: ObjectType::Other,
     });
     let end = manifest_pos
         .checked_add(manifest_len as u64)
         .ok_or_else(|| Error::InvalidAsset("value out of range".to_string()))?;
     let file_end = stream_len(output_stream)?;
-    positions.push(HashObjectPositions {
-        offset: usize::try_from(end)
-            .map_err(|_| Error::InvalidAsset("value out of range".to_string()))?,
-        length: usize::try_from(file_end - end)
-            .map_err(|_| Error::InvalidAsset("value out of range".to_string()))?,
-        htype: HashBlockObjectType::Other,
+    positions.push(ObjectLocations {
+        offset: end,
+        length: file_end - end,
+        htype: ObjectType::Other,
     });
     Ok(positions)
 }
@@ -308,83 +269,20 @@ pub(crate) fn get_object_locations(
 /// Patches the C2PA manifest in-place within an ID3-tagged asset file.
 /// `store_bytes` **must** be the same length as the existing manifest.
 #[allow(unused)]
-pub(crate) fn patch_cai_in_id3_asset(asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
-    let mut asset = OpenOptions::new()
-        .write(true)
-        .read(true)
-        .create(false)
-        .open(asset_path)?;
-    let (manifest_pos, manifest_len) =
-        get_manifest_pos(&mut asset)?.ok_or(Error::EmbeddingError)?;
+pub(crate) fn patch_cai_in_id3_stream(
+    stream: &mut dyn ReadWriteSeek,
+    store_bytes: &[u8],
+) -> Result<()> {
+    let (manifest_pos, manifest_len) = get_manifest_pos(stream)?.ok_or(Error::EmbeddingError)?;
     if store_bytes.len() == manifest_len as usize {
-        asset.seek(SeekFrom::Start(manifest_pos))?;
-        asset.write_all(store_bytes)?;
+        stream.seek(SeekFrom::Start(manifest_pos))?;
+        stream.write_all(store_bytes)?;
         Ok(())
     } else {
         Err(Error::InvalidAsset(
             "patch_cai_store store size mismatch.".to_string(),
         ))
     }
-}
-
-/// Embeds an XMP remote reference into an ID3-tagged asset file in place.
-///
-/// Opens the file at `asset_path`, delegates to
-/// [`RemoteRefEmbed::embed_reference_to_stream`], then writes the result back.
-/// Only [`RemoteRefEmbedType::Xmp`] is supported; all other variants return
-/// [`Error::UnsupportedType`].
-#[allow(unused)]
-pub(crate) fn embed_xmp_reference(
-    embed: &dyn RemoteRefEmbed,
-    asset_path: &std::path::Path,
-    embed_ref: RemoteRefEmbedType,
-) -> Result<()> {
-    match &embed_ref {
-        RemoteRefEmbedType::Xmp(_) => {
-            let mut input_stream = File::open(asset_path)?;
-            let mut output_stream = Cursor::new(Vec::new());
-            embed.embed_reference_to_stream(&mut input_stream, &mut output_stream, embed_ref)?;
-            std::fs::write(asset_path, output_stream.into_inner())?;
-            Ok(())
-        }
-        _ => Err(Error::UnsupportedType),
-    }
-}
-
-/// Reads the CAI store from a file on disk via a [`CAIReader`].
-pub(crate) fn read_cai_store_from_path(
-    reader: &dyn CAIReader,
-    asset_path: &Path,
-) -> Result<Vec<u8>> {
-    let mut f = File::open(asset_path)?;
-    reader.read_cai(&mut f)
-}
-
-/// Writes `store_bytes` into an ID3-tagged asset file via a [`CAIWriter`],
-/// replacing any existing C2PA manifest.
-pub(crate) fn save_cai_store_to_path(
-    writer: &dyn CAIWriter,
-    asset_path: &Path,
-    store_bytes: &[u8],
-) -> Result<()> {
-    let mut input_stream = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(asset_path)
-        .map_err(Error::IoError)?;
-    let mut temp_file = tempfile_builder("c2pa_temp")?;
-    writer.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
-    rename_or_move(temp_file, asset_path)
-}
-
-/// Returns the [`HashObjectPositions`] for a file on disk via a [`CAIWriter`].
-#[allow(unused)]
-pub(crate) fn get_object_locations_from_path(
-    writer: &dyn CAIWriter,
-    asset_path: &Path,
-) -> Result<Vec<HashObjectPositions>> {
-    let mut f = File::open(asset_path).map_err(|_| Error::EmbeddingError)?;
-    writer.get_object_locations_from_stream(&mut f)
 }
 
 // ── Shared test helpers ─────────────────────────────────────────────────────
@@ -406,7 +304,7 @@ pub(crate) mod test_helpers {
     };
 
     use crate::{
-        asset_io::{AssetIO, HashBlockObjectType, RemoteRefEmbed, RemoteRefEmbedType},
+        asset_io::{AssetIO, ObjectType, RemoteManifestUrl},
         error::Error,
         utils::{hash_utils::vec_compare, xmp_inmemory_utils::extract_provenance},
     };
@@ -446,7 +344,7 @@ pub(crate) mod test_helpers {
         let mut buf = [0u8; 10].to_vec();
         buf[0..4].copy_from_slice(b"XXXX");
         let mut cursor = Cursor::new(buf);
-        match handler.get_reader().read_cai(&mut cursor) {
+        match handler.get_reader().read_c2pa(&mut cursor) {
             Err(Error::UnsupportedType) => {}
             other => panic!(
                 "expected UnsupportedType for unknown magic, got {:?}",
@@ -459,7 +357,7 @@ pub(crate) mod test_helpers {
     /// to return `Error::IoError`.
     pub(crate) fn run_read_cai_io_error_too_short(handler: &dyn AssetIO) {
         let mut cursor = Cursor::new(b"abc");
-        match handler.get_reader().read_cai(&mut cursor) {
+        match handler.get_reader().read_c2pa(&mut cursor) {
             Err(Error::IoError(_)) => {}
             other => panic!("expected IoError for short stream, got {:?}", other),
         }
@@ -490,7 +388,7 @@ pub(crate) mod test_helpers {
         }
         let buf = id3_tag_with_payload(tag, audio_payload);
         let mut cursor = Cursor::new(buf);
-        match handler.get_reader().read_cai(&mut cursor) {
+        match handler.get_reader().read_c2pa(&mut cursor) {
             Err(Error::TooManyManifestStores) => {}
             Ok(data) => {
                 assert!(
@@ -510,7 +408,7 @@ pub(crate) mod test_helpers {
     pub(crate) fn run_write_read_roundtrip(handler: &dyn AssetIO, fixture: &Path, tmp: &Path) {
         let data = b"some more test data";
         std::fs::copy(fixture, tmp).unwrap();
-        handler.save_cai_store(tmp, data).unwrap();
+        handler.save_c2pa_store(tmp, data).unwrap();
         let read_back = handler.read_cai_store(tmp).unwrap();
         assert!(vec_compare(data, &read_back));
     }
@@ -519,14 +417,14 @@ pub(crate) mod test_helpers {
     pub(crate) fn run_patch_same_size(handler: &dyn AssetIO, fixture: &Path, tmp: &Path) {
         let test_data = b"some test data";
         std::fs::copy(fixture, tmp).unwrap();
-        handler.save_cai_store(tmp, test_data).unwrap();
+        handler.save_c2pa_store(tmp, test_data).unwrap();
         let source_data = handler.read_cai_store(tmp).unwrap();
         let mut new_data = vec![0u8; source_data.len()];
         new_data[..test_data.len()].copy_from_slice(test_data);
         handler
             .asset_patch_ref()
             .unwrap()
-            .patch_cai_store(tmp, &new_data)
+            .patch_c2pa_file(tmp, &new_data)
             .unwrap();
         let replaced = handler.read_cai_store(tmp).unwrap();
         assert_eq!(new_data, replaced);
@@ -535,11 +433,11 @@ pub(crate) mod test_helpers {
     /// Patching with a wrong-sized buffer must return `InvalidAsset`.
     pub(crate) fn run_patch_size_mismatch(handler: &dyn AssetIO, fixture: &Path, tmp: &Path) {
         std::fs::copy(fixture, tmp).unwrap();
-        handler.save_cai_store(tmp, &[1, 2, 3, 4]).unwrap();
+        handler.save_c2pa_store(tmp, &[1, 2, 3, 4]).unwrap();
         match handler
             .asset_patch_ref()
             .unwrap()
-            .patch_cai_store(tmp, b"wrong length")
+            .patch_c2pa_file(tmp, b"wrong length")
         {
             Err(Error::InvalidAsset(msg))
                 if msg.contains("patch_cai_store store size mismatch") => {}
@@ -550,18 +448,18 @@ pub(crate) mod test_helpers {
     /// Save a manifest then remove it; reading back must yield `JumbfNotFound`.
     pub(crate) fn run_remove_manifest(handler: &dyn AssetIO, fixture: &Path, tmp: &Path) {
         std::fs::copy(fixture, tmp).unwrap();
-        handler.save_cai_store(tmp, &[1, 2, 3]).unwrap();
-        handler.remove_cai_store(tmp).unwrap();
+        handler.save_c2pa_store(tmp, &[1, 2, 3]).unwrap();
+        handler.remove_c2pa_store(tmp).unwrap();
         match handler.read_cai_store(tmp) {
             Err(Error::JumbfNotFound) => {}
             _ => unreachable!(),
         }
     }
 
-    /// Embed an XMP URL, then verify it can be read back.
+    /// Write a remote manifest URL, then verify it can be read back.
     pub(crate) fn run_remote_ref_xmp(
         handler: &dyn AssetIO,
-        embed: &dyn RemoteRefEmbed,
+        embed: &dyn RemoteManifestUrl,
         fixture: &Path,
     ) {
         let reader = handler.get_reader();
@@ -571,11 +469,7 @@ pub(crate) mod test_helpers {
 
         let mut output = Cursor::new(Vec::new());
         embed
-            .embed_reference_to_stream(
-                &mut stream,
-                &mut output,
-                RemoteRefEmbedType::Xmp("Test".to_owned()),
-            )
+            .write_remote_manifest_url(&mut stream, &mut output, "Test")
             .unwrap();
         output.rewind().unwrap();
         let xmp = reader.read_xmp(&mut output).unwrap();
@@ -590,36 +484,39 @@ pub(crate) mod test_helpers {
         tmp: &Path,
     ) {
         std::fs::copy(fixture, tmp).unwrap();
-        handler.save_cai_store(tmp, &[1, 2, 3, 4, 5]).unwrap();
-        let positions = handler.get_object_locations(tmp).unwrap();
+        handler.save_c2pa_store(tmp, &[1, 2, 3, 4, 5]).unwrap();
+        let mut f = std::fs::File::open(tmp).unwrap();
+        let positions = handler
+            .get_writer("")
+            .unwrap()
+            .get_object_locations(&mut f)
+            .unwrap();
         assert_eq!(positions.len(), 3, "expected [Cai, Other, Other]");
-        let file_len = std::fs::metadata(tmp).unwrap().len() as usize;
-        let sum_len: usize = positions.iter().map(|p| p.length).sum();
+        let file_len = std::fs::metadata(tmp).unwrap().len();
+        let sum_len: u64 = positions.iter().map(|p| p.length).sum();
         assert_eq!(
             sum_len, file_len,
             "position lengths should sum to file size"
         );
+        assert!(positions.iter().any(|p| p.htype == ObjectType::C2pa));
         assert!(positions
             .iter()
-            .any(|p| p.htype == HashBlockObjectType::Cai));
-        assert!(positions
-            .iter()
-            .any(|p| p.htype == HashBlockObjectType::Other && p.offset == 0));
+            .any(|p| p.htype == ObjectType::Other && p.offset == 0));
     }
 
     /// `remove_cai_store_from_stream` must produce a stream without a manifest.
     pub(crate) fn run_remove_from_stream(handler: &dyn AssetIO, fixture: &Path, tmp: &Path) {
         std::fs::copy(fixture, tmp).unwrap();
-        handler.save_cai_store(tmp, &[1, 2, 3]).unwrap();
+        handler.save_c2pa_store(tmp, &[1, 2, 3]).unwrap();
         let mut input = std::fs::File::open(tmp).unwrap();
         let mut out_buf = Cursor::new(Vec::new());
         handler
             .get_writer("")
             .unwrap()
-            .remove_cai_store_from_stream(&mut input, &mut out_buf)
+            .remove_c2pa(&mut input, &mut out_buf)
             .unwrap();
         out_buf.set_position(0);
-        match handler.get_reader().read_cai(&mut out_buf) {
+        match handler.get_reader().read_c2pa(&mut out_buf) {
             Err(Error::JumbfNotFound) => {}
             other => panic!(
                 "expected JumbfNotFound after remove_cai_store_from_stream, got {:?}",
@@ -631,35 +528,21 @@ pub(crate) mod test_helpers {
     /// `write_cai` with empty `store_bytes` must remove the manifest.
     pub(crate) fn run_write_cai_empty_removes(handler: &dyn AssetIO, fixture: &Path, tmp: &Path) {
         std::fs::copy(fixture, tmp).unwrap();
-        handler.save_cai_store(tmp, &[1, 2, 3]).unwrap();
+        handler.save_c2pa_store(tmp, &[1, 2, 3]).unwrap();
         let mut input = std::fs::File::open(tmp).unwrap();
         let mut out_buf = Cursor::new(Vec::new());
         handler
             .get_writer("")
             .unwrap()
-            .write_cai(&mut input, &mut out_buf, &[])
+            .write_c2pa(&mut input, &mut out_buf, &[])
             .unwrap();
         out_buf.set_position(0);
-        match handler.get_reader().read_cai(&mut out_buf) {
+        match handler.get_reader().read_c2pa(&mut out_buf) {
             Err(Error::JumbfNotFound) => {}
             other => panic!(
                 "expected JumbfNotFound after write_cai with empty store, got {:?}",
                 other
             ),
-        }
-    }
-
-    /// Embedding an unsupported reference type must return `UnsupportedType`.
-    pub(crate) fn run_embed_reference_unsupported(embed: &dyn RemoteRefEmbed, fixture: &Path) {
-        let mut stream = std::fs::File::open(fixture).unwrap();
-        let mut output = Cursor::new(Vec::new());
-        match embed.embed_reference_to_stream(
-            &mut stream,
-            &mut output,
-            RemoteRefEmbedType::StegoS("x".to_string()),
-        ) {
-            Err(Error::UnsupportedType) => {}
-            other => panic!("expected UnsupportedType for StegoS, got {:?}", other),
         }
     }
 
@@ -671,7 +554,7 @@ pub(crate) mod test_helpers {
     ) {
         let payload = b"c2pa manifest payload";
         std::fs::copy(fixture, tmp).unwrap();
-        handler.save_cai_store(tmp, payload).unwrap();
+        handler.save_c2pa_store(tmp, payload).unwrap();
         let read = handler.read_cai_store(tmp).unwrap();
         assert!(vec_compare(payload, &read));
     }
@@ -688,17 +571,22 @@ pub(crate) mod test_helpers {
 
     pub(crate) fn run_embed_reference_file_path(
         handler: &dyn AssetIO,
-        embed: &dyn RemoteRefEmbed,
+        embed: &dyn RemoteManifestUrl,
         fixture: &Path,
         tmp: &Path,
     ) {
         std::fs::copy(fixture, tmp).unwrap();
+        let mut input_stream = std::fs::File::open(tmp).unwrap();
+        let mut output_stream = Cursor::new(Vec::new());
         embed
-            .embed_reference(
-                tmp,
-                RemoteRefEmbedType::Xmp("https://example.com/ref".to_string()),
+            .write_remote_manifest_url(
+                &mut input_stream,
+                &mut output_stream,
+                "https://example.com/ref",
             )
             .unwrap();
+        std::fs::write(tmp, output_stream.into_inner()).unwrap();
+
         let mut f = std::fs::File::open(tmp).unwrap();
         let xmp = handler.get_reader().read_xmp(&mut f).expect("xmp present");
         let p = extract_provenance(&xmp).unwrap();

@@ -51,7 +51,6 @@ use crate::{
     error::{Error, Result},
     hash_utils::hash_by_alg,
     jumbf::labels::manifest_label_from_uri,
-    jumbf_io,
     maybe_send_sync::MaybeSend,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     settings::{builder::TimeStampFetchScope, MAX_ASSERTIONS},
@@ -193,7 +192,7 @@ pub struct ManifestDefinition {
 }
 
 fn default_instance_id() -> String {
-    format!("xmp:iid:{}", Uuid::new_v4())
+    format!("xmp.iid:{}", Uuid::new_v4())
 }
 
 fn default_format() -> String {
@@ -482,7 +481,8 @@ impl Builder {
     /// # Returns
     /// * A new [`Builder`].
     #[deprecated(
-        note = "Use `Builder::default()` for default settings, or `Builder::from_context(context)` and pass settings in the `Context`."
+        since = "0.79.4",
+        note = "Use `Builder::default()` for default settings, or `Builder::from_context(context)` and pass settings in the `Context`. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     pub fn new() -> Self {
         // Legacy behavior: explicitly get global settings for backward compatibility
@@ -625,7 +625,8 @@ impl Builder {
     /// # Errors
     /// * Returns an [`Error`] if the JSON is malformed or incorrect.
     #[deprecated(
-        note = "Use `Builder::from_context(context).with_definition(json)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+        since = "0.79.4",
+        note = "Use `Builder::from_context(context).with_definition(json)` instead, passing a `Context` explicitly rather than relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     pub fn from_json(json: &str) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
@@ -685,7 +686,7 @@ impl Builder {
 
     /// Returns a [Vec] of MIME types that the API is able to sign.
     pub fn supported_mime_types() -> Vec<String> {
-        jumbf_io::supported_builder_mime_types()
+        Context::default().io().writer_mime_types()
     }
 
     /// Returns the claim version for this builder.
@@ -1608,7 +1609,8 @@ impl Builder {
     /// # }
     /// ```
     #[deprecated(
-        note = "Use `Builder::from_context(context).with_archive(stream)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+        since = "0.79.4",
+        note = "Use `Builder::from_context(context).with_archive(stream)` instead, passing a `Context` explicitly rather than relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     #[allow(deprecated)]
     pub fn from_archive(stream: impl Read + Seek + Send) -> Result<Self> {
@@ -2426,6 +2428,10 @@ impl Builder {
     /// * The bytes of the `c2pa_manifest` placeholder.
     /// # Errors
     /// * Returns an [`Error`] if the placeholder cannot be created.
+    #[deprecated(
+        since = "0.91.0",
+        note = "Use `Builder::placeholder` instead, which also supports dynamic assertions (e.g., CAWG identity). Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn data_hashed_placeholder(
         &mut self,
         reserve_size: usize,
@@ -2441,9 +2447,10 @@ impl Builder {
             self.add_assertion(labels::DATA_HASH, &ph)?;
         }
         self.definition.format = format.to_string();
-        self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
+        self.definition.instance_id = format!("xmp.iid:{}", Uuid::new_v4());
         let mut store = self.to_store()?;
-        let placeholder = store.get_data_hashed_manifest_placeholder(reserve_size, format)?;
+        let placeholder =
+            store.get_data_hashed_manifest_placeholder(reserve_size, format, self.context())?;
         Ok(placeholder)
     }
 
@@ -2483,14 +2490,14 @@ impl Builder {
         }
 
         // BMFF formats always use BmffHash.
-        if jumbf_io::is_bmff_format(format) {
+        if self.context.io().is_bmff_format(format) {
             return HashType::Bmff;
         }
 
         // When prefer_box_hash is enabled and the format handler supports it,
         // use BoxHash (no placeholder needed).
         if self.context.settings().builder.prefer_box_hash {
-            if let Some(handler) = jumbf_io::get_assetio_handler(format) {
+            if let Some(handler) = self.context.io().handler(format) {
                 if handler.asset_box_hash_ref().is_some() {
                     return HashType::Box;
                 }
@@ -2560,7 +2567,7 @@ impl Builder {
 
         // If no hash exists, add an appropriate placeholder based on format
         if hash_count == 0 {
-            if crate::jumbf_io::is_bmff_format(format) {
+            if self.context().io().is_bmff_format(format) {
                 // For BMFF formats, add a placeholder BmffHash.
                 let ph_alg = self.definition.hash_alg.as_deref().unwrap_or("sha256");
 
@@ -2568,7 +2575,9 @@ impl Builder {
                 self.bmff_hasher.alg = ph_alg.to_string();
 
                 let mut placeholder_bmff = BmffHash::new("jumbf manifest", ph_alg, None);
-                placeholder_bmff.set_default_exclusions();
+                // Baked into this assertion's exclusions now; later setting
+                // changes won't affect this placeholder or its signed hash.
+                placeholder_bmff.set_default_exclusions_with_options(self.context.settings());
                 placeholder_bmff.add_place_holder_hash()?;
                 let assertion_label = placeholder_bmff.to_assertion()?.label();
                 self.add_assertion(&assertion_label, &placeholder_bmff)?;
@@ -2604,7 +2613,7 @@ impl Builder {
         // JUMBF to the same size, keeping the composed byte count identical.
         self.placeholder_jumbf_len = Some(jumbf.len());
         // Return composed bytes ready for the caller to embed into the asset.
-        Store::get_composed_manifest(&jumbf, format)
+        Store::get_composed_manifest(&jumbf, format, self.context())
     }
 
     /// Sets the exclusion object for the [`BmffHash`] assertion in the Builder.
@@ -2902,7 +2911,10 @@ impl Builder {
         let use_box_hash = has_box_hash
             || (!has_bmff_hash && {
                 self.context.settings().builder.prefer_box_hash
-                    && jumbf_io::get_assetio_handler(format)
+                    && self
+                        .context
+                        .io()
+                        .handler(format)
                         .and_then(|h| h.asset_box_hash_ref().map(|_| ()))
                         .is_some()
             });
@@ -2974,7 +2986,11 @@ impl Builder {
             self.add_assertion(&assertion_label, &bmff_hash)?;
         } else if use_box_hash {
             // BoxHash path: get the format's AssetBoxHash handler and compute box hashes.
-            let handler = jumbf_io::get_assetio_handler(format).ok_or(Error::UnsupportedType)?;
+            let handler = self
+                .context
+                .io()
+                .handler(format)
+                .ok_or(Error::UnsupportedType)?;
             let bhp = handler.asset_box_hash_ref().ok_or_else(|| {
                 Error::BadParam(format!("Format '{format}' does not support BoxHash"))
             })?;
@@ -3124,7 +3140,7 @@ impl Builder {
             }
         }
 
-        Store::get_composed_manifest(&jumbf, format)
+        Store::get_composed_manifest(&jumbf, format, self.context())
     }
 
     /// Create a signed data hashed embeddable manifest using a supplied signer.
@@ -3142,6 +3158,10 @@ impl Builder {
     /// * `source` - The stream to read from.
     /// # Returns
     /// * The bytes of the `c2pa_manifest` that was created (prep-formatted).
+    #[deprecated(
+        since = "0.91.0",
+        note = "Use `Builder::update_hash_from_stream` and `Builder::sign_embeddable` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     #[async_generic(async_signature(
         &mut self,
         signer: &dyn AsyncSigner,
@@ -3186,6 +3206,10 @@ impl Builder {
     /// * `signer` - The signer to use.
     /// # Returns
     /// * The bytes of the c2pa_manifest that was created (prep-formatted).
+    #[deprecated(
+        since = "0.91.0",
+        note = "Use `Builder::update_hash_from_stream` and `Builder::sign_embeddable` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     #[async_generic(async_signature(
         &mut self,
         signer: &dyn AsyncSigner,
@@ -3196,7 +3220,7 @@ impl Builder {
         signer: &dyn Signer,
         format: &str,
     ) -> Result<Vec<u8>> {
-        self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
+        self.definition.instance_id = format!("xmp.iid:{}", Uuid::new_v4());
 
         let mut store = self.to_store()?;
         let bytes = if _sync {
@@ -3214,7 +3238,7 @@ impl Builder {
             }
         }
         // get composed version for embedding to JPEG
-        Store::get_composed_manifest(&bytes, format)
+        Store::get_composed_manifest(&bytes, format, &self.context)
     }
 
     /// Embed a signed manifest into a stream using a supplied signer.
@@ -3376,9 +3400,12 @@ impl Builder {
             ));
         };
 
-        self.definition.format =
-            crate::format_from_path(path).ok_or(crate::Error::UnsupportedType)?;
-        self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
+        self.definition.format = self
+            .context()
+            .io()
+            .format_from_path(path)
+            .ok_or(crate::Error::UnsupportedType)?;
+        self.definition.instance_id = format!("xmp.iid:{}", Uuid::new_v4());
         if self.definition.title.is_none() {
             if let Some(title) = path.file_name() {
                 self.definition.title = Some(title.to_string_lossy().to_string());
@@ -3465,8 +3492,16 @@ impl Builder {
         self.set_asset_from_dest(dest)?;
 
         // formats must match but allow extensions to be slightly different (i.e. .jpeg vs .jpg)s
-        let format = crate::format_from_path(source).ok_or(crate::Error::UnsupportedType)?;
-        let format_dest = crate::format_from_path(dest).ok_or(crate::Error::UnsupportedType)?;
+        let format = self
+            .context()
+            .io()
+            .format_from_path(source)
+            .ok_or(crate::Error::UnsupportedType)?;
+        let format_dest = self
+            .context()
+            .io()
+            .format_from_path(dest)
+            .ok_or(crate::Error::UnsupportedType)?;
         if format != format_dest {
             return Err(crate::Error::BadParam(
                 "Source and destination file formats must match".to_string(),
@@ -3543,8 +3578,16 @@ impl Builder {
         self.set_asset_from_dest(dest)?;
 
         // formats must match but allow extensions to be slightly different (i.e. .jpeg vs .jpg)s
-        let format = crate::format_from_path(source).ok_or(crate::Error::UnsupportedType)?;
-        let format_dest = crate::format_from_path(dest).ok_or(crate::Error::UnsupportedType)?;
+        let format = self
+            .context()
+            .io()
+            .format_from_path(source)
+            .ok_or(crate::Error::UnsupportedType)?;
+        let format_dest = self
+            .context()
+            .io()
+            .format_from_path(dest)
+            .ok_or(crate::Error::UnsupportedType)?;
         if format != format_dest {
             return Err(crate::Error::BadParam(
                 "Source and destination file formats must match".to_string(),
@@ -3573,8 +3616,29 @@ impl Builder {
     /// * The bytes of the composed manifest.
     /// # Errors
     /// * Returns an [`Error`] if the manifest cannot be converted.
+    #[deprecated(
+        since = "0.91.0",
+        note = "Use `Builder::compose_manifest` on a `Builder` instance instead; without a `Context`, custom asset I/O handlers registered via `Context::with_io_handler` are not consulted. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn composed_manifest(manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
-        Store::get_composed_manifest(manifest_bytes, format)
+        // Legacy behavior: no Context available, so only the built-in global registry is used.
+        Store::get_composed_manifest(manifest_bytes, format, &Context::new())
+    }
+
+    /// Converts a manifest into a composed manifest with the specified format.
+    ///
+    /// This wraps the bytes in the container format of the specified format.
+    /// So that it can be directly embedded into a stream of that format.
+    ///
+    /// # Arguments
+    /// * `manifest_bytes` - The bytes of the manifest to convert.
+    /// * `format` - The format to convert to.
+    /// # Returns
+    /// * The bytes of the composed manifest.
+    /// # Errors
+    /// * Returns an [`Error`] if the manifest cannot be converted.
+    pub fn compose_manifest(&self, manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
+        Store::get_composed_manifest(manifest_bytes, format, self.context())
     }
 
     /// Add an ingredient to the manifest from a Reader.
@@ -3672,13 +3736,16 @@ impl Builder {
         // First we need to generate a `BoxHash` over an empty string.
         let mut empty_asset = std::io::Cursor::new("");
 
-        let boxes = jumbf_io::get_assetio_handler("application/c2pa")
+        let boxes = self
+            .context
+            .io()
+            .handler("application/c2pa")
             .ok_or(Error::UnsupportedType)?
             .asset_box_hash_ref()
             .ok_or(Error::UnsupportedType)?
             .get_box_map(&mut empty_asset)?;
 
-        let box_hash = BoxHash { boxes };
+        let box_hash = BoxHash::from_box_map(boxes);
 
         let mut claim = match &kind {
             ArchiveKind::Builder => self.to_claim()?,
@@ -3755,12 +3822,15 @@ enum UriRewrite {
 
 /// Ingredient ids that `action` references, both symbolically (`ingredientIds` /
 /// `org.cai.ingredientIds` / `instanceId` / deprecated `instance_id`) and positionally
-/// (`parameters.ingredients` `HashedUri`s resolved against `pre_filter_ids`).
+/// (the v1 singular `parameters.ingredient` and v2/v3 plural `parameters.ingredients`
+/// `HashedUri`s, both resolved against `pre_filter_ids`).
 #[cfg(feature = "unstable_builder_filter")]
 fn action_ingredient_ref_ids(action: &Action, pre_filter_ids: &[String]) -> Vec<String> {
     let mut ids = action.ingredient_ids();
-    if let Some(uris) = action.parameters().and_then(|p| p.ingredients.as_ref()) {
-        for uri in uris {
+    if let Some(params) = action.parameters() {
+        let singular = params.ingredient.as_ref().into_iter();
+        let plural = params.ingredients.iter().flatten();
+        for uri in singular.chain(plural) {
             if let Some(label) = assertion_label_from_uri(&uri.url()) {
                 let (_, idx) = parse_positional_label(&label);
                 if let Some(id) = pre_filter_ids.get(idx) {
@@ -3803,11 +3873,13 @@ fn rewrite_one_ingredient_uri(
     UriRewrite::Rewritten(HashedUri::new(new_url, hu.alg(), &hu.hash()))
 }
 
-/// Rewrites `parameters.ingredients[].url` on every action so positional labels
-/// (`c2pa.ingredient.v3__N`) point at the new positions of the surviving ingredients.
+/// Rewrites `parameters.ingredient.url` and `parameters.ingredients[].url` on every action so
+/// positional labels (`c2pa.ingredient.v3__N`) point at the new positions of the surviving
+/// ingredients.
 ///
 /// Required after any ingredient is pruned: `to_claim` re-emits the surviving ingredients
-/// positionally at sign time, so any stale `__N` reference would otherwise dangle.
+/// positionally at sign time, so any stale `__N` reference would otherwise dangle. Both the v1
+/// singular `ingredient` and v2/v3 plural `ingredients` reference shapes are handled.
 #[cfg(feature = "unstable_builder_filter")]
 fn rewrite_action_ingredient_urls(
     actions: &mut Actions,
@@ -3815,19 +3887,18 @@ fn rewrite_action_ingredient_urls(
     id_to_new_idx: &HashMap<&str, usize>,
 ) -> Result<()> {
     let mut rewritten = Vec::with_capacity(actions.actions.len());
-    for action in actions.actions.drain(..) {
-        let Some(ingredient_uris) = action.parameters().and_then(|p| p.ingredients.as_ref()) else {
+    for mut action in actions.actions.drain(..) {
+        let Some(params) = action.parameters() else {
             rewritten.push(action);
             continue;
         };
+        let singular = params.ingredient.clone();
+        let plural = params.ingredients.clone();
 
-        let mut changed = false;
-        let mut remapped_uris: Vec<HashedUri> = Vec::with_capacity(ingredient_uris.len());
-        for uri in ingredient_uris {
-            match rewrite_one_ingredient_uri(uri, pre_filter_ids, id_to_new_idx) {
+        if let Some(uri) = singular {
+            match rewrite_one_ingredient_uri(&uri, pre_filter_ids, id_to_new_idx) {
                 UriRewrite::Rewritten(new) => {
-                    changed = true;
-                    remapped_uris.push(new);
+                    action = action.set_parameter("ingredient", new)?;
                 }
                 UriRewrite::Stale => {
                     log::warn!(
@@ -3835,18 +3906,39 @@ fn rewrite_action_ingredient_urls(
                         action.action(),
                         label_segment_from_uri(&uri.url()),
                     );
-                    remapped_uris.push(uri.clone());
                 }
-                UriRewrite::Unchanged => remapped_uris.push(uri.clone()),
+                UriRewrite::Unchanged => {}
             }
         }
 
-        if changed {
-            // Propagate rather than swallow: a failed remap would silently dangle references.
-            rewritten.push(action.set_parameter("ingredients", remapped_uris)?);
-        } else {
-            rewritten.push(action);
+        if let Some(ingredient_uris) = plural {
+            let mut changed = false;
+            let mut remapped_uris: Vec<HashedUri> = Vec::with_capacity(ingredient_uris.len());
+            for uri in &ingredient_uris {
+                match rewrite_one_ingredient_uri(uri, pre_filter_ids, id_to_new_idx) {
+                    UriRewrite::Rewritten(new) => {
+                        changed = true;
+                        remapped_uris.push(new);
+                    }
+                    UriRewrite::Stale => {
+                        log::warn!(
+                            "action '{}' has stale ingredient ref '{}'",
+                            action.action(),
+                            label_segment_from_uri(&uri.url()),
+                        );
+                        remapped_uris.push(uri.clone());
+                    }
+                    UriRewrite::Unchanged => remapped_uris.push(uri.clone()),
+                }
+            }
+
+            if changed {
+                // Propagate rather than swallow: a failed remap would silently dangle references.
+                action = action.set_parameter("ingredients", remapped_uris)?;
+            }
         }
+
+        rewritten.push(action);
     }
     actions.actions = rewritten;
     Ok(())
@@ -3863,7 +3955,7 @@ mod tests {
     };
 
     use c2pa_macros::c2pa_test_async;
-    use rand::Rng;
+    use rand::RngExt;
     use serde_json::json;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
@@ -3876,7 +3968,7 @@ mod tests {
         asset_handlers::bmff_io::{
             inject_manifest_into_free_box, inject_placeholder, read_bmff_c2pa_boxes,
         },
-        hash_stream_by_alg,
+        hash_stream_by_alg, jumbf_io,
         maybe_send_sync::MaybeSend,
         settings::Settings,
         utils::{
@@ -4214,6 +4306,49 @@ mod tests {
         assert_eq!(manifest.title().unwrap(), "Test_Manifest");
         let test_assertion: TestAssertion = manifest.find_assertion("org.life.meaning").unwrap();
         assert_eq!(test_assertion.answer, 42);
+    }
+
+    #[test]
+    fn test_builder_incorrect_ingredient_format_errors() {
+        let mut source = Cursor::new(TEST_IMAGE);
+
+        let ingredient_json = json!({
+            "title": "CA.jpg",
+            "format": "image/jpeg",
+        })
+        .to_string();
+
+        let mut builder = Builder::default()
+            .with_definition(simple_manifest_json())
+            .unwrap();
+
+        // pass incorrect format
+        let result = builder.add_ingredient_from_stream(ingredient_json, "image/png", &mut source);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_builder_incorrect_ingredient_format_ignore_ingredient_errors() {
+        let mut source = Cursor::new(TEST_IMAGE);
+
+        let ingredient_json = json!({
+            "title": "CA.jpg",
+            "format": "image/jpeg",
+        })
+        .to_string();
+
+        let settings = Settings::default()
+            .with_value("builder.ignore_ingredient_errors", true)
+            .unwrap();
+        let context = Context::default().with_settings(settings).unwrap();
+
+        let mut builder = Builder::from_context(context)
+            .with_definition(simple_manifest_json())
+            .unwrap();
+
+        // pass incorrect format, but ignore_ingredient_errors should prevent an error
+        let result = builder.add_ingredient_from_stream(ingredient_json, "image/png", &mut source);
+        assert!(result.is_ok());
     }
 
     // Ensure multiple `c2pa.placed` actions aren't created.
@@ -5472,7 +5607,7 @@ mod tests {
         let c2pa_io = jumbf_io::get_assetio_handler("application/c2pa").unwrap();
         let box_mapper = c2pa_io.asset_box_hash_ref().unwrap();
         let boxes = box_mapper.get_box_map(&mut reader).unwrap();
-        let bh = BoxHash { boxes };
+        let bh = BoxHash::from_box_map(boxes);
 
         builder.add_assertion(labels::BOX_HASH, &bh)?;
 
@@ -5835,6 +5970,106 @@ mod tests {
         Ok(())
     }
 
+    /// End-to-end sign + re-read for the `bmff_hash_exclude_free_and_skip_boxes`
+    /// setting, in both positions. `TEST_VIDEO_MP4` has a real, pre-existing
+    /// top-level `/free` box unrelated to the placeholder (which is inserted
+    /// right after `ftyp`), so tampering with that box's payload after signing
+    /// proves whether it was actually covered by the hash.
+    #[test]
+    fn test_bmff_hash_exclude_free_and_skip_boxes_setting() -> Result<()> {
+        use std::io::{Seek, SeekFrom, Write};
+
+        // Finds the byte offset of a top-level box's payload by walking
+        // 4-byte-size + 4-byte-type headers from the start of the stream.
+        fn find_top_level_box_payload_offset(data: &[u8], want_type: &[u8; 4]) -> Option<usize> {
+            let mut pos = 0;
+            while pos + 8 <= data.len() {
+                let size = u32::from_be_bytes(data[pos..pos + 4].try_into().unwrap()) as usize;
+                if &data[pos + 4..pos + 8] == want_type {
+                    return Some(pos + 8);
+                }
+                if size < 8 {
+                    break;
+                }
+                pos += size;
+            }
+            None
+        }
+
+        // Builds, embeds, hashes, signs, and patches the fixture MP4 under the
+        // given setting, returning the final asset bytes.
+        fn sign_with_setting(exclude_free_and_skip: bool) -> Result<Vec<u8>> {
+            let context = Context::new().with_settings(
+                serde_json::json!({
+                    "builder": { "bmff_hash_exclude_free_and_skip_boxes": exclude_free_and_skip }
+                })
+                .to_string(),
+            )?;
+            let mut builder =
+                Builder::from_context(context).with_definition(simple_manifest_json().as_str())?;
+
+            let composed_placeholder = builder.placeholder("video/mp4")?;
+
+            let bmff_hash: BmffHash = builder.find_assertion(BmffHash::LABEL)?;
+            assert_eq!(
+                bmff_hash.exclusions().iter().any(|e| e.xpath == "/free"),
+                exclude_free_and_skip
+            );
+
+            let mut input_stream = Cursor::new(TEST_VIDEO_MP4);
+            let mut output_stream = Cursor::new(Vec::new());
+            let offset = write_bmff_placeholder_stream(
+                &composed_placeholder,
+                &mut input_stream,
+                &mut output_stream,
+            )?;
+
+            output_stream.rewind()?;
+            builder.update_hash_from_stream("video/mp4", &mut output_stream)?;
+
+            let signed_manifest = builder.sign_embeddable("video/mp4")?;
+
+            output_stream.seek(SeekFrom::Start(offset as u64))?;
+            output_stream.write_all(&signed_manifest)?;
+
+            Ok(output_stream.into_inner())
+        }
+
+        fn is_trusted(data: &[u8]) -> bool {
+            let mut stream = Cursor::new(data.to_vec());
+            let reader = Reader::default()
+                .with_stream("video/mp4", &mut stream)
+                .unwrap();
+            reader.validation_state() == ValidationState::Trusted
+        }
+
+        for exclude_free_and_skip in [true, false] {
+            let mut signed = sign_with_setting(exclude_free_and_skip)?;
+            assert!(
+                is_trusted(&signed),
+                "clean asset (exclude_free_and_skip={exclude_free_and_skip}) must verify as trusted"
+            );
+
+            let free_payload_offset = find_top_level_box_payload_offset(&signed, b"free")
+                .expect("fixture must contain a top-level /free box");
+            signed[free_payload_offset + 100] ^= 0xff;
+
+            if exclude_free_and_skip {
+                assert!(
+                    is_trusted(&signed),
+                    "/free is excluded from the hash, so tampering it must not be detected"
+                );
+            } else {
+                assert!(
+                    !is_trusted(&signed),
+                    "/free is included in the hash, so tampering it must be detected"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
     /// Simulates a client that hashes mdat chunks while writing, then hands those
     /// hashes to the SDK so it can construct the Merkle tree without re-reading the
     /// (potentially multi-gigabyte) mdat content.
@@ -5896,7 +6131,7 @@ mod tests {
             // break the mdat into 7 random chunks and hash each chunks
             let mut remaining = mdat_box.size - 8; // subtract 8 bytes to get to actual content size for non-largesize box.  For largesize we will account for the larger header below.
             let offset = mdat_box.offset;
-            let mut rng = rand::thread_rng();
+            let mut rng = rand::rng();
 
             // for a non largesize box the actual mdat data starts after the 8 byte header, for a largesize box it starts
             // after 16 bytes.  So we need to account for that when seeking to the start of the mdat content.
@@ -5906,7 +6141,7 @@ mod tests {
 
             while remaining > 0 {
                 // Generate a random size between 10% and the remaining length
-                let mut chunk_size = rng.gen_range((remaining / 10)..=remaining);
+                let mut chunk_size = rng.random_range((remaining / 10)..=remaining);
 
                 // eat up rest of mdat if 0 is generated for some reason so we don't have random 0 leaves
                 if chunk_size == 0 {
@@ -5959,7 +6194,7 @@ mod tests {
         let box_mapper = c2pa_io.asset_box_hash_ref().unwrap();
         let boxes = box_mapper.get_box_map(&mut reader).unwrap();
         // Create the BoxHash object
-        let bh = BoxHash { boxes };
+        let bh = BoxHash::from_box_map(boxes);
         // And generate the box hashes
         //bh.generate_box_hash_from_stream(&mut reader, "sha256", box_mapper, true).unwrap();
 
@@ -5988,7 +6223,7 @@ mod tests {
     async fn test_builder_box_hashed_embeddable() {
         use crate::{
             asset_handlers::jpeg_io::JpegIO,
-            asset_io::{CAIWriter, HashBlockObjectType},
+            asset_io::{C2paWriter, ObjectType},
         };
         const BOX_HASH_IMAGE: &[u8] = include_bytes!("../tests/fixtures/boxhash.jpg");
         const BOX_HASH: &[u8] = include_bytes!("../tests/fixtures/boxhash.json");
@@ -6013,22 +6248,17 @@ mod tests {
 
         // insert manifest into output asset
         let jpeg_io = JpegIO {};
-        let ol = jpeg_io
-            .get_object_locations_from_stream(&mut input_stream)
-            .unwrap();
+        let ol = jpeg_io.get_object_locations(&mut input_stream).unwrap();
         input_stream.rewind().unwrap();
 
-        let cai_loc = ol
-            .iter()
-            .find(|o| o.htype == HashBlockObjectType::Cai)
-            .unwrap();
+        let cai_loc = ol.iter().find(|o| o.htype == ObjectType::C2pa).unwrap();
 
         // build new asset in memory inserting new manifest
         let outbuf = Vec::new();
         let mut out_stream = Cursor::new(outbuf);
 
         // write before
-        let mut before = vec![0u8; cai_loc.offset];
+        let mut before = vec![0u8; usize::try_from(cai_loc.offset).unwrap()];
         input_stream.read_exact(before.as_mut_slice()).unwrap();
         out_stream.write_all(&before).unwrap();
 
@@ -6055,7 +6285,7 @@ mod tests {
     async fn test_builder_box_hashed_embeddable_with_exclusions() {
         use crate::{
             asset_handlers::jpeg_io::JpegIO,
-            asset_io::{CAIWriter, HashBlockObjectType},
+            asset_io::{C2paWriter, ObjectType},
         };
         const BOX_HASH_IMAGE: &[u8] = include_bytes!("../tests/fixtures/boxhash.jpg");
         const BOX_HASH: &[u8] = include_bytes!("../tests/fixtures/boxhash_with_exclusion.json");
@@ -6080,22 +6310,17 @@ mod tests {
 
         // insert manifest into output asset
         let jpeg_io = JpegIO {};
-        let ol = jpeg_io
-            .get_object_locations_from_stream(&mut input_stream)
-            .unwrap();
+        let ol = jpeg_io.get_object_locations(&mut input_stream).unwrap();
         input_stream.rewind().unwrap();
 
-        let cai_loc = ol
-            .iter()
-            .find(|o| o.htype == HashBlockObjectType::Cai)
-            .unwrap();
+        let cai_loc = ol.iter().find(|o| o.htype == ObjectType::C2pa).unwrap();
 
         // build new asset in memory inserting new manifest
         let outbuf = Vec::new();
         let mut out_stream = Cursor::new(outbuf);
 
         // write before
-        let mut before = vec![0u8; cai_loc.offset];
+        let mut before = vec![0u8; usize::try_from(cai_loc.offset).unwrap()];
         input_stream.read_exact(before.as_mut_slice()).unwrap();
         out_stream.write_all(&before).unwrap();
 
@@ -6458,6 +6683,31 @@ mod tests {
         let m = reader.active_manifest().unwrap();
         assert_eq!(m.ingredients().len(), 1);
         assert!(m.ingredients()[0].active_manifest().is_some());
+    }
+
+    #[c2pa_test_async]
+    async fn test_add_cloud_ingredient_ignore_ingredient_errors() {
+        let mut cloud_image = Cursor::new(TEST_IMAGE_CLOUD);
+
+        let settings = Settings::default()
+            .with_value("verify.remote_manifest_fetch", false)
+            .unwrap();
+        let context = Context::default().with_settings(settings).unwrap();
+
+        let mut builder = Builder::from_context(context);
+
+        let ingredient = builder
+            .add_ingredient_from_stream_async(parent_json(), "image/jpeg", &mut cloud_image)
+            .await
+            .unwrap();
+
+        let validation_results = ingredient.validation_results().unwrap();
+        assert!(validation_results
+            .active_manifest()
+            .unwrap()
+            .failure()
+            .iter()
+            .any(|status| status.code() == crate::validation_status::MANIFEST_INACCESSIBLE));
     }
 
     #[test]
@@ -11142,6 +11392,13 @@ mod tests {
                 .map(|u| u.url())
         }
 
+        /// The url of an action's singular positional ingredient reference, if any.
+        fn singular_ing_url(a: &Action) -> Option<String> {
+            a.parameters()
+                .and_then(|p| p.ingredient.as_ref())
+                .map(|u| u.url())
+        }
+
         /// A componentOf ingredient (label == instance_id) referenced by positional URL tests.
         fn positional_ingredient(label: &str) -> serde_json::Value {
             json!({
@@ -11164,6 +11421,24 @@ mod tests {
                         "alg": "sha256",
                         "hash": [1, 2, 3, 4],
                     }]
+                }
+            })
+        }
+
+        /// A `c2pa.placed` action referencing a single positional ingredient label via the v1
+        /// singular `parameters.ingredient` HashedUri, rather than the v2/v3 plural
+        /// `parameters.ingredients` array used by [`positional_placed`]. Neither shape is
+        /// deprecated, so both must resolve identically for rescue and URL-rewrite purposes.
+        fn positional_placed_singular(idx: usize) -> serde_json::Value {
+            let label = Claim::label_with_instance("c2pa.ingredient.v3", idx);
+            json!({
+                "action": "c2pa.placed",
+                "parameters": {
+                    "ingredient": {
+                        "url": format!("self#jumbf=c2pa.assertions/{label}"),
+                        "alg": "sha256",
+                        "hash": [1, 2, 3, 4],
+                    }
                 }
             })
         }
@@ -11737,6 +12012,95 @@ mod tests {
                 .actions
                 .iter()
                 .any(|a| a.action() == "c2pa.edited"));
+        }
+
+        // Regression test: a `c2pa.placed` action linking an ingredient via the v1 singular
+        // `parameters.ingredient` HashedUri must be rescued the same way one linking via the
+        // v2/v3 plural `parameters.ingredients` array is. Previously `action_ingredient_ref_ids`
+        // only inspected the plural array, so a singular-only reference was invisible to the
+        // rescue check and the action was silently dropped even though its ingredient survived.
+        #[test]
+        fn filter_actions_and_ingredients_rescues_via_singular_ingredient_reference() {
+            let def = json!({
+                "ingredients": [
+                    positional_ingredient("my_ing"),
+                ],
+                "assertions": [{ "label": "c2pa.actions.v2", "data": { "actions": [
+                    created_action(),
+                    positional_placed_singular(0),
+                ]}}]
+            });
+
+            // The action predicate alone would drop `c2pa.placed`; only the singular-reference
+            // rescue of `my_ing` should save it.
+            let mut b = removal_builder(def);
+            b.filter_actions_and_ingredients(
+                |a| a.action() != "c2pa.placed",
+                |ing| ing.label() == Some("my_ing"),
+            )
+            .unwrap();
+
+            assert_eq!(b.definition.ingredients.len(), 1);
+            assert!(builder_actions(&b)
+                .actions
+                .iter()
+                .any(|a| a.action() == "c2pa.placed"));
+        }
+
+        // Contrast case: an unrescued singular reference is dropped like any other, confirming
+        // the rescue above is due to the ingredient predicate rather than some blanket keep.
+        #[test]
+        fn filter_actions_and_ingredients_drops_unrescued_singular_ingredient_reference() {
+            let def = json!({
+                "ingredients": [
+                    positional_ingredient("not_my_ing"),
+                ],
+                "assertions": [{ "label": "c2pa.actions.v2", "data": { "actions": [
+                    created_action(),
+                    positional_placed_singular(0),
+                ]}}]
+            });
+
+            let mut b = removal_builder(def);
+            b.filter_actions_and_ingredients(|a| a.action() != "c2pa.placed", |_| false)
+                .unwrap();
+
+            assert!(b.definition.ingredients.is_empty());
+            assert!(!builder_actions(&b)
+                .actions
+                .iter()
+                .any(|a| a.action() == "c2pa.placed"));
+        }
+
+        // The singular `parameters.ingredient` URL must be repointed to a surviving ingredient's
+        // new position after pruning shifts indices, the same way the plural array is
+        // (`filter_ingredients_parent_of_nonzero_index` covers the plural case).
+        #[test]
+        fn filter_actions_and_ingredients_rewrites_singular_ingredient_reference_after_prune() {
+            let mut b = removal_builder(json!({
+                "ingredients": [
+                    positional_ingredient("orphan"), // idx0, pruned
+                    positional_ingredient("kept"),    // idx1, referenced by the singular form
+                ],
+                "assertions": [{ "label": "c2pa.actions.v2", "data": { "actions": [
+                    created_action(),
+                    positional_placed_singular(1),
+                ]}}]
+            }));
+
+            b.filter_actions_and_ingredients(|_| true, |ing| ing.label() == Some("kept"))
+                .unwrap();
+
+            assert_eq!(b.definition.ingredients.len(), 1);
+            assert_eq!(b.definition.ingredients[0].label(), Some("kept"));
+            // The reference moved from idx1 to idx0 as "orphan" was pruned.
+            let url = builder_actions(&b)
+                .actions
+                .iter()
+                .find(|a| a.action() == "c2pa.placed")
+                .and_then(singular_ing_url)
+                .unwrap();
+            assert!(url.ends_with("c2pa.ingredient.v3"));
         }
 
         // Two ingredients with neither a `label` nor an `instance_id` both fall back to the same

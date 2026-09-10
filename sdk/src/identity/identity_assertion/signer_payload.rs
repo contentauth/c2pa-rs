@@ -17,8 +17,9 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    dynamic_assertion::PartialClaim, identity::ValidationError, log_current_item,
-    status_tracker::StatusTracker, HashedUri, Manifest,
+    assertions::labels::is_hard_binding_label, dynamic_assertion::PartialClaim,
+    identity::ValidationError, log_current_item, status_tracker::StatusTracker, HashedUri,
+    Manifest,
 };
 
 /// A set of _referenced assertions_ and other related data, known overall as
@@ -93,7 +94,7 @@ impl SignerPayload {
 
         if !ref_assertion_labels.iter().any(|ra| {
             if let Some((_jumbf_prefix, label)) = ra.rsplit_once('/') {
-                label.starts_with("c2pa.hash.")
+                is_hard_binding_label(label)
             } else {
                 false
             }
@@ -190,7 +191,7 @@ impl SignerPayload {
 
         if !ref_assertion_labels.iter().any(|ra| {
             if let Some((_jumbf_prefix, label)) = ra.rsplit_once('/') {
-                label.starts_with("c2pa.hash.")
+                is_hard_binding_label(label)
             } else {
                 false
             }

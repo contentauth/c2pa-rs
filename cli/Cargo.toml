@@ -62,7 +62,7 @@ wstd = "0.5"
 development = ["mockall"]
 
 [dev-dependencies]
-mockall = "0.14.0"
+mockall = "0.15.0"
 
 [target.'cfg(not(target_os = "wasi"))'.dev-dependencies]
 assert_cmd = "2.2.2"

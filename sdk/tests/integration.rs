@@ -21,7 +21,8 @@ mod integration_1 {
 
     use c2pa::{
         assertions::{c2pa_action, Action, Actions, AssetReference, Metadata},
-        Builder, Context, Reader, Result, Settings,
+        validation_status::CAWG_X509_CREDENTIAL_UNTRUSTED,
+        Builder, Context, Reader, Result, Settings, ValidationState,
     };
     use c2pa_macros::c2pa_test_async;
     #[allow(unused)] // different code path for WASI
@@ -342,8 +343,14 @@ mod integration_1 {
                 .last()
                 .unwrap()
                 .code(),
-            "signingCredential.untrusted"
+            CAWG_X509_CREDENTIAL_UNTRUSTED
         );
+
+        // An untrusted CAWG X.509 identity credential is scoped to that
+        // identity assertion and must not by itself invalidate the enclosing
+        // manifest (the same tolerance already given to an untrusted C2PA
+        // claim signature credential).
+        assert_eq!(reader.validation_state(), ValidationState::Valid);
 
         Ok(())
     }
