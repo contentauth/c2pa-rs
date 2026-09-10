@@ -25,7 +25,7 @@
 //! a format-specific hash transform: [`crate::utils::hash_utils::hash_stream_by_alg`]
 //! hashes the raw bytes outside the reported exclusion, for every handler alike.
 //!
-//! [`write_cai`](CAIWriter::write_cai) closes that gap the only way available under
+//! [`write_c2pa`](C2paWriter::write_c2pa) closes that gap the only way available under
 //! the current trait surface: it NFC-normalizes the visible text *before* embedding,
 //! so the bytes this handler ever writes to disk are already canonical NFC. Raw-byte
 //! hashing of a canonical-NFC file is exactly NFC-hashing, so the generic engine
@@ -37,23 +37,20 @@
 //! verifying such an asset falls back to raw-byte comparison like every other format.
 //! That is a limitation of the current [`AssetIO`] surface, not of this handler.
 
-use std::{fs::File, path::Path};
-
 use unicode_normalization::UnicodeNormalization;
 
 use crate::{
     asset_io::{
-        rename_or_move, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, HashBlockObjectType,
-        HashObjectPositions,
+        AssetIO, C2paReader, C2paWriter, ObjectLocations, ObjectType, ReadSeek, ReadWriteSeek,
     },
     error::{Error, Result},
-    utils::io_utils::{stream_len, tempfile_builder, ReaderUtils},
+    utils::io_utils::{stream_len, ReaderUtils},
 };
 
 const SUPPORTED_TYPES: [&str; 2] = ["txt", "text/plain"];
 
 /// Used only to size a wrapper before the real manifest is known, so
-/// [`get_object_locations_from_stream`](CAIWriter::get_object_locations_from_stream) can report an
+/// [`get_object_locations`](C2paWriter::get_object_locations) can report an
 /// exclusion range on an asset that does not carry one yet. The real embed always uses the
 /// caller's `store_bytes`, never this placeholder.
 const PLACEHOLDER_STORE: &[u8] = b"placeholder manifest";
@@ -348,7 +345,7 @@ mod wrapper {
 
 /// Reads a text asset into a `String`. The allocation is checked, so an oversized stream fails
 /// with `Error::InsufficientMemory` rather than aborting.
-fn read_text_stream(mut reader: &mut dyn CAIRead) -> Result<String> {
+fn read_text_stream(mut reader: &mut dyn ReadSeek) -> Result<String> {
     reader.rewind()?;
     let len = stream_len(reader)?;
     let bytes = reader.read_to_vec(len)?;
@@ -357,27 +354,23 @@ fn read_text_stream(mut reader: &mut dyn CAIRead) -> Result<String> {
 }
 
 /// `c2pa.hash.data` layout: excluded wrapper region, plus content before/after.
-fn hash_positions(
-    full_len: usize,
-    region_start: usize,
-    region_len: usize,
-) -> Vec<HashObjectPositions> {
+fn hash_positions(full_len: usize, region_start: usize, region_len: usize) -> Vec<ObjectLocations> {
     let region_end = region_start + region_len;
     vec![
-        HashObjectPositions {
-            offset: region_start,
-            length: region_len,
-            htype: HashBlockObjectType::Cai,
+        ObjectLocations {
+            offset: region_start as u64,
+            length: region_len as u64,
+            htype: ObjectType::C2pa,
         },
-        HashObjectPositions {
+        ObjectLocations {
             offset: 0,
-            length: region_start,
-            htype: HashBlockObjectType::Other,
+            length: region_start as u64,
+            htype: ObjectType::Other,
         },
-        HashObjectPositions {
-            offset: region_end,
-            length: full_len.saturating_sub(region_end),
-            htype: HashBlockObjectType::Other,
+        ObjectLocations {
+            offset: region_end as u64,
+            length: full_len.saturating_sub(region_end) as u64,
+            htype: ObjectType::Other,
         },
     ]
 }
@@ -412,8 +405,8 @@ pub struct PlainTextIO {
     _asset_type: String,
 }
 
-impl CAIReader for PlainTextIO {
-    fn read_cai(&self, reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
+impl C2paReader for PlainTextIO {
+    fn read_c2pa(&self, reader: &mut dyn ReadSeek) -> Result<Vec<u8>> {
         let text = read_text_stream(reader)?;
         let w = wrapper::extract(&text).ok_or(Error::JumbfNotFound)?;
         if w.payload.is_empty() {
@@ -422,16 +415,16 @@ impl CAIReader for PlainTextIO {
         Ok(w.payload)
     }
 
-    fn read_xmp(&self, _asset_reader: &mut dyn CAIRead) -> Option<String> {
+    fn read_xmp(&self, _asset_reader: &mut dyn ReadSeek) -> Option<String> {
         None
     }
 }
 
-impl CAIWriter for PlainTextIO {
-    fn write_cai(
+impl C2paWriter for PlainTextIO {
+    fn write_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         store_bytes: &[u8],
     ) -> Result<()> {
         let text = read_text_stream(input_stream)?;
@@ -444,17 +437,17 @@ impl CAIWriter for PlainTextIO {
         Ok(())
     }
 
-    fn get_object_locations_from_stream(
+    fn get_object_locations(
         &self,
-        input_stream: &mut dyn CAIRead,
-    ) -> Result<Vec<HashObjectPositions>> {
+        input_stream: &mut dyn ReadSeek,
+    ) -> Result<Vec<ObjectLocations>> {
         let text = read_text_stream(input_stream)?;
 
         let (full_len, region_start, region_len) = match wrapper::extract(&text) {
             Some(w) => (text.len(), w.start, w.length),
             None => {
                 // No manifest yet (or what is present is not a single valid wrapper): build on
-                // the same normalized-clean-text basis write_cai will use, with a placeholder
+                // the same normalized-clean-text basis write_c2pa will use, with a placeholder
                 // wrapper standing in for the real one.
                 let normalized = normalized_clean_text(&text);
                 let framed = wrapper::encode_padded(PLACEHOLDER_STORE)?;
@@ -467,10 +460,10 @@ impl CAIWriter for PlainTextIO {
         Ok(hash_positions(full_len, region_start, region_len))
     }
 
-    fn remove_cai_store_from_stream(
+    fn remove_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
     ) -> Result<()> {
         let text = read_text_stream(input_stream)?;
         let cleaned = strip_all_wrappers(&text);
@@ -491,36 +484,12 @@ impl AssetIO for PlainTextIO {
         Box::new(PlainTextIO::new(asset_type))
     }
 
-    fn get_reader(&self) -> &dyn CAIReader {
+    fn get_reader(&self) -> &dyn C2paReader {
         self
     }
 
-    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn C2paWriter>> {
         Some(Box::new(PlainTextIO::new(asset_type)))
-    }
-
-    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
-        let mut f = File::open(asset_path)?;
-        self.read_cai(&mut f)
-    }
-
-    fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
-        let mut input_stream = File::open(asset_path).map_err(Error::IoError)?;
-        let mut temp_file = tempfile_builder("c2pa_temp")?;
-        self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
-        rename_or_move(temp_file, asset_path)
-    }
-
-    fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>> {
-        let mut input_stream = File::open(asset_path).map_err(|_err| Error::EmbeddingError)?;
-        self.get_object_locations_from_stream(&mut input_stream)
-    }
-
-    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
-        let mut input_file = File::open(asset_path)?;
-        let mut temp_file = tempfile_builder("c2pa_temp")?;
-        self.remove_cai_store_from_stream(&mut input_file, &mut temp_file)?;
-        rename_or_move(temp_file, asset_path)
     }
 
     fn supported_types(&self) -> &[&str] {
@@ -535,20 +504,20 @@ mod tests {
     use std::io::Cursor;
 
     use super::*;
-    use crate::asset_io::HashBlockObjectType;
+    use crate::asset_io::ObjectType;
 
     fn embed(source: &str, store: &[u8]) -> String {
         let io = PlainTextIO::new("txt");
         let mut input = Cursor::new(source.as_bytes().to_vec());
         let mut output = Cursor::new(Vec::new());
-        io.write_cai(&mut input, &mut output, store).unwrap();
+        io.write_c2pa(&mut input, &mut output, store).unwrap();
         String::from_utf8(output.into_inner()).unwrap()
     }
 
     fn read_back(text: &str) -> Result<Vec<u8>> {
         let io = PlainTextIO::new("txt");
         let mut input = Cursor::new(text.as_bytes().to_vec());
-        io.read_cai(&mut input)
+        io.read_c2pa(&mut input)
     }
 
     #[test]
@@ -570,31 +539,31 @@ mod tests {
         let out = embed("Visible content.", b"store");
         let io = PlainTextIO::new("txt");
         let mut cursor = Cursor::new(out.clone().into_bytes());
-        let locations = io.get_object_locations_from_stream(&mut cursor).unwrap();
+        let locations = io.get_object_locations(&mut cursor).unwrap();
         let cai = locations
             .iter()
-            .find(|p| p.htype == HashBlockObjectType::Cai)
+            .find(|p| p.htype == ObjectType::C2pa)
             .unwrap();
-        assert_eq!(cai.offset, "Visible content.".len());
-        assert_eq!(cai.offset + cai.length, out.len());
+        assert_eq!(cai.offset, "Visible content.".len() as u64);
+        assert_eq!(cai.offset + cai.length, out.len() as u64);
         let other_before = locations
             .iter()
-            .find(|p| p.htype == HashBlockObjectType::Other && p.offset == 0)
+            .find(|p| p.htype == ObjectType::Other && p.offset == 0)
             .unwrap();
-        assert_eq!(other_before.length, "Visible content.".len());
+        assert_eq!(other_before.length, "Visible content.".len() as u64);
     }
 
     #[test]
     fn object_locations_with_no_manifest_yet_still_report_a_cai_region() {
         let io = PlainTextIO::new("txt");
         let mut cursor = Cursor::new(b"No manifest here.".to_vec());
-        let locations = io.get_object_locations_from_stream(&mut cursor).unwrap();
+        let locations = io.get_object_locations(&mut cursor).unwrap();
         let cai = locations
             .iter()
-            .find(|p| p.htype == HashBlockObjectType::Cai)
+            .find(|p| p.htype == ObjectType::C2pa)
             .unwrap();
         assert!(cai.length > 0);
-        assert_eq!(cai.offset, "No manifest here.".len());
+        assert_eq!(cai.offset, "No manifest here.".len() as u64);
     }
 
     #[test]
@@ -612,15 +581,14 @@ mod tests {
         let io = PlainTextIO::new("txt");
         let mut input = Cursor::new(out.into_bytes());
         let mut output = Cursor::new(Vec::new());
-        io.remove_cai_store_from_stream(&mut input, &mut output)
-            .unwrap();
+        io.remove_c2pa(&mut input, &mut output).unwrap();
         assert_eq!(
             String::from_utf8(output.into_inner()).unwrap(),
             "Body text."
         );
     }
 
-    /// The whole reason `write_cai` normalizes before embedding: two inputs that render
+    /// The whole reason `write_c2pa` normalizes before embedding: two inputs that render
     /// identically but differ in normalization form (NFD vs NFC) must produce byte-identical
     /// visible text once embedded, so a generic raw-byte hash over the non-excluded range is the
     /// spec-mandated NFC hash.

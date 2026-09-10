@@ -648,6 +648,14 @@ mod tests {
 
     #[test]
     fn test_zip_hash() -> Result<()> {
+        // With `unstable_plain_text` enabled, `.txt` resolves to a real MIME type (see
+        // `mime::extension_to_mime`); otherwise it stays unrecognized.
+        let txt_format = if cfg!(feature = "unstable_plain_text") {
+            Some("text/plain".to_string())
+        } else {
+            None
+        };
+
         let mut stream = Cursor::new(ZIP_SAMPLE1);
 
         let mut collection = CollectionHash {
@@ -673,7 +681,7 @@ mod tests {
                     106, 248, 168, 169, 245, 207, 172, 29, 204, 80, 155, 37, 30, 186, 60
                 ]),
                 size: Some(47),
-                dc_format: None,
+                dc_format: txt_format.clone(),
                 data_types: None,
             })
         );
@@ -685,7 +693,7 @@ mod tests {
                     63, 175, 25, 6, 118, 200, 12, 188, 128, 67, 78, 249, 182, 242, 156
                 ]),
                 size: Some(57),
-                dc_format: None,
+                dc_format: txt_format.clone(),
                 data_types: None,
             })
         );
@@ -697,7 +705,7 @@ mod tests {
                     187, 230, 19, 242, 52, 212, 181, 104, 99, 179, 177, 81, 150, 33
                 ]),
                 size: Some(53),
-                dc_format: None,
+                dc_format: txt_format.clone(),
                 data_types: None,
             })
         );
@@ -709,7 +717,7 @@ mod tests {
                     106, 204, 158, 142, 176, 247, 251, 174, 145, 243, 12, 22, 151, 116
                 ]),
                 size: Some(68),
-                dc_format: None,
+                dc_format: txt_format.clone(),
                 data_types: None,
             })
         );
@@ -721,7 +729,7 @@ mod tests {
                     36, 28, 55, 23, 62, 109, 143, 182, 233, 99, 144, 23, 139, 9, 118
                 ]),
                 size: Some(56),
-                dc_format: None,
+                dc_format: txt_format.clone(),
                 data_types: None,
             })
         );
