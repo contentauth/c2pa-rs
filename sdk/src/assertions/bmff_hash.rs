@@ -1682,6 +1682,12 @@ impl BmffHash {
                             {
                                 return Err(Error::HashMismatch("Fragment not valid".to_string()));
                             }
+                        } else {
+                            // A fragmented BMFF MerkleMap must carry an initHash; a
+                            // missing required field is a malformed assertion.
+                            return Err(Error::C2PAValidation(
+                                ASSERTION_BMFFHASH_MALFORMED.to_string(),
+                            ));
                         }
                     } else {
                         return Err(Error::HashMismatch("Fragment had no MerkleMap".to_string()));
@@ -1802,6 +1808,12 @@ impl BmffHash {
                         if !mm.check_merkle_tree(alg, &hash, bmff_mm.location, &bmff_mm.hashes) {
                             return Err(Error::HashMismatch("Fragment not valid".to_string()));
                         }
+                    } else {
+                        // A fragmented BMFF MerkleMap must carry an initHash; a
+                        // missing required field is a malformed assertion.
+                        return Err(Error::C2PAValidation(
+                            ASSERTION_BMFFHASH_MALFORMED.to_string(),
+                        ));
                     }
                 } else {
                     return Err(Error::HashMismatch("Fragment had no MerkleMap".to_string()));
