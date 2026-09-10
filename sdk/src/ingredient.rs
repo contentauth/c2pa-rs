@@ -31,7 +31,6 @@ use crate::{
         self, labels, AssertionMetadata, AssetType, CertificateStatus, DigitalSourceType,
         EmbeddedData, Relationship,
     },
-    asset_io::CAIRead,
     claim::{Claim, ClaimAssetData},
     context::Context,
     crypto::base64,
@@ -45,6 +44,7 @@ use crate::{
         },
     },
     log_item,
+    read_seek::ReadSeek,
     resource_store::{ResourceRef, ResourceStore, StoreResolver},
     settings::get_thread_local_settings,
     status_tracker::StatusTracker,
@@ -184,6 +184,13 @@ impl Ingredient {
     /// use c2pa::Ingredient;
     /// let ingredient = Ingredient::new("title", "image/jpeg", "ed610ae51f604002be3dbf0c589a2f1f");
     /// ```
+    ///
+    /// Use [`Builder::add_ingredient_from_stream`](crate::Builder::add_ingredient_from_stream)
+    /// to derive an `Ingredient` from an asset instead of constructing a standalone one from scratch.
+    #[deprecated(
+        since = "0.91.0",
+        note = "Building a standalone `Ingredient` from scratch is no longer the recommended pattern. Use `Builder::add_ingredient_from_stream` to derive an `Ingredient` from an asset instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn new<S>(title: S, format: S, instance_id: S) -> Self
     where
         S: Into<String>,
@@ -209,6 +216,13 @@ impl Ingredient {
     /// use c2pa::Ingredient;
     /// let ingredient = Ingredient::new_v2("title", "image/jpeg");
     /// ```
+    ///
+    /// Use [`Builder::add_ingredient_from_stream`](crate::Builder::add_ingredient_from_stream)
+    /// to derive an `Ingredient` from an asset instead of constructing a standalone one from scratch.
+    #[deprecated(
+        since = "0.91.0",
+        note = "Building a standalone `Ingredient` from scratch is no longer the recommended pattern. Use `Builder::add_ingredient_from_stream` to derive an `Ingredient` from an asset instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn new_v2<S1, S2>(title: S1, format: S2) -> Self
     where
         S1: Into<String>,
@@ -648,7 +662,7 @@ impl Ingredient {
     }
 
     /// Generates an `Ingredient` from a stream, including XMP info.
-    pub fn from_stream_info<F, S>(stream: &mut dyn CAIRead, format: F, title: S) -> Self
+    pub fn from_stream_info<F, S>(stream: &mut dyn ReadSeek, format: F, title: S) -> Self
     where
         F: Into<String>,
         S: Into<String>,
@@ -664,7 +678,12 @@ impl Ingredient {
             default_instance_id()
         };
 
-        let mut ingredient = Self::new(title.into(), format, id);
+        let mut ingredient = Self {
+            title: Some(title.into()),
+            format: Some(format),
+            instance_id: Some(id),
+            ..Default::default()
+        };
 
         ingredient.document_id = xmp_info.document_id; // use document id if one exists
         ingredient.provenance = xmp_info.provenance;
@@ -785,8 +804,11 @@ impl Ingredient {
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
     ///
     /// Pass an explicit [`Context`](crate::Context) via `add_stream_internal` instead.
-    #[deprecated(note = "Use with_stream with an explicit Context instead")]
-    pub fn from_stream(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
+    #[deprecated(
+        since = "0.88.0",
+        note = "Use `with_stream` with an explicit `Context` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
+    pub fn from_stream(format: &str, stream: &mut dyn ReadSeek) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
         let settings = get_thread_local_settings();
         let context = Context::new().with_settings(settings)?;
@@ -811,7 +833,7 @@ impl Ingredient {
     pub(crate) fn with_stream<S: Into<String>>(
         mut self,
         format: S,
-        stream: &mut dyn CAIRead,
+        stream: &mut dyn ReadSeek,
         context: &Context,
     ) -> Result<Self> {
         let format = format.into();
@@ -856,7 +878,7 @@ impl Ingredient {
     fn add_stream_internal(
         mut self,
         format: &str,
-        stream: &mut dyn CAIRead,
+        stream: &mut dyn ReadSeek,
         context: &Context,
     ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
@@ -935,7 +957,8 @@ impl Ingredient {
     ///
     /// Use [`Builder::from_context`](crate::Builder::from_context) with an explicit [`Context`](crate::Context) instead.
     #[deprecated(
-        note = "Use with_stream with an explicit Context instead of relying on thread-local settings."
+        since = "0.79.4",
+        note = "Use `with_stream` with an explicit `Context` instead of relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     #[allow(deprecated)]
     pub async fn from_memory_async(format: &str, buffer: &[u8]) -> Result<Self> {
@@ -950,9 +973,10 @@ impl Ingredient {
     ///
     /// Use [`Builder::from_context`](crate::Builder::from_context) with an explicit [`Context`](crate::Context) instead.
     #[deprecated(
-        note = "Use with_stream_async with an explicit Context instead of relying on thread-local settings."
+        since = "0.79.4",
+        note = "Use `with_stream_async` with an explicit `Context` instead of relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
-    pub async fn from_stream_async(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
+    pub async fn from_stream_async(format: &str, stream: &mut dyn ReadSeek) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
         let settings = get_thread_local_settings();
         let context = Context::new().with_settings(settings)?;
@@ -961,7 +985,7 @@ impl Ingredient {
 
     pub(crate) async fn from_stream_async_with_settings(
         format: &str,
-        stream: &mut dyn CAIRead,
+        stream: &mut dyn ReadSeek,
         context: &Context,
     ) -> Result<Self> {
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
@@ -1443,7 +1467,8 @@ impl Ingredient {
     /// }
     /// ```
     #[deprecated(
-        note = "Pass an explicit `Context` via `from_manifest_and_asset_stream_async` instead of relying on thread-local settings."
+        since = "0.79.4",
+        note = "Pass an explicit `Context` via `from_manifest_and_asset_stream_async` instead of relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     #[allow(deprecated)]
     pub async fn from_manifest_and_asset_bytes_async<M: Into<Vec<u8>>>(
@@ -1459,11 +1484,14 @@ impl Ingredient {
     /// using thread-local settings.
     ///
     /// Pass an explicit [`Context`](crate::Context) instead of relying on thread-local settings.
-    #[deprecated(note = "Pass an explicit `Context` instead of relying on thread-local settings.")]
+    #[deprecated(
+        since = "0.79.4",
+        note = "Pass an explicit `Context` instead of relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub async fn from_manifest_and_asset_stream_async<M: Into<Vec<u8>>>(
         manifest_bytes: M,
         format: &str,
-        stream: &mut dyn CAIRead,
+        stream: &mut dyn ReadSeek,
     ) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
         let settings = get_thread_local_settings();

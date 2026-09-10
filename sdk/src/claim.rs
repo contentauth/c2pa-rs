@@ -39,7 +39,6 @@ use crate::{
         Action, Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, CollectionHash, DataBox,
         DataHash, DataMap, Ingredient, Metadata, Relationship, V2_DEPRECATED_ACTIONS,
     },
-    asset_io::CAIRead,
     cbor_types::map_cbor_to_type,
     context::{Context, ProgressPhase},
     cose_validator::{
@@ -70,8 +69,8 @@ use crate::{
             DATABOX, DATABOXES, SIGNATURE,
         },
     },
-    jumbf_io::{get_assetio_handler, is_zip_format},
     log_item,
+    read_seek::ReadSeek,
     resource_store::UriOrResource,
     salt::{DefaultSalt, SaltGenerator},
     settings::{Settings, MAX_ASSERTIONS},
@@ -114,10 +113,10 @@ pub enum ClaimAssetData<'a> {
     #[cfg(feature = "file_io")]
     Path(&'a Path),
     Bytes(&'a [u8], &'a str),
-    Stream(&'a mut dyn CAIRead, &'a str),
-    StreamFragment(&'a mut dyn CAIRead, &'a mut dyn CAIRead, &'a str),
+    Stream(&'a mut dyn ReadSeek, &'a str),
+    StreamFragment(&'a mut dyn ReadSeek, &'a mut dyn ReadSeek, &'a str),
     #[cfg(feature = "file_io")]
-    StreamFragments(&'a mut dyn CAIRead, &'a Vec<std::path::PathBuf>, &'a str),
+    StreamFragments(&'a mut dyn ReadSeek, &'a Vec<std::path::PathBuf>, &'a str),
 }
 
 impl ClaimAssetData<'_> {
@@ -1281,6 +1280,10 @@ impl Claim {
     }
 
     /// Deprecated in  C2PA 2.4 or greater compatible manifests. Replaced by equiveaent value in ClaimGeneratorInfo.
+    #[deprecated(
+        since = "0.91.0",
+        note = "The `specVersion` claim field is deprecated from C2PA spec version 2.4. Use `ClaimGeneratorInfo::set_spec_version` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn set_spec_version(&mut self, spec_version: Option<String>) {
         self.spec_version = spec_version;
     }
@@ -1843,6 +1846,20 @@ impl Claim {
         self.update_assertion(
             replace_with,
             |_: &ClaimAssertion| true,
+            |_: &ClaimAssertion, a: Assertion| Ok(a),
+        )
+    }
+
+    /// Replace the assertion with the same label as `replace_with` AND the
+    /// given instance number (0 = the first `label`, 1 = `label__1`, ...).
+    pub(crate) fn replace_assertion_instance(
+        &mut self,
+        replace_with: Assertion,
+        instance: usize,
+    ) -> Result<()> {
+        self.update_assertion(
+            replace_with,
+            |ca: &ClaimAssertion| ca.instance() == instance,
             |_: &ClaimAssertion, a: Assertion| Ok(a),
         )
     }
@@ -2781,6 +2798,9 @@ impl Claim {
                 }
 
                 // check watermarks for required softbinding
+                // `c2pa_action::WATERMARKED` is deprecated for producing new content (spec 2.2+),
+                // but validators must still recognize it in older manifests.
+                #[allow(deprecated)]
                 if action.action() == c2pa_action::WATERMARKED
                     || action.action() == c2pa_action::WATERMARKED_BOUND
                 {
@@ -3149,13 +3169,12 @@ impl Claim {
                     let hash_result = match asset_data {
                         #[cfg(feature = "file_io")]
                         ClaimAssetData::Path(asset_path) => {
-                            let box_hash_processor =
-                                crate::jumbf_io::get_assetio_handler_from_path(asset_path)
-                                    .ok_or(Error::UnsupportedType)?
-                                    .asset_box_hash_ref()
-                                    .ok_or(Error::HashMismatch(
-                                        "Box hash not supported".to_string(),
-                                    ))?;
+                            let box_hash_processor = context
+                                .io()
+                                .handler_from_path(asset_path)
+                                .ok_or(Error::UnsupportedType)?
+                                .asset_box_hash_ref()
+                                .ok_or(Error::HashMismatch("Box hash not supported".to_string()))?;
 
                             let mut file = std::fs::File::open(asset_path)?;
                             bh.verify_stream_hash_with_progress(
@@ -3166,7 +3185,9 @@ impl Claim {
                             )
                         }
                         ClaimAssetData::Bytes(asset_bytes, asset_type) => {
-                            let box_hash_processor = get_assetio_handler(asset_type)
+                            let box_hash_processor = context
+                                .io()
+                                .handler(asset_type)
                                 .ok_or(Error::UnsupportedType)?
                                 .asset_box_hash_ref()
                                 .ok_or(Error::HashMismatch(format!(
@@ -3182,7 +3203,9 @@ impl Claim {
                             )
                         }
                         ClaimAssetData::Stream(stream_data, asset_type) => {
-                            let box_hash_processor = get_assetio_handler(asset_type)
+                            let box_hash_processor = context
+                                .io()
+                                .handler(asset_type)
                                 .ok_or(Error::UnsupportedType)?
                                 .asset_box_hash_ref()
                                 .ok_or(Error::HashMismatch(format!(
@@ -3249,7 +3272,10 @@ impl Claim {
                     let collection_hash =
                         CollectionHash::from_assertion(hash_binding_assertion.assertion())?;
 
-                    let verify_result = if asset_data.format().as_deref().is_some_and(is_zip_format)
+                    let verify_result = if asset_data
+                        .format()
+                        .as_deref()
+                        .is_some_and(|f| context.io().is_zip_format(f))
                     {
                         match asset_data {
                             #[cfg(feature = "file_io")]
@@ -4762,6 +4788,7 @@ pub(crate) fn check_ocsp_status(
 pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
+    #![allow(deprecated)]
 
     use super::*;
     use crate::{resource_store::UriOrResource, utils::test::create_test_claim, DigitalSourceType};

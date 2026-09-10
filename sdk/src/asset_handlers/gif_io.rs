@@ -12,27 +12,22 @@
 // each license.
 
 use std::{
-    fs::{self, File},
-    io::{self, Cursor, Read, SeekFrom},
+    fs,
+    io::{self, Read, SeekFrom},
     path::Path,
     str,
 };
 
 use byteorder::{ReadBytesExt, WriteBytesExt};
-use tempfile::Builder;
 
 use crate::{
-    assertions::{AllowedExclusion, BoxMap, ExclusionKind, C2PA_BOXHASH},
     asset_io::{
-        self, AssetBoxHash, AssetIO, AssetPatch, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
-        ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
-        RemoteRefEmbedType,
+        AllowedExclusion, AssetBoxHash, AssetIO, AssetPatch, BoxMap, C2paReader, C2paWriter,
+        ComposedManifestRef, ExclusionKind, ObjectLocations, ObjectType, ReadSeek, ReadWriteSeek,
+        RemoteManifestUrl, WriteXmp, C2PA_BOXHASH,
     },
     error::Result,
-    utils::{
-        io_utils::stream_len,
-        xmp_inmemory_utils::{self, MIN_XMP},
-    },
+    utils::io_utils::stream_len,
     Error,
 };
 
@@ -42,16 +37,16 @@ const XMP_MAGIC_TRAILER_LEN: usize = 257;
 
 pub struct GifIO {}
 
-impl CAIReader for GifIO {
-    fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
-        self.find_c2pa_block(asset_reader)?
+impl C2paReader for GifIO {
+    fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>> {
+        self.find_c2pa_block(input_stream)?
             .map(|marker| marker.block.data_sub_blocks.to_decoded_bytes())
             .ok_or(Error::JumbfNotFound)
     }
 
-    fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String> {
+    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Option<String> {
         let mut bytes = self
-            .find_xmp_block(asset_reader)
+            .find_xmp_block(input_stream)
             .ok()?
             .map(|marker| marker.block.data_sub_blocks.to_decoded_bytes())?;
 
@@ -84,11 +79,11 @@ impl CAIReader for GifIO {
     }
 }
 
-impl CAIWriter for GifIO {
-    fn write_cai(
+impl C2paWriter for GifIO {
+    fn write_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         store_bytes: &[u8],
     ) -> Result<()> {
         let old_block_marker = self.find_c2pa_block(input_stream)?;
@@ -105,58 +100,58 @@ impl CAIWriter for GifIO {
         }
     }
 
-    fn get_object_locations_from_stream(
+    fn get_object_locations(
         &self,
-        input_stream: &mut dyn CAIRead,
-    ) -> Result<Vec<HashObjectPositions>> {
+        input_stream: &mut dyn ReadSeek,
+    ) -> Result<Vec<ObjectLocations>> {
         let c2pa_block = self.find_c2pa_block(input_stream)?;
         match c2pa_block {
             Some(c2pa_block) => Ok(vec![
-                HashObjectPositions {
+                ObjectLocations {
                     offset: 0,
-                    length: usize::try_from(c2pa_block.start() - 1)?,
-                    htype: HashBlockObjectType::Other,
+                    length: c2pa_block.start() - 1,
+                    htype: ObjectType::Other,
                 },
-                HashObjectPositions {
-                    offset: usize::try_from(c2pa_block.start())?,
-                    length: usize::try_from(c2pa_block.len())?,
-                    htype: HashBlockObjectType::Cai,
+                ObjectLocations {
+                    offset: c2pa_block.start(),
+                    length: c2pa_block.len(),
+                    htype: ObjectType::C2pa,
                 },
-                HashObjectPositions {
-                    offset: usize::try_from(c2pa_block.end())?,
-                    length: usize::try_from(stream_len(input_stream)? - c2pa_block.end())?,
-                    htype: HashBlockObjectType::Other,
+                ObjectLocations {
+                    offset: c2pa_block.end(),
+                    length: stream_len(input_stream)? - c2pa_block.end(),
+                    htype: ObjectType::Other,
                 },
             ]),
             None => {
                 self.skip_preamble(input_stream)?;
 
-                let end_preamble_pos = usize::try_from(input_stream.stream_position()?)?;
+                let end_preamble_pos = input_stream.stream_position()?;
                 Ok(vec![
-                    HashObjectPositions {
+                    ObjectLocations {
                         offset: 0,
                         length: end_preamble_pos - 1,
-                        htype: HashBlockObjectType::Other,
+                        htype: ObjectType::Other,
                     },
-                    HashObjectPositions {
+                    ObjectLocations {
                         offset: end_preamble_pos,
                         length: 1, // Need at least size 1.
-                        htype: HashBlockObjectType::Cai,
+                        htype: ObjectType::C2pa,
                     },
-                    HashObjectPositions {
+                    ObjectLocations {
                         offset: end_preamble_pos + 1,
-                        length: usize::try_from(stream_len(input_stream)?)? - end_preamble_pos,
-                        htype: HashBlockObjectType::Other,
+                        length: stream_len(input_stream)? - end_preamble_pos,
+                        htype: ObjectType::Other,
                     },
                 ])
             }
         }
     }
 
-    fn remove_cai_store_from_stream(
+    fn remove_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
     ) -> Result<()> {
         match self.find_c2pa_block(input_stream)? {
             Some(block_marker) => {
@@ -172,9 +167,10 @@ impl CAIWriter for GifIO {
 }
 
 impl AssetPatch for GifIO {
-    fn patch_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
+    fn patch_c2pa_file(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
         let mut stream = fs::OpenOptions::new()
             .read(true)
+            .write(true)
             .open(asset_path)
             .map_err(Error::IoError)?;
 
@@ -189,50 +185,24 @@ impl AssetPatch for GifIO {
     }
 }
 
-impl RemoteRefEmbed for GifIO {
-    fn embed_reference(&self, asset_path: &Path, embed_ref: RemoteRefEmbedType) -> Result<()> {
-        match &embed_ref {
-            RemoteRefEmbedType::Xmp(_) => {
-                let mut input_stream = File::open(asset_path)?;
-                let mut output_stream = Cursor::new(Vec::new());
-                self.embed_reference_to_stream(&mut input_stream, &mut output_stream, embed_ref)?;
-                fs::write(asset_path, output_stream.into_inner())?;
-                Ok(())
-            }
-            _ => Err(Error::UnsupportedType),
-        }
-    }
-
-    fn embed_reference_to_stream(
+impl WriteXmp for GifIO {
+    fn write_xmp(
         &self,
-        source_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
-        embed_ref: RemoteRefEmbedType,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
+        xmp: &str,
     ) -> Result<()> {
-        match embed_ref {
-            RemoteRefEmbedType::Xmp(url) => {
-                let xmp = xmp_inmemory_utils::add_provenance(
-                    // TODO: we read xmp here, then search for it again after, we can cache it
-                    &self
-                        .read_xmp(source_stream)
-                        .unwrap_or_else(|| MIN_XMP.to_string()),
-                    &url,
-                )?;
+        let old_block_marker = self.find_xmp_block(input_stream)?;
+        let new_block = ApplicationExtension::new_xmp(xmp.as_bytes().to_vec())?;
 
-                let old_block_marker = self.find_xmp_block(source_stream)?;
-                let new_block = ApplicationExtension::new_xmp(xmp.into_bytes())?;
-
-                match old_block_marker {
-                    Some(old_block_marker) => self.replace_block(
-                        source_stream,
-                        output_stream,
-                        &old_block_marker.into(),
-                        &new_block.into(),
-                    ),
-                    None => self.insert_block(source_stream, output_stream, &new_block.into()),
-                }
-            }
-            _ => Err(Error::UnsupportedType),
+        match old_block_marker {
+            Some(old_block_marker) => self.replace_block(
+                input_stream,
+                output_stream,
+                &old_block_marker.into(),
+                &new_block.into(),
+            ),
+            None => self.insert_block(input_stream, output_stream, &new_block.into()),
         }
     }
 }
@@ -244,7 +214,7 @@ impl ComposedManifestRef for GifIO {
 }
 
 impl AssetBoxHash for GifIO {
-    fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
+    fn get_box_map(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<BoxMap>> {
         let c2pa_block_exists = self.find_c2pa_block(input_stream)?.is_some();
 
         let mut box_maps = Vec::new();
@@ -319,11 +289,11 @@ impl AssetIO for GifIO {
         Box::new(GifIO::new(asset_type))
     }
 
-    fn get_reader(&self) -> &dyn CAIReader {
+    fn get_reader(&self) -> &dyn C2paReader {
         self
     }
 
-    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn C2paWriter>> {
         Some(Box::new(GifIO::new(asset_type)))
     }
 
@@ -331,7 +301,11 @@ impl AssetIO for GifIO {
         Some(self)
     }
 
-    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+    fn remote_manifest_url_ref(&self) -> Option<&dyn RemoteManifestUrl> {
+        Some(self)
+    }
+
+    fn write_xmp_ref(&self) -> Option<&dyn WriteXmp> {
         Some(self)
     }
 
@@ -343,55 +317,13 @@ impl AssetIO for GifIO {
         Some(self)
     }
 
-    fn read_cai_store(&self, asset_path: &Path) -> crate::Result<Vec<u8>> {
-        let mut f = File::open(asset_path)?;
-        self.read_cai(&mut f)
-    }
-
-    fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> crate::Result<()> {
-        let mut stream = fs::OpenOptions::new()
-            .read(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        let mut temp_file = Builder::new()
-            .prefix("c2pa_temp")
-            .rand_bytes(5)
-            .tempfile()?;
-
-        self.write_cai(&mut stream, &mut temp_file, store_bytes)?;
-
-        asset_io::rename_or_move(temp_file, asset_path)
-    }
-
-    fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>> {
-        let mut f = std::fs::File::open(asset_path).map_err(|_err| Error::EmbeddingError)?;
-        self.get_object_locations_from_stream(&mut f)
-    }
-
-    fn remove_cai_store(&self, asset_path: &Path) -> crate::Result<()> {
-        let mut stream = fs::OpenOptions::new()
-            .read(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        let mut temp_file = Builder::new()
-            .prefix("c2pa_temp")
-            .rand_bytes(5)
-            .tempfile()?;
-
-        self.remove_cai_store_from_stream(&mut stream, &mut temp_file)?;
-
-        asset_io::rename_or_move(temp_file, asset_path)
-    }
-
     fn supported_types(&self) -> &[&str] {
         &["gif", "image/gif"]
     }
 }
 
 impl GifIO {
-    fn skip_preamble(&self, stream: &mut dyn CAIRead) -> Result<()> {
+    fn skip_preamble(&self, stream: &mut dyn ReadSeek) -> Result<()> {
         stream.rewind()?;
 
         Header::from_stream(stream)?;
@@ -409,7 +341,7 @@ impl GifIO {
     // According to spec, C2PA blocks must come before the first image descriptor.
     fn find_c2pa_block(
         &self,
-        stream: &mut dyn CAIRead,
+        stream: &mut dyn ReadSeek,
     ) -> Result<Option<BlockMarker<ApplicationExtension>>> {
         self.find_app_block_from_iterator(
             ApplicationExtensionKind::C2pa,
@@ -427,7 +359,7 @@ impl GifIO {
 
     fn find_xmp_block(
         &self,
-        stream: &mut dyn CAIRead,
+        stream: &mut dyn ReadSeek,
     ) -> Result<Option<BlockMarker<ApplicationExtension>>> {
         self.find_app_block_from_iterator(ApplicationExtensionKind::Xmp, Blocks::new(stream)?)
     }
@@ -458,8 +390,8 @@ impl GifIO {
 
     fn remove_block(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         block_meta: &BlockMarker<Block>,
     ) -> Result<()> {
         input_stream.rewind()?;
@@ -477,8 +409,8 @@ impl GifIO {
 
     fn replace_block(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         old_block_marker: &BlockMarker<Block>,
         new_block: &Block,
     ) -> Result<()> {
@@ -502,7 +434,7 @@ impl GifIO {
     #[allow(dead_code)] // this here for wasm builds to pass clippy  (todo: remove)
     fn replace_block_in_place(
         &self,
-        stream: &mut dyn CAIReadWrite,
+        stream: &mut dyn ReadWriteSeek,
         old_block_marker: &BlockMarker<Block>,
         new_block: &Block,
     ) -> Result<()> {
@@ -520,8 +452,8 @@ impl GifIO {
 
     fn insert_block(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         block: &Block,
     ) -> Result<()> {
         self.skip_preamble(input_stream)?;
@@ -545,7 +477,7 @@ impl GifIO {
 
     // GIF has two versions: 87a and 89a. 87a doesn't support block extensions, so if the input stream is
     // 87a we need to update it to 89a.
-    fn update_to_89a(&self, stream: &mut dyn CAIReadWrite) -> Result<()> {
+    fn update_to_89a(&self, stream: &mut dyn ReadWriteSeek) -> Result<()> {
         stream.seek(SeekFrom::Start(4))?;
         // 0x39 is 9 in ASCII.
         stream.write_u8(0x39)?;
@@ -555,12 +487,12 @@ impl GifIO {
 
 struct Blocks<'a> {
     next: Option<BlockMarker<Block>>,
-    stream: &'a mut dyn CAIRead,
+    stream: &'a mut dyn ReadSeek,
     reached_trailer: bool,
 }
 
 impl<'a> Blocks<'a> {
-    fn new(stream: &'a mut dyn CAIRead) -> Result<Blocks<'a>> {
+    fn new(stream: &'a mut dyn ReadSeek) -> Result<Blocks<'a>> {
         stream.rewind()?;
 
         let start = stream.stream_position()?;
@@ -640,13 +572,8 @@ impl BlockMarker<Block> {
             names.push(name.to_owned());
         }
 
-        Ok(BoxMap {
-            names,
-            allowed_exclusions: self.block.allowed_exclusions(self.len()),
-            range_start: self.start(),
-            range_len: self.len(),
-            ..Default::default()
-        })
+        Ok(BoxMap::new(names, self.start(), self.len())
+            .with_allowed_exclusions(self.block.allowed_exclusions(self.len())))
     }
 }
 
@@ -676,7 +603,7 @@ enum Block {
 }
 
 impl Block {
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<BlockMarker<Block>> {
+    fn from_stream(stream: &mut dyn ReadSeek) -> Result<BlockMarker<Block>> {
         let start = stream.stream_position()?;
 
         let ext_introducer = stream.read_u8()?;
@@ -719,7 +646,7 @@ impl Block {
     }
 
     // Some blocks MUST come after other blocks, this function ensures that.
-    fn next_block_hint(&self, stream: &mut dyn CAIRead) -> Result<Option<BlockMarker<Block>>> {
+    fn next_block_hint(&self, stream: &mut dyn ReadSeek) -> Result<Option<BlockMarker<Block>>> {
         let start = stream.stream_position()?;
         let next_block = match self {
             Block::Header(_) => Some(Block::LogicalScreenDescriptor(
@@ -854,29 +781,23 @@ struct Header {
 }
 
 impl Header {
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<Header> {
+    fn from_stream(stream: &mut dyn ReadSeek) -> Result<Header> {
         let mut signature = [0u8; 3];
         stream.read_exact(&mut signature)?;
         if signature != *b"GIF" {
-            return Err(GifError::InvalidFileSignature {
-                reason: format!(
-                    "invalid header signature: expected \"GIF\", found \"{}\"",
-                    String::from_utf8_lossy(&signature)
-                ),
-            }
-            .into());
+            return Err(Error::InvalidAsset(format!(
+                "invalid header signature: expected \"GIF\", found \"{}\"",
+                String::from_utf8_lossy(&signature)
+            )));
         }
 
         let mut version = [0u8; 3];
         stream.read_exact(&mut version)?;
         if version != *b"87a" && version != *b"89a" {
-            return Err(GifError::InvalidFileSignature {
-                reason: format!(
-                    "invalid header version: expected \"89a\" or \"87a\", found \"{}\"",
-                    String::from_utf8_lossy(&version)
-                ),
-            }
-            .into());
+            return Err(Error::InvalidAsset(format!(
+                "invalid header version: expected \"89a\" or \"87a\", found \"{}\"",
+                String::from_utf8_lossy(&version)
+            )));
         }
 
         Ok(Header {
@@ -892,7 +813,7 @@ struct LogicalScreenDescriptor {
 }
 
 impl LogicalScreenDescriptor {
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<LogicalScreenDescriptor> {
+    fn from_stream(stream: &mut dyn ReadSeek) -> Result<LogicalScreenDescriptor> {
         stream.seek(SeekFrom::Current(4))?;
 
         let packed = stream.read_u8()?;
@@ -912,7 +833,7 @@ impl LogicalScreenDescriptor {
 struct GlobalColorTable {}
 
 impl GlobalColorTable {
-    fn from_stream(stream: &mut dyn CAIRead, size: u8) -> Result<GlobalColorTable> {
+    fn from_stream(stream: &mut dyn ReadSeek, size: u8) -> Result<GlobalColorTable> {
         stream.seek(SeekFrom::Current(3 * (2_i64.pow(size as u32 + 1))))?;
 
         Ok(GlobalColorTable {})
@@ -957,7 +878,7 @@ impl ApplicationExtension {
         })
     }
 
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<ApplicationExtension> {
+    fn from_stream(stream: &mut dyn ReadSeek) -> Result<ApplicationExtension> {
         let app_block_size = stream.read_u8()?;
         // App block size is a fixed value.
         if app_block_size != 0x0b {
@@ -1023,7 +944,7 @@ impl From<ApplicationExtension> for Block {
 struct PlainTextExtension {}
 
 impl PlainTextExtension {
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<PlainTextExtension> {
+    fn from_stream(stream: &mut dyn ReadSeek) -> Result<PlainTextExtension> {
         stream.seek(SeekFrom::Current(11))?;
         DataSubBlocks::from_encoded_stream_and_skip(stream)?;
         Ok(PlainTextExtension {})
@@ -1036,7 +957,7 @@ struct CommentExtension {
 }
 
 impl CommentExtension {
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<CommentExtension> {
+    fn from_stream(stream: &mut dyn ReadSeek) -> Result<CommentExtension> {
         Ok(CommentExtension {
             data_sub_blocks: DataSubBlocks::from_encoded_stream(stream)?,
         })
@@ -1048,7 +969,7 @@ struct GraphicControlExtension {}
 
 impl GraphicControlExtension {
     // TODO: validate ext introducer and label, and do that for other extensions?
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<GraphicControlExtension> {
+    fn from_stream(stream: &mut dyn ReadSeek) -> Result<GraphicControlExtension> {
         stream.seek(SeekFrom::Current(6))?;
         Ok(GraphicControlExtension {})
     }
@@ -1061,7 +982,7 @@ struct ImageDescriptor {
 }
 
 impl ImageDescriptor {
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<ImageDescriptor> {
+    fn from_stream(stream: &mut dyn ReadSeek) -> Result<ImageDescriptor> {
         stream.seek(SeekFrom::Current(8))?;
 
         let packed = stream.read_u8()?;
@@ -1080,7 +1001,7 @@ struct LocalColorTable {}
 
 impl LocalColorTable {
     fn from_stream(
-        stream: &mut dyn CAIRead,
+        stream: &mut dyn ReadSeek,
         local_color_table_size: u8,
     ) -> Result<LocalColorTable> {
         stream.seek(SeekFrom::Current(
@@ -1094,7 +1015,7 @@ impl LocalColorTable {
 struct ImageData {}
 
 impl ImageData {
-    fn from_stream(stream: &mut dyn CAIRead) -> Result<ImageData> {
+    fn from_stream(stream: &mut dyn ReadSeek) -> Result<ImageData> {
         stream.seek(SeekFrom::Current(1))?;
         DataSubBlocks::from_encoded_stream_and_skip(stream)?;
         Ok(ImageData {})
@@ -1132,7 +1053,7 @@ impl DataSubBlocks {
         })
     }
 
-    fn from_encoded_stream(stream: &mut dyn CAIRead) -> Result<DataSubBlocks> {
+    fn from_encoded_stream(stream: &mut dyn ReadSeek) -> Result<DataSubBlocks> {
         let mut data_sub_blocks = Vec::new();
         loop {
             let sub_block_size = stream.read_u8()?;
@@ -1156,7 +1077,7 @@ impl DataSubBlocks {
         })
     }
 
-    fn from_encoded_stream_and_skip(stream: &mut dyn CAIRead) -> Result<u64> {
+    fn from_encoded_stream_and_skip(stream: &mut dyn ReadSeek) -> Result<u64> {
         let mut length = 0;
         loop {
             let sub_block_size = stream.read_u8()?;
@@ -1230,19 +1151,13 @@ fn metadata_exclusions_from_sub_blocks(
         .collect()
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum GifError {
-    #[error("invalid file signature: {reason}")]
-    InvalidFileSignature { reason: String },
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
     use io::{Cursor, Seek};
-    use xmp_inmemory_utils::extract_provenance;
 
     use super::*;
+    use crate::utils::xmp_inmemory_utils::extract_provenance;
 
     const SAMPLE1: &[u8] = include_bytes!("../../tests/fixtures/sample1.gif");
 
@@ -1393,22 +1308,22 @@ mod tests {
         let gif_io = GifIO {};
 
         assert!(matches!(
-            gif_io.read_cai(&mut stream),
+            gif_io.read_c2pa(&mut stream),
             Err(Error::JumbfNotFound)
         ));
 
         let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 7));
         let random_bytes = [1, 2, 3, 4, 3, 2, 1];
-        gif_io.write_cai(&mut stream, &mut output_stream1, &random_bytes)?;
+        gif_io.write_c2pa(&mut stream, &mut output_stream1, &random_bytes)?;
 
-        let data_written = gif_io.read_cai(&mut output_stream1)?;
+        let data_written = gif_io.read_c2pa(&mut output_stream1)?;
         assert_eq!(data_written, random_bytes);
 
         let mut output_stream2 = Cursor::new(Vec::with_capacity(SAMPLE1.len()));
-        gif_io.remove_cai_store_from_stream(&mut output_stream1, &mut output_stream2)?;
+        gif_io.remove_c2pa(&mut output_stream1, &mut output_stream2)?;
 
         assert!(matches!(
-            gif_io.read_cai(&mut stream),
+            gif_io.read_c2pa(&mut stream),
             Err(Error::JumbfNotFound)
         ));
 
@@ -1464,15 +1379,15 @@ mod tests {
         let gif_io = GifIO {};
 
         assert!(matches!(
-            gif_io.read_cai(&mut stream),
+            gif_io.read_c2pa(&mut stream),
             Err(Error::JumbfNotFound)
         ));
 
         let mut output_stream = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 7));
         let random_bytes = [1, 2, 3, 4, 3, 2, 1];
-        gif_io.write_cai(&mut stream, &mut output_stream, &random_bytes)?;
+        gif_io.write_c2pa(&mut stream, &mut output_stream, &random_bytes)?;
 
-        let data_written = gif_io.read_cai(&mut output_stream)?;
+        let data_written = gif_io.read_c2pa(&mut output_stream)?;
         assert_eq!(data_written, random_bytes);
 
         Ok(())
@@ -1485,22 +1400,22 @@ mod tests {
         let gif_io = GifIO {};
 
         assert!(matches!(
-            gif_io.read_cai(&mut stream),
+            gif_io.read_c2pa(&mut stream),
             Err(Error::JumbfNotFound)
         ));
 
         let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 7));
         let random_bytes = [1, 2, 3, 4, 3, 2, 1];
-        gif_io.write_cai(&mut stream, &mut output_stream1, &random_bytes)?;
+        gif_io.write_c2pa(&mut stream, &mut output_stream1, &random_bytes)?;
 
-        let data_written = gif_io.read_cai(&mut output_stream1)?;
+        let data_written = gif_io.read_c2pa(&mut output_stream1)?;
         assert_eq!(data_written, random_bytes);
 
         let mut output_stream2 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 5));
         let random_bytes = [3, 2, 1, 2, 3];
-        gif_io.write_cai(&mut output_stream1, &mut output_stream2, &random_bytes)?;
+        gif_io.write_c2pa(&mut output_stream1, &mut output_stream2, &random_bytes)?;
 
-        let data_written = gif_io.read_cai(&mut output_stream2)?;
+        let data_written = gif_io.read_c2pa(&mut output_stream2)?;
         assert_eq!(data_written, random_bytes);
 
         let mut bytes = Vec::new();
@@ -1517,61 +1432,61 @@ mod tests {
 
         let gif_io = GifIO {};
 
-        let obj_locations = gif_io.get_object_locations_from_stream(&mut stream)?;
+        let obj_locations = gif_io.get_object_locations(&mut stream)?;
         assert_eq!(
             obj_locations.first(),
-            Some(&HashObjectPositions {
+            Some(&ObjectLocations {
                 offset: 0,
                 length: 780,
-                htype: HashBlockObjectType::Other,
+                htype: ObjectType::Other,
             })
         );
         assert_eq!(
             obj_locations.get(1),
-            Some(&HashObjectPositions {
+            Some(&ObjectLocations {
                 offset: 781,
                 length: 1,
-                htype: HashBlockObjectType::Cai,
+                htype: ObjectType::C2pa,
             })
         );
         assert_eq!(
             obj_locations.get(2),
-            Some(&HashObjectPositions {
+            Some(&ObjectLocations {
                 offset: 782,
-                length: SAMPLE1.len() - 781,
-                htype: HashBlockObjectType::Other,
+                length: (SAMPLE1.len() - 781) as u64,
+                htype: ObjectType::Other,
             })
         );
         assert_eq!(obj_locations.len(), 3);
 
         let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len() + 15 + 4));
-        gif_io.write_cai(&mut stream, &mut output_stream1, &[1, 2, 3, 4])?;
+        gif_io.write_c2pa(&mut stream, &mut output_stream1, &[1, 2, 3, 4])?;
 
-        let mut obj_locations = gif_io.get_object_locations_from_stream(&mut output_stream1)?;
+        let mut obj_locations = gif_io.get_object_locations(&mut output_stream1)?;
         obj_locations.sort_by_key(|pos| pos.offset);
 
         assert_eq!(
             obj_locations.first(),
-            Some(&HashObjectPositions {
+            Some(&ObjectLocations {
                 offset: 0,
                 length: 780,
-                htype: HashBlockObjectType::Other,
+                htype: ObjectType::Other,
             })
         );
         assert_eq!(
             obj_locations.get(1),
-            Some(&HashObjectPositions {
+            Some(&ObjectLocations {
                 offset: 781,
                 length: 20,
-                htype: HashBlockObjectType::Cai,
+                htype: ObjectType::C2pa,
             })
         );
         assert_eq!(
             obj_locations.get(2),
-            Some(&HashObjectPositions {
+            Some(&ObjectLocations {
                 offset: 801,
-                length: SAMPLE1.len() - 781,
-                htype: HashBlockObjectType::Other,
+                length: (SAMPLE1.len() - 781) as u64,
+                htype: ObjectType::Other,
             })
         );
         assert_eq!(obj_locations.len(), 3);
@@ -1588,30 +1503,19 @@ mod tests {
         let box_map = gif_io.get_box_map(&mut stream)?;
         assert_eq!(
             box_map.first(),
-            Some(&BoxMap {
-                names: vec!["GIF89a".to_owned()],
-                range_start: 0,
-                range_len: 6,
-                ..Default::default()
-            })
+            Some(&BoxMap::new(vec!["GIF89a".to_owned()], 0, 6))
         );
         assert_eq!(
             box_map.get(box_map.len() / 2),
-            Some(&BoxMap {
-                names: vec!["2C".to_owned()],
-                range_start: 368494,
-                range_len: 778,
-                ..Default::default()
-            })
+            Some(&BoxMap::new(vec!["2C".to_owned()], 368494, 778))
         );
         assert_eq!(
             box_map.last(),
-            Some(&BoxMap {
-                names: vec!["3B".to_owned()],
-                range_start: SAMPLE1.len() as u64 - 1,
-                range_len: 1,
-                ..Default::default()
-            })
+            Some(&BoxMap::new(
+                vec!["3B".to_owned()],
+                SAMPLE1.len() as u64 - 1,
+                1
+            ))
         );
         assert_eq!(box_map.len(), 276);
 
@@ -1673,11 +1577,7 @@ mod tests {
         assert_eq!(gif_io.read_xmp(&mut stream), None);
 
         let mut output_stream1 = Cursor::new(Vec::with_capacity(SAMPLE1.len()));
-        gif_io.embed_reference_to_stream(
-            &mut stream,
-            &mut output_stream1,
-            RemoteRefEmbedType::Xmp("Test".to_owned()),
-        )?;
+        gif_io.write_remote_manifest_url(&mut stream, &mut output_stream1, "Test")?;
 
         let xmp = gif_io.read_xmp(&mut output_stream1).unwrap();
         let p = extract_provenance(&xmp).unwrap();
