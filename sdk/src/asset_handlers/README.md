@@ -370,6 +370,9 @@ All traits require `Sync + Send`. Handlers must be **stateless structs** with no
 | **GifIO** (GIF) | Y | Y | Y | Y | Y | Y | Y |
 | **C2paIO** (C2PA sidecar) | Y | Y | Y | -- | Y | Y | -- |
 | **PdfIO** (PDF) | Y | -- | Y | -- | -- | Y | -- |
+| **OggIO** (OGG, Opus) [^ogg] | Y | Y | Y | -- | Y | -- | Y |
+
+[^ogg]: Experimental — compiled only with the `unstable_ogg` feature. See the [experimental features policy](../../../docs/experimental-features.md).
 
 ### Key observations
 
@@ -441,7 +444,7 @@ flowchart TB
         end
     end
 
-    handlers["jpeg_io.rs  jpegxl_io.rs  png_io.rs  bmff_io.rs  tiff_io.rs   riff_io.rs  svg_io.rs  mp3_io.rs  gif_io.rs  c2pa_io.rs  pdf_io.rs"]
+    handlers["jpeg_io.rs  jpegxl_io.rs  png_io.rs  bmff_io.rs  tiff_io.rs   riff_io.rs  svg_io.rs  mp3_io.rs  gif_io.rs  ogg_io.rs  c2pa_io.rs  pdf_io.rs"]
 
     dispatch -->|"Looks up by extension/MIME"| traits
     traits -->|"Implemented by asset_handlers/&lt;format&gt;_io.rs"| handlers
