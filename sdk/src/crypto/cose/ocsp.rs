@@ -538,7 +538,9 @@ pub(crate) fn fetch_and_check_ocsp_response(
         };
 
         let mut ca_log = StatusTracker::default();
-        let ca_response = validate_fetched_ocsp(&ca_der, &certs[i..], signing_time, &mut ca_log);
+        let ca_response =
+            validate_fetched_ocsp(&ca_der, &certs[i..], ctp, signing_time, &mut ca_log);
+
         if ca_response.revoked_at.is_some() {
             log_item!("", "issuing CA revoked", "fetch_and_check_ocsp_response")
                 .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
@@ -571,6 +573,7 @@ pub(crate) fn fetch_and_check_ocsp_response(
     Ok(validate_fetched_ocsp(
         &ocsp_response_der,
         &certs,
+        ctp,
         signing_time,
         validation_log,
     ))
@@ -584,10 +587,23 @@ pub(crate) fn fetch_and_check_ocsp_response(
 fn validate_fetched_ocsp(
     ocsp_response_der: &[u8],
     subject_chain: &[Vec<u8>],
+    ctp: &CertificateTrustPolicy,
     signing_time: Option<DateTime<Utc>>,
     validation_log: &mut StatusTracker,
 ) -> OcspResponse {
+    // Check the OCSP response, but only if it is well-formed.
+    // Revocation errors are reported in the validation log.
+    // `subject_chain` is the certificate chain to bind the OCSP response to.
+    //
+    // Status codes go to a scratch log until the responder has been accepted, then
+    // are appended below. RFC 6960 section 3.2 requires all of requirements 1-4
+    // before a response may be accepted, and C2PA 2.4 section 15.9.2 conditions
+    // `signingCredential.ocsp.notRevoked` on that acceptance – but
+    // `from_der_checked` logs the success as soon as requirements 1 and 2 hold. With
+    // the caller's log passed in directly, an early return below discarded the
+    // response while leaving that success code behind.
     let mut current_validation_log = StatusTracker::default();
+
     let ocsp_data = match OcspResponse::from_der_checked(
         ocsp_response_der,
         subject_chain,
@@ -608,12 +624,18 @@ fn validate_fetched_ocsp(
         let mut new_ctp = CertificateTrustPolicy::default();
         new_ctp.clear_ekus();
         new_ctp.add_mandatory_ekus(OCSP_OID_STR.as_bytes()); // ocsp signing EKU
-        if check_end_entity_certificate_profile(first_cert, &new_ctp, validation_log, None).is_err()
+        if check_end_entity_certificate_profile(
+            first_cert,
+            &new_ctp,
+            &mut current_validation_log,
+            None,
+        )
+        .is_err()
         {
             return OcspResponse::default();
         }
 
-        // validate the trust; complete the responder's path from the signer's
+        // Validate the trust; complete the responder's path from the signer's
         // x5chain if the response does not embed the responder's issuing CA.
         //
         // This is RFC 6960 section 3.2 requirement 4, "the signer is currently
@@ -622,7 +644,8 @@ fn validate_fetched_ocsp(
         // inspects a single certificate and builds no path, so a self-signed
         // certificate carrying id-kp-OCSPSigning satisfies it.
         let ocsp_cert_chain = extend_ocsp_cert_chain(ocsp_certs, subject_chain);
-        if new_ctp
+
+        if ctp
             .check_certificate_trust(
                 &ocsp_cert_chain,
                 first_cert,
@@ -633,11 +656,11 @@ fn validate_fetched_ocsp(
             return OcspResponse::default();
         }
     } else {
-        // OCSP response must be signed by and the cert chain provided
+        // OCSP response must be signed by and the cert chain provided.
         return OcspResponse::default();
     }
 
-    // only append usable OCSP responses to validation_log
+    // Only append usable OCSP responses to validation_log.
     validation_log.append(&current_validation_log);
     ocsp_data
 }
@@ -827,7 +850,14 @@ mod tests {
         let test_time = Utc.with_ymd_and_hms(2024, 2, 1, 8, 0, 0).unwrap();
 
         let mut log = StatusTracker::default();
-        let resp = validate_fetched_ocsp(rsp, &chain, Some(test_time), &mut log);
+        let resp = validate_fetched_ocsp(
+            rsp,
+            &chain,
+            &CertificateTrustPolicy::default(),
+            Some(test_time),
+            &mut log,
+        );
+
         assert!(resp.revoked_at.is_none());
     }
 
@@ -836,7 +866,13 @@ mod tests {
         // An undecodable response yields no cert data and no status.
         let chain = ocsp_signing_chain();
         let mut log = StatusTracker::default();
-        let resp = validate_fetched_ocsp(&[0xde, 0xad, 0xbe, 0xef], &chain, None, &mut log);
+        let resp = validate_fetched_ocsp(
+            &[0xde, 0xad, 0xbe, 0xef],
+            &chain,
+            &CertificateTrustPolicy::default(),
+            None,
+            &mut log,
+        );
         assert!(resp.revoked_at.is_none());
         assert!(resp.ocsp_certs.is_none());
     }

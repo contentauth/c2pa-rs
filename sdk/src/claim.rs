@@ -2959,8 +2959,33 @@ impl Claim {
                     }
 
                     if !dh.is_remote_hash() {
-                        // there are extra exclusion then log the information code about extra exclusion
                         if let Some(exclusions) = &dh.exclusions {
+                            // Exclusions only make sense for a manifest embedded in this asset;
+                            // a detached manifest's exclusion is a hole for unrelated content.
+                            // If the caller didn't read the manifest out of this asset, fall back
+                            // to checking whether the asset really does have a C2PA box there.
+                            let box_present_in_asset = svi
+                                .manifest_store_range
+                                .as_ref()
+                                .is_some_and(|range| exclusions.contains(range));
+                            let has_real_exclusion = exclusions.iter().any(|e| e.length() > 0);
+                            if has_real_exclusion && !svi.is_embedded && !box_present_in_asset {
+                                log_item!(
+                                    claim.assertion_uri(&hash_binding_assertion.label()),
+                                    "data hash exclusions not valid for a detached manifest",
+                                    "verify_internal"
+                                )
+                                .validation_status(validation_status::ASSERTION_DATAHASH_MISMATCH)
+                                .failure(
+                                    validation_log,
+                                    Error::HashMismatch(
+                                        "data hash exclusions not valid for a detached manifest"
+                                            .to_string(),
+                                    ),
+                                )?;
+                            }
+
+                            // there are extra exclusion then log the information code about extra exclusion
                             if exclusions.len() > 1 {
                                 log_item!(
                                     claim.assertion_uri(&hash_binding_assertion.label()),
