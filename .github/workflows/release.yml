@@ -13,6 +13,13 @@ name: Release-plz publish
 # itself -- keeping binary builds tag-driven means release-candidate builds
 # (which never reach this workflow) produce the same binaries via
 # release-rc.yml's tags.
+#
+# When the `c2pa` crate itself is among the packages published, this also
+# dispatches a cross-repo notification (repository_dispatch, authenticated
+# with the CROSS_ORG_PR_TOKEN org token) -- so contentauth/c2patool can
+# immediately open a PR bumping its `stable` branch's `c2pa` dependency,
+# instead of waiting for a scheduled poll. See c2patool's
+# docs/release-process.md, "c2pa-rs release bump".
 
 permissions:
   pull-requests: write
@@ -80,3 +87,27 @@ jobs:
           echo "=== Release-plz releases ==="
           echo "$RELEASES"
           echo "==========================="
+
+      # `releases` is a JSON array of every package release-plz just published
+      # (this repo hosts several crates); only a `c2pa` entry is relevant to
+      # c2patool. Silently does nothing on a release batch that doesn't
+      # include `c2pa` (e.g. a c2pa-crypto-only release).
+      - name: Notify c2patool of a new c2pa release
+        if: steps.release-plz.outputs.releases_created == 'true'
+        env:
+          # RELEASE_PLZ_ORG_TOKEN lacks repository_dispatch permission on
+          # contentauth/c2patool (confirmed empirically: it returns a 403).
+          # CROSS_ORG_PR_TOKEN is the org token actually scoped for this
+          # cross-repo call.
+          GH_TOKEN: ${{ secrets.CROSS_ORG_PR_TOKEN }}
+          RELEASES: ${{ steps.release-plz.outputs.releases }}
+        run: |
+          VERSION=$(echo "$RELEASES" | jq -r '.[] | select(.package_name == "c2pa") | .version')
+          if [ -z "$VERSION" ]; then
+            echo "No 'c2pa' crate in this release batch; nothing to notify."
+            exit 0
+          fi
+          echo "Dispatching c2patool release-bump for c2pa $VERSION"
+          gh api repos/contentauth/c2patool/dispatches \
+            -f event_type=c2pa-rs-release \
+            -F "client_payload[version]=$VERSION"
