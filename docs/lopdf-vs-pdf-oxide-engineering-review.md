@@ -12,6 +12,7 @@
 - [High Level Breakdown](#high-level-breakdown)
   - [Capability Matrix](#capability-matrix)
   - [Limitations Comparison](#limitations-comparison)
+  - [Spec Conformance (C2PA Appendix A.4)](#spec-conformance-c2pa-appendix-a4)
   - [Diagrams](#diagrams)
 - [APIs / Library Surfaces](#apis--library-surfaces)
   - [`lopdf` surface](#lopdf-surface)
@@ -90,7 +91,7 @@ Decide which PDF library backend c2pa-rs should treat as the default, stable pat
 | Write: remove manifest | ✅ | ✅ | |
 | Write: same-length in-place patch (byte-offset stable) | ✅ — format-agnostic raw byte splice in `pdf_io.rs` | ✅ — same code path, backend-independent | Used whenever a same-length manifest is already embedded (the normal signing flow) |
 | Write: full-document rewrite mechanism | `Document::save_to` — `lopdf`'s own writer | Fully hand-rolled in c2pa-rs (`WorkingGraph::serialize_to`) | See [APIs / Library Surfaces](#apis--library-surfaces) |
-| Write: incremental (byte-preserving) update | Not wired up, but `lopdf::IncrementalDocument` exists | Not available; no analog | Neither used today |
+| Write: incremental (byte-preserving) update | Not wired up, but `lopdf::IncrementalDocument` exists | Not available; but implementable in c2pa-rs — see [`pdf-oxide-incremental-update-write.md`](pdf-oxide-incremental-update-write.md) | Neither used today |
 | Write: modern xref / object streams | Supported (`save_modern`), unused today | Always classic xref; no object-stream writing | Neither exercised today |
 | Native PDF digital signatures | ❌ | Present (`pdf_oxide::signatures`), unused | Orthogonal to C2PA |
 | Rendering / extraction / redaction | ❌ | Present, unused | Out of current scope |
@@ -113,6 +114,27 @@ Where the Capability Matrix asks "does it do X", this table asks "where does eac
 | No independent fuzzing / security audit by c2pa-rs | **Yes** — ships its own guards (decompression-bomb cap, `ReferenceLimit`) but not independently fuzzed by c2pa-rs | **Yes** — ships its own xref-reconstruction/parsing hardening, not itemized or independently audited by c2pa-rs | Shared gap |
 | Footprint cost | Not a limitation — smaller baseline | **Yes** — ~2.9× stripped release binary size, ~2.7× dependency tree | See [Performance & Scalability](#performance--scalability) |
 | WASM / `no_std` maturity | Not a limitation — works under c2pa-rs's existing rayon carve-out | **Yes** — no `no_std`; `libc`/`env_logger` always-on; WASM behind a feature, unverified against c2pa-rs's build matrix | |
+
+### Spec Conformance (C2PA Appendix A.4)
+
+Both backends implement the same `C2paPdf` contract and are driven by the same `pdf_io.rs` write-policy layer (single-manifest, reject-encrypted, always-embed-as-file). As a result their spec conformance is **near-identical** — every genuine gap lives in the shared layer, so switching backends closes none of them. The one backend-differentiated area is how the embedded manifest object itself is encoded (row 1), where `pdf_oxide` is marginally closer to spec.
+
+Scored against C2PA Technical Specification 2.4, Appendix A.4 "Embedding manifests into PDFs" (`/c2pa-spec-lookup fetch "A.4"` to refresh):
+
+| # | Spec A.4 requirement | Level | `lopdf` | `pdf_oxide` | Notes |
+|---|---|---|:---:|:---:|---|
+| 1 | Manifest embedded as embedded file stream (ISO 32000 §7.11.4) | SHALL | ⚠️ | ✅ | `lopdf` omits `/Type /EmbeddedFile` and nests `/Subtype` under an `/F` sub-dict as a string (`pdf.rs:561`); `pdf_oxide` sets `/Type` + a top-level `/Subtype` name with `/`→`#2F` escaping (`pdf_oxide.rs:363`) |
+| 2 | `Subtype` value = `application/c2pa` | SHALL | ❌ | ❌ | Both emit the legacy `application/x-c2pa-manifest-store` (shared `C2PA_MIME_TYPE`). `pdf_oxide` at least emits it as a valid escaped name object |
+| 3 | `AFRelationship` = `C2PA_Manifest` on the Filespec | SHALL | ✅ | ✅ | `pdf.rs:546` / `pdf_oxide.rs:386` |
+| 4 | Encrypted PDF → embedded file stream uses an `Identity` crypt filter | SHALL (conditional) | ❌ | ❌ | Neither supports embedding into encrypted PDFs; both reject the write instead (`pdf_io.rs:147`) — declines rather than violates |
+| 5 | Catalog `/AF` = *indirect* reference to the active-manifest Filespec | SHALL | ✅ | ✅ | `pdf.rs:523` / `pdf_oxide.rs:397` |
+| 6 | Filespec also reachable via `/Names/EmbeddedFiles` NameTree **or** a `FileAttachment` annotation | SHALL | ✅ | ✅ | Both implement both methods; the writer defaults to the NameTree path |
+| 7 | Annotation approach **shall** be used when the PDF already has a certifying signature (DocMDP) | SHALL (conditional) | ❌ | ❌ | Shared `write_cai` always uses the embedded-file path and never detects DocMDP (`pdf_io.rs:158`) |
+| 8 | Consumer processes all manifests across all stores (incremental update: base = initial, latest = active) | SHALL | ❌ | ❌ | Both are single-manifest only; `>1` → `NotImplemented` (`pdf_io.rs:90`) |
+| 9 | Reserve the PDF-signature `Contents` range and exclude it in `c2pa.hash.data` (A.4.2.2) | SHALL (conditional) | ❌ | ❌ | No PDF-signature co-sign handling in either backend |
+| 10 | Object-level manifests (per-object `/AF`) | MAY / recommended | ❌ | ❌ | Optional — document-level only in both; not a compliance gap |
+
+**Reading it:** rows 3, 5, 6 (the core happy-path SHALLs) pass on both. Rows 2, 7, 8 are real SHALL gaps present on both — row 2 (MIME) and row 8 (incremental multi-manifest) are inherited legacy limitations; row 7 (certifying-signature → annotation) is an unimplemented conditional SHALL. Rows 4 and 9 are conditional SHALLs both sidestep by not supporting the scenario. Row 10 is optional. Only row 1 differentiates the backends, and there `pdf_oxide` is the more spec-faithful of the two — a point in its favor, though not one that changes the overall recommendation.
 
 ### Diagrams
 
