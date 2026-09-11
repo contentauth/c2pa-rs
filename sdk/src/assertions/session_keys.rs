@@ -68,6 +68,13 @@ impl SessionKey {
     ) -> Result<Self> {
         let signer_binding = c2pa_cbor::from_slice::<c2pa_cbor::Value>(signer_binding_tagged)
             .map_err(|e| Error::AssertionEncoding(format!("invalid signerBinding CBOR: {e}")))?;
+        // Reject anything that isn't a COSE_Sign1_Tagged value up front, rather than deferring
+        // the mismatch to signerBinding verification (§18.25 requires the `18([...])` tag).
+        if !matches!(signer_binding, c2pa_cbor::Value::Tag(18, _)) {
+            return Err(Error::AssertionEncoding(
+                "signerBinding must be a COSE_Sign1_Tagged value (CBOR tag 18)".to_string(),
+            ));
+        }
         Ok(Self {
             key,
             min_sequence_number,
@@ -169,6 +176,52 @@ mod tests {
         let assertion = original.to_assertion().unwrap();
         let restored = SessionKeys::from_assertion(&assertion).unwrap();
         assert_eq!(original, restored);
+    }
+
+    #[test]
+    fn new_accepts_tag18_binding() {
+        // 18([ h'a10127', {}, null, h'deadbeef' ]) — a well-formed COSE_Sign1_Tagged.
+        let binding = c2pa_cbor::to_vec(&c2pa_cbor::Value::Tag(
+            18,
+            Box::new(c2pa_cbor::Value::Array(vec![
+                c2pa_cbor::Value::Bytes(vec![0xa1, 0x01, 0x27]),
+                c2pa_cbor::Value::Map(std::collections::BTreeMap::new()),
+                c2pa_cbor::Value::Null,
+                c2pa_cbor::Value::Bytes(vec![0xde, 0xad, 0xbe, 0xef]),
+            ])),
+        ))
+        .unwrap();
+
+        let key = SessionKey::new(
+            c2pa_cbor::Value::Map(std::collections::BTreeMap::new()),
+            0,
+            "2026-01-01T00:00:00Z",
+            3600,
+            &binding,
+        )
+        .unwrap();
+        assert!(matches!(key.signer_binding, c2pa_cbor::Value::Tag(18, _)));
+    }
+
+    #[test]
+    fn new_rejects_untagged_binding() {
+        // A bare (untagged) array decodes fine but is not a COSE_Sign1_Tagged value.
+        let untagged = c2pa_cbor::to_vec(&c2pa_cbor::Value::Array(vec![
+            c2pa_cbor::Value::Bytes(vec![0xa1, 0x01, 0x27]),
+            c2pa_cbor::Value::Map(std::collections::BTreeMap::new()),
+            c2pa_cbor::Value::Null,
+            c2pa_cbor::Value::Bytes(vec![0xde, 0xad, 0xbe, 0xef]),
+        ]))
+        .unwrap();
+
+        let err = SessionKey::new(
+            c2pa_cbor::Value::Map(std::collections::BTreeMap::new()),
+            0,
+            "2026-01-01T00:00:00Z",
+            3600,
+            &untagged,
+        );
+        assert!(err.is_err());
     }
 
     /// Per §18.25, `createdAt` is a CBOR tag 0 (standard date-time string) value. Guards the
