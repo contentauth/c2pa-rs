@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 
 use async_trait::async_trait;
 use serde_bytes::ByteBuf;
@@ -128,6 +128,32 @@ impl DynamicAssertion for IdentityAssertionBuilder {
     }
 }
 
+/// Allows an [`IdentityAssertionSigner`] to hand out shared clones of a single
+/// [`IdentityAssertionBuilder`] each time [`dynamic_assertions()`] is called,
+/// so that the same builder can service both the placeholder-reservation and
+/// content-writing passes of a split signing operation.
+///
+/// [`IdentityAssertionSigner`]: crate::identity::builder::IdentityAssertionSigner
+/// [`dynamic_assertions()`]: crate::Signer::dynamic_assertions
+impl DynamicAssertion for Arc<IdentityAssertionBuilder> {
+    fn label(&self) -> String {
+        self.as_ref().label()
+    }
+
+    fn reserve_size(&self) -> crate::Result<usize> {
+        self.as_ref().reserve_size()
+    }
+
+    fn content(
+        &self,
+        label: &str,
+        size: Option<usize>,
+        claim: &PartialClaim,
+    ) -> crate::Result<DynamicAssertionContent> {
+        self.as_ref().content(label, size, claim)
+    }
+}
+
 /// An `AsyncIdentityAssertionBuilder` gathers together the necessary components
 /// for an identity assertion. When added to an
 /// [`AsyncIdentityAssertionSigner`], it ensures that the proper data is added
@@ -236,6 +262,35 @@ impl AsyncDynamicAssertion for AsyncIdentityAssertionBuilder {
         let signature_result = self.credential_holder.sign(&signer_payload).await;
 
         finalize_identity_assertion(signer_payload, size, signature_result)
+    }
+}
+
+/// Allows an [`AsyncIdentityAssertionSigner`] to hand out shared clones of a
+/// single [`AsyncIdentityAssertionBuilder`] each time [`dynamic_assertions()`]
+/// is called, so that the same builder can service both the
+/// placeholder-reservation and content-writing passes of a split signing
+/// operation.
+///
+/// [`AsyncIdentityAssertionSigner`]: crate::identity::builder::AsyncIdentityAssertionSigner
+/// [`dynamic_assertions()`]: crate::AsyncSigner::dynamic_assertions
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl AsyncDynamicAssertion for Arc<AsyncIdentityAssertionBuilder> {
+    fn label(&self) -> String {
+        self.as_ref().label()
+    }
+
+    fn reserve_size(&self) -> crate::Result<usize> {
+        self.as_ref().reserve_size()
+    }
+
+    async fn content(
+        &self,
+        label: &str,
+        size: Option<usize>,
+        claim: &PartialClaim,
+    ) -> crate::Result<DynamicAssertionContent> {
+        self.as_ref().content(label, size, claim).await
     }
 }
 

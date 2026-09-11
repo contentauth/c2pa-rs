@@ -36,10 +36,9 @@ use crate::{
             self, ACTIONS, ASSERTION_METADATA, ASSERTION_STORE, BMFF_HASH, CLAIM_THUMBNAIL,
             DATABOX_STORE, METADATA_LABEL_REGEX,
         },
-        Action, Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, DataBox, DataHash,
-        Ingredient, Metadata, Relationship, V2_DEPRECATED_ACTIONS,
+        Action, Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, CollectionHash, DataBox,
+        DataHash, DataMap, Ingredient, Metadata, Relationship, V2_DEPRECATED_ACTIONS,
     },
-    asset_io::CAIRead,
     cbor_types::map_cbor_to_type,
     context::{Context, ProgressPhase},
     cose_validator::{
@@ -66,12 +65,12 @@ use crate::{
         labels::{
             assertion_label_from_uri, box_name_from_uri, manifest_label_from_uri,
             manifest_label_to_parts, to_absolute_uri, to_assertion_uri, to_databox_uri,
-            to_manifest_uri, to_signature_uri, ASSERTIONS, CLAIM, CREDENTIALS, DATABOX, DATABOXES,
-            SIGNATURE,
+            to_manifest_uri, to_normalized_uri, to_signature_uri, ASSERTIONS, CLAIM, CREDENTIALS,
+            DATABOX, DATABOXES, SIGNATURE,
         },
     },
-    jumbf_io::get_assetio_handler,
     log_item,
+    read_seek::ReadSeek,
     resource_store::UriOrResource,
     salt::{DefaultSalt, SaltGenerator},
     settings::{Settings, MAX_ASSERTIONS},
@@ -114,10 +113,25 @@ pub enum ClaimAssetData<'a> {
     #[cfg(feature = "file_io")]
     Path(&'a Path),
     Bytes(&'a [u8], &'a str),
-    Stream(&'a mut dyn CAIRead, &'a str),
-    StreamFragment(&'a mut dyn CAIRead, &'a mut dyn CAIRead, &'a str),
+    Stream(&'a mut dyn ReadSeek, &'a str),
+    StreamFragment(&'a mut dyn ReadSeek, &'a mut dyn ReadSeek, &'a str),
     #[cfg(feature = "file_io")]
-    StreamFragments(&'a mut dyn CAIRead, &'a Vec<std::path::PathBuf>, &'a str),
+    StreamFragments(&'a mut dyn ReadSeek, &'a Vec<std::path::PathBuf>, &'a str),
+}
+
+impl ClaimAssetData<'_> {
+    /// Returns the asset's format (MIME type or extension), if it can be determined.
+    pub(crate) fn format(&self) -> Option<String> {
+        match self {
+            #[cfg(feature = "file_io")]
+            ClaimAssetData::Path(path) => crate::format_from_path(path),
+            ClaimAssetData::Bytes(_, asset_type)
+            | ClaimAssetData::Stream(_, asset_type)
+            | ClaimAssetData::StreamFragment(_, _, asset_type) => Some((*asset_type).to_owned()),
+            #[cfg(feature = "file_io")]
+            ClaimAssetData::StreamFragments(_, _, asset_type) => Some((*asset_type).to_owned()),
+        }
+    }
 }
 
 #[derive(PartialEq, Debug, Eq, Clone, Hash)]
@@ -251,6 +265,7 @@ const ALG_SOFT_F: &str = "alg_soft";
 const METADATA_F: &str = "metadata";
 const CREATED_ASSERTIONS_F: &str = "created_assertions";
 const GATHERED_ASSERTIONS_F: &str = "gathered_assertions";
+const SPEC_VERSION_F: &str = "specVersion";
 
 /// A `Claim` gathers together all the `Assertion`s about an asset
 /// from an actor at a given time, and may also include one or more
@@ -267,6 +282,11 @@ pub struct Claim {
 
     // root of CAI store
     update_manifest: bool,
+
+    // true if this claim was read from a `c2md`-tagged superbox (C2PA spec
+    // 11.2.2) rather than an ordinary `c2ma` standard manifest. Preserved so
+    // the original tag survives round-trips (e.g. ingredient copies).
+    is_c2md: bool,
 
     // true if manifest is or will be stored compressed
     compressed: bool,
@@ -331,6 +351,9 @@ pub struct Claim {
     data_boxes: Vec<(HashedUri, DataBox)>, /* list of the data boxes and their hashed URIs found for this manifest */
 
     claim_version: usize,
+
+    // deprecated in C2PA 2.4
+    spec_version: Option<String>, // The version of the specification against which the validation was performed (SemVer formatted string)
 
     // Optional context for settings access (set when created from Builder)
     context: Option<Arc<Context>>,
@@ -452,6 +475,7 @@ impl Claim {
             instance_id: "".to_string(),
 
             update_manifest: false,
+            is_c2md: false,
             compressed: false,
             data_boxes: Vec::new(),
             metadata: None,
@@ -459,6 +483,7 @@ impl Claim {
             created_assertions: Vec::new(),
             gathered_assertions: None,
             context: None,
+            spec_version: None,
         }
     }
 
@@ -552,6 +577,7 @@ impl Claim {
             instance_id: "".to_string(),
 
             update_manifest: false,
+            is_c2md: false,
             compressed: false,
             data_boxes: Vec::new(),
             metadata: None,
@@ -559,6 +585,7 @@ impl Claim {
             created_assertions: Vec::new(),
             gathered_assertions: None,
             context: None,
+            spec_version: None,
         })
     }
 
@@ -665,6 +692,7 @@ impl Claim {
             Ok(Claim {
                 remote_manifest: RemoteManifest::NoRemote,
                 update_manifest: false,
+                is_c2md: false,
                 compressed: false,
                 title,
                 format: Some(format),
@@ -693,6 +721,7 @@ impl Claim {
                 created_assertions: Vec::new(),
                 gathered_assertions: None,
                 context: None,
+                spec_version: None,
             })
         } else {
             /* Claim V2 fields
@@ -706,37 +735,9 @@ impl Claim {
             ? "alg": tstr .size (1..max-tstr-length),
             ? "alg_soft": tstr .size (1..max-tstr-length),
             ? "metadata": $assertion-metadata-map,
+            ? "spec_version": semver-string,
+            ? any unknown fields
             */
-
-            static V2_FIELDS: [&str; 10] = [
-                INSTANCE_ID_F,
-                CLAIM_GENERATOR_INFO_F,
-                SIGNATURE_F,
-                CREATED_ASSERTIONS_F,
-                GATHERED_ASSERTIONS_F,
-                DC_TITLE_F,
-                REDACTED_ASSERTIONS_F,
-                ALG_F,
-                ALG_SOFT_F,
-                METADATA_F,
-            ];
-
-            // make sure only V2 fields are present
-            if let c2pa_cbor::Value::Map(m) = &claim_value {
-                for v in m.keys() {
-                    if let c2pa_cbor::Value::Text(t) = v {
-                        if !V2_FIELDS.contains(&t.as_str()) {
-                            return Err(Error::ClaimDecoding(format!(
-                                "unknown V2 claim field: {t}",
-                            )));
-                        }
-                    } else {
-                        return Err(Error::ClaimDecoding("non-text key in V2 claim".to_string()));
-                    }
-                }
-            } else {
-                return Err(Error::ClaimDecoding("claim is not an object".to_string()));
-            }
 
             let instance_id = map_cbor_to_type(INSTANCE_ID_F, &claim_value).ok_or(
                 Error::ClaimDecoding("instanceID is missing or invalid".to_string()),
@@ -763,6 +764,7 @@ impl Claim {
             let alg_soft: Option<String> = map_cbor_to_type(ALG_SOFT_F, &claim_value);
             let metadata: Option<Vec<AssertionMetadata>> =
                 map_cbor_to_type(METADATA_F, &claim_value);
+            let spec_version: Option<String> = map_cbor_to_type(SPEC_VERSION_F, &claim_value);
 
             // create merged list of created and gathered assertions for processing compatibility
             // created are added first with highest priority than gathered
@@ -774,6 +776,7 @@ impl Claim {
             Ok(Claim {
                 remote_manifest: RemoteManifest::NoRemote,
                 update_manifest: false,
+                is_c2md: false,
                 compressed: false,
                 title,
                 format: None,
@@ -801,6 +804,7 @@ impl Claim {
                 claim_version,
                 created_assertions,
                 gathered_assertions,
+                spec_version,
                 context: None,
             })
         }
@@ -893,6 +897,7 @@ impl Claim {
         ? "redacted_assertions": [1* jumbf-uri-type],
         ? "alg": tstr .size (1..max-tstr-length),
         ? "alg_soft": tstr .size (1..max-tstr-length),
+        ? "spec_version": semver-string,
         ? "metadata": $assertion-metadata-map,
         */
 
@@ -914,6 +919,9 @@ impl Claim {
             claim_map_len += 1
         }
         if self.metadata.is_some() {
+            claim_map_len += 1
+        }
+        if self.spec_version.is_some() {
             claim_map_len += 1
         }
 
@@ -955,6 +963,9 @@ impl Claim {
         }
         if let Some(md) = self.metadata() {
             claim_map.serialize_field(METADATA_F, md)?;
+        }
+        if let Some(spec_version) = self.spec_version() {
+            claim_map.serialize_field(SPEC_VERSION_F, spec_version)?;
         }
 
         claim_map.end()
@@ -1100,7 +1111,7 @@ impl Claim {
         &self.instance_id
     }
 
-    /// set title
+    /// set title, deprecated in C2PA 2.4.  Claim generators should create a c2pa.metadata assertion containing the dc:title field.
     pub fn set_title(&mut self, title: Option<String>) {
         self.title = title;
     }
@@ -1148,6 +1159,12 @@ impl Claim {
     /// Is this an update manifest
     pub fn update_manifest(&self) -> bool {
         self.update_manifest
+    }
+
+    /// True if this claim was read from a `c2md`-tagged superbox (C2PA spec
+    /// 11.2.2) rather than an ordinary `c2ma` standard manifest.
+    pub fn is_c2md(&self) -> bool {
+        self.is_c2md
     }
 
     // get version of the Claim
@@ -1198,6 +1215,10 @@ impl Claim {
         self.update_manifest = is_update_manifest;
     }
 
+    pub(crate) fn set_is_c2md(&mut self, is_c2md: bool) {
+        self.is_c2md = is_c2md;
+    }
+
     /// Adds an action to the claim.
     ///
     /// If an Actions assertion already exists, the action is added to it.
@@ -1242,6 +1263,29 @@ impl Claim {
 
     pub fn metadata(&self) -> Option<&[AssertionMetadata]> {
         self.metadata.as_deref()
+    }
+
+    pub fn spec_version(&self) -> Option<&String> {
+        match self.claim_generator_info() {
+            // Spec 2.4 case
+            Some(cgi) => {
+                // for Claims V2 there must be a single CGI item
+                if self.version() > 1 && cgi.len() == 1 {
+                    return cgi[0].get_spec_version();
+                }
+                None
+            }
+            None => self.spec_version.as_ref(), // legacy case where SpecVersion was including in Claim map
+        }
+    }
+
+    /// Deprecated in  C2PA 2.4 or greater compatible manifests. Replaced by equiveaent value in ClaimGeneratorInfo.
+    #[deprecated(
+        since = "0.91.0",
+        note = "The `specVersion` claim field is deprecated from C2PA spec version 2.4. Use `ClaimGeneratorInfo::set_spec_version` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
+    pub fn set_spec_version(&mut self, spec_version: Option<String>) {
+        self.spec_version = spec_version;
     }
 
     pub fn add_claim_generator_hint(&mut self, hint_key: &str, hint_value: Value) {
@@ -1806,29 +1850,62 @@ impl Claim {
         )
     }
 
-    /// Redact an assertion from a prior claim.
-    /// This will remove the assertion from the JUMBF
+    /// Replace the assertion with the same label as `replace_with` AND the
+    /// given instance number (0 = the first `label`, 1 = `label__1`, ...).
+    pub(crate) fn replace_assertion_instance(
+        &mut self,
+        replace_with: Assertion,
+        instance: usize,
+    ) -> Result<()> {
+        self.update_assertion(
+            replace_with,
+            |ca: &ClaimAssertion| ca.instance() == instance,
+            |_: &ClaimAssertion, a: Assertion| Ok(a),
+        )
+    }
+
+    /// Redact an assertion from a given claim.
+    /// This will remove the assertion from the JUMBF.
     fn redact_assertion(&mut self, assertion_uri: &str) -> Result<()> {
         // cannot redact action assertions per the spec
         // cannot redact hash bindings
-        let (label, _instance) = Claim::assertion_label_from_link(assertion_uri);
+        let (label, instance) = Claim::assertion_label_from_link(assertion_uri);
         if label.starts_with(assertions::labels::ACTIONS) || label.starts_with("c2pa.hash.") {
             return Err(Error::AssertionInvalidRedaction);
         }
 
-        // delete assertion or databox
+        // A redaction URI may only target this claim.
+        if let Some(manifest) = manifest_label_from_uri(assertion_uri) {
+            if manifest != self.label() {
+                return Err(Error::AssertionRedactionNotFound);
+            }
+        }
+
+        // Delete assertion or databox
         if assertion_uri.contains(ASSERTION_STORE) {
-            if let Some(index) = self.assertion_store.iter().position(|x| {
-                assertion_uri.ends_with(&Claim::label_with_instance(&x.label_raw(), x.instance()))
-            }) {
+            // Compare the assertion label strictly using label and instance,
+            // with both sides normalized so they are comparable.
+            // `assertion_label_from_link` truncates the URI's label at `__`.
+            // Currently, the stored side is always normalized on ingest, and signing rejects
+            // a non-numeric `__` suffix, so a manifest we read here can not hold such a label.
+            let target = Claim::label_with_instance(&label, instance);
+            if let Some(index) = self
+                .assertion_store
+                .iter()
+                .position(|x| Claim::label_with_instance(&x.label_raw(), x.instance()) == target)
+            {
                 self.assertion_store.remove(index);
                 return Ok(());
             }
         } else if assertion_uri.contains(DATABOX_STORE) {
+            // Normalize to a (full) databox URI.
+            let box_name =
+                box_name_from_uri(assertion_uri).ok_or(Error::AssertionRedactionNotFound)?;
+            let target = to_normalized_uri(&to_databox_uri(self.label(), &box_name));
             if let Some(index) = self
                 .databoxes()
                 .iter()
-                .position(|(x, _d)| assertion_uri.contains(&x.url()))
+                .position(|(x, _d)| to_normalized_uri(&x.url()) == target)
             {
                 self.data_boxes.remove(index);
                 return Ok(());
@@ -2117,6 +2194,7 @@ impl Claim {
         let mut first_actions_assertion = None;
 
         // check created actions then gathered actions if not found in created actions
+        // starting with 2.4 these assertion can only be in created assertions
         for actions in [&created_actions, &gathered_actions] {
             if let Some(assertion) = actions.first() {
                 let first_actions = Actions::from_assertion(assertion.assertion())?;
@@ -2130,6 +2208,39 @@ impl Claim {
                     }
                 }
             }
+        }
+
+        // there can be only 1 of either c2pa.opened or c2pa.created, and they cannot both exist
+        let inception_action_count = {
+            let mut count = 0usize;
+            for assertion in all_actions.iter() {
+                let Ok(actions) = Actions::from_assertion(assertion.assertion()) else {
+                    continue;
+                };
+                for action in actions.actions() {
+                    if action.action() == c2pa_action::OPENED
+                        || action.action() == c2pa_action::CREATED
+                    {
+                        count += 1;
+                    }
+                }
+            }
+            count
+        };
+
+        if inception_action_count > 1 {
+            log_item!(
+                claim_label.clone(),
+                "cannot have more than one c2pa.created or c2pa.opened action",
+                "verify_actions"
+            )
+            .validation_status(validation_status::ASSERTION_ACTION_MALFORMED)
+            .failure(
+                validation_log,
+                Error::ValidationRule(
+                    "cannot have more than one c2pa.created or c2pa.opened action".into(),
+                ),
+            )?;
         }
 
         // 2.a first actions assertion must start with an open or created action, do not apply to update manifests
@@ -2315,23 +2426,25 @@ impl Claim {
                         } else if let Some(ingredients) = &params.ingredients {
                             for h in ingredients {
                                 // can we find a reference in the ingredient list
-                                // is it referenced from this manifest
-                                if claim.ingredient_assertions().iter().any(|i| {
-                                    if let Ok(ingredient) =
-                                        Ingredient::from_assertion(i.assertion())
-                                    {
-                                        if let Some(target_label) =
-                                            assertion_label_from_uri(&h.url())
+                                // is it referenced from this manifest and only once
+                                found_good = claim
+                                    .ingredient_assertions()
+                                    .iter()
+                                    .filter(|i| {
+                                        if let Ok(ingredient) =
+                                            Ingredient::from_assertion(i.assertion())
                                         {
-                                            return target_label == i.label()
-                                                && ingredient.relationship
-                                                    == Relationship::ParentOf;
+                                            if let Some(target_label) =
+                                                assertion_label_from_uri(&h.url())
+                                            {
+                                                return target_label == i.label()
+                                                    && ingredient.relationship
+                                                        == Relationship::ParentOf;
+                                            }
                                         }
-                                    }
-                                    false
-                                }) {
-                                    found_good = 1;
-                                }
+                                        false
+                                    })
+                                    .count();
                             }
                         }
 
@@ -2426,6 +2539,35 @@ impl Claim {
                             "c2pa.created action must have a digitalSourceType".into(),
                         ),
                     );
+                }
+
+                // c2pa.translated must have sourceLanguage and targetLanguage parameters.
+                // Per the C2PA spec (18.15.4.7, Parameters): "When using a c2pa.translated
+                // action, the sourceLanguage and targetLanguage fields in the parameters
+                // object shall contain RFC 5646, BCP 47 language codes."
+                if action.action() == c2pa_action::TRANSLATED {
+                    let params = action.parameters();
+                    let source_language = params
+                        .and_then(|p| p.source_language.as_deref())
+                        .unwrap_or("");
+                    let target_language = params
+                        .and_then(|p| p.target_language.as_deref())
+                        .unwrap_or("");
+
+                    if source_language.is_empty() || target_language.is_empty() {
+                        log_item!(
+                            label.clone(),
+                            "c2pa.translated action must have sourceLanguage and targetLanguage parameters",
+                            "verify_actions"
+                        )
+                        .validation_status(validation_status::ASSERTION_ACTION_MALFORMED)
+                        .failure_no_throw(
+                            validation_log,
+                            Error::ValidationRule(
+                                "c2pa.translated action must have sourceLanguage and targetLanguage parameters".into(),
+                            ),
+                        );
+                    }
                 }
 
                 // 2.c if ingredient is present it must be a valid parentOf reference
@@ -2527,7 +2669,6 @@ impl Claim {
                                                 .is_some_and(|r| r.contains(redacted_uri));
                                         parent_tested = Some(in_assertions || in_redacted);
                                     } else {
-                                        dbg!("failed here");
                                         parent_tested = Some(false);
                                     }
                                 }
@@ -2567,6 +2708,82 @@ impl Claim {
                     }
                 }
 
+                // 2.f if the action’s parameters field exists and contains a relatedAssertions field
+                if let Some(related_assertions) = action.related_assertions() {
+                    // 2.f.i if the value of relatedAssertions is not an array with at least one element,
+                    //       the claim shall be rejected with a failure code of assertion.action.malformed
+                    if related_assertions.is_empty() {
+                        log_item!(
+                            label.clone(),
+                            "relatedAssertions must contain at least one entry",
+                            "verify_actions"
+                        )
+                        .validation_status(validation_status::ASSERTION_ACTION_MALFORMED)
+                        .failure_no_throw(
+                            validation_log,
+                            Error::ValidationRule(
+                                "relatedAssertions must contain at least one entry".into(),
+                            ),
+                        );
+                    }
+
+                    for related in related_assertions {
+                        let url = related.url();
+
+                        // 2.f.ii.B resolve the hashed URI to locate the referenced assertion
+                        let (target_label, instance) = Claim::assertion_label_from_link(&url);
+
+                        // 2.f.ii.C if the referenced assertion cannot be resolved, or does not
+                        //          resolve to an assertion within the current manifest, the claim
+                        //          shall be rejected with a failure code of assertion.action.malformed
+                        let in_current_manifest = if related.is_relative_url() {
+                            true
+                        } else {
+                            manifest_label_from_uri(&url).as_deref() == Some(claim.label())
+                        };
+                        let assertion = if in_current_manifest {
+                            claim.get_claim_assertion(&target_label, instance)
+                        } else {
+                            None
+                        };
+
+                        if assertion.is_none() {
+                            log_item!(
+                                url.clone(),
+                                format!("relatedAssertions reference could not be resolved within the current manifest: {url}"),
+                                "verify_actions"
+                            )
+                            .validation_status(validation_status::ASSERTION_ACTION_MALFORMED)
+                            .failure_no_throw(
+                                validation_log,
+                                Error::ValidationRule(
+                                format!("relatedAssertions reference could not be resolved within the current manifest: {url}"),
+                                ),
+                            );
+                        }
+
+                        // 2.f.ii.D If the referenced assertion is of of type c2pa.ingredients,
+                        //          c2pa.ingredients.v2, c2pa.ingredients.v3, c2pa.actions, or
+                        //          c2pa.actions.v2, the claim shall be rejected with a failure
+                        //          code of assertion.action.malformed.
+                        let base = labels::base(&target_label);
+                        if base == labels::ACTIONS || base == labels::INGREDIENT {
+                            log_item!(
+                                url.clone(),
+                                format!("relatedAssertions must not reference an actions or ingredient assertion: {url}"),
+                                "verify_actions"
+                            )
+                            .validation_status(validation_status::ASSERTION_ACTION_MALFORMED)
+                            .failure_no_throw(
+                                validation_log,
+                                Error::ValidationRule(
+                                format!("relatedAssertions must not reference an actions or ingredient assertion: {url}"),
+                                ),
+                            );
+                        }
+                    }
+                }
+
                 // 2.h check softwareAgent icons
                 let mut icons = Vec::new();
                 if let Some(assertions::SoftwareAgent::ClaimGeneratorInfo(cgi)) =
@@ -2578,6 +2795,31 @@ impl Claim {
                 }
                 if !icons.is_empty() {
                     Claim::verify_icons(claim, &icons, validation_log)?;
+                }
+
+                // check watermarks for required softbinding
+                // `c2pa_action::WATERMARKED` is deprecated for producing new content (spec 2.2+),
+                // but validators must still recognize it in older manifests.
+                #[allow(deprecated)]
+                if action.action() == c2pa_action::WATERMARKED
+                    || action.action() == c2pa_action::WATERMARKED_BOUND
+                {
+                    // there must be at least one soft binding assertions, in the future there may be
+                    // a requirement to reference the actual soft binding via parameters relatedAssertions field
+                    if claim.soft_binding_assertions().is_empty() {
+                        log_item!(
+                            label.clone(),
+                            "watermark action missing soft binding assertion",
+                            "verify_actions"
+                        )
+                        .validation_status(validation_status::ACTION_ASSERTION_SOFTBINDING_MISSING)
+                        .failure_no_throw(
+                            validation_log,
+                            Error::ValidationRule(
+                                "watermark action missing soft binding assertion".into(),
+                            ),
+                        );
+                    }
                 }
             }
         }
@@ -2619,6 +2861,20 @@ impl Claim {
             }
         }
         Ok(())
+    }
+
+    /// Classifies a hash-verification failure into its format's `malformed`
+    /// or `mismatch` validation-status constant, based on whether `e` carries
+    /// that format's own `malformed` code.
+    fn classify_hash_verification_error(
+        e: &Error,
+        malformed: &'static str,
+        mismatch: &'static str,
+    ) -> &'static str {
+        match e {
+            Error::C2PAValidation(es) if es == malformed => malformed,
+            _ => mismatch,
+        }
     }
 
     pub(crate) fn verify_hash_binding(
@@ -2792,10 +3048,42 @@ impl Claim {
                     .label_raw()
                     .starts_with(BmffHash::LABEL)
                 {
+                    let cp2a_id: [u8; 16] = [
+                        216, 254, 195, 214, 27, 14, 72, 60, 146, 151, 88, 40, 135, 126, 196, 129,
+                    ];
+                    let c2pa_dm = DataMap {
+                        offset: 8,
+                        value: cp2a_id.to_vec(), // C2PA identifier
+                    };
+
                     // handle BMFF data hashes
                     let dh = BmffHash::from_assertion(hash_binding_assertion.assertion())?;
 
                     let name = dh.name().map_or("unnamed".to_string(), default_str);
+
+                    // are there addtional exclusions that are not manifests or ftyp
+                    if dh.exclusions().iter().any(|e| {
+                        if e.xpath == "/uuid" {
+                            match &e.data {
+                                Some(dm_vec) if dm_vec.len() == 1 => !(dm_vec[0] == c2pa_dm),
+                                _ => true,
+                            }
+                        } else if e.xpath == "/ftyp" || e.xpath == "/mfra" {
+                            false
+                        } else {
+                            true // not ftyp, mfra or uuid
+                        }
+                    }) {
+                        log_item!(
+                            claim.assertion_uri(&hash_binding_assertion.label()),
+                            "extra BMFF hash exclusion(s) found",
+                            "verify_internal"
+                        )
+                        .validation_status(
+                            validation_status::ASSERTION_BMFFHASH_ADDITIONAL_EXCLUSIONS,
+                        )
+                        .informational(validation_log);
+                    }
 
                     let mut step = 0u32;
                     let mut cb = |_s: u32, t: u32| {
@@ -2849,26 +3137,21 @@ impl Claim {
                             continue;
                         }
                         Err(e) => {
-                            let err_str = match e {
-                                Error::C2PAValidation(es) => {
-                                    if es == validation_status::ASSERTION_BMFFHASH_MALFORMED {
-                                        validation_status::ASSERTION_BMFFHASH_MALFORMED
-                                    } else {
-                                        validation_status::ASSERTION_BMFFHASH_MISMATCH
-                                    }
-                                }
-                                _ => validation_status::ASSERTION_BMFFHASH_MISMATCH,
-                            };
+                            let err_str = Self::classify_hash_verification_error(
+                                &e,
+                                validation_status::ASSERTION_BMFFHASH_MALFORMED,
+                                validation_status::ASSERTION_BMFFHASH_MISMATCH,
+                            );
 
                             log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
-                                format!("asset hash error, name: {name}, error: {}", err_str),
+                                format!("asset hash error, name: {name}, error: {e}"),
                                 "verify_internal"
                             )
                             .validation_status(err_str)
                             .failure(
                                 validation_log,
-                                Error::HashMismatch(format!("Asset hash failure: {err_str}")),
+                                Error::HashMismatch(format!("Asset hash failure: {e}")),
                             )?;
                         }
                     }
@@ -2886,13 +3169,12 @@ impl Claim {
                     let hash_result = match asset_data {
                         #[cfg(feature = "file_io")]
                         ClaimAssetData::Path(asset_path) => {
-                            let box_hash_processor =
-                                crate::jumbf_io::get_assetio_handler_from_path(asset_path)
-                                    .ok_or(Error::UnsupportedType)?
-                                    .asset_box_hash_ref()
-                                    .ok_or(Error::HashMismatch(
-                                        "Box hash not supported".to_string(),
-                                    ))?;
+                            let box_hash_processor = context
+                                .io()
+                                .handler_from_path(asset_path)
+                                .ok_or(Error::UnsupportedType)?
+                                .asset_box_hash_ref()
+                                .ok_or(Error::HashMismatch("Box hash not supported".to_string()))?;
 
                             let mut file = std::fs::File::open(asset_path)?;
                             bh.verify_stream_hash_with_progress(
@@ -2903,7 +3185,9 @@ impl Claim {
                             )
                         }
                         ClaimAssetData::Bytes(asset_bytes, asset_type) => {
-                            let box_hash_processor = get_assetio_handler(asset_type)
+                            let box_hash_processor = context
+                                .io()
+                                .handler(asset_type)
                                 .ok_or(Error::UnsupportedType)?
                                 .asset_box_hash_ref()
                                 .ok_or(Error::HashMismatch(format!(
@@ -2919,7 +3203,9 @@ impl Claim {
                             )
                         }
                         ClaimAssetData::Stream(stream_data, asset_type) => {
-                            let box_hash_processor = get_assetio_handler(asset_type)
+                            let box_hash_processor = context
+                                .io()
+                                .handler(asset_type)
                                 .ok_or(Error::UnsupportedType)?
                                 .asset_box_hash_ref()
                                 .ok_or(Error::HashMismatch(format!(
@@ -2937,7 +3223,19 @@ impl Claim {
                     };
 
                     match hash_result {
-                        Ok(_a) => {
+                        Ok(metadata_exclusion_used) => {
+                            if metadata_exclusion_used {
+                                log_item!(
+                                    claim.assertion_uri(&hash_binding_assertion.label()),
+                                    "additional box hash exclusions found",
+                                    "verify_internal"
+                                )
+                                .validation_status(
+                                    validation_status::ASSERTION_BOXHASH_ADDITIONAL_EXCLUSIONS,
+                                )
+                                .informational(validation_log);
+                            }
+
                             log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
                                 "boxes hash valid",
@@ -2949,15 +3247,105 @@ impl Claim {
                             continue;
                         }
                         Err(e) => {
+                            let err_str = Self::classify_hash_verification_error(
+                                &e,
+                                validation_status::ASSERTION_BOXESHASH_MALFORMED,
+                                validation_status::ASSERTION_BOXHASH_MISMATCH,
+                            );
+
                             log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
                                 format!("asset hash error: {e}"),
                                 "verify_internal"
                             )
-                            .validation_status(validation_status::ASSERTION_BOXHASH_MISMATCH)
+                            .validation_status(err_str)
                             .failure(
                                 validation_log,
                                 Error::HashMismatch(format!("Asset hash failure: {e}")),
+                            )?;
+                        }
+                    }
+                } else if hash_binding_assertion
+                    .label_raw()
+                    .starts_with(CollectionHash::LABEL)
+                {
+                    let collection_hash =
+                        CollectionHash::from_assertion(hash_binding_assertion.assertion())?;
+
+                    let verify_result = if asset_data
+                        .format()
+                        .as_deref()
+                        .is_some_and(|f| context.io().is_zip_format(f))
+                    {
+                        match asset_data {
+                            #[cfg(feature = "file_io")]
+                            ClaimAssetData::Path(asset_path) => {
+                                let mut file = std::fs::File::open(asset_path)?;
+                                collection_hash.verify_zip_stream_hash(&mut file, Some(claim.alg()))
+                            }
+                            ClaimAssetData::Bytes(asset_bytes, _) => {
+                                let mut cursor = std::io::Cursor::new(*asset_bytes);
+                                collection_hash
+                                    .verify_zip_stream_hash(&mut cursor, Some(claim.alg()))
+                            }
+                            ClaimAssetData::Stream(stream_data, _) => collection_hash
+                                .verify_zip_stream_hash(*stream_data, Some(claim.alg())),
+                            _ => return Err(Error::UnsupportedType),
+                        }
+                    } else {
+                        // we don't support multiple streams as input so the only option is paths for non-ZIP-based assets.
+                        match asset_data {
+                            #[cfg(feature = "file_io")]
+                            ClaimAssetData::Path(asset_path) => collection_hash
+                                .verify_hash(asset_path.parent().unwrap_or(asset_path)),
+                            _ => return Err(Error::UnsupportedType),
+                        }
+                    };
+
+                    match verify_result {
+                        Ok(_) => {
+                            log_item!(
+                                claim.assertion_uri(&hash_binding_assertion.label()),
+                                "collection hash valid",
+                                "verify_internal"
+                            )
+                            .validation_status(validation_status::ASSERTION_COLLECTIONHASH_MATCH)
+                            .success(validation_log);
+
+                            continue;
+                        }
+                        Err(err) => {
+                            let err_str = match &err {
+                                Error::C2PAValidation(code)
+                                    if code
+                                        == validation_status::ASSERTION_COLLECTIONHASH_MALFORMED =>
+                                {
+                                    validation_status::ASSERTION_COLLECTIONHASH_MALFORMED
+                                }
+                                Error::C2PAValidation(code)
+                                    if code
+                                        == validation_status::ASSERTION_COLLECTIONHASH_INVALID_URI =>
+                                {
+                                    validation_status::ASSERTION_COLLECTIONHASH_INVALID_URI
+                                }
+                                Error::C2PAValidation(code)
+                                    if code
+                                        == validation_status::ASSERTION_COLLECTIONHASH_INCORRECT_FILE_COUNT =>
+                                {
+                                    validation_status::ASSERTION_COLLECTIONHASH_INCORRECT_FILE_COUNT
+                                }
+                                _ => validation_status::ASSERTION_COLLECTIONHASH_MISMATCH,
+                            };
+
+                            log_item!(
+                                claim.assertion_uri(&hash_binding_assertion.label()),
+                                format!("collection hash error: {err_str}"),
+                                "verify_internal"
+                            )
+                            .validation_status(err_str)
+                            .failure(
+                                validation_log,
+                                Error::HashMismatch(format!("asset hash failure: {err}")),
                             )?;
                         }
                     }
@@ -3074,7 +3462,7 @@ impl Claim {
                         "redaction of disallowed hash assertion",
                         "verify_internal"
                     )
-                    .validation_status(validation_status::ASSERTION_DATAHASH_REDACTED)
+                    .validation_status(validation_status::ASSERTION_HARDBINDING_REDACTED)
                     .failure(validation_log, Error::ClaimDisallowedRedaction)?;
                 }
             }
@@ -3086,7 +3474,11 @@ impl Claim {
             .iter()
             .filter(|a| {
                 if let Ok(ingredient) = Ingredient::from_assertion(a.assertion()) {
-                    return ingredient.relationship == Relationship::ParentOf;
+                    let version = ingredient.version().unwrap_or(1);
+                    let has_valid_parent = version <= 2 && ingredient.c2pa_manifest().is_some()
+                        || ingredient.c2pa_manifest().is_some() && ingredient.signature().is_some();
+
+                    return has_valid_parent && ingredient.relationship == Relationship::ParentOf;
                 }
                 false
             })
@@ -3311,28 +3703,270 @@ impl Claim {
         if claim.version() >= 2 {
             // only for claim version 2 or greater
             Claim::verify_metadata(claim, validation_log)?;
+            Claim::verify_claim_generator_info(claim, validation_log)?;
+        }
+
+        // soft binding algorithm validation applies to all claim versions
+        Claim::verify_soft_binding_alg(
+            claim,
+            context
+                .settings()
+                .soft_binding
+                .soft_binding_algorithms
+                .as_deref()
+                .unwrap_or(&[]),
+            validation_log,
+        )?;
+
+        // cloud-data assertion validation applies to all claim versions
+        Claim::verify_cloud_data(claim, validation_log)?;
+
+        // external-reference assertion validation applies to all claim versions
+        Claim::verify_external_reference(claim, validation_log)?;
+
+        Ok(())
+    }
+
+    // Validate claim_generator_info for v2+ claims per §10.2.2.
+    // Must be present, non-empty, and have a non-empty name field.
+    fn verify_claim_generator_info(
+        claim: &Claim,
+        validation_log: &mut StatusTracker,
+    ) -> Result<()> {
+        match claim.claim_generator_info() {
+            None | Some([]) => {
+                log_item!(
+                    claim.uri(),
+                    "claim_generator_info is required for v2+ claims",
+                    "verify_claim_generator_info"
+                )
+                .validation_status(validation_status::CLAIM_MALFORMED)
+                .failure(
+                    validation_log,
+                    Error::ClaimDecoding("claim_generator_info is missing".to_string()),
+                )?;
+            }
+            Some(cgi) => {
+                if cgi[0].name.is_empty() {
+                    log_item!(
+                        claim.uri(),
+                        "claim_generator_info name must not be empty",
+                        "verify_claim_generator_info"
+                    )
+                    .validation_status(validation_status::CLAIM_MALFORMED)
+                    .failure(
+                        validation_log,
+                        Error::ClaimDecoding("claim_generator_info name is empty".to_string()),
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate that each soft binding assertion's effective algorithm is in the
+    /// C2PA soft binding algorithm registry (§9.3.2).
+    ///
+    /// The effective algorithm is the assertion-level `alg` field when present,
+    /// falling back to the claim-level `alg_soft` field. If neither is present
+    /// the assertion is malformed.
+    /// Starting with C2PA 2.4 we no longer require soft binding alg to be on the
+    /// official list.  This allows for future algorithm support without code changes.
+    /// The function now will only check the structure of the assertion.
+    fn verify_soft_binding_alg(
+        claim: &Claim,
+        _soft_binding_algs: &[String],
+        validation_log: &mut StatusTracker,
+    ) -> Result<()> {
+        use assertions::SoftBinding;
+
+        for ca in claim.soft_binding_assertions() {
+            let label = to_assertion_uri(claim.label(), &ca.label());
+
+            let _soft_binding = match SoftBinding::from_assertion(ca.assertion()) {
+                Ok(soft_binding) => soft_binding,
+                Err(_) => {
+                    log_item!(
+                        label.clone(),
+                        "soft binding assertion could not be decoded",
+                        "verify_soft_binding_alg"
+                    )
+                    .validation_status(validation_status::CLAIM_MALFORMED)
+                    .failure_no_throw(validation_log, Error::ClaimDecoding(label.clone()));
+
+                    // Malformed, but don't abort the whole verification over one
+                    // bad soft binding assertion -- move on to the next one.
+                    continue;
+                }
+            };
+
+            /*
+            // Effective alg: assertion field takes precedence over claim-level alg_soft.
+            let effective_alg = soft_binding
+                .alg
+                .as_deref()
+                .or_else(|| claim.alg_soft().map(String::as_str));
+
+            match effective_alg {
+                None => {
+                    log_item!(
+                        label.clone(),
+                        "soft binding assertion has no algorithm (alg or alg_soft required)",
+                        "verify_soft_binding_alg"
+                    )
+                    .validation_status(validation_status::CLAIM_MALFORMED)
+                    .failure(
+                        validation_log,
+                        Error::ValidationRule("soft binding missing algorithm".into()),
+                    )?;
+                }
+                Some(alg) if !soft_binding_algs.iter().any(|a| a == alg) => {
+                    log_item!(
+                        label.clone(),
+                        format!("soft binding algorithm '{alg}' is not in the C2PA soft binding algorithm registry"),
+                        "verify_soft_binding_alg"
+                    )
+                    .validation_status(validation_status::ALGORITHM_UNSUPPORTED)
+                    .failure(
+                        validation_log,
+                        Error::ValidationRule(format!(
+                            "unsupported soft binding algorithm: {alg}"
+                        )),
+                    )?;
+                }
+                Some(_) => {}
+            }
+            */
+        }
+        Ok(())
+    }
+
+    /// Validate each `c2pa.cloud-data` assertion per §15.10.3.2.1.
+    ///
+    /// Checks:
+    /// 1. Required fields (`assertion`/label, `size`, `url`/location, `format`/content_type)
+    ///    are present — failure code `assertion.cloud-data.malformed`.
+    /// 2. The referenced assertion must not be a hard binding type — failure code
+    ///    `assertion.cloud-data.hardBinding`.
+    /// 3. In an update manifest the referenced assertion must not be an actions
+    ///    assertion — failure code `assertion.cloud-data.actions`.
+    ///     
+    /// No fetching of the cloud data is performed, only the structure of the assertion is checked.
+    fn verify_cloud_data(claim: &Claim, validation_log: &mut StatusTracker) -> Result<()> {
+        use assertions::CloudData;
+
+        for ca in claim.cloud_data_assertions() {
+            let label = to_assertion_uri(claim.label(), &ca.label());
+
+            let cloud_data = match CloudData::from_assertion(ca.assertion()) {
+                Ok(cloud_data) => cloud_data,
+                Err(_) => {
+                    log_item!(
+                        label.clone(),
+                        "cloud-data assertion could not be decoded",
+                        "verify_cloud_data"
+                    )
+                    .validation_status(validation_status::ASSERTION_CLOUD_DATA_MALFORMED)
+                    .failure_no_throw(validation_log, Error::ClaimDecoding(label.clone()));
+
+                    // Malformed, but don't abort the whole verification over one
+                    // bad cloud-data assertion -- move on to the next one.
+                    continue;
+                }
+            };
+
+            // Step 1: size must be at least 1 byte.
+            if cloud_data.size < 1 {
+                log_item!(
+                    label.clone(),
+                    "cloud-data assertion has invalid size (must be >= 1)",
+                    "verify_cloud_data"
+                )
+                .validation_status(validation_status::ASSERTION_CLOUD_DATA_MALFORMED)
+                .failure_no_throw(validation_log, Error::ClaimDecoding(label.clone()));
+            }
+
+            // Step 2: hard binding assertions must not be stored as cloud data.
+            if cloud_data.is_hard_binding() {
+                log_item!(
+                    label.clone(),
+                    "cloud-data assertion references a hard binding assertion",
+                    "verify_cloud_data"
+                )
+                .validation_status(validation_status::ASSERTION_CLOUD_DATA_HARD_BINDING)
+                .failure_no_throw(validation_log, Error::ClaimDecoding(label.clone()));
+            }
+
+            // Step 3: actions assertions must not be stored as cloud data in update manifests.
+            if claim.update_manifest() && cloud_data.is_actions() {
+                log_item!(
+                    label.clone(),
+                    "cloud-data assertion references an actions assertion in an update manifest",
+                    "verify_cloud_data"
+                )
+                .validation_status(validation_status::ASSERTION_CLOUD_DATA_ACTIONS)
+                .failure_no_throw(validation_log, Error::ClaimDecoding(label.clone()));
+            }
+
+            // Check for forbbidden label types, including hard bindings and the cloud-data assertion itself.
+            if cloud_data.is_forbidden().is_err() {
+                log_item!(
+                    label.clone(),
+                    "cloud-data assertion references a forbidden label",
+                    "verify_cloud_data"
+                )
+                .validation_status(validation_status::ASSERTION_CLOUD_DATA_MALFORMED)
+                .failure_no_throw(validation_log, Error::ClaimDecoding(label.clone()));
+            }
         }
 
         Ok(())
     }
 
-    // Perform metadata validation check
-    fn verify_metadata(claim: &Claim, validation_log: &mut StatusTracker) -> Result<()> {
-        for metadata_assertion in claim.metadata_assertions() {
-            let metadata_assertion = Metadata::from_assertion(metadata_assertion.assertion())?;
-            if !metadata_assertion.is_valid() {
-                let label = to_assertion_uri(claim.label(), metadata_assertion.label());
-                log_item!(
-                    label,
-                    "metadata assertion contains disallowed field",
-                    "verify_internal"
-                )
-                .validation_status(validation_status::ASSERTION_METADATA_DISALLOWED)
-                .failure(
-                    validation_log,
-                    Error::ValidationRule("fields must be in allowed list".into()),
-                )?;
+    /// Validate each `c2pa.external-reference` assertion per C2PA 2.4.
+    /// No fetching of the external reference is performed, only the structure of the assertion is checked.
+    fn verify_external_reference(claim: &Claim, validation_log: &mut StatusTracker) -> Result<()> {
+        use assertions::ExternalReference;
+
+        for ca in claim.assertions_by_type(
+            &Assertion::new(
+                assertions::labels::EXTERNAL_REFERENCE,
+                None,
+                AssertionData::Cbor(Vec::new()),
+            ),
+            None,
+        ) {
+            let label = to_assertion_uri(claim.label(), &ca.label());
+
+            let external_reference = match ExternalReference::from_assertion(ca.assertion()) {
+                Ok(external_reference) => external_reference,
+                Err(_) => {
+                    log_item!(
+                        label.clone(),
+                        "external-reference assertion could not be decoded",
+                        "verify_external_reference"
+                    )
+                    .validation_status(validation_status::ASSERTION_EXTERNAL_REFERENCE_MALFORMED)
+                    .failure_no_throw(validation_log, Error::ClaimDecoding(label.clone()));
+                    continue;
+                }
+            };
+
+            if let Err(err) = external_reference.validate() {
+                log_item!(label.clone(), err.to_string(), "verify_external_reference")
+                    .validation_status(validation_status::ASSERTION_EXTERNAL_REFERENCE_MALFORMED)
+                    .failure_no_throw(validation_log, err);
             }
+        }
+
+        Ok(())
+    }
+
+    // Perform metadata validation check.
+    // Check the structure only.  C2PA 2.4 no longer requires checking against allowed fields.
+    fn verify_metadata(claim: &Claim, _validation_log: &mut StatusTracker) -> Result<()> {
+        for metadata_assertion in claim.metadata_assertions() {
+            Metadata::from_assertion(metadata_assertion.assertion())?;
         }
         Ok(())
     }
@@ -3351,24 +3985,43 @@ impl Claim {
         mda
     }
 
-    /// Return list of data hash assertions
+    /// Return list of data hash assertions.
+    ///
+    /// For v2+ claims, only created assertions are returned; gathered hash
+    /// assertions are excluded because hard bindings must be in created_assertions.
     pub fn hash_assertions(&self) -> Vec<&ClaimAssertion> {
+        let assertion_type = if self.claim_version >= 2 {
+            Some(ClaimAssertionType::Created)
+        } else {
+            None
+        };
+
         let dummy_data = AssertionData::Cbor(Vec::new());
         let dummy_hash = Assertion::new(DataHash::LABEL, None, dummy_data);
-        let mut data_hashes = self.assertions_by_type(&dummy_hash, None);
+        let mut data_hashes = self.assertions_by_type(&dummy_hash, assertion_type.clone());
 
-        // add in an BMFF hashes
+        // add in BMFF hashes
         let dummy_bmff_data = AssertionData::Cbor(Vec::new());
         let dummy_bmff_hash = Assertion::new(assertions::labels::BMFF_HASH, None, dummy_bmff_data);
-        data_hashes.append(&mut self.assertions_by_type(&dummy_bmff_hash, None));
+        data_hashes.append(&mut self.assertions_by_type(&dummy_bmff_hash, assertion_type.clone()));
 
-        // add in an box hashes
+        // add in box hashes
         let dummy_box_data = AssertionData::Cbor(Vec::new());
         let dummy_box_hash = Assertion::new(assertions::labels::BOX_HASH, None, dummy_box_data);
-        data_hashes.append(&mut self.assertions_by_type(&dummy_box_hash, None));
+        data_hashes.append(&mut self.assertions_by_type(&dummy_box_hash, assertion_type.clone()));
+
+        // add in collection hashes
+        let dummy_collection_data = AssertionData::Cbor(Vec::new());
+        let dummy_collection_hash = Assertion::new(
+            assertions::labels::COLLECTION_HASH,
+            None,
+            dummy_collection_data,
+        );
+        data_hashes.append(&mut self.assertions_by_type(&dummy_collection_hash, assertion_type));
 
         // remove any multipart hashes, those are handled elsewhere
-        data_hashes.retain(|x| !x.label_raw().ends_with(assertions::labels::PART));
+        data_hashes
+            .retain(|x: &&ClaimAssertion| !x.label_raw().ends_with(assertions::labels::PART));
 
         data_hashes
     }
@@ -3380,8 +4033,21 @@ impl Claim {
         self.assertions_by_type(&dummy_bmff_hash, None)
     }
 
+    /// Return list of soft binding assertions.
+    pub fn soft_binding_assertions(&self) -> Vec<&ClaimAssertion> {
+        let dummy_data = AssertionData::Cbor(Vec::new());
+        let dummy = Assertion::new(assertions::labels::SOFT_BINDING, None, dummy_data);
+        self.assertions_by_type(&dummy, None)
+    }
+
+    /// Return list of cloud data assertions.
+    pub fn cloud_data_assertions(&self) -> Vec<&ClaimAssertion> {
+        let dummy_data = AssertionData::Cbor(Vec::new());
+        let dummy = Assertion::new(assertions::labels::CLOUD_DATA, None, dummy_data);
+        self.assertions_by_type(&dummy, None)
+    }
+
     pub fn data_hash_assertions(&self) -> Vec<&ClaimAssertion> {
-        // add in an BMFF hashes
         let dummy_hash_data = AssertionData::Cbor(Vec::new());
         let dummy_data_hash = Assertion::new(assertions::labels::DATA_HASH, None, dummy_hash_data);
         self.assertions_by_type(&dummy_data_hash, None)
@@ -3392,6 +4058,16 @@ impl Claim {
         let dummy_box_data = AssertionData::Cbor(Vec::new());
         let dummy_box_hash = Assertion::new(assertions::labels::BOX_HASH, None, dummy_box_data);
         self.assertions_by_type(&dummy_box_hash, None)
+    }
+
+    pub fn collection_hash_assertions(&self) -> Vec<&ClaimAssertion> {
+        let dummy_collection_data = AssertionData::Cbor(Vec::new());
+        let dummy_collection_hash = Assertion::new(
+            assertions::labels::COLLECTION_HASH,
+            None,
+            dummy_collection_data,
+        );
+        self.assertions_by_type(&dummy_collection_hash, None)
     }
 
     /// Return list of ingredient assertions. This function
@@ -4112,9 +4788,10 @@ pub(crate) fn check_ocsp_status(
 pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::unwrap_used)]
+    #![allow(deprecated)]
 
     use super::*;
-    use crate::{resource_store::UriOrResource, utils::test::create_test_claim};
+    use crate::{resource_store::UriOrResource, utils::test::create_test_claim, DigitalSourceType};
 
     #[test]
     fn test_build_claim() {
@@ -4365,6 +5042,1079 @@ pub mod tests {
                 .get_assertion(labels::INGREDIENT_THUMBNAIL, 1)
                 .is_none(),
             "instance 1 should be gone"
+        );
+    }
+
+    #[test]
+    fn test_redact_databox_exact_label_match_with_shared_prefix() {
+        let mut claim = Claim::new("unit test", Some("test"), 2);
+
+        // Add two databoxes to force multiple URIs
+        let uri0 = claim
+            .add_databox("application/octet-stream", vec![0u8; 4], None)
+            .expect("add databox 0");
+        let uri1 = claim
+            .add_databox("application/octet-stream", vec![1u8; 4], None)
+            .expect("add databox 1");
+
+        let has_databox = |claim: &Claim, uri: &HashedUri| {
+            claim.databoxes().iter().any(|(x, _d)| x.url() == uri.url())
+        };
+
+        assert!(has_databox(&claim, &uri0), "databox 0 should exist");
+        assert!(has_databox(&claim, &uri1), "databox 1 should exist");
+
+        // Check labels
+        assert!(
+            uri0.url().ends_with("/c2pa.data"),
+            "expected databox 0 to be labeled `c2pa.data`, got {}",
+            uri0.url()
+        );
+        assert!(
+            uri1.url().ends_with("/c2pa.data__1"),
+            "expected databox 1 to be labeled `c2pa.data__1`, got {}",
+            uri1.url()
+        );
+
+        // Order is important here in our test.
+        // redact the `__1` URI first, to make sure we exact-match.
+        claim
+            .redact_assertion(&uri1.url())
+            .expect("redact databox 1 should succeed");
+
+        assert!(
+            has_databox(&claim, &uri0),
+            "databox 0 must still exist after redacting databox 1"
+        );
+        assert!(!has_databox(&claim, &uri1), "databox 1 should be gone");
+
+        // Now redact the base (which should be still here, since the other exact-matched).
+        claim
+            .redact_assertion(&uri0.url())
+            .expect("redact databox 0 should succeed");
+
+        assert!(!has_databox(&claim, &uri0), "databox 0 should be gone");
+        assert!(!has_databox(&claim, &uri1), "databox 1 should be gone");
+    }
+
+    #[test]
+    fn test_redact_databox_from_other_manifest_returns_not_found() {
+        use crate::jumbf::labels::to_databox_uri;
+
+        let mut claim = Claim::new("unit test", Some("test"), 2);
+
+        let uri0 = claim
+            .add_databox("application/octet-stream", vec![0u8; 4], None)
+            .expect("add databox 0");
+
+        let foreign_uri =
+            to_databox_uri("urn:uuid:00000000-0000-0000-0000-000000000000", "c2pa.data");
+        assert_ne!(foreign_uri, uri0.url(), "test setup: URIs must differ");
+
+        let result = claim.redact_assertion(&foreign_uri);
+        assert!(
+            matches!(result, Err(Error::AssertionRedactionNotFound)),
+            "cross-manifest redaction should fail, got {result:?}"
+        );
+
+        assert!(
+            claim
+                .databoxes()
+                .iter()
+                .any(|(x, _d)| x.url() == uri0.url()),
+            "databox 0 should have survived a redaction targeting another manifest"
+        );
+    }
+
+    #[test]
+    fn test_redact_assertion_instance_labels_are_exact() {
+        use crate::{assertions::UserCbor, jumbf::labels::to_assertion_uri};
+
+        const LABEL: &str = "com.example.a";
+
+        let mut claim = Claim::new("unit test", Some("test"), 2);
+        for n in 0..3 {
+            claim
+                .add_assertion(&UserCbor::new(
+                    LABEL,
+                    c2pa_cbor::to_vec(&format!("payload {n}")).unwrap(),
+                ))
+                .expect("add assertion");
+        }
+
+        let stored = |claim: &Claim| -> Vec<String> {
+            claim
+                .claim_assertion_store()
+                .iter()
+                .map(|x| Claim::label_with_instance(&x.label_raw(), x.instance()))
+                .collect()
+        };
+
+        assert_eq!(
+            stored(&claim),
+            vec!["com.example.a", "com.example.a__1", "com.example.a__2"],
+            "test setup: three instances of the same label"
+        );
+
+        // Redact `__2` first: the `__1` and base labels share its prefix and must survive.
+        claim
+            .redact_assertion(&to_assertion_uri(claim.label(), "com.example.a__2"))
+            .expect("redact instance 2");
+        assert_eq!(
+            stored(&claim),
+            vec!["com.example.a", "com.example.a__1"],
+            "only instance 2 should have been removed"
+        );
+
+        claim
+            .redact_assertion(&to_assertion_uri(claim.label(), "com.example.a__1"))
+            .expect("redact instance 1");
+        assert_eq!(
+            stored(&claim),
+            vec!["com.example.a"],
+            "only instance 1 should have been removed"
+        );
+
+        claim
+            .redact_assertion(&to_assertion_uri(claim.label(), LABEL))
+            .expect("redact base instance");
+        assert!(claim.claim_assertion_store().is_empty());
+    }
+
+    /// `com.example.meta` is a prefix of `com.example.metadata` but is not the same
+    /// assertion, so redacting it must not match.
+    #[test]
+    fn test_redact_assertion_prefix_is_not_a_match() {
+        use crate::{assertions::UserCbor, jumbf::labels::to_assertion_uri};
+
+        let mut claim = Claim::new("unit test", Some("test"), 2);
+        claim
+            .add_assertion(&UserCbor::new(
+                "com.example.metadata",
+                c2pa_cbor::to_vec(&"payload").unwrap(),
+            ))
+            .expect("add assertion");
+
+        let uri = to_assertion_uri(claim.label(), "com.example.meta");
+        let result = claim.redact_assertion(&uri);
+        assert!(
+            matches!(result, Err(Error::AssertionRedactionNotFound)),
+            "a prefix of a stored label must not match, got {result:?}"
+        );
+        assert_eq!(
+            claim.claim_assertion_store().len(),
+            1,
+            "the assertion must survive a non-matching redaction"
+        );
+    }
+
+    #[test]
+    fn test_redact_assertion_suffix_label_is_not_a_match() {
+        use crate::{assertions::UserCbor, jumbf::labels::to_assertion_uri};
+
+        let mut claim = Claim::new("unit test", Some("test"), 2);
+        for label in ["example.a", "org.example.a"] {
+            claim
+                .add_assertion(&UserCbor::new(
+                    label,
+                    c2pa_cbor::to_vec(&"payload").unwrap(),
+                ))
+                .expect("add assertion");
+        }
+
+        claim
+            .redact_assertion(&to_assertion_uri(claim.label(), "org.example.a"))
+            .expect("redact org.example.a");
+
+        let remaining: Vec<String> = claim
+            .claim_assertion_store()
+            .iter()
+            .map(|x| Claim::label_with_instance(&x.label_raw(), x.instance()))
+            .collect();
+        assert_eq!(
+            remaining,
+            vec!["example.a"],
+            "redacting `org.example.a` must not remove the `example.a` assertion"
+        );
+    }
+
+    /// Verify comparison conditions.
+    #[test]
+    fn test_redact_assertion_label_from_link_round_trip() {
+        for label in [
+            "com.example.a",
+            "com.example.a__1",
+            "c2pa.thumbnail.ingredient__3.jpeg",
+            "c2pa.thumbnail.claim.jpeg__1",
+            "stds.schema-org.CreativeWork__2",
+            "c2pa.data",
+            "c2pa.data__1",
+        ] {
+            let (parsed, instance) = Claim::assertion_label_from_link(label);
+            assert_eq!(
+                Claim::label_with_instance(&parsed, instance),
+                label,
+                "label normalization must round-trip for {label}"
+            );
+        }
+    }
+
+    fn make_soft_binding(alg: Option<&str>) -> assertions::SoftBinding {
+        use crate::assertions::{SoftBindingBlock, SoftBindingScope};
+        let mut sb = assertions::SoftBinding::default();
+        sb.alg = alg.map(str::to_string);
+        sb.blocks = vec![SoftBindingBlock {
+            scope: SoftBindingScope::default(),
+            value: "abc123".as_bytes().to_vec(),
+        }];
+        sb
+    }
+
+    #[test]
+    fn test_verify_soft_binding_alg_valid() {
+        let settings = Settings::new()
+            .with_json(
+                r#"
+                {
+                    "soft_binding": {
+                        "soft_binding_algorithms": ["com.adobe.trustmark.Q", "com.adobe.trustmark.C", "com.digimarc.validate.1"]
+                    }
+                }
+            "#,
+            )
+            .unwrap();
+
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let mut claim = create_test_claim().expect("create test claim");
+
+        claim
+            .add_assertion(&make_soft_binding(Some("com.digimarc.validate.1")))
+            .expect("add soft binding");
+
+        assert!(
+            Claim::verify_soft_binding_alg(
+                &claim,
+                settings
+                    .soft_binding
+                    .soft_binding_algorithms
+                    .as_deref()
+                    .unwrap_or(&[]),
+                &mut validation_log
+            )
+            .is_ok(),
+            "known algorithm should pass"
+        );
+        assert!(validation_log.logged_items().is_empty());
+    }
+
+    #[test]
+    #[ignore = "validation disabled for C2PA 2.4 forward"]
+    fn test_verify_soft_binding_alg_unknown() {
+        let settings = Settings::new()
+            .with_json(
+                r#"
+                {
+                    "soft_binding": {
+                        "soft_binding_algorithms": ["com.adobe.trustmark.Q", "com.adobe.trustmark.C", "com.digimarc.validate.1"]
+                    }
+                }
+            "#,
+            )
+            .unwrap();
+
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let mut claim = create_test_claim().expect("create test claim");
+
+        claim
+            .add_assertion(&make_soft_binding(Some("com.unknown.watermark.99")))
+            .expect("add soft binding");
+
+        let result = Claim::verify_soft_binding_alg(
+            &claim,
+            settings
+                .soft_binding
+                .soft_binding_algorithms
+                .as_deref()
+                .unwrap_or(&[]),
+            &mut validation_log,
+        );
+        assert!(result.is_err(), "unknown algorithm should fail");
+        assert!(
+            validation_log
+                .logged_items()
+                .iter()
+                .any(|item| item.validation_status.as_deref()
+                    == Some(validation_status::ALGORITHM_UNSUPPORTED)),
+            "should log ALGORITHM_UNSUPPORTED"
+        );
+    }
+
+    #[test]
+    #[ignore = "validation disabled for C2PA 2.4 forward"]
+    fn test_verify_soft_binding_alg_missing_alg() {
+        let settings = Settings::new()
+            .with_json(
+                r#"
+                {
+                    "soft_binding": {
+                        "soft_binding_algorithms": ["com.adobe.trustmark.Q", "com.adobe.trustmark.C", "com.digimarc.validate.1"]
+                    }
+                }
+            "#,
+            )
+            .unwrap();
+
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let mut claim = create_test_claim().expect("create test claim");
+
+        // No alg on assertion, no alg_soft on claim
+        claim
+            .add_assertion(&make_soft_binding(None))
+            .expect("add soft binding");
+
+        let result = Claim::verify_soft_binding_alg(
+            &claim,
+            settings
+                .soft_binding
+                .soft_binding_algorithms
+                .as_deref()
+                .unwrap_or(&[]),
+            &mut validation_log,
+        );
+        assert!(result.is_err(), "missing algorithm should fail");
+        assert!(
+            validation_log
+                .logged_items()
+                .iter()
+                .any(|item| item.validation_status.as_deref()
+                    == Some(validation_status::CLAIM_MALFORMED)),
+            "should log CLAIM_MALFORMED"
+        );
+    }
+
+    #[test]
+    fn test_verify_soft_binding_alg_fallback_to_alg_soft() {
+        let settings = Settings::new()
+            .with_json(
+                r#"
+                {
+                    "soft_binding": {
+                        "soft_binding_algorithms": ["io.iscc.v0"]
+                    }
+                }
+            "#,
+            )
+            .unwrap();
+
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let mut claim = create_test_claim().expect("create test claim");
+
+        // No alg on assertion, but claim-level alg_soft is a known algorithm
+        claim.alg_soft = Some("io.iscc.v0".to_string());
+        claim
+            .add_assertion(&make_soft_binding(None))
+            .expect("add soft binding");
+
+        assert!(
+            Claim::verify_soft_binding_alg(
+                &claim,
+                settings
+                    .soft_binding
+                    .soft_binding_algorithms
+                    .as_deref()
+                    .unwrap_or(&[]),
+                &mut validation_log
+            )
+            .is_ok(),
+            "valid alg_soft fallback should pass"
+        );
+        assert!(validation_log.logged_items().is_empty());
+    }
+
+    #[test]
+    #[ignore = "validation disabled for C2PA 2.4 forward"]
+    fn test_verify_soft_binding_alg_undecodable_does_not_abort() {
+        // A soft binding assertion that isn't valid CBOR-encoded SoftBinding data
+        // (e.g. reusing the c2pa.soft-binding label for a JSON payload) should be
+        // logged as a claim.malformed failure, not abort the whole verification.
+        struct MalformedSoftBinding;
+
+        impl AssertionBase for MalformedSoftBinding {
+            const LABEL: &'static str = assertions::SoftBinding::LABEL;
+
+            fn to_assertion(&self) -> Result<Assertion> {
+                Ok(Assertion::new(
+                    Self::LABEL,
+                    None,
+                    AssertionData::Json(
+                        r#"{"alg":"com.example.sha256","value":"abc123"}"#.to_string(),
+                    ),
+                )
+                .set_content_type("application/json"))
+            }
+
+            fn from_assertion(_assertion: &Assertion) -> Result<Self> {
+                unimplemented!("not needed for this test")
+            }
+        }
+
+        let settings = Settings::new()
+            .with_json(
+                r#"
+                {
+                    "soft_binding": {
+                        "soft_binding_algorithms": ["com.example.sha256"]
+                    }
+                }
+            "#,
+            )
+            .unwrap();
+
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let mut claim = create_test_claim().expect("create test claim");
+
+        claim
+            .add_assertion(&MalformedSoftBinding)
+            .expect("add malformed soft binding");
+
+        assert!(
+            Claim::verify_soft_binding_alg(
+                &claim,
+                settings
+                    .soft_binding
+                    .soft_binding_algorithms
+                    .as_deref()
+                    .unwrap_or(&[]),
+                &mut validation_log
+            )
+            .is_ok(),
+            "an undecodable soft binding assertion should not abort verification"
+        );
+        assert!(
+            validation_log
+                .logged_items()
+                .iter()
+                .any(|item| item.validation_status.as_deref()
+                    == Some(validation_status::CLAIM_MALFORMED)),
+            "should log CLAIM_MALFORMED for the undecodable assertion"
+        );
+    }
+
+    #[test]
+    #[ignore = "validation disabled for C2PA 2.4 forward"]
+    fn test_verify_soft_binding_alg_continues_past_malformed_assertion() {
+        // A claim with three c2pa.soft-binding assertions: the first undecodable,
+        // the second valid, and the third using an unsupported algorithm. Skipping
+        // past the first (undecodable, non-fatal) must not skip evaluation of the
+        // second and third -- the unsupported algorithm in the third must still be
+        // caught and reported as a fatal error.
+        struct MalformedSoftBinding;
+
+        impl AssertionBase for MalformedSoftBinding {
+            const LABEL: &'static str = assertions::SoftBinding::LABEL;
+
+            fn to_assertion(&self) -> Result<Assertion> {
+                Ok(Assertion::new(
+                    Self::LABEL,
+                    None,
+                    AssertionData::Json(
+                        r#"{"alg":"com.example.sha256","value":"abc123"}"#.to_string(),
+                    ),
+                )
+                .set_content_type("application/json"))
+            }
+
+            fn from_assertion(_assertion: &Assertion) -> Result<Self> {
+                unimplemented!("not needed for this test")
+            }
+        }
+
+        let settings = Settings::new()
+            .with_json(
+                r#"
+                {
+                    "soft_binding": {
+                        "soft_binding_algorithms": ["com.example.sha256"]
+                    }
+                }
+            "#,
+            )
+            .unwrap();
+
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let mut claim = create_test_claim().expect("create test claim");
+
+        claim
+            .add_assertion(&MalformedSoftBinding)
+            .expect("add malformed soft binding");
+        claim
+            .add_assertion(&make_soft_binding(Some("com.example.sha256")))
+            .expect("add valid soft binding");
+        claim
+            .add_assertion(&make_soft_binding(Some("com.unknown.watermark.99")))
+            .expect("add soft binding with unsupported algorithm");
+
+        let result = Claim::verify_soft_binding_alg(
+            &claim,
+            settings
+                .soft_binding
+                .soft_binding_algorithms
+                .as_deref()
+                .unwrap_or(&[]),
+            &mut validation_log,
+        );
+        assert!(
+            result.is_err(),
+            "the unsupported algorithm on the third assertion must still be fatal"
+        );
+        assert!(
+            validation_log
+                .logged_items()
+                .iter()
+                .any(|item| item.validation_status.as_deref()
+                    == Some(validation_status::CLAIM_MALFORMED)),
+            "should log CLAIM_MALFORMED for the first, undecodable assertion"
+        );
+        assert!(
+            validation_log
+                .logged_items()
+                .iter()
+                .any(|item| item.validation_status.as_deref()
+                    == Some(validation_status::ALGORITHM_UNSUPPORTED)),
+            "should still reach and log ALGORITHM_UNSUPPORTED for the third assertion"
+        );
+    }
+
+    #[test]
+    fn test_verify_claim_generator_info_valid() {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let claim = create_test_claim().expect("create test claim");
+
+        // create_test_claim adds a ClaimGeneratorInfo with name "test app"
+        assert!(
+            Claim::verify_claim_generator_info(&claim, &mut validation_log).is_ok(),
+            "valid claim_generator_info should pass"
+        );
+        assert!(
+            validation_log.logged_items().is_empty(),
+            "no errors should be logged for a valid claim"
+        );
+    }
+
+    #[test]
+    fn test_verify_claim_generator_info_missing() {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        // Build a v2 claim without adding any claim_generator_info
+        let mut claim = Claim::new("test", Some("test"), 2);
+        claim.claim_generator_info = None;
+
+        let result = Claim::verify_claim_generator_info(&claim, &mut validation_log);
+        assert!(result.is_err(), "missing claim_generator_info should fail");
+        assert!(
+            validation_log
+                .logged_items()
+                .iter()
+                .any(|item| item.validation_status.as_deref()
+                    == Some(validation_status::CLAIM_MALFORMED)),
+            "should log CLAIM_MALFORMED"
+        );
+    }
+
+    #[test]
+    fn test_verify_claim_generator_info_empty_name() {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let mut claim = Claim::new("test", Some("test"), 2);
+        claim.add_claim_generator_info(ClaimGeneratorInfo::new(""));
+
+        let result = Claim::verify_claim_generator_info(&claim, &mut validation_log);
+        assert!(result.is_err(), "empty name should fail");
+        assert!(
+            validation_log
+                .logged_items()
+                .iter()
+                .any(|item| item.validation_status.as_deref()
+                    == Some(validation_status::CLAIM_MALFORMED)),
+            "should log CLAIM_MALFORMED"
+        );
+    }
+
+    #[test]
+    fn test_spec_version_from_claim_generator_info() {
+        let mut claim = Claim::new("test", Some("test"), 2);
+        let mut cgi = ClaimGeneratorInfo::new("test app");
+        cgi.set_spec_version("2.4.0");
+        claim.add_claim_generator_info(cgi);
+
+        assert_eq!(claim.spec_version().map(|s| s.as_str()), Some("2.4.0"));
+    }
+
+    #[test]
+    fn test_spec_version_none_when_not_set_in_claim_generator_info() {
+        let mut claim = Claim::new("test", Some("test"), 2);
+        claim.add_claim_generator_info(ClaimGeneratorInfo::new("test app"));
+
+        assert_eq!(claim.spec_version(), None);
+    }
+
+    fn make_cloud_data(label: &str) -> assertions::CloudData {
+        assertions::CloudData::new(
+            label,
+            1024,
+            assertions::HashedExtUri::new(
+                "https://example.com/data",
+                "sha256",
+                vec![0xde, 0xad, 0xbe, 0xef],
+            ),
+        )
+    }
+
+    fn make_external_reference(url: &str) -> assertions::ExternalReference {
+        assertions::ExternalReference::new_hashed(url, "sha256", vec![0xde, 0xad, 0xbe, 0xef])
+    }
+
+    #[test]
+    fn test_verify_external_reference_valid() {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let mut claim = create_test_claim().expect("create test claim");
+
+        claim
+            .add_assertion(&make_external_reference("https://example.com/ext.json"))
+            .expect("add external reference");
+
+        assert!(
+            Claim::verify_external_reference(&claim, &mut validation_log).is_ok(),
+            "valid external-reference assertion should pass"
+        );
+        assert!(validation_log.logged_items().is_empty());
+    }
+
+    #[test]
+    fn test_verify_external_reference_rejects_malformed() {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let mut claim = create_test_claim().expect("create test claim");
+
+        let bad = assertions::ExternalReference {
+            location: assertions::ExternalReferenceLocation::Hashed(assertions::HashedExtUri {
+                url: "   ".to_owned(),
+                alg: String::new(),
+                hash: vec![],
+                data_types: None,
+            }),
+            label: None,
+            description: None,
+            metadata: None,
+        };
+        claim
+            .add_assertion(&bad)
+            .expect("add malformed external reference");
+
+        Claim::verify_external_reference(&claim, &mut validation_log).unwrap();
+
+        assert!(
+            validation_log
+                .logged_items()
+                .iter()
+                .any(|item| item.validation_status.as_deref()
+                    == Some(validation_status::ASSERTION_EXTERNAL_REFERENCE_MALFORMED)),
+            "should log ASSERTION_EXTERNAL_REFERENCE_MALFORMED"
+        );
+    }
+
+    #[test]
+    fn test_verify_cloud_data_valid() {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let mut claim = create_test_claim().expect("create test claim");
+
+        // A fully-specified cloud-data assertion referencing a non-forbidden type.
+        claim
+            .add_assertion(&make_cloud_data("c2pa.metadata"))
+            .expect("add cloud data");
+
+        assert!(
+            Claim::verify_cloud_data(&claim, &mut validation_log).is_ok(),
+            "valid cloud-data assertion should pass"
+        );
+        assert!(validation_log.logged_items().is_empty());
+    }
+
+    #[test]
+    fn test_verify_cloud_data_zero_size_rejected() {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let mut claim = create_test_claim().expect("create test claim");
+
+        // size must be >= 1 per spec (size-type = int .ge 1).
+        let cd = assertions::CloudData::new(
+            "c2pa.metadata",
+            0,
+            assertions::HashedExtUri::new(
+                "https://example.com/data",
+                "sha256",
+                vec![0xde, 0xad, 0xbe, 0xef],
+            ),
+        );
+        claim.add_assertion(&cd).expect("add cloud data");
+
+        Claim::verify_cloud_data(&claim, &mut validation_log).unwrap();
+
+        assert!(
+            validation_log
+                .logged_items()
+                .iter()
+                .any(|item| item.validation_status.as_deref()
+                    == Some(validation_status::ASSERTION_CLOUD_DATA_MALFORMED)),
+            "should log ASSERTION_CLOUD_DATA_MALFORMED"
+        );
+    }
+
+    // Builds a v2 claim whose created assertions contain a valid c2pa.created
+    // action followed by the given c2pa.translated action, runs verify_actions,
+    // and returns the validation log for status-code checks.
+    fn verify_translated_action(translated: Action) -> StatusTracker {
+        use crate::assertions::DigitalSourceType;
+
+        // A valid first action (created + digitalSourceType) keeps the claim
+        // otherwise clean, so the only possible malformed status comes from the
+        // c2pa.translated action under test.
+        let mut claim = Claim::new("test", Some("test"), 2);
+        let actions = Actions::new()
+            .add_action(
+                Action::new(c2pa_action::CREATED)
+                    .set_source_type(DigitalSourceType::AlgorithmicMedia),
+            )
+            .add_action(translated);
+        claim.add_assertion(&actions).expect("add actions");
+
+        let svi = StoreValidationInfo::default();
+        let settings = Settings::default();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+        Claim::verify_actions(&claim, &svi, &mut validation_log, &settings)
+            .expect("verify_actions should not throw");
+        validation_log
+    }
+
+    // Regression: per C2PA spec 18.15.4.7, a c2pa.translated action's parameters
+    // must contain sourceLanguage and targetLanguage. An action with empty
+    // parameters must be reported as assertion.action.malformed.
+    #[test]
+    fn test_verify_translated_action_missing_languages() {
+        let log = verify_translated_action(Action::new(c2pa_action::TRANSLATED));
+        assert!(
+            log.has_status(validation_status::ASSERTION_ACTION_MALFORMED),
+            "c2pa.translated without sourceLanguage/targetLanguage should be malformed"
+        );
+    }
+
+    // A c2pa.translated action with only one of the two language codes is still
+    // malformed.
+    #[test]
+    fn test_verify_translated_action_partial_languages() {
+        let translated = Action::new(c2pa_action::TRANSLATED)
+            .set_parameter("source_language", "en-US")
+            .expect("set source_language");
+        let log = verify_translated_action(translated);
+        assert!(
+            log.has_status(validation_status::ASSERTION_ACTION_MALFORMED),
+            "c2pa.translated with only sourceLanguage should be malformed"
+        );
+    }
+
+    // Positive: a c2pa.translated action with both BCP-47 language codes present
+    // must not be reported as malformed.
+    #[test]
+    #[ignore = "validation disabled for C2PA 2.4 forward"]
+    fn test_verify_translated_action_with_languages_valid() {
+        let translated = Action::new(c2pa_action::TRANSLATED)
+            .set_parameter("source_language", "en-US")
+            .expect("set source_language")
+            .set_parameter("target_language", "fr-FR")
+            .expect("set target_language");
+        let log = verify_translated_action(translated);
+        assert!(
+            !log.has_status(validation_status::ASSERTION_ACTION_MALFORMED),
+            "c2pa.translated with both languages should not be malformed"
+        );
+    }
+
+    fn verify_related_assertions(claim: &mut Claim, related: Vec<HashedUri>) -> StatusTracker {
+        let edited = Action::new(c2pa_action::EDITED)
+            .set_parameter("relatedAssertions", related)
+            .unwrap();
+        let actions = Actions::new()
+            .add_action(
+                Action::new(c2pa_action::CREATED)
+                    .set_source_type(DigitalSourceType::AlgorithmicMedia),
+            )
+            .add_action(edited);
+        claim.add_assertion(&actions).unwrap();
+
+        let svi = StoreValidationInfo::default();
+        let settings = Settings::default();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+        Claim::verify_actions(claim, &svi, &mut validation_log, &settings).unwrap();
+
+        validation_log
+    }
+
+    #[test]
+    fn test_verify_related_assertions_empty_rejected() {
+        let mut claim = Claim::new("test", Some("test"), 2);
+        let log = verify_related_assertions(&mut claim, vec![]);
+        assert!(
+            log.has_status(validation_status::ASSERTION_ACTION_MALFORMED),
+            "empty relatedAssertions should be malformed"
+        );
+    }
+
+    #[test]
+    fn test_verify_related_assertions_unresolvable_rejected() {
+        let mut claim = Claim::new("test", Some("test"), 2);
+        let uri = HashedUri::new(
+            to_assertion_uri(claim.label(), "com.example.missing"),
+            Some("sha256".to_string()),
+            b"hash",
+        );
+        let log = verify_related_assertions(&mut claim, vec![uri]);
+        assert!(
+            log.has_status(validation_status::ASSERTION_ACTION_MALFORMED),
+            "unresolvable relatedAssertions reference should be malformed"
+        );
+    }
+
+    #[test]
+    fn test_verify_related_assertions_references_actions_rejected() {
+        let mut claim = Claim::new("test", Some("test"), 2);
+        let uri = HashedUri::new(
+            to_assertion_uri(claim.label(), Actions::LABEL_VERSIONED),
+            Some("sha256".to_string()),
+            b"hash",
+        );
+        let log = verify_related_assertions(&mut claim, vec![uri]);
+        assert!(
+            log.has_status(validation_status::ASSERTION_ACTION_MALFORMED),
+            "relatedAssertions referencing an actions assertion should be malformed"
+        );
+    }
+
+    #[test]
+    fn test_verify_related_assertions_references_ingredient_rejected() {
+        let mut claim = Claim::new("test", Some("test"), 2);
+        let ingredient_uri = claim
+            .add_assertion(&Ingredient::new_v3(Relationship::ComponentOf))
+            .unwrap();
+        let log = verify_related_assertions(&mut claim, vec![ingredient_uri]);
+        assert!(
+            log.has_status(validation_status::ASSERTION_ACTION_MALFORMED),
+            "relatedAssertions referencing an ingredient assertion should be malformed"
+        );
+    }
+
+    #[test]
+    fn test_verify_related_assertions_valid() {
+        use crate::assertions::UserCbor;
+
+        let mut claim = Claim::new("test", Some("test"), 2);
+        let uri = claim
+            .add_assertion(&UserCbor::new(
+                "com.example.related",
+                c2pa_cbor::to_vec(&"related payload").unwrap(),
+            ))
+            .unwrap();
+        let log = verify_related_assertions(&mut claim, vec![uri]);
+        assert!(
+            !log.has_status(validation_status::ASSERTION_ACTION_MALFORMED),
+            "relatedAssertions referencing an allowed assertion should not be malformed"
+        );
+    }
+
+    #[test]
+    fn test_verify_actions_rejects_multiple_inception_actions_in_one_assertion() {
+        use crate::assertions::DigitalSourceType;
+
+        let mut claim = Claim::new("test", Some("test"), 2);
+        let actions = Actions::new()
+            .add_action(Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty))
+            .add_action(Action::new(c2pa_action::OPENED));
+        claim.add_assertion(&actions).expect("add actions");
+
+        let svi = StoreValidationInfo::default();
+        let settings = Settings::default();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+
+        Claim::verify_actions(&claim, &svi, &mut validation_log, &settings)
+            .expect("verify_actions should not throw");
+
+        assert!(
+            validation_log.has_status(validation_status::ASSERTION_ACTION_MALFORMED),
+            "an actions assertion containing more than one c2pa.created/c2pa.opened action should be malformed"
+        );
+    }
+
+    #[test]
+    fn test_verify_actions_rejects_both_created_and_opened_actions() {
+        use crate::assertions::DigitalSourceType;
+
+        let mut claim = Claim::new("test", Some("test"), 2);
+        let created_actions = Actions::new().add_action(
+            Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty),
+        );
+        let opened_actions = Actions::new().add_action(Action::new(c2pa_action::OPENED));
+
+        claim
+            .add_assertion(&created_actions)
+            .expect("add created actions");
+        claim
+            .add_assertion(&opened_actions)
+            .expect("add opened actions");
+
+        let svi = StoreValidationInfo::default();
+        let settings = Settings::default();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+
+        Claim::verify_actions(&claim, &svi, &mut validation_log, &settings)
+            .expect("verify_actions should not throw");
+
+        assert!(
+            validation_log.has_status(validation_status::ASSERTION_ACTION_MALFORMED),
+            "a claim containing both c2pa.created and c2pa.opened actions should be malformed"
+        );
+    }
+
+    // Builds a v2 claim whose actions assertion contains a valid c2pa.created
+    // action followed by the given watermark action, optionally adds a soft
+    // binding assertion, runs verify_actions, and returns the validation log.
+    fn verify_watermark_action(action: Action, with_soft_binding: bool) -> StatusTracker {
+        use crate::assertions::DigitalSourceType;
+
+        let mut claim = Claim::new("test", Some("test"), 2);
+        let actions = Actions::new()
+            .add_action(
+                Action::new(c2pa_action::CREATED)
+                    .set_source_type(DigitalSourceType::TrainedAlgorithmicMedia),
+            )
+            .add_action(action);
+        claim.add_assertion(&actions).expect("add actions");
+
+        if with_soft_binding {
+            claim
+                .add_assertion(&make_soft_binding(Some("com.example.wm")))
+                .expect("add soft binding");
+        }
+
+        let svi = StoreValidationInfo::default();
+        let settings = Settings::default();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+        Claim::verify_actions(&claim, &svi, &mut validation_log, &settings)
+            .expect("verify_actions should not throw");
+        validation_log
+    }
+
+    #[test]
+    fn test_watermarked_action_without_soft_binding_logs_missing() {
+        let log = verify_watermark_action(Action::new(c2pa_action::WATERMARKED), false);
+        assert!(
+            log.has_status(validation_status::ACTION_ASSERTION_SOFTBINDING_MISSING),
+            "c2pa.watermarked without soft binding should log ACTION_ASSERTION_SOFTBINDING_MISSING"
+        );
+    }
+
+    #[test]
+    fn test_watermarked_bound_action_without_soft_binding_logs_missing() {
+        let log = verify_watermark_action(Action::new(c2pa_action::WATERMARKED_BOUND), false);
+        assert!(
+            log.has_status(validation_status::ACTION_ASSERTION_SOFTBINDING_MISSING),
+            "c2pa.watermarked.bound without soft binding should log ACTION_ASSERTION_SOFTBINDING_MISSING"
+        );
+    }
+
+    #[test]
+    fn test_watermarked_action_with_soft_binding_passes() {
+        let log = verify_watermark_action(Action::new(c2pa_action::WATERMARKED), true);
+        assert!(
+            !log.has_status(validation_status::ACTION_ASSERTION_SOFTBINDING_MISSING),
+            "c2pa.watermarked with soft binding present should not log ACTION_ASSERTION_SOFTBINDING_MISSING"
+        );
+    }
+
+    #[test]
+    fn test_verify_cloud_data_hard_binding_rejected() {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let mut claim = create_test_claim().expect("create test claim");
+
+        // Hard binding assertion referenced from cloud-data is forbidden.
+        claim
+            .add_assertion(&make_cloud_data(assertions::labels::DATA_HASH))
+            .expect("add cloud data");
+
+        Claim::verify_cloud_data(&claim, &mut validation_log).unwrap();
+
+        assert!(
+            validation_log
+                .logged_items()
+                .iter()
+                .any(|item| item.validation_status.as_deref()
+                    == Some(validation_status::ASSERTION_CLOUD_DATA_HARD_BINDING)),
+            "should log ASSERTION_CLOUD_DATA_HARD_BINDING"
+        );
+    }
+
+    #[test]
+    fn test_verify_cloud_data_actions_in_update_manifest_rejected() {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let mut claim = create_test_claim().expect("create test claim");
+        claim.set_update_manifest(true);
+
+        claim
+            .add_assertion(&make_cloud_data(assertions::labels::ACTIONS))
+            .expect("add cloud data");
+
+        Claim::verify_cloud_data(&claim, &mut validation_log).unwrap();
+
+        assert!(
+            validation_log
+                .logged_items()
+                .iter()
+                .any(|item| item.validation_status.as_deref()
+                    == Some(validation_status::ASSERTION_CLOUD_DATA_ACTIONS)),
+            "should log ASSERTION_CLOUD_DATA_ACTIONS"
+        );
+    }
+
+    #[test]
+    fn test_verify_cloud_data_actions_in_non_update_manifest_not_allowed() {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let mut claim = create_test_claim().expect("create test claim");
+
+        // Actions cloud-data is only forbidden in update manifests.
+        claim
+            .add_assertion(&make_cloud_data(assertions::labels::ACTIONS))
+            .expect("add cloud data");
+
+        Claim::verify_cloud_data(&claim, &mut validation_log).unwrap();
+
+        assert!(
+            validation_log.has_any_error(),
+            "actions in cloud-data of a non-update manifest should fail"
         );
     }
 }

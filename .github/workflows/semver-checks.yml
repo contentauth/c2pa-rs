@@ -21,6 +21,11 @@ permissions:
 jobs:
   semver-checks:
     name: cargo-semver-checks
+
+    # cargo-semver-checks compiles the PR's code, so untrusted fork PRs must not
+    # run it unreviewed. That trust gate is enforced by GitHub's "Fork pull
+    # request workflows from outside collaborators" Actions setting (see
+    # tier-1a.yml) rather than in this workflow.
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -34,5 +39,5 @@ jobs:
       - name: Run cargo-semver-checks
         uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2
         with:
-          # Public-API library crates. c2patool is a binary (no API surface).
+          # Public-API library crates.
           package: c2pa, c2pa-c-ffi

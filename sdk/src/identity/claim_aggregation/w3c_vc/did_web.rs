@@ -36,6 +36,13 @@ const USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VE
 #[cfg(test)]
 use std::{cell::RefCell, collections::HashMap};
 
+/// Domain name used by tests to stand in for a real `did:web` domain, routed
+/// to a local mock server via [`PROXIES`]. Deliberately not `"localhost"`,
+/// so the SSRF guard in `to_url` runs unmodified in test builds and its
+/// rejection of `did:web:localhost` can itself be tested.
+#[cfg(test)]
+pub(crate) const TEST_MOCK_DOMAIN: &str = "did-web-mock.test";
+
 #[cfg(test)]
 thread_local! {
     /// Maps a `did:web` domain name to a URL prefix (ending in `/`) that should
@@ -89,6 +96,11 @@ pub enum DidWebError {
 
     #[error("response body exceeded size limit of {MAX_DID_DOC_SIZE} bytes")]
     ResponseTooLarge,
+
+    #[error(
+        "resolved DID document's id ({resolved}) does not match the requested DID ({requested})"
+    )]
+    DidMismatch { requested: String, resolved: String },
 }
 
 fn prepare_url(did: &Did<'_>) -> Result<String, DidWebError> {
@@ -100,9 +112,25 @@ fn prepare_url(did: &Did<'_>) -> Result<String, DidWebError> {
     to_url(did.method_specific_id())
 }
 
-fn parse_did_doc(bytes: Vec<u8>, url: &str) -> Result<DidDocument, DidWebError> {
+fn parse_did_doc(bytes: Vec<u8>, url: &str, did: &Did<'_>) -> Result<DidDocument, DidWebError> {
     let json = String::from_utf8(bytes).map_err(|_| DidWebError::InvalidData(url.to_owned()))?;
-    DidDocument::from_json(&json).map_err(|_| DidWebError::InvalidData(url.to_owned()))
+    let doc =
+        DidDocument::from_json(&json).map_err(|_| DidWebError::InvalidData(url.to_owned()))?;
+
+    // The resolved document's subject `id` MUST match the DID that was
+    // requested (https://www.w3.org/TR/did-core/#did-subject). Without this
+    // check, a redirected or otherwise substituted response could hand back a
+    // document belonging to a different DID, and callers would have no way to
+    // detect that the returned key material doesn't actually belong to the
+    // DID they asked to resolve.
+    if doc.id != *did {
+        return Err(DidWebError::DidMismatch {
+            requested: did.to_string(),
+            resolved: doc.id.to_string(),
+        });
+    }
+
+    Ok(doc)
 }
 
 pub(crate) async fn resolve_async(
@@ -112,7 +140,7 @@ pub(crate) async fn resolve_async(
     let url = prepare_url(did)?;
     // TODO: https://w3c-ccg.github.io/did-method-web/#in-transit-security
     let bytes = get_did_doc_async(&url, context).await?;
-    parse_did_doc(bytes, &url)
+    parse_did_doc(bytes, &url, did)
 }
 
 fn build_request(url: &str) -> Result<http::Request<Vec<u8>>, DidWebError> {
@@ -181,7 +209,7 @@ pub(crate) fn resolve(did: &Did<'_>, context: &Context) -> Result<DidDocument, D
     let url = prepare_url(did)?;
     // TODO: https://w3c-ccg.github.io/did-method-web/#in-transit-security
     let bytes = get_did_doc(&url, context)?;
-    parse_did_doc(bytes, &url)
+    parse_did_doc(bytes, &url, did)
 }
 
 pub(crate) fn to_url(did: &str) -> Result<String, DidWebError> {
@@ -198,8 +226,22 @@ pub(crate) fn to_url(did: &str) -> Result<String, DidWebError> {
     // Reject bare IPv4/IPv6 literals — did:web requires a DNS domain name.
     // Domain may include a %3A-encoded port (e.g. "192.168.1.1%3A8080"), so
     // strip the port suffix before checking.
-    let host_part = domain_name.split("%3A").next().unwrap_or(domain_name);
-    if host_part.parse::<std::net::IpAddr>().is_ok() {
+    let mut host_part = String::from(domain_name.split("%3A").next().unwrap_or(domain_name));
+
+    // For the case [::1] which is a loopback address
+    host_part.retain(|c| c != '[' && c != ']');
+
+    let mut invalid_host = host_part.parse::<std::net::IpAddr>().is_ok();
+
+    if !invalid_host {
+        host_part = host_part.to_lowercase();
+        const INVALID_HOSTS: [&str; 3] = ["localhost", "nip.io", "sslip.io"];
+        invalid_host = INVALID_HOSTS
+            .into_iter()
+            .any(|suffix| host_part == suffix || host_part.ends_with(&format!(".{suffix}")));
+    }
+
+    if invalid_host {
         return Err(DidWebError::InvalidWebDid(did.to_owned()));
     }
 
@@ -208,9 +250,9 @@ pub(crate) fn to_url(did: &str) -> Result<String, DidWebError> {
         None => ".well-known".to_string(),
     };
 
-    // Use http for localhost in tests only — production always requires HTTPS.
+    // Use http for the test mock domain only — production always requires HTTPS.
     #[cfg(test)]
-    let proto = if domain_name.starts_with("localhost") {
+    let proto = if domain_name.starts_with(TEST_MOCK_DOMAIN) {
         "http"
     } else {
         "https"
@@ -290,6 +332,43 @@ mod tests {
             did_web::to_url(did("did:web:192.168.1.1%3A8080:path").method_specific_id()).is_err(),
             "RFC-1918 IPv4 with port must be rejected"
         );
+        // "localhost" must be rejected too. The test suite uses a distinct
+        // `did_web::TEST_MOCK_DOMAIN` for its own mock-server plumbing so
+        // this check runs unmodified (no test-only carve-out) and is
+        // directly testable here.
+        assert!(
+            did_web::to_url(did("did:web:localhost").method_specific_id()).is_err(),
+            "localhost must be rejected"
+        );
+        assert!(
+            did_web::to_url(did("did:web:LOCALHOST").method_specific_id()).is_err(),
+            "localhost must be rejected case-insensitively"
+        );
+        // Note: `to_url` splits its input on ':' to isolate the domain
+        // segment before any host validation runs, so `domain_name` can
+        // never itself contain a ':' — a raw IPv6 literal (bracketed or
+        // not) can therefore never reach the host checks below. There is
+        // no reachable bypass to test here.
+        // DNS-rebinding services that resolve arbitrary subdomains to the
+        // requested IP must be rejected regardless of case.
+        assert!(
+            did_web::to_url(did("did:web:169.254.169.254.nip.io").method_specific_id()).is_err(),
+            "nip.io subdomain must be rejected"
+        );
+        assert!(
+            did_web::to_url(did("did:web:10.0.0.1.sslip.io").method_specific_id()).is_err(),
+            "sslip.io subdomain must be rejected"
+        );
+        assert!(
+            did_web::to_url(did("did:web:NIP.IO").method_specific_id()).is_err(),
+            "nip.io must be rejected case-insensitively"
+        );
+        // A domain that merely contains "nip.io" as a substring without a
+        // dot boundary must not be falsely rejected.
+        assert!(
+            did_web::to_url(did("did:web:evilnip.io").method_specific_id()).is_ok(),
+            "non-boundary substring match must not be rejected"
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -310,22 +389,22 @@ mod tests {
         // wasm_bindgen_test)] Can't test this on WASM until we find an httpmock
         // replacement.
         async fn from_did_key() {
+            // Keep in sync with `did_web::TEST_MOCK_DOMAIN`.
             const DID_JSON: &str = r#"{
             "@context": "https://www.w3.org/ns/did/v1",
-            "id": "did:web:localhost",
+            "id": "did:web:did-web-mock.test",
             "verificationMethod": [{
-                "id": "did:web:localhost#key1",
+                "id": "did:web:did-web-mock.test#key1",
                 "type": "Ed25519VerificationKey2018",
-                "controller": "did:web:localhost",
+                "controller": "did:web:did-web-mock.test",
                 "publicKeyBase58": "2sXRz2VfrpySNEL6xmXJWQg6iY94qwNp1qrJJFBuPWmH"
             }],
-            "assertionMethod": ["did:web:localhost#key1"]
+            "assertionMethod": ["did:web:did-web-mock.test#key1"]
         }"#;
 
             let server = MockServer::start();
 
-            let server_url = server.url("/").replace("127.0.0.1", "localhost");
-            did_web::set_proxy("localhost", &server_url);
+            did_web::set_proxy(did_web::TEST_MOCK_DOMAIN, &server.url("/"));
 
             let did_doc_mock = server.mock(|when, then| {
                 when.method(GET).path("/.well-known/did.json");
@@ -335,7 +414,7 @@ mod tests {
             });
 
             let context = Context::new();
-            let doc = did_web::resolve_async(&did("did:web:localhost"), &context)
+            let doc = did_web::resolve_async(&did("did:web:did-web-mock.test"), &context)
                 .await
                 .unwrap();
             let doc_expected = DidDocument::from_json(DID_JSON).unwrap();
@@ -346,12 +425,67 @@ mod tests {
             did_doc_mock.assert();
         }
 
+        // Resolution must reject a document whose `id` doesn't match the
+        // requested DID; otherwise a redirect or content swap can hand back a
+        // different DID's document undetected. `parse_did_doc` now enforces this
+        // (`DidWebError::DidMismatch`), so `spoofed_did_doc_is_rejected` passes.
+        // https://jira.corp.adobe.com/browse/CAI-12259
+        #[tokio::test]
+        async fn spoofed_did_doc_is_rejected() {
+            // Simulates: issuer DID is `did:web:did-web-mock.test` (the "trusted"
+            // looking DID referenced by a VC's `issuer` field), but resolution
+            // (e.g. via an HTTP redirect hijacked by an attacker, or a compromised/
+            // misconfigured origin) actually returns a DID document for a
+            // completely different subject, `did:web:attacker.test`, controlled by
+            // the attacker and containing the attacker's own key material.
+            const ATTACKER_DID_JSON: &str = r#"{
+                "@context": "https://www.w3.org/ns/did/v1",
+                "id": "did:web:attacker.test",
+                "verificationMethod": [{
+                    "id": "did:web:attacker.test#key1",
+                    "type": "Ed25519VerificationKey2018",
+                    "controller": "did:web:attacker.test",
+                    "publicKeyBase58": "ATTACKERKEY2VfrpySNEL6xmXJWQg6iY94qwNp1qrJJFBu"
+                }],
+                "assertionMethod": ["did:web:attacker.test#key1"]
+            }"#;
+
+            let server = MockServer::start();
+
+            // The proxy stands in for "wherever the redirect/compromised origin
+            // actually served content from" -- from the caller's point of view, it
+            // asked to resolve `did:web:did-web-mock.test` and nothing signals that
+            // the response body belongs to a different DID.
+            did_web::set_proxy(did_web::TEST_MOCK_DOMAIN, &server.url("/"));
+
+            let attacker_doc_mock = server.mock(|when, then| {
+                when.method(GET).path("/.well-known/did.json");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .body(ATTACKER_DID_JSON);
+            });
+
+            let context = Context::new();
+
+            // Requested DID is the "trusted" one; the attacker's document (a
+            // different subject `id`) must be rejected rather than returned.
+            let result = did_web::resolve_async(&did("did:web:did-web-mock.test"), &context).await;
+
+            did_web::clear_proxies();
+            attacker_doc_mock.assert();
+
+            assert!(
+                matches!(result, Err(DidWebError::DidMismatch { .. })),
+                "resolve_async must reject a DID document whose `id` does not \
+                 match the requested DID, got: {result:?}"
+            );
+        }
+
         #[tokio::test]
         async fn content_length_above_limit_rejected() {
             let server = MockServer::start();
 
-            let server_url = server.url("/").replace("127.0.0.1", "localhost");
-            did_web::set_proxy("localhost", &server_url);
+            did_web::set_proxy(did_web::TEST_MOCK_DOMAIN, &server.url("/"));
 
             let oversized_body = vec![b'X'; (MAX_DID_DOC_SIZE + 1) as usize];
             let _mock = server.mock(|when, then| {
@@ -363,7 +497,7 @@ mod tests {
             });
 
             let context = Context::new();
-            let result = did_web::resolve_async(&did("did:web:localhost"), &context).await;
+            let result = did_web::resolve_async(&did("did:web:did-web-mock.test"), &context).await;
 
             did_web::clear_proxies();
 
@@ -377,8 +511,7 @@ mod tests {
         async fn oversized_response_returns_error() {
             let server = MockServer::start();
 
-            let server_url = server.url("/").replace("127.0.0.1", "localhost");
-            did_web::set_proxy("localhost", &server_url);
+            did_web::set_proxy(did_web::TEST_MOCK_DOMAIN, &server.url("/"));
 
             // Serve a body one byte larger than the allowed limit.
             let oversized_body = vec![b'X'; (MAX_DID_DOC_SIZE + 1) as usize];
@@ -390,7 +523,7 @@ mod tests {
             });
 
             let context = Context::new();
-            let result = did_web::resolve_async(&did("did:web:localhost"), &context).await;
+            let result = did_web::resolve_async(&did("did:web:did-web-mock.test"), &context).await;
 
             did_web::clear_proxies();
 
@@ -460,8 +593,7 @@ mod tests {
 
             let server = MockServer::start();
 
-            let server_url = server.url("/").replace("127.0.0.1", "localhost");
-            did_web::set_proxy("localhost", &server_url);
+            did_web::set_proxy(did_web::TEST_MOCK_DOMAIN, &server.url("/"));
 
             // Empty allowlist — every host blocked.
             // Before Fix 1, get_did_doc() ignored this and created its own resolver.
@@ -470,7 +602,7 @@ mod tests {
                 RestrictedResolver::with_allowed_hosts(inner, vec![] as Vec<HostPattern>);
             let context = Context::new().with_resolver_async(restricted);
 
-            let result = did_web::resolve_async(&did("did:web:localhost"), &context).await;
+            let result = did_web::resolve_async(&did("did:web:did-web-mock.test"), &context).await;
 
             did_web::clear_proxies();
 

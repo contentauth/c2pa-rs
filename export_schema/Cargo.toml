@@ -4,10 +4,15 @@ version.workspace = true
 authors = ["Dave Kozma <dkozma@adobe.com>"]
 license = "MIT OR Apache-2.0"
 edition = "2018"
-rust-version = "1.88.0"
+rust-version = "1.96.0"
 
 [dependencies]
 anyhow = "1.0.103"
-c2pa = { workspace = true, features = ["openssl", "json_schema"] }
+c2pa = { workspace = true, features = ["json_schema"] }
 schemars = "1.2.1"
 serde_json = "1.0.150"
+
+[features]
+default = ["openssl"]
+openssl = ["c2pa/openssl"]
+rust_native_crypto = ["c2pa/rust_native_crypto"]

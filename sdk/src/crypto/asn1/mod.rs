@@ -42,8 +42,8 @@ use der::{Decode, Encode};
 /// - The header cannot be encoded
 pub(crate) fn reconstruct_der_bytes(tag: u8, content: &[u8]) -> Result<Vec<u8>, der::Error> {
     // Use der crate's Header which handles both short and long form length encoding
-    let der_tag = der::Tag::try_from(tag)?;
-    let header = der::Header::new(der_tag, content.len())?;
+    let der_tag = der::Tag::from_der(&[tag])?;
+    let header = der::Header::new(der_tag, der::Length::try_from(content.len())?);
 
     // Encode the header (tag + length)
     let mut der_bytes = Vec::new();
@@ -72,15 +72,17 @@ fn extract_der_content(der_bytes: &[u8]) -> Result<&str, der::Error> {
 
     // Get the content portion - header.encoded_len() gives a Length we need to convert
     let header_len: usize = header.encoded_len()?.try_into()?;
-    let content_len: usize = header.length.try_into()?;
+    let content_len: usize = header.length().try_into()?;
 
     if der_bytes.len() < header_len + content_len {
         Err(der::Tag::GeneralizedTime.length_error())?;
     }
 
     // Extract and validate UTF-8
-    std::str::from_utf8(&der_bytes[header_len..header_len + content_len])
-        .map_err(|_| der::Tag::Utf8String.value_error())
+    Ok(
+        std::str::from_utf8(&der_bytes[header_len..header_len + content_len])
+            .map_err(|_| der::Tag::Utf8String.value_error())?,
+    )
 }
 
 /// Algorithm identifier for use with bcder
@@ -260,17 +262,17 @@ impl GeneralizedTime {
         // If that fails, manually parse to allow fractional seconds
         // DER format: Tag (0x18) + Length + Content
         if bytes.len() < 2 {
-            return Err(der::Tag::GeneralizedTime.length_error());
+            return Err(der::Tag::GeneralizedTime.length_error().into());
         }
 
         if bytes[0] != 0x18 {
             // 0x18 = GENERALIZED_TIME tag
-            return Err(der::Tag::GeneralizedTime.value_error());
+            return Err(der::Tag::GeneralizedTime.value_error().into());
         }
 
         let length = bytes[1] as usize;
         if bytes.len() != length + 2 {
-            return Err(der::Tag::GeneralizedTime.length_error());
+            return Err(der::Tag::GeneralizedTime.length_error().into());
         }
 
         let content = &bytes[2..];
@@ -280,7 +282,7 @@ impl GeneralizedTime {
         // Parse RFC 3161 format: YYYYMMDDHHmmss[.f*]Z
         // Minimum length: 15 chars (YYYYMMDDHHmmssZ)
         if time_str.len() < 15 || !time_str.ends_with('Z') {
-            return Err(der::Tag::GeneralizedTime.value_error());
+            return Err(der::Tag::GeneralizedTime.value_error().into());
         }
 
         // Extract components
@@ -314,17 +316,17 @@ impl GeneralizedTime {
         let nanoseconds = if !frac_part.is_empty() {
             // Should start with a dot
             if !frac_part.starts_with('.') {
-                return Err(der::Tag::GeneralizedTime.value_error());
+                return Err(der::Tag::GeneralizedTime.value_error().into());
             }
 
             let frac_digits = &frac_part[1..]; // Remove leading dot
             if frac_digits.is_empty() || frac_digits.len() > 9 {
-                return Err(der::Tag::GeneralizedTime.value_error());
+                return Err(der::Tag::GeneralizedTime.value_error().into());
             }
 
             // Verify all bytes are ASCII digits
             if !frac_digits.as_bytes()[0].is_ascii_digit() {
-                return Err(der::Tag::GeneralizedTime.value_error());
+                return Err(der::Tag::GeneralizedTime.value_error().into());
             }
 
             // Decode the fractional seconds using approach from RustCrypto's x509-tsp
@@ -459,21 +461,21 @@ impl From<GeneralizedTime> for chrono::DateTime<chrono::Utc> {
     }
 }
 
-// impl From cannot return Result; conversions should never fail for valid dates
-#[allow(clippy::expect_used)]
-impl From<chrono::DateTime<chrono::Utc>> for GeneralizedTime {
-    fn from(dt: chrono::DateTime<chrono::Utc>) -> Self {
+// Fallible: der's GeneralizedTime only supports 1970-9999, so a DateTime outside
+// that range (e.g. a pre-1970 signing time attacker-supplied in a timestamp token)
+// must return an error rather than panic.
+impl TryFrom<chrono::DateTime<chrono::Utc>> for GeneralizedTime {
+    type Error = der::Error;
+
+    fn try_from(dt: chrono::DateTime<chrono::Utc>) -> Result<Self, Self::Error> {
         // Convert chrono to SystemTime, then to der's GeneralizedTime
         let system_time: std::time::SystemTime = dt.into();
 
-        // Create GeneralizedTime from SystemTime
-        // This should never fail for valid dates (der crate supports dates from 1970-2255)
-        let der_time = der::asn1::GeneralizedTime::from_system_time(system_time)
-            .expect("Failed to create GeneralizedTime from valid DateTime");
+        // der supports 1970-9999; out-of-range dates error here instead of panicking
+        let der_time = der::asn1::GeneralizedTime::from_system_time(system_time)?;
 
         // Convert to our wrapper type
-        // Encoding should never fail for a valid GeneralizedTime
-        Self::from_der_time(der_time).expect("Failed to encode GeneralizedTime (internal error)")
+        Self::from_der_time(der_time)
     }
 }
 
@@ -717,7 +719,7 @@ mod tests {
         let dt = Utc.with_ymd_and_hms(2023, 1, 15, 12, 30, 45).unwrap();
 
         // Convert to GeneralizedTime
-        let gt = GeneralizedTime::from(dt);
+        let gt = GeneralizedTime::try_from(dt).unwrap();
 
         // Verify the time string format (should be "20230115123045Z")
         let time_str = gt.as_str();
@@ -746,7 +748,7 @@ mod tests {
         // Create a GeneralizedTime from a known timestamp and test roundtrip
         use chrono::{Datelike, TimeZone, Utc};
         let test_time = Utc.with_ymd_and_hms(2022, 6, 10, 18, 46, 40).unwrap();
-        let gt = GeneralizedTime::from(test_time);
+        let gt = GeneralizedTime::try_from(test_time).unwrap();
 
         // Get DER bytes and parse them back
         let der_bytes = gt.as_der_bytes();
@@ -795,7 +797,7 @@ mod tests {
 
         // Test GeneralizedTime roundtrip with a timestamp
         let test_time = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
-        let gt = GeneralizedTime::from(test_time);
+        let gt = GeneralizedTime::try_from(test_time).unwrap();
         let der_bytes = gt.as_der_bytes();
         let gt_parsed = GeneralizedTime::from_der_bytes(der_bytes).unwrap();
         assert_eq!(gt, gt_parsed);
@@ -962,7 +964,7 @@ mod tests {
         use chrono::{TimeZone, Utc};
 
         let original_dt = Utc.with_ymd_and_hms(2025, 10, 29, 14, 30, 0).unwrap();
-        let gt1 = GeneralizedTime::from(original_dt);
+        let gt1 = GeneralizedTime::try_from(original_dt).unwrap();
 
         // Get the DER bytes directly
         let der_bytes = gt1.as_der_bytes();
@@ -994,7 +996,7 @@ mod tests {
 
         // Convert to chrono, then to GeneralizedTime
         let dt: chrono::DateTime<chrono::Utc> = system_time.into();
-        let gt = GeneralizedTime::from(dt);
+        let gt = GeneralizedTime::try_from(dt).unwrap();
 
         // Convert back and verify
         let dt_back: chrono::DateTime<chrono::Utc> = gt.into();
@@ -1005,6 +1007,26 @@ mod tests {
             .duration_since(system_time)
             .unwrap_or_else(|_| system_time.duration_since(system_time_back).unwrap());
         assert!(diff.as_secs() < 1);
+    }
+
+    #[test]
+    fn test_generalized_time_try_from_out_of_range() {
+        use chrono::TimeZone;
+
+        // der's GeneralizedTime only supports 1970-9999. Dates outside that range
+        // (e.g. a pre-1970 signing time attacker-supplied in a timestamp token) must
+        // return an error rather than panic. Regression test for the DoS where an
+        // infallible `From` impl called `.expect()` on `from_system_time`.
+        let pre_1970 = chrono::Utc.with_ymd_and_hms(1950, 1, 1, 0, 0, 0).unwrap();
+        assert!(GeneralizedTime::try_from(pre_1970).is_err());
+
+        // A date past der's upper bound (year 9999) must also error rather than panic.
+        let post_9999 = chrono::Utc.with_ymd_and_hms(10000, 1, 1, 0, 0, 0).unwrap();
+        assert!(GeneralizedTime::try_from(post_9999).is_err());
+
+        // A valid in-range date still succeeds.
+        let in_range = chrono::Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        assert!(GeneralizedTime::try_from(in_range).is_ok());
     }
 
     /// Test Extensions::from_constructed() with IMPLICIT tagging
@@ -1350,5 +1372,197 @@ mod tests {
                 "Mismatch for: {desc}"
             );
         }
+    }
+
+    /// Buffer too short to hold even a DER tag and length byte.
+    #[test]
+    fn test_rfc3161_too_short() {
+        let empty: &[u8] = &[];
+        let err = GeneralizedTime::from_der_bytes_rfc3161(empty)
+            .expect_err("empty buffer should be rejected");
+        assert_eq!(
+            err.kind(),
+            der::ErrorKind::Length {
+                tag: der::Tag::GeneralizedTime
+            },
+            "expected Length error for empty buffer, got {:?}",
+            err.kind()
+        );
+
+        let tag_only: &[u8] = &[0x18];
+        let err = GeneralizedTime::from_der_bytes_rfc3161(tag_only)
+            .expect_err("tag byte without length should be rejected");
+        assert_eq!(
+            err.kind(),
+            der::ErrorKind::Length {
+                tag: der::Tag::GeneralizedTime
+            },
+            "expected Length error for tag-only buffer, got {:?}",
+            err.kind()
+        );
+    }
+
+    /// First byte is not the GENERALIZED_TIME tag (0x18).
+    #[test]
+    fn test_rfc3161_wrong_tag() {
+        // 0x17 = UTCTime, not GeneralizedTime.
+        let mut der_bytes = vec![0x17, 0x0d];
+        der_bytes.extend_from_slice(b"2301010000000");
+
+        let err = GeneralizedTime::from_der_bytes_rfc3161(&der_bytes)
+            .expect_err("UTCTime tag should be rejected");
+        assert_eq!(
+            err.kind(),
+            der::ErrorKind::Value {
+                tag: der::Tag::GeneralizedTime
+            },
+            "expected Value error for wrong tag, got {:?}",
+            err.kind()
+        );
+    }
+
+    /// Declared DER length does not match the actual content length.
+    /// The check is an exact comparison (`bytes.len() != length + 2`), so both
+    /// an over-declared and an under-declared length are rejected.
+    #[test]
+    fn test_rfc3161_length_mismatch() {
+        // Content is 15 bytes, but the length byte claims 32.
+        let mut over = vec![0x18, 0x20];
+        over.extend_from_slice(b"20230101000000Z");
+        let err = GeneralizedTime::from_der_bytes_rfc3161(&over)
+            .expect_err("over-declared length should be rejected");
+        assert_eq!(
+            err.kind(),
+            der::ErrorKind::Length {
+                tag: der::Tag::GeneralizedTime
+            },
+            "expected Length error for over-declared length, got {:?}",
+            err.kind()
+        );
+
+        // Content is 15 bytes, but the length byte claims 5.
+        let mut under = vec![0x18, 0x05];
+        under.extend_from_slice(b"20230101000000Z");
+        let err = GeneralizedTime::from_der_bytes_rfc3161(&under)
+            .expect_err("under-declared length should be rejected");
+        assert_eq!(
+            err.kind(),
+            der::ErrorKind::Length {
+                tag: der::Tag::GeneralizedTime
+            },
+            "expected Length error for under-declared length, got {:?}",
+            err.kind()
+        );
+    }
+
+    /// Content is shorter than the 15-char minimum, or does not end with 'Z'.
+    #[test]
+    fn test_rfc3161_too_short_time_str() {
+        let short = "2023";
+        let mut der_bytes = vec![0x18, short.len() as u8];
+        der_bytes.extend_from_slice(short.as_bytes());
+        let err = GeneralizedTime::from_der_bytes_rfc3161(&der_bytes)
+            .expect_err("content under 15 chars should be rejected");
+        assert_eq!(
+            err.kind(),
+            der::ErrorKind::Value {
+                tag: der::Tag::GeneralizedTime
+            },
+            "expected Value error for short content, got {:?}",
+            err.kind()
+        );
+
+        let no_z = "20230101000000X";
+        let mut der_bytes = vec![0x18, no_z.len() as u8];
+        der_bytes.extend_from_slice(no_z.as_bytes());
+        let err = GeneralizedTime::from_der_bytes_rfc3161(&der_bytes)
+            .expect_err("content without trailing 'Z' should be rejected");
+        assert_eq!(
+            err.kind(),
+            der::ErrorKind::Value {
+                tag: der::Tag::GeneralizedTime
+            },
+            "expected Value error for missing trailing 'Z', got {:?}",
+            err.kind()
+        );
+    }
+
+    /// A fractional part is present but does not begin with '.'.
+    #[test]
+    fn test_rfc3161_frac_missing_dot() {
+        let time_str = "20230101000000XZ";
+        let mut der_bytes = vec![0x18, time_str.len() as u8];
+        der_bytes.extend_from_slice(time_str.as_bytes());
+
+        let err = GeneralizedTime::from_der_bytes_rfc3161(&der_bytes)
+            .expect_err("fractional part without leading dot should be rejected");
+        assert_eq!(
+            err.kind(),
+            der::ErrorKind::Value {
+                tag: der::Tag::GeneralizedTime
+            },
+            "expected Value error for missing fractional dot, got {:?}",
+            err.kind()
+        );
+    }
+
+    /// A '.' immediately followed by 'Z', i.e. zero fractional digits.
+    #[test]
+    fn test_rfc3161_frac_empty() {
+        let time_str = "20230101000000.Z";
+        let mut der_bytes = vec![0x18, time_str.len() as u8];
+        der_bytes.extend_from_slice(time_str.as_bytes());
+
+        let err = GeneralizedTime::from_der_bytes_rfc3161(&der_bytes)
+            .expect_err("empty fractional digits should be rejected");
+        assert_eq!(
+            err.kind(),
+            der::ErrorKind::Value {
+                tag: der::Tag::GeneralizedTime
+            },
+            "expected Value error for empty fractional digits, got {:?}",
+            err.kind()
+        );
+    }
+
+    /// More than 9 fractional digits (nanosecond precision is the maximum).
+    #[test]
+    fn test_rfc3161_frac_too_long() {
+        let time_str = "20230101000000.1234567890Z"; // 10 fractional digits
+        let mut der_bytes = vec![0x18, time_str.len() as u8];
+        der_bytes.extend_from_slice(time_str.as_bytes());
+
+        let err = GeneralizedTime::from_der_bytes_rfc3161(&der_bytes)
+            .expect_err("more than 9 fractional digits should be rejected");
+        assert_eq!(
+            err.kind(),
+            der::ErrorKind::Value {
+                tag: der::Tag::GeneralizedTime
+            },
+            "expected Value error for over-long fractional digits, got {:?}",
+            err.kind()
+        );
+    }
+
+    /// The fractional part starts with a non-digit byte.
+    /// Kept to a single character on purpose: only the first fractional byte is
+    /// checked here, so something like ".5aZ" would instead fail later during
+    /// integer parsing.
+    #[test]
+    fn test_rfc3161_frac_nonascii_digit() {
+        let time_str = "20230101000000.aZ";
+        let mut der_bytes = vec![0x18, time_str.len() as u8];
+        der_bytes.extend_from_slice(time_str.as_bytes());
+
+        let err = GeneralizedTime::from_der_bytes_rfc3161(&der_bytes)
+            .expect_err("non-digit fractional part should be rejected");
+        assert_eq!(
+            err.kind(),
+            der::ErrorKind::Value {
+                tag: der::Tag::GeneralizedTime
+            },
+            "expected Value error for non-digit fractional part, got {:?}",
+            err.kind()
+        );
     }
 }

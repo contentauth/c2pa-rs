@@ -38,7 +38,7 @@ use crate::{
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
-    jumbf_io, log_item,
+    log_item,
     manifest::StoreOptions,
     manifest_store_report::ManifestStoreReport,
     status_tracker::StatusTracker,
@@ -46,7 +46,7 @@ use crate::{
     utils::hash_utils::hash_to_b64,
     validation_results::{ValidationResults, ValidationState},
     validation_status::{ValidationStatus, ASSERTION_MISSING, ASSERTION_NOT_REDACTED},
-    Ingredient, Manifest, ManifestAssertion,
+    Ingredient, Manifest, ManifestAssertion, ManifestAssertionKind,
 };
 
 /// MaybeSend allows for no Send bound on wasm32 targets
@@ -228,7 +228,7 @@ impl Reader {
 
         // Prefer the caller's format hint when it identifies the same container as the
         // stream bytes (e.g. "dng" stays "dng" rather than being widened to "image/tiff").
-        let format_owned = jumbf_io::format_from_stream(format, &mut stream);
+        let format_owned = self.context.io().format_from_stream(format, &mut stream);
         let format = format_owned.as_str();
 
         self.context.check_progress(ProgressPhase::Reading, 1, 1)?;
@@ -258,7 +258,8 @@ impl Reader {
     /// # Note
     /// [CAWG identity assertions](https://cawg.io/identity/) require async calls for validation.
     #[deprecated(
-        note = "Use `Reader::from_context(context).with_stream(format, stream)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+        since = "0.79.4",
+        note = "Use `Reader::from_context(context).with_stream(format, stream)` instead, passing a `Context` explicitly rather than relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     #[async_generic]
     pub fn from_stream(format: &str, stream: impl Read + Seek + MaybeSend) -> Result<Reader> {
@@ -306,8 +307,8 @@ impl Reader {
     pub fn with_file<P: AsRef<std::path::Path>>(mut self, path: P) -> Result<Self> {
         let path = path.as_ref();
         let mut file = File::open(path)?;
-        let path_fmt = crate::format_from_path(path).unwrap_or_default();
-        let format = jumbf_io::format_from_stream(&path_fmt, &mut file);
+        let path_fmt = self.context.io().format_from_path(path).unwrap_or_default();
+        let format = self.context.io().format_from_stream(&path_fmt, &mut file);
 
         // Try loading from stream first
         let mut validation_log = StatusTracker::default();
@@ -389,7 +390,8 @@ impl Reader {
     /// [CAWG identity assertions](https://cawg.io/identity/) require async calls for validation.
     #[cfg(feature = "file_io")]
     #[deprecated(
-        note = "Use `Reader::from_context(context).with_file(path)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+        since = "0.79.4",
+        note = "Use `Reader::from_context(context).with_file(path)` instead, passing a `Context` explicitly rather than relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     #[async_generic]
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Reader> {
@@ -473,7 +475,8 @@ impl Reader {
     /// This function returns an [`Error`] ef the c2pa_data is not valid, or severe errors occur in validation.
     /// You must check validation status for non-severe errors.
     #[deprecated(
-        note = "Use `Reader::from_context(context).with_manifest_data_and_stream(c2pa_data, format, stream)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+        since = "0.79.4",
+        note = "Use `Reader::from_context(context).with_manifest_data_and_stream(c2pa_data, format, stream)` instead, passing a `Context` explicitly rather than relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     #[async_generic]
     pub fn from_manifest_data_and_stream(
@@ -584,7 +587,10 @@ impl Reader {
     ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
 
-        let asset_type = jumbf_io::get_supported_file_extension(path.as_ref())
+        let asset_type = self
+            .context
+            .io()
+            .supported_extension(path.as_ref())
             .ok_or(crate::Error::UnsupportedType)?;
 
         let mut init_segment = std::fs::File::open(path.as_ref())?;
@@ -609,7 +615,8 @@ impl Reader {
     /// multiple separate asset files.
     #[cfg(feature = "file_io")]
     #[deprecated(
-        note = "Use `Reader::from_context(context).with_fragmented_files(path, fragments)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+        since = "0.79.4",
+        note = "Use `Reader::from_context(context).with_fragmented_files(path, fragments)` instead, passing a `Context` explicitly rather than relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     pub fn from_fragmented_files<P: AsRef<std::path::Path>>(
         path: P,
@@ -622,7 +629,7 @@ impl Reader {
 
     /// Returns a [Vec] of mime types that [c2pa-rs] is able to read.
     pub fn supported_mime_types() -> Vec<String> {
-        jumbf_io::supported_reader_mime_types()
+        Context::default().io().reader_mime_types()
     }
 
     /// replace assertion values in the reader json with the values from the assertion_values map
@@ -981,13 +988,13 @@ impl Reader {
                 ) {
                     let uri = to_assertion_uri(claim_label, &ca.label());
                     if let Some(a) = self.store.get_assertion_from_uri(&uri) {
-                        write_bytes(uri_to_path(&uri, Some(claim_label)), a.data())?;
+                        write_bytes(uri_to_path(&uri, Some(claim_label))?, a.data())?;
                     }
                 }
             }
             // Write databoxes
             for (hr, databox) in claim.databoxes() {
-                write_bytes(uri_to_path(&hr.url(), Some(claim_label)), &databox.data)?;
+                write_bytes(uri_to_path(&hr.url(), Some(claim_label))?, &databox.data)?;
             }
         }
         Ok(())
@@ -1237,7 +1244,24 @@ impl Reader {
                     builder.add_ingredient(ingredient);
                 }
                 for assertion in manifest.assertions.iter() {
-                    builder.add_assertion(assertion.label(), assertion.value()?)?;
+                    // Archive bookkeeping, not part of the manifest being edited.
+                    if assertion
+                        .label()
+                        .starts_with(crate::assertions::labels::ARCHIVE_METADATA)
+                    {
+                        continue;
+                    }
+                    // For archive roundtrip: keep created/gathered attribution and kind
+                    let kind = match assertion.kind() {
+                        ManifestAssertionKind::Json => Some(ManifestAssertionKind::Json),
+                        _ => None,
+                    };
+                    builder.add_assertion_impl(
+                        assertion.label(),
+                        assertion.value()?,
+                        kind,
+                        assertion.created(),
+                    )?;
                 }
             }
         }
@@ -1316,6 +1340,7 @@ pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
+    #![allow(deprecated)]
     use std::io::Cursor;
 
     use super::*;
@@ -1581,6 +1606,48 @@ pub mod tests {
         Ok(())
     }
 
+    /// A databox label containing path traversal (as could be read straight
+    /// from an attacker-crafted asset's JUMBF `jumd` box - see
+    /// `Store::from_jumbf_impl`, which passes that label to `Claim::put_databox`
+    /// unmodified) must not let `to_folder` write outside the output folder.
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_to_folder_rejects_path_traversal_in_databox_label() {
+        use crate::{assertions::DataBox, claim::Claim, utils::io_utils::tempdirectory};
+
+        let malicious_databox = DataBox {
+            format: "application/octet-stream".to_string(),
+            data: b"attacker controlled bytes".to_vec(),
+            data_types: None,
+        };
+        let db_cbor = c2pa_cbor::to_vec(&malicious_databox).unwrap();
+
+        let mut claim = Claim::new("test", None, 1);
+        claim.put_databox("../../../evil", &db_cbor, None).unwrap();
+
+        let mut store = Store::new();
+        store.commit_claim(claim).unwrap();
+
+        let reader = Reader {
+            store: Arc::new(store),
+            ..Default::default()
+        };
+
+        let temp_dir = tempdirectory().unwrap();
+        let result = reader.to_folder(temp_dir.path());
+        assert!(
+            result.is_err(),
+            "a databox label containing path traversal must be rejected, not written to disk"
+        );
+
+        // Confirm nothing escaped into the output folder's parent.
+        let escaped = temp_dir.path().parent().unwrap().join("evil");
+        assert!(
+            !escaped.exists(),
+            "traversal must not create files outside the output folder"
+        );
+    }
+
     #[test]
     #[cfg(feature = "file_io")]
     /// Test that the reader can validate a file with nested assertion errors
@@ -1820,6 +1887,50 @@ pub mod tests {
                 "no bytes should be written to the stream on error for uri {bad_uri:?}"
             );
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn read_zip_signed_on_linux() -> Result<()> {
+        let mut stream = Cursor::new(include_bytes!(
+            "../tests/fixtures/cross-compatibility-zip/sample1-linux.zip"
+        ));
+        let reader = Reader::from_context(test_context()).with_stream("zip", &mut stream)?;
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        Ok(())
+    }
+
+    #[test]
+    fn read_zip_signed_on_macos() -> Result<()> {
+        let mut stream = Cursor::new(include_bytes!(
+            "../tests/fixtures/cross-compatibility-zip/sample1-macos.zip"
+        ));
+        let reader = Reader::from_context(test_context()).with_stream("zip", &mut stream)?;
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        Ok(())
+    }
+
+    #[test]
+    fn read_zip_signed_with_backslash_paths_on_windows() -> Result<()> {
+        let mut stream = Cursor::new(include_bytes!(
+            "../tests/fixtures/cross-compatibility-zip/sample1_backslash-windows.zip"
+        ));
+        let reader = Reader::from_context(test_context()).with_stream("zip", &mut stream)?;
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        Ok(())
+    }
+
+    #[test]
+    fn read_zip_signed_with_normalized_paths_on_windows() -> Result<()> {
+        let mut stream = Cursor::new(include_bytes!(
+            "../tests/fixtures/cross-compatibility-zip/sample1-windows.zip"
+        ));
+        let reader = Reader::from_context(test_context()).with_stream("zip", &mut stream)?;
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
 
         Ok(())
     }

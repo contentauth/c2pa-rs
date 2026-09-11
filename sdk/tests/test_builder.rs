@@ -59,7 +59,7 @@ fn test_builder_ca_jpg() -> Result<()> {
     builder.save_to_stream(format, &mut source, &mut dest)?;
     // use this to update the known good
     // dest.set_position(0);
-    // let reader = Reader::from_stream(format, &mut dest)?;
+    // let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
     // std::fs::write("tests/known_good/CA_test.json", reader.json()).unwrap();
 
     dest.set_position(0);
@@ -613,6 +613,84 @@ fn test_metadata_formats_json_manifest() -> Result<()> {
             _ => {}
         }
     }
+    Ok(())
+}
+
+/// The created/gathered attribution must be kept in the read path for metadata assertions.
+#[test]
+fn test_metadata_assertion_created_flag_round_trips() -> Result<()> {
+    let context = test_context().into_shared();
+
+    let manifest_json = r#"
+    {
+        "assertions": [
+            {
+                "label": "c2pa.metadata",
+                "kind": "Json",
+                "created": true,
+                "data": {
+                    "@context": { "exif": "http://ns.adobe.com/exif/1.0/" },
+                    "exif:GPSLatitude": "39,21.102N"
+                }
+            },
+            {
+                "label": "cawg.metadata",
+                "kind": "Json",
+                "data": {
+                    "@context": { "cawg": "http://cawg.org/ns/1.0/" },
+                    "cawg:SomeField": "SomeValue"
+                }
+            },
+            {
+                "label": "c2pa.assertion.metadata",
+                "created": true,
+                "data": {
+                    "@context": { "custom": "http://custom.org/ns/1.0/" },
+                    "custom:Field": "CustomValue"
+                }
+            }
+        ]
+    }
+    "#;
+
+    let mut builder = Builder::from_shared_context(&context).with_definition(manifest_json)?;
+    const TEST_IMAGE: &[u8] = include_bytes!("fixtures/CA.jpg");
+    let format = "image/jpeg";
+    let mut source = Cursor::new(TEST_IMAGE);
+    let mut dest = Cursor::new(Vec::new());
+
+    builder.sign(context.signer()?, format, &mut source, &mut dest)?;
+
+    dest.set_position(0);
+    let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
+
+    let created_of = |label: &str| -> bool {
+        reader
+            .active_manifest()
+            .unwrap()
+            .assertions()
+            .iter()
+            .find(|a| a.label() == label)
+            .unwrap_or_else(|| panic!("{label} should be present"))
+            .created()
+    };
+
+    // `c2pa.metadata` and `cawg.metadata` decode as Metadata,
+    // `c2pa.assertion.metadata` decodes as AssertionMetadata.
+    assert!(
+        created_of("c2pa.metadata"),
+        "a created c2pa.metadata assertion reads back as created"
+    );
+    assert!(
+        created_of("c2pa.assertion.metadata"),
+        "a created c2pa.assertion.metadata assertion reads back as created"
+    );
+    // A gathered assertion must stay gathered.
+    assert!(
+        !created_of("cawg.metadata"),
+        "a gathered metadata assertion must not read back as created"
+    );
+
     Ok(())
 }
 

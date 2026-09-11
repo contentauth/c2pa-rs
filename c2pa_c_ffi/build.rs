@@ -14,7 +14,10 @@
 //! This creates the c2pa.h header file and the c2pa_version.txt file
 //! in the target directory. It is intended to be run as part of the build process.
 //! The crate version is added to the header file.
-use std::{env, path::Path};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 fn main() {
     // Get the version from the environment variable set by Cargo.
@@ -24,10 +27,19 @@ fn main() {
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR environment variable not set");
     println!("Running c2pa_c_ffi folder build script: {out_dir:?}");
 
-    let workspace_target_dir = Path::new(&out_dir)
-        .ancestors()
-        .nth(3)
-        .expect("Invalid OUT_DIR structure");
+    // Prefer an explicitly declared header directory over deriving it from OUT_DIR,
+    // whose layout seems to be able to shift across targets/toolchains and tooling updates...
+    // (e.g. emscripten with -Z build-std).
+    let header_dir = match env::var("C2PA_HEADER_DIR") {
+        Ok(dir) => PathBuf::from(dir),
+        Err(_) => Path::new(&out_dir)
+            .ancestors()
+            .nth(3)
+            .expect("Invalid OUT_DIR structure")
+            .to_path_buf(),
+    };
+    fs::create_dir_all(&header_dir).expect("could not create header output directory");
+    let workspace_target_dir = header_dir.as_path();
 
     // Generate the bindings using cbindgen.
     let crate_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
