@@ -29,6 +29,16 @@ use crate::{crypto::base64::encode, utils::io_utils::stream_len, Error, Result};
 
 const MAX_HASH_BUF: usize = 256 * 1024 * 1024; // cap memory usage to 256MB
 
+/// Size of the next chunk to read, given how much of the range is left and the
+/// configured buffer cap.
+///
+/// Clamping in `u64` keeps a range of 4 GiB or more from truncating on a 32-bit target,
+/// where `usize` is 32 bits. The cap fits in every supported `usize`, so the clamped
+/// value always converts.
+fn chunk_size(chunk_left: u64, max_hash_buf: usize) -> usize {
+    usize::try_from(chunk_left.min(max_hash_buf as u64)).unwrap_or(usize::MAX)
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 /// Defines a hash range to be used with `hash_stream_by_alg`
 pub struct HashRange {
@@ -141,6 +151,16 @@ impl Hasher {
             "sha512" => Ok(Hasher::SHA512(Sha512::new())),
             _ => Err(Error::UnsupportedType),
         }
+    }
+}
+
+/// Output size in bytes of a digest produced by the given hash algorithm.
+pub fn hash_size_by_alg(alg: &str) -> Result<usize> {
+    match alg {
+        "sha256" => Ok(<Sha256 as Digest>::output_size()),
+        "sha384" => Ok(<Sha384 as Digest>::output_size()),
+        "sha512" => Ok(<Sha512 as Digest>::output_size()),
+        _ => Err(Error::UnsupportedType),
     }
 }
 
@@ -421,7 +441,7 @@ where
         .iter()
         .map(|r| {
             let len = r.end() - r.start() + 1;
-            (len as usize).div_ceil(max_hash_buf) as u32
+            u32::try_from(len.div_ceil(max_hash_buf as u64)).unwrap_or(u32::MAX)
         })
         .sum();
     let mut step: u32 = 0;
@@ -446,7 +466,7 @@ where
             data.seek(SeekFrom::Start(*start))?;
 
             loop {
-                let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, max_hash_buf)];
+                let mut chunk = vec![0u8; chunk_size(chunk_left, max_hash_buf)];
 
                 data.read_exact(&mut chunk)?;
 
@@ -482,7 +502,7 @@ where
             // move to start of range
             data.seek(SeekFrom::Start(*start))?;
 
-            let mut chunk = vec![0u8; std::cmp::min(chunk_left as usize, max_hash_buf)];
+            let mut chunk = vec![0u8; chunk_size(chunk_left, max_hash_buf)];
             data.read_exact(&mut chunk)?;
 
             loop {
@@ -504,7 +524,7 @@ where
                     })?;
 
                 // read next chunk while we wait for hash
-                let mut next_chunk = vec![0u8; std::cmp::min(chunk_left as usize, max_hash_buf)];
+                let mut next_chunk = vec![0u8; chunk_size(chunk_left, max_hash_buf)];
                 data.read_exact(&mut next_chunk)?;
 
                 hasher_enum = match rx.recv() {
@@ -646,6 +666,21 @@ mod tests {
         NonZeroUsize::new(1024).unwrap()
     }
 
+    // Regression test for CAI-13325: `chunk_left as usize` truncated a range of
+    // exactly 4 GiB (2^32) to zero on 32-bit targets, so the read loop asked for
+    // zero bytes on every iteration and never terminated.
+    #[test]
+    fn chunk_size_does_not_truncate_on_32_bit_targets() {
+        let cap = test_hash_buf().get();
+
+        assert_eq!(chunk_size(0, cap), 0);
+        assert_eq!(chunk_size(1, cap), 1);
+        assert_eq!(chunk_size(cap as u64, cap), cap);
+        assert_eq!(chunk_size(cap as u64 + 1, cap), cap);
+        assert_eq!(chunk_size(1 << 32, cap), cap);
+        assert_eq!(chunk_size(u64::MAX, cap), cap);
+    }
+
     // Attacker-controlled HashRange with start+length > u64::MAX must return Err,
     // not panic, in both the exclusion and inclusion paths.
     #[test]
@@ -770,5 +805,57 @@ mod tests {
             hash,
             hex!("e3301ce38a42503098530b98cd1b652a10c5caf890735017dd0012ec319f04e5")
         );
+    }
+
+    // Reports a fixed virtual length and yields zero bytes on read, so a multi-GiB
+    // stream can be exercised without allocating that much memory.
+    struct ZeroStream {
+        len: u64,
+        pos: u64,
+    }
+
+    impl Read for ZeroStream {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let remaining = self.len - self.pos;
+            let n = std::cmp::min(buf.len() as u64, remaining) as usize;
+            buf[..n].fill(0);
+            self.pos += n as u64;
+            Ok(n)
+        }
+    }
+
+    impl Seek for ZeroStream {
+        fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+            self.pos = match pos {
+                SeekFrom::Start(p) => p,
+                SeekFrom::End(p) => (self.len as i64 + p) as u64,
+                SeekFrom::Current(p) => (self.pos as i64 + p) as u64,
+            };
+            Ok(self.pos)
+        }
+    }
+
+    // Regression test for CAI-13325: on 32-bit targets (wasm32) `chunk_left as usize`
+    // truncated a range of exactly 4 GiB (2^32) to zero, so each read-chunk buffer was
+    // empty, `read_exact` on it returned `Ok(())` immediately without decrementing
+    // `chunk_left`, and the loop spun forever. This drives the real hashing loop
+    // across a virtual 4 GiB range so the fix is verified under the project's
+    // wasm32-wasip2 test job, where `usize` is actually 32 bits.
+    #[test]
+    fn hash_range_of_exactly_4gib_terminates() {
+        let mut reader = ZeroStream {
+            len: 1u64 << 32,
+            pos: 0,
+        };
+        let hash = hash_stream_by_alg_with_progress_impl(
+            "sha256",
+            &mut reader,
+            None,
+            true,
+            &mut |_, _| Ok(()),
+            NonZeroUsize::new(1024 * 1024).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(hash.len(), 32);
     }
 }

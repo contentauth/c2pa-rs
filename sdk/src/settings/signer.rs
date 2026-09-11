@@ -22,7 +22,11 @@ use crate::{
     crypto::cert_chain_pem_to_der,
     dynamic_assertion::DynamicAssertion,
     http::{SyncGenericResolver, SyncHttpResolver},
-    identity::{builder::IdentityAssertionBuilder, x509::X509CredentialHolder},
+    identity::{
+        builder::{CredentialHolder, IdentityAssertionBuilder, IdentityBuilderError},
+        x509::X509CredentialHolder,
+        SignerPayload,
+    },
     settings::{Settings, SettingsValidate},
     signer::OwnedSignerWrapper,
     BoxedSigner, Error, Result, Signer,
@@ -75,9 +79,15 @@ pub enum SignerSettings {
 
 impl SignerSettings {
     // TODO: add async signer
-    /// Returns the constructed signer from the [Settings::signer] field.
+    /// Returns the constructed signer from the thread-local `signer` settings field.
     ///
     /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings].
+    ///
+    /// Configure the signer via a [`Context`](crate::Context) passed explicitly to
+    /// [`Builder::from_context`](crate::Builder::from_context) instead.
+    #[deprecated(
+        note = "Configure the signer via `Context` and pass it to `Builder::from_context` instead of using thread-local signer settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn signer() -> Result<BoxedSigner> {
         let signer_info = match Settings::get_thread_local_value::<Option<SignerSettings>>("signer")
         {
@@ -162,13 +172,27 @@ impl SignerSettings {
             }
 
             SignerSettings::Remote {
-                url: _url,
-                alg: _alg,
-                sign_cert: _sign_cert,
-                tsa_url: _tsa_url,
-                referenced_assertions: _,
-                roles: _,
-            } => todo!("Remote CAWG X.509 signing not yet supported"),
+                url,
+                alg: cawg_alg,
+                sign_cert: cawg_sign_cert,
+                tsa_url: cawg_tsa_url,
+                referenced_assertions: cawg_referenced_assertions,
+                roles: cawg_roles,
+            } => {
+                // The identity (CAWG) signature is not RFC 3161 time stamped, so
+                // the TSA URL is intentionally unused here (matches the Local case).
+                let _ = cawg_tsa_url;
+
+                let signer = CawgX509IdentitySigner::from_remote_settings(
+                    c2pa_signer,
+                    cawg_alg,
+                    url,
+                    cawg_sign_cert.as_bytes(),
+                    cawg_referenced_assertions.unwrap_or_default(),
+                    cawg_roles.unwrap_or_default(),
+                )?;
+                Ok(Box::new(signer))
+            }
         }
     }
 }
@@ -223,6 +247,37 @@ impl CawgX509IdentitySigner {
             c2pa_signer,
             identity_signer: Arc::from(raw_signer),
             identity_cert_chain: cert_chain_pem_to_der(sign_cert)?,
+            referenced_assertions,
+            roles,
+        })
+    }
+
+    /// Creates a combined signer that delegates identity signing to a remote
+    /// HTTP endpoint.
+    pub(crate) fn from_remote_settings(
+        c2pa_signer: BoxedSigner,
+        alg: SigningAlg,
+        url: String,
+        sign_cert: &[u8],
+        referenced_assertions: Vec<String>,
+        roles: Vec<String>,
+    ) -> Result<Self> {
+        let identity_cert_chain = cert_chain_pem_to_der(sign_cert)?;
+
+        // `max_signature_size` must describe only the raw signature: the cert chain
+        // is already accounted for separately by `X509CredentialHolder::reserve_size()`
+        // (via `cose_reserve_size`). 10_000 bytes is a generous fixed upper bound since
+        // the remote endpoint's exact signature size isn't known locally.
+        let max_signature_size = 10_000;
+
+        Ok(Self {
+            c2pa_signer,
+            identity_signer: Arc::new(RemoteRawSigner {
+                url,
+                alg,
+                max_signature_size,
+            }),
+            identity_cert_chain,
             referenced_assertions,
             roles,
         })
@@ -318,6 +373,128 @@ impl Signer for CawgX509IdentitySigner {
     }
 }
 
+/// Shares one [`CredentialHolder`] between the identity assertion builders
+/// handed out on every [`Signer::dynamic_assertions`] call.
+struct ArcCredentialHolder(Arc<dyn CredentialHolder + Send + Sync>);
+
+impl CredentialHolder for ArcCredentialHolder {
+    fn sig_type(&self) -> &'static str {
+        self.0.sig_type()
+    }
+
+    fn reserve_size(&self) -> usize {
+        self.0.reserve_size()
+    }
+
+    fn sign(
+        &self,
+        signer_payload: &SignerPayload,
+    ) -> std::result::Result<Vec<u8>, IdentityBuilderError> {
+        self.0.sign(signer_payload)
+    }
+}
+
+/// A [`Signer`] that signs the C2PA claim with an inner signer and adds one
+/// CAWG identity assertion produced by an arbitrary [`CredentialHolder`]
+/// (for example an identity claims aggregation credential fetched from an
+/// issuer at signing time).
+///
+/// Unlike [`CawgX509IdentitySigner`], this wrapper keeps whatever dynamic
+/// assertions the inner signer already contributes, so wrapping an X.509
+/// identity signer yields a manifest with both identity assertions.
+pub(crate) struct CawgIdentitySigner {
+    c2pa_signer: BoxedSigner,
+    credential_holder: Arc<dyn CredentialHolder + Send + Sync>,
+    referenced_assertions: Vec<String>,
+    roles: Vec<String>,
+}
+
+impl CawgIdentitySigner {
+    pub(crate) fn new(
+        c2pa_signer: BoxedSigner,
+        credential_holder: Box<dyn CredentialHolder + Send + Sync>,
+        referenced_assertions: &[&str],
+        roles: &[&str],
+    ) -> Self {
+        Self {
+            c2pa_signer,
+            credential_holder: Arc::from(credential_holder),
+            referenced_assertions: referenced_assertions
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            roles: roles.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+}
+
+impl Signer for CawgIdentitySigner {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+        Signer::sign(&self.c2pa_signer, data)
+    }
+
+    fn alg(&self) -> SigningAlg {
+        Signer::alg(&self.c2pa_signer)
+    }
+
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        self.c2pa_signer.certs()
+    }
+
+    fn reserve_size(&self) -> usize {
+        Signer::reserve_size(&self.c2pa_signer)
+    }
+
+    fn time_authority_url(&self) -> Option<String> {
+        self.c2pa_signer.time_authority_url()
+    }
+
+    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        self.c2pa_signer.timestamp_request_headers()
+    }
+
+    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+        self.c2pa_signer.timestamp_request_body(message)
+    }
+
+    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        self.c2pa_signer.send_timestamp_request(message)
+    }
+
+    fn ocsp_val(&self) -> Option<Vec<u8>> {
+        self.c2pa_signer.ocsp_val()
+    }
+
+    fn direct_cose_handling(&self) -> bool {
+        self.c2pa_signer.direct_cose_handling()
+    }
+
+    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+        let mut assertions = self.c2pa_signer.dynamic_assertions();
+
+        let mut iab = IdentityAssertionBuilder::for_credential_holder(ArcCredentialHolder(
+            Arc::clone(&self.credential_holder),
+        ));
+
+        if !self.referenced_assertions.is_empty() {
+            let refs: Vec<&str> = self
+                .referenced_assertions
+                .iter()
+                .map(|s| s.as_str())
+                .collect();
+            iab.add_referenced_assertions(&refs);
+        }
+
+        if !self.roles.is_empty() {
+            let roles: Vec<&str> = self.roles.iter().map(|s| s.as_str()).collect();
+            iab.add_roles(&roles);
+        }
+
+        assertions.push(Box::new(iab));
+        assertions
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct RemoteSigner {
     url: String,
@@ -361,11 +538,58 @@ impl Signer for RemoteSigner {
     }
 }
 
+/// A [`RawSigner`] that delegates identity signing to a remote HTTP endpoint.
+///
+/// A POST request with the raw bytes-to-be-signed as the body is sent to
+/// `url`; the response body (up to `max_signature_size` bytes) is used as
+/// the raw signature. This mirrors [`RemoteSigner`], but implements the
+/// lower-level [`RawSigner`] trait so it can back a [`CawgX509IdentitySigner`]
+/// (whose certificate chain and reserve-size accounting are handled by the
+/// SDK, not the raw signer).
+#[derive(Debug)]
+struct RemoteRawSigner {
+    url: String,
+    alg: SigningAlg,
+    max_signature_size: usize,
+}
+
+impl RawSigner for RemoteRawSigner {
+    fn sign(&self, data: &[u8]) -> std::result::Result<Vec<u8>, RawSignerError> {
+        use std::io::Read;
+
+        let request = Request::post(&self.url)
+            .body(data.to_vec())
+            .map_err(|e| RawSignerError::InternalError(e.to_string()))?;
+        let response = SyncGenericResolver::with_redirects()
+            .unwrap_or_default()
+            .http_resolve(request)
+            .map_err(|e| RawSignerError::InternalError(e.to_string()))?;
+
+        let mut bytes: Vec<u8> = Vec::with_capacity(self.max_signature_size);
+        response
+            .into_body()
+            .take(self.max_signature_size as u64)
+            .read_to_end(&mut bytes)
+            .map_err(|e| RawSignerError::InternalError(e.to_string()))?;
+        Ok(bytes)
+    }
+
+    fn alg(&self) -> SigningAlg {
+        self.alg
+    }
+
+    fn max_signature_size(&self) -> usize {
+        self.max_signature_size
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::unwrap_used)]
     #![allow(clippy::expect_used)]
 
+    #[cfg(not(target_arch = "wasm32"))]
+    use crate::BoxedSigner;
     use crate::{settings::Settings, utils::test_signer, Signer, SigningAlg};
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -376,6 +600,27 @@ pub mod tests {
         server.mock(|when, then| {
             when.method(httpmock::Method::POST);
             then.status(200).body(signed_bytes);
+        })
+    }
+
+    /// Mocks a remote signing endpoint that signs whatever bytes it receives
+    /// using a local reference `signer`, simulating a real remote signing
+    /// service backed by a private key it never exposes.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn remote_signer_respond_with_signature(
+        server: &httpmock::MockServer,
+        signer: BoxedSigner,
+    ) -> httpmock::Mock<'_> {
+        server.mock(|when, then| {
+            when.method(httpmock::Method::POST);
+            then.respond_with(move |req: &httpmock::HttpMockRequest| {
+                let signed = signer.sign(req.body_ref()).unwrap_or_default();
+                http::Response::builder()
+                    .status(200)
+                    .body(signed)
+                    .unwrap()
+                    .into()
+            });
         })
     }
 
@@ -636,5 +881,173 @@ pub mod tests {
         let signer_settings = settings.signer.expect("signer settings should be present");
         let signer = signer_settings.c2pa_signer().unwrap();
         assert_eq!(signer.certs().unwrap(), Vec::<Vec<u8>>::new());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_make_cawg_remote_signer_from_settings() {
+        use httpmock::MockServer;
+
+        use crate::create_signer;
+
+        let c2pa_alg = SigningAlg::Ps384;
+        let (c2pa_sign_cert, c2pa_private_key) =
+            test_signer::cert_chain_and_private_key_for_alg(c2pa_alg);
+        let c2pa_signer =
+            create_signer::from_keys(c2pa_sign_cert, c2pa_private_key, c2pa_alg, None).unwrap();
+
+        let cawg_alg = SigningAlg::Ed25519;
+        let (cawg_sign_cert, cawg_private_key) =
+            test_signer::cert_chain_and_private_key_for_alg(cawg_alg);
+        let reference_signer =
+            create_signer::from_keys(cawg_sign_cert, cawg_private_key, cawg_alg, None).unwrap();
+        let signed_bytes = reference_signer.sign(&[1, 2, 3]).unwrap();
+
+        let server = MockServer::start();
+        let mock = remote_signer_mock_server(&server, &signed_bytes);
+
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [cawg_x509_signer.remote]
+                    url = (server.base_url())
+                    alg = (cawg_alg.to_string())
+                    sign_cert = (String::from_utf8(cawg_sign_cert.to_vec()).unwrap())
+                    referenced_assertions = ["c2pa.actions"]
+                    roles = ["creator"]
+                }
+                .to_string(),
+            )
+            .unwrap();
+
+        let cawg_settings = settings
+            .cawg_x509_signer
+            .expect("cawg signer settings should be present");
+        let combined = cawg_settings.cawg_signer(c2pa_signer).unwrap();
+
+        // The combined signer still delegates alg/certs/sign to the underlying
+        // c2pa signer; the remote identity signer only backs dynamic_assertions().
+        assert_eq!(combined.alg(), c2pa_alg);
+        assert!(!combined.certs().unwrap().is_empty());
+        assert_eq!(combined.dynamic_assertions().len(), 1);
+
+        // dynamic_assertions() only builds the assertion; it doesn't invoke the
+        // remote identity signer yet, so the mock is intentionally not asserted
+        // here (see test_cawg_remote_signer_round_trip for the full path).
+        let _ = mock;
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[c2pa_macros::c2pa_test_async]
+    async fn test_cawg_remote_signer_round_trip() {
+        use std::io::{Cursor, Seek};
+
+        use httpmock::MockServer;
+
+        use crate::{
+            create_signer,
+            crypto::cose::Verifier,
+            identity::{
+                tests::fixtures::{manifest_json, parent_json},
+                x509::X509SignatureVerifier,
+                IdentityAssertion,
+            },
+            status_tracker::StatusTracker,
+            Builder, Reader,
+        };
+
+        const TEST_IMAGE: &[u8] = include_bytes!("../../tests/fixtures/CA.jpg");
+        const TEST_THUMBNAIL: &[u8] = include_bytes!("../../tests/fixtures/thumbnail.jpg");
+
+        let format = "image/jpeg";
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+
+        let c2pa_alg = SigningAlg::Ps256;
+        let (c2pa_sign_cert, c2pa_private_key) =
+            test_signer::cert_chain_and_private_key_for_alg(c2pa_alg);
+        let c2pa_signer =
+            create_signer::from_keys(c2pa_sign_cert, c2pa_private_key, c2pa_alg, None).unwrap();
+
+        let cawg_alg = SigningAlg::Ed25519;
+        let (cawg_sign_cert, cawg_private_key) =
+            test_signer::cert_chain_and_private_key_for_alg(cawg_alg);
+        // The "remote" endpoint is backed by a local signer holding the same
+        // private key, simulating a real remote signing service.
+        let reference_identity_signer =
+            create_signer::from_keys(cawg_sign_cert, cawg_private_key, cawg_alg, None).unwrap();
+
+        let server = MockServer::start();
+        let mock = remote_signer_respond_with_signature(&server, reference_identity_signer);
+
+        // decode_identity_assertions is disabled so IdentityAssertion::from_manifest
+        // below can parse the raw assertion content itself (matches the pattern used
+        // by other CAWG X.509 round-trip tests in sdk/src/identity/x509).
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [cawg_x509_signer.remote]
+                    url = (server.base_url())
+                    alg = (cawg_alg.to_string())
+                    sign_cert = (String::from_utf8(cawg_sign_cert.to_vec()).unwrap())
+                    referenced_assertions = ["c2pa.actions"]
+                    roles = ["creator"]
+                }
+                .to_string(),
+            )
+            .unwrap()
+            .with_value("core.decode_identity_assertions", false)
+            .unwrap();
+
+        let cawg_settings = settings
+            .cawg_x509_signer
+            .clone()
+            .expect("cawg signer settings should be present");
+        let combined_signer = cawg_settings.cawg_signer(c2pa_signer).unwrap();
+
+        let context = crate::Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .into_shared();
+
+        let mut builder = Builder::from_shared_context(&context)
+            .with_definition(manifest_json())
+            .unwrap();
+        builder
+            .add_ingredient_from_stream(parent_json(), format, &mut source)
+            .unwrap();
+        builder
+            .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
+            .unwrap();
+
+        builder
+            .sign(&combined_signer, format, &mut source, &mut dest)
+            .unwrap();
+
+        mock.assert();
+
+        dest.rewind().unwrap();
+        let manifest_store = Reader::from_shared_context(&context)
+            .with_stream(format, &mut dest)
+            .unwrap();
+        assert_eq!(manifest_store.validation_status(), None);
+
+        let manifest = manifest_store.active_manifest().unwrap();
+        let mut st = StatusTracker::default();
+        let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
+
+        let ia = ia_iter.next().unwrap().unwrap();
+        assert!(ia_iter.next().is_none());
+        drop(ia_iter);
+
+        let x509_verifier = X509SignatureVerifier {
+            cose_verifier: Verifier::IgnoreProfileAndTrustPolicy,
+        };
+        let sig_info = ia
+            .validate(manifest, &mut st, &x509_verifier)
+            .await
+            .unwrap();
+
+        assert_eq!(sig_info.cert_info.alg.unwrap(), cawg_alg);
     }
 }
