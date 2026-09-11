@@ -21,7 +21,6 @@ rules:
     level: error
     optional: true
     options:
-      - c2patool
       - export_schema
       - make_test_images
       - c2pa_c_ffi
