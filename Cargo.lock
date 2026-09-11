@@ -561,7 +561,7 @@ dependencies = [
  "byteorder",
  "byteordered",
  "bytes",
- "c2pa_cbor",
+ "c2pa_cbor 0.78.0",
  "c2pa_macros",
  "c2pa_raw_crypto",
  "chrono",
@@ -650,7 +650,7 @@ name = "c2pa-c-ffi"
 version = "0.91.0-dev"
 dependencies = [
  "c2pa",
- "c2pa_cbor",
+ "c2pa_cbor 0.77.4",
  "cbindgen",
  "libc",
  "serde",
@@ -665,6 +665,17 @@ name = "c2pa_cbor"
 version = "0.77.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88380203853f999aa8e5bcdac2a0984d082c42994cc5a99d240aed180b2c2f3b"
+dependencies = [
+ "half",
+ "serde",
+ "serde_bytes",
+]
+
+[[package]]
+name = "c2pa_cbor"
+version = "0.78.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b413817d7fcff304f37381bb36de9b5fa08c060b3bd4916de7fcbe0d0c874254"
 dependencies = [
  "half",
  "serde",

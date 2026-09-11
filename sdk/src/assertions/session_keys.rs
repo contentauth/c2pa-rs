@@ -21,57 +21,8 @@ use super::labels;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     cbor_types::DateT,
-    Result,
+    Error, Result,
 };
-
-/// Serialize the `signer_binding` field as COSE_Sign1_Tagged (CBOR tag 18 + content).
-///
-/// The c2pa_cbor encoder recognizes `__cbor_tag_18__` in `serialize_newtype_struct`
-/// and writes the proper CBOR tag 18 prefix before the inner value.
-fn serialize_cose_sign1_tagged<S>(
-    value: &c2pa_cbor::Value,
-    serializer: S,
-) -> std::result::Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    serializer.serialize_newtype_struct("__cbor_tag_18__", value)
-}
-
-/// Deserialize the `signer_binding` field.
-///
-/// The c2pa_cbor decoder transparently strips CBOR tags, so whether the wire
-/// format contains tag 18 (spec-compliant) or a raw bstr (legacy), the inner
-/// value is returned as-is.
-fn deserialize_cose_sign1_tagged<'de, D>(
-    deserializer: D,
-) -> std::result::Result<c2pa_cbor::Value, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    c2pa_cbor::Value::deserialize(deserializer)
-}
-
-/// Serialize the `created_at` field as a CBOR tag 0 date-time string, per §18.25.
-///
-/// The field is a plain `String` rather than [`DateT`] so that `SessionKey` is nameable and
-/// constructible from outside the crate: `DateT` lives in a `pub(crate)` module, so a public
-/// field of that type would be visible in the docs but impossible for a caller to write.
-fn serialize_date_tagged<S>(value: &str, serializer: S) -> std::result::Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    DateT(value.to_string()).serialize(serializer)
-}
-
-/// Deserialize the `created_at` field, accepting the spec's CBOR tag 0 date-time string (and,
-/// like [`DateT`], an untagged string so the assertion survives a JSON round-trip).
-fn deserialize_date_tagged<'de, D>(deserializer: D) -> std::result::Result<String, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    DateT::deserialize(deserializer).map(|d| d.0)
-}
 
 /// A single session key used to verify VSI signatures ([§18.25]).
 ///
@@ -93,25 +44,38 @@ pub struct SessionKey {
     ///
     /// [§18.25.2]: https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_session_keys
     pub min_sequence_number: u64,
-    /// Key creation time, an RFC 3339 date-time string.
-    ///
-    /// Serialized as a CBOR tag 0 date-time string on the wire, per §18.25.
-    #[serde(
-        serialize_with = "serialize_date_tagged",
-        deserialize_with = "deserialize_date_tagged"
-    )]
-    pub created_at: String,
+    /// Key creation time, an RFC 3339 date-time string serialized as a CBOR tag 0
+    /// date-time string on the wire, per §18.25.
+    pub created_at: DateT,
     /// Seconds from `created_at` for which this key is valid.
     pub validity_period: u64,
-    /// COSE_Sign1_Tagged binding this key to the signer's certificate.
-    ///
-    /// Stored internally as the inner COSE_Sign1 content (without tag 18).
-    /// The CBOR tag 18 is added/stripped transparently during serialization/deserialization.
-    #[serde(
-        serialize_with = "serialize_cose_sign1_tagged",
-        deserialize_with = "deserialize_cose_sign1_tagged"
-    )]
+    /// COSE_Sign1_Tagged binding this key to the signer's certificate, held as a native
+    /// tagged CBOR value (`18([...])`) per §18.25.
     pub signer_binding: c2pa_cbor::Value,
+}
+
+impl SessionKey {
+    /// Constructs a session key from ergonomic inputs, mapping them to the CBOR-native field
+    /// types: `created_at` (an RFC 3339 string) becomes a tag 0 [`DateT`], and
+    /// `signer_binding_tagged` — the COSE_Sign1_Tagged (`18([...])`) bytes of the detached
+    /// binding — is decoded into a native tagged [`c2pa_cbor::Value`].
+    pub fn new(
+        key: c2pa_cbor::Value,
+        min_sequence_number: u64,
+        created_at: impl Into<String>,
+        validity_period: u64,
+        signer_binding_tagged: &[u8],
+    ) -> Result<Self> {
+        let signer_binding = c2pa_cbor::from_slice::<c2pa_cbor::Value>(signer_binding_tagged)
+            .map_err(|e| Error::AssertionEncoding(format!("invalid signerBinding CBOR: {e}")))?;
+        Ok(Self {
+            key,
+            min_sequence_number,
+            created_at: DateT(created_at.into()),
+            validity_period,
+            signer_binding,
+        })
+    }
 }
 
 /// The `c2pa.session-keys` assertion embedded in a live video init segment manifest ([§18.25]).
@@ -166,9 +130,18 @@ mod tests {
         SessionKey {
             key: c2pa_cbor::Value::Map(key_map),
             min_sequence_number: 0,
-            created_at: "2026-01-01T00:00:00Z".to_string(),
+            created_at: DateT("2026-01-01T00:00:00Z".to_string()),
             validity_period: 3600,
-            signer_binding: c2pa_cbor::Value::Bytes(vec![]),
+            // COSE_Sign1_Tagged shape: 18([protected, unprotected, payload, signature]).
+            signer_binding: c2pa_cbor::Value::Tag(
+                18,
+                Box::new(c2pa_cbor::Value::Array(vec![
+                    c2pa_cbor::Value::Bytes(vec![]),
+                    c2pa_cbor::Value::Map(std::collections::BTreeMap::new()),
+                    c2pa_cbor::Value::Bytes(vec![]),
+                    c2pa_cbor::Value::Bytes(vec![]),
+                ])),
+            ),
         }
     }
 
@@ -198,8 +171,8 @@ mod tests {
         assert_eq!(original, restored);
     }
 
-    /// Per §18.25, `createdAt` is a CBOR tag 0 (standard date-time string) value. The field is
-    /// a plain `String` in Rust, so this guards the tag against being dropped on the wire.
+    /// Per §18.25, `createdAt` is a CBOR tag 0 (standard date-time string) value. Guards the
+    /// tag against being dropped on the wire.
     #[test]
     fn created_at_serializes_as_cbor_tag_0() {
         let keys = SessionKeys {
@@ -236,7 +209,7 @@ mod tests {
         encoded.remove(pos); // drop the 0xc0 tag byte, leaving a bare text string
 
         let restored: SessionKeys = c2pa_cbor::from_slice(&encoded).unwrap();
-        assert_eq!(restored.keys[0].created_at, "2026-01-01T00:00:00Z");
+        assert_eq!(restored.keys[0].created_at.0, "2026-01-01T00:00:00Z");
     }
 
     #[test]
@@ -249,5 +222,52 @@ mod tests {
         let assertion = original.to_assertion().unwrap();
         let restored = SessionKeys::from_assertion(&assertion).unwrap();
         assert_eq!(restored.keys[0].validity_period, 86400);
+    }
+
+    /// Per §18.25, `signerBinding` is a native COSE_Sign1_Tagged value (`18([...])`). Guards the
+    /// tag against being dropped on the wire (it must not collapse to an opaque bstr).
+    #[test]
+    fn signer_binding_serializes_as_cbor_tag_18() {
+        let keys = SessionKeys {
+            keys: vec![minimal_session_key()],
+        };
+        let encoded = c2pa_cbor::to_vec(&keys).unwrap();
+
+        // Tag 18 encodes as 0xd2; the tagged item that follows is the 4-element COSE_Sign1 array
+        // (0x84). Guards against the binding collapsing to a bstr (major type 2).
+        let tag18_then_array = encoded.windows(2).any(|w| w == [0xd2, 0x84]);
+        assert!(
+            tag18_then_array,
+            "signerBinding must be encoded as CBOR tag 18 wrapping a 4-element array"
+        );
+    }
+
+    /// The whole point of holding `SessionKey`'s CBOR-typed fields natively: the
+    /// `Builder::add_assertion` path serializes via `to_value` and signs `to_vec` of that. This
+    /// must preserve every field, including the tag 0 / tag 18 tags, so `SessionKeys` no longer
+    /// needs a `cbor_override`. (The bytes differ from a direct `to_vec` of the struct only in
+    /// map-key ordering — `to_value` collects into a sorted map — which is immaterial.)
+    #[test]
+    fn add_assertion_path_round_trips_with_tags() {
+        let keys = SessionKeys {
+            keys: vec![minimal_session_key()],
+        };
+
+        // Mirror Builder::add_assertion + sign: struct -> Value -> signed CBOR bytes.
+        let value = c2pa_cbor::value::to_value(&keys).unwrap();
+        let signed_bytes = c2pa_cbor::to_vec(&value).unwrap();
+
+        // Tags survive the to_value hop.
+        assert!(
+            signed_bytes.windows(2).any(|w| w == [0xd2, 0x84]),
+            "signerBinding tag 18 must survive the to_value path"
+        );
+        assert!(
+            signed_bytes.windows(2).any(|w| w == [0xc0, 0x74]),
+            "createdAt tag 0 must survive the to_value path"
+        );
+
+        let restored: SessionKeys = c2pa_cbor::from_slice(&signed_bytes).unwrap();
+        assert_eq!(restored, keys);
     }
 }

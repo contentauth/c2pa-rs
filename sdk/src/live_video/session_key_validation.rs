@@ -495,71 +495,16 @@ fn extract_iat(sign1: &coset::CoseSign1) -> Option<i64> {
         })
 }
 
-/// Extracts raw COSE_Sign1_Tagged bytes from a `signerBinding` CBOR value.
+/// Extracts the tag-18 COSE_Sign1_Tagged bytes from a session key's `signerBinding`, ready for
+/// `coset::CoseSign1::from_tagged_slice`.
 ///
-/// The value may appear in different forms depending on the serialization roundtrip:
-/// - `Value::Array` with 4 elements — COSE_Sign1 inner content, possibly from JSON roundtrip
-///   where byte strings become integer arrays. Re-serialized with tag 18.
-/// - `Value::Array` of integers — legacy: flat byte representation of tagged COSE_Sign1 bytes
-/// - `Value::Bytes` — direct CBOR byte string (ideal CBOR-only case)
-/// - `Value::Text` — base64-encoded string (serde_json with base64 for bytes)
+/// Per §18.25 the `signerBinding` is a native CBOR tag-18 value, so re-encoding it yields the
+/// tagged COSE_Sign1 bytes directly.
 fn extract_signer_binding_bytes(value: &c2pa_cbor::Value) -> Option<Vec<u8>> {
     match value {
-        c2pa_cbor::Value::Array(items) if is_cose_sign1_array(items) => {
-            // COSE_Sign1 inner array [protected, unprotected, payload, signature].
-            // After a JSON roundtrip, bstr elements become integer arrays — coerce
-            // them back to Bytes so that the CBOR re-serialization is spec-correct.
-            let fixed =
-                c2pa_cbor::Value::Array(items.iter().map(coerce_int_array_to_bytes).collect());
-            let mut buf = Vec::new();
-            c2pa_cbor::tags::encode_tagged(&mut buf, 18, &fixed).ok()?;
-            Some(buf)
-        }
-        // Legacy: flat array of integers (Value::Bytes after JSON roundtrip)
-        c2pa_cbor::Value::Array(items) => items
-            .iter()
-            .map(|v| match v {
-                c2pa_cbor::Value::Integer(i) => u8::try_from(*i).ok(),
-                _ => None,
-            })
-            .collect(),
-        c2pa_cbor::Value::Bytes(bytes) => Some(bytes.clone()),
-        c2pa_cbor::Value::Text(text) => {
-            use base64::{engine::general_purpose, Engine};
-            general_purpose::STANDARD
-                .decode(text)
-                .or_else(|_| general_purpose::STANDARD_NO_PAD.decode(text))
-                .ok()
-        }
+        c2pa_cbor::Value::Tag(18, _) => c2pa_cbor::to_vec(value).ok(),
         _ => None,
     }
-}
-
-/// Returns true if the array looks like a COSE_Sign1 structure (4 elements
-/// where not all are plain integers).
-fn is_cose_sign1_array(items: &[c2pa_cbor::Value]) -> bool {
-    items.len() == 4
-        && items
-            .iter()
-            .any(|v| !matches!(v, c2pa_cbor::Value::Integer(_)))
-}
-
-/// If the value is an array of integers (from a JSON roundtrip of a CBOR bstr),
-/// convert it back to `Value::Bytes`. Otherwise return the value unchanged.
-fn coerce_int_array_to_bytes(value: &c2pa_cbor::Value) -> c2pa_cbor::Value {
-    if let c2pa_cbor::Value::Array(items) = value {
-        if let Some(bytes) = items
-            .iter()
-            .map(|v| match v {
-                c2pa_cbor::Value::Integer(i) => u8::try_from(*i).ok(),
-                _ => None,
-            })
-            .collect::<Option<Vec<u8>>>()
-        {
-            return c2pa_cbor::Value::Bytes(bytes);
-        }
-    }
-    value.clone()
 }
 
 #[cfg(test)]
@@ -590,11 +535,13 @@ mod tests {
         map.insert(cbor_int(-2), c2pa_cbor::Value::Bytes(vec![0; 32]));
         map.insert(cbor_int(-3), c2pa_cbor::Value::Bytes(vec![0; 32]));
 
+        // signerBinding is intentionally empty here: every test that uses this helper passes
+        // `None` for the EE cert, so validation fails closed before the binding is ever parsed.
         SessionKeys {
             keys: vec![SessionKey {
                 key: c2pa_cbor::Value::Map(map),
                 min_sequence_number: 0,
-                created_at: chrono::Utc::now().to_rfc3339(),
+                created_at: crate::cbor_types::DateT(chrono::Utc::now().to_rfc3339()),
                 validity_period: 3600,
                 signer_binding: c2pa_cbor::Value::Bytes(vec![]),
             }],
@@ -950,7 +897,7 @@ mod tests {
 
         let keys = SessionKeys {
             keys: vec![SessionKey {
-                created_at: "2020-01-01T00:00:00Z".to_string(),
+                created_at: crate::cbor_types::DateT("2020-01-01T00:00:00Z".to_string()),
                 validity_period: 1,
                 ..session_keys_with_cose_key(cose_key, &signing_key, &ee_cert_der)
                     .keys
@@ -987,7 +934,7 @@ mod tests {
 
         let keys = SessionKeys {
             keys: vec![SessionKey {
-                created_at: "2099-01-01T00:00:00Z".to_string(),
+                created_at: crate::cbor_types::DateT("2099-01-01T00:00:00Z".to_string()),
                 validity_period: 3600,
                 ..session_keys_with_cose_key(cose_key, &signing_key, &ee_cert_der)
                     .keys
@@ -1086,13 +1033,14 @@ mod tests {
         binding_bytes: Vec<u8>,
     ) -> SessionKeys {
         SessionKeys {
-            keys: vec![SessionKey {
-                key: cose_key,
-                min_sequence_number: 0,
-                created_at: chrono::Utc::now().to_rfc3339(),
-                validity_period: 3600,
-                signer_binding: c2pa_cbor::Value::Bytes(binding_bytes),
-            }],
+            keys: vec![SessionKey::new(
+                cose_key,
+                0,
+                chrono::Utc::now().to_rfc3339(),
+                3600,
+                &binding_bytes,
+            )
+            .unwrap()],
         }
     }
 
@@ -1152,7 +1100,17 @@ mod tests {
     fn signer_binding_none_cert_fails_closed() {
         let session_key = generate_ed25519_session_key();
         let cose_key = build_ed25519_cose_key_value(&session_key.verifying_key(), b"k");
-        let keys = session_key_with_ed25519_binding(cose_key, vec![0xde, 0xad]);
+        // The binding is never parsed on this path (no EE cert ⇒ fail closed first), so its
+        // contents are arbitrary; construct the key directly to skip `SessionKey::new`'s decode.
+        let keys = SessionKeys {
+            keys: vec![SessionKey {
+                key: cose_key,
+                min_sequence_number: 0,
+                created_at: crate::cbor_types::DateT(chrono::Utc::now().to_rfc3339()),
+                validity_period: 3600,
+                signer_binding: c2pa_cbor::Value::Bytes(vec![0xde, 0xad]),
+            }],
+        };
 
         let mut validator = LiveVideoValidator::new();
         let mut tracker = StatusTracker::default();
@@ -1292,73 +1250,27 @@ mod tests {
         }
     }
 
-    // ── extract_signer_binding_bytes shape-sniffing ──────────────────────────────
+    // ── extract_signer_binding_bytes ─────────────────────────────────────────────
     //
-    // `signerBinding` normally round-trips as `Value::Bytes` (a tagged COSE_Sign1_Tagged
-    // bstr), but callers that pass a `SessionKeys` assertion through a JSON intermediate
-    // representation (or a hand-authored one) can produce three other shapes that must still
-    // be accepted.
+    // Per §18.25 `signerBinding` is a native tagged CBOR value (`18([...])`); re-encoding it
+    // yields the COSE_Sign1_Tagged bytes that `coset::CoseSign1::from_tagged_slice` expects.
 
     #[test]
-    fn extract_signer_binding_bytes_from_native_bytes() {
-        let raw = vec![0xd2, 0x01, 0x02, 0x03];
-        let value = c2pa_cbor::Value::Bytes(raw.clone());
-
-        assert_eq!(super::extract_signer_binding_bytes(&value), Some(raw));
-    }
-
-    #[test]
-    fn extract_signer_binding_bytes_from_base64_text() {
-        use base64::{engine::general_purpose, Engine};
-
-        let raw = vec![0xd2, 0xaa, 0xbb, 0xcc];
-        let value = c2pa_cbor::Value::Text(general_purpose::STANDARD.encode(&raw));
-
-        assert_eq!(super::extract_signer_binding_bytes(&value), Some(raw));
-    }
-
-    #[test]
-    fn extract_signer_binding_bytes_from_unpadded_base64_text() {
-        use base64::{engine::general_purpose, Engine};
-
-        let raw = vec![0xd2, 0x01, 0x02];
-        let value = c2pa_cbor::Value::Text(general_purpose::STANDARD_NO_PAD.encode(&raw));
-
-        assert_eq!(super::extract_signer_binding_bytes(&value), Some(raw));
-    }
-
-    #[test]
-    fn extract_signer_binding_bytes_from_legacy_flat_integer_array() {
-        // A `Value::Bytes` that went through a JSON roundtrip comes back as a flat array of
-        // integers (all elements, so `is_cose_sign1_array` doesn't misidentify it).
-        let raw = vec![0xd2u8, 0x01, 0x02, 0x03];
-        let value = c2pa_cbor::Value::Array(
-            raw.iter()
-                .map(|&b| c2pa_cbor::Value::Integer(b as i64))
-                .collect(),
+    fn extract_signer_binding_bytes_from_native_tag18() {
+        // 18([ h'a10127', {}, null, h'deadbeef' ])
+        let value = c2pa_cbor::Value::Tag(
+            18,
+            Box::new(c2pa_cbor::Value::Array(vec![
+                c2pa_cbor::Value::Bytes(vec![0xa1, 0x01, 0x27]),
+                c2pa_cbor::Value::Map(std::collections::BTreeMap::new()),
+                c2pa_cbor::Value::Null,
+                c2pa_cbor::Value::Bytes(vec![0xde, 0xad, 0xbe, 0xef]),
+            ])),
         );
 
-        assert_eq!(super::extract_signer_binding_bytes(&value), Some(raw));
-    }
-
-    #[test]
-    fn extract_signer_binding_bytes_from_cose_sign1_shaped_array() {
-        // A 4-element [protected, unprotected, payload, signature] array with at least one
-        // non-integer element (here, the bstr protected header) — as COSE_Sign1 would look
-        // after being decoded into a generic `Value` and losing its CBOR tag 18.
-        let value = c2pa_cbor::Value::Array(vec![
-            c2pa_cbor::Value::Bytes(vec![0xa1, 0x01, 0x27]), // protected header bstr
-            c2pa_cbor::Value::Map(std::collections::BTreeMap::new()), // unprotected header
-            c2pa_cbor::Value::Null,                          // detached payload
-            c2pa_cbor::Value::Bytes(vec![0xde, 0xad, 0xbe, 0xef]), // signature
-        ]);
-
         let extracted = super::extract_signer_binding_bytes(&value).unwrap();
-
-        // Re-encoded as a tagged (tag 18) COSE_Sign1: starts with the tag-18 prefix.
         assert_eq!(extracted[0], 0xd2, "must be CBOR-tagged (tag 18)");
 
-        // Decoding a CBOR-tagged value yields Value::Tag(18, inner), not a bare Array.
         let decoded: c2pa_cbor::Value = c2pa_cbor::from_slice(&extracted).unwrap();
         match decoded {
             c2pa_cbor::Value::Tag(18, inner) => match *inner {
@@ -1370,8 +1282,15 @@ mod tests {
     }
 
     #[test]
-    fn extract_signer_binding_bytes_returns_none_for_unsupported_shape() {
-        let value = c2pa_cbor::Value::Integer(42);
-        assert_eq!(super::extract_signer_binding_bytes(&value), None);
+    fn extract_signer_binding_bytes_returns_none_for_untagged_shape() {
+        // A bare bstr (the pre-§18.25 opaque form) is no longer accepted.
+        assert_eq!(
+            super::extract_signer_binding_bytes(&c2pa_cbor::Value::Bytes(vec![0xd2, 0x01])),
+            None
+        );
+        assert_eq!(
+            super::extract_signer_binding_bytes(&c2pa_cbor::Value::Integer(42)),
+            None
+        );
     }
 }

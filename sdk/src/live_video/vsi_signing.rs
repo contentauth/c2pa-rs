@@ -64,7 +64,8 @@ pub struct LiveVideoVsiSigner {
     session_signing_key: SigningKey,
     session_cose_key: c2pa_cbor::Value,
     kid: Vec<u8>,
-    signer_binding: c2pa_cbor::Value,
+    /// COSE_Sign1_Tagged (`18([...])`) bytes of the detached signer binding.
+    signer_binding: Vec<u8>,
     min_sequence_number: u64,
     created_at: String,
     validity_period: u64,
@@ -153,10 +154,10 @@ impl LiveVideoVsiSigner {
     ) -> Result<Vec<u8>> {
         self.track_timescale = parse_first_mdhd_timescale(segment_data);
 
-        let session_keys = self.build_session_keys_assertion();
+        let session_keys = self.build_session_keys_assertion()?;
         let mut builder = Builder::from_context(super::context_from_thread_local_settings()?)
             .with_definition(self.base_manifest_json.as_str())?;
-        builder.add_assertion_cbor(SessionKeys::LABEL, &session_keys)?;
+        builder.add_assertion(SessionKeys::LABEL, &session_keys)?;
 
         let mut source = std::io::Cursor::new(segment_data);
         let mut dest = std::io::Cursor::new(Vec::new());
@@ -341,16 +342,16 @@ impl LiveVideoVsiSigner {
         Ok(())
     }
 
-    fn build_session_keys_assertion(&self) -> SessionKeys {
-        SessionKeys {
-            keys: vec![SessionKey {
-                key: self.session_cose_key.clone(),
-                min_sequence_number: self.min_sequence_number,
-                created_at: self.created_at.clone(),
-                validity_period: self.validity_period,
-                signer_binding: self.signer_binding.clone(),
-            }],
-        }
+    fn build_session_keys_assertion(&self) -> Result<SessionKeys> {
+        Ok(SessionKeys {
+            keys: vec![SessionKey::new(
+                self.session_cose_key.clone(),
+                self.min_sequence_number,
+                self.created_at.clone(),
+                self.validity_period,
+                &self.signer_binding,
+            )?],
+        })
     }
 }
 
@@ -409,10 +410,7 @@ pub(super) fn build_segment_bmff_hash(full_segment: &[u8]) -> Result<c2pa_cbor::
 //   - the **payload** is the signer's end-entity certificate encoded as a CBOR
 //     byte string (used in Sig_structure but NOT carried in the COSE_Sign1).
 
-fn build_signer_binding(
-    ee_cert_der: &[u8],
-    session_signing_key: &SigningKey,
-) -> Result<c2pa_cbor::Value> {
+fn build_signer_binding(ee_cert_der: &[u8], session_signing_key: &SigningKey) -> Result<Vec<u8>> {
     let external_payload = c2pa_cbor::to_vec(&c2pa_cbor::Value::Bytes(ee_cert_der.to_vec()))
         .map_err(|e| Error::BadParam(format!("failed to CBOR-encode EE certificate: {e}")))?;
 
@@ -428,14 +426,11 @@ fn build_signer_binding(
     let signature: ed25519_dalek::Signature = Ed25519Signer::sign(session_signing_key, &tbs);
     sign1.signature = signature.to_bytes().to_vec();
 
-    let binding_bytes = sign1
+    // The COSE_Sign1_Tagged (`18([...])`) bytes; `SessionKey::new` decodes these into the
+    // native tagged CBOR value stored in the assertion per §18.25.
+    sign1
         .to_tagged_vec()
-        .map_err(|e| Error::BadParam(format!("failed to encode signer binding: {e}")))?;
-
-    // Store the COSE_Sign1_Tagged bytes as an opaque bstr. Storing as Value::Bytes is
-    // what extract_signer_binding_bytes expects; JSON round-trips it as base64 (Text),
-    // which extract_signer_binding_bytes also handles.
-    Ok(c2pa_cbor::Value::Bytes(binding_bytes))
+        .map_err(|e| Error::BadParam(format!("failed to encode signer binding: {e}")))
 }
 
 // ── VSI COSE_Sign1 construction ──────────────────────────────────────────────
@@ -938,7 +933,7 @@ mod tests {
         let signer = make_test_signer();
         let mut vsi_signer = make_vsi_signer_with_manifest_id(&signer, b"key-1", 1);
 
-        let session_keys = vsi_signer.build_session_keys_assertion();
+        let session_keys = vsi_signer.build_session_keys_assertion().unwrap();
         let ee_cert_der = signer.certs().unwrap().into_iter().next().unwrap();
         let mut validator = LiveVideoValidator::new();
         let mut tracker = StatusTracker::default();
@@ -993,7 +988,7 @@ mod tests {
         let signer = make_test_signer();
         let vsi_signer = make_vsi_signer(&signer, b"key-1", 1);
 
-        let session_keys = vsi_signer.build_session_keys_assertion();
+        let session_keys = vsi_signer.build_session_keys_assertion().unwrap();
         let ee_cert_der = signer.certs().unwrap().into_iter().next().unwrap();
 
         let mut validator = LiveVideoValidator::new();
@@ -1177,7 +1172,7 @@ mod tests {
         assert_eq!(map1.sequence_number, 1);
         assert_eq!(map2.sequence_number, 2);
 
-        let session_keys = signer2.build_session_keys_assertion();
+        let session_keys = signer2.build_session_keys_assertion().unwrap();
         let ee_cert_der = signer.certs().unwrap().into_iter().next().unwrap();
         let mut validator = LiveVideoValidator::new();
         let mut tracker = StatusTracker::default();
