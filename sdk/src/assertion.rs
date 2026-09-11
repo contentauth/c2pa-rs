@@ -20,6 +20,7 @@ use thiserror::Error;
 
 use crate::{
     assertions::labels,
+    crypto::base64::encode_b64_wrapped,
     error::{Error, Result},
 };
 
@@ -340,16 +341,9 @@ impl Assertion {
                 .map_err(|e| AssertionDecodeError::from_assertion_and_json_err(self, e)),
 
             AssertionData::Cbor(x) => {
-                let buf: Vec<u8> = Vec::new();
-                let mut from = c2pa_cbor::Deserializer::from_slice(x);
-                let mut to = serde_json::Serializer::new(buf);
-
-                serde_transcode::transcode(&mut from, &mut to)
-                    .map_err(|e| AssertionDecodeError::from_assertion_and_json_err(self, e))?;
-
-                let buf2 = to.into_inner();
-                serde_json::from_slice(&buf2)
-                    .map_err(|e| AssertionDecodeError::from_assertion_and_json_err(self, e))
+                let value: c2pa_cbor::Value = c2pa_cbor::from_slice(x)
+                    .map_err(|e| AssertionDecodeError::from_assertion_and_cbor_err(self, e))?;
+                Ok(cbor_to_crjson(&value))
             }
 
             AssertionData::Binary(x) => {
@@ -497,6 +491,50 @@ impl Assertion {
             }
         }
         Ok(())
+    }
+}
+
+/// Converts a decoded CBOR value into its crJSON-mapped `serde_json::Value` form
+/// (spec: crJSON `cbor_serialised_assertions` mapping table).
+///
+/// Byte strings become `b64'<base64>'`-wrapped strings rather than JSON number
+/// arrays, so a bstr can never be confused with a genuine integer array further
+/// down the pipeline. Tags are unwrapped (dropping the tag number and recursing
+/// into the inner value), which also implements the spec's tag-0 date-time rule.
+/// Non-text map keys are stringified, since JSON object keys must be strings.
+fn cbor_to_crjson(value: &c2pa_cbor::Value) -> Value {
+    use c2pa_cbor::Value as Cbor;
+
+    match value {
+        Cbor::Null => Value::Null,
+        Cbor::Bool(b) => Value::Bool(*b),
+        Cbor::Integer(i) => Value::Number((*i).into()),
+        Cbor::Float(f) => serde_json::Number::from_f64(*f)
+            .map(Value::Number)
+            .unwrap_or(Value::Null),
+        Cbor::Bytes(b) => Value::String(encode_b64_wrapped(b)),
+        Cbor::Text(s) => Value::String(s.clone()),
+        Cbor::Array(a) => Value::Array(a.iter().map(cbor_to_crjson).collect()),
+        Cbor::Map(m) => {
+            let mut obj = serde_json::Map::new();
+            for (k, v) in m {
+                obj.insert(cbor_key_to_string(k), cbor_to_crjson(v));
+            }
+            Value::Object(obj)
+        }
+        Cbor::Tag(_, inner) => cbor_to_crjson(inner),
+    }
+}
+
+/// Stringifies a CBOR map key for use as a JSON object key.
+fn cbor_key_to_string(key: &c2pa_cbor::Value) -> String {
+    use c2pa_cbor::Value as Cbor;
+
+    match key {
+        Cbor::Text(s) => s.clone(),
+        Cbor::Integer(i) => i.to_string(),
+        Cbor::Bool(b) => b.to_string(),
+        other => cbor_to_crjson(other).to_string(),
     }
 }
 
@@ -711,5 +749,38 @@ pub mod tests {
         let action_restored_obj = action_restored.as_json_object().unwrap();
 
         assert_eq!(action_obj, action_restored_obj);
+    }
+
+    #[test]
+    fn test_cbor_bytes_vs_int_array_crjson_encoding() {
+        #[derive(Serialize)]
+        struct BytesAndArray {
+            raw_bytes: ByteBuf,
+            int_array: Vec<u8>,
+        }
+
+        let value = BytesAndArray {
+            raw_bytes: ByteBuf::from(vec![1, 2, 3, 4]),
+            int_array: vec![5, 6, 7, 8],
+        };
+
+        let data = AssertionData::Cbor(c2pa_cbor::to_vec(&value).unwrap());
+        let assertion = Assertion::new("test.bytes_and_array", None, data);
+
+        let json = assertion.as_json_object().unwrap();
+
+        // A genuine CBOR byte string (major type 2) is reported in crJSON as a
+        // base64-wrapped string, per the spec's `cbor_serialised_assertions` mapping.
+        assert_eq!(
+            json.get("raw_bytes").unwrap().as_str().unwrap(),
+            encode_b64_wrapped(&[1, 2, 3, 4])
+        );
+
+        // A CBOR array of integers (major type 4) is preserved as a JSON number
+        // array, and must never be confused with a byte string.
+        assert_eq!(
+            json.get("int_array").unwrap(),
+            &serde_json::json!([5, 6, 7, 8])
+        );
     }
 }
