@@ -27,11 +27,7 @@ You can also read the documentation directly in GitHub:
 - [Release notes](https://github.com/contentauth/c2pa-rs/blob/main/docs/release-notes.md)
 - [Contributing to the project](https://github.com/contentauth/c2pa-rs/blob/main/docs/project-contributions.md)
 
-- [C2PA Tool](https://github.com/contentauth/c2pa-rs/blob/main/cli/README.md) documentation:
-  - [Using C2PA Tool](https://github.com/contentauth/c2pa-rs/blob/main/cli/docs/usage.md)
-  - [Manifest definition file](https://github.com/contentauth/c2pa-rs/blob/main/cli/docs/manifest.md)
-  - [Signing assets](https://github.com/contentauth/c2pa-rs/blob/main/cli/docs/signing.md)
-  - [Change log](https://github.com/contentauth/c2pa-rs/blob/main/cli/CHANGELOG.md)
+- [C2PA Tool](https://github.com/contentauth/c2patool) (`c2patool`) now lives in its own repository.
 
 - [C API](https://github.com/contentauth/c2pa-rs/blob/main/c2pa_c_ffi/README.md): Interface that you can use to integrate with any application that uses C or interfaces with C libraries.
 </div>
@@ -96,7 +92,7 @@ See [Configuring SDK settings](docs/context-settings.md) for details.
 
 To use the CAI Rust library, you must install [Rust and Cargo](https://doc.rust-lang.org/cargo/index.html).
 
-Minimal supported Rust version (MSRV): The `c2pa` crate requires Rust version 1.88.0 or newer. When a newer version of Rust becomes required, a new minor (0.x.0) version of this crate will be released.
+Minimal supported Rust version (MSRV): The `c2pa` crate requires Rust version 1.96.0 or newer. When a newer version of Rust becomes required, a new minor (0.x.0) version of this crate will be released.
 
 **Install C build tools**
 

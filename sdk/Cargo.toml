@@ -20,7 +20,7 @@ readme = "../README.md"
 keywords = ["xmp", "metadata"]
 categories = ["api-bindings"]
 edition = "2021"
-rust-version = "1.88.0"
+rust-version = "1.96.0"
 exclude = ["tests/fixtures"]
 
 [package.metadata.docs.rs]
@@ -35,6 +35,11 @@ add_thumbnails = ["dep:image"]
 # the crate's usual semantic-versioning stability guarantees and may change or be removed in any
 # release. See docs/experimental-features.md.
 unstable_builder_filter = []
+# Native plain-text asset handler (C2PA A.8 Unicode-variation-selector wrapper), implemented
+# in-tree with no third-party C2PA-text crate; the only dependency is unicode-normalization for
+# NFC. Experimental feature: exempt from the crate's usual semantic-versioning stability
+# guarantees and may change or be removed in any release. See docs/experimental-features.md.
+unstable_plain_text = ["dep:unicode-normalization"]
 file_io = []
 fetch_remote_manifests = ["dep:wasi"]
 json_schema = ["dep:schemars"]
@@ -44,6 +49,10 @@ openssl = [
 ]
 pdf = ["dep:lopdf"]
 rust_native_crypto = ["c2pa_raw_crypto/rust_native_crypto"]
+# Native structured-text asset handler (C2PA A.9 ASCII-armour comment block). Experimental
+# feature: exempt from the crate's usual semantic-versioning stability guarantees and may change
+# or be removed in any release. See docs/experimental-features.md.
+unstable_structured_text = []
 # TODO: make our async tests always use the async API so we don't need ureq + reqwest
 #       see https://github.com/contentauth/c2pa-rs/issues/1364
 default_http = ["http_reqwest", "http_ureq", "http_wasi", "http_wstd"]
@@ -93,14 +102,14 @@ asn1-rs = "0.7.2"
 async-generic = "1.1"
 async-trait = "0.1.89"
 atree = "0.5.4"
-base64 = "0.22.1"
+base64 = "0.23.1"
 bcder = "0.7.6"
 bytes = "1.11.1"
 brotli = "7.0.0"
 byteorder = { version = "1.5.0", default-features = false }
 byteordered = "0.6.0"
 chrono = { version = "0.4.44", default-features = false, features = ["serde"] }
-c2pa_cbor = "0.77.2"
+c2pa_cbor = "0.77.4"
 c2pa_raw_crypto = { version = "0.1.2", default-features = false }
 const-hex = "1.19"
 coset = "0.4.2"
@@ -122,7 +131,7 @@ img-parts = "0.4.0"
 iref = { version = "3.2.2", features = ["serde"] }
 jfifdump = "0.6.0"
 log = "0.4.30"
-lopdf = { version = "0.44.0", optional = true, default-features = false }
+lopdf = { version = "0.45.0", optional = true, default-features = false }
 lazy_static = "1.5.0"
 memchr = "2.8.1"
 nom = "7.1.3"
@@ -155,6 +164,7 @@ tempfile = "3.27.0"
 thiserror = "2.0.18"
 toml = "1.1.2"
 url = "2.5.8"
+unicode-normalization = { version = "0.1", optional = true }
 uuid = { version = "1.23.2", features = ["serde", "v4"] }
 web-time = "1.1"
 x509-parser = "0.18.1"
@@ -163,7 +173,7 @@ zip = { version = "8.6.0", default-features = false }
 
 # lopdf's rayon needs real threads: native always has them, WASM only with atomics.
 [target.'cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))'.dependencies]
-lopdf = { version = "0.44.0", optional = true }
+lopdf = { version = "0.45.0", optional = true }
 
 [target.'cfg(not(target_os = "wasi"))'.dependencies]
 reqwest = { version = "0.12.28", default-features = false, features = [
