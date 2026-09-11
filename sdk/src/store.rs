@@ -2083,6 +2083,31 @@ impl Store {
             context,
         )?;
 
+        // Per spec §15.11.3.3.1, any box present at a redacted URI must contain only 0x00
+        // bytes, regardless of its JUMBF type — reject with `assertion.notRedacted` otherwise.
+        // This is driven by the redaction list (not the box type), and is the compensating
+        // control for suppressing the ingredient manifest hash mismatch in `ingredient_checks`:
+        // without it, forged content planted in a redacted slot would surface as a genuine,
+        // hash-unverified assertion.
+        for redacted_uri in &svi.redactions {
+            // A fully removed assertion (resolution fails) is a valid form of redaction;
+            // only a *present* box with non-zero content is a violation.
+            if let Ok(claim_assertion) = store.get_claim_assertion_from_uri(redacted_uri) {
+                if !is_zero(claim_assertion.assertion().data()) {
+                    log_item!(
+                        redacted_uri.clone(),
+                        "redacted assertion data must be zeros or empty",
+                        "verify_store"
+                    )
+                    .validation_status(validation_status::ASSERTION_NOT_REDACTED)
+                    .failure(
+                        validation_log,
+                        Error::OtherError("redacted assertion data must be zeros or empty".into()),
+                    )?;
+                }
+            }
+        }
+
         // keep track of already verified ingredients
         let mut visited = HashSet::new();
         visited.insert(claim.label().to_owned());
@@ -7537,6 +7562,216 @@ pub mod tests {
         assert!(redacted_claim
             .get_assertion(TEST_USER_ASSERTION, 0)
             .is_none());
+    }
+
+    // A URI listed in a claim's `redacted_assertions` must, if any box is still
+    // present at that location, contain only zero bytes regardless of the box's JUMBF type
+    // (spec 2.x §15.11.3.3.1). The honest builder removes the assertion entirely, so we
+    // reproduce the attack by building a legitimately-redacted asset and then injecting a
+    // non-zero CBOR assertion box back into the redacted slot — exactly what an attacker does
+    // by editing the manifest-store bytes (no key required, since redaction suppresses the
+    // ingredient manifest hash mismatch). Before the fix this forged box surfaced as a genuine
+    // assertion with no failures; it must now be rejected with `assertion.notRedacted`.
+    #[test]
+    fn test_forged_content_in_redacted_slot_is_rejected() {
+        use crate::{
+            assertions::C2paReason, claim::ClaimAssertionType, Builder, BuilderIntent, Reader,
+        };
+
+        const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
+        const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
+
+        // Read the parent so we can address the assertion we are going to redact.
+        let mut input = Cursor::new(TEST_IMAGE);
+        let parent = Reader::default()
+            .with_stream("image/jpeg", &mut input)
+            .expect("read parent");
+        let parent_manifest_label = parent.active_label().unwrap().to_owned();
+        let redacted_uri = to_assertion_uri(&parent_manifest_label, ASSERTION_LABEL);
+
+        // Produce a normal, spec-compliant redaction of that assertion.
+        let mut builder = Builder::default();
+        builder.set_intent(BuilderIntent::Edit);
+        builder.definition.redactions = Some(vec![redacted_uri.clone()]);
+        let redacted_action = Action::new("c2pa.redacted")
+            .set_reason(C2paReason::PiiPresent)
+            .set_parameter("redacted".to_owned(), redacted_uri.clone())
+            .unwrap();
+        builder.add_action(redacted_action).unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(signer.as_ref(), "image/jpeg", &mut input, &mut output)
+            .expect("builder sign");
+        output.set_position(0);
+
+        let mut load_report = StatusTracker::default();
+        let mut store =
+            Store::from_stream("image/jpeg", &mut output, &mut load_report, &Context::new())
+                .expect("load store");
+
+        // Baseline: the honest redaction removes the assertion, so nothing sits at the
+        // redacted URI and no notRedacted failure is raised.
+        let mut baseline_report = StatusTracker::default();
+        let _ = Store::verify_store(&store, None, &mut baseline_report, &Context::new());
+        assert!(
+            !baseline_report.has_status(validation_status::ASSERTION_NOT_REDACTED),
+            "a properly redacted (removed) assertion must not raise assertion.notRedacted"
+        );
+
+        // Attack: plant a non-zero CBOR assertion box back into the redacted slot of the
+        // ingredient (parent) manifest. `data()` for this box is non-zero, so the reader must
+        // reject it even though its box type is not the C2PA Redaction UUID placeholder.
+        let alg = store
+            .get_claim(&parent_manifest_label)
+            .expect("parent claim present")
+            .alg()
+            .to_owned();
+        // A small non-zero CBOR map ({"x": 1}); the exact contents don't matter, only that
+        // they are not all-zero.
+        let forged = Assertion::from_data_cbor(ASSERTION_LABEL, &[0xa1, 0x61, 0x78, 0x01]);
+        let forged_hash =
+            Claim::calc_assertion_box_hash(ASSERTION_LABEL, &forged, None, &alg).unwrap();
+        let forged_ca = ClaimAssertion::new(
+            forged,
+            0,
+            &forged_hash,
+            &alg,
+            None,
+            ClaimAssertionType::Created,
+        );
+        store
+            .get_claim_mut(&parent_manifest_label)
+            .expect("parent claim present")
+            .put_assertion_store(forged_ca);
+
+        let mut attack_report = StatusTracker::default();
+        let _ = Store::verify_store(&store, None, &mut attack_report, &Context::new());
+        assert!(
+            attack_report.has_status(validation_status::ASSERTION_NOT_REDACTED),
+            "forged non-zero content at a redacted URI must be rejected with assertion.notRedacted"
+        );
+    }
+
+    // `Reader::with_store` used to independently re-derive `assertion.notRedacted`
+    // from presence alone (no zero check), by comparing the claim's declared redactions
+    // against assertions that failed to resolve. That logic predates the zero-content check
+    // above and had no coverage for a *present* redacted box, so it both missed the forged
+    // case's already-correct failure being logged twice, and false-positived on a validly
+    // zeroed box. Drive the same scenarios through `Reader::with_store` (not just
+    // `Store::verify_store`) to prove that's fixed.
+    #[test]
+    fn test_redacted_slot_content_through_reader() {
+        use crate::{
+            assertions::C2paReason, claim::ClaimAssertionType, Builder, BuilderIntent, Reader,
+        };
+
+        const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
+        const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
+
+        // Build a legitimately-redacted asset and return the loaded store plus the label
+        // of the manifest whose assertion was redacted.
+        fn build_redacted_store(image: &[u8]) -> (Store, String) {
+            let mut input = Cursor::new(image);
+            let parent = Reader::default()
+                .with_stream("image/jpeg", &mut input)
+                .expect("read parent");
+            let parent_manifest_label = parent.active_label().unwrap().to_owned();
+            let redacted_uri = to_assertion_uri(&parent_manifest_label, ASSERTION_LABEL);
+
+            let mut builder = Builder::default();
+            builder.set_intent(BuilderIntent::Edit);
+            builder.definition.redactions = Some(vec![redacted_uri.clone()]);
+            let redacted_action = Action::new("c2pa.redacted")
+                .set_reason(C2paReason::PiiPresent)
+                .set_parameter("redacted".to_owned(), redacted_uri)
+                .unwrap();
+            builder.add_action(redacted_action).unwrap();
+
+            let signer = test_signer(SigningAlg::Ps256);
+            let mut output = Cursor::new(Vec::new());
+            builder
+                .sign(signer.as_ref(), "image/jpeg", &mut input, &mut output)
+                .expect("builder sign");
+            output.set_position(0);
+
+            let mut load_report = StatusTracker::default();
+            let store =
+                Store::from_stream("image/jpeg", &mut output, &mut load_report, &Context::new())
+                    .expect("load store");
+            (store, parent_manifest_label)
+        }
+
+        // Replace the redacted slot's (removed) assertion with a present box built from
+        // `assertion`, exactly as an attacker editing the manifest-store bytes would.
+        fn plant_assertion(store: &mut Store, parent_manifest_label: &str, assertion: Assertion) {
+            let alg = store
+                .get_claim(parent_manifest_label)
+                .expect("parent claim present")
+                .alg()
+                .to_owned();
+            let hash =
+                Claim::calc_assertion_box_hash(ASSERTION_LABEL, &assertion, None, &alg).unwrap();
+            let claim_assertion =
+                ClaimAssertion::new(assertion, 0, &hash, &alg, None, ClaimAssertionType::Created);
+            store
+                .get_claim_mut(parent_manifest_label)
+                .expect("parent claim present")
+                .put_assertion_store(claim_assertion);
+        }
+
+        fn count_status(log: &StatusTracker, code: &str) -> usize {
+            log.logged_items()
+                .iter()
+                .filter(|item| item.validation_status.as_deref() == Some(code))
+                .count()
+        }
+
+        // A validly zeroed box left in the redacted slot (the spec's alternative to full
+        // removal) must not be flagged at all: not `assertion.notRedacted` (it *is*
+        // correctly redacted) and not `assertion.missing` (it's present, just empty).
+        {
+            let (mut store, parent_manifest_label) = build_redacted_store(TEST_IMAGE);
+            let zeroed = Assertion::from_data_uuid(ASSERTION_LABEL, C2PA_REDACTION_UUID, &[0u8; 4]);
+            plant_assertion(&mut store, &parent_manifest_label, zeroed);
+
+            let mut validation_log = StatusTracker::default();
+            let _ = Store::verify_store(&store, None, &mut validation_log, &Context::new());
+            let mut reader = Reader::default();
+            let _ = reader.with_store(store, &mut validation_log);
+
+            assert_eq!(
+                count_status(&validation_log, validation_status::ASSERTION_NOT_REDACTED),
+                0,
+                "a present, zeroed redacted box must not raise assertion.notRedacted"
+            );
+            assert_eq!(
+                count_status(&validation_log, validation_status::ASSERTION_MISSING),
+                0,
+                "a present, zeroed redacted box must not be counted as missing"
+            );
+        }
+
+        // A forged, non-zero box in the redacted slot must be rejected exactly once, by
+        // `Store::verify_store`'s zero-content check — not a second time by
+        // `Reader::with_store`'s (now removed) presence-only reconciliation.
+        {
+            let (mut store, parent_manifest_label) = build_redacted_store(TEST_IMAGE);
+            let forged = Assertion::from_data_cbor(ASSERTION_LABEL, &[0xa1, 0x61, 0x78, 0x01]);
+            plant_assertion(&mut store, &parent_manifest_label, forged);
+
+            let mut validation_log = StatusTracker::default();
+            let _ = Store::verify_store(&store, None, &mut validation_log, &Context::new());
+            let mut reader = Reader::default();
+            let _ = reader.with_store(store, &mut validation_log);
+
+            assert_eq!(
+                count_status(&validation_log, validation_status::ASSERTION_NOT_REDACTED),
+                1,
+                "forged non-zero content at a redacted URI must be rejected exactly once"
+            );
+        }
     }
 
     #[test]
