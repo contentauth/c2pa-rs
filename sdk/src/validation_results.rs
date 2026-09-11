@@ -1432,6 +1432,38 @@ pub mod tests {
     }
 
     #[test]
+    fn not_trusted_state_with_cawg_identity_failure() {
+        // No CAWG identity assertion failure code -- whatever the underlying
+        // problem -- should by itself render the enclosing manifest invalid;
+        // each is scoped to that identity assertion.
+        for code in [
+            "cawg.identity.cbor.invalid",
+            "cawg.identity.sig_type.unknown",
+            "cawg.identity.pad.invalid",
+        ] {
+            let mut validation_results = ValidationResults::default();
+
+            validation_results.add_status(
+                ValidationStatus::new(CLAIM_SIGNATURE_VALIDATED).set_kind(LogKind::Success),
+            );
+            validation_results.add_status(
+                ValidationStatus::new(CLAIM_SIGNATURE_INSIDE_VALIDITY).set_kind(LogKind::Success),
+            );
+            validation_results.add_status(
+                ValidationStatus::new(SIGNING_CREDENTIAL_TRUSTED).set_kind(LogKind::Success),
+            );
+
+            validation_results.add_status(ValidationStatus::new_failure(code));
+
+            assert_eq!(
+                validation_results.validation_state(),
+                ValidationState::Valid,
+                "expected Valid state for failure code {code}"
+            );
+        }
+    }
+
+    #[test]
     fn not_trusted_state_with_failure_delta() {
         let mut validation_results = ValidationResults::default();
 
