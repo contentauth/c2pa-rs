@@ -218,6 +218,7 @@ mod tests {
             cert_info.issuer_org.as_ref().unwrap(),
             "C2PA Test Signing Cert"
         );
+        assert_eq!(cert_info.common_name.as_ref().unwrap(), "C2PA Signer");
 
         // No need to restore settings - we never modified global state!
     }
