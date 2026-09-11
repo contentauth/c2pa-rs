@@ -112,6 +112,7 @@ pub(crate) struct StoreValidationInfo<'a> {
     pub update_manifest_label: Option<String>,    // label of the update manifest if it exists
     pub manifest_store_range: Option<HashRange>, // range of the manifest store in the asset for data hash exclusions
     pub certificate_statuses: HashMap<String, Vec<Vec<u8>>>, // list of certificate status assertions for each serial
+    pub is_embedded: bool, // whether the manifest was read out of the asset being validated, vs. supplied separately (sidecar/remote)
 }
 
 /// A `Store` maintains a list of `Claim` structs.
@@ -1907,7 +1908,10 @@ impl Store {
         context: &Context,
     ) -> Result<StoreValidationInfo<'a>> {
         let io = context.io();
-        let mut svi = StoreValidationInfo::default();
+        let mut svi = StoreValidationInfo {
+            is_embedded: self.embedded,
+            ..Default::default()
+        };
         Store::get_claim_referenced_manifests(claim, self, &mut svi, true, validation_log)?;
 
         // find the manifest with the hash binding
@@ -2032,7 +2036,7 @@ impl Store {
                         let ocsp_ders = svi
                             .certificate_statuses
                             .entry(response.certificate_serial_num)
-                            .or_insert(Vec::new());
+                            .or_default();
                         ocsp_ders.push(response.ocsp_der);
                     }
                 }
@@ -3069,6 +3073,13 @@ impl Store {
 
                 context.check_progress(ProgressPhase::Embedding, 1, 1)?;
 
+                // Sidecar/remote-only signing doesn't embed the manifest into
+                // output_stream; anything else does.
+                self.embedded = !matches!(
+                    self.provenance_claim().map(|pc| pc.remote_manifest()),
+                    Some(RemoteManifest::SideCar) | Some(RemoteManifest::Remote(_))
+                );
+
                 if context.settings().verify.verify_after_sign {
                     let output_len = stream_len(output_stream)?;
                     let validate_hash = context.settings().verify.verify_after_sign_hash;
@@ -3723,29 +3734,32 @@ impl Store {
                 .failure_no_throw(validation_log, e);
         })?;
 
+        // Known here, before verification runs, so verify_hash_binding can tell an
+        // embedded manifest (this asset's own bytes) from a detached one.
+        let embedded = remote_url.is_none();
         let store = if _sync {
-            Self::from_manifest_data_and_stream(
+            Self::from_manifest_data_and_stream_with_embedded(
                 &manifest_bytes,
                 format,
                 &mut stream,
                 validation_log,
                 context,
+                embedded,
             )
         } else {
-            Self::from_manifest_data_and_stream_async(
+            Self::from_manifest_data_and_stream_with_embedded_async(
                 &manifest_bytes,
                 format,
                 &mut stream,
                 validation_log,
                 context,
+                embedded,
             )
             .await
         };
 
         let mut store = store?;
-        if remote_url.is_none() {
-            store.embedded = true;
-        } else {
+        if !embedded {
             store.remote_url = remote_url;
         }
 
@@ -3757,18 +3771,52 @@ impl Store {
     pub fn from_manifest_data_and_stream(
         c2pa_data: &[u8],
         format: &str,
+        stream: impl Read + Seek + MaybeSend,
+        validation_log: &mut StatusTracker,
+        context: &Context,
+    ) -> Result<Self> {
+        if _sync {
+            Self::from_manifest_data_and_stream_with_embedded(
+                c2pa_data,
+                format,
+                stream,
+                validation_log,
+                context,
+                false,
+            )
+        } else {
+            Self::from_manifest_data_and_stream_with_embedded_async(
+                c2pa_data,
+                format,
+                stream,
+                validation_log,
+                context,
+                false,
+            )
+            .await
+        }
+    }
+
+    /// Load store from a manifest data and stream, marking whether `c2pa_data` was read out
+    /// of `stream` itself (embedded) as opposed to supplied separately (sidecar/remote).
+    #[async_generic]
+    pub(crate) fn from_manifest_data_and_stream_with_embedded(
+        c2pa_data: &[u8],
+        format: &str,
         mut stream: impl Read + Seek + MaybeSend,
         validation_log: &mut StatusTracker,
         context: &Context,
+        embedded: bool,
     ) -> Result<Self> {
         stream.rewind()?;
 
         // First we convert the JUMBF into a usable store.
-        let store = Store::from_jumbf_with_context(c2pa_data, validation_log, context)
+        let mut store = Store::from_jumbf_with_context(c2pa_data, validation_log, context)
             .inspect_err(|e| {
                 log_item!("asset", "error loading file", "load_from_asset")
                     .failure_no_throw(validation_log, e);
             })?;
+        store.embedded = embedded;
 
         if context.settings().verify.verify_after_reading {
             stream.rewind()?;

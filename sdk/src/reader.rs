@@ -1385,6 +1385,70 @@ pub mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
+    fn test_detached_manifest_exclusion_hole_rejected() {
+        use crate::{assertions::DataHash, Builder};
+
+        // Sign a real asset (embedded); the attacker never holds this key.
+        let victim_src = include_bytes!("../tests/fixtures/no_manifest.jpg");
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut builder = Builder::from_context(test_context())
+            .with_definition(r#"{"title": "victim"}"#)
+            .unwrap();
+        let mut source = Cursor::new(victim_src.to_vec());
+        let mut dest = Cursor::new(Vec::new());
+        builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
+            .unwrap();
+        let victim = dest.into_inner();
+
+        // Attacker lifts the signed manifest store out, byte-verbatim, no re-signing.
+        let context = test_context();
+        let mut victim_stream = Cursor::new(victim.clone());
+        let (jumbf, _remote) =
+            crate::store::Store::load_jumbf_from_stream("image/jpeg", &mut victim_stream, &context)
+                .unwrap();
+
+        // Read the signed exclusion range straight off the claim.
+        let store = crate::store::Store::from_stream(
+            "image/jpeg",
+            Cursor::new(victim.clone()),
+            &mut StatusTracker::default(),
+            &context,
+        )
+        .unwrap();
+        let claim = store.provenance_claim().unwrap();
+        let dh_assertion = claim
+            .hash_assertions()
+            .into_iter()
+            .find(|a| a.label_raw().starts_with(DataHash::LABEL))
+            .unwrap();
+        let dh = DataHash::from_assertion(dh_assertion.assertion()).unwrap();
+        let range = &dh.exclusions.unwrap()[0];
+        let (excl_start, excl_len) = (range.start() as usize, range.length() as usize);
+
+        // Overwrite exactly that range with unrelated content, keeping every byte
+        // outside it untouched.
+        let mut forged = victim.clone();
+        for b in forged[excl_start..excl_start + excl_len].iter_mut() {
+            *b = 0x41;
+        }
+
+        // Validate the forged pair through the detached-manifest path (c2patool
+        // --external-manifest / a sidecar or remote manifest workflow).
+        let result =
+            Reader::from_manifest_data_and_stream(&jumbf, "image/jpeg", Cursor::new(forged));
+        let state = result
+            .map(|r| r.validation_state())
+            .unwrap_or(ValidationState::Invalid);
+        assert_ne!(
+            state,
+            ValidationState::Trusted,
+            "a detached manifest's exclusion must not let unrelated content inside it pass validation"
+        );
+    }
+
+    #[test]
     fn test_reader_embedded() -> Result<()> {
         let reader =
             Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
