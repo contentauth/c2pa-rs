@@ -112,7 +112,7 @@ brotli = "7.0.0"
 byteorder = { version = "1.5.0", default-features = false }
 byteordered = "0.6.0"
 chrono = { version = "0.4.44", default-features = false, features = ["serde"] }
-c2pa_cbor = "0.77.2"
+c2pa_cbor = "0.78.0"
 c2pa_raw_crypto = { version = "0.1.2", default-features = false }
 const-hex = "1.19"
 coset = "0.4.2"
