@@ -1739,6 +1739,8 @@ pub(crate) struct C2PABmffBoxes {
     pub manifest_bytes: Option<Vec<u8>>,
     pub original_bytes: Option<Vec<u8>>,
     pub update_bytes: Option<Vec<u8>>,
+    /// True if any C2PA box (any purpose) was found.
+    pub c2pa_box_present: bool,
     pub manifest_box_bytes: Option<Vec<u8>>,
     pub update_box_bytes: Option<Vec<u8>>,
     pub bmff_merkle: Vec<BmffMerkleMap>,
@@ -1760,6 +1762,8 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
     let mut manifest_bytes: Option<Vec<u8>> = None;
     let mut original_bytes: Option<Vec<u8>> = None;
     let mut update_bytes: Option<Vec<u8>> = None;
+    // True if any C2PA box (any purpose) was found.
+    let mut c2pa_box_present = false;
     let mut manifest_box_bytes: Option<Vec<u8>> = None;
     let mut update_box_bytes: Option<Vec<u8>> = None;
     let mut xmp: Option<String> = None;
@@ -1784,6 +1788,7 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
                 if let Some(uuid) = &box_info.data.user_type {
                     // make sure it is a C2PA ContentProvenanceBox box
                     if vec_compare(&C2PA_UUID, uuid) {
+                        c2pa_box_present = true;
                         let (purpose, mut data_len) = get_uuid_box_purpose(reader, box_info)?;
 
                         // is the purpose manifest?
@@ -1875,6 +1880,7 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
         manifest_bytes,
         original_bytes,
         update_bytes,
+        c2pa_box_present,
         manifest_box_bytes,
         update_box_bytes,
         bmff_merkle: merkle_boxes,
@@ -1941,7 +1947,17 @@ impl C2paReader for BmffIO {
             ));
         }
 
-        c2pa_boxes.manifest_bytes.ok_or(Error::JumbfNotFound)
+        match c2pa_boxes.manifest_bytes {
+            Some(manifest_bytes) => Ok(manifest_bytes),
+            // A C2PA box was present but did not resolve to a manifest (retagged
+            // to an unrecognized/merkle purpose). Return C2PAValidation, not
+            // JumbfNotFound, so `Store::load_jumbf_from_stream` rejects rather
+            // than masking the tampering via XMP remote-manifest fallback.
+            None if c2pa_boxes.c2pa_box_present => Err(Error::C2PAValidation(
+                "C2PA box present without a readable manifest".to_string(),
+            )),
+            None => Err(Error::JumbfNotFound),
+        }
     }
 
     // Get XMP block
@@ -3468,6 +3484,108 @@ pub mod tests {
         assert!(
             matches!(result, Ok(ref bytes) if bytes == b"dummy manifest bytes"),
             "expected ordinary manifest-only asset to be read as-is, got {result:?}"
+        );
+    }
+
+    // A C2PA box present but resolving to no manifest (e.g. a manifest box
+    // retagged to an unrecognized or merkle purpose - the purpose tag is
+    // hash-excluded) must be rejected, not reported as an unsigned asset.
+
+    #[test]
+    fn test_read_cai_rejects_c2pa_box_with_unrecognized_purpose() {
+        let mut data = minimal_ftyp();
+        // A real manifest box retagged to an unrecognized purpose. It is no
+        // longer sorted into the manifest bytes, so without the check the
+        // reader would report the asset as carrying no manifest at all.
+        write_c2pa_box(&mut data, b"dummy manifest bytes", "notapurpose", &[], 0).unwrap();
+
+        let bmff_io = BmffIO::new("mp4");
+        let mut source = Cursor::new(data);
+        let result = bmff_io.read_c2pa(&mut source);
+        assert!(
+            matches!(
+                result,
+                Err(Error::C2PAValidation(ref m)) if m == "C2PA box present without a readable manifest"
+            ),
+            "expected retagged-purpose box to be rejected, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_read_cai_rejects_merkle_box_without_manifest() {
+        let mut data = minimal_ftyp();
+        // A valid merkle box with no accompanying manifest - merkle boxes are
+        // auxiliary and never travel alone, so this is a retagged/removed
+        // manifest.
+        let mm = BmffMerkleMap {
+            unique_id: 0,
+            local_id: 0,
+            location: 0,
+            hashes: None,
+        };
+        let merkle_data = c2pa_cbor::to_vec(&mm).unwrap();
+        write_c2pa_box(&mut data, &[], MERKLE, &merkle_data, 0).unwrap();
+
+        let bmff_io = BmffIO::new("mp4");
+        let mut source = Cursor::new(data);
+        let result = bmff_io.read_c2pa(&mut source);
+        assert!(
+            matches!(
+                result,
+                Err(Error::C2PAValidation(ref m)) if m == "C2PA box present without a readable manifest"
+            ),
+            "expected merkle-only asset to be rejected, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_read_cai_unsigned_asset_still_reports_not_found() {
+        // No C2PA box at all -> genuinely unsigned, must stay JumbfNotFound
+        // (the new check must not fire when no C2PA box is present).
+        let data = minimal_ftyp();
+        let bmff_io = BmffIO::new("mp4");
+        let mut source = Cursor::new(data);
+        let result = bmff_io.read_c2pa(&mut source);
+        assert!(
+            matches!(result, Err(Error::JumbfNotFound)),
+            "expected unsigned asset to report JumbfNotFound, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_load_jumbf_tampered_box_skips_remote_fallback() {
+        use crate::{
+            utils::xmp_inmemory_utils::{add_provenance, XmpInfo, MIN_XMP},
+            Context,
+        };
+
+        // A BMFF with BOTH a tampered C2PA box (resolves to no manifest) and an
+        // XMP remote-manifest provenance reference: the tampering must be
+        // rejected rather than silently falling back to the remote manifest.
+        let mut data = minimal_ftyp();
+        write_c2pa_box(&mut data, b"dummy manifest bytes", "notapurpose", &[], 0).unwrap();
+        let url = "http://example.com/manifest.c2pa";
+        let xmp = add_provenance(MIN_XMP, url).unwrap();
+        write_xmp_box(&mut data, xmp.as_bytes()).unwrap();
+
+        // The remote reference is genuinely present, so the fallback would fire
+        // on JumbfNotFound.
+        assert_eq!(
+            XmpInfo::from_source(&mut Cursor::new(data.clone()), "mp4")
+                .provenance
+                .as_deref(),
+            Some(url)
+        );
+
+        let context = Context::new();
+        let mut source = Cursor::new(data);
+        let result = crate::store::Store::load_jumbf_from_stream("mp4", &mut source, &context);
+        assert!(
+            matches!(
+                result,
+                Err(Error::C2PAValidation(ref m)) if m == "C2PA box present without a readable manifest"
+            ),
+            "tampered C2PA box must be rejected, not fall back to the remote manifest; got {result:?}"
         );
     }
 
