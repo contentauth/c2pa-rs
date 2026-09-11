@@ -703,7 +703,14 @@ mod tests {
         let test_time = Utc.with_ymd_and_hms(2024, 2, 1, 8, 0, 0).unwrap();
 
         let mut log = StatusTracker::default();
-        let resp = validate_fetched_ocsp(rsp, &chain, Some(test_time), &mut log);
+        let resp = validate_fetched_ocsp(
+            rsp,
+            &chain,
+            &CertificateTrustPolicy::default(),
+            Some(test_time),
+            &mut log,
+        );
+
         assert!(resp.revoked_at.is_none());
     }
 
@@ -712,7 +719,13 @@ mod tests {
         // An undecodable response yields no cert data and no status.
         let chain = ocsp_signing_chain();
         let mut log = StatusTracker::default();
-        let resp = validate_fetched_ocsp(&[0xde, 0xad, 0xbe, 0xef], &chain, None, &mut log);
+        let resp = validate_fetched_ocsp(
+            &[0xde, 0xad, 0xbe, 0xef],
+            &chain,
+            &CertificateTrustPolicy::default(),
+            None,
+            &mut log,
+        );
         assert!(resp.revoked_at.is_none());
         assert!(resp.ocsp_certs.is_none());
     }
