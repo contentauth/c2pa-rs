@@ -1,10 +1,11 @@
 name: Publish c2pa-library binaries
 
-# Triggered by `c2pa-v*` tags, which come from two places (see
-# docs/release-process.md):
-#   * release-plz, on a release-line branch -> a real tag like `c2pa-v0.90.0`.
-#   * release-rc.yml, when a release-candidate build is cut -> a prerelease tag
-#     like `c2pa-v0.90.0-rc.1`.
+# Triggered by two tag namespaces (see docs/release-process.md):
+#   * `c2pa-v*` -> a real release tag from release-plz on a release-line branch,
+#     e.g. `c2pa-v0.90.0`.
+#   * `c2pa-rc-v*` -> a release-candidate build tag from release-rc.yml, e.g.
+#     `c2pa-rc-v0.90.0-rc.1`. RC builds are kept out of the `c2pa-v*` namespace
+#     so release-plz never mistakes them for a publish.
 # Either way the binaries are built here; the GitHub release is always marked as
 # a prerelease (pre-1.0). Nothing here publishes to crates.io. Git tags are
 # repo-global, so no branch filter is needed.
@@ -12,7 +13,8 @@ name: Publish c2pa-library binaries
 on:
   push:
     tags:
-      - "c2pa-v*" # Trigger on version tags (e.g., c2pa-v0.90.0)
+      - "c2pa-v*" # Real releases from release-plz (e.g. c2pa-v0.90.0).
+      - "c2pa-rc-v*" # RC builds from release-rc.yml (e.g. c2pa-rc-v0.90.0-rc.1).
   workflow_dispatch:
 
 jobs:
@@ -167,9 +169,9 @@ jobs:
           # the version from a filename.
           TAG_NAME="${{ github.ref_name }}"
           case "$TAG_NAME" in
-            c2pa-v*) ;;
+            c2pa-v* | c2pa-rc-v*) ;;
             *)
-              echo "::error::Expected a c2pa-v* tag ref, got '$TAG_NAME'. Run this workflow on a c2pa-v* tag."
+              echo "::error::Expected a c2pa-v* or c2pa-rc-v* tag ref, got '$TAG_NAME'."
               exit 1
               ;;
           esac
@@ -178,17 +180,24 @@ jobs:
 
       # Generate the release notes ourselves, scoped to the previous tag of THIS
       # crate. Tags are repo-global and interleaved across crates (c2pa-v*,
-      # c2patool-v*, c2pa-c-ffi-v*), and GitHub's automatic "previous tag" is the
-      # chronologically previous tag regardless of crate -- which produced
-      # nonsense ranges like `c2patool-v0.26.72...c2pa-v0.90.0`. Picking the
-      # previous same-crate tag keeps the changelog within this crate's history.
+      # c2pa-c-ffi-v*), and GitHub's automatic "previous tag" is the
+      # chronologically previous tag regardless of crate -- which would produce
+      # nonsense ranges. Picking the previous same-crate tag keeps the
+      # changelog within this crate's history.
       - name: Generate release notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           TAG="${{ steps.extract_tag.outputs.tag_name }}"
-          PREFIX="c2pa-v"
+
+          # RC build tags live in their own `c2pa-rc-v*` namespace, so baseline
+          # the notes on the previous tag of the SAME kind: an RC build against
+          # the prior RC build, a real release against the prior real release.
+          case "$TAG" in
+            c2pa-rc-v*) PREFIX="c2pa-rc-v" ;;
+            *) PREFIX="c2pa-v" ;;
+          esac
           repo="${{ github.repository }}"
           # All tags for this crate, plus the current one, sorted ascending.
           matching=$(gh api --paginate "repos/$repo/git/matching-refs/tags/$PREFIX" \

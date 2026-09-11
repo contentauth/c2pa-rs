@@ -6,13 +6,17 @@ The CAI Rust library includes an implementation of the [Creator Assertions Worki
 
 An identity claims aggregation (ICA) credential is signed by an issuer identified by a DID (for example a `did:web` or `did:jwk`). A valid signature only proves that the credential was signed by whoever controls that DID: it does **not**, on its own, establish that the issuer is trustworthy. In particular, a self-issued `did:jwk` can be minted by anyone, so accepting it as trusted would let an attacker assert any identity.
 
-For this reason, the library treats ICA issuers as untrusted unless they appear on an explicit allow-list. Configure the allow-list through the `cawg_trust.trusted_ica_issuers` setting, which is a list of exact DID strings (any DID method):
+For this reason, the library treats ICA issuers as untrusted unless they appear on an explicit allow-list. Configure the allow-list by adding a new CAWG specific trust anchor. `trust.anchors[].trusted_ica_issuers` setting, which is a list of exact DID strings (any DID method):
 
 ```json
 {
-  "cawg_trust": {
-    "trusted_ica_issuers": [
-      "did:web:issuer.example.com"
+  "trust": 
+    "anchors": [
+      {
+          "trusted_ica_issuers": [
+            "did:web:issuer.example.com"
+        ]
+      }
     ]
   }
 }

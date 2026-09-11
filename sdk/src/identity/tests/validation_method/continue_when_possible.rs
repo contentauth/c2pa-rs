@@ -204,7 +204,7 @@ async fn assertion_not_in_claim_v1() {
 
     assert_eq!(
         log.description,
-        "signing certificate trusted, found in User trust anchors"
+        "signing certificate trusted, found in [https://c2pa-rs/unknown_tl] trust anchors"
     );
 
     assert_eq!(
@@ -334,7 +334,7 @@ async fn duplicate_assertion_reference() {
 
     assert_eq!(
         log.description,
-        "signing certificate trusted, found in User trust anchors"
+        "signing certificate trusted, found in [https://c2pa-rs/unknown_tl] trust anchors"
     );
     assert_eq!(
         log.validation_status.as_ref().unwrap().as_ref() as &str,
@@ -442,7 +442,7 @@ async fn no_hard_binding() {
 
     assert_eq!(
         log.description,
-        "signing certificate trusted, found in User trust anchors"
+        "signing certificate trusted, found in [https://c2pa-rs/unknown_tl] trust anchors"
     );
 
     assert_eq!(
@@ -741,7 +741,7 @@ async fn pad1_invalid() {
 
     assert_eq!(
         log.description,
-        "signing certificate trusted, found in User trust anchors"
+        "signing certificate trusted, found in [https://c2pa-rs/unknown_tl] trust anchors"
     );
 
     assert_eq!(
@@ -850,7 +850,7 @@ async fn pad2_invalid() {
 
     assert_eq!(
         log.description,
-        "signing certificate trusted, found in User trust anchors"
+        "signing certificate trusted, found in [https://c2pa-rs/unknown_tl] trust anchors"
     );
 
     assert_eq!(

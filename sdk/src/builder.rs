@@ -51,7 +51,6 @@ use crate::{
     error::{Error, Result},
     hash_utils::hash_by_alg,
     jumbf::labels::manifest_label_from_uri,
-    jumbf_io,
     maybe_send_sync::MaybeSend,
     resource_store::{ResourceRef, ResourceResolver, ResourceStore},
     settings::{builder::TimeStampFetchScope, MAX_ASSERTIONS},
@@ -193,7 +192,7 @@ pub struct ManifestDefinition {
 }
 
 fn default_instance_id() -> String {
-    format!("xmp:iid:{}", Uuid::new_v4())
+    format!("xmp.iid:{}", Uuid::new_v4())
 }
 
 fn default_format() -> String {
@@ -482,7 +481,8 @@ impl Builder {
     /// # Returns
     /// * A new [`Builder`].
     #[deprecated(
-        note = "Use `Builder::default()` for default settings, or `Builder::from_context(context)` and pass settings in the `Context`."
+        since = "0.79.4",
+        note = "Use `Builder::default()` for default settings, or `Builder::from_context(context)` and pass settings in the `Context`. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     pub fn new() -> Self {
         // Legacy behavior: explicitly get global settings for backward compatibility
@@ -625,7 +625,8 @@ impl Builder {
     /// # Errors
     /// * Returns an [`Error`] if the JSON is malformed or incorrect.
     #[deprecated(
-        note = "Use `Builder::from_context(context).with_definition(json)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+        since = "0.79.4",
+        note = "Use `Builder::from_context(context).with_definition(json)` instead, passing a `Context` explicitly rather than relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     pub fn from_json(json: &str) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
@@ -685,7 +686,7 @@ impl Builder {
 
     /// Returns a [Vec] of MIME types that the API is able to sign.
     pub fn supported_mime_types() -> Vec<String> {
-        jumbf_io::supported_builder_mime_types()
+        Context::default().io().writer_mime_types()
     }
 
     /// Returns the claim version for this builder.
@@ -1608,7 +1609,8 @@ impl Builder {
     /// # }
     /// ```
     #[deprecated(
-        note = "Use `Builder::from_context(context).with_archive(stream)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+        since = "0.79.4",
+        note = "Use `Builder::from_context(context).with_archive(stream)` instead, passing a `Context` explicitly rather than relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     #[allow(deprecated)]
     pub fn from_archive(stream: impl Read + Seek + Send) -> Result<Self> {
@@ -2426,6 +2428,10 @@ impl Builder {
     /// * The bytes of the `c2pa_manifest` placeholder.
     /// # Errors
     /// * Returns an [`Error`] if the placeholder cannot be created.
+    #[deprecated(
+        since = "0.91.0",
+        note = "Use `Builder::placeholder` instead, which also supports dynamic assertions (e.g., CAWG identity). Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn data_hashed_placeholder(
         &mut self,
         reserve_size: usize,
@@ -2441,9 +2447,10 @@ impl Builder {
             self.add_assertion(labels::DATA_HASH, &ph)?;
         }
         self.definition.format = format.to_string();
-        self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
+        self.definition.instance_id = format!("xmp.iid:{}", Uuid::new_v4());
         let mut store = self.to_store()?;
-        let placeholder = store.get_data_hashed_manifest_placeholder(reserve_size, format)?;
+        let placeholder =
+            store.get_data_hashed_manifest_placeholder(reserve_size, format, self.context())?;
         Ok(placeholder)
     }
 
@@ -2483,14 +2490,14 @@ impl Builder {
         }
 
         // BMFF formats always use BmffHash.
-        if jumbf_io::is_bmff_format(format) {
+        if self.context.io().is_bmff_format(format) {
             return HashType::Bmff;
         }
 
         // When prefer_box_hash is enabled and the format handler supports it,
         // use BoxHash (no placeholder needed).
         if self.context.settings().builder.prefer_box_hash {
-            if let Some(handler) = jumbf_io::get_assetio_handler(format) {
+            if let Some(handler) = self.context.io().handler(format) {
                 if handler.asset_box_hash_ref().is_some() {
                     return HashType::Box;
                 }
@@ -2560,7 +2567,7 @@ impl Builder {
 
         // If no hash exists, add an appropriate placeholder based on format
         if hash_count == 0 {
-            if crate::jumbf_io::is_bmff_format(format) {
+            if self.context().io().is_bmff_format(format) {
                 // For BMFF formats, add a placeholder BmffHash.
                 let ph_alg = self.definition.hash_alg.as_deref().unwrap_or("sha256");
 
@@ -2606,7 +2613,7 @@ impl Builder {
         // JUMBF to the same size, keeping the composed byte count identical.
         self.placeholder_jumbf_len = Some(jumbf.len());
         // Return composed bytes ready for the caller to embed into the asset.
-        Store::get_composed_manifest(&jumbf, format)
+        Store::get_composed_manifest(&jumbf, format, self.context())
     }
 
     /// Sets the exclusion object for the [`BmffHash`] assertion in the Builder.
@@ -2904,7 +2911,10 @@ impl Builder {
         let use_box_hash = has_box_hash
             || (!has_bmff_hash && {
                 self.context.settings().builder.prefer_box_hash
-                    && jumbf_io::get_assetio_handler(format)
+                    && self
+                        .context
+                        .io()
+                        .handler(format)
                         .and_then(|h| h.asset_box_hash_ref().map(|_| ()))
                         .is_some()
             });
@@ -2976,7 +2986,11 @@ impl Builder {
             self.add_assertion(&assertion_label, &bmff_hash)?;
         } else if use_box_hash {
             // BoxHash path: get the format's AssetBoxHash handler and compute box hashes.
-            let handler = jumbf_io::get_assetio_handler(format).ok_or(Error::UnsupportedType)?;
+            let handler = self
+                .context
+                .io()
+                .handler(format)
+                .ok_or(Error::UnsupportedType)?;
             let bhp = handler.asset_box_hash_ref().ok_or_else(|| {
                 Error::BadParam(format!("Format '{format}' does not support BoxHash"))
             })?;
@@ -3126,7 +3140,7 @@ impl Builder {
             }
         }
 
-        Store::get_composed_manifest(&jumbf, format)
+        Store::get_composed_manifest(&jumbf, format, self.context())
     }
 
     /// Create a signed data hashed embeddable manifest using a supplied signer.
@@ -3144,6 +3158,10 @@ impl Builder {
     /// * `source` - The stream to read from.
     /// # Returns
     /// * The bytes of the `c2pa_manifest` that was created (prep-formatted).
+    #[deprecated(
+        since = "0.91.0",
+        note = "Use `Builder::update_hash_from_stream` and `Builder::sign_embeddable` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     #[async_generic(async_signature(
         &mut self,
         signer: &dyn AsyncSigner,
@@ -3188,6 +3206,10 @@ impl Builder {
     /// * `signer` - The signer to use.
     /// # Returns
     /// * The bytes of the c2pa_manifest that was created (prep-formatted).
+    #[deprecated(
+        since = "0.91.0",
+        note = "Use `Builder::update_hash_from_stream` and `Builder::sign_embeddable` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     #[async_generic(async_signature(
         &mut self,
         signer: &dyn AsyncSigner,
@@ -3198,7 +3220,7 @@ impl Builder {
         signer: &dyn Signer,
         format: &str,
     ) -> Result<Vec<u8>> {
-        self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
+        self.definition.instance_id = format!("xmp.iid:{}", Uuid::new_v4());
 
         let mut store = self.to_store()?;
         let bytes = if _sync {
@@ -3216,7 +3238,7 @@ impl Builder {
             }
         }
         // get composed version for embedding to JPEG
-        Store::get_composed_manifest(&bytes, format)
+        Store::get_composed_manifest(&bytes, format, &self.context)
     }
 
     /// Embed a signed manifest into a stream using a supplied signer.
@@ -3378,9 +3400,12 @@ impl Builder {
             ));
         };
 
-        self.definition.format =
-            crate::format_from_path(path).ok_or(crate::Error::UnsupportedType)?;
-        self.definition.instance_id = format!("xmp:iid:{}", Uuid::new_v4());
+        self.definition.format = self
+            .context()
+            .io()
+            .format_from_path(path)
+            .ok_or(crate::Error::UnsupportedType)?;
+        self.definition.instance_id = format!("xmp.iid:{}", Uuid::new_v4());
         if self.definition.title.is_none() {
             if let Some(title) = path.file_name() {
                 self.definition.title = Some(title.to_string_lossy().to_string());
@@ -3467,8 +3492,16 @@ impl Builder {
         self.set_asset_from_dest(dest)?;
 
         // formats must match but allow extensions to be slightly different (i.e. .jpeg vs .jpg)s
-        let format = crate::format_from_path(source).ok_or(crate::Error::UnsupportedType)?;
-        let format_dest = crate::format_from_path(dest).ok_or(crate::Error::UnsupportedType)?;
+        let format = self
+            .context()
+            .io()
+            .format_from_path(source)
+            .ok_or(crate::Error::UnsupportedType)?;
+        let format_dest = self
+            .context()
+            .io()
+            .format_from_path(dest)
+            .ok_or(crate::Error::UnsupportedType)?;
         if format != format_dest {
             return Err(crate::Error::BadParam(
                 "Source and destination file formats must match".to_string(),
@@ -3545,8 +3578,16 @@ impl Builder {
         self.set_asset_from_dest(dest)?;
 
         // formats must match but allow extensions to be slightly different (i.e. .jpeg vs .jpg)s
-        let format = crate::format_from_path(source).ok_or(crate::Error::UnsupportedType)?;
-        let format_dest = crate::format_from_path(dest).ok_or(crate::Error::UnsupportedType)?;
+        let format = self
+            .context()
+            .io()
+            .format_from_path(source)
+            .ok_or(crate::Error::UnsupportedType)?;
+        let format_dest = self
+            .context()
+            .io()
+            .format_from_path(dest)
+            .ok_or(crate::Error::UnsupportedType)?;
         if format != format_dest {
             return Err(crate::Error::BadParam(
                 "Source and destination file formats must match".to_string(),
@@ -3575,8 +3616,29 @@ impl Builder {
     /// * The bytes of the composed manifest.
     /// # Errors
     /// * Returns an [`Error`] if the manifest cannot be converted.
+    #[deprecated(
+        since = "0.91.0",
+        note = "Use `Builder::compose_manifest` on a `Builder` instance instead; without a `Context`, custom asset I/O handlers registered via `Context::with_io_handler` are not consulted. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn composed_manifest(manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
-        Store::get_composed_manifest(manifest_bytes, format)
+        // Legacy behavior: no Context available, so only the built-in global registry is used.
+        Store::get_composed_manifest(manifest_bytes, format, &Context::new())
+    }
+
+    /// Converts a manifest into a composed manifest with the specified format.
+    ///
+    /// This wraps the bytes in the container format of the specified format.
+    /// So that it can be directly embedded into a stream of that format.
+    ///
+    /// # Arguments
+    /// * `manifest_bytes` - The bytes of the manifest to convert.
+    /// * `format` - The format to convert to.
+    /// # Returns
+    /// * The bytes of the composed manifest.
+    /// # Errors
+    /// * Returns an [`Error`] if the manifest cannot be converted.
+    pub fn compose_manifest(&self, manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
+        Store::get_composed_manifest(manifest_bytes, format, self.context())
     }
 
     /// Add an ingredient to the manifest from a Reader.
@@ -3674,13 +3736,16 @@ impl Builder {
         // First we need to generate a `BoxHash` over an empty string.
         let mut empty_asset = std::io::Cursor::new("");
 
-        let boxes = jumbf_io::get_assetio_handler("application/c2pa")
+        let boxes = self
+            .context
+            .io()
+            .handler("application/c2pa")
             .ok_or(Error::UnsupportedType)?
             .asset_box_hash_ref()
             .ok_or(Error::UnsupportedType)?
             .get_box_map(&mut empty_asset)?;
 
-        let box_hash = BoxHash { boxes };
+        let box_hash = BoxHash::from_box_map(boxes);
 
         let mut claim = match &kind {
             ArchiveKind::Builder => self.to_claim()?,
@@ -3890,7 +3955,7 @@ mod tests {
     };
 
     use c2pa_macros::c2pa_test_async;
-    use rand::Rng;
+    use rand::RngExt;
     use serde_json::json;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
@@ -3903,7 +3968,7 @@ mod tests {
         asset_handlers::bmff_io::{
             inject_manifest_into_free_box, inject_placeholder, read_bmff_c2pa_boxes,
         },
-        hash_stream_by_alg,
+        hash_stream_by_alg, jumbf_io,
         maybe_send_sync::MaybeSend,
         settings::Settings,
         utils::{
@@ -4241,6 +4306,49 @@ mod tests {
         assert_eq!(manifest.title().unwrap(), "Test_Manifest");
         let test_assertion: TestAssertion = manifest.find_assertion("org.life.meaning").unwrap();
         assert_eq!(test_assertion.answer, 42);
+    }
+
+    #[test]
+    fn test_builder_incorrect_ingredient_format_errors() {
+        let mut source = Cursor::new(TEST_IMAGE);
+
+        let ingredient_json = json!({
+            "title": "CA.jpg",
+            "format": "image/jpeg",
+        })
+        .to_string();
+
+        let mut builder = Builder::default()
+            .with_definition(simple_manifest_json())
+            .unwrap();
+
+        // pass incorrect format
+        let result = builder.add_ingredient_from_stream(ingredient_json, "image/png", &mut source);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_builder_incorrect_ingredient_format_ignore_ingredient_errors() {
+        let mut source = Cursor::new(TEST_IMAGE);
+
+        let ingredient_json = json!({
+            "title": "CA.jpg",
+            "format": "image/jpeg",
+        })
+        .to_string();
+
+        let settings = Settings::default()
+            .with_value("builder.ignore_ingredient_errors", true)
+            .unwrap();
+        let context = Context::default().with_settings(settings).unwrap();
+
+        let mut builder = Builder::from_context(context)
+            .with_definition(simple_manifest_json())
+            .unwrap();
+
+        // pass incorrect format, but ignore_ingredient_errors should prevent an error
+        let result = builder.add_ingredient_from_stream(ingredient_json, "image/png", &mut source);
+        assert!(result.is_ok());
     }
 
     // Ensure multiple `c2pa.placed` actions aren't created.
@@ -5189,6 +5297,185 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "unstable_structured_text")]
+    fn test_builder_sign_structured_text() {
+        let cases: &[(&str, &[u8])] = &[
+            ("text/markdown", b"# Title\n\nStructured-text body.\n"),
+            ("application/yaml", b"title: Example\nvalue: 1\n"),
+            ("application/toml", b"title = \"Example\"\n"),
+        ];
+
+        for (format, content) in cases {
+            let mut source = Cursor::new(content.to_vec());
+            let mut dest = Cursor::new(Vec::new());
+
+            let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
+            builder
+                .add_ingredient_from_stream(parent_json(), format, &mut source)
+                .unwrap();
+            builder
+                .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
+                .unwrap();
+
+            let signer = test_signer(SigningAlg::Ps256);
+            builder
+                .sign(signer.as_ref(), format, &mut source, &mut dest)
+                .unwrap();
+
+            dest.rewind().unwrap();
+            let manifest_store = Reader::default().with_stream(format, &mut dest).unwrap();
+            assert_eq!(
+                manifest_store.validation_state(),
+                ValidationState::Trusted,
+                "signed {format} did not validate as Trusted"
+            );
+            assert_eq!(
+                manifest_store.active_manifest().unwrap().title().unwrap(),
+                "Test_Manifest"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "unstable_structured_text")]
+    fn test_tampered_structured_text_fails_validation() {
+        let mut source = Cursor::new(b"# Doc\n\nOriginal TAMPER_ME body.\n".to_vec());
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
+        builder
+            .add_ingredient_from_stream(parent_json(), "text/markdown", &mut source)
+            .unwrap();
+        builder
+            .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
+            .unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+        builder
+            .sign(signer.as_ref(), "text/markdown", &mut source, &mut dest)
+            .unwrap();
+
+        // Same-length replacement keeps byte offsets (and the manifest block)
+        // stable, so only the visible content changes.
+        let signed = String::from_utf8(dest.into_inner()).unwrap();
+        let tampered = signed.replace("TAMPER_ME", "tampered!");
+        assert_ne!(tampered, signed, "replacement must change the bytes");
+
+        let mut tampered_stream = Cursor::new(tampered.into_bytes());
+        let manifest_store = Reader::default()
+            .with_stream("text/markdown", &mut tampered_stream)
+            .unwrap();
+        assert_ne!(
+            manifest_store.validation_state(),
+            ValidationState::Trusted,
+            "tampered structured text must not validate as Trusted"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "unstable_plain_text")]
+    fn test_builder_sign_plain_text() {
+        let mut source = Cursor::new(b"Plain text provenance, end to end.\n".to_vec());
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
+        builder
+            .add_ingredient_from_stream(parent_json(), "text/plain", &mut source)
+            .unwrap();
+        builder
+            .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
+            .unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        builder
+            .sign(signer.as_ref(), "text/plain", &mut source, &mut dest)
+            .unwrap();
+
+        dest.rewind().unwrap();
+        let manifest_store = Reader::default()
+            .with_stream("text/plain", &mut dest)
+            .unwrap();
+        assert_eq!(
+            manifest_store.validation_state(),
+            ValidationState::Trusted,
+            "signed text/plain did not validate as Trusted"
+        );
+        assert_eq!(
+            manifest_store.active_manifest().unwrap().title().unwrap(),
+            "Test_Manifest"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "unstable_plain_text")]
+    fn test_tampered_plain_text_fails_validation() {
+        let mut source = Cursor::new(b"Original TAMPER_ME body.\n".to_vec());
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
+        builder
+            .add_ingredient_from_stream(parent_json(), "text/plain", &mut source)
+            .unwrap();
+        builder
+            .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
+            .unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+        builder
+            .sign(signer.as_ref(), "text/plain", &mut source, &mut dest)
+            .unwrap();
+
+        // Same-length replacement keeps the wrapper's byte offset stable, so only the
+        // visible content changes.
+        let signed = String::from_utf8(dest.into_inner()).unwrap();
+        let tampered = signed.replace("TAMPER_ME", "tampered!");
+        assert_ne!(tampered, signed, "replacement must change the bytes");
+
+        let mut tampered_stream = Cursor::new(tampered.into_bytes());
+        let manifest_store = Reader::default()
+            .with_stream("text/plain", &mut tampered_stream)
+            .unwrap();
+        assert_ne!(
+            manifest_store.validation_state(),
+            ValidationState::Trusted,
+            "tampered plain text must not validate as Trusted"
+        );
+    }
+
+    /// The reason `PlainTextIO::write_cai` normalizes to NFC before embedding: content
+    /// that arrives decomposed (NFD) must still sign and validate as `Trusted`, proving
+    /// the generic raw-byte hash engine agrees with the A.8-mandated NFC hash end to end
+    /// (asset_handlers::plain_text_io has the unit-level version of this argument).
+    #[test]
+    #[cfg(feature = "unstable_plain_text")]
+    fn test_builder_sign_plain_text_nfd_input_validates_trusted() {
+        // "café" written NFD: 'e' + U+0301 combining acute accent, instead of precomposed é.
+        let nfd_source = "cafe\u{0301} notes, decomposed on disk.\n";
+        let mut source = Cursor::new(nfd_source.as_bytes().to_vec());
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
+        builder
+            .add_ingredient_from_stream(parent_json(), "text/plain", &mut source)
+            .unwrap();
+        builder
+            .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
+            .unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+        builder
+            .sign(signer.as_ref(), "text/plain", &mut source, &mut dest)
+            .unwrap();
+
+        dest.rewind().unwrap();
+        let manifest_store = Reader::default()
+            .with_stream("text/plain", &mut dest)
+            .unwrap();
+        assert_eq!(
+            manifest_store.validation_state(),
+            ValidationState::Trusted,
+            "NFD-decomposed input must still validate as Trusted"
+        );
+    }
+
+    #[test]
     #[cfg(feature = "file_io")]
     fn test_builder_sign_assets() {
         const TESTFILES: &[&str] = &[
@@ -5499,7 +5786,7 @@ mod tests {
         let c2pa_io = jumbf_io::get_assetio_handler("application/c2pa").unwrap();
         let box_mapper = c2pa_io.asset_box_hash_ref().unwrap();
         let boxes = box_mapper.get_box_map(&mut reader).unwrap();
-        let bh = BoxHash { boxes };
+        let bh = BoxHash::from_box_map(boxes);
 
         builder.add_assertion(labels::BOX_HASH, &bh)?;
 
@@ -6023,7 +6310,7 @@ mod tests {
             // break the mdat into 7 random chunks and hash each chunks
             let mut remaining = mdat_box.size - 8; // subtract 8 bytes to get to actual content size for non-largesize box.  For largesize we will account for the larger header below.
             let offset = mdat_box.offset;
-            let mut rng = rand::thread_rng();
+            let mut rng = rand::rng();
 
             // for a non largesize box the actual mdat data starts after the 8 byte header, for a largesize box it starts
             // after 16 bytes.  So we need to account for that when seeking to the start of the mdat content.
@@ -6033,7 +6320,7 @@ mod tests {
 
             while remaining > 0 {
                 // Generate a random size between 10% and the remaining length
-                let mut chunk_size = rng.gen_range((remaining / 10)..=remaining);
+                let mut chunk_size = rng.random_range((remaining / 10)..=remaining);
 
                 // eat up rest of mdat if 0 is generated for some reason so we don't have random 0 leaves
                 if chunk_size == 0 {
@@ -6086,7 +6373,7 @@ mod tests {
         let box_mapper = c2pa_io.asset_box_hash_ref().unwrap();
         let boxes = box_mapper.get_box_map(&mut reader).unwrap();
         // Create the BoxHash object
-        let bh = BoxHash { boxes };
+        let bh = BoxHash::from_box_map(boxes);
         // And generate the box hashes
         //bh.generate_box_hash_from_stream(&mut reader, "sha256", box_mapper, true).unwrap();
 
@@ -6115,7 +6402,7 @@ mod tests {
     async fn test_builder_box_hashed_embeddable() {
         use crate::{
             asset_handlers::jpeg_io::JpegIO,
-            asset_io::{CAIWriter, HashBlockObjectType},
+            asset_io::{C2paWriter, ObjectType},
         };
         const BOX_HASH_IMAGE: &[u8] = include_bytes!("../tests/fixtures/boxhash.jpg");
         const BOX_HASH: &[u8] = include_bytes!("../tests/fixtures/boxhash.json");
@@ -6140,22 +6427,17 @@ mod tests {
 
         // insert manifest into output asset
         let jpeg_io = JpegIO {};
-        let ol = jpeg_io
-            .get_object_locations_from_stream(&mut input_stream)
-            .unwrap();
+        let ol = jpeg_io.get_object_locations(&mut input_stream).unwrap();
         input_stream.rewind().unwrap();
 
-        let cai_loc = ol
-            .iter()
-            .find(|o| o.htype == HashBlockObjectType::Cai)
-            .unwrap();
+        let cai_loc = ol.iter().find(|o| o.htype == ObjectType::C2pa).unwrap();
 
         // build new asset in memory inserting new manifest
         let outbuf = Vec::new();
         let mut out_stream = Cursor::new(outbuf);
 
         // write before
-        let mut before = vec![0u8; cai_loc.offset];
+        let mut before = vec![0u8; usize::try_from(cai_loc.offset).unwrap()];
         input_stream.read_exact(before.as_mut_slice()).unwrap();
         out_stream.write_all(&before).unwrap();
 
@@ -6182,7 +6464,7 @@ mod tests {
     async fn test_builder_box_hashed_embeddable_with_exclusions() {
         use crate::{
             asset_handlers::jpeg_io::JpegIO,
-            asset_io::{CAIWriter, HashBlockObjectType},
+            asset_io::{C2paWriter, ObjectType},
         };
         const BOX_HASH_IMAGE: &[u8] = include_bytes!("../tests/fixtures/boxhash.jpg");
         const BOX_HASH: &[u8] = include_bytes!("../tests/fixtures/boxhash_with_exclusion.json");
@@ -6207,22 +6489,17 @@ mod tests {
 
         // insert manifest into output asset
         let jpeg_io = JpegIO {};
-        let ol = jpeg_io
-            .get_object_locations_from_stream(&mut input_stream)
-            .unwrap();
+        let ol = jpeg_io.get_object_locations(&mut input_stream).unwrap();
         input_stream.rewind().unwrap();
 
-        let cai_loc = ol
-            .iter()
-            .find(|o| o.htype == HashBlockObjectType::Cai)
-            .unwrap();
+        let cai_loc = ol.iter().find(|o| o.htype == ObjectType::C2pa).unwrap();
 
         // build new asset in memory inserting new manifest
         let outbuf = Vec::new();
         let mut out_stream = Cursor::new(outbuf);
 
         // write before
-        let mut before = vec![0u8; cai_loc.offset];
+        let mut before = vec![0u8; usize::try_from(cai_loc.offset).unwrap()];
         input_stream.read_exact(before.as_mut_slice()).unwrap();
         out_stream.write_all(&before).unwrap();
 
@@ -6585,6 +6862,31 @@ mod tests {
         let m = reader.active_manifest().unwrap();
         assert_eq!(m.ingredients().len(), 1);
         assert!(m.ingredients()[0].active_manifest().is_some());
+    }
+
+    #[c2pa_test_async]
+    async fn test_add_cloud_ingredient_ignore_ingredient_errors() {
+        let mut cloud_image = Cursor::new(TEST_IMAGE_CLOUD);
+
+        let settings = Settings::default()
+            .with_value("verify.remote_manifest_fetch", false)
+            .unwrap();
+        let context = Context::default().with_settings(settings).unwrap();
+
+        let mut builder = Builder::from_context(context);
+
+        let ingredient = builder
+            .add_ingredient_from_stream_async(parent_json(), "image/jpeg", &mut cloud_image)
+            .await
+            .unwrap();
+
+        let validation_results = ingredient.validation_results().unwrap();
+        assert!(validation_results
+            .active_manifest()
+            .unwrap()
+            .failure()
+            .iter()
+            .any(|status| status.code() == crate::validation_status::MANIFEST_INACCESSIBLE));
     }
 
     #[test]
