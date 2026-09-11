@@ -22,7 +22,7 @@ use std::{
 };
 
 use atree::{Arena, Token};
-use byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
+use byteorder::{BigEndian, NativeEndian, ReadBytesExt, WriteBytesExt};
 use byteordered::{with_order, ByteOrdered, Endianness};
 
 use crate::{
@@ -397,6 +397,22 @@ fn check_ifd_data_size(claimed_size: u64, file_size: u64) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// The authoritative length of the C2PA manifest store: the JUMBF superbox
+/// LBox/XLBox at `offset` (big-endian, per ISO BMFF, independent of TIFF byte
+/// order). Returns `None` when the data isn't a parseable JUMBF box header
+/// (e.g. the zero placeholder written during signing before the real manifest).
+fn c2pa_manifest_jumbf_len<R: Read + Seek + ?Sized>(stream: &mut R, offset: u64) -> Option<u64> {
+    stream.seek(SeekFrom::Start(offset)).ok()?;
+    let lbox = u64::from(stream.read_u32::<BigEndian>().ok()?);
+    let len = if lbox == 1 {
+        stream.read_u64::<BigEndian>().ok()?
+    } else {
+        lbox
+    };
+    // A valid JUMBF box is at least LBox(4) + TBox(4) bytes.
+    (len >= 8).then_some(len)
 }
 
 #[derive(Debug)]
@@ -2485,6 +2501,18 @@ impl C2paWriter for TiffIO {
         let manifest_offset = decode_offset(cai_ifd_entry.value_offset, e, big_tiff)?;
         let manifest_len = cai_ifd_entry.value_count;
 
+        // The IFD value_count is attacker-controlled; bound the manifest exclusion
+        // to the actual JUMBF superbox length so a forged, over-long count can't
+        // exclude non-manifest bytes (C2PA 15.12.1). Skipped for the signing-time
+        // placeholder, which is not yet a JUMBF box.
+        if let Some(jumbf_len) = c2pa_manifest_jumbf_len(&mut output_stream, manifest_offset) {
+            if manifest_len != jumbf_len {
+                return Err(Error::InvalidAsset(
+                    "C2PA IFD value_count does not match manifest store length".to_string(),
+                ));
+            }
+        }
+
         // figure out count to exclude
         let c2p_entry_pos = last_page_ifd
             .entries
@@ -3024,7 +3052,10 @@ pub mod tests {
 
     #[test]
     fn test_get_object_location() {
-        let data = "some data";
+        // The C2PA manifest store is always a JUMBF box; get_object_locations
+        // bounds the IFD value_count to that box's length, so use a minimal
+        // valid JUMBF superbox (LBox = 8, TBox = "jumb") as the stored data.
+        let data: [u8; 8] = [0x00, 0x00, 0x00, 0x08, 0x6a, 0x75, 0x6d, 0x62];
 
         let source = crate::utils::test::fixture_path("TUSCANY.TIF");
 
@@ -3036,12 +3067,12 @@ pub mod tests {
         let tiff_io = TiffIO {};
 
         // save data to tiff
-        tiff_io.save_c2pa_store(&output, data.as_bytes()).unwrap();
+        tiff_io.save_c2pa_store(&output, &data).unwrap();
 
         // read data back
         let loaded = tiff_io.read_cai_store(&output).unwrap();
 
-        assert_eq!(&loaded, data.as_bytes());
+        assert_eq!(loaded.as_slice(), data.as_slice());
 
         let mut success = false;
         let mut output_reader = std::fs::File::open(&output).unwrap();
@@ -3053,7 +3084,7 @@ pub mod tests {
                     let mut manifests_buf: Vec<u8> = vec![0u8; usize::try_from(op.length).unwrap()];
                     of.seek(SeekFrom::Start(op.offset)).unwrap();
                     of.read_exact(manifests_buf.as_mut_slice()).unwrap();
-                    if crate::hash_utils::vec_compare(&manifests_buf, data.as_bytes()) {
+                    if crate::hash_utils::vec_compare(&manifests_buf, &data) {
                         success = true;
                     }
                 }
