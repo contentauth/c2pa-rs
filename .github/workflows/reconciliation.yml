@@ -19,7 +19,7 @@ name: Release-branch reconciliation
 # release-prep commit, etc. `main` owns its own versions (release-plz plus the
 # dev-cycle bump in release-train-cut.yml), so replaying these onto `main`
 # would only cause conflicts. They are identified structurally -- by a diff
-# confined entirely to bookkeeping paths (Cargo.toml, Cargo.lock, CHANGELOG.md)
+# confined entirely to bookkeeping paths (Cargo.toml, CHANGELOG.md)
 # -- rather than by author or commit message, both of which vary (some bumps
 # are made by github-actions[bot], some by a maintainer by hand). Any commit
 # that touches a non-bookkeeping file is real work and is still reported.
@@ -73,7 +73,7 @@ jobs:
             # step alive under `set -e` when grep matches nothing (all files
             # are bookkeeping, i.e. a ceremony commit).
             non_bookkeeping=$(printf '%s\n' "$files" \
-              | grep -vE '(^|/)Cargo\.toml$|^Cargo\.lock$|(^|/)CHANGELOG\.md$' || true)
+              | grep -vE '(^|/)Cargo\.toml$|(^|/)CHANGELOG\.md$' || true)
             if [ -n "$files" ] && [ -z "$non_bookkeeping" ]; then
               echo "Skipping release-ceremony commit $sha (version/changelog bookkeeping only)."
             else

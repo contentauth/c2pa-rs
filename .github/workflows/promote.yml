@@ -1,0 +1,146 @@
+name: Promote release candidate
+
+# Promotes a baked release-candidate branch (`0.N.0-rc`) onto the `stable`
+# release line – the deliberate, manual final step of a breaking train's bake
+# (see docs/release-process.md).
+#
+# This workflow does NOT publish. It resets the candidate's version back to the
+# last published release and force-pushes the baked train onto `stable`; the
+# existing `release-pr.yml` then opens the reviewed `0.N.0` version + changelog
+# PR, and merging THAT is what publishes (via `release.yml`).
+#
+# Why reset the version rather than strip `-rc` to the final number: a push to
+# `stable` whose version is already ahead of crates.io makes `release.yml` run
+# `release-plz release` and publish immediately, which would skip the reviewed
+# release PR and its generated changelog. Resetting to the last published
+# version keeps `stable` level with the registry, so `release-pr.yml` – not this
+# workflow – computes the train's bump and writes the changelog.
+#
+# Prerequisites:
+#   * The `RELEASE_PLZ_ORG_TOKEN` identity must be allowed to force-push
+#     `stable` and to create `v0.*` branches (branch-protection bypass).
+#   * Release-candidate build tags must live OUTSIDE the `c2pa-v*` namespace
+#     (see release-rc.yml), so release-plz baselines the changelog on the last
+#     real release rather than on an `-rc.N` build tag.
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+
+jobs:
+  promote:
+    name: Promote release candidate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse to run outside a release-candidate branch
+        run: |
+          # An RC branch is named `<version>-rc` (no numeric suffix). Guard
+          # against dispatching against main / stable / a v0.x line.
+          case "${{ github.ref_name }}" in
+            *-rc) echo "Promoting RC branch ${{ github.ref_name }}." ;;
+            *)
+              echo "::error::promote must be dispatched on a *-rc branch, not '${{ github.ref_name }}'."
+              exit 1
+              ;;
+          esac
+
+      - name: Checkout RC branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PLZ_ORG_TOKEN }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
+
+      # `cargo set-version` (from cargo-edit) keeps intra-workspace dependency
+      # requirements in sync when it moves a crate's version.
+      - name: Install cargo-edit
+        uses: baptiste0928/cargo-install@f204293d9709061b7bc1756fec3ec4e2cd57dec0 # v3.4.0
+        with:
+          crate: cargo-edit
+          version: "0.13.6"
+
+      - name: Compute promotion versions
+        id: ver
+        run: |
+          set -euo pipefail
+          meta() { cargo metadata --format-version=1 --no-deps | jq -r ".packages[]|select(.name==\"$1\")|.version"; }
+
+          # The candidate version currently on the RC branch, e.g. 0.90.0-rc.3.
+          RC_C2PA=$(meta c2pa)
+
+          # The outgoing `stable` version is what is on crates.io (stable tracks
+          # the latest published release). It names the snapshot branch and is
+          # the version we reset to so release-plz recomputes the train's bump.
+          git fetch origin stable
+          OLD_C2PA=$(git show origin/stable:Cargo.toml | sed -n 's/^version = "\(.*\)"/\1/p' | head -1)
+          if [ -z "$OLD_C2PA" ]; then
+            echo "::error::Could not read the outgoing c2pa version from origin/stable:Cargo.toml."
+            exit 1
+          fi
+
+          # e.g. 0.89.3 -> v0.89.
+          OLD_LINE="v$(echo "$OLD_C2PA" | cut -d. -f1,2)"
+
+          {
+            echo "rc_c2pa=$RC_C2PA"
+            echo "old_c2pa=$OLD_C2PA"
+            echo "old_line=$OLD_LINE"
+          } >> "$GITHUB_OUTPUT"
+          echo "Promoting ${{ github.ref_name }} ($RC_C2PA) onto stable; resetting to $OLD_C2PA so release-pr.yml computes the train bump."
+
+      - name: Snapshot outgoing stable line
+        run: |
+          set -euo pipefail
+          LINE="${{ steps.ver.outputs.old_line }}"
+          if git ls-remote --exit-code --heads origin "$LINE" >/dev/null 2>&1; then
+            echo "Snapshot branch $LINE already exists; leaving it as-is."
+          else
+            # Point the retiring line at the current tip of stable so critical
+            # backports to the old release can still target it.
+            git push origin "refs/remotes/origin/stable:refs/heads/$LINE"
+            echo "Created snapshot branch $LINE from stable."
+          fi
+
+      - name: Reset candidate to the last published version
+        run: |
+          set -euo pipefail
+          # Move c2pa (and c2pa-c-ffi, which shares the workspace version) back to
+          # the last published number. `stable` then sits level with crates.io,
+          # so the force-push below does not trigger an immediate publish; the
+          # bump is left for release-pr.yml to compute and for a human to review.
+          cargo set-version -p c2pa "${{ steps.ver.outputs.old_c2pa }}"
+
+      - name: Force-push baked train onto stable
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore: promote ${{ github.ref_name }} onto stable (reset to ${{ steps.ver.outputs.old_c2pa }} for release-plz)"
+
+          # Force-push rather than merge so stable's history becomes exactly the
+          # coherent set of changes baked on the RC branch (see
+          # docs/release-process.md). The push triggers release-pr.yml, which
+          # opens the reviewed version + changelog PR. Pushed with a PAT so that
+          # downstream workflow actually runs – a push made with the default
+          # GITHUB_TOKEN does not cascade into other workflows.
+          git push --force origin "HEAD:stable"
+
+      - name: Summary
+        run: |
+          {
+            echo "## Release candidate promoted"
+            echo ""
+            echo "- Branch \`${{ github.ref_name }}\` (candidate \`${{ steps.ver.outputs.rc_c2pa }}\`) force-pushed onto \`stable\`, reset to \`${{ steps.ver.outputs.old_c2pa }}\`."
+            echo "- Outgoing \`stable\` snapshotted as \`${{ steps.ver.outputs.old_line }}\` for backports."
+            echo ""
+            echo "\`release-pr.yml\` will open the reviewed version + changelog PR on \`stable\`. **Merging that PR publishes to crates.io.**"
+            echo ""
+            echo "If release-plz under-bumps (the train is breaking by policy but \`cargo-semver-checks\` detected no break), force the final number on that PR with \`release-plz set-version\`."
+          } >> "$GITHUB_STEP_SUMMARY"
