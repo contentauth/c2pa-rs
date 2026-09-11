@@ -45,7 +45,7 @@ use crate::{
     store::Store,
     utils::hash_utils::hash_to_b64,
     validation_results::{ValidationResults, ValidationState},
-    validation_status::{ValidationStatus, ASSERTION_MISSING, ASSERTION_NOT_REDACTED},
+    validation_status::{ValidationStatus, ASSERTION_MISSING},
     Ingredient, Manifest, ManifestAssertion, ManifestAssertionKind,
 };
 
@@ -1057,24 +1057,13 @@ impl Reader {
 
         let validation_results = ValidationResults::from_store(arc_store.as_ref(), validation_log);
 
-        // resolve redactions
-        // Even though we validate
-        // compare options.redacted_assertions and options.missing_assertions
-        // remove all overlapping values from both arrays
-        // any remaining redacted assertions are not actually redacted
-        // any remaining missing assertions are not actually missing
-
-        let mut redacted = options.redacted_assertions.clone();
+        // Report assertions the claim references but that aren't present, excluding any
+        // that were redacted: a redacted assertion is expected to be absent (removed) or
+        // zeroed, so it must not be reported as `assertion.missing`. Whether a redacted
+        // box is validly zeroed or forged with non-zero content is `Store::verify_store`'s
+        // concern (it raises `assertion.notRedacted`); here we only resolve missing vs. redacted.
         let mut missing = options.missing_assertions.clone();
-        redacted.retain(|item| !missing.contains(item));
         missing.retain(|item| !options.redacted_assertions.contains(item));
-
-        // Add any remaining redacted assertions to the validation results
-        for uri in &redacted {
-            log_item!(uri.clone(), "assertion not redacted", "Reader::from_store")
-                .validation_status(ASSERTION_NOT_REDACTED)
-                .informational(validation_log);
-        }
 
         for uri in &missing {
             log_item!(uri.clone(), "assertion missing", "Reader::from_store")
