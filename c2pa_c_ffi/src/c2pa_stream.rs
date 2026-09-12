@@ -17,8 +17,8 @@ use std::{
 };
 
 use crate::{
-    box_tracked, cimpl_free, deref_mut_or_return_int, error::C2paError, ok_or_return_int,
-    CimplError,
+    box_tracked, cimpl_free, deref_mut_option, deref_mut_or_return_int, error::C2paError,
+    ok_or_return_int, CimplError,
 };
 
 #[repr(C)]
@@ -257,7 +257,7 @@ impl TestStream {
 
     /// Gets a mutable reference to the underlying C2paStream
     pub fn stream_mut(&mut self) -> &mut C2paStream {
-        unsafe { &mut *self.0 }
+        deref_mut_option!(self.0, C2paStream).expect("TestStream always wraps a tracked C2paStream")
     }
 
     /// Gets the raw pointer (for passing to C API functions)
@@ -374,7 +374,7 @@ impl TestC2paStream {
     }
 
     unsafe extern "C" fn writer(context: *mut StreamContext, data: *const u8, len: isize) -> isize {
-        let stream: &mut TestC2paStream = &mut *(context as *mut TestC2paStream);
+        let stream = deref_mut_or_return_int!(context as *mut TestC2paStream, TestC2paStream);
         let data: &[u8] = slice::from_raw_parts(data, len as usize);
         match stream.cursor.write(data) {
             Ok(bytes) => bytes as isize,
@@ -409,9 +409,8 @@ impl TestC2paStream {
     /// - If non-null, `c_stream.context` must also be a tracked pointer allocated via `box_tracked!`.
     /// - Must not be called more than once for the same pointer.
     pub unsafe fn drop_c_stream(c_stream: *mut C2paStream) {
-        if !c_stream.is_null() {
-            let context = unsafe { (*c_stream).context };
-            cimpl_free(context as *mut std::ffi::c_void);
+        if let Some(real_stream) = deref_mut_option!(c_stream, C2paStream) {
+            cimpl_free(real_stream.context as *mut std::ffi::c_void);
         }
         cimpl_free(c_stream as *mut std::ffi::c_void);
     }
@@ -558,7 +557,7 @@ mod tests {
         let test_stream = TestC2paStream::new(vec![1, 2, 3, 4, 5]);
         let context = box_tracked!(test_stream) as *mut StreamContext;
 
-        let c2pa_stream = unsafe {
+        let c2pa_stream_ptr = unsafe {
             c2pa_create_stream(
                 context,
                 TestC2paStream::reader,
@@ -568,7 +567,7 @@ mod tests {
             )
         };
 
-        let c2pa_stream = unsafe { &mut *c2pa_stream };
+        let c2pa_stream = deref_mut_option!(c2pa_stream_ptr, C2paStream).expect("just created");
         let mut buf = [0u8; 3];
 
         let result = c2pa_stream.read(&mut buf);
@@ -576,7 +575,7 @@ mod tests {
         result.expect("Failed to read from C2paStream");
         assert_eq!(buf, [1, 2, 3]);
 
-        unsafe { c2pa_release_stream(c2pa_stream) };
+        unsafe { c2pa_release_stream(c2pa_stream_ptr) };
         cimpl_free(context as *mut std::ffi::c_void);
     }
 }
