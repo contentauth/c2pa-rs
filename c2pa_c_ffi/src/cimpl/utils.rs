@@ -40,6 +40,9 @@ type CleanupFn = Box<dyn FnMut() + Send>;
 // `scramble_to_odd_id`. Must be odd on whichever width `usize` actually is.
 #[cfg(target_pointer_width = "64")]
 const ID_MULTIPLIER: usize = 0x9e3779b97f4a7c15;
+// On 32-bit, ids are only guaranteed distinct for the first 2^31 allocations
+// (see `scramble_to_odd_id`) — far more reachable over a long-running
+// process than the 2^63 window on 64-bit.
 #[cfg(target_pointer_width = "32")]
 const ID_MULTIPLIER: usize = 0x9e3779b9;
 #[cfg(not(any(target_pointer_width = "64", target_pointer_width = "32")))]
@@ -48,15 +51,32 @@ compile_error!("PointerRegistry's handle scrambling needs a 32- or 64-bit usize"
 /// Turns a plain sequential counter value into a scrambled, always-odd
 /// handle id.
 ///
-/// - **Always odd (and therefore never zero)**: real Rust allocations
-///   always land on at least a 2-byte boundary, so their addresses are
-///   always even. An odd id can therefore never collide with a real tracked
-///   buffer address (see `track_by_address`).
-/// - **Bijective, not just well-mixed**: multiplying by a fixed odd constant
-///   is invertible modulo `2^usize::BITS`, and the product of two odd numbers
-///   is always odd regardless of truncation — so distinct counter values are
-///   mathematically guaranteed to scramble to distinct odd ids, not just
-///   unlikely to collide the way a hash could.
+/// Always odd (and therefore never zero): real Rust allocations always land
+/// on at least a 2-byte boundary, so their addresses are always even. An odd
+/// id can therefore never collide with a real tracked buffer address (see
+/// `track_by_address`).
+///
+/// Distinct for the first `2^(usize::BITS - 1)` allocations: multiplying the
+/// counter by 2 is 2-to-1, not invertible, mod `2^usize::BITS`, so two
+/// counters exactly `2^(usize::BITS - 1)` apart scramble to the same id.
+/// That's a period of 2^63 on 64-bit — no real process will get there — but
+/// only 2^31 on 32-bit, worth keeping in mind for long-running 32-bit
+/// targets.
+///
+/// Scrambled, not just sequential: multiplying by the fixed odd
+/// `ID_MULTIPLIER` adds no correctness guarantee beyond the point above —
+/// it's a bijection on the odd residues, so it can't create or remove any
+/// collision the doubling step didn't already have. What it buys instead is
+/// protection against accidents, not a hostile caller: cimpl's handles are
+/// only as trustworthy as the linked client, which we don't treat as
+/// adversarial. But a torn read across threads, an off-by-one, or a stray
+/// write that perturbs a stored handle by a small amount is a realistic
+/// accident — and with plain sequential ids (1, 3, 5, 7, ...) that kind of
+/// small perturbation could easily land on another live object's id,
+/// causing silent type confusion instead of a crash. Scrambling turns that
+/// same small perturbation into an essentially random 64-bit value that
+/// almost certainly isn't tracked at all, so the accident fails loudly
+///   (`untracked pointer`) instead of silently colliding.
 fn scramble_to_odd_id(counter: usize) -> usize {
     let odd = counter.wrapping_mul(2).wrapping_add(1);
     odd.wrapping_mul(ID_MULTIPLIER)
@@ -104,10 +124,13 @@ impl PointerRegistry {
         }
         let counter = self.next_id.fetch_add(1, Ordering::Relaxed);
         let id = scramble_to_odd_id(counter);
-        if let Ok(mut tracked) = self.tracked.lock() {
-            tracked.insert(id, (real_addr, type_id, cleanup));
-        }
-        // Silently ignore poisoned mutex - this is a best-effort tracking system
+        // Recover from a poisoned mutex rather than silently dropping
+        // `cleanup` unrun: the opaque id is the only handle to this
+        // allocation, so failing to insert here would both leak it and hand
+        // back an id that can never resolve. See the Drop impl below, which
+        // recovers the same way.
+        let mut tracked = self.tracked.lock().unwrap_or_else(|e| e.into_inner());
+        tracked.insert(id, (real_addr, type_id, cleanup));
         id
     }
 
@@ -116,10 +139,10 @@ impl PointerRegistry {
     /// returned pointer must remain a real, readable address.
     fn track_by_address(&self, real_addr: usize, type_id: TypeId, cleanup: CleanupFn) {
         if real_addr != 0 {
-            if let Ok(mut tracked) = self.tracked.lock() {
-                tracked.insert(real_addr, (real_addr, type_id, cleanup));
-            }
-            // Silently ignore poisoned mutex - this is a best-effort tracking system
+            // See track_by_id: recover from poisoning instead of dropping
+            // `cleanup` unrun and leaking the allocation.
+            let mut tracked = self.tracked.lock().unwrap_or_else(|e| e.into_inner());
+            tracked.insert(real_addr, (real_addr, type_id, cleanup));
         }
     }
 
@@ -130,10 +153,11 @@ impl PointerRegistry {
             return Err(Error::from(CimplError::null_parameter("pointer")));
         }
 
-        let tracked = self
-            .tracked
-            .lock()
-            .map_err(|_| Error::from(CimplError::mutex_poisoned()))?;
+        // Recover from poisoning rather than erroring: a panic elsewhere while
+        // holding this lock doesn't leave the map itself in a state we need
+        // to distrust (see track_by_id), and treating poisoning as fatal here
+        // would make every previously tracked handle permanently unresolvable.
+        let tracked = self.tracked.lock().unwrap_or_else(|e| e.into_inner());
         match tracked.get(&id) {
             Some((real_addr, actual_type, _)) if *actual_type == expected_type => Ok(*real_addr),
             Some(_) => Err(Error::from(CimplError::wrong_pointer_type(id as u64))),
@@ -166,10 +190,7 @@ impl PointerRegistry {
             return Err(Error::from(CimplError::null_parameter("pointer")));
         }
 
-        let mut tracked = self
-            .tracked
-            .lock()
-            .map_err(|_| Error::from(CimplError::mutex_poisoned()))?;
+        let mut tracked = self.tracked.lock().unwrap_or_else(|e| e.into_inner());
 
         match tracked.get(&id) {
             Some((_, actual_type, _)) if *actual_type == expected_type => {
@@ -188,10 +209,7 @@ impl PointerRegistry {
         }
 
         let mut cleanup = {
-            let mut tracked = self
-                .tracked
-                .lock()
-                .map_err(|_| Error::from(CimplError::mutex_poisoned()))?;
+            let mut tracked = self.tracked.lock().unwrap_or_else(|e| e.into_inner());
             match tracked.remove(&key) {
                 Some((_, _, cleanup)) => cleanup,
                 None => return Err(Error::from(CimplError::untracked_pointer(key as u64))),
