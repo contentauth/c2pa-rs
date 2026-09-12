@@ -408,7 +408,13 @@ mod tests {
         dest.rewind().unwrap();
 
         let manifest_store = Reader::default().with_stream(format, &mut dest).unwrap();
-        assert_eq!(manifest_store.validation_status(), None);
+        // The naive credential's sig_type is unrecognized by the default Reader,
+        // which must surface it as a failure.
+        assert!(manifest_store
+            .validation_status()
+            .unwrap()
+            .iter()
+            .any(|s| s.code() == "cawg.identity.sig_type.unknown"));
 
         let manifest = manifest_store.active_manifest().unwrap();
         let mut st = StatusTracker::default();
@@ -463,7 +469,13 @@ mod tests {
         dest.rewind().unwrap();
 
         let manifest_store = Reader::default().with_stream(format, &mut dest).unwrap();
-        assert_eq!(manifest_store.validation_status(), None);
+        // The naive credential's sig_type is unrecognized by the default Reader,
+        // which must surface it as a failure.
+        assert!(manifest_store
+            .validation_status()
+            .unwrap()
+            .iter()
+            .any(|s| s.code() == "cawg.identity.sig_type.unknown"));
 
         let manifest = manifest_store.active_manifest().unwrap();
         let mut st = StatusTracker::default();

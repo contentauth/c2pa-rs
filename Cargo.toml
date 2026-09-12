@@ -3,7 +3,6 @@ resolver = "3"
 
 members = [
     "c2pa_c_ffi",
-    "cli",
     "export_schema",
     "macros",
     "make_test_images",

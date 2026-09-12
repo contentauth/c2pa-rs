@@ -184,8 +184,6 @@ impl Ingredient {
             && self.validation_status.is_none()
             && self.c2pa_manifest.is_none()
             && self.validation_results.is_some()
-            && self.active_manifest.is_some()
-            && self.claim_signature.is_some()
     }
 
     pub fn set_title<S: Into<String>>(mut self, title: S) -> Self {
@@ -441,6 +439,12 @@ impl Ingredient {
         if self.active_manifest.is_some() && self.validation_results.is_none() {
             return Err(serde::ser::Error::custom(
                 "Ingredient v3 activeManifest requires validationResults to be present",
+            ));
+        }
+
+        if self.active_manifest.is_some() && self.digital_source_type.is_some() {
+            return Err(serde::ser::Error::custom(
+                "Ingredient v3 activeManifest and digitalSourceType cannot both be present",
             ));
         }
 
@@ -1043,6 +1047,8 @@ pub mod tests {
             Some("1.0.0".into()),
         )];
 
+        let digital_source_type = Some(DigitalSourceType::AlgorithmicMedia);
+
         let mut all_vals = Ingredient {
             title: Some("test_title".to_owned()),
             format: Some("image/jpeg".to_owned()),
@@ -1075,6 +1081,8 @@ pub mod tests {
 
         // Save as V3
         all_vals.version = 3;
+        all_vals.active_manifest = None;
+        all_vals.digital_source_type = digital_source_type;
         let v3 = all_vals.to_assertion().unwrap();
 
         // test v1
@@ -1134,15 +1142,16 @@ pub mod tests {
             description: Some("Some ingredient description".to_owned()),
             informational_uri: Some("https://tfhub.dev/deepmind/bigbigan-resnet50/1".to_owned()),
             data_types: Some(data_types),
-            validation_results: Some(validation_results),
-            active_manifest: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
+            validation_results: Some(validation_results.clone()),
+            active_manifest: None,
             claim_signature: Some(HashedUri::new("self#jumbf=c2pa/urn:c2pa:5E7B01FC-4932-4BAB-AB32-D4F12A8AA322/c2pa.signature".to_owned(), Some("sha256".to_owned()), &[1,2,3,4,5,6,7,8,9,0])),
             soft_bindings_matched: Some(true),
             soft_binding_algorithms_matched: Some(vec!["alg1".to_owned(), "alg2".to_owned()]),
+            digital_source_type: Some(DigitalSourceType::AlgorithmicMedia),
             version: 3,
             ..Default::default()
         };
-        assert_eq!(v3_decoded, v3_expected);
+        assert!(v3_decoded == v3_expected);
         assert!(!v3_decoded.is_v1_compatible());
         assert!(!v3_decoded.is_v2_compatible());
         assert!(v3_decoded.is_v3_compatible());

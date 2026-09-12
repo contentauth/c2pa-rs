@@ -24,7 +24,10 @@ use serde_bytes::ByteBuf;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor, AssertionJson},
     assertions::labels,
-    asset_io::{AssetBoxHash, CAIRead},
+    asset_io::{
+        AllowedExclusion, AssetBoxHash, BoxMap as AssetBoxMap, ExclusionKind, ReadSeek,
+        C2PA_BOXHASH,
+    },
     error::{Error, Result},
     hash_utils::hash_by_alg,
     maybe_send_sync::MaybeSend,
@@ -38,8 +41,6 @@ use crate::{
 };
 
 const ASSERTION_CREATION_VERSION: usize = 1;
-
-pub const C2PA_BOXHASH: &str = "C2PA";
 
 /// A byte range within one of a [`BoxMap`]'s named boxes, excluded from that
 /// entry's hash. See the `box-exclusions-map` CDDL rule for this assertion.
@@ -66,71 +67,6 @@ pub struct BoxHashExclusionRequest {
     pub length: u64,
 }
 
-/// What a permitted exclusion range represents, per spec §15.12.3.
-#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
-pub enum ExclusionKind {
-    /// The C2PA Manifest Store itself, or padding.
-    ManifestOrPadding,
-    /// Asset metadata (EXIF/XMP/IPTC-equivalent) per spec §9.2.6.
-    AssetMetadata,
-}
-
-/// A box-relative byte range a format handler has determined is safe to
-/// exclude. Always derived from the *live* asset by
-/// `AssetBoxHash::get_box_map` - never trusted from the assertion itself,
-/// so [`BoxMap::allowed_exclusions`] is never serialized.
-#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq)]
-pub struct AllowedExclusion {
-    pub start: u64,
-    pub length: u64,
-    pub kind: ExclusionKind,
-}
-
-impl AllowedExclusion {
-    /// The box's entire content is excludable - e.g. the C2PA store itself,
-    /// or a format's dedicated padding box.
-    pub fn whole_box(len: u64) -> Self {
-        AllowedExclusion {
-            start: 0,
-            length: len,
-            kind: ExclusionKind::ManifestOrPadding,
-        }
-    }
-
-    /// Everything past a fixed-size structural header is excludable asset
-    /// metadata (EXIF/XMP/IPTC-equivalent per spec §9.2.6). `total_len` is
-    /// the box's own full length, and `header_len` the number of leading
-    /// bytes (marker/length/type/CRC-adjacent fields, as applicable per
-    /// format) that must stay hashed.
-    pub fn after_header(header_len: u64, total_len: u64) -> Self {
-        AllowedExclusion {
-            start: header_len,
-            length: total_len.saturating_sub(header_len),
-            kind: ExclusionKind::AssetMetadata,
-        }
-    }
-
-    fn end(&self) -> Option<u64> {
-        self.start.checked_add(self.length)
-    }
-
-    /// Whether this permitted range itself stays within its box's real
-    /// length - a defense against a buggy or malicious `AssetBoxHash`
-    /// implementor reporting a range that reaches past the box it's
-    /// attached to. `AllowedExclusion` is otherwise trusted as already
-    /// self-bounded, so this is checked independently rather than assumed.
-    fn is_bounded_by(&self, box_len: u64) -> bool {
-        self.end().is_some_and(|end| end <= box_len)
-    }
-
-    /// Whether `[range_start, range_end)` is fully contained within this
-    /// permitted range.
-    fn contains(&self, range_start: u64, range_end: u64) -> bool {
-        self.end()
-            .is_some_and(|end| range_start >= self.start && range_end <= end)
-    }
-}
-
 #[derive(Serialize, Default, Deserialize, Debug, PartialEq, Eq)]
 pub struct BoxMap {
     pub names: Vec<String>,
@@ -153,14 +89,11 @@ pub struct BoxMap {
 
     #[serde(skip)]
     pub range_len: u64,
-
-    #[serde(skip)]
-    pub allowed_exclusions: Vec<AllowedExclusion>,
 }
 
 impl BoxMap {
     // diagnostic tool to show hashes for boxes
-    pub fn dump_box(&self, mut reader: &mut dyn CAIRead, alg: &str) -> Result<()> {
+    pub fn dump_box(&self, mut reader: &mut dyn ReadSeek, alg: &str) -> Result<()> {
         print!("box names: ");
         for name in &self.names {
             print!("{name}, ");
@@ -173,6 +106,27 @@ impl BoxMap {
 
         println!("data len: {}, hash: {}", len, Hexlify(&hash));
         Ok(())
+    }
+
+    /// Builds a spec `BoxMap` (hash-bearing) from an [`AssetBoxHash::get_box_map`]
+    /// entry (region-only), attaching the hash produced for that region and
+    /// any spec-conformant `exclusions` computed for it (see [`BoxExclusion`]).
+    fn from_asset_box_map(
+        bm: AssetBoxMap,
+        hash: Vec<u8>,
+        alg: Option<String>,
+        exclusions: Option<Vec<BoxExclusion>>,
+    ) -> Self {
+        BoxMap {
+            names: bm.names,
+            alg,
+            hash: ByteBuf::from(hash),
+            excluded: bm.excluded,
+            exclusions,
+            pad: ByteBuf::from(vec![]),
+            range_start: bm.range_start,
+            range_len: bm.range_len,
+        }
     }
 }
 
@@ -291,6 +245,24 @@ pub struct BoxHash {
 impl BoxHash {
     pub const LABEL: &'static str = labels::BOX_HASH;
 
+    /// Builds an unhashed placeholder [`BoxHash`] straight from
+    /// `AssetBoxHash::get_box_map`'s output, with every entry's `hash` left
+    /// empty and `alg` unset.
+    ///
+    /// Used to size and reserve space for a `c2pa.hash.boxes` assertion before
+    /// the asset (and its real box hashes) exist — e.g. an archived working
+    /// store signed over an empty asset. Call
+    /// [`generate_box_hash_from_stream`](Self::generate_box_hash_from_stream)
+    /// separately to fill in real hashes once the asset is available.
+    pub(crate) fn from_box_map(boxes: Vec<AssetBoxMap>) -> Self {
+        BoxHash {
+            boxes: boxes
+                .into_iter()
+                .map(|bm| BoxMap::from_asset_box_map(bm, vec![], None, None))
+                .collect(),
+        }
+    }
+
     pub fn verify_hash(
         &self,
         asset_path: &Path,
@@ -315,7 +287,7 @@ impl BoxHash {
 
     pub fn verify_stream_hash(
         &self,
-        reader: &mut dyn CAIRead,
+        reader: &mut dyn ReadSeek,
         alg: Option<&str>,
         bhp: &dyn AssetBoxHash,
     ) -> Result<()> {
@@ -334,7 +306,7 @@ impl BoxHash {
     /// status.
     pub(crate) fn verify_stream_hash_with_progress<F>(
         &self,
-        reader: &mut dyn CAIRead,
+        reader: &mut dyn ReadSeek,
         alg: Option<&str>,
         bhp: &dyn AssetBoxHash,
         progress: &mut F,
@@ -583,7 +555,7 @@ impl BoxHash {
                         return Err(Error::HashMismatch("Malformed C2PA box hash".to_owned()));
                     }
 
-                    c2pa_box = bm;
+                    c2pa_box = BoxMap::from_asset_box_map(bm, vec![], None, None);
                     is_before_c2pa = false;
                     continue;
                 }
@@ -646,12 +618,15 @@ impl BoxHash {
                 boxes_ranges.push(before_c2pa_ranges);
                 boxes.push(before_c2pa);
             }
-            // Do the same for the actual C2PA box
+            // Do the same for the actual C2PA box. Its `allowed_exclusions`
+            // is never read - the hash loop below always skips the C2PA
+            // box's own entry before `box_ranges` would be consulted - this
+            // is only here to keep `boxes_ranges` zipped with `boxes`.
             if c2pa_box.range_len > 0 {
                 boxes_ranges.push(vec![BoxRangeInfo {
                     start: c2pa_box.range_start,
                     len: c2pa_box.range_len,
-                    allowed_exclusions: c2pa_box.allowed_exclusions.clone(),
+                    allowed_exclusions: vec![],
                 }]);
                 boxes.push(c2pa_box);
             }
@@ -684,15 +659,14 @@ impl BoxHash {
                 )?);
             }
         } else {
-            for (source_index, mut bm) in source_bms.into_iter().enumerate() {
+            for (source_index, bm) in source_bms.into_iter().enumerate() {
                 if bm.names[0] == "C2PA" {
                     // there should only be 1 collapsed C2PA range
                     if bm.names.len() != 1 {
                         return Err(Error::HashMismatch("Malformed C2PA box hash".to_owned()));
                     }
-                    bm.hash = ByteBuf::from(vec![0]);
-                    bm.pad = ByteBuf::from(vec![]);
-                    self.boxes.push(bm);
+                    self.boxes
+                        .push(BoxMap::from_asset_box_map(bm, vec![0], None, None));
                     continue;
                 }
 
@@ -717,21 +691,24 @@ impl BoxHash {
                     split_exclusions(&box_ranges, bm.range_start, bm.range_len, &exclusions)?.0
                 };
 
-                bm.alg = Some(alg.to_string());
-                bm.hash = ByteBuf::from(hash_stream_by_alg_with_progress(
+                let hash = hash_stream_by_alg_with_progress(
                     alg,
                     reader,
                     Some(inclusions),
                     false,
                     &mut progress,
-                )?);
-                bm.pad = ByteBuf::from(vec![]);
-                bm.exclusions = if exclusions.is_empty() {
-                    None
-                } else {
-                    Some(exclusions)
-                };
-                self.boxes.push(bm);
+                )?;
+
+                self.boxes.push(BoxMap::from_asset_box_map(
+                    bm,
+                    hash,
+                    Some(alg.to_string()),
+                    if exclusions.is_empty() {
+                        None
+                    } else {
+                        Some(exclusions)
+                    },
+                ));
             }
         }
 
@@ -917,7 +894,7 @@ mod tests {
     mockall::mock! {
         pub MABH { }
         impl AssetBoxHash for MABH {
-            fn get_box_map(&self, reader: &mut dyn CAIRead) -> Result<Vec<BoxMap>>;
+            fn get_box_map(&self, reader: &mut dyn ReadSeek) -> Result<Vec<AssetBoxMap>>;
         }
     }
 
@@ -931,33 +908,15 @@ mod tests {
         mock.expect_get_box_map().returning(|_| {
             Ok(vec![
                 // Make sure the first one is the C2PA box
-                BoxMap {
-                    names: vec!["C2PA".to_string()],
-                    alg: Some(alg.to_string()),
-                    hash: ByteBuf::from(vec![0]),
-                    excluded: None,
-                    exclusions: None,
-                    allowed_exclusions: vec![AllowedExclusion {
+                AssetBoxMap::new(vec!["C2PA".to_string()], 0, 10).with_allowed_exclusions(vec![
+                    AllowedExclusion {
                         start: 0,
                         length: 10,
                         kind: ExclusionKind::ManifestOrPadding,
-                    }],
-                    pad: ByteBuf::from(vec![]),
-                    range_start: 0,
-                    range_len: 10,
-                },
+                    },
+                ]),
                 // And follow with
-                BoxMap {
-                    names: vec!["test".to_string()],
-                    alg: Some(alg.to_string()),
-                    hash: ByteBuf::from(vec![0]),
-                    excluded: None,
-                    exclusions: None,
-                    allowed_exclusions: vec![],
-                    pad: ByteBuf::from(vec![]),
-                    range_start: 10,
-                    range_len: 10,
-                },
+                AssetBoxMap::new(vec!["test".to_string()], 10, 10),
             ])
         });
         // The data size must match what we return in the expectation
@@ -986,33 +945,15 @@ mod tests {
         mock.expect_get_box_map().returning(|_| {
             Ok(vec![
                 // And follow with
-                BoxMap {
-                    names: vec!["test".to_string()],
-                    alg: Some(alg.to_string()),
-                    hash: ByteBuf::from(vec![0]),
-                    excluded: None,
-                    exclusions: None,
-                    allowed_exclusions: vec![],
-                    pad: ByteBuf::from(vec![]),
-                    range_start: 0,
-                    range_len: 10,
-                },
+                AssetBoxMap::new(vec!["test".to_string()], 0, 10),
                 // Make sure the first one is the C2PA box
-                BoxMap {
-                    names: vec!["C2PA".to_string()],
-                    alg: Some(alg.to_string()),
-                    hash: ByteBuf::from(vec![0]),
-                    excluded: None,
-                    exclusions: None,
-                    allowed_exclusions: vec![AllowedExclusion {
+                AssetBoxMap::new(vec!["C2PA".to_string()], 10, 10).with_allowed_exclusions(vec![
+                    AllowedExclusion {
                         start: 0,
                         length: 10,
                         kind: ExclusionKind::ManifestOrPadding,
-                    }],
-                    pad: ByteBuf::from(vec![]),
-                    range_start: 10,
-                    range_len: 10,
-                },
+                    },
+                ]),
             ])
         });
         // The data size must match what we return in the expectation
@@ -1041,44 +982,16 @@ mod tests {
         mock.expect_get_box_map().returning(|_| {
             Ok(vec![
                 // And follow with
-                BoxMap {
-                    names: vec!["test".to_string()],
-                    alg: Some(alg.to_string()),
-                    hash: ByteBuf::from(vec![0]),
-                    excluded: None,
-                    exclusions: None,
-                    allowed_exclusions: vec![],
-                    pad: ByteBuf::from(vec![]),
-                    range_start: 0,
-                    range_len: 10,
-                },
+                AssetBoxMap::new(vec!["test".to_string()], 0, 10),
                 // Make sure the first one is the C2PA box
-                BoxMap {
-                    names: vec!["C2PA".to_string()],
-                    alg: Some(alg.to_string()),
-                    hash: ByteBuf::from(vec![0]),
-                    excluded: None,
-                    exclusions: None,
-                    allowed_exclusions: vec![AllowedExclusion {
+                AssetBoxMap::new(vec!["C2PA".to_string()], 10, 10).with_allowed_exclusions(vec![
+                    AllowedExclusion {
                         start: 0,
                         length: 10,
                         kind: ExclusionKind::ManifestOrPadding,
-                    }],
-                    pad: ByteBuf::from(vec![]),
-                    range_start: 10,
-                    range_len: 10,
-                },
-                BoxMap {
-                    names: vec!["test1".to_string()],
-                    alg: Some(alg.to_string()),
-                    hash: ByteBuf::from(vec![0]),
-                    excluded: None,
-                    exclusions: None,
-                    allowed_exclusions: vec![],
-                    pad: ByteBuf::from(vec![]),
-                    range_start: 20,
-                    range_len: 10,
-                },
+                    },
+                ]),
+                AssetBoxMap::new(vec!["test1".to_string()], 20, 10),
             ])
         });
         // The data size must match what we return in the expectation
@@ -1114,7 +1027,6 @@ mod tests {
                 hash: ByteBuf::from(vec![0]),
                 excluded: None,
                 exclusions: None,
-                allowed_exclusions: vec![],
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 0,
@@ -1132,20 +1044,16 @@ mod tests {
         let alg = "sha256";
         let mut mock = MockMABH::new();
         mock.expect_get_box_map().returning(|_| {
-            Ok(vec![BoxMap {
+            Ok(vec![AssetBoxMap {
                 names: vec!["AAAA".to_string()],
-                alg: None,
-                hash: ByteBuf::from(vec![]),
                 excluded: None,
-                exclusions: None,
+                range_start: 0,
+                range_len: 10,
                 allowed_exclusions: vec![AllowedExclusion {
                     start: 0,
                     length: 10,
                     kind: ExclusionKind::AssetMetadata,
                 }],
-                pad: ByteBuf::from(vec![]),
-                range_start: 0,
-                range_len: 10,
             }])
         });
 
@@ -1159,7 +1067,6 @@ mod tests {
                 hash: ByteBuf::from(vec![0; 32]),
                 excluded: None,
                 exclusions: Some(vec![]),
-                allowed_exclusions: vec![],
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 10,
@@ -1182,16 +1089,12 @@ mod tests {
         let alg = "sha256";
         let mut mock = MockMABH::new();
         mock.expect_get_box_map().returning(|_| {
-            Ok(vec![BoxMap {
+            Ok(vec![AssetBoxMap {
                 names: vec!["AAAA".to_string()],
-                alg: None,
-                hash: ByteBuf::from(vec![]),
                 excluded: None,
-                exclusions: None,
-                allowed_exclusions: vec![],
-                pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 10,
+                allowed_exclusions: vec![],
             }])
         });
 
@@ -1205,7 +1108,6 @@ mod tests {
                 hash: ByteBuf::from(vec![]),
                 excluded: Some(true),
                 exclusions: Some(vec![]),
-                allowed_exclusions: vec![],
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 10,
@@ -1227,20 +1129,16 @@ mod tests {
         let alg = "sha256";
         let mut mock = MockMABH::new();
         mock.expect_get_box_map().returning(|_| {
-            Ok(vec![BoxMap {
+            Ok(vec![AssetBoxMap {
                 names: vec![C2PA_BOXHASH.to_string()],
-                alg: None,
-                hash: ByteBuf::from(vec![]),
                 excluded: None,
-                exclusions: None,
+                range_start: 0,
+                range_len: 10,
                 allowed_exclusions: vec![AllowedExclusion {
                     start: 0,
                     length: 10,
                     kind: ExclusionKind::ManifestOrPadding,
                 }],
-                pad: ByteBuf::from(vec![]),
-                range_start: 0,
-                range_len: 10,
             }])
         });
 
@@ -1254,7 +1152,6 @@ mod tests {
                 hash: ByteBuf::from(vec![]),
                 excluded: None,
                 exclusions: Some(vec![]),
-                allowed_exclusions: vec![],
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 10,
@@ -1279,16 +1176,12 @@ mod tests {
         let alg = "sha256";
         let mut mock = MockMABH::new();
         mock.expect_get_box_map().returning(|_| {
-            Ok(vec![BoxMap {
+            Ok(vec![AssetBoxMap {
                 names: vec!["AAAA".to_string()],
-                alg: None,
-                hash: ByteBuf::from(vec![]),
                 excluded: None,
-                exclusions: None,
-                allowed_exclusions: vec![],
-                pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 10,
+                allowed_exclusions: vec![],
             }])
         });
 
@@ -1302,7 +1195,6 @@ mod tests {
                 hash: ByteBuf::from(vec![]),
                 excluded: Some(true),
                 exclusions: None,
-                allowed_exclusions: vec![],
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 10,
@@ -1321,20 +1213,16 @@ mod tests {
         let alg = "sha256";
         let mut mock = MockMABH::new();
         mock.expect_get_box_map().returning(|_| {
-            Ok(vec![BoxMap {
+            Ok(vec![AssetBoxMap {
                 names: vec![C2PA_BOXHASH.to_string()],
-                alg: None,
-                hash: ByteBuf::from(vec![]),
                 excluded: None,
-                exclusions: None,
+                range_start: 0,
+                range_len: 10,
                 allowed_exclusions: vec![AllowedExclusion {
                     start: 0,
                     length: 10,
                     kind: ExclusionKind::ManifestOrPadding,
                 }],
-                pad: ByteBuf::from(vec![]),
-                range_start: 0,
-                range_len: 10,
             }])
         });
 
@@ -1348,7 +1236,6 @@ mod tests {
                 hash: ByteBuf::from(vec![]),
                 excluded: Some(true),
                 exclusions: None,
-                allowed_exclusions: vec![],
                 pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 10,
@@ -1379,7 +1266,6 @@ mod tests {
                     box_index: Some(1),
                 },
             ]),
-            allowed_exclusions: vec![],
             pad: ByteBuf::from(vec![]),
             range_start: 0,
             range_len: 20,
@@ -1722,16 +1608,12 @@ mod tests {
         let alg = "sha256";
         let mut mock = MockMABH::new();
         mock.expect_get_box_map().returning(|_| {
-            Ok(vec![BoxMap {
+            Ok(vec![AssetBoxMap {
                 names: vec!["AAAA".to_string()],
-                alg: None,
-                hash: ByteBuf::from(vec![]),
                 excluded: None,
-                exclusions: None,
-                allowed_exclusions: vec![],
-                pad: ByteBuf::from(vec![]),
                 range_start: 0,
                 range_len: 10,
+                allowed_exclusions: vec![],
             }])
         });
 
@@ -1763,12 +1645,11 @@ mod tests {
         let mut mock = MockMABH::new();
         mock.expect_get_box_map().returning(|_| {
             Ok(vec![
-                BoxMap {
+                AssetBoxMap {
                     names: vec!["AAAA".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(vec![]),
                     excluded: None,
-                    exclusions: None,
+                    range_start: 0,
+                    range_len: 10,
                     // Only ranges within an AssetMetadata/ManifestOrPadding
                     // range may be excluded (spec §15.12.3).
                     allowed_exclusions: vec![AllowedExclusion {
@@ -1776,24 +1657,17 @@ mod tests {
                         length: 10,
                         kind: ExclusionKind::AssetMetadata,
                     }],
-                    pad: ByteBuf::from(vec![]),
-                    range_start: 0,
-                    range_len: 10,
                 },
-                BoxMap {
+                AssetBoxMap {
                     names: vec!["BBBB".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(vec![]),
                     excluded: None,
-                    exclusions: None,
+                    range_start: 10,
+                    range_len: 10,
                     allowed_exclusions: vec![AllowedExclusion {
                         start: 0,
                         length: 10,
                         kind: ExclusionKind::AssetMetadata,
                     }],
-                    pad: ByteBuf::from(vec![]),
-                    range_start: 10,
-                    range_len: 10,
                 },
             ])
         });
@@ -1857,50 +1731,38 @@ mod tests {
         let mut mock = MockMABH::new();
         mock.expect_get_box_map().returning(|_| {
             Ok(vec![
-                BoxMap {
+                AssetBoxMap {
                     names: vec!["AAAA".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(vec![]),
                     excluded: None,
-                    exclusions: None,
+                    range_start: 0,
+                    range_len: 10,
                     allowed_exclusions: vec![AllowedExclusion {
                         start: 0,
                         length: 10,
                         kind: ExclusionKind::AssetMetadata,
                     }],
-                    pad: ByteBuf::from(vec![]),
-                    range_start: 0,
-                    range_len: 10,
                 },
-                BoxMap {
+                AssetBoxMap {
                     names: vec![C2PA_BOXHASH.to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(vec![]),
                     excluded: None,
-                    exclusions: None,
+                    range_start: 10,
+                    range_len: 5,
                     allowed_exclusions: vec![AllowedExclusion {
                         start: 0,
                         length: 5,
                         kind: ExclusionKind::ManifestOrPadding,
                     }],
-                    pad: ByteBuf::from(vec![]),
-                    range_start: 10,
-                    range_len: 5,
                 },
-                BoxMap {
+                AssetBoxMap {
                     names: vec!["BBBB".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(vec![]),
                     excluded: None,
-                    exclusions: None,
+                    range_start: 15,
+                    range_len: 10,
                     allowed_exclusions: vec![AllowedExclusion {
                         start: 0,
                         length: 10,
                         kind: ExclusionKind::AssetMetadata,
                     }],
-                    pad: ByteBuf::from(vec![]),
-                    range_start: 15,
-                    range_len: 10,
                 },
             ])
         });

@@ -152,24 +152,19 @@ impl Default for ValidationResults {
 /// example, `cawg.x509.credential.untrusted`, `cawg.x509.signature.mismatch`).
 const CAWG_X509_STATUS_PREFIX: &str = "cawg.x509.";
 
-/// Returns `true` if a failure with `code` is scoped to an individual
-/// credential or CAWG identity assertion and does not by itself render the
-/// enclosing manifest invalid.
-///
-/// This covers the C2PA claim signature's untrusted-credential failure
-/// (`signingCredential.untrusted`) and every CAWG X.509 identity assertion
-/// failure code (all of which share the `cawg.x509.` prefix). A CAWG X.509
-/// identity assertion is supplementary content layered on top of the C2PA
-/// manifest -- much like a CAWG identity claims aggregation (ICA) issuer-trust
-/// failure (`cawg.ica.untrusted_issuer`, which is scoped out via its
-/// `LogKind::Informational` rather than appearing in `.failure()` at all) --
-/// so none of its failures should, by themselves, make the enclosing
-/// manifest invalid.
+/// Prefix shared by every CAWG identity assertion status code (for example,
+/// `cawg.identity.cbor.invalid`, `cawg.identity.sig_type.unknown`).
+const CAWG_IDENTITY_STATUS_PREFIX: &str = "cawg.identity.";
+
+/// Returns `true` if a failure with `code` is scoped to an individual credential
+/// or CAWG identity assertion and does not, by itself, invalidate the enclosing
+/// manifest. A CAWG validation failure's blast radius is only that assertion.
 ///
 /// See [`ValidationResults::validation_state`] and [`ValidationFailureSummary`].
 fn is_tolerated_manifest_failure_code(code: &str) -> bool {
     code == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
         || code.starts_with(CAWG_X509_STATUS_PREFIX)
+        || code.starts_with(CAWG_IDENTITY_STATUS_PREFIX)
 }
 
 impl ValidationResults {
@@ -1058,6 +1053,11 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a C2PA assertion.
     pub const ACTION_ASSERTION_REDACTED: &str = "assertion.action.redacted";
 
+    /// An `action` assertion missing required soft binding
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    pub const ACTION_ASSERTION_SOFTBINDING_MISSING: &str = "assertion.action.softBindingMissing";
+
     /// The hash of a byte range of the asset does not match the
     /// hash declared in the data hash assertion.
     ///
@@ -1092,6 +1092,17 @@ pub mod validation_codes {
     ///
     /// Any corresponding URL should point to a C2PA assertion.
     pub const ASSERTION_CLOUD_DATA_ACTIONS: &str = "assertion.cloud-data.actions";
+
+    /// A cloud data assertion was incomplete or malformed.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    pub const ASSERTION_CLOUD_DATA_MALFORMED: &str = "assertion.cloud-data.malformed";
+
+    /// An external reference assertion was incomplete or malformed.
+    ///
+    /// Any corresponding URL should point to a C2PA assertion.
+    pub const ASSERTION_EXTERNAL_REFERENCE_MALFORMED: &str =
+        "assertion.external-reference.malformed";
 
     /// The value of an `alg` header, or other header that specifies an
     /// algorithm used to compute the value of another field, is unknown
@@ -1168,6 +1179,10 @@ pub mod validation_codes {
     /// A hard binding assertion was redacted when the claim was created.
     ///
     /// Any corresponding URL should point to a C2PA assertion box.
+    #[deprecated(
+        since = "0.91.0",
+        note = "This status code is deprecated from C2PA spec version 2.3. Use `ASSERTION_HARDBINDING_REDACTED` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub const ASSERTION_DATAHASH_REDACTED: &str = "assertion.dataHash.redacted";
 
     /// A hard binding assertion was redacted when the claim was created.
@@ -1185,11 +1200,6 @@ pub mod validation_codes {
     ///
     /// Any corresponding URL should point to a C2PA assertion box.
     pub const ASSERTION_BOXESHASH_MALFORMED: &str = "assertion.boxesHash.malformed";
-
-    /// The cloud-data assertion was incomplete.
-    ///
-    /// Any corresponding URL should point to a C2PA assertion box.
-    pub const ASSERTION_CLOUD_DATA_MALFORMED: &str = "assertion.cloud-data.malformed";
 
     /// A hash of an asset in the collection does not match hash declared in
     /// the collection data hash assertion.
@@ -1398,6 +1408,38 @@ pub mod tests {
             CAWG_X509_CREDENTIAL_INVALID,
             CAWG_X509_SIGNATURE_MISMATCH,
             CAWG_X509_SIGNATURE_OUTSIDE_VALIDITY,
+        ] {
+            let mut validation_results = ValidationResults::default();
+
+            validation_results.add_status(
+                ValidationStatus::new(CLAIM_SIGNATURE_VALIDATED).set_kind(LogKind::Success),
+            );
+            validation_results.add_status(
+                ValidationStatus::new(CLAIM_SIGNATURE_INSIDE_VALIDITY).set_kind(LogKind::Success),
+            );
+            validation_results.add_status(
+                ValidationStatus::new(SIGNING_CREDENTIAL_TRUSTED).set_kind(LogKind::Success),
+            );
+
+            validation_results.add_status(ValidationStatus::new_failure(code));
+
+            assert_eq!(
+                validation_results.validation_state(),
+                ValidationState::Valid,
+                "expected Valid state for failure code {code}"
+            );
+        }
+    }
+
+    #[test]
+    fn not_trusted_state_with_cawg_identity_failure() {
+        // No CAWG identity assertion failure code -- whatever the underlying
+        // problem -- should by itself render the enclosing manifest invalid;
+        // each is scoped to that identity assertion.
+        for code in [
+            "cawg.identity.cbor.invalid",
+            "cawg.identity.sig_type.unknown",
+            "cawg.identity.pad.invalid",
         ] {
             let mut validation_results = ValidationResults::default();
 
@@ -1686,7 +1728,7 @@ pub mod tests {
         assert_eq!(
             validation_results.to_string(),
             concat!(
-                "spec validation version: 2.3.0\n",
+                "spec validation version: 2.4.0\n",
                 "state: Invalid\n",
                 "  success: claimSignature.validated, claimSignature.insideValidity\n",
                 "  informational:\n",

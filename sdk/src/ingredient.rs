@@ -31,7 +31,6 @@ use crate::{
         self, labels, AssertionMetadata, AssetType, CertificateStatus, DigitalSourceType,
         EmbeddedData, Relationship,
     },
-    asset_io::CAIRead,
     claim::{Claim, ClaimAssetData},
     context::Context,
     crypto::base64,
@@ -45,6 +44,7 @@ use crate::{
         },
     },
     log_item,
+    read_seek::ReadSeek,
     resource_store::{ResourceRef, ResourceStore, StoreResolver},
     settings::get_thread_local_settings,
     status_tracker::StatusTracker,
@@ -184,6 +184,13 @@ impl Ingredient {
     /// use c2pa::Ingredient;
     /// let ingredient = Ingredient::new("title", "image/jpeg", "ed610ae51f604002be3dbf0c589a2f1f");
     /// ```
+    ///
+    /// Use [`Builder::add_ingredient_from_stream`](crate::Builder::add_ingredient_from_stream)
+    /// to derive an `Ingredient` from an asset instead of constructing a standalone one from scratch.
+    #[deprecated(
+        since = "0.91.0",
+        note = "Building a standalone `Ingredient` from scratch is no longer the recommended pattern. Use `Builder::add_ingredient_from_stream` to derive an `Ingredient` from an asset instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn new<S>(title: S, format: S, instance_id: S) -> Self
     where
         S: Into<String>,
@@ -209,6 +216,13 @@ impl Ingredient {
     /// use c2pa::Ingredient;
     /// let ingredient = Ingredient::new_v2("title", "image/jpeg");
     /// ```
+    ///
+    /// Use [`Builder::add_ingredient_from_stream`](crate::Builder::add_ingredient_from_stream)
+    /// to derive an `Ingredient` from an asset instead of constructing a standalone one from scratch.
+    #[deprecated(
+        since = "0.91.0",
+        note = "Building a standalone `Ingredient` from scratch is no longer the recommended pattern. Use `Builder::add_ingredient_from_stream` to derive an `Ingredient` from an asset instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn new_v2<S1, S2>(title: S1, format: S2) -> Self
     where
         S1: Into<String>,
@@ -648,7 +662,7 @@ impl Ingredient {
     }
 
     /// Generates an `Ingredient` from a stream, including XMP info.
-    pub fn from_stream_info<F, S>(stream: &mut dyn CAIRead, format: F, title: S) -> Self
+    pub fn from_stream_info<F, S>(stream: &mut dyn ReadSeek, format: F, title: S) -> Self
     where
         F: Into<String>,
         S: Into<String>,
@@ -664,7 +678,12 @@ impl Ingredient {
             default_instance_id()
         };
 
-        let mut ingredient = Self::new(title.into(), format, id);
+        let mut ingredient = Self {
+            title: Some(title.into()),
+            format: Some(format),
+            instance_id: Some(id),
+            ..Default::default()
+        };
 
         ingredient.document_id = xmp_info.document_id; // use document id if one exists
         ingredient.provenance = xmp_info.provenance;
@@ -679,6 +698,7 @@ impl Ingredient {
         result: Result<Store>,
         manifest_bytes: Option<Vec<u8>>,
         validation_log: &StatusTracker,
+        context: &Context,
     ) -> Result<()> {
         match result {
             Ok(store) => {
@@ -744,25 +764,32 @@ impl Ingredient {
                 self.validation_status = Some(vec![status]);
                 Ok(())
             }
-            Err(e) => {
-                // we can ignore the error here because it should have a log entry corresponding to it
-                debug!("ingredient {e:?}");
+            Err(err) => match context.settings().builder.ignore_ingredient_errors {
+                true => {
+                    debug!("ignoring ingredient error: {err:?}");
 
-                let mut results = ValidationResults::default();
-                // convert any other error to a validation status
-                let statuses: Vec<ValidationStatus> = validation_log
-                    .logged_items()
-                    .iter()
-                    .filter_map(ValidationStatus::from_log_item)
-                    .collect();
+                    let statuses: Vec<ValidationStatus> = validation_log
+                        .logged_items()
+                        .iter()
+                        .filter_map(ValidationStatus::from_log_item)
+                        .collect();
 
-                for status in statuses {
-                    results.add_status(status.clone());
+                    let mut results = ValidationResults::default();
+                    for status in statuses {
+                        results.add_status(status);
+                    }
+
+                    // this is a hard error, which means it was never logged as a validation
+                    // status, so convert the error itself into a `general.error` status
+                    results.add_status(ValidationStatus::from_error(&err));
+
+                    self.validation_status = results.validation_errors();
+                    self.validation_results = Some(results);
+
+                    Ok(())
                 }
-                self.validation_status = results.validation_errors();
-                self.validation_results = Some(results);
-                Ok(())
-            }
+                false => Err(err),
+            },
         }
     }
 
@@ -777,8 +804,11 @@ impl Ingredient {
     /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
     ///
     /// Pass an explicit [`Context`](crate::Context) via `add_stream_internal` instead.
-    #[deprecated(note = "Use with_stream with an explicit Context instead")]
-    pub fn from_stream(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
+    #[deprecated(
+        since = "0.88.0",
+        note = "Use `with_stream` with an explicit `Context` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
+    pub fn from_stream(format: &str, stream: &mut dyn ReadSeek) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
         let settings = get_thread_local_settings();
         let context = Context::new().with_settings(settings)?;
@@ -803,7 +833,7 @@ impl Ingredient {
     pub(crate) fn with_stream<S: Into<String>>(
         mut self,
         format: S,
-        stream: &mut dyn CAIRead,
+        stream: &mut dyn ReadSeek,
         context: &Context,
     ) -> Result<Self> {
         let format = format.into();
@@ -848,40 +878,44 @@ impl Ingredient {
     fn add_stream_internal(
         mut self,
         format: &str,
-        stream: &mut dyn CAIRead,
+        stream: &mut dyn ReadSeek,
         context: &Context,
     ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
 
-        // retrieve the manifest bytes from embedded or remote and convert to store if found
+        // retrieve the manifest bytes from embedded or remote and convert to store if found;
+        // also track whether the bytes came from parsing `stream` itself (embedded) as
+        // opposed to `manifest_data()` or a remote fallback (not embedded).
         let jumbf_result = match self.manifest_data() {
-            Some(data) => Ok(data.into_owned()),
+            Some(data) => Ok((data.into_owned(), false)),
             None => if _sync {
                 Store::load_jumbf_from_stream(format, stream, context)
             } else {
                 Store::load_jumbf_from_stream_async(format, stream, context).await
             }
-            .map(|(manifest_bytes, _)| manifest_bytes),
+            .map(|(manifest_bytes, remote_url)| (manifest_bytes, remote_url.is_none())),
         };
 
         // We can't use functional combinators since we can't use async callbacks (https://github.com/rust-lang/rust/issues/62290)
         let (mut result, manifest_bytes) = match jumbf_result {
-            Ok(manifest_bytes) => {
+            Ok((manifest_bytes, embedded)) => {
                 let result = if _sync {
-                    Store::from_manifest_data_and_stream(
+                    Store::from_manifest_data_and_stream_with_embedded(
                         &manifest_bytes,
                         format,
                         &mut *stream,
                         &mut validation_log,
                         context,
+                        embedded,
                     )
                 } else {
-                    Store::from_manifest_data_and_stream_async(
+                    Store::from_manifest_data_and_stream_with_embedded_async(
                         &manifest_bytes,
                         format,
                         &mut *stream,
                         &mut validation_log,
                         context,
+                        embedded,
                     )
                     .await
                 };
@@ -911,7 +945,7 @@ impl Ingredient {
         }
 
         // set validation status from result and log
-        self.update_validation_status(result, manifest_bytes, &validation_log)?;
+        self.update_validation_status(result, manifest_bytes, &validation_log, context)?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
@@ -927,7 +961,8 @@ impl Ingredient {
     ///
     /// Use [`Builder::from_context`](crate::Builder::from_context) with an explicit [`Context`](crate::Context) instead.
     #[deprecated(
-        note = "Use with_stream with an explicit Context instead of relying on thread-local settings."
+        since = "0.79.4",
+        note = "Use `with_stream` with an explicit `Context` instead of relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     #[allow(deprecated)]
     pub async fn from_memory_async(format: &str, buffer: &[u8]) -> Result<Self> {
@@ -942,9 +977,10 @@ impl Ingredient {
     ///
     /// Use [`Builder::from_context`](crate::Builder::from_context) with an explicit [`Context`](crate::Context) instead.
     #[deprecated(
-        note = "Use with_stream_async with an explicit Context instead of relying on thread-local settings."
+        since = "0.79.4",
+        note = "Use `with_stream_async` with an explicit `Context` instead of relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
-    pub async fn from_stream_async(format: &str, stream: &mut dyn CAIRead) -> Result<Self> {
+    pub async fn from_stream_async(format: &str, stream: &mut dyn ReadSeek) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
         let settings = get_thread_local_settings();
         let context = Context::new().with_settings(settings)?;
@@ -953,7 +989,7 @@ impl Ingredient {
 
     pub(crate) async fn from_stream_async_with_settings(
         format: &str,
-        stream: &mut dyn CAIRead,
+        stream: &mut dyn ReadSeek,
         context: &Context,
     ) -> Result<Self> {
         let mut ingredient = Self::from_stream_info(stream, format, "untitled");
@@ -1001,7 +1037,7 @@ impl Ingredient {
             };
 
         // set validation status from result and log
-        ingredient.update_validation_status(result, manifest_bytes, &validation_log)?;
+        ingredient.update_validation_status(result, manifest_bytes, &validation_log, context)?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
@@ -1435,7 +1471,8 @@ impl Ingredient {
     /// }
     /// ```
     #[deprecated(
-        note = "Pass an explicit `Context` via `from_manifest_and_asset_stream_async` instead of relying on thread-local settings."
+        since = "0.79.4",
+        note = "Pass an explicit `Context` via `from_manifest_and_asset_stream_async` instead of relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     #[allow(deprecated)]
     pub async fn from_manifest_and_asset_bytes_async<M: Into<Vec<u8>>>(
@@ -1451,11 +1488,14 @@ impl Ingredient {
     /// using thread-local settings.
     ///
     /// Pass an explicit [`Context`](crate::Context) instead of relying on thread-local settings.
-    #[deprecated(note = "Pass an explicit `Context` instead of relying on thread-local settings.")]
+    #[deprecated(
+        since = "0.79.4",
+        note = "Pass an explicit `Context` instead of relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub async fn from_manifest_and_asset_stream_async<M: Into<Vec<u8>>>(
         manifest_bytes: M,
         format: &str,
-        stream: &mut dyn CAIRead,
+        stream: &mut dyn ReadSeek,
     ) -> Result<Self> {
         // Legacy behavior: explicitly get global settings for backward compatibility
         let settings = get_thread_local_settings();
@@ -1495,7 +1535,12 @@ impl Ingredient {
             };
 
         // set validation status from result and log
-        ingredient.update_validation_status(result, Some(manifest_bytes), &validation_log)?;
+        ingredient.update_validation_status(
+            result,
+            Some(manifest_bytes),
+            &validation_log,
+            &context,
+        )?;
 
         // create a thumbnail if we don't already have a manifest with a thumb we can use
         #[cfg(feature = "add_thumbnails")]
@@ -1921,6 +1966,8 @@ mod tests {
 
     #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory_and_bad_manifest() {
+        crate::settings::set_settings_value("builder.ignore_ingredient_errors", true).unwrap();
+
         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let bad_manifest_bytes = b"not a real c2pa manifest".to_vec();
         let format = "image/jpeg";
@@ -1933,7 +1980,8 @@ mod tests {
         .expect("ingredient should load even with a bad manifest");
 
         assert_eq!(ingredient.format(), Some(format));
-        assert!(ingredient.validation_status().is_some());
+        let statuses = ingredient.validation_status().unwrap();
+        assert_eq!(statuses[0].code(), validation_status::GENERAL_ERROR);
     }
 
     #[test]
@@ -2094,20 +2142,8 @@ mod tests {
     #[cfg(all(feature = "file_io", feature = "add_thumbnails"))]
     fn test_jpg_prerelease() {
         const PRERELEASE_JPEG: &str = "prerelease.jpg";
-        let ingredient = load_ingredient(PRERELEASE_JPEG).expect("load_ingredient");
-        stats(&ingredient);
-
-        println!("ingredient = {ingredient}");
-        assert_eq!(ingredient.title(), Some(PRERELEASE_JPEG));
-        assert_eq!(ingredient.format(), Some("image/jpeg"));
-        test_thumbnail(&ingredient, "image/jpeg");
-        assert!(ingredient.provenance().is_some());
-        assert_eq!(ingredient.manifest_data(), None);
-        assert!(ingredient.validation_status().is_some());
-        assert_eq!(
-            ingredient.validation_status().unwrap()[0].code(),
-            validation_status::STATUS_PRERELEASE
-        );
+        let ingredient = load_ingredient(PRERELEASE_JPEG);
+        assert!(matches!(ingredient, Err(Error::PrereleaseError)));
     }
 
     #[test]
@@ -2122,8 +2158,7 @@ mod tests {
     #[test]
     #[cfg(feature = "fetch_remote_manifests")]
     fn test_jpg_cloud_failure() {
-        let ingredient = load_ingredient("cloudx.jpg").expect("load_ingredient");
-        println!("ingredient = {ingredient}");
+        let ingredient = load_ingredient("cloudx.jpg").unwrap();
         assert!(ingredient.validation_status().is_some());
         assert_eq!(
             ingredient.validation_status().unwrap()[0].code(),

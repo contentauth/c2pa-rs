@@ -93,7 +93,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
-        rust_version: [stable, 1.88.0]
+        rust_version: [stable, 1.96.0]
 
     steps:
       - name: Checkout repository
@@ -124,7 +124,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
-        rust_version: [stable, 1.88.0]
+        rust_version: [stable, 1.96.0]
 
     steps:
       - name: Checkout repository
@@ -155,7 +155,7 @@ jobs:
       fail-fast: false
       matrix:
         target: [aarch64-unknown-linux-gnu]
-        rust_version: [stable, 1.88.0]
+        rust_version: [stable, 1.96.0]
 
     steps:
       - name: Checkout repository
@@ -168,7 +168,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install cross-compilation toolset
-        run: cargo install cross
+        run: cargo install cross --locked
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1

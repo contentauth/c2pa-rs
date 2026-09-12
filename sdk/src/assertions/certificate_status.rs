@@ -132,6 +132,13 @@ pub mod tests {
         assert_eq!(assertion.mime_type(), "application/cbor");
         assert_eq!(assertion.label(), CertificateStatus::LABEL);
 
+        let values: std::collections::BTreeMap<String, Vec<c2pa_cbor::Value>> =
+            c2pa_cbor::from_slice(assertion.data()).unwrap();
+        assert_eq!(
+            values["ocspVals"],
+            [c2pa_cbor::Value::Bytes(b"ocsp_val".to_vec())]
+        );
+
         let result = CertificateStatus::from_assertion(&assertion).unwrap();
         assert_eq!(result, original)
     }

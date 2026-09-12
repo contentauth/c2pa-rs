@@ -15,7 +15,7 @@
 #[allow(dead_code)]
 pub const C2PA_GENERATOR_VERSION: &str = "2.2.0";
 /// C2PA Validator Version
-pub const C2PA_VALIDATOR_VERSION: &str = "2.3.0";
+pub const C2PA_VALIDATOR_VERSION: &str = "2.4.0";
 
 // C2PA TSA Trust URI
 #[allow(dead_code)]
