@@ -152,24 +152,19 @@ impl Default for ValidationResults {
 /// example, `cawg.x509.credential.untrusted`, `cawg.x509.signature.mismatch`).
 const CAWG_X509_STATUS_PREFIX: &str = "cawg.x509.";
 
-/// Returns `true` if a failure with `code` is scoped to an individual
-/// credential or CAWG identity assertion and does not by itself render the
-/// enclosing manifest invalid.
-///
-/// This covers the C2PA claim signature's untrusted-credential failure
-/// (`signingCredential.untrusted`) and every CAWG X.509 identity assertion
-/// failure code (all of which share the `cawg.x509.` prefix). A CAWG X.509
-/// identity assertion is supplementary content layered on top of the C2PA
-/// manifest -- much like a CAWG identity claims aggregation (ICA) issuer-trust
-/// failure (`cawg.ica.untrusted_issuer`, which is scoped out via its
-/// `LogKind::Informational` rather than appearing in `.failure()` at all) --
-/// so none of its failures should, by themselves, make the enclosing
-/// manifest invalid.
+/// Prefix shared by every CAWG identity assertion status code (for example,
+/// `cawg.identity.cbor.invalid`, `cawg.identity.sig_type.unknown`).
+const CAWG_IDENTITY_STATUS_PREFIX: &str = "cawg.identity.";
+
+/// Returns `true` if a failure with `code` is scoped to an individual credential
+/// or CAWG identity assertion and does not, by itself, invalidate the enclosing
+/// manifest. A CAWG validation failure's blast radius is only that assertion.
 ///
 /// See [`ValidationResults::validation_state`] and [`ValidationFailureSummary`].
 fn is_tolerated_manifest_failure_code(code: &str) -> bool {
     code == validation_status::SIGNING_CREDENTIAL_UNTRUSTED
         || code.starts_with(CAWG_X509_STATUS_PREFIX)
+        || code.starts_with(CAWG_IDENTITY_STATUS_PREFIX)
 }
 
 impl ValidationResults {
@@ -1413,6 +1408,38 @@ pub mod tests {
             CAWG_X509_CREDENTIAL_INVALID,
             CAWG_X509_SIGNATURE_MISMATCH,
             CAWG_X509_SIGNATURE_OUTSIDE_VALIDITY,
+        ] {
+            let mut validation_results = ValidationResults::default();
+
+            validation_results.add_status(
+                ValidationStatus::new(CLAIM_SIGNATURE_VALIDATED).set_kind(LogKind::Success),
+            );
+            validation_results.add_status(
+                ValidationStatus::new(CLAIM_SIGNATURE_INSIDE_VALIDITY).set_kind(LogKind::Success),
+            );
+            validation_results.add_status(
+                ValidationStatus::new(SIGNING_CREDENTIAL_TRUSTED).set_kind(LogKind::Success),
+            );
+
+            validation_results.add_status(ValidationStatus::new_failure(code));
+
+            assert_eq!(
+                validation_results.validation_state(),
+                ValidationState::Valid,
+                "expected Valid state for failure code {code}"
+            );
+        }
+    }
+
+    #[test]
+    fn not_trusted_state_with_cawg_identity_failure() {
+        // No CAWG identity assertion failure code -- whatever the underlying
+        // problem -- should by itself render the enclosing manifest invalid;
+        // each is scoped to that identity assertion.
+        for code in [
+            "cawg.identity.cbor.invalid",
+            "cawg.identity.sig_type.unknown",
+            "cawg.identity.pad.invalid",
         ] {
             let mut validation_results = ValidationResults::default();
 
