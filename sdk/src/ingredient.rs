@@ -883,35 +883,39 @@ impl Ingredient {
     ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
 
-        // retrieve the manifest bytes from embedded or remote and convert to store if found
+        // retrieve the manifest bytes from embedded or remote and convert to store if found;
+        // also track whether the bytes came from parsing `stream` itself (embedded) as
+        // opposed to `manifest_data()` or a remote fallback (not embedded).
         let jumbf_result = match self.manifest_data() {
-            Some(data) => Ok(data.into_owned()),
+            Some(data) => Ok((data.into_owned(), false)),
             None => if _sync {
                 Store::load_jumbf_from_stream(format, stream, context)
             } else {
                 Store::load_jumbf_from_stream_async(format, stream, context).await
             }
-            .map(|(manifest_bytes, _)| manifest_bytes),
+            .map(|(manifest_bytes, remote_url)| (manifest_bytes, remote_url.is_none())),
         };
 
         // We can't use functional combinators since we can't use async callbacks (https://github.com/rust-lang/rust/issues/62290)
         let (mut result, manifest_bytes) = match jumbf_result {
-            Ok(manifest_bytes) => {
+            Ok((manifest_bytes, embedded)) => {
                 let result = if _sync {
-                    Store::from_manifest_data_and_stream(
+                    Store::from_manifest_data_and_stream_with_embedded(
                         &manifest_bytes,
                         format,
                         &mut *stream,
                         &mut validation_log,
                         context,
+                        embedded,
                     )
                 } else {
-                    Store::from_manifest_data_and_stream_async(
+                    Store::from_manifest_data_and_stream_with_embedded_async(
                         &manifest_bytes,
                         format,
                         &mut *stream,
                         &mut validation_log,
                         context,
+                        embedded,
                     )
                     .await
                 };

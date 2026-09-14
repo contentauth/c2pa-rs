@@ -45,7 +45,7 @@ use crate::{
     store::Store,
     utils::hash_utils::hash_to_b64,
     validation_results::{ValidationResults, ValidationState},
-    validation_status::{ValidationStatus, ASSERTION_MISSING, ASSERTION_NOT_REDACTED},
+    validation_status::{ValidationStatus, ASSERTION_MISSING},
     Ingredient, Manifest, ManifestAssertion, ManifestAssertionKind,
 };
 
@@ -1057,24 +1057,13 @@ impl Reader {
 
         let validation_results = ValidationResults::from_store(arc_store.as_ref(), validation_log);
 
-        // resolve redactions
-        // Even though we validate
-        // compare options.redacted_assertions and options.missing_assertions
-        // remove all overlapping values from both arrays
-        // any remaining redacted assertions are not actually redacted
-        // any remaining missing assertions are not actually missing
-
-        let mut redacted = options.redacted_assertions.clone();
+        // Report assertions the claim references but that aren't present, excluding any
+        // that were redacted: a redacted assertion is expected to be absent (removed) or
+        // zeroed, so it must not be reported as `assertion.missing`. Whether a redacted
+        // box is validly zeroed or forged with non-zero content is `Store::verify_store`'s
+        // concern (it raises `assertion.notRedacted`); here we only resolve missing vs. redacted.
         let mut missing = options.missing_assertions.clone();
-        redacted.retain(|item| !missing.contains(item));
         missing.retain(|item| !options.redacted_assertions.contains(item));
-
-        // Add any remaining redacted assertions to the validation results
-        for uri in &redacted {
-            log_item!(uri.clone(), "assertion not redacted", "Reader::from_store")
-                .validation_status(ASSERTION_NOT_REDACTED)
-                .informational(validation_log);
-        }
 
         for uri in &missing {
             log_item!(uri.clone(), "assertion missing", "Reader::from_store")
@@ -1382,6 +1371,70 @@ pub mod tests {
         assert_eq!(reader2.validation_state(), ValidationState::Trusted);
         //std::fs::write("../target/CA-rebuilt.jpg", dest.get_ref())?;
         Ok(())
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_detached_manifest_exclusion_hole_rejected() {
+        use crate::{assertions::DataHash, Builder};
+
+        // Sign a real asset (embedded); the attacker never holds this key.
+        let victim_src = include_bytes!("../tests/fixtures/no_manifest.jpg");
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut builder = Builder::from_context(test_context())
+            .with_definition(r#"{"title": "victim"}"#)
+            .unwrap();
+        let mut source = Cursor::new(victim_src.to_vec());
+        let mut dest = Cursor::new(Vec::new());
+        builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
+            .unwrap();
+        let victim = dest.into_inner();
+
+        // Attacker lifts the signed manifest store out, byte-verbatim, no re-signing.
+        let context = test_context();
+        let mut victim_stream = Cursor::new(victim.clone());
+        let (jumbf, _remote) =
+            crate::store::Store::load_jumbf_from_stream("image/jpeg", &mut victim_stream, &context)
+                .unwrap();
+
+        // Read the signed exclusion range straight off the claim.
+        let store = crate::store::Store::from_stream(
+            "image/jpeg",
+            Cursor::new(victim.clone()),
+            &mut StatusTracker::default(),
+            &context,
+        )
+        .unwrap();
+        let claim = store.provenance_claim().unwrap();
+        let dh_assertion = claim
+            .hash_assertions()
+            .into_iter()
+            .find(|a| a.label_raw().starts_with(DataHash::LABEL))
+            .unwrap();
+        let dh = DataHash::from_assertion(dh_assertion.assertion()).unwrap();
+        let range = &dh.exclusions.unwrap()[0];
+        let (excl_start, excl_len) = (range.start() as usize, range.length() as usize);
+
+        // Overwrite exactly that range with unrelated content, keeping every byte
+        // outside it untouched.
+        let mut forged = victim.clone();
+        for b in forged[excl_start..excl_start + excl_len].iter_mut() {
+            *b = 0x41;
+        }
+
+        // Validate the forged pair through the detached-manifest path (c2patool
+        // --external-manifest / a sidecar or remote manifest workflow).
+        let result =
+            Reader::from_manifest_data_and_stream(&jumbf, "image/jpeg", Cursor::new(forged));
+        let state = result
+            .map(|r| r.validation_state())
+            .unwrap_or(ValidationState::Invalid);
+        assert_ne!(
+            state,
+            ValidationState::Trusted,
+            "a detached manifest's exclusion must not let unrelated content inside it pass validation"
+        );
     }
 
     #[test]
