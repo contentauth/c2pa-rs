@@ -2423,7 +2423,9 @@ impl Store {
 
             let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
-            if context.settings().verify.verify_after_sign {
+            // A `direct_cose_handling` signer returns an opaque, signer-owned COSE
+            // structure that the SDK is documented not to interpret or verify.
+            if context.settings().verify.verify_after_sign && !signer.direct_cose_handling() {
                 self.verify_store_strict(None, context)?;
             }
 
@@ -2439,7 +2441,8 @@ impl Store {
 
         let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
-        if context.settings().verify.verify_after_sign {
+        // See the comment above: do not verify remote signers (we never did).
+        if context.settings().verify.verify_after_sign && !signer.direct_cose_handling() {
             self.verify_store_strict(None, context)?;
         }
 
@@ -2552,7 +2555,9 @@ impl Store {
 
         let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
-        if context.settings().verify.verify_after_sign {
+        // A `direct_cose_handling` signer returns an opaque, signer-owned COSE
+        // structure that the SDK is documented not to interpret or verify.
+        if context.settings().verify.verify_after_sign && !signer.direct_cose_handling() {
             if _sync {
                 self.verify_store_strict(None, context)?;
             } else {
@@ -3105,7 +3110,9 @@ impl Store {
                     Some(RemoteManifest::SideCar) | Some(RemoteManifest::Remote(_))
                 );
 
-                if context.settings().verify.verify_after_sign {
+                // A `direct_cose_handling` signer returns an opaque, signer-owned COSE
+                // structure that the SDK is documented not to interpret or verify.
+                if context.settings().verify.verify_after_sign && !signer.direct_cose_handling() {
                     let output_len = stream_len(output_stream)?;
                     let validate_hash = context.settings().verify.verify_after_sign_hash;
                     let mut asset_data = if output_len > 0 && validate_hash {

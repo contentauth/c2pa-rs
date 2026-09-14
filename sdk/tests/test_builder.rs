@@ -448,6 +448,58 @@ fn test_dynamic_assertions_builder() -> Result<()> {
     Ok(())
 }
 
+// A `direct_cose_handling` signer owns the entire COSE structure, and the SDK is
+// documented not to interpret or verify the opaque bytes it returns. Regression
+// test for #2659, where the post-sign `verify_after_sign` check (which is on by
+// default) tried to parse those opaque bytes as COSE and failed.
+#[test]
+fn test_direct_cose_handling_signer_skips_post_sign_verification() -> Result<()> {
+    use c2pa::{Signer, SigningAlg};
+
+    struct OpaqueCoseSigner;
+
+    impl Signer for OpaqueCoseSigner {
+        fn sign(&self, _data: &[u8]) -> Result<Vec<u8>> {
+            // A `direct_cose_handling` signer may return any opaque byte sequence; the
+            // SDK must not attempt to interpret or verify it.
+            Ok(vec![0u8; self.reserve_size()])
+        }
+
+        fn alg(&self) -> SigningAlg {
+            SigningAlg::Es256
+        }
+
+        fn certs(&self) -> Result<Vec<Vec<u8>>> {
+            Ok(Vec::new())
+        }
+
+        fn reserve_size(&self) -> usize {
+            10000
+        }
+
+        fn direct_cose_handling(&self) -> bool {
+            true
+        }
+    }
+
+    let context = test_context().into_shared();
+
+    let mut builder = Builder::from_shared_context(&context);
+
+    use c2pa::assertions::Action;
+    builder.add_action(Action::new("c2pa.created"))?;
+
+    const TEST_IMAGE: &[u8] = include_bytes!("fixtures/CA.jpg");
+    let format = "image/jpeg";
+    let mut source = Cursor::new(TEST_IMAGE);
+    let mut dest = Cursor::new(Vec::new());
+
+    let signer = OpaqueCoseSigner;
+    builder.sign(&signer, format, &mut source, &mut dest)?;
+
+    Ok(())
+}
+
 #[test]
 fn test_assertion_created_field() -> Result<()> {
     use serde_json::json;
