@@ -2027,7 +2027,7 @@ pub unsafe extern "C" fn c2pa_builder_sign(
     let format = cstr_or_return_int!(format);
     let mut source = deref_mut_or_return_int!(source, C2paStream);
     let mut dest = deref_mut_or_return_int!(dest, C2paStream);
-    let c2pa_signer = deref_mut_or_return_int!(signer_ptr, C2paSigner);
+    let c2pa_signer = deref_or_return_int!(signer_ptr, C2paSigner);
 
     let result = builder.sign(
         c2pa_signer.signer.as_ref(),
@@ -2173,7 +2173,7 @@ pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
     manifest_bytes_ptr: *mut *const c_uchar,
 ) -> i64 {
     let mut builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
-    let c2pa_signer = deref_mut_or_return_int!(signer_ptr, C2paSigner);
+    let c2pa_signer = deref_or_return_int!(signer_ptr, C2paSigner);
     let data_hash_json = cstr_or_return_int!(data_hash);
     let format = cstr_or_return_int!(format);
 
@@ -2588,7 +2588,7 @@ pub unsafe extern "C" fn c2pa_builder_compose_manifest(
     manifest_bytes_size: usize,
     result_bytes_ptr: *mut *const c_uchar,
 ) -> i64 {
-    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let builder = deref_or_return_int!(builder_ptr, C2paBuilder);
     let format = cstr_or_return_int!(format);
     ptr_or_return_int!(manifest_bytes_ptr);
     ptr_or_return_int!(result_bytes_ptr);
@@ -2601,11 +2601,7 @@ pub unsafe extern "C" fn c2pa_builder_compose_manifest(
 
     let result = builder.compose_manifest(bytes, &format);
     let result_bytes = ok_or_return_int!(result);
-    let len = result_bytes.len() as i64;
-    if !result_bytes_ptr.is_null() {
-        *result_bytes_ptr = to_c_bytes(result_bytes);
-    }
-    len
+    out_bytes_or_return_int!(result_bytes, result_bytes_ptr)
 }
 
 /// Creates a C2paSigner from a callback and configuration.
@@ -2637,9 +2633,9 @@ pub unsafe extern "C" fn c2pa_builder_compose_manifest(
 /// Apply a timeout inside the callback, to avoid spinning forever.
 /// Return -1 to propagate an error on failure.
 ///
-/// A signer gets borrowed exclusively for the duration of the sign call
-/// (so callbacks do not run in parallel). If a signer is shared across multiple
-/// calls, they serialize to make sure they can't interfere with each other.
+/// A signer is borrowed shared for the duration of a sign call, so any number
+/// of concurrent calls may use the same signer and its callback may run in
+/// parallel.
 ///
 /// # Example
 /// ```c

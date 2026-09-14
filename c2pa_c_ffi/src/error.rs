@@ -80,16 +80,15 @@ impl C2paError {
             Self::NotSupported(_) => 109,
             Self::Other(_) => 110,
             Self::NullParameter(_) => 111,
-            // Matches CimplError::pointer_in_use, so the round trip is stable.
-            Self::PointerInUse(_) => 7,
-            Self::WrongWrapperKind(_) => 8,
-            Self::ForeignProcess(_) => 9,
-            Self::TrackingRefused(_) => 10,
-            Self::InvalidBufferSize(_) => 6,
             Self::RemoteManifest(_) => 112,
             Self::ResourceNotFound(_) => 113,
             Self::Signature(_) => 114,
             Self::Verify(_) => 115,
+            Self::InvalidBufferSize(_) => 6,
+            Self::PointerInUse(_) => 7,
+            Self::WrongWrapperKind(_) => 8,
+            Self::ForeignProcess(_) => 9,
+            Self::TrackingRefused(_) => 10,
         }
     }
 

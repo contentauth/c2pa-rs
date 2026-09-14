@@ -440,8 +440,9 @@ macro_rules! arc_tracked {
 #[macro_export]
 macro_rules! untrack_or_return {
     ($ptr:expr, $type:ty, $err_val:expr) => {{
-        $crate::ptr_or_return!($ptr, $err_val);
-        match $crate::untrack_owned::<$type>($ptr) {
+        let ptr = $ptr;
+        $crate::ptr_or_return!(ptr, $err_val);
+        match $crate::untrack_owned::<$type>(ptr) {
             Ok(value) => value,
             Err(e) => {
                 $crate::CimplError::from(e).set_last();
@@ -761,6 +762,7 @@ macro_rules! out_bytes_or_return_int {
         if !$out_ptr.is_null() {
             let allocated = $crate::cimpl::to_c_bytes(bytes);
             if allocated.is_null() && len > 0 {
+                *$out_ptr = std::ptr::null();
                 return -1;
             }
             *$out_ptr = allocated;
