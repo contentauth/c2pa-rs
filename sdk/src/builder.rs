@@ -3230,13 +3230,17 @@ impl Builder {
                 .get_box_hashed_embeddable_manifest_async(signer, &self.context)
                 .await
         }?;
-        if self.context.settings().verify.verify_after_sign {
+
+        // A `direct_cose_handling` signer returns an opaque, signer-owned COSE
+        // structure that the SDK is documented not to interpret or verify.
+        if self.context.settings().verify.verify_after_sign && !signer.direct_cose_handling() {
             if _sync {
                 store.verify_store_strict(None, &self.context)?;
             } else {
                 store.verify_store_strict_async(None, &self.context).await?;
             }
         }
+
         // get composed version for embedding to JPEG
         Store::get_composed_manifest(&bytes, format, &self.context)
     }
