@@ -136,7 +136,8 @@ mod tests {
         let mut stream = LocalAssetTransport::default()
             .open(&request)
             .unwrap()
-            .into_read_seek();
+            .try_into_read_seek()
+            .unwrap();
 
         let mut magic = [0u8; 2];
         stream.read_exact(&mut magic).unwrap();

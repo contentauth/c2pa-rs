@@ -43,6 +43,20 @@ pub enum AssetTransportError {
     #[error("no asset transport configured on the Context")]
     NotConfigured,
 
+    /// A range read returned fewer bytes than required and the caller did not expect a
+    /// partial response.
+    #[error("short read at offset {offset}: expected {expected} bytes, got {got}")]
+    ShortRead {
+        offset: u64,
+        expected: u64,
+        got: u64,
+    },
+
+    /// The object changed underneath a range read: a response came from a different
+    /// version than the read began with.
+    #[error("object version changed during read: expected {expected}, got {got}")]
+    VersionChanged { expected: String, got: String },
+
     #[error(transparent)]
     Io(#[from] std::io::Error),
 

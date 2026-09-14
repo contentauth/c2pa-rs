@@ -322,7 +322,7 @@ impl Reader {
             Some(fmt) => fmt,
             None => resolved.advisory_format().unwrap_or("").to_string(),
         };
-        let mut file = resolved.into_read_seek();
+        let mut file = resolved.try_into_read_seek()?;
         let format = self.context.io().format_from_stream(&path_fmt, &mut file);
 
         // Try loading from stream first
@@ -355,7 +355,9 @@ impl Reader {
                 let mut manifest_data = Vec::new();
                 match sidecar {
                     Ok(resolved) => {
-                        resolved.into_read_seek().read_to_end(&mut manifest_data)?;
+                        resolved
+                            .try_into_read_seek()?
+                            .read_to_end(&mut manifest_data)?;
                     }
                     // Convert a transport not found error to JumbfNotFound, since it means there is no manifest.
                     Err(AssetTransportError::NotFound { .. }) => return Err(Error::JumbfNotFound),
@@ -1543,6 +1545,57 @@ pub mod tests {
 
         let reader = Reader::from_context(context).with_file("no/such/file.jpg")?;
         assert!(reader.active_manifest().is_some());
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_file_read_over_sync_ranges_matches_whole_object() -> Result<()> {
+        // The headline of byte-range support: a synchronous range transport, wrapped in
+        // a `RangeStream`, is read by the ordinary parse and reaches the same result as
+        // reading the whole object. This proves discovery *and* hard-binding
+        // verification happen over ranges, not just that a manifest was found.
+        use crate::asset_transport::{
+            AssetTransportError, ObjectVersion, RangeChunk, RangeInfo, RangeTransportSource,
+            SyncRangeTransport,
+        };
+
+        struct InMemoryRanges(Vec<u8>);
+        impl SyncRangeTransport for InMemoryRanges {
+            fn info(&self) -> std::result::Result<RangeInfo, AssetTransportError> {
+                Ok(RangeInfo::new(self.0.len() as u64))
+            }
+
+            fn read_range(
+                &self,
+                offset: u64,
+                len: u64,
+                _expect: Option<&ObjectVersion>,
+            ) -> std::result::Result<RangeChunk, AssetTransportError> {
+                let start = (offset as usize).min(self.0.len());
+                let end = start.saturating_add(len as usize).min(self.0.len());
+                Ok(RangeChunk::new(self.0[start..end].to_vec()))
+            }
+        }
+
+        // Whole-object read for the reference result.
+        let whole = Reader::from_context(Context::new())
+            .with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+
+        // Same bytes, served in ranges through a custom transport.
+        let bytes = IMAGE_WITH_MANIFEST.to_vec();
+        let context = Context::new().with_asset_transport(RangeTransportSource::new(move |_| {
+            Ok(InMemoryRanges(bytes.clone()))
+        }));
+        let ranged = Reader::from_context(context).with_file("no/such/file.jpg")?;
+
+        assert!(ranged.active_manifest().is_some());
+        assert_eq!(
+            ranged.validation_state(),
+            whole.validation_state(),
+            "ranged read disagreed with whole-object read: {:?}",
+            ranged.validation_status()
+        );
         Ok(())
     }
 

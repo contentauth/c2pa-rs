@@ -1838,7 +1838,8 @@ mod tests {
             .unwrap()
             .open(&request)
             .unwrap()
-            .into_read_seek();
+            .try_into_read_seek()
+            .unwrap();
 
         let mut got = String::new();
         stream.read_to_string(&mut got).unwrap();
@@ -1914,7 +1915,8 @@ mod tests {
                 .unwrap()
                 .open(&request)
                 .unwrap()
-                .into_read_seek();
+                .try_into_read_seek()
+                .unwrap();
             let mut got = String::new();
             stream.read_to_string(&mut got).unwrap();
             assert_eq!(got, "sync", "{order}");
