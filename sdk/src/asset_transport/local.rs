@@ -30,6 +30,7 @@ use crate::utils::path_utils::{ensure_within_root, reject_unsafe_identifier};
 /// - [`AssetRef::Path`] (filesystem path).
 /// - [`AssetRef::Custom`] (treated as a path).
 /// - [`AssetRef::Uri`] (file URI).
+///
 /// Anything else is rejected with [`AssetTransportError::UnsupportedReference`].
 ///
 /// If a root is defined, references need to be sandboxed in the defined root.
