@@ -24,8 +24,14 @@ wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 #[test]
 #[cfg(feature = "file_io")]
 fn test_reader_not_found() -> Result<()> {
+    // Asset (bytes) transport will handle opening the asset.
     let result = Reader::default().with_file("not_found.png");
-    assert_err!(result, Err(Error::IoError(_)));
+    assert_err!(
+        result,
+        Err(Error::AssetTransport(
+            c2pa::asset_transport::AssetTransportError::NotFound { .. }
+        ))
+    );
     Ok(())
 }
 

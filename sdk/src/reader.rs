@@ -14,8 +14,6 @@
 //! The Reader provides a way to read a manifest store from an asset.
 //! It also performs validation on the manifest store.
 
-#[cfg(feature = "file_io")]
-use std::fs::{read, File};
 use std::{
     collections::{HashMap, HashSet},
     io::{Read, Seek, Write},
@@ -30,6 +28,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_with::skip_serializing_none;
 
+#[cfg(feature = "file_io")]
+use crate::asset_transport::{AssetRef, AssetRequest, AssetTransportError};
 #[cfg(feature = "file_io")]
 use crate::utils::io_utils::uri_to_path;
 use crate::{
@@ -289,7 +289,9 @@ impl Reader {
     /// The updated [`Reader`] with the added manifest store.
     ///
     /// # Errors
-    /// Returns an [`Error`] when the manifest data cannot be read from the specified file.  If there's no error upon reading, you must still check validation status to ensure that the manifest data is validated.  That is, even if there are no errors, the data still might not be valid.
+    /// Returns an [`Error`] when the manifest data cannot be read from the specified file.  If there's no error upon reading, you must still check validation status to ensure that the manifest data is validated.
+    /// That is, even if there are no errors, the data still might not be valid.
+    /// A missing or refused file arrives as [`Error::AssetTransport`], not [`Error::IoError`].
     ///
     /// # Example
     ///
@@ -306,8 +308,21 @@ impl Reader {
     #[async_generic]
     pub fn with_file<P: AsRef<std::path::Path>>(mut self, path: P) -> Result<Self> {
         let path = path.as_ref();
-        let mut file = File::open(path)?;
-        let path_fmt = self.context.io().format_from_path(path).unwrap_or_default();
+        let request = AssetRequest::new(AssetRef::Path(path));
+        let resolved = if _sync {
+            self.context.asset_transport()?.open(&request)?
+        } else {
+            match self.context.asset_transport_async() {
+                Some(transport) => transport.open_async(&request).await?,
+                None => self.context.asset_transport()?.open(&request)?,
+            }
+        };
+
+        let path_fmt = match self.context.io().format_from_path(path) {
+            Some(fmt) => fmt,
+            None => resolved.advisory_format().unwrap_or("").to_string(),
+        };
+        let mut file = resolved.into_read_seek();
         let format = self.context.io().format_from_stream(&path_fmt, &mut file);
 
         // Try loading from stream first
@@ -320,38 +335,58 @@ impl Reader {
 
         match store {
             Err(Error::JumbfNotFound) => {
-                // if not embedded or cloud, check for sidecar first and load if it exists
-                let potential_sidecar_path = path.with_extension("c2pa");
-                if potential_sidecar_path.exists() {
-                    let manifest_data = read(potential_sidecar_path)?;
-                    validation_log = StatusTracker::default();
-                    let store = if _sync {
-                        Store::from_manifest_data_and_stream(
-                            &manifest_data,
-                            &format,
-                            &mut file,
-                            &mut validation_log,
-                            &self.context,
-                        )
-                    } else {
-                        Store::from_manifest_data_and_stream_async(
-                            &manifest_data,
-                            &format,
-                            &mut file,
-                            &mut validation_log,
-                            &self.context,
-                        )
-                        .await
-                    }?;
-                    if _sync {
-                        self.with_store(store, &mut validation_log)
-                    } else {
-                        self.with_store_async(store, &mut validation_log).await
-                    }?;
-                    Ok(self)
+                // The asset was served by some asset bytes transport, reuse it for sidecars too.
+                let sidecar_path = path.with_extension("c2pa");
+                let sidecar_request = AssetRequest::new(AssetRef::Path(&sidecar_path));
+                let sidecar = if _sync {
+                    self.context
+                        .asset_transport()
+                        .and_then(|t| t.open(&sidecar_request))
                 } else {
-                    Err(Error::JumbfNotFound)
+                    match self.context.asset_transport_async() {
+                        Some(transport) => transport.open_async(&sidecar_request).await,
+                        None => self
+                            .context
+                            .asset_transport()
+                            .and_then(|t| t.open(&sidecar_request)),
+                    }
+                };
+
+                let mut manifest_data = Vec::new();
+                match sidecar {
+                    Ok(resolved) => {
+                        resolved.into_read_seek().read_to_end(&mut manifest_data)?;
+                    }
+                    // Convert a transport not found error to JumbfNotFound, since it means there is no manifest.
+                    Err(AssetTransportError::NotFound { .. }) => return Err(Error::JumbfNotFound),
+                    Err(e) => return Err(e.into()),
                 }
+
+                validation_log = StatusTracker::default();
+                let store = if _sync {
+                    Store::from_manifest_data_and_stream(
+                        &manifest_data,
+                        &format,
+                        &mut file,
+                        &mut validation_log,
+                        &self.context,
+                    )
+                } else {
+                    Store::from_manifest_data_and_stream_async(
+                        &manifest_data,
+                        &format,
+                        &mut file,
+                        &mut validation_log,
+                        &self.context,
+                    )
+                    .await
+                }?;
+                if _sync {
+                    self.with_store(store, &mut validation_log)
+                } else {
+                    self.with_store_async(store, &mut validation_log).await
+                }?;
+                Ok(self)
             }
             Ok(store) => {
                 if _sync {
@@ -377,7 +412,10 @@ impl Reader {
     /// A [`Reader`] for the manifest store.
     ///
     /// # Errors
-    /// Returns an [`Error`] when the manifest data cannot be read from the specified file.  If there's no error upon reading, you must still check validation status to ensure that the manifest data is validated.  That is, even if there are no errors, the data still might not be valid.
+    /// Returns an [`Error`] when the manifest data cannot be read from the specified file.
+    /// If there's no error upon reading, the validation status must still be checked to ensure that the manifest data is validated.
+    /// That is, even if there are no (read) errors, the data still might not be valid.
+    /// Note: A missing or refused file arrives as [`Error::AssetTransport`], not [`Error::IoError`].
     ///
     /// # Example
     ///
@@ -1480,6 +1518,160 @@ pub mod tests {
     fn test_reader_from_file_no_manifest() -> Result<()> {
         let result = Reader::default().with_file("tests/fixtures/IMG_0003.jpg");
         assert!(matches!(result, Err(Error::JumbfNotFound)));
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_file_read_through_filesystem_uses_asset_transport() -> Result<()> {
+        use crate::asset_transport::{
+            AssetRequest, AssetTransportError, ResolvedAsset, SyncAssetTransport,
+        };
+
+        struct InMemorySource(Vec<u8>);
+        impl SyncAssetTransport for InMemorySource {
+            fn open(
+                &self,
+                _: &AssetRequest<'_>,
+            ) -> std::result::Result<ResolvedAsset, AssetTransportError> {
+                Ok(ResolvedAsset::new(Cursor::new(self.0.clone())))
+            }
+        }
+
+        let context =
+            Context::new().with_asset_transport(InMemorySource(IMAGE_WITH_MANIFEST.to_vec()));
+
+        let reader = Reader::from_context(context).with_file("no/such/file.jpg")?;
+        assert!(reader.active_manifest().is_some());
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_file_read_through_filesystem_uses_asset_transport_format_hint() -> Result<()> {
+        use crate::asset_transport::{
+            AssetRequest, AssetTransportError, ResolvedAsset, SyncAssetTransport,
+        };
+
+        struct TypedSource(Vec<u8>);
+        impl SyncAssetTransport for TypedSource {
+            fn open(
+                &self,
+                _: &AssetRequest<'_>,
+            ) -> std::result::Result<ResolvedAsset, AssetTransportError> {
+                Ok(ResolvedAsset::new(Cursor::new(self.0.clone())).with_format("image/svg+xml"))
+            }
+        }
+
+        let svg = include_bytes!("../tests/fixtures/sample1.svg").to_vec();
+        let context = Context::new().with_asset_transport(TypedSource(svg));
+
+        let err = Reader::from_context(context)
+            .with_file("no/such/asset")
+            .err();
+
+
+        assert!(
+            !matches!(err, Some(Error::UnsupportedType)),
+            "format hint should have picked the format handler, got {err:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_sidecar_read_through_filesystem_uses_same_asset_transport_as_source_asset() -> Result<()> {
+        use crate::{
+            asset_transport::{
+                AssetRef, AssetRequest, AssetTransportError, ResolvedAsset, SyncAssetTransport,
+            },
+            builder::BuilderIntent,
+            Builder,
+        };
+
+        let signing_context = test_context().into_shared();
+        let mut unsigned = Cursor::new(include_bytes!("../tests/fixtures/earth_apollo17.jpg"));
+
+        let mut builder = Builder::from_shared_context(&signing_context);
+        builder.set_intent(BuilderIntent::Edit);
+        builder.set_no_embed(true);
+        let manifest_data = builder.sign(
+            signing_context.signer()?,
+            "image/jpeg",
+            &mut unsigned,
+            &mut std::io::empty(),
+        )?;
+
+        struct SidecarSource {
+            asset: Vec<u8>,
+            manifest: Vec<u8>,
+        }
+        impl SyncAssetTransport for SidecarSource {
+            fn open(
+                &self,
+                request: &AssetRequest<'_>,
+            ) -> std::result::Result<ResolvedAsset, AssetTransportError> {
+                let is_sidecar = match request.reference {
+                    AssetRef::Path(p) => p.extension().is_some_and(|e| e == "c2pa"),
+                    _ => false,
+                };
+                let bytes = if is_sidecar {
+                    self.manifest.clone()
+                } else {
+                    self.asset.clone()
+                };
+                Ok(ResolvedAsset::new(Cursor::new(bytes)))
+            }
+        }
+
+        let context = Context::new().with_asset_transport(SidecarSource {
+            asset: include_bytes!("../tests/fixtures/earth_apollo17.jpg").to_vec(),
+            manifest: manifest_data,
+        });
+
+        let reader = Reader::from_context(context).with_file("no/such/photo.jpg")?;
+        assert!(reader.active_manifest().is_some());
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_an_unreadable_existing_sidecar_reports_as_error() -> Result<()> {
+        use crate::asset_transport::{
+            AssetRef, AssetRequest, AssetTransportError, ResolvedAsset, SyncAssetTransport,
+        };
+
+        struct DeniedSidecarSource;
+        impl SyncAssetTransport for DeniedSidecarSource {
+            fn open(
+                &self,
+                request: &AssetRequest<'_>,
+            ) -> std::result::Result<ResolvedAsset, AssetTransportError> {
+                match request.reference {
+                    AssetRef::Path(p) if p.extension().is_some_and(|e| e == "c2pa") => {
+                        Err(AssetTransportError::PermissionDenied {
+                            reference: p.to_string_lossy().into_owned(),
+                        })
+                    }
+                    // An asset with no embedded manifest, so the sidecar path is reached.
+                    _ => Ok(ResolvedAsset::new(Cursor::new(
+                        include_bytes!("../tests/fixtures/earth_apollo17.jpg").to_vec(),
+                    ))),
+                }
+            }
+        }
+
+        let context = Context::new().with_asset_transport(DeniedSidecarSource);
+        let result = Reader::from_context(context).with_file("no/such/photo.jpg");
+
+        assert!(
+            matches!(
+                result,
+                Err(Error::AssetTransport(
+                    AssetTransportError::PermissionDenied { .. }
+                ))
+            )
+        );
         Ok(())
     }
 

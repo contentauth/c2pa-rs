@@ -47,6 +47,10 @@ pub enum C2paError {
     Signature(String),
     #[error("Verify: {0}")]
     Verify(String),
+    #[error("PermissionDenied: {0}")]
+    PermissionDenied(String),
+    #[error("NotConfigured: {0}")]
+    NotConfigured(String),
 }
 
 pub type Error = C2paError;
@@ -72,6 +76,8 @@ impl C2paError {
             Self::ResourceNotFound(_) => 113,
             Self::Signature(_) => 114,
             Self::Verify(_) => 115,
+            Self::PermissionDenied(_) => 116,
+            Self::NotConfigured(_) => 117,
         }
     }
 
@@ -117,6 +123,20 @@ impl C2paError {
             RemoteManifestFetch(_) | RemoteManifestUrl(_) => Self::RemoteManifest(err_str),
             JumbfNotFound => Self::ManifestNotFound(err_str),
             IoError(_) => Self::Io(err_str),
+            AssetTransport(e) => match e {
+                c2pa::asset_transport::AssetTransportError::NotFound { .. } => {
+                    Self::FileNotFound(err_str)
+                }
+                c2pa::asset_transport::AssetTransportError::PermissionDenied { .. }
+                | c2pa::asset_transport::AssetTransportError::OutsideRoot { .. } => {
+                    Self::PermissionDenied(err_str)
+                }
+                c2pa::asset_transport::AssetTransportError::NotConfigured
+                | c2pa::asset_transport::AssetTransportError::NoSyncTransport => {
+                    Self::NotConfigured(err_str)
+                }
+                _ => Self::Io(err_str),
+            },
             JsonError(e) => Self::Json(err_str),
             NotFound | ResourceNotFound(_) | MissingDataBox => Self::ResourceNotFound(err_str),
             FileNotFound(_) => Self::FileNotFound(err_str),
@@ -159,6 +179,8 @@ impl C2paError {
             "ResourceNotFound" => Self::ResourceNotFound(error_message),
             "Signature" => Self::Signature(error_message),
             "Verify" => Self::Verify(error_message),
+            "PermissionDenied" => Self::PermissionDenied(error_message),
+            "NotConfigured" => Self::NotConfigured(error_message),
             _ => Self::Other(format!("{error_type}: {error_message}")),
         }
     }
@@ -360,6 +382,92 @@ mod tests {
             "Expected NullParameter, got: {:?}",
             c2pa_err
         );
+    }
+
+    #[test]
+    fn test_file_not_found_through_asset_transport() {
+        let err =
+            c2pa::Error::AssetTransport(c2pa::asset_transport::AssetTransportError::NotFound {
+                reference: "no/such/file.jpg".to_string(),
+            });
+
+        let mapped = C2paError::from_c2pa_error(err);
+        assert!(matches!(mapped, C2paError::FileNotFound(_)), "got {mapped}");
+        assert_eq!(mapped.code(), 104);
+
+        let round_tripped = C2paError::from(mapped.to_string());
+        assert!(matches!(round_tripped, C2paError::FileNotFound(_)));
+        assert_eq!(round_tripped.code(), 104);
+    }
+
+    #[test]
+    fn test_file_permission_denied_through_asset_transport() {
+        let err = c2pa::Error::AssetTransport(
+            c2pa::asset_transport::AssetTransportError::PermissionDenied {
+                reference: "locked.jpg".to_string(),
+            },
+        );
+
+        let mapped = C2paError::from_c2pa_error(err);
+        assert!(
+            matches!(mapped, C2paError::PermissionDenied(_)),
+            "got {mapped}"
+        );
+        assert_eq!(mapped.code(), 116);
+
+        let round_tripped = C2paError::from(mapped.to_string());
+        assert!(matches!(round_tripped, C2paError::PermissionDenied(_)));
+        assert_eq!(round_tripped.code(), 116);
+    }
+
+    #[test]
+    fn test_file_permission_denied_through_asset_transport_when_file_outside_root_sandbox() {
+        let err =
+            c2pa::Error::AssetTransport(c2pa::asset_transport::AssetTransportError::OutsideRoot {
+                reference: "../../etc/passwd".to_string(),
+            });
+
+        let mapped = C2paError::from_c2pa_error(err);
+        assert!(
+            matches!(mapped, C2paError::PermissionDenied(_)),
+            "got {mapped}"
+        );
+        assert_eq!(mapped.code(), 116);
+
+        let round_tripped = C2paError::from(mapped.to_string());
+        assert!(matches!(round_tripped, C2paError::PermissionDenied(_)));
+        assert_eq!(round_tripped.code(), 116);
+    }
+
+    #[test]
+    fn test_no_sync_asset_transport_errors_as_unconfigured() {
+        let err = c2pa::Error::AssetTransport(
+            c2pa::asset_transport::AssetTransportError::NoSyncTransport,
+        );
+
+        let mapped = C2paError::from_c2pa_error(err);
+        assert!(
+            matches!(mapped, C2paError::NotConfigured(_)),
+            "got {mapped}"
+        );
+        assert_eq!(mapped.code(), 117);
+    }
+
+    #[test]
+    fn test_asset_transport_not_configured_reports_unconfigured() {
+        let err =
+            c2pa::Error::AssetTransport(c2pa::asset_transport::AssetTransportError::NotConfigured);
+
+        let mapped = C2paError::from_c2pa_error(err);
+        assert!(
+            matches!(mapped, C2paError::NotConfigured(_)),
+            "got {mapped}"
+        );
+        assert_eq!(mapped.code(), 117);
+
+        let round_tripped = C2paError::from(mapped.to_string());
+        assert!(matches!(round_tripped, C2paError::NotConfigured(_)));
+        assert_eq!(round_tripped.code(), 117);
     }
 
     #[test]

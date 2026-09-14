@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#[cfg(feature = "file_io")]
+use std::path::PathBuf;
 use std::path::{Component, Path};
 
 use crate::{Error, Result};
@@ -69,6 +71,130 @@ pub(crate) fn sanitize_archive_path(path: &str) -> Result<String> {
     }
 
     Ok(sanitized)
+}
+
+/// Lexically normalize a path by resolving `.` and `..` components without
+/// touching the filesystem.
+///
+/// Leading `..` components that cannot be popped (they would climb above the
+/// path's start, or the path is rooted) are preserved so that an escape above a
+/// relative base remains detectable by a later `starts_with` check.
+#[cfg(feature = "file_io")]
+pub(crate) fn normalize_lexically(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => match out.components().next_back() {
+                // Pop a preceding normal segment.
+                Some(Component::Normal(_)) => {
+                    out.pop();
+                }
+                // Cannot climb above a filesystem/drive root: drop the `..`.
+                Some(Component::RootDir | Component::Prefix(_)) => {}
+                // Nothing to pop (empty, or tail is already `..`): keep it so the
+                // escape stays visible.
+                _ => out.push(".."),
+            },
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// Resolve a resource `path` (an attacker-influenced identifier) against `base`,
+/// confining the result to `root` (the manifest tree). Returns the resolved
+/// path, or an error if the identifier would escape `root`.
+///
+/// Relative identifiers — including `..` — are permitted: a nested ingredient
+/// (whose `base` is a subdirectory) may reference sibling resources one or more
+/// levels up, as long as the resolved path stays inside `root`. What is rejected
+/// is anything that escapes `root`:
+///
+/// 1. Backslashes and absolute paths are refused up front by
+///    [`reject_unsafe_identifier`]. Archives are portable, so a Windows-authored
+///    `\` separator would otherwise be treated as a filename on Linux; absolute
+///    identifiers are never legitimate.
+/// 2. Containment within `root` is enforced by [`ensure_within_root`], lexically
+///    and then against symlinks.
+///
+/// A non-existent target has nothing to canonicalize and is returned as the
+/// joined path; the caller's own read/open then surfaces the not-found error.
+#[cfg(feature = "file_io")]
+pub(crate) fn resolve_within_root(base: &Path, root: &Path, path: &str) -> Result<PathBuf> {
+    reject_unsafe_identifier(path)?;
+
+    let joined = base.join(path);
+    ensure_within_root(&joined, root)
+        .map_err(|_| Error::BadParam(format!("Resource path escapes manifest root: {path}")))?;
+
+    Ok(joined)
+}
+
+/// Reject an identifier that can never be legitimate: empty, backslash-separated,
+/// or absolute. Split out of [`resolve_within_root`] so a caller that builds its
+/// own candidate path can apply the same check without the join.
+#[cfg(feature = "file_io")]
+pub(crate) fn reject_unsafe_identifier(path: &str) -> Result<()> {
+    if path.is_empty() {
+        return Err(Error::BadParam(
+            "Empty resource path not allowed".to_string(),
+        ));
+    }
+    if path.contains('\\') {
+        return Err(Error::BadParam(format!(
+            "Backslash not allowed in resource path: {path}"
+        )));
+    }
+    if Path::new(path).is_absolute() {
+        return Err(Error::BadParam(format!(
+            "Absolute resource path not allowed: {path}"
+        )));
+    }
+    Ok(())
+}
+
+/// Confine an already-joined `candidate` to `root`, rejecting anything that escapes it.
+///
+/// Two checks, either of which can accept:
+///
+/// 1. Lexical containment: `candidate` is normalized (resolving `.`/`..` without
+///    filesystem access) and must remain within the normalized `root`. This
+///    catches escapes even when the target does not exist.
+/// 2. Symlink containment: if the target exists, it is canonicalized (following
+///    symlinks) and re-checked against the canonicalized `root`. A hostile bundle
+///    could ship an innocuously-named symlink pointing outside the manifest tree;
+///    lexical checks alone would not catch that. Both sides are canonicalized so a
+///    legitimately symlinked `root` (e.g. `/tmp` -> `/private/tmp` on macOS) is
+///    not falsely rejected — which is also why a lexical failure falls through to
+///    this check rather than rejecting outright.
+#[cfg(feature = "file_io")]
+pub(crate) fn ensure_within_root(candidate: &Path, root: &Path) -> Result<()> {
+    // Lexical containment (works whether or not the target exists).
+    if normalize_lexically(candidate).starts_with(normalize_lexically(root)) {
+        // Symlink containment for targets that exist.
+        if let Ok(canonical_target) = candidate.canonicalize() {
+            let canonical_root = root.canonicalize()?;
+            if !canonical_target.starts_with(&canonical_root) {
+                return Err(escaped_root(candidate));
+            }
+        }
+        return Ok(());
+    }
+
+    // A symlinked prefix can still make the two canonicalize to the same place.
+    match (candidate.canonicalize(), root.canonicalize()) {
+        (Ok(target), Ok(canonical_root)) if target.starts_with(&canonical_root) => Ok(()),
+        _ => Err(escaped_root(candidate)),
+    }
+}
+
+#[cfg(feature = "file_io")]
+fn escaped_root(candidate: &Path) -> Error {
+    Error::BadParam(format!(
+        "Path escapes the configured root: {}",
+        candidate.display()
+    ))
 }
 
 #[cfg(test)]
