@@ -121,6 +121,9 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
+    use crate::asset_transport::AssetRef;
+    #[cfg(feature = "file_io")]
+    use crate::utils::io_utils::tempdirectory;
 
     #[cfg(feature = "file_io")]
     #[test]
@@ -186,7 +189,7 @@ mod tests {
     #[cfg(feature = "file_io")]
     #[test]
     fn default_filesystem_transport_allows_relative_paths_kept_inside_rooted_sandbox() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempdirectory().unwrap();
         std::fs::create_dir(dir.path().join("sub")).unwrap();
         std::fs::write(dir.path().join("asset.jpg"), b"\xff\xd8 test").unwrap();
 
@@ -199,7 +202,7 @@ mod tests {
     #[cfg(feature = "file_io")]
     #[test]
     fn rooted_transport_rejects_an_escape_beyond_the_root() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempdirectory().unwrap();
         let transport = LocalAssetTransport::rooted_at(dir.path());
 
         let request = AssetRequest::from_reference("../../etc/passwd");
@@ -212,11 +215,11 @@ mod tests {
     #[cfg(all(feature = "file_io", unix))]
     #[test]
     fn default_rooted_filesystem_transport_rejects_outside_symlinks() {
-        let outside = tempfile::tempdir().unwrap();
+        let outside = tempdirectory().unwrap();
         let secret = outside.path().join("secret.jpg");
         std::fs::write(&secret, b"\xff\xd8 secret").unwrap();
 
-        let root = tempfile::tempdir().unwrap();
+        let root = tempdirectory().unwrap();
         std::os::unix::fs::symlink(&secret, root.path().join("innocent.jpg")).unwrap();
 
         let transport = LocalAssetTransport::rooted_at(root.path());
@@ -231,7 +234,7 @@ mod tests {
     #[cfg(feature = "file_io")]
     #[test]
     fn default_filesystem_transport_confines_to_an_absolute_root() {
-        let parent = tempfile::tempdir().unwrap();
+        let parent = tempdirectory().unwrap();
         let root = parent.path().join("assets");
         std::fs::create_dir(&root).unwrap();
         let asset = root.join("photo.jpg");
@@ -278,11 +281,11 @@ mod tests {
     #[cfg(feature = "file_io")]
     #[test]
     fn default_filesystem_transport_rejects_paths_outside_rooted_sandbox() {
-        let outside = tempfile::tempdir().unwrap();
+        let outside = tempdirectory().unwrap();
         let secret = outside.path().join("secret.jpg");
         std::fs::write(&secret, b"\xff\xd8 secret").unwrap();
 
-        let root = tempfile::tempdir().unwrap();
+        let root = tempdirectory().unwrap();
         let transport = LocalAssetTransport::rooted_at(root.path());
 
         let request = AssetRequest::new(AssetRef::Path(&secret));
@@ -295,7 +298,7 @@ mod tests {
     #[cfg(feature = "file_io")]
     #[test]
     fn default_unrooted_filesystem_transport_can_open_paths() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = tempdirectory().unwrap();
         let asset = dir.path().join("asset.jpg");
         std::fs::write(&asset, b"\xff\xd8 test").unwrap();
 
@@ -320,12 +323,12 @@ mod tests {
     #[cfg(feature = "file_io")]
     #[test]
     fn default_rooted_filesystem_transport_contains_file_uris_to_sandbox() {
-        let outside = tempfile::tempdir().unwrap();
+        let outside = tempdirectory().unwrap();
         let secret = outside.path().join("secret.jpg");
         std::fs::write(&secret, b"\xff\xd8 secret").unwrap();
         let uri = url::Url::from_file_path(&secret).unwrap().to_string();
 
-        let root = tempfile::tempdir().unwrap();
+        let root = tempdirectory().unwrap();
         let transport = LocalAssetTransport::rooted_at(root.path());
 
         let request = AssetRequest::new(AssetRef::Uri(&uri));
