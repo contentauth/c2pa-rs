@@ -234,7 +234,10 @@ mod tests {
     #[cfg(feature = "file_io")]
     #[test]
     fn default_filesystem_transport_confines_to_an_absolute_root() {
-        let parent = tempdirectory().unwrap();
+        // Fixture must be accessible in test env on any platform...
+        let parent = tempfile::Builder::new()
+            .tempdir_in(std::env::current_dir().unwrap())
+            .unwrap();
         let root = parent.path().join("assets");
         std::fs::create_dir(&root).unwrap();
         let asset = root.join("photo.jpg");
