@@ -99,8 +99,7 @@ struct EntryInner {
 /// Current process id.
 #[cfg(not(target_arch = "wasm32"))]
 fn current_pid() -> u32 {
-    // SAFETY: getpid takes no arguments and cannot fail.
-    unsafe { libc::getpid() as u32 }
+    std::process::id()
 }
 
 /// No fork, so return 0 as a constant.
