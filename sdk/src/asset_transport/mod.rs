@@ -43,18 +43,44 @@ pub enum AssetRef<'a> {
     Custom(&'a str),
 }
 
+/// Why an asset is being opened: the primary asset, or its sidecar manifest.
+///
+/// A transport that does not key on the [`AssetRef`] (e.g. one wired to a single
+/// stream) needs this to tell a sidecar (`.c2pa`) request apart from the asset
+/// request, so it can serve manifest bytes rather than the asset again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum AssetPurpose {
+    /// The primary asset.
+    #[default]
+    Asset,
+    /// A sidecar manifest (`.c2pa`) alongside the asset.
+    Sidecar,
+}
+
 /// A generic request to open an asset (through an AssetRef).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct AssetRequest<'a> {
     /// Reference to open.
     pub reference: AssetRef<'a>,
+    /// What the request is for (primary asset or sidecar manifest).
+    pub purpose: AssetPurpose,
 }
 
 impl<'a> AssetRequest<'a> {
     /// Build a request to open an [`AssetRef`].
     pub fn new(reference: AssetRef<'a>) -> Self {
-        Self { reference }
+        Self {
+            reference,
+            purpose: AssetPurpose::Asset,
+        }
+    }
+
+    /// Set what the request is for (primary asset or sidecar manifest).
+    pub fn with_purpose(mut self, purpose: AssetPurpose) -> Self {
+        self.purpose = purpose;
+        self
     }
 
     /// Build a request to open an [`AssetRef`] from a string.
@@ -81,10 +107,13 @@ fn has_uri_scheme(reference: &str) -> bool {
 }
 
 /// Result of opening request: bytes + transport info.
-#[non_exhaustive]
+///
+/// Fields are private; construction goes through [`ResolvedAsset::new`] and the
+/// builder methods, so the shape can grow without a `#[non_exhaustive]` marker.
 pub struct ResolvedAsset {
     stream: Box<dyn ReadSeek>,
     format: Option<String>,
+    size: Option<u64>,
 }
 
 impl ResolvedAsset {
@@ -93,6 +122,7 @@ impl ResolvedAsset {
         Self {
             stream: Box::new(stream),
             format: None,
+            size: None,
         }
     }
 
@@ -102,10 +132,23 @@ impl ResolvedAsset {
         self
     }
 
+    /// Total size of the asset in bytes, when the transport knows it
+    /// (e.g. a `Content-Length` header or an archive entry size). May be unknown
+    /// for a streaming/chunked source, in which case it is left unset.
+    pub fn with_size(mut self, size: u64) -> Self {
+        self.size = Some(size);
+        self
+    }
+
     /// Format hint for the asset (bytes) transport, as declared by the transport.
     /// Hint, since e.g. a `Content-Type` hint wouldn't override magic bytes determined type.
     pub fn advisory_format(&self) -> Option<&str> {
         self.format.as_deref()
+    }
+
+    /// Total size of the asset in bytes, if the transport reported one.
+    pub fn size(&self) -> Option<u64> {
+        self.size
     }
 
     /// Turn the transported asset bytes into a seekable stream.
@@ -149,5 +192,30 @@ impl<T: AsyncAssetTransport + ?Sized> AsyncAssetTransport for std::sync::Arc<T> 
         request: &AssetRequest<'_>,
     ) -> Result<ResolvedAsset, AssetTransportError> {
         (**self).open_async(request).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use super::*;
+
+    #[test]
+    fn resolved_asset_carries_optional_size() {
+        let unknown = ResolvedAsset::new(Cursor::new(vec![1u8, 2, 3]));
+        assert_eq!(unknown.size(), None);
+
+        let known = ResolvedAsset::new(Cursor::new(vec![1u8, 2, 3])).with_size(3);
+        assert_eq!(known.size(), Some(3));
+    }
+
+    #[test]
+    fn asset_request_purpose_defaults_to_asset() {
+        let request = AssetRequest::new(AssetRef::Uri("s3://b/k"));
+        assert_eq!(request.purpose, AssetPurpose::Asset);
+
+        let sidecar = request.with_purpose(AssetPurpose::Sidecar);
+        assert_eq!(sidecar.purpose, AssetPurpose::Sidecar);
     }
 }

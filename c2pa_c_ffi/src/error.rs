@@ -124,9 +124,9 @@ impl C2paError {
             JumbfNotFound => Self::ManifestNotFound(err_str),
             IoError(_) => Self::Io(err_str),
             AssetTransport(e) => match e {
-                c2pa::asset_transport::AssetTransportError::NotFound { .. } => {
-                    Self::FileNotFound(err_str)
-                }
+                // A missing asset was an `io::Error` (code 105) before the transport
+                // layer existed; keep that FFI code stable rather than moving to 104.
+                c2pa::asset_transport::AssetTransportError::NotFound { .. } => Self::Io(err_str),
                 c2pa::asset_transport::AssetTransportError::PermissionDenied { .. }
                 | c2pa::asset_transport::AssetTransportError::OutsideRoot { .. } => {
                     Self::PermissionDenied(err_str)
@@ -385,19 +385,21 @@ mod tests {
     }
 
     #[test]
-    fn test_file_not_found_through_asset_transport() {
+    fn test_missing_asset_through_transport_keeps_io_code() {
+        // A missing asset stays FFI code 105 (Io), as it was before the transport
+        // layer — not 104 — so downstream bindings that match on 105 do not break.
         let err =
             c2pa::Error::AssetTransport(c2pa::asset_transport::AssetTransportError::NotFound {
                 reference: "no/such/file.jpg".to_string(),
             });
 
         let mapped = C2paError::from_c2pa_error(err);
-        assert!(matches!(mapped, C2paError::FileNotFound(_)), "got {mapped}");
-        assert_eq!(mapped.code(), 104);
+        assert!(matches!(mapped, C2paError::Io(_)), "got {mapped}");
+        assert_eq!(mapped.code(), 105);
 
         let round_tripped = C2paError::from(mapped.to_string());
-        assert!(matches!(round_tripped, C2paError::FileNotFound(_)));
-        assert_eq!(round_tripped.code(), 104);
+        assert!(matches!(round_tripped, C2paError::Io(_)));
+        assert_eq!(round_tripped.code(), 105);
     }
 
     #[test]

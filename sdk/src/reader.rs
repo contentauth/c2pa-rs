@@ -29,7 +29,7 @@ use serde_json::Value;
 use serde_with::skip_serializing_none;
 
 #[cfg(feature = "file_io")]
-use crate::asset_transport::{AssetRef, AssetRequest, AssetTransportError};
+use crate::asset_transport::{AssetPurpose, AssetRef, AssetRequest, AssetTransportError};
 #[cfg(feature = "file_io")]
 use crate::utils::io_utils::uri_to_path;
 use crate::{
@@ -309,6 +309,10 @@ impl Reader {
     pub fn with_file<P: AsRef<std::path::Path>>(mut self, path: P) -> Result<Self> {
         let path = path.as_ref();
         let request = AssetRequest::new(AssetRef::Path(path));
+
+        // Cancellation checkpoint before a potentially long transport read (e.g. network).
+        self.context.check_progress(ProgressPhase::Reading, 1, 1)?;
+
         let resolved = if _sync {
             self.context.asset_transport()?.open(&request)?
         } else {
@@ -337,7 +341,8 @@ impl Reader {
             Err(Error::JumbfNotFound) => {
                 // The asset was served by some asset bytes transport, reuse it for sidecars too.
                 let sidecar_path = path.with_extension("c2pa");
-                let sidecar_request = AssetRequest::new(AssetRef::Path(&sidecar_path));
+                let sidecar_request = AssetRequest::new(AssetRef::Path(&sidecar_path))
+                    .with_purpose(AssetPurpose::Sidecar);
                 let sidecar = if _sync {
                     self.context
                         .asset_transport()
@@ -360,6 +365,15 @@ impl Reader {
                     // Convert a transport not found error to JumbfNotFound, since it means there is no manifest.
                     Err(AssetTransportError::NotFound { .. }) => return Err(Error::JumbfNotFound),
                     Err(e) => return Err(e.into()),
+                }
+
+                // A transport that does not key on the reference (e.g. one wired to a
+                // single stream) may answer the sidecar request with the asset bytes
+                // again. A `.c2pa` sidecar is a raw JUMBF superbox (box type `jumb`);
+                // anything else means there is no manifest, not a malformed one.
+                let is_jumbf = manifest_data.len() >= 8 && &manifest_data[4..8] == b"jumb";
+                if !is_jumbf {
+                    return Err(Error::JumbfNotFound);
                 }
 
                 validation_log = StatusTracker::default();
@@ -1671,6 +1685,58 @@ pub mod tests {
             ))
         ));
         Ok(())
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn manifestless_asset_from_reference_ignoring_transport_reports_jumbf_not_found() {
+        use crate::asset_transport::{
+            AssetRequest, AssetTransportError, ResolvedAsset, SyncAssetTransport,
+        };
+
+        // A transport that ignores the reference and always returns the same asset
+        // bytes — so the sidecar request is answered with the asset, not a manifest.
+        struct AlwaysSameAsset(Vec<u8>);
+        impl SyncAssetTransport for AlwaysSameAsset {
+            fn open(
+                &self,
+                _: &AssetRequest<'_>,
+            ) -> std::result::Result<ResolvedAsset, AssetTransportError> {
+                Ok(ResolvedAsset::new(Cursor::new(self.0.clone())))
+            }
+        }
+
+        // earth_apollo17.jpg carries no embedded manifest, so the sidecar path is reached.
+        let asset = include_bytes!("../tests/fixtures/earth_apollo17.jpg").to_vec();
+        let context = Context::new().with_asset_transport(AlwaysSameAsset(asset));
+
+        let err = Reader::from_context(context)
+            .with_file("no/such/photo.jpg")
+            .err();
+        assert!(
+            matches!(err, Some(Error::JumbfNotFound)),
+            "a manifest-less asset must report JumbfNotFound, not a decode error; got {err:?}"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn with_file_fires_a_reading_progress_checkpoint() {
+        use std::sync::Mutex;
+
+        let seen = Arc::new(Mutex::new(Vec::<ProgressPhase>::new()));
+        let seen_cb = Arc::clone(&seen);
+        let context = Context::new().with_progress_callback(move |phase, _, _| {
+            seen_cb.lock().unwrap().push(phase);
+            true
+        });
+
+        // A real fixture so the transport open succeeds; we only assert the checkpoint fired.
+        let _ = Reader::from_context(context).with_file("tests/fixtures/CA.jpg");
+        assert!(
+            seen.lock().unwrap().contains(&ProgressPhase::Reading),
+            "with_file must fire a Reading checkpoint around the transport open"
+        );
     }
 
     #[test]

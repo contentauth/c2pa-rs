@@ -126,9 +126,7 @@ pub(crate) fn resolve_within_root(base: &Path, root: &Path, path: &str) -> Resul
 
     let joined = base.join(path);
     ensure_within_root(&joined, root)
-        .map_err(|_| Error::BadParam(format!("Resource path escapes manifest root: {path}")))?;
-
-    Ok(joined)
+        .map_err(|_| Error::BadParam(format!("Resource path escapes manifest root: {path}")))
 }
 
 /// Reject an identifier that can never be legitimate: empty, backslash-separated,
@@ -168,24 +166,36 @@ pub(crate) fn reject_unsafe_identifier(path: &str) -> Result<()> {
 ///    legitimately symlinked `root` (e.g. `/tmp` -> `/private/tmp` on macOS) is
 ///    not falsely rejected — which is also why a lexical failure falls through to
 ///    this check rather than rejecting outright.
+///
+/// Returns the **validated** path the caller should open: the canonicalized target
+/// when it exists, or the joined candidate when it does not (so the caller's own
+/// open surfaces the not-found error). Opening the returned path — rather than
+/// re-resolving the original candidate — closes the check-then-open race where a
+/// symlink is swapped into the root between validation and open.
 #[cfg(feature = "file_io")]
-pub(crate) fn ensure_within_root(candidate: &Path, root: &Path) -> Result<()> {
+pub(crate) fn ensure_within_root(candidate: &Path, root: &Path) -> Result<PathBuf> {
     // Lexical containment (works whether or not the target exists).
     if normalize_lexically(candidate).starts_with(normalize_lexically(root)) {
-        // Symlink containment for targets that exist.
-        if let Ok(canonical_target) = candidate.canonicalize() {
-            let canonical_root = root.canonicalize()?;
-            if !canonical_target.starts_with(&canonical_root) {
-                return Err(escaped_root(candidate));
+        // Symlink containment for targets that exist. Hand back the canonicalized
+        // path so the caller opens exactly what was validated.
+        match candidate.canonicalize() {
+            Ok(canonical_target) => {
+                let canonical_root = root.canonicalize()?;
+                if !canonical_target.starts_with(&canonical_root) {
+                    return Err(escaped_root(candidate));
+                }
+                Ok(canonical_target)
             }
+            // Non-existent target: nothing to canonicalize, so it cannot be
+            // symlink-swapped either. Return the joined candidate.
+            Err(_) => Ok(candidate.to_path_buf()),
         }
-        return Ok(());
-    }
-
-    // A symlinked prefix can still make the two canonicalize to the same place.
-    match (candidate.canonicalize(), root.canonicalize()) {
-        (Ok(target), Ok(canonical_root)) if target.starts_with(&canonical_root) => Ok(()),
-        _ => Err(escaped_root(candidate)),
+    } else {
+        // A symlinked prefix can still make the two canonicalize to the same place.
+        match (candidate.canonicalize(), root.canonicalize()) {
+            (Ok(target), Ok(canonical_root)) if target.starts_with(&canonical_root) => Ok(target),
+            _ => Err(escaped_root(candidate)),
+        }
     }
 }
 
@@ -261,5 +271,83 @@ mod tests {
     #[test]
     fn mixed_slash_traversal_rejected() {
         assert!(sanitize_archive_path("resources/..\\..\\etc/passwd").is_err());
+    }
+}
+
+#[cfg(all(test, feature = "file_io"))]
+mod within_root_tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::ensure_within_root;
+    use crate::utils::io_utils::tempdirectory;
+
+    #[test]
+    fn existing_target_inside_root_returns_canonical_path() {
+        let root = tempdirectory().unwrap();
+        let target = root.path().join("asset.jpg");
+        std::fs::write(&target, b"\xff\xd8").unwrap();
+
+        let resolved = ensure_within_root(&target, root.path()).unwrap();
+        assert_eq!(resolved, target.canonicalize().unwrap());
+        assert!(resolved.starts_with(root.path().canonicalize().unwrap()));
+    }
+
+    #[test]
+    fn nonexistent_target_inside_root_returns_joined_candidate() {
+        let root = tempdirectory().unwrap();
+        let candidate = root.path().join("missing.jpg");
+
+        // Nothing to canonicalize; the caller's open surfaces the not-found error.
+        let resolved = ensure_within_root(&candidate, root.path()).unwrap();
+        assert_eq!(resolved, candidate);
+    }
+
+    #[test]
+    fn existing_target_outside_root_is_rejected() {
+        let outside = tempdirectory().unwrap();
+        let secret = outside.path().join("secret.jpg");
+        std::fs::write(&secret, b"\xff\xd8").unwrap();
+
+        let root = tempdirectory().unwrap();
+        assert!(ensure_within_root(&secret, root.path()).is_err());
+    }
+
+    #[test]
+    fn nonexistent_target_escaping_root_is_rejected() {
+        let root = tempdirectory().unwrap();
+        // Lexical escape to a path that does not exist: rejected without touching disk.
+        let candidate = root.path().join("../elsewhere/missing.jpg");
+        assert!(ensure_within_root(&candidate, root.path()).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_root_is_not_falsely_rejected() {
+        // A symlinked root (e.g. /tmp -> /private/tmp on macOS) must still accept
+        // its own contents; both sides are canonicalized before comparison.
+        let real = tempdirectory().unwrap();
+        let target = real.path().join("asset.jpg");
+        std::fs::write(&target, b"\xff\xd8").unwrap();
+
+        let link_parent = tempdirectory().unwrap();
+        let link_root = link_parent.path().join("link");
+        std::os::unix::fs::symlink(real.path(), &link_root).unwrap();
+
+        let resolved = ensure_within_root(&link_root.join("asset.jpg"), &link_root).unwrap();
+        assert_eq!(resolved, target.canonicalize().unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_inside_root_pointing_outside_is_rejected() {
+        let outside = tempdirectory().unwrap();
+        let secret = outside.path().join("secret.jpg");
+        std::fs::write(&secret, b"\xff\xd8").unwrap();
+
+        let root = tempdirectory().unwrap();
+        let innocent = root.path().join("innocent.jpg");
+        std::os::unix::fs::symlink(&secret, &innocent).unwrap();
+
+        assert!(ensure_within_root(&innocent, root.path()).is_err());
     }
 }

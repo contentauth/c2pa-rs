@@ -44,6 +44,11 @@ pub struct LocalAssetTransport {
 impl LocalAssetTransport {
     /// Verified references are confined to the sandbox defined by the root.
     /// Things outside the sandboxed root are rejected with [`AssetTransportError::OutsideRoot`].
+    ///
+    /// Containment is not atomic against an attacker who can write into `root`:
+    /// the check and the open are separate syscalls. Opening the canonicalized
+    /// path closes the common symlink-swap race, but a truly hostile, writable
+    /// root is not a multi-tenant sandbox — do not treat it as one.
     pub fn rooted_at(root: impl Into<std::path::PathBuf>) -> Self {
         let root = root.into();
         let root = root
@@ -96,12 +101,18 @@ impl SyncAssetTransport for LocalAssetTransport {
                 )
             }
         };
-        if let Some(root) = &self.root {
-            ensure_within_root(&candidate, root).map_err(|_| outside(&candidate))?;
-        }
+        // When a root is configured, open the path that containment validated
+        // (canonicalized when it exists), not the raw candidate — otherwise a
+        // symlink swapped into the root between check and open would be followed.
+        let to_open: Cow<'_, Path> = match &self.root {
+            Some(root) => {
+                Cow::Owned(ensure_within_root(&candidate, root).map_err(|_| outside(&candidate))?)
+            }
+            None => candidate,
+        };
 
-        let file = std::fs::File::open(&candidate)
-            .map_err(|e| AssetTransportError::from_io(e, &candidate.to_string_lossy()))?;
+        let file = std::fs::File::open(&to_open)
+            .map_err(|e| AssetTransportError::from_io(e, &to_open.to_string_lossy()))?;
         Ok(ResolvedAsset::new(file))
     }
 }

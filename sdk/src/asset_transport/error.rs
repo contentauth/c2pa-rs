@@ -43,6 +43,18 @@ pub enum AssetTransportError {
     #[error("no asset transport configured on the Context")]
     NotConfigured,
 
+    /// The transport timed out reaching the asset (e.g. a network read).
+    #[error("timed out reading asset: {reference}")]
+    Timeout { reference: String },
+
+    /// The transport could not satisfy the requested byte range.
+    #[error("requested range not satisfiable: {reference}")]
+    RangeNotSatisfiable { reference: String },
+
+    /// The asset exceeds the size the caller is willing to read.
+    #[error("asset too large: {reference}")]
+    TooLarge { reference: String },
+
     #[error(transparent)]
     Io(#[from] std::io::Error),
 
@@ -71,5 +83,28 @@ impl AssetTransportError {
             },
             _ => AssetTransportError::Io(err),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn network_shaped_variants_render_their_reference() {
+        let timeout = AssetTransportError::Timeout {
+            reference: "https://x/y".to_string(),
+        };
+        assert!(timeout.to_string().contains("timed out"));
+
+        let range = AssetTransportError::RangeNotSatisfiable {
+            reference: "https://x/y".to_string(),
+        };
+        assert!(range.to_string().contains("not satisfiable"));
+
+        let large = AssetTransportError::TooLarge {
+            reference: "https://x/y".to_string(),
+        };
+        assert!(large.to_string().contains("too large"));
     }
 }

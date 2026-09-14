@@ -583,6 +583,10 @@ impl Context {
     /// Returns the sync asset transport (bytes source of an asset).
     /// Defaults to `LocalAssetTransport` when `file_io` is on,
     /// [`UnconfiguredAssetTransport`](crate::asset_transport::UnconfiguredAssetTransport) otherwise.
+    ///
+    /// Unlike [`resolver`](Self::resolver), which always has a default and returns the
+    /// `Arc` directly, this returns a `Result`: registering an async-only transport
+    /// leaves no sync transport to hand back ([`AssetTransportError::NoSyncTransport`]).
     pub fn asset_transport(
         &self,
     ) -> std::result::Result<Arc<dyn SyncAssetTransport>, AssetTransportError> {
