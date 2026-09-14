@@ -109,7 +109,7 @@ brotli = "7.0.0"
 byteorder = { version = "1.5.0", default-features = false }
 byteordered = "0.6.0"
 chrono = { version = "0.4.44", default-features = false, features = ["serde"] }
-c2pa_cbor = "0.77.4"
+c2pa_cbor = "0.78.0"
 c2pa_raw_crypto = { version = "0.1.2", default-features = false }
 const-hex = "1.19"
 coset = "0.4.2"
@@ -148,7 +148,7 @@ rasn = "0.28.13"
 rasn-cms = "0.28.13"
 rasn-ocsp = "0.28.13"
 rasn-pkix = "0.28.13"
-regex = "1.12"
+regex = "1.12.3"
 riff = "2.0.0"
 schemars = { version = "1.2.1", optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
@@ -227,7 +227,7 @@ features = ["clock", "serde"]
 getrandom = { version = "0.3.4", features = ["wasm_js"] }
 # Also enable getrandom 0.2 with js feature for other dependencies (rand, tempfile, config)
 # This is needed until all dependencies migrate to getrandom 0.3
-getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
+getrandom_02 = { package = "getrandom", version = "0.2.8", features = ["js"] }
 # `rand` 0.10 depends on getrandom 0.4, which also needs the wasm_js feature
 # enabled for wasm32 support.
 getrandom_04 = { package = "getrandom", version = "0.4", features = [
