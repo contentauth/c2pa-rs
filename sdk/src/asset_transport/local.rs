@@ -222,12 +222,10 @@ mod tests {
         let transport = LocalAssetTransport::rooted_at(root.path());
         let request = AssetRequest::from_reference("innocent.jpg");
 
-        assert!(
-            matches!(
-                transport.open(&request),
-                Err(AssetTransportError::OutsideRoot { .. })
-            )
-        );
+        assert!(matches!(
+            transport.open(&request),
+            Err(AssetTransportError::OutsideRoot { .. })
+        ));
     }
 
     #[cfg(feature = "file_io")]
@@ -288,12 +286,10 @@ mod tests {
         let transport = LocalAssetTransport::rooted_at(root.path());
 
         let request = AssetRequest::new(AssetRef::Path(&secret));
-        assert!(
-            matches!(
-                transport.open(&request),
-                Err(AssetTransportError::OutsideRoot { .. })
-            )
-        );
+        assert!(matches!(
+            transport.open(&request),
+            Err(AssetTransportError::OutsideRoot { .. })
+        ));
     }
 
     #[cfg(feature = "file_io")]

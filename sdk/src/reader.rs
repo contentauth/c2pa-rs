@@ -1570,7 +1570,6 @@ pub mod tests {
             .with_file("no/such/asset")
             .err();
 
-
         assert!(
             !matches!(err, Some(Error::UnsupportedType)),
             "format hint should have picked the format handler, got {err:?}"
@@ -1580,7 +1579,8 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
-    fn test_sidecar_read_through_filesystem_uses_same_asset_transport_as_source_asset() -> Result<()> {
+    fn test_sidecar_read_through_filesystem_uses_same_asset_transport_as_source_asset() -> Result<()>
+    {
         use crate::{
             asset_transport::{
                 AssetRef, AssetRequest, AssetTransportError, ResolvedAsset, SyncAssetTransport,
@@ -1664,14 +1664,12 @@ pub mod tests {
         let context = Context::new().with_asset_transport(DeniedSidecarSource);
         let result = Reader::from_context(context).with_file("no/such/photo.jpg");
 
-        assert!(
-            matches!(
-                result,
-                Err(Error::AssetTransport(
-                    AssetTransportError::PermissionDenied { .. }
-                ))
-            )
-        );
+        assert!(matches!(
+            result,
+            Err(Error::AssetTransport(
+                AssetTransportError::PermissionDenied { .. }
+            ))
+        ));
         Ok(())
     }
 

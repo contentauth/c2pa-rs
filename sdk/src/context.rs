@@ -1811,9 +1811,7 @@ mod tests {
         let path = std::path::Path::new("tests/fixtures/C.jpg");
         let request = AssetRequest::new(AssetRef::Path(path));
 
-        assert!(
-            context.asset_transport().unwrap().open(&request).is_ok()
-        );
+        assert!(context.asset_transport().unwrap().open(&request).is_ok());
         assert!(context.asset_transport_async().is_none());
     }
 
