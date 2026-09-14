@@ -51,6 +51,8 @@ pub enum C2paError {
     PermissionDenied(String),
     #[error("NotConfigured: {0}")]
     NotConfigured(String),
+    #[error("AssetNotFound: {0}")]
+    AssetNotFound(String),
 }
 
 pub type Error = C2paError;
@@ -78,6 +80,7 @@ impl C2paError {
             Self::Verify(_) => 115,
             Self::PermissionDenied(_) => 116,
             Self::NotConfigured(_) => 117,
+            Self::AssetNotFound(_) => 118,
         }
     }
 
@@ -124,9 +127,9 @@ impl C2paError {
             JumbfNotFound => Self::ManifestNotFound(err_str),
             IoError(_) => Self::Io(err_str),
             AssetTransport(e) => match e {
-                // A missing asset was an `io::Error` (code 105) before the transport
-                // layer existed; keep that FFI code stable rather than moving to 104.
-                c2pa::asset_transport::AssetTransportError::NotFound { .. } => Self::Io(err_str),
+                c2pa::asset_transport::AssetTransportError::NotFound { .. } => {
+                    Self::AssetNotFound(err_str)
+                }
                 c2pa::asset_transport::AssetTransportError::PermissionDenied { .. }
                 | c2pa::asset_transport::AssetTransportError::OutsideRoot { .. } => {
                     Self::PermissionDenied(err_str)
@@ -181,6 +184,7 @@ impl C2paError {
             "Verify" => Self::Verify(error_message),
             "PermissionDenied" => Self::PermissionDenied(error_message),
             "NotConfigured" => Self::NotConfigured(error_message),
+            "AssetNotFound" => Self::AssetNotFound(error_message),
             _ => Self::Other(format!("{error_type}: {error_message}")),
         }
     }
@@ -336,6 +340,9 @@ mod tests {
             (C2paError::ResourceNotFound("test".into()), 113),
             (C2paError::Signature("test".into()), 114),
             (C2paError::Verify("test".into()), 115),
+            (C2paError::PermissionDenied("test".into()), 116),
+            (C2paError::NotConfigured("test".into()), 117),
+            (C2paError::AssetNotFound("test".into()), 118),
         ];
 
         for (original, expected_code) in test_cases {
@@ -382,24 +389,6 @@ mod tests {
             "Expected NullParameter, got: {:?}",
             c2pa_err
         );
-    }
-
-    #[test]
-    fn test_missing_asset_through_transport_keeps_io_code() {
-        // A missing asset stays FFI code 105 (Io), as it was before the transport
-        // layer — not 104 — so downstream bindings that match on 105 do not break.
-        let err =
-            c2pa::Error::AssetTransport(c2pa::asset_transport::AssetTransportError::NotFound {
-                reference: "no/such/file.jpg".to_string(),
-            });
-
-        let mapped = C2paError::from_c2pa_error(err);
-        assert!(matches!(mapped, C2paError::Io(_)), "got {mapped}");
-        assert_eq!(mapped.code(), 105);
-
-        let round_tripped = C2paError::from(mapped.to_string());
-        assert!(matches!(round_tripped, C2paError::Io(_)));
-        assert_eq!(round_tripped.code(), 105);
     }
 
     #[test]

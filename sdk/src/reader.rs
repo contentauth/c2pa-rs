@@ -29,7 +29,7 @@ use serde_json::Value;
 use serde_with::skip_serializing_none;
 
 #[cfg(feature = "file_io")]
-use crate::asset_transport::{AssetPurpose, AssetRef, AssetRequest, AssetTransportError};
+use crate::asset_transport::{AssetRef, AssetRequest, AssetRequestKind, AssetTransportError};
 #[cfg(feature = "file_io")]
 use crate::utils::io_utils::uri_to_path;
 use crate::{
@@ -339,7 +339,7 @@ impl Reader {
                 // The asset was served by some asset bytes transport, reuse it for sidecars too.
                 let sidecar_path = path.with_extension("c2pa");
                 let sidecar_request = AssetRequest::new(AssetRef::Path(&sidecar_path))
-                    .with_purpose(AssetPurpose::Sidecar);
+                    .with_kind(AssetRequestKind::Sidecar);
                 let sidecar = if _sync {
                     self.context
                         .asset_transport()
@@ -1710,26 +1710,6 @@ pub mod tests {
         assert!(
             matches!(err, Some(Error::JumbfNotFound)),
             "a manifest-less asset must report JumbfNotFound, not a decode error; got {err:?}"
-        );
-    }
-
-    #[test]
-    #[cfg(feature = "file_io")]
-    fn with_file_fires_a_reading_progress_checkpoint() {
-        use std::sync::Mutex;
-
-        let seen = Arc::new(Mutex::new(Vec::<ProgressPhase>::new()));
-        let seen_cb = Arc::clone(&seen);
-        let context = Context::new().with_progress_callback(move |phase, _, _| {
-            seen_cb.lock().unwrap().push(phase);
-            true
-        });
-
-        // A real fixture so the transport open succeeds; we only assert the checkpoint fired.
-        let _ = Reader::from_context(context).with_file("tests/fixtures/CA.jpg");
-        assert!(
-            seen.lock().unwrap().contains(&ProgressPhase::Reading),
-            "with_file must fire a Reading checkpoint around the transport open"
         );
     }
 

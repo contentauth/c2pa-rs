@@ -46,11 +46,11 @@ pub enum AssetRef<'a> {
 /// Is the opened asset an asset or a c2pa sidecar?
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
-pub enum AssetPurpose {
+pub enum AssetRequestKind {
     /// An asset.
     #[default]
     Asset,
-    /// A sidecar (`.c2pa`).
+    /// A sidecar manifest (`.c2pa`).
     Sidecar,
 }
 
@@ -60,8 +60,8 @@ pub enum AssetPurpose {
 pub struct AssetRequest<'a> {
     /// Reference to open.
     pub reference: AssetRef<'a>,
-    /// What the request is for (primary asset or sidecar manifest).
-    pub purpose: AssetPurpose,
+    /// Whether this targets the primary asset or its sidecar manifest.
+    pub kind: AssetRequestKind,
 }
 
 impl<'a> AssetRequest<'a> {
@@ -69,13 +69,13 @@ impl<'a> AssetRequest<'a> {
     pub fn new(reference: AssetRef<'a>) -> Self {
         Self {
             reference,
-            purpose: AssetPurpose::Asset,
+            kind: AssetRequestKind::Asset,
         }
     }
 
-    /// Set what the request is for (primary asset or sidecar manifest).
-    pub fn with_purpose(mut self, purpose: AssetPurpose) -> Self {
-        self.purpose = purpose;
+    /// Set whether this targets the primary asset or its sidecar manifest.
+    pub fn with_kind(mut self, kind: AssetRequestKind) -> Self {
+        self.kind = kind;
         self
     }
 
@@ -202,11 +202,11 @@ mod tests {
     }
 
     #[test]
-    fn asset_request_purpose_defaults_to_asset() {
+    fn asset_request_kind_defaults_to_asset() {
         let request = AssetRequest::new(AssetRef::Uri("s3://b/k"));
-        assert_eq!(request.purpose, AssetPurpose::Asset);
+        assert_eq!(request.kind, AssetRequestKind::Asset);
 
-        let sidecar = request.with_purpose(AssetPurpose::Sidecar);
-        assert_eq!(sidecar.purpose, AssetPurpose::Sidecar);
+        let sidecar = request.with_kind(AssetRequestKind::Sidecar);
+        assert_eq!(sidecar.kind, AssetRequestKind::Sidecar);
     }
 }
