@@ -1280,11 +1280,11 @@ pub(crate) fn track_string_array(
         let strings = rebuild();
         free_members(&cleanup_members);
         drop(strings);
-        // Dropping the box deallocates the array itself.
+        // Dropping the box deallocates the array.
     };
 
     if !get_registry().track_by_address(addr, TypeId::of::<StringArray>(), Box::new(cleanup)) {
-        // The caller should see nothing to reclaim.
+        // A caller should see nothing to reclaim.
         free_members(&members);
         drop(unsafe {
             Box::from_raw(std::ptr::slice_from_raw_parts_mut(
