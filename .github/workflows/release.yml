@@ -72,7 +72,7 @@ jobs:
 
       - name: Run release-plz (publish)
         id: release-plz
-        uses: MarcoIeni/release-plz-action@064f4d1e36c843611ddf013be726beaa4ad804db # v0.5.129
+        uses: MarcoIeni/release-plz-action@aec534bbd8631793b9b3b8f1ee6cd886c322e17f # v0.5.133
         with:
           command: release
           verbose: true
