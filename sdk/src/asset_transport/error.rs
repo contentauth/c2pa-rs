@@ -43,7 +43,7 @@ pub enum AssetTransportError {
     #[error("no asset transport configured on the Context")]
     NotConfigured,
 
-    /// The transport timed out reaching the asset (e.g. a network read).
+    /// The transport timed out.
     #[error("timed out reading asset: {reference}")]
     Timeout { reference: String },
 
@@ -51,7 +51,7 @@ pub enum AssetTransportError {
     #[error("requested range not satisfiable: {reference}")]
     RangeNotSatisfiable { reference: String },
 
-    /// The asset exceeds the size the caller is willing to read.
+    /// The asset exceeds the size the caller can read for this chunk.
     #[error("asset too large: {reference}")]
     TooLarge { reference: String },
 

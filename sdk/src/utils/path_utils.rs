@@ -169,15 +169,13 @@ pub(crate) fn reject_unsafe_identifier(path: &str) -> Result<()> {
 ///
 /// Returns the **validated** path the caller should open: the canonicalized target
 /// when it exists, or the joined candidate when it does not (so the caller's own
-/// open surfaces the not-found error). Opening the returned path — rather than
-/// re-resolving the original candidate — closes the check-then-open race where a
-/// symlink is swapped into the root between validation and open.
+/// open surfaces the not-found error).
 #[cfg(feature = "file_io")]
 pub(crate) fn ensure_within_root(candidate: &Path, root: &Path) -> Result<PathBuf> {
     // Lexical containment (works whether or not the target exists).
     if normalize_lexically(candidate).starts_with(normalize_lexically(root)) {
-        // Symlink containment for targets that exist. Hand back the canonicalized
-        // path so the caller opens exactly what was validated.
+        // Symlink containment for targets that exist.
+        // Returns the canonical validated path to be opened.
         match candidate.canonicalize() {
             Ok(canonical_target) => {
                 let canonical_root = root.canonicalize()?;
@@ -186,8 +184,7 @@ pub(crate) fn ensure_within_root(candidate: &Path, root: &Path) -> Result<PathBu
                 }
                 Ok(canonical_target)
             }
-            // Non-existent target: nothing to canonicalize, so it cannot be
-            // symlink-swapped either. Return the joined candidate.
+            // Non-existent target, return the candidate.
             Err(_) => Ok(candidate.to_path_buf()),
         }
     } else {

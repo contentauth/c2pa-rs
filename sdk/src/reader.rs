@@ -310,9 +310,6 @@ impl Reader {
         let path = path.as_ref();
         let request = AssetRequest::new(AssetRef::Path(path));
 
-        // Cancellation checkpoint before a potentially long transport read (e.g. network).
-        self.context.check_progress(ProgressPhase::Reading, 1, 1)?;
-
         let resolved = if _sync {
             self.context.asset_transport()?.open(&request)?
         } else {
@@ -367,10 +364,7 @@ impl Reader {
                     Err(e) => return Err(e.into()),
                 }
 
-                // A transport that does not key on the reference (e.g. one wired to a
-                // single stream) may answer the sidecar request with the asset bytes
-                // again. A `.c2pa` sidecar is a raw JUMBF superbox (box type `jumb`);
-                // anything else means there is no manifest, not a malformed one.
+                // Verify we actually got JUMBF.
                 let is_jumbf = manifest_data.len() >= 8 && &manifest_data[4..8] == b"jumb";
                 if !is_jumbf {
                     return Err(Error::JumbfNotFound);

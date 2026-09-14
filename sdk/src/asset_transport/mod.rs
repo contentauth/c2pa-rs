@@ -43,18 +43,14 @@ pub enum AssetRef<'a> {
     Custom(&'a str),
 }
 
-/// Why an asset is being opened: the primary asset, or its sidecar manifest.
-///
-/// A transport that does not key on the [`AssetRef`] (e.g. one wired to a single
-/// stream) needs this to tell a sidecar (`.c2pa`) request apart from the asset
-/// request, so it can serve manifest bytes rather than the asset again.
+/// Is the opened asset an asset or a c2pa sidecar?
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum AssetPurpose {
-    /// The primary asset.
+    /// An asset.
     #[default]
     Asset,
-    /// A sidecar manifest (`.c2pa`) alongside the asset.
+    /// A sidecar (`.c2pa`).
     Sidecar,
 }
 
@@ -106,10 +102,7 @@ fn has_uri_scheme(reference: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
 }
 
-/// Result of opening request: bytes + transport info.
-///
-/// Fields are private; construction goes through [`ResolvedAsset::new`] and the
-/// builder methods, so the shape can grow without a `#[non_exhaustive]` marker.
+/// Result of opening request = resolved asset and information about it.
 pub struct ResolvedAsset {
     stream: Box<dyn ReadSeek>,
     format: Option<String>,
@@ -132,9 +125,7 @@ impl ResolvedAsset {
         self
     }
 
-    /// Total size of the asset in bytes, when the transport knows it
-    /// (e.g. a `Content-Length` header or an archive entry size). May be unknown
-    /// for a streaming/chunked source, in which case it is left unset.
+    /// Size of the asset, if the transport can know it.
     pub fn with_size(mut self, size: u64) -> Self {
         self.size = Some(size);
         self
@@ -146,7 +137,7 @@ impl ResolvedAsset {
         self.format.as_deref()
     }
 
-    /// Total size of the asset in bytes, if the transport reported one.
+    /// Reported transport size of the asset.
     pub fn size(&self) -> Option<u64> {
         self.size
     }
