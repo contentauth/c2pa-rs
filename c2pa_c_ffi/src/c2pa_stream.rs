@@ -16,8 +16,10 @@ use std::{
     slice,
 };
 
+#[cfg(test)]
+use crate::deref_mut_option;
 use crate::{
-    box_tracked, cimpl_free, deref_mut_option, deref_mut_or_return_int, error::C2paError,
+    box_tracked, cimpl::untrack_owned, cimpl_free, deref_mut_or_return_int, error::C2paError,
     ok_or_return_int, CimplError,
 };
 
@@ -63,8 +65,10 @@ type WriteCallback =
 /// The return value is 0 for success, or a negative number for an error.
 type FlushCallback = unsafe extern "C" fn(context: *mut StreamContext) -> isize;
 
-#[repr(C)]
 /// A C2paStream is a Rust Read/Write/Seek stream that can be created and used in C.
+///
+/// Not `#[repr(C)]`, so cbindgen writes an opaque forward declaration: the C FFI
+/// now handles opaque ids, and we shouldn't dereference anything directly anymore.
 #[derive(Debug)]
 pub struct C2paStream {
     context: *mut StreamContext,
@@ -104,12 +108,6 @@ impl C2paStream {
             writer,
             flusher,
         }
-    }
-
-    /// Extracts the context from the C2paStream (used for testing in Rust).
-    pub fn extract_context(&mut self) -> Box<StreamContext> {
-        let context_ptr = std::mem::replace(&mut self.context, std::ptr::null_mut());
-        unsafe { Box::from_raw(context_ptr) }
     }
 }
 
@@ -167,13 +165,23 @@ impl Seek for C2paStream {
     /// # Errors
     /// * Returns an error if the underlying C callback returns an error too (negative value)
     fn seek(&mut self, from: std::io::SeekFrom) -> std::io::Result<u64> {
+        let out_of_range = || {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "seek callback: stream offset out of range",
+            )
+        };
         let (pos, mode) = match from {
             std::io::SeekFrom::Current(pos) => (pos, C2paSeekMode::Current),
-            std::io::SeekFrom::Start(pos) => (pos as i64, C2paSeekMode::Start),
+            std::io::SeekFrom::Start(pos) => (
+                i64::try_from(pos).map_err(|_| out_of_range())?,
+                C2paSeekMode::Start,
+            ),
             std::io::SeekFrom::End(pos) => (pos, C2paSeekMode::End),
         };
+        let pos = isize::try_from(pos).map_err(|_| out_of_range())?;
 
-        let new_pos = unsafe { (self.seeker)(self.context, pos as isize, mode) };
+        let new_pos = unsafe { (self.seeker)(self.context, pos, mode) };
         if new_pos < 0 {
             return Err(CimplError::last_message()
                 .map(|msg| {
@@ -236,6 +244,8 @@ impl Write for C2paStream {
     }
 }
 
+// SAFETY: C2paStream = 4 C function pointers + 1 context pointer.
+// The callbacks and context should be safe to call from any thread.
 unsafe impl Send for C2paStream {}
 unsafe impl Sync for C2paStream {}
 
@@ -255,8 +265,9 @@ impl TestStream {
         Self(TestC2paStream::new(data).into_c_stream())
     }
 
-    /// Gets a mutable reference to the underlying C2paStream
-    pub fn stream_mut(&mut self) -> &mut C2paStream {
+    /// Borrow the C2paStream, with the guard keeping it alive as long as needed.
+    /// Used through `Deref`/`DerefMut`.
+    pub fn stream_mut(&mut self) -> crate::TypedExclusive<C2paStream> {
         deref_mut_option!(self.0, C2paStream).expect("TestStream always wraps a tracked C2paStream")
     }
 
@@ -285,8 +296,19 @@ impl Drop for TestStream {
 /// * `seek` - a SeekCallback to seek in the stream
 /// * `write` - a WriteCallback to write to the stream
 ///
+/// # Callback contract
+///
+/// A callback must not block forever:
+/// the handles it borrowed stay borrowed (during the run).
+/// Not returning from the callback means handles can't be freed anymore.
+///
+/// Apply a timeout inside the callback, to avoid spinning forever.
+/// Return -1 to propagate an error on failure.
+///
 /// # Safety
 /// The context must remain valid for the lifetime of the C2paStream.
+///
+/// The callbacks and the context must be safe to invoke from any thread.
 ///
 /// The resulting C2paStream must be released by calling c2pa_release_stream.
 #[no_mangle]
@@ -326,7 +348,7 @@ impl TestC2paStream {
     }
 
     unsafe extern "C" fn reader(context: *mut StreamContext, data: *mut u8, len: isize) -> isize {
-        let stream = deref_mut_or_return_int!(context as *mut TestC2paStream, TestC2paStream);
+        let mut stream = deref_mut_or_return_int!(context as *mut TestC2paStream, TestC2paStream);
         let data: &mut [u8] = slice::from_raw_parts_mut(data, len as usize);
         ok_or_return_int!(stream.cursor.read(data)) as isize
     }
@@ -336,7 +358,7 @@ impl TestC2paStream {
         offset: isize,
         mode: C2paSeekMode,
     ) -> isize {
-        let stream = deref_mut_or_return_int!(context as *mut TestC2paStream, TestC2paStream);
+        let mut stream = deref_mut_or_return_int!(context as *mut TestC2paStream, TestC2paStream);
 
         match mode {
             C2paSeekMode::Start => {
@@ -374,7 +396,7 @@ impl TestC2paStream {
     }
 
     unsafe extern "C" fn writer(context: *mut StreamContext, data: *const u8, len: isize) -> isize {
-        let stream = deref_mut_or_return_int!(context as *mut TestC2paStream, TestC2paStream);
+        let mut stream = deref_mut_or_return_int!(context as *mut TestC2paStream, TestC2paStream);
         let data: &[u8] = slice::from_raw_parts(data, len as usize);
         match stream.cursor.write(data) {
             Ok(bytes) => bytes as isize,
@@ -409,10 +431,10 @@ impl TestC2paStream {
     /// - If non-null, `c_stream.context` must also be a tracked pointer allocated via `box_tracked!`.
     /// - Must not be called more than once for the same pointer.
     pub unsafe fn drop_c_stream(c_stream: *mut C2paStream) {
-        if let Some(real_stream) = deref_mut_option!(c_stream, C2paStream) {
-            cimpl_free(real_stream.context as *mut std::ffi::c_void);
-        }
-        cimpl_free(c_stream as *mut std::ffi::c_void);
+        let Ok(real_stream) = untrack_owned::<C2paStream>(c_stream) else {
+            return;
+        };
+        cimpl_free(real_stream.context as *mut std::ffi::c_void);
     }
 }
 
@@ -474,6 +496,23 @@ mod tests {
         let mut buf = [0u8; 3];
         assert_eq!(stream.stream_mut().read(&mut buf).unwrap(), 0);
         assert_eq!(buf, [0, 0, 0]);
+    }
+
+    #[test]
+    fn test_seek_rejects_offsets_beyond_i64() {
+        // Past i64::MAX, the old `as i64` conversion wrapped this u64 negative,
+        // handing the C callback a nonsense offset; the checked conversion refuses.
+        let data = vec![1, 2, 3, 4, 5];
+        let mut stream = TestStream::new(data);
+
+        let err = stream
+            .stream_mut()
+            .seek(SeekFrom::Start(u64::MAX))
+            .expect_err("an offset beyond i64::MAX must be refused");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+
+        // The stream stays usable after the refusal.
+        assert_eq!(stream.stream_mut().seek(SeekFrom::Start(2)).unwrap(), 2);
     }
 
     #[test]
@@ -567,7 +606,7 @@ mod tests {
             )
         };
 
-        let c2pa_stream = deref_mut_option!(c2pa_stream_ptr, C2paStream).expect("just created");
+        let mut c2pa_stream = deref_mut_option!(c2pa_stream_ptr, C2paStream).expect("just created");
         let mut buf = [0u8; 3];
 
         let result = c2pa_stream.read(&mut buf);

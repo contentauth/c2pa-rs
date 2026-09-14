@@ -200,7 +200,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
-          toolchain: nightly-2025-12-06
+          toolchain: nightly-2026-07-12
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
@@ -209,7 +209,7 @@ jobs:
         env:
           FEATURES: ${{needs.get-features.outputs.openssl-features}}
         run: |
-          cargo +nightly-2025-12-06 test -Z direct-minimal-versions --all-targets --features "$FEATURES"
+          cargo +nightly-2026-07-12 test -Z direct-minimal-versions --all-targets --features "$FEATURES"
 
   unused_deps:
     name: Check for unused dependencies
