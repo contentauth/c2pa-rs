@@ -403,7 +403,7 @@ impl<T> Deref for TypedExclusive<T> {
 }
 
 impl<T> DerefMut for TypedExclusive<T> {
-    // That borrow here is eclusive at a given point in time.
+    // That borrow here is exclusive at a given point in time.
     fn deref_mut(&mut self) -> &mut T {
         unsafe { &mut *std::ptr::with_exposed_provenance_mut::<T>(self.inner.entry.real_addr) }
     }

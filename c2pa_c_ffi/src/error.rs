@@ -347,15 +347,15 @@ mod tests {
             (C2paError::NotSupported("test".into()), 109),
             (C2paError::Other("test".into()), 110),
             (C2paError::NullParameter("test".into()), 111),
-            (C2paError::PointerInUse("test".into()), 7),
-            (C2paError::WrongWrapperKind("test".into()), 8),
-            (C2paError::ForeignProcess("test".into()), 9),
-            (C2paError::TrackingRefused("test".into()), 10),
-            (C2paError::InvalidBufferSize("test".into()), 6),
             (C2paError::RemoteManifest("test".into()), 112),
             (C2paError::ResourceNotFound("test".into()), 113),
             (C2paError::Signature("test".into()), 114),
             (C2paError::Verify("test".into()), 115),
+            (C2paError::InvalidBufferSize("test".into()), 6),
+            (C2paError::PointerInUse("test".into()), 7),
+            (C2paError::WrongWrapperKind("test".into()), 8),
+            (C2paError::ForeignProcess("test".into()), 9),
+            (C2paError::TrackingRefused("test".into()), 10),
         ];
 
         for (original, expected_code) in test_cases {
@@ -439,10 +439,7 @@ mod tests {
         );
 
         let err: C2paError = cimpl.into();
-        assert!(
-            matches!(err, C2paError::TrackingRefused(_)),
-            "code 10 must map to TrackingRefused, got {err}"
-        );
+        assert!(matches!(err, C2paError::TrackingRefused(_)));
         assert_eq!(err.code(), 10);
     }
 }
