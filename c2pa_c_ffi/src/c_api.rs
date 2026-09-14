@@ -2623,6 +2623,8 @@ pub unsafe extern "C" fn c2pa_builder_compose_manifest(
 /// When binding through the C API to other languages, the callback must live long
 /// enough, possibly being re-used and called multiple times. The callback is logically
 /// owned by the host/caller.
+/// `context` must be safe to use from any thread
+/// (caller upholds `Send + Sync` for the pointed-to data).
 ///
 /// # Callback contract
 ///
@@ -2775,9 +2777,8 @@ struct CallbackCredentialHolder {
     callback: CredentialHolderCallback,
 }
 
-// The context pointer is owned by the host, which promises it stays valid and
-// usable from the signing thread for as long as the signer lives (the same
-// contract as `c2pa_signer_create`).
+// Safety: the caller guarantees that `context` is safe to use from any thread
+// for as long as the signer lives.
 unsafe impl Send for CallbackCredentialHolder {}
 unsafe impl Sync for CallbackCredentialHolder {}
 
@@ -4845,6 +4846,18 @@ verify_after_sign = true
             new_builder.is_null(),
             "Should return null for invalid input"
         );
+    }
+
+    #[test]
+    fn test_c2pa_builder_with_definition_null_builder() {
+        let manifest_def = CString::new("{}").unwrap();
+        let new_builder =
+            unsafe { c2pa_builder_with_definition(std::ptr::null_mut(), manifest_def.as_ptr()) };
+        assert!(new_builder.is_null());
+        let error = unsafe { c2pa_error() };
+        let error_owned = unsafe { CStr::from_ptr(error) }.to_owned();
+        unsafe { c2pa_free(error as *const c_void) };
+        assert_eq!(error_owned.to_str().unwrap(), "NullParameter: builder");
     }
 
     #[test]

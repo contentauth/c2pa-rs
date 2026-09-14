@@ -441,7 +441,10 @@ macro_rules! arc_tracked {
 macro_rules! untrack_or_return {
     ($ptr:expr, $type:ty, $err_val:expr) => {{
         let ptr = $ptr;
-        $crate::ptr_or_return!(ptr, $err_val);
+        if ptr.is_null() {
+            $crate::CimplError::null_parameter(stringify!($ptr)).set_last();
+            return $err_val;
+        }
         match $crate::untrack_owned::<$type>(ptr) {
             Ok(value) => value,
             Err(e) => {
