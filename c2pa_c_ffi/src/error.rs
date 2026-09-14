@@ -47,8 +47,6 @@ pub enum C2paError {
     ForeignProcess(String),
     #[error("TrackingRefused: {0}")]
     TrackingRefused(String),
-    #[error("MutexPoisoned: {0}")]
-    MutexPoisoned(String),
     #[error("InvalidBufferSize: {0}")]
     InvalidBufferSize(String),
     #[error("NullParameter: {0}")]
@@ -83,12 +81,11 @@ impl C2paError {
             Self::Other(_) => 110,
             Self::NullParameter(_) => 111,
             // Matches CimplError::pointer_in_use, so the round trip is stable.
-            Self::PointerInUse(_) => 8,
-            Self::WrongWrapperKind(_) => 9,
-            Self::ForeignProcess(_) => 10,
-            Self::TrackingRefused(_) => 11,
-            Self::MutexPoisoned(_) => 6,
-            Self::InvalidBufferSize(_) => 7,
+            Self::PointerInUse(_) => 7,
+            Self::WrongWrapperKind(_) => 8,
+            Self::ForeignProcess(_) => 9,
+            Self::TrackingRefused(_) => 10,
+            Self::InvalidBufferSize(_) => 6,
             Self::RemoteManifest(_) => 112,
             Self::ResourceNotFound(_) => 113,
             Self::Signature(_) => 114,
@@ -180,7 +177,6 @@ impl C2paError {
             "WrongWrapperKind" => Self::WrongWrapperKind(error_message),
             "ForeignProcess" => Self::ForeignProcess(error_message),
             "TrackingRefused" => Self::TrackingRefused(error_message),
-            "MutexPoisoned" => Self::MutexPoisoned(error_message),
             "InvalidBufferSize" => Self::InvalidBufferSize(error_message),
             "Remote" => Self::RemoteManifest(error_message),
             "ResourceNotFound" => Self::ResourceNotFound(error_message),
@@ -234,7 +230,6 @@ impl From<crate::cimpl::CimplError> for C2paError {
             codes::UNTRACKED_POINTER => C2paError::Other(err.message().to_string()),
             codes::WRONG_POINTER_TYPE => C2paError::Other(err.message().to_string()),
             codes::OTHER => C2paError::Other(err.message().to_string()),
-            codes::MUTEX_POISONED => C2paError::MutexPoisoned(cause("MutexPoisoned: ")),
             codes::INVALID_BUFFER_SIZE => {
                 C2paError::InvalidBufferSize(cause("InvalidBufferSize: "))
             }
@@ -352,12 +347,11 @@ mod tests {
             (C2paError::NotSupported("test".into()), 109),
             (C2paError::Other("test".into()), 110),
             (C2paError::NullParameter("test".into()), 111),
-            (C2paError::PointerInUse("test".into()), 8),
-            (C2paError::WrongWrapperKind("test".into()), 9),
-            (C2paError::ForeignProcess("test".into()), 10),
-            (C2paError::TrackingRefused("test".into()), 11),
-            (C2paError::MutexPoisoned("test".into()), 6),
-            (C2paError::InvalidBufferSize("test".into()), 7),
+            (C2paError::PointerInUse("test".into()), 7),
+            (C2paError::WrongWrapperKind("test".into()), 8),
+            (C2paError::ForeignProcess("test".into()), 9),
+            (C2paError::TrackingRefused("test".into()), 10),
+            (C2paError::InvalidBufferSize("test".into()), 6),
             (C2paError::RemoteManifest("test".into()), 112),
             (C2paError::ResourceNotFound("test".into()), 113),
             (C2paError::Signature("test".into()), 114),
@@ -431,14 +425,9 @@ mod tests {
 
     #[test]
     fn test_cimpl_typed_errors_keep_their_type() {
-        let err: C2paError = CimplError::mutex_poisoned().into();
-        assert!(matches!(err, C2paError::MutexPoisoned(_)), "got {err}");
-        assert_eq!(err.code(), 6);
-        assert_eq!(err.to_string(), "MutexPoisoned: thread panic detected");
-
         let err: C2paError = CimplError::invalid_buffer_size(999, "data").into();
         assert!(matches!(err, C2paError::InvalidBufferSize(_)), "got {err}");
-        assert_eq!(err.code(), 7);
+        assert_eq!(err.code(), 6);
         assert_eq!(err.to_string(), "InvalidBufferSize: 999 for 'data'");
     }
 
@@ -452,8 +441,8 @@ mod tests {
         let err: C2paError = cimpl.into();
         assert!(
             matches!(err, C2paError::TrackingRefused(_)),
-            "code 11 must map to TrackingRefused, got {err}"
+            "code 10 must map to TrackingRefused, got {err}"
         );
-        assert_eq!(err.code(), 11);
+        assert_eq!(err.code(), 10);
     }
 }

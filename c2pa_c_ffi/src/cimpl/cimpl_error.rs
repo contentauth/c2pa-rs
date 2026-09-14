@@ -78,12 +78,11 @@ pub(crate) mod codes {
     pub(crate) const UNTRACKED_POINTER: i32 = 3;
     pub(crate) const WRONG_POINTER_TYPE: i32 = 4;
     pub(crate) const OTHER: i32 = 5;
-    pub(crate) const MUTEX_POISONED: i32 = 6;
-    pub(crate) const INVALID_BUFFER_SIZE: i32 = 7;
-    pub(crate) const POINTER_IN_USE: i32 = 8;
-    pub(crate) const WRONG_WRAPPER_KIND: i32 = 9;
-    pub(crate) const FOREIGN_PROCESS: i32 = 10;
-    pub(crate) const TRACKING_REFUSED: i32 = 11;
+    pub(crate) const INVALID_BUFFER_SIZE: i32 = 6;
+    pub(crate) const POINTER_IN_USE: i32 = 7;
+    pub(crate) const WRONG_WRAPPER_KIND: i32 = 8;
+    pub(crate) const FOREIGN_PROCESS: i32 = 9;
+    pub(crate) const TRACKING_REFUSED: i32 = 10;
 }
 
 impl CimplError {
@@ -130,13 +129,6 @@ impl CimplError {
         Self::new(
             codes::WRONG_POINTER_TYPE,
             format!("WrongPointerType: 0x{:x}", ptr),
-        )
-    }
-
-    pub fn mutex_poisoned() -> Self {
-        Self::new(
-            codes::MUTEX_POISONED,
-            "MutexPoisoned: thread panic detected".to_string(),
         )
     }
 

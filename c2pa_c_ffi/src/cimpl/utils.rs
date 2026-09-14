@@ -309,19 +309,6 @@ impl EntryInner {
     }
 }
 
-/// Remove an entry that was built but never recorded, then drop it.
-fn discard_untracked_entry(entry: Arc<EntryInner>) {
-    match Arc::into_inner(entry) {
-        Some(mut entry) => {
-            // Dropping a Box<dyn FnMut()> drops the closure's captures without running its body.
-            entry.cancel_cleanup_mut();
-        }
-        None => {
-            eprintln!("c2pa: an untracked registry entry was still referenced");
-        }
-    }
-}
-
 /// Debug log for the registry.
 impl std::fmt::Debug for EntryInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -332,7 +319,7 @@ impl std::fmt::Debug for EntryInner {
 impl Drop for EntryInner {
     fn drop(&mut self) {
         // Never drop an Arc<EntryInner> while holding the registry lock:
-        // a clean up closure could enter the registry still, and deadlock.
+        // a clean up closure could enter the registry, and deadlock.
 
         if self.owner_pid != current_pid() {
             self.cancel_cleanup_mut();
@@ -359,20 +346,20 @@ pub struct SharedCheckout {
 }
 
 impl Drop for SharedCheckout {
-    /// Drop to make sure the handle gets un-borrowed.
+    /// Drop to "un-borrow".
     fn drop(&mut self) {
         self.entry.borrow_state.fetch_sub(1, Ordering::AcqRel);
     }
 }
 
 /// Exclusive borrow of a handle.
-/// There can be only 1 exclusive borrow at most at a point in time.
+/// Only 1 exclusive borrow max at a given point in time.
 pub struct ExclusiveCheckout {
     entry: Arc<EntryInner>,
 }
 
 impl Drop for ExclusiveCheckout {
-    /// Drop to make sure the exclusive handle gets un-borrowed.
+    /// Drop to "un-borrow".
     fn drop(&mut self) {
         self.entry.borrow_state.store(0, Ordering::Release);
     }
@@ -416,7 +403,7 @@ impl<T> Deref for TypedExclusive<T> {
 }
 
 impl<T> DerefMut for TypedExclusive<T> {
-    // DerefMut, so no other borrow of this can exist at a given point in time.
+    // That borrow here is eclusive at a given point in time.
     fn deref_mut(&mut self) -> &mut T {
         unsafe { &mut *std::ptr::with_exposed_provenance_mut::<T>(self.inner.entry.real_addr) }
     }
@@ -426,6 +413,9 @@ impl<T> DerefMut for TypedExclusive<T> {
 // `scramble_to_odd_id`. Must be odd on whichever width `usize` actually is.
 #[cfg(target_pointer_width = "64")]
 const ID_MULTIPLIER: usize = 0x9e3779b97f4a7c15;
+// On 32-bit, ids are only guaranteed distinct for the first 2^31 allocations
+// (see `scramble_to_odd_id`) — far more reachable over a long-running
+// process than the 2^63 window on 64-bit.
 #[cfg(target_pointer_width = "32")]
 const ID_MULTIPLIER: usize = 0x9e3779b9;
 #[cfg(not(any(target_pointer_width = "64", target_pointer_width = "32")))]
@@ -444,6 +434,20 @@ compile_error!("PointerRegistry's handle scrambling needs a 32- or 64-bit usize"
 ///   `2^(usize::BITS - 1)` allocations: 2^63 on 64-bit (unreachable), ~2.1
 ///   billion on 32-bit (wasm32 included). `track_by_id` refuses to mint past
 ///   that bound on 32-bit.
+/// - **Scrambled, not just sequential**: multiplying by the fixed odd
+///   `ID_MULTIPLIER` adds no correctness guarantee beyond the point above —
+///   it's a bijection on the odd residues, so it can't create or remove any
+///   collision the doubling step didn't already have. What it buys instead is
+///   protection against accidents, not a hostile caller: cimpl's handles are
+///   only as trustworthy as the linked client, which we don't treat as
+///   adversarial. But a torn read across threads, an off-by-one, or a stray
+///   write that perturbs a stored handle by a small amount is a realistic
+///   accident — and with plain sequential ids (1, 3, 5, 7, ...) that kind of
+///   small perturbation could easily land on another live object's id,
+///   causing silent type confusion instead of a crash. Scrambling turns that
+///   same small perturbation into an essentially random 64-bit value that
+///   almost certainly isn't tracked at all, so the accident fails loudly
+///   (`untracked pointer`) instead of silently colliding.
 fn scramble_to_odd_id(counter: usize) -> usize {
     let odd = counter.wrapping_mul(2).wrapping_add(1);
     odd.wrapping_mul(ID_MULTIPLIER)
@@ -487,10 +491,10 @@ impl PointerRegistry {
         }
     }
 
-    /// Track a pointer under a freshly generated opaque handle id, so the
-    /// value handed to C is never the real address (and so can never alias a
-    /// different object that later reuses that address).
-    #[must_use = "None returned: caller still owns pointer and must free it"]
+    /// Track a pointer under a freshly generated opaque handle id,
+    /// so the value handed to C is never the real address
+    /// (and so can never alias a different object that later reuses that address).
+    #[must_use = "On None value: caller still owns pointer (and must free it)"]
     fn track_by_id(
         &self,
         real_addr: usize,
@@ -522,21 +526,14 @@ impl PointerRegistry {
             cleanup: Mutex::new(Some(cleanup)),
             owner_pid: current_pid(),
         });
-        if let Ok(mut tracked) = self.tracked.lock() {
-            if let Some(previous) = tracked.insert(id, entry) {
-                // Ids come from a counter that never repeats within its period,
-                // so an occupied slot means that guarantee broke.
-                previous.cancel_cleanup();
-                eprintln!(
-                    "c2pa: handle id 0x{id:x} was minted twice, leaking the displaced object"
-                );
-            }
-            return Some(id);
+        let mut tracked = self.tracked.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(previous) = tracked.insert(id, entry) {
+            // Ids come from a counter that never repeats within its period,
+            // so an occupied slot means that guarantee broke.
+            previous.cancel_cleanup();
+            eprintln!("c2pa: handle id 0x{id:x} was minted twice, leaking the displaced object");
         }
-        // Poisoned lock = no record.
-        discard_untracked_entry(entry);
-        CimplError::tracking_refused("registry lock poisoned").set_last();
-        None
+        Some(id)
     }
 
     /// Track a pointer by address.
@@ -564,18 +561,13 @@ impl PointerRegistry {
                 cleanup: Mutex::new(Some(cleanup)),
                 owner_pid: current_pid(),
             });
-            if let Ok(mut tracked) = self.tracked.lock() {
-                if let Some(previous) = tracked.insert(real_addr, entry) {
-                    // Something already freed the memory.
-                    previous.cancel_cleanup();
-                    eprintln!("c2pa: attempt to retrack an already tracked address");
-                }
-                return true;
+            let mut tracked = self.tracked.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(previous) = tracked.insert(real_addr, entry) {
+                // Something already freed the memory.
+                previous.cancel_cleanup();
+                eprintln!("c2pa: attempt to retrack an already tracked address");
             }
-            // A poisoned lock means the entry was never recorded.
-            discard_untracked_entry(entry);
-            CimplError::tracking_refused("registry lock poisoned").set_last();
-            return false;
+            return true;
         }
         // Nothing to track or free.
         true
@@ -592,11 +584,7 @@ impl PointerRegistry {
                 "id space of handles exhausted",
             )));
         }
-        drop(
-            self.tracked
-                .lock()
-                .map_err(|_| Error::from(CimplError::mutex_poisoned()))?,
-        );
+        drop(self.tracked.lock().unwrap_or_else(|e| e.into_inner()));
         Ok(())
     }
 
@@ -617,10 +605,11 @@ impl PointerRegistry {
         if id == 0 {
             return Err(Error::from(CimplError::null_parameter("pointer")));
         }
-        let tracked = self
-            .tracked
-            .lock()
-            .map_err(|_| Error::from(CimplError::mutex_poisoned()))?;
+        // Recover from poisoning rather than erroring: a panic elsewhere while
+        // holding this lock doesn't leave the map itself in a state we need
+        // to distrust (see track_by_id), and treating poisoning as fatal here
+        // would make every previously tracked handle permanently unresolvable.
+        let tracked = self.tracked.lock().unwrap_or_else(|e| e.into_inner());
         match tracked.get(&id) {
             Some(entry) if entry.type_id == expected_type => Ok(Arc::clone(entry)),
             Some(_) => Err(Error::from(CimplError::wrong_pointer_type(id as u64))),
@@ -685,10 +674,7 @@ impl PointerRegistry {
         }
 
         let entry = {
-            let tracked = self
-                .tracked
-                .lock()
-                .map_err(|_| Error::from(CimplError::mutex_poisoned()))?;
+            let tracked = self.tracked.lock().unwrap_or_else(|e| e.into_inner());
             match tracked.get(&id) {
                 Some(entry) if entry.type_id == expected_type => {
                     if required.is_some_and(|required| required != entry.wrapper) {
@@ -706,13 +692,7 @@ impl PointerRegistry {
             return Err(Error::from(CimplError::pointer_in_use()));
         }
         // Get the lock again, verify we can continue.
-        let mut tracked = match self.tracked.lock() {
-            Ok(tracked) => tracked,
-            Err(_) => {
-                entry.borrow_state.store(0, Ordering::Release);
-                return Err(Error::from(CimplError::mutex_poisoned()));
-            }
-        };
+        let mut tracked = self.tracked.lock().unwrap_or_else(|e| e.into_inner());
         match tracked.get(&id) {
             Some(current) if Arc::ptr_eq(current, &entry) => {}
             _ => {
@@ -759,10 +739,7 @@ impl PointerRegistry {
         }
 
         let (first_entry, second_entry) = {
-            let tracked = self
-                .tracked
-                .lock()
-                .map_err(|_| Error::from(CimplError::mutex_poisoned()))?;
+            let tracked = self.tracked.lock().unwrap_or_else(|e| e.into_inner());
 
             // The pair needs to be taken or rejected together, not only half.
             for id in [first, second] {
@@ -799,14 +776,7 @@ impl PointerRegistry {
         }
 
         // Get both again, verify they are still available.
-        let mut tracked = match self.tracked.lock() {
-            Ok(tracked) => tracked,
-            Err(_) => {
-                first_entry.borrow_state.store(0, Ordering::Release);
-                second_entry.borrow_state.store(0, Ordering::Release);
-                return Err(Error::from(CimplError::mutex_poisoned()));
-            }
-        };
+        let mut tracked = self.tracked.lock().unwrap_or_else(|e| e.into_inner());
         for (id, entry) in [(first, &first_entry), (second, &second_entry)] {
             match tracked.get(&id) {
                 Some(current) if Arc::ptr_eq(current, entry) => {}
@@ -827,7 +797,8 @@ impl PointerRegistry {
             (second_removed.real_addr, second_removed.wrapper),
         );
 
-        drop(tracked); // Release before the Arcs drop.
+        // Release order is important here.
+        drop(tracked);
         drop(first_removed);
         drop(second_removed);
         drop(first_entry);
@@ -844,10 +815,7 @@ impl PointerRegistry {
         }
 
         let entry = {
-            let mut tracked = self
-                .tracked
-                .lock()
-                .map_err(|_| Error::from(CimplError::mutex_poisoned()))?;
+            let mut tracked = self.tracked.lock().unwrap_or_else(|e| e.into_inner());
             match tracked.remove(&key) {
                 Some(entry) => entry,
                 None => return Err(Error::from(CimplError::untracked_pointer(key as u64))),
@@ -878,10 +846,7 @@ impl PointerRegistry {
         }
 
         let entry = {
-            let mut tracked = self
-                .tracked
-                .lock()
-                .map_err(|_| Error::from(CimplError::mutex_poisoned()))?;
+            let mut tracked = self.tracked.lock().unwrap_or_else(|e| e.into_inner());
             match tracked.get(&key) {
                 Some(current) if Arc::ptr_eq(current, expected) => {
                     tracked.remove(&key).expect("checked Some above")
@@ -1291,8 +1256,9 @@ pub(crate) fn track_string_array(
                 let weak = get_registry()
                     .tracked
                     .lock()
-                    .ok()
-                    .and_then(|tracked| tracked.get(&key).map(Arc::downgrade))
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get(&key)
+                    .map(Arc::downgrade)
                     .unwrap_or_default();
                 (key, weak)
             })
@@ -1475,10 +1441,7 @@ mod tests {
                 return Err(Error::from(CimplError::null_parameter("pointer")));
             }
 
-            let tracked = self
-                .tracked
-                .lock()
-                .map_err(|_| Error::from(CimplError::mutex_poisoned()))?;
+            let tracked = self.tracked.lock().unwrap_or_else(|e| e.into_inner());
             match tracked.get(&id) {
                 Some(entry) if entry.type_id == expected_type => Ok(entry.real_addr),
                 Some(_) => Err(Error::from(CimplError::wrong_pointer_type(id as u64))),
@@ -1894,5 +1857,38 @@ mod tests {
             assert_eq!(b as usize % 2, 0, "byte buffer address must be even");
             assert_eq!(cimpl_free(b as *mut std::ffi::c_void), 0);
         }
+    }
+
+    #[test]
+    fn test_registry_stays_usable_after_the_lock_is_poisoned() {
+        use std::sync::atomic::AtomicBool;
+
+        let registry = PointerRegistry::new();
+        std::thread::scope(|scope| {
+            let poisoner = scope.spawn(|| {
+                let _guard = registry.tracked.lock().expect("lock not yet poisoned");
+                panic!("poison the registry lock");
+            });
+            assert!(poisoner.join().is_err(), "the poisoning thread must panic");
+        });
+        assert!(registry.tracked.is_poisoned());
+
+        let freed = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&freed);
+        let id = registry
+            .track_by_id(
+                0x1000,
+                TypeId::of::<u8>(),
+                Wrapper::Boxed,
+                Box::new(move || flag.store(true, Ordering::SeqCst)),
+            )
+            .expect("tracking must survive a poisoned lock");
+
+        assert!(registry.lookup(id, TypeId::of::<u8>()).is_ok());
+        assert!(registry.free(id).is_ok());
+        assert!(
+            freed.load(Ordering::SeqCst),
+            "cleanup must run when a handle is freed after poisoning"
+        );
     }
 }
