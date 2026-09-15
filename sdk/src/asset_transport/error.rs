@@ -13,9 +13,7 @@
 
 //! Error types for the [`asset_transport`](crate::asset_transport) module.
 
-/// Errors happening through the asset transport.
-/// The errors let a caller determine if the transport rejected the request,
-/// or the bytes transported were somehow not valid.
+/// Errors from the asset transport.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum AssetTransportError {
@@ -39,12 +37,24 @@ pub enum AssetTransportError {
     #[error("the configured asset transport is async-only")]
     NoSyncTransport,
 
+    /// No blocking sync transport configured.
+    #[error("asset is served by an async range transport")]
+    AsyncOnlyAsset,
+
     /// No asset transport available on the Context to serve asset bytes.
     #[error("no asset transport configured on the Context")]
     NotConfigured,
 
-    /// A range read returned fewer bytes than required and the caller did not expect a
-    /// partial response.
+    /// The transport timed out.
+    #[error("timed out reading asset: {reference}")]
+    Timeout { reference: String },
+
+    /// The transport could not satisfy the requested byte range.
+    #[error("requested range not satisfiable: {reference}")]
+    RangeNotSatisfiable { reference: String },
+
+    /// A range read returned fewer bytes than required,
+    /// and the caller did not expect a partial response.
     #[error("short read at offset {offset}: expected {expected} bytes, got {got}")]
     ShortRead {
         offset: u64,
@@ -52,15 +62,17 @@ pub enum AssetTransportError {
         got: u64,
     },
 
-    /// The object changed underneath a range read: a response came from a different
-    /// version than the read began with.
+    /// The object changed underneath a range read:
+    /// a response came from a different version than the read began with.
     #[error("object version changed during read: expected {expected}, got {got}")]
     VersionChanged { expected: String, got: String },
 
     #[error(transparent)]
     Io(#[from] std::io::Error),
 
+    /// Any other error.
     #[error(transparent)]
+    #[non_exhaustive]
     Other {
         source: Box<dyn std::error::Error + Send + Sync>,
     },
@@ -74,7 +86,7 @@ impl AssetTransportError {
         }
     }
 
-    /// Detailed errors parsed from I/O errors, to distinguish NotFound/PermissionDenied.
+    /// Detailed errors parsed from I/O errors.
     pub fn from_io(err: std::io::Error, reference: &str) -> Self {
         match err.kind() {
             std::io::ErrorKind::NotFound => AssetTransportError::NotFound {
@@ -85,5 +97,23 @@ impl AssetTransportError {
             },
             _ => AssetTransportError::Io(err),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn network_errors_render_reference() {
+        let timeout = AssetTransportError::Timeout {
+            reference: "https://x/y".to_string(),
+        };
+        assert!(timeout.to_string().contains("timed out"));
+
+        let range = AssetTransportError::RangeNotSatisfiable {
+            reference: "https://x/y".to_string(),
+        };
+        assert!(range.to_string().contains("not satisfiable"));
     }
 }

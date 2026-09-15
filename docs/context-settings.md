@@ -509,6 +509,10 @@ The `signer` field in `Settings` supports two types: `local` and `remote`.
 
 For advanced use cases, you can provide custom HTTP resolvers to control how remote manifests are fetched. Custom resolvers are useful for adding authentication, caching, logging, or mocking network calls in tests.
 
+### Custom asset transports
+
+You can register a custom source for asset bytes (an in-memory buffer, a network fetch, a custom store) instead of reading the local filesystem. See [The asset transport layer](asset_transport.md), which also explains how the asset transport relates to the HTTP resolver above.
+
 ### Thread safety
 
 `Context` is designed to be used safely across threads. While `Context` itself doesn't implement `Clone`, you can:

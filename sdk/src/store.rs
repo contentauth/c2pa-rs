@@ -21,6 +21,8 @@ use std::{
 use async_generic::async_generic;
 use log::error;
 
+#[cfg(feature = "file_io")]
+use crate::asset_transport::OwnedAssetRef;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError},
     assertions::{
@@ -1957,7 +1959,7 @@ impl Store {
                     io.object_locations(&format, reader)
                 }
                 #[cfg(feature = "file_io")]
-                ClaimAssetData::StreamFragments(reader, _path_bufs, typ) => {
+                ClaimAssetData::StreamFragments(reader, _refs, _transport, typ) => {
                     let format = typ.to_owned();
                     io.object_locations(&format, reader)
                 }
@@ -3866,23 +3868,30 @@ impl Store {
     pub fn load_from_file_and_fragments(
         asset_type: &str,
         init_segment: &mut dyn ReadSeek,
-        fragments: &Vec<PathBuf>,
+        fragments: &[PathBuf],
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<Store> {
         let manifest_bytes = Store::load_jumbf_from_stream(asset_type, init_segment, context)?.0;
 
         let store = Store::from_jumbf_with_context(&manifest_bytes, validation_log, context)?;
-        let verify = context.settings().verify.verify_after_reading;
 
-        if verify {
+        if context.settings().verify.verify_after_reading {
+            // One transport from the Context serves every fragment.
+            let transport = context.asset_transport()?;
+            let fragment_refs: Vec<OwnedAssetRef> = fragments
+                .iter()
+                .map(|p| OwnedAssetRef::Path(p.clone()))
+                .collect();
+
             init_segment.rewind()?;
             // verify store and claims
             Store::verify_store(
                 &store,
                 Some(&mut ClaimAssetData::StreamFragments(
                     init_segment,
-                    fragments,
+                    &fragment_refs,
+                    transport.as_ref(),
                     asset_type,
                 )),
                 validation_log,

@@ -11,10 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! Layer recovering read asset bytes through some transport (e.g. filesystem, network, ...).
-//! Extension points `SyncAssetTransport` and `AsyncAssetTransport` lets determine
-//! where and how asset bytes are read from.
-//! Custom transports can be registered on [`Context`](crate::Context).
+//! Abstraction over where asset bytes are read from (filesystem, network, ...).
+//! `SyncAssetTransport` and `AsyncAssetTransport` let callers plug in custom transports,
+//! registered on [`Context`](crate::Context).
 
 mod error;
 mod local;
@@ -35,8 +34,7 @@ use crate::{
     read_seek::ReadSeek,
 };
 
-/// What the transport opens:
-/// filepath (filesystem), URI, or something the transport handler defined.
+/// What the transport opens: a filesystem path, a URI, or a handler-defined reference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AssetRef<'a> {
@@ -44,27 +42,95 @@ pub enum AssetRef<'a> {
     Path(&'a std::path::Path),
     /// An absolute URI.
     Uri(&'a str),
-    /// Location/type defined by the handler, opaque, so untrusted.
-    /// The handler is expected to check for path traversals etc.
+    /// A reference whose shape only the handler understands, so it is untrusted.
+    /// The handler must guard against path traversal.
     Custom(&'a str),
 }
 
-/// A generic request to open an asset (through an AssetRef).
+impl AssetRef<'_> {
+    /// Copy this reference into an owned [`OwnedAssetRef`].
+    pub fn into_owned(self) -> OwnedAssetRef {
+        match self {
+            AssetRef::Path(p) => OwnedAssetRef::Path(p.to_path_buf()),
+            AssetRef::Uri(u) => OwnedAssetRef::Uri(u.to_owned()),
+            AssetRef::Custom(s) => OwnedAssetRef::Custom(s.to_owned()),
+        }
+    }
+}
+
+/// Owned form of [`AssetRef`], for a transport that keeps a reference past a borrow.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum OwnedAssetRef {
+    /// A filesystem path.
+    Path(std::path::PathBuf),
+    /// An absolute URI.
+    Uri(String),
+    /// A handler-defined reference (see [`AssetRef::Custom`]).
+    Custom(String),
+}
+
+impl OwnedAssetRef {
+    /// Borrow as an [`AssetRef`]. Not named `as_ref`: that reads as the [`AsRef`] trait,
+    /// which returns a reference, while this returns a fresh borrowing value.
+    pub fn as_asset_ref(&self) -> AssetRef<'_> {
+        match self {
+            OwnedAssetRef::Path(p) => AssetRef::Path(p),
+            OwnedAssetRef::Uri(u) => AssetRef::Uri(u),
+            OwnedAssetRef::Custom(s) => AssetRef::Custom(s),
+        }
+    }
+}
+
+impl std::fmt::Display for AssetRef<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AssetRef::Path(p) => write!(f, "{}", p.display()),
+            AssetRef::Uri(u) => f.write_str(u),
+            AssetRef::Custom(s) => f.write_str(s),
+        }
+    }
+}
+
+/// Whether a request targets the primary asset or its sidecar manifest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum AssetRequestKind {
+    /// The primary asset.
+    #[default]
+    Asset,
+    /// A sidecar manifest (`.c2pa`). A transport that cannot serve sidecars returns
+    /// [`AssetTransportError::UnsupportedReference`], which the reader reads as no manifest.
+    Sidecar,
+}
+
+/// A generic request to read an asset (through an AssetRef).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct AssetRequest<'a> {
     /// Reference to open.
     pub reference: AssetRef<'a>,
+    /// Whether this targets the primary asset or its sidecar manifest.
+    pub kind: AssetRequestKind,
 }
 
 impl<'a> AssetRequest<'a> {
     /// Build a request to open an [`AssetRef`].
     pub fn new(reference: AssetRef<'a>) -> Self {
-        Self { reference }
+        Self {
+            reference,
+            kind: AssetRequestKind::Asset,
+        }
     }
 
-    /// Build a request to open an [`AssetRef`] from a string.
-    /// Supports URIs (if recognized as URI), considered an opaque ref otherwise.
+    /// Set whether this targets the (primary) asset or its sidecar manifest.
+    pub fn with_kind(mut self, kind: AssetRequestKind) -> Self {
+        self.kind = kind;
+        self
+    }
+
+    /// Build a request from a string: a recognized URI scheme becomes
+    /// [`AssetRef::Uri`], otherwise [`AssetRef::Custom`].
     pub fn from_reference(reference: &'a str) -> Self {
         let reference = if has_uri_scheme(reference) {
             AssetRef::Uri(reference)
@@ -75,8 +141,7 @@ impl<'a> AssetRequest<'a> {
     }
 }
 
-/// Determines if an asset reference fits a URI scheme.
-/// Matches any URI format (e.g. s3://bucket/key).
+/// True if `reference` has a URI scheme (e.g. `s3://bucket/key`).
 fn has_uri_scheme(reference: &str) -> bool {
     let Some((scheme, _)) = reference.split_once("://") else {
         return false;
@@ -86,14 +151,14 @@ fn has_uri_scheme(reference: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
 }
 
-/// Result of opening request: bytes + transport info.
-#[non_exhaustive]
+/// Result of a request: the resolved asset and metadata about it.
 pub struct ResolvedAsset {
     bytes: AssetBytes,
     format: Option<String>,
+    size: Option<u64>,
 }
 
-/// How a resolved asset's bytes are backed: a ready seekable stream, or a
+/// How a resolved asset's bytes come in: a ready seekable stream, or a
 /// random-access range source fetched on demand.
 enum AssetBytes {
     Stream(Box<dyn ReadSeek>),
@@ -109,9 +174,8 @@ struct RangeSource {
 /// A range transport, synchronous or non-blocking.
 enum RangeTransportKind {
     Sync(Box<dyn SyncRangeTransport>),
-    // Constructed by `from_ranges_async` and refused by the synchronous accessors with
-    // `NoSyncTransport`. The transport itself is read by the retry-on-miss driver that
-    // lands with asynchronous verification; until then it is intentionally only stored.
+    // Constructed by `from_ranges_async`, refused by the sync accessors with `AsyncOnlyAsset`.
+    // The retry-on-miss driver for async verification will read it. Stored only until then.
     #[allow(dead_code)]
     Async(Box<dyn AsyncRangeTransport>),
 }
@@ -119,9 +183,15 @@ enum RangeTransportKind {
 impl ResolvedAsset {
     /// Creates a seekable stream set at the beginning of an asset.
     pub fn new(stream: impl ReadSeek + 'static) -> Self {
+        Self::from_boxed(Box::new(stream))
+    }
+
+    /// Like [`new`](Self::new), for an already-boxed stream (no double box).
+    pub fn from_boxed(stream: Box<dyn ReadSeek>) -> Self {
         Self {
-            bytes: AssetBytes::Stream(Box::new(stream)),
+            bytes: AssetBytes::Stream(stream),
             format: None,
+            size: None,
         }
     }
 
@@ -130,13 +200,14 @@ impl ResolvedAsset {
     /// The transport is wrapped in a window cache and presented to the parse as an
     /// ordinary seekable stream, so a synchronous read verifies over ranges with no
     /// separate driver.
-    pub fn from_ranges(transport: impl SyncRangeTransport + 'static) -> Self {
+    pub fn from_ranges(transport: impl SyncRangeTransport + 'static, config: RangeConfig) -> Self {
         Self {
             bytes: AssetBytes::Ranges(RangeSource {
                 transport: RangeTransportKind::Sync(Box::new(transport)),
-                config: RangeConfig::default(),
+                config,
             }),
             format: None,
+            size: None,
         }
     }
 
@@ -144,50 +215,53 @@ impl ResolvedAsset {
     /// for a runtime with no blocking read (a service worker, a Cloudflare Worker).
     ///
     /// The synchronous parse path cannot read this directly; the reader drives it.
-    pub fn from_ranges_async(transport: impl AsyncRangeTransport + 'static) -> Self {
+    pub fn from_ranges_async(
+        transport: impl AsyncRangeTransport + 'static,
+        config: RangeConfig,
+    ) -> Self {
         Self {
             bytes: AssetBytes::Ranges(RangeSource {
                 transport: RangeTransportKind::Async(Box::new(transport)),
-                config: RangeConfig::default(),
+                config,
             }),
             format: None,
+            size: None,
         }
     }
 
-    /// Format hint for the asset (bytes) transport.
-    pub fn with_format(mut self, format: impl Into<String>) -> Self {
+    /// Format hint for the asset bytes: a MIME type or an extension
+    /// Detected magic bytes and the path extension win over it.
+    /// An unrecognized format hint is ignored.
+    pub fn with_format_hint(mut self, format: impl Into<String>) -> Self {
         self.format = Some(format.into());
         self
     }
 
-    /// Sets the window-cache configuration for a range-backed asset.
-    ///
-    /// Returns an error on a stream asset: there is no range source to configure, and
-    /// silently discarding the configuration would hide the mistake.
-    pub fn with_range_config(mut self, config: RangeConfig) -> Result<Self, AssetTransportError> {
-        match &mut self.bytes {
-            AssetBytes::Ranges(source) => {
-                source.config = config;
-                Ok(self)
-            }
-            AssetBytes::Stream(_) => Err(AssetTransportError::Other {
-                source: "with_range_config called on a stream asset (no range source to configure)"
-                    .into(),
-            }),
-        }
+    /// Total size of the asset, if the transport knows it.
+    pub fn with_size(mut self, size: u64) -> Self {
+        self.size = Some(size);
+        self
     }
 
-    /// Format hint for the asset (bytes) transport, as declared by the transport.
-    /// Hint, since e.g. a `Content-Type` hint wouldn't override magic bytes determined type.
-    pub fn advisory_format(&self) -> Option<&str> {
+    /// Format hint declared by the transport (e.g. `Content-Type`).
+    /// Detected magic bytes take precedence.
+    pub fn format_hint(&self) -> Option<&str> {
         self.format.as_deref()
+    }
+
+    /// The size the transport declared at open time, if any.
+    ///
+    /// A hint, never fetched on demand. A range read seeks against [`RangeInfo::len`].
+    /// The two can disagree.
+    pub fn size(&self) -> Option<u64> {
+        self.size
     }
 
     /// Turns the transported asset bytes into a blocking seekable stream.
     ///
     /// A stream asset returns its stream; a synchronous range asset is wrapped so it
     /// fetches on demand. An asynchronous range asset has no blocking view and returns
-    /// [`AssetTransportError::NoSyncTransport`]; use the async read path for it.
+    /// [`AssetTransportError::AsyncOnlyAsset`]; use the async read path for it.
     pub fn try_into_read_seek(self) -> Result<Box<dyn ReadSeek>, AssetTransportError> {
         match self.bytes {
             AssetBytes::Stream(stream) => Ok(stream),
@@ -195,35 +269,35 @@ impl ResolvedAsset {
                 RangeTransportKind::Sync(transport) => {
                     Ok(Box::new(RangeStream::new(transport, source.config)))
                 }
-                RangeTransportKind::Async(_) => Err(AssetTransportError::NoSyncTransport),
+                RangeTransportKind::Async(_) => Err(AssetTransportError::AsyncOnlyAsset),
             },
         }
     }
 }
 
 /// Extension point: transport that can open an asset synchronously.
-/// The surface is read-only today; a write path would arrive as further methods.
+/// The surface is read-only today. A write path would arrive as further methods.
 pub trait SyncAssetTransport: MaybeSend + MaybeSync {
     /// Opens the requested asset, returns seekable bytes (position is at the start).
-    fn open(&self, request: &AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError>;
+    fn open(&self, request: AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError>;
 }
 
 /// Transport that can open an asset synchronously.
 impl<T: SyncAssetTransport + ?Sized> SyncAssetTransport for std::sync::Arc<T> {
-    fn open(&self, request: &AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError> {
+    fn open(&self, request: AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError> {
         (**self).open(request)
     }
 }
 
 /// Extension point: transport that can open an asset asynchronously (non-blocking only).
-/// The surface is read-only today; a write path would arrive as further methods.
+/// The surface is read-only today. A write path would arrive as further methods.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 pub trait AsyncAssetTransport: MaybeSend + MaybeSync {
     /// Opens the requested asset, returns seekable bytes (position is at the start).
     async fn open_async(
         &self,
-        request: &AssetRequest<'_>,
+        request: AssetRequest<'_>,
     ) -> Result<ResolvedAsset, AssetTransportError>;
 }
 
@@ -233,8 +307,51 @@ pub trait AsyncAssetTransport: MaybeSend + MaybeSync {
 impl<T: AsyncAssetTransport + ?Sized> AsyncAssetTransport for std::sync::Arc<T> {
     async fn open_async(
         &self,
-        request: &AssetRequest<'_>,
+        request: AssetRequest<'_>,
     ) -> Result<ResolvedAsset, AssetTransportError> {
         (**self).open_async(request).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use super::*;
+
+    #[test]
+    fn resolved_asset_carries_optional_size() {
+        let unknown = ResolvedAsset::new(Cursor::new(vec![1u8, 2, 3]));
+        assert_eq!(unknown.size(), None);
+
+        let known = ResolvedAsset::new(Cursor::new(vec![1u8, 2, 3])).with_size(3);
+        assert_eq!(known.size(), Some(3));
+    }
+
+    #[test]
+    fn asset_request_kind_defaults_to_asset() {
+        let request = AssetRequest::new(AssetRef::Uri("s3://b/k"));
+        assert_eq!(request.kind, AssetRequestKind::Asset);
+
+        let sidecar = request.with_kind(AssetRequestKind::Sidecar);
+        assert_eq!(sidecar.kind, AssetRequestKind::Sidecar);
+    }
+
+    #[test]
+    fn asset_ref_owns_and_borrows_back() {
+        let owned = AssetRef::Uri("s3://b/k").into_owned();
+        assert_eq!(owned.as_asset_ref(), AssetRef::Uri("s3://b/k"));
+
+        // AssetRequest is Copy.
+        let request = AssetRequest::new(AssetRef::Custom("x"));
+        let copy = request;
+        assert_eq!(copy.reference, request.reference);
+    }
+
+    #[test]
+    fn from_boxed_takes_a_boxed_stream() {
+        let boxed: Box<dyn ReadSeek> = Box::new(Cursor::new(vec![1u8, 2, 3]));
+        let resolved = ResolvedAsset::from_boxed(boxed);
+        assert_eq!(resolved.size(), None);
     }
 }

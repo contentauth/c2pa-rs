@@ -200,15 +200,50 @@ fn test_builder_sidecar_only() -> Result<()> {
     Ok(())
 }
 
+// Delegates to the local filesystem, counting every open so a test can prove
+// fragmented verification reads through the transport, not straight off disk.
+#[cfg(all(not(target_arch = "wasm32"), feature = "file_io"))]
+struct CountingTransport {
+    inner: c2pa::asset_transport::LocalAssetTransport,
+    served: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "file_io"))]
+impl c2pa::asset_transport::SyncAssetTransport for CountingTransport {
+    fn open(
+        &self,
+        request: c2pa::asset_transport::AssetRequest<'_>,
+    ) -> std::result::Result<
+        c2pa::asset_transport::ResolvedAsset,
+        c2pa::asset_transport::AssetTransportError,
+    > {
+        self.served
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.open(request)
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 #[cfg(feature = "file_io")]
 fn test_builder_fragmented() -> Result<()> {
-    use std::path::PathBuf;
+    use std::{
+        path::PathBuf,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
 
     use common::tempdirectory;
 
     let context = test_context().into_shared();
+
+    // A second context whose transport counts the fragment opens.
+    let served = std::sync::Arc::new(AtomicUsize::new(0));
+    let verify_context = test_context()
+        .with_asset_transport(CountingTransport {
+            inner: c2pa::asset_transport::LocalAssetTransport::default(),
+            served: served.clone(),
+        })
+        .into_shared();
 
     let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Create(c2pa::DigitalSourceType::Empty));
@@ -242,14 +277,20 @@ fn test_builder_fragmented() -> Result<()> {
                 let output_init = new_output_path.join(p.file_name().unwrap());
 
                 // verify all the fragments
-                let output_fragments = fragments
+                let output_fragments: Vec<PathBuf> = fragments
                     .into_iter()
                     .map(|f| new_output_path.join(f.file_name().unwrap()))
                     .collect();
-                let reader = Reader::from_shared_context(&context)
+                let served_before = served.load(Ordering::SeqCst);
+                let reader = Reader::from_shared_context(&verify_context)
                     .with_fragmented_files(&output_init, &output_fragments)?;
                 //println!("reader: {}", reader);
                 assert_eq!(reader.validation_status(), None);
+                // The init segment plus every fragment went through the transport layer.
+                assert_eq!(
+                    served.load(Ordering::SeqCst) - served_before,
+                    output_fragments.len() + 1,
+                );
 
                 // test a single fragment
                 let init_segment = std::fs::File::open(output_init)?;

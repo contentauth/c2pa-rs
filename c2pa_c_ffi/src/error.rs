@@ -51,6 +51,14 @@ pub enum C2paError {
     PermissionDenied(String),
     #[error("NotConfigured: {0}")]
     NotConfigured(String),
+    #[error("AssetNotFound: {0}")]
+    AssetNotFound(String),
+    #[error("Timeout: {0}")]
+    Timeout(String),
+    #[error("RangeNotSatisfiable: {0}")]
+    RangeNotSatisfiable(String),
+    #[error("AsyncOnlyAsset: {0}")]
+    AsyncOnlyAsset(String),
 }
 
 pub type Error = C2paError;
@@ -78,6 +86,10 @@ impl C2paError {
             Self::Verify(_) => 115,
             Self::PermissionDenied(_) => 116,
             Self::NotConfigured(_) => 117,
+            Self::AssetNotFound(_) => 118,
+            Self::Timeout(_) => 119,
+            Self::RangeNotSatisfiable(_) => 120,
+            Self::AsyncOnlyAsset(_) => 121,
         }
     }
 
@@ -125,7 +137,7 @@ impl C2paError {
             IoError(_) => Self::Io(err_str),
             AssetTransport(e) => match e {
                 c2pa::asset_transport::AssetTransportError::NotFound { .. } => {
-                    Self::FileNotFound(err_str)
+                    Self::AssetNotFound(err_str)
                 }
                 c2pa::asset_transport::AssetTransportError::PermissionDenied { .. }
                 | c2pa::asset_transport::AssetTransportError::OutsideRoot { .. } => {
@@ -134,6 +146,15 @@ impl C2paError {
                 c2pa::asset_transport::AssetTransportError::NotConfigured
                 | c2pa::asset_transport::AssetTransportError::NoSyncTransport => {
                     Self::NotConfigured(err_str)
+                }
+                c2pa::asset_transport::AssetTransportError::Timeout { .. } => {
+                    Self::Timeout(err_str)
+                }
+                c2pa::asset_transport::AssetTransportError::RangeNotSatisfiable { .. } => {
+                    Self::RangeNotSatisfiable(err_str)
+                }
+                c2pa::asset_transport::AssetTransportError::AsyncOnlyAsset => {
+                    Self::AsyncOnlyAsset(err_str)
                 }
                 _ => Self::Io(err_str),
             },
@@ -181,6 +202,10 @@ impl C2paError {
             "Verify" => Self::Verify(error_message),
             "PermissionDenied" => Self::PermissionDenied(error_message),
             "NotConfigured" => Self::NotConfigured(error_message),
+            "AssetNotFound" => Self::AssetNotFound(error_message),
+            "Timeout" => Self::Timeout(error_message),
+            "RangeNotSatisfiable" => Self::RangeNotSatisfiable(error_message),
+            "AsyncOnlyAsset" => Self::AsyncOnlyAsset(error_message),
             _ => Self::Other(format!("{error_type}: {error_message}")),
         }
     }
@@ -336,6 +361,11 @@ mod tests {
             (C2paError::ResourceNotFound("test".into()), 113),
             (C2paError::Signature("test".into()), 114),
             (C2paError::Verify("test".into()), 115),
+            (C2paError::PermissionDenied("test".into()), 116),
+            (C2paError::NotConfigured("test".into()), 117),
+            (C2paError::AssetNotFound("test".into()), 118),
+            (C2paError::Timeout("test".into()), 119),
+            (C2paError::RangeNotSatisfiable("test".into()), 120),
         ];
 
         for (original, expected_code) in test_cases {
@@ -374,6 +404,33 @@ mod tests {
     }
 
     #[test]
+    fn test_network_errors_have_codes() {
+        use c2pa::asset_transport::AssetTransportError;
+
+        for (err, expected_code) in [
+            (
+                AssetTransportError::Timeout {
+                    reference: "u".to_string(),
+                },
+                119,
+            ),
+            (
+                AssetTransportError::RangeNotSatisfiable {
+                    reference: "u".to_string(),
+                },
+                120,
+            ),
+        ] {
+            let mapped = C2paError::from_c2pa_error(c2pa::Error::AssetTransport(err));
+            assert_eq!(mapped.code(), expected_code, "got {mapped}");
+
+            // Round-trips through the "Name: message" string form.
+            let round_tripped = C2paError::from(mapped.to_string());
+            assert_eq!(round_tripped.code(), expected_code);
+        }
+    }
+
+    #[test]
     fn test_cimpl_null_parameter_maps_to_c2pa_null_parameter() {
         let cimpl_err = CimplError::null_parameter("my_param");
         let c2pa_err: C2paError = cimpl_err.into();
@@ -385,23 +442,7 @@ mod tests {
     }
 
     #[test]
-    fn test_file_not_found_through_asset_transport() {
-        let err =
-            c2pa::Error::AssetTransport(c2pa::asset_transport::AssetTransportError::NotFound {
-                reference: "no/such/file.jpg".to_string(),
-            });
-
-        let mapped = C2paError::from_c2pa_error(err);
-        assert!(matches!(mapped, C2paError::FileNotFound(_)), "got {mapped}");
-        assert_eq!(mapped.code(), 104);
-
-        let round_tripped = C2paError::from(mapped.to_string());
-        assert!(matches!(round_tripped, C2paError::FileNotFound(_)));
-        assert_eq!(round_tripped.code(), 104);
-    }
-
-    #[test]
-    fn test_file_permission_denied_through_asset_transport() {
+    fn test_permission_denied_via_transport() {
         let err = c2pa::Error::AssetTransport(
             c2pa::asset_transport::AssetTransportError::PermissionDenied {
                 reference: "locked.jpg".to_string(),
@@ -421,7 +462,7 @@ mod tests {
     }
 
     #[test]
-    fn test_file_permission_denied_through_asset_transport_when_file_outside_root_sandbox() {
+    fn test_permission_denied_outside_root() {
         let err =
             c2pa::Error::AssetTransport(c2pa::asset_transport::AssetTransportError::OutsideRoot {
                 reference: "../../etc/passwd".to_string(),
@@ -440,7 +481,7 @@ mod tests {
     }
 
     #[test]
-    fn test_no_sync_asset_transport_errors_as_unconfigured() {
+    fn test_async_only_maps_not_configured() {
         let err = c2pa::Error::AssetTransport(
             c2pa::asset_transport::AssetTransportError::NoSyncTransport,
         );
@@ -454,7 +495,7 @@ mod tests {
     }
 
     #[test]
-    fn test_asset_transport_not_configured_reports_unconfigured() {
+    fn test_not_configured_maps_unconfigured() {
         let err =
             c2pa::Error::AssetTransport(c2pa::asset_transport::AssetTransportError::NotConfigured);
 

@@ -23,7 +23,7 @@
 //! retry-on-miss driver and forward-only hashing added alongside verification; until
 //! then [`AsyncRangeTransport`] is defined for callers to implement, but reading an
 //! async range source returns
-//! [`NoSyncTransport`](AssetTransportError::NoSyncTransport).
+//! [`AsyncOnlyAsset`](AssetTransportError::AsyncOnlyAsset).
 //!
 //! HTTP transports do not have to reinvent object identity and status handling:
 //! [`ObjectVersion::from_http_validators`] carries the `ETag`/`Last-Modified` version
@@ -95,9 +95,10 @@ impl std::fmt::Display for ObjectVersion {
 #[non_exhaustive]
 pub struct RangeInfo {
     /// Total length of the object in bytes.
+    /// Discovered on the first read.
+    /// [`ResolvedAsset::size`](crate::asset_transport::ResolvedAsset::size) is a hint.
     pub len: u64,
     /// Identifies the version of the object being served, when the transport can.
-    ///
     /// `None` means the source cannot express object identity, so a read spanning
     /// several requests cannot be confirmed to have seen one consistent version.
     pub version: Option<ObjectVersion>,
@@ -139,7 +140,7 @@ impl RangeConfig {
     /// build one field-by-field; chain from [`Default`] instead:
     ///
     /// ```
-    /// # use c2pa::RangeConfig;
+    /// # use c2pa::asset_transport::RangeConfig;
     /// let config = RangeConfig::default().with_hash_chunk(1024 * 1024);
     /// ```
     pub fn with_hash_chunk(mut self, hash_chunk: u64) -> Self {
@@ -287,6 +288,8 @@ impl<T: AsyncRangeTransport + ?Sized> AsyncRangeTransport for std::sync::Arc<T> 
 ///   [`AssetTransportError::VersionChanged`].
 /// - `412 Precondition Failed` means the origin rejected the `If-Range`; also
 ///   [`AssetTransportError::VersionChanged`].
+/// - `416 Range Not Satisfiable` means the range lies outside the object; reported as
+///   [`AssetTransportError::RangeNotSatisfiable`].
 /// - Any other status means the far end did not honor `Range`.
 ///
 /// A `200` whose validator matches `expect` (or where no version is known) still
@@ -297,11 +300,15 @@ impl<T: AsyncRangeTransport + ?Sized> AsyncRangeTransport for std::sync::Arc<T> 
 /// Pure over values a fetch already produced — no I/O, no HTTP client.
 pub fn validate_range_status(
     status: u16,
+    reference: &str,
     expect: Option<&ObjectVersion>,
     served: Option<&ObjectVersion>,
 ) -> Result<(), AssetTransportError> {
     match status {
         206 => Ok(()),
+        416 => Err(AssetTransportError::RangeNotSatisfiable {
+            reference: reference.to_string(),
+        }),
         412 => Err(AssetTransportError::VersionChanged {
             expected: expect.map(ObjectVersion::to_string).unwrap_or_default(),
             got: "rejected by origin (412 Precondition Failed)".to_string(),
@@ -452,9 +459,9 @@ where
     F: Fn(&AssetRequest<'_>) -> Result<R, AssetTransportError> + MaybeSend + MaybeSync,
     R: SyncRangeTransport + 'static,
 {
-    fn open(&self, request: &AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError> {
-        let reader = (self.factory)(request)?;
-        ResolvedAsset::from_ranges(reader).with_range_config(self.config)
+    fn open(&self, request: AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError> {
+        let reader = (self.factory)(&request)?;
+        Ok(ResolvedAsset::from_ranges(reader, self.config))
     }
 }
 
@@ -562,25 +569,32 @@ mod tests {
 
     #[test]
     fn validate_range_status_enforces_the_range_contract() {
-        assert!(validate_range_status(206, None, None).is_ok());
+        assert!(validate_range_status(206, "s3://bucket/key", None, None).is_ok());
+
         // 200 with a differing validator is a changed object.
         let v1 = ObjectVersion::new("v1");
         let v2 = ObjectVersion::new("v2");
         assert!(matches!(
-            validate_range_status(200, Some(&v1), Some(&v2)),
+            validate_range_status(200, "s3://bucket/key", Some(&v1), Some(&v2)),
             Err(AssetTransportError::VersionChanged { .. })
         ));
         // 200 without a version mismatch still fails: a whole body is not a range.
         assert!(matches!(
-            validate_range_status(200, None, None),
+            validate_range_status(200, "s3://bucket/key", None, None),
             Err(AssetTransportError::Other { .. })
         ));
+
         assert!(matches!(
-            validate_range_status(412, Some(&v1), None),
+            validate_range_status(412, "s3://bucket/key", Some(&v1), None),
             Err(AssetTransportError::VersionChanged { .. })
         ));
         assert!(matches!(
-            validate_range_status(500, None, None),
+            validate_range_status(416, "s3://bucket/key", None, None),
+            Err(AssetTransportError::RangeNotSatisfiable { reference })
+                if reference == "s3://bucket/key"
+        ));
+        assert!(matches!(
+            validate_range_status(500, "s3://bucket/key", None, None),
             Err(AssetTransportError::Other { .. })
         ));
     }
