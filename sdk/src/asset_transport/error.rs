@@ -13,9 +13,8 @@
 
 //! Error types for the [`asset_transport`](crate::asset_transport) module.
 
-/// Errors happening through the asset transport.
-/// The errors let a caller determine if the transport rejected the request,
-/// or the bytes transported were somehow not valid.
+/// Errors from the asset transport: distinguishes a rejected request
+/// from invalid transported bytes.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum AssetTransportError {
@@ -87,7 +86,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn network_shaped_variants_render_their_reference() {
+    fn network_errors_render_reference() {
         let timeout = AssetTransportError::Timeout {
             reference: "https://x/y".to_string(),
         };

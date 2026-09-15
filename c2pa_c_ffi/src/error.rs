@@ -397,7 +397,7 @@ mod tests {
     }
 
     #[test]
-    fn test_transport_network_errors_have_their_own_codes() {
+    fn test_network_errors_have_codes() {
         use c2pa::asset_transport::AssetTransportError;
 
         for (err, expected_code) in [
@@ -435,7 +435,7 @@ mod tests {
     }
 
     #[test]
-    fn test_file_permission_denied_through_asset_transport() {
+    fn test_permission_denied_via_transport() {
         let err = c2pa::Error::AssetTransport(
             c2pa::asset_transport::AssetTransportError::PermissionDenied {
                 reference: "locked.jpg".to_string(),
@@ -455,7 +455,7 @@ mod tests {
     }
 
     #[test]
-    fn test_file_permission_denied_through_asset_transport_when_file_outside_root_sandbox() {
+    fn test_permission_denied_outside_root() {
         let err =
             c2pa::Error::AssetTransport(c2pa::asset_transport::AssetTransportError::OutsideRoot {
                 reference: "../../etc/passwd".to_string(),
@@ -474,7 +474,7 @@ mod tests {
     }
 
     #[test]
-    fn test_no_sync_asset_transport_errors_as_unconfigured() {
+    fn test_async_only_maps_not_configured() {
         let err = c2pa::Error::AssetTransport(
             c2pa::asset_transport::AssetTransportError::NoSyncTransport,
         );
@@ -488,7 +488,7 @@ mod tests {
     }
 
     #[test]
-    fn test_asset_transport_not_configured_reports_unconfigured() {
+    fn test_not_configured_maps_unconfigured() {
         let err =
             c2pa::Error::AssetTransport(c2pa::asset_transport::AssetTransportError::NotConfigured);
 

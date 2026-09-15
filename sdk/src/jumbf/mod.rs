@@ -15,10 +15,9 @@ pub mod boxes;
 pub mod boxio;
 pub mod labels;
 
-/// True if `bytes` begin with a JUMBF superbox header:
-/// a 4-byte length followed by the box type `jumb` at offset 4.
-/// This does not validate the box body:
-/// a truncated or malformed `jumb` box passes here and fails in the parser.
+/// True if `bytes` begin with a JUMBF superbox header: a 4-byte length followed
+/// by the box type `jumb` at offset 4. Does not validate the box body.
+/// A truncated or malformed `jumb` box passes here and fails later in the parser.
 pub(crate) fn starts_with_superbox(bytes: &[u8]) -> bool {
     bytes.len() >= 8 && &bytes[4..8] == b"jumb"
 }
@@ -35,7 +34,7 @@ mod tests {
         // A JPEG start-of-image marker is not a superbox.
         assert!(!starts_with_superbox(b"\xff\xd8\xff\xe0\x00\x10JF"));
 
-        // Too short...
+        // Too short to hold a header.
         assert!(!starts_with_superbox(b"jumb"));
     }
 }

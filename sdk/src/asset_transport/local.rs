@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! Default asset transport: local filesystem (needs file_io feature flag).
+//! Default asset transport: the local filesystem (needs the `file_io` feature).
 
 #[cfg(feature = "file_io")]
 use std::{
@@ -25,7 +25,7 @@ use super::{AssetRequest, AssetTransportError, ResolvedAsset, SyncAssetTransport
 #[cfg(feature = "file_io")]
 use crate::utils::path_utils::{ensure_within_root, reject_unsafe_identifier};
 
-/// Default asset transport uses the local filesystem.
+/// Default asset transport: the local filesystem.
 /// Accepts:
 /// - [`AssetRef::Path`] (filesystem path).
 /// - [`AssetRef::Custom`] (treated as a path).
@@ -33,7 +33,7 @@ use crate::utils::path_utils::{ensure_within_root, reject_unsafe_identifier};
 ///
 /// Anything else is rejected with [`AssetTransportError::UnsupportedReference`].
 ///
-/// If a root is defined, references need to be sandboxed in the defined root.
+/// If a root is set, references are confined to it (see [`Self::rooted_at`]).
 #[cfg(feature = "file_io")]
 #[derive(Debug, Default, Clone)]
 pub struct LocalAssetTransport {
@@ -42,8 +42,11 @@ pub struct LocalAssetTransport {
 
 #[cfg(feature = "file_io")]
 impl LocalAssetTransport {
-    /// Verified references are confined to the sandbox defined by the root.
-    /// Things outside the sandboxed root are rejected with [`AssetTransportError::OutsideRoot`].
+    /// Confines references to `root`. Anything outside it is rejected with
+    /// [`AssetTransportError::OutsideRoot`].
+    ///
+    /// Not atomic against an attacker who can write into `root` between check and
+    /// open. Not a multi-tenant sandbox.
     pub fn rooted_at(root: impl Into<std::path::PathBuf>) -> Self {
         let root = root.into();
         let root = root
@@ -114,7 +117,7 @@ impl SyncAssetTransport for LocalAssetTransport {
     }
 }
 
-/// If `file_io` is off: [`AssetTransportError::NotConfigured`], refuse all read requests.
+/// Refuses every read with [`AssetTransportError::NotConfigured`]. Used when `file_io` is off.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct UnconfiguredAssetTransport;
 
@@ -380,8 +383,8 @@ mod tests {
 
     #[cfg(feature = "file_io")]
     #[test]
-    fn rooted_transport_missing_file_error_names_caller_reference_not_host_path() {
-        // This is to avoid leaking info on available paths.
+    fn rooted_missing_file_names_reference() {
+        // Avoid leaking which paths exist on the host.
         let root = tempdirectory().unwrap();
         let transport = LocalAssetTransport::rooted_at(root.path());
 
@@ -396,7 +399,7 @@ mod tests {
 
     #[cfg(feature = "file_io")]
     #[test]
-    fn rooted_transport_outside_root_error_names_caller_reference_not_host_path() {
+    fn rooted_outside_root_names_reference() {
         let root = tempdirectory().unwrap();
         let transport = LocalAssetTransport::rooted_at(root.path());
 

@@ -11,10 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! Layer recovering read asset bytes through some transport (e.g. filesystem, network, ...).
-//! Extension points `SyncAssetTransport` and `AsyncAssetTransport` lets determine
-//! where and how asset bytes are read from.
-//! Custom transports can be registered on [`Context`](crate::Context).
+//! Abstraction over where asset bytes are read from (filesystem, network, ...).
+//! `SyncAssetTransport` and `AsyncAssetTransport` let callers plug in custom transports,
+//! registered on [`Context`](crate::Context).
 
 mod error;
 mod local;
@@ -29,8 +28,7 @@ use crate::{
     read_seek::ReadSeek,
 };
 
-/// What the transport opens:
-/// filepath (filesystem), URI, or something the transport handler defined.
+/// What the transport opens: a filesystem path, a URI, or a handler-defined reference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AssetRef<'a> {
@@ -38,16 +36,16 @@ pub enum AssetRef<'a> {
     Path(&'a std::path::Path),
     /// An absolute URI.
     Uri(&'a str),
-    /// Location/type defined by the handler, opaque, so untrusted.
-    /// The handler is expected to check for path traversals etc.
+    /// A reference whose shape only the handler understands, so it is untrusted;
+    /// the handler must guard against path traversal.
     Custom(&'a str),
 }
 
-/// Is the opened asset an asset or a c2pa sidecar?
+/// Whether a request targets the primary asset or its sidecar manifest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum AssetRequestKind {
-    /// An asset.
+    /// The primary asset.
     #[default]
     Asset,
     /// A sidecar manifest (`.c2pa`).
@@ -79,8 +77,8 @@ impl<'a> AssetRequest<'a> {
         self
     }
 
-    /// Build a request to open an [`AssetRef`] from a string.
-    /// Supports URIs (if recognized as URI), considered an opaque ref otherwise.
+    /// Build a request from a string: a recognized URI scheme becomes
+    /// [`AssetRef::Uri`], otherwise [`AssetRef::Custom`].
     pub fn from_reference(reference: &'a str) -> Self {
         let reference = if has_uri_scheme(reference) {
             AssetRef::Uri(reference)
@@ -91,8 +89,7 @@ impl<'a> AssetRequest<'a> {
     }
 }
 
-/// Determines if an asset reference fits a URI scheme.
-/// Matches any URI format (e.g. s3://bucket/key).
+/// True if `reference` has a URI scheme (e.g. `s3://bucket/key`).
 fn has_uri_scheme(reference: &str) -> bool {
     let Some((scheme, _)) = reference.split_once("://") else {
         return false;
@@ -102,7 +99,7 @@ fn has_uri_scheme(reference: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
 }
 
-/// Result of opening request = resolved asset and information about it.
+/// Result of an open request: the resolved asset plus metadata about it.
 pub struct ResolvedAsset {
     stream: Box<dyn ReadSeek>,
     format: Option<String>,
@@ -125,19 +122,19 @@ impl ResolvedAsset {
         self
     }
 
-    /// Size of the asset, if the transport can know it.
+    /// Total size of the asset, if the transport knows it.
     pub fn with_size(mut self, size: u64) -> Self {
         self.size = Some(size);
         self
     }
 
-    /// Format hint for the asset (bytes) transport, as declared by the transport.
-    /// Hint, since e.g. a `Content-Type` hint wouldn't override magic bytes determined type.
+    /// Format hint declared by the transport (e.g. `Content-Type`). A hint only.
+    /// Detected magic bytes take precedence.
     pub fn advisory_format(&self) -> Option<&str> {
         self.format.as_deref()
     }
 
-    /// Reported transport size of the asset.
+    /// The size the transport reported, if any.
     pub fn size(&self) -> Option<u64> {
         self.size
     }
@@ -149,7 +146,7 @@ impl ResolvedAsset {
 }
 
 /// Extension point: transport that can open an asset synchronously.
-/// The surface is read-only today; a write path would arrive as further methods.
+/// The surface is read-only today. A write path would arrive as further methods.
 pub trait SyncAssetTransport: MaybeSend + MaybeSync {
     /// Opens the requested asset, returns seekable bytes (position is at the start).
     fn open(&self, request: &AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError>;
@@ -163,7 +160,7 @@ impl<T: SyncAssetTransport + ?Sized> SyncAssetTransport for std::sync::Arc<T> {
 }
 
 /// Extension point: transport that can open an asset asynchronously (non-blocking only).
-/// The surface is read-only today; a write path would arrive as further methods.
+/// The surface is read-only today. A write path would arrive as further methods.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 pub trait AsyncAssetTransport: MaybeSend + MaybeSync {

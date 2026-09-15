@@ -281,7 +281,7 @@ mod within_root_tests {
     use crate::utils::io_utils::tempdirectory;
 
     #[test]
-    fn resolve_within_root_returns_the_joined_identifier_not_the_canonical_path() {
+    fn resolve_returns_joined_not_canonical() {
         // The resource store surfaces this path in `path_for_id` and error strings,
         // so it must stay the joined identifier path.
         let root = tempdirectory().unwrap();
@@ -292,7 +292,7 @@ mod within_root_tests {
     }
 
     #[test]
-    fn existing_target_inside_root_returns_canonical_path() {
+    fn existing_inside_returns_canonical() {
         let root = tempdirectory().unwrap();
         let target = root.path().join("asset.jpg");
         std::fs::write(&target, b"\xff\xd8").unwrap();
@@ -303,17 +303,17 @@ mod within_root_tests {
     }
 
     #[test]
-    fn nonexistent_target_inside_root_returns_joined_candidate() {
+    fn missing_inside_returns_joined() {
         let root = tempdirectory().unwrap();
         let candidate = root.path().join("missing.jpg");
 
-        // Nothing to canonicalize; the caller's open surfaces the not-found error.
+        // Nothing to canonicalize. The caller's open surfaces the not-found error.
         let resolved = ensure_within_root(&candidate, root.path()).unwrap();
         assert_eq!(resolved, candidate);
     }
 
     #[test]
-    fn existing_target_outside_root_is_rejected() {
+    fn existing_outside_rejected() {
         let outside = tempdirectory().unwrap();
         let secret = outside.path().join("secret.jpg");
         std::fs::write(&secret, b"\xff\xd8").unwrap();
@@ -323,7 +323,7 @@ mod within_root_tests {
     }
 
     #[test]
-    fn nonexistent_target_escaping_root_is_rejected() {
+    fn missing_outside_rejected() {
         let root = tempdirectory().unwrap();
         // Lexical escape to a path that does not exist: rejected without touching disk.
         let candidate = root.path().join("../elsewhere/missing.jpg");
@@ -332,9 +332,9 @@ mod within_root_tests {
 
     #[cfg(unix)]
     #[test]
-    fn symlinked_root_is_not_falsely_rejected() {
+    fn symlinked_root_accepted() {
         // A symlinked root (e.g. /tmp -> /private/tmp on macOS) must still accept
-        // its own contents; both sides are canonicalized before comparison.
+        // its own contents. Both sides are canonicalized before comparison.
         let real = tempdirectory().unwrap();
         let target = real.path().join("asset.jpg");
         std::fs::write(&target, b"\xff\xd8").unwrap();
@@ -349,7 +349,7 @@ mod within_root_tests {
 
     #[cfg(unix)]
     #[test]
-    fn symlink_inside_root_pointing_outside_is_rejected() {
+    fn symlink_escape_rejected() {
         let outside = tempdirectory().unwrap();
         let secret = outside.path().join("secret.jpg");
         std::fs::write(&secret, b"\xff\xd8").unwrap();

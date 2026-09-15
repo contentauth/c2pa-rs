@@ -130,7 +130,7 @@ enum AssetTransportState {
     Default(OnceLock<Arc<dyn SyncAssetTransport>>),
     /// An explicit sync transport only.
     SyncOnly(Arc<dyn SyncAssetTransport>),
-    /// An explicit async transport only; the sync path returns `NoSyncTransport`.
+    /// An explicit async transport only. The sync path returns `NoSyncTransport`.
     AsyncOnly(Arc<dyn AsyncAssetTransport>),
     /// Both an explicit sync and async transport.
     Both(Arc<dyn SyncAssetTransport>, Arc<dyn AsyncAssetTransport>),
@@ -577,9 +577,8 @@ impl Context {
     /// Configure asynchronous asset transport (bytes source) on the Context.
     pub fn set_asset_transport_async<T: AsyncAssetTransport + 'static>(&mut self, transport: T) {
         let async_transport = Arc::new(transport);
-        // Keep an explicitly registered sync transport. A bare `Default` (or a prior
-        // async) is dropped: registering only an async transport opts the sync path
-        // out of the filesystem, so it returns `NoSyncTransport` rather than reading disk.
+        // Keep an explicit sync transport. A bare `Default` is dropped.
+        // Async-only opts the sync path out of the filesystem. It returns `NoSyncTransport`.
         self.asset_transport_state = match &self.asset_transport_state {
             AssetTransportState::SyncOnly(sync_transport)
             | AssetTransportState::Both(sync_transport, _) => {
@@ -594,6 +593,9 @@ impl Context {
     /// Returns the sync asset transport (bytes source of an asset).
     /// Defaults to `LocalAssetTransport` when `file_io` is on,
     /// [`UnconfiguredAssetTransport`](crate::asset_transport::UnconfiguredAssetTransport) otherwise.
+    ///
+    /// Unlike [`resolver`](Self::resolver), this returns a `Result`: an async-only
+    /// registration leaves no sync transport to hand back.
     pub fn asset_transport(
         &self,
     ) -> std::result::Result<Arc<dyn SyncAssetTransport>, AssetTransportError> {
@@ -1820,7 +1822,7 @@ mod tests {
 
     #[cfg(feature = "file_io")]
     #[test]
-    fn test_asset_transport_default_uses_filesystem() {
+    fn test_default_uses_filesystem_transport() {
         use crate::asset_transport::{AssetRef, AssetRequest};
 
         let context = Context::new();
@@ -1832,7 +1834,7 @@ mod tests {
     }
 
     #[test]
-    fn test_configured_asset_transport_overwrites_default() {
+    fn test_custom_overwrites_default() {
         use std::io::{Cursor, Read};
 
         use crate::asset_transport::{
@@ -1862,7 +1864,7 @@ mod tests {
     }
 
     #[test]
-    fn test_async_only_transport_does_not_serve_sync_path() {
+    fn test_async_only_no_sync() {
         use crate::asset_transport::{
             AssetRequest, AssetTransportError, AsyncAssetTransport, ResolvedAsset,
         };
@@ -1888,7 +1890,7 @@ mod tests {
     }
 
     #[test]
-    fn test_asset_transport_can_configure_sync_and_async_transport() {
+    fn test_both_sync_and_async() {
         use std::io::{Cursor, Read};
 
         use crate::asset_transport::{

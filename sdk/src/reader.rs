@@ -290,9 +290,9 @@ impl Reader {
     ///
     /// # Errors
     /// Returns an [`Error`] when the manifest data cannot be read from the specified file.
-    /// If there's no error upon reading, you must still check validation status to ensure that the manifest data is validated.
-    /// That is, even if there are no errors, the data still might not be valid.
     /// A missing or refused file arrives as [`Error::AssetTransport`], not [`Error::IoError`].
+    /// Even without a read error, check validation status.
+    /// The data may still be invalid.
     ///
     /// # Example
     ///
@@ -311,7 +311,7 @@ impl Reader {
         let path = path.as_ref();
         let request = AssetRequest::new(AssetRef::Path(path));
 
-        // Cancellation checkpoint before starting a potentially long transport read.
+        // Cancellation checkpoint before a potentially long transport read.
         self.context.check_progress(ProgressPhase::Reading, 1, 1)?;
         let resolved = if _sync {
             self.context.asset_transport()?.open(&request)?
@@ -321,7 +321,7 @@ impl Reader {
                 None => self.context.asset_transport()?.open(&request)?,
             }
         };
-        // And once the bytes are in hand, before parsing them.
+        // And once opened, before parsing.
         self.context.check_progress(ProgressPhase::Reading, 1, 1)?;
 
         let path_fmt = match self.context.io().format_from_path(path) {
@@ -341,7 +341,7 @@ impl Reader {
 
         match store {
             Err(Error::JumbfNotFound) => {
-                // The asset was served by some asset bytes transport, reuse the transport for sidecars too.
+                // No embedded manifest: try a sidecar via the same transport.
                 let sidecar_path = path.with_extension("c2pa");
                 let sidecar_request = AssetRequest::new(AssetRef::Path(&sidecar_path))
                     .with_kind(AssetRequestKind::Sidecar);
@@ -366,14 +366,13 @@ impl Reader {
                     Ok(resolved) => {
                         resolved.into_read_seek().read_to_end(&mut manifest_data)?;
                     }
-                    // Convert a transport not found error to JumbfNotFound, since it means there is no manifest.
+                    // No sidecar means no manifest.
                     Err(AssetTransportError::NotFound { .. }) => return Err(Error::JumbfNotFound),
                     Err(e) => return Err(e.into()),
                 }
 
-                // Verify we actually got JUMBF. A transport that ignores the request
-                // reference may answer the sidecar with the asset bytes again; a
-                // non-superbox means there is no manifest here.
+                // A transport that ignores the reference may answer with the asset
+                // bytes again. A non-superbox means there is no manifest here.
                 if !crate::jumbf::starts_with_superbox(&manifest_data) {
                     return Err(Error::JumbfNotFound);
                 }
@@ -429,9 +428,9 @@ impl Reader {
     ///
     /// # Errors
     /// Returns an [`Error`] when the manifest data cannot be read from the specified file.
-    /// If there's no error upon reading, the validation status must still be checked to ensure that the manifest data is validated.
-    /// That is, even if there are no (read) errors, the data still might not be valid.
-    /// Note: A missing or refused file arrives as [`Error::AssetTransport`], not [`Error::IoError`].
+    /// A missing or refused file arrives as [`Error::AssetTransport`], not [`Error::IoError`].
+    /// Even without a read error, check validation status.
+    /// The data may still be invalid.
     ///
     /// # Example
     ///
@@ -1539,7 +1538,7 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
-    fn test_file_read_through_filesystem_uses_asset_transport() -> Result<()> {
+    fn test_file_read_uses_transport() -> Result<()> {
         use crate::asset_transport::{
             AssetRequest, AssetTransportError, ResolvedAsset, SyncAssetTransport,
         };
@@ -1564,7 +1563,7 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
-    fn test_file_read_through_filesystem_uses_asset_transport_format_hint() -> Result<()> {
+    fn test_format_hint_from_transport() -> Result<()> {
         use crate::asset_transport::{
             AssetRequest, AssetTransportError, ResolvedAsset, SyncAssetTransport,
         };
@@ -1595,8 +1594,7 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
-    fn test_sidecar_read_through_filesystem_uses_same_asset_transport_as_source_asset() -> Result<()>
-    {
+    fn test_sidecar_uses_same_transport() -> Result<()> {
         use crate::{
             asset_transport::{
                 AssetRef, AssetRequest, AssetTransportError, ResolvedAsset, SyncAssetTransport,
@@ -1652,7 +1650,7 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
-    fn test_an_unreadable_existing_sidecar_reports_as_error() -> Result<()> {
+    fn test_unreadable_sidecar_is_error() -> Result<()> {
         use crate::asset_transport::{
             AssetRef, AssetRequest, AssetTransportError, ResolvedAsset, SyncAssetTransport,
         };
@@ -1691,13 +1689,13 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
-    fn manifestless_asset_from_reference_ignoring_transport_reports_jumbf_not_found() {
+    fn manifestless_via_reference_ignoring_transport() {
         use crate::asset_transport::{
             AssetRequest, AssetTransportError, ResolvedAsset, SyncAssetTransport,
         };
 
-        // A transport that ignores the reference and always returns the same asset
-        // bytes — so the sidecar request is answered with the asset, not a manifest.
+        // Ignores the reference. Always returns the same asset bytes.
+        // The sidecar request gets the asset back, not a manifest.
         struct AlwaysSameAsset(Vec<u8>);
         impl SyncAssetTransport for AlwaysSameAsset {
             fn open(
@@ -1723,7 +1721,7 @@ pub mod tests {
 
     #[test]
     #[cfg(feature = "file_io")]
-    fn with_file_reading_checkpoint_is_cancellable() {
+    fn with_file_is_cancellable() {
         // Cancel at the Reading checkpoint only; let every other phase proceed.
         let context =
             Context::new().with_progress_callback(|phase, _, _| phase != ProgressPhase::Reading);
