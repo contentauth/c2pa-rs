@@ -378,7 +378,10 @@ impl Reader {
                 let mut manifest_data = Vec::new();
                 match sidecar {
                     Ok(resolved) => {
-                        resolved.into_read_seek().read_to_end(&mut manifest_data)?;
+                        let mut sidecar_stream = resolved.into_read_seek();
+                        // Enforce stream at position 0.
+                        sidecar_stream.rewind()?;
+                        sidecar_stream.read_to_end(&mut manifest_data)?;
                     }
                     // No sidecar, or a transport that does not serve sidecars: no manifest.
                     Err(AssetTransportError::NotFound { .. })
@@ -671,6 +674,8 @@ impl Reader {
         let mut init_segment = transport
             .open(AssetRequest::new(AssetRef::Path(path.as_ref())))?
             .into_read_seek();
+        // Enforce stream at position 0.
+        init_segment.rewind()?;
         self.context.check_progress(ProgressPhase::Reading, 2, 0)?;
 
         match Store::load_from_file_and_fragments(

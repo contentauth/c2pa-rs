@@ -1564,6 +1564,10 @@ impl BmffHash {
     /// Verify fragments supplied as filesystem paths, through the local filesystem.
     /// For fragments served by a configured transport, read through
     /// [`Reader::with_fragmented_files`](crate::Reader::with_fragmented_files).
+    ///
+    /// A missing or unreadable fragment now surfaces as
+    /// [`Error::AssetTransport`](crate::Error::AssetTransport). Earlier releases returned
+    /// [`Error::IoError`](crate::Error::IoError).
     #[cfg(feature = "file_io")]
     pub fn verify_stream_segments(
         &self,
@@ -1628,6 +1632,8 @@ impl BmffHash {
                 let mut fragment_stream = transport
                     .open(AssetRequest::new(fragment.as_asset_ref()))?
                     .into_read_seek();
+                // Enforce stream at position 0.
+                fragment_stream.rewind()?;
 
                 // get merkle boxes from segment
                 let c2pa_boxes = read_bmff_c2pa_boxes(&mut fragment_stream)?;
