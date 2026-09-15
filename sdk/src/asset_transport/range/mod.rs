@@ -27,12 +27,12 @@
 //!
 //! HTTP transports do not have to reinvent object identity and status handling:
 //! [`ObjectVersion::from_http_validators`] carries the `ETag`/`Last-Modified` version
-//! rule, and [`validate_range_status`]/[`content_range_total`] the `206`/`412` status
-//! rules and `Content-Range` total parsing that every HTTP range transport needs.
-//! They are pure functions over values a fetch already produced, so they pull in no
-//! HTTP client and are available in any build.
+//! rule, and the [`http_range`] module the status, `Range` and `Content-Range` rules
+//! every HTTP range transport needs. They are pure functions over values a fetch already
+//! produced, so they pull in no HTTP client and are available in any build.
 
 mod cache;
+pub mod http_range;
 mod stream;
 
 pub(crate) use stream::RangeStream;
@@ -66,13 +66,17 @@ impl ObjectVersion {
     /// guarantee a range read needs and a weak tag does not give. `Last-Modified` is
     /// the fallback. Returns `None` when neither yields a usable token, so the read
     /// proceeds unversioned rather than pinned to a token that cannot hold.
+    ///
+    /// The tag must be quoted: RFC 9110 8.8.3 defines `opaque-tag` as a quoted string,
+    /// so a bare `abc` is malformed and falls through to `Last-Modified`. Quotes are
+    /// kept, because 8.8.3.2 compares strong validators character by character.
     pub fn from_http_validators(
         etag: Option<&str>,
         last_modified: Option<&str>,
     ) -> Option<ObjectVersion> {
         if let Some(etag) = etag {
             let etag = etag.trim();
-            if !etag.is_empty() && !etag.starts_with("W/") {
+            if etag.starts_with('"') && etag.len() > 1 && etag.ends_with('"') {
                 return Some(ObjectVersion::new(etag));
             }
         }
@@ -80,6 +84,18 @@ impl ObjectVersion {
             .map(str::trim)
             .filter(|lm| !lm.is_empty())
             .map(ObjectVersion::new)
+    }
+}
+
+impl From<String> for ObjectVersion {
+    fn from(token: String) -> Self {
+        ObjectVersion(token)
+    }
+}
+
+impl From<&str> for ObjectVersion {
+    fn from(token: &str) -> Self {
+        ObjectVersion(token.to_string())
     }
 }
 
@@ -111,8 +127,8 @@ impl RangeInfo {
     }
 
     /// Records the version of the object being served.
-    pub fn with_version(mut self, version: impl Into<String>) -> Self {
-        self.version = Some(ObjectVersion::new(version));
+    pub fn with_version(mut self, version: impl Into<ObjectVersion>) -> Self {
+        self.version = Some(version.into());
         self
     }
 }
@@ -166,7 +182,15 @@ impl Default for RangeConfig {
 /// read then proceeds without the guarantee that every byte came from one version,
 /// and the caller records that in the validation results.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct RangeChunk {
+    /// Where the response says these bytes start in the object.
+    ///
+    /// The offset the response *reported*, not the one requested. A transport that
+    /// echoes the request here makes the caller's placement check pass unconditionally.
+    /// An HTTP
+    /// transport reads it from `Content-Range`.
+    pub offset: u64,
     /// The bytes served. May be shorter than requested.
     pub bytes: Vec<u8>,
     /// The version that served them, when the transport can identify one.
@@ -175,16 +199,17 @@ pub struct RangeChunk {
 
 impl RangeChunk {
     /// Bytes served by a transport that cannot identify object versions.
-    pub fn new(bytes: Vec<u8>) -> Self {
+    pub fn new(offset: u64, bytes: Vec<u8>) -> Self {
         Self {
+            offset,
             bytes,
             version: None,
         }
     }
 
     /// Bytes served by a known version of the object.
-    pub fn with_version(mut self, version: impl Into<String>) -> Self {
-        self.version = Some(ObjectVersion::new(version));
+    pub fn with_version(mut self, version: impl Into<ObjectVersion>) -> Self {
+        self.version = Some(version.into());
         self
     }
 }
@@ -199,10 +224,17 @@ pub trait SyncRangeTransport: MaybeSend + MaybeSync {
 
     /// Reads up to `len` bytes at `offset`, reporting which version served them.
     ///
-    /// May return fewer bytes than requested; `RangeStream` treats a short read as
-    /// [`AssetTransportError::ShortRead`], never as end-of-file. Returning *more* than
-    /// `len` bytes is rejected by the caller: it is the signature of a server that
-    /// ignored the range request and returned the whole object.
+    /// May return fewer bytes than requested. `RangeStream` accepts a short response and
+    /// reads again from where it ended, so there is no need to pad. Only an empty
+    /// response with bytes still outstanding is
+    /// [`AssetTransportError::ShortRead`]. Returning *more* than `len` bytes is rejected
+    /// by the caller: it is the signature of a server that ignored the range request and
+    /// returned the whole object.
+    ///
+    /// The bytes must be unencoded. RFC 9110 14.1.2 defines ranges over the encoded
+    /// bytes, so a `gzip` response makes every offset meaningless. This trait cannot see
+    /// headers, so the transport checks its own `Content-Encoding` (see
+    /// [`http_range::content_encoding_ok`](super::range::http_range::content_encoding_ok)).
     ///
     /// `expect` carries the version established earlier in this read, when one is
     /// known. The caller compares the returned version against what it expected, and
@@ -279,83 +311,15 @@ impl<T: AsyncRangeTransport + ?Sized> AsyncRangeTransport for std::sync::Arc<T> 
     }
 }
 
-/// Checks an HTTP range response's status against the range contract, so an HTTP
-/// range transport does not reinvent this rule.
-///
-/// - `206 Partial Content` is the success case.
-/// - `200 OK` with a validator that differs from `expect` means the object changed
-///   and the whole body was returned; reported as
-///   [`AssetTransportError::VersionChanged`].
-/// - `412 Precondition Failed` means the origin rejected the `If-Range`; also
-///   [`AssetTransportError::VersionChanged`].
-/// - `416 Range Not Satisfiable` means the range lies outside the object; reported as
-///   [`AssetTransportError::RangeNotSatisfiable`].
-/// - Any other status means the far end did not honor `Range`.
-///
-/// A `200` whose validator matches `expect` (or where no version is known) still
-/// fails as "did not honor Range": a whole-body response cannot be trusted to sit at
-/// the requested offset. The length backstop in the core fetch path catches it too,
-/// but failing here names the cause.
-///
-/// Pure over values a fetch already produced — no I/O, no HTTP client.
-pub fn validate_range_status(
-    status: u16,
-    reference: &str,
-    expect: Option<&ObjectVersion>,
-    served: Option<&ObjectVersion>,
-) -> Result<(), AssetTransportError> {
-    match status {
-        206 => Ok(()),
-        416 => Err(AssetTransportError::RangeNotSatisfiable {
-            reference: reference.to_string(),
-        }),
-        412 => Err(AssetTransportError::VersionChanged {
-            expected: expect.map(ObjectVersion::to_string).unwrap_or_default(),
-            got: "rejected by origin (412 Precondition Failed)".to_string(),
-        }),
-        200 => {
-            if let (Some(expected), Some(got)) = (expect, served) {
-                if expected != got {
-                    return Err(AssetTransportError::VersionChanged {
-                        expected: expected.to_string(),
-                        got: got.to_string(),
-                    });
-                }
-            }
-            Err(AssetTransportError::Other {
-                source: "expected 206 Partial Content, got 200 (server did not honor Range)".into(),
-            })
-        }
-        other => Err(AssetTransportError::Other {
-            source: format!(
-                "expected 206 Partial Content, got {other} (server may not honor Range)"
-            )
-            .into(),
-        }),
-    }
-}
-
-/// Parses the total object length from a `Content-Range` header value.
-///
-/// `bytes 0-1023/4096` yields `Some(4096)`; an unknown total (`*/`) or an
-/// unparseable value yields `None`. Pure over the header value — no I/O.
-pub fn content_range_total(value: &str) -> Option<u64> {
-    let total = value.rsplit_once('/')?.1.trim();
-    if total == "*" {
-        return None;
-    }
-    total.parse().ok()
-}
-
-/// Fetches a range and confirms it matches the request: right version, not longer
-/// than asked.
+/// Fetches a range and confirms it matches the request: right offset, right version,
+/// not longer than asked.
 ///
 /// Returns the bytes and the version that served them, so a caller reading an object
 /// across several requests can adopt the first version it sees and hold every later
 /// response to it. Returns [`AssetTransportError::VersionChanged`] when the source
 /// reports a different version than the read began with, and rejects a response longer
-/// than `len` — the signature of a server that ignored `Range` and returned the whole
-/// object, whose bytes would otherwise be cached at the wrong offset.
+/// than `len`, which is the signature of a server that ignored `Range` and returned the
+/// whole object, whose bytes would otherwise be cached at the wrong offset.
 pub(crate) fn fetch_versioned(
     reader: &dyn SyncRangeTransport,
     offset: u64,
@@ -363,9 +327,29 @@ pub(crate) fn fetch_versioned(
     expect: Option<&ObjectVersion>,
 ) -> Result<RangeChunk, AssetTransportError> {
     let chunk = reader.read_range(offset, len, expect)?;
+    reject_misplaced(offset, chunk.offset)?;
     reject_overlong(offset, len, chunk.bytes.len())?;
     check_version(expect, chunk.version.as_ref())?;
     Ok(chunk)
+}
+
+/// Rejects a range response that starts somewhere other than the requested offset.
+///
+/// A correctly-sized response from the wrong position passes every length check and
+/// still feeds the parser bytes from elsewhere in the object. Content delivery networks
+/// realign ranges to block boundaries, proxies rewrite them, and service workers
+/// substitute bodies.
+fn reject_misplaced(requested: u64, served: u64) -> Result<(), AssetTransportError> {
+    if served != requested {
+        return Err(AssetTransportError::Other {
+            source: format!(
+                "range response starts at {served}, not the requested {requested} \
+                 (the response was served from the wrong position)"
+            )
+            .into(),
+        });
+    }
+    Ok(())
 }
 
 /// Rejects a range response longer than requested.
@@ -490,12 +474,12 @@ mod tests {
 
         fn read_range(
             &self,
-            _offset: u64,
+            offset: u64,
             _len: u64,
             _expect: Option<&ObjectVersion>,
         ) -> Result<RangeChunk, AssetTransportError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
-            let chunk = RangeChunk::new(self.bytes.clone());
+            let chunk = RangeChunk::new(offset, self.bytes.clone());
             Ok(match &self.version {
                 Some(v) => chunk.with_version(v.clone()),
                 None => chunk,
@@ -546,6 +530,34 @@ mod tests {
     }
 
     #[test]
+    fn fetch_versioned_rejects_a_response_from_the_wrong_offset() {
+        // A content delivery network that realigns the range to a block boundary returns
+        // the right number of bytes from the wrong position. Every length check passes
+        // and the parser reads bytes from elsewhere in the object.
+        struct RealignedTransport;
+        impl SyncRangeTransport for RealignedTransport {
+            fn info(&self) -> Result<RangeInfo, AssetTransportError> {
+                Ok(RangeInfo::new(8192))
+            }
+
+            fn read_range(
+                &self,
+                offset: u64,
+                len: u64,
+                _expect: Option<&ObjectVersion>,
+            ) -> Result<RangeChunk, AssetTransportError> {
+                Ok(RangeChunk::new(offset + 512, vec![0u8; len as usize]))
+            }
+        }
+
+        let err = fetch_versioned(&RealignedTransport, 1024, 256, None).unwrap_err();
+        assert!(
+            matches!(err, AssetTransportError::Other { .. }),
+            "expected a misplaced-response rejection, got {err:?}"
+        );
+    }
+
+    #[test]
     fn object_version_prefers_strong_etag_then_last_modified() {
         assert_eq!(
             ObjectVersion::from_http_validators(
@@ -559,51 +571,22 @@ mod tests {
             ObjectVersion::from_http_validators(Some("W/\"abc\""), Some("some-date")),
             Some(ObjectVersion::new("some-date"))
         );
+        // RFC 9110 8.8.3 makes an unquoted tag malformed. Fall back to Last-Modified.
+        assert_eq!(
+            ObjectVersion::from_http_validators(Some("abc"), Some("some-date")),
+            Some(ObjectVersion::new("some-date"))
+        );
+        // A lone quote is not a tag either.
+        assert_eq!(
+            ObjectVersion::from_http_validators(Some("\""), Some("some-date")),
+            Some(ObjectVersion::new("some-date"))
+        );
         // Neither usable.
         assert_eq!(
             ObjectVersion::from_http_validators(Some("W/\"abc\""), Some("  ")),
             None
         );
         assert_eq!(ObjectVersion::from_http_validators(None, None), None);
-    }
-
-    #[test]
-    fn validate_range_status_enforces_the_range_contract() {
-        assert!(validate_range_status(206, "s3://bucket/key", None, None).is_ok());
-
-        // 200 with a differing validator is a changed object.
-        let v1 = ObjectVersion::new("v1");
-        let v2 = ObjectVersion::new("v2");
-        assert!(matches!(
-            validate_range_status(200, "s3://bucket/key", Some(&v1), Some(&v2)),
-            Err(AssetTransportError::VersionChanged { .. })
-        ));
-        // 200 without a version mismatch still fails: a whole body is not a range.
-        assert!(matches!(
-            validate_range_status(200, "s3://bucket/key", None, None),
-            Err(AssetTransportError::Other { .. })
-        ));
-
-        assert!(matches!(
-            validate_range_status(412, "s3://bucket/key", Some(&v1), None),
-            Err(AssetTransportError::VersionChanged { .. })
-        ));
-        assert!(matches!(
-            validate_range_status(416, "s3://bucket/key", None, None),
-            Err(AssetTransportError::RangeNotSatisfiable { reference })
-                if reference == "s3://bucket/key"
-        ));
-        assert!(matches!(
-            validate_range_status(500, "s3://bucket/key", None, None),
-            Err(AssetTransportError::Other { .. })
-        ));
-    }
-
-    #[test]
-    fn content_range_total_parses_the_suffix() {
-        assert_eq!(content_range_total("bytes 0-1023/4096"), Some(4096));
-        assert_eq!(content_range_total("bytes 0-1023/*"), None);
-        assert_eq!(content_range_total("garbage"), None);
     }
 
     #[test]

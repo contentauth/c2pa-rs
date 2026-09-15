@@ -160,11 +160,11 @@ mod tests {
         ) -> Result<RangeChunk, AssetTransportError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             if self.short {
-                return Ok(RangeChunk::new(Vec::new()));
+                return Ok(RangeChunk::new(offset, Vec::new()));
             }
             let start = offset as usize;
             let end = (offset + len).min(self.data.len() as u64) as usize;
-            Ok(RangeChunk::new(self.data[start..end].to_vec()))
+            Ok(RangeChunk::new(offset, self.data[start..end].to_vec()))
         }
     }
 

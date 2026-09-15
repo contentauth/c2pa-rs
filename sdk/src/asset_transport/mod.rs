@@ -25,8 +25,8 @@ pub use local::LocalAssetTransport;
 pub use local::UnconfiguredAssetTransport;
 use range::RangeStream;
 pub use range::{
-    content_range_total, validate_range_status, AsyncRangeTransport, ObjectVersion, RangeChunk,
-    RangeConfig, RangeInfo, RangeTransportSource, SyncRangeTransport,
+    http_range, AsyncRangeTransport, ObjectVersion, RangeChunk, RangeConfig, RangeInfo,
+    RangeTransportSource, SyncRangeTransport,
 };
 
 use crate::{

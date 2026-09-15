@@ -50,8 +50,20 @@ pub enum AssetTransportError {
     Timeout { reference: String },
 
     /// The transport could not satisfy the requested byte range.
-    #[error("requested range not satisfiable: {reference}")]
-    RangeNotSatisfiable { reference: String },
+    ///
+    /// `total` is the object length when the transport learned it, which for HTTP comes
+    /// from `Content-Range: bytes */total`. An `offset` below a known `total` means the
+    /// range was satisfiable and the transport refused it for another reason, such as an
+    /// unsupported range unit.
+    #[error("requested range not satisfiable at offset {offset}: {reference}")]
+    RangeNotSatisfiable {
+        /// The reference that was read.
+        reference: String,
+        /// The offset the failed request asked for.
+        offset: u64,
+        /// The object length, when the transport learned it.
+        total: Option<u64>,
+    },
 
     /// A range read returned fewer bytes than required,
     /// and the caller did not expect a partial response.
@@ -113,7 +125,10 @@ mod tests {
 
         let range = AssetTransportError::RangeNotSatisfiable {
             reference: "https://x/y".to_string(),
+            offset: 512,
+            total: Some(256),
         };
         assert!(range.to_string().contains("not satisfiable"));
+        assert!(range.to_string().contains("512"));
     }
 }

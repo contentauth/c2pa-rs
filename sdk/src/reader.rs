@@ -1765,7 +1765,7 @@ pub mod tests {
             ) -> std::result::Result<RangeChunk, AssetTransportError> {
                 let start = (offset as usize).min(self.0.len());
                 let end = start.saturating_add(len as usize).min(self.0.len());
-                Ok(RangeChunk::new(self.0[start..end].to_vec()))
+                Ok(RangeChunk::new(offset, self.0[start..end].to_vec()))
             }
         }
 
