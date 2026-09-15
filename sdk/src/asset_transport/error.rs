@@ -51,10 +51,6 @@ pub enum AssetTransportError {
     #[error("requested range not satisfiable: {reference}")]
     RangeNotSatisfiable { reference: String },
 
-    /// A requested chunk exceeds the size the caller is willing to read.
-    #[error("chunk too large: {reference}")]
-    ChunkTooLarge { reference: String },
-
     #[error(transparent)]
     Io(#[from] std::io::Error),
 
@@ -101,10 +97,5 @@ mod tests {
             reference: "https://x/y".to_string(),
         };
         assert!(range.to_string().contains("not satisfiable"));
-
-        let large = AssetTransportError::ChunkTooLarge {
-            reference: "https://x/y".to_string(),
-        };
-        assert!(large.to_string().contains("chunk too large"));
     }
 }

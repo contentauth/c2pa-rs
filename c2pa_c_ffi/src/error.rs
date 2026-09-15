@@ -57,8 +57,6 @@ pub enum C2paError {
     Timeout(String),
     #[error("RangeNotSatisfiable: {0}")]
     RangeNotSatisfiable(String),
-    #[error("ChunkTooLarge: {0}")]
-    ChunkTooLarge(String),
 }
 
 pub type Error = C2paError;
@@ -89,7 +87,6 @@ impl C2paError {
             Self::AssetNotFound(_) => 118,
             Self::Timeout(_) => 119,
             Self::RangeNotSatisfiable(_) => 120,
-            Self::ChunkTooLarge(_) => 121,
         }
     }
 
@@ -151,9 +148,6 @@ impl C2paError {
                 c2pa::asset_transport::AssetTransportError::RangeNotSatisfiable { .. } => {
                     Self::RangeNotSatisfiable(err_str)
                 }
-                c2pa::asset_transport::AssetTransportError::ChunkTooLarge { .. } => {
-                    Self::ChunkTooLarge(err_str)
-                }
                 _ => Self::Io(err_str),
             },
             JsonError(e) => Self::Json(err_str),
@@ -203,7 +197,6 @@ impl C2paError {
             "AssetNotFound" => Self::AssetNotFound(error_message),
             "Timeout" => Self::Timeout(error_message),
             "RangeNotSatisfiable" => Self::RangeNotSatisfiable(error_message),
-            "ChunkTooLarge" => Self::ChunkTooLarge(error_message),
             _ => Self::Other(format!("{error_type}: {error_message}")),
         }
     }
@@ -364,7 +357,6 @@ mod tests {
             (C2paError::AssetNotFound("test".into()), 118),
             (C2paError::Timeout("test".into()), 119),
             (C2paError::RangeNotSatisfiable("test".into()), 120),
-            (C2paError::ChunkTooLarge("test".into()), 121),
         ];
 
         for (original, expected_code) in test_cases {
@@ -418,12 +410,6 @@ mod tests {
                     reference: "u".to_string(),
                 },
                 120,
-            ),
-            (
-                AssetTransportError::ChunkTooLarge {
-                    reference: "u".to_string(),
-                },
-                121,
             ),
         ] {
             let mapped = C2paError::from_c2pa_error(c2pa::Error::AssetTransport(err));

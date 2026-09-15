@@ -311,6 +311,8 @@ impl Reader {
         let path = path.as_ref();
         let request = AssetRequest::new(AssetRef::Path(path));
 
+        // Cancellation checkpoint before starting a potentially long transport read.
+        self.context.check_progress(ProgressPhase::Reading, 1, 1)?;
         let resolved = if _sync {
             self.context.asset_transport()?.open(&request)?
         } else {
@@ -319,6 +321,8 @@ impl Reader {
                 None => self.context.asset_transport()?.open(&request)?,
             }
         };
+        // And once the bytes are in hand, before parsing them.
+        self.context.check_progress(ProgressPhase::Reading, 1, 1)?;
 
         let path_fmt = match self.context.io().format_from_path(path) {
             Some(fmt) => fmt,
@@ -341,6 +345,8 @@ impl Reader {
                 let sidecar_path = path.with_extension("c2pa");
                 let sidecar_request = AssetRequest::new(AssetRef::Path(&sidecar_path))
                     .with_kind(AssetRequestKind::Sidecar);
+                // Cancellation checkpoint between the asset read and the sidecar read.
+                self.context.check_progress(ProgressPhase::Reading, 1, 1)?;
                 let sidecar = if _sync {
                     self.context
                         .asset_transport()
@@ -1712,6 +1718,20 @@ pub mod tests {
         assert!(
             matches!(err, Some(Error::JumbfNotFound)),
             "a manifest-less asset must report JumbfNotFound, not a decode error; got {err:?}"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn with_file_reading_checkpoint_is_cancellable() {
+        // Cancel at the Reading checkpoint only; let every other phase proceed.
+        let context = Context::new()
+            .with_progress_callback(|phase, _, _| phase != ProgressPhase::Reading);
+
+        let result = Reader::from_context(context).with_file("tests/fixtures/CA.jpg");
+        assert!(
+            matches!(result, Err(Error::OperationCancelled)),
+            "cancel() must be honored at with_file's Reading checkpoint; got {result:?}"
         );
     }
 

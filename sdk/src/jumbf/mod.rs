@@ -28,12 +28,14 @@ mod tests {
     use super::starts_with_superbox;
 
     #[test]
-    fn recognizes_a_superbox_header_and_rejects_other_bytes() {
+    fn recognizes_a_jumb_superbox_header() {
         // Length (4 bytes) then the `jumb` box type.
         assert!(starts_with_superbox(b"\x00\x00\x00\x1cjumb\x00\x00"));
+
         // A JPEG start-of-image marker is not a superbox.
         assert!(!starts_with_superbox(b"\xff\xd8\xff\xe0\x00\x10JF"));
-        // Too short to hold a header.
+
+        // Too short...
         assert!(!starts_with_superbox(b"jumb"));
     }
 }

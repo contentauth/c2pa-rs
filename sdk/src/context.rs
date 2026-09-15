@@ -123,14 +123,20 @@ enum AsyncResolverState {
     Default(OnceLock<Arc<dyn AsyncHttpResolver>>),
 }
 
-/// Internal state for sync asset transport selection.
+/// Which asset transports are configured: sync, async, both, or the lazy default.
+///
+/// One enum owning the transports (rather than a sync state plus a separate async
+/// `Option`) keeps invalid combinations — e.g. "async only" with no async transport —
+/// unrepresentable.
 enum AssetTransportState {
-    /// User-provided custom transport.
-    Custom(Arc<dyn SyncAssetTransport>),
-    /// Filesystem default with lazy initialization.
+    /// Neither registered; the filesystem default is lazily created for the sync path.
     Default(OnceLock<Arc<dyn SyncAssetTransport>>),
-    /// Only an async transport is registered, so the sync path has none.
-    AsyncOnly,
+    /// An explicit sync transport only.
+    SyncOnly(Arc<dyn SyncAssetTransport>),
+    /// An explicit async transport only; the sync path returns `NoSyncTransport`.
+    AsyncOnly(Arc<dyn AsyncAssetTransport>),
+    /// Both an explicit sync and async transport.
+    Both(Arc<dyn SyncAssetTransport>, Arc<dyn AsyncAssetTransport>),
 }
 
 /// Internal state for signer selection.
@@ -282,7 +288,6 @@ pub struct Context {
     sync_resolver_state: SyncResolverState,
     async_resolver_state: AsyncResolverState,
     asset_transport_state: AssetTransportState,
-    async_asset_transport: Option<Arc<dyn AsyncAssetTransport>>,
     signer: SignerState,
     async_signer: AsyncSignerState,
     progress_callback: Option<Box<ProgressCallbackFunc>>,
@@ -302,7 +307,6 @@ impl Default for Context {
             sync_resolver_state: SyncResolverState::Default(OnceLock::new()),
             async_resolver_state: AsyncResolverState::Default(OnceLock::new()),
             asset_transport_state: AssetTransportState::Default(OnceLock::new()),
-            async_asset_transport: None,
             #[cfg(test)]
             signer: SignerState::Custom(crate::utils::test_signer::test_signer(
                 crate::SigningAlg::Ps256,
@@ -551,7 +555,12 @@ impl Context {
 
     /// Configure synchronous asset transport (bytes source) on the Context.
     pub fn set_asset_transport<T: SyncAssetTransport + 'static>(&mut self, transport: T) {
-        self.asset_transport_state = AssetTransportState::Custom(Arc::new(transport));
+        let sync_transport = Arc::new(transport);
+        // Keep any async transport already registered.
+        self.asset_transport_state = match self.asset_transport_async() {
+            Some(async_transport) => AssetTransportState::Both(sync_transport, async_transport),
+            None => AssetTransportState::SyncOnly(sync_transport),
+        };
     }
 
     /// Configure asynchronous asset transport (bytes source) on the Context.
@@ -570,14 +579,19 @@ impl Context {
 
     /// Configure asynchronous asset transport (bytes source) on the Context.
     pub fn set_asset_transport_async<T: AsyncAssetTransport + 'static>(&mut self, transport: T) {
-        self.async_asset_transport = Some(Arc::new(transport));
-
-        // An async transport registered over the untouched default means the caller
-        // opted out of the filesystem: the sync path must fail rather than fall back
-        // to disk. An explicitly registered sync transport is left alone.
-        if matches!(self.asset_transport_state, AssetTransportState::Default(_)) {
-            self.asset_transport_state = AssetTransportState::AsyncOnly;
-        }
+        let async_transport = Arc::new(transport);
+        // Keep an explicitly registered sync transport. A bare `Default` (or a prior
+        // async) is dropped: registering only an async transport opts the sync path
+        // out of the filesystem, so it returns `NoSyncTransport` rather than reading disk.
+        self.asset_transport_state = match &self.asset_transport_state {
+            AssetTransportState::SyncOnly(sync_transport)
+            | AssetTransportState::Both(sync_transport, _) => {
+                AssetTransportState::Both(sync_transport.clone(), async_transport)
+            }
+            AssetTransportState::Default(_) | AssetTransportState::AsyncOnly(_) => {
+                AssetTransportState::AsyncOnly(async_transport)
+            }
+        };
     }
 
     /// Returns the sync asset transport (bytes source of an asset).
@@ -587,8 +601,10 @@ impl Context {
         &self,
     ) -> std::result::Result<Arc<dyn SyncAssetTransport>, AssetTransportError> {
         match &self.asset_transport_state {
-            AssetTransportState::Custom(transport) => Ok(transport.clone()),
-            AssetTransportState::AsyncOnly => Err(AssetTransportError::NoSyncTransport),
+            AssetTransportState::SyncOnly(transport) | AssetTransportState::Both(transport, _) => {
+                Ok(transport.clone())
+            }
+            AssetTransportState::AsyncOnly(_) => Err(AssetTransportError::NoSyncTransport),
             AssetTransportState::Default(once_lock) => Ok(once_lock
                 .get_or_init(|| {
                     #[cfg(feature = "file_io")]
@@ -604,10 +620,15 @@ impl Context {
         }
     }
 
-    /// Returns the sync asset transport (bytes source of an asset),
+    /// Returns the async asset transport (bytes source of an asset),
     /// or `None` when none is registered.
     pub fn asset_transport_async(&self) -> Option<Arc<dyn AsyncAssetTransport>> {
-        self.async_asset_transport.clone()
+        match &self.asset_transport_state {
+            AssetTransportState::AsyncOnly(transport) | AssetTransportState::Both(_, transport) => {
+                Some(transport.clone())
+            }
+            AssetTransportState::Default(_) | AssetTransportState::SyncOnly(_) => None,
+        }
     }
 
     /// Register a custom IO handler on this Context.
@@ -1032,7 +1053,6 @@ mod tests {
             sync_resolver_state: SyncResolverState::Default(OnceLock::new()),
             async_resolver_state: AsyncResolverState::Default(OnceLock::new()),
             asset_transport_state: AssetTransportState::Default(OnceLock::new()),
-            async_asset_transport: None,
             signer: SignerState::FromSettings(OnceLock::new()),
             async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
             progress_callback: None,
@@ -1111,7 +1131,6 @@ mod tests {
             sync_resolver_state: SyncResolverState::Default(OnceLock::new()),
             async_resolver_state: AsyncResolverState::Default(OnceLock::new()),
             asset_transport_state: AssetTransportState::Default(OnceLock::new()),
-            async_asset_transport: None,
             signer: SignerState::FromSettings(OnceLock::new()),
             async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
             progress_callback: None,

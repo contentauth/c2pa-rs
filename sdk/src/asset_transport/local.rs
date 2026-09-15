@@ -58,8 +58,13 @@ impl LocalAssetTransport {
 impl SyncAssetTransport for LocalAssetTransport {
     /// Request to open an asset (and read its bytes).
     fn open(&self, request: &AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError> {
-        let outside = |p: &Path| AssetTransportError::OutsideRoot {
-            reference: p.to_string_lossy().into_owned(),
+        let reference = match request.reference {
+            AssetRef::Path(p) => p.to_string_lossy().into_owned(),
+            AssetRef::Custom(s) => s.to_string(),
+            AssetRef::Uri(u) => u.to_string(),
+        };
+        let outside = || AssetTransportError::OutsideRoot {
+            reference: reference.clone(),
         };
 
         // Candidate path resolution.
@@ -70,7 +75,7 @@ impl SyncAssetTransport for LocalAssetTransport {
             },
             AssetRef::Custom(s) => match &self.root {
                 Some(root) => {
-                    reject_unsafe_identifier(s).map_err(|_| outside(Path::new(s)))?;
+                    reject_unsafe_identifier(s).map_err(|_| outside())?;
                     Cow::Owned(root.join(s))
                 }
                 None => {
@@ -79,7 +84,7 @@ impl SyncAssetTransport for LocalAssetTransport {
                         .components()
                         .any(|c| matches!(c, Component::ParentDir))
                     {
-                        return Err(outside(candidate));
+                        return Err(outside());
                     }
                     Cow::Borrowed(candidate)
                 }
@@ -97,16 +102,10 @@ impl SyncAssetTransport for LocalAssetTransport {
             }
         };
 
-        let reference = match request.reference {
-            AssetRef::Path(p) => p.to_string_lossy().into_owned(),
-            AssetRef::Custom(s) => s.to_string(),
-            AssetRef::Uri(u) => u.to_string(),
-        };
-
         // When a root is configured, open the canonicalized path.
         let to_open: Cow<'_, Path> = match &self.root {
             Some(root) => {
-                Cow::Owned(ensure_within_root(&candidate, root).map_err(|_| outside(&candidate))?)
+                Cow::Owned(ensure_within_root(&candidate, root).map_err(|_| outside())?)
             }
             None => candidate,
         };
@@ -384,7 +383,7 @@ mod tests {
     #[cfg(feature = "file_io")]
     #[test]
     fn rooted_transport_missing_file_error_names_caller_reference_not_host_path() {
-        // This si to avoid leaking info on available paths.
+        // This is to avoid leaking info on available paths.
         let root = tempdirectory().unwrap();
         let transport = LocalAssetTransport::rooted_at(root.path());
 
@@ -395,5 +394,21 @@ mod tests {
         };
 
         assert_eq!(reference, "missing.jpg");
+    }
+
+    #[cfg(feature = "file_io")]
+    #[test]
+    fn rooted_transport_outside_root_error_names_caller_reference_not_host_path() {
+        let root = tempdirectory().unwrap();
+        let transport = LocalAssetTransport::rooted_at(root.path());
+
+        // A reference that escapes the root once joined.
+        let request = AssetRequest::from_reference("../outside.jpg");
+        let err = transport.open(&request).err();
+        let Some(AssetTransportError::OutsideRoot { reference }) = err else {
+            unreachable!("expected OutsideRoot, got {err:?}");
+        };
+        // The caller's own reference, not the joined absolute root path.
+        assert_eq!(reference, "../outside.jpg");
     }
 }
