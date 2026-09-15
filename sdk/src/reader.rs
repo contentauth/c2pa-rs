@@ -351,6 +351,8 @@ impl Reader {
             None => resolved.format_hint().unwrap_or_default().to_string(),
         };
         let mut file = resolved.into_read_seek();
+        // Enforce stream at position 0.
+        file.rewind()?;
         let format = self.context.io().format_from_stream(&path_fmt, &mut file);
 
         // Try loading from stream first
