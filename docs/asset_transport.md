@@ -8,6 +8,8 @@ This guide describes `asset_transport`: the abstraction `Reader` uses to get ass
 
 A transport request, or a request tor ead asset bytes, builds an `AssetRequest` and hands it to whatever transport is configured on the `Context`: the local filesystem by default, or a caller-supplied transport for anything else (an in-memory buffer, a network fetch, a custom store). The reader code does not know which: it gets handed bytes.
 
+A transport is the byte-moving layer below a resolver. It moves bytes and does not interpret references. `ResourceResolver`, which resolves manifest-internal identifiers rather than external assets, is a separate thing and stays as is.
+
 ## The traits
 
 ```rust
@@ -53,9 +55,13 @@ stateDiagram-v2
     Default --> AsyncOnly: set_asset_transport_async
     SyncOnly --> Both: set_asset_transport_async
     AsyncOnly --> Both: set_asset_transport
+    SyncOnly --> Default: clear_asset_transport
+    AsyncOnly --> Default: clear_asset_transport_async
+    Both --> AsyncOnly: clear_asset_transport
+    Both --> SyncOnly: clear_asset_transport_async
 ```
 
-`Default` means neither is registered. The sync path lazily builds the transport described above (local filesystem, or unconfigured). Re-registering the same kind again just replaces that transport in place. The diagram only shows the moves between states.
+`Default` means neither is registered. The sync path lazily builds the transport described above (local filesystem, or unconfigured). `with_*`/`set_*` add or replace a transport, `clear_*` drops one. Re-registering the same kind just replaces it in place.
 
 Registering only an async transport opts the sync path out of the filesystem default. `Context::asset_transport()` then returns `Err(AssetTransportError::NoSyncTransport)`. It does not fall back to reading disk.
 

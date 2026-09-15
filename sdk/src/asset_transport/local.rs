@@ -61,13 +61,14 @@ impl LocalAssetTransport {
 impl SyncAssetTransport for LocalAssetTransport {
     /// Request to open an asset (and read its bytes).
     fn open(&self, request: &AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError> {
-        let reference = match request.reference {
+        // Built only on error paths.
+        let reference = || match request.reference {
             AssetRef::Path(p) => p.to_string_lossy().into_owned(),
             AssetRef::Custom(s) => s.to_string(),
             AssetRef::Uri(u) => u.to_string(),
         };
         let outside = || AssetTransportError::OutsideRoot {
-            reference: reference.clone(),
+            reference: reference(),
         };
 
         // Candidate path resolution.
@@ -112,12 +113,13 @@ impl SyncAssetTransport for LocalAssetTransport {
         };
 
         let file = std::fs::File::open(&to_open)
-            .map_err(|e| AssetTransportError::from_io(e, &reference))?;
+            .map_err(|e| AssetTransportError::from_io(e, &reference()))?;
         Ok(ResolvedAsset::new(file))
     }
 }
 
-/// Refuses every read with [`AssetTransportError::NotConfigured`]. Used when `file_io` is off.
+/// Refuses every read with [`AssetTransportError::NotConfigured`]. Used when `file_io` is off,
+/// or registered on a `Context` to disable sync filesystem reads on purpose.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct UnconfiguredAssetTransport;
 

@@ -311,8 +311,8 @@ impl Reader {
         let path = path.as_ref();
         let request = AssetRequest::new(AssetRef::Path(path));
 
-        // Cancellation checkpoint before a potentially long transport read.
-        self.context.check_progress(ProgressPhase::Reading, 1, 1)?;
+        // Checkpoints bracket the reads. Total 0: the read count is not known ahead.
+        self.context.check_progress(ProgressPhase::Reading, 1, 0)?;
         let resolved = if _sync {
             self.context.asset_transport()?.open(&request)?
         } else {
@@ -321,15 +321,20 @@ impl Reader {
                 None => self.context.asset_transport()?.open(&request)?,
             }
         };
-        // And once opened, before parsing.
-        self.context.check_progress(ProgressPhase::Reading, 1, 1)?;
+        self.context.check_progress(ProgressPhase::Reading, 2, 0)?;
 
+        let format_hint = resolved.format_hint().map(str::to_string);
         let path_fmt = match self.context.io().format_from_path(path) {
             Some(fmt) => fmt,
-            None => resolved.advisory_format().unwrap_or("").to_string(),
+            None => format_hint.clone().unwrap_or_default(),
         };
         let mut file = resolved.into_read_seek();
         let format = self.context.io().format_from_stream(&path_fmt, &mut file);
+        if let Some(format_hint) = &format_hint {
+            if *format_hint != format {
+                log::debug!("transport format hint {format_hint:?} not used; read as {format:?}");
+            }
+        }
 
         // Try loading from stream first
         let mut validation_log = StatusTracker::default();
@@ -346,7 +351,7 @@ impl Reader {
                 let sidecar_request = AssetRequest::new(AssetRef::Path(&sidecar_path))
                     .with_kind(AssetRequestKind::Sidecar);
                 // Cancellation checkpoint between the asset read and the sidecar read.
-                self.context.check_progress(ProgressPhase::Reading, 1, 1)?;
+                self.context.check_progress(ProgressPhase::Reading, 3, 0)?;
                 let sidecar = if _sync {
                     self.context
                         .asset_transport()
@@ -366,8 +371,11 @@ impl Reader {
                     Ok(resolved) => {
                         resolved.into_read_seek().read_to_end(&mut manifest_data)?;
                     }
-                    // No sidecar means no manifest.
-                    Err(AssetTransportError::NotFound { .. }) => return Err(Error::JumbfNotFound),
+                    // No sidecar, or a transport that does not serve sidecars: no manifest.
+                    Err(AssetTransportError::NotFound { .. })
+                    | Err(AssetTransportError::UnsupportedReference) => {
+                        return Err(Error::JumbfNotFound)
+                    }
                     Err(e) => return Err(e.into()),
                 }
 
@@ -1574,7 +1582,8 @@ pub mod tests {
                 &self,
                 _: &AssetRequest<'_>,
             ) -> std::result::Result<ResolvedAsset, AssetTransportError> {
-                Ok(ResolvedAsset::new(Cursor::new(self.0.clone())).with_format("image/svg+xml"))
+                Ok(ResolvedAsset::new(Cursor::new(self.0.clone()))
+                    .with_format_hint("image/svg+xml"))
             }
         }
 
@@ -1731,6 +1740,75 @@ pub mod tests {
             matches!(result, Err(Error::OperationCancelled)),
             "cancel() must be honored at with_file's Reading checkpoint; got {result:?}"
         );
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn with_file_reading_steps_rise() {
+        use std::sync::{Arc, Mutex};
+
+        use crate::asset_transport::{
+            AssetRequest, AssetTransportError, ResolvedAsset, SyncAssetTransport,
+        };
+
+        struct AlwaysSameAsset(Vec<u8>);
+        impl SyncAssetTransport for AlwaysSameAsset {
+            fn open(
+                &self,
+                _: &AssetRequest<'_>,
+            ) -> std::result::Result<ResolvedAsset, AssetTransportError> {
+                Ok(ResolvedAsset::new(Cursor::new(self.0.clone())))
+            }
+        }
+
+        let steps = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&steps);
+        // Manifest-less asset reaches the sidecar path, so all three checkpoints fire.
+        let asset = include_bytes!("../tests/fixtures/earth_apollo17.jpg").to_vec();
+        let context = Context::new()
+            .with_asset_transport(AlwaysSameAsset(asset))
+            .with_progress_callback(move |phase, step, _| {
+                if phase == ProgressPhase::Reading {
+                    seen.lock().unwrap().push(step);
+                }
+                true
+            });
+
+        let _ = Reader::from_context(context).with_file("no/such/photo.jpg");
+        assert_eq!(*steps.lock().unwrap(), vec![1, 2, 3]);
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn unsupported_sidecar_reads_as_no_manifest() {
+        use crate::asset_transport::{
+            AssetRef, AssetRequest, AssetRequestKind, AssetTransportError, ResolvedAsset,
+            SyncAssetTransport,
+        };
+
+        // Serves the asset, but rejects any sidecar request as unsupported.
+        struct NoSidecar(Vec<u8>);
+        impl SyncAssetTransport for NoSidecar {
+            fn open(
+                &self,
+                request: &AssetRequest<'_>,
+            ) -> std::result::Result<ResolvedAsset, AssetTransportError> {
+                match (request.reference, request.kind) {
+                    (AssetRef::Path(_), AssetRequestKind::Sidecar) => {
+                        Err(AssetTransportError::UnsupportedReference)
+                    }
+                    _ => Ok(ResolvedAsset::new(Cursor::new(self.0.clone()))),
+                }
+            }
+        }
+
+        let asset = include_bytes!("../tests/fixtures/earth_apollo17.jpg").to_vec();
+        let context = Context::new().with_asset_transport(NoSidecar(asset));
+
+        let err = Reader::from_context(context)
+            .with_file("no/such/photo.jpg")
+            .err();
+        assert!(matches!(err, Some(Error::JumbfNotFound)), "got {err:?}");
     }
 
     #[test]

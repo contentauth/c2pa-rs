@@ -36,9 +36,43 @@ pub enum AssetRef<'a> {
     Path(&'a std::path::Path),
     /// An absolute URI.
     Uri(&'a str),
-    /// A reference whose shape only the handler understands, so it is untrusted;
-    /// the handler must guard against path traversal.
+    /// A reference whose shape only the handler understands, so it is untrusted.
+    /// The handler must guard against path traversal.
     Custom(&'a str),
+}
+
+impl AssetRef<'_> {
+    /// Copy this reference into an owned [`OwnedAssetRef`].
+    pub fn into_owned(self) -> OwnedAssetRef {
+        match self {
+            AssetRef::Path(p) => OwnedAssetRef::Path(p.to_path_buf()),
+            AssetRef::Uri(u) => OwnedAssetRef::Uri(u.to_owned()),
+            AssetRef::Custom(s) => OwnedAssetRef::Custom(s.to_owned()),
+        }
+    }
+}
+
+/// Owned form of [`AssetRef`], for a transport that keeps a reference past a borrow.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum OwnedAssetRef {
+    /// A filesystem path.
+    Path(std::path::PathBuf),
+    /// An absolute URI.
+    Uri(String),
+    /// A handler-defined reference (see [`AssetRef::Custom`]).
+    Custom(String),
+}
+
+impl OwnedAssetRef {
+    /// Borrow as an [`AssetRef`].
+    pub fn as_ref(&self) -> AssetRef<'_> {
+        match self {
+            OwnedAssetRef::Path(p) => AssetRef::Path(p),
+            OwnedAssetRef::Uri(u) => AssetRef::Uri(u),
+            OwnedAssetRef::Custom(s) => AssetRef::Custom(s),
+        }
+    }
 }
 
 /// Whether a request targets the primary asset or its sidecar manifest.
@@ -48,12 +82,13 @@ pub enum AssetRequestKind {
     /// The primary asset.
     #[default]
     Asset,
-    /// A sidecar manifest (`.c2pa`).
+    /// A sidecar manifest (`.c2pa`). A transport that cannot serve sidecars returns
+    /// [`AssetTransportError::UnsupportedReference`], which the reader reads as no manifest.
     Sidecar,
 }
 
 /// A generic request to open an asset (through an AssetRef).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct AssetRequest<'a> {
     /// Reference to open.
@@ -109,15 +144,22 @@ pub struct ResolvedAsset {
 impl ResolvedAsset {
     /// Creates a seekable stream set at the beginning of an asset.
     pub fn new(stream: impl ReadSeek + 'static) -> Self {
+        Self::from_boxed(Box::new(stream))
+    }
+
+    /// Like [`new`](Self::new), for an already-boxed stream (no double box).
+    pub fn from_boxed(stream: Box<dyn ReadSeek>) -> Self {
         Self {
-            stream: Box::new(stream),
+            stream,
             format: None,
             size: None,
         }
     }
 
-    /// Format hint for the asset (bytes) transport.
-    pub fn with_format(mut self, format: impl Into<String>) -> Self {
+    /// Format hint for the asset bytes: a MIME type or an extension (e.g. `image/jpeg`
+    /// or `jpg`). Advisory only. Detected magic bytes and the path extension win over it,
+    /// and an unrecognized hint is ignored.
+    pub fn with_format_hint(mut self, format: impl Into<String>) -> Self {
         self.format = Some(format.into());
         self
     }
@@ -130,7 +172,7 @@ impl ResolvedAsset {
 
     /// Format hint declared by the transport (e.g. `Content-Type`). A hint only.
     /// Detected magic bytes take precedence.
-    pub fn advisory_format(&self) -> Option<&str> {
+    pub fn format_hint(&self) -> Option<&str> {
         self.format.as_deref()
     }
 
@@ -205,5 +247,23 @@ mod tests {
 
         let sidecar = request.with_kind(AssetRequestKind::Sidecar);
         assert_eq!(sidecar.kind, AssetRequestKind::Sidecar);
+    }
+
+    #[test]
+    fn asset_ref_owns_and_borrows_back() {
+        let owned = AssetRef::Uri("s3://b/k").into_owned();
+        assert_eq!(owned.as_ref(), AssetRef::Uri("s3://b/k"));
+
+        // AssetRequest is Copy.
+        let request = AssetRequest::new(AssetRef::Custom("x"));
+        let copy = request;
+        assert_eq!(copy.reference, request.reference);
+    }
+
+    #[test]
+    fn from_boxed_takes_a_boxed_stream() {
+        let boxed: Box<dyn ReadSeek> = Box::new(Cursor::new(vec![1u8, 2, 3]));
+        let resolved = ResolvedAsset::from_boxed(boxed);
+        assert_eq!(resolved.size(), None);
     }
 }

@@ -53,7 +53,9 @@ pub enum AssetTransportError {
     #[error(transparent)]
     Io(#[from] std::io::Error),
 
+    /// Any other error.
     #[error(transparent)]
+    #[non_exhaustive]
     Other {
         source: Box<dyn std::error::Error + Send + Sync>,
     },
