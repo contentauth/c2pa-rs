@@ -57,10 +57,10 @@ impl RangeCache {
     /// Copies contiguous cached bytes starting at `offset` into `buf`, returning how
     /// many bytes were copied (0 if `offset` is not cached).
     ///
-    /// A partial copy is not a driver miss: [`super::driver::PrefetchStream`] treats
-    /// only a zero-length copy as a miss and re-reads from the returned offset, so a
-    /// seam left by a capped insert (see [`RangeCache::insert`]) costs at most an extra
-    /// `read` call, never a retry attempt. Walking across adjacent segments here would
+    /// A partial copy is not a miss. Only a zero-length copy is, so a seam left by a
+    /// capped insert (see [`RangeCache::insert`]) costs at most an extra `read` call.
+    /// The async driver will re-read from the returned offset rather than spend a
+    /// retry attempt on it. Walking across adjacent segments here would
     /// be dead code under the current eviction policy: two byte-adjacent segments can
     /// never both be resident, since adjacency within budget always coalesces and a
     /// capped split leaves `total` over budget, which `evict` immediately trims to one.
