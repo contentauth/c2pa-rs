@@ -684,14 +684,25 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use std::{fs::File, io::Read};
+    use std::{
+        fs::File,
+        io::{Cursor, Read},
+    };
 
     use super::*;
-    use crate::utils::{
-        hash_utils::vec_compare,
-        io_utils::tempdirectory,
-        test::{fixture_path, temp_dir_path},
-        xmp_inmemory_utils::extract_provenance,
+    use crate::{
+        builder::Builder,
+        crypto::base64,
+        store::Store,
+        utils::{
+            hash_utils::vec_compare,
+            io_utils::tempdirectory,
+            test::{fixture_path, temp_dir_path, test_context},
+            test_signer::test_signer,
+            xmp_inmemory_utils::extract_provenance,
+        },
+        validation_status::ASSERTION_DATAHASH_MISMATCH,
+        Reader, SigningAlg, ValidationState,
     };
 
     fn assert_c2pa_namespace_on_svg_root(xml: &str) {
@@ -729,17 +740,6 @@ pub mod tests {
     #[test]
     #[allow(deprecated)]
     fn test_svg_shrunk_manifest_injection_rejected() {
-        use std::io::Cursor;
-
-        use crate::{
-            builder::Builder,
-            crypto::base64,
-            store::Store,
-            utils::{test::test_context, test_signer::test_signer},
-            validation_status::ASSERTION_DATAHASH_MISMATCH,
-            Reader, SigningAlg, ValidationState,
-        };
-
         // Sign an SVG normally.
         let src = std::fs::read(fixture_path("sample1.svg")).unwrap();
         let signer = test_signer(SigningAlg::Ps256);

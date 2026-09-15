@@ -413,17 +413,17 @@ fn data_hash_exclusions_match_manifest(
     manifest_store_range: Option<&HashRange>,
     is_embedded: bool,
 ) -> bool {
-    // Zero-length exclusions hash the whole asset; there is nothing to police.
-    let has_real_exclusion = exclusions.iter().any(|e| e.length() > 0);
-    if !has_real_exclusion {
+    // Remote/sidecar manifests carry a placeholder exclusion that excludes no
+    // bytes; the whole asset is hashed, so there is nothing to police.
+    if !exclusions.iter().any(|e| e.length() > 0) {
         return true;
     }
 
     match manifest_store_range {
-        // We located the manifest: an exclusion must cover exactly it.
+        // Manifest present in this asset: an exclusion must cover exactly it.
         Some(range) => exclusions.contains(range),
-        // We could not locate it: accept only when the manifest was read from this
-        // asset (embedded), not supplied separately (detached).
+        // Manifest not in this asset: allow only if it was read from here
+        // (embedded); a detached manifest on an unrelated asset is rejected (#2643).
         None => is_embedded,
     }
 }
