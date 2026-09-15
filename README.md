@@ -24,6 +24,7 @@ You can also read the documentation directly in GitHub:
 - [Using working stores and archives](https://github.com/contentauth/c2pa-rs/blob/main/docs/working-stores.md)
 - [Using the embeddable API](https://github.com/contentauth/c2pa-rs/blob/main/docs/embeddable-api.md) that provides explicit control over how a C2PA manifest is embedded into an asset.
 - [Progress and cancellation API](https://github.com/contentauth/c2pa-rs/blob/main/docs/progress_callbacks.md)
+- [The asset transport layer](https://github.com/contentauth/c2pa-rs/blob/main/docs/asset_transport.md)
 - [Release notes](https://github.com/contentauth/c2pa-rs/blob/main/docs/release-notes.md)
 - [Contributing to the project](https://github.com/contentauth/c2pa-rs/blob/main/docs/project-contributions.md)
 

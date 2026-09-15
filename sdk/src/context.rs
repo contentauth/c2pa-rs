@@ -18,6 +18,7 @@ use std::sync::{
 
 use crate::{
     asset_io::{AssetIO, HandlerRegistry},
+    asset_transport::{AssetTransportError, AsyncAssetTransport, SyncAssetTransport},
     http::{
         restricted::{RedirectResolver, RestrictedResolver},
         AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver,
@@ -120,6 +121,19 @@ enum AsyncResolverState {
     Custom(Arc<dyn AsyncHttpResolver>),
     /// Default resolver with lazy initialization.
     Default(OnceLock<Arc<dyn AsyncHttpResolver>>),
+}
+
+/// Which asset transports are configured: sync, async, both, or the default.
+enum AssetTransportState {
+    /// Neither registered: the sync path lazily creates the default transport
+    /// (the local filesystem with `file_io`, or an unconfigured transport).
+    Default(OnceLock<Arc<dyn SyncAssetTransport>>),
+    /// An explicit sync transport only.
+    SyncOnly(Arc<dyn SyncAssetTransport>),
+    /// An explicit async transport only. The sync path returns `NoSyncTransport`.
+    AsyncOnly(Arc<dyn AsyncAssetTransport>),
+    /// Both an explicit sync and async transport.
+    Both(Arc<dyn SyncAssetTransport>, Arc<dyn AsyncAssetTransport>),
 }
 
 /// Internal state for signer selection.
@@ -270,6 +284,7 @@ pub struct Context {
     settings: Settings,
     sync_resolver_state: SyncResolverState,
     async_resolver_state: AsyncResolverState,
+    asset_transport_state: AssetTransportState,
     signer: SignerState,
     async_signer: AsyncSignerState,
     progress_callback: Option<Box<ProgressCallbackFunc>>,
@@ -288,6 +303,7 @@ impl Default for Context {
             settings: Settings::default(),
             sync_resolver_state: SyncResolverState::Default(OnceLock::new()),
             async_resolver_state: AsyncResolverState::Default(OnceLock::new()),
+            asset_transport_state: AssetTransportState::Default(OnceLock::new()),
             #[cfg(test)]
             signer: SignerState::Custom(crate::utils::test_signer::test_signer(
                 crate::SigningAlg::Ps256,
@@ -520,6 +536,129 @@ impl Context {
             Arc::new(RedirectResolver::new(restricted, core.allow_redirects))
         } else {
             Arc::new(RedirectResolver::new(client, core.allow_redirects))
+        }
+    }
+
+    /// Configure synchronous asset transport (bytes source) on the Context.
+    /// A sync asset transport can be used for async paths too.
+    ///
+    /// # Arguments
+    ///
+    /// * `transport` - Any type implementing [`SyncAssetTransport`]
+    pub fn with_asset_transport<T: SyncAssetTransport + 'static>(mut self, transport: T) -> Self {
+        self.set_asset_transport(transport);
+        self
+    }
+
+    /// Configure synchronous asset transport (bytes source) on the Context.
+    pub fn set_asset_transport<T: SyncAssetTransport + 'static>(&mut self, transport: T) {
+        let sync_transport = Arc::new(transport);
+        // Keep any async transport already registered.
+        self.asset_transport_state = match self.asset_transport_async() {
+            Some(async_transport) => AssetTransportState::Both(sync_transport, async_transport),
+            None => AssetTransportState::SyncOnly(sync_transport),
+        };
+    }
+
+    /// Configure asynchronous asset transport (bytes source) on the Context.
+    /// An async asset transport can be used only for non-blocking async paths.
+    ///
+    /// Registered over the bare default, this disables sync reads (they return
+    /// [`NoSyncTransport`](crate::asset_transport::AssetTransportError::NoSyncTransport)). To
+    /// disable sync reads regardless of async, register
+    /// [`UnconfiguredAssetTransport`](crate::asset_transport::UnconfiguredAssetTransport).
+    ///
+    /// # Arguments
+    ///
+    /// * `transport` - Any type implementing [`AsyncAssetTransport`]
+    pub fn with_asset_transport_async<T: AsyncAssetTransport + 'static>(
+        mut self,
+        transport: T,
+    ) -> Self {
+        self.set_asset_transport_async(transport);
+        self
+    }
+
+    /// Configure asynchronous asset transport (bytes source) on the Context.
+    pub fn set_asset_transport_async<T: AsyncAssetTransport + 'static>(&mut self, transport: T) {
+        let async_transport = Arc::new(transport);
+        // Keep an explicit sync transport. A bare `Default` is dropped.
+        // Async-only opts the sync path out of the filesystem. It returns `NoSyncTransport`.
+        self.asset_transport_state = match &self.asset_transport_state {
+            AssetTransportState::SyncOnly(sync_transport)
+            | AssetTransportState::Both(sync_transport, _) => {
+                AssetTransportState::Both(sync_transport.clone(), async_transport)
+            }
+            AssetTransportState::Default(_) | AssetTransportState::AsyncOnly(_) => {
+                AssetTransportState::AsyncOnly(async_transport)
+            }
+        };
+    }
+
+    /// Drop the sync asset transport. With no async transport registered this restores the
+    /// default. With one registered the Context becomes async-only, and sync reads return
+    /// [`NoSyncTransport`](crate::asset_transport::AssetTransportError::NoSyncTransport).
+    pub fn clear_asset_transport(&mut self) {
+        self.asset_transport_state = match &self.asset_transport_state {
+            AssetTransportState::Both(_, async_transport) => {
+                AssetTransportState::AsyncOnly(async_transport.clone())
+            }
+            AssetTransportState::SyncOnly(_) => AssetTransportState::Default(OnceLock::new()),
+            // Nothing to clear.
+            AssetTransportState::AsyncOnly(_) | AssetTransportState::Default(_) => return,
+        };
+    }
+
+    /// Drop the async asset transport. An explicit sync transport is kept. Otherwise the
+    /// Context returns to the default (lazy local filesystem, or unconfigured).
+    pub fn clear_asset_transport_async(&mut self) {
+        self.asset_transport_state = match &self.asset_transport_state {
+            AssetTransportState::Both(sync_transport, _) => {
+                AssetTransportState::SyncOnly(sync_transport.clone())
+            }
+            AssetTransportState::AsyncOnly(_) => AssetTransportState::Default(OnceLock::new()),
+            // Nothing to clear.
+            AssetTransportState::SyncOnly(_) | AssetTransportState::Default(_) => return,
+        };
+    }
+
+    /// Returns the sync asset transport (bytes source of an asset).
+    /// Defaults to `LocalAssetTransport` when `file_io` is on,
+    /// [`UnconfiguredAssetTransport`](crate::asset_transport::UnconfiguredAssetTransport) otherwise.
+    ///
+    /// Unlike [`resolver`](Self::resolver), this returns a `Result`: an async-only
+    /// registration leaves no sync transport to hand back.
+    pub fn asset_transport(
+        &self,
+    ) -> std::result::Result<Arc<dyn SyncAssetTransport>, AssetTransportError> {
+        match &self.asset_transport_state {
+            AssetTransportState::SyncOnly(transport) | AssetTransportState::Both(transport, _) => {
+                Ok(transport.clone())
+            }
+            AssetTransportState::AsyncOnly(_) => Err(AssetTransportError::NoSyncTransport),
+            AssetTransportState::Default(once_lock) => Ok(once_lock
+                .get_or_init(|| {
+                    #[cfg(feature = "file_io")]
+                    {
+                        Arc::new(crate::asset_transport::LocalAssetTransport::default())
+                    }
+                    #[cfg(not(feature = "file_io"))]
+                    {
+                        Arc::new(crate::asset_transport::UnconfiguredAssetTransport)
+                    }
+                })
+                .clone()),
+        }
+    }
+
+    /// Returns the async asset transport (bytes source of an asset),
+    /// or `None` when none is registered.
+    pub fn asset_transport_async(&self) -> Option<Arc<dyn AsyncAssetTransport>> {
+        match &self.asset_transport_state {
+            AssetTransportState::AsyncOnly(transport) | AssetTransportState::Both(_, transport) => {
+                Some(transport.clone())
+            }
+            AssetTransportState::Default(_) | AssetTransportState::SyncOnly(_) => None,
         }
     }
 
@@ -944,6 +1083,7 @@ mod tests {
             settings: Settings::default(),
             sync_resolver_state: SyncResolverState::Default(OnceLock::new()),
             async_resolver_state: AsyncResolverState::Default(OnceLock::new()),
+            asset_transport_state: AssetTransportState::Default(OnceLock::new()),
             signer: SignerState::FromSettings(OnceLock::new()),
             async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
             progress_callback: None,
@@ -1021,6 +1161,7 @@ mod tests {
             settings: Settings::default(),
             sync_resolver_state: SyncResolverState::Default(OnceLock::new()),
             async_resolver_state: AsyncResolverState::Default(OnceLock::new()),
+            asset_transport_state: AssetTransportState::Default(OnceLock::new()),
             signer: SignerState::FromSettings(OnceLock::new()),
             async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
             progress_callback: None,
@@ -1709,5 +1850,186 @@ mod tests {
         let mut stream = std::io::Cursor::new(vec![]);
         // HandlerB was registered last, so it should win.
         assert_eq!(reader.read_c2pa(&mut stream).unwrap(), b"B");
+    }
+
+    #[cfg(feature = "file_io")]
+    #[test]
+    fn test_default_uses_filesystem_transport() {
+        use crate::asset_transport::{AssetRef, AssetRequest};
+
+        let context = Context::new();
+        let path = std::path::Path::new("tests/fixtures/C.jpg");
+        let request = AssetRequest::new(AssetRef::Path(path));
+
+        assert!(context.asset_transport().unwrap().open(request).is_ok());
+        assert!(context.asset_transport_async().is_none());
+    }
+
+    #[test]
+    fn test_custom_overwrites_default() {
+        use std::io::{Cursor, Read};
+
+        use crate::asset_transport::{
+            AssetRequest, AssetTransportError, ResolvedAsset, SyncAssetTransport,
+        };
+
+        struct StaticSource;
+        impl SyncAssetTransport for StaticSource {
+            fn open(&self, _: AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError> {
+                Ok(ResolvedAsset::new(Cursor::new(b"from-the-source".to_vec())))
+            }
+        }
+
+        let context = Context::new().with_asset_transport(StaticSource);
+        let request = AssetRequest::from_reference("ignored-by-this-source");
+
+        let mut stream = context
+            .asset_transport()
+            .unwrap()
+            .open(request)
+            .unwrap()
+            .into_read_seek();
+
+        let mut got = String::new();
+        stream.read_to_string(&mut got).unwrap();
+        assert_eq!(got, "from-the-source");
+    }
+
+    #[test]
+    fn test_async_only_no_sync() {
+        use crate::asset_transport::{
+            AssetRequest, AssetTransportError, AsyncAssetTransport, ResolvedAsset,
+        };
+
+        struct AsyncSource;
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+        impl AsyncAssetTransport for AsyncSource {
+            async fn open_async(
+                &self,
+                _: AssetRequest<'_>,
+            ) -> Result<ResolvedAsset, AssetTransportError> {
+                Ok(ResolvedAsset::new(std::io::Cursor::new(b"async".to_vec())))
+            }
+        }
+
+        let context = Context::new().with_asset_transport_async(AsyncSource);
+        assert!(matches!(
+            context.asset_transport(),
+            Err(AssetTransportError::NoSyncTransport)
+        ));
+        assert!(context.asset_transport_async().is_some());
+    }
+
+    #[test]
+    fn test_both_sync_and_async() {
+        use std::io::{Cursor, Read};
+
+        use crate::asset_transport::{
+            AssetRequest, AssetTransportError, AsyncAssetTransport, ResolvedAsset,
+            SyncAssetTransport,
+        };
+
+        struct SyncSource;
+        impl SyncAssetTransport for SyncSource {
+            fn open(&self, _: AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError> {
+                Ok(ResolvedAsset::new(Cursor::new(b"sync".to_vec())))
+            }
+        }
+
+        struct AsyncSource;
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+        impl AsyncAssetTransport for AsyncSource {
+            async fn open_async(
+                &self,
+                _: AssetRequest<'_>,
+            ) -> Result<ResolvedAsset, AssetTransportError> {
+                Ok(ResolvedAsset::new(Cursor::new(b"async".to_vec())))
+            }
+        }
+
+        let request = AssetRequest::from_reference("anything");
+
+        let sync_first = Context::new()
+            .with_asset_transport(SyncSource)
+            .with_asset_transport_async(AsyncSource);
+        let async_first = Context::new()
+            .with_asset_transport_async(AsyncSource)
+            .with_asset_transport(SyncSource);
+
+        for (order, context) in [("sync first", sync_first), ("async first", async_first)] {
+            let mut stream = context
+                .asset_transport()
+                .unwrap()
+                .open(request)
+                .unwrap()
+                .into_read_seek();
+            let mut got = String::new();
+            stream.read_to_string(&mut got).unwrap();
+            assert_eq!(got, "sync", "{order}");
+            assert!(context.asset_transport_async().is_some(), "{order}");
+        }
+    }
+
+    #[test]
+    fn test_clear_transports() {
+        use crate::asset_transport::{
+            AssetRequest, AssetTransportError, AsyncAssetTransport, ResolvedAsset,
+            SyncAssetTransport,
+        };
+
+        struct SyncSource;
+        impl SyncAssetTransport for SyncSource {
+            fn open(&self, _: AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError> {
+                Ok(ResolvedAsset::new(std::io::Cursor::new(b"s".to_vec())))
+            }
+        }
+        struct AsyncSource;
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+        impl AsyncAssetTransport for AsyncSource {
+            async fn open_async(
+                &self,
+                _: AssetRequest<'_>,
+            ) -> Result<ResolvedAsset, AssetTransportError> {
+                Ok(ResolvedAsset::new(std::io::Cursor::new(b"a".to_vec())))
+            }
+        }
+
+        // Both -> AsyncOnly.
+        let mut both = Context::new()
+            .with_asset_transport(SyncSource)
+            .with_asset_transport_async(AsyncSource);
+        both.clear_asset_transport();
+        assert!(matches!(
+            both.asset_transport(),
+            Err(AssetTransportError::NoSyncTransport)
+        ));
+        assert!(both.asset_transport_async().is_some());
+
+        // Both -> SyncOnly.
+        let mut both = Context::new()
+            .with_asset_transport(SyncSource)
+            .with_asset_transport_async(AsyncSource);
+        both.clear_asset_transport_async();
+        assert!(both.asset_transport().is_ok());
+        assert!(both.asset_transport_async().is_none());
+
+        // AsyncOnly -> Default.
+        let mut async_only = Context::new().with_asset_transport_async(AsyncSource);
+        async_only.clear_asset_transport_async();
+        assert!(async_only.asset_transport().is_ok());
+        assert!(async_only.asset_transport_async().is_none());
+
+        // SyncOnly -> Default (default sync transport is restored).
+        let mut sync_only = Context::new().with_asset_transport(SyncSource);
+        sync_only.clear_asset_transport();
+        assert!(sync_only.asset_transport().is_ok());
+
+        // Clearing an untouched Default is a no-op: the default sync transport still serves.
+        let mut untouched = Context::new();
+        untouched.clear_asset_transport();
+        assert!(untouched.asset_transport().is_ok());
     }
 }

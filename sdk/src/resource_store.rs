@@ -23,10 +23,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "file_io")]
 use {
-    crate::utils::path_utils::sanitize_archive_path,
+    crate::utils::path_utils::{resolve_within_root, sanitize_archive_path},
     std::{
         fs::{create_dir_all, read, write},
-        path::{Component, Path, PathBuf},
+        path::{Path, PathBuf},
     },
 };
 
@@ -492,100 +492,6 @@ impl Default for ResourceStore {
     fn default() -> Self {
         ResourceStore::new()
     }
-}
-
-/// Lexically normalize a path by resolving `.` and `..` components without
-/// touching the filesystem.
-///
-/// Leading `..` components that cannot be popped (they would climb above the
-/// path's start, or the path is rooted) are preserved so that an escape above a
-/// relative base remains detectable by a later `starts_with` check.
-#[cfg(feature = "file_io")]
-fn normalize_lexically(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => match out.components().next_back() {
-                // Pop a preceding normal segment.
-                Some(Component::Normal(_)) => {
-                    out.pop();
-                }
-                // Cannot climb above a filesystem/drive root: drop the `..`.
-                Some(Component::RootDir | Component::Prefix(_)) => {}
-                // Nothing to pop (empty, or tail is already `..`): keep it so the
-                // escape stays visible.
-                _ => out.push(".."),
-            },
-            other => out.push(other.as_os_str()),
-        }
-    }
-    out
-}
-
-/// Resolve a resource `path` (an attacker-influenced identifier) against `base`,
-/// confining the result to `root` (the manifest tree). Returns the resolved
-/// path, or an error if the identifier would escape `root`.
-///
-/// Relative identifiers — including `..` — are permitted: a nested ingredient
-/// (whose `base` is a subdirectory) may reference sibling resources one or more
-/// levels up, as long as the resolved path stays inside `root`. What is rejected
-/// is anything that escapes `root`:
-///
-/// 1. Backslashes and absolute paths are refused up front. Archives are
-///    portable, so a Windows-authored `\` separator would otherwise be treated
-///    as a filename on Linux; absolute identifiers are never legitimate.
-/// 2. Lexical containment: `base.join(path)` is normalized (resolving `.`/`..`
-///    without filesystem access) and must remain within the normalized `root`.
-///    This catches escapes even when the target does not exist.
-/// 3. Symlink containment: if the resolved target exists, it is canonicalized
-///    (following symlinks) and re-checked against the canonicalized `root`. A
-///    hostile bundle could ship an innocuously-named symlink pointing outside
-///    the manifest tree; lexical checks alone would not catch that. Both sides
-///    are canonicalized so a legitimately symlinked `root` (e.g. `/tmp` ->
-///    `/private/tmp` on macOS) is not falsely rejected.
-///
-/// A non-existent target passes step 3 (nothing to canonicalize) and is returned
-/// as the joined path; the caller's own read/open then surfaces the not-found
-/// error.
-#[cfg(feature = "file_io")]
-fn resolve_within_root(base: &Path, root: &Path, path: &str) -> Result<PathBuf> {
-    if path.is_empty() {
-        return Err(Error::BadParam(
-            "Empty resource path not allowed".to_string(),
-        ));
-    }
-    if path.contains('\\') {
-        return Err(Error::BadParam(format!(
-            "Backslash not allowed in resource path: {path}"
-        )));
-    }
-    if Path::new(path).is_absolute() {
-        return Err(Error::BadParam(format!(
-            "Absolute resource path not allowed: {path}"
-        )));
-    }
-
-    let joined = base.join(path);
-
-    // Lexical containment (works whether or not the target exists).
-    if !normalize_lexically(&joined).starts_with(normalize_lexically(root)) {
-        return Err(Error::BadParam(format!(
-            "Resource path escapes manifest root: {path}"
-        )));
-    }
-
-    // Symlink containment for targets that exist.
-    if let Ok(canonical_target) = joined.canonicalize() {
-        let canonical_root = root.canonicalize()?;
-        if !canonical_target.starts_with(&canonical_root) {
-            return Err(Error::BadParam(format!(
-                "Resource path escapes manifest root: {path}"
-            )));
-        }
-    }
-
-    Ok(joined)
 }
 
 pub trait ResourceResolver {

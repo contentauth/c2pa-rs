@@ -209,6 +209,9 @@ pub mod crypto;
 #[doc(hidden)]
 pub mod dynamic_assertion;
 
+/// `asset_transport` abstracts where read asset bytes come from: filesystem, network, or custom.
+pub mod asset_transport;
+
 /// The `http` module contains generic traits for configuring sync and async HTTP resolvers.
 pub mod http;
 

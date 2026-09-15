@@ -23,3 +23,5 @@ sdk/target/
 .cursor/rules/manifest.json
 .cursor/rules/security-global/*
 .cursor/rules/security-lang/*
+
+.notes
