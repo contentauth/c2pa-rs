@@ -104,9 +104,7 @@ impl SyncAssetTransport for LocalAssetTransport {
 
         // When a root is configured, open the canonicalized path.
         let to_open: Cow<'_, Path> = match &self.root {
-            Some(root) => {
-                Cow::Owned(ensure_within_root(&candidate, root).map_err(|_| outside())?)
-            }
+            Some(root) => Cow::Owned(ensure_within_root(&candidate, root).map_err(|_| outside())?),
             None => candidate,
         };
 

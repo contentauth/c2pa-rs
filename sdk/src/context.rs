@@ -123,13 +123,10 @@ enum AsyncResolverState {
     Default(OnceLock<Arc<dyn AsyncHttpResolver>>),
 }
 
-/// Which asset transports are configured: sync, async, both, or the lazy default.
-///
-/// One enum owning the transports (rather than a sync state plus a separate async
-/// `Option`) keeps invalid combinations — e.g. "async only" with no async transport —
-/// unrepresentable.
+/// Which asset transports are configured: sync, async, both, or the default.
 enum AssetTransportState {
-    /// Neither registered; the filesystem default is lazily created for the sync path.
+    /// Neither registered: the sync path lazily creates the default transport
+    /// (the local filesystem with `file_io`, or an unconfigured transport).
     Default(OnceLock<Arc<dyn SyncAssetTransport>>),
     /// An explicit sync transport only.
     SyncOnly(Arc<dyn SyncAssetTransport>),

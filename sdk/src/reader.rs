@@ -1725,8 +1725,8 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     fn with_file_reading_checkpoint_is_cancellable() {
         // Cancel at the Reading checkpoint only; let every other phase proceed.
-        let context = Context::new()
-            .with_progress_callback(|phase, _, _| phase != ProgressPhase::Reading);
+        let context =
+            Context::new().with_progress_callback(|phase, _, _| phase != ProgressPhase::Reading);
 
         let result = Reader::from_context(context).with_file("tests/fixtures/CA.jpg");
         assert!(

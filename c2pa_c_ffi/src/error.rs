@@ -144,7 +144,9 @@ impl C2paError {
                 | c2pa::asset_transport::AssetTransportError::NoSyncTransport => {
                     Self::NotConfigured(err_str)
                 }
-                c2pa::asset_transport::AssetTransportError::Timeout { .. } => Self::Timeout(err_str),
+                c2pa::asset_transport::AssetTransportError::Timeout { .. } => {
+                    Self::Timeout(err_str)
+                }
                 c2pa::asset_transport::AssetTransportError::RangeNotSatisfiable { .. } => {
                     Self::RangeNotSatisfiable(err_str)
                 }
