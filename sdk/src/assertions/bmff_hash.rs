@@ -42,6 +42,8 @@ const MAX_MDAT_BOXES: usize = 4;
 /// scenarios
 const MAX_MERKLE_LEAVES_SIZE: u64 = 32 * 1024 * 1024;
 
+#[cfg(feature = "file_io")]
+use crate::asset_transport::{AssetRequest, OwnedAssetRef, SyncAssetTransport};
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
@@ -1561,19 +1563,25 @@ impl BmffHash {
     pub fn verify_stream_segments(
         &self,
         init_stream: &mut dyn ReadSeek,
-        fragment_paths: &Vec<std::path::PathBuf>,
+        fragments: &[OwnedAssetRef],
+        transport: &dyn SyncAssetTransport,
         alg: Option<&str>,
     ) -> crate::Result<()> {
-        self.verify_stream_segments_with_progress(init_stream, fragment_paths, alg, &mut |_, _| {
-            Ok(())
-        })
+        self.verify_stream_segments_with_progress(
+            init_stream,
+            fragments,
+            transport,
+            alg,
+            &mut |_, _| Ok(()),
+        )
     }
 
     #[cfg(feature = "file_io")]
     pub(crate) fn verify_stream_segments_with_progress<F>(
         &self,
         init_stream: &mut dyn ReadSeek,
-        fragment_paths: &Vec<std::path::PathBuf>,
+        fragments: &[OwnedAssetRef],
+        transport: &dyn SyncAssetTransport,
         alg: Option<&str>,
         progress: &mut F,
     ) -> crate::Result<()>
@@ -1602,14 +1610,16 @@ impl BmffHash {
             // inithash cache to prevent duplicate work.
             let mut init_hashes = std::collections::HashSet::new();
 
-            if fragment_paths.is_empty() {
+            if fragments.is_empty() {
                 return Err(Error::HashMismatch("No fragment specified".to_string()));
             }
 
             let mut step = 0u32;
 
-            for fp in fragment_paths {
-                let mut fragment_stream = std::fs::File::open(fp)?;
+            for fragment in fragments {
+                let mut fragment_stream = transport
+                    .open(AssetRequest::new(fragment.as_asset_ref()))?
+                    .into_read_seek();
 
                 // get merkle boxes from segment
                 let c2pa_boxes = read_bmff_c2pa_boxes(&mut fragment_stream)?;

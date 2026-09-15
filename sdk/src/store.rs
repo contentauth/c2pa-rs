@@ -21,6 +21,8 @@ use std::{
 use async_generic::async_generic;
 use log::error;
 
+#[cfg(feature = "file_io")]
+use crate::asset_transport::OwnedAssetRef;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError},
     assertions::{
@@ -1957,7 +1959,7 @@ impl Store {
                     io.object_locations(&format, reader)
                 }
                 #[cfg(feature = "file_io")]
-                ClaimAssetData::StreamFragments(reader, _path_bufs, typ) => {
+                ClaimAssetData::StreamFragments(reader, _refs, typ) => {
                     let format = typ.to_owned();
                     io.object_locations(&format, reader)
                 }
@@ -3866,7 +3868,7 @@ impl Store {
     pub fn load_from_file_and_fragments(
         asset_type: &str,
         init_segment: &mut dyn ReadSeek,
-        fragments: &Vec<PathBuf>,
+        fragments: &[OwnedAssetRef],
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<Store> {
@@ -9443,10 +9445,12 @@ pub mod tests {
             // check all fragments together with the init
             let mut validation_log = StatusTracker::default();
             init_stream.rewind().unwrap();
+            let fragment_refs: Vec<OwnedAssetRef> =
+                fragments.iter().map(|p| OwnedAssetRef::Path(p.clone())).collect();
             let _manifest = Store::load_from_file_and_fragments(
                 "mp4",
                 &mut init_stream,
-                &fragments,
+                &fragment_refs,
                 &mut validation_log,
                 &context,
             )

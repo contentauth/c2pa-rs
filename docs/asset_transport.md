@@ -6,7 +6,7 @@ This guide describes `asset_transport`: the abstraction `Reader` uses to get ass
 
 ## Overview
 
-A transport request, or a request tor ead asset bytes, builds an `AssetRequest` and hands it to whatever transport is configured on the `Context`: the local filesystem by default, or a caller-supplied transport for anything else (an in-memory buffer, a network fetch, a custom store). The reader code does not know which: it gets handed bytes.
+A request to read asset bytes builds an `AssetRequest` and hands it to whatever transport is configured on the `Context`: the local filesystem by default, or a caller-supplied transport for anything else (an in-memory buffer, a network fetch, a custom store). The reader code does not know which: it gets handed bytes.
 
 A transport is the byte-moving layer below a resolver. It moves bytes and does not interpret references. `ResourceResolver`, which resolves manifest-internal identifiers rather than external assets, is a separate thing and stays as is.
 
@@ -46,7 +46,7 @@ let context = Context::new()
     .with_asset_transport_async(MyAsyncTransport);
 ```
 
-`Context` tracks four states, and registering one kind never silently drops the other:
+`Context` tracks four states, and registering one kind never silently drops an explicitly registered transport of the other kind:
 
 ```mermaid
 stateDiagram-v2
@@ -74,6 +74,14 @@ For an asset with an embedded manifest, `with_file` does one open:
 3. Parse a manifest store from the returned bytes.
 
 A cancellation checkpoint sits before and after the primary open, and before the sidecar open, so `Context::cancel()` can interrupt a long transport read between operations.
+
+## The transport and the HTTP resolver
+
+Remote manifest fetching does not go through the asset transport. It goes through the HTTP resolver (`Context::resolver`/`resolver_async`, `http_resolve`), which is request/response shaped: it sends an `http::Request`, reads a capped `Vec` from the response, and applies the redirect and host allow-list hardening. The asset transport is seek shaped: it hands back a seekable stream of asset bytes.
+
+So registering an asset transport does not redirect remote manifest fetching. A caller who wants their own network stack for both registers an async transport for assets and an async HTTP resolver for manifests.
+
+The two relate by layering, not merging. A future HTTP-backed asset transport implements `AsyncAssetTransport` and delegates to `Context::resolver_async` internally, reusing that hardening rather than duplicating it, while manifest fetch stays on the resolver where the response shape fits.
 
 ## Errors
 

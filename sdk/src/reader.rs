@@ -29,7 +29,9 @@ use serde_json::Value;
 use serde_with::skip_serializing_none;
 
 #[cfg(feature = "file_io")]
-use crate::asset_transport::{AssetRef, AssetRequest, AssetRequestKind, AssetTransportError};
+use crate::asset_transport::{
+    AssetRef, AssetRequest, AssetRequestKind, AssetTransportError, OwnedAssetRef, ResolvedAsset,
+};
 #[cfg(feature = "file_io")]
 use crate::utils::io_utils::uri_to_path;
 use crate::{
@@ -277,6 +279,24 @@ impl Reader {
     }
 
     #[cfg(feature = "file_io")]
+    /// Open an asset through the configured transport. Async prefers the async
+    /// transport, falling back to sync when none is registered.
+    #[cfg(feature = "file_io")]
+    #[async_generic]
+    fn open_asset(
+        &self,
+        request: AssetRequest<'_>,
+    ) -> std::result::Result<ResolvedAsset, AssetTransportError> {
+        if _sync {
+            self.context.asset_transport()?.open(request)
+        } else {
+            match self.context.asset_transport_async() {
+                Some(transport) => transport.open_async(request).await,
+                None => self.context.asset_transport()?.open(request),
+            }
+        }
+    }
+
     /// Add manifest store from a file to the [`Reader`].
     /// If the `fetch_remote_manifests` feature is enabled, and the asset refers to a remote manifest, the function fetches a remote manifest.
     ///
@@ -314,27 +334,24 @@ impl Reader {
         // Checkpoints bracket the reads. Total 0: the read count is not known ahead.
         self.context.check_progress(ProgressPhase::Reading, 1, 0)?;
         let resolved = if _sync {
-            self.context.asset_transport()?.open(&request)?
+            self.open_asset(request)?
         } else {
-            match self.context.asset_transport_async() {
-                Some(transport) => transport.open_async(&request).await?,
-                None => self.context.asset_transport()?.open(&request)?,
-            }
+            self.open_asset_async(request).await?
         };
         self.context.check_progress(ProgressPhase::Reading, 2, 0)?;
 
-        let format_hint = resolved.format_hint().map(str::to_string);
+        // The hint is only ignored when the path extension supplies a format.
         let path_fmt = match self.context.io().format_from_path(path) {
-            Some(fmt) => fmt,
-            None => format_hint.clone().unwrap_or_default(),
+            Some(fmt) => {
+                if let Some(hint) = resolved.format_hint() {
+                    log::debug!("format hint {hint:?} ignored; path extension gives {fmt:?}");
+                }
+                fmt
+            }
+            None => resolved.format_hint().unwrap_or_default().to_string(),
         };
         let mut file = resolved.into_read_seek();
         let format = self.context.io().format_from_stream(&path_fmt, &mut file);
-        if let Some(format_hint) = &format_hint {
-            if *format_hint != format {
-                log::debug!("transport format hint {format_hint:?} not used; read as {format:?}");
-            }
-        }
 
         // Try loading from stream first
         let mut validation_log = StatusTracker::default();
@@ -353,17 +370,9 @@ impl Reader {
                 // Cancellation checkpoint between the asset read and the sidecar read.
                 self.context.check_progress(ProgressPhase::Reading, 3, 0)?;
                 let sidecar = if _sync {
-                    self.context
-                        .asset_transport()
-                        .and_then(|t| t.open(&sidecar_request))
+                    self.open_asset(sidecar_request)
                 } else {
-                    match self.context.asset_transport_async() {
-                        Some(transport) => transport.open_async(&sidecar_request).await,
-                        None => self
-                            .context
-                            .asset_transport()
-                            .and_then(|t| t.open(&sidecar_request)),
-                    }
+                    self.open_asset_async(sidecar_request).await
                 };
 
                 let mut manifest_data = Vec::new();
@@ -644,7 +653,7 @@ impl Reader {
     pub fn with_fragmented_files<P: AsRef<std::path::Path>>(
         mut self,
         path: P,
-        fragments: &Vec<std::path::PathBuf>,
+        fragments: &[std::path::PathBuf],
     ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
 
@@ -654,12 +663,22 @@ impl Reader {
             .supported_extension(path.as_ref())
             .ok_or(crate::Error::UnsupportedType)?;
 
-        let mut init_segment = std::fs::File::open(path.as_ref())?;
+        // Init segment and fragments both go through the transport.
+        let mut init_segment = self
+            .context
+            .asset_transport()?
+            .open(AssetRequest::new(AssetRef::Path(path.as_ref())))?
+            .into_read_seek();
+
+        let fragment_refs: Vec<OwnedAssetRef> = fragments
+            .iter()
+            .map(|p| OwnedAssetRef::Path(p.clone()))
+            .collect();
 
         match Store::load_from_file_and_fragments(
             &asset_type,
             &mut init_segment,
-            fragments,
+            &fragment_refs,
             &mut validation_log,
             &self.context,
         ) {
@@ -681,7 +700,7 @@ impl Reader {
     )]
     pub fn from_fragmented_files<P: AsRef<std::path::Path>>(
         path: P,
-        fragments: &Vec<std::path::PathBuf>,
+        fragments: &[std::path::PathBuf],
     ) -> Result<Reader> {
         let settings = crate::settings::get_thread_local_settings();
         let context = Context::new().with_settings(settings)?;
@@ -1555,7 +1574,7 @@ pub mod tests {
         impl SyncAssetTransport for InMemorySource {
             fn open(
                 &self,
-                _: &AssetRequest<'_>,
+                _: AssetRequest<'_>,
             ) -> std::result::Result<ResolvedAsset, AssetTransportError> {
                 Ok(ResolvedAsset::new(Cursor::new(self.0.clone())))
             }
@@ -1580,7 +1599,7 @@ pub mod tests {
         impl SyncAssetTransport for TypedSource {
             fn open(
                 &self,
-                _: &AssetRequest<'_>,
+                _: AssetRequest<'_>,
             ) -> std::result::Result<ResolvedAsset, AssetTransportError> {
                 Ok(ResolvedAsset::new(Cursor::new(self.0.clone()))
                     .with_format_hint("image/svg+xml"))
@@ -1632,7 +1651,7 @@ pub mod tests {
         impl SyncAssetTransport for SidecarSource {
             fn open(
                 &self,
-                request: &AssetRequest<'_>,
+                request: AssetRequest<'_>,
             ) -> std::result::Result<ResolvedAsset, AssetTransportError> {
                 let is_sidecar = match request.reference {
                     AssetRef::Path(p) => p.extension().is_some_and(|e| e == "c2pa"),
@@ -1668,7 +1687,7 @@ pub mod tests {
         impl SyncAssetTransport for DeniedSidecarSource {
             fn open(
                 &self,
-                request: &AssetRequest<'_>,
+                request: AssetRequest<'_>,
             ) -> std::result::Result<ResolvedAsset, AssetTransportError> {
                 match request.reference {
                     AssetRef::Path(p) if p.extension().is_some_and(|e| e == "c2pa") => {
@@ -1709,7 +1728,7 @@ pub mod tests {
         impl SyncAssetTransport for AlwaysSameAsset {
             fn open(
                 &self,
-                _: &AssetRequest<'_>,
+                _: AssetRequest<'_>,
             ) -> std::result::Result<ResolvedAsset, AssetTransportError> {
                 Ok(ResolvedAsset::new(Cursor::new(self.0.clone())))
             }
@@ -1755,7 +1774,7 @@ pub mod tests {
         impl SyncAssetTransport for AlwaysSameAsset {
             fn open(
                 &self,
-                _: &AssetRequest<'_>,
+                _: AssetRequest<'_>,
             ) -> std::result::Result<ResolvedAsset, AssetTransportError> {
                 Ok(ResolvedAsset::new(Cursor::new(self.0.clone())))
             }
@@ -1791,7 +1810,7 @@ pub mod tests {
         impl SyncAssetTransport for NoSidecar {
             fn open(
                 &self,
-                request: &AssetRequest<'_>,
+                request: AssetRequest<'_>,
             ) -> std::result::Result<ResolvedAsset, AssetTransportError> {
                 match (request.reference, request.kind) {
                     (AssetRef::Path(_), AssetRequestKind::Sidecar) => {

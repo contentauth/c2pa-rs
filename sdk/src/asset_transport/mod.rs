@@ -65,12 +65,23 @@ pub enum OwnedAssetRef {
 }
 
 impl OwnedAssetRef {
-    /// Borrow as an [`AssetRef`].
-    pub fn as_ref(&self) -> AssetRef<'_> {
+    /// Borrow as an [`AssetRef`]. Not named `as_ref`: that reads as the [`AsRef`] trait,
+    /// which returns a reference, while this returns a fresh borrowing value.
+    pub fn as_asset_ref(&self) -> AssetRef<'_> {
         match self {
             OwnedAssetRef::Path(p) => AssetRef::Path(p),
             OwnedAssetRef::Uri(u) => AssetRef::Uri(u),
             OwnedAssetRef::Custom(s) => AssetRef::Custom(s),
+        }
+    }
+}
+
+impl std::fmt::Display for AssetRef<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AssetRef::Path(p) => write!(f, "{}", p.display()),
+            AssetRef::Uri(u) => f.write_str(u),
+            AssetRef::Custom(s) => f.write_str(s),
         }
     }
 }
@@ -191,12 +202,12 @@ impl ResolvedAsset {
 /// The surface is read-only today. A write path would arrive as further methods.
 pub trait SyncAssetTransport: MaybeSend + MaybeSync {
     /// Opens the requested asset, returns seekable bytes (position is at the start).
-    fn open(&self, request: &AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError>;
+    fn open(&self, request: AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError>;
 }
 
 /// Transport that can open an asset synchronously.
 impl<T: SyncAssetTransport + ?Sized> SyncAssetTransport for std::sync::Arc<T> {
-    fn open(&self, request: &AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError> {
+    fn open(&self, request: AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError> {
         (**self).open(request)
     }
 }
@@ -209,7 +220,7 @@ pub trait AsyncAssetTransport: MaybeSend + MaybeSync {
     /// Opens the requested asset, returns seekable bytes (position is at the start).
     async fn open_async(
         &self,
-        request: &AssetRequest<'_>,
+        request: AssetRequest<'_>,
     ) -> Result<ResolvedAsset, AssetTransportError>;
 }
 
@@ -219,7 +230,7 @@ pub trait AsyncAssetTransport: MaybeSend + MaybeSync {
 impl<T: AsyncAssetTransport + ?Sized> AsyncAssetTransport for std::sync::Arc<T> {
     async fn open_async(
         &self,
-        request: &AssetRequest<'_>,
+        request: AssetRequest<'_>,
     ) -> Result<ResolvedAsset, AssetTransportError> {
         (**self).open_async(request).await
     }
@@ -252,7 +263,7 @@ mod tests {
     #[test]
     fn asset_ref_owns_and_borrows_back() {
         let owned = AssetRef::Uri("s3://b/k").into_owned();
-        assert_eq!(owned.as_ref(), AssetRef::Uri("s3://b/k"));
+        assert_eq!(owned.as_asset_ref(), AssetRef::Uri("s3://b/k"));
 
         // AssetRequest is Copy.
         let request = AssetRequest::new(AssetRef::Custom("x"));

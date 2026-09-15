@@ -595,31 +595,30 @@ impl Context {
         };
     }
 
-    /// Drop the sync asset transport, falling back to the default.
+    /// Drop the sync asset transport. With no async transport registered this restores the
+    /// default. With one registered the Context becomes async-only, and sync reads return
+    /// [`NoSyncTransport`](crate::asset_transport::AssetTransportError::NoSyncTransport).
     pub fn clear_asset_transport(&mut self) {
         self.asset_transport_state = match &self.asset_transport_state {
             AssetTransportState::Both(_, async_transport) => {
                 AssetTransportState::AsyncOnly(async_transport.clone())
             }
             AssetTransportState::SyncOnly(_) => AssetTransportState::Default(OnceLock::new()),
-            AssetTransportState::AsyncOnly(async_transport) => {
-                AssetTransportState::AsyncOnly(async_transport.clone())
-            }
-            AssetTransportState::Default(_) => AssetTransportState::Default(OnceLock::new()),
+            // Nothing to clear.
+            AssetTransportState::AsyncOnly(_) | AssetTransportState::Default(_) => return,
         };
     }
 
-    /// Drop the async asset transport.
+    /// Drop the async asset transport. An explicit sync transport is kept. Otherwise the
+    /// Context returns to the default (lazy local filesystem, or unconfigured).
     pub fn clear_asset_transport_async(&mut self) {
         self.asset_transport_state = match &self.asset_transport_state {
             AssetTransportState::Both(sync_transport, _) => {
                 AssetTransportState::SyncOnly(sync_transport.clone())
             }
             AssetTransportState::AsyncOnly(_) => AssetTransportState::Default(OnceLock::new()),
-            AssetTransportState::SyncOnly(sync_transport) => {
-                AssetTransportState::SyncOnly(sync_transport.clone())
-            }
-            AssetTransportState::Default(_) => AssetTransportState::Default(OnceLock::new()),
+            // Nothing to clear.
+            AssetTransportState::SyncOnly(_) | AssetTransportState::Default(_) => return,
         };
     }
 
@@ -1862,7 +1861,7 @@ mod tests {
         let path = std::path::Path::new("tests/fixtures/C.jpg");
         let request = AssetRequest::new(AssetRef::Path(path));
 
-        assert!(context.asset_transport().unwrap().open(&request).is_ok());
+        assert!(context.asset_transport().unwrap().open(request).is_ok());
         assert!(context.asset_transport_async().is_none());
     }
 
@@ -1876,7 +1875,7 @@ mod tests {
 
         struct StaticSource;
         impl SyncAssetTransport for StaticSource {
-            fn open(&self, _: &AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError> {
+            fn open(&self, _: AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError> {
                 Ok(ResolvedAsset::new(Cursor::new(b"from-the-source".to_vec())))
             }
         }
@@ -1887,7 +1886,7 @@ mod tests {
         let mut stream = context
             .asset_transport()
             .unwrap()
-            .open(&request)
+            .open(request)
             .unwrap()
             .into_read_seek();
 
@@ -1908,7 +1907,7 @@ mod tests {
         impl AsyncAssetTransport for AsyncSource {
             async fn open_async(
                 &self,
-                _: &AssetRequest<'_>,
+                _: AssetRequest<'_>,
             ) -> Result<ResolvedAsset, AssetTransportError> {
                 Ok(ResolvedAsset::new(std::io::Cursor::new(b"async".to_vec())))
             }
@@ -1933,7 +1932,7 @@ mod tests {
 
         struct SyncSource;
         impl SyncAssetTransport for SyncSource {
-            fn open(&self, _: &AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError> {
+            fn open(&self, _: AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError> {
                 Ok(ResolvedAsset::new(Cursor::new(b"sync".to_vec())))
             }
         }
@@ -1944,7 +1943,7 @@ mod tests {
         impl AsyncAssetTransport for AsyncSource {
             async fn open_async(
                 &self,
-                _: &AssetRequest<'_>,
+                _: AssetRequest<'_>,
             ) -> Result<ResolvedAsset, AssetTransportError> {
                 Ok(ResolvedAsset::new(Cursor::new(b"async".to_vec())))
             }
@@ -1963,7 +1962,7 @@ mod tests {
             let mut stream = context
                 .asset_transport()
                 .unwrap()
-                .open(&request)
+                .open(request)
                 .unwrap()
                 .into_read_seek();
             let mut got = String::new();
@@ -1982,7 +1981,7 @@ mod tests {
 
         struct SyncSource;
         impl SyncAssetTransport for SyncSource {
-            fn open(&self, _: &AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError> {
+            fn open(&self, _: AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError> {
                 Ok(ResolvedAsset::new(std::io::Cursor::new(b"s".to_vec())))
             }
         }
@@ -1992,7 +1991,7 @@ mod tests {
         impl AsyncAssetTransport for AsyncSource {
             async fn open_async(
                 &self,
-                _: &AssetRequest<'_>,
+                _: AssetRequest<'_>,
             ) -> Result<ResolvedAsset, AssetTransportError> {
                 Ok(ResolvedAsset::new(std::io::Cursor::new(b"a".to_vec())))
             }
@@ -2027,5 +2026,10 @@ mod tests {
         let mut sync_only = Context::new().with_asset_transport(SyncSource);
         sync_only.clear_asset_transport();
         assert!(sync_only.asset_transport().is_ok());
+
+        // Clearing an untouched Default is a no-op: the default sync transport still serves.
+        let mut untouched = Context::new();
+        untouched.clear_asset_transport();
+        assert!(untouched.asset_transport().is_ok());
     }
 }

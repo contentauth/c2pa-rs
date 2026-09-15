@@ -57,15 +57,10 @@ impl LocalAssetTransport {
 #[cfg(feature = "file_io")]
 impl SyncAssetTransport for LocalAssetTransport {
     /// Request to open an asset (and read its bytes).
-    fn open(&self, request: &AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError> {
+    fn open(&self, request: AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError> {
         // Built only on error paths.
-        let reference = || match request.reference {
-            AssetRef::Path(p) => p.to_string_lossy().into_owned(),
-            AssetRef::Custom(s) => s.to_string(),
-            AssetRef::Uri(u) => u.to_string(),
-        };
         let outside = || AssetTransportError::OutsideRoot {
-            reference: reference(),
+            reference: request.reference.to_string(),
         };
 
         // Candidate path resolution.
@@ -110,7 +105,7 @@ impl SyncAssetTransport for LocalAssetTransport {
         };
 
         let file = std::fs::File::open(&to_open)
-            .map_err(|e| AssetTransportError::from_io(e, &reference()))?;
+            .map_err(|e| AssetTransportError::from_io(e, &request.reference.to_string()))?;
         Ok(ResolvedAsset::new(file))
     }
 }
@@ -121,7 +116,7 @@ impl SyncAssetTransport for LocalAssetTransport {
 pub struct UnconfiguredAssetTransport;
 
 impl SyncAssetTransport for UnconfiguredAssetTransport {
-    fn open(&self, _request: &AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError> {
+    fn open(&self, _request: AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError> {
         Err(AssetTransportError::NotConfigured)
     }
 }
@@ -144,7 +139,7 @@ mod tests {
         let request = AssetRequest::new(AssetRef::Path(path));
 
         let mut stream = LocalAssetTransport::default()
-            .open(&request)
+            .open(request)
             .unwrap()
             .into_read_seek();
 
@@ -158,7 +153,7 @@ mod tests {
     fn default_filesystem_transport_handles_custom_reference_as_path() {
         let request = AssetRequest::from_reference("tests/fixtures/C.jpg");
         assert!(matches!(request.reference, AssetRef::Custom(_)));
-        assert!(LocalAssetTransport::default().open(&request).is_ok());
+        assert!(LocalAssetTransport::default().open(request).is_ok());
     }
 
     #[cfg(feature = "file_io")]
@@ -171,7 +166,7 @@ mod tests {
 
         let request = AssetRequest::from_reference(&uri);
         assert!(matches!(request.reference, AssetRef::Uri(_)));
-        assert!(LocalAssetTransport::default().open(&request).is_ok());
+        assert!(LocalAssetTransport::default().open(request).is_ok());
     }
 
     #[cfg(feature = "file_io")]
@@ -180,7 +175,7 @@ mod tests {
         let request = AssetRequest::from_reference("../../etc/passwd");
         assert!(matches!(request.reference, AssetRef::Custom(_)));
         assert!(matches!(
-            LocalAssetTransport::default().open(&request),
+            LocalAssetTransport::default().open(request),
             Err(AssetTransportError::OutsideRoot { .. })
         ));
     }
@@ -194,7 +189,7 @@ mod tests {
 
         let request = AssetRequest::from_reference(absolute.to_str().unwrap());
         assert!(matches!(request.reference, AssetRef::Custom(_)));
-        assert!(LocalAssetTransport::default().open(&request).is_ok());
+        assert!(LocalAssetTransport::default().open(request).is_ok());
     }
     #[cfg(feature = "file_io")]
     #[test]
@@ -206,7 +201,7 @@ mod tests {
         let transport = LocalAssetTransport::rooted_at(dir.path());
         let request = AssetRequest::from_reference("sub/../asset.jpg");
 
-        assert!(transport.open(&request).is_ok());
+        assert!(transport.open(request).is_ok());
     }
 
     #[cfg(feature = "file_io")]
@@ -217,7 +212,7 @@ mod tests {
 
         let request = AssetRequest::from_reference("../../etc/passwd");
         assert!(matches!(
-            transport.open(&request),
+            transport.open(request),
             Err(AssetTransportError::OutsideRoot { .. })
         ));
     }
@@ -236,7 +231,7 @@ mod tests {
         let request = AssetRequest::from_reference("innocent.jpg");
 
         assert!(matches!(
-            transport.open(&request),
+            transport.open(request),
             Err(AssetTransportError::OutsideRoot { .. })
         ));
     }
@@ -263,7 +258,7 @@ mod tests {
 
         assert!(
             transport
-                .open(&AssetRequest::new(AssetRef::Path(&asset)))
+                .open(AssetRequest::new(AssetRef::Path(&asset)))
                 .is_ok(),
             "an absolute path inside a relative root should open"
         );
@@ -303,7 +298,7 @@ mod tests {
 
         let request = AssetRequest::new(AssetRef::Path(&secret));
         assert!(matches!(
-            transport.open(&request),
+            transport.open(request),
             Err(AssetTransportError::OutsideRoot { .. })
         ));
     }
@@ -317,7 +312,7 @@ mod tests {
 
         let request = AssetRequest::new(AssetRef::Path(&asset));
         assert!(
-            LocalAssetTransport::default().open(&request).is_ok(),
+            LocalAssetTransport::default().open(request).is_ok(),
             "an unrooted transport has no root to confine against"
         );
     }
@@ -347,7 +342,7 @@ mod tests {
         let request = AssetRequest::new(AssetRef::Uri(&uri));
         assert!(
             matches!(
-                transport.open(&request),
+                transport.open(request),
                 Err(AssetTransportError::OutsideRoot { .. })
             ),
             "a file: URI outside the root must not be readable from a rooted transport"
@@ -359,7 +354,7 @@ mod tests {
     fn default_filesystem_transport_rejects_non_file_uris() {
         let request = AssetRequest::new(AssetRef::Uri("https://example.com/a.jpg"));
         assert!(matches!(
-            LocalAssetTransport::default().open(&request),
+            LocalAssetTransport::default().open(request),
             Err(AssetTransportError::UnsupportedReference)
         ));
     }
@@ -370,7 +365,7 @@ mod tests {
         let path = std::path::Path::new("tests/fixtures/does-not-exist.jpg");
         let request = AssetRequest::new(AssetRef::Path(path));
 
-        let err = LocalAssetTransport::default().open(&request).err();
+        let err = LocalAssetTransport::default().open(request).err();
         let Some(AssetTransportError::NotFound { reference }) = err else {
             unreachable!("expected NotFound, got {err:?}");
         };
@@ -388,7 +383,7 @@ mod tests {
         let transport = LocalAssetTransport::rooted_at(root.path());
 
         let request = AssetRequest::from_reference("missing.jpg");
-        let err = transport.open(&request).err();
+        let err = transport.open(request).err();
         let Some(AssetTransportError::NotFound { reference }) = err else {
             unreachable!("expected NotFound, got {err:?}");
         };
@@ -404,7 +399,7 @@ mod tests {
 
         // A reference that escapes the root once joined.
         let request = AssetRequest::from_reference("../outside.jpg");
-        let err = transport.open(&request).err();
+        let err = transport.open(request).err();
         let Some(AssetTransportError::OutsideRoot { reference }) = err else {
             unreachable!("expected OutsideRoot, got {err:?}");
         };

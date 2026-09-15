@@ -1358,8 +1358,10 @@ fn fragment_files_with_no_init_hash_is_rejected() {
     }]);
 
     let mut init_stream = Cursor::new(ftyp);
+    let transport = c2pa::asset_transport::LocalAssetTransport::default();
+    let fragments = vec![c2pa::asset_transport::OwnedAssetRef::Path(frag_path)];
     let err = bmff_hash
-        .verify_stream_segments(&mut init_stream, &vec![frag_path], None)
+        .verify_stream_segments(&mut init_stream, &fragments, &transport, None)
         .expect_err("a fragment matching an initHash-less MerkleMap must be rejected");
     assert!(
         matches!(err, c2pa::Error::C2PAValidation(_)),

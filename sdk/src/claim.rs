@@ -25,6 +25,8 @@ use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
+#[cfg(feature = "file_io")]
+use crate::asset_transport::OwnedAssetRef;
 use crate::{
     assertion::{
         get_thumbnail_image_type, get_thumbnail_instance, get_thumbnail_type, Assertion,
@@ -116,7 +118,7 @@ pub enum ClaimAssetData<'a> {
     Stream(&'a mut dyn ReadSeek, &'a str),
     StreamFragment(&'a mut dyn ReadSeek, &'a mut dyn ReadSeek, &'a str),
     #[cfg(feature = "file_io")]
-    StreamFragments(&'a mut dyn ReadSeek, &'a Vec<std::path::PathBuf>, &'a str),
+    StreamFragments(&'a mut dyn ReadSeek, &'a [OwnedAssetRef], &'a str),
 }
 
 impl ClaimAssetData<'_> {
@@ -3140,13 +3142,16 @@ impl Claim {
                                 &mut cb,
                             ),
                         #[cfg(feature = "file_io")]
-                        ClaimAssetData::StreamFragments(initseg_data, fragment_paths, _) => dh
-                            .verify_stream_segments_with_progress(
+                        ClaimAssetData::StreamFragments(initseg_data, fragments, _) => {
+                            let transport = context.asset_transport()?;
+                            dh.verify_stream_segments_with_progress(
                                 *initseg_data,
-                                fragment_paths,
+                                fragments,
+                                transport.as_ref(),
                                 Some(claim.alg()),
                                 &mut cb,
-                            ),
+                            )
+                        }
                     };
 
                     match hash_result {
