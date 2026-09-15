@@ -43,7 +43,9 @@ const MAX_MDAT_BOXES: usize = 4;
 const MAX_MERKLE_LEAVES_SIZE: u64 = 32 * 1024 * 1024;
 
 #[cfg(feature = "file_io")]
-use crate::asset_transport::{AssetRequest, LocalAssetTransport, OwnedAssetRef, SyncAssetTransport};
+use crate::asset_transport::{
+    AssetRequest, LocalAssetTransport, OwnedAssetRef, SyncAssetTransport,
+};
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
