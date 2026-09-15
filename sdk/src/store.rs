@@ -9445,8 +9445,10 @@ pub mod tests {
             // check all fragments together with the init
             let mut validation_log = StatusTracker::default();
             init_stream.rewind().unwrap();
-            let fragment_refs: Vec<OwnedAssetRef> =
-                fragments.iter().map(|p| OwnedAssetRef::Path(p.clone())).collect();
+            let fragment_refs: Vec<OwnedAssetRef> = fragments
+                .iter()
+                .map(|p| OwnedAssetRef::Path(p.clone()))
+                .collect();
             let _manifest = Store::load_from_file_and_fragments(
                 "mp4",
                 &mut init_stream,

@@ -326,6 +326,7 @@ impl Reader {
     ///
     /// # Note
     /// [CAWG identity assertions](https://cawg.io/identity/) require async calls for validation.
+    #[cfg(feature = "file_io")]
     #[async_generic]
     pub fn with_file<P: AsRef<std::path::Path>>(mut self, path: P) -> Result<Self> {
         let path = path.as_ref();
