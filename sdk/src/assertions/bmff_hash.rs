@@ -43,7 +43,7 @@ const MAX_MDAT_BOXES: usize = 4;
 const MAX_MERKLE_LEAVES_SIZE: u64 = 32 * 1024 * 1024;
 
 #[cfg(feature = "file_io")]
-use crate::asset_transport::{AssetRequest, OwnedAssetRef, SyncAssetTransport};
+use crate::asset_transport::{AssetRequest, LocalAssetTransport, OwnedAssetRef, SyncAssetTransport};
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
@@ -1559,19 +1559,24 @@ impl BmffHash {
         Ok(())
     }
 
-    // Test-only wrapper. Production verifies through `verify_stream_segments_with_progress`.
-    #[cfg(all(test, feature = "file_io"))]
-    pub(crate) fn verify_stream_segments(
+    /// Verify fragments supplied as filesystem paths, through the local filesystem.
+    /// For fragments served by a configured transport, read through
+    /// [`Reader::with_fragmented_files`](crate::Reader::with_fragmented_files).
+    #[cfg(feature = "file_io")]
+    pub fn verify_stream_segments(
         &self,
         init_stream: &mut dyn ReadSeek,
-        fragments: &[OwnedAssetRef],
-        transport: &dyn SyncAssetTransport,
+        fragment_paths: &[std::path::PathBuf],
         alg: Option<&str>,
     ) -> crate::Result<()> {
+        let refs: Vec<OwnedAssetRef> = fragment_paths
+            .iter()
+            .map(|p| OwnedAssetRef::Path(p.clone()))
+            .collect();
         self.verify_stream_segments_with_progress(
             init_stream,
-            fragments,
-            transport,
+            &refs,
+            &LocalAssetTransport::default(),
             alg,
             &mut |_, _| Ok(()),
         )
@@ -3187,8 +3192,6 @@ mod bmff_hash_tests {
     fn fragment_files_with_no_init_hash_is_rejected() {
         use std::io::Write;
 
-        use crate::asset_transport::{LocalAssetTransport, OwnedAssetRef};
-
         let ftyp = build_box(b"ftyp", b"isom\x00\x00\x00\x00isom");
         let fragment = [
             ftyp.clone(),
@@ -3197,7 +3200,7 @@ mod bmff_hash_tests {
         ]
         .concat();
 
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::utils::io_utils::tempdirectory().unwrap();
         let frag_path = dir.path().join("frag.m4s");
         std::fs::File::create(&frag_path)
             .unwrap()
@@ -3218,10 +3221,9 @@ mod bmff_hash_tests {
         }]);
 
         let mut init_stream = Cursor::new(ftyp);
-        let transport = LocalAssetTransport::default();
-        let fragments = vec![OwnedAssetRef::Path(frag_path)];
+        let fragments = vec![frag_path];
         let err = bmff_hash
-            .verify_stream_segments(&mut init_stream, &fragments, &transport, None)
+            .verify_stream_segments(&mut init_stream, &fragments, None)
             .expect_err("a fragment matching an initHash-less MerkleMap must be rejected");
         assert!(
             matches!(err, crate::Error::C2PAValidation(_)),

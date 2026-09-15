@@ -3872,19 +3872,18 @@ impl Store {
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<Store> {
-        // One transport from the Context serves every fragment.
-        let transport = context.asset_transport()?;
-        let fragment_refs: Vec<OwnedAssetRef> = fragments
-            .iter()
-            .map(|p| OwnedAssetRef::Path(p.clone()))
-            .collect();
-
         let manifest_bytes = Store::load_jumbf_from_stream(asset_type, init_segment, context)?.0;
 
         let store = Store::from_jumbf_with_context(&manifest_bytes, validation_log, context)?;
-        let verify = context.settings().verify.verify_after_reading;
 
-        if verify {
+        if context.settings().verify.verify_after_reading {
+            // One transport from the Context serves every fragment.
+            let transport = context.asset_transport()?;
+            let fragment_refs: Vec<OwnedAssetRef> = fragments
+                .iter()
+                .map(|p| OwnedAssetRef::Path(p.clone()))
+                .collect();
+
             init_segment.rewind()?;
             // verify store and claims
             Store::verify_store(
