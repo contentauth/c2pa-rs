@@ -21,7 +21,6 @@ use std::{
 use async_generic::async_generic;
 use log::error;
 
-#[cfg(feature = "file_io")]
 use crate::asset_transport::OwnedAssetRef;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError},
@@ -1958,7 +1957,6 @@ impl Store {
                     let format = typ.to_owned();
                     io.object_locations(&format, reader)
                 }
-                #[cfg(feature = "file_io")]
                 ClaimAssetData::StreamFragments(reader, _refs, _transport, typ) => {
                     let format = typ.to_owned();
                     io.object_locations(&format, reader)
@@ -3858,45 +3856,55 @@ impl Store {
         Ok(store)
     }
 
-    /// Load Store from a init and fragments
+    /// Load Store from an initialization segment and a list of fragment references.
+    ///
     /// asset_type: asset extension or mime type
-    /// init_segment: reader for the file containing the initialization segments
-    /// fragments: list of paths to the fragments to verify
-    /// verify: if true will run verification checks when loading, all fragments must verify for Ok status
+    /// init_segment: reader over the initialization segment
+    /// fragments: references the `Context`'s transport resolves to fragment bytes
     /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
-    #[cfg(feature = "file_io")]
-    pub fn load_from_file_and_fragments(
+    #[async_generic(async_signature(
         asset_type: &str,
         init_segment: &mut dyn ReadSeek,
-        fragments: &[PathBuf],
+        fragments: &[OwnedAssetRef],
+        validation_log: &mut StatusTracker,
+        context: &Context
+    ))]
+    pub fn load_from_stream_and_fragment_refs(
+        asset_type: &str,
+        init_segment: &mut dyn ReadSeek,
+        fragments: &[OwnedAssetRef],
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<Store> {
-        let manifest_bytes = Store::load_jumbf_from_stream(asset_type, init_segment, context)?.0;
+        let manifest_bytes = if _sync {
+            Store::load_jumbf_from_stream(asset_type, init_segment, context)?.0
+        } else {
+            Store::load_jumbf_from_stream_async(asset_type, init_segment, context)
+                .await?
+                .0
+        };
 
         let store = Store::from_jumbf_with_context(&manifest_bytes, validation_log, context)?;
 
         if context.settings().verify.verify_after_reading {
-            // One transport from the Context serves every fragment.
+            // `verify_stream_segments_with_progress` takes `&dyn SyncAssetTransport`, so
+            // both paths need the sync transport. An async-only `Context` fails here.
             let transport = context.asset_transport()?;
-            let fragment_refs: Vec<OwnedAssetRef> = fragments
-                .iter()
-                .map(|p| OwnedAssetRef::Path(p.clone()))
-                .collect();
 
             init_segment.rewind()?;
             // verify store and claims
-            Store::verify_store(
-                &store,
-                Some(&mut ClaimAssetData::StreamFragments(
-                    init_segment,
-                    &fragment_refs,
-                    transport.as_ref(),
-                    asset_type,
-                )),
-                validation_log,
-                context,
-            )?;
+            let mut asset_data = ClaimAssetData::StreamFragments(
+                init_segment,
+                fragments,
+                transport.as_ref(),
+                asset_type,
+            );
+            if _sync {
+                Store::verify_store(&store, Some(&mut asset_data), validation_log, context)?;
+            } else {
+                Store::verify_store_async(&store, Some(&mut asset_data), validation_log, context)
+                    .await?;
+            }
         }
 
         Ok(store)
@@ -9452,10 +9460,14 @@ pub mod tests {
             // check all fragments together with the init
             let mut validation_log = StatusTracker::default();
             init_stream.rewind().unwrap();
-            let _manifest = Store::load_from_file_and_fragments(
+            let fragment_refs: Vec<OwnedAssetRef> = fragments
+                .iter()
+                .map(|p| OwnedAssetRef::Path(p.clone()))
+                .collect();
+            let _manifest = Store::load_from_stream_and_fragment_refs(
                 "mp4",
                 &mut init_stream,
-                &fragments,
+                &fragment_refs,
                 &mut validation_log,
                 &context,
             )

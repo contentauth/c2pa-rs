@@ -28,9 +28,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_with::skip_serializing_none;
 
-#[cfg(feature = "file_io")]
 use crate::asset_transport::{
-    AssetRef, AssetRequest, AssetRequestKind, AssetTransportError, ResolvedAsset,
+    AssetRef, AssetRequest, AssetRequestKind, AssetTransportError, OwnedAssetRef, ResolvedAsset,
 };
 #[cfg(feature = "file_io")]
 use crate::utils::io_utils::uri_to_path;
@@ -280,7 +279,6 @@ impl Reader {
 
     /// Open an asset through the configured transport. Async prefers the async
     /// transport, falling back to sync when none is registered.
-    #[cfg(feature = "file_io")]
     #[async_generic]
     fn open_asset(
         &self,
@@ -327,9 +325,33 @@ impl Reader {
     /// [CAWG identity assertions](https://cawg.io/identity/) require async calls for validation.
     #[cfg(feature = "file_io")]
     #[async_generic]
-    pub fn with_file<P: AsRef<std::path::Path>>(mut self, path: P) -> Result<Self> {
-        let path = path.as_ref();
-        let request = AssetRequest::new(AssetRef::Path(path));
+    pub fn with_file<P: AsRef<std::path::Path>>(self, path: P) -> Result<Self> {
+        let reference = AssetRef::Path(path.as_ref());
+        if _sync {
+            self.with_asset(reference, None)
+        } else {
+            self.with_asset_async(reference, None).await
+        }
+    }
+
+    /// Add a manifest store read through the [`Context`]'s asset transport.
+    ///
+    /// Available without `file_io`: the transport interprets the reference.
+    ///
+    /// # Arguments
+    /// * `reference` - What to open: a path, a URI, or a transport-defined reference.
+    /// * `format` - MIME type or extension. Precedence is detected magic bytes, then a
+    ///   path extension, then `format`, then the transport's `format_hint()`.
+    ///
+    /// # Sidecar
+    /// When no embedded manifest is found, a second request goes out with
+    /// [`AssetRequestKind::Sidecar`]. A path targets `<asset>.c2pa`. Any other reference
+    /// is re-sent unchanged, so the transport decides what its sidecar is. A transport
+    /// that serves no sidecar returns [`AssetTransportError::UnsupportedReference`],
+    /// read here as "no manifest".
+    #[async_generic]
+    pub fn with_asset(mut self, reference: AssetRef<'_>, format: Option<&str>) -> Result<Self> {
+        let request = AssetRequest::new(reference);
 
         self.context.check_progress(ProgressPhase::Reading, 1, 0)?;
         let resolved = if _sync {
@@ -339,16 +361,15 @@ impl Reader {
         };
         self.context.check_progress(ProgressPhase::Reading, 2, 0)?;
 
-        // The hint is ignored when the file extension has an extension/format.
-        let path_fmt = match self.context.io().format_from_path(path) {
-            Some(fmt) => {
-                if let Some(hint) = resolved.format_hint() {
-                    log::debug!("format hint {hint:?} ignored; path extension gives {fmt:?}");
-                }
-                fmt
-            }
-            None => resolved.format_hint().unwrap_or_default().to_string(),
-        };
+        // A path extension outranks the argument, which outranks the transport hint.
+        // `format_from_stream` then lets detected magic bytes win over all three.
+        let path_fmt = match reference {
+            AssetRef::Path(p) => self.context.io().format_from_path(p),
+            _ => None,
+        }
+        .or_else(|| format.map(str::to_owned))
+        .or_else(|| resolved.format_hint().map(str::to_owned))
+        .unwrap_or_default();
         let mut file = resolved.try_into_read_seek()?;
         // Enforce stream at position 0.
         file.rewind()?;
@@ -365,8 +386,8 @@ impl Reader {
         match store {
             Err(Error::JumbfNotFound) => {
                 // No embedded manifest: try a sidecar via the same transport.
-                let sidecar_path = path.with_extension("c2pa");
-                let sidecar_request = AssetRequest::new(AssetRef::Path(&sidecar_path))
+                let sidecar_ref = sidecar_reference(reference);
+                let sidecar_request = AssetRequest::new(sidecar_ref.as_asset_ref())
                     .with_kind(AssetRequestKind::Sidecar);
                 // Cancellation checkpoint between the asset read and the sidecar read.
                 self.context.check_progress(ProgressPhase::Reading, 3, 0)?;
@@ -433,6 +454,31 @@ impl Reader {
                 Ok(self)
             }
             Err(e) => Err(e),
+        }
+    }
+
+    /// [`with_asset`](Self::with_asset), addressing the asset by string.
+    ///
+    /// A recognized URI scheme becomes [`AssetRef::Uri`]. Anything else becomes
+    /// [`AssetRef::Custom`], which the transport treats as untrusted.
+    ///
+    /// # Arguments
+    /// * `format` - MIME type or extension. `None` leaves the format to detection and the
+    ///   transport's `format_hint()`.
+    /// * `reference` - The asset reference to resolve.
+    ///
+    /// # Filesystem access
+    /// A string is never an [`AssetRef::Path`], and the default
+    /// [`LocalAssetTransport`](crate::asset_transport::LocalAssetTransport) opens
+    /// `Custom` as a path. So under `file_io` a bare path here still reads a local file.
+    /// Build the transport with `LocalAssetTransport::rooted_at` to confine it.
+    #[async_generic]
+    pub fn with_reference(self, format: Option<&str>, reference: &str) -> Result<Self> {
+        let request = AssetRequest::from_reference(reference);
+        if _sync {
+            self.with_asset(request.reference, format)
+        } else {
+            self.with_asset_async(request.reference, format).await
         }
     }
 
@@ -655,44 +701,132 @@ impl Reader {
     /// Returns an [`Error`] when the manifest data cannot be read from the specified files.
     #[cfg(feature = "file_io")]
     pub fn with_fragmented_files<P: AsRef<std::path::Path>>(
-        mut self,
+        self,
         path: P,
         fragments: &[std::path::PathBuf],
     ) -> Result<Self> {
-        let mut validation_log = StatusTracker::default();
-
         let asset_type = self
             .context
             .io()
             .supported_extension(path.as_ref())
             .ok_or(crate::Error::UnsupportedType)?;
+        let fragment_refs: Vec<OwnedAssetRef> = fragments
+            .iter()
+            .map(|p| OwnedAssetRef::Path(p.clone()))
+            .collect();
 
-        // One transport serves the init segment and the fragments.
-        let transport = self.context.asset_transport()?;
+        self.with_fragment_refs(&asset_type, AssetRef::Path(path.as_ref()), &fragment_refs)
+    }
+
+    /// Add a manifest store from a fragmented asset addressed by references, read
+    /// through the [`Context`]'s asset transport.
+    ///
+    /// Available without `file_io`. Each reference resolves the way
+    /// [`with_reference`](Self::with_reference) resolves one.
+    ///
+    /// # Arguments
+    /// * `format` - MIME type or extension of the initialization segment. `None` falls
+    ///   back to the transport's `format_hint()`.
+    /// * `init_reference` - Reference to the initialization segment.
+    /// * `fragment_references` - Fragment references, in order.
+    ///
+    /// # Errors
+    /// Fragment verification hashes through a blocking transport, so an async-only
+    /// [`Context`] returns [`AssetTransportError::NoSyncTransport`] from both this method
+    /// and its async twin.
+    #[async_generic]
+    pub fn with_fragment_references(
+        self,
+        format: Option<&str>,
+        init_reference: &str,
+        fragment_references: &[String],
+    ) -> Result<Self> {
+        // Fragments verify through the sync transport. Resolve it before any bytes move,
+        // so an async-only Context fails here rather than mid-verification.
+        self.context.asset_transport()?;
+
+        let init_request = AssetRequest::from_reference(init_reference);
+        let fragment_refs: Vec<OwnedAssetRef> = fragment_references
+            .iter()
+            .map(|r| AssetRequest::from_reference(r).reference.into_owned())
+            .collect();
+
+        let asset_type = match format {
+            Some(format) => format.to_owned(),
+            None => {
+                let resolved = if _sync {
+                    self.open_asset(init_request)?
+                } else {
+                    self.open_asset_async(init_request).await?
+                };
+                resolved
+                    .format_hint()
+                    .ok_or(crate::Error::UnsupportedType)?
+                    .to_owned()
+            }
+        };
+
+        if _sync {
+            self.with_fragment_refs(&asset_type, init_request.reference, &fragment_refs)
+        } else {
+            self.with_fragment_refs_async(&asset_type, init_request.reference, &fragment_refs)
+                .await
+        }
+    }
+
+    /// Shared body of [`with_fragmented_files`](Self::with_fragmented_files) and
+    /// [`with_fragment_references`](Self::with_fragment_references).
+    ///
+    /// Neither is defined over the other: `PathBuf` to `&str` is lossy on a non-UTF-8
+    /// path, and a `&str` is never an [`AssetRef::Path`].
+    #[async_generic]
+    fn with_fragment_refs(
+        mut self,
+        asset_type: &str,
+        init_reference: AssetRef<'_>,
+        fragments: &[OwnedAssetRef],
+    ) -> Result<Self> {
+        let mut validation_log = StatusTracker::default();
 
         self.context.check_progress(ProgressPhase::Reading, 1, 0)?;
 
-        let mut init_segment = transport
-            .open(AssetRequest::new(AssetRef::Path(path.as_ref())))?
-            .try_into_read_seek()?;
+        let init_request = AssetRequest::new(init_reference);
+        let resolved = if _sync {
+            self.open_asset(init_request)?
+        } else {
+            self.open_asset_async(init_request).await?
+        };
+        let mut init_segment = resolved.try_into_read_seek()?;
         // Enforce stream at position 0.
         init_segment.rewind()?;
 
         self.context.check_progress(ProgressPhase::Reading, 2, 0)?;
 
-        match Store::load_from_file_and_fragments(
-            &asset_type,
-            &mut init_segment,
-            fragments,
-            &mut validation_log,
-            &self.context,
-        ) {
-            Ok(store) => {
-                self.with_store(store, &mut validation_log)?;
-                Ok(self)
-            }
-            Err(e) => Err(e),
-        }
+        let store = if _sync {
+            Store::load_from_stream_and_fragment_refs(
+                asset_type,
+                &mut init_segment,
+                fragments,
+                &mut validation_log,
+                &self.context,
+            )
+        } else {
+            Store::load_from_stream_and_fragment_refs_async(
+                asset_type,
+                &mut init_segment,
+                fragments,
+                &mut validation_log,
+                &self.context,
+            )
+            .await
+        }?;
+
+        if _sync {
+            self.with_store(store, &mut validation_log)
+        } else {
+            self.with_store_async(store, &mut validation_log).await
+        }?;
+        Ok(self)
     }
 
     /// Loads a [`Reader`]` from an initial segment and fragments.  This
@@ -1369,6 +1503,18 @@ impl Reader {
     }
 }
 
+/// The reference to request a sidecar manifest from.
+///
+/// A path gets the `.c2pa` sibling. Any other reference is returned unchanged: appending
+/// `.c2pa` to something like `s3://bucket/key?signature=...` would address nothing, so the
+/// transport derives its own sidecar instead.
+fn sidecar_reference(reference: AssetRef<'_>) -> OwnedAssetRef {
+    match reference {
+        AssetRef::Path(p) => OwnedAssetRef::Path(p.with_extension("c2pa")),
+        other => other.into_owned(),
+    }
+}
+
 /// Convert the Reader to a JSON value.
 impl TryFrom<Reader> for serde_json::Value {
     type Error = Error;
@@ -1641,6 +1787,145 @@ pub mod tests {
             "ranged read disagreed with whole-object read: {:?}",
             ranged.validation_status()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn with_reference_reaches_a_transport_without_file_io() -> Result<()> {
+        // A registered transport is reachable in a build with no `file_io`. Runs in
+        // every feature configuration. Without `file_io` this is the only path to it.
+        use crate::asset_transport::{
+            AssetRequest, AssetTransportError, ResolvedAsset, SyncAssetTransport,
+        };
+
+        struct InMemory(Vec<u8>);
+        impl SyncAssetTransport for InMemory {
+            fn open(
+                &self,
+                _: AssetRequest<'_>,
+            ) -> std::result::Result<ResolvedAsset, AssetTransportError> {
+                Ok(ResolvedAsset::new(Cursor::new(self.0.clone())))
+            }
+        }
+
+        let bytes = IMAGE_WITH_MANIFEST.to_vec();
+        let context = Context::new().with_asset_transport(InMemory(bytes));
+        let reader =
+            Reader::from_context(context).with_reference(Some("image/jpeg"), "mem://asset.jpg")?;
+
+        assert!(reader.active_manifest().is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn with_reference_keeps_the_sidecar_reference_verbatim() {
+        // Appending `.c2pa` to an opaque reference would address nothing, so the same
+        // reference goes out with `kind = Sidecar` and the transport decides.
+        use std::sync::{Arc, Mutex};
+
+        use crate::asset_transport::{
+            AssetRequest, AssetRequestKind, AssetTransportError, OwnedAssetRef, ResolvedAsset,
+            SyncAssetTransport,
+        };
+
+        const NO_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/no_manifest.jpg");
+
+        struct Recorder(Arc<Mutex<Vec<(OwnedAssetRef, AssetRequestKind)>>>);
+        impl SyncAssetTransport for Recorder {
+            fn open(
+                &self,
+                request: AssetRequest<'_>,
+            ) -> std::result::Result<ResolvedAsset, AssetTransportError> {
+                self.0
+                    .lock()
+                    .unwrap()
+                    .push((request.reference.into_owned(), request.kind));
+                // A real JPEG carrying no manifest, so the reader falls through to the
+                // sidecar request rather than failing on format.
+                Ok(ResolvedAsset::new(Cursor::new(NO_MANIFEST.to_vec())))
+            }
+        }
+
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let context = Context::new().with_asset_transport(Recorder(Arc::clone(&seen)));
+        let reference = "s3://bucket/key?signature=abc";
+        let _ = Reader::from_context(context).with_reference(None, reference);
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2, "expected an asset then a sidecar request");
+        assert_eq!(seen[0].1, AssetRequestKind::Asset);
+        assert_eq!(seen[1].1, AssetRequestKind::Sidecar);
+        assert_eq!(
+            seen[1].0,
+            OwnedAssetRef::Uri(reference.to_string()),
+            "sidecar reference was rewritten"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn with_asset_path_sidecar_targets_the_c2pa_sibling() {
+        // The path case keeps today's `with_file` behavior.
+        use std::sync::{Arc, Mutex};
+
+        use crate::asset_transport::{
+            AssetRequest, AssetRequestKind, AssetTransportError, OwnedAssetRef, ResolvedAsset,
+            SyncAssetTransport,
+        };
+
+        const NO_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/no_manifest.jpg");
+
+        struct Recorder(Arc<Mutex<Vec<(OwnedAssetRef, AssetRequestKind)>>>);
+        impl SyncAssetTransport for Recorder {
+            fn open(
+                &self,
+                request: AssetRequest<'_>,
+            ) -> std::result::Result<ResolvedAsset, AssetTransportError> {
+                self.0
+                    .lock()
+                    .unwrap()
+                    .push((request.reference.into_owned(), request.kind));
+                Ok(ResolvedAsset::new(Cursor::new(NO_MANIFEST.to_vec())))
+            }
+        }
+
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let context = Context::new().with_asset_transport(Recorder(Arc::clone(&seen)));
+        let path = std::path::Path::new("/assets/photo.jpg");
+        let _ = Reader::from_context(context).with_asset(AssetRef::Path(path), None);
+
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(
+            seen[1].0,
+            OwnedAssetRef::Path(std::path::PathBuf::from("/assets/photo.c2pa"))
+        );
+    }
+
+    #[test]
+    fn with_asset_uses_the_transport_format_hint() -> Result<()> {
+        // No path extension and no explicit format: the transport's hint is the only
+        // format source left. Regression guard for `with_asset`'s `unwrap_or_default()`.
+        use crate::asset_transport::{
+            AssetRequest, AssetTransportError, ResolvedAsset, SyncAssetTransport,
+        };
+
+        struct HintOnly(Vec<u8>);
+        impl SyncAssetTransport for HintOnly {
+            fn open(
+                &self,
+                _: AssetRequest<'_>,
+            ) -> std::result::Result<ResolvedAsset, AssetTransportError> {
+                Ok(ResolvedAsset::new(Cursor::new(self.0.clone()))
+                    .with_format_hint("image/jpeg".to_string()))
+            }
+        }
+
+        let bytes = IMAGE_WITH_MANIFEST.to_vec();
+        let context = Context::new().with_asset_transport(HintOnly(bytes));
+        let reader = Reader::from_context(context).with_reference(None, "mem://no-extension")?;
+
+        assert!(reader.active_manifest().is_some());
         Ok(())
     }
 

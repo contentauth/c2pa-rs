@@ -42,10 +42,9 @@ const MAX_MDAT_BOXES: usize = 4;
 /// scenarios
 const MAX_MERKLE_LEAVES_SIZE: u64 = 32 * 1024 * 1024;
 
+use crate::asset_transport::{AssetRequest, OwnedAssetRef, SyncAssetTransport};
 #[cfg(feature = "file_io")]
-use crate::asset_transport::{
-    AssetRequest, LocalAssetTransport, OwnedAssetRef, SyncAssetTransport,
-};
+use crate::asset_transport::LocalAssetTransport;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
@@ -1588,7 +1587,6 @@ impl BmffHash {
         )
     }
 
-    #[cfg(feature = "file_io")]
     pub(crate) fn verify_stream_segments_with_progress<F>(
         &self,
         init_stream: &mut dyn ReadSeek,

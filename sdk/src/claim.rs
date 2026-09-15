@@ -25,7 +25,6 @@ use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
-#[cfg(feature = "file_io")]
 use crate::asset_transport::{OwnedAssetRef, SyncAssetTransport};
 use crate::{
     assertion::{
@@ -117,7 +116,6 @@ pub enum ClaimAssetData<'a> {
     Bytes(&'a [u8], &'a str),
     Stream(&'a mut dyn ReadSeek, &'a str),
     StreamFragment(&'a mut dyn ReadSeek, &'a mut dyn ReadSeek, &'a str),
-    #[cfg(feature = "file_io")]
     StreamFragments(
         &'a mut dyn ReadSeek,
         &'a [OwnedAssetRef],
@@ -134,9 +132,10 @@ impl ClaimAssetData<'_> {
             ClaimAssetData::Path(path) => crate::format_from_path(path),
             ClaimAssetData::Bytes(_, asset_type)
             | ClaimAssetData::Stream(_, asset_type)
-            | ClaimAssetData::StreamFragment(_, _, asset_type) => Some((*asset_type).to_owned()),
-            #[cfg(feature = "file_io")]
-            ClaimAssetData::StreamFragments(_, _, _, asset_type) => Some((*asset_type).to_owned()),
+            | ClaimAssetData::StreamFragment(_, _, asset_type)
+            | ClaimAssetData::StreamFragments(_, _, _, asset_type) => {
+                Some((*asset_type).to_owned())
+            }
         }
     }
 }
@@ -3034,7 +3033,11 @@ impl Claim {
                                     Some(claim.alg()),
                                     &mut cb,
                                 ),
-                            _ => return Err(Error::UnsupportedType), /* this should never happen (coding error) */
+                            // A fragmented asset carries a BMFF hash, never a data hash.
+                            ClaimAssetData::StreamFragment(..)
+                            | ClaimAssetData::StreamFragments(..) => {
+                                return Err(Error::UnsupportedType)
+                            }
                         };
 
                         match hash_result {
@@ -3146,7 +3149,6 @@ impl Claim {
                                 Some(claim.alg()),
                                 &mut cb,
                             ),
-                        #[cfg(feature = "file_io")]
                         ClaimAssetData::StreamFragments(initseg_data, fragments, transport, _) => {
                             dh.verify_stream_segments_with_progress(
                                 *initseg_data,
@@ -3253,7 +3255,11 @@ impl Claim {
                                 &mut cb,
                             )
                         }
-                        _ => return Err(Error::UnsupportedType),
+                        // A fragmented asset carries a BMFF hash, never a box hash.
+                        ClaimAssetData::StreamFragment(..)
+                        | ClaimAssetData::StreamFragments(..) => {
+                            return Err(Error::UnsupportedType)
+                        }
                     };
 
                     match hash_result {
@@ -3324,10 +3330,16 @@ impl Claim {
                             }
                             ClaimAssetData::Stream(stream_data, _) => collection_hash
                                 .verify_zip_stream_hash(*stream_data, Some(claim.alg())),
-                            _ => return Err(Error::UnsupportedType),
+                            // A fragmented asset is never a ZIP collection.
+                            ClaimAssetData::StreamFragment(..)
+                            | ClaimAssetData::StreamFragments(..) => {
+                                return Err(Error::UnsupportedType)
+                            }
                         }
                     } else {
                         // we don't support multiple streams as input so the only option is paths for non-ZIP-based assets.
+                        // The wildcard stays: without `file_io` there is no `Path` arm, so
+                        // every variant lands here.
                         match asset_data {
                             #[cfg(feature = "file_io")]
                             ClaimAssetData::Path(asset_path) => collection_hash
