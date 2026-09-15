@@ -1559,8 +1559,9 @@ impl BmffHash {
         Ok(())
     }
 
-    #[cfg(feature = "file_io")]
-    pub fn verify_stream_segments(
+    // Test-only wrapper. Production verifies through `verify_stream_segments_with_progress`.
+    #[cfg(all(test, feature = "file_io"))]
+    pub(crate) fn verify_stream_segments(
         &self,
         init_stream: &mut dyn ReadSeek,
         fragments: &[OwnedAssetRef],
@@ -3139,6 +3140,93 @@ mod bmff_hash_tests {
         bmff_hash
             .verify_stream_hash(&mut reader, Some("sha256"))
             .expect("oversized-but-consistent local_id should verify, not panic");
+    }
+
+    #[cfg(all(feature = "file_io", not(target_arch = "wasm32")))]
+    fn build_box(fourcc: &[u8; 4], payload: &[u8]) -> Vec<u8> {
+        let s = (8 + payload.len()) as u32;
+        [&s.to_be_bytes()[..], fourcc.as_slice(), payload].concat()
+    }
+
+    #[cfg(all(feature = "file_io", not(target_arch = "wasm32")))]
+    fn build_merkle_uuid_box(unique_id: u64, local_id: u64, location: u64) -> Vec<u8> {
+        // CBOR map(3): uniqueId, localId, location.
+        let mut cbor = vec![0xa3];
+        let put_uint = |c: &mut Vec<u8>, v: u64| {
+            if v < 24 {
+                c.push(v as u8);
+            } else {
+                c.push(0x18);
+                c.push(v as u8);
+            }
+        };
+        cbor.extend_from_slice(&[0x68]);
+        cbor.extend_from_slice(b"uniqueId");
+        put_uint(&mut cbor, unique_id);
+        cbor.extend_from_slice(&[0x67]);
+        cbor.extend_from_slice(b"localId");
+        put_uint(&mut cbor, local_id);
+        cbor.extend_from_slice(&[0x68]);
+        cbor.extend_from_slice(b"location");
+        put_uint(&mut cbor, location);
+
+        let c2pa_uuid: [u8; 16] = [
+            0xd8, 0xfe, 0xc3, 0xd6, 0x1b, 0x0e, 0x48, 0x3c, 0x92, 0x97, 0x58, 0x28, 0x87, 0x7e,
+            0xc4, 0x81,
+        ];
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&c2pa_uuid);
+        payload.extend_from_slice(&[0u8; 4]);
+        payload.extend_from_slice(b"merkle\x00");
+        payload.extend_from_slice(&cbor);
+        build_box(b"uuid", &payload)
+    }
+
+    #[cfg(all(feature = "file_io", not(target_arch = "wasm32")))]
+    #[test]
+    fn fragment_files_with_no_init_hash_is_rejected() {
+        use std::io::Write;
+
+        use crate::asset_transport::{LocalAssetTransport, OwnedAssetRef};
+
+        let ftyp = build_box(b"ftyp", b"isom\x00\x00\x00\x00isom");
+        let fragment = [
+            ftyp.clone(),
+            build_merkle_uuid_box(1, 1, 0),
+            build_box(b"mdat", b"arbitrary attacker-controlled frame bytes"),
+        ]
+        .concat();
+
+        let dir = tempfile::tempdir().unwrap();
+        let frag_path = dir.path().join("frag.m4s");
+        std::fs::File::create(&frag_path)
+            .unwrap()
+            .write_all(&fragment)
+            .unwrap();
+
+        let mut bmff_hash = BmffHash::new("test", "sha256", None);
+        bmff_hash.add_exclusions(&mut vec![ExclusionsMap::new("/uuid".to_owned())]);
+        bmff_hash.set_merkle(vec![MerkleMap {
+            unique_id: 1,
+            local_id: 1,
+            count: 1,
+            alg: Some("sha256".into()),
+            init_hash: None,
+            hashes: VecByteBuf(vec![ByteBuf::from(vec![0xaau8; 32])]),
+            fixed_block_size: None,
+            variable_block_sizes: Some(vec![41]),
+        }]);
+
+        let mut init_stream = Cursor::new(ftyp);
+        let transport = LocalAssetTransport::default();
+        let fragments = vec![OwnedAssetRef::Path(frag_path)];
+        let err = bmff_hash
+            .verify_stream_segments(&mut init_stream, &fragments, &transport, None)
+            .expect_err("a fragment matching an initHash-less MerkleMap must be rejected");
+        assert!(
+            matches!(err, crate::Error::C2PAValidation(_)),
+            "expected C2PAValidation (bmffHash malformed), got: {err:?}"
+        );
     }
 }
 

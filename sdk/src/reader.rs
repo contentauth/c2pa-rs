@@ -30,7 +30,7 @@ use serde_with::skip_serializing_none;
 
 #[cfg(feature = "file_io")]
 use crate::asset_transport::{
-    AssetRef, AssetRequest, AssetRequestKind, AssetTransportError, OwnedAssetRef, ResolvedAsset,
+    AssetRef, AssetRequest, AssetRequestKind, AssetTransportError, ResolvedAsset,
 };
 #[cfg(feature = "file_io")]
 use crate::utils::io_utils::uri_to_path;
@@ -673,16 +673,10 @@ impl Reader {
             .into_read_seek();
         self.context.check_progress(ProgressPhase::Reading, 2, 0)?;
 
-        let fragment_refs: Vec<OwnedAssetRef> = fragments
-            .iter()
-            .map(|p| OwnedAssetRef::Path(p.clone()))
-            .collect();
-
         match Store::load_from_file_and_fragments(
             &asset_type,
             &mut init_segment,
-            &fragment_refs,
-            transport.as_ref(),
+            fragments,
             &mut validation_log,
             &self.context,
         ) {

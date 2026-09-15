@@ -22,7 +22,7 @@ use async_generic::async_generic;
 use log::error;
 
 #[cfg(feature = "file_io")]
-use crate::asset_transport::{OwnedAssetRef, SyncAssetTransport};
+use crate::asset_transport::OwnedAssetRef;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError},
     assertions::{
@@ -3868,21 +3868,16 @@ impl Store {
     pub fn load_from_file_and_fragments(
         asset_type: &str,
         init_segment: &mut dyn ReadSeek,
-        fragments: &[OwnedAssetRef],
-        transport: &dyn SyncAssetTransport,
+        fragments: &[PathBuf],
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<Store> {
-        // A file loader reads paths only. Non-path references stay out until a
-        // transport that needs them exists.
-        if !fragments
+        // One transport from the Context serves every fragment.
+        let transport = context.asset_transport()?;
+        let fragment_refs: Vec<OwnedAssetRef> = fragments
             .iter()
-            .all(|f| matches!(f, OwnedAssetRef::Path(_)))
-        {
-            return Err(Error::BadParam(
-                "fragment references must be file paths".to_string(),
-            ));
-        }
+            .map(|p| OwnedAssetRef::Path(p.clone()))
+            .collect();
 
         let manifest_bytes = Store::load_jumbf_from_stream(asset_type, init_segment, context)?.0;
 
@@ -3896,8 +3891,8 @@ impl Store {
                 &store,
                 Some(&mut ClaimAssetData::StreamFragments(
                     init_segment,
-                    fragments,
-                    transport,
+                    &fragment_refs,
+                    transport.as_ref(),
                     asset_type,
                 )),
                 validation_log,
@@ -9458,16 +9453,10 @@ pub mod tests {
             // check all fragments together with the init
             let mut validation_log = StatusTracker::default();
             init_stream.rewind().unwrap();
-            let fragment_refs: Vec<OwnedAssetRef> = fragments
-                .iter()
-                .map(|p| OwnedAssetRef::Path(p.clone()))
-                .collect();
-            let transport = context.asset_transport().unwrap();
             let _manifest = Store::load_from_file_and_fragments(
                 "mp4",
                 &mut init_stream,
-                &fragment_refs,
-                transport.as_ref(),
+                &fragments,
                 &mut validation_log,
                 &context,
             )
@@ -9475,33 +9464,6 @@ pub mod tests {
 
             assert!(!validation_log.has_any_error());
         }
-    }
-
-    #[test]
-    #[cfg(feature = "file_io")]
-    fn load_from_fragments_rejects_non_path_refs() {
-        use std::io::Cursor;
-
-        use crate::asset_transport::{LocalAssetTransport, OwnedAssetRef};
-
-        let transport = LocalAssetTransport::default();
-        let mut init = Cursor::new(b"\x00\x00\x00\x18ftypisom".to_vec());
-        let fragments = vec![OwnedAssetRef::Uri(
-            "https://example.com/frag.m4s".to_string(),
-        )];
-        let mut validation_log = StatusTracker::default();
-        let context = Context::new();
-
-        let err = Store::load_from_file_and_fragments(
-            "mp4",
-            &mut init,
-            &fragments,
-            &transport,
-            &mut validation_log,
-            &context,
-        )
-        .err();
-        assert!(matches!(err, Some(Error::BadParam(_))), "got {err:?}");
     }
 
     #[test]
