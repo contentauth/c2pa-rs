@@ -25,6 +25,8 @@ The following table summarizes the supported media (asset) file formats. This in
 | `mp3`           | `audio/mpeg`                                                                    |
 | `mp4`           | `video/mp4`, `application/mp4` <br/>Fragmented MP4 (DASH) supported only for file-based operations from the Rust library. |
 | `mov`           | `video/quicktime`                                                               |
+| `ogg`           | `audio/ogg` <br/>Experimental; requires the `unstable_ogg` feature.              |
+| `opus`          | `audio/opus` <br/>Experimental; requires the `unstable_ogg` feature.             |
 | `pdf`           | `application/pdf` (**read-only**)                                              |
 | `png`           | `image/png`                                                                     |
 | `svg`           | `image/svg+xml`                                                                 |
