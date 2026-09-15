@@ -26,7 +26,7 @@ use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
 #[cfg(feature = "file_io")]
-use crate::asset_transport::OwnedAssetRef;
+use crate::asset_transport::{OwnedAssetRef, SyncAssetTransport};
 use crate::{
     assertion::{
         get_thumbnail_image_type, get_thumbnail_instance, get_thumbnail_type, Assertion,
@@ -118,7 +118,12 @@ pub enum ClaimAssetData<'a> {
     Stream(&'a mut dyn ReadSeek, &'a str),
     StreamFragment(&'a mut dyn ReadSeek, &'a mut dyn ReadSeek, &'a str),
     #[cfg(feature = "file_io")]
-    StreamFragments(&'a mut dyn ReadSeek, &'a [OwnedAssetRef], &'a str),
+    StreamFragments(
+        &'a mut dyn ReadSeek,
+        &'a [OwnedAssetRef],
+        &'a dyn SyncAssetTransport,
+        &'a str,
+    ),
 }
 
 impl ClaimAssetData<'_> {
@@ -131,7 +136,7 @@ impl ClaimAssetData<'_> {
             | ClaimAssetData::Stream(_, asset_type)
             | ClaimAssetData::StreamFragment(_, _, asset_type) => Some((*asset_type).to_owned()),
             #[cfg(feature = "file_io")]
-            ClaimAssetData::StreamFragments(_, _, asset_type) => Some((*asset_type).to_owned()),
+            ClaimAssetData::StreamFragments(_, _, _, asset_type) => Some((*asset_type).to_owned()),
         }
     }
 }
@@ -3142,12 +3147,11 @@ impl Claim {
                                 &mut cb,
                             ),
                         #[cfg(feature = "file_io")]
-                        ClaimAssetData::StreamFragments(initseg_data, fragments, _) => {
-                            let transport = context.asset_transport()?;
+                        ClaimAssetData::StreamFragments(initseg_data, fragments, transport, _) => {
                             dh.verify_stream_segments_with_progress(
                                 *initseg_data,
                                 fragments,
-                                transport.as_ref(),
+                                *transport,
                                 Some(claim.alg()),
                                 &mut cb,
                             )

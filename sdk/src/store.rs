@@ -22,7 +22,7 @@ use async_generic::async_generic;
 use log::error;
 
 #[cfg(feature = "file_io")]
-use crate::asset_transport::OwnedAssetRef;
+use crate::asset_transport::{OwnedAssetRef, SyncAssetTransport};
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError},
     assertions::{
@@ -1959,7 +1959,7 @@ impl Store {
                     io.object_locations(&format, reader)
                 }
                 #[cfg(feature = "file_io")]
-                ClaimAssetData::StreamFragments(reader, _refs, typ) => {
+                ClaimAssetData::StreamFragments(reader, _refs, _transport, typ) => {
                     let format = typ.to_owned();
                     io.object_locations(&format, reader)
                 }
@@ -3869,9 +3869,21 @@ impl Store {
         asset_type: &str,
         init_segment: &mut dyn ReadSeek,
         fragments: &[OwnedAssetRef],
+        transport: &dyn SyncAssetTransport,
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<Store> {
+        // A file loader reads paths only. Non-path references stay out until a
+        // transport that needs them exists.
+        if !fragments
+            .iter()
+            .all(|f| matches!(f, OwnedAssetRef::Path(_)))
+        {
+            return Err(Error::BadParam(
+                "fragment references must be file paths".to_string(),
+            ));
+        }
+
         let manifest_bytes = Store::load_jumbf_from_stream(asset_type, init_segment, context)?.0;
 
         let store = Store::from_jumbf_with_context(&manifest_bytes, validation_log, context)?;
@@ -3885,6 +3897,7 @@ impl Store {
                 Some(&mut ClaimAssetData::StreamFragments(
                     init_segment,
                     fragments,
+                    transport,
                     asset_type,
                 )),
                 validation_log,
@@ -9449,10 +9462,12 @@ pub mod tests {
                 .iter()
                 .map(|p| OwnedAssetRef::Path(p.clone()))
                 .collect();
+            let transport = context.asset_transport().unwrap();
             let _manifest = Store::load_from_file_and_fragments(
                 "mp4",
                 &mut init_stream,
                 &fragment_refs,
+                transport.as_ref(),
                 &mut validation_log,
                 &context,
             )
@@ -9460,6 +9475,33 @@ pub mod tests {
 
             assert!(!validation_log.has_any_error());
         }
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn load_from_fragments_rejects_non_path_refs() {
+        use std::io::Cursor;
+
+        use crate::asset_transport::{LocalAssetTransport, OwnedAssetRef};
+
+        let transport = LocalAssetTransport::default();
+        let mut init = Cursor::new(b"\x00\x00\x00\x18ftypisom".to_vec());
+        let fragments = vec![OwnedAssetRef::Uri(
+            "https://example.com/frag.m4s".to_string(),
+        )];
+        let mut validation_log = StatusTracker::default();
+        let context = Context::new();
+
+        let err = Store::load_from_file_and_fragments(
+            "mp4",
+            &mut init,
+            &fragments,
+            &transport,
+            &mut validation_log,
+            &context,
+        )
+        .err();
+        assert!(matches!(err, Some(Error::BadParam(_))), "got {err:?}");
     }
 
     #[test]

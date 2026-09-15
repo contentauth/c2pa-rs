@@ -278,7 +278,6 @@ impl Reader {
         }
     }
 
-    #[cfg(feature = "file_io")]
     /// Open an asset through the configured transport. Async prefers the async
     /// transport, falling back to sync when none is registered.
     #[cfg(feature = "file_io")]
@@ -664,12 +663,15 @@ impl Reader {
             .supported_extension(path.as_ref())
             .ok_or(crate::Error::UnsupportedType)?;
 
-        // Init segment and fragments both go through the transport.
-        let mut init_segment = self
-            .context
-            .asset_transport()?
+        // One transport serves the init segment and the fragments.
+        let transport = self.context.asset_transport()?;
+
+        // Checkpoints bracket the init read. Total 0: the read count is not known ahead.
+        self.context.check_progress(ProgressPhase::Reading, 1, 0)?;
+        let mut init_segment = transport
             .open(AssetRequest::new(AssetRef::Path(path.as_ref())))?
             .into_read_seek();
+        self.context.check_progress(ProgressPhase::Reading, 2, 0)?;
 
         let fragment_refs: Vec<OwnedAssetRef> = fragments
             .iter()
@@ -680,6 +682,7 @@ impl Reader {
             &asset_type,
             &mut init_segment,
             &fragment_refs,
+            transport.as_ref(),
             &mut validation_log,
             &self.context,
         ) {
@@ -1829,6 +1832,39 @@ pub mod tests {
             .with_file("no/such/photo.jpg")
             .err();
         assert!(matches!(err, Some(Error::JumbfNotFound)), "got {err:?}");
+    }
+
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn fragmented_files_async_only_errors_at_entry() {
+        use crate::asset_transport::{
+            AssetRequest, AssetTransportError, AsyncAssetTransport, ResolvedAsset,
+        };
+
+        struct AsyncSource;
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+        impl AsyncAssetTransport for AsyncSource {
+            async fn open_async(
+                &self,
+                _: AssetRequest<'_>,
+            ) -> std::result::Result<ResolvedAsset, AssetTransportError> {
+                Ok(ResolvedAsset::new(Cursor::new(Vec::new())))
+            }
+        }
+
+        // Sync file API on an async-only Context fails once, at the entry.
+        let context = Context::new().with_asset_transport_async(AsyncSource);
+        let err = Reader::from_context(context)
+            .with_fragmented_files("test.mp4", &[])
+            .err();
+        assert!(
+            matches!(
+                err,
+                Some(Error::AssetTransport(AssetTransportError::NoSyncTransport))
+            ),
+            "got {err:?}"
+        );
     }
 
     #[test]
