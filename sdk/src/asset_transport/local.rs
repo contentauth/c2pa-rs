@@ -96,7 +96,14 @@ impl SyncAssetTransport for LocalAssetTransport {
                 )
             }
         };
-        // When a root is configured, open the canonicalized.
+
+        let reference = match request.reference {
+            AssetRef::Path(p) => p.to_string_lossy().into_owned(),
+            AssetRef::Custom(s) => s.to_string(),
+            AssetRef::Uri(u) => u.to_string(),
+        };
+
+        // When a root is configured, open the canonicalized path.
         let to_open: Cow<'_, Path> = match &self.root {
             Some(root) => {
                 Cow::Owned(ensure_within_root(&candidate, root).map_err(|_| outside(&candidate))?)
@@ -105,7 +112,7 @@ impl SyncAssetTransport for LocalAssetTransport {
         };
 
         let file = std::fs::File::open(&to_open)
-            .map_err(|e| AssetTransportError::from_io(e, &to_open.to_string_lossy()))?;
+            .map_err(|e| AssetTransportError::from_io(e, &reference))?;
         Ok(ResolvedAsset::new(file))
     }
 }
@@ -372,5 +379,21 @@ mod tests {
             reference.contains("does-not-exist.jpg"),
             "error should name the reference, got {reference}"
         );
+    }
+
+    #[cfg(feature = "file_io")]
+    #[test]
+    fn rooted_transport_missing_file_error_names_caller_reference_not_host_path() {
+        // This si to avoid leaking info on available paths.
+        let root = tempdirectory().unwrap();
+        let transport = LocalAssetTransport::rooted_at(root.path());
+
+        let request = AssetRequest::from_reference("missing.jpg");
+        let err = transport.open(&request).err();
+        let Some(AssetTransportError::NotFound { reference }) = err else {
+            unreachable!("expected NotFound, got {err:?}");
+        };
+
+        assert_eq!(reference, "missing.jpg");
     }
 }

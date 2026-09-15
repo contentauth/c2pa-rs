@@ -289,7 +289,8 @@ impl Reader {
     /// The updated [`Reader`] with the added manifest store.
     ///
     /// # Errors
-    /// Returns an [`Error`] when the manifest data cannot be read from the specified file.  If there's no error upon reading, you must still check validation status to ensure that the manifest data is validated.
+    /// Returns an [`Error`] when the manifest data cannot be read from the specified file.
+    /// If there's no error upon reading, you must still check validation status to ensure that the manifest data is validated.
     /// That is, even if there are no errors, the data still might not be valid.
     /// A missing or refused file arrives as [`Error::AssetTransport`], not [`Error::IoError`].
     ///
@@ -336,7 +337,7 @@ impl Reader {
 
         match store {
             Err(Error::JumbfNotFound) => {
-                // The asset was served by some asset bytes transport, reuse it for sidecars too.
+                // The asset was served by some asset bytes transport, reuse the transport for sidecars too.
                 let sidecar_path = path.with_extension("c2pa");
                 let sidecar_request = AssetRequest::new(AssetRef::Path(&sidecar_path))
                     .with_kind(AssetRequestKind::Sidecar);
@@ -364,9 +365,10 @@ impl Reader {
                     Err(e) => return Err(e.into()),
                 }
 
-                // Verify we actually got JUMBF.
-                let is_jumbf = manifest_data.len() >= 8 && &manifest_data[4..8] == b"jumb";
-                if !is_jumbf {
+                // Verify we actually got JUMBF. A transport that ignores the request
+                // reference may answer the sidecar with the asset bytes again; a
+                // non-superbox means there is no manifest here.
+                if !crate::jumbf::starts_with_superbox(&manifest_data) {
                     return Err(Error::JumbfNotFound);
                 }
 

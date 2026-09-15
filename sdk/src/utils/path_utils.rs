@@ -126,7 +126,9 @@ pub(crate) fn resolve_within_root(base: &Path, root: &Path, path: &str) -> Resul
 
     let joined = base.join(path);
     ensure_within_root(&joined, root)
-        .map_err(|_| Error::BadParam(format!("Resource path escapes manifest root: {path}")))
+        .map_err(|_| Error::BadParam(format!("Resource path escapes manifest root: {path}")))?;
+
+    Ok(joined)
 }
 
 /// Reject an identifier that can never be legitimate: empty, backslash-separated,
@@ -275,8 +277,19 @@ mod tests {
 mod within_root_tests {
     #![allow(clippy::unwrap_used)]
 
-    use super::ensure_within_root;
+    use super::{ensure_within_root, resolve_within_root};
     use crate::utils::io_utils::tempdirectory;
+
+    #[test]
+    fn resolve_within_root_returns_the_joined_identifier_not_the_canonical_path() {
+        // The resource store surfaces this path in `path_for_id` and error strings,
+        // so it must stay the joined identifier path.
+        let root = tempdirectory().unwrap();
+        std::fs::write(root.path().join("asset.jpg"), b"\xff\xd8").unwrap();
+
+        let resolved = resolve_within_root(root.path(), root.path(), "asset.jpg").unwrap();
+        assert_eq!(resolved, root.path().join("asset.jpg"));
+    }
 
     #[test]
     fn existing_target_inside_root_returns_canonical_path() {

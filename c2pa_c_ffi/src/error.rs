@@ -53,6 +53,12 @@ pub enum C2paError {
     NotConfigured(String),
     #[error("AssetNotFound: {0}")]
     AssetNotFound(String),
+    #[error("Timeout: {0}")]
+    Timeout(String),
+    #[error("RangeNotSatisfiable: {0}")]
+    RangeNotSatisfiable(String),
+    #[error("ChunkTooLarge: {0}")]
+    ChunkTooLarge(String),
 }
 
 pub type Error = C2paError;
@@ -81,6 +87,9 @@ impl C2paError {
             Self::PermissionDenied(_) => 116,
             Self::NotConfigured(_) => 117,
             Self::AssetNotFound(_) => 118,
+            Self::Timeout(_) => 119,
+            Self::RangeNotSatisfiable(_) => 120,
+            Self::ChunkTooLarge(_) => 121,
         }
     }
 
@@ -138,6 +147,13 @@ impl C2paError {
                 | c2pa::asset_transport::AssetTransportError::NoSyncTransport => {
                     Self::NotConfigured(err_str)
                 }
+                c2pa::asset_transport::AssetTransportError::Timeout { .. } => Self::Timeout(err_str),
+                c2pa::asset_transport::AssetTransportError::RangeNotSatisfiable { .. } => {
+                    Self::RangeNotSatisfiable(err_str)
+                }
+                c2pa::asset_transport::AssetTransportError::ChunkTooLarge { .. } => {
+                    Self::ChunkTooLarge(err_str)
+                }
                 _ => Self::Io(err_str),
             },
             JsonError(e) => Self::Json(err_str),
@@ -185,6 +201,9 @@ impl C2paError {
             "PermissionDenied" => Self::PermissionDenied(error_message),
             "NotConfigured" => Self::NotConfigured(error_message),
             "AssetNotFound" => Self::AssetNotFound(error_message),
+            "Timeout" => Self::Timeout(error_message),
+            "RangeNotSatisfiable" => Self::RangeNotSatisfiable(error_message),
+            "ChunkTooLarge" => Self::ChunkTooLarge(error_message),
             _ => Self::Other(format!("{error_type}: {error_message}")),
         }
     }
@@ -343,6 +362,9 @@ mod tests {
             (C2paError::PermissionDenied("test".into()), 116),
             (C2paError::NotConfigured("test".into()), 117),
             (C2paError::AssetNotFound("test".into()), 118),
+            (C2paError::Timeout("test".into()), 119),
+            (C2paError::RangeNotSatisfiable("test".into()), 120),
+            (C2paError::ChunkTooLarge("test".into()), 121),
         ];
 
         for (original, expected_code) in test_cases {
@@ -378,6 +400,39 @@ mod tests {
             "C2paException in c2pa-c checks for 'Remote:' prefix; got: {}",
             msg
         );
+    }
+
+    #[test]
+    fn test_transport_network_errors_have_their_own_codes() {
+        use c2pa::asset_transport::AssetTransportError;
+
+        for (err, expected_code) in [
+            (
+                AssetTransportError::Timeout {
+                    reference: "u".to_string(),
+                },
+                119,
+            ),
+            (
+                AssetTransportError::RangeNotSatisfiable {
+                    reference: "u".to_string(),
+                },
+                120,
+            ),
+            (
+                AssetTransportError::ChunkTooLarge {
+                    reference: "u".to_string(),
+                },
+                121,
+            ),
+        ] {
+            let mapped = C2paError::from_c2pa_error(c2pa::Error::AssetTransport(err));
+            assert_eq!(mapped.code(), expected_code, "got {mapped}");
+
+            // Round-trips through the "Name: message" string form.
+            let round_tripped = C2paError::from(mapped.to_string());
+            assert_eq!(round_tripped.code(), expected_code);
+        }
     }
 
     #[test]
