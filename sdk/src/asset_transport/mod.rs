@@ -87,7 +87,7 @@ pub enum AssetRequestKind {
     Sidecar,
 }
 
-/// A generic request to open an asset (through an AssetRef).
+/// A generic request to read an asset (through an AssetRef).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct AssetRequest<'a> {
@@ -106,7 +106,7 @@ impl<'a> AssetRequest<'a> {
         }
     }
 
-    /// Set whether this targets the primary asset or its sidecar manifest.
+    /// Set whether this targets the (primary) asset or its sidecar manifest.
     pub fn with_kind(mut self, kind: AssetRequestKind) -> Self {
         self.kind = kind;
         self
@@ -134,7 +134,7 @@ fn has_uri_scheme(reference: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
 }
 
-/// Result of an open request: the resolved asset plus metadata about it.
+/// Result of a request: the resolved asset and metadata about it.
 pub struct ResolvedAsset {
     stream: Box<dyn ReadSeek>,
     format: Option<String>,
@@ -156,9 +156,9 @@ impl ResolvedAsset {
         }
     }
 
-    /// Format hint for the asset bytes: a MIME type or an extension (e.g. `image/jpeg`
-    /// or `jpg`). Advisory only. Detected magic bytes and the path extension win over it,
-    /// and an unrecognized hint is ignored.
+    /// Format hint for the asset bytes: a MIME type or an extension
+    /// Detected magic bytes and the path extension win over it.
+    /// An unrecognized format hint is ignored.
     pub fn with_format_hint(mut self, format: impl Into<String>) -> Self {
         self.format = Some(format.into());
         self
@@ -170,7 +170,7 @@ impl ResolvedAsset {
         self
     }
 
-    /// Format hint declared by the transport (e.g. `Content-Type`). A hint only.
+    /// Format hint declared by the transport (e.g. `Content-Type`).
     /// Detected magic bytes take precedence.
     pub fn format_hint(&self) -> Option<&str> {
         self.format.as_deref()

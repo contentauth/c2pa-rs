@@ -13,8 +13,7 @@
 
 //! Error types for the [`asset_transport`](crate::asset_transport) module.
 
-/// Errors from the asset transport: distinguishes a rejected request
-/// from invalid transported bytes.
+/// Errors from the asset transport.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum AssetTransportError {
@@ -69,7 +68,7 @@ impl AssetTransportError {
         }
     }
 
-    /// Detailed errors parsed from I/O errors, to distinguish NotFound/PermissionDenied.
+    /// Detailed errors parsed from I/O errors.
     pub fn from_io(err: std::io::Error, reference: &str) -> Self {
         match err.kind() {
             std::io::ErrorKind::NotFound => AssetTransportError::NotFound {

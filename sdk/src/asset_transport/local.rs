@@ -33,7 +33,7 @@ use crate::utils::path_utils::{ensure_within_root, reject_unsafe_identifier};
 ///
 /// Anything else is rejected with [`AssetTransportError::UnsupportedReference`].
 ///
-/// If a root is set, references are confined to it (see [`Self::rooted_at`]).
+/// If a root is set, references are sandboxed to it (see [`Self::rooted_at`]).
 #[cfg(feature = "file_io")]
 #[derive(Debug, Default, Clone)]
 pub struct LocalAssetTransport {
@@ -44,9 +44,6 @@ pub struct LocalAssetTransport {
 impl LocalAssetTransport {
     /// Confines references to `root`. Anything outside it is rejected with
     /// [`AssetTransportError::OutsideRoot`].
-    ///
-    /// Not atomic against an attacker who can write into `root` between check and
-    /// open. Not a multi-tenant sandbox.
     pub fn rooted_at(root: impl Into<std::path::PathBuf>) -> Self {
         let root = root.into();
         let root = root
