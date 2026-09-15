@@ -921,7 +921,7 @@ macro_rules! cstr_array_or_return {
             loop {
                 if i >= $crate::macros::MAX_STRING_ARRAY_LEN {
                     $crate::CimplError::new(
-                        2,
+                        "StringTooLong",
                         concat!(
                             stringify!($ptr),
                             ": array exceeds maximum length or missing NULL terminator"
@@ -941,7 +941,7 @@ macro_rules! cstr_array_or_return {
                     Ok(s) => result.push(s.to_owned()),
                     Err(_) => {
                         $crate::CimplError::new(
-                            2,
+                            "StringTooLong",
                             concat!(stringify!($ptr), ": non-UTF-8 string in array"),
                         )
                         .set_last();
