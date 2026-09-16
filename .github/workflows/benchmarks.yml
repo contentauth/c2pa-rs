@@ -38,11 +38,11 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Check codspeed build cache
         id: cache-codspeed-build
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: target/codspeed/
           key: codspeed-output-${{ runner.os }}-${{ hashFiles('**/Cargo.toml', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
@@ -72,7 +72,7 @@ jobs:
 
       - name: Save codspeed build cache
         if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
-        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: target/codspeed/
           key: codspeed-output-${{ runner.os }}-${{ hashFiles('**/Cargo.toml', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
@@ -101,7 +101,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@254c19bd240aabef8777f48595e9d2d7b972184b # v6.2.1
@@ -116,7 +116,7 @@ jobs:
         run: cargo binstall --no-confirm cargo-codspeed
 
       - name: Restore codspeed build
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: target/codspeed/
           key: codspeed-output-${{ runner.os }}-${{ hashFiles('**/Cargo.toml', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
@@ -135,7 +135,7 @@ jobs:
 
       - name: Check asset cache
         id: cache-assets
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: sdk/benches/fixtures
           key: bench-asset-${{ steps.s3-etag.outputs.etag }}
@@ -151,14 +151,14 @@ jobs:
 
       - name: Save asset cache
         if: steps.cache-assets.outputs.cache-hit != 'true'
-        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: sdk/benches/fixtures
           key: bench-asset-${{ steps.s3-etag.outputs.etag }}
 
       - name: Restore asset cache
         if: steps.cache-assets.outputs.cache-hit == 'true'
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: sdk/benches/fixtures
           key: bench-asset-${{ steps.s3-etag.outputs.etag }}
