@@ -30,6 +30,16 @@ struct Segment {
     last_used: u64,
 }
 
+/// One past the last byte of `len` bytes at `offset`, clamped to `u64::MAX`.
+///
+/// A transport reports the object length, so an offset can sit anywhere in the range
+/// and `offset + len` can leave it. Saturating keeps the end ordered after the start,
+/// which is what the overlap comparisons need; the clamped byte is past any real
+/// object and is never addressed.
+fn segment_end(offset: u64, len: usize) -> u64 {
+    offset.saturating_add(len as u64)
+}
+
 /// A least-recently-used cache of non-overlapping asset byte segments.
 pub(crate) struct RangeCache {
     segments: BTreeMap<u64, Segment>,
@@ -102,28 +112,30 @@ impl RangeCache {
             return;
         }
         let mut lo = offset;
-        let mut hi = offset + data.len() as u64;
+        let mut hi = segment_end(offset, data.len());
 
         // Segments overlapping or touching [lo, hi): start <= hi and end >= lo.
         let overlapping: Vec<u64> = self
             .segments
             .range(..=hi)
-            .filter(|(&start, seg)| start + seg.data.len() as u64 >= lo)
+            .filter(|(&start, seg)| segment_end(start, seg.data.len()) >= lo)
             .map(|(&start, _)| start)
             .collect();
 
         for &start in &overlapping {
             let seg = &self.segments[&start];
             lo = lo.min(start);
-            hi = hi.max(start + seg.data.len() as u64);
+            hi = hi.max(segment_end(start, seg.data.len()));
         }
 
         // Cap the coalesce. A span over budget, or one that cannot be addressed as a
         // `usize` on this target (32-bit wasm), takes the own-segment path instead of
-        // merging into a single unbounded, unaddressable buffer.
+        // merging into a single unbounded, unaddressable buffer. A span that reached
+        // `u64::MAX` was clamped and no longer covers the data, so it takes that path
+        // too rather than merging into a buffer too short to hold it.
         let span = hi - lo;
         match usize::try_from(span) {
-            Ok(span_len) if span <= self.max_cached => {
+            Ok(span_len) if span <= self.max_cached && hi < u64::MAX => {
                 let mut merged = vec![0u8; span_len];
                 for &start in &overlapping {
                     // `start` came from the map above, so the segment is present.
@@ -156,11 +168,11 @@ impl RangeCache {
     /// neighbour so the map stays non-overlapping. Neighbours are left in place.
     fn insert_capped(&mut self, offset: u64, data: Vec<u8>) {
         let mut start = offset;
-        let end = offset + data.len() as u64;
+        let end = segment_end(offset, data.len());
 
         // Trim the front against a segment that covers `start`.
         if let Some((&s, seg)) = self.segments.range(..=start).next_back() {
-            let s_end = s + seg.data.len() as u64;
+            let s_end = segment_end(s, seg.data.len());
             if s_end > start {
                 start = s_end;
             }
@@ -281,6 +293,23 @@ mod tests {
         assert_eq!(cache.copy_into(100, &mut buf), 0);
         assert_eq!(cache.copy_into(0, &mut buf), 4);
         assert_eq!(cache.copy_into(200, &mut buf), 4);
+    }
+
+    // A transport reports the object length, so it decides which offsets a read
+    // reaches. An offset whose end leaves `u64` must not take the arithmetic with it.
+    #[test]
+    fn an_offset_near_the_end_of_the_range_does_not_overflow() {
+        let mut cache = RangeCache::new(4096);
+
+        cache.insert(u64::MAX - 10, vec![7u8; 64]);
+        cache.insert(u64::MAX - 200, vec![9u8; 64]);
+        cache.insert(u64::MAX, vec![1u8; 8]);
+
+        // The clamped tail is stored short rather than wrapping to the front of the
+        // object: a read at the low offset must not see those bytes.
+        let mut buf = [0u8; 16];
+        assert_eq!(cache.copy_into(0, &mut buf), 0);
+        assert!(cache.cached_bytes() <= 4096);
     }
 
     // --- R2: `max_cached` must bound memory on a sequential read ---
