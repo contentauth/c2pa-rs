@@ -77,7 +77,7 @@ use crate::{
     settings::{Settings, MAX_ASSERTIONS},
     status_tracker::{ErrorBehavior, StatusTracker},
     store::StoreValidationInfo,
-    utils::hash_utils::{hash_by_alg, vec_compare},
+    utils::hash_utils::{hash_buf_from_kb, hash_by_alg, vec_compare},
     validation_status, ClaimGeneratorInfo,
 };
 
@@ -3006,6 +3006,8 @@ impl Claim {
                         }
 
                         // only verify local hashes here
+                        let hash_buf =
+                            hash_buf_from_kb(context.settings().core.hash_buffer_size_in_kb);
                         let mut cb = |step, total| {
                             context.check_progress(ProgressPhase::VerifyingAssetHash, step, total)
                         };
@@ -3017,6 +3019,7 @@ impl Claim {
                                     &mut file,
                                     Some(claim.alg()),
                                     &mut cb,
+                                    hash_buf,
                                 )
                             }
                             ClaimAssetData::Bytes(asset_bytes, _) => {
@@ -3025,6 +3028,7 @@ impl Claim {
                                     &mut cursor,
                                     Some(claim.alg()),
                                     &mut cb,
+                                    hash_buf,
                                 )
                             }
                             ClaimAssetData::Stream(stream_data, _) => dh
@@ -3032,6 +3036,7 @@ impl Claim {
                                     *stream_data,
                                     Some(claim.alg()),
                                     &mut cb,
+                                    hash_buf,
                                 ),
                             // A fragmented asset carries a BMFF hash, never a data hash.
                             ClaimAssetData::StreamFragment(..)
@@ -3120,6 +3125,7 @@ impl Claim {
                         .informational(validation_log);
                     }
 
+                    let hash_buf = hash_buf_from_kb(context.settings().core.hash_buffer_size_in_kb);
                     let mut step = 0u32;
                     let mut cb = |_s: u32, t: u32| {
                         step += 1;
@@ -3128,19 +3134,26 @@ impl Claim {
                     let hash_result = match asset_data {
                         #[cfg(feature = "file_io")]
                         ClaimAssetData::Path(asset_path) => {
-                            dh.verify_hash_with_progress(asset_path, Some(claim.alg()), &mut cb)
+                            dh.verify_hash_with_progress(
+                                asset_path,
+                                Some(claim.alg()),
+                                &mut cb,
+                                hash_buf,
+                            )
                         }
                         ClaimAssetData::Bytes(asset_bytes, _) => dh
                             .verify_in_memory_hash_with_progress(
                                 asset_bytes,
                                 Some(claim.alg()),
                                 &mut cb,
+                                hash_buf,
                             ),
                         ClaimAssetData::Stream(stream_data, _) => dh
                             .verify_stream_hash_with_progress(
                                 *stream_data,
                                 Some(claim.alg()),
                                 &mut cb,
+                                hash_buf,
                             ),
                         ClaimAssetData::StreamFragment(initseg_data, fragment_data, _) => dh
                             .verify_stream_segment_with_progress(
@@ -3199,6 +3212,7 @@ impl Claim {
                     // handle BMFF data hashes
                     let bh = BoxHash::from_assertion(hash_binding_assertion.assertion())?;
 
+                    let hash_buf = hash_buf_from_kb(context.settings().core.hash_buffer_size_in_kb);
                     let mut cb = |step, total| {
                         context.check_progress(ProgressPhase::VerifyingAssetHash, step, total)
                     };
@@ -3218,6 +3232,7 @@ impl Claim {
                                 Some(claim.alg()),
                                 box_hash_processor,
                                 &mut cb,
+                                hash_buf,
                             )
                         }
                         ClaimAssetData::Bytes(asset_bytes, asset_type) => {
@@ -3236,6 +3251,7 @@ impl Claim {
                                 Some(claim.alg()),
                                 box_hash_processor,
                                 &mut cb,
+                                hash_buf,
                             )
                         }
                         ClaimAssetData::Stream(stream_data, asset_type) => {
@@ -3253,6 +3269,7 @@ impl Claim {
                                 Some(claim.alg()),
                                 box_hash_processor,
                                 &mut cb,
+                                hash_buf,
                             )
                         }
                         // A fragmented asset carries a BMFF hash, never a box hash.

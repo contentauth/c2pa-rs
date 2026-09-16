@@ -15,6 +15,7 @@ use std::{
     collections::{hash_map::Entry::Vacant, BTreeMap, HashMap},
     fmt,
     io::{BufReader, Cursor, Read, Seek},
+    num::NonZeroUsize,
     ops::Deref,
 };
 
@@ -57,7 +58,7 @@ use crate::{
     settings::Settings,
     utils::{
         hash_utils::{
-            concat_and_hash, hash_size_by_alg, hash_stream_by_alg,
+            concat_and_hash, default_hash_buf, hash_size_by_alg, hash_stream_by_alg,
             hash_stream_by_alg_with_progress, vec_compare, verify_stream_by_alg, HashRange, Hasher,
         },
         io_utils::stream_len,
@@ -959,9 +960,11 @@ impl BmffHash {
     where
         R: Read + Seek + ?Sized,
     {
-        self.hash = Some(ByteBuf::from(
-            self.hash_from_stream(asset_stream, &mut |_, _| Ok(()))?,
-        ));
+        self.hash = Some(ByteBuf::from(self.hash_from_stream(
+            asset_stream,
+            &mut |_, _| Ok(()),
+            default_hash_buf(),
+        )?));
         Ok(())
     }
 
@@ -972,14 +975,17 @@ impl BmffHash {
         &mut self,
         asset_stream: &mut R,
         progress: &mut F,
+        max_hash_buf: NonZeroUsize,
     ) -> crate::error::Result<()>
     where
         R: Read + Seek + ?Sized,
         F: FnMut(u32, u32) -> crate::error::Result<()>,
     {
-        self.hash = Some(ByteBuf::from(
-            self.hash_from_stream(asset_stream, progress)?,
-        ));
+        self.hash = Some(ByteBuf::from(self.hash_from_stream(
+            asset_stream,
+            progress,
+            max_hash_buf,
+        )?));
         Ok(())
     }
 
@@ -989,6 +995,7 @@ impl BmffHash {
         &mut self,
         asset_stream: &mut R,
         progress: &mut F,
+        max_hash_buf: NonZeroUsize,
     ) -> crate::error::Result<Vec<u8>>
     where
         R: Read + Seek + ?Sized,
@@ -1013,6 +1020,7 @@ impl BmffHash {
             Some(exclusions),
             true,
             progress,
+            max_hash_buf,
         )?;
 
         if hash.is_empty() {
@@ -1066,7 +1074,7 @@ impl BmffHash {
         data: &[u8],
         alg: Option<&str>,
     ) -> crate::error::Result<()> {
-        self.verify_in_memory_hash_with_progress(data, alg, &mut |_, _| Ok(()))
+        self.verify_in_memory_hash_with_progress(data, alg, &mut |_, _| Ok(()), default_hash_buf())
     }
 
     pub(crate) fn verify_in_memory_hash_with_progress<F>(
@@ -1074,12 +1082,13 @@ impl BmffHash {
         data: &[u8],
         alg: Option<&str>,
         progress: &mut F,
+        max_hash_buf: NonZeroUsize,
     ) -> crate::error::Result<()>
     where
         F: FnMut(u32, u32) -> crate::error::Result<()>,
     {
         let mut reader = Cursor::new(data);
-        self.verify_stream_hash_with_progress(&mut reader, alg, progress)
+        self.verify_stream_hash_with_progress(&mut reader, alg, progress, max_hash_buf)
     }
 
     // The BMFFMerklMaps are stored contiguous in the file.  Break this Vec into groups based on
@@ -1135,7 +1144,7 @@ impl BmffHash {
         asset_path: &std::path::Path,
         alg: Option<&str>,
     ) -> crate::error::Result<()> {
-        self.verify_hash_with_progress(asset_path, alg, &mut |_, _| Ok(()))
+        self.verify_hash_with_progress(asset_path, alg, &mut |_, _| Ok(()), default_hash_buf())
     }
 
     #[cfg(feature = "file_io")]
@@ -1144,12 +1153,13 @@ impl BmffHash {
         asset_path: &std::path::Path,
         alg: Option<&str>,
         progress: &mut F,
+        max_hash_buf: NonZeroUsize,
     ) -> crate::error::Result<()>
     where
         F: FnMut(u32, u32) -> crate::error::Result<()>,
     {
         let mut data = std::fs::File::open(asset_path)?;
-        self.verify_stream_hash_with_progress(&mut data, alg, progress)
+        self.verify_stream_hash_with_progress(&mut data, alg, progress, max_hash_buf)
     }
 
     /// Advance `step` and fire `progress(step, 0)`.
@@ -1227,7 +1237,7 @@ impl BmffHash {
         reader: &mut dyn ReadSeek,
         alg: Option<&str>,
     ) -> crate::error::Result<()> {
-        self.verify_stream_hash_with_progress(reader, alg, &mut |_, _| Ok(()))
+        self.verify_stream_hash_with_progress(reader, alg, &mut |_, _| Ok(()), default_hash_buf())
     }
 
     /// Like [`verify_stream_hash`] but fires `progress(step, total)` at each expensive hash
@@ -1235,7 +1245,7 @@ impl BmffHash {
     /// ticks and support cancellation.
     ///
     /// For the file-level hash path the callback is forwarded into
-    /// [`hash_stream_by_alg_with_progress`] so it fires once per 256 MB range, giving
+    /// [`hash_stream_by_alg_with_progress`] so it fires once per buffer-sized range, giving
     /// sub-pass granularity for large files.  For Merkle paths it fires once per hash operation.
     /// `total` is always `0` (indeterminate) from this layer because the pass count is not
     /// known until the file structure is parsed.
@@ -1244,6 +1254,7 @@ impl BmffHash {
         reader: &mut dyn ReadSeek,
         alg: Option<&str>,
         progress: &mut F,
+        max_hash_buf: NonZeroUsize,
     ) -> crate::error::Result<()>
     where
         F: FnMut(u32, u32) -> crate::error::Result<()>,
@@ -1275,6 +1286,7 @@ impl BmffHash {
                 Some(exclusions.clone()),
                 true,
                 progress,
+                max_hash_buf,
             )?;
             if !vec_compare(hash, &computed) {
                 return Err(Error::HashMismatch(

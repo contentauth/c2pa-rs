@@ -405,6 +405,14 @@ pub struct Core {
     ///
     /// This option defaults to 512MB and can result in noticeable performance improvements.
     pub backing_store_memory_threshold_in_mb: usize,
+    /// Kilobytes the hasher holds at one time in a single buffer.
+    ///
+    /// This bounds peak memory when hashing an asset for signing and for verification.
+    /// The native path hashes on a second thread and holds two buffers, so its peak is
+    /// twice this value. Lower it to verify a large asset in a constrained runtime.
+    ///
+    /// This option defaults to 262144 (256 MB).
+    pub hash_buffer_size_in_kb: usize,
     /// Whether to decode CAWG [`IdentityAssertion`]s during reading in the [`Reader`].
     ///
     /// This option defaults to true.
@@ -509,6 +517,7 @@ impl Default for Core {
             merkle_tree_chunk_size_in_kb: None,
             merkle_tree_max_proofs: 5,
             backing_store_memory_threshold_in_mb: 512,
+            hash_buffer_size_in_kb: 256 * 1024,
             decode_identity_assertions: true,
             allowed_network_hosts: None,
             allow_redirects: true,
@@ -525,6 +534,11 @@ impl SettingsValidate for Core {
             return Err(Error::BadParam(format!(
                 "max_decompressed_manifest_size_in_mb must not exceed {MAX_MANIFEST_SIZE_MB} MB"
             )));
+        }
+        if self.hash_buffer_size_in_kb == 0 {
+            return Err(Error::BadParam(
+                "hash_buffer_size_in_kb must be greater than zero".to_string(),
+            ));
         }
         Ok(())
     }

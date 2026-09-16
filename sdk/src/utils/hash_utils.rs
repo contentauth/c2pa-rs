@@ -236,23 +236,27 @@ pub fn hash_asset_by_alg_with_inclusions(
 
     The data is again split into range sets breaking at the exclusion points and now also the markers.
 */
-/// Internal implementation of [`hash_stream_by_alg`] with an optional per-range
-/// progress/cancellation callback.  SDK internals that have a [`Context`] available
-/// pass a closure that calls [`Context::check_progress`]; the public wrapper supplies
-/// `None` so external callers are unaffected.
+/// Internal implementation of [`hash_stream_by_alg`] with a per-range
+/// progress/cancellation callback and a caller-supplied buffer cap.
+///
+/// SDK internals that have a [`Context`] available pass a closure that calls
+/// [`Context::check_progress`] and the buffer size from
+/// [`Core::hash_buffer_size_in_kb`]. The public wrapper supplies a no-op closure and
+/// `MAX_HASH_BUF` so external callers are unaffected.
+///
+/// [`Core::hash_buffer_size_in_kb`]: crate::settings::Core::hash_buffer_size_in_kb
 pub(crate) fn hash_stream_by_alg_with_progress<R, F>(
     alg: &str,
     data: &mut R,
     hash_range: Option<Vec<HashRange>>,
     is_exclusion: bool,
     progress: &mut F,
+    max_hash_buf: NonZeroUsize,
 ) -> Result<Vec<u8>>
 where
     R: Read + Seek + ?Sized,
     F: FnMut(u32, u32) -> Result<()>,
 {
-    let max_hash_buf = NonZeroUsize::new(MAX_HASH_BUF)
-        .ok_or(Error::BadParam("invalid max_hash_buf".to_string()))?;
     hash_stream_by_alg_with_progress_impl(
         alg,
         data,
@@ -261,6 +265,20 @@ where
         progress,
         max_hash_buf,
     )
+}
+
+/// Default hash buffer size, used by the public hashing entry points.
+pub(crate) fn default_hash_buf() -> NonZeroUsize {
+    NonZeroUsize::new(MAX_HASH_BUF).unwrap_or(NonZeroUsize::MIN)
+}
+
+/// Turn [`Core::hash_buffer_size_in_kb`] into a byte count the hasher can use.
+///
+/// Zero is rejected at settings load, so this saturates rather than failing.
+///
+/// [`Core::hash_buffer_size_in_kb`]: crate::settings::Core::hash_buffer_size_in_kb
+pub(crate) fn hash_buf_from_kb(kb: usize) -> NonZeroUsize {
+    NonZeroUsize::new(kb.saturating_mul(1024)).unwrap_or(NonZeroUsize::MIN)
 }
 
 /// Make `hash_stream_by_alg_with_progress` configurable with `max_hash_buf`.
@@ -297,8 +315,8 @@ where
 
     let (ranges, bmff_v2_starts) = build_hash_ranges(hash_range, is_exclusion, data_len)?;
 
-    // Total callbacks = one per 256 MB chunk across all ranges (BMFF V2 single-byte offsets
-    // each contribute exactly one tick regardless of MAX_HASH_BUF).
+    // Total callbacks = one per buffer-sized chunk across all ranges. BMFF V2 single-byte
+    // offsets each contribute exactly one tick regardless of the buffer size.
     let total: u32 = ranges
         .iter()
         .map(|r| {
@@ -568,7 +586,14 @@ pub fn hash_stream_by_alg<R>(
 where
     R: Read + Seek + ?Sized,
 {
-    hash_stream_by_alg_with_progress(alg, data, hash_range, is_exclusion, &mut |_, _| Ok(()))
+    hash_stream_by_alg_with_progress(
+        alg,
+        data,
+        hash_range,
+        is_exclusion,
+        &mut |_, _| Ok(()),
+        default_hash_buf(),
+    )
 }
 
 // verify the hash using the specified algorithm

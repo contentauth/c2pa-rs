@@ -56,8 +56,11 @@ use crate::{
     settings::{builder::TimeStampFetchScope, MAX_ASSERTIONS},
     store::Store,
     utils::{
-        hash_utils::hash_to_b64, merkle::MerkleAccumulator, mime::format_to_mime,
-        path_utils::sanitize_archive_path, xmp_inmemory_utils::XmpInfo,
+        hash_utils::{hash_buf_from_kb, hash_to_b64},
+        merkle::MerkleAccumulator,
+        mime::format_to_mime,
+        path_utils::sanitize_archive_path,
+        xmp_inmemory_utils::XmpInfo,
     },
     AsyncSigner, ClaimGeneratorInfo, EphemeralSigner, HashRange, HashedUri, Ingredient,
     ManifestAssertionKind, Reader, Relationship, Signer,
@@ -2976,8 +2979,9 @@ impl Builder {
             // gen_hash_from_stream uses the BmffHash's own path-based exclusion list
             // and its own alg field (set when the assertion was created).
             let ctx = &self.context;
+            let hash_buf = hash_buf_from_kb(ctx.settings().core.hash_buffer_size_in_kb);
             let mut cb = |step, total| ctx.check_progress(ProgressPhase::Hashing, step, total);
-            bmff_hash.gen_hash_from_stream_with_progress(stream, &mut cb)?;
+            bmff_hash.gen_hash_from_stream_with_progress(stream, &mut cb, hash_buf)?;
 
             self.definition
                 .assertions
@@ -3004,9 +3008,17 @@ impl Builder {
             // inside the preceding SOS entropy range, which causes the sum to
             // exceed the file length and triggers a range-validation error.
             let ctx = &self.context;
+            let hash_buf = hash_buf_from_kb(ctx.settings().core.hash_buffer_size_in_kb);
             let cb: Box<dyn FnMut(u32, u32) -> Result<()>> =
                 Box::new(|step, total| ctx.check_progress(ProgressPhase::Hashing, step, total));
-            bh.generate_box_hash_from_stream_with_progress(stream, definition_alg, bhp, false, cb)?;
+            bh.generate_box_hash_from_stream_with_progress(
+                stream,
+                definition_alg,
+                bhp,
+                false,
+                cb,
+                hash_buf,
+            )?;
             self.definition
                 .assertions
                 .retain(|a| !a.label.starts_with(BoxHash::LABEL));
@@ -3034,6 +3046,7 @@ impl Builder {
                 Some(exclusions.clone())
             };
             let ctx = &self.context;
+            let hash_buf = hash_buf_from_kb(ctx.settings().core.hash_buffer_size_in_kb);
             let mut cb = |step, total| ctx.check_progress(ProgressPhase::Hashing, step, total);
             let hash = crate::utils::hash_utils::hash_stream_by_alg_with_progress(
                 &alg,
@@ -3041,6 +3054,7 @@ impl Builder {
                 exclusion_arg,
                 true,
                 &mut cb,
+                hash_buf,
             )?;
 
             // Preserve the existing assertion's name or use the default.

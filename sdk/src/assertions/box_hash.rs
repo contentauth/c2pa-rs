@@ -14,6 +14,7 @@
 use std::{
     fs::File,
     io::{Cursor, Read, Seek, SeekFrom},
+    num::NonZeroUsize,
     path::*,
 };
 
@@ -32,7 +33,9 @@ use crate::{
     hash_utils::hash_by_alg,
     maybe_send_sync::MaybeSend,
     utils::{
-        hash_utils::{hash_stream_by_alg_with_progress, vec_compare, HashRange},
+        hash_utils::{
+            default_hash_buf, hash_stream_by_alg_with_progress, vec_compare, HashRange,
+        },
         io_utils::ReaderUtils,
     },
     validation_results::validation_codes::{
@@ -291,7 +294,7 @@ impl BoxHash {
         alg: Option<&str>,
         bhp: &dyn AssetBoxHash,
     ) -> Result<()> {
-        self.verify_stream_hash_with_progress(reader, alg, bhp, &mut |_, _| Ok(()))
+        self.verify_stream_hash_with_progress(reader, alg, bhp, &mut |_, _| Ok(()), default_hash_buf())
             .map(|_metadata_exclusion_used| ())
     }
 
@@ -310,6 +313,7 @@ impl BoxHash {
         alg: Option<&str>,
         bhp: &dyn AssetBoxHash,
         progress: &mut F,
+        max_hash_buf: NonZeroUsize,
     ) -> Result<bool>
     where
         F: FnMut(u32, u32) -> Result<()>,
@@ -433,6 +437,7 @@ impl BoxHash {
                 Some(inclusions),
                 false,
                 progress,
+                max_hash_buf,
             )?;
 
             if !vec_compare(&bm.hash, &computed) {
@@ -453,9 +458,15 @@ impl BoxHash {
     where
         R: Read + Seek + MaybeSend,
     {
-        self.generate_box_hash_from_stream_with_progress(reader, alg, bhp, minimal_form, |_, _| {
-            Ok(())
-        })
+        self.generate_box_hash_from_stream_with_progress_and_exclusions(
+            reader,
+            alg,
+            bhp,
+            minimal_form,
+            &[],
+            |_, _| Ok(()),
+            default_hash_buf(),
+        )
     }
 
     /// Like [`Self::generate_box_hash_from_stream`] but fires `progress(step, total)` once
@@ -468,6 +479,7 @@ impl BoxHash {
         bhp: &dyn AssetBoxHash,
         minimal_form: bool,
         progress: F,
+        max_hash_buf: NonZeroUsize,
     ) -> Result<()>
     where
         R: Read + Seek + MaybeSend,
@@ -480,6 +492,7 @@ impl BoxHash {
             minimal_form,
             &[],
             progress,
+            max_hash_buf,
         )
     }
 
@@ -504,6 +517,7 @@ impl BoxHash {
             minimal_form,
             exclusion_requests,
             |_, _| Ok(()),
+            default_hash_buf(),
         )
     }
 
@@ -517,6 +531,7 @@ impl BoxHash {
         minimal_form: bool,
         exclusion_requests: &[BoxHashExclusionRequest],
         mut progress: F,
+        max_hash_buf: NonZeroUsize,
     ) -> Result<()>
     where
         R: Read + Seek + MaybeSend,
@@ -656,6 +671,7 @@ impl BoxHash {
                     Some(inclusions),
                     false,
                     &mut progress,
+                    max_hash_buf,
                 )?);
             }
         } else {
@@ -697,6 +713,7 @@ impl BoxHash {
                     Some(inclusions),
                     false,
                     &mut progress,
+                    max_hash_buf,
                 )?;
 
                 self.boxes.push(BoxMap::from_asset_box_map(
