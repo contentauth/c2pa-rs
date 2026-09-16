@@ -2997,6 +2997,49 @@ impl Claim {
                                 )
                                 .informational(validation_log);
                             }
+
+                            // A data-hash exclusion that covers the C2PA manifest
+                            // store must contain only the manifest store and
+                            // padding (C2PA 2.4 §15.12.1.1). An exclusion that
+                            // overlaps the manifest store but extends past its
+                            // real byte extent is swallowing actual asset content,
+                            // which then goes unhashed while the binding still
+                            // reports a match - e.g. a single exclusion spanning
+                            // the whole file leaves nothing to hash yet matches
+                            // SHA-256("") (CAI-13331 arm 2). The manifest store
+                            // range is only known for an embedded manifest.
+                            if svi.is_embedded {
+                                if let Some(mr) = &svi.manifest_store_range {
+                                    let mr_start = mr.start();
+                                    let mr_end = mr.start().saturating_add(mr.length());
+                                    for e in exclusions {
+                                        let e_start = e.start();
+                                        let e_end = e.start().saturating_add(e.length());
+                                        let overlaps_manifest =
+                                            e_start < mr_end && mr_start < e_end;
+                                        if overlaps_manifest
+                                            && (e_start < mr_start || e_end > mr_end)
+                                        {
+                                            log_item!(
+                                                claim.assertion_uri(
+                                                    &hash_binding_assertion.label()
+                                                ),
+                                                "data hash exclusion extends beyond the C2PA manifest store into asset content",
+                                                "verify_internal"
+                                            )
+                                            .validation_status(
+                                                validation_status::ASSERTION_DATAHASH_MISMATCH,
+                                            )
+                                            .failure(
+                                                validation_log,
+                                                Error::HashMismatch(
+                                                    "data hash exclusion covers asset content outside the manifest store".to_string(),
+                                                ),
+                                            )?;
+                                        }
+                                    }
+                                }
+                            }
                         }
 
                         // only verify local hashes here

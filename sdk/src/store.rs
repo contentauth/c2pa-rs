@@ -8819,6 +8819,81 @@ pub mod tests {
         assert!(!report.has_any_error());
     }
 
+    /// CAI-13331 arm 2: a `c2pa.hash.data` binding whose single exclusion spans
+    /// the entire asset hashes zero content bytes (SHA-256 of the empty input),
+    /// so an attacker could replace all asset content without invalidating the
+    /// hash. Even with a valid signature, verification must reject the binding
+    /// because the exclusion covers asset content outside the C2PA manifest
+    /// store (C2PA 2.4 §15.12.1.1).
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_datahash_whole_file_exclusion_rejected() {
+        use std::io::SeekFrom;
+
+        let context = crate::context::Context::new();
+        let ap = fixture_path("cloud.jpg");
+        let signer = test_signer(SigningAlg::Ps256);
+
+        let mut store = Store::from_context(&context);
+        let claim = create_test_claim().unwrap();
+        store.commit_claim(claim).unwrap();
+
+        let placeholder = store
+            .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg", &context)
+            .unwrap();
+
+        let temp_dir = tempdirectory().unwrap();
+        let output = temp_dir_path(&temp_dir, "datahash-wholefile-out.jpg");
+        let mut output_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&output)
+            .unwrap();
+
+        let offset =
+            write_jpeg_placeholder_file(&placeholder, &ap, &mut output_file, None).unwrap();
+
+        // Malicious exclusion: span the whole file, leaving nothing to hash.
+        let file_len = output_file.seek(SeekFrom::End(0)).unwrap();
+        let mut dh = DataHash::new("source_hash", "sha256");
+        dh.exclusions = Some(vec![HashRange::new(0, file_len)]);
+
+        output_file.rewind().unwrap();
+        let cm = store
+            .get_data_hashed_embeddable_manifest(
+                &dh,
+                signer.as_ref(),
+                "jpeg",
+                Some(&mut output_file),
+                &context,
+            )
+            .unwrap();
+
+        output_file.seek(SeekFrom::Start(offset as u64)).unwrap();
+        output_file.write_all(&cm).unwrap();
+
+        output_file.rewind().unwrap();
+        let mut report = StatusTracker::default();
+        let _new_store =
+            Store::from_stream("image/jpeg", &mut output_file, &mut report, &context).unwrap();
+
+        assert!(
+            report.has_any_error(),
+            "whole-file data-hash exclusion was accepted"
+        );
+        assert!(
+            report
+                .logged_items()
+                .iter()
+                .any(|i| i.validation_status.as_deref()
+                    == Some(validation_status::ASSERTION_DATAHASH_MISMATCH)),
+            "expected ASSERTION_DATAHASH_MISMATCH, got: {:?}",
+            report.logged_items()
+        );
+    }
+
     #[test]
     fn test_sign_manifest_errors_when_dynamic_placeholders_missing() {
         // A signer that advertises a dynamic assertion but whose placeholder slot is
