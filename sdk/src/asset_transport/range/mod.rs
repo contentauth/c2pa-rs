@@ -32,13 +32,17 @@
 //! produced, so they pull in no HTTP client and are available in any build.
 
 mod cache;
+mod driver;
 pub mod http_range;
 mod stream;
 
+pub(crate) use driver::{drive_async, read_whole_async};
 pub(crate) use stream::RangeStream;
 
 use crate::{
-    asset_transport::{AssetRequest, AssetTransportError, ResolvedAsset, SyncAssetTransport},
+    asset_transport::{
+        AssetRequest, AssetTransportError, AsyncAssetTransport, ResolvedAsset, SyncAssetTransport,
+    },
     maybe_send_sync::{MaybeSend, MaybeSync},
 };
 
@@ -134,44 +138,129 @@ impl RangeInfo {
 }
 
 /// Tunables for the window cache layered over a range transport.
+///
+/// Fields are private and set through the `with_*` builders, which reject a zero where
+/// zero has no meaning. Chain from [`Default`]:
+///
+/// ```
+/// # use c2pa::asset_transport::RangeConfig;
+/// # fn main() -> Result<(), c2pa::asset_transport::AssetTransportError> {
+/// let config = RangeConfig::default().with_window(32 * 1024)?;
+/// # Ok(())
+/// # }
+/// ```
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub struct RangeConfig {
     /// Minimum bytes to fetch per cache miss (read-ahead).
-    pub window: u64,
+    window: u64,
     /// Upper bound on a single range request.
-    pub max_request: u64,
+    max_request: u64,
     /// Eviction budget for cached bytes.
-    pub max_cached: u64,
+    max_cached: u64,
     /// Bytes held at once while hashing an asset for verification over an async source.
     /// Verification hashes the whole asset, so this bounds peak memory for the
     /// read: one chunk is fetched, hashed, and dropped before the next.
-    pub hash_chunk: u64,
+    hash_chunk: u64,
+    /// Largest object read whole when ranges cannot serve the read: a verified async
+    /// read, or a handler that slurps. `None` disables that rung.
+    max_whole_object: Option<u64>,
 }
 
 impl RangeConfig {
+    /// Sets the read-ahead floor for a cache miss.
+    ///
+    /// A miss fetches at least this much. Smaller windows suit a format whose discovery
+    /// walks box headers, where the working set is one window per header. Returns
+    /// [`AssetTransportError::Other`] for zero, which would make every fetch empty.
+    pub fn with_window(mut self, window: u64) -> Result<Self, AssetTransportError> {
+        self.window = nonzero("window", window)?;
+        Ok(self)
+    }
+
+    /// Sets the upper bound on one range request.
+    ///
+    /// [`RangeStream`] lowers this to `max_cached` when it is larger, so a single fetch
+    /// can never exceed the eviction budget. Returns [`AssetTransportError::Other`] for
+    /// zero.
+    pub fn with_max_request(mut self, max_request: u64) -> Result<Self, AssetTransportError> {
+        self.max_request = nonzero("max_request", max_request)?;
+        Ok(self)
+    }
+
+    /// Sets the eviction budget for cached bytes.
+    ///
+    /// This is the peak memory a ranged read uses, and it also caps `max_request`.
+    /// Returns [`AssetTransportError::Other`] for zero.
+    pub fn with_max_cached(mut self, max_cached: u64) -> Result<Self, AssetTransportError> {
+        self.max_cached = nonzero("max_cached", max_cached)?;
+        Ok(self)
+    }
+
+    /// Sets the largest object the whole-object fallback will read.
+    ///
+    /// `None` disables the fallback, which is the setting for a runtime that cannot hold
+    /// an arbitrary object, such as a Worker isolate.
+    pub fn with_max_whole_object(mut self, max_whole_object: Option<u64>) -> Self {
+        self.max_whole_object = max_whole_object;
+        self
+    }
+
     /// Sets the bytes held at once while hashing for verification.
-    ///
-    /// This struct is `#[non_exhaustive]`, so a caller outside the crate cannot
-    /// build one field-by-field; chain from [`Default`] instead:
-    ///
-    /// ```
-    /// # use c2pa::asset_transport::RangeConfig;
-    /// let config = RangeConfig::default().with_hash_chunk(1024 * 1024);
-    /// ```
     pub fn with_hash_chunk(mut self, hash_chunk: u64) -> Self {
         self.hash_chunk = hash_chunk;
         self
     }
+
+    /// Read-ahead floor for a cache miss.
+    pub fn window(&self) -> u64 {
+        self.window
+    }
+
+    /// Upper bound on one range request, before [`RangeStream`] caps it at
+    /// [`max_cached`](Self::max_cached).
+    pub fn max_request(&self) -> u64 {
+        self.max_request
+    }
+
+    /// Eviction budget for cached bytes.
+    pub fn max_cached(&self) -> u64 {
+        self.max_cached
+    }
+
+    /// Bytes held at once while hashing for verification.
+    pub fn hash_chunk(&self) -> u64 {
+        self.hash_chunk
+    }
+
+    /// Largest object the whole-object fallback will read, or `None` when that fallback
+    /// is disabled.
+    pub fn max_whole_object(&self) -> Option<u64> {
+        self.max_whole_object
+    }
+}
+
+/// Rejects a zero for a tunable that has no meaning at zero.
+fn nonzero(field: &str, value: u64) -> Result<u64, AssetTransportError> {
+    if value == 0 {
+        return Err(AssetTransportError::Other {
+            source: format!("RangeConfig::{field} must be greater than zero").into(),
+        });
+    }
+    Ok(value)
 }
 
 impl Default for RangeConfig {
     fn default() -> Self {
         Self {
-            window: 64 * 1024,
+            window: 16 * 1024,
             max_request: 8 * 1024 * 1024,
             max_cached: 4 * 1024 * 1024,
             hash_chunk: 4 * 1024 * 1024,
+            // Verification reads the whole object, so a default of `None` would refuse
+            // every async verified read. This fits a browser tab and a Node process; a
+            // Worker isolate, capped near 128 MiB, lowers it or disables the rung.
+            max_whole_object: Some(256 * 1024 * 1024),
         }
     }
 }
@@ -392,8 +481,8 @@ pub(crate) fn check_version(
 /// Bytes to fetch for a cache miss: at least a full window, capped by the single
 /// request limit and by what remains of the object.
 pub(crate) fn fetch_len(want: u64, remaining: u64, config: &RangeConfig) -> u64 {
-    want.max(config.window)
-        .min(config.max_request)
+    want.max(config.window())
+        .min(config.max_request())
         .min(remaining)
 }
 
@@ -413,12 +502,12 @@ pub(crate) fn add_signed(base: u64, delta: i64) -> std::io::Result<u64> {
 /// wrapping it in the shared window cache.
 ///
 /// The factory is called once per open and returns a transport for that reference.
-pub struct RangeTransportSource<F> {
+pub struct SyncRangeAssetTransport<F> {
     factory: F,
     config: RangeConfig,
 }
 
-impl<F, R> RangeTransportSource<F>
+impl<F, R> SyncRangeAssetTransport<F>
 where
     F: Fn(&AssetRequest<'_>) -> Result<R, AssetTransportError> + MaybeSend + MaybeSync,
     R: SyncRangeTransport + 'static,
@@ -438,7 +527,7 @@ where
     }
 }
 
-impl<F, R> SyncAssetTransport for RangeTransportSource<F>
+impl<F, R> SyncAssetTransport for SyncRangeAssetTransport<F>
 where
     F: Fn(&AssetRequest<'_>) -> Result<R, AssetTransportError> + MaybeSend + MaybeSync,
     R: SyncRangeTransport + 'static,
@@ -446,6 +535,56 @@ where
     fn open(&self, request: AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError> {
         let reader = (self.factory)(&request)?;
         Ok(ResolvedAsset::from_ranges(reader, self.config))
+    }
+}
+
+/// An [`AsyncAssetTransport`] that maps each request to an [`AsyncRangeTransport`],
+/// for a runtime with no blocking read. The reader drives the parse over it.
+///
+/// The twin of [`SyncRangeAssetTransport`], and the reason a binding with an async
+/// range transport does not write the [`AsyncAssetTransport`] boilerplate by hand.
+pub struct AsyncRangeAssetTransport<F> {
+    factory: F,
+    config: RangeConfig,
+}
+
+impl<F, R> AsyncRangeAssetTransport<F>
+where
+    F: Fn(&AssetRequest<'_>) -> Result<R, AssetTransportError> + MaybeSend + MaybeSync,
+    R: AsyncRangeTransport + 'static,
+{
+    /// Builds an async range-backed asset source from a transport factory.
+    ///
+    /// The factory is synchronous because opening a transport is cheap: it records a
+    /// reference, and the first network round trip happens in
+    /// [`AsyncRangeTransport::info_async`], which is awaited at most once per read.
+    pub fn new(factory: F) -> Self {
+        Self {
+            factory,
+            config: RangeConfig::default(),
+        }
+    }
+
+    /// Sets the window-cache configuration.
+    pub fn with_config(mut self, config: RangeConfig) -> Self {
+        self.config = config;
+        self
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+impl<F, R> AsyncAssetTransport for AsyncRangeAssetTransport<F>
+where
+    F: Fn(&AssetRequest<'_>) -> Result<R, AssetTransportError> + MaybeSend + MaybeSync,
+    R: AsyncRangeTransport + 'static,
+{
+    async fn open_async(
+        &self,
+        request: AssetRequest<'_>,
+    ) -> Result<ResolvedAsset, AssetTransportError> {
+        let reader = (self.factory)(&request)?;
+        Ok(ResolvedAsset::from_ranges_async(reader, self.config))
     }
 }
 

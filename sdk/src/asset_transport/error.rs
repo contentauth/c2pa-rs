@@ -79,6 +79,67 @@ pub enum AssetTransportError {
     #[error("object version changed during read: expected {expected}, got {got}")]
     VersionChanged { expected: String, got: String },
 
+    /// A driven parse asked again for bytes it had already fetched, so the cache
+    /// evicted them and the parse needs more resident at once than `max_cached` allows.
+    ///
+    /// Raise `max_cached`, lower `window`, or allow the whole-object fallback through
+    /// [`RangeConfig::with_max_whole_object`](crate::asset_transport::RangeConfig::with_max_whole_object).
+    #[error(
+        "working set exceeds the cache budget for {format}: re-read {windows} windows \
+         ({bytes} bytes) against max_cached {max_cached}"
+    )]
+    WorkingSetTooLarge {
+        /// The asset format being parsed.
+        format: String,
+        /// Distinct windows fetched before the re-read.
+        windows: usize,
+        /// Bytes fetched before the re-read.
+        bytes: u64,
+        /// The eviction budget the parse exceeded.
+        max_cached: u64,
+    },
+
+    /// A driven parse hit the attempt ceiling, so it is not resolving one miss per
+    /// attempt. A parse that reads different ranges each time never re-misses and
+    /// arrives here instead.
+    #[error(
+        "parse did not converge for {format}: {attempts} attempts against ceiling \
+         {ceiling} (max_cached {max_cached}, window {window})"
+    )]
+    AttemptsExhausted {
+        /// The asset format being parsed.
+        format: String,
+        /// Attempts made.
+        attempts: u32,
+        /// The ceiling, `max_cached / window + 1`.
+        ceiling: u32,
+        /// The eviction budget in force.
+        max_cached: u64,
+        /// The window size in force.
+        window: u64,
+    },
+
+    /// The whole-object fallback was needed but the object is larger than
+    /// [`RangeConfig::max_whole_object`](crate::asset_transport::RangeConfig::max_whole_object),
+    /// or that rung is disabled.
+    #[error("object of {len} bytes exceeds the whole-object limit for {reference}")]
+    WholeObjectTooLarge {
+        /// The reference that was read.
+        reference: String,
+        /// The object length.
+        len: u64,
+    },
+
+    /// The binding cannot be checked over an asynchronous range transport.
+    ///
+    /// Box hashes and merkle-hashed non-fragmented BMFF need access patterns the async
+    /// path cannot serve. Reported rather than passed unchecked.
+    #[error("{binding} cannot be verified over an async range transport")]
+    UnverifiableOverRanges {
+        /// The binding kind that cannot be checked.
+        binding: String,
+    },
+
     #[error(transparent)]
     Io(#[from] std::io::Error),
 

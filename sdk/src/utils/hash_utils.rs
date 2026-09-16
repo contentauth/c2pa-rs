@@ -278,8 +278,6 @@ where
     F: FnMut(u32, u32) -> Result<()>,
 {
     let max_hash_buf = max_hash_buf.get();
-    let mut bmff_v2_starts: Vec<u64> = Vec::new();
-
     use Hasher::*;
     let mut hasher_enum = match alg {
         "sha256" => SHA256(Sha256::new()),
@@ -297,6 +295,129 @@ where
         return Err(Error::OtherError("no data to hash".into()));
     }
 
+    let (ranges, bmff_v2_starts) = build_hash_ranges(hash_range, is_exclusion, data_len)?;
+
+    // Total callbacks = one per 256 MB chunk across all ranges (BMFF V2 single-byte offsets
+    // each contribute exactly one tick regardless of MAX_HASH_BUF).
+    let total: u32 = ranges
+        .iter()
+        .map(|r| {
+            let len = r.end() - r.start() + 1;
+            u32::try_from(len.div_ceil(max_hash_buf as u64)).unwrap_or(u32::MAX)
+        })
+        .sum();
+    let mut step: u32 = 0;
+
+    if cfg!(target_arch = "wasm32") {
+        // hash the data for ranges
+        for r in ranges {
+            step += 1;
+            progress(step, total)?;
+
+            let start = r.start();
+            let end = r.end();
+            let mut chunk_left = end - start + 1;
+
+            // check to see if this range is an BMFF V2 offset to include in the hash
+            if bmff_v2_starts.contains(start) && end == start {
+                hasher_enum.update(&start.to_be_bytes());
+                continue;
+            }
+
+            // move to start of range
+            data.seek(SeekFrom::Start(*start))?;
+
+            loop {
+                let mut chunk = vec![0u8; chunk_size(chunk_left, max_hash_buf)];
+
+                data.read_exact(&mut chunk)?;
+
+                hasher_enum.update(&chunk);
+
+                chunk_left -= chunk.len() as u64;
+                if chunk_left == 0 {
+                    break;
+                }
+
+                // fire after each non-final chunk so large ranges report sub-range progress
+                step += 1;
+                progress(step, total)?;
+            }
+        }
+    } else {
+        // hash the data for ranges, reading the next chunk on this thread while
+        // the current one hashes on a worker (hash is still moving ahead sequentially).
+        for r in ranges {
+            step += 1;
+            progress(step, total)?;
+
+            let start = r.start();
+            let end = r.end();
+            let mut chunk_left = end - start + 1;
+
+            // check to see if this range is an BMFF V2 offset to include in the hash
+            if bmff_v2_starts.contains(start) && end == start {
+                hasher_enum.update(&start.to_be_bytes());
+                continue;
+            }
+
+            // move to start of range
+            data.seek(SeekFrom::Start(*start))?;
+
+            let mut chunk = vec![0u8; chunk_size(chunk_left, max_hash_buf)];
+            data.read_exact(&mut chunk)?;
+
+            loop {
+                chunk_left -= chunk.len() as u64;
+
+                // with no next chunk to read there is nothing to overlap, so hash inline.
+                if chunk_left == 0 {
+                    hasher_enum.update(&chunk);
+                    break;
+                }
+
+                let (tx, rx) = std::sync::mpsc::channel();
+
+                std::thread::Builder::new()
+                    .name("c2pa-hash".to_string())
+                    .spawn(move || {
+                        hasher_enum.update(&chunk);
+                        tx.send(hasher_enum).unwrap_or_default();
+                    })?;
+
+                // read next chunk while we wait for hash
+                let mut next_chunk = vec![0u8; chunk_size(chunk_left, max_hash_buf)];
+                data.read_exact(&mut next_chunk)?;
+
+                hasher_enum = match rx.recv() {
+                    Ok(hasher) => hasher,
+                    Err(_) => return Err(Error::ThreadReceiveError),
+                };
+
+                // fire after each completed pipeline stage so large ranges report sub-range progress
+                step += 1;
+                progress(step, total)?;
+
+                chunk = next_chunk;
+            }
+        }
+    }
+
+    // return the hash
+    Ok(Hasher::finalize(hasher_enum))
+}
+
+/// Builds the inclusive byte ranges a hash covers, and the BMFF V2 offsets that must
+/// be hashed as positions rather than bytes.
+///
+/// Shared by the blocking and driven hashers so the two can never disagree about
+/// which bytes a binding covers.
+pub(crate) fn build_hash_ranges(
+    hash_range: Option<Vec<HashRange>>,
+    is_exclusion: bool,
+    data_len: u64,
+) -> Result<(Vec<RangeInclusive<u64>>, Vec<u64>)> {
+    let mut bmff_v2_starts: Vec<u64> = Vec::new();
     let ranges = match hash_range {
         Some(mut hr) if !hr.is_empty() => {
             // hash data skipping excluded regions
@@ -434,115 +555,7 @@ where
             ranges_vec
         }
     };
-
-    // Total callbacks = one per 256 MB chunk across all ranges (BMFF V2 single-byte offsets
-    // each contribute exactly one tick regardless of MAX_HASH_BUF).
-    let total: u32 = ranges
-        .iter()
-        .map(|r| {
-            let len = r.end() - r.start() + 1;
-            u32::try_from(len.div_ceil(max_hash_buf as u64)).unwrap_or(u32::MAX)
-        })
-        .sum();
-    let mut step: u32 = 0;
-
-    if cfg!(target_arch = "wasm32") {
-        // hash the data for ranges
-        for r in ranges {
-            step += 1;
-            progress(step, total)?;
-
-            let start = r.start();
-            let end = r.end();
-            let mut chunk_left = end - start + 1;
-
-            // check to see if this range is an BMFF V2 offset to include in the hash
-            if bmff_v2_starts.contains(start) && end == start {
-                hasher_enum.update(&start.to_be_bytes());
-                continue;
-            }
-
-            // move to start of range
-            data.seek(SeekFrom::Start(*start))?;
-
-            loop {
-                let mut chunk = vec![0u8; chunk_size(chunk_left, max_hash_buf)];
-
-                data.read_exact(&mut chunk)?;
-
-                hasher_enum.update(&chunk);
-
-                chunk_left -= chunk.len() as u64;
-                if chunk_left == 0 {
-                    break;
-                }
-
-                // fire after each non-final chunk so large ranges report sub-range progress
-                step += 1;
-                progress(step, total)?;
-            }
-        }
-    } else {
-        // hash the data for ranges, reading the next chunk on this thread while
-        // the current one hashes on a worker (hash is still moving ahead sequentially).
-        for r in ranges {
-            step += 1;
-            progress(step, total)?;
-
-            let start = r.start();
-            let end = r.end();
-            let mut chunk_left = end - start + 1;
-
-            // check to see if this range is an BMFF V2 offset to include in the hash
-            if bmff_v2_starts.contains(start) && end == start {
-                hasher_enum.update(&start.to_be_bytes());
-                continue;
-            }
-
-            // move to start of range
-            data.seek(SeekFrom::Start(*start))?;
-
-            let mut chunk = vec![0u8; chunk_size(chunk_left, max_hash_buf)];
-            data.read_exact(&mut chunk)?;
-
-            loop {
-                chunk_left -= chunk.len() as u64;
-
-                // with no next chunk to read there is nothing to overlap, so hash inline.
-                if chunk_left == 0 {
-                    hasher_enum.update(&chunk);
-                    break;
-                }
-
-                let (tx, rx) = std::sync::mpsc::channel();
-
-                std::thread::Builder::new()
-                    .name("c2pa-hash".to_string())
-                    .spawn(move || {
-                        hasher_enum.update(&chunk);
-                        tx.send(hasher_enum).unwrap_or_default();
-                    })?;
-
-                // read next chunk while we wait for hash
-                let mut next_chunk = vec![0u8; chunk_size(chunk_left, max_hash_buf)];
-                data.read_exact(&mut next_chunk)?;
-
-                hasher_enum = match rx.recv() {
-                    Ok(hasher) => hasher,
-                    Err(_) => return Err(Error::ThreadReceiveError),
-                };
-
-                // fire after each completed pipeline stage so large ranges report sub-range progress
-                step += 1;
-                progress(step, total)?;
-
-                chunk = next_chunk;
-            }
-        }
-    }
-
-    // return the hash
-    Ok(Hasher::finalize(hasher_enum))
+    Ok((ranges, bmff_v2_starts))
 }
 
 /// May be used to generate hashes in combination with embeddable APIs.
@@ -858,4 +871,5 @@ mod tests {
         .unwrap();
         assert_eq!(hash.len(), 32);
     }
+
 }

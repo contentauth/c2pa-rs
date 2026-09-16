@@ -23,10 +23,11 @@ pub use error::AssetTransportError;
 #[cfg(feature = "file_io")]
 pub use local::LocalAssetTransport;
 pub use local::UnconfiguredAssetTransport;
+pub(crate) use range::{drive_async, read_whole_async};
 use range::RangeStream;
 pub use range::{
-    http_range, AsyncRangeTransport, ObjectVersion, RangeChunk, RangeConfig, RangeInfo,
-    RangeTransportSource, SyncRangeTransport,
+    http_range, AsyncRangeAssetTransport, AsyncRangeTransport, ObjectVersion, RangeChunk,
+    RangeConfig, RangeInfo, SyncRangeAssetTransport, SyncRangeTransport,
 };
 
 use crate::{
@@ -174,10 +175,21 @@ struct RangeSource {
 /// A range transport, synchronous or non-blocking.
 enum RangeTransportKind {
     Sync(Box<dyn SyncRangeTransport>),
-    // Constructed by `from_ranges_async`, refused by the sync accessors with `AsyncOnlyAsset`.
-    // The retry-on-miss driver for async verification will read it. Stored only until then.
-    #[allow(dead_code)]
     Async(Box<dyn AsyncRangeTransport>),
+}
+
+/// How a caller must read a resolved asset: an ordinary stream, or a transport to drive.
+///
+/// Synchronous ranges collapse into `Stream`, since [`RangeStream`] already presents
+/// them as blocking bytes and driving them would only be slower.
+pub(crate) enum ReadTarget {
+    /// Blocking bytes: a stream asset, or a sync range transport wrapped in a cache.
+    Stream(Box<dyn ReadSeek>),
+    /// A non-blocking range transport, and the config to drive it with.
+    AsyncRanges {
+        transport: Box<dyn AsyncRangeTransport>,
+        config: RangeConfig,
+    },
 }
 
 impl ResolvedAsset {
@@ -257,20 +269,33 @@ impl ResolvedAsset {
         self.size
     }
 
+    /// Whether this asset's bytes are already a plain stream, or need a transport driven.
+    ///
+    /// Read the format hint and size before calling this, since it consumes `self`.
+    pub(crate) fn into_read_target(self) -> ReadTarget {
+        match self.bytes {
+            AssetBytes::Stream(stream) => ReadTarget::Stream(stream),
+            AssetBytes::Ranges(source) => match source.transport {
+                RangeTransportKind::Sync(transport) => {
+                    ReadTarget::Stream(Box::new(RangeStream::new(transport, source.config)))
+                }
+                RangeTransportKind::Async(transport) => ReadTarget::AsyncRanges {
+                    transport,
+                    config: source.config,
+                },
+            },
+        }
+    }
+
     /// Turns the transported asset bytes into a blocking seekable stream.
     ///
     /// A stream asset returns its stream; a synchronous range asset is wrapped so it
     /// fetches on demand. An asynchronous range asset has no blocking view and returns
     /// [`AssetTransportError::AsyncOnlyAsset`]; use the async read path for it.
     pub fn try_into_read_seek(self) -> Result<Box<dyn ReadSeek>, AssetTransportError> {
-        match self.bytes {
-            AssetBytes::Stream(stream) => Ok(stream),
-            AssetBytes::Ranges(source) => match source.transport {
-                RangeTransportKind::Sync(transport) => {
-                    Ok(Box::new(RangeStream::new(transport, source.config)))
-                }
-                RangeTransportKind::Async(_) => Err(AssetTransportError::AsyncOnlyAsset),
-            },
+        match self.into_read_target() {
+            ReadTarget::Stream(stream) => Ok(stream),
+            ReadTarget::AsyncRanges { .. } => Err(AssetTransportError::AsyncOnlyAsset),
         }
     }
 }

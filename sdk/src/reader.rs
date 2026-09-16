@@ -31,6 +31,7 @@ use serde_with::skip_serializing_none;
 use crate::asset_transport::{
     AssetRef, AssetRequest, AssetRequestKind, AssetTransportError, OwnedAssetRef, ResolvedAsset,
 };
+use crate::asset_transport::{drive_async, read_whole_async, ReadTarget};
 #[cfg(feature = "file_io")]
 use crate::utils::io_utils::uri_to_path;
 use crate::{
@@ -370,7 +371,21 @@ impl Reader {
         .or_else(|| format.map(str::to_owned))
         .or_else(|| resolved.format_hint().map(str::to_owned))
         .unwrap_or_default();
-        let mut file = resolved.try_into_read_seek()?;
+        // An async range transport has no blocking view, so the parse is driven: run
+        // over cached bytes, fetch what it misses, run again. Only the async twin can
+        // await, so the sync one still reports `AsyncOnlyAsset` through the same seam.
+        let mut file = if _sync {
+            resolved.try_into_read_seek()?
+        } else {
+            match resolved.into_read_target() {
+                ReadTarget::Stream(stream) => stream,
+                ReadTarget::AsyncRanges { transport, config } => {
+                    return self
+                        .with_driven_asset_async(&path_fmt, transport.as_ref(), config, reference)
+                        .await
+                }
+            }
+        };
         // Enforce stream at position 0.
         file.rewind()?;
         let format = self.context.io().format_from_stream(&path_fmt, &mut file);
@@ -1501,6 +1516,83 @@ impl Reader {
 
         Ok(ingredient)
     }
+
+    /// Reads an asset served by a non-blocking range transport.
+    ///
+    /// Discovery runs through the driver: the synchronous parser reads cached bytes,
+    /// the driver fetches what it misses and runs it again.
+    ///
+    /// Two cases take the whole object instead. Checking the data-hash binding needs
+    /// every hashed byte readable without awaiting, and the verification path is
+    /// synchronous down to the hasher. A handler that reads its input to end re-reads
+    /// everything on each attempt, so driving it is quadratic for the same bytes.
+    /// Both are bounded by `max_whole_object`: above it this is an error, never a
+    /// silent whole download.
+    async fn with_driven_asset_async(
+        mut self,
+        path_fmt: &str,
+        transport: &dyn crate::asset_transport::AsyncRangeTransport,
+        config: crate::asset_transport::RangeConfig,
+        reference: AssetRef<'_>,
+    ) -> Result<Self> {
+        let reference = reference.to_string();
+        let verifying = self.context.settings().verify.verify_after_reading;
+
+        if verifying || slurps_whole_asset(path_fmt) {
+            // An asset that takes this rung on every read costs a full download each
+            // time. Say so, or the cost is invisible to whoever tunes the knobs.
+            log::debug!(
+                "range read took the whole object for {reference} ({path_fmt}), \
+                 verifying={verifying}"
+            );
+            let mut file = read_whole_async(transport, &config, &reference).await?;
+            let format = self.context.io().format_from_stream(path_fmt, &mut file);
+            let mut validation_log = StatusTracker::default();
+            let store =
+                Store::from_stream_async(&format, &mut file, &mut validation_log, &self.context)
+                    .await?;
+            self.with_store_async(store, &mut validation_log).await?;
+            return Ok(self);
+        }
+
+        // `load_jumbf_from_stream` touches no `StatusTracker`, so it is restartable by
+        // construction and the "only side-effect-free work may be driven" rule is
+        // structural here rather than a review criterion.
+        let format = path_fmt.to_owned();
+        let context = self.context.clone();
+        let (manifest_bytes, report) = drive_async(transport, &config, &format, |stream| {
+            Store::load_jumbf_from_stream(&format, stream, &context)
+                .map(|(bytes, _)| bytes)
+                .map_err(std::io::Error::other)
+        })
+        .await?;
+        // Attempts, not wall time, are what a driven parse costs: a fast transport
+        // hides a re-parse per miss.
+        log::debug!(
+            "drove {format} discovery in {} attempts, {} bytes fetched",
+            report.attempts,
+            report.bytes_fetched
+        );
+
+        // The tracker runs once, outside the driver, on the bytes it produced.
+        let mut validation_log = StatusTracker::default();
+        let store =
+            Store::from_jumbf_with_context(&manifest_bytes, &mut validation_log, &self.context)?;
+        self.with_store_async(store, &mut validation_log).await?;
+        Ok(self)
+    }
+}
+
+/// Whether a format's handler reads the whole asset to find its manifest.
+///
+/// `jpeg_io::read_c2pa` opens by reading the stream to end, so under a restarting
+/// driver it re-reads everything on every attempt. Ranges save nothing for these and
+/// cost a re-parse per miss.
+fn slurps_whole_asset(format: &str) -> bool {
+    matches!(
+        format.rsplit('/').next().unwrap_or(format),
+        "jpeg" | "jpg"
+    )
 }
 
 /// The reference to request a sidecar manifest from.
@@ -1747,7 +1839,7 @@ pub mod tests {
         // reading the whole object. This proves discovery *and* hard-binding
         // verification happen over ranges, not just that a manifest was found.
         use crate::asset_transport::{
-            AssetTransportError, ObjectVersion, RangeChunk, RangeInfo, RangeTransportSource,
+            AssetTransportError, ObjectVersion, RangeChunk, RangeInfo, SyncRangeAssetTransport,
             SyncRangeTransport,
         };
 
@@ -1775,7 +1867,7 @@ pub mod tests {
 
         // Same bytes, served in ranges through a custom transport.
         let bytes = IMAGE_WITH_MANIFEST.to_vec();
-        let context = Context::new().with_asset_transport(RangeTransportSource::new(move |_| {
+        let context = Context::new().with_asset_transport(SyncRangeAssetTransport::new(move |_| {
             Ok(InMemoryRanges(bytes.clone()))
         }));
         let ranged = Reader::from_context(context).with_file("no/such/file.jpg")?;
@@ -1786,6 +1878,182 @@ pub mod tests {
             whole.validation_state(),
             "ranged read disagreed with whole-object read: {:?}",
             ranged.validation_status()
+        );
+        Ok(())
+    }
+
+    /// An async range transport with no blocking view, which the reader must drive.
+    #[cfg(not(target_arch = "wasm32"))]
+    struct InMemoryAsyncRanges {
+        bytes: Vec<u8>,
+        reads: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[async_trait::async_trait]
+    impl crate::asset_transport::AsyncRangeTransport for InMemoryAsyncRanges {
+        async fn info_async(
+            &self,
+        ) -> std::result::Result<crate::asset_transport::RangeInfo, AssetTransportError> {
+            Ok(crate::asset_transport::RangeInfo::new(self.bytes.len() as u64))
+        }
+
+        async fn read_range_async(
+            &self,
+            offset: u64,
+            len: u64,
+            _expect: Option<&crate::asset_transport::ObjectVersion>,
+        ) -> std::result::Result<crate::asset_transport::RangeChunk, AssetTransportError> {
+            self.reads
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let start = (offset as usize).min(self.bytes.len());
+            let end = start.saturating_add(len as usize).min(self.bytes.len());
+            Ok(crate::asset_transport::RangeChunk::new(
+                offset,
+                self.bytes[start..end].to_vec(),
+            ))
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn async_ranges_are_driven_and_match_the_whole_object() -> Result<()> {
+        // The async counterpart of the sync range test: the transport cannot block, so
+        // the reader drives the parse over it. Before the driver this returned
+        // `AsyncOnlyAsset`, which is what the c2pa-js `discover` and `verify-async`
+        // modes hit.
+        use crate::asset_transport::{AsyncRangeAssetTransport, RangeConfig};
+
+        let whole = Reader::from_context(Context::new())
+            .with_stream_async("image/jpeg", &mut Cursor::new(IMAGE_WITH_MANIFEST))
+            .await?;
+
+        let reads = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let bytes = IMAGE_WITH_MANIFEST.to_vec();
+        let counter = reads.clone();
+        // JPEG takes the whole-object rung, so the cap has to admit this object.
+        let config = RangeConfig::default()
+            .with_max_whole_object(Some(10 * 1024 * 1024));
+        let context = Context::new().with_asset_transport_async(
+            AsyncRangeAssetTransport::new(move |_| {
+                Ok(InMemoryAsyncRanges {
+                    bytes: bytes.clone(),
+                    reads: counter.clone(),
+                })
+            })
+            .with_config(config),
+        );
+
+        let ranged = Reader::from_context(context)
+            .with_asset_async(AssetRef::Uri("https://example.test/a.jpg"), Some("image/jpeg"))
+            .await?;
+
+        assert!(ranged.active_manifest().is_some());
+        assert_eq!(
+            ranged.validation_state(),
+            whole.validation_state(),
+            "driven async read disagreed with whole-object read: {:?}",
+            ranged.validation_status()
+        );
+        assert!(
+            reads.load(std::sync::atomic::Ordering::SeqCst) > 0,
+            "the transport was never read"
+        );
+        Ok(())
+    }
+
+    /// Discovery reads the manifest without checking the binding, so tampered bytes
+    /// must not produce a data-hash failure. That is what separates `discover` from
+    /// `verify-async`. A discovery path that verified anyway would make them identical.
+    ///
+    /// The assertion is on failure codes, not `validation_state`. With
+    /// `verify_after_reading` off nothing populates `ValidationResults`, and
+    /// `validation_state()` reports `Invalid` for an empty result set on every read
+    /// path, ranges or not. That is pre-existing and not what this test is about.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn async_discovery_does_not_check_the_binding() -> Result<()> {
+        use crate::asset_transport::{AsyncRangeAssetTransport, RangeConfig};
+
+        let mut tampered = IMAGE_WITH_MANIFEST.to_vec();
+        let last = tampered.len() - 64;
+        tampered[last] ^= 0xff;
+
+        let reads = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let counter = reads.clone();
+        let context = Context::new()
+            .with_settings(r#"{"verify": {"verify_after_reading": false}}"#)?
+            .with_asset_transport_async(
+                AsyncRangeAssetTransport::new(move |_| {
+                    Ok(InMemoryAsyncRanges {
+                        bytes: tampered.clone(),
+                        reads: counter.clone(),
+                    })
+                })
+                .with_config(RangeConfig::default()),
+            );
+
+        let reader = Reader::from_context(context)
+            .with_asset_async(AssetRef::Uri("https://example.test/d.jpg"), Some("image/jpeg"))
+            .await?;
+
+        assert!(reader.active_manifest().is_some());
+        let codes: Vec<&str> = reader
+            .validation_status()
+            .unwrap_or_default()
+            .iter()
+            .map(|s| s.code())
+            .collect();
+        assert!(
+            !codes.contains(&"assertion.dataHash.mismatch"),
+            "discovery checked the binding: it must not. codes={codes:?}"
+        );
+        Ok(())
+    }
+
+    /// The decisive test for verified async ranges: a transport that always succeeds
+    /// passes every other check. Corrupting a byte the manifest covers must be
+    /// rejected, or the binding is not being checked at all.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn async_ranges_reject_tampered_bytes() -> Result<()> {
+        use crate::asset_transport::{AsyncRangeAssetTransport, RangeConfig};
+
+        let mut tampered = IMAGE_WITH_MANIFEST.to_vec();
+        // Well past the manifest, inside the hashed image data.
+        let last = tampered.len() - 64;
+        tampered[last] ^= 0xff;
+
+        let reads = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let counter = reads.clone();
+        let context = Context::new().with_asset_transport_async(
+            AsyncRangeAssetTransport::new(move |_| {
+                Ok(InMemoryAsyncRanges {
+                    bytes: tampered.clone(),
+                    reads: counter.clone(),
+                })
+            })
+            .with_config(RangeConfig::default()),
+        );
+
+        let reader = Reader::from_context(context)
+            .with_asset_async(AssetRef::Uri("https://example.test/t.jpg"), Some("image/jpeg"))
+            .await?;
+
+        assert_eq!(
+            reader.validation_state(),
+            ValidationState::Invalid,
+            "tampered bytes passed verification over async ranges"
+        );
+        let codes: Vec<&str> = reader
+            .validation_status()
+            .unwrap_or_default()
+            .iter()
+            .map(|s| s.code())
+            .collect();
+        assert!(
+            codes.contains(&"assertion.dataHash.mismatch"),
+            "expected a data-hash mismatch, got {codes:?}"
         );
         Ok(())
     }

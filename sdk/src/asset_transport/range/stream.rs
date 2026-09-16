@@ -39,8 +39,15 @@ pub(crate) struct RangeStream {
 
 impl RangeStream {
     pub(crate) fn new(transport: Box<dyn SyncRangeTransport>, config: RangeConfig) -> Self {
+        // A fetch larger than the eviction budget becomes one segment that `evict`
+        // cannot drop, since it keeps the last segment whatever the budget. Capping the
+        // request at the budget makes `max_cached` the real peak, and gives the async
+        // driver a bound on how many misses one cache can hold.
+        let config = config
+            .with_max_request(config.max_request().min(config.max_cached()))
+            .unwrap_or(config);
         Self {
-            cache: RangeCache::new(config.max_cached),
+            cache: RangeCache::new(config.max_cached()),
             transport,
             config,
             offset: 0,
@@ -202,9 +209,51 @@ mod tests {
         stream.read_exact(&mut buf).unwrap();
         assert_eq!(&buf, &data[..10]);
 
-        // Default window (64 KiB) fetched the whole object in one request; the
-        // re-read after seeking back is served from cache.
+        // The default window covers this object in one request, so the re-read after
+        // seeking back is served from cache.
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_fetch_never_exceeds_the_eviction_budget() {
+        // `max_request` above `max_cached` produces one segment `evict` cannot drop,
+        // since it keeps the last segment whatever the budget. `RangeStream::new` caps
+        // the request at the budget, so `max_cached` is the real peak.
+        let max_cached = 1024u64;
+        let config = RangeConfig::default()
+            .with_window(64)
+            .unwrap()
+            .with_max_cached(max_cached)
+            .unwrap()
+            .with_max_request(8 * max_cached)
+            .unwrap();
+
+        let (mem, _calls) = reader(vec![0u8; 16 * 1024]);
+        let mut stream = RangeStream::new(mem, config);
+
+        // A read larger than the budget: `want` alone would ask for 8 KiB.
+        let mut buf = vec![0u8; 8 * 1024];
+        stream.read_exact(&mut buf).unwrap();
+
+        assert!(
+            stream.cache.cached_bytes() <= max_cached,
+            "cached {} exceeded budget {max_cached}",
+            stream.cache.cached_bytes()
+        );
+    }
+
+    #[test]
+    fn config_rejects_a_zero_tunable() {
+        assert!(RangeConfig::default().with_window(0).is_err());
+        assert!(RangeConfig::default().with_max_request(0).is_err());
+        assert!(RangeConfig::default().with_max_cached(0).is_err());
+        // Zero is meaningful here: no whole-object fallback.
+        assert_eq!(
+            RangeConfig::default()
+                .with_max_whole_object(None)
+                .max_whole_object(),
+            None
+        );
     }
 
     #[test]

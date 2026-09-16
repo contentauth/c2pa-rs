@@ -49,6 +49,12 @@ impl RangeCache {
         }
     }
 
+    /// Bytes currently held across every segment.
+    #[cfg(test)]
+    pub(crate) fn cached_bytes(&self) -> u64 {
+        self.total
+    }
+
     fn tick(&mut self) -> u64 {
         self.clock += 1;
         self.clock
