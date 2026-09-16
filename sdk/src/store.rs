@@ -101,6 +101,25 @@ pub(crate) struct ManifestHashes {
     pub signature_box_hash: Vec<u8>,
 }
 
+/// Returns the total byte length declared by the outer JUMBF superbox header at
+/// the start of `buf` (the ISO BMFF box `LBox`, or `XLBox` when `LBox == 1`).
+/// Returns `None` when the length cannot be determined (too short, or `LBox == 0`
+/// meaning the box runs to end-of-file, in which case there can be no trailing
+/// content to detect).
+fn jumbf_superbox_len(buf: &[u8]) -> Option<usize> {
+    if buf.len() < 8 {
+        return None;
+    }
+    match u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]) {
+        0 => None,
+        1 => {
+            let xlbox = buf.get(8..16)?;
+            usize::try_from(u64::from_be_bytes(xlbox.try_into().ok()?)).ok()
+        }
+        lbox => Some(lbox as usize),
+    }
+}
+
 // internal struct to pass around info needed to optimally complete validation
 #[derive(Default)]
 pub(crate) struct StoreValidationInfo<'a> {
@@ -3791,6 +3810,60 @@ impl Store {
         Ok(store)
     }
 
+    /// Flags a manifest store whose reconstructed bytes extend past the declared
+    /// JUMBF superbox with non-zero content. Those trailing bytes sit inside the
+    /// hard-binding exclusion range yet are not part of the parsed manifest, so
+    /// they are unauthenticated (CAI-13355). C2PA 2.4 §15.12.1.1/§15.12.3 require
+    /// the excluded manifest-store range to contain only the manifest store and
+    /// zero padding, so non-zero trailing bytes are rejected. Logged as a
+    /// non-throwing failure (mapped to the active hard binding's mismatch code)
+    /// so the reader still loads but reports an invalid validation state.
+    fn check_manifest_store_trailing_content(
+        c2pa_data: &[u8],
+        store: &Store,
+        validation_log: &mut StatusTracker,
+    ) {
+        let Some(superbox_len) = jumbf_superbox_len(c2pa_data) else {
+            return;
+        };
+        // Only trailing content beyond the superbox matters; benign zero padding
+        // is permitted by the spec.
+        if c2pa_data.len() <= superbox_len || !c2pa_data[superbox_len..].iter().any(|&b| b != 0) {
+            return;
+        }
+
+        let status = store
+            .provenance_claim()
+            .and_then(|claim| {
+                claim.hash_assertions().into_iter().find_map(|a| {
+                    let label = a.label_raw();
+                    if label.starts_with(BoxHash::LABEL) {
+                        Some(validation_status::ASSERTION_BOXHASH_MISMATCH)
+                    } else if label.starts_with(BmffHash::LABEL) {
+                        Some(validation_status::ASSERTION_BMFFHASH_MISMATCH)
+                    } else if label.starts_with(DataHash::LABEL) {
+                        Some(validation_status::ASSERTION_DATAHASH_MISMATCH)
+                    } else {
+                        None
+                    }
+                })
+            })
+            .unwrap_or(validation_status::ASSERTION_DATAHASH_MISMATCH);
+
+        log_item!(
+            "JUMBF",
+            "manifest store contains content beyond the JUMBF superbox inside the hard-binding exclusion",
+            "check_manifest_store_trailing_content"
+        )
+        .validation_status(status)
+        .failure_no_throw(
+            validation_log,
+            Error::HashMismatch(
+                "manifest store contains content beyond the JUMBF superbox".to_string(),
+            ),
+        );
+    }
+
     /// Load store from a manifest data and stream
     #[async_generic]
     pub fn from_manifest_data_and_stream(
@@ -3842,6 +3915,15 @@ impl Store {
                     .failure_no_throw(validation_log, e);
             })?;
         store.embedded = embedded;
+
+        // For an embedded manifest, `c2pa_data` is the manifest store reconstructed
+        // from the region the hard binding excludes. Any bytes beyond the declared
+        // JUMBF superbox live inside that exclusion but are not part of the manifest
+        // the validator parses, so they let an attacker hide replacement asset
+        // content without altering any signed byte (CAI-13355).
+        if embedded {
+            Store::check_manifest_store_trailing_content(c2pa_data, &store, validation_log);
+        }
 
         if context.settings().verify.verify_after_reading {
             stream.rewind()?;
@@ -8892,6 +8974,127 @@ pub mod tests {
             "expected ASSERTION_DATAHASH_MISMATCH, got: {:?}",
             report.logged_items()
         );
+    }
+
+    /// CAI-13355: content hidden inside the hard-binding exclusion range - bytes
+    /// in the reconstructed manifest store beyond the declared JUMBF superbox -
+    /// must invalidate the manifest even though the parsed manifest and every
+    /// signed byte are unchanged (the attacker shrinks the COSE `pad` reserve to
+    /// make room). The manifest store the embedded loader reconstructs from such
+    /// a forged file is exactly a valid store with trailing non-zero bytes.
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_manifest_store_trailing_content_rejected() {
+        use std::io::{Read, SeekFrom};
+
+        let context = crate::context::Context::new();
+        let ap = fixture_path("cloud.jpg");
+        let signer = test_signer(SigningAlg::Ps256);
+
+        let mut store = Store::from_context(&context);
+        store.commit_claim(create_test_claim().unwrap()).unwrap();
+
+        let placeholder = store
+            .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg", &context)
+            .unwrap();
+
+        let temp_dir = tempdirectory().unwrap();
+        let output = temp_dir_path(&temp_dir, "trailing-content.jpg");
+        let mut output_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&output)
+            .unwrap();
+
+        let offset =
+            write_jpeg_placeholder_file(&placeholder, &ap, &mut output_file, None).unwrap();
+
+        let mut dh = DataHash::new("source_hash", "sha256");
+        dh.exclusions = Some(vec![HashRange::new(
+            offset as u64,
+            placeholder.len() as u64,
+        )]);
+
+        output_file.rewind().unwrap();
+        let cm = store
+            .get_data_hashed_embeddable_manifest(
+                &dh,
+                signer.as_ref(),
+                "jpeg",
+                Some(&mut output_file),
+                &context,
+            )
+            .unwrap();
+        output_file.seek(SeekFrom::Start(offset as u64)).unwrap();
+        output_file.write_all(&cm).unwrap();
+        output_file.rewind().unwrap();
+        let mut signed = Vec::new();
+        output_file.read_to_end(&mut signed).unwrap();
+
+        // Baseline: the untampered file validates cleanly.
+        let mut ok_log = StatusTracker::default();
+        Store::from_stream(
+            "image/jpeg",
+            Cursor::new(signed.clone()),
+            &mut ok_log,
+            &context,
+        )
+        .unwrap();
+        assert!(!ok_log.has_any_error(), "baseline file must validate");
+
+        // Legit manifest store has no trailing content; forge one that does.
+        let (jumbf, _) =
+            Store::load_jumbf_from_stream("image/jpeg", &mut Cursor::new(signed.clone()), &context)
+                .unwrap();
+        assert_eq!(
+            jumbf.len(),
+            jumbf_superbox_len(&jumbf).unwrap(),
+            "legit manifest store must not have trailing content"
+        );
+        let mut forged = jumbf.clone();
+        forged.extend_from_slice(&[0xffu8; 64]);
+
+        let mut log = StatusTracker::default();
+        Store::from_manifest_data_and_stream_with_embedded(
+            &forged,
+            "image/jpeg",
+            Cursor::new(signed),
+            &mut log,
+            &context,
+            true,
+        )
+        .unwrap();
+        assert!(
+            log.logged_items()
+                .iter()
+                .any(|i| i.validation_status.as_deref()
+                    == Some(validation_status::ASSERTION_DATAHASH_MISMATCH)),
+            "trailing manifest-store content not rejected: {:?}",
+            log.logged_items()
+        );
+    }
+
+    #[test]
+    fn test_jumbf_superbox_len() {
+        // 32-bit LBox: total box length is the first 4 bytes.
+        let mut buf = vec![0u8; 8];
+        buf[0..4].copy_from_slice(&100u32.to_be_bytes());
+        assert_eq!(jumbf_superbox_len(&buf), Some(100));
+
+        // LBox == 1 selects the 64-bit XLBox at bytes 8..16.
+        let mut xl = vec![0u8; 16];
+        xl[3] = 1; // LBox = 1
+        xl[8..16].copy_from_slice(&500u64.to_be_bytes());
+        assert_eq!(jumbf_superbox_len(&xl), Some(500));
+
+        // LBox == 0 means "to end of file" - no determinable trailing content.
+        let zero = vec![0u8; 8];
+        assert_eq!(jumbf_superbox_len(&zero), None);
+
+        // Too short to hold a header.
+        assert_eq!(jumbf_superbox_len(&[0u8; 4]), None);
     }
 
     #[test]
