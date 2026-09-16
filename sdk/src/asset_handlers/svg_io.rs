@@ -684,14 +684,25 @@ pub mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use std::{fs::File, io::Read};
+    use std::{
+        fs::File,
+        io::{Cursor, Read},
+    };
 
     use super::*;
-    use crate::utils::{
-        hash_utils::vec_compare,
-        io_utils::tempdirectory,
-        test::{fixture_path, temp_dir_path},
-        xmp_inmemory_utils::extract_provenance,
+    use crate::{
+        builder::Builder,
+        crypto::base64,
+        store::Store,
+        utils::{
+            hash_utils::vec_compare,
+            io_utils::tempdirectory,
+            test::{fixture_path, temp_dir_path, test_context},
+            test_signer::test_signer,
+            xmp_inmemory_utils::extract_provenance,
+        },
+        validation_status::ASSERTION_DATAHASH_MISMATCH,
+        Reader, SigningAlg, ValidationState,
     };
 
     fn assert_c2pa_namespace_on_svg_root(xml: &str) {
@@ -718,6 +729,140 @@ pub mod tests {
             !manifest_open_tag.contains("xmlns:c2pa"),
             "xmlns:c2pa should not be on <c2pa:manifest>, got: {manifest_open_tag}"
         );
+    }
+
+    // A signed SVG's `c2pa.hash.data` exclusion covers the base64 manifest text.
+    // An attacker can shrink the manifest by removing the (unsigned) COSE `pad`
+    // header, then fill the freed space -- still inside the signed exclusion --
+    // with renderable SVG markup. The signature and data hash still verify, so
+    // without the manifest-location check this validates as trusted while
+    // rendering attacker content. Guards against that regression.
+    #[test]
+    #[allow(deprecated)]
+    fn test_svg_shrunk_manifest_injection_rejected() {
+        // Sign an SVG normally.
+        let src = std::fs::read(fixture_path("sample1.svg")).unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut builder = Builder::from_context(test_context())
+            .with_definition(r#"{"title":"poc"}"#)
+            .unwrap();
+        let mut dest = Cursor::new(Vec::new());
+        builder
+            .sign(
+                signer.as_ref(),
+                "image/svg+xml",
+                &mut Cursor::new(src),
+                &mut dest,
+            )
+            .unwrap();
+        let signed = dest.into_inner();
+
+        // Locate the base64 manifest text and its byte range (the data-hash exclusion).
+        let text = String::from_utf8_lossy(&signed);
+        let open = text.find("<c2pa:manifest").unwrap();
+        let excl_start = open + text[open..].find('>').unwrap() + 1;
+        let excl_end = excl_start + text[excl_start..].find("</c2pa:manifest").unwrap();
+
+        // Shrink the manifest by trimming the (unsigned) COSE `pad` zero-run.
+        let context = test_context();
+        let (manifest, _r) = Store::load_jumbf_from_stream(
+            "image/svg+xml",
+            &mut Cursor::new(signed.clone()),
+            &context,
+        )
+        .unwrap();
+        let (pad_start, pad_len) = longest_zero_run(&manifest);
+        assert_eq!(
+            manifest[pad_start - 3],
+            0x59,
+            "expected 2-byte-len pad header"
+        );
+        let shrink = 700usize;
+        let new_pad = pad_len - shrink;
+        assert!(new_pad >= 256, "keep the 2-byte length header");
+
+        let mut shrunk = manifest.clone();
+        shrunk[pad_start - 2] = (new_pad >> 8) as u8;
+        shrunk[pad_start - 1] = (new_pad & 0xff) as u8;
+        shrunk.drain(pad_start..pad_start + shrink);
+        // Patch the length fields of every JUMBF box that encloses the pad.
+        for boxoff in enclosing_boxes(&manifest, pad_start) {
+            let sz = u32::from_be_bytes(shrunk[boxoff..boxoff + 4].try_into().unwrap());
+            shrunk[boxoff..boxoff + 4].copy_from_slice(&(sz - shrink as u32).to_be_bytes());
+        }
+
+        // Splice the shrunk manifest back in and fill the freed exclusion space
+        // with renderable markup (closing the real manifest early, injecting a
+        // <rect>, then reopening an empty dummy manifest before the original close).
+        let new_b64 = base64::encode(&shrunk);
+        let gap = (excl_end - excl_start) - new_b64.len();
+        let head = "</c2pa:manifest></metadata>\
+                    <g><rect x='0' y='0' width='500' height='500' fill='red'/></g>\
+                    <metadata><c2pa:manifest><!--";
+        let tail = "-->";
+        let filler = "x".repeat(gap - head.len() - tail.len());
+        let injected = format!("{head}{filler}{tail}");
+        assert_eq!(injected.len(), gap);
+
+        let mut forged = Vec::new();
+        forged.extend_from_slice(&signed[..excl_start]);
+        forged.extend_from_slice(new_b64.as_bytes());
+        forged.extend_from_slice(injected.as_bytes());
+        forged.extend_from_slice(&signed[excl_end..]);
+        assert!(String::from_utf8_lossy(&forged).contains("fill='red'"));
+
+        let reader = Reader::from_context(test_context())
+            .with_stream("image/svg+xml", Cursor::new(forged))
+            .expect("reader should return validation results");
+        assert_ne!(
+            reader.validation_state(),
+            ValidationState::Trusted,
+            "renderable content injected into the manifest exclusion must not validate as trusted"
+        );
+        assert!(
+            reader
+                .validation_status()
+                .unwrap_or_default()
+                .iter()
+                .any(|s| s.code() == ASSERTION_DATAHASH_MISMATCH),
+            "expected {ASSERTION_DATAHASH_MISMATCH}, got {:?}",
+            reader.validation_status()
+        );
+    }
+
+    fn longest_zero_run(bytes: &[u8]) -> (usize, usize) {
+        let (mut best_start, mut best_len) = (0usize, 0usize);
+        let (mut i, n) = (0usize, bytes.len());
+        while i < n {
+            if bytes[i] == 0 {
+                let s = i;
+                while i < n && bytes[i] == 0 {
+                    i += 1;
+                }
+                if i - s > best_len {
+                    best_len = i - s;
+                    best_start = s;
+                }
+            } else {
+                i += 1;
+            }
+        }
+        (best_start, best_len)
+    }
+
+    fn enclosing_boxes(jumbf: &[u8], offset: usize) -> Vec<usize> {
+        let n = jumbf.len();
+        (0..n.saturating_sub(8))
+            .filter(|&p| {
+                let size = u32::from_be_bytes(jumbf[p..p + 4].try_into().unwrap()) as usize;
+                let ty = &jumbf[p + 4..p + 8];
+                ty.iter().all(u8::is_ascii_graphic)
+                    && size >= 8
+                    && p + size <= n
+                    && p <= offset
+                    && offset < p + size
+            })
+            .collect()
     }
 
     #[test]
