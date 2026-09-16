@@ -523,6 +523,7 @@ impl BoxHash {
 
     /// Like [`Self::generate_box_hash_from_stream_with_exclusions`] but fires
     /// `progress(step, total)` once per hashed box.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn generate_box_hash_from_stream_with_progress_and_exclusions<R, F>(
         &mut self,
         reader: &mut R,
@@ -1091,7 +1092,13 @@ mod tests {
         };
 
         let result =
-            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &mock, &mut |_, _| Ok(()));
+            bh.verify_stream_hash_with_progress(
+                &mut reader,
+                Some(alg),
+                &mock,
+                &mut |_, _| Ok(()),
+                default_hash_buf(),
+            );
         assert!(
             matches!(&result, Err(Error::C2PAValidation(s)) if s == ASSERTION_BOXESHASH_MALFORMED),
             "unexpected result: {result:?}"
@@ -1132,7 +1139,13 @@ mod tests {
         };
 
         let result =
-            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &mock, &mut |_, _| Ok(()));
+            bh.verify_stream_hash_with_progress(
+                &mut reader,
+                Some(alg),
+                &mock,
+                &mut |_, _| Ok(()),
+                default_hash_buf(),
+            );
         assert!(
             matches!(&result, Err(Error::C2PAValidation(s)) if s == ASSERTION_BOXESHASH_MALFORMED),
             "unexpected result: {result:?}"
@@ -1176,7 +1189,13 @@ mod tests {
         };
 
         let result =
-            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &mock, &mut |_, _| Ok(()));
+            bh.verify_stream_hash_with_progress(
+                &mut reader,
+                Some(alg),
+                &mock,
+                &mut |_, _| Ok(()),
+                default_hash_buf(),
+            );
         assert!(
             matches!(&result, Err(Error::C2PAValidation(s)) if s == ASSERTION_BOXESHASH_MALFORMED),
             "unexpected result: {result:?}"
@@ -1219,7 +1238,13 @@ mod tests {
         };
 
         let result =
-            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &mock, &mut |_, _| Ok(()));
+            bh.verify_stream_hash_with_progress(
+                &mut reader,
+                Some(alg),
+                &mock,
+                &mut |_, _| Ok(()),
+                default_hash_buf(),
+            );
         assert!(result.unwrap());
     }
 
@@ -1260,7 +1285,13 @@ mod tests {
         };
 
         let result =
-            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &mock, &mut |_, _| Ok(()));
+            bh.verify_stream_hash_with_progress(
+                &mut reader,
+                Some(alg),
+                &mock,
+                &mut |_, _| Ok(()),
+                default_hash_buf(),
+            );
         assert!(!result.unwrap());
     }
 

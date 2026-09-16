@@ -25,7 +25,10 @@ use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
-use crate::asset_transport::{OwnedAssetRef, SyncAssetTransport};
+use crate::asset_transport::{
+    hash_ranges_async, AssetTransportError, AsyncRangeTransport, OwnedAssetRef, RangeConfig,
+    SyncAssetTransport,
+};
 use crate::{
     assertion::{
         get_thumbnail_image_type, get_thumbnail_instance, get_thumbnail_type, Assertion,
@@ -77,7 +80,7 @@ use crate::{
     settings::{Settings, MAX_ASSERTIONS},
     status_tracker::{ErrorBehavior, StatusTracker},
     store::StoreValidationInfo,
-    utils::hash_utils::{hash_buf_from_kb, hash_by_alg, vec_compare},
+    utils::hash_utils::{hash_buf_from_kb, hash_by_alg, vec_compare, HashRange},
     validation_status, ClaimGeneratorInfo,
 };
 
@@ -122,6 +125,18 @@ pub enum ClaimAssetData<'a> {
         &'a dyn SyncAssetTransport,
         &'a str,
     ),
+    /// An asset reachable only through an async range transport. Verification pulls the
+    /// hashed ranges one buffer at a time, so peak memory is the hash buffer rather than
+    /// the object.
+    AsyncRanges {
+        transport: &'a dyn AsyncRangeTransport,
+        config: RangeConfig,
+        format: &'a str,
+        /// Where the manifest sits, found by a driven walk before verification starts.
+        /// `get_store_validation_info` cannot walk the asset here, since it has no async
+        /// twin and nothing to block on.
+        manifest_range: Option<HashRange>,
+    },
 }
 
 impl ClaimAssetData<'_> {
@@ -136,6 +151,7 @@ impl ClaimAssetData<'_> {
             | ClaimAssetData::StreamFragments(_, _, _, asset_type) => {
                 Some((*asset_type).to_owned())
             }
+            ClaimAssetData::AsyncRanges { format, .. } => Some((*format).to_owned()),
         }
     }
 }
@@ -2883,6 +2899,13 @@ impl Claim {
         }
     }
 
+    #[async_generic(async_signature(
+        claim: &Claim,
+        asset_data: &mut ClaimAssetData<'_>,
+        svi: &StoreValidationInfo<'_>,
+        validation_log: &mut StatusTracker,
+        context: &Context,
+    ))]
     pub(crate) fn verify_hash_binding(
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
@@ -3043,6 +3066,27 @@ impl Claim {
                             | ClaimAssetData::StreamFragments(..) => {
                                 return Err(Error::UnsupportedType)
                             }
+                            ClaimAssetData::AsyncRanges {
+                                transport: _transport,
+                                config: _config,
+                                ..
+                            } => {
+                                if _sync {
+                                    Err(Error::AssetTransport(
+                                        AssetTransportError::AsyncOnlyAsset,
+                                    ))
+                                } else {
+                                    verify_data_hash_over_ranges(
+                                        &dh,
+                                        claim.alg(),
+                                        *_transport,
+                                        _config,
+                                        hash_buf,
+                                        &mut cb,
+                                    )
+                                    .await
+                                }
+                            }
                         };
 
                         match hash_result {
@@ -3171,6 +3215,27 @@ impl Claim {
                                 &mut cb,
                             )
                         }
+                        ClaimAssetData::AsyncRanges {
+                            transport: _transport,
+                            config: _config,
+                            format: _format,
+                            ..
+                        } => {
+                            if _sync {
+                                Err(Error::AssetTransport(AssetTransportError::AsyncOnlyAsset))
+                            } else {
+                                verify_bmff_hash_over_ranges(
+                                    &dh,
+                                    claim.alg(),
+                                    *_transport,
+                                    _config,
+                                    _format,
+                                    hash_buf,
+                                    &mut cb,
+                                )
+                                .await
+                            }
+                        }
                     };
 
                     match hash_result {
@@ -3277,6 +3342,13 @@ impl Claim {
                         | ClaimAssetData::StreamFragments(..) => {
                             return Err(Error::UnsupportedType)
                         }
+                        // A box hash needs the handler's box map, which a driven parse
+                        // cannot build over ranges. Reported, never passed unchecked.
+                        ClaimAssetData::AsyncRanges { .. } => Err(Error::AssetTransport(
+                            AssetTransportError::UnverifiableOverRanges {
+                                binding: "box hash".to_owned(),
+                            },
+                        )),
                     };
 
                     match hash_result {
@@ -3352,6 +3424,15 @@ impl Claim {
                             | ClaimAssetData::StreamFragments(..) => {
                                 return Err(Error::UnsupportedType)
                             }
+                            // A collection hash covers the whole archive plus its central
+                            // directory, which a ranged read cannot supply on its own.
+                            ClaimAssetData::AsyncRanges { .. } => {
+                                return Err(Error::AssetTransport(
+                                    AssetTransportError::UnverifiableOverRanges {
+                                        binding: "collection hash".to_owned(),
+                                    },
+                                ))
+                            }
                         }
                     } else {
                         // we don't support multiple streams as input so the only option is paths for non-ZIP-based assets.
@@ -3361,6 +3442,15 @@ impl Claim {
                             #[cfg(feature = "file_io")]
                             ClaimAssetData::Path(asset_path) => collection_hash
                                 .verify_hash(asset_path.parent().unwrap_or(asset_path)),
+                            // A collection hash covers sibling files on disk, which a
+                            // single ranged object cannot supply.
+                            ClaimAssetData::AsyncRanges { .. } => {
+                                return Err(Error::AssetTransport(
+                                    AssetTransportError::UnverifiableOverRanges {
+                                        binding: "collection hash".to_owned(),
+                                    },
+                                ))
+                            }
                             _ => return Err(Error::UnsupportedType),
                         }
                     };
@@ -4799,6 +4889,95 @@ impl Claim {
         };
 
         get_ocsp_der(&sign1).is_some()
+    }
+}
+
+/// Verifies a data hash over an async range transport, one hash buffer at a time.
+async fn verify_data_hash_over_ranges<F>(
+    dh: &DataHash,
+    alg: &str,
+    transport: &dyn AsyncRangeTransport,
+    config: &RangeConfig,
+    max_hash_buf: std::num::NonZeroUsize,
+    progress: &mut F,
+) -> Result<()>
+where
+    F: FnMut(u32, u32) -> Result<()>,
+{
+    let curr_alg = dh.alg.as_deref().unwrap_or(alg).to_owned();
+    let computed = hash_ranges_async(
+        &curr_alg,
+        transport,
+        config,
+        dh.exclusions.clone(),
+        true,
+        max_hash_buf,
+        progress,
+    )
+    .await?;
+
+    if vec_compare(&dh.hash, &computed) {
+        Ok(())
+    } else {
+        Err(Error::HashMismatch("Hashes do not match".to_owned()))
+    }
+}
+
+/// Verifies a file-level BMFF hash over an async range transport.
+///
+/// The exclusion walk runs through the driver, since `bmff_to_jumbf_exclusions` is a
+/// pure `Read + Seek` pass with no tracker to mutate. Merkle hashing needs each
+/// fragment on its own and is reported unverifiable instead.
+async fn verify_bmff_hash_over_ranges<F>(
+    bmff: &BmffHash,
+    alg: &str,
+    transport: &dyn AsyncRangeTransport,
+    config: &RangeConfig,
+    format: &str,
+    max_hash_buf: std::num::NonZeroUsize,
+    progress: &mut F,
+) -> Result<()>
+where
+    F: FnMut(u32, u32) -> Result<()>,
+{
+    if bmff.merkle().is_some() {
+        return Err(Error::AssetTransport(
+            AssetTransportError::UnverifiableOverRanges {
+                binding: "bmff merkle".to_owned(),
+            },
+        ));
+    }
+
+    let hash = bmff
+        .hash()
+        .ok_or_else(|| Error::HashMismatch("BMFF hash missing".to_string()))?;
+
+    let exclusions_map = bmff.exclusions().to_vec();
+    let bmff_v2 = bmff.bmff_version() > 1;
+    let (exclusions, _) = crate::asset_transport::drive_async(transport, config, format, |stream| {
+        crate::asset_handlers::bmff_io::bmff_to_jumbf_exclusions(stream, &exclusions_map, bmff_v2)
+            .map_err(std::io::Error::other)
+    })
+    .await?;
+
+    let curr_alg = bmff.alg().map_or_else(|| alg.to_owned(), |a| a.to_owned());
+    let computed = hash_ranges_async(
+        &curr_alg,
+        transport,
+        config,
+        Some(exclusions),
+        true,
+        max_hash_buf,
+        progress,
+    )
+    .await?;
+
+    if vec_compare(hash, &computed) {
+        Ok(())
+    } else {
+        Err(Error::HashMismatch(
+            "BMFF file level hash mismatch".to_string(),
+        ))
     }
 }
 

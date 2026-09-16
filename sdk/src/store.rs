@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::{
     collections::{HashMap, HashSet},
     io::{Cursor, Read, Seek},
+    num::NonZeroUsize,
 };
 
 use async_generic::async_generic;
@@ -52,7 +53,10 @@ use crate::{
         AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
     },
     error::{Error, Result},
-    hash_utils::{hash_by_alg, hash_size_by_alg, vec_compare, verify_by_alg},
+    hash_utils::{
+        default_hash_buf, hash_buf_from_kb, hash_by_alg, hash_size_by_alg, vec_compare,
+        verify_by_alg,
+    },
     hashed_uri::HashedUri,
     jumbf::{
         self,
@@ -1934,6 +1938,13 @@ impl Store {
         // get the manifest offset position
         if let Some(asset_data) = asset_data {
             let locations = match asset_data {
+                // An async-ranged asset carries its manifest range already, found by a
+                // driven walk before verification. There is no async twin of this
+                // function to walk it here.
+                ClaimAssetData::AsyncRanges { manifest_range, .. } => {
+                    svi.manifest_store_range = manifest_range.clone();
+                    Ok(Vec::new())
+                }
                 #[cfg(feature = "file_io")]
                 ClaimAssetData::Path(path) => {
                     let format = io.supported_extension(path).ok_or(Error::UnsupportedType)?;
@@ -2136,7 +2147,18 @@ impl Store {
         // verify the asset hash binding once for the whole store, on the binding manifest
         if let Some(data) = asset_data {
             if let Some(binding_claim) = store.get_claim(&svi.binding_claim) {
-                Claim::verify_hash_binding(binding_claim, data, &svi, validation_log, context)?;
+                if _sync {
+                    Claim::verify_hash_binding(binding_claim, data, &svi, validation_log, context)?;
+                } else {
+                    Claim::verify_hash_binding_async(
+                        binding_claim,
+                        data,
+                        &svi,
+                        validation_log,
+                        context,
+                    )
+                    .await?;
+                }
             }
         }
 
@@ -2177,6 +2199,7 @@ impl Store {
         block_locations: &mut Vec<ObjectLocations>,
         calc_hashes: bool,
         progress: &mut F,
+        max_hash_buf: NonZeroUsize,
     ) -> Result<Vec<DataHash>>
     where
         R: Read + Seek + ?Sized,
@@ -2243,7 +2266,7 @@ impl Store {
         // Generate or set placeholder hash
         if calc_hashes {
             // Second signing pass: calcultate the actual real hash
-            dh.gen_hash_from_stream_with_progress(stream, progress)?;
+            dh.gen_hash_from_stream_with_progress(stream, progress, max_hash_buf)?;
         } else {
             // First signing pass: zero-filled placeholder hash (to get to end size)
             dh.set_hash(vec![0u8; hash_size_by_alg(alg)?]);
@@ -2474,8 +2497,9 @@ impl Store {
 
         if let Some(reader) = asset_reader {
             // calc hashes
+            let hash_buf = hash_buf_from_kb(context.settings().core.hash_buffer_size_in_kb);
             let mut cb = |step, total| context.check_progress(ProgressPhase::Hashing, step, total);
-            adjusted_dh.gen_hash_from_stream_with_progress(reader, &mut cb)?;
+            adjusted_dh.gen_hash_from_stream_with_progress(reader, &mut cb, hash_buf)?;
         }
 
         // update the placeholder hash
@@ -3251,6 +3275,8 @@ impl Store {
                             source_is_intermediate = true;
                         }
 
+                        let hash_buf =
+                            hash_buf_from_kb(context.settings().core.hash_buffer_size_in_kb);
                         let mut cb = |step, total| {
                             context.check_progress(ProgressPhase::Hashing, step, total)
                         };
@@ -3260,6 +3286,7 @@ impl Store {
                             box_hash_handler,
                             false,
                             &mut cb,
+                            hash_buf,
                         )?;
 
                         // add the box hash assertion to the claim
@@ -3366,9 +3393,15 @@ impl Store {
                     let mut bmff_hash = BmffHash::from_assertion(bmff_hashes[0].assertion())?;
 
                     output_stream.rewind()?;
+                    let hash_buf =
+                        hash_buf_from_kb(context.settings().core.hash_buffer_size_in_kb);
                     let mut cb =
                         |step, total| context.check_progress(ProgressPhase::Hashing, step, total);
-                    bmff_hash.gen_hash_from_stream_with_progress(output_stream, &mut cb)?;
+                    bmff_hash.gen_hash_from_stream_with_progress(
+                        output_stream,
+                        &mut cb,
+                        hash_buf,
+                    )?;
                     pc.update_bmff_hash(bmff_hash)?;
                 }
             }
@@ -3465,6 +3498,7 @@ impl Store {
                         &mut hash_ranges,
                         false,
                         &mut |_, _| Ok(()),
+                        default_hash_buf(),
                     )?
                 } else {
                     Store::generate_data_hashes_for_stream(
@@ -3473,6 +3507,7 @@ impl Store {
                         &mut hash_ranges,
                         false,
                         &mut |_, _| Ok(()),
+                        default_hash_buf(),
                     )?
                 };
 
@@ -3544,6 +3579,8 @@ impl Store {
                         });
                     }
 
+                    let hash_buf =
+                        hash_buf_from_kb(context.settings().core.hash_buffer_size_in_kb);
                     let mut cb =
                         |step, total| context.check_progress(ProgressPhase::Hashing, step, total);
                     let updated_hashes = Store::generate_data_hashes_for_stream(
@@ -3552,6 +3589,7 @@ impl Store {
                         &mut new_hash_ranges,
                         true,
                         &mut cb,
+                        hash_buf,
                     )?;
 
                     // patch existing claim hash with updated data

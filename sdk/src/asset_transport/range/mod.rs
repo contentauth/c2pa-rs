@@ -36,7 +36,7 @@ mod driver;
 pub mod http_range;
 mod stream;
 
-pub(crate) use driver::{drive_async, read_whole_async};
+pub(crate) use driver::{drive_async, hash_ranges_async, read_whole_async};
 pub(crate) use stream::RangeStream;
 
 use crate::{
@@ -158,10 +158,6 @@ pub struct RangeConfig {
     max_request: u64,
     /// Eviction budget for cached bytes.
     max_cached: u64,
-    /// Bytes held at once while hashing an asset for verification over an async source.
-    /// Verification hashes the whole asset, so this bounds peak memory for the
-    /// read: one chunk is fetched, hashed, and dropped before the next.
-    hash_chunk: u64,
     /// Largest object read whole when ranges cannot serve the read: a verified async
     /// read, or a handler that slurps. `None` disables that rung.
     max_whole_object: Option<u64>,
@@ -206,9 +202,13 @@ impl RangeConfig {
         self
     }
 
-    /// Sets the bytes held at once while hashing for verification.
-    pub fn with_hash_chunk(mut self, hash_chunk: u64) -> Self {
-        self.hash_chunk = hash_chunk;
+    /// Lets the whole-object fallback read an object of any size.
+    ///
+    /// This suits a host that can hold the object, such as a desktop browser tab. The
+    /// rung still fetches in [`max_request`](Self::max_request) pieces, and the caller
+    /// holds the assembled object for the length of the read.
+    pub fn with_unbounded_whole_object(mut self) -> Self {
+        self.max_whole_object = Some(u64::MAX);
         self
     }
 
@@ -226,11 +226,6 @@ impl RangeConfig {
     /// Eviction budget for cached bytes.
     pub fn max_cached(&self) -> u64 {
         self.max_cached
-    }
-
-    /// Bytes held at once while hashing for verification.
-    pub fn hash_chunk(&self) -> u64 {
-        self.hash_chunk
     }
 
     /// Largest object the whole-object fallback will read, or `None` when that fallback
@@ -256,7 +251,6 @@ impl Default for RangeConfig {
             window: 16 * 1024,
             max_request: 8 * 1024 * 1024,
             max_cached: 4 * 1024 * 1024,
-            hash_chunk: 4 * 1024 * 1024,
             // Verification reads the whole object, so a default of `None` would refuse
             // every async verified read. This fits a browser tab and a Node process; a
             // Worker isolate, capped near 128 MiB, lowers it or disables the rung.

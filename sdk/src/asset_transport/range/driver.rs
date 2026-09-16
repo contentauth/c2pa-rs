@@ -18,12 +18,18 @@
 //! driver awaits the missing range, caches it, and runs the parse again from the top.
 //! The cache outlives each attempt, so every attempt resolves at least one more miss.
 
-use std::io::{self, Cursor, Read, Seek, SeekFrom};
+use std::{
+    io::{self, Cursor, Read, Seek, SeekFrom},
+    num::NonZeroUsize,
+};
 
 use super::{
     add_signed, cache::RangeCache, fetch_len, AsyncRangeTransport, ObjectVersion, RangeConfig,
 };
-use crate::asset_transport::AssetTransportError;
+use crate::{
+    asset_transport::AssetTransportError,
+    utils::hash_utils::{build_hash_ranges, HashRange, Hasher},
+};
 
 /// Marks the error a [`PrefetchStream`] raises when the parse reads absent bytes.
 ///
@@ -206,8 +212,12 @@ where
             let mut stream = PrefetchStream::new(&mut cache, &mut miss, &config, info.len);
             parse(&mut stream)
         };
-        match outcome {
-            Ok(value) => {
+        // A parse that swallows read errors can report success on a truncated view.
+        // `bmff_io::build_bmff_tree` does exactly that: a header it cannot read ends
+        // the walk as if the asset had trailing data. So a recorded miss outranks a
+        // reported success.
+        let err = match outcome {
+            Ok(value) if miss.is_none() => {
                 return Ok((
                     value,
                     DriveReport {
@@ -216,54 +226,50 @@ where
                     },
                 ))
             }
-            Err(err) => {
-                let Some(record) = miss.take() else {
-                    // A parse failure of its own, not a miss.
-                    return Err(AssetTransportError::Io(err));
-                };
+            Ok(_) => io::Error::other("parse completed on a truncated view"),
+            Err(err) => err,
+        };
 
-                if fetched.contains(record.offset) {
-                    return Err(AssetTransportError::WorkingSetTooLarge {
-                        format: format.to_owned(),
-                        windows: fetched.spans.len(),
-                        bytes: fetched.bytes,
-                        max_cached: config.max_cached(),
-                    });
-                }
+        let Some(record) = miss.take() else {
+            // A parse failure of its own, not a miss.
+            return Err(AssetTransportError::Io(err));
+        };
 
-                if attempts >= ceiling {
-                    return Err(AssetTransportError::AttemptsExhausted {
-                        format: format.to_owned(),
-                        attempts,
-                        ceiling,
-                        max_cached: config.max_cached(),
-                        window: config.window(),
-                    });
-                }
-
-                // A transport error propagates here, spending no attempt, and
-                // `VersionChanged` aborts with the cache dropped rather than retrying.
-                let chunk = fetch_versioned_async(
-                    transport,
-                    record.offset,
-                    record.len,
-                    version.as_ref(),
-                )
-                .await?;
-                if chunk.bytes.is_empty() {
-                    return Err(AssetTransportError::ShortRead {
-                        offset: record.offset,
-                        expected: record.len,
-                        got: 0,
-                    });
-                }
-                if version.is_none() {
-                    version = chunk.version.clone();
-                }
-                fetched.record(record.offset, chunk.bytes.len() as u64);
-                cache.insert(record.offset, chunk.bytes);
-            }
+        if fetched.contains(record.offset) {
+            return Err(AssetTransportError::WorkingSetTooLarge {
+                format: format.to_owned(),
+                windows: fetched.spans.len(),
+                bytes: fetched.bytes,
+                max_cached: config.max_cached(),
+            });
         }
+
+        if attempts >= ceiling {
+            return Err(AssetTransportError::AttemptsExhausted {
+                format: format.to_owned(),
+                attempts,
+                ceiling,
+                max_cached: config.max_cached(),
+                window: config.window(),
+            });
+        }
+
+        // A transport error propagates here, spending no attempt, and `VersionChanged`
+        // aborts with the cache dropped rather than retrying.
+        let chunk =
+            fetch_versioned_async(transport, record.offset, record.len, version.as_ref()).await?;
+        if chunk.bytes.is_empty() {
+            return Err(AssetTransportError::ShortRead {
+                offset: record.offset,
+                expected: record.len,
+                got: 0,
+            });
+        }
+        if version.is_none() {
+            version = chunk.version.clone();
+        }
+        fetched.record(record.offset, chunk.bytes.len() as u64);
+        cache.insert(record.offset, chunk.bytes);
     }
 }
 
@@ -281,6 +287,11 @@ pub(crate) async fn fetch_versioned_async(
     super::check_version(expect, chunk.version.as_ref())?;
     Ok(chunk)
 }
+
+/// Bytes the whole-object rung reserves up front. Past this the buffer grows as it
+/// fills, so a transport that reports an impossible length fails on its own short read
+/// rather than aborting the process on a reservation.
+const MAX_PREALLOC: usize = 64 * 1024 * 1024;
 
 /// Reads an entire object into memory, for a parse that ranges cannot serve.
 ///
@@ -307,7 +318,15 @@ pub(crate) async fn read_whole_async(
         }
     }
 
-    let mut bytes = Vec::with_capacity(info.len as usize);
+    // An unbounded cap can name a length no allocation can serve. Reserving it up front
+    // aborts the process, so the buffer grows as bytes arrive and an oversized object
+    // fails on the transport's own short read instead.
+    let mut bytes = Vec::new();
+    bytes.try_reserve(usize::try_from(info.len).unwrap_or(0).min(MAX_PREALLOC))
+        .map_err(|_| AssetTransportError::WholeObjectTooLarge {
+            reference: reference.to_owned(),
+            len: info.len,
+        })?;
     let mut version = info.version.clone();
     let mut offset = 0u64;
     while offset < info.len {
@@ -328,6 +347,121 @@ pub(crate) async fn read_whole_async(
     }
 
     Ok(Cursor::new(bytes))
+}
+
+/// Hashes an asset over an async transport, holding one `max_hash_buf` buffer at a time.
+///
+/// The hash itself stays synchronous. Only byte acquisition awaits, so peak memory is
+/// the buffer rather than the object. `hash_range` and `is_exclusion` have the meaning
+/// they carry in [`hash_stream_by_alg`], and coverage comes from the same
+/// `build_hash_ranges` the blocking hasher uses, so the two agree by construction.
+///
+/// `progress(step, total)` fires once per buffer, matching the blocking hasher's ticks.
+///
+/// [`hash_stream_by_alg`]: crate::utils::hash_utils::hash_stream_by_alg
+pub(crate) async fn hash_ranges_async<F>(
+    alg: &str,
+    transport: &dyn AsyncRangeTransport,
+    config: &RangeConfig,
+    hash_range: Option<Vec<HashRange>>,
+    is_exclusion: bool,
+    max_hash_buf: NonZeroUsize,
+    progress: &mut F,
+) -> Result<Vec<u8>, AssetTransportError>
+where
+    F: FnMut(u32, u32) -> crate::Result<()>,
+{
+    let info = transport.info_async().await?;
+    if info.len < 1 {
+        return Err(AssetTransportError::Other {
+            source: "no data to hash".into(),
+        });
+    }
+
+    let mut hasher = Hasher::new(alg).map_err(|_| AssetTransportError::Other {
+        source: format!("unsupported hash algorithm: {alg}").into(),
+    })?;
+
+    let (ranges, bmff_v2_starts) = build_hash_ranges(hash_range, is_exclusion, info.len)
+        .map_err(|e| AssetTransportError::Other {
+            source: e.to_string().into(),
+        })?;
+
+    let buf = max_hash_buf.get() as u64;
+    let total: u32 = ranges
+        .iter()
+        .map(|r| u32::try_from((r.end() - r.start() + 1).div_ceil(buf)).unwrap_or(u32::MAX))
+        .sum();
+    let mut step: u32 = 0;
+    let mut version = info.version.clone();
+
+    for r in &ranges {
+        step += 1;
+        progress(step, total).map_err(|e| AssetTransportError::Other {
+            source: e.to_string().into(),
+        })?;
+
+        let start = *r.start();
+        let end = *r.end();
+
+        // A BMFF V2 offset contributes its position, not the byte at it.
+        if bmff_v2_starts.contains(&start) && end == start {
+            hasher.update(&start.to_be_bytes());
+            continue;
+        }
+
+        let mut left = end - start + 1;
+        let mut offset = start;
+        while left > 0 {
+            let want = left.min(buf);
+            let bytes =
+                read_exact_async(transport, config, offset, want, &mut version).await?;
+            hasher.update(&bytes);
+            offset += want;
+            left -= want;
+
+            if left > 0 {
+                step += 1;
+                progress(step, total).map_err(|e| AssetTransportError::Other {
+                    source: e.to_string().into(),
+                })?;
+            }
+        }
+    }
+
+    Ok(Hasher::finalize(hasher))
+}
+
+/// Fills `len` bytes at `offset`, issuing as many `max_request` pieces as it takes.
+///
+/// The network stays chunked even when the hash buffer is larger than one request, and
+/// the object version is pinned across every piece so a splice cannot go unnoticed.
+async fn read_exact_async(
+    transport: &dyn AsyncRangeTransport,
+    config: &RangeConfig,
+    offset: u64,
+    len: u64,
+    version: &mut Option<ObjectVersion>,
+) -> Result<Vec<u8>, AssetTransportError> {
+    let mut out = Vec::with_capacity(usize::try_from(len).unwrap_or(usize::MAX));
+    while (out.len() as u64) < len {
+        let at = offset + out.len() as u64;
+        let want = fetch_len(config.max_request(), len - out.len() as u64, config);
+        let chunk = fetch_versioned_async(transport, at, want, version.as_ref()).await?;
+        if chunk.bytes.is_empty() {
+            return Err(AssetTransportError::ShortRead {
+                offset: at,
+                expected: want,
+                got: 0,
+            });
+        }
+        if version.is_none() {
+            *version = chunk.version.clone();
+        }
+        out.extend_from_slice(&chunk.bytes);
+    }
+    out.truncate(usize::try_from(len).unwrap_or(usize::MAX));
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -572,5 +706,134 @@ mod tests {
             disabled,
             AssetTransportError::WholeObjectTooLarge { .. }
         ));
+    }
+
+    /// Under an unbounded cap there is no length left to refuse, so a transport
+    /// reporting an impossible length must fail by name rather than abort the process
+    /// on a reservation it can never satisfy.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn an_unbounded_whole_object_read_fails_by_name_not_by_abort() {
+        struct Huge;
+
+        #[async_trait::async_trait]
+        impl AsyncRangeTransport for Huge {
+            async fn info_async(&self) -> Result<RangeInfo, AssetTransportError> {
+                Ok(RangeInfo::new(u64::MAX))
+            }
+            async fn read_range_async(
+                &self,
+                offset: u64,
+                _len: u64,
+                _expect: Option<&ObjectVersion>,
+            ) -> Result<RangeChunk, AssetTransportError> {
+                // No bytes to give: the reported length was a lie.
+                Ok(RangeChunk::new(offset, Vec::new()))
+            }
+        }
+
+        let unbounded = config(1024, 65536).with_unbounded_whole_object();
+        let err = read_whole_async(&Huge, &unbounded, "https://x/huge")
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(err, AssetTransportError::ShortRead { .. }),
+            "expected ShortRead, got {err:?}"
+        );
+    }
+
+    /// The unbounded cap admits an object the default 256 MiB cap would refuse.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn the_unbounded_cap_admits_an_object_over_the_default() {
+        let transport = MemAsync::new(vec![7u8; 4096]);
+
+        let refused = read_whole_async(
+            &transport,
+            &config(1024, 65536).with_max_whole_object(Some(1024)),
+            "https://x/y",
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            refused,
+            AssetTransportError::WholeObjectTooLarge { .. }
+        ));
+
+        let admitted = read_whole_async(
+            &transport,
+            &config(1024, 65536).with_unbounded_whole_object(),
+            "https://x/y",
+        )
+        .await
+        .unwrap();
+        assert_eq!(admitted.into_inner().len(), 4096);
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod hash_equivalence_tests {
+    #![allow(clippy::panic, clippy::unwrap_used)]
+    use std::{io::Cursor, num::NonZeroUsize};
+
+    use super::*;
+    use crate::utils::hash_utils::hash_stream_by_alg;
+
+    struct Mem(Vec<u8>);
+
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+    impl AsyncRangeTransport for Mem {
+        async fn info_async(&self) -> Result<super::super::RangeInfo, AssetTransportError> {
+            Ok(super::super::RangeInfo::new(self.0.len() as u64))
+        }
+        async fn read_range_async(
+            &self,
+            offset: u64,
+            len: u64,
+            _expect: Option<&ObjectVersion>,
+        ) -> Result<super::super::RangeChunk, AssetTransportError> {
+            let start = (offset as usize).min(self.0.len());
+            let end = start.saturating_add(len as usize).min(self.0.len());
+            Ok(super::super::RangeChunk::new(
+                offset,
+                self.0[start..end].to_vec(),
+            ))
+        }
+    }
+
+    async fn both(data: &[u8], exclusions: Option<Vec<HashRange>>, chunk: usize) -> (Vec<u8>, Vec<u8>) {
+        let blocking =
+            hash_stream_by_alg("sha256", &mut Cursor::new(data.to_vec()), exclusions.clone(), true)
+                .unwrap();
+        let transport = Mem(data.to_vec());
+        let driven = hash_ranges_async(
+            "sha256",
+            &transport,
+            &RangeConfig::default(),
+            exclusions,
+            true,
+            NonZeroUsize::new(chunk).unwrap(),
+            &mut |_, _| Ok(()),
+        )
+        .await
+        .unwrap();
+        (blocking, driven)
+    }
+
+    #[tokio::test]
+    async fn the_async_hash_matches_the_blocking_hash() {
+        let data: Vec<u8> = (0..8192u32).map(|i| (i % 251) as u8).collect();
+
+        let (a, b) = both(&data, None, 512).await;
+        assert_eq!(a, b, "no exclusions");
+
+        let one = vec![HashRange::new(100, 50)];
+        let (a, b) = both(&data, Some(one), 512).await;
+        assert_eq!(a, b, "one exclusion");
+
+        let two = vec![HashRange::new(100, 50), HashRange::new(4000, 200)];
+        let (a, b) = both(&data, Some(two), 512).await;
+        assert_eq!(a, b, "two exclusions");
     }
 }

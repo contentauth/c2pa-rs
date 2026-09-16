@@ -296,15 +296,7 @@ where
     F: FnMut(u32, u32) -> Result<()>,
 {
     let max_hash_buf = max_hash_buf.get();
-    use Hasher::*;
-    let mut hasher_enum = match alg {
-        "sha256" => SHA256(Sha256::new()),
-        "sha384" => SHA384(Sha384::new()),
-        "sha512" => SHA512(Sha512::new()),
-        _ => {
-            return Err(Error::UnsupportedType);
-        }
-    };
+    let mut hasher_enum = Hasher::new(alg)?;
 
     let data_len = stream_len(data)?;
     data.rewind()?;
@@ -754,7 +746,15 @@ mod tests {
             called = true;
             Ok(())
         };
-        hash_stream_by_alg_with_progress("sha256", &mut reader, None, true, &mut cb).unwrap();
+        hash_stream_by_alg_with_progress(
+            "sha256",
+            &mut reader,
+            None,
+            true,
+            &mut cb,
+            default_hash_buf(),
+        )
+        .unwrap();
         assert!(called, "progress callback should have been invoked");
     }
 
@@ -763,7 +763,14 @@ mod tests {
         let data = vec![0u8; 64];
         let mut reader = Cursor::new(&data);
         let mut cb = |_step, _total| Err(Error::OperationCancelled);
-        let result = hash_stream_by_alg_with_progress("sha256", &mut reader, None, true, &mut cb);
+        let result = hash_stream_by_alg_with_progress(
+            "sha256",
+            &mut reader,
+            None,
+            true,
+            &mut cb,
+            default_hash_buf(),
+        );
         assert!(
             matches!(result, Err(Error::OperationCancelled)),
             "expected OperationCancelled, got {result:?}"
@@ -897,4 +904,35 @@ mod tests {
         assert_eq!(hash.len(), 32);
     }
 
+    #[test]
+    fn a_small_hash_buffer_gives_the_same_digest_as_the_default() {
+        let data: Vec<u8> = (0..1024u32 * 1024).map(|i| (i % 251) as u8).collect();
+
+        let small = hash_stream_by_alg_with_progress_impl(
+            "sha256",
+            &mut Cursor::new(&data),
+            None,
+            true,
+            &mut |_, _| Ok(()),
+            NonZeroUsize::new(64 * 1024).unwrap(),
+        )
+        .unwrap();
+        let default = hash_stream_by_alg_with_progress_impl(
+            "sha256",
+            &mut Cursor::new(&data),
+            None,
+            true,
+            &mut |_, _| Ok(()),
+            default_hash_buf(),
+        )
+        .unwrap();
+
+        assert_eq!(small, default);
+    }
+
+    #[test]
+    fn hash_buf_from_kb_converts_and_never_yields_zero() {
+        assert_eq!(hash_buf_from_kb(64).get(), 64 * 1024);
+        assert_eq!(hash_buf_from_kb(0).get(), 1);
+    }
 }

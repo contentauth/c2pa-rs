@@ -1520,14 +1520,14 @@ impl Reader {
     /// Reads an asset served by a non-blocking range transport.
     ///
     /// Discovery runs through the driver: the synchronous parser reads cached bytes,
-    /// the driver fetches what it misses and runs it again.
+    /// the driver fetches what it misses and runs it again. Verification then pulls the
+    /// hashed ranges one hash buffer at a time, so peak memory is the buffer rather
+    /// than the object.
     ///
-    /// Two cases take the whole object instead. Checking the data-hash binding needs
-    /// every hashed byte readable without awaiting, and the verification path is
-    /// synchronous down to the hasher. A handler that reads its input to end re-reads
-    /// everything on each attempt, so driving it is quadratic for the same bytes.
-    /// Both are bounded by `max_whole_object`: above it this is an error, never a
-    /// silent whole download.
+    /// A handler that reads its input to end re-reads everything on each attempt, so
+    /// driving it is quadratic for the same bytes. Those take the whole object instead,
+    /// bounded by `max_whole_object`: above it this is an error, never a silent whole
+    /// download.
     async fn with_driven_asset_async(
         mut self,
         path_fmt: &str,
@@ -1538,13 +1538,10 @@ impl Reader {
         let reference = reference.to_string();
         let verifying = self.context.settings().verify.verify_after_reading;
 
-        if verifying || slurps_whole_asset(path_fmt) {
+        if slurps_whole_asset(path_fmt) {
             // An asset that takes this rung on every read costs a full download each
             // time. Say so, or the cost is invisible to whoever tunes the knobs.
-            log::debug!(
-                "range read took the whole object for {reference} ({path_fmt}), \
-                 verifying={verifying}"
-            );
+            log::debug!("range read took the whole object for {reference} ({path_fmt})");
             let mut file = read_whole_async(transport, &config, &reference).await?;
             let format = self.context.io().format_from_stream(path_fmt, &mut file);
             let mut validation_log = StatusTracker::default();
@@ -1578,6 +1575,38 @@ impl Reader {
         let mut validation_log = StatusTracker::default();
         let store =
             Store::from_jumbf_with_context(&manifest_bytes, &mut validation_log, &self.context)?;
+
+        if verifying {
+            // The manifest range comes from a second driven walk. It is what
+            // `get_store_validation_info` would compute from a seekable stream, which
+            // it has no async twin to do here.
+            let (locations, _) = drive_async(transport, &config, &format, |stream| {
+                context
+                    .io()
+                    .object_locations(&format, stream)
+                    .map_err(std::io::Error::other)
+            })
+            .await?;
+            let manifest_range = locations
+                .iter()
+                .find(|o| o.htype == crate::asset_io::ObjectType::C2pa)
+                .map(|o| crate::utils::hash_utils::HashRange::new(o.offset, o.length));
+
+            let mut asset_data = crate::claim::ClaimAssetData::AsyncRanges {
+                transport,
+                config,
+                format: &format,
+                manifest_range,
+            };
+            Store::verify_store_async(
+                &store,
+                Some(&mut asset_data),
+                &mut validation_log,
+                &self.context,
+            )
+            .await?;
+        }
+
         self.with_store_async(store, &mut validation_log).await?;
         Ok(self)
     }
@@ -1882,11 +1911,85 @@ pub mod tests {
         Ok(())
     }
 
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn a_small_hash_buffer_reaches_the_verifying_hasher() -> Result<()> {
+        // `core.hash_buffer_size_in_kb` bounds the hasher's peak memory. The hasher
+        // fires one `VerifyingAssetHash` tick per buffer, so the tick count is the only
+        // in-process proof the setting travelled from `Settings` to the hash loop.
+        use std::sync::{
+            atomic::{AtomicU32, Ordering},
+            Arc,
+        };
+
+        use crate::ProgressPhase;
+
+        fn ticks_at(kb: usize) -> Result<u32> {
+            let ticks = Arc::new(AtomicU32::new(0));
+            let counter = ticks.clone();
+            let context = Context::new()
+                .with_settings(format!(
+                    r#"{{"core": {{"hash_buffer_size_in_kb": {kb}}}}}"#
+                ))?
+                .with_progress_callback(move |phase, _step, _total| {
+                    if phase == ProgressPhase::VerifyingAssetHash {
+                        counter.fetch_add(1, Ordering::SeqCst);
+                    }
+                    true
+                });
+
+            Reader::from_context(context)
+                .with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+            Ok(ticks.load(Ordering::SeqCst))
+        }
+
+        // The binding hashes two ranges of `IMAGE_WITH_MANIFEST`, the larger about
+        // 48 KiB, so the default gives one tick per range. A 16 KiB buffer splits the
+        // larger range and ticks more often.
+        let small = ticks_at(16)?;
+        let default = ticks_at(256 * 1024)?;
+
+        assert_eq!(default, 2, "one tick per hashed range at the default buffer");
+        assert!(
+            small > default,
+            "a 16 KiB buffer should tick more often than the default: {small} vs {default}"
+        );
+        Ok(())
+    }
+
     /// An async range transport with no blocking view, which the reader must drive.
     #[cfg(not(target_arch = "wasm32"))]
     struct InMemoryAsyncRanges {
         bytes: Vec<u8>,
         reads: std::sync::Arc<std::sync::atomic::AtomicU64>,
+        /// Largest `len` any single request asked for. A chunked hash keeps this at or
+        /// below the hash buffer, which is the only in-process proof of the bound.
+        max_len: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    impl InMemoryAsyncRanges {
+        fn new(bytes: Vec<u8>) -> (Self, InMemoryAsyncRangesStats) {
+            let stats = InMemoryAsyncRangesStats {
+                reads: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                max_len: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            };
+            (
+                Self {
+                    bytes,
+                    reads: stats.reads.clone(),
+                    max_len: stats.max_len.clone(),
+                },
+                stats,
+            )
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[derive(Clone)]
+    struct InMemoryAsyncRangesStats {
+        reads: std::sync::Arc<std::sync::atomic::AtomicU64>,
+        max_len: std::sync::Arc<std::sync::atomic::AtomicU64>,
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -1906,6 +2009,8 @@ pub mod tests {
         ) -> std::result::Result<crate::asset_transport::RangeChunk, AssetTransportError> {
             self.reads
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.max_len
+                .fetch_max(len, std::sync::atomic::Ordering::SeqCst);
             let start = (offset as usize).min(self.bytes.len());
             let end = start.saturating_add(len as usize).min(self.bytes.len());
             Ok(crate::asset_transport::RangeChunk::new(
@@ -1939,6 +2044,7 @@ pub mod tests {
                 Ok(InMemoryAsyncRanges {
                     bytes: bytes.clone(),
                     reads: counter.clone(),
+                    max_len: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 })
             })
             .with_config(config),
@@ -1988,6 +2094,7 @@ pub mod tests {
                     Ok(InMemoryAsyncRanges {
                         bytes: tampered.clone(),
                         reads: counter.clone(),
+                        max_len: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
                     })
                 })
                 .with_config(RangeConfig::default()),
@@ -2007,6 +2114,112 @@ pub mod tests {
         assert!(
             !codes.contains(&"assertion.dataHash.mismatch"),
             "discovery checked the binding: it must not. codes={codes:?}"
+        );
+        Ok(())
+    }
+
+    /// Verification over async ranges pulls one hash buffer at a time, so a 642 MB
+    /// object costs the buffer rather than the object. `video1.mp4` carries a
+    /// file-level BMFF hash and its handler does not slurp, so this is the driven path
+    /// end to end: discovery, the exclusion walk, and the chunked hash.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn async_ranges_verify_bmff_in_chunks() -> Result<()> {
+        use crate::asset_transport::{AsyncRangeAssetTransport, RangeConfig};
+
+        let bytes = std::fs::read("tests/fixtures/video1.mp4")?;
+        let whole = Reader::from_context(Context::new())
+            .with_stream_async("video/mp4", &mut Cursor::new(bytes.clone()))
+            .await?;
+
+        // 64 KiB buffer against an 809 KB asset, so the hash runs in many chunks.
+        let hash_buf_kb = 64usize;
+        let (_, stats) = InMemoryAsyncRanges::new(Vec::new());
+        let served = stats.clone();
+        let source = std::sync::Arc::new(bytes);
+        let context = Context::new()
+            .with_settings(format!(
+                r#"{{"core": {{"hash_buffer_size_in_kb": {hash_buf_kb}}}}}"#
+            ))?
+            .with_asset_transport_async(
+                AsyncRangeAssetTransport::new(move |_| {
+                    Ok(InMemoryAsyncRanges {
+                        bytes: source.as_ref().clone(),
+                        reads: served.reads.clone(),
+                        max_len: served.max_len.clone(),
+                    })
+                })
+                // No whole-object rung, so a fallback would fail rather than hide the
+                // chunked path.
+                .with_config(RangeConfig::default().with_max_whole_object(None)),
+            );
+
+        let ranged = Reader::from_context(context)
+            .with_asset_async(AssetRef::Uri("https://example.test/v.mp4"), Some("video/mp4"))
+            .await?;
+
+        assert!(ranged.active_manifest().is_some());
+        assert_eq!(
+            ranged.validation_state(),
+            whole.validation_state(),
+            "chunked async verification disagreed with the whole-object read: {:?}",
+            ranged.validation_status()
+        );
+
+        let reads = stats.reads.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(reads > 1, "the asset was read in one request, not chunked");
+        let max_len = stats.max_len.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(
+            max_len <= (hash_buf_kb * 1024) as u64,
+            "a single request asked for {max_len} bytes, above the {hash_buf_kb} KiB buffer"
+        );
+        Ok(())
+    }
+
+    /// The chunked BMFF path must reject a corrupted byte the file-level hash covers.
+    /// Without this, `async_ranges_verify_bmff_in_chunks` would pass against a hash
+    /// that checked nothing.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn async_ranges_reject_tampered_bmff() -> Result<()> {
+        use crate::asset_transport::{AsyncRangeAssetTransport, RangeConfig};
+
+        let mut bytes = std::fs::read("tests/fixtures/video1.mp4")?;
+        let last = bytes.len() - 64;
+        bytes[last] ^= 0xff;
+
+        let (_, stats) = InMemoryAsyncRanges::new(Vec::new());
+        let served = stats.clone();
+        let source = std::sync::Arc::new(bytes);
+        let context = Context::new().with_asset_transport_async(
+            AsyncRangeAssetTransport::new(move |_| {
+                Ok(InMemoryAsyncRanges {
+                    bytes: source.as_ref().clone(),
+                    reads: served.reads.clone(),
+                    max_len: served.max_len.clone(),
+                })
+            })
+            .with_config(RangeConfig::default().with_max_whole_object(None)),
+        );
+
+        let reader = Reader::from_context(context)
+            .with_asset_async(AssetRef::Uri("https://example.test/t.mp4"), Some("video/mp4"))
+            .await?;
+
+        assert_eq!(
+            reader.validation_state(),
+            ValidationState::Invalid,
+            "tampered BMFF bytes passed chunked verification"
+        );
+        let codes: Vec<&str> = reader
+            .validation_status()
+            .unwrap_or_default()
+            .iter()
+            .map(|s| s.code())
+            .collect();
+        assert!(
+            codes.contains(&"assertion.bmffHash.mismatch"),
+            "expected a BMFF hash mismatch, got {codes:?}"
         );
         Ok(())
     }
@@ -2031,6 +2244,7 @@ pub mod tests {
                 Ok(InMemoryAsyncRanges {
                     bytes: tampered.clone(),
                     reads: counter.clone(),
+                    max_len: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 })
             })
             .with_config(RangeConfig::default()),

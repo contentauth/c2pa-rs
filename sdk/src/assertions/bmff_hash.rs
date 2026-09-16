@@ -949,9 +949,11 @@ impl BmffHash {
     #[cfg(feature = "file_io")]
     pub fn gen_hash(&mut self, asset_path: &std::path::Path) -> crate::error::Result<()> {
         let mut file = std::fs::File::open(asset_path)?;
-        self.hash = Some(ByteBuf::from(
-            self.hash_from_stream(&mut file, &mut |_, _| Ok(()))?,
-        ));
+        self.hash = Some(ByteBuf::from(self.hash_from_stream(
+            &mut file,
+            &mut |_, _| Ok(()),
+            default_hash_buf(),
+        )?));
         Ok(())
     }
 

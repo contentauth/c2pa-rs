@@ -23,7 +23,7 @@ pub use error::AssetTransportError;
 #[cfg(feature = "file_io")]
 pub use local::LocalAssetTransport;
 pub use local::UnconfiguredAssetTransport;
-pub(crate) use range::{drive_async, read_whole_async};
+pub(crate) use range::{drive_async, hash_ranges_async, read_whole_async};
 use range::RangeStream;
 pub use range::{
     http_range, AsyncRangeAssetTransport, AsyncRangeTransport, ObjectVersion, RangeChunk,
