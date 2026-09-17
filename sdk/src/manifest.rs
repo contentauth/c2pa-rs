@@ -142,7 +142,7 @@ pub struct Manifest {
 }
 
 fn default_instance_id() -> String {
-    format!("xmp:iid:{}", Uuid::new_v4())
+    format!("xmp.iid:{}", Uuid::new_v4())
 }
 
 fn default_format() -> String {
@@ -600,7 +600,10 @@ impl Manifest {
                         Ingredient::from_ingredient_uri(store, manifest_label, &assertion_uri)?;
                     manifest.add_ingredient(ingredient);
                 }
-                labels::DATA_HASH | labels::BMFF_HASH | labels::BOX_HASH => {
+                labels::DATA_HASH
+                | labels::BMFF_HASH
+                | labels::BOX_HASH
+                | labels::COLLECTION_HASH => {
                     // do not include data hash when reading manifests
                 }
                 label if label.starts_with(labels::CLAIM_THUMBNAIL) => {

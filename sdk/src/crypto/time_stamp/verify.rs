@@ -492,14 +492,14 @@ pub fn verify_time_stamp(
 
         // the certificate must be on the trust list to be considered valid
         if verify_trust {
-            let mut adjusted_ctp = ctp.clone();
+            let mut adjusted_ctp = CertificateTrustPolicy::default();
 
             // Order certificates from leaf to root before trust validation
             let ordered_cert_ders = order_certificates_leaf_to_root(&cert_ders, cert_pos)?;
 
             // make sure this is a timestamping EKU
             adjusted_ctp.clear_ekus();
-            adjusted_ctp.add_valid_ekus(TIMESTAMP_OID_STR.as_bytes()); // timestamp signing EKU
+            adjusted_ctp.add_mandatory_ekus(TIMESTAMP_OID_STR.as_bytes()); // timestamp signing EKU
             if check_end_entity_certificate_profile(
                 &ordered_cert_ders[0],
                 &adjusted_ctp,
@@ -520,38 +520,54 @@ pub fn verify_time_stamp(
                 continue;
             }
 
-            if adjusted_ctp
-                .check_certificate_trust(
-                    &ordered_cert_ders[0..],
-                    &ordered_cert_ders[0],
-                    Some(signing_time),
-                )
-                .is_err()
-            {
-                log_item!(
-                    "",
-                    format!("timestamp cert untrusted: {}", &common_name),
-                    "verify_time_stamp"
-                )
-                .validation_status(TIMESTAMP_UNTRUSTED)
-                .informational(&mut current_validation_log);
+            match ctp.check_certificate_trust(
+                &ordered_cert_ders[0..],
+                &ordered_cert_ders[0],
+                Some(signing_time),
+            ) {
+                Err(_) => {
+                    log_item!(
+                        "",
+                        format!("timestamp cert untrusted: {}", &common_name),
+                        "verify_time_stamp"
+                    )
+                    .validation_status(TIMESTAMP_UNTRUSTED)
+                    .informational(&mut current_validation_log);
 
-                last_err = TimeStampError::Untrusted;
-                continue;
+                    last_err = TimeStampError::Untrusted;
+                    continue;
+                }
+                Ok((_trust_type, trust_uri)) => {
+                    log_item!(
+                        "",
+                        format!(
+                            "timestamp cert trusted: {}, trust list: {}",
+                            &common_name, &trust_uri
+                        ),
+                        "verify_time_stamp"
+                    )
+                    .validation_status(TIMESTAMP_TRUSTED)
+                    .set_trust_list_uri(&trust_uri)
+                    .success(&mut current_validation_log);
+
+                    validation_log.append(&current_validation_log);
+                    return Ok(tst);
+                }
             }
+        } else {
+            // this is the 1.x backward compatibility case, since there were no trust lists for timestamps
+            log_item!(
+                "",
+                format!("legacy timestamp cert trusted: {}", &common_name),
+                "verify_time_stamp"
+            )
+            .validation_status(TIMESTAMP_TRUSTED)
+            .success(&mut current_validation_log);
+
+            // If we find a valid value, we're done.
+            validation_log.append(&current_validation_log);
+            return Ok(tst);
         }
-
-        log_item!(
-            "",
-            format!("timestamp cert trusted: {}", &common_name),
-            "verify_time_stamp"
-        )
-        .validation_status(TIMESTAMP_TRUSTED)
-        .success(&mut current_validation_log);
-
-        // If we find a valid value, we're done.
-        validation_log.append(&current_validation_log);
-        return Ok(tst);
     }
 
     validation_log.append(&current_validation_log);

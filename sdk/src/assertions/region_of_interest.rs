@@ -254,6 +254,10 @@ pub struct RegionOfInterest {
     pub region_type: Option<String>,
     /// A value from our controlled vocabulary or an entity-specific value (e.g., com.litware.coolArea) that represents
     /// the role of a region among other regions.
+    #[deprecated(
+        since = "0.91.0",
+        note = "The `role` field is deprecated from C2PA spec version 2.1. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub role: Option<Role>,
     /// A free-text string.
     pub description: Option<String>,

@@ -14,7 +14,7 @@
 use async_trait::async_trait;
 use bcder::{encode::Values, OctetString};
 use c2pa_raw_crypto::oids::SHA256_OID;
-use rand::{thread_rng, Rng};
+use rand::RngExt;
 use sha2::{Digest, Sha256};
 
 use crate::{
@@ -144,9 +144,7 @@ pub fn default_rfc3161_message(data: &[u8]) -> Result<Vec<u8>, TimeStampError> {
     let digest = hasher.finalize();
 
     let mut random = [0u8; 8];
-    thread_rng().try_fill(&mut random).map_err(|_| {
-        TimeStampError::InternalError("Unable to generate random number".to_string())
-    })?;
+    rand::rng().fill(&mut random);
 
     // SHA-256 OID: 2.16.840.1.101.3.4.2.1
     let sha256_oid = raw_crypto_oid_to_bcder_oid(&SHA256_OID);

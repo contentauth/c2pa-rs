@@ -17,6 +17,7 @@ use std::sync::{
 };
 
 use crate::{
+    asset_io::{AssetIO, HandlerRegistry},
     http::{
         restricted::{RedirectResolver, RestrictedResolver},
         AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver,
@@ -275,6 +276,10 @@ pub struct Context {
     /// Embedded cancellation flag.  Any thread holding an `Arc<Context>` can call
     /// [`cancel()`](Context::cancel) without needing a separate token object.
     cancel_flag: AtomicBool,
+    /// Custom IO handlers provided by the caller, plus the built-in registry as a fallback.
+    /// Custom handlers are searched first; last-registered wins when two handlers claim the
+    /// same format.
+    io: HandlerRegistry,
 }
 
 impl Default for Context {
@@ -292,6 +297,7 @@ impl Default for Context {
             async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
             progress_callback: None,
             cancel_flag: AtomicBool::new(false),
+            io: HandlerRegistry::with_fallback(crate::jumbf_io::default_handler_registry()),
         }
     }
 }
@@ -515,6 +521,45 @@ impl Context {
         } else {
             Arc::new(RedirectResolver::new(client, core.allow_redirects))
         }
+    }
+
+    /// Register a custom IO handler on this Context.
+    ///
+    /// Custom handlers are consulted before the built-in global registry, so a handler
+    /// registered here can override a built-in handler for any format string it claims.
+    /// When multiple custom handlers claim the same format, the last one registered wins.
+    ///
+    /// # Arguments
+    ///
+    /// * `handler` - Any type implementing `AssetIO`
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use c2pa::{Context, AssetIO};
+    /// let context = Context::new().with_io_handler(MyCustomHandler::new(""));
+    /// let reader = c2pa::Reader::from_context(context);
+    /// ```
+    #[allow(unused)] // not public yet, but used in tests
+    pub(crate) fn with_io_handler(mut self, handler: impl AssetIO + 'static) -> Self {
+        self.io.add_handler(handler);
+        self
+    }
+
+    /// Register a custom IO handler on this Context (mutable variant).
+    #[allow(unused)] // not public yet, but used in tests
+    pub(crate) fn add_io_handler(&mut self, handler: impl AssetIO + 'static) {
+        self.io.add_handler(handler);
+    }
+
+    /// Returns this Context's [`HandlerRegistry`], for looking up asset I/O handlers and
+    /// their derived metadata (supported formats, MIME types, container families, ...).
+    ///
+    /// Custom handlers registered via [`with_io_handler`](Self::with_io_handler) are searched
+    /// before the built-in global registry; last-registered wins when two handlers claim the
+    /// same format.
+    pub(crate) fn io(&self) -> &HandlerRegistry {
+        &self.io
     }
 
     /// Configure this Context with a custom cryptographic signer.
@@ -903,6 +948,7 @@ mod tests {
             async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
             progress_callback: None,
             cancel_flag: AtomicBool::new(false),
+            io: HandlerRegistry::new(),
         };
 
         // Update settings to ensure no signer configuration
@@ -979,6 +1025,7 @@ mod tests {
             async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
             progress_callback: None,
             cancel_flag: AtomicBool::new(false),
+            io: HandlerRegistry::new(),
         };
 
         // Verify that async_signer() returns an error when no async signer settings are present
@@ -1529,5 +1576,138 @@ mod tests {
             SigningAlg::Es256,
             "Signer should now be Es256"
         );
+    }
+
+    #[test]
+    fn test_custom_io_handler_overrides_builtin() {
+        use crate::asset_io::{AssetIO, C2paReader, ReadSeek};
+
+        struct NoopReader;
+        impl C2paReader for NoopReader {
+            fn read_c2pa(&self, _: &mut dyn ReadSeek) -> crate::Result<Vec<u8>> {
+                Ok(b"custom-cai".to_vec())
+            }
+
+            fn read_xmp(&self, _: &mut dyn ReadSeek) -> Option<String> {
+                None
+            }
+        }
+
+        struct CustomHandler;
+        impl AssetIO for CustomHandler {
+            fn new(_: &str) -> Self {
+                CustomHandler
+            }
+
+            fn get_handler(&self, _: &str) -> Box<dyn AssetIO> {
+                Box::new(CustomHandler)
+            }
+
+            fn get_reader(&self) -> &dyn C2paReader {
+                &NoopReader
+            }
+
+            fn supported_types(&self) -> &[&str] {
+                &["image/jpeg"]
+            }
+        }
+
+        let ctx = Context::new().with_io_handler(CustomHandler);
+
+        // Custom handler claims "image/jpeg" — it should win over the built-in.
+        let handler = ctx.io().handler("image/jpeg");
+        assert!(handler.is_some(), "should find a handler for image/jpeg");
+
+        // Verify our handler is invoked by reading via get_reader_handler.
+        let reader_handler = ctx.io().reader("image/jpeg");
+        assert!(reader_handler.is_some());
+        let mut stream = std::io::Cursor::new(vec![]);
+        let result = reader_handler.unwrap().read_c2pa(&mut stream);
+        assert_eq!(result.unwrap(), b"custom-cai");
+
+        // Built-in format not claimed by the custom handler should fall through.
+        assert!(
+            ctx.io().handler("image/png").is_some(),
+            "png should still resolve via builtin"
+        );
+    }
+
+    #[test]
+    fn test_builtin_handlers_still_work_without_custom() {
+        let ctx = Context::new();
+        assert!(ctx.io().handler("image/jpeg").is_some());
+        assert!(ctx.io().handler("image/png").is_some());
+        assert!(ctx.io().handler("nonexistent/format").is_none());
+    }
+
+    #[test]
+    fn test_last_registered_custom_handler_wins() {
+        use crate::asset_io::{AssetIO, C2paReader, ReadSeek};
+
+        struct HandlerA;
+        struct ReaderA;
+        impl C2paReader for ReaderA {
+            fn read_c2pa(&self, _: &mut dyn ReadSeek) -> crate::Result<Vec<u8>> {
+                Ok(b"A".to_vec())
+            }
+
+            fn read_xmp(&self, _: &mut dyn ReadSeek) -> Option<String> {
+                None
+            }
+        }
+        impl AssetIO for HandlerA {
+            fn new(_: &str) -> Self {
+                HandlerA
+            }
+
+            fn get_handler(&self, _: &str) -> Box<dyn AssetIO> {
+                Box::new(HandlerA)
+            }
+
+            fn get_reader(&self) -> &dyn C2paReader {
+                &ReaderA
+            }
+
+            fn supported_types(&self) -> &[&str] {
+                &["x-custom/test"]
+            }
+        }
+
+        struct HandlerB;
+        struct ReaderB;
+        impl C2paReader for ReaderB {
+            fn read_c2pa(&self, _: &mut dyn ReadSeek) -> crate::Result<Vec<u8>> {
+                Ok(b"B".to_vec())
+            }
+
+            fn read_xmp(&self, _: &mut dyn ReadSeek) -> Option<String> {
+                None
+            }
+        }
+        impl AssetIO for HandlerB {
+            fn new(_: &str) -> Self {
+                HandlerB
+            }
+
+            fn get_handler(&self, _: &str) -> Box<dyn AssetIO> {
+                Box::new(HandlerB)
+            }
+
+            fn get_reader(&self) -> &dyn C2paReader {
+                &ReaderB
+            }
+
+            fn supported_types(&self) -> &[&str] {
+                &["x-custom/test"]
+            }
+        }
+
+        let ctx = Context::new()
+            .with_io_handler(HandlerA)
+            .with_io_handler(HandlerB);
+        let reader = ctx.io().reader("x-custom/test").unwrap();
+        let mut stream = std::io::Cursor::new(vec![]);
+        // HandlerB was registered last, so it should win.
+        assert_eq!(reader.read_c2pa(&mut stream).unwrap(), b"B");
     }
 }

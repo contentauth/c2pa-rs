@@ -32,6 +32,7 @@ use crate::{
         },
         IdentityAssertion, ValidationError,
     },
+    settings::TrustAnchor,
     status_tracker::{LogKind, StatusTracker},
 };
 
@@ -930,13 +931,9 @@ async fn did_is_untrusted() {
     // `did:jwk` is treated as untrusted. (This mirrors the secure production
     // default; the allow-list must be set explicitly to empty here because the
     // `#[cfg(test)]` default trusts the bundled fixture issuers.)
-    let context = crate::Context::new()
-        .with_settings(
-            crate::settings::Settings::default()
-                .with_value("cawg_trust.trusted_ica_issuers", Vec::<String>::new())
-                .unwrap(),
-        )
-        .unwrap();
+    let mut settings = crate::settings::Settings::default();
+    settings.trust.clear_trusted_ica_issuers();
+    let context = crate::Context::new().with_settings(settings).unwrap();
     let isv = IcaSignatureVerifier::new(&context);
 
     // The credential is otherwise well-formed and its signature is valid, so
@@ -993,16 +990,21 @@ async fn issuer_trusted_on_allow_list() {
     drop(ia_iter);
 
     // Trust exactly the issuer that signed this fixture.
-    let context = crate::Context::new()
-        .with_settings(
-            crate::settings::Settings::default()
-                .with_value(
-                    "cawg_trust.trusted_ica_issuers",
-                    vec![ICA_FIXTURE_JWK_ISSUER.to_string()],
-                )
-                .unwrap(),
-        )
-        .unwrap();
+    // CAWG anchors are separate from Signer anchors so we need to add CAWG anchor.
+    // Let's just add a CAWG specific anchor..
+    let mut settings = crate::settings::get_thread_local_settings();
+    if let Some(anchors) = &mut settings.trust.anchors {
+        // make sure there is a CAWG trust anchor with the ICA fixture issuers.
+        let cawg_anchor = TrustAnchor {
+            trust_kind: crate::settings::TrustListKind::CAWG,
+            trusted_ica_issuers: Some(vec![ICA_FIXTURE_JWK_ISSUER.to_string()]),
+            trust_uri: Some("cawg_trust".to_string()),
+            ..Default::default()
+        };
+
+        anchors.push(cawg_anchor);
+    }
+    let context = crate::Context::new().with_settings(settings).unwrap();
     let isv = IcaSignatureVerifier::new(&context);
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();

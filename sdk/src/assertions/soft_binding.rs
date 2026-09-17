@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+
+use c2pa_cbor::Value;
 use serde::{Deserialize, Serialize};
 
 use super::labels;
@@ -39,6 +42,10 @@ pub struct SoftBinding {
     #[serde(skip_serializing_if = "Option::is_none")]
     pad2: Option<serde_bytes::ByteBuf>,
 
+    /// Additional metadata of the soft binding. Useful for binding-specific information.
+    #[serde(rename = "bindingMetadata", skip_serializing_if = "Option::is_none")]
+    pub binding_metadata: Option<SoftBindingMetadata>,
+
     #[serde(skip_serializing)]
     url: Option<UriT>,
 }
@@ -49,7 +56,10 @@ impl SoftBinding {
     ///
     /// This is useful for cases where the data lives in a different file chunk or side-car
     /// than the claim.
-    #[deprecated = "deprecated in c2pa v1.3, use the asset reference assertion instead"]
+    #[deprecated(
+        since = "0.59.0",
+        note = "Use the asset reference assertion instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn url(&self) -> Option<&UriT> {
         self.url.as_ref()
     }
@@ -101,7 +111,10 @@ pub struct SoftBindingScope {
 #[allow(unused)]
 impl SoftBindingScope {
     /// In algorithm specific format, the part of the digital content over which the soft binding value has been computed.
-    #[deprecated = "deprecated in c2pa v2.1, use the `region` field instead"]
+    #[deprecated(
+        since = "0.59.0",
+        note = "Use the `region` field instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn extent(&self) -> Option<&[u8]> {
         self.extent.as_ref().map(|b| b.as_slice())
     }
@@ -115,6 +128,26 @@ pub struct SoftBindingTimespan {
 
     /// End of the time range (as milliseconds from media start) over which the soft binding value has been computed.
     pub end: u64,
+}
+
+/// Soft binding metadata.
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+pub struct SoftBindingMetadata {
+    /// Additional description of the implementation or author of the binding or the algorithm.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+
+    /// Contact information for the implementation or author of the binding or the algorithm.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contact: Option<String>,
+
+    /// A web page containing more details about the implementation or author of the binding or the algorithm.
+    #[serde(rename = "informationalUrl", skip_serializing_if = "Option::is_none")]
+    pub informational_url: Option<String>,
+
+    /// Uses flatten to allow these fields to be serialized at the same level as known fields.
+    #[serde(flatten, skip_serializing_if = "HashMap::is_empty")]
+    pub additional_fields: HashMap<String, Value>,
 }
 
 // A parsed C2PA soft binding algorithm registry.

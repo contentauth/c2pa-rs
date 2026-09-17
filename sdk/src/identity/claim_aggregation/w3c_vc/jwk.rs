@@ -181,7 +181,7 @@ type Base64urlUIntString = String;
 impl Jwk {
     #[cfg(test)]
     pub fn generate_ed25519() -> Result<Jwk, JwkError> {
-        let mut csprng = rand::rngs::OsRng {};
+        let mut csprng = rand_core_06::OsRng;
         let secret = ed25519_dalek::SigningKey::generate(&mut csprng);
         let public = secret.verifying_key();
         Ok(Jwk::from(Params::Okp(OctetParams {

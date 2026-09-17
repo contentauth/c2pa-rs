@@ -183,6 +183,18 @@ fn test_manifest_required_fields() -> Result<()> {
             "manifest.label required"
         );
         assert!(
+            obj.get("isUpdateManifest")
+                .and_then(|v| v.as_bool())
+                .is_some(),
+            "manifest.isUpdateManifest required boolean"
+        );
+        assert!(
+            obj.get("isCompressedManifest")
+                .and_then(|v| v.as_bool())
+                .is_some(),
+            "manifest.isCompressedManifest required boolean"
+        );
+        assert!(
             obj.get("assertions")
                 .map(|v| v.is_object())
                 .unwrap_or(false),
@@ -207,6 +219,8 @@ fn test_manifest_required_fields() -> Result<()> {
         // No extra top-level keys beyond what the schema allows (additionalProperties: false).
         let allowed = [
             "label",
+            "isUpdateManifest",
+            "isCompressedManifest",
             "assertions",
             "claim",
             "claim.v2",

@@ -59,9 +59,6 @@ changelog_path = "./CHANGELOG.md"
 # of in the `sdk` folder (which would be the default).
 
 [[package]]
-name = "c2patool"
-
-[[package]]
 name = "c2pa-c-ffi"
 version_group = "c2pa-rs"
 publish_features = ["rust_native_crypto"]

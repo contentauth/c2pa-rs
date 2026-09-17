@@ -22,9 +22,9 @@ use serde_bytes::ByteBuf;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::labels,
-    asset_io::CAIRead,
     cbor_types::UriT,
     error::{Error, Result},
+    read_seek::ReadSeek,
     utils::hash_utils::{
         hash_stream_by_alg, hash_stream_by_alg_with_progress, vec_compare, verify_asset_by_alg,
         verify_by_alg, HashRange,
@@ -269,7 +269,7 @@ impl DataHash {
     }
 
     // verify data using currently set algorithm or default alg is none currently set
-    pub fn verify_stream_hash(&self, reader: &mut dyn CAIRead, alg: Option<&str>) -> Result<()> {
+    pub fn verify_stream_hash(&self, reader: &mut dyn ReadSeek, alg: Option<&str>) -> Result<()> {
         self.verify_stream_hash_with_progress(reader, alg, &mut |_, _| Ok(()))
     }
 

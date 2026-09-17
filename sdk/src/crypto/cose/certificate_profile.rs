@@ -54,6 +54,29 @@ pub fn check_end_entity_certificate_profile(
         CertificateProfileError::InvalidCertificate
     })?;
 
+    // makes sure the certificate has any mandatory EKU values
+    if ctp.has_mandatory_ekus() {
+        if let Ok(Some(BasicExtension { value: eku, .. })) = signcert.extended_key_usage() {
+            if !ctp.verify_mandatory_ekus(eku) {
+                log_item!(
+                    "",
+                    "certificate missing mandatory EKU",
+                    "check_certificate_profile"
+                )
+                .validation_status(SIGNING_CREDENTIAL_INVALID)
+                .failure_no_throw(validation_log, CertificateProfileError::InvalidEku);
+            }
+        } else {
+            log_item!(
+                "",
+                "certificate missing mandatory EKU",
+                "check_certificate_profile"
+            )
+            .validation_status(SIGNING_CREDENTIAL_INVALID)
+            .failure_no_throw(validation_log, CertificateProfileError::InvalidEku);
+        }
+    }
+
     let tbscert = &signcert.tbs_certificate;
 
     // If we are expecting an end-entity cert, make sure that is so

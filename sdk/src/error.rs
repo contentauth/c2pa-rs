@@ -15,14 +15,7 @@
 
 use thiserror::Error;
 
-#[cfg(feature = "pdf")]
-use crate::asset_handlers::pdf_io::PdfError;
 use crate::{
-    asset_handlers::{
-        bmff_io::BmffError, flac_io::FlacError, gif_io::GifError, jpeg_io::JpegError,
-        mp3_io::Mp3Error, png_io::PngError, riff_io::RiffError, svg_io::SvgError,
-        tiff_io::TiffError,
-    },
     crypto::{cose::CoseError, time_stamp::TimeStampError},
     http::HttpResolverError,
     ValidationResults,
@@ -53,7 +46,7 @@ pub enum Error {
     AssertionMissing { url: String },
 
     /// The attempt to serialize the assertion (typically to JSON or CBOR) failed.
-    #[error("unable to encode assertion data")]
+    #[error("unable to encode assertion data: {0}")]
     AssertionEncoding(String),
 
     #[error(transparent)]
@@ -85,8 +78,10 @@ pub enum Error {
     #[error("claim could not be converted to CBOR")]
     ClaimEncoding,
 
-    /// The attempt to deserialize the claim from CBOR failed.
-    #[error("claim could not be converted from CBOR")]
+    /// The claim (or one of its assertions) failed to decode or is structurally
+    /// invalid. The string carries the assertion URI or a description of what
+    /// was wrong.
+    #[error("claim could not be converted from CBOR: {0}")]
     ClaimDecoding(String),
 
     #[error("attempt to add new claim without signing last claim")]
@@ -321,38 +316,7 @@ pub enum Error {
     C2PAValidation(String),
 
     #[error("manifest failed validation with: {}", .0.failure_summary())]
-    InvalidManifest(ValidationResults),
-
-    #[error("error parsing BMFF: {0}")]
-    BmffError(#[from] BmffError),
-
-    #[error("error parsing GIF: {0}")]
-    GifError(#[from] GifError),
-
-    #[error("error parsing JPEG: {0}")]
-    JpegError(#[from] JpegError),
-
-    #[error("error parsing MP3: {0}")]
-    Mp3Error(#[from] Mp3Error),
-
-    #[error("error parsing FLAC: {0}")]
-    FlacError(#[from] FlacError),
-
-    #[cfg(feature = "pdf")]
-    #[error("error parsing PDF: {0}")]
-    PdfError(#[from] PdfError),
-
-    #[error("error parsing PNG: {0}")]
-    PngError(#[from] PngError),
-
-    #[error("error parsing RIFF: {0}")]
-    RiffError(#[from] RiffError),
-
-    #[error("error parsing SVG: {0}")]
-    SvgError(#[from] SvgError),
-
-    #[error("error parsing TIFF: {0}")]
-    TiffError(#[from] TiffError),
+    InvalidManifest(Box<ValidationResults>),
 }
 
 /// A specialized `Result` type for C2PA toolkit operations.

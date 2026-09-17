@@ -83,7 +83,7 @@ test: check-format clippy test-local
 fmt:
 	cargo +nightly fmt
 
-# These are for building the c2patool release bin on various platforms
+# These are for building the c2pa-c-ffi release library on various platforms
 release-win-x86_64:
 	rustup update stable-msvc
 	rustup target add x86_64-pc-windows-msvc
