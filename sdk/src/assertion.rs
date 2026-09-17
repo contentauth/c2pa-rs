@@ -206,14 +206,9 @@ impl fmt::Debug for AssertionData {
                 write!(f, "uuid: {uuid}, <omitted>")
             }
             Self::Cbor(s) => {
-                let buf: Vec<u8> = Vec::new();
-                let mut from = c2pa_cbor::Deserializer::from_slice(s);
-                let mut to = serde_json::Serializer::pretty(buf);
-
-                serde_transcode::transcode(&mut from, &mut to).map_err(|_err| fmt::Error)?;
-                let buf2 = to.into_inner();
-
-                let decoded: Value = serde_json::from_slice(&buf2).map_err(|_err| fmt::Error)?;
+                let value: c2pa_cbor::Value =
+                    c2pa_cbor::from_slice(s).map_err(|_err| fmt::Error)?;
+                let decoded = cbor_to_crjson(&value);
 
                 write!(f, "{:?}", decoded.to_string())
             }
@@ -502,7 +497,7 @@ impl Assertion {
 /// down the pipeline. Tags are unwrapped (dropping the tag number and recursing
 /// into the inner value), which also implements the spec's tag-0 date-time rule.
 /// Non-text map keys are stringified, since JSON object keys must be strings.
-fn cbor_to_crjson(value: &c2pa_cbor::Value) -> Value {
+pub(crate) fn cbor_to_crjson(value: &c2pa_cbor::Value) -> Value {
     use c2pa_cbor::Value as Cbor;
 
     match value {

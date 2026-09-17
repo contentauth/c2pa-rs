@@ -27,8 +27,8 @@ use uuid::Uuid;
 
 use crate::{
     assertion::{
-        get_thumbnail_image_type, get_thumbnail_instance, get_thumbnail_type, Assertion,
-        AssertionBase, AssertionData,
+        cbor_to_crjson, get_thumbnail_image_type, get_thumbnail_instance, get_thumbnail_type,
+        Assertion, AssertionBase, AssertionData,
     },
     assertions::{
         self, c2pa_action,
@@ -4333,18 +4333,10 @@ impl Claim {
                             }
                             AssertionData::Cbor(x) => {
                                 // some types are not translatable to json so explicitly convert
-                                let buf: Vec<u8> = Vec::new();
-                                let mut from = c2pa_cbor::Deserializer::from_slice(x);
-                                let mut to = serde_json::Serializer::new(buf);
-
-                                serde_transcode::transcode(&mut from, &mut to)
-                                    .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
-                                let buf2 = to.into_inner();
-
-                                let decoded: Value = serde_json::from_slice(&buf2)
+                                let cbor_value: c2pa_cbor::Value = c2pa_cbor::from_slice(x)
                                     .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
 
-                                json_map.insert(label, decoded);
+                                json_map.insert(label, cbor_to_crjson(&cbor_value));
                             }
                             AssertionData::Binary(x) => {
                                 // binary vecs
@@ -4423,16 +4415,9 @@ impl Claim {
                             }
                             AssertionData::Cbor(x) => {
                                 // some types are not translatable to json so explicitly convert
-                                let buf: Vec<u8> = Vec::new();
-                                let mut from = c2pa_cbor::Deserializer::from_slice(x);
-                                let mut to = serde_json::Serializer::new(buf);
-
-                                serde_transcode::transcode(&mut from, &mut to)
+                                let cbor_value: c2pa_cbor::Value = c2pa_cbor::from_slice(x)
                                     .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
-                                let buf2 = to.into_inner();
-
-                                let d: Value = serde_json::from_slice(&buf2)
-                                    .map_err(|err| Error::AssertionEncoding(err.to_string()))?;
+                                let d = cbor_to_crjson(&cbor_value);
 
                                 let j = JsonOrderedAssertionData {
                                     label: claim_assertion.label().to_owned(),
