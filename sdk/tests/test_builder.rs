@@ -840,6 +840,50 @@ fn test_ingredient_arbitrary_metadata_fields() -> Result<()> {
 }
 
 #[test]
+#[cfg(feature = "pdf")]
+fn test_builder_pdf() -> Result<()> {
+    let context = test_context().into_shared();
+
+    let mut source = Cursor::new(include_bytes!("fixtures/basic.pdf"));
+    let format = "application/pdf";
+
+    let mut builder = Builder::from_shared_context(&context);
+    builder.set_intent(BuilderIntent::Edit);
+
+    let mut dest = Cursor::new(Vec::new());
+    builder.sign(context.signer()?, format, &mut source, &mut dest)?;
+
+    dest.set_position(0);
+    let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
+    assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+    Ok(())
+}
+
+// A PDF that already has a manifest embedded must still sign cleanly: the
+// existing manifest is removed and replaced, not appended alongside it.
+#[test]
+#[cfg(feature = "pdf")]
+fn test_builder_pdf_resign_already_signed() -> Result<()> {
+    let context = test_context().into_shared();
+
+    let mut source = Cursor::new(include_bytes!("fixtures/express-signed.pdf"));
+    let format = "application/pdf";
+
+    let mut builder = Builder::from_shared_context(&context);
+    builder.set_intent(BuilderIntent::Edit);
+
+    let mut dest = Cursor::new(Vec::new());
+    builder.sign(context.signer()?, format, &mut source, &mut dest)?;
+
+    dest.set_position(0);
+    let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
+    assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+    Ok(())
+}
+
+#[test]
 fn test_builder_unsupported_format() -> Result<()> {
     let context = Context::new().with_settings(test_settings())?.into_shared();
 

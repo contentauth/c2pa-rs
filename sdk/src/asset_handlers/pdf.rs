@@ -87,6 +87,14 @@ pub(crate) trait C2paPdf: Sized {
     fn remove_manifest_bytes(&mut self) -> Result<(), Error>;
 
     fn read_xmp(&self) -> Option<String>;
+
+    /// Returns the byte offset of the `N G obj` declaration for the C2PA
+    /// manifest's embedded-file stream, as recorded in this document's xref
+    /// table. `None` if no manifest is present.
+    ///
+    /// Callers must parse the exact same bytes that produced this `C2paPdf`
+    /// (e.g. via [`Pdf::from_bytes`]) for the offset to be meaningful.
+    fn manifest_object_offset(&self) -> Option<u64>;
 }
 
 pub(crate) struct Pdf {
@@ -294,6 +302,15 @@ impl C2paPdf for Pdf {
                 String::from_utf8(stream_dict.content.clone()).ok()
             })
     }
+
+    fn manifest_object_offset(&self) -> Option<u64> {
+        let (id, _generation) = self.c2pa_manifest_stream_object_id()?;
+
+        match self.document.reference_table.get(id) {
+            Some(lopdf::xref::XrefEntry::Normal { offset, .. }) => Some(*offset as u64),
+            _ => None,
+        }
+    }
 }
 
 impl Pdf {
@@ -315,6 +332,26 @@ impl Pdf {
             .catalog()?
             .get_deref(ASSOCIATED_FILE_KEY, &self.document)?
             .as_array()?)
+    }
+
+    /// Returns the [ObjectId] of the C2PA manifest's embedded-file stream object, if a
+    /// manifest is present.
+    fn c2pa_manifest_stream_object_id(&self) -> Option<ObjectId> {
+        let file_spec_ref = self.c2pa_file_spec_object_id()?;
+
+        self.document
+            .get_object(file_spec_ref)
+            .ok()?
+            .as_dict()
+            .ok()?
+            .get(b"EF")
+            .ok()?
+            .as_dict()
+            .ok()?
+            .get(b"F")
+            .ok()?
+            .as_reference()
+            .ok()
     }
 
     /// Returns the [Object::ObjectId] of the C2PA File Spec Reference, if it is present in the
@@ -471,18 +508,22 @@ impl Pdf {
     /// Remove the C2PA Manifest `Annotation` from the PDF.
     fn remove_manifest_from_annotations(&mut self) -> Result<(), Error> {
         for (_, page_id) in self.document.get_pages() {
-            self.document
-                .get_object_mut(page_id)?
-                .as_dict_mut()?
-                .get_mut(ANNOTATIONS_KEY)?
-                .as_array_mut()?
-                .retain(|obj| {
-                    obj.as_dict()
-                        .and_then(|annot| annot.get(TYPE_KEY))
-                        .and_then(Object::as_name)
-                        .map(|str| str::from_utf8(str) != Ok(CONTENT_CREDS))
-                        .unwrap_or(true)
-                });
+            let page = self.document.get_object_mut(page_id)?.as_dict_mut()?;
+
+            // Pages with no annotations at all have nothing to remove; skip them
+            // instead of failing the whole removal (e.g. manifests attached only
+            // via `/AF`, with no `/Names` or per-page `/Annots` reference).
+            let Ok(annots) = page.get_mut(ANNOTATIONS_KEY) else {
+                continue;
+            };
+
+            annots.as_array_mut()?.retain(|obj| {
+                obj.as_dict()
+                    .and_then(|annot| annot.get(TYPE_KEY))
+                    .and_then(Object::as_name)
+                    .map(|str| str::from_utf8(str) != Ok(CONTENT_CREDS))
+                    .unwrap_or(true)
+            });
         }
 
         Ok(())
