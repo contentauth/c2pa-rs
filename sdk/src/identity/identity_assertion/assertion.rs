@@ -447,6 +447,15 @@ impl IdentityAssertion {
             serde_json::to_value(result)
                 .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
         } else {
+            // Per CAWG Identity Assertion §7.1, an unrecognized sig_type SHALL be
+            // reported rather than silently ignored.
+            log_current_item!("unsupported signature type", "validate_partial_claim")
+                .validation_status("cawg.identity.sig_type.unknown")
+                .failure_no_throw(
+                    status_tracker,
+                    ValidationError::<String>::UnknownSignatureType(sig_type.to_string()),
+                );
+
             Err(ValidationError::UnknownSignatureType(sig_type.to_string()))
         }
     }

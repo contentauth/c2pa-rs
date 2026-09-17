@@ -65,7 +65,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout main
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           fetch-depth: 0
@@ -153,12 +153,13 @@ jobs:
 
       # Cut the first build (-rc.1) on the new branch: release-rc.yml sets the
       # -rc.1 versions, tags them, and those tags build prerelease binaries.
-      # Dispatched with the PAT so its subsequent tag pushes trigger the binary
-      # workflows.
+      # RELEASE_PLZ_ORG_TOKEN lacks workflow-dispatch permission on this repo
+      # (confirmed empirically: it returns a 403), so CROSS_ORG_PR_TOKEN is
+      # used here instead, matching the workaround in release.yml.
       - name: Cut first release-candidate build (-rc.1)
         if: steps.exists.outputs.skip != 'true' && steps.empty.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLZ_ORG_TOKEN }}
+          GH_TOKEN: ${{ secrets.CROSS_ORG_PR_TOKEN }}
         run: |
           gh workflow run release-rc.yml --ref "${{ steps.ver.outputs.branch }}"
 
