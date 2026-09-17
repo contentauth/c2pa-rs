@@ -1578,7 +1578,7 @@ impl BmffHash {
     /// For fragments served by a configured transport, read through
     /// [`Reader::with_fragmented_files`](crate::Reader::with_fragmented_files).
     ///
-    /// A missing or unreadable fragment now surfaces as
+    /// A missing or unreadable fragment surfaces as
     /// [`Error::AssetTransport`](crate::Error::AssetTransport). Earlier releases returned
     /// [`Error::IoError`](crate::Error::IoError).
     #[cfg(feature = "file_io")]

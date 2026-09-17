@@ -73,13 +73,14 @@ impl RangeCache {
     /// Copies contiguous cached bytes starting at `offset` into `buf`, returning how
     /// many bytes were copied (0 if `offset` is not cached).
     ///
-    /// A partial copy is not a miss. Only a zero-length copy is, so a seam left by a
-    /// capped insert (see [`RangeCache::insert`]) costs at most an extra `read` call.
-    /// The async driver will re-read from the returned offset rather than spend a
-    /// retry attempt on it. Walking across adjacent segments here would
-    /// be dead code under the current eviction policy: two byte-adjacent segments can
-    /// never both be resident, since adjacency within budget always coalesces and a
-    /// capped split leaves `total` over budget, which `evict` immediately trims to one.
+    /// A partial copy is not a miss. Only a zero-length copy is, so a short segment left
+    /// by a capped insert (see [`RangeCache::insert`]) costs at most an extra `read`
+    /// call. The async driver re-reads from the returned offset instead of spending a
+    /// retry attempt on it.
+    ///
+    /// Adjacent segments are never both resident: coalescing on insert merges them
+    /// within budget, and eviction trims an over-budget split immediately. So a walk
+    /// across segments here would never run.
     pub(crate) fn copy_into(&mut self, offset: u64, buf: &mut [u8]) -> usize {
         let Some((&start, seg)) = self.segments.range(..=offset).next_back() else {
             return 0;

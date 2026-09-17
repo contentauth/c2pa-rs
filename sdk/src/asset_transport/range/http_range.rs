@@ -24,7 +24,7 @@
 
 use std::num::NonZeroU64;
 
-use crate::asset_transport::{AssetTransportError, ObjectVersion};
+use crate::asset_transport::{range::RangeChunk, AssetTransportError, ObjectVersion};
 
 /// A parsed `Content-Range` header value.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,18 +44,6 @@ pub enum ContentRange {
         /// Total object length.
         total: u64,
     },
-}
-
-/// Whether an origin advertises range support, per its `Accept-Ranges` header.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum AcceptRanges {
-    /// `bytes` is among the accepted units.
-    Bytes,
-    /// `none`: the origin states it accepts no range units.
-    None,
-    /// Header absent, or naming units other than `bytes`.
-    Unknown,
 }
 
 /// Parses a `Content-Range` header value.
@@ -198,23 +186,113 @@ pub fn validate_status(
     }
 }
 
-/// Reads an `Accept-Ranges` header value.
+/// A range response as the platform received it, before any rule is applied.
 ///
-/// RFC 9110 14.3: an absent header states nothing, so it maps to
-/// [`AcceptRanges::Unknown`]. Only an explicit `none` is [`AcceptRanges::None`]. The
-/// reliable capability test is whether a probe returns `206` or `200`, because an
-/// intermediary can advertise support it does not honor.
-pub fn accept_ranges(value: Option<&str>) -> AcceptRanges {
-    let Some(value) = value else {
-        return AcceptRanges::Unknown;
-    };
-    let mut units = value.split(',').map(str::trim);
-    if units.clone().any(|u| u.eq_ignore_ascii_case("bytes")) {
-        AcceptRanges::Bytes
-    } else if units.any(|u| u.eq_ignore_ascii_case("none")) {
-        AcceptRanges::None
-    } else {
-        AcceptRanges::Unknown
+/// A transport fills this in with what its client handed back and calls
+/// [`into_chunk`](Self::into_chunk), so the RFC 9110 rules that decide whether a
+/// response is usable at the requested offset have one implementation rather than one
+/// per platform.
+///
+/// The fields are public and exhaustive: a transport outside this crate constructs one
+/// directly, which `#[non_exhaustive]` would forbid. Adding a field is therefore a
+/// breaking change, which is the right trade for a type whose whole purpose is to be
+/// built by its callers.
+///
+/// There is deliberately no `Default`: it would yield status `0`, which no origin sends
+/// and which [`into_chunk`](Self::into_chunk) could only report as a server fault.
+#[derive(Debug, Clone)]
+pub struct RangeResponse {
+    /// HTTP status code.
+    pub status: u16,
+    /// `Content-Range`, when the response carries one.
+    pub content_range: Option<String>,
+    /// `ETag`, when the response carries one.
+    pub etag: Option<String>,
+    /// `Last-Modified`, when the response carries one.
+    pub last_modified: Option<String>,
+    /// `Content-Encoding`. Across origins this needs
+    /// `Access-Control-Expose-Headers`, and a response whose encoding is hidden cannot
+    /// be refused by [`into_chunk`](Self::into_chunk).
+    pub content_encoding: Option<String>,
+    /// The body as the platform delivered it.
+    pub body: Vec<u8>,
+}
+
+impl RangeResponse {
+    /// The object length this response states, from `Content-Range`.
+    ///
+    /// A one-byte probe learns the length this way, and a `416` states it too.
+    pub fn total(&self) -> Option<u64> {
+        match content_range(self.content_range.as_deref()?)? {
+            ContentRange::Range { total, .. } => total,
+            ContentRange::Unsatisfied { total } => Some(total),
+        }
+    }
+
+    /// The version this response identifies, per RFC 9110 8.8.3.
+    pub fn version(&self) -> Option<ObjectVersion> {
+        ObjectVersion::from_http_validators(self.etag.as_deref(), self.last_modified.as_deref())
+    }
+
+    /// Applies the range contract and yields the chunk, or the reason the response
+    /// fails it.
+    ///
+    /// Runs the status rule, the encoding rule and the `Content-Range` rule, in that
+    /// order. Status comes first because error pages are routinely compressed: checking
+    /// the encoding first would report a gzipped `404` as an encoding violation instead
+    /// of as the failure it is. It decides whether a response is a usable range response
+    /// at all; whether the chunk is the one this read asked for is decided afterwards, by
+    /// the placement and length checks every transport already passes through.
+    ///
+    /// `total` is the object length when the caller already knows it, which lets a
+    /// whole-object `200` be accepted per RFC 9110 14.2.
+    pub fn into_chunk(
+        self,
+        reference: &str,
+        requested: (u64, NonZeroU64),
+        total: Option<u64>,
+        expect: Option<&ObjectVersion>,
+    ) -> Result<RangeChunk, AssetTransportError> {
+        let (offset, len) = requested;
+        let version = self.version();
+        // RFC 9110 15.5.17: a `416` states the object's current length, so it corrects
+        // whatever the caller believed. Every other status states nothing better than
+        // what the caller already knows.
+        let total = match self.status {
+            416 => self.total().or(total),
+            _ => total.or_else(|| self.total()),
+        };
+        validate_status(
+            self.status,
+            reference,
+            (offset, len.get()),
+            total,
+            expect,
+            version.as_ref(),
+        )?;
+
+        // RFC 9110 14.1.2 defines a range over the encoded bytes, so an encoded
+        // response does not address the object the offsets refer to.
+        if !content_encoding_ok(self.content_encoding.as_deref()) {
+            return Err(AssetTransportError::other(std::io::Error::other(format!(
+                "range response from {reference} carries a content encoding ({}), so its \
+                 byte offsets do not address the object",
+                self.content_encoding.as_deref().unwrap_or("unknown")
+            ))));
+        }
+
+        // An origin that omits `Content-Range` leaves the requested offset, which makes
+        // the caller's placement check pass without proving anything.
+        let served = match self.content_range.as_deref().and_then(content_range) {
+            Some(ContentRange::Range { first, .. }) => first,
+            _ => offset,
+        };
+
+        let chunk = RangeChunk::new(served, self.body);
+        Ok(match version {
+            Some(version) => chunk.with_version(version),
+            None => chunk,
+        })
     }
 }
 
@@ -389,14 +467,133 @@ mod tests {
         ));
     }
 
+    fn probe(status: u16, body: &[u8]) -> RangeResponse {
+        RangeResponse {
+            status,
+            body: body.to_vec(),
+            content_range: None,
+            etag: None,
+            last_modified: None,
+            content_encoding: None,
+        }
+    }
+
     #[test]
-    fn accept_ranges_treats_absence_as_unknown() {
-        assert_eq!(accept_ranges(None), AcceptRanges::Unknown);
-        assert_eq!(accept_ranges(Some("bytes")), AcceptRanges::Bytes);
-        assert_eq!(accept_ranges(Some("BYTES")), AcceptRanges::Bytes);
-        assert_eq!(accept_ranges(Some("none")), AcceptRanges::None);
-        assert_eq!(accept_ranges(Some("bytes, none")), AcceptRanges::Bytes);
-        assert_eq!(accept_ranges(Some("items")), AcceptRanges::Unknown);
+    fn into_chunk_takes_the_served_offset_from_content_range() {
+        let mut resp = probe(206, b"abcd");
+        resp.content_range = Some("bytes 100-103/900".to_string());
+        resp.etag = Some("\"v1\"".to_string());
+
+        let chunk = resp
+            .into_chunk("u", (100, NonZeroU64::new(4).unwrap()), None, None)
+            .unwrap();
+        assert_eq!(chunk.offset, 100);
+        assert_eq!(chunk.bytes, b"abcd");
+        assert_eq!(chunk.version.unwrap().to_string(), "\"v1\"");
+    }
+
+    // An origin that omits `Content-Range` proves nothing about placement, so the
+    // requested offset stands in and the caller's own placement check does the work.
+    #[test]
+    fn into_chunk_falls_back_to_the_requested_offset() {
+        let chunk = probe(206, b"ab")
+            .into_chunk("u", (7, NonZeroU64::new(2).unwrap()), None, None)
+            .unwrap();
+        assert_eq!(chunk.offset, 7);
+    }
+
+    // RFC 9110 14.2 lets an origin answer a range request with the whole object.
+    #[test]
+    fn into_chunk_accepts_a_whole_object_200() {
+        let chunk = probe(200, b"0123456789")
+            .into_chunk("u", (0, NonZeroU64::new(10).unwrap()), Some(10), None)
+            .unwrap();
+        assert_eq!(chunk.offset, 0);
+        assert_eq!(chunk.bytes.len(), 10);
+    }
+
+    #[test]
+    fn into_chunk_refuses_an_encoded_response() {
+        let mut resp = probe(206, b"\x1f\x8b");
+        resp.content_range = Some("bytes 0-1/900".to_string());
+        resp.content_encoding = Some("gzip".to_string());
+
+        let err = resp
+            .into_chunk("u", (0, NonZeroU64::new(2).unwrap()), None, None)
+            .unwrap_err();
+        assert!(err.to_string().contains("content encoding"), "{err}");
+    }
+
+    #[test]
+    fn into_chunk_reports_416_with_the_total() {
+        let mut resp = probe(416, b"");
+        resp.content_range = Some("bytes */900".to_string());
+
+        let err = resp
+            .into_chunk("u", (5000, NonZeroU64::new(8).unwrap()), None, None)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            AssetTransportError::RangeNotSatisfiable {
+                offset: 5000,
+                total: Some(900),
+                ..
+            }
+        ));
+    }
+
+    // RFC 9110 15.5.17: a `416` states the object's current length, so it is the origin
+    // correcting the caller. The caller's own total is the stale belief being corrected,
+    // and reporting it would say the range was satisfiable when it was not.
+    #[test]
+    fn a_416_reports_the_origin_length_over_a_stale_one() {
+        let mut resp = probe(416, b"");
+        resp.content_range = Some("bytes */400".to_string());
+
+        let err = resp
+            .into_chunk("u", (900, NonZeroU64::new(8).unwrap()), Some(1000), None)
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                AssetTransportError::RangeNotSatisfiable {
+                    total: Some(400),
+                    ..
+                }
+            ),
+            "{err}"
+        );
+    }
+
+    // A `416` that states no length leaves the caller's total as the only one there is.
+    #[test]
+    fn a_416_without_a_content_range_keeps_the_known_total() {
+        let err = probe(416, b"")
+            .into_chunk("u", (900, NonZeroU64::new(8).unwrap()), Some(1000), None)
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                AssetTransportError::RangeNotSatisfiable {
+                    total: Some(1000),
+                    ..
+                }
+            ),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn total_reads_the_length_from_either_content_range_form() {
+        let mut served = probe(206, b"");
+        served.content_range = Some("bytes 0-0/4242".to_string());
+        assert_eq!(served.total(), Some(4242));
+
+        let mut missed = probe(416, b"");
+        missed.content_range = Some("bytes */4242".to_string());
+        assert_eq!(missed.total(), Some(4242));
+
+        assert_eq!(probe(206, b"").total(), None);
     }
 
     #[test]

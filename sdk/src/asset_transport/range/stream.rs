@@ -16,7 +16,7 @@
 use std::io::{self, Read, Seek, SeekFrom};
 
 use super::{
-    add_signed, cache::RangeCache, fetch_len, ObjectVersion, RangeConfig, SyncRangeTransport,
+    cache::RangeCache, fetch_len, seek_to, ObjectVersion, RangeConfig, SyncRangeTransport,
 };
 use crate::asset_transport::AssetTransportError;
 
@@ -39,13 +39,7 @@ pub(crate) struct RangeStream {
 
 impl RangeStream {
     pub(crate) fn new(transport: Box<dyn SyncRangeTransport>, config: RangeConfig) -> Self {
-        // A fetch larger than the eviction budget becomes one segment that `evict`
-        // cannot drop, since it keeps the last segment whatever the budget. Capping the
-        // request at the budget makes `max_cached` the real peak, and gives the async
-        // driver a bound on how many misses one cache can hold.
-        let config = config
-            .with_max_request(config.max_request().min(config.max_cached()))
-            .unwrap_or(config);
+        let config = config.clamped();
         Self {
             cache: RangeCache::new(config.max_cached()),
             transport,
@@ -117,14 +111,7 @@ impl Read for RangeStream {
 
 impl Seek for RangeStream {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        let new_offset = match pos {
-            SeekFrom::Start(n) => n,
-            SeekFrom::Current(delta) => add_signed(self.offset, delta)?,
-            SeekFrom::End(delta) => {
-                let len = self.resolved_len()?;
-                add_signed(len, delta)?
-            }
-        };
+        let new_offset = seek_to(self.offset, pos, || self.resolved_len())?;
         self.offset = new_offset;
         Ok(new_offset)
     }
@@ -140,6 +127,7 @@ fn to_io(err: AssetTransportError) -> io::Error {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
+    use std::num::NonZeroU64;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -219,14 +207,11 @@ mod tests {
         // `max_request` above `max_cached` produces one segment `evict` cannot drop,
         // since it keeps the last segment whatever the budget. `RangeStream::new` caps
         // the request at the budget, so `max_cached` is the real peak.
-        let max_cached = 1024u64;
+        let max_cached = NonZeroU64::new(1024).unwrap();
         let config = RangeConfig::default()
-            .with_window(64)
-            .unwrap()
+            .with_window(NonZeroU64::new(64).unwrap())
             .with_max_cached(max_cached)
-            .unwrap()
-            .with_max_request(8 * max_cached)
-            .unwrap();
+            .with_max_request(max_cached.saturating_mul(NonZeroU64::new(8).unwrap()));
 
         let (mem, _calls) = reader(vec![0u8; 16 * 1024]);
         let mut stream = RangeStream::new(mem, config);
@@ -236,18 +221,16 @@ mod tests {
         stream.read_exact(&mut buf).unwrap();
 
         assert!(
-            stream.cache.cached_bytes() <= max_cached,
+            stream.cache.cached_bytes() <= max_cached.get(),
             "cached {} exceeded budget {max_cached}",
             stream.cache.cached_bytes()
         );
     }
 
     #[test]
-    fn config_rejects_a_zero_tunable() {
-        assert!(RangeConfig::default().with_window(0).is_err());
-        assert!(RangeConfig::default().with_max_request(0).is_err());
-        assert!(RangeConfig::default().with_max_cached(0).is_err());
-        // Zero is meaningful here: no whole-object fallback.
+    fn a_disabled_whole_object_rung_is_distinct_from_a_zero_tunable() {
+        // Zero is meaningful here, unlike the three `NonZeroU64` tunables: it means the
+        // whole-object rung is off, not that a size was left unset.
         assert_eq!(
             RangeConfig::default()
                 .with_max_whole_object(None)
@@ -267,6 +250,24 @@ mod tests {
         let mut buf = [0u8; 10];
         let err = stream.read(&mut buf).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Other);
+    }
+
+    // `SeekFrom::End` is the one arm that has to discover the object length, and it
+    // costs a request to do so. The other arms must not pay for it.
+    #[test]
+    fn seeking_from_the_end_resolves_the_length_and_other_arms_do_not() {
+        let data: Vec<u8> = (0..100u8).collect();
+        let (mem, calls) = reader(data.clone());
+        let mut stream = RangeStream::new(mem, RangeConfig::default());
+
+        stream.seek(SeekFrom::Start(10)).unwrap();
+        stream.seek(SeekFrom::Current(5)).unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        assert_eq!(stream.seek(SeekFrom::End(-10)).unwrap(), 90);
+        let mut buf = [0u8; 10];
+        stream.read_exact(&mut buf).unwrap();
+        assert_eq!(&buf, &data[90..]);
     }
 
     #[test]

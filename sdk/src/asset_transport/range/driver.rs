@@ -24,7 +24,7 @@ use std::{
 };
 
 use super::{
-    add_signed, cache::RangeCache, fetch_len, AsyncRangeTransport, ObjectVersion, RangeConfig,
+    cache::RangeCache, fetch_len, seek_to, AsyncRangeTransport, ObjectVersion, RangeConfig,
 };
 use crate::{
     asset_transport::AssetTransportError,
@@ -117,11 +117,7 @@ impl Read for PrefetchStream<'_> {
 
 impl Seek for PrefetchStream<'_> {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        let new_offset = match pos {
-            SeekFrom::Start(n) => n,
-            SeekFrom::Current(delta) => add_signed(self.offset, delta)?,
-            SeekFrom::End(delta) => add_signed(self.len, delta)?,
-        };
+        let new_offset = seek_to(self.offset, pos, || Ok(self.len))?;
         self.offset = new_offset;
         Ok(new_offset)
     }
@@ -181,22 +177,15 @@ pub(crate) async fn drive_async<T, F>(
 where
     F: FnMut(&mut PrefetchStream<'_>) -> io::Result<T>,
 {
-    // Match `RangeStream::new`: a fetch larger than the budget becomes a segment
-    // `evict` cannot drop, which would make the ceiling below unprovable.
-    let config = config
-        .with_max_request(config.max_request().min(config.max_cached()))
-        .unwrap_or(*config);
+    // A fetch larger than the budget becomes a segment `evict` cannot drop, which
+    // would make the ceiling below unprovable.
+    let config = config.clamped();
 
     let info = transport.info_async().await?;
     let mut version = info.version.clone();
 
-    // Each successful attempt caches at least `min(window, remaining)` new bytes.
-    // The cache holds at most `max_cached` before evicting. So `max_cached / window`
-    // attempts fill the budget. One more attempt evicts, and the attempt after that
-    // re-reads what was dropped. That is where re-miss detection fires with the
-    // actionable error. The ceiling has to leave room for both, or it pre-empts the
-    // better diagnosis. It exists only for a parse that reads different ranges each
-    // time and so never re-misses at all.
+    // `max_cached / window`, plus two attempts of headroom for the re-miss detection
+    // to fire before this ceiling does. See `RangeConfig::clamped` for why.
     let ceiling = (config.max_cached() / config.window()).saturating_add(2) as u32;
 
     let mut cache = RangeCache::new(config.max_cached());
@@ -256,21 +245,35 @@ where
 
         // A transport error propagates here, spending no attempt, and `VersionChanged`
         // aborts with the cache dropped rather than retrying.
-        let chunk =
-            fetch_versioned_async(transport, record.offset, record.len, version.as_ref()).await?;
-        if chunk.bytes.is_empty() {
-            return Err(AssetTransportError::ShortRead {
-                offset: record.offset,
-                expected: record.len,
-                got: 0,
-            });
-        }
-        if version.is_none() {
-            version = chunk.version.clone();
-        }
-        fetched.record(record.offset, chunk.bytes.len() as u64);
-        cache.insert(record.offset, chunk.bytes);
+        let bytes = fetch_piece(transport, record.offset, record.len, &mut version).await?;
+        fetched.record(record.offset, bytes.len() as u64);
+        cache.insert(record.offset, bytes);
     }
+}
+
+/// Fetches `len` bytes at `offset`, rejecting an empty response and adopting the
+/// version when the caller has not anchored on one yet.
+///
+/// A transport that returns nothing while bytes remain has short-read, not reached the
+/// end: the object length came from `info`, so the caller knows more bytes are there.
+async fn fetch_piece(
+    transport: &dyn AsyncRangeTransport,
+    offset: u64,
+    len: u64,
+    version: &mut Option<ObjectVersion>,
+) -> Result<Vec<u8>, AssetTransportError> {
+    let chunk = fetch_versioned_async(transport, offset, len, version.as_ref()).await?;
+    if chunk.bytes.is_empty() {
+        return Err(AssetTransportError::ShortRead {
+            offset,
+            expected: len,
+            got: 0,
+        });
+    }
+    if version.is_none() {
+        *version = chunk.version;
+    }
+    Ok(chunk.bytes)
 }
 
 /// The asynchronous twin of `fetch_versioned`: same placement, length and version
@@ -297,7 +300,7 @@ const MAX_PREALLOC: usize = 64 * 1024 * 1024;
 ///
 /// A handler that reads its input to end (JPEG) re-reads everything on every attempt,
 /// so driving it is quadratic for no benefit. `max_whole_object` bounds this rung: a
-/// runtime with a hard memory ceiling sets it low, or `None` to refuse outright.
+/// runtime with a hard memory ceiling sets it low, or `None` to refuse every read.
 ///
 /// The object still arrives over the network in `max_request` pieces, one ranged
 /// request each, so an intermediary that streams bounded chunks (a CORS proxy) serves
@@ -318,9 +321,6 @@ pub(crate) async fn read_whole_async(
         }
     }
 
-    // An unbounded cap can name a length no allocation can serve. Reserving it up front
-    // aborts the process, so the buffer grows as bytes arrive and an oversized object
-    // fails on the transport's own short read instead.
     let mut bytes = Vec::new();
     bytes.try_reserve(usize::try_from(info.len).unwrap_or(0).min(MAX_PREALLOC))
         .map_err(|_| AssetTransportError::WholeObjectTooLarge {
@@ -331,19 +331,9 @@ pub(crate) async fn read_whole_async(
     let mut offset = 0u64;
     while offset < info.len {
         let want = fetch_len(config.max_request(), info.len - offset, config);
-        let chunk = fetch_versioned_async(transport, offset, want, version.as_ref()).await?;
-        if chunk.bytes.is_empty() {
-            return Err(AssetTransportError::ShortRead {
-                offset,
-                expected: want,
-                got: 0,
-            });
-        }
-        if version.is_none() {
-            version = chunk.version.clone();
-        }
-        offset += chunk.bytes.len() as u64;
-        bytes.extend_from_slice(&chunk.bytes);
+        let piece = fetch_piece(transport, offset, want, &mut version).await?;
+        offset += piece.len() as u64;
+        bytes.extend_from_slice(&piece);
     }
 
     Ok(Cursor::new(bytes))
@@ -447,18 +437,8 @@ async fn read_exact_async(
     while (out.len() as u64) < len {
         let at = offset + out.len() as u64;
         let want = fetch_len(config.max_request(), len - out.len() as u64, config);
-        let chunk = fetch_versioned_async(transport, at, want, version.as_ref()).await?;
-        if chunk.bytes.is_empty() {
-            return Err(AssetTransportError::ShortRead {
-                offset: at,
-                expected: want,
-                got: 0,
-            });
-        }
-        if version.is_none() {
-            *version = chunk.version.clone();
-        }
-        out.extend_from_slice(&chunk.bytes);
+        let piece = fetch_piece(transport, at, want, version).await?;
+        out.extend_from_slice(&piece);
     }
     out.truncate(usize::try_from(len).unwrap_or(usize::MAX));
     Ok(out)
@@ -467,6 +447,7 @@ async fn read_exact_async(
 #[cfg(test)]
 mod tests {
     #![allow(clippy::panic, clippy::unwrap_used)]
+    use std::num::NonZeroU64;
     use std::sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -548,13 +529,11 @@ mod tests {
     }
 
     fn config(window: u64, max_cached: u64) -> RangeConfig {
+        let window = NonZeroU64::new(window).unwrap();
         RangeConfig::default()
             .with_window(window)
-            .unwrap()
             .with_max_request(window)
-            .unwrap()
-            .with_max_cached(max_cached)
-            .unwrap()
+            .with_max_cached(NonZeroU64::new(max_cached).unwrap())
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -694,7 +673,7 @@ mod tests {
             AssetTransportError::WholeObjectTooLarge { len: 4096, .. }
         ));
 
-        // `None` disables the rung outright, which is what a memory-capped Worker sets.
+        // `None` disables the rung entirely, which is what a memory-capped Worker sets.
         let disabled = read_whole_async(
             &transport,
             &config(1024, 65536).with_max_whole_object(None),
@@ -708,9 +687,9 @@ mod tests {
         ));
     }
 
-    /// Under an unbounded cap there is no length left to refuse, so a transport
-    /// reporting an impossible length must fail by name rather than abort the process
-    /// on a reservation it can never satisfy.
+    /// Under an unbounded cap there is no length left to refuse. A transport reporting
+    /// an impossible length still fails by name, without a reservation that would abort
+    /// the process trying to satisfy it.
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn an_unbounded_whole_object_read_fails_by_name_not_by_abort() {

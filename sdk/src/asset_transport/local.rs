@@ -110,7 +110,7 @@ impl SyncAssetTransport for LocalAssetTransport {
     }
 }
 
-/// Refuses every read with [`AssetTransportError::NotConfigured`]. Used when `file_io` is off,
+/// Every read returns [`AssetTransportError::NotConfigured`]. Used when `file_io` is off,
 /// or registered on a `Context` to disable sync filesystem reads on purpose.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct UnconfiguredAssetTransport;

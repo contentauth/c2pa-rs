@@ -373,7 +373,7 @@ impl Reader {
         .unwrap_or_default();
         // An async range transport has no blocking view, so the parse is driven: run
         // over cached bytes, fetch what it misses, run again. Only the async twin can
-        // await, so the sync one still reports `AsyncOnlyAsset` through the same seam.
+        // await, so the sync path reports `AsyncOnlyAsset` through the same open call.
         let mut file = if _sync {
             resolved.try_into_read_seek()?
         } else {
@@ -398,7 +398,7 @@ impl Reader {
             Store::from_stream_async(&format, &mut file, &mut validation_log, &self.context).await
         };
 
-        match store {
+        let store = match store {
             Err(Error::JumbfNotFound) => {
                 // No embedded manifest: try a sidecar via the same transport.
                 let sidecar_ref = sidecar_reference(reference);
@@ -435,7 +435,7 @@ impl Reader {
                 }
 
                 validation_log = StatusTracker::default();
-                let store = if _sync {
+                if _sync {
                     Store::from_manifest_data_and_stream(
                         &manifest_data,
                         &format,
@@ -452,24 +452,18 @@ impl Reader {
                         &self.context,
                     )
                     .await
-                }?;
-                if _sync {
-                    self.with_store(store, &mut validation_log)
-                } else {
-                    self.with_store_async(store, &mut validation_log).await
-                }?;
-                Ok(self)
+                }?
             }
-            Ok(store) => {
-                if _sync {
-                    self.with_store(store, &mut validation_log)
-                } else {
-                    self.with_store_async(store, &mut validation_log).await
-                }?;
-                Ok(self)
-            }
-            Err(e) => Err(e),
-        }
+            Ok(store) => store,
+            Err(e) => return Err(e),
+        };
+
+        if _sync {
+            self.with_store(store, &mut validation_log)
+        } else {
+            self.with_store_async(store, &mut validation_log).await
+        }?;
+        Ok(self)
     }
 
     /// [`with_asset`](Self::with_asset), addressing the asset by string.
@@ -509,10 +503,7 @@ impl Reader {
     /// A [`Reader`] for the manifest store.
     ///
     /// # Errors
-    /// Returns an [`Error`] when the manifest data cannot be read from the specified file.
-    /// A missing or refused file arrives as [`Error::AssetTransport`], not [`Error::IoError`].
-    /// Even without a read error, check validation status.
-    /// The data may still be invalid.
+    /// Same as [`Reader::with_file`].
     ///
     /// # Example
     ///
@@ -1538,7 +1529,7 @@ impl Reader {
         let reference = reference.to_string();
         let verifying = self.context.settings().verify.verify_after_reading;
 
-        if slurps_whole_asset(path_fmt) {
+        if !supports_ranged_discovery(path_fmt) {
             // An asset that takes this rung on every read costs a full download each
             // time. Say so, or the cost is invisible to whoever tunes the knobs.
             log::debug!("range read took the whole object for {reference} ({path_fmt})");
@@ -1612,15 +1603,21 @@ impl Reader {
     }
 }
 
-/// Whether a format's handler reads the whole asset to find its manifest.
+/// Whether a format's handler can find its manifest by seeking, rather than by reading
+/// the asset to end.
 ///
-/// `jpeg_io::read_c2pa` opens by reading the stream to end, so under a restarting
-/// driver it re-reads everything on every attempt. Ranges save nothing for these and
-/// cost a re-parse per miss.
-fn slurps_whole_asset(format: &str) -> bool {
-    matches!(
+/// A handler that navigates (box headers, a central directory) discovers a manifest from
+/// a few windows whatever the object's size, which is what ranges are for. A handler
+/// whose `read_c2pa` consumes the stream re-reads everything on every driver attempt,
+/// making discovery quadratic, so those take the whole-object rung instead.
+///
+/// The exclusions are `jpeg_io`, and `c2pa_io` for a bare manifest store read as the
+/// primary asset. `zip_io` also reads to end, but only of the manifest entry it already
+/// seeked to, so it stays on the ranged path.
+fn supports_ranged_discovery(format: &str) -> bool {
+    !matches!(
         format.rsplit('/').next().unwrap_or(format),
-        "jpeg" | "jpg"
+        "jpeg" | "jpg" | "c2pa" | "x-c2pa-manifest-store"
     )
 }
 
@@ -1698,6 +1695,32 @@ pub mod tests {
     const IMAGE_WITH_REMOTE_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
     const IMAGE_WITH_INGREDIENT_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACA.jpg");
     const SAMPLE1_HEIC: &[u8] = include_bytes!("../tests/fixtures/sample1.heic");
+
+    // A handler whose `read_c2pa` consumes the stream must not be driven: the driver
+    // restarts the parse on every miss, so it would re-read the object each time.
+    // Wrongly reporting support is quadratic and silent, which is why both directions
+    // are pinned here.
+    #[test]
+    fn only_navigating_handlers_support_ranged_discovery() {
+        for format in [
+            "image/jpeg",
+            "jpeg",
+            "jpg",
+            "c2pa",
+            "application/c2pa",
+            "application/x-c2pa-manifest-store",
+        ] {
+            assert!(
+                !supports_ranged_discovery(format),
+                "{format} should not be driven"
+            );
+        }
+
+        // Driven formats: discovery walks box headers, so ranges are the whole point.
+        for format in ["video/mp4", "image/png", "application/pdf", "image/tiff"] {
+            assert!(supports_ranged_discovery(format), "{format} should be driven");
+        }
+    }
 
     #[test]
     // Verify that we can convert a Reader back into a Builder re-sign and the read it back again
@@ -1863,10 +1886,10 @@ pub mod tests {
     #[test]
     #[cfg(feature = "file_io")]
     fn test_file_read_over_sync_ranges_matches_whole_object() -> Result<()> {
-        // The headline of byte-range support: a synchronous range transport, wrapped in
-        // a `RangeStream`, is read by the ordinary parse and reaches the same result as
-        // reading the whole object. This proves discovery *and* hard-binding
-        // verification happen over ranges, not just that a manifest was found.
+        // A synchronous range transport, wrapped in a `RangeStream`, is read by the
+        // ordinary parse and reaches the same result as reading the whole object. This
+        // proves discovery and hard-binding verification happen over ranges, not just
+        // that a manifest was found.
         use crate::asset_transport::{
             AssetTransportError, ObjectVersion, RangeChunk, RangeInfo, SyncRangeAssetTransport,
             SyncRangeTransport,
@@ -2120,7 +2143,7 @@ pub mod tests {
 
     /// Verification over async ranges pulls one hash buffer at a time, so a 642 MB
     /// object costs the buffer rather than the object. `video1.mp4` carries a
-    /// file-level BMFF hash and its handler does not slurp, so this is the driven path
+    /// file-level BMFF hash and its handler navigates, so this is the driven path
     /// end to end: discovery, the exclusion walk, and the chunked hash.
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]

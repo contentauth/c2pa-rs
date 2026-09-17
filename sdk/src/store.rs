@@ -54,7 +54,7 @@ use crate::{
     },
     error::{Error, Result},
     hash_utils::{
-        default_hash_buf, hash_buf_from_kb, hash_by_alg, hash_size_by_alg, vec_compare,
+        default_hash_buf, hash_by_alg, hash_size_by_alg, vec_compare,
         verify_by_alg,
     },
     hashed_uri::HashedUri,
@@ -1968,7 +1968,7 @@ impl Store {
                     let format = typ.to_owned();
                     io.object_locations(&format, reader)
                 }
-                ClaimAssetData::StreamFragments(reader, _refs, _transport, typ) => {
+                ClaimAssetData::StreamFragments(reader, _refs, typ) => {
                     let format = typ.to_owned();
                     io.object_locations(&format, reader)
                 }
@@ -2497,7 +2497,7 @@ impl Store {
 
         if let Some(reader) = asset_reader {
             // calc hashes
-            let hash_buf = hash_buf_from_kb(context.settings().core.hash_buffer_size_in_kb);
+            let hash_buf = context.hash_buf();
             let mut cb = |step, total| context.check_progress(ProgressPhase::Hashing, step, total);
             adjusted_dh.gen_hash_from_stream_with_progress(reader, &mut cb, hash_buf)?;
         }
@@ -3276,7 +3276,7 @@ impl Store {
                         }
 
                         let hash_buf =
-                            hash_buf_from_kb(context.settings().core.hash_buffer_size_in_kb);
+                            context.hash_buf();
                         let mut cb = |step, total| {
                             context.check_progress(ProgressPhase::Hashing, step, total)
                         };
@@ -3394,7 +3394,7 @@ impl Store {
 
                     output_stream.rewind()?;
                     let hash_buf =
-                        hash_buf_from_kb(context.settings().core.hash_buffer_size_in_kb);
+                        context.hash_buf();
                     let mut cb =
                         |step, total| context.check_progress(ProgressPhase::Hashing, step, total);
                     bmff_hash.gen_hash_from_stream_with_progress(
@@ -3580,7 +3580,7 @@ impl Store {
                     }
 
                     let hash_buf =
-                        hash_buf_from_kb(context.settings().core.hash_buffer_size_in_kb);
+                        context.hash_buf();
                     let mut cb =
                         |step, total| context.check_progress(ProgressPhase::Hashing, step, total);
                     let updated_hashes = Store::generate_data_hashes_for_stream(
@@ -3925,18 +3925,10 @@ impl Store {
         let store = Store::from_jumbf_with_context(&manifest_bytes, validation_log, context)?;
 
         if context.settings().verify.verify_after_reading {
-            // `verify_stream_segments_with_progress` takes `&dyn SyncAssetTransport`, so
-            // both paths need the sync transport. An async-only `Context` fails here.
-            let transport = context.asset_transport()?;
-
             init_segment.rewind()?;
             // verify store and claims
-            let mut asset_data = ClaimAssetData::StreamFragments(
-                init_segment,
-                fragments,
-                transport.as_ref(),
-                asset_type,
-            );
+            let mut asset_data =
+                ClaimAssetData::StreamFragments(init_segment, fragments, asset_type);
             if _sync {
                 Store::verify_store(&store, Some(&mut asset_data), validation_log, context)?;
             } else {

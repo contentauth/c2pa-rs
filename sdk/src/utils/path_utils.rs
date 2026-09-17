@@ -165,13 +165,13 @@ pub(crate) fn reject_unsafe_identifier(path: &str) -> Result<()> {
 ///    symlinks) and re-checked against the canonicalized `root`. A hostile bundle
 ///    could ship an innocuously-named symlink pointing outside the manifest tree;
 ///    lexical checks alone would not catch that. Both sides are canonicalized so a
-///    legitimately symlinked `root` (e.g. `/tmp` -> `/private/tmp` on macOS) is
-///    not falsely rejected — which is also why a lexical failure falls through to
-///    this check rather than rejecting outright.
+///    symlinked `root` (e.g. `/tmp` -> `/private/tmp` on macOS) is not falsely
+///    rejected, which is also why a lexical failure falls through to this check
+///    instead of failing at the lexical step.
 ///
-/// Returns the **validated** path the caller should open: the canonicalized target
-/// when it exists, or the joined candidate when it does not (so the caller's own
-/// open surfaces the not-found error).
+/// Returns the path the caller should open: the canonicalized target when it
+/// exists, or the joined candidate when it does not (so the caller's own open
+/// surfaces the not-found error).
 #[cfg(feature = "file_io")]
 pub(crate) fn ensure_within_root(candidate: &Path, root: &Path) -> Result<PathBuf> {
     // Lexical containment (works whether or not the target exists).

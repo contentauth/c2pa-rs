@@ -17,13 +17,12 @@
 //! twin) and gets segment caching, coalescing, short-read handling, and length
 //! discovery from `RangeStream`.
 //!
-//! The synchronous path is complete here: a [`SyncRangeTransport`] wrapped in a
-//! `RangeStream` is read by the ordinary synchronous parse, which discovers and
-//! verifies the manifest over ranges. The asynchronous path is served by the
-//! retry-on-miss driver and forward-only hashing added alongside verification; until
-//! then [`AsyncRangeTransport`] is defined for callers to implement, but reading an
-//! async range source returns
-//! [`AsyncOnlyAsset`](AssetTransportError::AsyncOnlyAsset).
+//! Both paths are complete. A [`SyncRangeTransport`] wrapped in a `RangeStream` is read
+//! by the ordinary synchronous parse, which discovers and verifies the manifest over
+//! ranges. An [`AsyncRangeTransport`] is served by the retry-on-miss driver and
+//! forward-only hashing, so a runtime with no blocking read verifies over ranges too.
+//! [`AsyncOnlyAsset`](AssetTransportError::AsyncOnlyAsset) now reports only the
+//! mismatch of handing an async source to a caller that asked for a blocking stream.
 //!
 //! HTTP transports do not have to reinvent object identity and status handling:
 //! [`ObjectVersion::from_http_validators`] carries the `ETag`/`Last-Modified` version
@@ -38,6 +37,8 @@ mod stream;
 
 pub(crate) use driver::{drive_async, hash_ranges_async, read_whole_async};
 pub(crate) use stream::RangeStream;
+
+use std::{io::SeekFrom, num::NonZeroU64};
 
 use crate::{
     asset_transport::{
@@ -69,7 +70,7 @@ impl ObjectVersion {
     /// compare equal across byte-different representations, which is exactly the
     /// guarantee a range read needs and a weak tag does not give. `Last-Modified` is
     /// the fallback. Returns `None` when neither yields a usable token, so the read
-    /// proceeds unversioned rather than pinned to a token that cannot hold.
+    /// proceeds unversioned.
     ///
     /// The tag must be quoted: RFC 9110 8.8.3 defines `opaque-tag` as a quoted string,
     /// so a bare `abc` is malformed and falls through to `Last-Modified`. Quotes are
@@ -116,7 +117,6 @@ impl std::fmt::Display for ObjectVersion {
 pub struct RangeInfo {
     /// Total length of the object in bytes.
     /// Discovered on the first read.
-    /// [`ResolvedAsset::size`](crate::asset_transport::ResolvedAsset::size) is a hint.
     pub len: u64,
     /// Identifies the version of the object being served, when the transport can.
     /// `None` means the source cannot express object identity, so a read spanning
@@ -139,27 +139,29 @@ impl RangeInfo {
 
 /// Tunables for the window cache layered over a range transport.
 ///
-/// Fields are private and set through the `with_*` builders, which reject a zero where
-/// zero has no meaning. Chain from [`Default`]:
+/// Fields are private and set through the `with_*` builders. The three size tunables
+/// take a [`NonZeroU64`], so a zero cannot reach them. Chain from [`Default`]:
 ///
 /// ```
+/// # use std::num::NonZeroU64;
 /// # use c2pa::asset_transport::RangeConfig;
-/// # fn main() -> Result<(), c2pa::asset_transport::AssetTransportError> {
-/// let config = RangeConfig::default().with_window(32 * 1024)?;
-/// # Ok(())
-/// # }
+/// const WINDOW: NonZeroU64 = match NonZeroU64::new(32 * 1024) {
+///     Some(window) => window,
+///     None => NonZeroU64::MIN,
+/// };
+/// let config = RangeConfig::default().with_window(WINDOW);
 /// ```
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub struct RangeConfig {
     /// Minimum bytes to fetch per cache miss (read-ahead).
-    window: u64,
+    window: NonZeroU64,
     /// Upper bound on a single range request.
-    max_request: u64,
+    max_request: NonZeroU64,
     /// Eviction budget for cached bytes.
-    max_cached: u64,
+    max_cached: NonZeroU64,
     /// Largest object read whole when ranges cannot serve the read: a verified async
-    /// read, or a handler that slurps. `None` disables that rung.
+    /// read, or a handler that needs the whole asset. `None` disables that rung.
     max_whole_object: Option<u64>,
 }
 
@@ -167,36 +169,37 @@ impl RangeConfig {
     /// Sets the read-ahead floor for a cache miss.
     ///
     /// A miss fetches at least this much. Smaller windows suit a format whose discovery
-    /// walks box headers, where the working set is one window per header. Returns
-    /// [`AssetTransportError::Other`] for zero, which would make every fetch empty.
-    pub fn with_window(mut self, window: u64) -> Result<Self, AssetTransportError> {
-        self.window = nonzero("window", window)?;
-        Ok(self)
+    /// walks box headers, where the working set is one window per header.
+    #[must_use]
+    pub fn with_window(mut self, window: NonZeroU64) -> Self {
+        self.window = window;
+        self
     }
 
     /// Sets the upper bound on one range request.
     ///
-    /// [`RangeStream`] lowers this to `max_cached` when it is larger, so a single fetch
-    /// can never exceed the eviction budget. Returns [`AssetTransportError::Other`] for
-    /// zero.
-    pub fn with_max_request(mut self, max_request: u64) -> Result<Self, AssetTransportError> {
-        self.max_request = nonzero("max_request", max_request)?;
-        Ok(self)
+    /// The window cache lowers this to `max_cached` when it is larger, so a single fetch
+    /// can never exceed the eviction budget.
+    #[must_use]
+    pub fn with_max_request(mut self, max_request: NonZeroU64) -> Self {
+        self.max_request = max_request;
+        self
     }
 
     /// Sets the eviction budget for cached bytes.
     ///
     /// This is the peak memory a ranged read uses, and it also caps `max_request`.
-    /// Returns [`AssetTransportError::Other`] for zero.
-    pub fn with_max_cached(mut self, max_cached: u64) -> Result<Self, AssetTransportError> {
-        self.max_cached = nonzero("max_cached", max_cached)?;
-        Ok(self)
+    #[must_use]
+    pub fn with_max_cached(mut self, max_cached: NonZeroU64) -> Self {
+        self.max_cached = max_cached;
+        self
     }
 
     /// Sets the largest object the whole-object fallback will read.
     ///
     /// `None` disables the fallback, which is the setting for a runtime that cannot hold
     /// an arbitrary object, such as a Worker isolate.
+    #[must_use]
     pub fn with_max_whole_object(mut self, max_whole_object: Option<u64>) -> Self {
         self.max_whole_object = max_whole_object;
         self
@@ -207,25 +210,41 @@ impl RangeConfig {
     /// This suits a host that can hold the object, such as a desktop browser tab. The
     /// rung still fetches in [`max_request`](Self::max_request) pieces, and the caller
     /// holds the assembled object for the length of the read.
+    #[must_use]
     pub fn with_unbounded_whole_object(mut self) -> Self {
         self.max_whole_object = Some(u64::MAX);
         self
     }
 
-    /// Read-ahead floor for a cache miss.
-    pub fn window(&self) -> u64 {
-        self.window
+    /// Lowers `max_request` and `window` to `max_cached` when either is larger.
+    ///
+    /// A fetch above the eviction budget becomes one segment `evict` cannot drop, since
+    /// it keeps the last segment whatever the budget. Clamping makes `max_cached` the
+    /// real peak, and gives the async driver a bound on how many misses one cache holds.
+    ///
+    /// `window` is clamped for the driver's sake: its attempt ceiling is
+    /// `max_cached / window`, so a window above the budget makes that zero and the
+    /// driver gives up after the two attempts the floor allows.
+    #[must_use]
+    pub(crate) fn clamped(self) -> Self {
+        self.with_max_request(self.max_request.min(self.max_cached))
+            .with_window(self.window.min(self.max_cached))
     }
 
-    /// Upper bound on one range request, before [`RangeStream`] caps it at
+    /// Read-ahead floor for a cache miss.
+    pub fn window(&self) -> u64 {
+        self.window.get()
+    }
+
+    /// Upper bound on one range request, before the window cache caps it at
     /// [`max_cached`](Self::max_cached).
     pub fn max_request(&self) -> u64 {
-        self.max_request
+        self.max_request.get()
     }
 
     /// Eviction budget for cached bytes.
     pub fn max_cached(&self) -> u64 {
-        self.max_cached
+        self.max_cached.get()
     }
 
     /// Largest object the whole-object fallback will read, or `None` when that fallback
@@ -235,22 +254,28 @@ impl RangeConfig {
     }
 }
 
-/// Rejects a zero for a tunable that has no meaning at zero.
-fn nonzero(field: &str, value: u64) -> Result<u64, AssetTransportError> {
-    if value == 0 {
-        return Err(AssetTransportError::Other {
-            source: format!("RangeConfig::{field} must be greater than zero").into(),
-        });
-    }
-    Ok(value)
+/// A non-zero constant, checked when the crate is compiled.
+///
+/// `NonZeroU64::new` is const-evaluable, so a literal that is accidentally zero is a
+/// build failure at the `unreachable` arm rather than a silent one-byte tunable.
+macro_rules! nonzero {
+    ($value:expr) => {
+        match NonZeroU64::new($value) {
+            Some(value) => value,
+            None => unreachable!(),
+        }
+    };
 }
 
 impl Default for RangeConfig {
     fn default() -> Self {
+        const WINDOW: NonZeroU64 = nonzero!(16 * 1024);
+        const MAX_REQUEST: NonZeroU64 = nonzero!(8 * 1024 * 1024);
+        const MAX_CACHED: NonZeroU64 = nonzero!(4 * 1024 * 1024);
         Self {
-            window: 16 * 1024,
-            max_request: 8 * 1024 * 1024,
-            max_cached: 4 * 1024 * 1024,
+            window: WINDOW,
+            max_request: MAX_REQUEST,
+            max_cached: MAX_CACHED,
             // Verification reads the whole object, so a default of `None` would refuse
             // every async verified read. This fits a browser tab and a Node process; a
             // Worker isolate, capped near 128 MiB, lowers it or disables the rung.
@@ -439,7 +464,7 @@ fn reject_misplaced(requested: u64, served: u64) -> Result<(), AssetTransportErr
 ///
 /// A response longer than `len` means the far end ignored the range request. Its
 /// bytes are the object from position 0, not from `offset`, so caching them at
-/// `offset` would feed the parser wrong bytes. Reject rather than truncate.
+/// `offset` would feed the parser wrong bytes.
 fn reject_overlong(offset: u64, len: u64, got: usize) -> Result<(), AssetTransportError> {
     if got as u64 > len {
         return Err(AssetTransportError::Other {
@@ -490,6 +515,22 @@ pub(crate) fn add_signed(base: u64, delta: i64) -> std::io::Result<u64> {
             "seek to an invalid position",
         )
     })
+}
+
+/// Resolves a [`SeekFrom`] against the current offset and the object length.
+///
+/// `len` is a closure because only [`SeekFrom::End`] needs the length, and one of the
+/// two range streams discovers it by fetching, which costs a request and can fail. The
+/// other arms never call it.
+pub(crate) fn seek_to<F>(offset: u64, pos: SeekFrom, len: F) -> std::io::Result<u64>
+where
+    F: FnOnce() -> std::io::Result<u64>,
+{
+    match pos {
+        SeekFrom::Start(n) => Ok(n),
+        SeekFrom::Current(delta) => add_signed(offset, delta),
+        SeekFrom::End(delta) => add_signed(len()?, delta),
+    }
 }
 
 /// A [`SyncAssetTransport`] that maps each request to a [`SyncRangeTransport`],
@@ -728,5 +769,31 @@ mod tests {
         assert_eq!(add_signed(10, -5).unwrap(), 5);
         assert!(add_signed(0, -1).is_err());
         assert!(add_signed(u64::MAX, 1).is_err());
+    }
+
+    // The driver's attempt ceiling is `max_cached / window`. A window above the budget
+    // makes that zero, leaving only the two attempts the floor allows, so a parse that
+    // needs a third window fails as `AttemptsExhausted` on a config that reads fine.
+    #[test]
+    fn clamping_keeps_a_window_within_the_eviction_budget() {
+        let budget = NonZeroU64::new(4096).unwrap();
+        let clamped = RangeConfig::default()
+            .with_max_cached(budget)
+            .with_window(NonZeroU64::new(64 * 1024).unwrap())
+            .with_max_request(NonZeroU64::new(64 * 1024).unwrap())
+            .clamped();
+
+        assert_eq!(clamped.window(), budget.get());
+        assert_eq!(clamped.max_request(), budget.get());
+        assert!(clamped.max_cached() / clamped.window() >= 1);
+    }
+
+    // A config already inside the budget is left alone.
+    #[test]
+    fn clamping_leaves_a_config_within_budget_untouched() {
+        let config = RangeConfig::default();
+        let clamped = config.clamped();
+        assert_eq!(clamped.window(), config.window());
+        assert_eq!(clamped.max_cached(), config.max_cached());
     }
 }

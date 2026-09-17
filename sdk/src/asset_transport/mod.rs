@@ -156,7 +156,6 @@ fn has_uri_scheme(reference: &str) -> bool {
 pub struct ResolvedAsset {
     bytes: AssetBytes,
     format: Option<String>,
-    size: Option<u64>,
 }
 
 /// How a resolved asset's bytes come in: a ready seekable stream, or a
@@ -203,7 +202,6 @@ impl ResolvedAsset {
         Self {
             bytes: AssetBytes::Stream(stream),
             format: None,
-            size: None,
         }
     }
 
@@ -219,7 +217,6 @@ impl ResolvedAsset {
                 config,
             }),
             format: None,
-            size: None,
         }
     }
 
@@ -237,7 +234,6 @@ impl ResolvedAsset {
                 config,
             }),
             format: None,
-            size: None,
         }
     }
 
@@ -249,24 +245,10 @@ impl ResolvedAsset {
         self
     }
 
-    /// Total size of the asset, if the transport knows it.
-    pub fn with_size(mut self, size: u64) -> Self {
-        self.size = Some(size);
-        self
-    }
-
     /// Format hint declared by the transport (e.g. `Content-Type`).
     /// Detected magic bytes take precedence.
     pub fn format_hint(&self) -> Option<&str> {
         self.format.as_deref()
-    }
-
-    /// The size the transport declared at open time, if any.
-    ///
-    /// A hint, never fetched on demand. A range read seeks against [`RangeInfo::len`].
-    /// The two can disagree.
-    pub fn size(&self) -> Option<u64> {
-        self.size
     }
 
     /// Whether this asset's bytes are already a plain stream, or need a transport driven.
@@ -307,7 +289,7 @@ pub trait SyncAssetTransport: MaybeSend + MaybeSync {
     fn open(&self, request: AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError>;
 }
 
-/// Transport that can open an asset synchronously.
+/// Delegates to the inner transport.
 impl<T: SyncAssetTransport + ?Sized> SyncAssetTransport for std::sync::Arc<T> {
     fn open(&self, request: AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError> {
         (**self).open(request)
@@ -326,7 +308,7 @@ pub trait AsyncAssetTransport: MaybeSend + MaybeSync {
     ) -> Result<ResolvedAsset, AssetTransportError>;
 }
 
-/// Transport that can open an asset asynchronously (non-blocking only).
+/// Delegates to the inner transport.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
 impl<T: AsyncAssetTransport + ?Sized> AsyncAssetTransport for std::sync::Arc<T> {
@@ -343,15 +325,6 @@ mod tests {
     use std::io::Cursor;
 
     use super::*;
-
-    #[test]
-    fn resolved_asset_carries_optional_size() {
-        let unknown = ResolvedAsset::new(Cursor::new(vec![1u8, 2, 3]));
-        assert_eq!(unknown.size(), None);
-
-        let known = ResolvedAsset::new(Cursor::new(vec![1u8, 2, 3])).with_size(3);
-        assert_eq!(known.size(), Some(3));
-    }
 
     #[test]
     fn asset_request_kind_defaults_to_asset() {
@@ -377,6 +350,6 @@ mod tests {
     fn from_boxed_takes_a_boxed_stream() {
         let boxed: Box<dyn ReadSeek> = Box::new(Cursor::new(vec![1u8, 2, 3]));
         let resolved = ResolvedAsset::from_boxed(boxed);
-        assert_eq!(resolved.size(), None);
+        assert!(matches!(resolved.into_read_target(), ReadTarget::Stream(_)));
     }
 }

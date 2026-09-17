@@ -45,10 +45,6 @@ pub enum AssetTransportError {
     #[error("no asset transport configured on the Context")]
     NotConfigured,
 
-    /// The transport timed out.
-    #[error("timed out reading asset: {reference}")]
-    Timeout { reference: String },
-
     /// The transport could not satisfy the requested byte range.
     ///
     /// `total` is the object length when the transport learned it, which for HTTP comes
@@ -111,7 +107,7 @@ pub enum AssetTransportError {
         format: String,
         /// Attempts made.
         attempts: u32,
-        /// The ceiling, `max_cached / window + 1`.
+        /// The ceiling, `max_cached / window + 2`.
         ceiling: u32,
         /// The eviction budget in force.
         max_cached: u64,
@@ -159,6 +155,13 @@ impl AssetTransportError {
         }
     }
 
+    /// A binding the async range path cannot check, named for the report.
+    pub fn unverifiable(binding: &str) -> Self {
+        AssetTransportError::UnverifiableOverRanges {
+            binding: binding.to_owned(),
+        }
+    }
+
     /// Detailed errors parsed from I/O errors.
     pub fn from_io(err: std::io::Error, reference: &str) -> Self {
         match err.kind() {
@@ -179,11 +182,6 @@ mod tests {
 
     #[test]
     fn network_errors_render_reference() {
-        let timeout = AssetTransportError::Timeout {
-            reference: "https://x/y".to_string(),
-        };
-        assert!(timeout.to_string().contains("timed out"));
-
         let range = AssetTransportError::RangeNotSatisfiable {
             reference: "https://x/y".to_string(),
             offset: 512,

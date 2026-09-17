@@ -27,7 +27,6 @@ use uuid::Uuid;
 
 use crate::asset_transport::{
     hash_ranges_async, AssetTransportError, AsyncRangeTransport, OwnedAssetRef, RangeConfig,
-    SyncAssetTransport,
 };
 use crate::{
     assertion::{
@@ -80,7 +79,7 @@ use crate::{
     settings::{Settings, MAX_ASSERTIONS},
     status_tracker::{ErrorBehavior, StatusTracker},
     store::StoreValidationInfo,
-    utils::hash_utils::{hash_buf_from_kb, hash_by_alg, vec_compare, HashRange},
+    utils::hash_utils::{hash_by_alg, vec_compare, HashRange},
     validation_status, ClaimGeneratorInfo,
 };
 
@@ -122,7 +121,6 @@ pub enum ClaimAssetData<'a> {
     StreamFragments(
         &'a mut dyn ReadSeek,
         &'a [OwnedAssetRef],
-        &'a dyn SyncAssetTransport,
         &'a str,
     ),
     /// An asset reachable only through an async range transport. Verification pulls the
@@ -148,7 +146,7 @@ impl ClaimAssetData<'_> {
             ClaimAssetData::Bytes(_, asset_type)
             | ClaimAssetData::Stream(_, asset_type)
             | ClaimAssetData::StreamFragment(_, _, asset_type)
-            | ClaimAssetData::StreamFragments(_, _, _, asset_type) => {
+            | ClaimAssetData::StreamFragments(_, _, asset_type) => {
                 Some((*asset_type).to_owned())
             }
             ClaimAssetData::AsyncRanges { format, .. } => Some((*format).to_owned()),
@@ -3030,7 +3028,7 @@ impl Claim {
 
                         // only verify local hashes here
                         let hash_buf =
-                            hash_buf_from_kb(context.settings().core.hash_buffer_size_in_kb);
+                            context.hash_buf();
                         let mut cb = |step, total| {
                             context.check_progress(ProgressPhase::VerifyingAssetHash, step, total)
                         };
@@ -3066,6 +3064,9 @@ impl Claim {
                             | ClaimAssetData::StreamFragments(..) => {
                                 return Err(Error::UnsupportedType)
                             }
+                            // `async_generic` emits both halves of this function, and the
+                            // sync one never touches these bindings. The underscores keep
+                            // it from warning on them; they are live in the async half.
                             ClaimAssetData::AsyncRanges {
                                 transport: _transport,
                                 config: _config,
@@ -3169,7 +3170,7 @@ impl Claim {
                         .informational(validation_log);
                     }
 
-                    let hash_buf = hash_buf_from_kb(context.settings().core.hash_buffer_size_in_kb);
+                    let hash_buf = context.hash_buf();
                     let mut step = 0u32;
                     let mut cb = |_s: u32, t: u32| {
                         step += 1;
@@ -3206,11 +3207,11 @@ impl Claim {
                                 Some(claim.alg()),
                                 &mut cb,
                             ),
-                        ClaimAssetData::StreamFragments(initseg_data, fragments, transport, _) => {
+                        ClaimAssetData::StreamFragments(initseg_data, fragments, _) => {
                             dh.verify_stream_segments_with_progress(
                                 *initseg_data,
                                 fragments,
-                                *transport,
+                                context.asset_transport()?.as_ref(),
                                 Some(claim.alg()),
                                 &mut cb,
                             )
@@ -3277,7 +3278,7 @@ impl Claim {
                     // handle BMFF data hashes
                     let bh = BoxHash::from_assertion(hash_binding_assertion.assertion())?;
 
-                    let hash_buf = hash_buf_from_kb(context.settings().core.hash_buffer_size_in_kb);
+                    let hash_buf = context.hash_buf();
                     let mut cb = |step, total| {
                         context.check_progress(ProgressPhase::VerifyingAssetHash, step, total)
                     };
@@ -3345,9 +3346,7 @@ impl Claim {
                         // A box hash needs the handler's box map, which a driven parse
                         // cannot build over ranges. Reported, never passed unchecked.
                         ClaimAssetData::AsyncRanges { .. } => Err(Error::AssetTransport(
-                            AssetTransportError::UnverifiableOverRanges {
-                                binding: "box hash".to_owned(),
-                            },
+                            AssetTransportError::unverifiable("box hash"),
                         )),
                     };
 
@@ -3428,9 +3427,7 @@ impl Claim {
                             // directory, which a ranged read cannot supply on its own.
                             ClaimAssetData::AsyncRanges { .. } => {
                                 return Err(Error::AssetTransport(
-                                    AssetTransportError::UnverifiableOverRanges {
-                                        binding: "collection hash".to_owned(),
-                                    },
+                                    AssetTransportError::unverifiable("collection hash"),
                                 ))
                             }
                         }
@@ -3446,9 +3443,7 @@ impl Claim {
                             // single ranged object cannot supply.
                             ClaimAssetData::AsyncRanges { .. } => {
                                 return Err(Error::AssetTransport(
-                                    AssetTransportError::UnverifiableOverRanges {
-                                        binding: "collection hash".to_owned(),
-                                    },
+                                    AssetTransportError::unverifiable("collection hash"),
                                 ))
                             }
                             _ => return Err(Error::UnsupportedType),
@@ -4941,11 +4936,9 @@ where
     F: FnMut(u32, u32) -> Result<()>,
 {
     if bmff.merkle().is_some() {
-        return Err(Error::AssetTransport(
-            AssetTransportError::UnverifiableOverRanges {
-                binding: "bmff merkle".to_owned(),
-            },
-        ));
+        return Err(Error::AssetTransport(AssetTransportError::unverifiable(
+            "bmff merkle",
+        )));
     }
 
     let hash = bmff
@@ -4960,7 +4953,7 @@ where
     })
     .await?;
 
-    let curr_alg = bmff.alg().map_or_else(|| alg.to_owned(), |a| a.to_owned());
+    let curr_alg = bmff.alg().map(String::as_str).unwrap_or(alg).to_owned();
     let computed = hash_ranges_async(
         &curr_alg,
         transport,

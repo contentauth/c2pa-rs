@@ -53,8 +53,6 @@ pub enum C2paError {
     NotConfigured(String),
     #[error("AssetNotFound: {0}")]
     AssetNotFound(String),
-    #[error("Timeout: {0}")]
-    Timeout(String),
     #[error("RangeNotSatisfiable: {0}")]
     RangeNotSatisfiable(String),
     #[error("AsyncOnlyAsset: {0}")]
@@ -87,7 +85,6 @@ impl C2paError {
             Self::PermissionDenied(_) => 116,
             Self::NotConfigured(_) => 117,
             Self::AssetNotFound(_) => 118,
-            Self::Timeout(_) => 119,
             Self::RangeNotSatisfiable(_) => 120,
             Self::AsyncOnlyAsset(_) => 121,
         }
@@ -147,9 +144,6 @@ impl C2paError {
                 | c2pa::asset_transport::AssetTransportError::NoSyncTransport => {
                     Self::NotConfigured(err_str)
                 }
-                c2pa::asset_transport::AssetTransportError::Timeout { .. } => {
-                    Self::Timeout(err_str)
-                }
                 c2pa::asset_transport::AssetTransportError::RangeNotSatisfiable { .. } => {
                     Self::RangeNotSatisfiable(err_str)
                 }
@@ -203,7 +197,6 @@ impl C2paError {
             "PermissionDenied" => Self::PermissionDenied(error_message),
             "NotConfigured" => Self::NotConfigured(error_message),
             "AssetNotFound" => Self::AssetNotFound(error_message),
-            "Timeout" => Self::Timeout(error_message),
             "RangeNotSatisfiable" => Self::RangeNotSatisfiable(error_message),
             "AsyncOnlyAsset" => Self::AsyncOnlyAsset(error_message),
             _ => Self::Other(format!("{error_type}: {error_message}")),
@@ -364,7 +357,6 @@ mod tests {
             (C2paError::PermissionDenied("test".into()), 116),
             (C2paError::NotConfigured("test".into()), 117),
             (C2paError::AssetNotFound("test".into()), 118),
-            (C2paError::Timeout("test".into()), 119),
             (C2paError::RangeNotSatisfiable("test".into()), 120),
         ];
 
@@ -407,27 +399,17 @@ mod tests {
     fn test_network_errors_have_codes() {
         use c2pa::asset_transport::AssetTransportError;
 
-        for (err, expected_code) in [
-            (
-                AssetTransportError::Timeout {
-                    reference: "u".to_string(),
-                },
-                119,
-            ),
-            (
-                AssetTransportError::RangeNotSatisfiable {
-                    reference: "u".to_string(),
-                },
-                120,
-            ),
-        ] {
-            let mapped = C2paError::from_c2pa_error(c2pa::Error::AssetTransport(err));
-            assert_eq!(mapped.code(), expected_code, "got {mapped}");
+        let err = AssetTransportError::RangeNotSatisfiable {
+            reference: "u".to_string(),
+            offset: 512,
+            total: Some(256),
+        };
+        let mapped = C2paError::from_c2pa_error(c2pa::Error::AssetTransport(err));
+        assert_eq!(mapped.code(), 120, "got {mapped}");
 
-            // Round-trips through the "Name: message" string form.
-            let round_tripped = C2paError::from(mapped.to_string());
-            assert_eq!(round_tripped.code(), expected_code);
-        }
+        // Round-trips through the "Name: message" string form.
+        let round_tripped = C2paError::from(mapped.to_string());
+        assert_eq!(round_tripped.code(), 120);
     }
 
     #[test]
