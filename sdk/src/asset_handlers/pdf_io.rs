@@ -312,13 +312,12 @@ pub mod tests {
 
     use std::io::Cursor;
 
+    use super::{find_stream_content_start, locate_manifest_content};
     use crate::{
         asset_handlers,
         asset_handlers::{pdf::MockC2paPdf, pdf_io::PdfIO},
         asset_io::{AssetIO, C2paReader},
     };
-
-    use super::{find_stream_content_start, locate_manifest_content};
 
     static MANIFEST_BYTES: &[u8; 2] = &[10u8, 20u8];
 
