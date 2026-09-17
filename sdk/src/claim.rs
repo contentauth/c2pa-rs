@@ -3075,7 +3075,7 @@ impl Claim {
                                     asset_data,
                                     validation_log,
                                     hash_binding_assertion,
-                                    &e.to_string(),
+                                    &e,
                                     Some(&name),
                                 )?;
                             }
@@ -3187,30 +3187,13 @@ impl Claim {
                             continue;
                         }
                         Err(e) => {
-                            let err_str = Self::classify_hash_verification_error(
-                                &e,
-                                validation_status::ASSERTION_BMFFHASH_MALFORMED,
-                                validation_status::ASSERTION_BMFFHASH_MISMATCH,
-                            );
-
                             Claim::verify_multi_asset_hash(
                                 claim,
                                 asset_data,
                                 validation_log,
                                 hash_binding_assertion,
-                                err_str,
+                                &e,
                                 Some(&name),
-                            )?;
-
-                            log_item!(
-                                claim.assertion_uri(&hash_binding_assertion.label()),
-                                format!("asset hash error, name: {name}, error: {e}"),
-                                "verify_internal"
-                            )
-                            .validation_status(err_str)
-                            .failure(
-                                validation_log,
-                                Error::HashMismatch(format!("Asset hash failure: {e}")),
                             )?;
                         }
                     }
@@ -3311,7 +3294,7 @@ impl Claim {
                                 asset_data,
                                 validation_log,
                                 hash_binding_assertion,
-                                &e.to_string(),
+                                &e,
                                 None,
                             )?;
                         }
@@ -4027,7 +4010,7 @@ impl Claim {
         asset_data: &mut ClaimAssetData,
         validation_log: &mut StatusTracker,
         hash_binding_assertion: &ClaimAssertion,
-        hash_binding_err_str: &str,
+        hash_binding_err: &Error,
         hash_binding_name: Option<&str>,
     ) -> Result<()> {
         let multi_asset_hash_assertions = claim.multi_asset_hash_assertions();
@@ -4085,15 +4068,28 @@ impl Claim {
         // If there is no multi asset assertion, passthrough the error handling
         // reporting from the caller.
         let description = if let Some(name) = hash_binding_name {
-            format!("asset hash error, name:{name}, error: {hash_binding_err_str}")
+            format!("asset hash error, name:{name}, error: {hash_binding_err}")
         } else {
-            format!("asset hash error, error: {hash_binding_err_str}")
+            format!("asset hash error, error: {hash_binding_err}")
         };
 
+        // Classify malformed vs. mismatch based on the failing hash-binding type.
         let validation_status = match hash_binding_assertion.label_raw() {
-            l if l.starts_with(DataHash::LABEL) => validation_status::ASSERTION_DATAHASH_MISMATCH,
-            l if l.starts_with(BoxHash::LABEL) => validation_status::ASSERTION_BOXHASH_MISMATCH,
-            l if l.starts_with(BmffHash::LABEL) => validation_status::ASSERTION_BMFFHASH_MISMATCH,
+            l if l.starts_with(DataHash::LABEL) => Self::classify_hash_verification_error(
+                hash_binding_err,
+                validation_status::ASSERTION_DATAHASH_MALFORMED,
+                validation_status::ASSERTION_DATAHASH_MISMATCH,
+            ),
+            l if l.starts_with(BoxHash::LABEL) => Self::classify_hash_verification_error(
+                hash_binding_err,
+                validation_status::ASSERTION_BOXESHASH_MALFORMED,
+                validation_status::ASSERTION_BOXHASH_MISMATCH,
+            ),
+            l if l.starts_with(BmffHash::LABEL) => Self::classify_hash_verification_error(
+                hash_binding_err,
+                validation_status::ASSERTION_BMFFHASH_MALFORMED,
+                validation_status::ASSERTION_BMFFHASH_MISMATCH,
+            ),
             _ => "",
         };
 
@@ -4105,7 +4101,7 @@ impl Claim {
         .validation_status(validation_status)
         .failure(
             validation_log,
-            Error::HashMismatch(format!("Asset hash failure: {hash_binding_err_str}")),
+            Error::HashMismatch(format!("Asset hash failure: {hash_binding_err}")),
         )?;
         Ok(())
     }
