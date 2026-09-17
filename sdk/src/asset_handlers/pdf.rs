@@ -59,6 +59,12 @@ pub enum Error {
     /// file specification in the array of Associated Files defined in the catalog.
     #[error("Unable to find a C2PA embedded file specification in PDF's associated files array")]
     FindingC2PAFileSpec,
+
+    /// A manifest is present, but its object is recorded via a compressed xref
+    /// entry (stored inside an `/ObjStm`), which carries no byte offset in the
+    /// outer file — its raw byte range can't be located this way.
+    #[error("C2PA manifest object is stored in a compressed xref entry; its byte range can't be determined")]
+    ManifestObjectNotByteAddressable,
 }
 
 const C2PA_MIME_TYPE: &str = "application/x-c2pa-manifest-store";
@@ -90,11 +96,17 @@ pub(crate) trait C2paPdf: Sized {
 
     /// Returns the byte offset of the `N G obj` declaration for the C2PA
     /// manifest's embedded-file stream, as recorded in this document's xref
-    /// table. `None` if no manifest is present.
+    /// table.
+    ///
+    /// Returns `Ok(None)` if no manifest is present at all. Returns
+    /// [`Error::ManifestObjectNotByteAddressable`] if a manifest is present
+    /// but its object is recorded via a compressed xref entry (inside an
+    /// `/ObjStm`), which has no byte offset in the outer file — callers must
+    /// not treat that case as "no manifest".
     ///
     /// Callers must parse the exact same bytes that produced this `C2paPdf`
     /// (e.g. via [`Pdf::from_bytes`]) for the offset to be meaningful.
-    fn manifest_object_offset(&self) -> Option<u64>;
+    fn manifest_object_offset(&self) -> Result<Option<u64>, Error>;
 }
 
 pub(crate) struct Pdf {
@@ -303,12 +315,20 @@ impl C2paPdf for Pdf {
             })
     }
 
-    fn manifest_object_offset(&self) -> Option<u64> {
-        let (id, _generation) = self.c2pa_manifest_stream_object_id()?;
+    fn manifest_object_offset(&self) -> Result<Option<u64>, Error> {
+        let Some((id, _generation)) = self.c2pa_manifest_stream_object_id() else {
+            return Ok(None);
+        };
 
         match self.document.reference_table.get(id) {
-            Some(lopdf::xref::XrefEntry::Normal { offset, .. }) => Some(*offset as u64),
-            _ => None,
+            Some(lopdf::xref::XrefEntry::Normal { offset, .. }) => Ok(Some(*offset as u64)),
+            Some(lopdf::xref::XrefEntry::Compressed { .. }) => {
+                Err(Error::ManifestObjectNotByteAddressable)
+            }
+            // Free/UnusableFree/missing: the manifest dict traversal found the
+            // object, but the xref table disagrees it exists — treat this as
+            // unlocatable rather than silently reporting no manifest.
+            _ => Err(Error::ManifestObjectNotByteAddressable),
         }
     }
 }
@@ -710,6 +730,34 @@ mod tests {
             .unwrap();
 
         assert!(pdf.has_c2pa_manifest());
+    }
+
+    // A manifest recorded via a compressed xref entry (stored inside an
+    // `/ObjStm`) has no byte offset in the outer file. This must surface as a
+    // distinct error, never as "no manifest".
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn test_manifest_object_offset_errors_on_compressed_xref_entry() {
+        let mut pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
+        pdf.write_manifest_as_embedded_file(vec![10u8, 20u8])
+            .unwrap();
+
+        let (id, _generation) = pdf.c2pa_manifest_stream_object_id().unwrap();
+        pdf.document.reference_table.entries.insert(
+            id,
+            lopdf::xref::XrefEntry::Compressed {
+                container: 1,
+                index: 0,
+            },
+        );
+
+        assert!(matches!(
+            pdf.manifest_object_offset(),
+            Err(Error::ManifestObjectNotByteAddressable)
+        ));
     }
 
     #[test]

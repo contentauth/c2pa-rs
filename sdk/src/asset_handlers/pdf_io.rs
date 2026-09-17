@@ -25,9 +25,18 @@ static SUPPORTED_TYPES: [&str; 2] = ["pdf", "application/pdf"];
 /// Finds where a stream object's raw content begins, given the byte offset of its
 /// `N G obj` declaration. Scans forward for the `stream` keyword and skips the EOL
 /// marker that must immediately follow it (PDF spec §7.3.8.1: CRLF or bare LF).
+///
+/// The scan is bounded to `MAX_DICT_SCAN` bytes so a missing/corrupt `stream`
+/// keyword can't turn this into an unbounded scan of the rest of the file. The
+/// real defense against locking onto a `stream` substring inside unrelated
+/// dict content (e.g. a crafted string value) is the content-equality check
+/// the caller performs on the result, not this bound.
 fn find_stream_content_start(bytes: &[u8], header_offset: usize) -> Option<usize> {
     const NEEDLE: &[u8] = b"stream";
-    let search_region = bytes.get(header_offset..)?;
+    const MAX_DICT_SCAN: usize = 8192;
+
+    let end = header_offset.saturating_add(MAX_DICT_SCAN).min(bytes.len());
+    let search_region = bytes.get(header_offset..end)?;
     let rel = search_region
         .windows(NEEDLE.len())
         .position(|w| w == NEEDLE)?;
@@ -43,18 +52,58 @@ fn find_stream_content_start(bytes: &[u8], header_offset: usize) -> Option<usize
 }
 
 /// Locates the raw byte range `(content_start, content_len)` of the C2PA manifest
-/// already embedded in `bytes`, if any, by re-parsing `bytes` and following its
-/// xref table to the manifest stream's declaration.
-fn locate_manifest_content(bytes: &[u8]) -> Option<(u64, u64)> {
-    let pdf = Pdf::from_bytes(bytes).ok()?;
-    let header_offset = pdf.manifest_object_offset()?;
-    let manifest_bytes = pdf.read_manifest_bytes().ok()??;
-    let [manifest_bytes] = manifest_bytes.as_slice() else {
-        return None;
+/// already embedded in `bytes`, by re-parsing `bytes` and following its xref
+/// table to the manifest stream's declaration.
+///
+/// Returns `Ok(None)` only when no manifest is present at all. Returns `Err`
+/// if a manifest is present but its byte range can't be safely determined
+/// this way (a compressed xref entry with no outer-file offset, or the
+/// located bytes don't actually match the manifest's own content) — callers
+/// must not treat that as "no manifest", since a manifest genuinely exists.
+fn locate_manifest_content(bytes: &[u8]) -> crate::Result<Option<(u64, u64)>> {
+    let pdf = Pdf::from_bytes(bytes).map_err(|e| Error::InvalidAsset(e.to_string()))?;
+
+    let header_offset = match pdf.manifest_object_offset() {
+        Ok(Some(offset)) => offset,
+        Ok(None) => return Ok(None),
+        Err(e) => return Err(unlocatable_manifest_error_from(e)),
     };
 
-    let content_start = find_stream_content_start(bytes, header_offset as usize)?;
-    Some((content_start as u64, manifest_bytes.len() as u64))
+    let manifest_bytes = pdf
+        .read_manifest_bytes()
+        .map_err(unlocatable_manifest_error_from)?
+        .ok_or_else(unlocatable_manifest_error)?;
+    let [manifest_bytes] = manifest_bytes.as_slice() else {
+        return Err(unlocatable_manifest_error());
+    };
+
+    let content_start = find_stream_content_start(bytes, header_offset as usize)
+        .ok_or_else(unlocatable_manifest_error)?;
+    let content_end = content_start
+        .checked_add(manifest_bytes.len())
+        .ok_or_else(unlocatable_manifest_error)?;
+
+    // Verify the located range actually holds the manifest's own bytes before
+    // trusting it, rather than any `stream` keyword occurrence the (possibly
+    // externally-authored) dict happens to contain.
+    if bytes.get(content_start..content_end) != Some(*manifest_bytes) {
+        return Err(unlocatable_manifest_error());
+    }
+
+    Ok(Some((content_start as u64, manifest_bytes.len() as u64)))
+}
+
+fn unlocatable_manifest_error() -> Error {
+    NotImplemented("PDF manifest is present but its byte range can't be located".into())
+}
+
+/// Same as [`unlocatable_manifest_error`], but preserves the underlying
+/// `pdf::Error` (e.g. `ManifestObjectNotByteAddressable`) in the message
+/// instead of discarding it, matching the `InvalidAsset` handling above.
+fn unlocatable_manifest_error_from(cause: crate::asset_handlers::pdf::Error) -> Error {
+    NotImplemented(format!(
+        "PDF manifest is present but its byte range can't be located: {cause}"
+    ))
 }
 
 pub struct PdfIO {}
@@ -121,7 +170,11 @@ impl C2paWriter for PdfIO {
         // depend on prior edit history), shifting the manifest out from under the
         // hash exclusion already computed against the first write. Same-length
         // in-place substitution keeps that offset stable across both passes.
-        if let Some((content_start, content_len)) = locate_manifest_content(&bytes) {
+        //
+        // If the existing manifest's byte range can't be safely determined (see
+        // `locate_manifest_content`), fall through to the full-rewrite path below
+        // instead of guessing — it's always correct, just not offset-stable.
+        if let Ok(Some((content_start, content_len))) = locate_manifest_content(&bytes) {
             if content_len == store_bytes.len() as u64 {
                 let start = content_start as usize;
                 let end = start + store_bytes.len();
@@ -159,7 +212,7 @@ impl C2paWriter for PdfIO {
         input_stream.read_to_end(&mut bytes)?;
         let file_len = bytes.len() as u64;
 
-        let Some((content_start, manifest_len)) = locate_manifest_content(&bytes) else {
+        let Some((content_start, manifest_len)) = locate_manifest_content(&bytes)? else {
             // No manifest embedded yet: report a placeholder at the end of the file,
             // since a full rewrite always appends the new stream object last.
             return Ok(vec![
@@ -265,6 +318,8 @@ pub mod tests {
         asset_io::{AssetIO, C2paReader},
     };
 
+    use super::{find_stream_content_start, locate_manifest_content};
+
     static MANIFEST_BYTES: &[u8; 2] = &[10u8, 20u8];
 
     #[test]
@@ -365,6 +420,96 @@ pub mod tests {
         let found =
             &out_bytes[c2pa_loc.offset as usize..(c2pa_loc.offset + c2pa_loc.length) as usize];
         assert_eq!(found, manifest_bytes.as_slice());
+    }
+
+    // `find_stream_content_start` trusts the first `stream` keyword it finds; a
+    // dict value containing that literal text followed by an EOL is a decoy. The
+    // scan must stay bounded rather than searching the rest of the file.
+    #[test]
+    fn test_find_stream_content_start_is_bounded() {
+        let mut bytes = vec![b'x'; 10_000];
+        // Place a real `stream\n` occurrence far past any reasonable dict size.
+        bytes.extend_from_slice(b"stream\n");
+        assert_eq!(find_stream_content_start(&bytes, 0), None);
+    }
+
+    #[test]
+    fn test_find_stream_content_start_finds_first_match_within_bound() {
+        let mut bytes = b"<< /Length 3 >>".to_vec();
+        bytes.extend_from_slice(b"stream\n");
+        bytes.extend_from_slice(b"abc");
+        bytes.extend_from_slice(b"\nendstream");
+
+        let start = find_stream_content_start(&bytes, 0).unwrap();
+        assert_eq!(&bytes[start..start + 3], b"abc");
+    }
+
+    // A decoy `stream\n` occurrence inside the dict (e.g. an externally-crafted
+    // PDF's string value) must not be trusted: the content-equality check should
+    // reject it rather than returning a wrong-but-plausible byte range. Built by
+    // hand via lopdf directly (rather than mutating a signed fixture's bytes) so
+    // the rest of the file's structure/xref stays valid and the test doesn't
+    // depend on byte-splicing arithmetic.
+    #[test]
+    fn test_locate_manifest_content_rejects_decoy_stream_keyword() {
+        use lopdf::{dictionary, Document, Object, Stream};
+
+        let manifest = vec![10u8, 20u8, 30u8, 40u8, 50u8];
+
+        let mut doc = Document::with_version("1.7");
+
+        let mut stream_dict = dictionary! {
+            "F" => dictionary! {
+                "Subtype" => Object::Name(b"application/x-c2pa-manifest-store".to_vec()),
+                "Length" => Object::Integer(manifest.len() as i64),
+            },
+        };
+        // `\r` gets escaped by lopdf's writer, but bare `\n` is written verbatim,
+        // so this decoy survives as a real `stream` + LF sequence in the output.
+        stream_dict.set("Decoy", Object::string_literal("noise stream\nmore noise"));
+        let stream_id = doc.add_object(Stream::new(stream_dict, manifest.clone()));
+
+        let file_spec_id = doc.add_object(dictionary! {
+            "AFRelationship" => Object::Name(b"C2PA_Manifest".to_vec()),
+            "Type" => Object::Name(b"FileSpec".to_vec()),
+            "EF" => dictionary! { "F" => Object::Reference(stream_id) },
+        });
+
+        let catalog_id = doc.add_object(dictionary! {
+            "Type" => Object::Name(b"Catalog".to_vec()),
+            "AF" => Object::Array(vec![Object::Reference(file_spec_id)]),
+        });
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+
+        assert!(
+            locate_manifest_content(&bytes).is_err(),
+            "a decoy `stream` keyword inside the dict must not be trusted"
+        );
+    }
+
+    // A truncated/corrupted file must never panic on an out-of-bounds slice,
+    // regardless of what `find_stream_content_start` thinks it found.
+    #[test]
+    fn test_get_object_locations_truncated_pdf_does_not_panic() {
+        let source = include_bytes!("../../tests/fixtures/basic.pdf");
+        let manifest_bytes = vec![10u8, 20u8, 30u8, 40u8, 50u8];
+        let pdf_io = PdfIO::new("pdf");
+        let writer = pdf_io.get_writer("pdf").unwrap();
+        let mut input = Cursor::new(source.to_vec());
+        let mut output = Cursor::new(Vec::new());
+        writer
+            .write_c2pa(&mut input, &mut output, &manifest_bytes)
+            .unwrap();
+
+        let mut truncated = output.into_inner();
+        truncated.truncate(truncated.len() / 2);
+
+        let mut stream = Cursor::new(truncated);
+        // Must return an error, never panic.
+        let _ = writer.get_object_locations(&mut stream);
     }
 
     // Regression test: the sign pipeline writes a placeholder manifest, computes
