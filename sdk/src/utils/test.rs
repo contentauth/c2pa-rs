@@ -28,18 +28,18 @@ use tempfile::TempDir;
 use crate::{
     assertions::{
         labels, Action, Actions, DigitalSourceType, EmbeddedData, Ingredient, Relationship,
-        ReviewRating, SchemaDotOrg, Thumbnail, User,
+        ReviewRating, Thumbnail, User,
     },
-    asset_io::CAIReadWrite,
     claim::Claim,
     context::Context,
-    crypto::{cose::CertificateTrustPolicy, raw_signature::SigningAlg},
+    crypto::cose::{CertificateTrustPolicy, TrustAnchorType},
     hash_utils::Hasher,
     jumbf_io::get_assetio_handler,
+    read_seek::ReadWriteSeek,
     resource_store::UriOrResource,
     store::Store,
     utils::{io_utils::tempdirectory, mime::extension_to_mime},
-    AsyncSigner, ClaimGeneratorInfo, Result,
+    AsyncSigner, ClaimGeneratorInfo, Result, SigningAlg,
 };
 
 pub const TEST_SMALL_JPEG: &str = "earth_apollo17.jpg";
@@ -110,7 +110,7 @@ define_fixtures!(
     C_JPEG => ("C.jpg", "image/jpeg"),
     CA_JPEG => ("CA.jpg", "image/jpeg"),
     XCA_JPEG => ("XCA.jpg", "image/jpeg"),
-    SAMPLE_PNG => ("libpng-test.png", "image/png"),
+    SAMPLE_PNG => ("sample1.png", "image/png"),
     SAMPLE_WAV => ("sample1.wav", "audio/wav"),
     SAMPLE_WEBP => ("sample1.webp", "image/webp"),
     SAMPLE_TIFF => ("TUSCANY.TIF", "image/tiff"),
@@ -120,6 +120,7 @@ define_fixtures!(
     SAMPLE_HEIF => ("sample1.heif", "image/heif"),
     SAMPLE_MP4 => ("video1.mp4", "video/mp4"),
     LEGACY_MP4 => ("legacy.mp4", "video/mp4"),
+    NO_MANIFEST_MP4 => ("video1_no_manifest.mp4", "video/mp4"),
     LEGACY_INGREDIENT_HASH => ("legacy_ingredient_hash.jpg", "image/jpeg"),
     NO_MANIFEST => ("no_manifest.jpg", "image/jpeg"),
     NO_ALG => ("no_alg.jpg", "image/jpeg"),
@@ -127,6 +128,7 @@ define_fixtures!(
     SAMPLE_PSD => ("Purple Square.psd", "image/vnd.adobe.photoshop"),
     TEST_TEXT_PLAIN => ("unsupported_type.txt", "text/plain"),
     PRE_RELEASE => ("prerelease.jpg", "image/jpeg"),
+    C_MOV => ("c.mov", "video/quicktime"),
 
     // Add more as needed
 );
@@ -341,7 +343,7 @@ pub fn create_test_claim_v1() -> Result<Claim> {
             "alternateName": "False"
         }
     }"#;
-    let claim_review = SchemaDotOrg::from_json_str(cr)?;
+    let claim_review = User::new("schema.org", cr);
     let thumbnail_claim = Thumbnail::new(labels::JPEG_CLAIM_THUMBNAIL, some_binary_data.clone());
     let thumbnail_ingred = Thumbnail::new(labels::JPEG_INGREDIENT_THUMBNAIL, some_binary_data);
     let user_assertion = User::new(TEST_USER_ASSERTION, user_assertion_data);
@@ -418,6 +420,7 @@ pub fn fixture_path(file_name: &str) -> PathBuf {
 
 /// Create in-memory test streams from a fixture file
 #[allow(clippy::expect_used)]
+#[allow(clippy::panic)]
 pub fn create_test_streams(
     fixture_name: &str,
 ) -> (
@@ -454,6 +457,35 @@ pub fn create_test_streams(
         let output_cursor = std::io::Cursor::new(Vec::new());
 
         (format, input_cursor, output_cursor)
+    }
+    #[cfg(not(feature = "file_io"))]
+    {
+        panic!(
+            "Fixture '{}' not found in embedded registry and file I/O is disabled",
+            fixture_name
+        );
+    }
+}
+
+/// Create a single in-memory input stream from a fixture file.
+/// Use this for read-only tests (e.g. format detection) that don't need an output stream.
+#[allow(clippy::expect_used)]
+#[allow(clippy::panic)]
+pub fn create_test_stream(fixture_name: &str) -> (&'static str, std::io::Cursor<Vec<u8>>) {
+    if let Some(fixture) = get_registry().get(fixture_name) {
+        return (fixture.1, std::io::Cursor::new(fixture.0.to_vec()));
+    }
+
+    #[cfg(feature = "file_io")]
+    {
+        let input_path = fixture_path(fixture_name);
+        let input_data = std::fs::read(&input_path).expect("could not read input file");
+        let format = input_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .and_then(extension_to_mime)
+            .unwrap_or("application/octet-stream");
+        (format, std::io::Cursor::new(input_data))
     }
     #[cfg(not(feature = "file_io"))]
     {
@@ -622,9 +654,12 @@ pub fn temp_signer_file() -> Box<dyn crate::Signer> {
 /// [`CertificateTrustPolicy`]: crate::crypto::cose::CertificateTrustPolicy
 pub fn test_certificate_acceptance_policy() -> CertificateTrustPolicy {
     let mut ctp = CertificateTrustPolicy::default();
-    ctp.add_trust_anchors(include_bytes!(
-        "../../tests/fixtures/certs/trust/test_cert_root_bundle.pem"
-    ))
+    ctp.add_trust_anchors(
+        include_bytes!("../../tests/fixtures/certs/trust/test_cert_root_bundle.pem"),
+        "https://c2pa-rs/unknown_tl",
+        TrustAnchorType::Manifest,
+        None,
+    )
     .unwrap();
     ctp
 }
@@ -633,7 +668,7 @@ pub fn test_certificate_acceptance_policy() -> CertificateTrustPolicy {
 pub fn write_jpeg_placeholder_file(
     placeholder: &[u8],
     input: &Path,
-    output_file: &mut dyn CAIReadWrite,
+    output_file: &mut dyn ReadWriteSeek,
     hasher: Option<&mut Hasher>,
 ) -> Result<usize> {
     let mut f = std::fs::File::open(input).unwrap();
@@ -645,7 +680,7 @@ pub fn write_jpeg_placeholder_stream<R>(
     placeholder: &[u8],
     format: &str,
     input: &mut R,
-    output_file: &mut dyn CAIReadWrite,
+    output_file: &mut dyn ReadWriteSeek,
     mut hasher: Option<&mut Hasher>,
 ) -> Result<usize>
 where
@@ -685,6 +720,61 @@ where
     output_file.write_all(&out_stream.into_inner()).unwrap();
 
     Ok(box_len)
+}
+
+/// Utility to create a BMFF (MP4) test asset with a placeholder for a manifest. Note
+/// that is not real.  Inserting a box this way will break the MP4 structure, but it
+/// is sufficient for testing.
+///
+/// Inserts `placeholder` (a composed C2PA UUID box, as returned by
+/// `Builder::composed_manifest` for BMFF formats) immediately after the `ftyp`
+/// box, which is the standard C2PA insertion point in BMFF assets.
+///
+/// Returns the byte offset where the placeholder was inserted (i.e. the end of
+/// the `ftyp` box).
+pub fn write_bmff_placeholder_stream<R>(
+    placeholder: &[u8],
+    input: &mut R,
+    output_file: &mut dyn ReadWriteSeek,
+) -> Result<usize>
+where
+    R: Read + std::io::Seek + Send,
+{
+    input.rewind().unwrap();
+
+    // Read the ftyp box header: 4-byte big-endian size + 4-byte box type.
+    let mut size_bytes = [0u8; 4];
+    input.read_exact(&mut size_bytes).unwrap();
+    let mut type_bytes = [0u8; 4];
+    input.read_exact(&mut type_bytes).unwrap();
+    assert_eq!(
+        &type_bytes, b"ftyp",
+        "BMFF stream must start with an ftyp box"
+    );
+
+    let ftyp_size = u32::from_be_bytes(size_bytes) as usize;
+
+    // Build the output stream with a hole for the manifest.
+    let outbuf = Vec::new();
+    let mut out_stream = Cursor::new(outbuf);
+    input.rewind().unwrap();
+
+    // Copy the ftyp box verbatim.
+    let mut before = vec![0u8; ftyp_size];
+    input.read_exact(before.as_mut_slice()).unwrap();
+    out_stream.write_all(&before).unwrap();
+
+    // Insert the composed placeholder (C2PA UUID box).
+    out_stream.write_all(placeholder).unwrap();
+
+    // Copy the remainder of the asset.
+    let mut after_buf = Vec::new();
+    input.read_to_end(&mut after_buf).unwrap();
+    out_stream.write_all(&after_buf).unwrap();
+
+    output_file.write_all(&out_stream.into_inner()).unwrap();
+
+    Ok(ftyp_size)
 }
 
 pub(crate) struct TestGoodSigner {}

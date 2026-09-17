@@ -23,8 +23,7 @@ use serde_bytes::ByteBuf;
 use crate::{
     crypto::{
         asn1::rfc3161::{TimeStampResp, TstInfo},
-        cose::{CertificateTrustPolicy, CoseError, TimeStampStorage},
-        raw_signature::{AsyncRawSigner, RawSigner},
+        cose::{AsyncCoseSigner, CertificateTrustPolicy, CoseError, CoseSigner, TimeStampStorage},
         time_stamp::{
             verify_time_stamp, verify_time_stamp_async, ContentInfo, TimeStampError,
             TimeStampResponse,
@@ -52,6 +51,17 @@ pub(crate) fn get_cose_tst_info(sign1: &coset::CoseSign1) -> Option<(&Value, Tim
                 None
             }
         })
+}
+
+/// Given a COSE Sign1, return the raw bytes of the first timestamp token in
+/// sigTst/sigTst2 if present.
+pub(crate) fn timestamp_token_bytes_from_sign1(sign1: &coset::CoseSign1) -> Option<Vec<u8>> {
+    let (sigtst, _tss) = get_cose_tst_info(sign1)?;
+    let mut time_cbor: Vec<u8> = vec![];
+    coset::cbor::into_writer(sigtst, &mut time_cbor).ok()?;
+    let tst_container: TstContainer = coset::cbor::from_reader(time_cbor.as_slice()).ok()?;
+    let token = tst_container.tst_tokens.first()?;
+    Some(token.val.clone())
 }
 
 /// Given a COSE signature, retrieve the `sigTst` header from it and validate
@@ -214,14 +224,14 @@ impl TstContainer {
 /// [`AsyncTimeStampProvider`]: crate::crypto::time_stamp::AsyncTimeStampProvider
 #[async_generic(
     async_signature(
-        ts_provider: &dyn AsyncRawSigner,
+        ts_provider: &dyn AsyncCoseSigner,
         data: &[u8],
         p_header: &ProtectedHeader,
         mut header_builder: HeaderBuilder,
         tss: TimeStampStorage,
     ))]
 pub(crate) fn add_sigtst_header(
-    ts_provider: &dyn RawSigner,
+    ts_provider: &dyn CoseSigner,
     data: &[u8],
     p_header: &ProtectedHeader,
     mut header_builder: HeaderBuilder,

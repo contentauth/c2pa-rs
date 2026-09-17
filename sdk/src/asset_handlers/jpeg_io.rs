@@ -13,9 +13,7 @@
 
 use std::{
     collections::HashMap,
-    fs::File,
     io::{BufReader, Cursor, Write},
-    path::*,
 };
 
 use byteorder::{BigEndian, ByteOrder, ReadBytesExt, WriteBytesExt};
@@ -26,20 +24,14 @@ use img_parts::{
     },
     Bytes, DynImage,
 };
-use serde_bytes::ByteBuf;
 
 use crate::{
-    assertions::{BoxMap, C2PA_BOXHASH},
     asset_io::{
-        rename_or_move, AssetBoxHash, AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter,
-        ComposedManifestRef, HashBlockObjectType, HashObjectPositions, RemoteRefEmbed,
-        RemoteRefEmbedType,
+        AllowedExclusion, AssetBoxHash, AssetIO, BoxMap, C2paReader, C2paWriter,
+        ComposedManifestRef, ObjectLocations, ObjectType, ReadSeek, ReadWriteSeek,
+        RemoteManifestUrl, WriteXmp, C2PA_BOXHASH,
     },
     error::{Error, Result},
-    utils::{
-        io_utils::tempfile_builder,
-        xmp_inmemory_utils::{add_provenance, MIN_XMP},
-    },
 };
 
 static SUPPORTED_TYPES: [&str; 3] = ["jpg", "jpeg", "image/jpeg"];
@@ -52,6 +44,9 @@ const XMP_EXTENSION_SIGNATURE_BUFFER_SIZE: usize = XMP_EXTENSION_SIGNATURE.len()
 
 const XMP_EXTENDED_NOTE: &str = "xmpNote:HasExtendedXMP";
 const XMP_EXTENDED_NOTE_SIZE: usize = XMP_EXTENDED_NOTE.len() + 1 + 1; // skip '=' and '"'
+
+const EXIF_SIGNATURE: &[u8] = b"Exif\0\0";
+const PHOTOSHOP_SIGNATURE: &[u8] = b"Photoshop 3.0\0"; // APP13 Image Resource Block (carries IPTC)
 
 const MAX_JPEG_MARKER_SIZE: usize = 64000; // technically it's 64K but a bit smaller is fine
 
@@ -72,10 +67,17 @@ fn vec_compare(va: &[u8], vb: &[u8]) -> bool {
        .all(|(a,b)| a == b)
 }
 
+// Single source of truth for "does this APP1 payload start with the XMP
+// signature", so the box-hash exclusion classifier below and the unrelated
+// XMP-extraction path can't drift from each other.
+fn is_xmp_signature(bytes: &[u8]) -> bool {
+    bytes.starts_with(XMP_SIGNATURE.as_bytes())
+}
+
 // Return contents of APP1 segment if it is an XMP segment.
 fn extract_xmp(seg: &JpegSegment) -> Option<&str> {
     let (sig, rest) = seg.contents().split_at_checked(XMP_SIGNATURE_BUFFER_SIZE)?;
-    if sig.starts_with(XMP_SIGNATURE.as_bytes()) {
+    if is_xmp_signature(sig) {
         std::str::from_utf8(rest).ok()
     } else {
         None
@@ -150,41 +152,6 @@ fn xmp_from_bytes(asset_bytes: &[u8]) -> Option<String> {
     Some(standard_xmp)
 }
 
-fn add_required_segs_to_stream(
-    input_stream: &mut dyn CAIRead,
-    output_stream: &mut dyn CAIReadWrite,
-) -> Result<()> {
-    let mut buf: Vec<u8> = Vec::new();
-    input_stream.rewind()?;
-    input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
-    input_stream.rewind()?;
-
-    let dimg_opt = DynImage::from_bytes(buf.into())
-        .map_err(|_err| Error::InvalidAsset("Could not parse input JPEG".to_owned()))?;
-
-    if let Some(DynImage::Jpeg(jpeg)) = dimg_opt {
-        // check for JUMBF Seg
-        let cai_app11 = get_cai_segments(&jpeg)?; // make sure we only check for C2PA segments
-
-        if cai_app11.is_empty() {
-            // create dummy JUMBF seg
-            let mut no_bytes: Vec<u8> = vec![0; 50]; // enough bytes to be valid
-            no_bytes.splice(16..20, C2PA_MARKER); // cai UUID signature
-            let aio = JpegIO {};
-            aio.write_cai(input_stream, output_stream, &no_bytes)?;
-        } else {
-            // just clone
-            input_stream.rewind()?;
-            output_stream.rewind()?;
-            std::io::copy(input_stream, output_stream)?;
-        }
-    } else {
-        return Err(Error::UnsupportedType);
-    }
-
-    Ok(())
-}
-
 // all cai specific segments
 fn get_cai_segments(jpeg: &img_parts::jpeg::Jpeg) -> Result<Vec<usize>> {
     let mut cai_segs: Vec<usize> = Vec::new();
@@ -254,8 +221,8 @@ fn delete_cai_segments(jpeg: &mut img_parts::jpeg::Jpeg) -> Result<Option<usize>
 
 pub struct JpegIO {}
 
-impl CAIReader for JpegIO {
-    fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
+impl C2paReader for JpegIO {
+    fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>> {
         let mut buffer: Vec<u8> = Vec::new();
 
         let mut manifest_store_cnt = 0;
@@ -263,24 +230,25 @@ impl CAIReader for JpegIO {
         // load the bytes
         let mut buf: Vec<u8> = Vec::new();
 
-        asset_reader.rewind()?;
-        asset_reader.read_to_end(&mut buf).map_err(Error::IoError)?;
+        input_stream.rewind()?;
+        input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
 
         let dimg_opt = DynImage::from_bytes(buf.into()).map_err(|err| match err {
-            img_parts::Error::WrongSignature => JpegError::InvalidFileSignature {
-                reason: format!(
-                    "it may be because the stream does not start with \"{} {}\"",
-                    markers::P,
-                    markers::SOI
-                ),
-            }
-            .into(),
+            img_parts::Error::WrongSignature => Error::InvalidAsset(format!(
+                "it may be because the stream does not start with \"{} {}\"",
+                markers::P,
+                markers::SOI
+            )),
             _ => Error::InvalidAsset("Could not parse input JPEG".to_owned()),
         })?;
 
         if let Some(dimg) = dimg_opt {
             match dimg {
                 DynImage::Jpeg(jpeg) => {
+                    if jpeg.segments().is_empty() {
+                        return Err(Error::InvalidAsset("JPEG has no segments".to_owned()));
+                    }
+
                     let app11 = jpeg.segments_by_marker(markers::APP11);
                     let mut cai_en: Vec<u8> = Vec::new();
                     let mut cai_seg_cnt: u32 = 0;
@@ -343,40 +311,47 @@ impl CAIReader for JpegIO {
     }
 
     // Get XMP block
-    fn read_xmp(&self, asset_reader: &mut dyn CAIRead) -> Option<String> {
+    fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Option<String> {
         // load the bytes
         let mut buf: Vec<u8> = Vec::new();
-        match asset_reader.read_to_end(&mut buf) {
+        match input_stream.read_to_end(&mut buf) {
             Ok(_) => xmp_from_bytes(&buf),
             Err(_) => None,
         }
     }
 }
 
-impl CAIWriter for JpegIO {
-    fn write_cai(
+impl C2paWriter for JpegIO {
+    fn write_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         store_bytes: &[u8],
     ) -> Result<()> {
         let mut buf = Vec::new();
         // read the whole asset
         input_stream.rewind()?;
         input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
+        // TODO: optimize this by implementing a streaming parser
         let mut jpeg = Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
 
         // remove existing CAI segments
         let insertion_point = match delete_cai_segments(&mut jpeg)? {
-            Some(i) if i > 0 => i - 1,
-            _ => 0,
+            Some(i) if i > 0 => i, // note the Jpeg::from_bytes Vec does not contain the SOI marker
+            _ => {
+                // insert after last APP0 if it exists (JFIF compatible), otherwise at the beginning (after SOI)
+                let app0_index = jpeg
+                    .segments()
+                    .iter()
+                    .rposition(|segment| segment.marker() == APP0);
+                app0_index.map_or(0, |i| i + 1)
+            }
         };
 
-        let jumbf_len = store_bytes.len();
-        let num_segments = (jumbf_len / MAX_JPEG_MARKER_SIZE) + 1;
         let mut seg_chucks = store_bytes.chunks(MAX_JPEG_MARKER_SIZE);
+        let num_segments = seg_chucks.len();
 
-        for seg in 1..num_segments + 1 {
+        for seg in 0..num_segments {
             /*
                 If the size of the box payload is less than 2^32-8 bytes,
                 then all fields except the XLBox field, that is: Le, CI, En, Z, LBox and TBox,
@@ -391,14 +366,14 @@ impl CAIWriter for JpegIO {
             // Z: Packet sequence number - 0x00000001...
             let ci = vec![0x4a, 0x50];
             let en = vec![0x02, 0x11];
-            let z: u32 = u32::try_from(seg)
+            let z: u32 = u32::try_from(seg + 1)
                 .map_err(|_| Error::InvalidAsset("Too many JUMBF segments".to_string()))?; //seg.to_be_bytes();
 
             let mut seg_data = Vec::new();
             seg_data.extend(ci);
             seg_data.extend(en);
             seg_data.extend(z.to_be_bytes());
-            if seg > 1 {
+            if seg > 0 {
                 // the LBox and TBox are already in the JUMBF
                 // but we need to duplicate them in all other segments
                 let lbox_tbox = store_bytes
@@ -406,13 +381,10 @@ impl CAIWriter for JpegIO {
                     .ok_or(Error::InvalidAsset("Store bytes too short".to_string()))?;
                 seg_data.extend(lbox_tbox);
             }
-            if seg_chucks.len() > 0 {
-                // make sure we have some...
-                if let Some(next_seg) = seg_chucks.next() {
-                    seg_data.extend(next_seg);
-                }
-            } else {
-                seg_data.extend(store_bytes);
+
+            // make sure we have some...
+            if let Some(next_seg) = seg_chucks.next() {
+                seg_data.extend(next_seg);
             }
 
             let seg_bytes = Bytes::from(seg_data);
@@ -433,104 +405,138 @@ impl CAIWriter for JpegIO {
         Ok(())
     }
 
-    fn get_object_locations_from_stream(
+    fn get_object_locations(
         &self,
-        input_stream: &mut dyn CAIRead,
-    ) -> Result<Vec<HashObjectPositions>> {
+        input_stream: &mut dyn ReadSeek,
+    ) -> Result<Vec<ObjectLocations>> {
         let mut cai_en: Vec<u8> = Vec::new();
         let mut cai_seg_cnt: u32 = 0;
 
-        let mut positions: Vec<HashObjectPositions> = Vec::new();
-        let mut curr_offset = 2; // start after JPEG marker
+        let mut positions: Vec<ObjectLocations> = Vec::new();
+        let mut curr_offset: u64 = 2; // start after JPEG marker
 
-        let output_vec: Vec<u8> = Vec::new();
-        let mut output_stream = Cursor::new(output_vec);
-        // make sure the file has the required segments so we can generate all the required offsets
-        add_required_segs_to_stream(input_stream, &mut output_stream)?;
+        input_stream.rewind()?;
+        let mut buf = Vec::new();
 
-        let buf: Vec<u8> = output_stream.into_inner();
+        // TODO: optimize this by implementing a streaming parser
+        input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
+        let jpeg = Jpeg::from_bytes(buf.into())
+            .map_err(|_err| Error::InvalidAsset("Could not parse input JPEG".to_owned()))?;
+        if jpeg.segments().is_empty() {
+            return Err(Error::InvalidAsset("JPEG has no segments".to_owned()));
+        }
 
-        let dimg = DynImage::from_bytes(buf.into())
-            .map_err(|e| Error::OtherError(Box::new(e)))?
-            .ok_or(Error::UnsupportedType)?;
+        let placeholder = if get_cai_segments(&jpeg)?.is_empty() {
+            let app0_index = jpeg.segments().iter().rposition(|s| s.marker() == APP0);
 
-        let mut cai_loc = HashObjectPositions {
-            offset: 0,
-            length: 0,
-            htype: HashBlockObjectType::Cai,
+            let placeholder_index = app0_index.map_or(0, |i| i + 1);
+            // len computed as done in write_cai
+            // marker + length_field + CI + EN + Z + data
+            let placeholder_len: u64 = 2 + 2 + 2 + 2 + 4 + 50;
+
+            Some((placeholder_index, placeholder_len))
+        } else {
+            None
         };
 
-        match dimg {
-            DynImage::Jpeg(jpeg) => {
-                for seg in jpeg.segments() {
-                    match seg.marker() {
-                        markers::APP11 => {
-                            // JUMBF marker
-                            let raw_bytes = seg.contents();
+        let mut cai_loc = ObjectLocations {
+            offset: 0,
+            length: 0,
+            htype: ObjectType::C2pa,
+        };
 
-                            if raw_bytes.len() > 16 {
-                                // we need at least 16 bytes in each segment for CAI
-                                let mut raw_vec = raw_bytes.to_vec();
-                                let _ci = raw_vec.as_mut_slice()[0..2].to_vec();
-                                let en = raw_vec.as_mut_slice()[2..4].to_vec();
-
-                                let is_cai_continuation = vec_compare(&cai_en, &en);
-
-                                if cai_seg_cnt > 0 && is_cai_continuation {
-                                    cai_seg_cnt += 1;
-                                    cai_loc.length += seg.len_with_entropy();
-                                } else {
-                                    // check if this is a CAI JUMBF block
-                                    let jumb_type = raw_vec
-                                        .get(24..28)
-                                        .ok_or(Error::InvalidAsset(
-                                            "Invalid JPEG CAI JUMBF block".to_string(),
-                                        ))?
-                                        .to_vec();
-                                    let is_cai = vec_compare(&C2PA_MARKER, &jumb_type);
-                                    if is_cai {
-                                        cai_seg_cnt = 1;
-                                        cai_en.clone_from(&en); // store the identifier
-
-                                        cai_loc.offset = curr_offset;
-                                        cai_loc.length += seg.len_with_entropy();
-                                    } else {
-                                        // save other for completeness sake
-                                        let v = HashObjectPositions {
-                                            offset: curr_offset,
-                                            length: seg.len_with_entropy(),
-                                            htype: HashBlockObjectType::Other,
-                                        };
-                                        positions.push(v);
-                                    }
-                                }
-                            }
-                        }
-                        markers::APP1 => {
-                            // XMP marker or EXIF or Extra XMP
-                            let v = HashObjectPositions {
-                                offset: curr_offset,
-                                length: seg.len_with_entropy(),
-                                htype: HashBlockObjectType::Xmp,
-                            };
-                            // todo: pick the app1 that is the xmp (not crucial as it gets hashed either way)
-                            positions.push(v);
-                        }
-                        _ => {
-                            // save other for completeness sake
-                            let v = HashObjectPositions {
-                                offset: curr_offset,
-                                length: seg.len_with_entropy(),
-                                htype: HashBlockObjectType::Other,
-                            };
-
-                            positions.push(v);
-                        }
-                    }
-                    curr_offset += seg.len_with_entropy();
+        for (index, seg) in jpeg.segments().iter().enumerate() {
+            if let Some((placeholder_index, placeholder_len)) = placeholder {
+                if index == placeholder_index {
+                    cai_loc.offset = curr_offset;
+                    cai_loc.length = placeholder_len;
+                    curr_offset += placeholder_len;
                 }
             }
-            _ => return Err(Error::InvalidAsset("Unknown image format".to_owned())),
+
+            match seg.marker() {
+                markers::APP11 => {
+                    // JUMBF marker
+                    let raw_bytes = seg.contents();
+
+                    if raw_bytes.len() > 16 {
+                        // we need at least 16 bytes in each segment for CAI
+                        let mut raw_vec = raw_bytes.to_vec();
+                        let _ci = raw_vec.as_mut_slice()[0..2].to_vec();
+                        let en = raw_vec.as_mut_slice()[2..4].to_vec();
+                        let mut z_vec = Cursor::new(raw_vec.as_mut_slice()[4..8].to_vec());
+                        let z = z_vec.read_u32::<BigEndian>()?;
+
+                        let is_cai_continuation = vec_compare(&cai_en, &en);
+
+                        if cai_seg_cnt > 0 && is_cai_continuation {
+                            // Per C2PA 15.12.1 the exclusion must cover only the manifest
+                            // store; reject an out-of-sequence z index (mirrors read_c2pa) or
+                            // a non-contiguous continuation that would otherwise enclose the
+                            // intervening (foreign) bytes.
+                            if z <= cai_seg_cnt || curr_offset != cai_loc.offset + cai_loc.length {
+                                return Err(Error::InvalidAsset(
+                                    "C2PA APP11 manifest segments are not contiguous".to_string(),
+                                ));
+                            }
+                            cai_seg_cnt += 1;
+                            cai_loc.length += seg.len_with_entropy() as u64;
+                        } else {
+                            // check if this is a CAI JUMBF block
+                            let jumb_type = raw_vec
+                                .get(24..28)
+                                .ok_or(Error::InvalidAsset(
+                                    "Invalid JPEG CAI JUMBF block".to_string(),
+                                ))?
+                                .to_vec();
+                            let is_cai = vec_compare(&C2PA_MARKER, &jumb_type);
+                            if is_cai {
+                                cai_seg_cnt = 1;
+                                cai_en.clone_from(&en); // store the identifier
+
+                                cai_loc.offset = curr_offset;
+                                cai_loc.length += seg.len_with_entropy() as u64;
+                            } else {
+                                // save other for completeness sake
+                                let v = ObjectLocations {
+                                    offset: curr_offset,
+                                    length: seg.len_with_entropy() as u64,
+                                    htype: ObjectType::Other,
+                                };
+                                positions.push(v);
+                            }
+                        }
+                    }
+                }
+                markers::APP1 => {
+                    // XMP marker or EXIF or Extra XMP
+                    let v = ObjectLocations {
+                        offset: curr_offset,
+                        length: seg.len_with_entropy() as u64,
+                        htype: ObjectType::Xmp,
+                    };
+                    // todo: pick the app1 that is the xmp (not crucial as it gets hashed either way)
+                    positions.push(v);
+                }
+                _ => {
+                    // save other for completeness sake
+                    let v = ObjectLocations {
+                        offset: curr_offset,
+                        length: seg.len_with_entropy() as u64,
+                        htype: ObjectType::Other,
+                    };
+
+                    positions.push(v);
+                }
+            }
+            curr_offset += seg.len_with_entropy() as u64;
+        }
+
+        if let Some((placeholder_index, placeholder_len)) = placeholder {
+            if placeholder_index >= jpeg.segments().len() {
+                cai_loc.offset = curr_offset;
+                cai_loc.length = placeholder_len;
+            }
         }
 
         if cai_loc.length > 0 {
@@ -540,10 +546,10 @@ impl CAIWriter for JpegIO {
         Ok(positions)
     }
 
-    fn remove_cai_store_from_stream(
+    fn remove_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
     ) -> Result<()> {
         let mut buf = Vec::new();
         // read the whole asset
@@ -564,60 +570,6 @@ impl CAIWriter for JpegIO {
 }
 
 impl AssetIO for JpegIO {
-    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
-        let mut f = File::open(asset_path)?;
-
-        self.read_cai(&mut f)
-    }
-
-    fn save_cai_store(&self, asset_path: &std::path::Path, store_bytes: &[u8]) -> Result<()> {
-        let mut input_stream = std::fs::OpenOptions::new()
-            .read(true)
-            //.truncate(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        let mut temp_file = tempfile_builder("c2pa_temp")?;
-
-        self.write_cai(&mut input_stream, &mut temp_file, store_bytes)?;
-
-        // copy temp file to asset
-        rename_or_move(temp_file, asset_path)
-    }
-
-    fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>> {
-        let mut file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        self.get_object_locations_from_stream(&mut file)
-    }
-
-    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
-        let input = std::fs::read(asset_path).map_err(Error::IoError)?;
-
-        let mut jpeg = Jpeg::from_bytes(input.into()).map_err(|_err| Error::EmbeddingError)?;
-
-        // remove existing CAI segments
-        delete_cai_segments(&mut jpeg)?;
-
-        // save updated file
-        let output = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .truncate(true)
-            .open(asset_path)
-            .map_err(Error::IoError)?;
-
-        jpeg.encoder()
-            .write_to(output)
-            .map_err(|_err| Error::InvalidAsset("JPEG write error".to_owned()))?;
-
-        Ok(())
-    }
-
     fn new(_asset_type: &str) -> Self
     where
         Self: Sized,
@@ -629,15 +581,19 @@ impl AssetIO for JpegIO {
         Box::new(JpegIO::new(asset_type))
     }
 
-    fn get_reader(&self) -> &dyn CAIReader {
+    fn get_reader(&self) -> &dyn C2paReader {
         self
     }
 
-    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+    fn get_writer(&self, asset_type: &str) -> Option<Box<dyn C2paWriter>> {
         Some(Box::new(JpegIO::new(asset_type)))
     }
 
-    fn remote_ref_writer_ref(&self) -> Option<&dyn RemoteRefEmbed> {
+    fn remote_manifest_url_ref(&self) -> Option<&dyn RemoteManifestUrl> {
+        Some(self)
+    }
+
+    fn write_xmp_ref(&self) -> Option<&dyn WriteXmp> {
         Some(self)
     }
 
@@ -654,83 +610,38 @@ impl AssetIO for JpegIO {
     }
 }
 
-impl RemoteRefEmbed for JpegIO {
-    #[allow(unused_variables)]
-    fn embed_reference(
+impl WriteXmp for JpegIO {
+    fn write_xmp(
         &self,
-        asset_path: &Path,
-        embed_ref: crate::asset_io::RemoteRefEmbedType,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
+        xmp: &str,
     ) -> Result<()> {
-        match &embed_ref {
-            crate::asset_io::RemoteRefEmbedType::Xmp(_manifest_uri) => {
-                let mut file = std::fs::File::open(asset_path)?;
-                let mut temp = Cursor::new(Vec::new());
-                self.embed_reference_to_stream(&mut file, &mut temp, embed_ref)?;
-                let mut output = std::fs::OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .truncate(true)
-                    .open(asset_path)
-                    .map_err(Error::IoError)?;
-                temp.set_position(0);
-                std::io::copy(&mut temp, &mut output).map_err(Error::IoError)?;
-                Ok(())
-            }
-            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
+        let mut buf = Vec::new();
+        // read the whole asset
+        input_stream.rewind()?;
+        input_stream.read_to_end(&mut buf).map_err(Error::IoError)?;
+        let mut jpeg = Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
+
+        // find any existing XMP segment to replace
+        let segments = jpeg.segments_mut();
+        let xmp_index = segments
+            .iter()
+            .position(|seg| seg.marker() == markers::APP1 && extract_xmp(seg).is_some());
+
+        // add the JPEG XMP signature prefix
+        let xmp = format!("{XMP_SIGNATURE}\0{xmp}");
+        let segment = JpegSegment::new_with_contents(markers::APP1, Bytes::from(xmp));
+        // insert or replace the segment
+        match xmp_index {
+            Some(i) => segments[i] = segment,
+            None => segments.insert(1, segment),
         }
-    }
 
-    fn embed_reference_to_stream(
-        &self,
-        source_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
-        embed_ref: RemoteRefEmbedType,
-    ) -> Result<()> {
-        match embed_ref {
-            crate::asset_io::RemoteRefEmbedType::Xmp(manifest_uri) => {
-                let mut buf = Vec::new();
-                // read the whole asset
-                source_stream.rewind()?;
-                source_stream
-                    .read_to_end(&mut buf)
-                    .map_err(Error::IoError)?;
-                let mut jpeg =
-                    Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
-
-                // find any existing XMP segment and remember where it was
-                let segments = jpeg.segments_mut();
-                let (xmp_index, xmp) = segments
-                    .iter()
-                    .enumerate()
-                    .find_map(|(i, seg)| {
-                        if seg.marker() == markers::APP1 {
-                            Some((Some(i), extract_xmp(seg)?))
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or((None, MIN_XMP));
-
-                // add provenance and JPEG XMP prefix
-                let xmp = format!("{XMP_SIGNATURE}\0{}", add_provenance(xmp, &manifest_uri)?);
-                let segment = JpegSegment::new_with_contents(markers::APP1, Bytes::from(xmp));
-                // insert or add the segment
-                match xmp_index {
-                    Some(i) => segments[i] = segment,
-                    None => segments.insert(1, segment),
-                }
-
-                jpeg.encoder()
-                    .write_to(output_stream)
-                    .map_err(|_err| Error::InvalidAsset("JPEG write error".to_owned()))?;
-                Ok(())
-            }
-            crate::asset_io::RemoteRefEmbedType::StegoS(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::StegoB(_) => Err(Error::UnsupportedType),
-            crate::asset_io::RemoteRefEmbedType::Watermark(_) => Err(Error::UnsupportedType),
-        }
+        jpeg.encoder()
+            .write_to(output_stream)
+            .map_err(|_err| Error::InvalidAsset("JPEG write error".to_owned()))?;
+        Ok(())
     }
 }
 
@@ -742,7 +653,7 @@ fn in_entropy(marker: u8) -> bool {
 // finds the correct break point for single image JPEGs.  We will need a new JPEG decoder
 // to handle those.  Also this function can be removed if img-parts ever addresses this issue
 // and support MPF JPEGs.
-fn get_entropy_size(input_stream: &mut dyn CAIRead) -> Result<usize> {
+fn get_entropy_size(input_stream: &mut dyn ReadSeek) -> Result<usize> {
     // Search the entropy data looking for non entropy segment marker.  The first valid seg marker before we hit
     // end of the file.
 
@@ -775,7 +686,7 @@ fn has_length(marker: u8) -> bool {
     matches!(marker, APP0..=APP15 | SOF0..=SOF15 | SOS | COM | DQT | DRI)
 }
 
-fn get_seg_size(input_stream: &mut dyn CAIRead) -> Result<usize> {
+fn get_seg_size(input_stream: &mut dyn ReadSeek) -> Result<usize> {
     let p = input_stream.read_u8()?;
     let marker = if p == P {
         input_stream.read_u8()?
@@ -793,7 +704,46 @@ fn get_seg_size(input_stream: &mut dyn CAIRead) -> Result<usize> {
     }
 }
 
-fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
+// Unlike PNG/JPEG-XL's format-registered chunk/box types, JPEG's APPn
+// markers are a generic "any application can use this for anything"
+// convention - APP1 is *conventionally* Exif or XMP and APP13 is
+// *conventionally* Photoshop's IRB (which carries IPTC), but nothing in the
+// JPEG spec enforces that. So the marker name alone isn't proof of content;
+// an APP1/APP13 segment is only treated as metadata if its payload actually
+// starts with a recognized signature. `prefix` is the first few bytes of
+// the segment's payload (after the 4-byte marker+length header).
+fn app_segment_is_recognized_metadata(name: &str, prefix: &[u8]) -> bool {
+    match name {
+        "APP1" => prefix.starts_with(EXIF_SIGNATURE) || is_xmp_signature(prefix),
+        "APP13" => prefix.starts_with(PHOTOSHOP_SIGNATURE),
+        _ => false,
+    }
+}
+
+// A JPEG segment's `range_len` covers the 2-byte marker and (for markers
+// that have one) the 2-byte length field, before the payload - `range_start`
+// points at the marker, not the data. So an APP1/APP13/COM segment's own
+// excludable payload is `[4, range_len)`, box-relative, skipping the
+// 4-byte marker+length header.
+fn jpeg_metadata_allowed_exclusions(range_len: u64) -> Vec<AllowedExclusion> {
+    vec![AllowedExclusion::after_header(4, range_len)]
+}
+
+fn jpeg_c2pa_allowed_exclusions(range_len: u64) -> Vec<AllowedExclusion> {
+    vec![AllowedExclusion::whole_box(range_len)]
+}
+
+/// Leading payload bytes of each APP1/APP13 segment, keyed by that box's
+/// `range_start`.
+type AppSegmentPrefixes = HashMap<u64, Vec<u8>>;
+
+/// Returns the parsed box maps alongside the leading bytes of each APP1/
+/// APP13 segment's payload (keyed by that box's `range_start`, since jfifdump
+/// hands us this payload up front but `range_len` - needed to bound how much
+/// of it matters - isn't known until [`get_box_map`]'s later pass). This lets
+/// that later pass classify APP1/APP13 content without re-seeking and
+/// re-reading bytes already in hand here.
+fn make_box_maps(input_stream: &mut dyn ReadSeek) -> Result<(Vec<BoxMap>, AppSegmentPrefixes)> {
     let segment_names = HashMap::from([
         (0xe0u8, "APP0"),
         (0xe1u8, "APP1"),
@@ -846,6 +796,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
     ]);
 
     let mut box_maps = Vec::new();
+    let mut app_prefixes: HashMap<u64, Vec<u8>> = HashMap::new();
     let mut cai_en: Vec<u8> = Vec::new();
     let mut cai_seg_cnt: u32 = 0;
     let mut cai_index = 0;
@@ -859,28 +810,12 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
     while let Ok(seg) = reader.next_segment() {
         match seg.kind {
             jfifdump::SegmentKind::Eoi => {
-                let bm = BoxMap {
-                    names: vec!["EOI".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position as u64,
-                    range_len: 0,
-                };
+                let bm = BoxMap::new(vec!["EOI".to_string()], seg.position as u64, 0);
 
                 box_maps.push(bm);
             }
             jfifdump::SegmentKind::Soi => {
-                let bm = BoxMap {
-                    names: vec!["SOI".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position as u64,
-                    range_len: 0,
-                };
+                let bm = BoxMap::new(vec!["SOI".to_string()], seg.position as u64, 0);
 
                 box_maps.push(bm);
             }
@@ -922,15 +857,11 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                             cai_seg_cnt = 1;
                             cai_en.clone_from(&en); // store the identifier
 
-                            let c2pa_bm = BoxMap {
-                                names: vec![C2PA_BOXHASH.to_string()],
-                                alg: None,
-                                hash: ByteBuf::from(Vec::new()),
-                                excluded: None,
-                                pad: ByteBuf::from(Vec::new()),
-                                range_start: seg.position as u64,
-                                range_len: (raw_bytes.len() + 4) as u64,
-                            };
+                            let c2pa_bm = BoxMap::new(
+                                vec![C2PA_BOXHASH.to_string()],
+                                seg.position as u64,
+                                (raw_bytes.len() + 4) as u64,
+                            );
 
                             box_maps.push(c2pa_bm);
                             cai_index = box_maps.len() - 1;
@@ -939,15 +870,7 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                                 .get(&nr)
                                 .ok_or(Error::InvalidAsset("Unknown segment marker".to_owned()))?;
 
-                            let bm = BoxMap {
-                                names: vec![name.to_string()],
-                                alg: None,
-                                hash: ByteBuf::from(Vec::new()),
-                                excluded: None,
-                                pad: ByteBuf::from(Vec::new()),
-                                range_start: seg.position as u64,
-                                range_len: 0,
-                            };
+                            let bm = BoxMap::new(vec![name.to_string()], seg.position as u64, 0);
 
                             box_maps.push(bm);
                         }
@@ -956,73 +879,45 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
             }
             jfifdump::SegmentKind::App { nr, data } => {
                 let nr = nr | 0xe0;
-                let _data = data;
 
                 let name = segment_names
                     .get(&nr)
                     .ok_or(Error::InvalidAsset("Unknown segment marker".to_owned()))?;
 
-                let bm = BoxMap {
-                    names: vec![name.to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position as u64,
-                    range_len: 0,
-                };
+                // Only APP1/APP13 are ever classified as metadata (see
+                // `app_segment_is_recognized_metadata`), so only stash a
+                // prefix for those - capped at the longest signature we ever
+                // need to check, to avoid holding a large APPn payload (e.g.
+                // an ICC profile) in memory for the rest of this pass. Keyed
+                // off the same resolved `name` the classifier itself checks
+                // against, rather than re-deriving it from `nr`, so the two
+                // checks can't drift out of sync with `segment_names`.
+                if *name == "APP1" || *name == "APP13" {
+                    let prefix_len = data.len().min(XMP_SIGNATURE_BUFFER_SIZE);
+                    app_prefixes.insert(seg.position as u64, data[..prefix_len].to_vec());
+                }
+
+                let bm = BoxMap::new(vec![name.to_string()], seg.position as u64, 0);
 
                 box_maps.push(bm);
             }
             jfifdump::SegmentKind::App0Jfif(_) => {
-                let bm = BoxMap {
-                    names: vec!["APP0".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position as u64,
-                    range_len: 0,
-                };
+                let bm = BoxMap::new(vec!["APP0".to_string()], seg.position as u64, 0);
 
                 box_maps.push(bm);
             }
             jfifdump::SegmentKind::Dqt(_) => {
-                let bm = BoxMap {
-                    names: vec!["DQT".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position as u64,
-                    range_len: 0,
-                };
+                let bm = BoxMap::new(vec!["DQT".to_string()], seg.position as u64, 0);
 
                 box_maps.push(bm);
             }
             jfifdump::SegmentKind::Dht(_) => {
-                let bm = BoxMap {
-                    names: vec!["DHT".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position as u64,
-                    range_len: 0,
-                };
+                let bm = BoxMap::new(vec!["DHT".to_string()], seg.position as u64, 0);
 
                 box_maps.push(bm);
             }
             jfifdump::SegmentKind::Dac(_) => {
-                let bm = BoxMap {
-                    names: vec!["DAC".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position as u64,
-                    range_len: 0,
-                };
+                let bm = BoxMap::new(vec!["DAC".to_string()], seg.position as u64, 0);
 
                 box_maps.push(bm);
             }
@@ -1031,67 +926,27 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     .get(&f.sof)
                     .ok_or(Error::InvalidAsset("Unknown segment marker".to_owned()))?;
 
-                let bm = BoxMap {
-                    names: vec![name.to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position as u64,
-                    range_len: 0,
-                };
+                let bm = BoxMap::new(vec![name.to_string()], seg.position as u64, 0);
 
                 box_maps.push(bm);
             }
             jfifdump::SegmentKind::Scan(_s) => {
-                let bm = BoxMap {
-                    names: vec!["SOS".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position as u64,
-                    range_len: 0,
-                };
+                let bm = BoxMap::new(vec!["SOS".to_string()], seg.position as u64, 0);
 
                 box_maps.push(bm);
             }
             jfifdump::SegmentKind::Dri(_) => {
-                let bm = BoxMap {
-                    names: vec!["DRI".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position as u64,
-                    range_len: 0,
-                };
+                let bm = BoxMap::new(vec!["DRI".to_string()], seg.position as u64, 0);
 
                 box_maps.push(bm);
             }
             jfifdump::SegmentKind::Rst(r) => {
-                let bm = BoxMap {
-                    names: vec![format!("RST{}", r.nr)],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position as u64,
-                    range_len: 0,
-                };
+                let bm = BoxMap::new(vec![format!("RST{}", r.nr)], seg.position as u64, 0);
 
                 box_maps.push(bm);
             }
             jfifdump::SegmentKind::Comment(_) => {
-                let bm = BoxMap {
-                    names: vec!["COM".to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position as u64,
-                    range_len: 0,
-                };
+                let bm = BoxMap::new(vec!["COM".to_string()], seg.position as u64, 0);
 
                 box_maps.push(bm);
             }
@@ -1100,31 +955,63 @@ fn make_box_maps(input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
                     .get(&marker)
                     .ok_or(Error::InvalidAsset("Unknown segment marker".to_owned()))?;
 
-                let bm = BoxMap {
-                    names: vec![name.to_string()],
-                    alg: None,
-                    hash: ByteBuf::from(Vec::new()),
-                    excluded: None,
-                    pad: ByteBuf::from(Vec::new()),
-                    range_start: seg.position as u64,
-                    range_len: 0,
-                };
+                let bm = BoxMap::new(vec![name.to_string()], seg.position as u64, 0);
 
                 box_maps.push(bm);
             }
         }
     }
 
-    Ok(box_maps)
+    Ok((box_maps, app_prefixes))
 }
 
 impl AssetBoxHash for JpegIO {
-    fn get_box_map(&self, input_stream: &mut dyn CAIRead) -> Result<Vec<BoxMap>> {
-        let mut box_maps = make_box_maps(input_stream)?;
+    fn get_box_map(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<BoxMap>> {
+        let (mut box_maps, app_prefixes) = make_box_maps(input_stream)?;
+
+        // If no C2PA APP11 segment exists in the source, synthesize a placeholder
+        // entry at the standard insertion point (immediately after the 2-byte SOI
+        // marker at offset 0).  This is needed on the signing path so that the box
+        // list covers the full file layout after embedding: verification re-derives
+        // byte positions from the current (embedded) file, and the C2PA entry must
+        // be present so the name-matching loop in `verify_stream_hash` can skip it.
+        // When a real C2PA segment is already present (e.g. during verification or
+        // re-signing) this block is skipped and the real entry is used as-is.
+        let has_c2pa = box_maps
+            .iter()
+            .any(|bm| bm.names.first().is_some_and(|n| n == C2PA_BOXHASH));
+
+        if !has_c2pa {
+            let mut c2pa_box = BoxMap::new(vec![C2PA_BOXHASH.to_string()], 0, 0).excluded();
+            // SOI is always first; insert the C2PA box right after it or after APP0 if it exists.
+            let app0_index = box_maps
+                .iter()
+                .position(|bm| bm.names.first().is_some_and(|n| n == "APP0"));
+            match app0_index {
+                Some(i) => {
+                    let app0_box = &box_maps[i];
+                    input_stream.seek(std::io::SeekFrom::Start(app0_box.range_start))?;
+                    let size = get_seg_size(input_stream)?;
+
+                    c2pa_box.range_start = app0_box.range_start + size as u64;
+                    box_maps.insert(i + 1, c2pa_box)
+                }
+                None if box_maps.len() > 1 => {
+                    let box0 = &box_maps[0];
+                    input_stream.seek(std::io::SeekFrom::Start(box0.range_start))?;
+                    let size = get_seg_size(input_stream)?;
+
+                    c2pa_box.range_start = box0.range_start + size as u64;
+                    box_maps.insert(1, c2pa_box)
+                }
+                None => return Err(Error::InvalidAsset("JPEG file has no segments".to_string())),
+            };
+        }
 
         for bm in box_maps.iter_mut() {
             if let Some(name) = bm.names.first() {
                 if name == C2PA_BOXHASH {
+                    bm.allowed_exclusions = jpeg_c2pa_allowed_exclusions(bm.range_len);
                     continue;
                 }
             }
@@ -1144,6 +1031,22 @@ impl AssetBoxHash for JpegIO {
             };
 
             bm.range_len = size as u64;
+
+            match bm.names.first().map(String::as_str) {
+                Some("APP1") | Some("APP13") => {
+                    let name = bm.names[0].clone();
+                    if let Some(prefix) = app_prefixes.get(&bm.range_start) {
+                        if app_segment_is_recognized_metadata(&name, prefix) {
+                            bm.allowed_exclusions = jpeg_metadata_allowed_exclusions(bm.range_len);
+                        }
+                    }
+                }
+                // COM is free-form text with no defined signature to check.
+                Some("COM") => {
+                    bm.allowed_exclusions = jpeg_metadata_allowed_exclusions(bm.range_len);
+                }
+                _ => {}
+            }
         }
 
         Ok(box_maps)
@@ -1152,13 +1055,12 @@ impl AssetBoxHash for JpegIO {
 
 impl ComposedManifestRef for JpegIO {
     fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>> {
-        let jumbf_len = manifest_data.len();
-        let num_segments = (jumbf_len / MAX_JPEG_MARKER_SIZE) + 1;
         let mut seg_chucks = manifest_data.chunks(MAX_JPEG_MARKER_SIZE);
+        let num_segments = seg_chucks.len(); // recalculate based on actual chunks
 
         let mut segments = Vec::new();
 
-        for seg in 1..num_segments + 1 {
+        for seg in 0..num_segments {
             /*
                 If the size of the box payload is less than 2^32-8 bytes,
                 then all fields except the XLBox field, that is: Le, CI, En, Z, LBox and TBox,
@@ -1173,14 +1075,14 @@ impl ComposedManifestRef for JpegIO {
             // Z: Packet sequence number - 0x00000001...
             let ci = vec![0x4a, 0x50];
             let en = vec![0x02, 0x11];
-            let z: u32 = u32::try_from(seg)
+            let z: u32 = u32::try_from(seg + 1)
                 .map_err(|_| Error::InvalidAsset("Too many JUMBF segments".to_string()))?; //seg.to_be_bytes();
 
             let mut seg_data = Vec::new();
             seg_data.extend(ci);
             seg_data.extend(en);
             seg_data.extend(z.to_be_bytes());
-            if seg > 1 {
+            if seg > 0 {
                 // the LBox and TBox are already in the JUMBF
                 // but we need to duplicate them in all other segments
                 let lbox_tbox = manifest_data
@@ -1188,13 +1090,10 @@ impl ComposedManifestRef for JpegIO {
                     .ok_or(Error::InvalidAsset("Manifest data too short".to_string()))?;
                 seg_data.extend(lbox_tbox);
             }
-            if seg_chucks.len() > 0 {
-                // make sure we have some...
-                if let Some(next_seg) = seg_chucks.next() {
-                    seg_data.extend(next_seg);
-                }
-            } else {
-                seg_data.extend(manifest_data);
+
+            // make sure we have some...
+            if let Some(next_seg) = seg_chucks.next() {
+                seg_data.extend(next_seg);
             }
 
             let seg_bytes = Bytes::from(seg_data);
@@ -1222,12 +1121,6 @@ impl ComposedManifestRef for JpegIO {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum JpegError {
-    #[error("invalid file signature: {reason}")]
-    InvalidFileSignature { reason: String },
-}
-
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::unwrap_used)]
@@ -1239,7 +1132,10 @@ pub mod tests {
     use wasm_bindgen_test::*;
 
     use super::*;
-    use crate::utils::io_utils::tempdirectory;
+    use crate::{
+        assertions::ExclusionKind,
+        utils::io_utils::{safe_vec, tempdirectory},
+    };
 
     #[test]
     fn test_extract_extensions_xmp() {
@@ -1290,6 +1186,54 @@ pub mod tests {
     }
 
     #[test]
+    fn test_jpeg_allowed_exclusions() {
+        // 20-byte segment: 2-byte marker + 2-byte length field + 16 bytes of data.
+        assert_eq!(
+            jpeg_metadata_allowed_exclusions(20),
+            vec![AllowedExclusion {
+                start: 4,
+                length: 16,
+                kind: ExclusionKind::AssetMetadata,
+            }]
+        );
+        assert_eq!(
+            jpeg_c2pa_allowed_exclusions(20),
+            vec![AllowedExclusion {
+                start: 0,
+                length: 20,
+                kind: ExclusionKind::ManifestOrPadding,
+            }]
+        );
+    }
+
+    #[test]
+    fn test_app_segment_is_recognized_metadata() {
+        assert!(app_segment_is_recognized_metadata("APP1", b"Exif\0\0stuff"));
+        assert!(app_segment_is_recognized_metadata(
+            "APP1",
+            b"http://ns.adobe.com/xap/1.0/\0stuff"
+        ));
+        assert!(app_segment_is_recognized_metadata(
+            "APP13",
+            b"Photoshop 3.0\0stuff"
+        ));
+        // Same bytes under the wrong marker name aren't recognized - a
+        // signature only counts for the segment type it actually belongs to.
+        assert!(!app_segment_is_recognized_metadata(
+            "APP13",
+            b"Exif\0\0stuff"
+        ));
+        // JPEG's APPn markers are a generic "any application" convention -
+        // an APP1/APP13 segment whose payload doesn't match any recognized
+        // signature is not metadata, whatever it actually contains.
+        assert!(!app_segment_is_recognized_metadata(
+            "APP1",
+            b"some vendor's private data"
+        ));
+        assert!(!app_segment_is_recognized_metadata("COM", b"Exif\0\0stuff"));
+    }
+
+    #[test]
     fn test_remove_c2pa() {
         let source = crate::utils::test::fixture_path("CA.jpg");
 
@@ -1299,10 +1243,11 @@ pub mod tests {
         std::fs::copy(source, &output).unwrap();
         let jpeg_io = JpegIO {};
 
-        jpeg_io.remove_cai_store(&output).unwrap();
+        jpeg_io.remove_c2pa_store(&output).unwrap();
 
         // read back in asset, JumbfNotFound is expected since it was removed
-        match jpeg_io.read_cai_store(&output) {
+        let mut file_reader = std::fs::File::open(&output).unwrap();
+        match jpeg_io.read_c2pa(&mut file_reader) {
             Err(Error::JumbfNotFound) => (),
             _ => unreachable!(),
         }
@@ -1322,12 +1267,12 @@ pub mod tests {
         let mut output_stream = Cursor::new(output_bytes);
 
         jpg_writer
-            .remove_cai_store_from_stream(&mut source_stream, &mut output_stream)
+            .remove_c2pa(&mut source_stream, &mut output_stream)
             .unwrap();
 
         // read back in asset, JumbfNotFound is expected since it was removed
         let jpg_reader = jpeg_io.get_reader();
-        match jpg_reader.read_cai(&mut output_stream) {
+        match jpg_reader.read_c2pa(&mut output_stream) {
             Err(Error::JumbfNotFound) => (),
             _ => unreachable!(),
         }
@@ -1348,11 +1293,14 @@ pub mod tests {
         // write xmp
         let assetio_handler = handler.get_handler("jpg");
 
-        let remote_ref_handler = assetio_handler.remote_ref_writer_ref().unwrap();
+        let remote_ref_handler = assetio_handler.remote_manifest_url_ref().unwrap();
 
+        let mut input_stream = std::fs::File::open(&output).unwrap();
+        let mut output_stream = Cursor::new(Vec::new());
         remote_ref_handler
-            .embed_reference(&output, RemoteRefEmbedType::Xmp(test_msg.to_string()))
+            .write_remote_manifest_url(&mut input_stream, &mut output_stream, test_msg)
             .unwrap();
+        std::fs::write(&output, output_stream.into_inner()).unwrap();
 
         // read back in XMP
         let mut file_reader = std::fs::File::open(&output).unwrap();
@@ -1373,16 +1321,12 @@ pub mod tests {
 
         let assetio_handler = handler.get_handler("jpg");
 
-        let remote_ref_handler = assetio_handler.remote_ref_writer_ref().unwrap();
+        let remote_ref_handler = assetio_handler.remote_manifest_url_ref().unwrap();
 
         let mut source_stream = Cursor::new(source_bytes.to_vec());
         let mut output_stream = Cursor::new(Vec::new());
         remote_ref_handler
-            .embed_reference_to_stream(
-                &mut source_stream,
-                &mut output_stream,
-                RemoteRefEmbedType::Xmp(test_msg.to_string()),
-            )
+            .write_remote_manifest_url(&mut source_stream, &mut output_stream, test_msg)
             .unwrap();
 
         output_stream.set_position(0);
@@ -1406,13 +1350,11 @@ pub mod tests {
 
         let source = crate::utils::test::fixture_path("CA.jpg");
 
-        let ol = jpeg_io.get_object_locations(&source).unwrap();
+        let mut source_reader = std::fs::File::open(&source).unwrap();
+        let ol = jpeg_io.get_object_locations(&mut source_reader).unwrap();
 
-        let cai_loc = ol
-            .iter()
-            .find(|o| o.htype == HashBlockObjectType::Cai)
-            .unwrap();
-        let curr_manifest = jpeg_io.read_cai_store(&source).unwrap();
+        let cai_loc = ol.iter().find(|o| o.htype == ObjectType::C2pa).unwrap();
+        let curr_manifest = jpeg_io.read_c2pa(&mut source_reader).unwrap();
 
         let temp_dir = tempdirectory().unwrap();
         let output = crate::utils::test::temp_dir_path(&temp_dir, "CA_test.jpg");
@@ -1420,7 +1362,7 @@ pub mod tests {
         std::fs::copy(source, &output).unwrap();
 
         // remove existing
-        jpeg_io.remove_cai_store(&output).unwrap();
+        jpeg_io.remove_c2pa_store(&output).unwrap();
 
         // generate new manifest data
         let em = jpeg_io
@@ -1433,7 +1375,7 @@ pub mod tests {
         let outbuf = Vec::new();
         let mut out_stream = Cursor::new(outbuf);
 
-        let mut before = vec![0u8; cai_loc.offset];
+        let mut before = vec![0u8; usize::try_from(cai_loc.offset).unwrap()];
         let mut in_file = std::fs::File::open(&output).unwrap();
 
         // write before
@@ -1450,7 +1392,7 @@ pub mod tests {
 
         // read manifest back in from new in-memory JPEG
         out_stream.rewind().unwrap();
-        let restored_manifest = jpeg_io.read_cai(&mut out_stream).unwrap();
+        let restored_manifest = jpeg_io.read_c2pa(&mut out_stream).unwrap();
 
         assert_eq!(&curr_manifest, &restored_manifest);
     }
@@ -1465,7 +1407,7 @@ pub mod tests {
 
         let jpeg_io = JpegIO {};
 
-        let result = jpeg_io.get_object_locations_from_stream(&mut stream);
+        let result = jpeg_io.get_object_locations(&mut stream);
         assert!(matches!(result, Err(Error::InvalidAsset(_))));
     }
 
@@ -1511,7 +1453,7 @@ pub mod tests {
 
         let jpeg_io = JpegIO {};
 
-        let result = jpeg_io.get_object_locations_from_stream(&mut stream);
+        let result = jpeg_io.get_object_locations(&mut stream);
         assert!(matches!(result, Err(Error::InvalidAsset(_))));
     }
 
@@ -1541,6 +1483,100 @@ pub mod tests {
 
         let jpeg_io = JpegIO {};
 
-        let _ = jpeg_io.get_object_locations_from_stream(&mut stream);
+        let _ = jpeg_io.get_object_locations(&mut stream);
+    }
+
+    #[test]
+    fn test_crash_jpeg_segments_equal_chunk_multiple() {
+        let some_data = safe_vec(MAX_JPEG_MARKER_SIZE as u64 * 3, Some(1u8)).unwrap();
+        let source = crate::utils::test::fixture_path("CA.jpg");
+        let mut source_stream = std::fs::File::open(source).unwrap();
+
+        let jpeg_io = JpegIO {};
+        let output = Vec::new();
+        let mut output_stream = Cursor::new(output);
+
+        let _ = jpeg_io.write_c2pa(&mut source_stream, &mut output_stream, &some_data);
+    }
+
+    // A foreign segment placed between two CAI APP11 segments breaks contiguity,
+    // which would otherwise let the manifest-store exclusion enclose non-manifest
+    // (unhashed) bytes. get_object_locations must reject it (C2PA 15.12.1).
+    #[test]
+    fn noncontiguous_cai_segments_rejected() {
+        let jpeg_io = JpegIO {};
+        let source = crate::utils::test::fixture_path("CA.jpg");
+        let mut buf = Vec::new();
+        std::fs::File::open(&source)
+            .unwrap()
+            .read_to_end(&mut buf)
+            .unwrap();
+
+        let mut jpeg = Jpeg::from_bytes(buf.clone().into()).unwrap();
+        let cai_segs = get_cai_segments(&jpeg).unwrap();
+        // CA.jpg's manifest spans multiple contiguous CAI APP11 segments.
+        assert!(cai_segs.len() >= 2);
+
+        // Positive: the untampered, contiguous manifest resolves normally.
+        let mut base_stream = Cursor::new(buf);
+        let base = jpeg_io.get_object_locations(&mut base_stream).unwrap();
+        assert!(base.iter().any(|o| o.htype == ObjectType::C2pa));
+
+        // Insert a foreign APP11 segment (different EN, non-c2pa body) between the
+        // first and second CAI segment, breaking contiguity.
+        let mut foreign = vec![0u8; 40];
+        foreign[2] = 0xab;
+        foreign[3] = 0xcd;
+        let foreign_seg = JpegSegment::new_with_contents(markers::APP11, Bytes::from(foreign));
+        jpeg.segments_mut().insert(cai_segs[1], foreign_seg);
+
+        let mut out = Cursor::new(Vec::new());
+        jpeg.encoder().write_to(&mut out).unwrap();
+        out.rewind().unwrap();
+
+        assert!(matches!(
+            jpeg_io.get_object_locations(&mut out),
+            Err(Error::InvalidAsset(_))
+        ));
+    }
+
+    // End-to-end: a signed update-manifest asset with a non-contiguous CAI
+    // injection must not validate as Valid/Trusted through the Reader.
+    #[test]
+    fn noncontiguous_cai_injection_rejected_by_reader() {
+        use crate::{Context, Reader, ValidationState};
+
+        let mut buf = Vec::new();
+        std::fs::File::open(crate::utils::test::fixture_path("update_manifest.jpg"))
+            .unwrap()
+            .read_to_end(&mut buf)
+            .unwrap();
+
+        // Baseline: the untampered update-manifest asset is not Invalid.
+        let base = Reader::from_context(Context::new())
+            .with_stream("image/jpeg", Cursor::new(buf.clone()))
+            .unwrap();
+        assert_ne!(base.validation_state(), ValidationState::Invalid);
+
+        // Inject [foreign APP11, CAI copy] after the single CAI segment so the
+        // manifest still reads from the first segment but the CAI segments are
+        // no longer contiguous.
+        let mut jpeg = Jpeg::from_bytes(buf.into()).unwrap();
+        let cai_idx = get_cai_segments(&jpeg).unwrap()[0];
+        let cai_copy = jpeg.segments()[cai_idx].clone();
+        let mut foreign = vec![0u8; 40];
+        foreign[2] = 0xab;
+        foreign[3] = 0xcd;
+        let foreign_seg = JpegSegment::new_with_contents(markers::APP11, Bytes::from(foreign));
+        jpeg.segments_mut().insert(cai_idx + 1, cai_copy);
+        jpeg.segments_mut().insert(cai_idx + 1, foreign_seg);
+
+        let mut out = Cursor::new(Vec::new());
+        jpeg.encoder().write_to(&mut out).unwrap();
+
+        let tampered = Reader::from_context(Context::new())
+            .with_stream("image/jpeg", out)
+            .unwrap();
+        assert_eq!(tampered.validation_state(), ValidationState::Invalid);
     }
 }

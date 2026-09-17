@@ -15,18 +15,24 @@
 
 use thiserror::Error;
 
-#[cfg(feature = "pdf")]
-use crate::asset_handlers::pdf_io::PdfError;
 use crate::{
-    asset_handlers::{
-        bmff_io::BmffError, gif_io::GifError, jpeg_io::JpegError, mp3_io::Mp3Error,
-        png_io::PngError, riff_io::RiffError, svg_io::SvgError, tiff_io::TiffError,
-    },
-    crypto::{cose::CoseError, raw_signature::RawSignerError, time_stamp::TimeStampError},
+    crypto::{cose::CoseError, time_stamp::TimeStampError},
     http::HttpResolverError,
+    ValidationResults,
 };
 
 /// `Error` enumerates errors returned by most C2PA toolkit operations.
+///
+/// # Stability
+///
+/// Prior to the 1.0 release of this SDK, this type is expected to undergo
+/// non-trivial refactoring: variants may be added, removed, renamed, or have
+/// their payloads reshaped between minor releases. The project's
+/// [deprecation policy](https://github.com/contentauth/c2pa-rs/blob/main/docs/deprecation-policy.md)
+/// is followed on a best-effort basis pre-1.0, and `Error` in particular is
+/// likely to see breaking changes ahead of 1.0 as the surface area is pared
+/// down. Downstream code matching on specific variants should expect churn
+/// until 1.0.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum Error {
@@ -35,16 +41,12 @@ pub enum Error {
     #[error("claim missing: label = {label}")]
     ClaimMissing { label: String },
 
-    /// An assertion has an unsupported version
-    #[error("Unsupported Assertion version")]
-    AssertionUnsupportedVersion,
-
     /// An assertion could not be found at the expected URL.
     #[error("assertion missing: url = {url}")]
     AssertionMissing { url: String },
 
     /// The attempt to serialize the assertion (typically to JSON or CBOR) failed.
-    #[error("unable to encode assertion data")]
+    #[error("unable to encode assertion data: {0}")]
     AssertionEncoding(String),
 
     #[error(transparent)]
@@ -62,8 +64,9 @@ pub enum Error {
     #[error("bad parameter: {0}")]
     BadParam(String),
 
-    #[error("required feature missing")]
-    MissingFeature(String),
+    /// The operation was cancelled by a progress callback or cancellation token.
+    #[error("operation cancelled")]
+    OperationCancelled,
 
     #[error("validation rule was violated: {0}")]
     ValidationRule(String),
@@ -75,21 +78,17 @@ pub enum Error {
     #[error("claim could not be converted to CBOR")]
     ClaimEncoding,
 
-    /// The attempt to deserialize the claim from CBOR failed.
-    #[error("claim could not be converted from CBOR")]
+    /// The claim (or one of its assertions) failed to decode or is structurally
+    /// invalid. The string carries the assertion URI or a description of what
+    /// was wrong.
+    #[error("claim could not be converted from CBOR: {0}")]
     ClaimDecoding(String),
-
-    #[error("claim already signed, no further changes allowed")]
-    ClaimAlreadySigned,
 
     #[error("attempt to add new claim without signing last claim")]
     ClaimUnsigned,
 
     #[error("missing signature box link")]
     ClaimMissingSignatureBox,
-
-    #[error("identity required required with copyright assertion")]
-    ClaimMissingIdentity,
 
     #[error("incompatible claim version")]
     ClaimVersion,
@@ -115,23 +114,12 @@ pub enum Error {
     #[error("more than one manifest store detected")]
     TooManyManifestStores,
 
-    #[error("manifest is not refernced by any ingredient")]
-    UnreferencedManifest,
-
-    /// The COSE Sign1 structure can not be parsed.
-    #[error("COSE Sign1 structure can not be parsed: {coset_error}")]
-    InvalidCoseSignature {
-        coset_error: coset::CoseError, /* NOTE: We can not use #[transparent] here because
-                                        * coset::CoseError does not implement std::Error::error
-                                        * and can't because coset is nostd. */
-    },
+    #[error("assertion limit exceeded: maximum allowed is {max}")]
+    TooManyAssertions { max: usize },
 
     /// The COSE signature uses an algorithm that is not supported by this crate.
     #[error("COSE signature algorithm is not supported")]
     CoseSignatureAlgorithmNotSupported,
-
-    #[error("COSE could not find verification key")]
-    CoseMissingKey,
 
     /// The COSE signature did not contain a signing certificate.
     #[error("could not find signing certificate chain in COSE signature")]
@@ -146,62 +134,15 @@ pub enum Error {
     #[error("COSE verifier failure")]
     CoseVerifier,
 
-    #[error("COSE certificate has expired")]
-    CoseCertExpiration,
-
-    #[error("COSE certificate has been revoked")]
-    CoseCertRevoked,
-
-    #[error("COSE certificate not trusted")]
-    CoseCertUntrusted,
-
-    /// Unable to parse the time stamp from this signature.
-    #[error("COSE time stamp could not be parsed")]
-    CoseInvalidTimeStamp,
-
-    #[error("COSE time stamp had expired cert")]
-    CoseTimeStampValidity,
-
-    /// The time stamp in the signature did not match the signed data.
-    #[error("COSE time stamp does not match data")]
-    CoseTimeStampMismatch,
-
     /// Unable to generate a trusted time stamp.
     #[error("could not generate a trusted time stamp")]
     CoseTimeStampGeneration,
-
-    #[error("COSE TimeStamp Authority failure")]
-    CoseTimeStampAuthority,
 
     #[error("COSE Signature too big for JUMBF box")]
     CoseSigboxTooSmall,
 
     #[error("COSE Signer does not contain signing certificate")]
     CoseNoCerts,
-
-    #[error("WASM verifier error")]
-    WasmVerifier,
-
-    #[error("WASM RSA-PSS key import error: {0}")]
-    WasmRsaKeyImport(String),
-
-    #[error("WASM RSA-PSS verification error")]
-    WasmRsaVerification,
-
-    #[error("WASM crypto key error")]
-    WasmKey,
-
-    #[error("WASM not called from window or worker global scope")]
-    WasmInvalidContext,
-
-    #[error("WASM could not load crypto library")]
-    WasmNoCrypto,
-
-    #[error("remote signers are not supported for WASM")]
-    WasmNoRemoteSigner,
-
-    #[error("feature unsupported on Wasm")]
-    WasmFeatureUnsupported,
 
     /// Unable to generate valid JUMBF for a claim.
     #[error("could not create valid JUMBF for claim")]
@@ -222,14 +163,8 @@ pub enum Error {
     #[error("must fetch remote manifests from url {0}")]
     RemoteManifestUrl(String),
 
-    #[error("failed to fetch the remote settings")]
-    FailedToFetchSettings,
-
     #[error("failed to remotely sign data")]
     FailedToRemoteSign,
-
-    #[error("stopped because of logged error")]
-    LogStop,
 
     #[error("not found")]
     NotFound,
@@ -352,17 +287,14 @@ pub enum Error {
     #[error("insufficient memory space for operation")]
     InsufficientMemory,
 
-    #[error("parameters out of range")]
-    OutOfRange,
-
     #[error(transparent)]
     TimeStampError(#[from] crate::crypto::time_stamp::TimeStampError),
 
     #[error(transparent)]
-    RawSignatureValidationError(#[from] crate::crypto::raw_signature::RawSignatureValidationError),
+    RawSignatureValidationError(#[from] c2pa_raw_crypto::RawSignatureValidationError),
 
     #[error(transparent)]
-    RawSignerError(#[from] crate::crypto::raw_signature::RawSignerError),
+    RawSignerError(#[from] c2pa_raw_crypto::RawSignerError),
 
     #[error(transparent)]
     CertificateProfileError(#[from] crate::crypto::cose::CertificateProfileError),
@@ -383,33 +315,8 @@ pub enum Error {
     #[error("C2PA Validation Error: {0}")]
     C2PAValidation(String),
 
-    #[error("error parsing BMFF: {0}")]
-    BmffError(#[from] BmffError),
-
-    #[error("error parsing GIF: {0}")]
-    GifError(#[from] GifError),
-
-    #[error("error parsing JPEG: {0}")]
-    JpegError(#[from] JpegError),
-
-    #[error("error parsing MP3: {0}")]
-    Mp3Error(#[from] Mp3Error),
-
-    #[cfg(feature = "pdf")]
-    #[error("error parsing PDF: {0}")]
-    PdfError(#[from] PdfError),
-
-    #[error("error parsing PNG: {0}")]
-    PngError(#[from] PngError),
-
-    #[error("error parsing RIFF: {0}")]
-    RiffError(#[from] RiffError),
-
-    #[error("error parsing SVG: {0}")]
-    SvgError(#[from] SvgError),
-
-    #[error("error parsing TIFF: {0}")]
-    TiffError(#[from] TiffError),
+    #[error("manifest failed validation with: {}", .0.failure_summary())]
+    InvalidManifest(Box<ValidationResults>),
 }
 
 /// A specialized `Result` type for C2PA toolkit operations.
@@ -460,13 +367,6 @@ impl From<Error> for CoseError {
             Error::RawSignatureValidationError(e) => Self::RawSignatureValidationError(e),
             _ => Self::InternalError(err.to_string()),
         }
-    }
-}
-
-impl From<Error> for RawSignerError {
-    fn from(err: Error) -> Self {
-        // See if better mappings exist, but I doubt it.
-        Self::InternalError(err.to_string())
     }
 }
 

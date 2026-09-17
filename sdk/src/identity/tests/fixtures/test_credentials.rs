@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use crate::crypto::raw_signature::SigningAlg;
+use crate::SigningAlg;
 
 pub(crate) fn cert_chain_and_private_key_for_alg(alg: SigningAlg) -> (Vec<u8>, Vec<u8>) {
     match alg {
@@ -49,5 +49,7 @@ pub(crate) fn cert_chain_and_private_key_for_alg(alg: SigningAlg) -> (Vec<u8>, V
             include_bytes!("../../../../tests/fixtures/certs/ed25519.pub").to_vec(),
             include_bytes!("../../../../tests/fixtures/certs/ed25519.pem").to_vec(),
         ),
+
+        _ => panic!("unsupported test signing algorithm: {alg}"),
     }
 }

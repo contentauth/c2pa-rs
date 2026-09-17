@@ -47,7 +47,7 @@ fn main() -> Result<()> {
     // set RUST_LOG=debug to get detailed debug logging
     env_logger::init();
 
-    make_test_images::MakeTestImages::new(config).run()?;
+    make_test_images::MakeTestImages::new(config)?.run()?;
 
     Ok(())
 }

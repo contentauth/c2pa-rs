@@ -62,6 +62,11 @@ pub const SOFT_BINDING: &str = "c2pa.soft-binding";
 /// See [Cloud data - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_cloud_data).
 pub const CLOUD_DATA: &str = "c2pa.cloud-data";
 
+/// Label for an external reference assertion.
+///
+/// See [External reference - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_external_reference).
+pub const EXTERNAL_REFERENCE: &str = "c2pa.external-reference";
+
 /// Label prefix for a thumbnail assertion.
 ///
 /// See [Thumbnail - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_thumbnail).
@@ -162,14 +167,26 @@ pub const IPTC_PHOTO_METADATA: &str = "stds.iptc.photo-metadata";
 ///
 /// See [Use of Schema.org - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_use_of_schema_org).
 #[doc(hidden)]
+#[deprecated(
+    since = "0.91.0",
+    note = "This attribute is deprecated from C2PA spec version 2.0. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+)]
 pub const SCHEMA_ORG: &str = "schema.org";
 
-/// Label prefix for a claim review assertion.
-///
-/// See [Claim review - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_claim_review).
+pub(crate) const SCHEMA_ORG_INTERNAL: &str = "schema.org";
+
+/// Label prefix for a Claim Review assertion. Deprecated since C2PA 2.0 spec.
+#[deprecated(
+    since = "0.91.0",
+    note = "This attribute is deprecated from C2PA spec version 2.0. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+)]
 pub const CLAIM_REVIEW: &str = "stds.schema-org.ClaimReview";
 
-/// Label prefix for a creative work assertion.  Deprecated.
+/// Label prefix for a Creative Work assertion. Deprecated in C2PA 2.0 spec.
+#[deprecated(
+    since = "0.91.0",
+    note = "This attribute is deprecated from C2PA spec version 2.0. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+)]
 pub const CREATIVE_WORK: &str = "stds.schema-org.CreativeWork";
 
 /// Label prefix for a timestamp assertion.
@@ -198,6 +215,11 @@ pub const ASSET_REFERENCE: &str = "c2pa.asset-ref";
 /// See [Multi asset hash - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_multi_asset_hash).
 pub const PART: &str = ".part";
 
+/// Label for multi asset hashes
+///
+/// See [Multi asset hash - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_multi_asset_hash).
+pub const MULTI_ASSET_HASH: &str = "c2pa.hash.multi-asset";
+
 /// Label prefix for a C2PA metadata assertion.
 ///
 /// A [metadata assertion](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_metadata)
@@ -212,12 +234,39 @@ pub const METADATA: &str = "c2pa.metadata";
 /// and may contain metadata from any documented schema.
 pub const CAWG_METADATA: &str = "cawg.metadata";
 
+/// Label for working-store archive metadata (JSON-LD), including `archive:type`.
+///
+/// Used by [`Builder::to_archive`](crate::Builder::to_archive),
+/// [`Builder::write_ingredient_archive`](crate::Builder::write_ingredient_archive), and related APIs.
+pub const ARCHIVE_METADATA: &str = "org.contentauth.archive.metadata";
+
+/// `archive:type` value for a full manifest [`Builder`](crate::Builder) working-store archive (JUMBF).
+pub const ARCHIVE_TYPE_BUILDER: &str = "builder";
+
+/// `archive:type` value for a single-ingredient working-store archive from [`Builder::write_ingredient_archive`](crate::Builder::write_ingredient_archive).
+pub const ARCHIVE_TYPE_INGREDIENT: &str = "ingredient";
+
 /// Array of all hash labels because they have special treatment
 pub const HASH_LABELS: [&str; 4] = [DATA_HASH, BOX_HASH, BMFF_HASH, COLLECTION_HASH];
 
 /// Array of all non-redactable labels
 pub const NON_REDACTABLE_LABELS: [&str; 5] =
     [ACTIONS, DATA_HASH, BOX_HASH, BMFF_HASH, COLLECTION_HASH];
+
+/// Returns `true` if `label` names a hard binding assertion (`c2pa.hash.data`,
+/// any `c2pa.hash.bmff.*`, `c2pa.hash.boxes`, `c2pa.hash.collection.data`, or
+/// `c2pa.hash.multi-asset`).
+///
+/// `BMFF_HASH` is matched on its base label (version/instance suffix stripped)
+/// so it accepts `.v2`/`.v3` variants without accepting a fake like
+/// `c2pa.hash.bmfffake`; the others are compared exactly.
+pub(crate) fn is_hard_binding_label(label: &str) -> bool {
+    label == DATA_HASH
+        || label == BOX_HASH
+        || label == COLLECTION_HASH
+        || label == MULTI_ASSET_HASH
+        || base(label) == BMFF_HASH
+}
 
 /// Must have a label that ends in '.metadata' and is preceded by an entity-specific namespace.
 /// For example, a 'com.litware.metadata' assertion would be valid.
@@ -228,11 +277,6 @@ pub static METADATA_LABEL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
             .unwrap()
     }
 });
-
-/// Label prefix for multi-asset hash assertion.
-///
-/// See <https://spec.c2pa.org/specifications/specifications/2.2/specs/C2PA_Specification.html#_multi_asset_hash>
-pub const MULTI_ASSET_HASH: &str = "c2pa.hash.multi-asset";
 
 /// Parse a label into its components
 ///
@@ -271,8 +315,21 @@ pub fn parse_label(label: &str) -> (&str, usize, usize) {
     if let Some(last) = components.last() {
         if VERSION_RE.is_match(last) {
             if let Ok(version) = last[1..].parse::<usize>() {
-                let base_end = without_instance.len() - last.len() - 1;
-                return (&without_instance[..base_end], version, instance);
+                // A version suffix is only strippable when a base label exists before
+                // it, i.e. there is a '.' separator. That requires
+                // without_instance.len() > last.len() (at minimum one byte for the
+                // separator plus one byte for the base). When they are equal the
+                // entire string is the version token with no base (e.g. "v1"), so
+                // subtracting last.len() + 1 would underflow usize — panicking in
+                // debug builds and wrapping in release builds.
+                //
+                // When no base exists we fall through to the default return below,
+                // yielding (without_instance, 1, instance): the full string is
+                // treated as the label name and the version defaults to 1.
+                if without_instance.len() > last.len() {
+                    let base_end = without_instance.len() - last.len() - 1;
+                    return (&without_instance[..base_end], version, instance);
+                }
             }
         }
     }
@@ -368,7 +425,9 @@ pub fn instance(label: &str) -> usize {
 /// );
 /// ```
 pub fn add_thumbnail_format(label: &str, format: &str) -> String {
-    match format {
+    // mimetypes are case-insensitive (RFC 2045 section 5.1).
+    let format = format.to_lowercase();
+    match format.as_str() {
         "image/jpeg" | "jpeg" | "jpg" => format!("{label}.jpeg"),
         "image/png" | "png" => format!("{label}.png"),
         "image/svg+xml" | "svg" => format!("{label}.svg"),
@@ -379,6 +438,121 @@ pub fn add_thumbnail_format(label: &str, format: &str) -> String {
             } else {
                 format!("{label}/{format}")
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// MIME types are case-insensitive (RFC 2045 section 5.1),
+    /// every spelling should produces the same label.
+    #[test]
+    fn test_add_thumbnail_format_case_insensitive() {
+        // (label prefix, format, expected label)
+        let cases = [
+            (CLAIM_THUMBNAIL, "image/jpeg", JPEG_CLAIM_THUMBNAIL),
+            (CLAIM_THUMBNAIL, "IMAGE/JPEG", JPEG_CLAIM_THUMBNAIL),
+            (CLAIM_THUMBNAIL, "Image/Jpeg", JPEG_CLAIM_THUMBNAIL),
+            (CLAIM_THUMBNAIL, "JPG", JPEG_CLAIM_THUMBNAIL),
+            (INGREDIENT_THUMBNAIL, "image/png", PNG_INGREDIENT_THUMBNAIL),
+            (INGREDIENT_THUMBNAIL, "IMAGE/PNG", PNG_INGREDIENT_THUMBNAIL),
+            (CLAIM_THUMBNAIL, "IMAGE/SVG+XML", SVG_CLAIM_THUMBNAIL),
+        ];
+
+        for (label, format, expected) in cases {
+            assert_eq!(add_thumbnail_format(label, format), expected);
+        }
+    }
+
+    /// Regression tests for usize underflow in `parse_label` when the input
+    /// is a bare version token with no base label (e.g. "v1").
+    ///
+    /// Before the fix, `without_instance.len() - last.len() - 1` underflowed
+    /// when `without_instance == last` (no '.' separator exists), panicking in
+    /// debug builds (exit code 101) and wrapping to `usize::MAX` in release
+    /// builds.  The fix guards on `without_instance.len() > last.len()` and
+    /// falls through to the default return when no base exists.
+    #[test]
+    fn test_parse_label_bare_version_does_not_panic() {
+        // "v1": entire string is the version token; no base, no instance.
+        // Expected: the string is returned as-is (label name), version = 1 (default).
+        assert_eq!(parse_label("v1"), ("v1", 1, 0));
+
+        // "v2": same pattern with a different digit.
+        assert_eq!(parse_label("v2"), ("v2", 1, 0));
+
+        // "v999": large version number, still bare.
+        assert_eq!(parse_label("v999"), ("v999", 1, 0));
+
+        // "v1__2": bare version with an instance suffix.
+        // without_instance = "v1", instance = 2 — still no base label.
+        assert_eq!(parse_label("v1__2"), ("v1", 1, 2));
+    }
+
+    /// Verify that the normal versioned-label code path still works correctly
+    /// after the guard was added.
+    #[test]
+    fn test_parse_label_normal_cases_unaffected() {
+        // No version, no instance.
+        assert_eq!(parse_label("c2pa.ingredient"), ("c2pa.ingredient", 1, 0));
+
+        // Version suffix stripped correctly.
+        assert_eq!(parse_label("c2pa.ingredient.v3"), ("c2pa.ingredient", 3, 0));
+
+        // Instance suffix only.
+        assert_eq!(parse_label("c2pa.actions__2"), ("c2pa.actions", 1, 2));
+
+        // Both version and instance.
+        assert_eq!(
+            parse_label("c2pa.ingredient.v3__2"),
+            ("c2pa.ingredient", 3, 2)
+        );
+
+        // Upper-case 'V' is not matched by the regex — returned as-is.
+        assert_eq!(
+            parse_label("c2pa.ingredient.V2"),
+            ("c2pa.ingredient.V2", 1, 0)
+        );
+    }
+
+    /// Regression: only the real hard-binding assertion types (and BMFF's
+    /// versioned variants) count, not any label with a `c2pa.hash.` prefix.
+    /// A fake label like `c2pa.hash.fake` must be rejected - this used to be
+    /// accepted by a naive `starts_with("c2pa.hash.")` check in the CAWG
+    /// identity assertion's hard-binding-presence check.
+    #[test]
+    fn test_is_hard_binding_label() {
+        for label in [
+            DATA_HASH,
+            BOX_HASH,
+            COLLECTION_HASH,
+            MULTI_ASSET_HASH,
+            BMFF_HASH,
+            "c2pa.hash.bmff.v2",
+            "c2pa.hash.bmff.v3",
+        ] {
+            assert!(is_hard_binding_label(label), "expected {label} to match");
+        }
+
+        for label in [
+            "c2pa.hash.fake",
+            "c2pa.hash",
+            "c2pa.hash.",
+            "c2pa.hash.databoxes",
+            "c2pa.actions",
+            // BMFF must match on its base, not a bare prefix. A trailing
+            // segment is only stripped when it's a real version token
+            // (`.vN`), so these fakes stay distinct from the base.
+            "c2pa.hash.bmfffake",
+            "c2pa.hash.bmff.fake",
+            "c2pa.hash.bmff.vfake",
+        ] {
+            assert!(
+                !is_hard_binding_label(label),
+                "expected {label} to be rejected"
+            );
         }
     }
 }

@@ -25,7 +25,7 @@ use crate::{
     builder::BuilderIntent,
     cbor_types::DateT,
     resource_store::UriOrResource,
-    settings::SettingsValidate,
+    settings::{deserialize_case_insensitive, deserialize_case_insensitive_opt, SettingsValidate},
     ClaimGeneratorInfo, Error, ResourceRef, Result,
 };
 
@@ -93,7 +93,11 @@ pub struct ThumbnailSettings {
     /// input format.
     ///
     /// The default value is None.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "deserialize_case_insensitive_opt"
+    )]
     pub format: Option<ThumbnailFormat>,
     /// Whether or not to prefer a smaller sized media format for the thumbnail.
     ///
@@ -112,6 +116,7 @@ pub struct ThumbnailSettings {
     /// algorithms for various formats.
     ///
     /// The default value is [`ThumbnailQuality::Medium`].
+    #[serde(deserialize_with = "deserialize_case_insensitive")]
     pub quality: ThumbnailQuality,
 }
 
@@ -209,6 +214,7 @@ impl TryFrom<ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
                     ClaimGeneratorInfoOperatingSystem::Other(name) => name,
                 })
             },
+            spec_version: None,
             other: value
                 .other
                 .into_iter()
@@ -241,6 +247,7 @@ impl TryFrom<&ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
                     ClaimGeneratorInfoOperatingSystem::Other(name) => name.clone(),
                 })
             },
+            spec_version: None,
             other: value
                 .other
                 .iter()
@@ -388,6 +395,18 @@ pub struct ActionsSettings {
     /// field.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub all_actions_included: Option<bool>,
+    /// Whether to automatically set [Actions::all_actions_included][crate::assertions::Actions::all_actions_included]
+    /// to `true` when the manifest's sole recorded action is `c2pa.opened` — i.e. the asset was
+    /// opened only to record that action and immediately re-saved without any other changes,
+    /// as required by the
+    /// [C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_all_actions_included).
+    ///
+    /// Disabled by default: the builder can only see changes that were recorded as an
+    /// [`Action`], so enabling this is an assertion by the caller that every change made to
+    /// the asset in this workflow is in fact tracked as an action.
+    /// Takes priority over `all_actions_included` when it applies, but never overrides a value
+    /// the caller explicitly set on the actions assertion data itself.
+    pub auto_all_actions_included: bool,
     /// Templates to be added to the [Actions::templates][crate::assertions::Actions::templates] field.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) templates: Option<Vec<ActionTemplateSettings>>,
@@ -418,6 +437,7 @@ impl Default for ActionsSettings {
     fn default() -> Self {
         ActionsSettings {
             all_actions_included: None,
+            auto_all_actions_included: false,
             templates: None,
             actions: None,
             auto_created_action: AutoActionSettings {
@@ -454,7 +474,7 @@ impl SettingsValidate for ActionsSettings {
 pub enum TimeStampFetchScope {
     /// Fetch timestamps for only the parent manifest.
     Parent,
-    /// Fetch timestmaps for all manifests in the manifest store.
+    /// Fetch timestamps for all manifests in the manifest store.
     All,
 }
 
@@ -491,6 +511,7 @@ pub struct TimeStampSettings {
     /// Which manifests to fetch timestamps for.
     ///
     /// The default value is [`TimeStampFetchScope::All`].
+    #[serde(deserialize_with = "deserialize_case_insensitive")]
     pub fetch_scope: TimeStampFetchScope,
 }
 
@@ -512,10 +533,10 @@ pub struct BuilderSettings {
     /// The name of the vendor creating the content credential.
     pub vendor: Option<String>,
 
-    /// Claim generator info that is automatically added to the builder.
-    ///
-    /// Note that this information will prepend any claim generator info
-    /// provided explicitly to the builder.
+    /// When set, used as [`ClaimGeneratorInfo`] when
+    /// [`ManifestDefinition::claim_generator_info`](crate::builder::ManifestDefinition) is empty
+    /// (e.g. key omitted in JSON or an empty array). If `None` or when the definition lists at
+    /// least one generator, that path does not use this value.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub claim_generator_info: Option<ClaimGeneratorInfoSettings>,
     /// Various settings for configuring automatic thumbnail generation.
@@ -534,6 +555,7 @@ pub struct BuilderSettings {
     /// For more information, see [Certificate status assertion - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#certificate_status_assertion).
     ///
     /// [`CertificateStatus`]: crate::assertions::CertificateStatus
+    #[serde(default, deserialize_with = "deserialize_case_insensitive_opt")]
     pub(crate) certificate_status_fetch: Option<OcspFetchScope>,
     // TODO: this setting affects fetching and generation of the assertion; needs clarification
     /// Whether to only use [`CertificateStatus`] assertions to check certificate revocation status. If there
@@ -551,6 +573,7 @@ pub struct BuilderSettings {
     ///
     /// [`BuilderIntent`]: crate::BuilderIntent
     /// [`Builder`]: crate::Builder
+    #[serde(default, deserialize_with = "deserialize_case_insensitive_opt")]
     pub intent: Option<BuilderIntent>,
     /// Assertions with a base label included in this list will be automatically marked as a created assertion.
     /// Assertions not in this list will be automatically marked as gathered.
@@ -560,6 +583,22 @@ pub struct BuilderSettings {
     /// See more information on the difference between created vs gathered assertions in the spec here:
     /// [fields - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_fields)
     pub created_assertion_labels: Option<Vec<String>>,
+    /// When `true`, use [`BoxHash`] instead of [`crate::assertions::DataHash`] for formats
+    /// that support it (JPEG, PNG, GIF, etc.) when no explicit hard binding assertion has
+    /// been set.
+    ///
+    /// Formats that support `BoxHash` can embed the C2PA manifest as a new chunk/segment
+    /// without shifting existing byte offsets, so a placeholder is never required.
+    /// Setting this to `true` enables the direct workflow (`Builder::sign_embeddable`
+    /// Mode 2) for those formats and makes `Builder::needs_placeholder` return `false`.
+    ///
+    /// Defaults to `false` to preserve existing behaviour until `BoxHash` support is
+    /// more widely tested.  Set to `true` (or configure it per-[`Context`]) whenever
+    /// you are ready to prefer box-based hashing for supported formats.
+    ///
+    /// [`BoxHash`]: crate::assertions::BoxHash
+    /// [`Context`]: crate::Context
+    pub prefer_box_hash: bool,
     /// Whether to generate a C2PA archive (instead of zip) when writing the manifest builder.
     /// Now always defaults to true - the ability to disable it will be removed in the future.
     pub generate_c2pa_archive: Option<bool>,
@@ -567,6 +606,27 @@ pub struct BuilderSettings {
     ///
     /// [`TimeStamp`]: crate::assertions::TimeStamp
     pub auto_timestamp_assertion: TimeStampSettings,
+    /// Whether `/free` and `/skip` boxes are excluded from the BMFF/MP4 hard-binding hash.
+    ///
+    /// `/free` and `/skip` are reserved/padding space that apps commonly rewrite after
+    /// signing (e.g. to reclaim or repurpose it), so the C2PA spec permits excluding
+    /// them. Set to `false` to fold their content into the hash instead, so any later
+    /// edit to either box invalidates the hard binding like any other content change.
+    ///
+    /// The default value is `true`.
+    pub bmff_hash_exclude_free_and_skip_boxes: bool,
+    /// Whether to ignore errors encountered while loading or validating an [`Ingredient`]'s
+    /// manifest (e.g. invalid file format).
+    ///
+    /// When enabled, a hard error is reported as a `general.error` in the ingredient's
+    /// [`validation_results`] instead of being returned, so the [`Ingredient`] still loads
+    /// and callers can inspect what went wrong.
+    ///
+    /// The default value is false.
+    ///
+    /// [`Ingredient`]: crate::Ingredient
+    /// [`validation_results`]: crate::Ingredient::validation_results
+    pub ignore_ingredient_errors: bool,
 }
 
 impl Default for BuilderSettings {
@@ -580,8 +640,11 @@ impl Default for BuilderSettings {
             certificate_status_should_override: None,
             intent: None,
             created_assertion_labels: None,
+            prefer_box_hash: false,
             generate_c2pa_archive: Some(true),
             auto_timestamp_assertion: TimeStampSettings::default(),
+            bmff_hash_exclude_free_and_skip_boxes: true,
+            ignore_ingredient_errors: false,
         }
     }
 }
@@ -784,5 +847,32 @@ pub mod tests {
             Some(SoftwareAgent::ClaimGeneratorInfo(_))
         ));
         assert_eq!(action.reason, Some("Privacy concerns".to_string()));
+    }
+
+    // For backwards compatibility with the `config` crate.
+    #[test]
+    fn test_case_insensitive_enum_deserialization() {
+        use crate::settings::Settings;
+
+        let settings = Settings::new()
+            .with_json(r#"{"builder": {"thumbnail": {"format": "PNG", "quality": "HIGH"}, "intent": "EDIT"}}"#)
+            .unwrap();
+        assert_eq!(
+            settings.builder.thumbnail.format,
+            Some(ThumbnailFormat::Png)
+        );
+        assert_eq!(settings.builder.thumbnail.quality, ThumbnailQuality::High);
+        assert_eq!(settings.builder.intent, Some(BuilderIntent::Edit));
+
+        let settings = Settings::new()
+            .with_json(r#"{"builder": {"intent": {"create": "empty"}}}"#)
+            .unwrap();
+        assert_eq!(
+            settings.builder.intent,
+            Some(BuilderIntent::Create(DigitalSourceType::Empty))
+        );
+
+        let result = Settings::new().with_json(r#"{"builder": {"intent": {"Create": "empty"}}}"#);
+        assert!(result.is_err());
     }
 }

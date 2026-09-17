@@ -54,6 +54,9 @@ pub struct ValidationStatus {
 
     #[serde(skip)]
     ingredient_uri: Option<String>,
+
+    #[serde(skip)]
+    trust_list_uri: Option<String>,
 }
 
 fn default_log_kind() -> LogKind {
@@ -69,6 +72,7 @@ impl ValidationStatus {
             success: None,
             ingredient_uri: None,
             kind: LogKind::Success,
+            trust_list_uri: None,
         }
     }
 
@@ -102,6 +106,11 @@ impl ValidationStatus {
         self.ingredient_uri.as_deref()
     }
 
+    /// Returns the internal JUMBF reference to the trust list that was validated.
+    pub fn trust_list_uri(&self) -> Option<&str> {
+        self.trust_list_uri.as_deref()
+    }
+
     /// Sets the internal JUMBF reference to the entity was validated.
     pub fn set_url<S: Into<String>>(mut self, url: S) -> Self {
         self.url = Some(url.into());
@@ -126,6 +135,12 @@ impl ValidationStatus {
         self
     }
 
+    /// Sets the internal JUMBF reference to the trust list that was validated this item.
+    pub fn set_trust_list_uri<S: Into<String>>(mut self, uri: S) -> Self {
+        self.trust_list_uri = Some(uri.into());
+        self
+    }
+
     /// Returns `true` if this has a successful validation code.
     pub fn passed(&self) -> bool {
         self.kind != LogKind::Failure
@@ -142,7 +157,7 @@ impl ValidationStatus {
             "ClaimMissing" => CLAIM_MISSING,
             e if e.starts_with("AssertionMissing") => ASSERTION_MISSING,
             e if e.starts_with("AssertionDecoding") => ASSERTION_REQUIRED_MISSING,
-            e if e.starts_with("HashMismatch") => ASSERTION_DATAHASH_MATCH,
+            e if e.starts_with("HashMismatch") => ASSERTION_DATAHASH_MISMATCH,
             e if e.starts_with("RemoteManifestFetch") => MANIFEST_INACCESSIBLE,
             e if e.starts_with("PrereleaseError") => STATUS_PRERELEASE,
             _ => GENERAL_ERROR,
@@ -155,7 +170,7 @@ impl ValidationStatus {
             Error::ClaimMissing { .. } => CLAIM_MISSING,
             Error::AssertionMissing { .. } => ASSERTION_MISSING,
             Error::AssertionDecoding(_code) => ASSERTION_REQUIRED_MISSING, /* todo detect json/cbor errors */
-            Error::HashMismatch(_) => ASSERTION_DATAHASH_MATCH,
+            Error::HashMismatch(_) => ASSERTION_DATAHASH_MISMATCH,
             Error::RemoteManifestFetch(_) => MANIFEST_INACCESSIBLE,
             Error::PrereleaseError => STATUS_PRERELEASE,
             _ => GENERAL_ERROR,
@@ -179,9 +194,15 @@ impl ValidationStatus {
                     .set_url(item.label.to_string())
                     .set_kind(item.kind.clone())
                     .set_explanation(item.description.to_string());
+
                 if let Some(ingredient_uri) = &item.ingredient_uri {
                     vi = vi.set_ingredient_uri(ingredient_uri.to_string());
                 }
+
+                if let Some(trust_list_uri) = &item.trust_list_uri {
+                    vi = vi.set_trust_list_uri(trust_list_uri.to_string());
+                }
+
                 vi
             }),
             // If we don't have a validation_status, then make one from the err_val
@@ -215,3 +236,37 @@ impl PartialEq for ValidationStatus {
 // -- unofficial status code --
 
 pub(crate) const STATUS_PRERELEASE: &str = "com.adobe.prerelease";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hash_mismatch_error_maps_to_mismatch_code() {
+        // Error::HashMismatch must produce the failure code, not the success code.
+        assert_eq!(
+            ValidationStatus::code_from_error(&Error::HashMismatch("digest differs".to_string())),
+            ASSERTION_DATAHASH_MISMATCH,
+        );
+    }
+
+    #[test]
+    fn hash_mismatch_error_str_maps_to_mismatch_code() {
+        // The string-based path (used when mapping log items without a typed error) must
+        // also produce the failure code.
+        assert_eq!(
+            ValidationStatus::code_from_error_str("HashMismatch(digest differs)"),
+            ASSERTION_DATAHASH_MISMATCH,
+        );
+    }
+
+    #[test]
+    fn hash_mismatch_from_error_is_failure_status() {
+        let status = ValidationStatus::from_error(&Error::HashMismatch("bad hash".to_string()));
+        assert_eq!(status.code(), ASSERTION_DATAHASH_MISMATCH);
+        assert!(
+            !status.passed(),
+            "hash mismatch must not be a passing status"
+        );
+    }
+}

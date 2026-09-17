@@ -162,23 +162,23 @@ fn compare_json_values(
                 compare_json_values(&format!("{path}[{i}]"), val1, val2, issues);
             }
         }
-        (val1, val2) if val1 != val2 => {
-            if !(path.ends_with(".instance_id")
+        (val1, val2)
+            if val1 != val2
+                && !(path.ends_with(".instance_id")
                 || path.ends_with(".instanceId")
                 || path.ends_with(".identifier")
                 || path.ends_with(".time")
                 || path.contains(".hash")
                 || path.contains(".label")
                 || path.contains("claim_generator")  // changes with every version (todo: get more specific)
-                || val1.is_string() && val2.is_string() && val1.to_string().contains("urn:uuid:"))
-            {
-                if val2.is_null() {
-                    issues.push(format!("Missing {path}: {val1}"));
-                } else if val2.is_null() {
-                    issues.push(format!("Added {path}: {val2}"));
-                } else {
-                    issues.push(format!("Changed {path}: {val1} vs {val2}"));
-                }
+                || val1.is_string() && val2.is_string() && val1.to_string().contains("urn:uuid:")) =>
+        {
+            if val2.is_null() {
+                issues.push(format!("Missing {path}: {val1}"));
+            } else if val2.is_null() {
+                issues.push(format!("Added {path}: {val2}"));
+            } else {
+                issues.push(format!("Changed {path}: {val1} vs {val2}"));
             }
         }
         _ => (),

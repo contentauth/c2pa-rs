@@ -18,6 +18,7 @@ use serde::Serialize;
 
 use crate::{
     identity::{SignerPayload, ValidationError},
+    maybe_send_sync::MaybeSync,
     status_tracker::StatusTracker,
 };
 
@@ -29,7 +30,7 @@ use crate::{
 /// from the credential and signature.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-pub trait SignatureVerifier: Sync {
+pub trait SignatureVerifier: MaybeSync {
     /// The `Output` type provides credential-type specific information that is
     /// derived from the signature. Typically, this describes the named actor,
     /// but may also contain information about the time of signing or the
@@ -43,11 +44,27 @@ pub trait SignatureVerifier: Sync {
     /// [`ValidationError`]: crate::identity::ValidationError
     type Error: Debug;
 
-    /// Verify the signature, returning an instance of [`Output`] if the
-    /// signature is valid.
+    /// Verify the signature synchronously, returning an instance of [`Output`]
+    /// if the signature is valid.
+    ///
+    /// Implementations that require network I/O (e.g. `did:web` resolution)
+    /// must return an error from this method; use [`check_signature_async`]
+    /// instead for those cases.
     ///
     /// [`Output`]: Self::Output
-    async fn check_signature(
+    /// [`check_signature_async`]: Self::check_signature_async
+    fn check_signature(
+        &self,
+        signer_payload: &SignerPayload,
+        signature: &[u8],
+        status_tracker: &mut StatusTracker,
+    ) -> Result<Self::Output, ValidationError<Self::Error>>;
+
+    /// Verify the signature asynchronously, returning an instance of [`Output`]
+    /// if the signature is valid.
+    ///
+    /// [`Output`]: Self::Output
+    async fn check_signature_async(
         &self,
         signer_payload: &SignerPayload,
         signature: &[u8],

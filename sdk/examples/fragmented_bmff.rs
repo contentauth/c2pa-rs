@@ -22,9 +22,9 @@
 //! ```
 
 mod cawg {
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
-    use anyhow::{anyhow, bail, Context as AnyhowContext, Result};
+    use anyhow::Result;
     use c2pa::{Builder, Settings, Signer};
     use serde_json::json;
 
@@ -96,46 +96,12 @@ mod cawg {
         builder: &mut Builder,
         signer: &dyn Signer,
         init_pattern: &Path,
-        frag_pattern: &PathBuf,
+        frag_pattern: &Path,
         output_path: &Path,
     ) -> Result<()> {
-        // search folders for init segments
-        let ip = init_pattern
-            .to_str()
-            .ok_or(anyhow!("could not parse source pattern"))?;
-        let inits = glob::glob(ip).context("could not process glob pattern")?;
-        let mut count = 0;
-        for init in inits {
-            match init {
-                Ok(p) => {
-                    let mut fragments = Vec::new();
-                    let init_dir = p.parent().context("init segment had no parent dir")?;
-                    let seg_glob = init_dir.join(frag_pattern); // segment match pattern
-
-                    // grab the fragments that go with this init segment
-                    let seg_glob_str = seg_glob.to_str().context("fragment path not valid")?;
-                    let seg_paths = glob::glob(seg_glob_str).context("fragment glob not valid")?;
-                    for seg in seg_paths {
-                        match seg {
-                            Ok(f) => fragments.push(f),
-                            Err(_) => return Err(anyhow!("fragment path not valid")),
-                        }
-                    }
-
-                    println!("Adding manifest to: {p:?}");
-                    let new_output_path =
-                        output_path.join(init_dir.file_name().context("invalid file name")?);
-                    builder.sign_fragmented_files(signer, &p, &fragments, &new_output_path)?;
-
-                    count += 1;
-                }
-                Err(_) => bail!("bad path to init segment"),
-            }
-        }
-        if count == 0 {
-            println!("No files matching pattern: {ip}");
-        }
-        Ok(())
+        builder
+            .sign_fragmented_files(signer, init_pattern, frag_pattern, output_path)
+            .map_err(anyhow::Error::from)
     }
 }
 

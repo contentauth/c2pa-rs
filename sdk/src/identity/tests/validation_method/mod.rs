@@ -23,3 +23,5 @@
 
 mod continue_when_possible;
 mod stop_on_error;
+
+pub(super) use super::read_manifest;

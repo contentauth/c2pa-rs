@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 
 use async_trait::async_trait;
 use serde_bytes::ByteBuf;
@@ -128,6 +128,32 @@ impl DynamicAssertion for IdentityAssertionBuilder {
     }
 }
 
+/// Allows an [`IdentityAssertionSigner`] to hand out shared clones of a single
+/// [`IdentityAssertionBuilder`] each time [`dynamic_assertions()`] is called,
+/// so that the same builder can service both the placeholder-reservation and
+/// content-writing passes of a split signing operation.
+///
+/// [`IdentityAssertionSigner`]: crate::identity::builder::IdentityAssertionSigner
+/// [`dynamic_assertions()`]: crate::Signer::dynamic_assertions
+impl DynamicAssertion for Arc<IdentityAssertionBuilder> {
+    fn label(&self) -> String {
+        self.as_ref().label()
+    }
+
+    fn reserve_size(&self) -> crate::Result<usize> {
+        self.as_ref().reserve_size()
+    }
+
+    fn content(
+        &self,
+        label: &str,
+        size: Option<usize>,
+        claim: &PartialClaim,
+    ) -> crate::Result<DynamicAssertionContent> {
+        self.as_ref().content(label, size, claim)
+    }
+}
+
 /// An `AsyncIdentityAssertionBuilder` gathers together the necessary components
 /// for an identity assertion. When added to an
 /// [`AsyncIdentityAssertionSigner`], it ensures that the proper data is added
@@ -239,6 +265,35 @@ impl AsyncDynamicAssertion for AsyncIdentityAssertionBuilder {
     }
 }
 
+/// Allows an [`AsyncIdentityAssertionSigner`] to hand out shared clones of a
+/// single [`AsyncIdentityAssertionBuilder`] each time [`dynamic_assertions()`]
+/// is called, so that the same builder can service both the
+/// placeholder-reservation and content-writing passes of a split signing
+/// operation.
+///
+/// [`AsyncIdentityAssertionSigner`]: crate::identity::builder::AsyncIdentityAssertionSigner
+/// [`dynamic_assertions()`]: crate::AsyncSigner::dynamic_assertions
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl AsyncDynamicAssertion for Arc<AsyncIdentityAssertionBuilder> {
+    fn label(&self) -> String {
+        self.as_ref().label()
+    }
+
+    fn reserve_size(&self) -> crate::Result<usize> {
+        self.as_ref().reserve_size()
+    }
+
+    async fn content(
+        &self,
+        label: &str,
+        size: Option<usize>,
+        claim: &PartialClaim,
+    ) -> crate::Result<DynamicAssertionContent> {
+        self.as_ref().content(label, size, claim).await
+    }
+}
+
 fn finalize_identity_assertion(
     signer_payload: SignerPayload,
     size: Option<usize>,
@@ -330,7 +385,7 @@ mod tests {
         let mut source = Cursor::new(TEST_IMAGE);
         let mut dest = Cursor::new(Vec::new());
 
-        let mut builder = Builder::from_json(&manifest_json()).unwrap();
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
         builder
             .add_ingredient_from_stream(parent_json(), format, &mut source)
             .unwrap();
@@ -352,8 +407,14 @@ mod tests {
         // Read back the Manifest that was generated.
         dest.rewind().unwrap();
 
-        let manifest_store = Reader::from_stream(format, &mut dest).unwrap();
-        assert_eq!(manifest_store.validation_status(), None);
+        let manifest_store = Reader::default().with_stream(format, &mut dest).unwrap();
+        // The naive credential's sig_type is unrecognized by the default Reader,
+        // which must surface it as a failure.
+        assert!(manifest_store
+            .validation_status()
+            .unwrap()
+            .iter()
+            .any(|s| s.code() == "cawg.identity.sig_type.unknown"));
 
         let manifest = manifest_store.active_manifest().unwrap();
         let mut st = StatusTracker::default();
@@ -383,7 +444,7 @@ mod tests {
         let mut source = Cursor::new(TEST_IMAGE);
         let mut dest = Cursor::new(Vec::new());
 
-        let mut builder = Builder::from_json(&manifest_json()).unwrap();
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
         builder
             .add_ingredient_from_stream_async(parent_json(), format, &mut source)
             .await
@@ -407,8 +468,14 @@ mod tests {
         // Read back the Manifest that was generated.
         dest.rewind().unwrap();
 
-        let manifest_store = Reader::from_stream(format, &mut dest).unwrap();
-        assert_eq!(manifest_store.validation_status(), None);
+        let manifest_store = Reader::default().with_stream(format, &mut dest).unwrap();
+        // The naive credential's sig_type is unrecognized by the default Reader,
+        // which must surface it as a failure.
+        assert!(manifest_store
+            .validation_status()
+            .unwrap()
+            .iter()
+            .any(|s| s.code() == "cawg.identity.sig_type.unknown"));
 
         let manifest = manifest_store.active_manifest().unwrap();
         let mut st = StatusTracker::default();

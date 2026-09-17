@@ -15,17 +15,17 @@ use std::io::{Cursor, Seek};
 
 use c2pa::{
     assertions::{self, TimeStamp},
-    settings::Settings,
-    Builder, BuilderIntent, Reader, Result, Signer,
+    Builder, BuilderIntent, Context, Reader, Result, Signer,
 };
 
 mod common;
+use common::test_settings;
 
 const TEST_IMAGE: &[u8] = include_bytes!("fixtures/no_manifest.jpg");
 const FORMAT: &str = "image/jpeg";
 
 // Basic wrapper around a Signer to include a time authority URL.
-struct WrappedTsaSigner(Box<dyn Signer>);
+struct WrappedTsaSigner(Box<dyn Signer + Send + Sync>);
 
 impl Signer for WrappedTsaSigner {
     fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
@@ -53,11 +53,12 @@ impl Signer for WrappedTsaSigner {
 // as a timestamp assertion in the main manifest.
 #[test]
 fn timestamp_assertion_parent_scope() {
-    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+    let base_settings = test_settings();
+    let child_context = Context::new().with_settings(base_settings).unwrap();
 
     let mut child_image = Cursor::new(Vec::new());
 
-    let mut builder = Builder::new();
+    let mut builder = Builder::from_context(child_context);
     builder
         .sign(
             &WrappedTsaSigner(Box::new(common::test_signer())),
@@ -67,22 +68,26 @@ fn timestamp_assertion_parent_scope() {
         )
         .unwrap();
 
-    Settings::from_toml(
-        &toml::toml! {
-            [builder.auto_timestamp_assertion]
-            enabled = true
-            skip_existing = false
-            fetch_scope = "parent"
-        }
-        .to_string(),
-    )
-    .unwrap();
+    let mut parent_settings = test_settings();
+    parent_settings
+        .update_from_str(
+            &toml::toml! {
+                [builder.auto_timestamp_assertion]
+                enabled = true
+                skip_existing = false
+                fetch_scope = "parent"
+            }
+            .to_string(),
+            "toml",
+        )
+        .unwrap();
 
     child_image.rewind().unwrap();
 
     let mut parent_image = Cursor::new(Vec::new());
 
-    let mut builder = Builder::new();
+    let parent_context = Context::new().with_settings(parent_settings).unwrap();
+    let mut builder = Builder::from_context(parent_context);
     builder.set_intent(BuilderIntent::Update);
     builder
         .sign(
@@ -95,7 +100,7 @@ fn timestamp_assertion_parent_scope() {
 
     parent_image.rewind().unwrap();
 
-    let reader = Reader::from_stream(FORMAT, parent_image).unwrap();
+    let reader = Reader::default().with_stream(FORMAT, parent_image).unwrap();
     let timestamp_assertion: TimeStamp = reader
         .active_manifest()
         .unwrap()
@@ -114,11 +119,12 @@ fn timestamp_assertion_parent_scope() {
 // as a timestamp assertion in the main manifest.
 #[test]
 fn timestamp_assertion_all_scope() {
-    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+    let base_settings = test_settings();
+    let child_context = Context::new().with_settings(base_settings).unwrap();
 
     let mut child_image = Cursor::new(Vec::new());
 
-    let mut builder = Builder::new();
+    let mut builder = Builder::from_context(child_context);
     builder
         .sign(
             &WrappedTsaSigner(Box::new(common::test_signer())),
@@ -128,22 +134,26 @@ fn timestamp_assertion_all_scope() {
         )
         .unwrap();
 
-    Settings::from_toml(
-        &toml::toml! {
-            [builder.auto_timestamp_assertion]
-            enabled = true
-            skip_existing = false
-            fetch_scope = "all"
-        }
-        .to_string(),
-    )
-    .unwrap();
+    let mut parent_settings = test_settings();
+    parent_settings
+        .update_from_str(
+            &toml::toml! {
+                [builder.auto_timestamp_assertion]
+                enabled = true
+                skip_existing = false
+                fetch_scope = "all"
+            }
+            .to_string(),
+            "toml",
+        )
+        .unwrap();
 
     child_image.rewind().unwrap();
 
     let mut parent_image = Cursor::new(Vec::new());
 
-    let mut builder = Builder::new();
+    let parent_context = Context::new().with_settings(parent_settings).unwrap();
+    let mut builder = Builder::from_context(parent_context);
     builder.set_intent(BuilderIntent::Update);
     builder
         .sign(
@@ -156,7 +166,7 @@ fn timestamp_assertion_all_scope() {
 
     parent_image.rewind().unwrap();
 
-    let reader = Reader::from_stream(FORMAT, parent_image).unwrap();
+    let reader = Reader::default().with_stream(FORMAT, parent_image).unwrap();
     let timestamp_assertion: TimeStamp = reader
         .active_manifest()
         .unwrap()
@@ -179,11 +189,12 @@ fn timestamp_assertion_all_scope() {
 // as a timestamp assertion in the main manifest.
 #[test]
 fn timestamp_assertion_explicit_builder() {
-    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+    let settings = test_settings();
+    let context = Context::new().with_settings(settings).unwrap();
 
     let mut child_image = Cursor::new(Vec::new());
 
-    let mut builder = Builder::new();
+    let mut builder = Builder::from_context(context);
     builder
         .sign(
             &WrappedTsaSigner(Box::new(common::test_signer())),
@@ -195,11 +206,13 @@ fn timestamp_assertion_explicit_builder() {
 
     let mut parent_image = Cursor::new(Vec::new());
 
-    let mut builder = Builder::new();
+    let mut builder = Builder::default();
     builder.set_intent(BuilderIntent::Update);
 
     child_image.rewind().unwrap();
-    let reader = Reader::from_stream(FORMAT, &mut child_image).unwrap();
+    let reader = Reader::default()
+        .with_stream(FORMAT, &mut child_image)
+        .unwrap();
     builder.add_timestamp(reader.active_label().unwrap());
     child_image.rewind().unwrap();
 
@@ -214,7 +227,7 @@ fn timestamp_assertion_explicit_builder() {
 
     parent_image.rewind().unwrap();
 
-    let reader = Reader::from_stream(FORMAT, parent_image).unwrap();
+    let reader = Reader::default().with_stream(FORMAT, parent_image).unwrap();
     let timestamp_assertion: TimeStamp = reader
         .active_manifest()
         .unwrap()
@@ -229,15 +242,71 @@ fn timestamp_assertion_explicit_builder() {
         .is_some());
 }
 
+// Sign a manifest with a child ingredient using an explicit signer, then use `save_to_stream`
+// (which resolves the signer from the context instead of taking one explicitly) to sign the
+// parent manifest and confirm the timestamp assertion is still added.
+#[test]
+fn timestamp_assertion_save_to_stream() {
+    let settings = test_settings();
+    let context = Context::new().with_settings(settings).unwrap();
+
+    let mut child_image = Cursor::new(Vec::new());
+
+    let mut builder = Builder::from_context(context);
+    builder
+        .sign(
+            &WrappedTsaSigner(Box::new(common::test_signer())),
+            FORMAT,
+            &mut Cursor::new(TEST_IMAGE),
+            &mut child_image,
+        )
+        .unwrap();
+
+    child_image.rewind().unwrap();
+    let reader = Reader::default()
+        .with_stream(FORMAT, &mut child_image)
+        .unwrap();
+    let child_manifest_label = reader.active_label().unwrap().to_owned();
+    child_image.rewind().unwrap();
+
+    let parent_context = Context::new()
+        .with_settings(test_settings())
+        .unwrap()
+        .with_signer(WrappedTsaSigner(Box::new(common::test_signer())));
+
+    let mut builder = Builder::from_context(parent_context);
+    builder.set_intent(BuilderIntent::Update);
+    builder.add_timestamp(child_manifest_label.as_str());
+
+    let mut parent_image = Cursor::new(Vec::new());
+    builder
+        .save_to_stream(FORMAT, &mut child_image, &mut parent_image)
+        .unwrap();
+
+    parent_image.rewind().unwrap();
+
+    let reader = Reader::default().with_stream(FORMAT, parent_image).unwrap();
+    let timestamp_assertion: TimeStamp = reader
+        .active_manifest()
+        .unwrap()
+        .find_assertion(assertions::labels::TIMESTAMP)
+        .unwrap();
+
+    assert!(timestamp_assertion
+        .get_timestamp(&child_manifest_label)
+        .is_some());
+}
+
 // Sign a manifest with a child ingredient and timestamp assertion it, then sign the parent manifest
 // again and skip timestamping all existing timestamped manifests.
 #[test]
 fn timestamp_assertion_skip_existing() {
-    Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+    let settings = test_settings();
 
     let mut child_image = Cursor::new(Vec::new());
 
-    let mut builder = Builder::new();
+    let mut builder =
+        Builder::from_context(Context::new().with_settings(settings.clone()).unwrap());
     builder
         .sign(
             &WrappedTsaSigner(Box::new(common::test_signer())),
@@ -251,7 +320,7 @@ fn timestamp_assertion_skip_existing() {
 
     let mut parent_image = Cursor::new(Vec::new());
 
-    let mut builder = Builder::new();
+    let mut builder = Builder::default();
     builder.set_intent(BuilderIntent::Update);
     builder
         .sign(
@@ -262,23 +331,26 @@ fn timestamp_assertion_skip_existing() {
         )
         .unwrap();
 
-    Settings::from_toml(
-        &toml::toml! {
-            [builder.auto_timestamp_assertion]
-            enabled = true
-            skip_existing = true
-            fetch_scope = "all"
-        }
-        .to_string(),
-    )
-    .unwrap();
+    let mut skip_settings = settings;
+    skip_settings
+        .update_from_str(
+            &toml::toml! {
+                [builder.auto_timestamp_assertion]
+                enabled = true
+                skip_existing = true
+                fetch_scope = "all"
+            }
+            .to_string(),
+            "toml",
+        )
+        .unwrap();
 
     parent_image.rewind().unwrap();
 
     let mut parent_parent_image = Cursor::new(Vec::new());
 
     // Sign it one last time to ensure the original child manifest isn't timestamped again.
-    let mut builder = Builder::new();
+    let mut builder = Builder::from_context(Context::new().with_settings(skip_settings).unwrap());
     builder.set_intent(BuilderIntent::Update);
     builder
         .sign(
@@ -291,7 +363,9 @@ fn timestamp_assertion_skip_existing() {
 
     parent_parent_image.rewind().unwrap();
 
-    let reader = Reader::from_stream(FORMAT, parent_parent_image).unwrap();
+    let reader = Reader::default()
+        .with_stream(FORMAT, parent_parent_image)
+        .unwrap();
     let timestamp_assertion: TimeStamp = reader
         .active_manifest()
         .unwrap()

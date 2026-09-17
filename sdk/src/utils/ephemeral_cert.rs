@@ -467,7 +467,7 @@ pub fn generate_ephemeral_chain(ee_cert_name: &str) -> Result<EphemeralCertChain
 /// Like `generate_ephemeral_chain` but omits the given EE extensions
 /// (test-only). Used to find which extension causes OpenSSL 3.x to reject the
 /// cert.
-#[cfg(test)]
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 pub(crate) fn generate_ephemeral_chain_with_ee_skip(
     ee_cert_name: &str,
     skip_extensions: &[&str],
@@ -520,21 +520,18 @@ pub(crate) fn generate_ephemeral_chain_with_ee_skip(
     })
 }
 
-/// Encode a single certificate DER as PEM (CERTIFICATE block).
-pub fn der_to_pem(der: &[u8]) -> String {
-    pem::Pem::new("CERTIFICATE", der.to_vec()).to_string()
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::panic)]
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     use std::process::Command;
 
     use rasn_pkix::BasicConstraints;
 
-    use super::{der_to_pem, generate_ephemeral_chain};
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    use super::generate_ephemeral_chain;
 
     /// Documents why OpenSSL 3.x rejects rasn's BasicConstraints for EE certs.
     /// rasn encodes `BasicConstraints { ca: false, path_len_constraint: None }`
@@ -734,5 +731,11 @@ mod tests {
                 ext
             );
         }
+    }
+
+    /// Encode a single certificate DER as PEM (CERTIFICATE block).
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn der_to_pem(der: &[u8]) -> String {
+        pem::Pem::new("CERTIFICATE", der.to_vec()).to_string()
     }
 }

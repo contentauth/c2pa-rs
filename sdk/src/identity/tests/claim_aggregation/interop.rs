@@ -23,22 +23,49 @@ use wasm_bindgen_test::wasm_bindgen_test;
 use crate::{
     identity::{
         claim_aggregation::{IcaSignatureVerifier, IdentityProvider, VerifiedIdentity},
+        tests::ica_test_context,
         IdentityAssertion, SignerPayload,
     },
+    settings::Settings,
     status_tracker::StatusTracker,
-    HashedUri, Reader,
+    Context, HashedUri,
 };
+
+async fn read_manifest_no_trust<R: std::io::Read + std::io::Seek + Send>(
+    format: &str,
+    source: &mut R,
+) -> crate::Reader {
+    let settings = Settings::new()
+        .with_value("verify.verify_trust", false)
+        .unwrap()
+        .with_value("core.decode_identity_assertions", false)
+        .unwrap()
+        .with_value(
+            "soft_binding.soft_binding_algorithms",
+            [
+                "com.adobe.trustmark.P".to_string(),
+                "com.adobe.icn.dense".to_string(),
+            ],
+        )
+        .unwrap();
+    let context = Context::new()
+        .with_settings(settings)
+        .unwrap()
+        .into_shared();
+    crate::Reader::from_shared_context(&context)
+        .with_stream_async(format, source)
+        .await
+        .unwrap()
+}
 
 #[c2pa_test_async]
 async fn adobe_connected_identities() {
-    crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
-
     let format = "image/jpeg";
     let test_image = include_bytes!("../fixtures/claim_aggregation/adobe_connected_identities.jpg");
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = read_manifest_no_trust(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     let manifest = reader.active_manifest().unwrap();
@@ -51,7 +78,8 @@ async fn adobe_connected_identities() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let context = ica_test_context();
+    let isv = IcaSignatureVerifier::new(&context);
     let ica = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
     // There should be exactly one verified identity.
@@ -101,7 +129,7 @@ async fn adobe_connected_identities() {
 
     assert_eq!(
         ia_json,
-        r#"{"urn:uuid:19e83793-4427-4161-b682-a53b975a6f72":[{"sig_type":"cawg.identity_claims_aggregation","referenced_assertions":["c2pa.hash.data"],"named_actor":{"@context":["https://www.w3.org/ns/credentials/v2","https://cawg.io/identity/1.1/ica/context/"],"type":["VerifiableCredential","IdentityClaimsAggregationCredential"],"issuer":"did:web:connected-identities.identity-stage.adobe.com","validFrom":"2025-04-09T22:46:13Z","verifiedIdentities":[{"type":"cawg.social_media","username":"testuser23","uri":"https://net.s2stagehance.com/testuser23","verifiedAt":"2025-04-09T22:45:26Z","provider":{"id":"https://behance.net","name":"behance"}}],"credentialSchema":[{"id":"https://cawg.io/identity/1.1/ica/schema/","type":"JSONSchema"}]}}]}"#
+        r#"{"urn:uuid:19e83793-4427-4161-b682-a53b975a6f72":[{"sig_type":"cawg.identity_claims_aggregation","referenced_assertions":["c2pa.hash.data"],"named_actor":{"@context":["https://www.w3.org/ns/credentials/v2","https://cawg.io/identity/1.1/ica/context/"],"type":["VerifiableCredential","IdentityClaimsAggregationCredential"],"issuer":"did:web:connected-identities.identity-stage.adobe.com","validFrom":"2025-04-09T22:46:13Z","verifiedIdentities":[{"type":"cawg.social_media","username":"testuser23","uri":"https://net.s2stagehance.com/testuser23","verifiedAt":"2025-04-09T22:45:26Z","provider":{"id":"https://behance.net","name":"behance"}}],"c2paAsset":{"referenced_assertions":[{"url":"self#jumbf=c2pa.assertions/c2pa.hash.data","alg":"sha256","hash":[222,12,254,33,138,24,216,89,74,194,44,202,254,234,79,175,58,31,243,141,143,60,113,134,81,85,8,248,86,167,211,178]}],"sig_type":"cawg.identity_claims_aggregation"},"credentialSchema":[{"id":"https://cawg.io/identity/1.1/ica/schema/","type":"JSONSchema"}]}}]}"#
     );
 
     // Check the summary report for this manifest.
@@ -111,30 +139,29 @@ async fn adobe_connected_identities() {
 
     assert_eq!(
         ia_json,
-        r#"[{"sig_type":"cawg.identity_claims_aggregation","referenced_assertions":["c2pa.hash.data"],"named_actor":{"@context":["https://www.w3.org/ns/credentials/v2","https://cawg.io/identity/1.1/ica/context/"],"type":["VerifiableCredential","IdentityClaimsAggregationCredential"],"issuer":"did:web:connected-identities.identity-stage.adobe.com","validFrom":"2025-04-09T22:46:13Z","verifiedIdentities":[{"type":"cawg.social_media","username":"testuser23","uri":"https://net.s2stagehance.com/testuser23","verifiedAt":"2025-04-09T22:45:26Z","provider":{"id":"https://behance.net","name":"behance"}}],"credentialSchema":[{"id":"https://cawg.io/identity/1.1/ica/schema/","type":"JSONSchema"}]}}]"#
+        r#"[{"sig_type":"cawg.identity_claims_aggregation","referenced_assertions":["c2pa.hash.data"],"named_actor":{"@context":["https://www.w3.org/ns/credentials/v2","https://cawg.io/identity/1.1/ica/context/"],"type":["VerifiableCredential","IdentityClaimsAggregationCredential"],"issuer":"did:web:connected-identities.identity-stage.adobe.com","validFrom":"2025-04-09T22:46:13Z","verifiedIdentities":[{"type":"cawg.social_media","username":"testuser23","uri":"https://net.s2stagehance.com/testuser23","verifiedAt":"2025-04-09T22:45:26Z","provider":{"id":"https://behance.net","name":"behance"}}],"c2paAsset":{"referenced_assertions":[{"url":"self#jumbf=c2pa.assertions/c2pa.hash.data","alg":"sha256","hash":[222,12,254,33,138,24,216,89,74,194,44,202,254,234,79,175,58,31,243,141,143,60,113,134,81,85,8,248,86,167,211,178]}],"sig_type":"cawg.identity_claims_aggregation"},"credentialSchema":[{"id":"https://cawg.io/identity/1.1/ica/schema/","type":"JSONSchema"}]}}]"#
     );
 }
 
 #[c2pa_test_async]
 async fn ims_multiple_manifests() {
-    crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
-
     let format = "image/jpeg";
     let test_image = include_bytes!("../fixtures/claim_aggregation/ims_multiple_manifests.jpg");
 
     let mut test_image = Cursor::new(test_image);
 
-    let reader = Reader::from_stream(format, &mut test_image).unwrap();
+    let reader = read_manifest_no_trust(format, &mut test_image).await;
     assert_eq!(reader.validation_status(), None);
 
     // Check the summary report for the entire manifest store.
     let mut st = StatusTracker::default();
-    let isv = IcaSignatureVerifier {};
+    let context = ica_test_context();
+    let isv = IcaSignatureVerifier::new(&context);
     let ia_summary = IdentityAssertion::summarize_from_reader(&reader, &mut st, &isv).await;
     let ia_json = serde_json::to_string(&ia_summary).unwrap();
 
     assert_eq!(
         ia_json,
-        r#"{"contentauth:urn:uuid:b2b1f7fa-b119-4de1-9c0d-c97fbea3f2c3":[],"urn:uuid:6aba7a19-9f59-44c1-8e1f-1fb396aa06f8":[{"sig_type":"cawg.identity_claims_aggregation","referenced_assertions":["c2pa.hash.data"],"named_actor":{"@context":["https://www.w3.org/ns/credentials/v2","https://cawg.io/identity/1.1/ica/context/"],"type":["VerifiableCredential","IdentityClaimsAggregationCredential"],"issuer":"did:web:connected-identities.identity-stage.adobe.com","validFrom":"2025-04-09T22:46:13Z","verifiedIdentities":[{"type":"cawg.social_media","username":"testuser23","uri":"https://net.s2stagehance.com/testuser23","verifiedAt":"2025-04-09T22:45:26Z","provider":{"id":"https://behance.net","name":"behance"}}],"credentialSchema":[{"id":"https://cawg.io/identity/1.1/ica/schema/","type":"JSONSchema"}]}}]}"#
+        r#"{"contentauth:urn:uuid:b2b1f7fa-b119-4de1-9c0d-c97fbea3f2c3":[],"urn:uuid:6aba7a19-9f59-44c1-8e1f-1fb396aa06f8":[{"sig_type":"cawg.identity_claims_aggregation","referenced_assertions":["c2pa.hash.data"],"named_actor":{"@context":["https://www.w3.org/ns/credentials/v2","https://cawg.io/identity/1.1/ica/context/"],"type":["VerifiableCredential","IdentityClaimsAggregationCredential"],"issuer":"did:web:connected-identities.identity-stage.adobe.com","validFrom":"2025-04-09T22:46:13Z","verifiedIdentities":[{"type":"cawg.social_media","username":"testuser23","uri":"https://net.s2stagehance.com/testuser23","verifiedAt":"2025-04-09T22:45:26Z","provider":{"id":"https://behance.net","name":"behance"}}],"c2paAsset":{"referenced_assertions":[{"url":"self#jumbf=c2pa.assertions/c2pa.hash.data","alg":"sha256","hash":[142,208,84,9,57,253,162,226,212,228,215,13,167,225,242,192,11,196,28,251,89,72,210,203,219,219,174,7,244,169,111,159]}],"sig_type":"cawg.identity_claims_aggregation"},"credentialSchema":[{"id":"https://cawg.io/identity/1.1/ica/schema/","type":"JSONSchema"}]}}]}"#
     );
 }

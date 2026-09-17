@@ -82,7 +82,10 @@ pub enum DigitalSourceType {
     )]
     Print,
     /// Minor augmentation or correction by a human, such as a digitally-retouched photo used in a magazine.
-    #[deprecated]
+    #[deprecated(
+        since = "0.67.1",
+        note = "Deprecated in the IPTC digital source type vocabulary; no longer recommended for new content. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     #[serde(
         alias = "minorHumanEdits",
         rename = "http://cv.iptc.org/newscodes/digitalsourcetype/minorHumanEdits"
@@ -109,14 +112,20 @@ pub enum DigitalSourceType {
     )]
     AlgorithmicallyEnhanced,
     /// The digital image was created by computer software.
-    #[deprecated]
+    #[deprecated(
+        since = "0.67.1",
+        note = "Deprecated in the IPTC digital source type vocabulary; no longer recommended for new content. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     #[serde(
         alias = "softwareImage",
         rename = "http://cv.iptc.org/newscodes/digitalsourcetype/softwareImage"
     )]
     SoftwareImage,
     /// Media created by a human using digital tools.
-    #[deprecated]
+    #[deprecated(
+        since = "0.67.1",
+        note = "Deprecated in the IPTC digital source type vocabulary; no longer recommended for new content. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     #[serde(
         alias = "digitalArt",
         rename = "http://cv.iptc.org/newscodes/digitalsourcetype/digitalArt"
@@ -192,6 +201,10 @@ impl fmt::Display for DigitalSourceType {
 /// C2PA actions defined in the C2PA specification.
 pub mod c2pa_action {
     /// Changes to tone, saturation, etc.
+    #[deprecated(
+        since = "0.91.0",
+        note = "This action is deprecated from C2PA spec version 2.0. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub const COLOR_ADJUSTMENTS: &str = "c2pa.color_adjustments";
 
     /// The format of the asset was changed.
@@ -245,8 +258,148 @@ pub mod c2pa_action {
     /// Does not include any adjustments that would affect the "editorial" meaning of the content.
     pub const TRANSCODED: &str = "c2pa.transcoded";
 
+    /// Changes to the language of the content.
+    ///
+    /// Per the C2PA spec (18.15.4.7, Parameters), a `c2pa.translated` action's
+    /// `parameters` object shall contain `sourceLanguage` and `targetLanguage`
+    /// BCP-47 (RFC 5646) language codes.
+    pub const TRANSLATED: &str = "c2pa.translated";
+
+    /// Watermarking was applied to this area for the purpose of soft binding.  2.3 and earlier.
+    #[deprecated(
+        since = "0.91.0",
+        note = "This action is deprecated from C2PA spec version 2.2. Use `WATERMARKED_BOUND` or `WATERMARKED_UNBOUND` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
+    pub const WATERMARKED: &str = "c2pa.watermarked";
+
+    /// Watermarking was applied to this area for the purpose of soft binding. 2.4 or later.
+    pub const WATERMARKED_BOUND: &str = "c2pa.watermarked.bound";
+
+    /// Watermarking was applied to this area without creating a soft binding. 2.4 or later.
+    pub const WATERMARKED_UNBOUND: &str = "c2pa.watermarked.unbound";
+
     /// Something happened, but the claim_generator cannot specify what.
     pub const UNKNOWN: &str = "c2pa.unknown";
+}
+
+/// Deprecated string constants for C2PA action reasons.
+///
+/// Use [`C2paReason`] enum variants instead.
+#[deprecated(
+    since = "0.80.3",
+    note = "Use `C2paReason` enum variants instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+)]
+pub mod c2pa_reason {
+    /// Personally identifiable information is present.
+    #[deprecated(
+        since = "0.80.3",
+        note = "Use `C2paReason::PiiPresent` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
+    pub const PII_PRESENT: &str = "c2pa.PII.present";
+
+    /// The data is invalid.
+    #[deprecated(
+        since = "0.80.3",
+        note = "Use `C2paReason::InvalidData` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
+    pub const INVALID_DATA: &str = "c2pa.invalid.data";
+
+    /// Trade secret information is present.
+    #[deprecated(
+        since = "0.80.3",
+        note = "Use `C2paReason::TradeSecretPresent` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
+    pub const TRADE_SECRET_PRESENT: &str = "c2pa.trade-secret.present";
+
+    /// Government classified or confidential information is present.
+    #[deprecated(
+        since = "0.80.3",
+        note = "Use `C2paReason::GovernmentConfidential` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
+    pub const GOVERNMENT_CONFIDENTIAL: &str = "c2pa.government.confidential";
+}
+
+/// Predefined reason values for the `reason` field on [`Action`].
+///
+/// The C2PA specification defines these standard values for use with
+/// `c2pa.redacted` actions. Custom values must follow entity-specific
+/// namespace syntax (e.g., `com.example.my-reason`).
+///
+/// New variants may be added in future releases.
+///
+/// See [Reason - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_reason).
+#[non_exhaustive]
+#[derive(Deserialize, Serialize, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+pub enum C2paReason {
+    /// Personally identifiable information is present.
+    #[serde(rename = "c2pa.PII.present")]
+    PiiPresent,
+
+    /// The data is invalid.
+    #[serde(rename = "c2pa.invalid.data")]
+    InvalidData,
+
+    /// Trade secret information is present.
+    #[serde(rename = "c2pa.trade-secret.present")]
+    TradeSecretPresent,
+
+    /// Government classified or confidential information is present.
+    #[serde(rename = "c2pa.government.confidential")]
+    GovernmentConfidential,
+
+    /// An unknown or custom reason value.
+    #[serde(untagged)]
+    Other(String),
+}
+
+impl C2paReason {
+    /// Returns the string representation of this reason without allocating.
+    pub fn as_str(&self) -> &str {
+        match self {
+            C2paReason::PiiPresent => "c2pa.PII.present",
+            C2paReason::InvalidData => "c2pa.invalid.data",
+            C2paReason::TradeSecretPresent => "c2pa.trade-secret.present",
+            C2paReason::GovernmentConfidential => "c2pa.government.confidential",
+            C2paReason::Other(s) => s.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for C2paReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl From<C2paReason> for String {
+    fn from(r: C2paReason) -> Self {
+        r.as_str().to_owned()
+    }
+}
+
+impl PartialEq<str> for C2paReason {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<&str> for C2paReason {
+    fn eq(&self, other: &&str) -> bool {
+        self == *other
+    }
+}
+
+impl PartialEq<C2paReason> for str {
+    fn eq(&self, other: &C2paReason) -> bool {
+        other == self
+    }
+}
+
+impl PartialEq<C2paReason> for &str {
+    fn eq(&self, other: &C2paReason) -> bool {
+        other == *self
+    }
 }
 
 pub static V2_DEPRECATED_ACTIONS: [&str; 7] = [
@@ -310,6 +463,9 @@ pub struct ActionParameters {
     /// Was this action performed multiple times.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub multiple_instances: Option<bool>,
+    /// Hashed JUMBF URI(s) to assertion(s) related to this action that are neither ingredients nor actions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub related_assertions: Option<Vec<HashedUri>>,
 
     /// Anything from the common parameters.
     #[serde(flatten)]
@@ -357,7 +513,10 @@ pub struct Action {
 
     /// This is NOT the instanceID in the spec
     /// It is now deprecated but was previously used to map the action to an ingredient
-    #[deprecated(since = "0.37.0", note = "Use `parameters.ingredientIds[]` instead")]
+    #[deprecated(
+        since = "0.37.0",
+        note = "Use `parameters.ingredientIds[]` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     #[serde(skip_serializing)]
     #[serde(alias = "instanceId", alias = "instanceID")]
     pub(crate) instance_id: Option<String>,
@@ -380,6 +539,7 @@ pub struct Action {
 
     // The reason why this action was performed, required when the action is `c2pa.redacted`
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "json_schema", schemars(with = "Option<C2paReason>"))]
     pub(crate) reason: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -425,7 +585,10 @@ impl Action {
 
     /// Returns the value of the `xmpMM:InstanceID` property for the modified
     /// (output) resource.
-    #[deprecated(since = "0.37.0", note = "Use `ingredient_ids()` instead")]
+    #[deprecated(
+        since = "0.37.0",
+        note = "Use `ingredient_ids()` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn instance_id(&self) -> Option<&str> {
         #[allow(deprecated)]
         self.instance_id.as_deref()
@@ -478,6 +641,10 @@ impl Action {
     }
 
     /// An array of the [`Actor`]s that undertook this action.
+    #[deprecated(
+        since = "0.91.0",
+        note = "The `actors` field is deprecated from C2PA spec version 2.0. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn actors(&self) -> Option<&[Actor]> {
         self.actors.as_deref()
     }
@@ -494,6 +661,13 @@ impl Action {
     /// See [Related actions - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_related_actions).
     pub fn related(&self) -> Option<&[Action]> {
         self.related.as_deref()
+    }
+
+    /// Returns the list of hashed URIs to assertions related to this action.
+    pub fn related_assertions(&self) -> Option<&[HashedUri]> {
+        self.parameters
+            .as_ref()
+            .and_then(|parameters| parameters.related_assertions.as_deref())
     }
 
     /// Returns the reason why this action was performed.
@@ -520,6 +694,10 @@ impl Action {
 
     /// Sets the list of the parts of the resource that were changed
     /// since the previous event history.
+    #[deprecated(
+        since = "0.91.0",
+        note = "The `changed` field is deprecated from C2PA spec version 2.1. Use `changes` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn set_changed(mut self, changed: Option<&Vec<&str>>) -> Self {
         self.changed = changed.map(|v| v.join(";"));
         self
@@ -527,7 +705,10 @@ impl Action {
 
     /// Sets the value of the `xmpMM:InstanceID` property for the
     /// modified (output) resource.
-    #[deprecated(since = "0.37.0", note = "Use `add_ingredient_id()` instead")]
+    #[deprecated(
+        since = "0.37.0",
+        note = "Use `add_ingredient_id()` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn set_instance_id<S: Into<String>>(self, id: S) -> Self {
         #[allow(clippy::unwrap_used)]
         self.add_ingredient_id(&id.into()).unwrap() // Supporting deprecated feature.
@@ -596,6 +777,10 @@ impl Action {
     }
 
     /// Sets the array of [`Actor`]s that undertook this action.
+    #[deprecated(
+        since = "0.91.0",
+        note = "The `actors` field is deprecated from C2PA spec version 2.0. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    )]
     pub fn set_actors(mut self, actors: Option<&Vec<Actor>>) -> Self {
         self.actors = actors.cloned();
         self
@@ -627,8 +812,11 @@ impl Action {
 
     /// Sets the reason why this action was performed.
     ///
-    /// This is only present in C2PA v2.
-    /// See [Related actions - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_reason).
+    /// Required for `c2pa.redacted` actions. The value should be one of
+    /// the variants in [`C2paReason`] or a custom value following
+    /// entity-specific namespace syntax (e.g., `com.example.my-reason`).
+    ///
+    /// See [Reason - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_reason).
     pub fn set_reason<S: Into<String>>(mut self, reason: S) -> Self {
         self.reason = Some(reason.into());
         self
@@ -658,43 +846,64 @@ impl Action {
         Ok(self)
     }
 
-    /// Extracts ingredient IDs from the action
-    /// There are many deprecated ways to specify ingredient IDs
-    /// priority: parameters.ingredientIds, parameters.org.cai.ingredientIds, parameters.instanceId, instanceId.
-    /// This is used to map actions to their associated ingredients.
-    /// We don't want any of these fields in the final CBOR, so we remove them after extracting.
-    pub(crate) fn extract_ingredient_ids(&mut self) -> Option<Vec<String>> {
-        let ingredient_ids = self.remove_parameter(INGREDIENT_IDS);
-        let cai_ingredient_ids = self.remove_parameter("org.cai.ingredientIds");
-        let param_instance_id = self.remove_parameter("instanceId");
-        #[allow(deprecated)]
-        let instance_id = self.instance_id.take();
-        let mut ids: Vec<String> = Vec::new();
-
-        let mut convert_ids = |val: Option<c2pa_cbor::Value>| {
-            if let Some(val) = val {
-                match val {
-                    c2pa_cbor::Value::Array(arr) => {
-                        for v in arr {
-                            if let c2pa_cbor::Value::Text(s) = v {
-                                ids.push(s);
-                            }
-                        }
-                    }
-                    c2pa_cbor::Value::Text(s) => ids.push(s),
-                    _ => {}
-                }
+    /// Reads the ingredient IDs an action references, without mutating the action.
+    ///
+    /// There are many deprecated ways to specify ingredient IDs; this checks every linking
+    /// mechanism in priority order: `parameters.ingredientIds`, `parameters.org.cai.ingredientIds`,
+    /// `parameters.instanceId`, then the deprecated `instanceId` field (only when none of the
+    /// parameters are present). Used to map actions to their associated ingredients.
+    ///
+    /// This is the read-only counterpart of [`Self::extract_ingredient_ids`], which additionally
+    /// removes the parameters it reads. Use this when the action must stay intact (e.g. computing
+    /// which ingredients are referenced during a prune).
+    pub(crate) fn ingredient_ids(&self) -> Vec<String> {
+        let convert = |val: Option<c2pa_cbor::Value>| -> Vec<String> {
+            match val {
+                Some(c2pa_cbor::Value::Array(arr)) => arr
+                    .into_iter()
+                    .filter_map(|v| match v {
+                        c2pa_cbor::Value::Text(s) => Some(s),
+                        _ => None,
+                    })
+                    .collect(),
+                Some(c2pa_cbor::Value::Text(s)) => vec![s],
+                _ => vec![],
             }
         };
 
-        convert_ids(ingredient_ids);
-        convert_ids(cai_ingredient_ids);
-        convert_ids(param_instance_id);
+        let mut ids = Vec::new();
+        ids.extend(convert(self.get_parameter(INGREDIENT_IDS)));
+        ids.extend(convert(self.get_parameter("org.cai.ingredientIds")));
+        ids.extend(convert(self.get_parameter("instanceId")));
+        if ids.is_empty() {
+            #[allow(deprecated)]
+            if let Some(id) = self.instance_id.as_deref() {
+                ids.push(id.to_owned());
+            }
+        }
+        ids
+    }
 
-        if !ids.is_empty() {
-            Some(ids)
+    /// Extracts ingredient IDs from the action, removing the parameters it reads.
+    ///
+    /// Reads the same links as [`Self::ingredient_ids`], then removes the temporary
+    /// `ingredientIds` / `org.cai.ingredientIds` / `instanceId` parameters and the deprecated
+    /// `instanceId` field, because we don't want any of them in the final CBOR.
+    pub(crate) fn extract_ingredient_ids(&mut self) -> Option<Vec<String>> {
+        let ids = self.ingredient_ids();
+
+        self.remove_parameter(INGREDIENT_IDS);
+        self.remove_parameter("org.cai.ingredientIds");
+        self.remove_parameter("instanceId");
+        #[allow(deprecated)]
+        {
+            self.instance_id = None;
+        }
+
+        if ids.is_empty() {
+            None
         } else {
-            instance_id.map(|s| vec![s])
+            Some(ids)
         }
     }
 }
@@ -755,7 +964,11 @@ pub struct Actions {
     #[serde(rename = "softwareAgents", skip_serializing_if = "Option::is_none")]
     pub software_agents: Option<Vec<ClaimGeneratorInfo>>,
 
-    /// If present & true, indicates that no actions took place that were not included in the actions list.
+    /// If `true`, indicates that all actions performed on the asset are described in the
+    /// actions assertion(s). If `false`, additional, unrecorded actions may have been
+    /// performed. An omitted value should be interpreted the same as `false`.
+    ///
+    /// See [All actions included - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_all_actions_included)
     #[serde(rename = "allActionsIncluded", skip_serializing_if = "Option::is_none")]
     pub all_actions_included: Option<bool>,
 
@@ -932,6 +1145,7 @@ pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
+    #![allow(deprecated)]
 
     use super::*;
     use crate::{

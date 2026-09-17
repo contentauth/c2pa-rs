@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::{labels, BmffHash, BoxHash, DataHash},
-    asset_io::{AssetIO, CAIRead},
+    asset_io::{AssetIO, ReadSeek},
     claim::{Claim, ClaimAssetData},
     error::{Error, Result},
     jumbf_io::get_assetio_handler,
@@ -122,7 +122,7 @@ impl MultiAssetHash {
     /// Validates part locations, reads the specified byte ranges, and verifies against referenced hash assertions.
     fn verify_stream_hash(
         &self,
-        reader: &mut dyn CAIRead,
+        reader: &mut dyn ReadSeek,
         claim: &Claim,
         asset_handler: Option<&dyn AssetIO>,
     ) -> Result<()> {

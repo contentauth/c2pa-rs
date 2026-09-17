@@ -17,11 +17,14 @@ use std::{
     fmt::{Debug, Formatter},
 };
 
+use async_generic::async_generic;
+use c2pa_raw_crypto::RawSignatureValidationError;
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
 use crate::{
-    crypto::cose::{CertificateTrustPolicy, Verifier},
+    context::Context,
+    crypto::cose::{parse_cose_sign1, CertificateTrustPolicy, CoseError, Verifier},
     dynamic_assertion::PartialClaim,
     identity::{
         claim_aggregation::IcaSignatureVerifier,
@@ -33,13 +36,15 @@ use crate::{
             signer_payload::SignerPayload,
         },
         internal::debug_byte_slice::DebugByteSlice,
-        x509::X509SignatureVerifier,
+        x509::{X509SignatureInfo, X509StatusRemapGuard},
         SignatureVerifier, ToCredentialSummary, ValidationError,
     },
     jumbf::labels::to_assertion_uri,
     log_current_item, log_item,
+    settings::TrustListKind,
     status_tracker::StatusTracker,
-    Context, Manifest, Reader,
+    validation_status::{CAWG_X509_SIGNATURE_MISMATCH, CAWG_X509_SIGNATURE_VALIDATED},
+    Manifest, Reader,
 };
 
 /// This struct represents the raw content of the identity assertion.
@@ -279,23 +284,30 @@ impl IdentityAssertion {
             .check_against_manifest(manifest, status_tracker)?;
 
         verifier
-            .check_signature(&self.signer_payload, &self.signature, status_tracker)
+            .check_signature_async(&self.signer_payload, &self.signature, status_tracker)
             .await
     }
 
-    /// Using the provided [`SignatureVerifier`], check the validity of this
-    /// identity assertion.
+    /// Validate this identity assertion against a list of claim assertion URIs.
     ///
-    /// If successful, returns the credential-type specific information that can
-    /// be derived from the signature. This is the [`SignatureVerifier::Output`]
-    /// type which typically describes the named actor, but may also contain
-    /// information about the time of signing or the credential's source.
-    pub(crate) async fn validate_partial_claim(
+    /// Accepts a plain slice of [`HashedUri`]s so callers do not need to
+    /// construct the internal [`PartialClaim`] type.
+    ///
+    /// The sync variant (`validate_partial_claim`) handles `cawg.x509.cose`
+    /// fully; other signature types that require network I/O (e.g.
+    /// `cawg.identity_claims_aggregation`) are skipped with an informational
+    /// log entry and return `None` from the caller's perspective.
+    ///
+    /// The async variant (`validate_partial_claim_async`) handles all known
+    /// signature types.
+    #[async_generic]
+    pub(crate) fn validate_partial_claim(
         &self,
         partial_claim: &PartialClaim,
         status_tracker: &mut StatusTracker,
+        context: &Context,
     ) -> Result<serde_json::Value, ValidationError<String>> {
-        let settings = Context::new().settings().clone();
+        let settings = context.settings();
         self.check_padding(status_tracker)?;
 
         self.signer_payload
@@ -309,35 +321,95 @@ impl IdentityAssertion {
             // Load the trust handler settings. Don't worry about status as these
             // are checked during setting generation.
 
-            let cose_verifier = if settings.cawg_trust.verify_trust_list {
-                if let Some(ta) = &settings.cawg_trust.trust_anchors {
-                    let _ = ctp.add_trust_anchors(ta.as_bytes());
-                }
+            if let Some(anchors) = &settings.trust.anchors_for_trust_kind(TrustListKind::CAWG) {
+                for anchor in anchors {
+                    let _ = ctp.add_trust_anchors(
+                        anchor.trust_anchors.as_bytes(),
+                        anchor.trust_uri.as_deref().unwrap_or(""),
+                        anchor.trust_kind.clone().into(),
+                        anchor.trust_config.clone(),
+                    );
 
-                if let Some(pa) = &settings.cawg_trust.user_anchors {
-                    let _ = ctp.add_user_trust_anchors(pa.as_bytes());
+                    if let Some(al) = &anchor.allowed_list {
+                        let _ = ctp.add_end_entity_credentials(al.as_bytes());
+                    }
                 }
+            }
+            let cose_verifier = Verifier::VerifyTrustPolicy(Cow::Owned(ctp));
 
-                if let Some(tc) = &settings.cawg_trust.trust_config {
-                    ctp.add_valid_ekus(tc.as_bytes());
+            let mut signer_payload_cbor: Vec<u8> = vec![];
+            c2pa_cbor::to_writer(&mut signer_payload_cbor, &self.signer_payload).map_err(|_| {
+                ValidationError::InternalError("CBOR serialization error".to_string())
+            })?;
+
+            let signature_result = {
+                let mut remap_guard = X509StatusRemapGuard::new(status_tracker);
+                let status_tracker = remap_guard.status_tracker();
+
+                match parse_cose_sign1(&self.signature, &signer_payload_cbor, status_tracker) {
+                    Ok(cose_sign1) => {
+                        let verify_result = if _sync {
+                            cose_verifier.verify_signature(
+                                &self.signature,
+                                &signer_payload_cbor,
+                                &[],
+                                None,
+                                status_tracker,
+                            )
+                        } else {
+                            cose_verifier
+                                .verify_signature_async(
+                                    &self.signature,
+                                    &signer_payload_cbor,
+                                    &[],
+                                    None,
+                                    status_tracker,
+                                )
+                                .await
+                        };
+
+                        verify_result
+                            .map(|cert_info| (cose_sign1, cert_info))
+                            .map_err(|e| match e {
+                                CoseError::RawSignatureValidationError(
+                                    RawSignatureValidationError::SignatureMismatch,
+                                ) => {
+                                    log_current_item!(
+                                        "signature mismatch",
+                                        "validate_partial_claim"
+                                    )
+                                    .validation_status(CAWG_X509_SIGNATURE_MISMATCH)
+                                    .failure_no_throw(
+                                        status_tracker,
+                                        ValidationError::<String>::SignatureMismatch,
+                                    );
+
+                                    ValidationError::SignatureMismatch
+                                }
+
+                                e => ValidationError::SignatureError(e.to_string()),
+                            })
+                    }
+
+                    Err(e) => Err(ValidationError::SignatureError(e.to_string())),
                 }
+            }; // `remap_guard` drops here, remapping the codes logged above.
 
-                if let Some(al) = &settings.cawg_trust.allowed_list {
-                    let _ = ctp.add_end_entity_credentials(al.as_bytes());
-                }
+            let (cose_sign1, cert_info) = signature_result?;
 
-                Verifier::VerifyTrustPolicy(Cow::Owned(ctp))
-            } else {
-                Verifier::IgnoreProfileAndTrustPolicy
+            log_current_item!(
+                "X.509 identity assertion signature validated",
+                "validate_partial_claim"
+            )
+            .validation_status(CAWG_X509_SIGNATURE_VALIDATED)
+            .success(status_tracker);
+
+            let info = X509SignatureInfo {
+                signer_payload: self.signer_payload.clone(),
+                cose_sign1,
+                cert_info,
             };
-
-            let verifier = X509SignatureVerifier { cose_verifier };
-
-            let result = verifier
-                .check_signature(&self.signer_payload, &self.signature, status_tracker)
-                .await
-                .map(|v| v.to_summary())
-                .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))?;
+            let result = info.to_summary();
 
             log_current_item!(
                 "CAWG X.509 identity signature valid",
@@ -351,23 +423,39 @@ impl IdentityAssertion {
             serde_json::to_value(result)
                 .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
         } else if sig_type == "cawg.identity_claims_aggregation" {
-            let verifier = IcaSignatureVerifier {};
+            let verifier = IcaSignatureVerifier::new(context);
 
-            let result = verifier
-                .check_signature(&self.signer_payload, &self.signature, status_tracker)
-                .await
-                .map(|v| v.to_summary())
-                .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))?;
-            log_current_item!(
-                "CAWG identity_claims_aggregation signature valid",
-                "validate_partial_claim"
-            )
-            .validation_status("cawg.ica.credential_valid")
-            .success(status_tracker);
+            let result = if _sync {
+                verifier
+                    .check_signature(&self.signer_payload, &self.signature, status_tracker)
+                    .map(|v| v.to_summary())
+                    .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
+            } else {
+                verifier
+                    .check_signature_async(&self.signer_payload, &self.signature, status_tracker)
+                    .await
+                    .map(|v| v.to_summary())
+                    .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
+            }?;
+
+            // NOTE: The `cawg.ica.credential_valid` success code is issued by
+            // `IcaSignatureVerifier::check_signature` itself, and only when the
+            // credential is valid and its issuer is trusted (i.e. no
+            // `cawg.ica.untrusted_issuer` notice was generated). We must not issue
+            // it again here, or an untrusted issuer would be reported as valid.
 
             serde_json::to_value(result)
                 .map_err(|e| ValidationError::UnknownSignatureType(e.to_string()))
         } else {
+            // Per CAWG Identity Assertion §7.1, an unrecognized sig_type SHALL be
+            // reported rather than silently ignored.
+            log_current_item!("unsupported signature type", "validate_partial_claim")
+                .validation_status("cawg.identity.sig_type.unknown")
+                .failure_no_throw(
+                    status_tracker,
+                    ValidationError::<String>::UnknownSignatureType(sig_type.to_string()),
+                );
+
             Err(ValidationError::UnknownSignatureType(sig_type.to_string()))
         }
     }
@@ -417,5 +505,150 @@ impl Debug for IdentityAssertion {
             .field("signature", &DebugByteSlice(&self.signature))
             .field("label", &self.label)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::panic)]
+    #![allow(clippy::unwrap_used)]
+
+    use std::io::{Cursor, Seek};
+
+    use c2pa_macros::c2pa_test_async;
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use super::*;
+    use crate::{
+        dynamic_assertion::PartialClaim,
+        identity::{
+            builder::{IdentityAssertionBuilder, IdentityAssertionSigner},
+            tests::{
+                fixtures::{cert_chain_and_private_key_for_alg, manifest_json, parent_json},
+                read_manifest,
+            },
+            x509::X509CredentialHolder,
+        },
+        Builder, SigningAlg,
+    };
+
+    const TEST_IMAGE: &[u8] = include_bytes!("../../../tests/fixtures/CA.jpg");
+    const TEST_THUMBNAIL: &[u8] = include_bytes!("../../../tests/fixtures/thumbnail.jpg");
+
+    #[c2pa_test_async]
+    async fn x509_signature_mismatch_is_reported() {
+        let format = "image/jpeg";
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
+        builder
+            .add_ingredient_from_stream(parent_json(), format, &mut source)
+            .unwrap();
+
+        builder
+            .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
+            .unwrap();
+
+        let mut c2pa_signer = IdentityAssertionSigner::from_test_credentials(SigningAlg::Ps256);
+
+        let (cawg_cert_chain, cawg_private_key) =
+            cert_chain_and_private_key_for_alg(SigningAlg::Ed25519);
+
+        let cawg_raw_signer =
+            c2pa_raw_crypto::signer_from_private_key(&cawg_private_key, SigningAlg::Ed25519)
+                .unwrap();
+
+        let x509_holder = X509CredentialHolder::from_raw_signer(
+            cawg_raw_signer,
+            crate::crypto::cert_chain_pem_to_der(&cawg_cert_chain).unwrap(),
+        );
+        let iab = IdentityAssertionBuilder::for_credential_holder(x509_holder);
+        c2pa_signer.add_identity_assertion(iab);
+
+        builder
+            .sign(&c2pa_signer, format, &mut source, &mut dest)
+            .unwrap();
+
+        // Read back the Manifest that was generated.
+        dest.rewind().unwrap();
+
+        let manifest_store = read_manifest(format, &mut dest).await;
+        assert_eq!(manifest_store.validation_status(), None);
+
+        let manifest = manifest_store.active_manifest().unwrap();
+        let mut st = StatusTracker::default();
+        let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
+
+        // Should find exactly one identity assertion.
+        let ia = ia_iter.next().unwrap().unwrap();
+        assert!(ia_iter.next().is_none());
+        drop(ia_iter);
+
+        let mut partial_claim = PartialClaim::default();
+        for referenced_assertion in &ia.signer_payload.referenced_assertions {
+            partial_claim.add_assertion(referenced_assertion);
+        }
+
+        // Tamper with the signer payload (leaving the original signature bytes
+        // untouched) so that the COSE signature no longer matches. This is a
+        // syntactically valid `SignerPayload`, so it exercises a genuine
+        // cryptographic mismatch -- through the production `validate_partial_claim`
+        // path used during normal manifest reading -- rather than a CBOR parsing
+        // failure.
+        let mut tampered_signer_payload = ia.signer_payload.clone();
+        tampered_signer_payload.roles.push("tampered".to_string());
+
+        let tampered_ia = IdentityAssertion {
+            signer_payload: tampered_signer_payload,
+            signature: ia.signature.clone(),
+            pad1: ia.pad1.clone(),
+            pad2: ia.pad2.clone(),
+            label: None,
+        };
+
+        let context = Context::new();
+        let err = tampered_ia
+            .validate_partial_claim_async(&partial_claim, &mut st, &context)
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.to_string(), "signature is invalid");
+
+        let log = st
+            .logged_items()
+            .iter()
+            .find(|item| item.description == "signature mismatch")
+            .unwrap();
+
+        assert_eq!(log.kind, crate::status_tracker::LogKind::Failure);
+        assert_eq!(
+            log.validation_status.as_ref().unwrap().as_ref() as &str,
+            CAWG_X509_SIGNATURE_MISMATCH
+        );
+
+        // Signature bytes that don't even parse as a COSE_Sign1 structure are a
+        // different Rust error variant (`SignatureError`, not
+        // `SignatureMismatch`) from the cryptographic mismatch above, but the
+        // CAWG spec reports both under the same status code -- see the longer
+        // comment in x509_signature_verifier.rs's equivalent test.
+        let malformed_ia = IdentityAssertion {
+            signer_payload: ia.signer_payload.clone(),
+            signature: b"not a COSE_Sign1 structure".to_vec(),
+            pad1: ia.pad1.clone(),
+            pad2: ia.pad2.clone(),
+            label: None,
+        };
+
+        let mut malformed_st = StatusTracker::default();
+        let malformed_err = malformed_ia
+            .validate_partial_claim_async(&partial_claim, &mut malformed_st, &context)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(malformed_err, ValidationError::SignatureError(_)));
+
+        assert!(malformed_st.has_status(CAWG_X509_SIGNATURE_MISMATCH));
     }
 }

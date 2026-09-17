@@ -112,6 +112,7 @@
 //! ## Input Validation (from C)
 //! - **Pointer from C**: `deref_or_return_null!(ptr, Type)` → validates & dereferences to `&Type`
 //! - **String from C**: `cstr_or_return_null!(c_str)` → converts C string to Rust `String`
+//! - **String array from C**: `cstr_array_or_return_null!(ptr)` → converts NULL-terminated `*const *const c_char` to `Vec<String>`
 //! - **Byte array from C**: `bytes_or_return_null!(ptr, len, "name")` → validates & converts to `&[u8]`
 //! - **Check not null**: `ptr_or_return_null!(ptr)` → just null check, no deref (for output params)
 //!
@@ -128,7 +129,7 @@
 //! All macros follow: `action_or_return_<what>`
 //! - `_null`: Returns `NULL` pointer
 //! - `_int`: Returns `-1`
-//! - `_zero`: Returns `0`  
+//! - `_zero`: Returns `0`
 //! - `_false`: Returns `false`
 //!
 //! # Type Mapping Guide
@@ -349,12 +350,67 @@ macro_rules! arc_tracked {
     }};
 }
 
+/// Untrack a pointer from the registry and take ownership of the pointee
+/// (ownership transfer from C to Rust), yielding it by value.
+///
+/// Validates the pointer is tracked with the correct type, removes it from the
+/// registry so it can't be double-freed or flagged as a leak, then immediately
+/// `Box::from_raw`s it and moves the value out. Because the result is an owned
+/// value rather than a pointer, any early return written *after* this macro
+/// (e.g. from validating another argument) drops it via Rust's ordinary
+/// scope-exit `Drop` — so the input is consumed the same way on every failure
+/// path, not just when the rest of the function succeeds.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// // In c2pa_context_builder_set_signer — signer is moved into the builder:
+/// let signer = untrack_or_return_int!(signer_ptr, C2paSigner);
+/// builder.set_signer(signer.signer);
+///
+/// // In c2pa_context_builder_build — builder is consumed to produce a context:
+/// let builder = untrack_or_return_null!(builder, C2paContextBuilder);
+/// box_tracked!(builder.into_shared())
+/// ```
+#[macro_export]
+macro_rules! untrack_or_return {
+    ($ptr:expr, $type:ty, $err_val:expr) => {{
+        $crate::ptr_or_return!($ptr, $err_val);
+        match $crate::untrack_pointer::<$type>($ptr) {
+            Ok(()) => *Box::from_raw($ptr as *mut $type),
+            Err(e) => {
+                $crate::CimplError::from(e).set_last();
+                return $err_val;
+            }
+        }
+    }};
+}
+
+/// Untrack a pointer and take ownership of the pointee, returning -1 on error.
+#[macro_export]
+macro_rules! untrack_or_return_int {
+    ($ptr:expr, $type:ty) => {{
+        $crate::untrack_or_return!($ptr, $type, -1)
+    }};
+}
+
+/// Untrack a pointer and take ownership of the pointee, returning NULL on error.
+#[macro_export]
+macro_rules! untrack_or_return_null {
+    ($ptr:expr, $type:ty) => {{
+        $crate::untrack_or_return!($ptr, $type, std::ptr::null_mut())
+    }};
+}
+
 /// Maximum length for C strings when using bounded conversion (64KB)
 pub const MAX_CSTRING_LEN: usize = 1048576;
 
-/// Convert C string with bounded length check or early-return with error value
-/// Uses a safe bounded approach to prevent reading unbounded memory.
-/// Maximum string length is MAX_CSTRING_LEN (1MB).
+/// Maximum number of entries accepted from a NULL-terminated C string array.
+/// Guards against runaway iteration when a caller omits the NULL terminator.
+pub const MAX_STRING_ARRAY_LEN: usize = 256;
+
+/// Convert C string with bounded length check or early-return with error value.
+/// Errors if the string exceeds MAX_CSTRING_LEN bytes.
 #[macro_export]
 macro_rules! cstr_or_return {
     ($ptr:expr, $err_val:expr) => {{
@@ -363,45 +419,35 @@ macro_rules! cstr_or_return {
             $crate::CimplError::null_parameter(stringify!($ptr)).set_last();
             return $err_val;
         } else {
-            // SAFETY: We create a bounded slice up to MAX_CSTRING_LEN.
-            // Caller must ensure ptr is valid for reading and points to a
-            // null-terminated string within MAX_CSTRING_LEN bytes.
-            let bytes = unsafe {
-                std::slice::from_raw_parts(ptr as *const u8, $crate::macros::MAX_CSTRING_LEN)
-            };
-            match std::ffi::CStr::from_bytes_until_nul(bytes) {
-                Ok(cstr) => cstr.to_string_lossy().into_owned(),
-                Err(_) => {
-                    $crate::CimplError::string_too_long(stringify!($ptr)).set_last();
-                    return $err_val;
-                }
+            // SAFETY: caller must ensure ptr is a valid null-terminated C string.
+            let cstr = unsafe { std::ffi::CStr::from_ptr(ptr as *const std::ffi::c_char) };
+            if cstr.to_bytes().len() > $crate::macros::MAX_CSTRING_LEN {
+                $crate::CimplError::string_too_long(stringify!($ptr)).set_last();
+                return $err_val;
             }
+            cstr.to_string_lossy().into_owned()
         }
     }};
 }
 
-/// Convert C string with custom length limit or early-return with error value
-/// Allows specifying a custom maximum length for the string.
+/// Convert C string with custom length limit or early-return with error value.
+/// Errors if the string exceeds max_len bytes.
 #[macro_export]
 macro_rules! cstr_or_return_with_limit {
     ($ptr:expr, $max_len:expr, $err_val:expr) => {{
         let ptr = $ptr;
         let max_len = $max_len;
         if ptr.is_null() {
-            $crate::cimpl_error::null_parameter(stringify!($ptr)).set_last();
+            $crate::CimplError::null_parameter(stringify!($ptr)).set_last();
             return $err_val;
         } else {
-            // SAFETY: We create a bounded slice up to max_len.
-            // Caller must ensure ptr is valid for reading and points to a
-            // null-terminated string within max_len bytes.
-            let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, max_len) };
-            match std::ffi::CStr::from_bytes_until_nul(bytes) {
-                Ok(cstr) => cstr.to_string_lossy().into_owned(),
-                Err(_) => {
-                    $crate::cimpl_error::string_too_long(stringify!($ptr).to_string());
-                    return $err_val;
-                }
+            // SAFETY: caller must ensure ptr is a valid null-terminated C string.
+            let cstr = unsafe { std::ffi::CStr::from_ptr(ptr as *const std::ffi::c_char) };
+            if cstr.to_bytes().len() > max_len {
+                $crate::CimplError::string_too_long(stringify!($ptr)).set_last();
+                return $err_val;
             }
+            cstr.to_string_lossy().into_owned()
         }
     }};
 }
@@ -636,18 +682,13 @@ macro_rules! cstr_option {
         if ptr.is_null() {
             None
         } else {
-            // SAFETY: We create a bounded slice up to MAX_CSTRING_LEN.
-            // Caller must ensure ptr is valid for reading and points to a
-            // null-terminated string within MAX_CSTRING_LEN bytes.
-            let bytes = unsafe {
-                std::slice::from_raw_parts(ptr as *const u8, $crate::macros::MAX_CSTRING_LEN)
-            };
-            match std::ffi::CStr::from_bytes_until_nul(bytes) {
-                Ok(cstr) => Some(cstr.to_string_lossy().into_owned()),
-                Err(_) => {
-                    $crate::CimplError::string_too_long(stringify!($ptr)).set_last();
-                    None
-                }
+            // SAFETY: caller must ensure ptr is a valid null-terminated C string.
+            let cstr = unsafe { std::ffi::CStr::from_ptr(ptr as *const std::ffi::c_char) };
+            if cstr.to_bytes().len() > $crate::macros::MAX_CSTRING_LEN {
+                $crate::CimplError::string_too_long(stringify!($ptr)).set_last();
+                None
+            } else {
+                Some(cstr.to_string_lossy().into_owned())
             }
         }
     }};
@@ -727,6 +768,88 @@ macro_rules! bytes_or_return_int {
     ($ptr:expr, $len:expr, $name:expr) => {{
         $crate::bytes_or_return!($ptr, $len, $name, -1)
     }};
+}
+
+// ============================================================================
+// NULL-Terminated C String Array Macros
+// ============================================================================
+
+/// Convert a NULL-terminated C string array (`*const *const c_char`) to a
+/// `Vec<String>`, or early-return with a custom error value.
+///
+/// * A NULL outer pointer is treated as an empty list (not an error).
+/// * Returns early if the array exceeds [`MAX_STRING_ARRAY_LEN`] entries
+///   (likely a missing NULL terminator).
+/// * Returns early if any individual string is not valid UTF-8.
+///
+/// # Examples
+/// ```rust,ignore
+/// let refs = cstr_array_or_return!(refs_ptr, std::ptr::null_mut());
+/// ```
+#[macro_export]
+macro_rules! cstr_array_or_return {
+    ($ptr:expr, $err_val:expr) => {{
+        let ptr = $ptr;
+        if ptr.is_null() {
+            Vec::<String>::new()
+        } else {
+            let mut result = Vec::<String>::new();
+            let mut i = 0usize;
+            loop {
+                if i >= $crate::macros::MAX_STRING_ARRAY_LEN {
+                    $crate::CimplError::new(
+                        2,
+                        concat!(
+                            stringify!($ptr),
+                            ": array exceeds maximum length or missing NULL terminator"
+                        ),
+                    )
+                    .set_last();
+                    return $err_val;
+                }
+                // SAFETY: caller guarantees ptr points to a valid NULL-terminated array.
+                let entry = unsafe { *ptr.add(i) };
+                if entry.is_null() {
+                    break;
+                }
+                // SAFETY: caller guarantees each entry is a valid NULL-terminated C string.
+                let cstr = unsafe { std::ffi::CStr::from_ptr(entry) };
+                match cstr.to_str() {
+                    Ok(s) => result.push(s.to_owned()),
+                    Err(_) => {
+                        $crate::CimplError::new(
+                            2,
+                            concat!(stringify!($ptr), ": non-UTF-8 string in array"),
+                        )
+                        .set_last();
+                        return $err_val;
+                    }
+                }
+                i += 1;
+            }
+            result
+        }
+    }};
+}
+
+/// Convert a NULL-terminated C string array to a `Vec<String>`, returning NULL on error.
+///
+/// See [`cstr_array_or_return`] for full documentation.
+#[macro_export]
+macro_rules! cstr_array_or_return_null {
+    ($ptr:expr) => {
+        $crate::cstr_array_or_return!($ptr, std::ptr::null_mut())
+    };
+}
+
+/// Convert a NULL-terminated C string array to a `Vec<String>`, returning -1 on error.
+///
+/// See [`cstr_array_or_return`] for full documentation.
+#[macro_export]
+macro_rules! cstr_array_or_return_int {
+    ($ptr:expr) => {
+        $crate::cstr_array_or_return!($ptr, -1)
+    };
 }
 
 /// Free a pointer that was allocated by cimpl.

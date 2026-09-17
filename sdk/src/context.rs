@@ -11,18 +11,100 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, OnceLock,
+};
 
 use crate::{
+    asset_io::{AssetIO, HandlerRegistry},
     http::{
-        restricted::RestrictedResolver, AsyncGenericResolver, AsyncHttpResolver,
-        SyncGenericResolver, SyncHttpResolver,
+        restricted::{RedirectResolver, RestrictedResolver},
+        AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver,
     },
     maybe_send_sync::{MaybeSend, MaybeSync},
     settings::Settings,
     signer::{BoxedAsyncSigner, BoxedSigner},
     AsyncSigner, Error, Result, Signer,
 };
+
+/// Phases reported by the progress callback.
+///
+/// Passed to the progress callback registered on [`Context`] so callers can
+/// display progress indicators or make phase-specific cancellation decisions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ProgressPhase {
+    /// Parsing and extracting JUMBF manifest data from an asset stream (I/O phase).
+    Reading,
+    /// Verifying the structure and integrity of a manifest store entry.
+    VerifyingManifest,
+    /// Verifying a COSE cryptographic signature and certificate chain for a claim.
+    /// Fires twice per claim: once before COSE parse (`step=1`) and once after
+    /// OCSP and full signature verification (`step=2`).
+    VerifyingSignature,
+    /// Verifying one ingredient's embedded manifest.  Fires once per ingredient
+    /// (`step` = ingredient index, `total` = total ingredient count).
+    VerifyingIngredient,
+    /// Re-hashing the asset bytes to verify the `c2pa.hash.data` or `c2pa.hash.bmff`
+    /// assertion (the most time-consuming part of reading for large assets).
+    VerifyingAssetHash,
+    /// Adding an ingredient to the manifest.
+    AddingIngredient,
+    /// Generating a thumbnail for the asset (during signing).
+    Thumbnail,
+    /// Hashing asset data to build the hash binding assertion (during signing).
+    Hashing,
+    /// Signing the claim with COSE, including any remote TSA timestamp fetch.
+    Signing,
+    /// Embedding the signed JUMBF manifest store into the output asset.
+    Embedding,
+    /// Fetching a remote manifest over the network.
+    FetchingRemoteManifest,
+    /// Writing the asset with the placeholder JUMBF to the output stream
+    /// (the full-file streaming copy that precedes the hash-readback pass).
+    /// Fires once between the write pass and the hash computation pass so
+    /// callers can distinguish I/O time from CPU hashing time.
+    Writing,
+    /// Fetching an OCSP response over the network.
+    FetchingOCSP,
+    /// Fetching a timestamp from a remote TSA over the network.
+    FetchingTimestamp,
+}
+
+/// Progress callback function type.
+///
+/// Called at key checkpoints during signing and reading operations.
+///
+/// # Parameters
+/// * `phase` – the current [`ProgressPhase`], which fully describes what the SDK
+///   is doing.  No separate message string is provided; callers should derive any
+///   user-visible text from `phase` in whatever language they need.
+/// * `step`  – monotonically increasing counter within the current phase, starting
+///   at `1`.  Resets to `1` at the start of each new phase.  Use it as a liveness
+///   signal: as long as `step` keeps rising, the SDK is making forward progress.
+///   The unit is phase-specific (e.g. chunk index for [`ProgressPhase::Hashing`],
+///   ingredient index for [`ProgressPhase::VerifyingIngredient`]) and should
+///   otherwise be treated as opaque.
+/// * `total` – interpreted as follows:
+///   - `0` – indeterminate; the count is not known in advance.  Show a spinner
+///     and use the rising `step` value as a liveness heartbeat.
+///   - `1` – single-shot phase; the callback itself is the notification.
+///   - `> 1` – determinate; `step / total` gives a completion fraction suitable
+///     for a progress bar.
+///
+/// # Return value
+/// Return `true` to continue, `false` to request cancellation.
+/// The SDK returns [`Error::OperationCancelled`] at the next safe checkpoint.
+///
+/// On non-WASM targets the closure must be `Send + Sync`; on WASM (single-threaded)
+/// no thread-safety bounds are required.
+#[cfg(not(target_arch = "wasm32"))]
+pub type ProgressCallbackFunc = dyn Fn(ProgressPhase, u32, u32) -> bool + Send + Sync;
+
+/// Progress callback function type (WASM variant – no `Send + Sync`).
+#[cfg(target_arch = "wasm32")]
+pub type ProgressCallbackFunc = dyn Fn(ProgressPhase, u32, u32) -> bool;
 
 /// Internal state for sync HTTP resolver selection.
 enum SyncResolverState {
@@ -45,7 +127,6 @@ enum SignerState {
     /// User-provided custom signer.
     Custom(BoxedSigner),
     /// Signer created from context's settings with lazy initialization.
-    /// The Result is cached so we only attempt creation once.
     FromSettings(OnceLock<Result<BoxedSigner>>),
 }
 
@@ -54,7 +135,6 @@ enum AsyncSignerState {
     /// User-provided custom async signer.
     Custom(BoxedAsyncSigner),
     /// Async signer created from context's settings with lazy initialization.
-    /// The Result is cached so we only attempt creation once.
     FromSettings(OnceLock<Result<BoxedAsyncSigner>>),
 }
 
@@ -188,18 +268,26 @@ impl IntoSettings for serde_json::Value {
 /// ```
 pub struct Context {
     settings: Settings,
-    sync_resolver: SyncResolverState,
-    async_resolver: AsyncResolverState,
+    sync_resolver_state: SyncResolverState,
+    async_resolver_state: AsyncResolverState,
     signer: SignerState,
     async_signer: AsyncSignerState,
+    progress_callback: Option<Box<ProgressCallbackFunc>>,
+    /// Embedded cancellation flag.  Any thread holding an `Arc<Context>` can call
+    /// [`cancel()`](Context::cancel) without needing a separate token object.
+    cancel_flag: AtomicBool,
+    /// Custom IO handlers provided by the caller, plus the built-in registry as a fallback.
+    /// Custom handlers are searched first; last-registered wins when two handlers claim the
+    /// same format.
+    io: HandlerRegistry,
 }
 
 impl Default for Context {
     fn default() -> Self {
         Self {
             settings: Settings::default(),
-            sync_resolver: SyncResolverState::Default(OnceLock::new()),
-            async_resolver: AsyncResolverState::Default(OnceLock::new()),
+            sync_resolver_state: SyncResolverState::Default(OnceLock::new()),
+            async_resolver_state: AsyncResolverState::Default(OnceLock::new()),
             #[cfg(test)]
             signer: SignerState::Custom(crate::utils::test_signer::test_signer(
                 crate::SigningAlg::Ps256,
@@ -207,6 +295,9 @@ impl Default for Context {
             #[cfg(not(test))]
             signer: SignerState::FromSettings(OnceLock::new()),
             async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
+            progress_callback: None,
+            cancel_flag: AtomicBool::new(false),
+            io: HandlerRegistry::with_fallback(crate::jumbf_io::default_handler_registry()),
         }
     }
 }
@@ -325,7 +416,7 @@ impl Context {
         mut self,
         resolver: T,
     ) -> Self {
-        self.sync_resolver = SyncResolverState::Custom(Arc::new(resolver));
+        self.sync_resolver_state = SyncResolverState::Custom(Arc::new(resolver));
         self
     }
 
@@ -333,7 +424,7 @@ impl Context {
         &mut self,
         resolver: T,
     ) -> Result<()> {
-        self.sync_resolver = SyncResolverState::Custom(Arc::new(resolver));
+        self.sync_resolver_state = SyncResolverState::Custom(Arc::new(resolver));
         Ok(())
     }
 
@@ -348,7 +439,7 @@ impl Context {
         mut self,
         resolver: T,
     ) -> Self {
-        self.async_resolver = AsyncResolverState::Custom(Arc::new(resolver));
+        self.async_resolver_state = AsyncResolverState::Custom(Arc::new(resolver));
         self
     }
 
@@ -356,44 +447,119 @@ impl Context {
         &mut self,
         resolver: T,
     ) -> Result<()> {
-        self.async_resolver = AsyncResolverState::Custom(Arc::new(resolver));
+        self.async_resolver_state = AsyncResolverState::Custom(Arc::new(resolver));
         Ok(())
     }
 
     /// Returns a reference to the sync resolver.
     ///
-    /// The default resolver is a `SyncGenericResolver` wrapped with `RestrictedResolver`
-    /// to apply host filtering from the settings.
+    /// When no custom resolver is set, the default resolver is assembled from the
+    /// [`allow_redirects`] and [`allowed_network_hosts`] settings.
+    ///
+    /// [`allow_redirects`]: crate::settings::Core::allow_redirects
+    /// [`allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
     pub fn resolver(&self) -> Arc<dyn SyncHttpResolver> {
-        match &self.sync_resolver {
+        match &self.sync_resolver_state {
             SyncResolverState::Custom(resolver) => resolver.clone(),
             SyncResolverState::Default(once_lock) => once_lock
-                .get_or_init(|| {
-                    let inner = SyncGenericResolver::new();
-                    let mut resolver = RestrictedResolver::new(inner);
-                    resolver.set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
-                    Arc::new(resolver)
-                })
+                .get_or_init(|| self.build_default_sync_resolver())
                 .clone(),
+        }
+    }
+
+    /// Builds the default sync resolver stack from the [`allow_redirects`] and
+    /// [`allowed_network_hosts`] settings.
+    ///
+    /// The base HTTP client never auto-follows redirects; a [`RedirectResolver`] follows them at the
+    /// SDK layer so it can reject hops to internal addresses (SSRF hardening, CAI-12574). An explicit
+    /// allow-list, when configured, is applied *inside* the redirect follower via
+    /// [`RestrictedResolver`], so it is re-checked on every hop. Concrete wrapper types are used (no
+    /// intermediate `Arc<dyn ..>`) so the stack stays `Send`/`Sync` where required, including WASM.
+    ///
+    /// [`allow_redirects`]: crate::settings::Core::allow_redirects
+    /// [`allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
+    fn build_default_sync_resolver(&self) -> Arc<dyn SyncHttpResolver> {
+        let core = &self.settings.core;
+        let client = SyncGenericResolver::new();
+
+        if let Some(allowed_hosts) = core.allowed_network_hosts.clone() {
+            let mut restricted = RestrictedResolver::new(client);
+            restricted.set_allowed_hosts(Some(allowed_hosts));
+            Arc::new(RedirectResolver::new(restricted, core.allow_redirects))
+        } else {
+            Arc::new(RedirectResolver::new(client, core.allow_redirects))
         }
     }
 
     /// Returns a reference to the async resolver.
     ///
-    /// The default resolver is an `AsyncGenericResolver` wrapped with `RestrictedResolver`
-    /// to apply host filtering from the settings.
+    /// When no custom resolver is set, the default resolver is assembled from the
+    /// [`allow_redirects`] and [`allowed_network_hosts`] settings, mirroring the sync resolver.
+    ///
+    /// [`allow_redirects`]: crate::settings::Core::allow_redirects
+    /// [`allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
     pub fn resolver_async(&self) -> Arc<dyn AsyncHttpResolver> {
-        match &self.async_resolver {
+        match &self.async_resolver_state {
             AsyncResolverState::Custom(resolver) => resolver.clone(),
             AsyncResolverState::Default(once_lock) => once_lock
-                .get_or_init(|| {
-                    let inner = AsyncGenericResolver::new();
-                    let mut resolver = RestrictedResolver::new(inner);
-                    resolver.set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
-                    Arc::new(resolver)
-                })
+                .get_or_init(|| self.build_default_async_resolver())
                 .clone(),
         }
+    }
+
+    /// Builds the default async resolver stack. Mirrors [`build_default_sync_resolver`].
+    ///
+    /// [`build_default_sync_resolver`]: Context::build_default_sync_resolver
+    fn build_default_async_resolver(&self) -> Arc<dyn AsyncHttpResolver> {
+        let core = &self.settings.core;
+        let client = AsyncGenericResolver::new();
+
+        if let Some(allowed_hosts) = core.allowed_network_hosts.clone() {
+            let mut restricted = RestrictedResolver::new(client);
+            restricted.set_allowed_hosts(Some(allowed_hosts));
+            Arc::new(RedirectResolver::new(restricted, core.allow_redirects))
+        } else {
+            Arc::new(RedirectResolver::new(client, core.allow_redirects))
+        }
+    }
+
+    /// Register a custom IO handler on this Context.
+    ///
+    /// Custom handlers are consulted before the built-in global registry, so a handler
+    /// registered here can override a built-in handler for any format string it claims.
+    /// When multiple custom handlers claim the same format, the last one registered wins.
+    ///
+    /// # Arguments
+    ///
+    /// * `handler` - Any type implementing `AssetIO`
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use c2pa::{Context, AssetIO};
+    /// let context = Context::new().with_io_handler(MyCustomHandler::new(""));
+    /// let reader = c2pa::Reader::from_context(context);
+    /// ```
+    #[allow(unused)] // not public yet, but used in tests
+    pub(crate) fn with_io_handler(mut self, handler: impl AssetIO + 'static) -> Self {
+        self.io.add_handler(handler);
+        self
+    }
+
+    /// Register a custom IO handler on this Context (mutable variant).
+    #[allow(unused)] // not public yet, but used in tests
+    pub(crate) fn add_io_handler(&mut self, handler: impl AssetIO + 'static) {
+        self.io.add_handler(handler);
+    }
+
+    /// Returns this Context's [`HandlerRegistry`], for looking up asset I/O handlers and
+    /// their derived metadata (supported formats, MIME types, container families, ...).
+    ///
+    /// Custom handlers registered via [`with_io_handler`](Self::with_io_handler) are searched
+    /// before the built-in global registry; last-registered wins when two handlers claim the
+    /// same format.
+    pub(crate) fn io(&self) -> &HandlerRegistry {
+        &self.io
     }
 
     /// Configure this Context with a custom cryptographic signer.
@@ -464,10 +630,10 @@ impl Context {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::MissingSignerSettings`] if:
-    /// - No signer was explicitly set with `with_signer()`
-    /// - No signer configuration is present in this Context's settings
-    /// - The signer configuration in settings is invalid
+    /// Returns [`Error::MissingSignerSettings`] if no signer was explicitly set
+    /// with `with_signer()` and no signer configuration is present in this
+    /// Context's settings. Returns other errors if signer creation fails (e.g.
+    /// invalid credentials, unsupported algorithm, or crypto library errors).
     ///
     /// # Examples
     ///
@@ -513,11 +679,9 @@ impl Context {
             SignerState::Custom(signer) => Ok(signer.as_ref()),
             SignerState::FromSettings(once_lock) => {
                 let result = once_lock.get_or_init(|| {
-                    // Create signer from this context's settings
                     if let Some(signer_settings) = &self.settings.signer {
                         let c2pa_signer = signer_settings.clone().c2pa_signer()?;
 
-                        // Check for CAWG x509 wrapper
                         if let Some(cawg_settings) = &self.settings.cawg_x509_signer {
                             cawg_settings.clone().cawg_signer(c2pa_signer)
                         } else {
@@ -530,7 +694,9 @@ impl Context {
                 match result {
                     Ok(boxed) => Ok(boxed.as_ref()),
                     Err(Error::MissingSignerSettings) => Err(Error::MissingSignerSettings),
-                    Err(_) => Err(Error::MissingSignerSettings), // Treat all errors as missing settings
+                    Err(e) => Err(Error::BadParam(format!(
+                        "failed to create signer from settings: {e}"
+                    ))),
                 }
             }
         }
@@ -569,12 +735,9 @@ impl Context {
                 });
                 match result {
                     Ok(boxed) => Ok(boxed.as_ref()),
-                    Err(Error::BadParam(_)) => Err(Error::BadParam(
-                        "Async signer not configured in settings".to_string(),
-                    )),
-                    Err(_) => Err(Error::BadParam(
-                        "Async signer not configured in settings".to_string(),
-                    )),
+                    Err(e) => Err(Error::BadParam(format!(
+                        "failed to create async signer from settings: {e}"
+                    ))),
                 }
             }
         }
@@ -617,12 +780,103 @@ impl Context {
         self.async_signer = AsyncSignerState::Custom(Box::new(signer));
         self
     }
+
+    /// Register a progress callback that will be invoked at key phases of
+    /// long-running operations (signing, hashing, embedding, etc.).
+    ///
+    /// The callback receives the current [`ProgressPhase`], a monotonically
+    /// increasing step counter, and an optional total (see [`ProgressCallbackFunc`]
+    /// for the full `step`/`total` semantics).  Returning `false` from the callback
+    /// will cause the operation to return [`Error::OperationCancelled`] at the next
+    /// safe checkpoint.
+    ///
+    /// Closures close over whatever external state they need.  C and WASM adapters
+    /// capture their `user_data` / JS reference inside the Rust closure.
+    ///
+    /// ```
+    /// # use c2pa::{Context, ProgressPhase};
+    /// let ctx = Context::new().with_progress_callback(|phase, step, total| {
+    ///     println!("{phase:?} {step}/{total}");
+    ///     true // return false to cancel
+    /// });
+    /// ```
+    pub fn with_progress_callback<F>(mut self, callback: F) -> Self
+    where
+        F: Fn(ProgressPhase, u32, u32) -> bool + MaybeSend + MaybeSync + 'static,
+    {
+        self.progress_callback = Some(Box::new(callback));
+        self
+    }
+
+    /// Mutable setter for the progress callback (for FFI builders that cannot use the
+    /// consuming builder pattern).
+    pub fn set_progress_callback<F>(&mut self, callback: F)
+    where
+        F: Fn(ProgressPhase, u32, u32) -> bool + MaybeSend + MaybeSync + 'static,
+    {
+        self.progress_callback = Some(Box::new(callback));
+    }
+
+    /// Request cancellation of any in-progress operation on this context.
+    ///
+    /// This is thread-safe and may be called from any thread that holds an
+    /// `Arc<Context>`.  The operation will return [`Error::OperationCancelled`]
+    /// at the next safe checkpoint.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use c2pa::Context;
+    /// # use std::sync::Arc;
+    /// let ctx = Arc::new(Context::new());
+    ///
+    /// // Hand a clone to a background thread; call cancel() to abort.
+    /// let ctx2 = ctx.clone();
+    /// // std::thread::spawn(move || ctx2.cancel());
+    /// ```
+    pub fn cancel(&self) {
+        self.cancel_flag.store(true, Ordering::Release);
+    }
+
+    /// Returns `true` if [`cancel()`](Context::cancel) has been called.
+    pub fn is_cancelled(&self) -> bool {
+        self.cancel_flag.load(Ordering::Acquire)
+    }
+
+    /// Report progress and check for cancellation at a single checkpoint.
+    ///
+    /// Invokes the registered [`ProgressCallbackFunc`] (if any), then checks the
+    /// embedded cancel flag.  Returns [`Error::OperationCancelled`] if either
+    /// signals a stop.
+    ///
+    /// `step` is a monotonically increasing counter within `phase` (resets to `1`
+    /// at each new phase).  `total` is `0` for indeterminate, `1` for single-shot,
+    /// or `> 1` for a determinate phase where `step / total` gives a completion
+    /// fraction.  See [`ProgressCallbackFunc`] for the full semantics.
+    pub(crate) fn check_progress(&self, phase: ProgressPhase, step: u32, total: u32) -> Result<()> {
+        log::info!("progress: phase={phase:?} step={step}/{total}");
+        if let Some(cb) = self.progress_callback.as_deref() {
+            if !cb(phase, step, total) {
+                return Err(Error::OperationCancelled);
+            }
+        }
+        if self.cancel_flag.load(Ordering::Acquire) {
+            return Err(Error::OperationCancelled);
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
+    #[cfg(not(target_arch = "wasm32"))]
+    use crate::utils::test_signer::async_test_signer;
+    use crate::{
+        utils::{test::test_context, test_signer::test_signer},
+        SigningAlg,
+    };
 
     #[test]
     fn test_into_settings_from_settings() {
@@ -664,9 +918,7 @@ mod tests {
 
     #[test]
     fn test_signer_from_settings() {
-        // Create a context with signer settings from the test_settings.toml file
-        let toml = include_str!("../tests/fixtures/test_settings.toml");
-        let context = Context::new().with_settings(toml).unwrap();
+        let context = test_context();
 
         // Verify that signer can be created from the settings
         let signer = context.signer();
@@ -675,7 +927,7 @@ mod tests {
         // Verify the signer has the expected algorithm
         let signer = signer.unwrap();
         assert!(
-            signer.alg() == crate::SigningAlg::Ps256,
+            signer.alg() == SigningAlg::Ps256,
             "Signer from settings should have Ps256 algorithm"
         );
 
@@ -690,10 +942,13 @@ mod tests {
         // create a context with FromSettings and empty settings
         let mut context = Context {
             settings: Settings::default(),
-            sync_resolver: SyncResolverState::Default(OnceLock::new()),
-            async_resolver: AsyncResolverState::Default(OnceLock::new()),
+            sync_resolver_state: SyncResolverState::Default(OnceLock::new()),
+            async_resolver_state: AsyncResolverState::Default(OnceLock::new()),
             signer: SignerState::FromSettings(OnceLock::new()),
             async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
+            progress_callback: None,
+            cancel_flag: AtomicBool::new(false),
+            io: HandlerRegistry::new(),
         };
 
         // Update settings to ensure no signer configuration
@@ -720,7 +975,7 @@ mod tests {
     #[test]
     fn test_custom_signer() {
         // Create a custom test signer
-        let custom_signer = crate::utils::test_signer::test_signer(crate::SigningAlg::Es256);
+        let custom_signer = test_signer(SigningAlg::Es256);
 
         // Create a context with the custom signer
         let context = Context::new().with_signer(custom_signer);
@@ -728,7 +983,7 @@ mod tests {
         // Verify the custom signer is returned with the expected algorithm
         let signer = context.signer().unwrap();
         assert!(
-            signer.alg() == crate::SigningAlg::Es256,
+            signer.alg() == SigningAlg::Es256,
             "Custom signer should have Es256 algorithm"
         );
     }
@@ -736,10 +991,8 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn test_custom_async_signer() {
-        use crate::utils::test_signer::async_test_signer;
-
         // Create a custom async signer using the test utility
-        let custom_async_signer = async_test_signer(crate::SigningAlg::Es256);
+        let custom_async_signer = async_test_signer(SigningAlg::Es256);
 
         // Create a context with the custom async signer
         let context = Context::new().with_async_signer(custom_async_signer);
@@ -748,7 +1001,7 @@ mod tests {
         let async_signer = context.async_signer().unwrap();
         assert_eq!(
             async_signer.alg(),
-            crate::SigningAlg::Es256,
+            SigningAlg::Es256,
             "Custom async signer should have Es256 algorithm"
         );
 
@@ -766,10 +1019,13 @@ mod tests {
         // Create a context without custom async signer (will try to load from settings)
         let context = Context {
             settings: Settings::default(),
-            sync_resolver: SyncResolverState::Default(OnceLock::new()),
-            async_resolver: AsyncResolverState::Default(OnceLock::new()),
+            sync_resolver_state: SyncResolverState::Default(OnceLock::new()),
+            async_resolver_state: AsyncResolverState::Default(OnceLock::new()),
             signer: SignerState::FromSettings(OnceLock::new()),
             async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
+            progress_callback: None,
+            cancel_flag: AtomicBool::new(false),
+            io: HandlerRegistry::new(),
         };
 
         // Verify that async_signer() returns an error when no async signer settings are present
@@ -787,24 +1043,206 @@ mod tests {
     }
 
     #[test]
-    fn test_default_sync_resolver() {
-        // Create a context with default resolver
+    fn test_check_progress_no_callback_ok() {
         let context = Context::new();
+        let result = context.check_progress(ProgressPhase::Hashing, 1, 1);
+        assert!(result.is_ok());
+    }
 
-        // Verify we can get the default resolver
+    #[test]
+    fn test_check_progress_cancelled_returns_error() {
+        let context = Context::new();
+        context.cancel();
+        let result = context.check_progress(ProgressPhase::Signing, 1, 1);
+        assert!(matches!(result, Err(Error::OperationCancelled)));
+    }
+
+    #[test]
+    fn test_check_progress_callback_false_cancels() {
+        let context = Context::new().with_progress_callback(|_, _, _| false);
+        let result = context.check_progress(ProgressPhase::Reading, 1, 1);
+        assert!(matches!(result, Err(Error::OperationCancelled)));
+    }
+
+    #[test]
+    fn test_check_progress_callback_receives_phase_and_steps() {
+        use std::sync::Mutex;
+        let received: std::sync::Arc<Mutex<Vec<(ProgressPhase, u32, u32)>>> =
+            std::sync::Arc::new(Mutex::new(Vec::new()));
+        let received_clone = received.clone();
+        let context = Context::new().with_progress_callback(move |phase, step, total| {
+            received_clone.lock().unwrap().push((phase, step, total));
+            true
+        });
+        context
+            .check_progress(ProgressPhase::Thumbnail, 1, 1)
+            .unwrap();
+        context
+            .check_progress(ProgressPhase::Hashing, 3, 10)
+            .unwrap();
+        let r = received.lock().unwrap();
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0], (ProgressPhase::Thumbnail, 1, 1));
+        assert_eq!(r[1], (ProgressPhase::Hashing, 3, 10));
+    }
+
+    #[test]
+    fn test_check_progress_indeterminate_total_passes_through() {
+        // total=0 means indeterminate; the callback must still receive it correctly
+        // and returning true should not cancel.
+        use std::sync::Mutex;
+        let received: std::sync::Arc<Mutex<Vec<(ProgressPhase, u32, u32)>>> =
+            std::sync::Arc::new(Mutex::new(Vec::new()));
+        let received_clone = received.clone();
+        let context = Context::new().with_progress_callback(move |phase, step, total| {
+            received_clone.lock().unwrap().push((phase, step, total));
+            true
+        });
+        context
+            .check_progress(ProgressPhase::Hashing, 1, 0)
+            .unwrap();
+        context
+            .check_progress(ProgressPhase::Hashing, 2, 0)
+            .unwrap();
+        let r = received.lock().unwrap();
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0], (ProgressPhase::Hashing, 1, 0));
+        assert_eq!(r[1], (ProgressPhase::Hashing, 2, 0));
+    }
+
+    #[test]
+    fn test_cancel_flag_checked_between_callbacks() {
+        // cancel() called between two check_progress calls (no callback involved)
+        // should cause the second call to return OperationCancelled.
+        let context = Context::new();
+        assert!(context.check_progress(ProgressPhase::Hashing, 1, 0).is_ok());
+        context.cancel();
+        assert!(matches!(
+            context.check_progress(ProgressPhase::Hashing, 2, 0),
+            Err(Error::OperationCancelled)
+        ));
+    }
+
+    #[test]
+    fn test_is_cancelled_after_cancel() {
+        let context = Context::new();
+        assert!(!context.is_cancelled());
+        context.cancel();
+        assert!(context.is_cancelled());
+    }
+
+    #[test]
+    fn test_default_sync_resolver() {
+        let context = Context::new();
         let _resolver = context.resolver();
     }
 
     #[test]
     fn test_default_async_resolver() {
-        // Create a context with default resolver
         let context = Context::new();
-
-        // Verify we can get the default async resolver
         let _resolver = context.resolver_async();
+    }
 
-        // The test passes if we can get the async resolver without errors
-        // The default is a RestrictedResolver wrapping AsyncGenericResolver
+    // The default policy (`allow_redirects = true`) must NOT block direct requests to internal
+    // hosts – that would break enterprise OCSP/timestamp endpoints and local development. Only
+    // *redirects* to internal hosts are blocked. This is a deliberate, documented trade-off (an
+    // accepted risk – see the "Accepted risk" section in the `crate::http` module docs), not an
+    // oversight. Here a loopback mock server (an internal host) is reached successfully under the
+    // default policy.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_default_allows_direct_internal_host() {
+        use http::Request;
+        use httpmock::MockServer;
+
+        use crate::http::SyncHttpResolver;
+
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/manifest");
+            then.status(200).body([1, 2, 3]);
+        });
+
+        let resolver = Context::new().resolver();
+
+        let request = Request::get(format!("{}/manifest", server.base_url()))
+            .body(vec![])
+            .unwrap();
+        let response = resolver.http_resolve(request).unwrap();
+
+        assert_eq!(response.status(), 200);
+        mock.assert_calls(1);
+    }
+
+    // Under the default policy, a redirect whose target is an internal / cloud-metadata address is
+    // rejected as `RedirectTargetDisallowed` rather than being followed (SSRF – CAI-12574). The
+    // initial (loopback) request is allowed; only the redirect hop is blocked.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_default_blocks_redirect_to_internal_host() {
+        use http::Request;
+        use httpmock::MockServer;
+
+        use crate::http::{HttpResolverError, SyncHttpResolver};
+
+        let server = MockServer::start();
+        let redirect = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/redirect");
+            then.status(302)
+                .header("Location", "http://169.254.169.254/latest/meta-data/");
+        });
+
+        let resolver = Context::new().resolver();
+        let request = Request::get(format!("{}/redirect", server.base_url()))
+            .body(vec![])
+            .unwrap();
+        let result = resolver.http_resolve(request);
+
+        assert!(
+            matches!(
+                result,
+                Err(HttpResolverError::RedirectTargetDisallowed { .. })
+            ),
+            "a redirect to an internal address must be rejected"
+        );
+        redirect.assert_calls(1);
+    }
+
+    // `allow_redirects = false` refuses to follow any redirect, reporting `RedirectDisallowed`.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_allow_redirects_false_refuses_redirect() {
+        use http::Request;
+        use httpmock::MockServer;
+
+        use crate::http::{HttpResolverError, SyncHttpResolver};
+
+        let server = MockServer::start();
+        let redirect = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/redirect");
+            then.status(302).header("Location", server.url("/target"));
+        });
+        let target = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/target");
+            then.status(200).body([1, 2, 3]);
+        });
+
+        let context = Context::new()
+            .with_settings("[core]\nallow_redirects = false\n")
+            .unwrap();
+        let resolver = context.resolver();
+
+        let request = Request::get(format!("{}/redirect", server.base_url()))
+            .body(vec![])
+            .unwrap();
+        let result = resolver.http_resolve(request);
+
+        assert!(
+            matches!(result, Err(HttpResolverError::RedirectDisallowed { .. })),
+            "allow_redirects = false must refuse the redirect"
+        );
+        redirect.assert_calls(1);
+        target.assert_calls(0);
     }
 
     #[test]
@@ -834,10 +1272,7 @@ mod tests {
             }
         }
 
-        // Create a context with the custom resolver
         let context = Context::new().with_resolver(MockSyncResolver);
-
-        // Verify the custom resolver is used
         let resolver = context.resolver();
 
         // Make a test request to verify it's our mock
@@ -915,9 +1350,9 @@ mod tests {
             [core]
             allowed_network_hosts = ["example.com", "test.org"]
         "#;
-        let context = Context::new().with_settings(settings_toml).unwrap();
 
         // Get the resolver
+        let context = Context::new().with_settings(settings_toml).unwrap();
         let _resolver = context.resolver();
 
         // Note: We can't easily test the actual restriction behavior here
@@ -940,8 +1375,6 @@ mod tests {
     fn test_resolver_caching() {
         // Create a context
         let context = Context::new();
-
-        // Get the resolver multiple times
         let _resolver1 = context.resolver();
         let _resolver2 = context.resolver();
         let _resolver3 = context.resolver();
@@ -1062,10 +1495,8 @@ mod tests {
 
     #[test]
     fn test_set_signer() {
-        use crate::SigningAlg;
-
         // Create a custom test signer (Es256)
-        let custom_signer = crate::utils::test_signer::test_signer(SigningAlg::Es256);
+        let custom_signer = test_signer(SigningAlg::Es256);
 
         // Create a context and mutate it with set_signer
         let mut context = Context::new();
@@ -1090,10 +1521,8 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn test_set_async_signer() {
-        use crate::SigningAlg;
-
         // Create a custom async test signer (Es256)
-        let custom_signer = crate::utils::test_signer::async_test_signer(SigningAlg::Es256);
+        let custom_signer = async_test_signer(SigningAlg::Es256);
 
         // Create a context and mutate it with set_async_signer
         let mut context = Context::new();
@@ -1124,10 +1553,8 @@ mod tests {
 
     #[test]
     fn test_set_methods_replace_previous_values() {
-        use crate::SigningAlg;
-
         // Create a context with initial signer (Ps256)
-        let initial_signer = crate::utils::test_signer::test_signer(SigningAlg::Ps256);
+        let initial_signer = test_signer(SigningAlg::Ps256);
         let mut context = Context::new().with_signer(initial_signer);
 
         // Verify initial signer
@@ -1139,7 +1566,7 @@ mod tests {
         );
 
         // Replace with new signer (Es256) using set_signer
-        let new_signer = crate::utils::test_signer::test_signer(SigningAlg::Es256);
+        let new_signer = test_signer(SigningAlg::Es256);
         context.set_signer(new_signer).unwrap();
 
         // Verify signer was replaced
@@ -1149,5 +1576,138 @@ mod tests {
             SigningAlg::Es256,
             "Signer should now be Es256"
         );
+    }
+
+    #[test]
+    fn test_custom_io_handler_overrides_builtin() {
+        use crate::asset_io::{AssetIO, C2paReader, ReadSeek};
+
+        struct NoopReader;
+        impl C2paReader for NoopReader {
+            fn read_c2pa(&self, _: &mut dyn ReadSeek) -> crate::Result<Vec<u8>> {
+                Ok(b"custom-cai".to_vec())
+            }
+
+            fn read_xmp(&self, _: &mut dyn ReadSeek) -> Option<String> {
+                None
+            }
+        }
+
+        struct CustomHandler;
+        impl AssetIO for CustomHandler {
+            fn new(_: &str) -> Self {
+                CustomHandler
+            }
+
+            fn get_handler(&self, _: &str) -> Box<dyn AssetIO> {
+                Box::new(CustomHandler)
+            }
+
+            fn get_reader(&self) -> &dyn C2paReader {
+                &NoopReader
+            }
+
+            fn supported_types(&self) -> &[&str] {
+                &["image/jpeg"]
+            }
+        }
+
+        let ctx = Context::new().with_io_handler(CustomHandler);
+
+        // Custom handler claims "image/jpeg" — it should win over the built-in.
+        let handler = ctx.io().handler("image/jpeg");
+        assert!(handler.is_some(), "should find a handler for image/jpeg");
+
+        // Verify our handler is invoked by reading via get_reader_handler.
+        let reader_handler = ctx.io().reader("image/jpeg");
+        assert!(reader_handler.is_some());
+        let mut stream = std::io::Cursor::new(vec![]);
+        let result = reader_handler.unwrap().read_c2pa(&mut stream);
+        assert_eq!(result.unwrap(), b"custom-cai");
+
+        // Built-in format not claimed by the custom handler should fall through.
+        assert!(
+            ctx.io().handler("image/png").is_some(),
+            "png should still resolve via builtin"
+        );
+    }
+
+    #[test]
+    fn test_builtin_handlers_still_work_without_custom() {
+        let ctx = Context::new();
+        assert!(ctx.io().handler("image/jpeg").is_some());
+        assert!(ctx.io().handler("image/png").is_some());
+        assert!(ctx.io().handler("nonexistent/format").is_none());
+    }
+
+    #[test]
+    fn test_last_registered_custom_handler_wins() {
+        use crate::asset_io::{AssetIO, C2paReader, ReadSeek};
+
+        struct HandlerA;
+        struct ReaderA;
+        impl C2paReader for ReaderA {
+            fn read_c2pa(&self, _: &mut dyn ReadSeek) -> crate::Result<Vec<u8>> {
+                Ok(b"A".to_vec())
+            }
+
+            fn read_xmp(&self, _: &mut dyn ReadSeek) -> Option<String> {
+                None
+            }
+        }
+        impl AssetIO for HandlerA {
+            fn new(_: &str) -> Self {
+                HandlerA
+            }
+
+            fn get_handler(&self, _: &str) -> Box<dyn AssetIO> {
+                Box::new(HandlerA)
+            }
+
+            fn get_reader(&self) -> &dyn C2paReader {
+                &ReaderA
+            }
+
+            fn supported_types(&self) -> &[&str] {
+                &["x-custom/test"]
+            }
+        }
+
+        struct HandlerB;
+        struct ReaderB;
+        impl C2paReader for ReaderB {
+            fn read_c2pa(&self, _: &mut dyn ReadSeek) -> crate::Result<Vec<u8>> {
+                Ok(b"B".to_vec())
+            }
+
+            fn read_xmp(&self, _: &mut dyn ReadSeek) -> Option<String> {
+                None
+            }
+        }
+        impl AssetIO for HandlerB {
+            fn new(_: &str) -> Self {
+                HandlerB
+            }
+
+            fn get_handler(&self, _: &str) -> Box<dyn AssetIO> {
+                Box::new(HandlerB)
+            }
+
+            fn get_reader(&self) -> &dyn C2paReader {
+                &ReaderB
+            }
+
+            fn supported_types(&self) -> &[&str] {
+                &["x-custom/test"]
+            }
+        }
+
+        let ctx = Context::new()
+            .with_io_handler(HandlerA)
+            .with_io_handler(HandlerB);
+        let reader = ctx.io().reader("x-custom/test").unwrap();
+        let mut stream = std::io::Cursor::new(vec![]);
+        // HandlerB was registered last, so it should win.
+        assert_eq!(reader.read_c2pa(&mut stream).unwrap(), b"B");
     }
 }

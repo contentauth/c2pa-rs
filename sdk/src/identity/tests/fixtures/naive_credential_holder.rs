@@ -85,7 +85,7 @@ impl SignatureVerifier for NaiveSignatureVerifier {
     type Error = ();
     type Output = NaiveCredential;
 
-    async fn check_signature(
+    fn check_signature(
         &self,
         signer_payload: &SignerPayload,
         signature: &[u8],
@@ -100,6 +100,15 @@ impl SignatureVerifier for NaiveSignatureVerifier {
         } else {
             Ok(NaiveCredential {})
         }
+    }
+
+    async fn check_signature_async(
+        &self,
+        signer_payload: &SignerPayload,
+        signature: &[u8],
+        status_tracker: &mut StatusTracker,
+    ) -> Result<Self::Output, ValidationError<Self::Error>> {
+        self.check_signature(signer_payload, signature, status_tracker)
     }
 }
 
