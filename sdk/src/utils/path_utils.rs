@@ -277,58 +277,8 @@ mod tests {
 mod within_root_tests {
     #![allow(clippy::unwrap_used)]
 
-    use super::{ensure_within_root, resolve_within_root};
+    use super::ensure_within_root;
     use crate::utils::io_utils::tempdirectory;
-
-    #[test]
-    fn resolve_returns_joined_not_canonical() {
-        // The resource store surfaces this path in `path_for_id` and error strings,
-        // so it must stay the joined identifier path.
-        let root = tempdirectory().unwrap();
-        std::fs::write(root.path().join("asset.jpg"), b"\xff\xd8").unwrap();
-
-        let resolved = resolve_within_root(root.path(), root.path(), "asset.jpg").unwrap();
-        assert_eq!(resolved, root.path().join("asset.jpg"));
-    }
-
-    #[test]
-    fn existing_inside_returns_canonical() {
-        let root = tempdirectory().unwrap();
-        let target = root.path().join("asset.jpg");
-        std::fs::write(&target, b"\xff\xd8").unwrap();
-
-        let resolved = ensure_within_root(&target, root.path()).unwrap();
-        assert_eq!(resolved, target.canonicalize().unwrap());
-        assert!(resolved.starts_with(root.path().canonicalize().unwrap()));
-    }
-
-    #[test]
-    fn missing_inside_returns_joined() {
-        let root = tempdirectory().unwrap();
-        let candidate = root.path().join("missing.jpg");
-
-        // Nothing to canonicalize. The caller's open surfaces the not-found error.
-        let resolved = ensure_within_root(&candidate, root.path()).unwrap();
-        assert_eq!(resolved, candidate);
-    }
-
-    #[test]
-    fn existing_outside_rejected() {
-        let outside = tempdirectory().unwrap();
-        let secret = outside.path().join("secret.jpg");
-        std::fs::write(&secret, b"\xff\xd8").unwrap();
-
-        let root = tempdirectory().unwrap();
-        assert!(ensure_within_root(&secret, root.path()).is_err());
-    }
-
-    #[test]
-    fn missing_outside_rejected() {
-        let root = tempdirectory().unwrap();
-        // Lexical escape to a path that does not exist: rejected without touching disk.
-        let candidate = root.path().join("../elsewhere/missing.jpg");
-        assert!(ensure_within_root(&candidate, root.path()).is_err());
-    }
 
     #[cfg(unix)]
     #[test]

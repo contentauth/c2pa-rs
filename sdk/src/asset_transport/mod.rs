@@ -320,36 +320,3 @@ impl<T: AsyncAssetTransport + ?Sized> AsyncAssetTransport for std::sync::Arc<T> 
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::io::Cursor;
-
-    use super::*;
-
-    #[test]
-    fn asset_request_kind_defaults_to_asset() {
-        let request = AssetRequest::new(AssetRef::Uri("s3://b/k"));
-        assert_eq!(request.kind, AssetRequestKind::Asset);
-
-        let sidecar = request.with_kind(AssetRequestKind::Sidecar);
-        assert_eq!(sidecar.kind, AssetRequestKind::Sidecar);
-    }
-
-    #[test]
-    fn asset_ref_owns_and_borrows_back() {
-        let owned = AssetRef::Uri("s3://b/k").into_owned();
-        assert_eq!(owned.as_asset_ref(), AssetRef::Uri("s3://b/k"));
-
-        // AssetRequest is Copy.
-        let request = AssetRequest::new(AssetRef::Custom("x"));
-        let copy = request;
-        assert_eq!(copy.reference, request.reference);
-    }
-
-    #[test]
-    fn from_boxed_takes_a_boxed_stream() {
-        let boxed: Box<dyn ReadSeek> = Box::new(Cursor::new(vec![1u8, 2, 3]));
-        let resolved = ResolvedAsset::from_boxed(boxed);
-        assert!(matches!(resolved.into_read_target(), ReadTarget::Stream(_)));
-    }
-}

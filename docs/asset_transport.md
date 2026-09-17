@@ -138,7 +138,7 @@ A future HTTP-backed asset transport implements `AsyncAssetTransport` and calls 
 
 `ShortRead` and `VersionChanged` come from the range path: a response shorter than the requested window, and an object that changed underneath a read that spans several requests. `WholeObjectTooLarge` comes from the whole-object rung described above, when the object exceeds `RangeConfig::max_whole_object`.
 
-`NoSyncTransport` and `AsyncOnlyAsset` are separate. The first is a fact about the `Context`: no sync transport is registered, and every read on it fails the same way. The second is a fact about one asset: the `Context` is fine and the open succeeded, but this asset is backed by an async range transport and has no blocking view.
+`NoSyncTransport` means no sync transport is registered on the `Context`, and every read on it fails the same way. `AsyncOnlyAsset` means the `Context` and the open both succeeded, but this particular asset is backed by an async range transport with no blocking view.
 
 The synchronous and asynchronous range paths surface a failure differently. `RangeStream` implements `Read`/`Seek`, so on the sync path `VersionChanged`, `ShortRead` and the rest become `io::Error` the moment the parser touches them, and the original is preserved as the source and is downcastable:
 

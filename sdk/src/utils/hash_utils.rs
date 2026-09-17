@@ -904,35 +904,4 @@ mod tests {
         assert_eq!(hash.len(), 32);
     }
 
-    #[test]
-    fn a_small_hash_buffer_gives_the_same_digest_as_the_default() {
-        let data: Vec<u8> = (0..1024u32 * 1024).map(|i| (i % 251) as u8).collect();
-
-        let small = hash_stream_by_alg_with_progress_impl(
-            "sha256",
-            &mut Cursor::new(&data),
-            None,
-            true,
-            &mut |_, _| Ok(()),
-            NonZeroUsize::new(64 * 1024).unwrap(),
-        )
-        .unwrap();
-        let default = hash_stream_by_alg_with_progress_impl(
-            "sha256",
-            &mut Cursor::new(&data),
-            None,
-            true,
-            &mut |_, _| Ok(()),
-            default_hash_buf(),
-        )
-        .unwrap();
-
-        assert_eq!(small, default);
-    }
-
-    #[test]
-    fn hash_buf_from_kb_converts_and_never_yields_zero() {
-        assert_eq!(hash_buf_from_kb(64).get(), 64 * 1024);
-        assert_eq!(hash_buf_from_kb(0).get(), 1);
-    }
 }

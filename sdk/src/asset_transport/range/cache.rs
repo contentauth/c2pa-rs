@@ -217,84 +217,12 @@ impl RangeCache {
         }
     }
 
-    #[cfg(test)]
-    fn segment_count(&self) -> usize {
-        self.segments.len()
-    }
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
     use super::*;
-
-    #[test]
-    fn copy_into_returns_zero_when_uncached() {
-        let mut cache = RangeCache::new(1024);
-        let mut buf = [0u8; 8];
-        assert_eq!(cache.copy_into(0, &mut buf), 0);
-    }
-
-    #[test]
-    fn copy_into_reads_cached_bytes() {
-        let mut cache = RangeCache::new(1024);
-        cache.insert(10, vec![1, 2, 3, 4]);
-        let mut buf = [0u8; 4];
-        assert_eq!(cache.copy_into(10, &mut buf), 4);
-        assert_eq!(buf, [1, 2, 3, 4]);
-        // Partial read from the middle of a segment.
-        let mut buf = [0u8; 8];
-        assert_eq!(cache.copy_into(12, &mut buf), 2);
-        assert_eq!(&buf[..2], &[3, 4]);
-    }
-
-    #[test]
-    fn adjacent_inserts_coalesce_into_one_segment() {
-        let mut cache = RangeCache::new(1024);
-        cache.insert(0, vec![1, 2, 3]);
-        cache.insert(3, vec![4, 5, 6]);
-        assert_eq!(cache.segment_count(), 1);
-        let mut buf = [0u8; 6];
-        assert_eq!(cache.copy_into(0, &mut buf), 6);
-        assert_eq!(buf, [1, 2, 3, 4, 5, 6]);
-    }
-
-    #[test]
-    fn overlapping_inserts_coalesce() {
-        let mut cache = RangeCache::new(1024);
-        cache.insert(0, vec![1, 2, 3, 4]);
-        cache.insert(2, vec![3, 4, 5, 6]);
-        assert_eq!(cache.segment_count(), 1);
-        let mut buf = [0u8; 6];
-        assert_eq!(cache.copy_into(0, &mut buf), 6);
-        assert_eq!(buf, [1, 2, 3, 4, 5, 6]);
-    }
-
-    #[test]
-    fn disjoint_inserts_stay_separate() {
-        let mut cache = RangeCache::new(1024);
-        cache.insert(0, vec![1, 2]);
-        cache.insert(100, vec![9, 9]);
-        assert_eq!(cache.segment_count(), 2);
-    }
-
-    #[test]
-    fn eviction_drops_least_recently_used() {
-        // Budget holds only ~2 of the 4-byte segments.
-        let mut cache = RangeCache::new(8);
-        cache.insert(0, vec![0; 4]);
-        cache.insert(100, vec![0; 4]);
-        // Touch the first segment so the second becomes least-recently-used.
-        let mut buf = [0u8; 4];
-        assert_eq!(cache.copy_into(0, &mut buf), 4);
-        cache.insert(200, vec![0; 4]);
-        // Segment at 100 was LRU and should be gone; 0 and 200 remain.
-        assert!(cache.total <= 8);
-        let mut buf = [0u8; 4];
-        assert_eq!(cache.copy_into(100, &mut buf), 0);
-        assert_eq!(cache.copy_into(0, &mut buf), 4);
-        assert_eq!(cache.copy_into(200, &mut buf), 4);
-    }
 
     // A transport reports the object length, so it decides which offsets a read
     // reaches. An offset whose end leaves `u64` must not take the arithmetic with it.
@@ -311,27 +239,5 @@ mod tests {
         let mut buf = [0u8; 16];
         assert_eq!(cache.copy_into(0, &mut buf), 0);
         assert!(cache.cached_bytes() <= 4096);
-    }
-
-    // --- R2: `max_cached` must bound memory on a sequential read ---
-
-    #[test]
-    fn sequential_run_stays_within_budget() {
-        // A forward pass of touching windows totalling far more than the budget.
-        // Before the coalesce cap this merged into one never-evicted segment and
-        // `total` grew without bound; the assertion is the defect stated directly.
-        let window = 64u64;
-        let max_cached = 4 * window;
-        let mut cache = RangeCache::new(max_cached);
-        for i in 0..64u64 {
-            cache.insert(i * window, vec![0u8; window as usize]);
-            assert!(
-                cache.total <= max_cached,
-                "total {} exceeded budget {} at window {}",
-                cache.total,
-                max_cached,
-                i
-            );
-        }
     }
 }

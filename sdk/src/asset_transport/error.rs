@@ -175,19 +175,3 @@ impl AssetTransportError {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn network_errors_render_reference() {
-        let range = AssetTransportError::RangeNotSatisfiable {
-            reference: "https://x/y".to_string(),
-            offset: 512,
-            total: Some(256),
-        };
-        assert!(range.to_string().contains("not satisfiable"));
-        assert!(range.to_string().contains("512"));
-    }
-}

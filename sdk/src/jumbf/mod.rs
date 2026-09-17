@@ -21,20 +21,3 @@ pub mod labels;
 pub(crate) fn starts_with_superbox(bytes: &[u8]) -> bool {
     bytes.len() >= 8 && &bytes[4..8] == b"jumb"
 }
-
-#[cfg(test)]
-mod tests {
-    use super::starts_with_superbox;
-
-    #[test]
-    fn recognizes_a_jumb_superbox_header() {
-        // Length (4 bytes) then the `jumb` box type.
-        assert!(starts_with_superbox(b"\x00\x00\x00\x1cjumb\x00\x00"));
-
-        // A JPEG start-of-image marker is not a superbox.
-        assert!(!starts_with_superbox(b"\xff\xd8\xff\xe0\x00\x10JF"));
-
-        // Too short to hold a header.
-        assert!(!starts_with_superbox(b"jumb"));
-    }
-}

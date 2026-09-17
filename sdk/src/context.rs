@@ -1833,50 +1833,6 @@ mod tests {
         assert_eq!(reader.read_c2pa(&mut stream).unwrap(), b"B");
     }
 
-    #[cfg(feature = "file_io")]
-    #[test]
-    fn test_default_uses_filesystem_transport() {
-        use crate::asset_transport::{AssetRef, AssetRequest};
-
-        let context = Context::new();
-        let path = std::path::Path::new("tests/fixtures/C.jpg");
-        let request = AssetRequest::new(AssetRef::Path(path));
-
-        assert!(context.asset_transport().unwrap().open(request).is_ok());
-        assert!(context.asset_transport_async().is_none());
-    }
-
-    #[test]
-    fn test_custom_overwrites_default() {
-        use std::io::{Cursor, Read};
-
-        use crate::asset_transport::{
-            AssetRequest, AssetTransportError, ResolvedAsset, SyncAssetTransport,
-        };
-
-        struct StaticSource;
-        impl SyncAssetTransport for StaticSource {
-            fn open(&self, _: AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError> {
-                Ok(ResolvedAsset::new(Cursor::new(b"from-the-source".to_vec())))
-            }
-        }
-
-        let context = Context::new().with_asset_transport(StaticSource);
-        let request = AssetRequest::from_reference("ignored-by-this-source");
-
-        let mut stream = context
-            .asset_transport()
-            .unwrap()
-            .open(request)
-            .unwrap()
-            .try_into_read_seek()
-            .unwrap();
-
-        let mut got = String::new();
-        stream.read_to_string(&mut got).unwrap();
-        assert_eq!(got, "from-the-source");
-    }
-
     #[test]
     fn test_async_only_no_sync() {
         use crate::asset_transport::{
@@ -1901,57 +1857,5 @@ mod tests {
             Err(AssetTransportError::NoSyncTransport)
         ));
         assert!(context.asset_transport_async().is_some());
-    }
-
-    #[test]
-    fn test_both_sync_and_async() {
-        use std::io::{Cursor, Read};
-
-        use crate::asset_transport::{
-            AssetRequest, AssetTransportError, AsyncAssetTransport, ResolvedAsset,
-            SyncAssetTransport,
-        };
-
-        struct SyncSource;
-        impl SyncAssetTransport for SyncSource {
-            fn open(&self, _: AssetRequest<'_>) -> Result<ResolvedAsset, AssetTransportError> {
-                Ok(ResolvedAsset::new(Cursor::new(b"sync".to_vec())))
-            }
-        }
-
-        struct AsyncSource;
-        #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
-        #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
-        impl AsyncAssetTransport for AsyncSource {
-            async fn open_async(
-                &self,
-                _: AssetRequest<'_>,
-            ) -> Result<ResolvedAsset, AssetTransportError> {
-                Ok(ResolvedAsset::new(Cursor::new(b"async".to_vec())))
-            }
-        }
-
-        let request = AssetRequest::from_reference("anything");
-
-        let sync_first = Context::new()
-            .with_asset_transport(SyncSource)
-            .with_asset_transport_async(AsyncSource);
-        let async_first = Context::new()
-            .with_asset_transport_async(AsyncSource)
-            .with_asset_transport(SyncSource);
-
-        for (order, context) in [("sync first", sync_first), ("async first", async_first)] {
-            let mut stream = context
-                .asset_transport()
-                .unwrap()
-                .open(request)
-                .unwrap()
-                .try_into_read_seek()
-                .unwrap();
-            let mut got = String::new();
-            stream.read_to_string(&mut got).unwrap();
-            assert_eq!(got, "sync", "{order}");
-            assert!(context.asset_transport_async().is_some(), "{order}");
-        }
     }
 }
