@@ -2032,6 +2032,11 @@ pub mod tests {
     #[test]
     #[allow(deprecated)]
     fn test_from_string_loads_legacy_trust_anchors() {
+        // Some Wasm/WASI test runners execute all tests in a single process without
+        // per-test thread isolation, so the thread-local `SETTINGS` state can carry
+        // over from an earlier test. Start from a clean baseline.
+        reset_default_settings().unwrap();
+
         let legacy_trust_anchors = r#"{
                 "trust": {
                     "trust_anchors": "-----BEGIN CERTIFICATE-----\\nMIICEzCCAcWgAwIBAgIUW4fUnS38162x10PCnB8qFsrQuZgwBQYDK2VwMHcxCzAJ\\nBgNVBAYTAlVTMQswCQYDVQQIDAJDQTESMBAGA1UEBwwJU29tZXdoZXJlMRowGAYD\\nVQQKDBFDMlBBIFRlc3QgUm9vdCBDQTEZMBcGA1UECwwQRk9SIFRFU1RJTkdfT05M\\nWTEQMA4GA1UEAwwHUm9vdCBDQTAeFw0yMjA2MTAxODQ2NDFaFw0zMjA2MDcxODQ2\\nNDFaMHcxCzAJBgNVBAYTAlVTMQswCQYDVQQIDAJDQTESMBAGA1UEBwwJU29tZXdo\\nZXJlMRowGAYDVQQKDBFDMlBBIFRlc3QgUm9vdCBDQTEZMBcGA1UECwwQRk9SIFRF\\nU1RJTkdfT05MWTEQMA4GA1UEAwwHUm9vdCBDQTAqMAUGAytlcAMhAGPUgK9q1H3D\\neKMGqLGjTXJSpsrLpe0kpxkaFMe7KUAuo2MwYTAdBgNVHQ4EFgQUXuZWArP1jiRM\\nfgye6ZqRyGupTowwHwYDVR0jBBgwFoAUXuZWArP1jiRMfgye6ZqRyGupTowwDwYD\\nVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMCAYYwBQYDK2VwA0EA8E79g54u2fUy\\ndfVLPyqKmtjenOUMvVQD7waNbetLY7kvUJZCd5eaDghk30/Q1RaNjiP/2RfA/it8\\nzGxQnM2hCA==\\n-----END CERTIFICATE-----",
@@ -2069,5 +2074,7 @@ pub mod tests {
             has_system_trust_anchor,
             "Expected system trust anchor to be present"
         );
+
+        reset_default_settings().unwrap();
     }
 }
