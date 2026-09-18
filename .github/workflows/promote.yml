@@ -58,14 +58,6 @@ jobs:
         with:
           toolchain: stable
 
-      # `cargo set-version` (from cargo-edit) keeps intra-workspace dependency
-      # requirements in sync when it moves a crate's version.
-      - name: Install cargo-edit
-        uses: baptiste0928/cargo-install@f204293d9709061b7bc1756fec3ec4e2cd57dec0 # v3.4.0
-        with:
-          crate: cargo-edit
-          version: "0.13.6"
-
       - name: Compute promotion versions
         id: ver
         run: |
@@ -115,7 +107,20 @@ jobs:
           # the last published number. `stable` then sits level with crates.io,
           # so the force-push below does not trigger an immediate publish; the
           # bump is left for release-pr.yml to compute and for a human to review.
-          cargo set-version -p c2pa "${{ steps.ver.outputs.old_c2pa }}"
+          #
+          # A plain string replace, not `cargo set-version` (from cargo-edit) – that
+          # tool refuses to ever move a version backward, with no override, so it
+          # cannot perform the reset this step exists to do. The version string lives
+          # in exactly two places in the root Cargo.toml – `workspace.package.version`
+          # and the `c2pa` workspace-dependency's `version` – everything else inherits
+          # via `version.workspace = true`, and no `Cargo.lock` is committed to reconcile.
+          RC_C2PA="${{ steps.ver.outputs.rc_c2pa }}"
+          OLD_C2PA="${{ steps.ver.outputs.old_c2pa }}"
+          if ! grep -q "version = \"$RC_C2PA\"" Cargo.toml; then
+            echo "::error::Expected to find version = \"$RC_C2PA\" in Cargo.toml."
+            exit 1
+          fi
+          sed -i "s/version = \"$RC_C2PA\"/version = \"$OLD_C2PA\"/g" Cargo.toml
 
       - name: Force-push baked train onto stable
         run: |
