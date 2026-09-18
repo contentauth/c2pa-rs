@@ -27,6 +27,10 @@
   color: "5319e7"
   description: "Cherry-pick this merged main PR onto the stable release line"
 
+- name: backport-v0.90
+  color: "5319e7"
+  description: "Cherry-pick this merged main PR onto the retired v0.90 release line"
+
 - name: do-not-backport
   color: "6a737d"
   description: "Deliberately not backported onto stable (e.g. incompatible behavior change)"
