@@ -267,44 +267,40 @@ impl ValidationResults {
                 .iter()
                 .any(|s| s.ingredient_uri().is_some() && !is_active_manifest(s.url()))
             {
-                // Collect all the ValidationStatus records from all the ingredients in the store,
-                // each tagged with the label of the ingredient that reported them. Since we need
-                // to process v1, v2 and v3 ingredients, we process all in the same format.
-                let ingredient_statuses_by_label: Vec<(Option<String>, Vec<ValidationStatus>)> =
-                    store
-                        .claims()
-                        .iter()
-                        .flat_map(|c| c.ingredient_assertions())
-                        .filter_map(|a| Ingredient::from_assertion(a.assertion()).ok())
-                        .filter_map(get_statuses)
-                        .collect();
-
-                let ingredient_statuses: Vec<ValidationStatus> = ingredient_statuses_by_label
-                    .iter()
-                    .flat_map(|(_, statuses)| statuses.iter().cloned())
-                    .collect();
+                // Collect all the ValidationStatus records from all the ingredients in the
+                // store, in a single pass that also builds `attested_inside_validity` -- since
+                // we need to process v1, v2 and v3 ingredients, we process all in the same
+                // format. Statuses are moved (not cloned) into `ingredient_statuses`, so this
+                // costs no more allocation than the flat collection this replaced.
+                let mut ingredient_statuses: Vec<ValidationStatus> = Vec::new();
 
                 // Only trust a `claimSignature.insideValidity` attestation as authoritative
                 // about a manifest label when it was reported by the ingredient *for that same
                 // label*, i.e. it is self-attested. Without this, an ingredient could "vouch"
                 // for some other, unrelated manifest label elsewhere in the store and suppress a
                 // genuine, live-detected certificate-expiry finding for it.
-                let attested_inside_validity: HashSet<String> = ingredient_statuses_by_label
+                let mut attested_inside_validity: HashSet<String> = HashSet::new();
+
+                for (own_label, group_statuses) in store
+                    .claims()
                     .iter()
-                    .filter_map(|(own_label, statuses)| {
-                        let own_label = own_label.as_ref()?;
-                        statuses
-                            .iter()
-                            .any(|status| {
-                                status.code() == validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY
-                                    && status
-                                        .url()
-                                        .and_then(manifest_label_from_uri)
-                                        .is_some_and(|label| &label == own_label)
-                            })
-                            .then(|| own_label.clone())
-                    })
-                    .collect();
+                    .flat_map(|c| c.ingredient_assertions())
+                    .filter_map(|a| Ingredient::from_assertion(a.assertion()).ok())
+                    .filter_map(get_statuses)
+                {
+                    if let Some(own_label) = &own_label {
+                        if group_statuses.iter().any(|status| {
+                            status.code() == validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY
+                                && status
+                                    .url()
+                                    .and_then(manifest_label_from_uri)
+                                    .is_some_and(|label| &label == own_label)
+                        }) {
+                            attested_inside_validity.insert(own_label.clone());
+                        }
+                    }
+                    ingredient_statuses.extend(group_statuses);
+                }
 
                 // Drop a status only if it is a genuine re-report of what an ingredient already
                 // attested: it must be scoped to an ingredient AND not describe the active
