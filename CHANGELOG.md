@@ -9,6 +9,116 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.91.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.22...c2pa-v0.91.0)
+_18 September 2026_
+
+### Added
+
+* Implement remote signing for CAWG X.509 identity assertions ([#2635](https://github.com/contentauth/c2pa-rs/pull/2635))
+* Add native plain-text asset handler (A.8) ([#2494](https://github.com/contentauth/c2pa-rs/pull/2494))
+* Credential-holder identity signer in the C API ([#2603](https://github.com/contentauth/c2pa-rs/pull/2603))
+* Clean up asset_io, rename things, share common code, and add private registry through `Context` ([#2491](https://github.com/contentauth/c2pa-rs/pull/2491))
+* Add related assertions field and validation to c2pa.actions ([#2446](https://github.com/contentauth/c2pa-rs/pull/2446))
+* Add digital source type field to ingredient ([#2447](https://github.com/contentauth/c2pa-rs/pull/2447))
+* Add support for general boxes hash exclusions ([#2513](https://github.com/contentauth/c2pa-rs/pull/2513))
+* [**breaking**] Update for C2PA 2.3 spec ([#2545](https://github.com/contentauth/c2pa-rs/pull/2545))
+* *(crjson)* Implement isUpdateManifest and isCompressedManifest fields ([#2185](https://github.com/contentauth/c2pa-rs/pull/2185))
+* Simplify error handling in `IcaSignatureVerifier` methods ([#2532](https://github.com/contentauth/c2pa-rs/pull/2532))
+* Make BMFF hash exclusion of /free and /skip boxes configurable ([#2511](https://github.com/contentauth/c2pa-rs/pull/2511))
+* New builder method to combine filtering of actions and ingredients ([#2379](https://github.com/contentauth/c2pa-rs/pull/2379))
+* [**breaking**] Split out c2pa-raw-crypto, take 2 ([#2231](https://github.com/contentauth/c2pa-rs/pull/2231))
+* [**breaking**] Enable verify after sign by default ([#2277](https://github.com/contentauth/c2pa-rs/pull/2277))
+* Add manifests without out modifying and source data. ([#2276](https://github.com/contentauth/c2pa-rs/pull/2276))
+
+### Documented
+
+* Remove duplicate info, general edits, fix links, etc. ([#2490](https://github.com/contentauth/c2pa-rs/pull/2490))
+* Edit and cleanup pass ([#2354](https://github.com/contentauth/c2pa-rs/pull/2354))
+* Add experimental features policy ([#2345](https://github.com/contentauth/c2pa-rs/pull/2345))
+
+### Experimental
+
+* *(experimental)* Add structured-text asset handler (C2PA A.9) ([#2283](https://github.com/contentauth/c2pa-rs/pull/2283))
+
+### Fixed
+
+* Reject BMFF assets with a C2PA box that resolves to no manifest ([#2606](https://github.com/contentauth/c2pa-rs/pull/2606))
+* Resolve OCSP issuer from trust anchor when x5chain omits it ([#2608](https://github.com/contentauth/c2pa-rs/pull/2608))
+* Report unrecognized CAWG identity sig_type instead of silently ignoring it ([#2614](https://github.com/contentauth/c2pa-rs/pull/2614))
+* Reject non-contiguous C2PA APP11 segments when computing JPEG manifest-store exclusion ([#2610](https://github.com/contentauth/c2pa-rs/pull/2610))
+* Reject data hash exclusions for detached manifests without a matching C2PA box ([#2643](https://github.com/contentauth/c2pa-rs/pull/2643))
+* *(sdk)* Correct two bugs in online OCSP responder validation (#2542 follow-up) ([#2616](https://github.com/contentauth/c2pa-rs/pull/2616))
+* Enforce zero-content rule for all redacted assertion slots ([#2527](https://github.com/contentauth/c2pa-rs/pull/2527))
+* Populate common_name in CAWG X.509 signature verification ([#2634](https://github.com/contentauth/c2pa-rs/pull/2634))
+* *(sdk)* Correct label_with_instance suffix threshold in ManifestAssertion ([#2346](https://github.com/contentauth/c2pa-rs/pull/2346))
+* Reject fragmented BMFF fragments matching a Merkle map without an initHash ([#2609](https://github.com/contentauth/c2pa-rs/pull/2609))
+* Correct OCSP status validation-log classification ([#2620](https://github.com/contentauth/c2pa-rs/pull/2620))
+* Reject signing certificate whose key algorithm does not match the COSE signing algorithm ([#2612](https://github.com/contentauth/c2pa-rs/pull/2612))
+* Check issuing CA revocation via AIA on the online OCSP fetch path ([#2615](https://github.com/contentauth/c2pa-rs/pull/2615))
+* Dynamic assertions sharing a label each get their own placeholder ([#2602](https://github.com/contentauth/c2pa-rs/pull/2602))
+* X.509 cert with missing org should not be a reporting failure ([#2540](https://github.com/contentauth/c2pa-rs/pull/2540))
+* Match BMFF hard-binding label on base, not bare prefix ([#2588](https://github.com/contentauth/c2pa-rs/pull/2588))
+* Authorize the OCSP responder on the online path before accepting a response ([#2542](https://github.com/contentauth/c2pa-rs/pull/2542))
+* Fix bad error message ([#2580](https://github.com/contentauth/c2pa-rs/pull/2580))
+* [**breaking**] C2PA 2.4 validation ([#2578](https://github.com/contentauth/c2pa-rs/pull/2578))
+* Propagate hard errors when parsing ingredient streams ([#2176](https://github.com/contentauth/c2pa-rs/pull/2176))
+* Consistently use xmp.iid: instead of xmp:iid: ([#2563](https://github.com/contentauth/c2pa-rs/pull/2563))
+* *(sdk)* Prevent ingredient assertions from canceling active-manifest failures (CAI-12751) ([#2535](https://github.com/contentauth/c2pa-rs/pull/2535))
+* Don't abort verification on an undecodable soft-binding/cloud-data assertion ([#2512](https://github.com/contentauth/c2pa-rs/pull/2512))
+* *(riff)* Support image/x-webp in WebP signing path ([#2259](https://github.com/contentauth/c2pa-rs/pull/2259))
+* Apply certificate validity checks to all intermediate CAs ([#2480](https://github.com/contentauth/c2pa-rs/pull/2480))
+* Mock connected identities DID on Wasm32 ([#2550](https://github.com/contentauth/c2pa-rs/pull/2550))
+* Hash a range of 4 GiB or more without hanging on 32-bit targets (CAI-13325) ([#2524](https://github.com/contentauth/c2pa-rs/pull/2524))
+* Include c2paAsset (role, sig_type, referenced_assertions) in IcaCredentialSummary ([#2534](https://github.com/contentauth/c2pa-rs/pull/2534))
+* *(sdk)* [**breaking**] Use CAWG identity assertion v1.3 status codes for X.509 signature validation ([#2516](https://github.com/contentauth/c2pa-rs/pull/2516))
+* Set allActionsIncluded per C2PA 2.4 spec when opening/re-saving without other changes (CAI-13222) ([#2503](https://github.com/contentauth/c2pa-rs/pull/2503))
+* Harden against unbounded memory allocation attack in JPEG XL parser ([#2453](https://github.com/contentauth/c2pa-rs/pull/2453))
+* *(sdk)* [**breaking**] Block redirect SSRF via per-hop validation; add allow_redirects (CAI-12574) ([#2433](https://github.com/contentauth/c2pa-rs/pull/2433))
+* Harden against arbitrary file write via manifest resource path traversal in Reader::to_folder ([#2462](https://github.com/contentauth/c2pa-rs/pull/2462))
+* Harden against local_id truncation issue in accessing BMFF merkle maps ([#2454](https://github.com/contentauth/c2pa-rs/pull/2454))
+* Reject BMFF update manifest without a paired original manifest ([#2471](https://github.com/contentauth/c2pa-rs/pull/2471))
+* Propagate created flag to metadata assertions ([#2459](https://github.com/contentauth/c2pa-rs/pull/2459))
+* Allow dc:created and dc:modified in c2pa.metadata (CAI-13221) ([#2425](https://github.com/contentauth/c2pa-rs/pull/2425))
+* *(sdk)* Validate inputTo ingredients against manifest tampering ([#2455](https://github.com/contentauth/c2pa-rs/pull/2455))
+* Complete OCSP responder certificate path from signer x5chain ([#2468](https://github.com/contentauth/c2pa-rs/pull/2468))
+* Support Xpath indices ([#2434](https://github.com/contentauth/c2pa-rs/pull/2434))
+* Builder.save_to_stream was not adding timestamp assertions CAI-21732 ([#2437](https://github.com/contentauth/c2pa-rs/pull/2437))
+* Split CAWG trust config into a dedicated CawgTrust struct (CAI-12709) ([#2278](https://github.com/contentauth/c2pa-rs/pull/2278))
+* Make URI checks for (data)boxes when going through redactions more strict ([#2390](https://github.com/contentauth/c2pa-rs/pull/2390))
+* Emit empty redacted_assertions for claim.v2 with no redactions ([#2287](https://github.com/contentauth/c2pa-rs/pull/2287))
+* Trim whitespace padding around formats ([#2376](https://github.com/contentauth/c2pa-rs/pull/2376))
+* Updates missing 2.2 validation steps ([#2312](https://github.com/contentauth/c2pa-rs/pull/2312))
+* [**breaking**] Remove generic XML support from SVG handler ([#2311](https://github.com/contentauth/c2pa-rs/pull/2311))
+* [**breaking**] Enforce trusted-issuer allow-list for CAWG ICA credentials (CAI-11347) ([#2209](https://github.com/contentauth/c2pa-rs/pull/2209))
+
+### Breaking changes
+
+* **`c2pa-raw-crypto` split** ([#2231](https://github.com/contentauth/c2pa-rs/pull/2231)) — `SigningAlg`, `RawSigner`, `RawSignerError`, `RawSignatureValidationError`, and the built-in OpenSSL / `rust_native_crypto` implementations have moved out of `c2pa::crypto::raw_signature` (now removed) into the separate `c2pa-raw-crypto` crate. Continue importing these types from the crate root (`c2pa::SigningAlg`, etc.), which still re-exports them; code that referenced `c2pa::crypto::raw_signature::*` directly needs updated import paths, and code that needs lower-level access to the raw-signing primitives should depend on `c2pa-raw-crypto` directly.
+* **`verify_after_sign` now defaults to `true`** ([#2277](https://github.com/contentauth/c2pa-rs/pull/2277)) — `Settings::verify.verify_after_sign` previously defaulted to `false` in release builds. Builder-created manifests are now re-verified immediately after signing by default, adding a small amount of work per sign in exchange for catching a malformed manifest before it leaves the process. If you relied on the old default, set `verify_after_sign = false` explicitly.
+* **Trust-list settings restructured for multiple named trust lists** ([#2545](https://github.com/contentauth/c2pa-rs/pull/2545)) — the top-level `cawg_trust` settings section is gone. C2PA claim-generator, CAWG, and TSA trust configuration now live together under `trust.anchors`, an array of `{ trust_uri, trust_kind, trust_anchors, trust_config, allowed_list, trusted_ica_issuers }` entries distinguished by `trust_kind` (e.g. `"manifest"`), replacing the old single `trust.trust_anchors` / `trust.trust_config` / `trust.user_anchors` / `trust.allowed_list` fields. A new `soft_binding.soft_binding_algorithms` setting was also added. If you configure trust via `Settings` JSON/TOML, update it to the new `trust.anchors[]` shape — see [`docs/context-settings.md`](docs/context-settings.md) for the current schema.
+* **CAWG X.509 identity assertions use CAWG-specific status codes** ([#2516](https://github.com/contentauth/c2pa-rs/pull/2516)) — per CAWG identity assertion spec v1.3 §8.2.2, X.509 identity signature validation now emits `cawg.x509.*` status codes (e.g. `cawg.x509.credential.trusted`, `cawg.x509.signature.mismatch`, `cawg.x509.signature.validated`) instead of reusing the C2PA claim-signature codes (`signingCredential.trusted`, `claimSignature.mismatch`, etc.). Code that inspects `ValidationResults` or log items for the old codes on this path needs to check for the new `cawg.x509.*` codes instead.
+* **CAWG ICA issuers must be explicitly trusted** ([#2209](https://github.com/contentauth/c2pa-rs/pull/2209)) — the new `trusted_ica_issuers` list (part of `trust.anchors[]`, see above) defaults to empty, so no CAWG claims-aggregation issuer is trusted until you list it explicitly; a previously-accepted, unlisted issuer now fails with `cawg.ica.untrusted_issuer`. Also, `CawgValidator` is no longer a unit struct: replace `&CawgValidator {}` with `CawgValidator::new(&context)` or `CawgValidator::default()`.
+* **HTTP redirects to non-public hosts are rejected by default** ([#2433](https://github.com/contentauth/c2pa-rs/pull/2433)) — fetching a remote manifest, OCSP response, timestamp, or `did:web` document now validates every redirect hop, not just the initial request, and rejects a hop that resolves to a non-globally-routable address (loopback, RFC1918, link-local/cloud-metadata, etc.) with `HttpResolverError::RedirectTargetDisallowed`. If your deployment legitimately redirects through an internal host, set `core.allow_redirects = false` to disable redirect-following, or adjust `core.allowed_network_hosts`.
+* **C2PA 2.4 validation rules** ([#2578](https://github.com/contentauth/c2pa-rs/pull/2578)) — validation of soft-binding and metadata assertions is relaxed, and Cloud Data / External Reference assertions are validated without fetching, per the C2PA 2.4 spec. This mostly loosens prior rejections; if your code or test fixtures depended on the stricter 2.3-era validation failing for these assertion types, re-check them.
+* **SVG handler no longer accepts generic XML** ([#2311](https://github.com/contentauth/c2pa-rs/pull/2311)) — the SVG asset handler's generic XML fallback is gone. An XML-based format now needs its own specific handler per the C2PA spec's manifest-placement rules (see the new plain-text ([#2494](https://github.com/contentauth/c2pa-rs/pull/2494)) and experimental structured-text ([#2283](https://github.com/contentauth/c2pa-rs/pull/2283)) handlers added in this release); a document that previously round-tripped through the generic SVG/XML path may need a different asset handler.
+
+> [!NOTE]
+> This release also carries roughly 70 `#[deprecated]` items accumulated on `main` since the last breaking-changes train. None of them are removed in 0.91.0, but per our [deprecation policy](docs/deprecation-policy.md), the next breaking-changes release — planned for mid-November 2026 — will delete every API still marked deprecated at that point. If your build emits deprecation warnings from `c2pa`, plan to migrate before that release ships.
+
+### Other
+
+* Update trust anchor examples/fixtures for anchors array ([#2388](https://github.com/contentauth/c2pa-rs/pull/2388)) ([#2436](https://github.com/contentauth/c2pa-rs/pull/2436))
+* C2pa.certificate-status is serialized in an invalid way ([#2508](https://github.com/contentauth/c2pa-rs/pull/2508))
+
+### Updated dependencies
+
+* Bump base64 from 0.22.1 to 0.23.1 ([#2591](https://github.com/contentauth/c2pa-rs/pull/2591))
+* Bump mockall from 0.14.0 to 0.15.0 ([#2593](https://github.com/contentauth/c2pa-rs/pull/2593))
+* Bump rand from 0.8.7 to 0.10.2 ([#2571](https://github.com/contentauth/c2pa-rs/pull/2571))
+* Bump jsonschema from 0.45.1 to 0.49.4 ([#2525](https://github.com/contentauth/c2pa-rs/pull/2525))
+* Bump pem from 3.0.6 to 4.0.0 ([#2496](https://github.com/contentauth/c2pa-rs/pull/2496))
+* Bump der from 0.7.10 to 0.8.0, add new features for gated APIs ([#2358](https://github.com/contentauth/c2pa-rs/pull/2358))
+
 ## [0.89.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.89.2...c2pa-v0.89.3)
 _13 July 2026_
 
