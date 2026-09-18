@@ -486,11 +486,11 @@ jobs:
       - name: Install nightly toolchain
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
-          toolchain: nightly-2026-01-16
+          toolchain: nightly-2026-07-12
           components: rustfmt
 
       - name: Check format
-        run: cargo +nightly-2026-01-16 fmt --all -- --check
+        run: cargo +nightly-2026-07-12 fmt --all -- --check
 
   cargo-deny:
     name: License / vulnerability audit
