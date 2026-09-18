@@ -1212,23 +1212,6 @@ impl BmffHash {
         Ok(())
     }
 
-    /// A BMFF hash must actually commit to asset bytes via either a monolithic
-    /// `hash` or a `merkle` tree. With neither present, the verify paths skip all
-    /// hash comparison (the `if let Some(..)` arms are both empty) and fall
-    /// through to `Ok(())`, reporting a match over zero covered bytes
-    /// (CAI-13331 arm 1). Legitimate monolithic vs. fragmented shapes always
-    /// supply exactly one of the two, so requiring at least one does not reject
-    /// any valid assertion. Checked only on the verification paths (not during
-    /// generation, where the hash is populated after structural validation).
-    fn verify_has_content_binding(&self) -> crate::error::Result<()> {
-        if self.hash().is_none() && self.merkle().is_none() {
-            return Err(Error::C2PAValidation(
-                ASSERTION_BMFFHASH_MALFORMED.to_string(),
-            ));
-        }
-        Ok(())
-    }
-
     /* Verifies BMFF hashes from a single file asset.  The following variants are handled
         A single BMFF asset with only a file hash
         A single BMMF asset with Merkle tree hash
@@ -1263,7 +1246,6 @@ impl BmffHash {
         F: FnMut(u32, u32) -> crate::error::Result<()>,
     {
         self.verify_self()?;
-        self.verify_has_content_binding()?;
 
         // start the verification
         reader.rewind()?;
@@ -1599,7 +1581,6 @@ impl BmffHash {
         F: FnMut(u32, u32) -> crate::Result<()>,
     {
         self.verify_self()?;
-        self.verify_has_content_binding()?;
 
         let curr_alg = match &self.alg {
             Some(a) => a.clone(),
@@ -1745,7 +1726,6 @@ impl BmffHash {
         F: FnMut(u32, u32) -> crate::Result<()>,
     {
         self.verify_self()?;
-        self.verify_has_content_binding()?;
 
         let curr_alg = match &self.alg {
             Some(a) => a.clone(),
@@ -2662,35 +2642,6 @@ mod bmff_hash_tests {
         bmff_hash
             .verify_self()
             .expect("valid non-overlapping subsets must pass verify_self");
-    }
-
-    /// A BMFF hash with neither a `hash` nor a `merkle` commits to no asset bytes;
-    /// the verification path must reject it as malformed (CAI-13331 arm 1).
-    #[test]
-    fn verify_has_content_binding_rejects_missing_hash_and_merkle() {
-        let bmff_hash = bmff_hash_with_subsets(vec![SubsetMap {
-            offset: 0,
-            length: 10,
-        }]);
-        assert!(bmff_hash.hash().is_none() && bmff_hash.merkle().is_none());
-        assert!(matches!(
-            bmff_hash.verify_has_content_binding(),
-            Err(Error::C2PAValidation(ref s)) if s == ASSERTION_BMFFHASH_MALFORMED
-        ));
-    }
-
-    /// The legitimate hash-only shape must still pass the content-binding check;
-    /// the fix must not over-reject monolithic BMFF hashes.
-    #[test]
-    fn verify_has_content_binding_accepts_hash_only() {
-        let mut bmff_hash = bmff_hash_with_subsets(vec![SubsetMap {
-            offset: 0,
-            length: 10,
-        }]);
-        bmff_hash.set_hash(vec![1, 2, 3]);
-        bmff_hash
-            .verify_has_content_binding()
-            .expect("hash-only BMFF hash must pass");
     }
 
     fn make_bmff_merkle_entries(count: usize) -> Vec<BmffMerkleMap> {

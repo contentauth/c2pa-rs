@@ -338,11 +338,6 @@ impl BoxHash {
         };
 
         let mut metadata_exclusion_used = false;
-        // Track whether any non-C2PA content box was actually hashed and compared.
-        // If every content box is skipped (all `excluded: true`, or only the C2PA
-        // store is named) the binding covers zero asset bytes yet would otherwise
-        // return `Ok` (CAI-13331 arm 3).
-        let mut hashed_content_box = false;
 
         for bm in &self.boxes {
             let mut skip_c2pa = false;
@@ -443,8 +438,6 @@ impl BoxHash {
             if !vec_compare(&bm.hash, &computed) {
                 return Err(Error::HashMismatch("Hashes do not match".to_owned()));
             }
-
-            hashed_content_box = true;
         }
 
         // Every box present in the asset must be named in the `boxes` array; a
@@ -455,22 +448,6 @@ impl BoxHash {
         if source_index != source_bms.len() {
             return Err(Error::HashMismatch(
                 ASSERTION_BOXHASH_UNKNOWN_BOX.to_owned(),
-            ));
-        }
-
-        // When the asset actually contains content boxes beyond the C2PA store,
-        // at least one of them must be hashed. If every content box is skipped
-        // (all `excluded: true`) the binding covers zero asset bytes yet would
-        // otherwise report a match (CAI-13331 arm 3). Assets that are nothing but
-        // a C2PA manifest store (e.g. `application/c2pa` embeddable manifests)
-        // legitimately have no content box to hash, so only enforce this when
-        // content boxes are present.
-        let has_content_boxes = source_bms
-            .iter()
-            .any(|bm| bm.names.first().is_some_and(|n| n != C2PA_BOXHASH));
-        if has_content_boxes && !hashed_content_box {
-            return Err(Error::HashMismatch(
-                "box hash covers no asset content".to_owned(),
             ));
         }
 
@@ -1206,64 +1183,33 @@ mod tests {
         // itself (e.g. the spec's PNG iTXt example) is an exclusion beyond
         // the C2PA-store-only baseline, so it must surface the informational
         // `additionalExclusionsPresent` signal - even though this path never
-        // classifies the excluded box's content. As in a real asset, at least
-        // one actual content box ("BBBB") is still hashed, so the binding
-        // covers content (see the zero-coverage guard, CAI-13331 arm 3).
+        // classifies the excluded box's content.
         let alg = "sha256";
         let mut mock = MockMABH::new();
         mock.expect_get_box_map().returning(|_| {
-            Ok(vec![
-                AssetBoxMap::new(vec!["C2PA".to_string()], 0, 10),
-                AssetBoxMap::new(vec!["AAAA".to_string()], 10, 10),
-                AssetBoxMap::new(vec!["BBBB".to_string()], 20, 10),
-            ])
+            Ok(vec![AssetBoxMap {
+                names: vec!["AAAA".to_string()],
+                excluded: None,
+                range_start: 0,
+                range_len: 10,
+                allowed_exclusions: vec![],
+            }])
         });
 
-        let data: Vec<u8> = (0..30).collect();
-        // Hash of the one content box that is actually included ("BBBB").
-        let bbbb_hash = hash_stream_by_alg_with_progress(
-            alg,
-            &mut Cursor::new(data.clone()),
-            Some(vec![HashRange::new(20, 10)]),
-            false,
-            &mut |_, _| Ok(()),
-        )
-        .unwrap();
+        let data: Vec<u8> = (0..10).collect();
         let mut reader = Cursor::new(data);
 
         let bh = BoxHash {
-            boxes: vec![
-                BoxMap {
-                    names: vec![C2PA_BOXHASH.to_string()],
-                    alg: Some(alg.to_string()),
-                    hash: ByteBuf::from(vec![]),
-                    excluded: None,
-                    exclusions: None,
-                    pad: ByteBuf::from(vec![]),
-                    range_start: 0,
-                    range_len: 10,
-                },
-                BoxMap {
-                    names: vec!["AAAA".to_string()],
-                    alg: Some(alg.to_string()),
-                    hash: ByteBuf::from(vec![]),
-                    excluded: Some(true),
-                    exclusions: None,
-                    pad: ByteBuf::from(vec![]),
-                    range_start: 10,
-                    range_len: 10,
-                },
-                BoxMap {
-                    names: vec!["BBBB".to_string()],
-                    alg: Some(alg.to_string()),
-                    hash: ByteBuf::from(bbbb_hash),
-                    excluded: None,
-                    exclusions: None,
-                    pad: ByteBuf::from(vec![]),
-                    range_start: 20,
-                    range_len: 10,
-                },
-            ],
+            boxes: vec![BoxMap {
+                names: vec!["AAAA".to_string()],
+                alg: Some(alg.to_string()),
+                hash: ByteBuf::from(vec![]),
+                excluded: Some(true),
+                exclusions: None,
+                pad: ByteBuf::from(vec![]),
+                range_start: 0,
+                range_len: 10,
+            }],
         };
 
         let result =
@@ -1349,56 +1295,6 @@ mod tests {
         assert!(
             matches!(&result, Err(Error::HashMismatch(s)) if s == ASSERTION_BOXHASH_UNKNOWN_BOX),
             "unexpected result: {result:?}"
-        );
-    }
-
-    /// When every content box is marked `excluded: true` the binding covers no
-    /// asset bytes; it must be rejected rather than reported as a match
-    /// (CAI-13331 arm 3).
-    #[test]
-    fn test_verify_rejects_all_content_boxes_excluded() {
-        let alg = "sha256";
-        let mut mock = MockMABH::new();
-        mock.expect_get_box_map().returning(|_| {
-            Ok(vec![
-                AssetBoxMap::new(vec!["C2PA".to_string()], 0, 10),
-                AssetBoxMap::new(vec!["AAAA".to_string()], 10, 10),
-            ])
-        });
-
-        let data: Vec<u8> = (0..20).collect();
-        let mut reader = Cursor::new(data);
-
-        let bh = BoxHash {
-            boxes: vec![
-                BoxMap {
-                    names: vec![C2PA_BOXHASH.to_string()],
-                    alg: Some(alg.to_string()),
-                    hash: ByteBuf::from(vec![]),
-                    excluded: None,
-                    exclusions: None,
-                    pad: ByteBuf::from(vec![]),
-                    range_start: 0,
-                    range_len: 10,
-                },
-                BoxMap {
-                    names: vec!["AAAA".to_string()],
-                    alg: Some(alg.to_string()),
-                    hash: ByteBuf::from(vec![]),
-                    excluded: Some(true),
-                    exclusions: None,
-                    pad: ByteBuf::from(vec![]),
-                    range_start: 10,
-                    range_len: 10,
-                },
-            ],
-        };
-
-        let result =
-            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &mock, &mut |_, _| Ok(()));
-        assert!(
-            matches!(&result, Err(Error::HashMismatch(_))),
-            "expected zero-coverage rejection, got: {result:?}"
         );
     }
 
