@@ -14,6 +14,7 @@
 #[cfg(feature = "file_io")]
 use std::path::{Path, PathBuf};
 use std::{
+    cmp::Ordering,
     collections::{HashMap, HashSet},
     io::{Cursor, Read, Seek},
 };
@@ -2358,89 +2359,104 @@ impl Store {
     /// Signs an already hashed manifest with dynamic assertion support.
     ///
     /// # Arguments
-    /// * `signer` - The signer to use.
-    /// * `settings` - The settings to use.
+    /// * `context` - The active context with signer and settings.
+    /// * `target_len` - When `Some`, the returned bytes are zero-padded up to
+    ///   this length if the signed jumbf comes out smaller (e.g. because a
+    ///   placeholder over-reserved space for exclusions/assertions that ended
+    ///   up smaller once filled with real content). Pass the length of a
+    ///   previously-embedded placeholder so the composed result is
+    ///   byte-for-byte the same size and can be patched in place. The JUMBF
+    ///   parser honours its own internal length field and ignores trailing
+    ///   padding bytes.
     /// # Returns
     /// * The signed manifest bytes.
     /// # Errors
     /// * Returns an [`Error`] if the placeholder cannot be signed.
-    pub fn sign_manifest(&mut self, signer: &dyn Signer, context: &Context) -> Result<Vec<u8>> {
+    /// * Returns [`Error::BadParam`] if `target_len` is `Some` and the signed
+    ///   jumbf is larger than the placeholder reserved, since the caller can no
+    ///   longer patch it into the pre-allocated space in place.
+    pub fn sign_manifest(
+        &mut self,
+        context: &Context,
+        target_len: Option<usize>,
+    ) -> Result<Vec<u8>> {
         let settings = context.settings();
+        let signer = context.signer()?;
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
 
         // if user did not supply a hash
-        if pc.hash_assertions().is_empty() {
+        let hash_assertions = pc.hash_assertions();
+        if hash_assertions.is_empty() {
             return Err(Error::BadParam(
                 "Claim must have a valid hard binding assertion".to_string(),
             ));
         };
 
-        // Write any dynamic assertions exposed by the signer. The caller
-        // (`Builder::sign_embeddable`) reserves matching placeholder slots via
-        // `add_dynamic_assertion_placeholders` before calling this, so the assertion
-        // content replaces those slots in place. This must reuse the same
-        // `dynamic_assertions()` result across the whole operation – draining it on an
-        // earlier call is what silently dropped identity assertions in issue #2055.
-        let dynamic_assertions = signer.dynamic_assertions();
-        if !dynamic_assertions.is_empty() {
-            // Every dynamic assertion needs a reserved placeholder slot to replace.
-            // Surface any that are missing with an actionable message instead of
-            // letting `write_dynamic_assertions` fail later with an opaque
-            // `Error::NotFound`.
-            let missing: Vec<String> = dynamic_assertions
-                .iter()
-                .map(|da| da.label())
-                .filter(|label| pc.assertion_hashed_uri_from_label(label).is_none())
-                .collect();
-
-            if !missing.is_empty() {
-                return Err(Error::BadParam(format!(
-                    "no placeholder slots were reserved for dynamic assertions [{}]; \
-                     call add_dynamic_assertion_placeholders() before signing",
-                    missing.join(", ")
-                )));
-            }
-
-            let mut preliminary_claim = PartialClaim::default();
-            {
-                for assertion in pc.assertions() {
-                    preliminary_claim.add_assertion(assertion);
-                }
-            }
-
-            // Drop pc before calling write_dynamic_assertions
-            let _ = pc;
-
-            let _modified =
-                self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
-
-            // Get pc again
-            let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-            let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
-
-            let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-            pc.set_signature_val(sig);
-
-            let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
-
-            if context.settings().verify.verify_after_sign {
-                self.verify_store_strict(None, context)?;
-            }
-
-            return Ok(jumbf_bytes);
-        }
+        // BMFF mdat Merkle-leaf hashing intentionally grows the signed jumbf
+        // beyond `Builder::placeholder`'s reservation (leaf hashes aren't known
+        // until the real content is hashed), so the caller is responsible for
+        // over-reserving embedding space itself. That's safe for BMFF because
+        // the reserved space is a self-describing `free` box rather than a raw
+        // byte range: `inject_manifest_into_free_box` writes the real manifest
+        // and re-splits whatever's left into a smaller trailing `free` box, so
+        // later box offsets never shift as long as the manifest fits inside the
+        // caller's `free` box. We have no way to see that box's size from here,
+        // so exempt BmffHash bindings from the oversize check below and let
+        // that later patch step be the actual ceiling check; every other hard
+        // binding commits to an exact, reproducible size.
+        let is_bmff_binding = hash_assertions
+            .iter()
+            .any(|ca| ca.assertion().label_root() == BmffHash::LABEL);
 
         context.check_progress(ProgressPhase::Signing, 1, 1)?;
 
-        // No dynamic assertions - sign directly
-        let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
+        // Reserve placeholder slots for any dynamic assertions exposed by the
+        // signer, then write their real content in place. This must reuse the
+        // same `dynamic_assertions()` result across the whole operation –
+        // draining it on an earlier call is what silently dropped identity
+        // assertions in issue #2055.
+        let dynamic_assertions = signer.dynamic_assertions();
+        let sig = if !dynamic_assertions.is_empty() {
+            self.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
+
+            let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+            let mut preliminary_claim = PartialClaim::default();
+            for assertion in pc.assertions() {
+                preliminary_claim.add_assertion(assertion);
+            }
+
+            self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
+
+            // Get pc again: write_dynamic_assertions replaced placeholder content
+            // with the real assertions and cleared cached claim data, so the
+            // claim must be re-fetched before signing.
+            let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+            self.sign_claim(pc, signer, signer.reserve_size(), settings)?
+        } else {
+            // No dynamic assertions - sign directly using the claim fetched above.
+            self.sign_claim(pc, signer, signer.reserve_size(), settings)?
+        };
+
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
         pc.set_signature_val(sig);
 
-        let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+        let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
         if context.settings().verify.verify_after_sign {
             self.verify_store_strict(None, context)?;
+        }
+
+        if let Some(len) = target_len {
+            match jumbf_bytes.len().cmp(&len) {
+                Ordering::Less => jumbf_bytes.resize(len, 0u8),
+                Ordering::Greater if !is_bmff_binding => {
+                    return Err(Error::BadParam(format!(
+                        "signed jumbf ({} bytes) exceeds placeholder-reserved size ({len} bytes)",
+                        jumbf_bytes.len()
+                    )))
+                }
+                _ => {}
+            }
         }
 
         Ok(jumbf_bytes)
@@ -8820,11 +8836,18 @@ pub mod tests {
     }
 
     #[test]
-    fn test_sign_manifest_errors_when_dynamic_placeholders_missing() {
-        // A signer that advertises a dynamic assertion but whose placeholder slot is
-        // never reserved. `sign_manifest` must reject it with an actionable error that
-        // names the offending assertion, rather than the opaque `Error::NotFound` that
-        // `write_dynamic_assertions` would otherwise raise (see issue #2055 review).
+    fn test_sign_manifest_reserves_dynamic_assertion_placeholders_itself() {
+        // A signer that advertises a dynamic assertion, with the caller never
+        // reserving a placeholder slot for it. `sign_manifest` must reserve (and
+        // fill in) that slot itself rather than requiring the caller to call
+        // `add_dynamic_assertion_placeholders` first (see issue #2055 review for
+        // why placeholder slots and real content must come from the same
+        // `dynamic_assertions()` call).
+        #[derive(Serialize)]
+        struct TestAssertion {
+            my_tag: String,
+        }
+
         #[derive(Debug)]
         struct TestDynamicAssertion {}
 
@@ -8834,7 +8857,10 @@ pub mod tests {
             }
 
             fn reserve_size(&self) -> Result<usize> {
-                Ok(64)
+                let assertion = TestAssertion {
+                    my_tag: "some value I will replace".to_string(),
+                };
+                Ok(c2pa_cbor::to_vec(&assertion)?.len())
             }
 
             fn content(
@@ -8843,11 +8869,16 @@ pub mod tests {
                 _size: Option<usize>,
                 _claim: &PartialClaim,
             ) -> Result<DynamicAssertionContent> {
-                Ok(DynamicAssertionContent::Cbor(Vec::new()))
+                let assertion = TestAssertion {
+                    my_tag: "some value I will replace".to_string(),
+                };
+                Ok(DynamicAssertionContent::Cbor(
+                    c2pa_cbor::to_vec(&assertion).unwrap(),
+                ))
             }
         }
 
-        struct DynamicSigner(Box<dyn Signer>);
+        struct DynamicSigner(crate::BoxedSigner);
 
         impl crate::Signer for DynamicSigner {
             fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
@@ -8871,25 +8902,28 @@ pub mod tests {
             }
         }
 
-        let context = crate::context::Context::new();
         let signer = DynamicSigner(test_signer(SigningAlg::Ps256));
+        let context = crate::context::Context::new().with_signer(signer);
 
         let mut store = Store::from_context(&context);
         store.commit_claim(create_test_claim().unwrap()).unwrap();
 
         // Reserve the hard-binding placeholder only – no dynamic-assertion slots.
+        let reserve_size = context.signer().unwrap().reserve_size();
         store
-            .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg", &context)
+            .get_data_hashed_manifest_placeholder(reserve_size, "jpeg", &context)
             .unwrap();
 
-        let err = store.sign_manifest(&signer, &context).unwrap_err();
-        match err {
-            Error::BadParam(msg) => assert!(
-                msg.contains("com.mycompany.myassertion"),
-                "error should name the assertion missing a placeholder slot: {msg}"
-            ),
-            other => panic!("expected Error::BadParam, got {other:?}"),
-        }
+        let jumbf_bytes = store.sign_manifest(&context, None).unwrap();
+
+        let mut validation_log = StatusTracker::default();
+        let signed_store = Store::from_jumbf(&jumbf_bytes, &mut validation_log).unwrap();
+        let pc = signed_store.provenance_claim().unwrap();
+        assert!(
+            pc.assertion_hashed_uri_from_label("com.mycompany.myassertion")
+                .is_some(),
+            "dynamic assertion should be present in the signed manifest"
+        );
     }
 
     #[test]
