@@ -1061,6 +1061,174 @@ pub mod tests {
         assertions::ExclusionKind,
         utils::io_utils::{safe_vec, tempdirectory},
     };
+    fn longest_zero_run(bytes: &[u8]) -> (usize, usize) {
+        let (mut best_start, mut best_len, mut i, n) = (0usize, 0usize, 0usize, bytes.len());
+        while i < n {
+            if bytes[i] == 0 {
+                let s = i;
+                while i < n && bytes[i] == 0 {
+                    i += 1;
+                }
+                if i - s > best_len {
+                    best_len = i - s;
+                    best_start = s;
+                }
+            } else {
+                i += 1;
+            }
+        }
+        (best_start, best_len)
+    }
+
+    fn enclosing_boxes(jumbf: &[u8], offset: usize) -> Vec<usize> {
+        let n = jumbf.len();
+        (0..n.saturating_sub(8))
+            .filter(|&p| {
+                let size = u32::from_be_bytes(jumbf[p..p + 4].try_into().unwrap()) as usize;
+                let ty = &jumbf[p + 4..p + 8];
+                ty.iter().all(u8::is_ascii_graphic)
+                    && size >= 8
+                    && p + size <= n
+                    && p <= offset
+                    && offset < p + size
+            })
+            .collect()
+    }
+
+    // JPEG variant of the shrunk-manifest injection guarded against for SVG (#2653).
+    // The signed c2pa.hash.data exclusion covers the whole APP11/JUMBF block. An
+    // attacker shrinks the unsigned COSE `pad`, patches the JUMBF box lengths so the
+    // manifest still reconstructs and the signature still verifies, then fills the
+    // freed bytes -- still inside the signed exclusion -- with a foreign (renderable)
+    // segment. The asset-agnostic exclusion/manifest-location check must reject it
+    // with ASSERTION_DATAHASH_MISMATCH.
+    #[test]
+    #[allow(deprecated)]
+    fn shrunk_manifest_injection_rejected() {
+        use crate::{
+            builder::Builder,
+            store::Store,
+            utils::{test::test_context, test_signer::test_signer},
+            validation_status::ASSERTION_DATAHASH_MISMATCH,
+            Reader, SigningAlg, ValidationState,
+        };
+
+        let src = std::fs::read(crate::utils::test::fixture_path("IMG_0003.jpg")).unwrap();
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut builder = Builder::from_context(test_context())
+            .with_definition(r#"{"title":"poc"}"#)
+            .unwrap();
+        let mut dest = Cursor::new(Vec::new());
+        builder
+            .sign(
+                signer.as_ref(),
+                "image/jpeg",
+                &mut Cursor::new(src),
+                &mut dest,
+            )
+            .unwrap();
+        let signed = dest.into_inner();
+
+        // The signed manifest lives in a single contiguous APP11 CAI block.
+        let jpeg_io = JpegIO {};
+        let ol = jpeg_io
+            .get_object_locations(&mut Cursor::new(signed.clone()))
+            .unwrap();
+        let cai = ol.iter().find(|o| o.htype == ObjectType::C2pa).unwrap();
+        let excl_off = cai.offset as usize; // exclusion start in the file
+        let excl_len = cai.length as usize; // exclusion length (whole APP11 block)
+        assert_eq!(
+            get_cai_segments(&Jpeg::from_bytes(Bytes::copy_from_slice(&signed)).unwrap())
+                .unwrap()
+                .len(),
+            1
+        );
+
+        // manifest byte i <-> file byte (excl_off + 12): marker(2)+len(2)+CI(2)+EN(2)+Z(4).
+        let jumbf_file_start = excl_off + 12;
+
+        let manifest = Store::load_jumbf_from_stream(
+            "image/jpeg",
+            &mut Cursor::new(signed.clone()),
+            &test_context(),
+        )
+        .unwrap()
+        .0;
+        let (pad_start, pad_len) = longest_zero_run(&manifest);
+        assert_eq!(
+            manifest[pad_start - 3],
+            0x59,
+            "expected 2-byte-len pad header"
+        );
+
+        let shrink = 500usize;
+        let new_pad = pad_len - shrink;
+        assert!(new_pad >= 256, "keep the 2-byte length header");
+
+        let mut forged = signed.clone();
+
+        // 1. Patch the enclosing JUMBF box length fields (-shrink).
+        for boxoff in enclosing_boxes(&manifest, pad_start) {
+            let f = jumbf_file_start + boxoff;
+            let sz = u32::from_be_bytes(forged[f..f + 4].try_into().unwrap());
+            forged[f..f + 4].copy_from_slice(&(sz - shrink as u32).to_be_bytes());
+        }
+        // 2. Patch the CBOR pad byte-string length header (2-byte form).
+        let ph = jumbf_file_start + pad_start - 2;
+        forged[ph] = (new_pad >> 8) as u8;
+        forged[ph + 1] = (new_pad & 0xff) as u8;
+        // 3. Remove `shrink` zero bytes from the pad run.
+        let pf = jumbf_file_start + pad_start;
+        forged.drain(pf..pf + shrink);
+        // 4. Patch the APP11 segment 2-byte length field (-shrink).
+        let seg_len_off = excl_off + 2;
+        let seg_len = u16::from_be_bytes(forged[seg_len_off..seg_len_off + 2].try_into().unwrap());
+        forged[seg_len_off..seg_len_off + 2]
+            .copy_from_slice(&(seg_len - shrink as u16).to_be_bytes());
+        // 5. Insert a foreign COM segment of `shrink` bytes right after the (now
+        //    shorter) CAI block -- still inside the original signed exclusion span.
+        let com_at = excl_off + (excl_len - shrink);
+        let mut com = vec![0xffu8, 0xfe]; // COM marker
+        com.extend_from_slice(&((shrink - 2) as u16).to_be_bytes());
+        com.resize(shrink, 0xaa); // fill the segment body
+        forged.splice(com_at..com_at, com);
+
+        // File size and every byte outside the signed exclusion are preserved.
+        assert_eq!(forged.len(), signed.len());
+        assert_eq!(
+            &forged[excl_off + excl_len..],
+            &signed[excl_off + excl_len..]
+        );
+
+        // The manifest still reconstructs identically (pad is unsigned).
+        let forged_manifest = Store::load_jumbf_from_stream(
+            "image/jpeg",
+            &mut Cursor::new(forged.clone()),
+            &test_context(),
+        )
+        .unwrap()
+        .0;
+        assert_eq!(forged_manifest.len(), manifest.len() - shrink);
+
+        let reader = Reader::from_context(test_context())
+            .with_stream("image/jpeg", Cursor::new(forged))
+            .unwrap();
+        assert_ne!(
+            reader.validation_state(),
+            ValidationState::Trusted,
+            "injected content in the manifest exclusion must not validate as trusted"
+        );
+        assert!(
+            reader
+                .validation_status()
+                .unwrap_or_default()
+                .iter()
+                .any(|s| s.code() == ASSERTION_DATAHASH_MISMATCH),
+            "expected {ASSERTION_DATAHASH_MISMATCH}, got {:?}",
+            reader.validation_status()
+        );
+    }
+
     #[test]
     fn test_extract_xmp() {
         let contents = Bytes::from_static(b"http://ns.adobe.com/xap/1.0/\0stuff");
