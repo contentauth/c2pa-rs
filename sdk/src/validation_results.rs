@@ -11,7 +11,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::fmt::{self, Display};
+use std::{
+    collections::HashSet,
+    fmt::{self, Display},
+};
 
 use chrono::Utc;
 #[cfg(feature = "json_schema")]
@@ -269,6 +272,14 @@ impl ValidationResults {
                     .flatten()
                     .collect();
 
+                let attested_inside_validity: HashSet<String> = ingredient_statuses
+                    .iter()
+                    .filter(|status| {
+                        status.code() == validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY
+                    })
+                    .filter_map(|status| status.url().and_then(manifest_label_from_uri))
+                    .collect();
+
                 // Drop a status only if it is a genuine re-report of what an ingredient already
                 // attested: it must be scoped to an ingredient AND not describe the active
                 // manifest AND match an ingredient attestation. Any status describing the active
@@ -287,9 +298,18 @@ impl ValidationResults {
                 //    `assertion.ingredient.malformed`.
                 // Neither signal can be forged by ingredient assertion content.
                 statuses.retain(|s| {
+                    let attested_historical_expiry = s.code()
+                        == validation_status::SIGNING_CREDENTIAL_EXPIRED
+                        && s.ingredient_uri().is_some()
+                        && !is_active_manifest(s.url())
+                        && s.url()
+                            .and_then(manifest_label_from_uri)
+                            .is_some_and(|label| attested_inside_validity.contains(&label));
+
                     s.ingredient_uri().is_none()
                         || is_active_manifest(s.url())
-                        || !ingredient_statuses.iter().any(|i| i == s)
+                        || (!ingredient_statuses.iter().any(|i| i == s)
+                            && !attested_historical_expiry)
                 })
             }
             for status in statuses {
@@ -1349,8 +1369,8 @@ pub mod tests {
             ASSERTION_INGREDIENT_MALFORMED, CAWG_X509_ALGORITHM_UNSUPPORTED,
             CAWG_X509_CREDENTIAL_INVALID, CAWG_X509_CREDENTIAL_UNTRUSTED,
             CAWG_X509_SIGNATURE_MISMATCH, CAWG_X509_SIGNATURE_OUTSIDE_VALIDITY, CLAIM_MALFORMED,
-            CLAIM_SIGNATURE_INSIDE_VALIDITY, CLAIM_SIGNATURE_VALIDATED, SIGNING_CREDENTIAL_TRUSTED,
-            SIGNING_CREDENTIAL_UNTRUSTED,
+            CLAIM_SIGNATURE_INSIDE_VALIDITY, CLAIM_SIGNATURE_VALIDATED, SIGNING_CREDENTIAL_EXPIRED,
+            SIGNING_CREDENTIAL_TRUSTED, SIGNING_CREDENTIAL_UNTRUSTED,
         },
         HashedUri, Relationship,
     };
@@ -1976,5 +1996,79 @@ pub mod tests {
 
         // ...so the overall state stays Invalid rather than being upgraded to Valid.
         assert_eq!(results.validation_state(), ValidationState::Invalid);
+    }
+
+    #[test]
+    fn from_store_suppresses_ingredient_cert_expiry_attested_inside_validity() {
+        let mut outer_claim = Claim::new("test-generator", None, 2);
+        let outer_label = outer_claim.label().to_string();
+
+        let inner_manifest_uri = labels::to_manifest_uri("urn:uuid:inner-test");
+        let inner_signature_uri = labels::to_signature_uri("urn:uuid:inner-test");
+
+        let mut attested = ValidationResults::default();
+        attested.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_VALIDATED)
+                .set_kind(LogKind::Success)
+                .set_url(&inner_signature_uri),
+        );
+        attested.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_INSIDE_VALIDITY)
+                .set_kind(LogKind::Success)
+                .set_url(&inner_signature_uri),
+        );
+
+        let ingredient = Ingredient {
+            relationship: Relationship::ComponentOf,
+            version: 3,
+            active_manifest: Some(HashedUri::new(
+                inner_manifest_uri,
+                Some("sha256".into()),
+                &[0u8; 32],
+            )),
+            validation_results: Some(attested),
+            ..Default::default()
+        };
+        outer_claim.add_assertion(&ingredient).unwrap();
+
+        let mut store = Store::new();
+        store.insert_restored_claim(outer_label.clone(), outer_claim);
+
+        let mut tracker = StatusTracker::default();
+
+        log_item!(outer_label.clone(), "claim signature valid", "verify")
+            .validation_status(CLAIM_SIGNATURE_VALIDATED)
+            .success(&mut tracker);
+        log_item!(
+            outer_label.clone(),
+            "claim signature inside validity",
+            "verify"
+        )
+        .validation_status(CLAIM_SIGNATURE_INSIDE_VALIDITY)
+        .success(&mut tracker);
+
+        let ingredient_uri = labels::to_assertion_uri(&outer_label, assertions::labels::INGREDIENT);
+        tracker.push_ingredient_uri(ingredient_uri);
+        let _ = log_item!(
+            inner_signature_uri.clone(),
+            "certificate expired",
+            "check_certificate_profile"
+        )
+        .validation_status(SIGNING_CREDENTIAL_EXPIRED)
+        .failure(&mut tracker, "certificate expired");
+        tracker.pop_ingredient_uri();
+
+        let results = ValidationResults::from_store(&store, &tracker);
+
+        assert!(
+            results
+                .validation_errors()
+                .unwrap_or_default()
+                .iter()
+                .all(|status| status.code() != SIGNING_CREDENTIAL_EXPIRED),
+            "ingredient attestation should suppress nested expiry delta: {:?}",
+            results.validation_errors()
+        );
+        assert_eq!(results.validation_state(), ValidationState::Valid);
     }
 }
