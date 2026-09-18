@@ -215,8 +215,20 @@ impl ValidationResults {
                 uri.is_some_and(|uri| manifest_label_from_uri(uri) == active_manifest)
             };
 
-            // Returns a flat list of validation statuses from the ingredient with absolute URIs.
+            // Returns the ingredient's own manifest label (if any) together with a flat list of
+            // its validation statuses, with absolute URIs. The own label is threaded through
+            // separately (rather than re-derived from the flattened statuses later) so that a
+            // `claimSignature.insideValidity` attestation can only ever be trusted as being
+            // *about the ingredient that made it* -- not about some other, unrelated manifest
+            // label that the ingredient's assertion content merely happens to name.
             let get_statuses = |i: Ingredient| {
+                let own_label = i
+                    .active_manifest
+                    .as_ref()
+                    .or(i.c2pa_manifest.as_ref())
+                    .map(|m| m.url())
+                    .and_then(|uri| manifest_label_from_uri(&uri));
+
                 // Get a flat list of validation statuses from the ingredient.
                 // If validation_results are present, use them, otherwise use the ingredient's validation_status.
                 //
@@ -239,18 +251,12 @@ impl ValidationResults {
 
                 // Convert any relative manifest urls found in ingredient validation statuses to absolute.
                 validation_status.map(|mut statuses| {
-                    if let Some(label) = i
-                        .active_manifest
-                        .as_ref()
-                        .or(i.c2pa_manifest.as_ref())
-                        .map(|m| m.url())
-                        .and_then(|uri| manifest_label_from_uri(&uri))
-                    {
+                    if let Some(label) = &own_label {
                         for status in &mut statuses {
-                            status.make_absolute(&label)
+                            status.make_absolute(label)
                         }
                     }
-                    statuses
+                    (own_label, statuses)
                 })
             };
 
@@ -261,23 +267,43 @@ impl ValidationResults {
                 .iter()
                 .any(|s| s.ingredient_uri().is_some() && !is_active_manifest(s.url()))
             {
-                // Collect all the ValidationStatus records from all the ingredients in the store.
-                // Since we need to process v1,v2 and v3 ingredients, we process all in the same format.
-                let ingredient_statuses: Vec<ValidationStatus> = store
-                    .claims()
+                // Collect all the ValidationStatus records from all the ingredients in the store,
+                // each tagged with the label of the ingredient that reported them. Since we need
+                // to process v1, v2 and v3 ingredients, we process all in the same format.
+                let ingredient_statuses_by_label: Vec<(Option<String>, Vec<ValidationStatus>)> =
+                    store
+                        .claims()
+                        .iter()
+                        .flat_map(|c| c.ingredient_assertions())
+                        .filter_map(|a| Ingredient::from_assertion(a.assertion()).ok())
+                        .filter_map(get_statuses)
+                        .collect();
+
+                let ingredient_statuses: Vec<ValidationStatus> = ingredient_statuses_by_label
                     .iter()
-                    .flat_map(|c| c.ingredient_assertions())
-                    .filter_map(|a| Ingredient::from_assertion(a.assertion()).ok())
-                    .filter_map(get_statuses)
-                    .flatten()
+                    .flat_map(|(_, statuses)| statuses.iter().cloned())
                     .collect();
 
-                let attested_inside_validity: HashSet<String> = ingredient_statuses
+                // Only trust a `claimSignature.insideValidity` attestation as authoritative
+                // about a manifest label when it was reported by the ingredient *for that same
+                // label*, i.e. it is self-attested. Without this, an ingredient could "vouch"
+                // for some other, unrelated manifest label elsewhere in the store and suppress a
+                // genuine, live-detected certificate-expiry finding for it.
+                let attested_inside_validity: HashSet<String> = ingredient_statuses_by_label
                     .iter()
-                    .filter(|status| {
-                        status.code() == validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY
+                    .filter_map(|(own_label, statuses)| {
+                        let own_label = own_label.as_ref()?;
+                        statuses
+                            .iter()
+                            .any(|status| {
+                                status.code() == validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY
+                                    && status
+                                        .url()
+                                        .and_then(manifest_label_from_uri)
+                                        .is_some_and(|label| &label == own_label)
+                            })
+                            .then(|| own_label.clone())
                     })
-                    .filter_map(|status| status.url().and_then(manifest_label_from_uri))
                     .collect();
 
                 // Drop a status only if it is a genuine re-report of what an ingredient already
@@ -2070,5 +2096,110 @@ pub mod tests {
             results.validation_errors()
         );
         assert_eq!(results.validation_state(), ValidationState::Valid);
+    }
+
+    #[test]
+    fn from_store_cannot_be_suppressed_by_unrelated_ingredient_attesting_foreign_manifest_label() {
+        // Two independent claims in the store: `outer_claim` genuinely nests an ingredient whose
+        // manifest ("urn:uuid:victim") has since had its certificate expire, and `attacker_claim`
+        // is a wholly unrelated claim (not part of the active manifest's real ingredient chain)
+        // that happens to carry an ingredient assertion whose own `active_manifest` differs, but
+        // which forges a `claimSignature.insideValidity` attestation *for the victim's signature
+        // URL*. Suppression must not be triggerable merely by an unrelated ingredient assertion
+        // naming the same manifest label elsewhere in the store — it must only cancel a delta for
+        // the ingredient that genuinely, cryptographically attests it.
+
+        let victim_manifest_uri = labels::to_manifest_uri("urn:uuid:victim");
+        let victim_signature_uri = labels::to_signature_uri("urn:uuid:victim");
+
+        let mut outer_claim = Claim::new("test-generator", None, 2);
+        let outer_label = outer_claim.label().to_string();
+
+        // The outer/active claim genuinely nests the victim ingredient, with no attestation of
+        // its own -- so the *only* claimed insideValidity for the victim's signature URL is the
+        // forged one added below via a completely separate claim.
+        let victim_ingredient = Ingredient {
+            relationship: Relationship::ComponentOf,
+            version: 3,
+            active_manifest: Some(HashedUri::new(
+                victim_manifest_uri,
+                Some("sha256".into()),
+                &[0u8; 32],
+            )),
+            // v3 ingredients require `validation_results` to be present, but it carries no
+            // `claimSignature.insideValidity` attestation of its own here.
+            validation_results: Some(ValidationResults::default()),
+            ..Default::default()
+        };
+        outer_claim.add_assertion(&victim_ingredient).unwrap();
+
+        // A wholly separate claim, unrelated to the outer/active manifest's real ingredient
+        // chain, whose own ingredient assertion just happens to forge an attestation naming the
+        // victim's signature URL.
+        let mut attacker_claim = Claim::new("attacker-generator", None, 2);
+        let attacker_label = attacker_claim.label().to_string();
+
+        let mut forged = ValidationResults::default();
+        forged.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_INSIDE_VALIDITY)
+                .set_kind(LogKind::Success)
+                .set_url(&victim_signature_uri),
+        );
+        let attacker_ingredient = Ingredient {
+            relationship: Relationship::ComponentOf,
+            version: 3,
+            active_manifest: Some(HashedUri::new(
+                labels::to_manifest_uri("urn:uuid:attacker-unrelated"),
+                Some("sha256".into()),
+                &[0u8; 32],
+            )),
+            validation_results: Some(forged),
+            ..Default::default()
+        };
+        attacker_claim.add_assertion(&attacker_ingredient).unwrap();
+
+        let mut store = Store::new();
+        store.insert_restored_claim(outer_label.clone(), outer_claim);
+        store.insert_restored_claim(attacker_label, attacker_claim);
+
+        let mut tracker = StatusTracker::default();
+
+        log_item!(outer_label.clone(), "claim signature valid", "verify")
+            .validation_status(CLAIM_SIGNATURE_VALIDATED)
+            .success(&mut tracker);
+        log_item!(
+            outer_label.clone(),
+            "claim signature inside validity",
+            "verify"
+        )
+        .validation_status(CLAIM_SIGNATURE_INSIDE_VALIDITY)
+        .success(&mut tracker);
+
+        // The live re-check of the victim ingredient genuinely finds its certificate has expired.
+        let ingredient_uri = labels::to_assertion_uri(&outer_label, assertions::labels::INGREDIENT);
+        tracker.push_ingredient_uri(ingredient_uri);
+        let _ = log_item!(
+            victim_signature_uri.clone(),
+            "certificate expired",
+            "check_certificate_profile"
+        )
+        .validation_status(SIGNING_CREDENTIAL_EXPIRED)
+        .failure(&mut tracker, "certificate expired");
+        tracker.pop_ingredient_uri();
+
+        let results = ValidationResults::from_store(&store, &tracker);
+
+        // The genuine, live-detected expiry for the victim manifest must survive: a forged
+        // attestation from an unrelated ingredient elsewhere in the store must not be able to
+        // suppress it merely by naming the same manifest/signature URL.
+        assert!(
+            results
+                .validation_errors()
+                .unwrap_or_default()
+                .iter()
+                .any(|status| status.code() == SIGNING_CREDENTIAL_EXPIRED),
+            "an unrelated ingredient's forged attestation suppressed a genuine expiry finding: {:?}",
+            results.validation_errors()
+        );
     }
 }
