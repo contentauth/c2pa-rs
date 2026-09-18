@@ -644,6 +644,7 @@ impl BmffHash {
                 .and_modify(|leaves| leaves.push((remainder.len() as u64, fragment_hash.clone())))
                 .or_insert(vec![(remainder.len() as u64, fragment_hash)]);
         }
+        accumulator.fixed_size_remainder.clear();
 
         if accumulator.merkle_leaves.is_empty() {
             return Ok(());
@@ -663,6 +664,7 @@ impl BmffHash {
         self.add_exclusions(&mut vec![mdat]);
         self.set_merkle(merkle_maps);
 
+        accumulator.merkle_leaves.clear();
         Ok(())
     }
 

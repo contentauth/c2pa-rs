@@ -14,6 +14,7 @@
 #[cfg(feature = "file_io")]
 use std::path::{Path, PathBuf};
 use std::{
+    cmp::Ordering,
     collections::{HashMap, HashSet},
     io::{Cursor, Read, Seek},
 };
@@ -2371,6 +2372,9 @@ impl Store {
     /// * The signed manifest bytes.
     /// # Errors
     /// * Returns an [`Error`] if the placeholder cannot be signed.
+    /// * Returns [`Error::BadParam`] if `target_len` is `Some` and the signed
+    ///   jumbf is larger than the placeholder reserved, since the caller can no
+    ///   longer patch it into the pre-allocated space in place.
     pub fn sign_manifest(
         &mut self,
         context: &Context,
@@ -2381,11 +2385,28 @@ impl Store {
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
 
         // if user did not supply a hash
-        if pc.hash_assertions().is_empty() {
+        let hash_assertions = pc.hash_assertions();
+        if hash_assertions.is_empty() {
             return Err(Error::BadParam(
                 "Claim must have a valid hard binding assertion".to_string(),
             ));
         };
+
+        // BMFF mdat Merkle-leaf hashing intentionally grows the signed jumbf
+        // beyond `Builder::placeholder`'s reservation (leaf hashes aren't known
+        // until the real content is hashed), so the caller is responsible for
+        // over-reserving embedding space itself. That's safe for BMFF because
+        // the reserved space is a self-describing `free` box rather than a raw
+        // byte range: `inject_manifest_into_free_box` writes the real manifest
+        // and re-splits whatever's left into a smaller trailing `free` box, so
+        // later box offsets never shift as long as the manifest fits inside the
+        // caller's `free` box. We have no way to see that box's size from here,
+        // so exempt BmffHash bindings from the oversize check below and let
+        // that later patch step be the actual ceiling check; every other hard
+        // binding commits to an exact, reproducible size.
+        let is_bmff_binding = hash_assertions
+            .iter()
+            .any(|ca| ca.assertion().label_root() == BmffHash::LABEL);
 
         context.check_progress(ProgressPhase::Signing, 1, 1)?;
 
@@ -2426,8 +2447,15 @@ impl Store {
         }
 
         if let Some(len) = target_len {
-            if jumbf_bytes.len() < len {
-                jumbf_bytes.resize(len, 0u8);
+            match jumbf_bytes.len().cmp(&len) {
+                Ordering::Less => jumbf_bytes.resize(len, 0u8),
+                Ordering::Greater if !is_bmff_binding => {
+                    return Err(Error::BadParam(format!(
+                        "signed jumbf ({} bytes) exceeds placeholder-reserved size ({len} bytes)",
+                        jumbf_bytes.len()
+                    )))
+                }
+                _ => {}
             }
         }
 
