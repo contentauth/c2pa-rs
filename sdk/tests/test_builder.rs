@@ -883,6 +883,47 @@ fn test_builder_pdf_resign_already_signed() -> Result<()> {
     Ok(())
 }
 
+// A remote (URL-only, no embedded manifest) PDF: the manifest URL is
+// written into the PDF's XMP `dcterms:provenance`, no C2PA manifest is
+// embedded, and the manifest data returned by `sign` validates against the
+// asset via that XMP reference.
+#[test]
+#[cfg(feature = "pdf")]
+fn test_builder_pdf_remote_url() -> Result<()> {
+    let context = test_context().into_shared();
+
+    let mut source = Cursor::new(include_bytes!("fixtures/basic.pdf"));
+    let format = "application/pdf";
+
+    let mut builder = Builder::from_shared_context(&context);
+    builder.set_intent(BuilderIntent::Edit);
+    builder.set_remote_url("https://example.com/manifest.c2pa");
+    builder.set_no_embed(true);
+
+    let mut dest = Cursor::new(Vec::new());
+    let manifest_data = builder.sign(context.signer()?, format, &mut source, &mut dest)?;
+
+    // No manifest embedded in the asset itself: reading it back without
+    // supplying the manifest data separately reports the remote URL found in
+    // XMP, rather than finding an embedded manifest.
+    dest.set_position(0);
+    assert!(matches!(
+        Reader::from_shared_context(&context).with_stream(format, &mut dest),
+        Err(Error::RemoteManifestUrl(url)) if url == "https://example.com/manifest.c2pa"
+    ));
+
+    // The returned manifest data validates against the (unmodified-by-embedding) asset.
+    dest.set_position(0);
+    let reader = Reader::from_shared_context(&context).with_manifest_data_and_stream(
+        &manifest_data,
+        format,
+        &mut dest,
+    )?;
+    assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+    Ok(())
+}
+
 #[test]
 fn test_builder_unsupported_format() -> Result<()> {
     let context = Context::new().with_settings(test_settings())?.into_shared();

@@ -15,7 +15,7 @@ use crate::{
     asset_handlers::pdf::{C2paPdf, Pdf},
     asset_io::{
         AssetIO, C2paReader, C2paWriter, ComposedManifestRef, ObjectLocations, ObjectType,
-        ReadSeek, ReadWriteSeek,
+        ReadSeek, ReadWriteSeek, RemoteManifestUrl, WriteXmp,
     },
     Error::{self, JumbfNotFound, NotImplemented, PdfReadError},
 };
@@ -258,8 +258,15 @@ impl C2paWriter for PdfIO {
         input_stream.rewind()?;
         let mut pdf =
             Pdf::from_reader(input_stream).map_err(|e| Error::InvalidAsset(e.to_string()))?;
-        pdf.remove_manifest_bytes()
-            .map_err(|_| Error::EmbeddingError)?;
+
+        // A no-op, not an error, when there's nothing to remove: the remote/
+        // sidecar save path always calls this first regardless of whether a
+        // manifest is actually present, exactly as `write_c2pa` above already
+        // guards its own call to `remove_manifest_bytes`.
+        if pdf.has_c2pa_manifest() {
+            pdf.remove_manifest_bytes()
+                .map_err(|_| Error::EmbeddingError)?;
+        }
 
         let mut bytes = Vec::new();
         pdf.save_to(&mut bytes).map_err(Error::IoError)?;
@@ -296,12 +303,43 @@ impl AssetIO for PdfIO {
     fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
         Some(self)
     }
+
+    fn remote_manifest_url_ref(&self) -> Option<&dyn RemoteManifestUrl> {
+        Some(self)
+    }
+
+    fn write_xmp_ref(&self) -> Option<&dyn WriteXmp> {
+        Some(self)
+    }
 }
 
 impl ComposedManifestRef for PdfIO {
     // Return entire CAI block as Vec<u8>
     fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>, Error> {
         Ok(manifest_data.to_vec())
+    }
+}
+
+impl WriteXmp for PdfIO {
+    fn write_xmp(
+        &self,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
+        xmp: &str,
+    ) -> crate::Result<()> {
+        input_stream.rewind()?;
+        let mut bytes = Vec::new();
+        input_stream.read_to_end(&mut bytes)?;
+
+        let mut pdf = Pdf::from_bytes(&bytes).map_err(|e| Error::InvalidAsset(e.to_string()))?;
+        pdf.write_xmp(xmp.to_string())
+            .map_err(|_| Error::EmbeddingError)?;
+
+        let mut out_bytes = Vec::new();
+        pdf.save_to(&mut out_bytes).map_err(Error::IoError)?;
+        output_stream.rewind()?;
+        output_stream.write_all(&out_bytes)?;
+        Ok(())
     }
 }
 
@@ -607,11 +645,96 @@ pub mod tests {
         ));
     }
 
+    // `remove_c2pa` must no-op on a PDF with no manifest, not error: the
+    // remote/sidecar save path in `Store::start_save_stream` always calls it
+    // first regardless of whether a manifest is actually present.
+    #[test]
+    fn test_remove_c2pa_on_pdf_without_manifest_is_a_no_op() {
+        let source = include_bytes!("../../tests/fixtures/basic.pdf");
+        let pdf_io = PdfIO::new("pdf");
+        let writer = pdf_io.get_writer("pdf").unwrap();
+        let mut input = Cursor::new(source.to_vec());
+        let mut output = Cursor::new(Vec::new());
+
+        writer.remove_c2pa(&mut input, &mut output).unwrap();
+
+        output.set_position(0);
+        assert!(matches!(
+            pdf_io.read_c2pa(&mut output),
+            Err(crate::Error::JumbfNotFound)
+        ));
+    }
+
     #[test]
     fn test_read_cai_express_pdf_finds_single_manifest_store() {
         let source = include_bytes!("../../tests/fixtures/express-signed.pdf");
         let pdf_io = PdfIO::new("pdf");
         let mut pdf_stream = Cursor::new(source.to_vec());
         assert!(pdf_io.read_c2pa(&mut pdf_stream).is_ok());
+    }
+
+    #[test]
+    fn test_write_remote_manifest_url_with_no_existing_xmp() {
+        let source = include_bytes!("../../tests/fixtures/basic-no-xmp.pdf");
+        let test_url = "https://example.com/manifest.c2pa";
+
+        let pdf_io = PdfIO::new("pdf");
+        let remote_ref_handler = pdf_io.remote_manifest_url_ref().unwrap();
+
+        let mut input = Cursor::new(source.to_vec());
+        let mut output = Cursor::new(Vec::new());
+        remote_ref_handler
+            .write_remote_manifest_url(&mut input, &mut output, test_url)
+            .unwrap();
+
+        output.set_position(0);
+        let read_xmp = pdf_io.read_xmp(&mut output).unwrap();
+        assert!(read_xmp.contains(test_url));
+
+        output.set_position(0);
+        assert_eq!(
+            remote_ref_handler.read_manifest_url(&mut output),
+            Some(test_url.to_string())
+        );
+    }
+
+    #[test]
+    fn test_write_remote_manifest_url_preserves_existing_xmp() {
+        let source = include_bytes!("../../tests/fixtures/basic.pdf");
+        let test_url = "https://example.com/manifest.c2pa";
+
+        let pdf_io = PdfIO::new("pdf");
+        let mut input = Cursor::new(source.to_vec());
+        let existing_xmp = pdf_io.read_xmp(&mut input).unwrap();
+        // Sanity check on the fixture itself: the merge logic only adds a new
+        // `rdf:Description` attribute and passes every other event through
+        // unchanged, so an existing *child element* is the right thing to
+        // assert survives (a byte-for-byte whole-packet comparison wouldn't,
+        // since the `rdf:Description` tag itself gains a new attribute).
+        assert!(existing_xmp.contains("<xmp:CreatorTool>"));
+        input.set_position(0);
+
+        let remote_ref_handler = pdf_io.remote_manifest_url_ref().unwrap();
+        let mut output = Cursor::new(Vec::new());
+        remote_ref_handler
+            .write_remote_manifest_url(&mut input, &mut output, test_url)
+            .unwrap();
+
+        output.set_position(0);
+        let read_xmp = pdf_io.read_xmp(&mut output).unwrap();
+        assert!(read_xmp.contains(test_url));
+        // The rest of the pre-existing XMP packet must survive the merge, not
+        // just get clobbered by a fresh minimal packet.
+        assert!(read_xmp.contains("<xmp:CreatorTool>Acrobat Pro 23.1.20143</xmp:CreatorTool>"));
+    }
+
+    #[test]
+    fn test_read_manifest_url_none_when_absent() {
+        let source = include_bytes!("../../tests/fixtures/basic-no-xmp.pdf");
+        let pdf_io = PdfIO::new("pdf");
+        let remote_ref_handler = pdf_io.remote_manifest_url_ref().unwrap();
+
+        let mut input = Cursor::new(source.to_vec());
+        assert_eq!(remote_ref_handler.read_manifest_url(&mut input), None);
     }
 }
