@@ -159,6 +159,10 @@ pub struct Ingredient {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     ocsp_responses: Option<Vec<ResourceRef>>,
+
+    /// If true, the ingredient assertion is added to created_assertions, rather than to gathered_assertions, which is the default.
+    /// ParentOf ingredients are always created assertions, and this field is ignored for them.
+    is_created: Option<bool>,
 }
 
 fn default_instance_id() -> String {
@@ -1348,7 +1352,13 @@ impl Ingredient {
                                 format_to_mime(&thumb_ref.format),
                                 data.into_owned(),
                             );
-                            claim.add_assertion(&thumbnail)?
+                            // parent ingredients are always created assertions, and any
+                            // created ingredients are presumed to have created thumbnails here
+                            if self.is_parent() || self.is_created.unwrap_or(false) {
+                                claim.add_created_assertion(&thumbnail)?
+                            } else {
+                                claim.add_assertion(&thumbnail)?
+                            }
                         }
                     }
                 };
@@ -1372,7 +1382,13 @@ impl Ingredient {
                         format_to_mime(&data_ref.format),
                         box_data.into_owned(),
                     );
-                    claim.add_assertion(&embedded_data)?
+                    // parent ingredients are always created assertions, and any
+                    // created ingredients are presumed to have created data here
+                    if self.is_parent() || self.is_created.unwrap_or(false) {
+                        claim.add_created_assertion(&embedded_data)?
+                    } else {
+                        claim.add_assertion(&embedded_data)?
+                    }
                 }
             };
 
@@ -1442,7 +1458,11 @@ impl Ingredient {
             .informational_uri
             .clone_from(&self.informational_uri);
         ingredient_assertion.data_types.clone_from(&self.data_types);
-        claim.add_assertion(&ingredient_assertion)
+        if self.is_parent() || self.is_created.unwrap_or(false) {
+            claim.add_created_assertion(&ingredient_assertion)
+        } else {
+            claim.add_assertion(&ingredient_assertion)
+        }
     }
 
     /// Asynchronously create an Ingredient from a binary manifest (.c2pa) and asset bytes,
