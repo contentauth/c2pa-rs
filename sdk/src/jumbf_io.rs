@@ -17,6 +17,8 @@ use std::{collections::HashMap, io::Cursor, sync::Arc};
 
 use lazy_static::lazy_static;
 
+#[cfg(feature = "unstable_ogg")]
+use crate::asset_handlers::ogg_io::OggIO;
 #[cfg(feature = "pdf")]
 use crate::asset_handlers::pdf_io::PdfIO;
 #[cfg(feature = "unstable_plain_text")]
@@ -51,6 +53,8 @@ lazy_static! {
         Box::new(Mp3IO::new("")),
         Box::new(GifIO::new("")),
         Box::new(FlacIO::new("")),
+        #[cfg(feature = "unstable_ogg")]
+        Box::new(OggIO::new("")),
         #[cfg(feature = "unstable_structured_text")]
         Box::new(StructuredTextIO::new("")),
         #[cfg(feature = "unstable_plain_text")]
@@ -381,6 +385,10 @@ pub mod tests {
         assert!(supported.iter().any(|s| s == "svg"));
         assert!(supported.iter().any(|s| s == "mp3"));
         assert!(supported.iter().any(|s| s == "jxl"));
+        let ogg_supported = supported.iter().any(|s| s == "ogg");
+        assert_eq!(ogg_supported, cfg!(feature = "unstable_ogg"));
+        let opus_supported = supported.iter().any(|s| s == "opus");
+        assert_eq!(opus_supported, cfg!(feature = "unstable_ogg"));
     }
 
     fn test_jumbf(asset_type: &str, reader: &mut dyn ReadSeek) {
@@ -489,6 +497,22 @@ pub mod tests {
         // mp3 doesn't support remote refs
         //reader.rewind().unwrap();
         //test_remote_ref("mp3", &mut reader); // not working
+    }
+
+    #[test]
+    #[cfg(feature = "unstable_ogg")]
+    fn test_streams_ogg() {
+        let mut reader = std::fs::File::open("tests/fixtures/sample1.ogg").unwrap();
+        test_jumbf("ogg", &mut reader);
+        // OGG doesn't support remote refs: the C2PA spec does not define XMP
+        // embedding for OGG containers.
+    }
+
+    #[test]
+    #[cfg(feature = "unstable_ogg")]
+    fn test_streams_opus() {
+        let mut reader = std::fs::File::open("tests/fixtures/sample1.opus").unwrap();
+        test_jumbf("opus", &mut reader);
     }
 
     #[test]

@@ -35,6 +35,11 @@ add_thumbnails = ["dep:image"]
 # the crate's usual semantic-versioning stability guarantees and may change or be removed in any
 # release. See docs/experimental-features.md.
 unstable_builder_filter = []
+# Native OGG asset handler: C2PA manifest embedding for OGG Vorbis and OGG Opus containers
+# (C2PA spec v2.3 section A.3.5), implemented in-tree with no new dependencies. Experimental
+# feature: exempt from the crate's usual semantic-versioning stability guarantees and may change
+# or be removed in any release. See docs/experimental-features.md.
+unstable_ogg = []
 # Native plain-text asset handler (C2PA A.8 Unicode-variation-selector wrapper), implemented
 # in-tree with no third-party C2PA-text crate; the only dependency is unicode-normalization for
 # NFC. Experimental feature: exempt from the crate's usual semantic-versioning stability
