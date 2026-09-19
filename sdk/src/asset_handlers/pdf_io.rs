@@ -673,6 +673,37 @@ pub mod tests {
         assert!(pdf_io.read_c2pa(&mut pdf_stream).is_ok());
     }
 
+    // `express-signed.pdf` isn't just a PDF this codebase wrote itself: it's
+    // real Adobe Express output with a classic (non-stream) xref table and
+    // two revisions (an incremental update) — the structural variation C2PA
+    // spec §A.4.2.1 calls out as PDF's defining special case. Because
+    // `get_object_locations` is consulted on the read/validation path too
+    // (`Store::get_store_validation_info`), not only when writing, it needs
+    // to locate the manifest correctly here just as reliably as on output
+    // this crate produced — and to prove it's the *right* range, not just
+    // that it didn't error, this cross-checks the located bytes against the
+    // manifest independently read via `read_c2pa`.
+    #[test]
+    fn test_get_object_locations_matches_manifest_on_externally_signed_incremental_update_pdf() {
+        let source = include_bytes!("../../tests/fixtures/express-signed.pdf");
+        let pdf_io = PdfIO::new("pdf");
+        let writer = pdf_io.get_writer("pdf").unwrap();
+        let mut stream = Cursor::new(source.to_vec());
+
+        let locations = writer.get_object_locations(&mut stream).unwrap();
+        let c2pa_loc = locations
+            .iter()
+            .find(|l| l.htype == crate::asset_io::ObjectType::C2pa)
+            .unwrap();
+        let located_bytes =
+            &source[c2pa_loc.offset as usize..(c2pa_loc.offset + c2pa_loc.length) as usize];
+
+        stream.set_position(0);
+        let manifest_bytes = pdf_io.read_c2pa(&mut stream).unwrap();
+
+        assert_eq!(located_bytes, manifest_bytes.as_slice());
+    }
+
     #[test]
     fn test_write_remote_manifest_url_with_no_existing_xmp() {
         let source = include_bytes!("../../tests/fixtures/basic-no-xmp.pdf");

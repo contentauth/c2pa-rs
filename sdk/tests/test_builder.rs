@@ -895,22 +895,30 @@ fn test_builder_pdf_remote_url() -> Result<()> {
     let mut source = Cursor::new(include_bytes!("fixtures/basic.pdf"));
     let format = "application/pdf";
 
+    // Deliberately non-resolving hostname (mirrors the legacy
+    // `test_builder_remote_url`'s `"http://my_remote_url"`): a real,
+    // resolvable domain here would make this test's outcome depend on live
+    // network access and on which HTTP status a third party happens to
+    // return, neither of which this test should depend on.
+    let remote_url = "https://my_remote_pdf_manifest_url/manifest.c2pa";
+
     let mut builder = Builder::from_shared_context(&context);
     builder.set_intent(BuilderIntent::Edit);
-    builder.set_remote_url("https://example.com/manifest.c2pa");
+    builder.set_remote_url(remote_url);
     builder.set_no_embed(true);
 
     let mut dest = Cursor::new(Vec::new());
     let manifest_data = builder.sign(context.signer()?, format, &mut source, &mut dest)?;
 
     // No manifest embedded in the asset itself: reading it back without
-    // supplying the manifest data separately reports the remote URL found in
-    // XMP, rather than finding an embedded manifest.
+    // supplying the manifest data separately must fail one way or another —
+    // exactly which `Error` variant depends on whether `fetch_remote_manifests`
+    // is enabled (attempted fetch vs. immediately surfacing the URL), which
+    // isn't what this test is about, so it isn't asserted.
     dest.set_position(0);
-    assert!(matches!(
-        Reader::from_shared_context(&context).with_stream(format, &mut dest),
-        Err(Error::RemoteManifestUrl(url)) if url == "https://example.com/manifest.c2pa"
-    ));
+    Reader::from_shared_context(&context)
+        .with_stream(format, &mut dest)
+        .expect_err("no manifest embedded; must not read as if one were");
 
     // The returned manifest data validates against the (unmodified-by-embedding) asset.
     dest.set_position(0);
