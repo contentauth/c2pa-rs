@@ -46,7 +46,7 @@
 //!
 //! Independent of redirects, the *initial* request is also checked: by default a URL that directly
 //! names a link-local or cloud-metadata address (e.g. `169.254.169.254`) is rejected as
-//! [`HttpResolverError::MetadataOrLinkLocalUriDisallowed`] (SSRF – https://github.com/contentauth/c2pa-rs/issues/2430). See below for what
+//! [`HttpResolverError::MetadataOrLinkLocalUriDisallowed`] (SSRF – <https://github.com/contentauth/c2pa-rs/issues/2430>). See below for what
 //! this does and does not cover.
 //!
 //! ## Scope: which requests this policy governs
@@ -71,7 +71,7 @@
 //! constrain the initial host to an explicit set (including loopback/private hosts), configure
 //! [`Core::allowed_network_hosts`].
 //!
-//! [`RedirectTargetDisallowed`]: HttpResolverError::RedirectTargetDisallowed
+//! [`RedirectTargetDisallowed`]: crate::http::HttpResolverError::RedirectTargetDisallowed
 //!
 //! To restrict which hosts the SDK may contact at all (including each redirect hop), use
 //! [`Core::allowed_network_hosts`]:
@@ -96,6 +96,7 @@
 //! [`Context::resolver_async`]: crate::Context::resolver_async
 //! [`HttpResolverError::RedirectTargetDisallowed`]: crate::http::HttpResolverError::RedirectTargetDisallowed
 //! [`HttpResolverError::RedirectDisallowed`]: crate::http::HttpResolverError::RedirectDisallowed
+//! [`HttpResolverError::MetadataOrLinkLocalUriDisallowed`]: crate::http::HttpResolverError::MetadataOrLinkLocalUriDisallowed
 //! [`Core::allow_redirects`]: crate::settings::Core::allow_redirects
 //! [`Core::allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
 

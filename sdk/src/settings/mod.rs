@@ -439,7 +439,7 @@ pub struct Core {
     /// - `None` (default): no host allow-list is applied. Redirect handling is governed
     ///   independently by [`allow_redirects`] (which rejects redirects to internal addresses), and
     ///   the initial request is still rejected if it directly names a link-local/cloud-metadata
-    ///   address (SSRF – https://github.com/contentauth/c2pa-rs/issues/2430); see [`allow_redirects`] for the full initial-request policy.
+    ///   address (SSRF – <https://github.com/contentauth/c2pa-rs/issues/2430>); see [`allow_redirects`] for the full initial-request policy.
     /// - `Some(vec)` where `vec` is empty, all traffic is blocked.
     /// - `Some(vec)` with at least one pattern, filtering enabled for only those patterns. Setting
     ///   this takes over the initial-request policy entirely, superseding the default
@@ -490,7 +490,7 @@ pub struct Core {
     /// This applies to redirect *targets*, not the initial request. Independently of this setting,
     /// the initial request is rejected by default when it directly names a link-local or
     /// cloud-metadata address (e.g. `169.254.169.254`), reported as
-    /// [`HttpResolverError::MetadataOrLinkLocalUriDisallowed`] (SSRF – https://github.com/contentauth/c2pa-rs/issues/2430). A URL that
+    /// [`HttpResolverError::MetadataOrLinkLocalUriDisallowed`] (SSRF – <https://github.com/contentauth/c2pa-rs/issues/2430>). A URL that
     /// directly names a loopback or private (RFC 1918) host (for example an enterprise OCSP
     /// responder on a private address, or a `localhost` development server) is not covered by that
     /// guard and is still fetched. Use [`allowed_network_hosts`] to restrict which hosts — including
