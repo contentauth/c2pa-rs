@@ -162,6 +162,7 @@ pub struct Ingredient {
 
     /// If true, the ingredient assertion is added to created_assertions, rather than to gathered_assertions, which is the default.
     /// ParentOf ingredients are always created assertions, and this field is ignored for them.
+    #[serde(skip_serializing_if = "Option::is_none")]
     is_created: Option<bool>,
 }
 
