@@ -11,10 +11,10 @@ members = [
 
 # members in this workspace can share this version setting
 [workspace.package]
-version = "0.91.0"
+version = "0.92.0"
 
 [workspace.dependencies]
-c2pa = { path = "sdk", version = "0.91.0", default-features = false }
+c2pa = { path = "sdk", version = "0.92.0", default-features = false }
 
 [profile.dev]
 # opt-level = 1        # enable to allow test code to run faster at a small compile time cost and missing debug info
