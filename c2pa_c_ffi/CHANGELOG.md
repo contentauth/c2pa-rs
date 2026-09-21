@@ -23,6 +23,15 @@ _21 September 2026_
 * Builder style c_ffi_api functions will now consistently consume the self parameter ([#2344](https://github.com/contentauth/c2pa-rs/pull/2344))
 * [**breaking**] Enforce trusted-issuer allow-list for CAWG ICA credentials (CAI-11347) ([#2209](https://github.com/contentauth/c2pa-rs/pull/2209))
 
+### Breaking changes
+
+* **Trust-list settings restructured for multiple named trust lists** ([#2545](https://github.com/contentauth/c2pa-rs/pull/2545)) — the top-level `cawg_trust` settings section is gone. C2PA claim-generator, CAWG, and TSA trust configuration now live together under `trust.anchors`, an array of `{ trust_uri, trust_kind, trust_anchors, trust_config, allowed_list, trusted_ica_issuers }` entries distinguished by `trust_kind` (e.g. `"manifest"`), replacing the old single `trust.trust_anchors` / `trust.trust_config` / `trust.user_anchors` / `trust.allowed_list` fields. If you configure trust via the `Settings` JSON passed through the C API, update it to the new `trust.anchors[]` shape — see [`docs/context-settings.md`](../docs/context-settings.md) for the current schema.
+* **CAWG ICA issuers must be explicitly trusted** ([#2209](https://github.com/contentauth/c2pa-rs/pull/2209)) — the new `trusted_ica_issuers` list (part of `trust.anchors[]`, see above) defaults to empty, so no CAWG claims-aggregation issuer is trusted until you list it explicitly; a previously-accepted, unlisted issuer now fails with `cawg.ica.untrusted_issuer`.
+
+> [!NOTE]
+> This release also carries roughly 70 `#[deprecated]` items accumulated in the Rust SDK since the last breaking-changes train. Per our [deprecation policy](../docs/deprecation-policy.md), the next breaking-changes release — planned for mid-November 2026 — will delete every API still marked deprecated at that point.
+
+
 ## [0.88.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.87.0...c2pa-c-ffi-v0.88.0)
 _11 June 2026_
 
