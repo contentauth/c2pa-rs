@@ -31,6 +31,26 @@ _21 September 2026_
 > [!NOTE]
 > This release also carries roughly 70 `#[deprecated]` items accumulated in the Rust SDK since the last breaking-changes train. Per our [deprecation policy](../docs/deprecation-policy.md), the next breaking-changes release — planned for mid-November 2026 — will delete every API still marked deprecated at that point.
 
+## [0.90.16](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.90.15...c2pa-c-ffi-v0.90.16)
+_27 August 2026_
+
+### Fixed
+
+* Resolve new Rust 1.98.0 Clippy lint (chunks_exact_to_as_chunks) (backport #2528) ([#2531](https://github.com/contentauth/c2pa-rs/pull/2531))
+
+## [0.90.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.90.3...c2pa-c-ffi-v0.90.4)
+_04 August 2026_
+
+### Fixed
+
+* Emscripten build which lost its header (backport #2395) ([#2396](https://github.com/contentauth/c2pa-rs/pull/2396))
+
+## [0.90.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.89.3...c2pa-c-ffi-v0.90.0)
+_16 July 2026_
+
+### Changed
+
+* Transition release onto the new scheduled breaking-change release train (see [release process](https://github.com/contentauth/c2pa-rs/blob/main/docs/release-process.md)). This is a version-only bump: there are no `c2pa-c-ffi` library code changes since 0.89.3 ([#2250](https://github.com/contentauth/c2pa-rs/pull/2250)).
 
 ## [0.88.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.87.0...c2pa-c-ffi-v0.88.0)
 _11 June 2026_
