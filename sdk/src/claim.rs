@@ -37,7 +37,8 @@ use crate::{
             DATABOX_STORE, METADATA_LABEL_REGEX,
         },
         Action, Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, CollectionHash, DataBox,
-        DataHash, DataMap, Ingredient, Metadata, Relationship, V2_DEPRECATED_ACTIONS,
+        DataHash, DataMap, Ingredient, Metadata, MultiAssetHash, Relationship,
+        V2_DEPRECATED_ACTIONS,
     },
     cbor_types::map_cbor_to_type,
     context::{Context, ProgressPhase},
@@ -77,7 +78,8 @@ use crate::{
     status_tracker::{ErrorBehavior, StatusTracker},
     store::StoreValidationInfo,
     utils::hash_utils::{hash_by_alg, vec_compare, HashRange},
-    validation_status, ClaimGeneratorInfo,
+    validation_status::{self, ASSERTION_MULTI_ASSET_HASH_MALFORMED},
+    ClaimGeneratorInfo,
 };
 
 const BUILD_HASH_ALG: &str = "sha256";
@@ -3066,15 +3068,15 @@ impl Claim {
                                 continue;
                             }
                             Err(e) => {
-                                log_item!(
-                                    claim.assertion_uri(&hash_binding_assertion.label()),
-                                    format!("asset hash error, name: {name}, error: {e}"),
-                                    "verify_internal"
-                                )
-                                .validation_status(validation_status::ASSERTION_DATAHASH_MISMATCH)
-                                .failure(
+                                // If standard asset hard binding fails, try multi-asset hash validation.
+                                // Only one multi-asset hash assertion is allowed per manifest.
+                                Claim::verify_multi_asset_hash(
+                                    claim,
+                                    asset_data,
                                     validation_log,
-                                    Error::HashMismatch(format!("Asset hash failure: {e}")),
+                                    hash_binding_assertion,
+                                    &e,
+                                    Some(&name),
                                 )?;
                             }
                         }
@@ -3185,21 +3187,13 @@ impl Claim {
                             continue;
                         }
                         Err(e) => {
-                            let err_str = Self::classify_hash_verification_error(
-                                &e,
-                                validation_status::ASSERTION_BMFFHASH_MALFORMED,
-                                validation_status::ASSERTION_BMFFHASH_MISMATCH,
-                            );
-
-                            log_item!(
-                                claim.assertion_uri(&hash_binding_assertion.label()),
-                                format!("asset hash error, name: {name}, error: {e}"),
-                                "verify_internal"
-                            )
-                            .validation_status(err_str)
-                            .failure(
+                            Claim::verify_multi_asset_hash(
+                                claim,
+                                asset_data,
                                 validation_log,
-                                Error::HashMismatch(format!("Asset hash failure: {e}")),
+                                hash_binding_assertion,
+                                &e,
+                                Some(&name),
                             )?;
                         }
                     }
@@ -3295,21 +3289,13 @@ impl Claim {
                             continue;
                         }
                         Err(e) => {
-                            let err_str = Self::classify_hash_verification_error(
-                                &e,
-                                validation_status::ASSERTION_BOXESHASH_MALFORMED,
-                                validation_status::ASSERTION_BOXHASH_MISMATCH,
-                            );
-
-                            log_item!(
-                                claim.assertion_uri(&hash_binding_assertion.label()),
-                                format!("asset hash error: {e}"),
-                                "verify_internal"
-                            )
-                            .validation_status(err_str)
-                            .failure(
+                            Claim::verify_multi_asset_hash(
+                                claim,
+                                asset_data,
                                 validation_log,
-                                Error::HashMismatch(format!("Asset hash failure: {e}")),
+                                hash_binding_assertion,
+                                &e,
+                                None,
                             )?;
                         }
                     }
@@ -4019,7 +4005,116 @@ impl Claim {
         Ok(())
     }
 
-    ///Returns list of metadata assertions
+    fn verify_multi_asset_hash(
+        claim: &Claim,
+        asset_data: &mut ClaimAssetData,
+        validation_log: &mut StatusTracker,
+        hash_binding_assertion: &ClaimAssertion,
+        hash_binding_err: &Error,
+        hash_binding_name: Option<&str>,
+    ) -> Result<()> {
+        let multi_asset_hash_assertions = claim.multi_asset_hash_assertions();
+        if multi_asset_hash_assertions.len() > 1 {
+            return Err(Error::C2PAValidation(
+                ASSERTION_MULTI_ASSET_HASH_MALFORMED.to_string(),
+            ));
+        }
+
+        if let Some(assertion) = multi_asset_hash_assertions.first() {
+            let multi_asset_hash_assertion = MultiAssetHash::from_assertion(assertion.assertion())?;
+            let multi_hash_result = multi_asset_hash_assertion.verify_hash(asset_data, claim);
+
+            match &multi_hash_result {
+                Ok(_) => {
+                    log_item!(
+                        claim.assertion_uri(MultiAssetHash::LABEL),
+                        "multi-asset hash valid",
+                        "verify_multi_asset_hash"
+                    )
+                    .validation_status(validation_status::ASSERTION_MULTI_ASSET_HASH_MATCH)
+                    .success(validation_log);
+                }
+                Err(multi_e) => {
+                    let err_str = match multi_e {
+                        Error::C2PAValidation(ref es) => {
+                            if es == validation_status::ASSERTION_MULTI_ASSET_HASH_MALFORMED {
+                                validation_status::ASSERTION_MULTI_ASSET_HASH_MALFORMED
+                            } else if es
+                                == validation_status::ASSERTION_MULTI_ASSET_HASH_MISSING_PART
+                            {
+                                validation_status::ASSERTION_MULTI_ASSET_HASH_MISSING_PART
+                            } else {
+                                validation_status::ASSERTION_MULTI_ASSET_HASH_MISMATCH
+                            }
+                        }
+                        _ => validation_status::ASSERTION_MULTI_ASSET_HASH_MISMATCH,
+                    };
+
+                    log_item!(
+                        claim.assertion_uri(multi_asset_hash_assertion.label()),
+                        format!("multi asset hash error, error: {}", err_str),
+                        "verify_multi_asset_hash"
+                    )
+                    .validation_status(err_str)
+                    .failure(
+                        validation_log,
+                        Error::HashMismatch(format!("Asset hash failure: {err_str}")),
+                    )?;
+                }
+            }
+            return multi_hash_result;
+        }
+
+        // If there is no multi asset assertion, passthrough the error handling
+        // reporting from the caller.
+        let description = if let Some(name) = hash_binding_name {
+            format!("asset hash error, name:{name}, error: {hash_binding_err}")
+        } else {
+            format!("asset hash error, error: {hash_binding_err}")
+        };
+
+        // Classify malformed vs. mismatch based on the failing hash-binding type.
+        let validation_status = match hash_binding_assertion.label_raw() {
+            l if l.starts_with(DataHash::LABEL) => Self::classify_hash_verification_error(
+                hash_binding_err,
+                validation_status::ASSERTION_DATAHASH_MALFORMED,
+                validation_status::ASSERTION_DATAHASH_MISMATCH,
+            ),
+            l if l.starts_with(BoxHash::LABEL) => Self::classify_hash_verification_error(
+                hash_binding_err,
+                validation_status::ASSERTION_BOXESHASH_MALFORMED,
+                validation_status::ASSERTION_BOXHASH_MISMATCH,
+            ),
+            l if l.starts_with(BmffHash::LABEL) => Self::classify_hash_verification_error(
+                hash_binding_err,
+                validation_status::ASSERTION_BMFFHASH_MALFORMED,
+                validation_status::ASSERTION_BMFFHASH_MISMATCH,
+            ),
+            _ => "",
+        };
+
+        log_item!(
+            claim.assertion_uri(&hash_binding_assertion.label()),
+            description,
+            "verify_multi_asset_hash"
+        )
+        .validation_status(validation_status)
+        .failure(
+            validation_log,
+            Error::HashMismatch(format!("Asset hash failure: {hash_binding_err}")),
+        )?;
+        Ok(())
+    }
+
+    /// Returns list of multi asset hash assertions
+    pub fn multi_asset_hash_assertions(&self) -> Vec<&ClaimAssertion> {
+        let dummy_data = AssertionData::Cbor(Vec::new());
+        let dummy_multi_asset_hash =
+            Assertion::new(assertions::labels::MULTI_ASSET_HASH, None, dummy_data);
+        self.assertions_by_type(&dummy_multi_asset_hash, None)
+    }
+
+    /// Returns list of metadata assertions
     pub fn metadata_assertions(&self) -> Vec<&ClaimAssertion> {
         let mut mda: Vec<&ClaimAssertion> = self
             .assertion_store
@@ -4682,6 +4777,13 @@ impl Claim {
         self.claim_assertion_store()
             .iter()
             .find(|ca| ca.label_raw() == assertion_label && ca.instance() == instance)
+    }
+
+    /// TODO: Refactor instances of this pattern to use this method
+    /// returns assertion from link
+    pub fn get_assertion_from_link(&self, assertion_link: &str) -> Option<&Assertion> {
+        let (label, instance) = Claim::assertion_label_from_link(assertion_link);
+        self.get_assertion(&label, instance)
     }
 
     /// returns hash of an assertion whose label and instance match
