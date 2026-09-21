@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.91.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.90.22...c2pa-c-ffi-v0.91.0)
+_21 September 2026_
+
+### Added
+
+* Credential-holder identity signer in the C API ([#2603](https://github.com/contentauth/c2pa-rs/pull/2603))
+* Clean up asset_io, rename things, share common code, and add private registry through `Context` ([#2491](https://github.com/contentauth/c2pa-rs/pull/2491))
+* [**breaking**] Update for C2PA 2.3 spec ([#2545](https://github.com/contentauth/c2pa-rs/pull/2545))
+
+### Fixed
+
+* Resolve new Rust 1.98.0 Clippy lint (chunks_exact_to_as_chunks) ([#2528](https://github.com/contentauth/c2pa-rs/pull/2528))
+* Emscripten build which lost its header ([#2395](https://github.com/contentauth/c2pa-rs/pull/2395))
+* Builder style c_ffi_api functions will now consistently consume the self parameter ([#2344](https://github.com/contentauth/c2pa-rs/pull/2344))
+* [**breaking**] Enforce trusted-issuer allow-list for CAWG ICA credentials (CAI-11347) ([#2209](https://github.com/contentauth/c2pa-rs/pull/2209))
+
 ## [0.88.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.87.0...c2pa-c-ffi-v0.88.0)
 _11 June 2026_
 
