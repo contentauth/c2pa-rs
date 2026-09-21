@@ -150,7 +150,8 @@ pub struct TrustAnchor {
 
 impl Default for TrustAnchor {
     fn default() -> Self {
-        if cfg!(not(test)) {
+        #[cfg(not(test))]
+        {
             Self {
                 trust_anchors: "".into(),
                 trust_uri: None,
@@ -159,7 +160,9 @@ impl Default for TrustAnchor {
                 allowed_list: None,
                 trusted_ica_issuers: None,
             }
-        } else {
+        }
+        #[cfg(test)]
+        {
             // In unit tests, trust the ICA issuer DIDs used by the bundled CAWG
             // ICA fixtures so the existing ICA validation tests continue to
             // produce `cawg.ica.credential_valid`. In production the allow-list
