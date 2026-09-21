@@ -7,6 +7,7 @@ use serde_json::Value;
 use crate::{
     assertion::{AssertionBase, AssertionDecodeError},
     assertions::labels,
+    crypto::base64::decode_b64_wrapped,
     error::{Error, Result},
 };
 
@@ -181,7 +182,8 @@ impl ManifestAssertion {
     /// # }
     /// ```
     pub fn to_assertion<T: DeserializeOwned>(&self) -> Result<T> {
-        serde_json::from_value(self.value()?.to_owned()).map_err(|e| {
+        let value = resolve_b64_wrapped_bytes(self.value()?.to_owned());
+        serde_json::from_value(value).map_err(|e| {
             Error::AssertionDecoding(AssertionDecodeError::from_json_err(
                 self.label.to_owned(),
                 None,
@@ -189,6 +191,29 @@ impl ManifestAssertion {
                 e,
             ))
         })
+    }
+}
+
+/// Reverses crJSON's `b64'<base64>'` byte-string wrapper (as produced for CBOR
+/// byte strings when building this assertion's JSON value) back into a JSON
+/// number array, so typed structs with `Vec<u8>`/`serde_bytes` fields (e.g. the
+/// internal `IdentityAssertion`'s `signature`/`pad1`/`pad2`) still deserialize
+/// correctly.
+fn resolve_b64_wrapped_bytes(value: Value) -> Value {
+    match value {
+        Value::String(s) => match decode_b64_wrapped(&s) {
+            Some(bytes) => {
+                Value::Array(bytes.into_iter().map(|b| Value::Number(b.into())).collect())
+            }
+            None => Value::String(s),
+        },
+        Value::Array(arr) => Value::Array(arr.into_iter().map(resolve_b64_wrapped_bytes).collect()),
+        Value::Object(map) => Value::Object(
+            map.into_iter()
+                .map(|(k, v)| (k, resolve_b64_wrapped_bytes(v)))
+                .collect(),
+        ),
+        other => other,
     }
 }
 
