@@ -3342,15 +3342,26 @@ impl Claim {
                             #[cfg(feature = "file_io")]
                             ClaimAssetData::Path(asset_path) => {
                                 let mut file = std::fs::File::open(asset_path)?;
-                                collection_hash.verify_zip_stream_hash(&mut file, Some(claim.alg()))
+                                collection_hash.verify_zip_stream_hash_with_buffer_size(
+                                    &mut file,
+                                    Some(claim.alg()),
+                                    hash_buffer_size_in_bytes,
+                                )
                             }
                             ClaimAssetData::Bytes(asset_bytes, _) => {
                                 let mut cursor = std::io::Cursor::new(*asset_bytes);
-                                collection_hash
-                                    .verify_zip_stream_hash(&mut cursor, Some(claim.alg()))
+                                collection_hash.verify_zip_stream_hash_with_buffer_size(
+                                    &mut cursor,
+                                    Some(claim.alg()),
+                                    hash_buffer_size_in_bytes,
+                                )
                             }
                             ClaimAssetData::Stream(stream_data, _) => collection_hash
-                                .verify_zip_stream_hash(*stream_data, Some(claim.alg())),
+                                .verify_zip_stream_hash_with_buffer_size(
+                                    *stream_data,
+                                    Some(claim.alg()),
+                                    hash_buffer_size_in_bytes,
+                                ),
                             _ => return Err(Error::UnsupportedType),
                         }
                     } else {
@@ -3358,7 +3369,10 @@ impl Claim {
                         match asset_data {
                             #[cfg(feature = "file_io")]
                             ClaimAssetData::Path(asset_path) => collection_hash
-                                .verify_hash(asset_path.parent().unwrap_or(asset_path)),
+                                .verify_hash_with_buffer_size(
+                                    asset_path.parent().unwrap_or(asset_path),
+                                    hash_buffer_size_in_bytes,
+                                ),
                             _ => return Err(Error::UnsupportedType),
                         }
                     };

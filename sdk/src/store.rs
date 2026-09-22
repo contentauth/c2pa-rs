@@ -3422,10 +3422,16 @@ impl Store {
                 let mut placeholder_collection_hash = CollectionHash::new(pc.alg().to_owned());
                 if source_is_intermediate {
                     intermediate_stream.rewind()?;
-                    placeholder_collection_hash.gen_zip_uri_hashes(&mut intermediate_stream)?;
+                    placeholder_collection_hash.gen_zip_uri_hashes_with_buffer_size(
+                        &mut intermediate_stream,
+                        hash_buffer_size_in_bytes,
+                    )?;
                 } else {
                     input_stream.rewind()?;
-                    placeholder_collection_hash.gen_zip_uri_hashes(input_stream)?;
+                    placeholder_collection_hash.gen_zip_uri_hashes_with_buffer_size(
+                        input_stream,
+                        hash_buffer_size_in_bytes,
+                    )?;
                 }
 
                 placeholder_collection_hash.set_placeholder_zip_central_directory_hash()?;

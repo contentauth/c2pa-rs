@@ -620,7 +620,36 @@ pub fn verify_stream_by_alg<R>(
 where
     R: Read + Seek + ?Sized,
 {
-    if let Ok(data_hash) = hash_stream_by_alg(alg, reader, hash_range, is_exclusion) {
+    verify_stream_by_alg_with_buffer_size(
+        alg,
+        hash,
+        reader,
+        hash_range,
+        is_exclusion,
+        default_hash_buffer_size(),
+    )
+}
+
+/// Like [`verify_stream_by_alg`], but with configurable hash buffer size.
+pub(crate) fn verify_stream_by_alg_with_buffer_size<R>(
+    alg: &str,
+    hash: &[u8],
+    reader: &mut R,
+    hash_range: Option<Vec<HashRange>>,
+    is_exclusion: bool,
+    max_hash_buffer_size_in_bytes: NonZeroUsize,
+) -> bool
+where
+    R: Read + Seek + ?Sized,
+{
+    if let Ok(data_hash) = hash_stream_by_alg_with_progress(
+        alg,
+        reader,
+        hash_range,
+        is_exclusion,
+        &mut |_, _| Ok(()),
+        max_hash_buffer_size_in_bytes,
+    ) {
         vec_compare(hash, &data_hash)
     } else {
         false

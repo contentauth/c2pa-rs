@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     fs::{self, File},
     io::{self, Read, Seek},
+    num::NonZeroUsize,
     path::{Component, Path, PathBuf},
 };
 
@@ -11,8 +12,10 @@ use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::{labels::COLLECTION_HASH, AssetType},
     asset_handlers::zip_io::{zip_central_directory_range, zip_uri_ranges},
-    hash_stream_by_alg,
-    hash_utils::{hash_size_by_alg, verify_stream_by_alg},
+    hash_utils::{
+        default_hash_buffer_size, hash_size_by_alg, hash_stream_by_alg_with_progress,
+        verify_stream_by_alg_with_buffer_size,
+    },
     utils::mime,
     validation_status::{
         ASSERTION_COLLECTIONHASH_INCORRECT_FILE_COUNT, ASSERTION_COLLECTIONHASH_INVALID_URI,
@@ -130,6 +133,15 @@ impl CollectionHash {
     ///
     /// The base path is the directory that each URI is resolved against.
     pub fn gen_hash(&mut self, base_path: &Path) -> Result<()> {
+        self.gen_hash_with_buffer_size(base_path, default_hash_buffer_size())
+    }
+
+    /// Like [`Self::gen_hash`], but with configurable hash buffer size.
+    pub fn gen_hash_with_buffer_size(
+        &mut self,
+        base_path: &Path,
+        max_hash_buffer_size_in_bytes: NonZeroUsize,
+    ) -> Result<()> {
         if base_path.is_file() {
             return Err(Error::BadParam(format!(
                 "base path must be a directory, got `{}`",
@@ -150,11 +162,13 @@ impl CollectionHash {
                 Some(file_len) => file_len,
                 None => file.metadata()?.len(),
             };
-            uri_map.hash = Some(hash_stream_by_alg(
+            uri_map.hash = Some(hash_stream_by_alg_with_progress(
                 &self.alg,
                 &mut file,
                 Some(vec![HashRange::new(0, file_len)]),
                 false,
+                &mut |_, _| Ok(()),
+                max_hash_buffer_size_in_bytes,
             )?);
         }
 
@@ -165,6 +179,15 @@ impl CollectionHash {
     ///
     /// The base path is the directory that each URI is resolved against.
     pub fn verify_hash(&self, base_path: &Path) -> Result<()> {
+        self.verify_hash_with_buffer_size(base_path, default_hash_buffer_size())
+    }
+
+    /// Like [`Self::verify_hash`], but with configurable hash buffer size.
+    pub fn verify_hash_with_buffer_size(
+        &self,
+        base_path: &Path,
+        max_hash_buffer_size_in_bytes: NonZeroUsize,
+    ) -> Result<()> {
         if base_path.is_file() {
             return Err(Error::BadParam(format!(
                 "base path must be a directory, got `{}`",
@@ -187,12 +210,13 @@ impl CollectionHash {
             })?;
             let file_len = file.metadata()?.len();
 
-            if !verify_stream_by_alg(
+            if !verify_stream_by_alg_with_buffer_size(
                 &self.alg,
                 hash,
                 &mut file,
                 Some(vec![HashRange::new(0, file_len)]),
                 false,
+                max_hash_buffer_size_in_bytes,
             ) {
                 return Err(Error::HashMismatch(format!(
                     "hash for {} does not match",
@@ -209,8 +233,24 @@ impl CollectionHash {
     where
         R: Read + Seek + ?Sized,
     {
+        self.gen_hash_from_zip_stream_with_buffer_size(stream, default_hash_buffer_size())
+    }
+
+    /// Like [`Self::gen_hash_from_zip_stream`], but with configurable hash buffer size.
+    ///
+    /// Buffer size configuration applies to per-entry hash payloads.
+    /// The central directory, as metadata that does not scale with asset size
+    /// (scales with entries) keeps using the default hash buffer size.
+    pub fn gen_hash_from_zip_stream_with_buffer_size<R>(
+        &mut self,
+        stream: &mut R,
+        max_hash_buffer_size_in_bytes: NonZeroUsize,
+    ) -> Result<()>
+    where
+        R: Read + Seek + ?Sized,
+    {
         self.gen_zip_central_directory_hash(stream)?;
-        self.gen_zip_uri_hashes(stream)?;
+        self.gen_zip_uri_hashes_with_buffer_size(stream, max_hash_buffer_size_in_bytes)?;
 
         Ok(())
     }
@@ -223,14 +263,32 @@ impl CollectionHash {
     where
         R: Read + Seek + ?Sized,
     {
+        self.gen_zip_uri_hashes_with_buffer_size(stream, default_hash_buffer_size())
+    }
+
+    /// Like [`Self::gen_zip_uri_hashes`], but with configurable hash buffer size.
+    pub fn gen_zip_uri_hashes_with_buffer_size<R>(
+        &mut self,
+        stream: &mut R,
+        max_hash_buffer_size_in_bytes: NonZeroUsize,
+    ) -> Result<()>
+    where
+        R: Read + Seek + ?Sized,
+    {
         self.uris = HashMap::new();
         for (path, hash_range) in zip_uri_ranges(stream)? {
             // Path needs to be a valid URI, so normalize.
             // https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_fields_2
             let path = PathBuf::from(path.to_string_lossy().replace('\\', "/"));
 
-            let hash =
-                hash_stream_by_alg(&self.alg, stream, Some(vec![hash_range.clone()]), false)?;
+            let hash = hash_stream_by_alg_with_progress(
+                &self.alg,
+                stream,
+                Some(vec![hash_range.clone()]),
+                false,
+                &mut |_, _| Ok(()),
+                max_hash_buffer_size_in_bytes,
+            )?;
 
             let format = mime::mime_from_path(&path);
             self.uris.insert(
@@ -255,11 +313,14 @@ impl CollectionHash {
         R: Read + Seek + ?Sized,
     {
         let zip_central_directory_inclusions = zip_central_directory_range(stream)?;
-        self.zip_central_directory_hash = Some(hash_stream_by_alg(
+        self.zip_central_directory_hash = Some(hash_stream_by_alg_with_progress(
             &self.alg,
             stream,
             Some(zip_central_directory_inclusions),
             false,
+            &mut |_, _| Ok(()),
+            // default because central directory scales with entries, not asset size.
+            default_hash_buffer_size(),
         )?);
 
         Ok(())
@@ -280,6 +341,23 @@ impl CollectionHash {
     where
         R: Read + Seek + ?Sized,
     {
+        self.verify_zip_stream_hash_with_buffer_size(stream, alg, default_hash_buffer_size())
+    }
+
+    /// Like [`Self::verify_zip_stream_hash`], but with configurable hash buffer size.
+    ///
+    /// Buffer size configuration applies to per-entry hash payloads.
+    /// The central directory, as metadata that does not scale with asset size
+    /// (scales with entries) keeps using the default hash buffer size.
+    pub fn verify_zip_stream_hash_with_buffer_size<R>(
+        &self,
+        stream: &mut R,
+        alg: Option<&str>,
+        max_hash_buffer_size_in_bytes: NonZeroUsize,
+    ) -> Result<()>
+    where
+        R: Read + Seek + ?Sized,
+    {
         let alg = alg.unwrap_or(self.alg.as_str());
 
         let zip_central_directory_hash = self
@@ -288,12 +366,13 @@ impl CollectionHash {
             .ok_or_else(|| Error::C2PAValidation(ASSERTION_COLLECTIONHASH_MALFORMED.to_string()))?;
 
         let zip_central_directory_hash_range = zip_central_directory_range(stream)?;
-        if !verify_stream_by_alg(
+        if !verify_stream_by_alg_with_buffer_size(
             alg,
             zip_central_directory_hash,
             stream,
             Some(zip_central_directory_hash_range),
             false,
+            default_hash_buffer_size(),
         ) {
             return Err(Error::HashMismatch(
                 "hashes do not match for ZIP central directory".to_owned(),
@@ -314,7 +393,14 @@ impl CollectionHash {
                 Error::C2PAValidation(ASSERTION_COLLECTIONHASH_INCORRECT_FILE_COUNT.to_string())
             })?;
 
-            if !verify_stream_by_alg(alg, hash, stream, Some(vec![hash_range]), false) {
+            if !verify_stream_by_alg_with_buffer_size(
+                alg,
+                hash,
+                stream,
+                Some(vec![hash_range]),
+                false,
+                max_hash_buffer_size_in_bytes,
+            ) {
                 return Err(Error::HashMismatch(format!(
                     "hash for {} does not match",
                     path.display()
@@ -383,6 +469,51 @@ mod tests {
         collection.gen_hash_from_zip_stream(&mut stream)?;
 
         Ok(collection)
+    }
+
+    /// Count read calls so we can count the hasher calls.
+    struct ReadCounter<'a> {
+        inner: Cursor<&'a [u8]>,
+        reads: usize,
+    }
+
+    impl Read for ReadCounter<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.reads += 1;
+            self.inner.read(buf)
+        }
+    }
+
+    impl Seek for ReadCounter<'_> {
+        fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
+            self.inner.seek(pos)
+        }
+    }
+
+    #[test]
+    fn test_configured_buffer_hash_size_is_used() -> Result<()> {
+        let collection = gen_zip_collection_hash()?;
+
+        let count_reads = |buffer_size: NonZeroUsize| -> Result<usize> {
+            let mut stream = ReadCounter {
+                inner: Cursor::new(ZIP_SAMPLE1),
+                reads: 0,
+            };
+            collection.verify_zip_stream_hash_with_buffer_size(
+                &mut stream,
+                Some("sha256"),
+                buffer_size,
+            )?;
+            Ok(stream.reads)
+        };
+
+        // Use a smaller buffer than an entry to force a split.
+        const SMALL_BUFFER: NonZeroUsize = NonZeroUsize::new(16).expect("16 is non-zero");
+        let small_buffer_reads = count_reads(SMALL_BUFFER)?;
+        let default_buffer_reads = count_reads(default_hash_buffer_size())?;
+
+        assert!(small_buffer_reads > default_buffer_reads);
+        Ok(())
     }
 
     #[cfg(not(target_arch = "wasm32"))]
