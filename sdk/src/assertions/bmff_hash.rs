@@ -56,8 +56,9 @@ use crate::{
     utils::{
         hash_utils::{
             concat_and_hash, default_hash_buffer_size, hash_by_alg, hash_size_by_alg,
-            hash_stream_by_alg, hash_stream_by_alg_with_progress, vec_compare,
-            verify_stream_by_alg, HashRange, Hasher,
+            hash_stream_by_alg, hash_stream_by_alg_with_buffer_size,
+            hash_stream_by_alg_with_progress, vec_compare, verify_stream_by_alg,
+            verify_stream_by_alg_with_buffer_size, HashRange, Hasher,
         },
         io_utils::stream_len,
         merkle::{C2PAMerkleTree, MerkleAccumulator, MerkleNode},
@@ -1430,8 +1431,14 @@ impl BmffHash {
                         mm_exclusions.push(moof_exclusion);
 
                         Self::progress_tick(&mut step, progress)?;
-                        if !verify_stream_by_alg(alg, init_hash, reader, Some(mm_exclusions), true)
-                        {
+                        if !verify_stream_by_alg_with_buffer_size(
+                            alg,
+                            init_hash,
+                            reader,
+                            Some(mm_exclusions),
+                            true,
+                            max_hash_buffer_size_in_bytes,
+                        ) {
                             return Err(Error::HashMismatch(
                                 "BMFF file level hash mismatch".to_string(),
                             ));
@@ -1489,7 +1496,13 @@ impl BmffHash {
                         Self::progress_tick(&mut step, progress)?;
 
                         // hash the specified range
-                        let hash = hash_stream_by_alg(alg, reader, Some(curr_exclusions), true)?;
+                        let hash = hash_stream_by_alg_with_buffer_size(
+                            alg,
+                            reader,
+                            Some(curr_exclusions),
+                            true,
+                            max_hash_buffer_size_in_bytes,
+                        )?;
 
                         let bmff_mm = &bmff_merkle[index];
 
