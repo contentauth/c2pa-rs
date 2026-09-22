@@ -338,17 +338,10 @@ fn finalize_identity_assertion(
             .map_err(|e| crate::Error::BadParam(e.to_string()))?;
         // TO DO: Think through how errors map into crate::Error.
 
-        // `pad1` grew the encoding, so re-check rather than assume room for `pad2` remains.
-        let pad2_len = assertion_size
-            .checked_sub(assertion_cbor.len())
-            .and_then(|remaining| remaining.checked_sub(6))
-            .ok_or_else(|| {
-                crate::Error::BadParam(format!(
-                    "Assertion larger than expected {assertion_size} bytes"
-                ))
-            })?;
-
-        ia.pad2 = Some(ByteBuf::from(vec![0u8; pad2_len]));
+        ia.pad2 = Some(ByteBuf::from(vec![
+            0u8;
+            assertion_size - assertion_cbor.len() - 6
+        ]));
 
         assertion_cbor.clear();
         c2pa_cbor::to_writer(&mut assertion_cbor, &ia)
