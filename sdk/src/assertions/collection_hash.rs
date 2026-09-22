@@ -13,7 +13,7 @@ use crate::{
     assertions::{labels::COLLECTION_HASH, AssetType},
     asset_handlers::zip_io::{zip_central_directory_range, zip_uri_ranges},
     hash_utils::{
-        default_hash_buffer_size, hash_size_by_alg, hash_stream_by_alg_with_progress,
+        default_hash_buffer_size, hash_size_by_alg, hash_stream_by_alg_with_buffer_size,
         verify_stream_by_alg_with_buffer_size,
     },
     utils::mime,
@@ -162,12 +162,11 @@ impl CollectionHash {
                 Some(file_len) => file_len,
                 None => file.metadata()?.len(),
             };
-            uri_map.hash = Some(hash_stream_by_alg_with_progress(
+            uri_map.hash = Some(hash_stream_by_alg_with_buffer_size(
                 &self.alg,
                 &mut file,
                 Some(vec![HashRange::new(0, file_len)]),
                 false,
-                &mut |_, _| Ok(()),
                 max_hash_buffer_size_in_bytes,
             )?);
         }
@@ -281,12 +280,11 @@ impl CollectionHash {
             // https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_fields_2
             let path = PathBuf::from(path.to_string_lossy().replace('\\', "/"));
 
-            let hash = hash_stream_by_alg_with_progress(
+            let hash = hash_stream_by_alg_with_buffer_size(
                 &self.alg,
                 stream,
                 Some(vec![hash_range.clone()]),
                 false,
-                &mut |_, _| Ok(()),
                 max_hash_buffer_size_in_bytes,
             )?;
 
@@ -313,12 +311,11 @@ impl CollectionHash {
         R: Read + Seek + ?Sized,
     {
         let zip_central_directory_inclusions = zip_central_directory_range(stream)?;
-        self.zip_central_directory_hash = Some(hash_stream_by_alg_with_progress(
+        self.zip_central_directory_hash = Some(hash_stream_by_alg_with_buffer_size(
             &self.alg,
             stream,
             Some(zip_central_directory_inclusions),
             false,
-            &mut |_, _| Ok(()),
             // default because central directory scales with entries, not asset size.
             default_hash_buffer_size(),
         )?);

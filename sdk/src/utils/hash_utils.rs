@@ -563,12 +563,13 @@ where
     Ok(Hasher::finalize(hasher_enum))
 }
 
-/// May be used to generate hashes in combination with embeddable APIs.
-pub fn hash_stream_by_alg<R>(
+/// Like [`hash_stream_by_alg`], but with configurable hash buffer size.
+pub(crate) fn hash_stream_by_alg_with_buffer_size<R>(
     alg: &str,
     data: &mut R,
     hash_range: Option<Vec<HashRange>>,
     is_exclusion: bool,
+    max_hash_buffer_size_in_bytes: NonZeroUsize,
 ) -> Result<Vec<u8>>
 where
     R: Read + Seek + ?Sized,
@@ -579,6 +580,25 @@ where
         hash_range,
         is_exclusion,
         &mut |_, _| Ok(()),
+        max_hash_buffer_size_in_bytes,
+    )
+}
+
+/// May be used to generate hashes in combination with embeddable APIs.
+pub fn hash_stream_by_alg<R>(
+    alg: &str,
+    data: &mut R,
+    hash_range: Option<Vec<HashRange>>,
+    is_exclusion: bool,
+) -> Result<Vec<u8>>
+where
+    R: Read + Seek + ?Sized,
+{
+    hash_stream_by_alg_with_buffer_size(
+        alg,
+        data,
+        hash_range,
+        is_exclusion,
         default_hash_buffer_size(),
     )
 }
@@ -642,12 +662,11 @@ pub(crate) fn verify_stream_by_alg_with_buffer_size<R>(
 where
     R: Read + Seek + ?Sized,
 {
-    if let Ok(data_hash) = hash_stream_by_alg_with_progress(
+    if let Ok(data_hash) = hash_stream_by_alg_with_buffer_size(
         alg,
         reader,
         hash_range,
         is_exclusion,
-        &mut |_, _| Ok(()),
         max_hash_buffer_size_in_bytes,
     ) {
         vec_compare(hash, &data_hash)
