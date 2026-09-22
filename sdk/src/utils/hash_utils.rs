@@ -39,8 +39,8 @@ const MAX_HASH_BUF: usize = 256 * 1024 * 1024; // cap memory usage to 256MB
 /// Clamping in `u64` keeps a range of 4 GiB or more from truncating on a 32-bit target,
 /// where `usize` is 32 bits. The cap fits in every supported `usize`, so the clamped
 /// value always converts.
-fn chunk_size(chunk_left: u64, max_hash_buf: usize) -> usize {
-    usize::try_from(chunk_left.min(max_hash_buf as u64)).unwrap_or(usize::MAX)
+fn chunk_size(chunk_left: u64, max_hash_buffer_size_in_bytes: usize) -> usize {
+    usize::try_from(chunk_left.min(max_hash_buffer_size_in_bytes as u64)).unwrap_or(usize::MAX)
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
@@ -250,24 +250,37 @@ pub(crate) fn hash_stream_by_alg_with_progress<R, F>(
     hash_range: Option<Vec<HashRange>>,
     is_exclusion: bool,
     progress: &mut F,
+    max_hash_buffer_size_in_bytes: NonZeroUsize,
 ) -> Result<Vec<u8>>
 where
     R: Read + Seek + ?Sized,
     F: FnMut(u32, u32) -> Result<()>,
 {
-    let max_hash_buf = NonZeroUsize::new(MAX_HASH_BUF)
-        .ok_or(Error::BadParam("invalid max_hash_buf".to_string()))?;
     hash_stream_by_alg_with_progress_impl(
         alg,
         data,
         hash_range,
         is_exclusion,
         progress,
-        max_hash_buf,
+        max_hash_buffer_size_in_bytes,
     )
 }
 
-/// Make `hash_stream_by_alg_with_progress` configurable with `max_hash_buf`.
+/// Default hash buffer size, used by the public hashing entry points.
+pub(crate) fn default_hash_buffer_size() -> NonZeroUsize {
+    NonZeroUsize::new(MAX_HASH_BUF).unwrap_or(NonZeroUsize::MIN)
+}
+
+/// Turn [`Core::hash_buffer_size_in_kb`] into a byte count the hasher can use.
+///
+/// Zero is rejected at settings load, so this saturates rather than failing.
+///
+/// [`Core::hash_buffer_size_in_kb`]: crate::settings::Core::hash_buffer_size_in_kb
+pub(crate) fn hash_buffer_size_from_kb(kb: usize) -> NonZeroUsize {
+    NonZeroUsize::new(kb.saturating_mul(1024)).unwrap_or(NonZeroUsize::MIN)
+}
+
+/// Make `hash_stream_by_alg_with_progress` configurable with `max_hash_buffer_size_in_bytes`.
 /// e.g. makes it configurable in tests too.
 fn hash_stream_by_alg_with_progress_impl<R, F>(
     alg: &str,
@@ -275,13 +288,13 @@ fn hash_stream_by_alg_with_progress_impl<R, F>(
     hash_range: Option<Vec<HashRange>>,
     is_exclusion: bool,
     progress: &mut F,
-    max_hash_buf: NonZeroUsize,
+    max_hash_buffer_size_in_bytes: NonZeroUsize,
 ) -> Result<Vec<u8>>
 where
     R: Read + Seek + ?Sized,
     F: FnMut(u32, u32) -> Result<()>,
 {
-    let max_hash_buf = max_hash_buf.get();
+    let max_hash_buffer_size_in_bytes = max_hash_buffer_size_in_bytes.get();
     let mut bmff_v2_starts: Vec<u64> = Vec::new();
 
     use Hasher::*;
@@ -445,7 +458,7 @@ where
         .iter()
         .map(|r| {
             let len = r.end() - r.start() + 1;
-            u32::try_from(len.div_ceil(max_hash_buf as u64)).unwrap_or(u32::MAX)
+            u32::try_from(len.div_ceil(max_hash_buffer_size_in_bytes as u64)).unwrap_or(u32::MAX)
         })
         .sum();
     let mut step: u32 = 0;
@@ -470,7 +483,7 @@ where
             data.seek(SeekFrom::Start(*start))?;
 
             loop {
-                let mut chunk = vec![0u8; chunk_size(chunk_left, max_hash_buf)];
+                let mut chunk = vec![0u8; chunk_size(chunk_left, max_hash_buffer_size_in_bytes)];
 
                 data.read_exact(&mut chunk)?;
 
@@ -506,7 +519,7 @@ where
             // move to start of range
             data.seek(SeekFrom::Start(*start))?;
 
-            let mut chunk = vec![0u8; chunk_size(chunk_left, max_hash_buf)];
+            let mut chunk = vec![0u8; chunk_size(chunk_left, max_hash_buffer_size_in_bytes)];
             data.read_exact(&mut chunk)?;
 
             loop {
@@ -528,7 +541,8 @@ where
                     })?;
 
                 // read next chunk while we wait for hash
-                let mut next_chunk = vec![0u8; chunk_size(chunk_left, max_hash_buf)];
+                let mut next_chunk =
+                    vec![0u8; chunk_size(chunk_left, max_hash_buffer_size_in_bytes)];
                 data.read_exact(&mut next_chunk)?;
 
                 hasher_enum = match rx.recv() {
@@ -559,7 +573,14 @@ pub fn hash_stream_by_alg<R>(
 where
     R: Read + Seek + ?Sized,
 {
-    hash_stream_by_alg_with_progress(alg, data, hash_range, is_exclusion, &mut |_, _| Ok(()))
+    hash_stream_by_alg_with_progress(
+        alg,
+        data,
+        hash_range,
+        is_exclusion,
+        &mut |_, _| Ok(()),
+        default_hash_buffer_size(),
+    )
 }
 
 // verify the hash using the specified algorithm
@@ -679,7 +700,7 @@ mod tests {
     use super::*;
 
     // Small enough that a few KB of test data spans multiple chunks.
-    fn test_hash_buf() -> NonZeroUsize {
+    fn test_hash_buffer_size() -> NonZeroUsize {
         NonZeroUsize::new(1024).unwrap()
     }
 
@@ -688,7 +709,7 @@ mod tests {
     // zero bytes on every iteration and never terminated.
     #[test]
     fn chunk_size_does_not_truncate_on_32_bit_targets() {
-        let cap = test_hash_buf().get();
+        let cap = test_hash_buffer_size().get();
 
         assert_eq!(chunk_size(0, cap), 0);
         assert_eq!(chunk_size(1, cap), 1);
@@ -733,7 +754,15 @@ mod tests {
             called = true;
             Ok(())
         };
-        hash_stream_by_alg_with_progress("sha256", &mut reader, None, true, &mut cb).unwrap();
+        hash_stream_by_alg_with_progress(
+            "sha256",
+            &mut reader,
+            None,
+            true,
+            &mut cb,
+            default_hash_buffer_size(),
+        )
+        .unwrap();
         assert!(called, "progress callback should have been invoked");
     }
 
@@ -742,7 +771,14 @@ mod tests {
         let data = vec![0u8; 64];
         let mut reader = Cursor::new(&data);
         let mut cb = |_step, _total| Err(Error::OperationCancelled);
-        let result = hash_stream_by_alg_with_progress("sha256", &mut reader, None, true, &mut cb);
+        let result = hash_stream_by_alg_with_progress(
+            "sha256",
+            &mut reader,
+            None,
+            true,
+            &mut cb,
+            default_hash_buffer_size(),
+        );
         assert!(
             matches!(result, Err(Error::OperationCancelled)),
             "expected OperationCancelled, got {result:?}"
@@ -766,7 +802,7 @@ mod tests {
             None,
             true,
             &mut cb,
-            test_hash_buf(),
+            test_hash_buffer_size(),
         )
         .unwrap();
         assert_eq!(seen, vec![(1, 3), (2, 3), (3, 3)]);
@@ -788,7 +824,7 @@ mod tests {
             None,
             true,
             &mut |_, _| Ok(()),
-            test_hash_buf(),
+            test_hash_buffer_size(),
         )
         .unwrap();
 
@@ -814,7 +850,7 @@ mod tests {
             Some(hr),
             true,
             &mut |_, _| Ok(()),
-            test_hash_buf(),
+            test_hash_buffer_size(),
         )
         .unwrap();
 

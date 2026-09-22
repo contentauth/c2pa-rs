@@ -14,6 +14,7 @@
 use std::{
     fs::File,
     io::{Cursor, Read, Seek, SeekFrom},
+    num::NonZeroUsize,
     path::*,
 };
 
@@ -32,7 +33,9 @@ use crate::{
     hash_utils::hash_by_alg,
     maybe_send_sync::MaybeSend,
     utils::{
-        hash_utils::{hash_stream_by_alg_with_progress, vec_compare, HashRange},
+        hash_utils::{
+            default_hash_buffer_size, hash_stream_by_alg_with_progress, vec_compare, HashRange,
+        },
         io_utils::ReaderUtils,
     },
     validation_results::validation_codes::{
@@ -291,8 +294,14 @@ impl BoxHash {
         alg: Option<&str>,
         bhp: &dyn AssetBoxHash,
     ) -> Result<()> {
-        self.verify_stream_hash_with_progress(reader, alg, bhp, &mut |_, _| Ok(()))
-            .map(|_metadata_exclusion_used| ())
+        self.verify_stream_hash_with_progress(
+            reader,
+            alg,
+            bhp,
+            &mut |_, _| Ok(()),
+            default_hash_buffer_size(),
+        )
+        .map(|_metadata_exclusion_used| ())
     }
 
     /// Like [`Self::verify_stream_hash`] but fires `progress(step, total)` once per hashed
@@ -310,6 +319,7 @@ impl BoxHash {
         alg: Option<&str>,
         bhp: &dyn AssetBoxHash,
         progress: &mut F,
+        max_hash_buffer_size_in_bytes: NonZeroUsize,
     ) -> Result<bool>
     where
         F: FnMut(u32, u32) -> Result<()>,
@@ -433,6 +443,7 @@ impl BoxHash {
                 Some(inclusions),
                 false,
                 progress,
+                max_hash_buffer_size_in_bytes,
             )?;
 
             if !vec_compare(&bm.hash, &computed) {
@@ -464,9 +475,14 @@ impl BoxHash {
     where
         R: Read + Seek + MaybeSend,
     {
-        self.generate_box_hash_from_stream_with_progress(reader, alg, bhp, minimal_form, |_, _| {
-            Ok(())
-        })
+        self.generate_box_hash_from_stream_with_progress(
+            reader,
+            alg,
+            bhp,
+            minimal_form,
+            |_, _| Ok(()),
+            default_hash_buffer_size(),
+        )
     }
 
     /// Like [`Self::generate_box_hash_from_stream`] but fires `progress(step, total)` once
@@ -479,6 +495,7 @@ impl BoxHash {
         bhp: &dyn AssetBoxHash,
         minimal_form: bool,
         progress: F,
+        max_hash_buffer_size_in_bytes: NonZeroUsize,
     ) -> Result<()>
     where
         R: Read + Seek + MaybeSend,
@@ -491,6 +508,7 @@ impl BoxHash {
             minimal_form,
             &[],
             progress,
+            max_hash_buffer_size_in_bytes,
         )
     }
 
@@ -515,11 +533,13 @@ impl BoxHash {
             minimal_form,
             exclusion_requests,
             |_, _| Ok(()),
+            default_hash_buffer_size(),
         )
     }
 
     /// Like [`Self::generate_box_hash_from_stream_with_exclusions`] but fires
     /// `progress(step, total)` once per hashed box.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn generate_box_hash_from_stream_with_progress_and_exclusions<R, F>(
         &mut self,
         reader: &mut R,
@@ -528,6 +548,7 @@ impl BoxHash {
         minimal_form: bool,
         exclusion_requests: &[BoxHashExclusionRequest],
         mut progress: F,
+        max_hash_buffer_size_in_bytes: NonZeroUsize,
     ) -> Result<()>
     where
         R: Read + Seek + MaybeSend,
@@ -667,6 +688,7 @@ impl BoxHash {
                     Some(inclusions),
                     false,
                     &mut progress,
+                    max_hash_buffer_size_in_bytes,
                 )?);
             }
         } else {
@@ -708,6 +730,7 @@ impl BoxHash {
                     Some(inclusions),
                     false,
                     &mut progress,
+                    max_hash_buffer_size_in_bytes,
                 )?;
 
                 self.boxes.push(BoxMap::from_asset_box_map(
@@ -1084,8 +1107,13 @@ mod tests {
             }],
         };
 
-        let result =
-            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &mock, &mut |_, _| Ok(()));
+        let result = bh.verify_stream_hash_with_progress(
+            &mut reader,
+            Some(alg),
+            &mock,
+            &mut |_, _| Ok(()),
+            default_hash_buffer_size(),
+        );
         assert!(
             matches!(&result, Err(Error::C2PAValidation(s)) if s == ASSERTION_BOXESHASH_MALFORMED),
             "unexpected result: {result:?}"
@@ -1125,8 +1153,13 @@ mod tests {
             }],
         };
 
-        let result =
-            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &mock, &mut |_, _| Ok(()));
+        let result = bh.verify_stream_hash_with_progress(
+            &mut reader,
+            Some(alg),
+            &mock,
+            &mut |_, _| Ok(()),
+            default_hash_buffer_size(),
+        );
         assert!(
             matches!(&result, Err(Error::C2PAValidation(s)) if s == ASSERTION_BOXESHASH_MALFORMED),
             "unexpected result: {result:?}"
@@ -1169,8 +1202,13 @@ mod tests {
             }],
         };
 
-        let result =
-            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &mock, &mut |_, _| Ok(()));
+        let result = bh.verify_stream_hash_with_progress(
+            &mut reader,
+            Some(alg),
+            &mock,
+            &mut |_, _| Ok(()),
+            default_hash_buffer_size(),
+        );
         assert!(
             matches!(&result, Err(Error::C2PAValidation(s)) if s == ASSERTION_BOXESHASH_MALFORMED),
             "unexpected result: {result:?}"
@@ -1212,8 +1250,13 @@ mod tests {
             }],
         };
 
-        let result =
-            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &mock, &mut |_, _| Ok(()));
+        let result = bh.verify_stream_hash_with_progress(
+            &mut reader,
+            Some(alg),
+            &mock,
+            &mut |_, _| Ok(()),
+            default_hash_buffer_size(),
+        );
         assert!(result.unwrap());
     }
 
@@ -1253,8 +1296,13 @@ mod tests {
             }],
         };
 
-        let result =
-            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &mock, &mut |_, _| Ok(()));
+        let result = bh.verify_stream_hash_with_progress(
+            &mut reader,
+            Some(alg),
+            &mock,
+            &mut |_, _| Ok(()),
+            default_hash_buffer_size(),
+        );
         assert!(!result.unwrap());
     }
 
@@ -1290,8 +1338,13 @@ mod tests {
             }],
         };
 
-        let result =
-            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &mock, &mut |_, _| Ok(()));
+        let result = bh.verify_stream_hash_with_progress(
+            &mut reader,
+            Some(alg),
+            &mock,
+            &mut |_, _| Ok(()),
+            default_hash_buffer_size(),
+        );
         assert!(
             matches!(&result, Err(Error::HashMismatch(s)) if s == ASSERTION_BOXHASH_UNKNOWN_BOX),
             "unexpected result: {result:?}"

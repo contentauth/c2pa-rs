@@ -76,7 +76,7 @@ use crate::{
     settings::{Settings, MAX_ASSERTIONS},
     status_tracker::{ErrorBehavior, StatusTracker},
     store::StoreValidationInfo,
-    utils::hash_utils::{hash_by_alg, vec_compare, HashRange},
+    utils::hash_utils::{hash_buffer_size_from_kb, hash_by_alg, vec_compare, HashRange},
     validation_status, ClaimGeneratorInfo,
 };
 
@@ -2914,6 +2914,8 @@ impl Claim {
     ) -> Result<()> {
         const UNNAMED: &str = "unnamed";
         let default_str = |s: &String| s.clone();
+        let hash_buffer_size_in_bytes =
+            hash_buffer_size_from_kb(context.settings().core.hash_buffer_size_in_kb);
 
         // verify data hashes for provenance claims
         if claim.label() == svi.binding_claim {
@@ -3034,6 +3036,7 @@ impl Claim {
                                     &mut file,
                                     Some(claim.alg()),
                                     &mut cb,
+                                    hash_buffer_size_in_bytes,
                                 )
                             }
                             ClaimAssetData::Bytes(asset_bytes, _) => {
@@ -3042,6 +3045,7 @@ impl Claim {
                                     &mut cursor,
                                     Some(claim.alg()),
                                     &mut cb,
+                                    hash_buffer_size_in_bytes,
                                 )
                             }
                             ClaimAssetData::Stream(stream_data, _) => dh
@@ -3049,6 +3053,7 @@ impl Claim {
                                     *stream_data,
                                     Some(claim.alg()),
                                     &mut cb,
+                                    hash_buffer_size_in_bytes,
                                 ),
                             _ => return Err(Error::UnsupportedType), /* this should never happen (coding error) */
                         };
@@ -3140,20 +3145,25 @@ impl Claim {
                     };
                     let hash_result = match asset_data {
                         #[cfg(feature = "file_io")]
-                        ClaimAssetData::Path(asset_path) => {
-                            dh.verify_hash_with_progress(asset_path, Some(claim.alg()), &mut cb)
-                        }
+                        ClaimAssetData::Path(asset_path) => dh.verify_hash_with_progress(
+                            asset_path,
+                            Some(claim.alg()),
+                            &mut cb,
+                            hash_buffer_size_in_bytes,
+                        ),
                         ClaimAssetData::Bytes(asset_bytes, _) => dh
                             .verify_in_memory_hash_with_progress(
                                 asset_bytes,
                                 Some(claim.alg()),
                                 &mut cb,
+                                hash_buffer_size_in_bytes,
                             ),
                         ClaimAssetData::Stream(stream_data, _) => dh
                             .verify_stream_hash_with_progress(
                                 *stream_data,
                                 Some(claim.alg()),
                                 &mut cb,
+                                hash_buffer_size_in_bytes,
                             ),
                         ClaimAssetData::StreamFragment(initseg_data, fragment_data, _) => dh
                             .verify_stream_segment_with_progress(
@@ -3230,6 +3240,7 @@ impl Claim {
                                 Some(claim.alg()),
                                 box_hash_processor,
                                 &mut cb,
+                                hash_buffer_size_in_bytes,
                             )
                         }
                         ClaimAssetData::Bytes(asset_bytes, asset_type) => {
@@ -3248,6 +3259,7 @@ impl Claim {
                                 Some(claim.alg()),
                                 box_hash_processor,
                                 &mut cb,
+                                hash_buffer_size_in_bytes,
                             )
                         }
                         ClaimAssetData::Stream(stream_data, asset_type) => {
@@ -3265,6 +3277,7 @@ impl Claim {
                                 Some(claim.alg()),
                                 box_hash_processor,
                                 &mut cb,
+                                hash_buffer_size_in_bytes,
                             )
                         }
                         _ => return Err(Error::UnsupportedType),

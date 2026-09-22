@@ -55,8 +55,11 @@ use crate::{
     settings::{builder::TimeStampFetchScope, MAX_ASSERTIONS},
     store::Store,
     utils::{
-        hash_utils::hash_to_b64, merkle::MerkleAccumulator, mime::format_to_mime,
-        path_utils::sanitize_archive_path, xmp_inmemory_utils::XmpInfo,
+        hash_utils::{hash_buffer_size_from_kb, hash_to_b64},
+        merkle::MerkleAccumulator,
+        mime::format_to_mime,
+        path_utils::sanitize_archive_path,
+        xmp_inmemory_utils::XmpInfo,
     },
     AsyncSigner, ClaimGeneratorInfo, EphemeralSigner, HashRange, HashedUri, Ingredient,
     ManifestAssertionKind, Reader, Relationship, Signer,
@@ -2941,8 +2944,14 @@ impl Builder {
             // gen_hash_from_stream uses the BmffHash's own path-based exclusion list
             // and its own alg field (set when the assertion was created).
             let ctx = &self.context;
+            let hash_buffer_size_in_bytes =
+                hash_buffer_size_from_kb(ctx.settings().core.hash_buffer_size_in_kb);
             let mut cb = |step, total| ctx.check_progress(ProgressPhase::Hashing, step, total);
-            bmff_hash.gen_hash_from_stream_with_progress(stream, &mut cb)?;
+            bmff_hash.gen_hash_from_stream_with_progress(
+                stream,
+                &mut cb,
+                hash_buffer_size_in_bytes,
+            )?;
 
             self.definition
                 .assertions
@@ -2969,9 +2978,18 @@ impl Builder {
             // inside the preceding SOS entropy range, which causes the sum to
             // exceed the file length and triggers a range-validation error.
             let ctx = &self.context;
+            let hash_buffer_size_in_bytes =
+                hash_buffer_size_from_kb(ctx.settings().core.hash_buffer_size_in_kb);
             let cb: Box<dyn FnMut(u32, u32) -> Result<()>> =
                 Box::new(|step, total| ctx.check_progress(ProgressPhase::Hashing, step, total));
-            bh.generate_box_hash_from_stream_with_progress(stream, definition_alg, bhp, false, cb)?;
+            bh.generate_box_hash_from_stream_with_progress(
+                stream,
+                definition_alg,
+                bhp,
+                false,
+                cb,
+                hash_buffer_size_in_bytes,
+            )?;
             self.definition
                 .assertions
                 .retain(|a| !a.label.starts_with(BoxHash::LABEL));
@@ -2999,6 +3017,8 @@ impl Builder {
                 Some(exclusions.clone())
             };
             let ctx = &self.context;
+            let hash_buffer_size_in_bytes =
+                hash_buffer_size_from_kb(ctx.settings().core.hash_buffer_size_in_kb);
             let mut cb = |step, total| ctx.check_progress(ProgressPhase::Hashing, step, total);
             let hash = crate::utils::hash_utils::hash_stream_by_alg_with_progress(
                 &alg,
@@ -3006,6 +3026,7 @@ impl Builder {
                 exclusion_arg,
                 true,
                 &mut cb,
+                hash_buffer_size_in_bytes,
             )?;
 
             // Preserve the existing assertion's name or use the default.
@@ -11085,6 +11106,50 @@ mod tests {
 
         assert!(builder.context().settings().verify.verify_after_sign);
 
+        Ok(())
+    }
+
+    /// `core.hash_buffer_size_in_kb` must reach the hasher, not just validate.
+    /// The file-level hash fires one progress tick per buffer-sized read range, so a
+    /// small buffer produces strictly more Hashing ticks over the same asset than a
+    /// buffer large enough to swallow it in one range.
+    #[test]
+    fn test_hash_buffer_size_setting_reaches_hasher() -> Result<()> {
+        use std::sync::Mutex;
+
+        fn count_hashing_ticks(buffer_size_in_kb: usize) -> Result<usize> {
+            let ticks: std::sync::Arc<Mutex<usize>> = std::sync::Arc::new(Mutex::new(0));
+            let ticks_clone = ticks.clone();
+            let mut ctx = test_context();
+            ctx.settings_mut().core.hash_buffer_size_in_kb = buffer_size_in_kb;
+            let ctx = ctx
+                .with_progress_callback(move |phase, _, _| {
+                    if phase == ProgressPhase::Hashing {
+                        *ticks_clone.lock().unwrap() += 1;
+                    }
+                    true
+                })
+                .into_shared();
+
+            let mut builder = Builder::from_shared_context(&ctx);
+            let mut source = Cursor::new(TEST_IMAGE);
+            let mut dest = Cursor::new(Vec::new());
+            builder.save_to_stream("image/jpeg", &mut source, &mut dest)?;
+
+            let count = *ticks.lock().unwrap();
+            Ok(count)
+        }
+
+        // 1 KB is far smaller than TEST_IMAGE, so the hash is read in many ranges.
+        let small_buffer_ticks = count_hashing_ticks(1)?;
+        // 256 MB swallows the whole asset in a single range.
+        let large_buffer_ticks = count_hashing_ticks(256 * 1024)?;
+
+        assert!(
+            small_buffer_ticks > large_buffer_ticks,
+            "a 1 KB hash buffer should produce more Hashing ticks than a 256 MB one, \
+             got {small_buffer_ticks} vs {large_buffer_ticks}"
+        );
         Ok(())
     }
 

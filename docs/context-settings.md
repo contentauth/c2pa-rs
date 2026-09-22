@@ -224,7 +224,8 @@ Here's the `Settings` JSON with all default values:
     "backing_store_memory_threshold_in_mb": 512,
     "decode_identity_assertions": true,
     "allowed_network_hosts": null,
-    "max_decompressed_manifest_size_in_mb": 32
+    "max_decompressed_manifest_size_in_mb": 32,
+    "hash_buffer_size_in_kb": 262144
   },
   "signer": null,
   "trust":{ 

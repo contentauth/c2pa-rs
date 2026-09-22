@@ -17,6 +17,7 @@ use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
     io::{Cursor, Read, Seek},
+    num::NonZeroUsize,
 };
 
 use async_generic::async_generic;
@@ -52,7 +53,9 @@ use crate::{
         AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
     },
     error::{Error, Result},
-    hash_utils::{hash_by_alg, hash_size_by_alg, vec_compare, verify_by_alg},
+    hash_utils::{
+        hash_buffer_size_from_kb, hash_by_alg, hash_size_by_alg, vec_compare, verify_by_alg,
+    },
     hashed_uri::HashedUri,
     jumbf::{
         self,
@@ -2178,6 +2181,7 @@ impl Store {
         block_locations: &mut Vec<ObjectLocations>,
         calc_hashes: bool,
         progress: &mut F,
+        max_hash_buffer_size_in_bytes: NonZeroUsize,
     ) -> Result<Vec<DataHash>>
     where
         R: Read + Seek + ?Sized,
@@ -2244,7 +2248,7 @@ impl Store {
         // Generate or set placeholder hash
         if calc_hashes {
             // Second signing pass: calcultate the actual real hash
-            dh.gen_hash_from_stream_with_progress(stream, progress)?;
+            dh.gen_hash_from_stream_with_progress(stream, progress, max_hash_buffer_size_in_bytes)?;
         } else {
             // First signing pass: zero-filled placeholder hash (to get to end size)
             dh.set_hash(vec![0u8; hash_size_by_alg(alg)?]);
@@ -2490,8 +2494,14 @@ impl Store {
 
         if let Some(reader) = asset_reader {
             // calc hashes
+            let hash_buffer_size_in_bytes =
+                hash_buffer_size_from_kb(context.settings().core.hash_buffer_size_in_kb);
             let mut cb = |step, total| context.check_progress(ProgressPhase::Hashing, step, total);
-            adjusted_dh.gen_hash_from_stream_with_progress(reader, &mut cb)?;
+            adjusted_dh.gen_hash_from_stream_with_progress(
+                reader,
+                &mut cb,
+                hash_buffer_size_in_bytes,
+            )?;
         }
 
         // update the placeholder hash
@@ -3154,6 +3164,8 @@ impl Store {
     ) -> Result<Vec<u8>> {
         let settings = context.settings();
         let threshold = settings.core.backing_store_memory_threshold_in_mb;
+        let hash_buffer_size_in_bytes =
+            hash_buffer_size_from_kb(settings.core.hash_buffer_size_in_kb);
 
         let input_len = io_utils::stream_len(input_stream)?;
         let mut intermediate_stream = io_utils::stream_with_fs_fallback(threshold, input_len)?;
@@ -3276,6 +3288,7 @@ impl Store {
                             box_hash_handler,
                             false,
                             &mut cb,
+                            hash_buffer_size_in_bytes,
                         )?;
 
                         // add the box hash assertion to the claim
@@ -3384,7 +3397,11 @@ impl Store {
                     output_stream.rewind()?;
                     let mut cb =
                         |step, total| context.check_progress(ProgressPhase::Hashing, step, total);
-                    bmff_hash.gen_hash_from_stream_with_progress(output_stream, &mut cb)?;
+                    bmff_hash.gen_hash_from_stream_with_progress(
+                        output_stream,
+                        &mut cb,
+                        hash_buffer_size_in_bytes,
+                    )?;
                     pc.update_bmff_hash(bmff_hash)?;
                 }
             }
@@ -3481,6 +3498,7 @@ impl Store {
                         &mut hash_ranges,
                         false,
                         &mut |_, _| Ok(()),
+                        hash_buffer_size_in_bytes,
                     )?
                 } else {
                     Store::generate_data_hashes_for_stream(
@@ -3489,6 +3507,7 @@ impl Store {
                         &mut hash_ranges,
                         false,
                         &mut |_, _| Ok(()),
+                        hash_buffer_size_in_bytes,
                     )?
                 };
 
@@ -3568,6 +3587,7 @@ impl Store {
                         &mut new_hash_ranges,
                         true,
                         &mut cb,
+                        hash_buffer_size_in_bytes,
                     )?;
 
                     // patch existing claim hash with updated data

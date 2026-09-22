@@ -509,6 +509,14 @@ pub struct Core {
     ///
     /// The default is 32 MB.
     pub max_decompressed_manifest_size_in_mb: usize,
+    /// Kilobytes the hasher holds at one time in a single buffer.
+    ///
+    /// This bounds peak memory when hashing an asset for signing and for verification.
+    /// The native path hashes on a second thread and holds two buffers, so its peak is
+    /// twice this value. Lower it to verify a large asset in a constrained runtime.
+    ///
+    /// The default is 262144 (256 MB).
+    pub hash_buffer_size_in_kb: usize,
 }
 
 impl Default for Core {
@@ -522,6 +530,7 @@ impl Default for Core {
             allow_redirects: true,
             prefer_compress_manifests: false,
             max_decompressed_manifest_size_in_mb: 32,
+            hash_buffer_size_in_kb: 256 * 1024,
         }
     }
 }
@@ -533,6 +542,11 @@ impl SettingsValidate for Core {
             return Err(Error::BadParam(format!(
                 "max_decompressed_manifest_size_in_mb must not exceed {MAX_MANIFEST_SIZE_MB} MB"
             )));
+        }
+        if self.hash_buffer_size_in_kb == 0 {
+            return Err(Error::BadParam(
+                "hash_buffer_size_in_kb must be greater than zero".to_string(),
+            ));
         }
         Ok(())
     }
@@ -1536,6 +1550,18 @@ pub mod tests {
         let result =
             Settings::default().with_value("core.max_decompressed_manifest_size_in_mb", 1025usize);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_core_validate_rejects_zero_hash_buffer_size_in_kb() {
+        // A non-zero value is accepted, so a rejection below is the zero check firing
+        // rather than this key being unwritable for some unrelated reason.
+        let accepted = Settings::default().with_value("core.hash_buffer_size_in_kb", 64usize);
+        assert!(accepted.is_ok(), "non-zero value should be accepted");
+        assert_eq!(accepted.unwrap().core.hash_buffer_size_in_kb, 64);
+
+        let rejected = Settings::default().with_value("core.hash_buffer_size_in_kb", 0usize);
+        assert!(rejected.is_err(), "zero should be rejected");
     }
 
     /// Legacy test: verifies arbitrary (hidden) keys can be stored and retrieved via the

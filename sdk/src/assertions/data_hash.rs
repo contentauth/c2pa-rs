@@ -13,6 +13,7 @@
 
 use std::{
     io::{Read, Seek},
+    num::NonZeroUsize,
     path::*,
 };
 
@@ -26,8 +27,8 @@ use crate::{
     error::{Error, Result},
     read_seek::ReadSeek,
     utils::hash_utils::{
-        hash_stream_by_alg, hash_stream_by_alg_with_progress, vec_compare, verify_asset_by_alg,
-        verify_by_alg, HashRange,
+        default_hash_buffer_size, hash_stream_by_alg, hash_stream_by_alg_with_progress,
+        vec_compare, verify_asset_by_alg, verify_by_alg, HashRange,
     },
 };
 
@@ -124,6 +125,7 @@ impl DataHash {
         &mut self,
         stream: &mut R,
         progress: &mut F,
+        max_hash_buffer_size_in_bytes: NonZeroUsize,
     ) -> Result<()>
     where
         R: Read + Seek + ?Sized,
@@ -138,7 +140,14 @@ impl DataHash {
         let alg = self.alg.as_deref().unwrap_or("sha256").to_string();
         let exclusions = self.exclusions.clone();
 
-        let hash = hash_stream_by_alg_with_progress(&alg, stream, exclusions, true, progress)?;
+        let hash = hash_stream_by_alg_with_progress(
+            &alg,
+            stream,
+            exclusions,
+            true,
+            progress,
+            max_hash_buffer_size_in_bytes,
+        )?;
 
         if hash.is_empty() {
             Err(Error::BadParam("could not generate data hash".to_string()))
@@ -270,7 +279,12 @@ impl DataHash {
 
     // verify data using currently set algorithm or default alg is none currently set
     pub fn verify_stream_hash(&self, reader: &mut dyn ReadSeek, alg: Option<&str>) -> Result<()> {
-        self.verify_stream_hash_with_progress(reader, alg, &mut |_, _| Ok(()))
+        self.verify_stream_hash_with_progress(
+            reader,
+            alg,
+            &mut |_, _| Ok(()),
+            default_hash_buffer_size(),
+        )
     }
 
     /// Like [`verify_stream_hash`] but fires `progress(step, total)` once per hash
@@ -281,6 +295,7 @@ impl DataHash {
         reader: &mut R,
         alg: Option<&str>,
         progress: &mut F,
+        max_hash_buffer_size_in_bytes: NonZeroUsize,
     ) -> Result<()>
     where
         R: Read + Seek + ?Sized,
@@ -300,8 +315,14 @@ impl DataHash {
 
         let exclusions = self.exclusions.as_ref().cloned();
 
-        let computed =
-            hash_stream_by_alg_with_progress(&curr_alg, reader, exclusions, true, progress)?;
+        let computed = hash_stream_by_alg_with_progress(
+            &curr_alg,
+            reader,
+            exclusions,
+            true,
+            progress,
+            max_hash_buffer_size_in_bytes,
+        )?;
 
         if vec_compare(&self.hash, &computed) {
             Ok(())
