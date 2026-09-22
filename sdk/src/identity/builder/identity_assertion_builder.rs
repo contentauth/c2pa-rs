@@ -326,9 +326,7 @@ fn finalize_identity_assertion(
         if assertion_size < min_size {
             // TO DO: Think about how to signal this in such a way that
             // the AsyncCredentialHolder implementor understands the problem.
-            return Err(crate::Error::BadParam(format!(
-                "Assertion larger than expected {assertion_size} bytes"
-            )));
+            return Err(crate::Error::BadParam(format!("Serialized assertion is {len} bytes, which exceeds the planned size of {assertion_size} bytes", len = assertion_cbor.len())));
         }
 
         ia.pad1 = vec![0u8; assertion_size - assertion_cbor.len() - 15];
