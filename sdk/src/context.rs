@@ -876,10 +876,13 @@ impl Context {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
+    use http::Request;
+
     use super::*;
     #[cfg(not(target_arch = "wasm32"))]
     use crate::utils::test_signer::async_test_signer;
     use crate::{
+        http::{HttpResolverError, SyncHttpResolver},
         utils::{test::test_context, test_signer::test_signer},
         SigningAlg,
     };
@@ -1219,10 +1222,6 @@ mod tests {
     // redirect is involved. No network call is made — the guard rejects before dialing out.
     #[test]
     fn test_default_blocks_direct_metadata_host() {
-        use http::Request;
-
-        use crate::http::{HttpResolverError, SyncHttpResolver};
-
         let resolver = Context::new().resolver();
         let request = Request::get("http://169.254.169.254/latest/meta-data/")
             .body(vec![])

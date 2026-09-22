@@ -532,7 +532,9 @@ impl<T: AsyncHttpResolver + Sync> AsyncHttpResolver for MetadataGuardResolver<T>
 /// [`Core::allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
 pub(crate) fn host_is_metadata_or_link_local(uri: &Uri) -> bool {
     let Some(host) = uri.host() else {
-        return false;
+        // A request with no host is malformed and cannot be dialed by the concrete clients, but
+        // fail closed here too for consistency with `host_is_non_global`.
+        return true;
     };
 
     let host = normalize_host(host);
@@ -594,13 +596,20 @@ pub(crate) fn host_is_non_global(uri: &Uri) -> bool {
     host == "localhost" || host.ends_with(".localhost")
 }
 
-/// Normalizes a URI host for comparison: strips IPv6 brackets and a fully-qualified trailing dot,
-/// and lower-cases the result.
+/// Normalizes a URI host for comparison: strips IPv6 brackets, an IPv6 zone ID, and a
+/// fully-qualified trailing dot, and lower-cases the result.
 fn normalize_host(host: &str) -> String {
     let host = host
         .strip_prefix('[')
         .and_then(|h| h.strip_suffix(']'))
         .unwrap_or(host);
+
+    // Strip an RFC 6874 zone ID, e.g. `fe80::1%25eth0` (percent-encoded, as required in a URI) or
+    // an already-decoded `fe80::1%eth0` -> `fe80::1`, so the address still parses as `IpAddr`.
+    // `Ipv6Addr::parse` does not understand zone IDs, so without this the host would fall through
+    // unrecognized (neither a valid IP nor an obfuscated numeric form) and be treated as allowed,
+    // missing link-local addresses like this one.
+    let host = host.split('%').next().unwrap_or(host);
 
     let host = host.strip_suffix('.').unwrap_or(host);
 
@@ -965,17 +974,18 @@ mod test {
             "http://0.0.0.0/",                          // unspecified
             "http://[::1]/",                            // IPv6 loopback
             "http://[fe80::1]/",                        // IPv6 link-local
-            "http://[fc00::1]/",                        // IPv6 unique-local
-            "http://[::ffff:169.254.169.254]/",         // IPv4-mapped link-local
-            "http://localhost/",                        // loopback host name
-            "http://api.localhost/",                    // loopback host name suffix
-            "http://LOCALHOST/",                        // case-insensitive host name
-            "http://127.0.0.1./",                       // trailing-dot FQDN form of loopback
-            "http://2130706433/",                       // obfuscated decimal 127.0.0.1
-            "http://0x7f000001/",                       // obfuscated hex 127.0.0.1
-            "http://127.0x1/",                          // hex octet in a non-leading position
-            "http://0x7f.0x0.0x0.0x1/",                 // dotted all-hex form of 127.0.0.1
-            "http://127.1/",                            // short-form IPv4 loopback
+            "http://[fe80::1%25eth0]/", // IPv6 link-local with a percent-encoded zone ID
+            "http://[fc00::1]/",        // IPv6 unique-local
+            "http://[::ffff:169.254.169.254]/", // IPv4-mapped link-local
+            "http://localhost/",        // loopback host name
+            "http://api.localhost/",    // loopback host name suffix
+            "http://LOCALHOST/",        // case-insensitive host name
+            "http://127.0.0.1./",       // trailing-dot FQDN form of loopback
+            "http://2130706433/",       // obfuscated decimal 127.0.0.1
+            "http://0x7f000001/",       // obfuscated hex 127.0.0.1
+            "http://127.0x1/",          // hex octet in a non-leading position
+            "http://0x7f.0x0.0x0.0x1/", // dotted all-hex form of 127.0.0.1
+            "http://127.1/",            // short-form IPv4 loopback
         ] {
             assert!(
                 host_is_non_global(&Uri::from_static(uri)),
@@ -993,12 +1003,22 @@ mod test {
             "http://[::ffff:169.254.169.254]/",         // IPv4-mapped link-local
             "http://[fd00:ec2::254]/",                  // AWS IPv6 IMDS
             "http://2852039166/",                       // obfuscated decimal 169.254.169.254
+            "http://[fe80::1%25eth0]/", // IPv6 link-local with a percent-encoded zone ID
         ] {
             assert!(
                 host_is_metadata_or_link_local(&Uri::from_static(uri)),
                 "expected {uri} to be denied by the metadata/link-local guard"
             );
         }
+    }
+
+    #[test]
+    fn hostless_uri_is_rejected_by_default_guard() {
+        // A request with no host cannot normally be dialed by the concrete clients, but the guard
+        // fails closed for consistency with `host_is_non_global`.
+        assert!(host_is_metadata_or_link_local(&Uri::from_static(
+            "/latest/meta-data/"
+        )));
     }
 
     #[test]
