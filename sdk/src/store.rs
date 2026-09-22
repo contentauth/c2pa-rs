@@ -2659,8 +2659,31 @@ impl Store {
         for da in dyn_assertions.iter() {
             let reserve_size = da.reserve_size()?;
             let data1 = c2pa_cbor::ser::to_vec_packed(&vec![0; reserve_size])?;
-            let cbor_delta = data1.len() - reserve_size;
-            let da_data = c2pa_cbor::ser::to_vec_packed(&vec![0; reserve_size - cbor_delta])?;
+
+            let cbor_delta = data1.len().checked_sub(reserve_size).ok_or_else(|| {
+                Error::BadParam(format!(
+                    "dynamic assertion {label} reservation is too small ({reserve_size} bytes)",
+                    label = da.label()
+                ))
+            })?;
+
+            let payload_len = reserve_size.checked_sub(cbor_delta).ok_or_else(|| {
+                Error::BadParam(format!(
+                    "dynamic assertion {label} reservation is too small ({reserve_size} bytes)",
+                    label = da.label()
+                ))
+            })?;
+
+            let da_data = c2pa_cbor::ser::to_vec_packed(&vec![0; payload_len])?;
+
+            // At a CBOR header-width boundary, subtracting the delta drops the payload back below the boundary.
+            if da_data.len() != reserve_size {
+                return Err(Error::BadParam(format!(
+                    "dynamic assertion {label} cannot reserve exactly {reserve_size} bytes",
+                    label = da.label()
+                )));
+            }
+
             assertions.push(UserCbor::new(&da.label(), da_data));
         }
 

@@ -316,10 +316,19 @@ fn finalize_identity_assertion(
     // TO DO: Think through how errors map into crate::Error.
 
     if let Some(assertion_size) = size {
-        if assertion_cbor.len() > assertion_size {
+        // Make sure enough padding/room is left for the 15 bytes of padding fields.
+        let min_size = assertion_cbor.len().checked_add(15).ok_or_else(|| {
+            crate::Error::BadParam(format!(
+                "Assertion larger than expected {assertion_size} bytes"
+            ))
+        })?;
+
+        if assertion_size < min_size {
             // TO DO: Think about how to signal this in such a way that
             // the AsyncCredentialHolder implementor understands the problem.
-            return Err(crate::Error::BadParam(format!("Serialized assertion is {len} bytes, which exceeds the planned size of {assertion_size} bytes", len = assertion_cbor.len())));
+            return Err(crate::Error::BadParam(format!(
+                "Assertion larger than expected {assertion_size} bytes"
+            )));
         }
 
         ia.pad1 = vec![0u8; assertion_size - assertion_cbor.len() - 15];
@@ -329,18 +338,29 @@ fn finalize_identity_assertion(
             .map_err(|e| crate::Error::BadParam(e.to_string()))?;
         // TO DO: Think through how errors map into crate::Error.
 
-        ia.pad2 = Some(ByteBuf::from(vec![
-            0u8;
-            assertion_size - assertion_cbor.len() - 6
-        ]));
+        // `pad1` grew the encoding, so re-check rather than assume room for `pad2` remains.
+        let pad2_len = assertion_size
+            .checked_sub(assertion_cbor.len())
+            .and_then(|remaining| remaining.checked_sub(6))
+            .ok_or_else(|| {
+                crate::Error::BadParam(format!(
+                    "Assertion larger than expected {assertion_size} bytes"
+                ))
+            })?;
+
+        ia.pad2 = Some(ByteBuf::from(vec![0u8; pad2_len]));
 
         assertion_cbor.clear();
         c2pa_cbor::to_writer(&mut assertion_cbor, &ia)
             .map_err(|e| crate::Error::BadParam(e.to_string()))?;
         // TO DO: Think through how errors map into crate::Error.
 
-        // TO DO: See if this approach ever fails. IMHO it "should" work for all cases.
-        assert_eq!(assertion_size, assertion_cbor.len());
+        if assertion_cbor.len() != assertion_size {
+            return Err(crate::Error::BadParam(format!(
+                "Padded assertion is {len} bytes, expected {assertion_size} bytes",
+                len = assertion_cbor.len()
+            )));
+        }
     }
 
     Ok(DynamicAssertionContent::Cbor(assertion_cbor))
@@ -367,7 +387,7 @@ mod tests {
                 manifest_json, parent_json, NaiveAsyncCredentialHolder, NaiveCredentialHolder,
                 NaiveSignatureVerifier,
             },
-            IdentityAssertion, ToCredentialSummary,
+            IdentityAssertion, SignerPayload, ToCredentialSummary,
         },
         status_tracker::StatusTracker,
         Builder, Reader, SigningAlg,
@@ -493,5 +513,32 @@ mod tests {
         let nc_summary = naive_credential.to_summary();
         let nc_json = serde_json::to_string(&nc_summary).unwrap();
         assert_eq!(nc_json, "{}");
+    }
+
+    /// Reserve size can't hold assert + the 15 padding bytes.
+    #[test]
+    fn rejects_reserve_size_that_is_too_small() {
+        use super::{finalize_identity_assertion, DynamicAssertionContent};
+
+        let signer_payload = SignerPayload {
+            referenced_assertions: vec![],
+            sig_type: "INVALID.identity.naive_credential".to_owned(),
+            roles: vec![],
+        };
+
+        let DynamicAssertionContent::Cbor(unpadded) =
+            finalize_identity_assertion(signer_payload.clone(), None, Ok(vec![])).unwrap()
+        else {
+            panic!("expected CBOR content");
+        };
+        let unpadded_len = unpadded.len();
+
+        for size in [0usize, 1, unpadded_len, unpadded_len + 14] {
+            match finalize_identity_assertion(signer_payload.clone(), Some(size), Ok(vec![])) {
+                Err(crate::Error::BadParam(_)) => {}
+                Err(e) => panic!("expected BadParam, got {e:?}"),
+                Ok(_) => panic!("a reserve size that is too small must panic"),
+            }
+        }
     }
 }
