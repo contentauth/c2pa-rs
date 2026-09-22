@@ -293,6 +293,22 @@ fn compress_brob_box(inner_type: &[u8; 4], data: &[u8]) -> Result<Vec<u8>> {
     Ok(build_box(&BOX_BROB, &brob_payload))
 }
 
+/// Returns `true` if top-level `jumb` box `b` carries the C2PA manifest-store
+/// label, peeking only the bytes needed to read the inner `jumd` label.
+fn jumb_box_is_c2pa_store(
+    reader: &mut dyn ReadSeek,
+    b: &JxlBoxInfo,
+    file_len: u64,
+) -> Result<bool> {
+    let peek = b.data_size(file_len).min(JUMD_C2PA_LABEL_PEEK);
+    reader.seek(SeekFrom::Start(b.data_offset()))?;
+    let mut header_peek = safe_vec(peek, Some(0u8))?;
+    reader
+        .read_exact(&mut header_peek)
+        .map_err(Error::IoError)?;
+    Ok(jumb_data_has_c2pa_label(&header_peek))
+}
+
 /// Finds the C2PA manifest store in a JPEG XL container.
 ///
 /// Scans all top-level `jumb` BMFF boxes and returns the **complete** `jumb` BMFF box
@@ -318,15 +334,7 @@ fn find_c2pa_jumb_location(
         if b.box_type != BOX_JUMB {
             continue;
         }
-        // Peek only the bytes needed by jumb_data_has_c2pa_label to check
-        // the C2PA label; no need to read the entire payload.
-        let peek = b.data_size(file_len).min(JUMD_C2PA_LABEL_PEEK);
-        reader.seek(SeekFrom::Start(b.data_offset()))?;
-        let mut header_peek = safe_vec(peek, Some(0u8))?;
-        reader
-            .read_exact(&mut header_peek)
-            .map_err(Error::IoError)?;
-        if jumb_data_has_c2pa_label(&header_peek) {
+        if jumb_box_is_c2pa_store(reader, b, file_len)? {
             if found.is_some() {
                 return Err(Error::TooManyManifestStores);
             }
@@ -815,14 +823,17 @@ impl AssetBoxHash for JpegXlIO {
                 b.total_size
             };
 
-            // Only plain jumb boxes are marked as C2PA; brob boxes (including those
-            // wrapping jumb) are treated as opaque data for hashing purposes, since
-            // compressed manifests are incompatible with box-based hashing.
-            let name = if b.box_type == BOX_JUMB {
-                C2PA_BOXHASH.to_string()
-            } else {
-                b.type_str()
-            };
+            // Only the C2PA manifest-store jumb box is marked as C2PA (and thus
+            // skipped by box hashing); other jumb boxes carry unrelated JUMBF
+            // metadata and must be hashed like any other box. brob boxes (including
+            // those wrapping jumb) are treated as opaque data for hashing purposes,
+            // since compressed manifests are incompatible with box-based hashing.
+            let name =
+                if b.box_type == BOX_JUMB && jumb_box_is_c2pa_store(input_stream, b, file_len)? {
+                    C2PA_BOXHASH.to_string()
+                } else {
+                    b.type_str()
+                };
             let brob_inner_type = if b.box_type == BOX_BROB {
                 let mut inner_type = [0u8; 4];
                 input_stream.seek(SeekFrom::Start(b.data_offset()))?;
@@ -2053,6 +2064,87 @@ pub mod tests {
         let mut f = std::fs::File::open(&test_path).unwrap();
         let locations = jpegxl_io.get_object_locations(&mut f).unwrap();
         assert!(locations.iter().any(|l| l.htype == ObjectType::C2pa));
+    }
+
+    // Builds a JPEG XL container holding a non-C2PA JUMBF box (label != "c2pa"),
+    // the real C2PA manifest store (label "c2pa"), and a codestream.
+    #[cfg(test)]
+    fn build_jxl_with_extra_jumb() -> (Vec<u8>, usize) {
+        let ftyp_box = build_box(&BOX_FTYP, b"jxl \0\0\0\0jxl ");
+        let jxlc_box = build_box(&BOX_JXLC, &[0xff, 0x0a, 0x00]);
+        let other_jumb = build_box(&BOX_JUMB, &build_jumd_box(b"xmp\0"));
+        let c2pa_jumb = c2pa_store(b"manifest");
+
+        let mut container = Vec::new();
+        container.extend_from_slice(&JXL_CONTAINER_MAGIC);
+        container.extend_from_slice(&ftyp_box);
+        // Offset of a payload byte inside the non-C2PA jumb (jumd UUID region):
+        // magic + ftyp + jumb header (8) + jumd header (8).
+        let tamper_offset = container.len() + 16;
+        container.extend_from_slice(&other_jumb);
+        container.extend_from_slice(&c2pa_jumb);
+        container.extend_from_slice(&jxlc_box);
+        (container, tamper_offset)
+    }
+
+    // A non-C2PA JUMBF (`jumb`) box must stay a hashable box; only the jumb box
+    // whose inner jumd label is `c2pa` is the manifest store (and thus excluded
+    // from box hashing). Guards the bypass where every jumb was marked C2PA.
+    #[test]
+    fn get_box_map_marks_only_c2pa_labeled_jumb() {
+        let (container, _) = build_jxl_with_extra_jumb();
+        let jpegxl_io = JpegXlIO {};
+        let box_map = jpegxl_io.get_box_map(&mut Cursor::new(container)).unwrap();
+
+        let c2pa_count = box_map
+            .iter()
+            .filter(|m| m.names.first().is_some_and(|n| n == C2PA_BOXHASH))
+            .count();
+        assert_eq!(
+            c2pa_count, 1,
+            "only the c2pa-labeled jumb may be marked C2PA"
+        );
+
+        let jumb_count = box_map
+            .iter()
+            .filter(|m| m.names.first().is_some_and(|n| n == "jumb"))
+            .count();
+        assert_eq!(jumb_count, 1, "non-C2PA jumb must remain a hashable box");
+    }
+
+    // End-to-end: after box-hashing an asset, tampering a non-C2PA jumb box must be
+    // detected as a hash mismatch during verification (previously it was skipped).
+    #[test]
+    fn tampered_non_c2pa_jumb_detected_by_box_hash() {
+        use crate::assertions::BoxHash;
+
+        let (container, tamper_offset) = build_jxl_with_extra_jumb();
+        let jpegxl_io = JpegXlIO {};
+
+        // "Sign": compute the box hashes over the asset.
+        let mut bh = BoxHash { boxes: Vec::new() };
+        bh.generate_box_hash_from_stream(
+            &mut Cursor::new(container.clone()),
+            "sha256",
+            &jpegxl_io,
+            false,
+        )
+        .unwrap();
+
+        // Untampered asset verifies.
+        bh.verify_in_memory_hash(&container, Some("sha256"), &jpegxl_io)
+            .unwrap();
+
+        // Tamper a byte inside the non-C2PA jumb payload (length/type preserved).
+        let mut tampered = container.clone();
+        tampered[tamper_offset] ^= 0xff;
+
+        // The modification must now be detected.
+        assert!(
+            bh.verify_in_memory_hash(&tampered, Some("sha256"), &jpegxl_io)
+                .is_err(),
+            "tampering a non-C2PA jumb box must be detected by box hash"
+        );
     }
 
     // ─── Spec compliance: container with jxlp (partial codestream) ───
