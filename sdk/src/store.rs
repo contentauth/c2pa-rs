@@ -2658,30 +2658,22 @@ impl Store {
         let mut assertions = Vec::new();
         for da in dyn_assertions.iter() {
             let reserve_size = da.reserve_size()?;
-            let data1 = c2pa_cbor::ser::to_vec_packed(&vec![0; reserve_size])?;
 
-            let cbor_delta = data1.len().checked_sub(reserve_size).ok_or_else(|| {
-                Error::BadParam(format!(
-                    "dynamic assertion {label} reservation is too small ({reserve_size} bytes)",
-                    label = da.label()
-                ))
-            })?;
-
-            let payload_len = reserve_size.checked_sub(cbor_delta).ok_or_else(|| {
-                Error::BadParam(format!(
-                    "dynamic assertion {label} reservation is too small ({reserve_size} bytes)",
-                    label = da.label()
-                ))
-            })?;
-
-            let da_data = c2pa_cbor::ser::to_vec_packed(&vec![0; payload_len])?;
-
-            // At a CBOR header-width boundary, subtracting the delta drops the payload back below the boundary.
-            if da_data.len() != reserve_size {
-                return Err(Error::BadParam(format!(
-                    "dynamic assertion {label} cannot reserve exactly {reserve_size} bytes",
-                    label = da.label()
-                )));
+            // The CBOR length prefix grows in steps (1/2/3/5 bytes).
+            let mut payload_len = reserve_size;
+            let mut da_data = c2pa_cbor::ser::to_vec_packed(&vec![0; payload_len])?;
+            let mut seen = std::collections::HashSet::new();
+            while da_data.len() != reserve_size {
+                let diff = reserve_size as isize - da_data.len() as isize;
+                let next = payload_len as isize + diff;
+                if next < 0 || !seen.insert(payload_len) {
+                    return Err(Error::BadParam(format!(
+                        "dynamic assertion {label} cannot reserve exactly {reserve_size} bytes",
+                        label = da.label()
+                    )));
+                }
+                payload_len = next as usize;
+                da_data = c2pa_cbor::ser::to_vec_packed(&vec![0; payload_len])?;
             }
 
             assertions.push(UserCbor::new(&da.label(), da_data));
