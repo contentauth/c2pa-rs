@@ -3456,6 +3456,57 @@ pub mod tests {
             .expect("valid cumulative IFD entry sizes should clone successfully");
     }
 
+    // The cumulative bound must hold for every element-type branch, not just Byte.
+    // For each type, two entries that each fit the file but together exceed it must
+    // be rejected -- exercising accumulate_copy_len (and, for 8-byte types, the
+    // added per-entry check) in the Short/Long/Sshort/Slong/Float/8-byte branches.
+    #[test]
+    fn clone_ifd_entries_cumulative_bound_covers_all_types() {
+        let file_size = 40u64;
+        // (entry_type discriminant, per-entry value_count, label): each entry's byte
+        // size is 24 (<= 40, fits alone), two entries sum to 48 (> 40, rejected).
+        let cases: [(u16, u64, &str); 6] = [
+            (IFDEntryType::Short as u16, 12, "Short"),
+            (IFDEntryType::Long as u16, 6, "Long"),
+            (IFDEntryType::Sshort as u16, 12, "Sshort"),
+            (IFDEntryType::Slong as u16, 6, "Slong"),
+            (IFDEntryType::Float as u16, 6, "Float"),
+            (IFDEntryType::Double as u16, 3, "Double"),
+        ];
+
+        for (entry_type, value_count, label) in cases {
+            let mut asset_reader = Cursor::new(vec![0xaau8; file_size as usize]);
+            let mut entries: BTreeMap<u16, IfdEntry> = BTreeMap::new();
+            for tag in 0..2u16 {
+                entries.insert(
+                    tag,
+                    IfdEntry {
+                        entry_tag: tag,
+                        entry_type,
+                        value_count,
+                        value_offset: 0,
+                    },
+                );
+            }
+
+            let writer = Cursor::new(Vec::<u8>::new());
+            let mut cloner = TiffCloner::new(Endianness::Little, false, writer).unwrap();
+
+            // Map to a message so the assert doesn't require Debug on the Ok map:
+            // Ok -> empty (fails), a different error -> its text (fails), the
+            // expected InvalidAsset -> its message (passes the contains check).
+            let msg = match cloner.clone_ifd_entries(&entries, &mut asset_reader) {
+                Err(Error::InvalidAsset(msg)) => msg,
+                Err(other) => other.to_string(),
+                Ok(_) => String::new(),
+            };
+            assert!(
+                msg.contains("IFD entry") && msg.contains("exceed"),
+                "type {label}: expected cumulative rejection, got message {msg:?}",
+            );
+        }
+    }
+
     // Unit test for the shared cap helper used by the strip, tile, and BigTable
     // copy loops. Covers the running-total accounting, the exceed-source-length
     // rejection (with the per-kind label), and the checked_add overflow guard.
