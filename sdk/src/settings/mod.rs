@@ -402,12 +402,18 @@ pub struct Core {
     /// provided during validation. The value may be 0 to store just leaf node hashes (no UUID boxes are generated in this case).
     ///
     /// This option defaults to 5.
+    /// Single-file fragment signing instead always uses a leaf row with one
+    /// locator UUID per moof; this option controls the other Merkle paths.
     ///
     /// See more information in the spec here:
     /// [bmff_based_hash - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_bmff_based_hash)
     ///
     /// [`BmffHash`]: crate::assertions::BmffHash
     pub merkle_tree_max_proofs: usize,
+    /// Maximum number of single-file fragment leaves stored in a BMFF assertion.
+    /// Single-file fragment signing stores a leaf row (no proofs); this bounds
+    /// the manifest size independently of the media file size. Defaults to 10,000.
+    pub merkle_tree_max_leaves: usize,
     /// Maximum amount of data in megabytes that will be loaded into memory before
     /// being stored in temporary files on the disk.
     ///
@@ -525,6 +531,7 @@ impl Default for Core {
         Self {
             merkle_tree_chunk_size_in_kb: None,
             merkle_tree_max_proofs: 5,
+            merkle_tree_max_leaves: 10_000,
             backing_store_memory_threshold_in_mb: 512,
             decode_identity_assertions: true,
             allowed_network_hosts: None,

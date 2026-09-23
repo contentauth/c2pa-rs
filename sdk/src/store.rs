@@ -3296,6 +3296,7 @@ impl Store {
         if is_bmff {
             // 2) Get hash ranges if needed, do not generate for update manifests
             let mut needs_hash = false;
+            let mut single_file_fragments = false;
             if !pc.update_manifest() && pc.bmff_hash_assertions().is_empty() {
                 if source_is_intermediate {
                     intermediate_stream.rewind()?;
@@ -3308,8 +3309,41 @@ impl Store {
                     bmff_hash.set_bmff_version(2); // backcompat support
                 }
 
-                // add Merkle mdats if requested
-                if source_is_intermediate {
+                // Fragment binding takes precedence over ordinary mdat chunk hashing.
+                let fragment_boxes = if source_is_intermediate {
+                    bmff_hash.prepare_single_file_merkle(
+                        &mut intermediate_stream,
+                        settings.core.merkle_tree_max_leaves,
+                    )?
+                } else {
+                    bmff_hash.prepare_single_file_merkle(
+                        input_stream,
+                        settings.core.merkle_tree_max_leaves,
+                    )?
+                };
+                if let Some(fragment_boxes) = fragment_boxes {
+                    // Auxiliary-only assets deliberately do not permit automatic
+                    // sidecar/XMP discovery. Do not emit undiscoverable output.
+                    if remove_manifests {
+                        return Err(Error::BadParam(
+                            "single-file fragmented BMFF Merkle signing requires an embedded manifest; detached signing is unsupported".into(),
+                        ));
+                    }
+                    let mut temp_stream = io_utils::stream_with_fs_fallback(threshold, input_len)?;
+                    let source: &mut dyn ReadSeek = if source_is_intermediate {
+                        &mut intermediate_stream
+                    } else {
+                        input_stream
+                    };
+                    crate::asset_handlers::bmff_io::insert_fragment_merkle_boxes(
+                        source,
+                        &mut temp_stream,
+                        &fragment_boxes,
+                    )?;
+                    intermediate_stream = temp_stream;
+                    source_is_intermediate = true;
+                    single_file_fragments = true;
+                } else if source_is_intermediate {
                     Store::generate_bmff_mdat_hashes(
                         &mut intermediate_stream,
                         &mut bmff_hash,
@@ -3384,7 +3418,11 @@ impl Store {
                     output_stream.rewind()?;
                     let mut cb =
                         |step, total| context.check_progress(ProgressPhase::Hashing, step, total);
-                    bmff_hash.gen_hash_from_stream_with_progress(output_stream, &mut cb)?;
+                    if single_file_fragments {
+                        bmff_hash.finalize_single_file_merkle(output_stream, &mut cb)?;
+                    } else {
+                        bmff_hash.gen_hash_from_stream_with_progress(output_stream, &mut cb)?;
+                    }
                     pc.update_bmff_hash(bmff_hash)?;
                 }
             }
