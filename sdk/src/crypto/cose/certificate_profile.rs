@@ -19,6 +19,7 @@ use x509_parser::{
     certificate::{BasicExtension, X509Certificate},
     der_parser::{ber::parse_ber_sequence, oid},
     extensions::ParsedExtension,
+    num_bigint::{BigInt, Sign},
     oid_registry::Oid,
     x509::{AlgorithmIdentifier, X509Version},
 };
@@ -332,11 +333,26 @@ pub fn check_certificate_profile(
         let modulus = seq[0]
             .as_bigint()
             .map_err(|_| CertificateProfileError::InvalidCertificate)?;
+        let exponent = seq[1]
+            .as_bigint()
+            .map_err(|_| CertificateProfileError::InvalidCertificate)?;
 
         if modulus.bits() < 2048 {
             log_item!(
                 "",
                 "certificate key length too short",
+                "check_certificate_profile"
+            )
+            .validation_status(SIGNING_CREDENTIAL_INVALID)
+            .failure_no_throw(validation_log, CertificateProfileError::InvalidCertificate);
+
+            return Err(CertificateProfileError::InvalidCertificate);
+        }
+
+        if !is_valid_rsa_public_exponent(&exponent) {
+            log_item!(
+                "",
+                "certificate RSA public exponent is invalid",
                 "check_certificate_profile"
             )
             .validation_status(SIGNING_CREDENTIAL_INVALID)
@@ -579,6 +595,16 @@ const SECP521R1_OID: Oid<'static> = oid!(1.3.132 .0 .35);
 const SECP384R1_OID: Oid<'static> = oid!(1.3.132 .0 .34);
 const PRIME256V1_OID: Oid<'static> = oid!(1.2.840 .10045 .3 .1 .7);
 
+fn is_valid_rsa_public_exponent(exponent: &BigInt) -> bool {
+    exponent.sign() == Sign::Plus
+        && exponent >= &BigInt::from(3u32)
+        && exponent
+            .magnitude()
+            .to_u32_digits()
+            .first()
+            .is_some_and(|least_significant| least_significant % 2 == 1)
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
@@ -587,13 +613,24 @@ mod tests {
 
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
-    use x509_parser::pem::Pem;
+    use x509_parser::{num_bigint::BigInt, pem::Pem};
 
+    use super::is_valid_rsa_public_exponent;
     use crate::{
         crypto::cose::{check_end_entity_certificate_profile, CertificateTrustPolicy},
         status_tracker::StatusTracker,
         validation_results::validation_codes::SIGNING_CREDENTIAL_EXPIRED,
     };
+
+    #[test]
+    fn rsa_public_exponent_profile() {
+        assert!(!is_valid_rsa_public_exponent(&BigInt::from(1u32)));
+        assert!(!is_valid_rsa_public_exponent(&BigInt::from(2u32)));
+        assert!(!is_valid_rsa_public_exponent(&BigInt::from(4u32)));
+        assert!(!is_valid_rsa_public_exponent(&BigInt::from(-3)));
+        assert!(is_valid_rsa_public_exponent(&BigInt::from(3u32)));
+        assert!(is_valid_rsa_public_exponent(&BigInt::from(65537u32)));
+    }
 
     #[test]
     #[cfg_attr(
