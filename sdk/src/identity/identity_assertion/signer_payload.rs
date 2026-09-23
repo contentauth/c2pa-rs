@@ -275,7 +275,8 @@ mod tests {
         let mut partial_claim = PartialClaim::default();
         partial_claim.add_assertion(&claim_reference);
 
-        let mut status_tracker = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let mut status_tracker =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
         let signer_payload = SignerPayload {
             referenced_assertions: vec![referenced],
             roles: vec![],
@@ -289,7 +290,10 @@ mod tests {
         assert!(matches!(err, ValidationError::AssertionMismatch(_)));
         assert_eq!(status_tracker.logged_items().len(), 1);
         assert_eq!(
-            status_tracker.logged_items()[0].validation_status.as_deref().unwrap(),
+            status_tracker.logged_items()[0]
+                .validation_status
+                .as_deref()
+                .unwrap(),
             "cawg.identity.assertion.mismatch"
         );
     }
