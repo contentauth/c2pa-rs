@@ -18,7 +18,7 @@ use std::io::{Read, Write};
 
 use lopdf::{
     dictionary, Document, Object,
-    Object::{Array, Integer, Name, Reference},
+    Object::{Array, Name, Reference},
     ObjectId, Stream,
 };
 use thiserror::Error;
@@ -30,6 +30,7 @@ static ASSOCIATED_FILE_KEY: &[u8] = b"AF";
 static C2PA_RELATIONSHIP: &[u8] = b"C2PA_Manifest";
 static CONTENT_CREDS: &str = "Content Credentials";
 static EMBEDDED_FILES_KEY: &[u8] = b"EmbeddedFiles";
+static METADATA_KEY: &[u8] = b"Metadata";
 static SUBTYPE_KEY: &[u8] = b"Subtype";
 static TYPE_KEY: &[u8] = b"Type";
 static NAMES_KEY: &[u8] = b"Names";
@@ -59,9 +60,18 @@ pub enum Error {
     /// file specification in the array of Associated Files defined in the catalog.
     #[error("Unable to find a C2PA embedded file specification in PDF's associated files array")]
     FindingC2PAFileSpec,
+
+    /// A manifest is present, but its object is recorded via a compressed xref
+    /// entry (stored inside an `/ObjStm`), which carries no byte offset in the
+    /// outer file — its raw byte range can't be located this way.
+    #[error("C2PA manifest object is stored in a compressed xref entry; its byte range can't be determined")]
+    ManifestObjectNotByteAddressable,
 }
 
-const C2PA_MIME_TYPE: &str = "application/x-c2pa-manifest-store";
+/// MIME subtype for a C2PA Manifest Store's embedded file specification, per
+/// C2PA spec §A.4.1: "The embedded file specification dictionary shall have
+/// a Subtype key whose value is `application/c2pa`".
+const C2PA_MIME_TYPE: &str = "application/c2pa";
 
 #[cfg_attr(test, mockall::automock)]
 pub(crate) trait C2paPdf: Sized {
@@ -87,6 +97,25 @@ pub(crate) trait C2paPdf: Sized {
     fn remove_manifest_bytes(&mut self) -> Result<(), Error>;
 
     fn read_xmp(&self) -> Option<String>;
+
+    /// Writes `xmp` as the PDF's XML metadata stream (the `/Metadata` entry
+    /// on the document's `/Catalog`), creating that entry if none exists, or
+    /// replacing an existing one's content otherwise.
+    fn write_xmp(&mut self, xmp: String) -> Result<(), Error>;
+
+    /// Returns the byte offset of the `N G obj` declaration for the C2PA
+    /// manifest's embedded-file stream, as recorded in this document's xref
+    /// table.
+    ///
+    /// Returns `Ok(None)` if no manifest is present at all. Returns
+    /// [`Error::ManifestObjectNotByteAddressable`] if a manifest is present
+    /// but its object is recorded via a compressed xref entry (inside an
+    /// `/ObjStm`), which has no byte offset in the outer file — callers must
+    /// not treat that case as "no manifest".
+    ///
+    /// Callers must parse the exact same bytes that produced this `C2paPdf`
+    /// (e.g. via [`Pdf::from_bytes`]) for the offset to be meaningful.
+    fn manifest_object_offset(&self) -> Result<Option<u64>, Error>;
 }
 
 pub(crate) struct Pdf {
@@ -294,6 +323,66 @@ impl C2paPdf for Pdf {
                 String::from_utf8(stream_dict.content.clone()).ok()
             })
     }
+
+    /// Writes `xmp` as the PDF's XML metadata stream.
+    ///
+    /// If `/Metadata` on the Catalog is already an indirect reference, replaces
+    /// the referenced object in place with a fresh `/Type /Metadata /Subtype
+    /// /XML` stream holding `xmp` — any other keys the previous object carried
+    /// are discarded, since none are meaningful for a stream this method didn't
+    /// itself create. Otherwise (no `/Metadata` entry at all, or one that isn't
+    /// a reference — e.g. a malformed direct value) adds a new indirect stream
+    /// object and points `/Metadata` at it.
+    ///
+    /// A stream is never written as a *direct* dictionary value: PDF syntax
+    /// only allows `stream`/`endstream` immediately after a top-level `N G
+    /// obj` declaration, so overwriting a non-reference `/Metadata` value
+    /// in place with a `Stream` object would serialize as invalid PDF.
+    fn write_xmp(&mut self, xmp: String) -> Result<(), Error> {
+        let stream = Object::Stream(Stream::new(
+            dictionary! {
+                TYPE_KEY => Name("Metadata".into()),
+                SUBTYPE_KEY => Name("XML".into()),
+            },
+            xmp.into_bytes(),
+        ));
+
+        let existing_reference = self
+            .document
+            .catalog()?
+            .get(METADATA_KEY)
+            .ok()
+            .and_then(|object| object.as_reference().ok());
+
+        match existing_reference {
+            Some(object_id) => *self.document.get_object_mut(object_id)? = stream,
+            None => {
+                let metadata_ref = self.document.add_object(stream);
+                self.document
+                    .catalog_mut()?
+                    .set(METADATA_KEY, Reference(metadata_ref));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn manifest_object_offset(&self) -> Result<Option<u64>, Error> {
+        let Some((id, _generation)) = self.c2pa_manifest_stream_object_id() else {
+            return Ok(None);
+        };
+
+        match self.document.reference_table.get(id) {
+            Some(lopdf::xref::XrefEntry::Normal { offset, .. }) => Ok(Some(*offset as u64)),
+            Some(lopdf::xref::XrefEntry::Compressed { .. }) => {
+                Err(Error::ManifestObjectNotByteAddressable)
+            }
+            // Free/UnusableFree/missing: the manifest dict traversal found the
+            // object, but the xref table disagrees it exists — treat this as
+            // unlocatable rather than silently reporting no manifest.
+            _ => Err(Error::ManifestObjectNotByteAddressable),
+        }
+    }
 }
 
 impl Pdf {
@@ -315,6 +404,26 @@ impl Pdf {
             .catalog()?
             .get_deref(ASSOCIATED_FILE_KEY, &self.document)?
             .as_array()?)
+    }
+
+    /// Returns the [ObjectId] of the C2PA manifest's embedded-file stream object, if a
+    /// manifest is present.
+    fn c2pa_manifest_stream_object_id(&self) -> Option<ObjectId> {
+        let file_spec_ref = self.c2pa_file_spec_object_id()?;
+
+        self.document
+            .get_object(file_spec_ref)
+            .ok()?
+            .as_dict()
+            .ok()?
+            .get(b"EF")
+            .ok()?
+            .as_dict()
+            .ok()?
+            .get(b"F")
+            .ok()?
+            .as_reference()
+            .ok()
     }
 
     /// Returns the [Object::ObjectId] of the C2PA File Spec Reference, if it is present in the
@@ -437,9 +546,14 @@ impl Pdf {
 
     /// Adds the `Embedded File Specification` to the PDF document. Returns the [Reference]
     /// to the added `Embedded File Specification`.
+    ///
+    /// Sets `Subtype` and `AFRelationship` on this dictionary per C2PA spec §A.4.1: "The
+    /// embedded file specification dictionary shall have a Subtype key whose value is
+    /// `application/c2pa` and an AFRelationship key ... whose value is `C2PA_Manifest`."
     fn add_embedded_file_specification(&mut self, file_stream_ref: ObjectId) -> ObjectId {
         let embedded_file_stream = dictionary! {
             AF_RELATIONSHIP_KEY => Name(C2PA_RELATIONSHIP.into()),
+            SUBTYPE_KEY => C2PA_MIME_TYPE,
             "Desc" => Object::string_literal(CONTENT_CREDS),
             "F" => Object::string_literal(CONTENT_CREDS),
             "EF" => dictionary! {
@@ -455,15 +569,7 @@ impl Pdf {
     /// Adds the provided `bytes` as a `StreamDictionary` to the PDF document. Returns the
     /// [Reference] of the added [Object].
     fn add_c2pa_embedded_file_stream(&mut self, bytes: Vec<u8>) -> ObjectId {
-        let stream = Stream::new(
-            dictionary! {
-                "F" => dictionary! {
-                SUBTYPE_KEY => C2PA_MIME_TYPE,
-                "Length" => Integer(bytes.len() as i64),
-                },
-            },
-            bytes,
-        );
+        let stream = Stream::new(dictionary! {}, bytes);
 
         self.document.add_object(stream)
     }
@@ -471,18 +577,22 @@ impl Pdf {
     /// Remove the C2PA Manifest `Annotation` from the PDF.
     fn remove_manifest_from_annotations(&mut self) -> Result<(), Error> {
         for (_, page_id) in self.document.get_pages() {
-            self.document
-                .get_object_mut(page_id)?
-                .as_dict_mut()?
-                .get_mut(ANNOTATIONS_KEY)?
-                .as_array_mut()?
-                .retain(|obj| {
-                    obj.as_dict()
-                        .and_then(|annot| annot.get(TYPE_KEY))
-                        .and_then(Object::as_name)
-                        .map(|str| str::from_utf8(str) != Ok(CONTENT_CREDS))
-                        .unwrap_or(true)
-                });
+            let page = self.document.get_object_mut(page_id)?.as_dict_mut()?;
+
+            // Pages with no annotations at all have nothing to remove; skip them
+            // instead of failing the whole removal (e.g. manifests attached only
+            // via `/AF`, with no `/Names` or per-page `/Annots` reference).
+            let Ok(annots) = page.get_mut(ANNOTATIONS_KEY) else {
+                continue;
+            };
+
+            annots.as_array_mut()?.retain(|obj| {
+                obj.as_dict()
+                    .and_then(|annot| annot.get(TYPE_KEY))
+                    .and_then(Object::as_name)
+                    .map(|str| str::from_utf8(str) != Ok(CONTENT_CREDS))
+                    .unwrap_or(true)
+            });
         }
 
         Ok(())
@@ -671,6 +781,69 @@ mod tests {
         assert!(pdf.has_c2pa_manifest());
     }
 
+    // C2PA spec §A.4.1: "The embedded file specification dictionary shall have a
+    // Subtype key whose value is application/c2pa and an AFRelationship key ...
+    // whose value is C2PA_Manifest."
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn test_file_specification_has_spec_required_subtype_and_af_relationship() {
+        let mut pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
+        pdf.write_manifest_as_embedded_file(vec![10u8, 20u8])
+            .unwrap();
+
+        let file_spec_ref = pdf.c2pa_file_spec_object_id().unwrap();
+        let file_spec = pdf
+            .document
+            .get_object(file_spec_ref)
+            .unwrap()
+            .as_dict()
+            .unwrap();
+
+        assert_eq!(
+            file_spec.get(SUBTYPE_KEY).unwrap().as_name().unwrap(),
+            b"application/c2pa"
+        );
+        assert_eq!(
+            file_spec
+                .get(AF_RELATIONSHIP_KEY)
+                .unwrap()
+                .as_name()
+                .unwrap(),
+            C2PA_RELATIONSHIP
+        );
+    }
+
+    // A manifest recorded via a compressed xref entry (stored inside an
+    // `/ObjStm`) has no byte offset in the outer file. This must surface as a
+    // distinct error, never as "no manifest".
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn test_manifest_object_offset_errors_on_compressed_xref_entry() {
+        let mut pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
+        pdf.write_manifest_as_embedded_file(vec![10u8, 20u8])
+            .unwrap();
+
+        let (id, _generation) = pdf.c2pa_manifest_stream_object_id().unwrap();
+        pdf.document.reference_table.entries.insert(
+            id,
+            lopdf::xref::XrefEntry::Compressed {
+                container: 1,
+                index: 0,
+            },
+        );
+
+        assert!(matches!(
+            pdf.manifest_object_offset(),
+            Err(Error::ManifestObjectNotByteAddressable)
+        ));
+    }
+
     #[test]
     #[cfg_attr(
         all(target_arch = "wasm32", not(target_os = "wasi")),
@@ -803,6 +976,87 @@ mod tests {
     fn test_read_xmp_on_pdf_with_some_metadata() {
         let pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
         assert!(pdf.read_xmp().is_some());
+    }
+
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn test_write_xmp_on_pdf_with_no_existing_metadata() {
+        let mut pdf =
+            Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic-no-xmp.pdf")).unwrap();
+        assert_eq!(pdf.read_xmp(), None);
+
+        pdf.write_xmp("test xmp content".to_string()).unwrap();
+        assert_eq!(pdf.read_xmp(), Some("test xmp content".to_string()));
+    }
+
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn test_write_xmp_on_pdf_with_existing_metadata() {
+        let mut pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
+        assert!(pdf.read_xmp().is_some());
+
+        pdf.write_xmp("replacement xmp content".to_string())
+            .unwrap();
+        assert_eq!(pdf.read_xmp(), Some("replacement xmp content".to_string()));
+    }
+
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn test_write_xmp_round_trips_through_save_to() {
+        let mut pdf =
+            Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic-no-xmp.pdf")).unwrap();
+        pdf.write_xmp("test xmp content".to_string()).unwrap();
+
+        let mut saved_bytes = vec![];
+        pdf.save_to(&mut saved_bytes).unwrap();
+
+        let saved_pdf = Pdf::from_bytes(&saved_bytes).unwrap();
+        assert_eq!(saved_pdf.read_xmp(), Some("test xmp content".to_string()));
+    }
+
+    // A `Stream` is only valid PDF syntax as a top-level indirect object —
+    // writing one as a direct dictionary value serializes as `stream` /
+    // `endstream` nested inside another object's dictionary, which isn't
+    // valid PDF grammar. If `/Metadata` is ever a malformed direct (non
+    // -reference) value rather than the reference it's supposed to be,
+    // `write_xmp` must still go through a fresh indirect object rather than
+    // overwriting that value in place with a `Stream`.
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn test_write_xmp_replaces_malformed_direct_metadata_value() {
+        let mut pdf =
+            Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic-no-xmp.pdf")).unwrap();
+        pdf.document
+            .catalog_mut()
+            .unwrap()
+            .set(METADATA_KEY, dictionary! {});
+
+        pdf.write_xmp("test xmp content".to_string()).unwrap();
+        assert_eq!(pdf.read_xmp(), Some("test xmp content".to_string()));
+
+        // Must still be valid, reparseable PDF: `/Metadata` is now a proper
+        // indirect reference, not the `Stream` written in place as a direct
+        // value that malformed grammar would produce.
+        let metadata = pdf.document.catalog().unwrap().get(METADATA_KEY).unwrap();
+        assert!(metadata.as_reference().is_ok());
+
+        let mut saved_bytes = vec![];
+        pdf.save_to(&mut saved_bytes).unwrap();
+
+        let saved_pdf = Pdf::from_bytes(&saved_bytes).unwrap();
+        assert_eq!(saved_pdf.read_xmp(), Some("test xmp content".to_string()));
     }
 
     #[test]
