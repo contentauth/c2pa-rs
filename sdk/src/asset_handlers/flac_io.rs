@@ -389,10 +389,12 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "wasi"))]
     fn test_read_cai_zlib_bomb_rejected() {
         // CAI-13353 / VULN-38328 regression: a compressed ID3v2.4 frame must
         // not be allowed to decompress without bound. FLAC shares the same
-        // ID3 parsing path as MP3, so it is affected too.
+        // ID3 parsing path as MP3, so it is affected too. Skipped under
+        // WASI; see the helper's doc comment for why.
         test_helpers::run_read_cai_zlib_bomb_rejected(&FlacIO::new("flac"), MINIMAL_FLAC);
     }
 

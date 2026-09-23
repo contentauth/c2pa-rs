@@ -411,6 +411,11 @@ pub(crate) mod test_helpers {
     /// (`MAX_FRAME_CONTENT_SIZE` in `stream::frame::content`); this builds a
     /// frame that inflates just past that cap and asserts the read fails
     /// fast instead of exhausting memory.
+    ///
+    /// Not run under WASI: its CI sandbox caps linear memory well below
+    /// 256 MiB, so approaching the cap trips a hard wasm trap instead of the
+    /// graceful `Result::Err` this test wants to observe.
+    #[cfg(not(target_os = "wasi"))]
     pub(crate) fn run_read_cai_zlib_bomb_rejected(handler: &dyn AssetIO, audio_payload: &[u8]) {
         use std::io::Write;
 
