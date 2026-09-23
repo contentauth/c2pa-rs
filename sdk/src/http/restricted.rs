@@ -462,6 +462,108 @@ fn build_redirected_request(
     builder.body(body).map_err(HttpResolverError::Http)
 }
 
+/// Resolver wrapper that rejects requests whose *initial* URI directly names a link-local or
+/// cloud-metadata address ([`host_is_metadata_or_link_local`]), independent of any
+/// [`Core::allowed_network_hosts`] allow-list.
+///
+/// This closes the residual SSRF gap left by [`RedirectResolver`] (https://github.com/contentauth/c2pa-rs/issues/2430): that wrapper only
+/// validates redirect *targets*, so a manifest, OCSP, or `did:web` URL that names a link-local /
+/// cloud-metadata address directly (no redirect involved) would otherwise be fetched normally under
+/// the default policy. Loopback and private (RFC 1918) hosts are not affected by this guard — see
+/// the module docs in [`crate::http`] for the accepted-risk rationale.
+///
+/// This guard is only installed by [`Context`] when [`Core::allowed_network_hosts`] is unset; an
+/// explicit allow-list is a stronger, intentional statement of policy and takes precedence over
+/// this default.
+///
+/// [`Context`]: crate::Context
+/// [`Core::allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
+#[derive(Debug)]
+pub(crate) struct MetadataGuardResolver<T> {
+    inner: T,
+}
+
+impl<T> MetadataGuardResolver<T> {
+    /// Wraps `inner`, rejecting requests to link-local/cloud-metadata addresses before they reach
+    /// it.
+    pub(crate) fn new(inner: T) -> Self {
+        Self { inner }
+    }
+}
+
+impl<T: SyncHttpResolver> SyncHttpResolver for MetadataGuardResolver<T> {
+    fn http_resolve(
+        &self,
+        request: Request<Vec<u8>>,
+    ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+        if host_is_metadata_or_link_local(request.uri()) {
+            return Err(HttpResolverError::MetadataOrLinkLocalUriDisallowed {
+                uri: sanitize_for_log(&request.uri().to_string()),
+            });
+        }
+        self.inner.http_resolve(request)
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl<T: AsyncHttpResolver + Sync> AsyncHttpResolver for MetadataGuardResolver<T> {
+    async fn http_resolve_async(
+        &self,
+        request: Request<Vec<u8>>,
+    ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+        if host_is_metadata_or_link_local(request.uri()) {
+            return Err(HttpResolverError::MetadataOrLinkLocalUriDisallowed {
+                uri: sanitize_for_log(&request.uri().to_string()),
+            });
+        }
+        self.inner.http_resolve_async(request).await
+    }
+}
+
+/// Returns true if `uri`'s host is a link-local address (`169.254.0.0/16`, `fe80::/10`) or a
+/// well-known cloud-metadata endpoint outside those ranges (e.g. AWS's IPv6 IMDS address). Used to
+/// guard the *initial* request by default (CAI-13326); see [`MetadataGuardResolver`].
+///
+/// Unlike [`host_is_non_global`], this does **not** flag loopback or private (RFC 1918) addresses —
+/// those remain reachable by default so `localhost`/intranet manifest hosts and enterprise PKI keep
+/// working. Use [`Core::allowed_network_hosts`] to restrict those as well.
+///
+/// [`Core::allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
+pub(crate) fn host_is_metadata_or_link_local(uri: &Uri) -> bool {
+    let Some(host) = uri.host() else {
+        // A request with no host is malformed and cannot be dialed by the concrete clients, but
+        // fail closed here too for consistency with `host_is_non_global`.
+        return true;
+    };
+
+    let host = normalize_host(host);
+
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return ip_is_metadata_or_link_local(ip);
+    }
+
+    // Obfuscated numeric hosts (e.g. a decimal or hex encoding of 169.254.169.254) have no
+    // legitimate use as a manifest/OCSP/timestamp host; fail closed rather than risk an OS
+    // resolver treating them as link-local.
+    looks_like_obfuscated_ip(&host)
+}
+
+fn ip_is_metadata_or_link_local(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_link_local(), // 169.254.0.0/16, incl. 169.254.169.254 (AWS/Azure/GCP/DO IMDS)
+        IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return v4.is_link_local();
+            }
+
+            let segments = v6.segments();
+            (segments[0] & 0xffc0) == 0xfe80 // fe80::/10 link-local
+                || segments == [0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254] // AWS IPv6 IMDS (fd00:ec2::254)
+        }
+    }
+}
+
 /// Returns true if `uri`'s host is not globally routable (loopback, private, link-local /
 /// cloud-metadata, unique-local, CGNAT, etc.) and must therefore not be used as a redirect target.
 ///
@@ -494,13 +596,20 @@ pub(crate) fn host_is_non_global(uri: &Uri) -> bool {
     host == "localhost" || host.ends_with(".localhost")
 }
 
-/// Normalizes a URI host for comparison: strips IPv6 brackets and a fully-qualified trailing dot,
-/// and lower-cases the result.
+/// Normalizes a URI host for comparison: strips IPv6 brackets, an IPv6 zone ID, and a
+/// fully-qualified trailing dot, and lower-cases the result.
 fn normalize_host(host: &str) -> String {
     let host = host
         .strip_prefix('[')
         .and_then(|h| h.strip_suffix(']'))
         .unwrap_or(host);
+
+    // Strip an RFC 6874 zone ID, e.g. `fe80::1%25eth0` (percent-encoded, as required in a URI) or
+    // an already-decoded `fe80::1%eth0` -> `fe80::1`, so the address still parses as `IpAddr`.
+    // `Ipv6Addr::parse` does not understand zone IDs, so without this the host would fall through
+    // unrecognized (neither a valid IP nor an obfuscated numeric form) and be treated as allowed,
+    // missing link-local addresses like this one.
+    let host = host.split('%').next().unwrap_or(host);
 
     let host = host.strip_suffix('.').unwrap_or(host);
 
@@ -865,23 +974,104 @@ mod test {
             "http://0.0.0.0/",                          // unspecified
             "http://[::1]/",                            // IPv6 loopback
             "http://[fe80::1]/",                        // IPv6 link-local
-            "http://[fc00::1]/",                        // IPv6 unique-local
-            "http://[::ffff:169.254.169.254]/",         // IPv4-mapped link-local
-            "http://localhost/",                        // loopback host name
-            "http://api.localhost/",                    // loopback host name suffix
-            "http://LOCALHOST/",                        // case-insensitive host name
-            "http://127.0.0.1./",                       // trailing-dot FQDN form of loopback
-            "http://2130706433/",                       // obfuscated decimal 127.0.0.1
-            "http://0x7f000001/",                       // obfuscated hex 127.0.0.1
-            "http://127.0x1/",                          // hex octet in a non-leading position
-            "http://0x7f.0x0.0x0.0x1/",                 // dotted all-hex form of 127.0.0.1
-            "http://127.1/",                            // short-form IPv4 loopback
+            "http://[fe80::1%25eth0]/", // IPv6 link-local with a percent-encoded zone ID
+            "http://[fc00::1]/",        // IPv6 unique-local
+            "http://[::ffff:169.254.169.254]/", // IPv4-mapped link-local
+            "http://localhost/",        // loopback host name
+            "http://api.localhost/",    // loopback host name suffix
+            "http://LOCALHOST/",        // case-insensitive host name
+            "http://127.0.0.1./",       // trailing-dot FQDN form of loopback
+            "http://2130706433/",       // obfuscated decimal 127.0.0.1
+            "http://0x7f000001/",       // obfuscated hex 127.0.0.1
+            "http://127.0x1/",          // hex octet in a non-leading position
+            "http://0x7f.0x0.0x0.0x1/", // dotted all-hex form of 127.0.0.1
+            "http://127.1/",            // short-form IPv4 loopback
         ] {
             assert!(
                 host_is_non_global(&Uri::from_static(uri)),
                 "expected {uri} to be denied"
             );
         }
+    }
+
+    #[test]
+    fn metadata_and_link_local_hosts_are_rejected_by_default_guard() {
+        for uri in [
+            "http://169.254.169.254/latest/meta-data/", // AWS/Azure/GCP/DO IMDS
+            "http://169.254.1.1/",                      // link-local (whole /16)
+            "http://[fe80::1]/",                        // IPv6 link-local
+            "http://[::ffff:169.254.169.254]/",         // IPv4-mapped link-local
+            "http://[fd00:ec2::254]/",                  // AWS IPv6 IMDS
+            "http://2852039166/",                       // obfuscated decimal 169.254.169.254
+            "http://[fe80::1%25eth0]/", // IPv6 link-local with a percent-encoded zone ID
+        ] {
+            assert!(
+                host_is_metadata_or_link_local(&Uri::from_static(uri)),
+                "expected {uri} to be denied by the metadata/link-local guard"
+            );
+        }
+    }
+
+    #[test]
+    fn hostless_uri_is_rejected_by_default_guard() {
+        // A request with no host cannot normally be dialed by the concrete clients, but the guard
+        // fails closed for consistency with `host_is_non_global`.
+        assert!(host_is_metadata_or_link_local(&Uri::from_static(
+            "/latest/meta-data/"
+        )));
+    }
+
+    #[test]
+    fn loopback_and_private_hosts_are_allowed_by_default_guard() {
+        // The narrower default guard only blocks link-local/metadata; loopback and RFC1918 hosts
+        // remain reachable by default (see module docs for the accepted-risk rationale).
+        for uri in [
+            "http://127.0.0.1/",
+            "http://localhost/",
+            "http://10.0.0.1/",
+            "http://192.168.1.1/",
+            "https://contentauthenticity.org/",
+        ] {
+            assert!(
+                !host_is_metadata_or_link_local(&Uri::from_static(uri)),
+                "expected {uri} to be allowed by the metadata/link-local guard"
+            );
+        }
+    }
+
+    #[test]
+    fn metadata_guard_resolver_blocks_direct_metadata_request() {
+        let resolver = MetadataGuardResolver::new(NoopHttpResolver);
+        let result = scripted_get(&resolver, "http://169.254.169.254/latest/meta-data/");
+        assert!(matches!(
+            result,
+            Err(HttpResolverError::MetadataOrLinkLocalUriDisallowed { .. })
+        ));
+    }
+
+    #[test]
+    fn metadata_guard_resolver_allows_loopback_and_public_hosts() {
+        let resolver = MetadataGuardResolver::new(NoopHttpResolver);
+        assert_allowed_uri(&resolver, "http://127.0.0.1/");
+        assert_allowed_uri(&resolver, "https://contentauthenticity.org/");
+    }
+
+    #[test]
+    fn explicit_allow_list_is_not_subject_to_the_metadata_guard() {
+        // An explicit `allowed_network_hosts` allow-list (modeled here by `RestrictedResolver`) is a
+        // stronger, intentional statement of policy than the default metadata/link-local guard: if
+        // an operator explicitly opts a metadata host in, it is reachable. `Context` installs
+        // `RestrictedResolver` instead of `MetadataGuardResolver` whenever an allow-list is
+        // configured (see `Context::build_default_sync_resolver`), so the guard never runs at all in
+        // that case.
+        let restricted_resolver = RestrictedResolver::with_allowed_hosts(
+            NoopHttpResolver,
+            vec!["169.254.169.254".into()],
+        );
+        assert_allowed_uri(
+            &restricted_resolver,
+            "http://169.254.169.254/latest/meta-data/",
+        );
     }
 
     #[test]
