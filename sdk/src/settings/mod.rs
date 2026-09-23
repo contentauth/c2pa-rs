@@ -511,10 +511,7 @@ pub struct Core {
     pub max_decompressed_manifest_size_in_mb: usize,
     /// Kilobytes the hasher holds at one time in a single buffer.
     ///
-    /// This bounds peak memory when hashing an asset for signing and for verification.
-    /// The native path hashes on a second thread and holds two buffers, so its peak is
-    /// twice this value. Lower it to verify a large asset in a constrained runtime.
-    ///
+    /// This bounds (peak) memory during hashing of an asset for signing and for verification.
     /// The default is 262144 (256 MB).
     pub hash_buffer_size_in_kb: usize,
 }
@@ -1554,8 +1551,7 @@ pub mod tests {
 
     #[test]
     fn test_core_validate_rejects_zero_hash_buffer_size_in_kb() {
-        // A non-zero value is accepted, so a rejection below is the zero check firing
-        // rather than this key being unwritable for some unrelated reason.
+        // Zero as setting is eventually rejected.
         let accepted = Settings::default().with_value("core.hash_buffer_size_in_kb", 64usize);
         assert!(accepted.is_ok(), "non-zero value should be accepted");
         assert_eq!(accepted.unwrap().core.hash_buffer_size_in_kb, 64);

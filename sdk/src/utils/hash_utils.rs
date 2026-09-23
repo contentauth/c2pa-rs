@@ -272,8 +272,7 @@ pub(crate) fn default_hash_buffer_size() -> NonZeroUsize {
 }
 
 /// Turn [`Core::hash_buffer_size_in_kb`] into a byte count the hasher can use.
-///
-/// Zero is rejected at settings load, so this saturates rather than failing.
+/// Note: Zero is rejected at settings load.
 ///
 /// [`Core::hash_buffer_size_in_kb`]: crate::settings::Core::hash_buffer_size_in_kb
 pub(crate) fn hash_buffer_size_from_kb(kb: usize) -> NonZeroUsize {
