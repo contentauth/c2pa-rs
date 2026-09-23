@@ -404,6 +404,74 @@ pub(crate) mod test_helpers {
         }
     }
 
+    /// Regression test for CAI-13353 (VULN-38328): an ID3v2.4 frame using the
+    /// COMPRESSION + DATA_LENGTH_INDICATOR flags could decompress to
+    /// gigabytes from a tiny on-disk payload, OOM-killing the process.
+    /// `id3` 1.17.2 caps decoded frame content at 256 MiB
+    /// (`MAX_FRAME_CONTENT_SIZE` in `stream::frame::content`); this builds a
+    /// frame that inflates just past that cap and asserts the read fails
+    /// fast instead of exhausting memory.
+    pub(crate) fn run_read_cai_zlib_bomb_rejected(handler: &dyn AssetIO, audio_payload: &[u8]) {
+        use std::io::Write;
+
+        use flate2::{write::ZlibEncoder, Compression};
+
+        fn synchsafe(n: u32) -> [u8; 4] {
+            [
+                ((n >> 21) & 0x7f) as u8,
+                ((n >> 14) & 0x7f) as u8,
+                ((n >> 7) & 0x7f) as u8,
+                (n & 0x7f) as u8,
+            ]
+        }
+
+        // Highly-compressible payload that inflates to just past id3's 256
+        // MiB cap while compressing down to a few hundred bytes on disk.
+        const INFLATED_LEN: u64 = 256 * 1024 * 1024 + 1024 * 1024;
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::best());
+        let chunk = [0u8; 1024 * 1024];
+        let mut written = 0u64;
+        while written < INFLATED_LEN {
+            let n = std::cmp::min(chunk.len() as u64, INFLATED_LEN - written) as usize;
+            encoder.write_all(&chunk[..n]).expect("compress chunk");
+            written += n as u64;
+        }
+        let compressed = encoder.finish().expect("finish zlib stream");
+
+        // Frame content: 4-byte data-length-indicator (its value is ignored
+        // by the reader, only its presence matters) + the compressed bytes.
+        let mut frame_content = synchsafe(0).to_vec();
+        frame_content.extend_from_slice(&compressed);
+
+        let mut frame = Vec::new();
+        frame.extend_from_slice(b"TXXX");
+        frame.extend_from_slice(&synchsafe(frame_content.len() as u32));
+        frame.extend_from_slice(&0x0009u16.to_be_bytes()); // COMPRESSION | DATA_LENGTH_INDICATOR
+        frame.extend_from_slice(&frame_content);
+
+        let mut buf = id3_header(4, frame.len() as u32).to_vec();
+        buf.extend_from_slice(&frame);
+        buf.extend_from_slice(audio_payload);
+        let mut cursor = Cursor::new(buf);
+
+        let start = std::time::Instant::now();
+        let result = handler.get_reader().read_c2pa(&mut cursor);
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed < std::time::Duration::from_secs(10),
+            "zlib-bomb ID3 frame took too long to reject: {:?}",
+            elapsed
+        );
+        match result {
+            Err(_) => {}
+            Ok(data) => panic!(
+                "expected zlib-bomb ID3 frame to be rejected, got Ok({} bytes)",
+                data.len()
+            ),
+        }
+    }
+
     /// Write arbitrary data then read it back and verify round-trip equality.
     pub(crate) fn run_write_read_roundtrip(handler: &dyn AssetIO, fixture: &Path, tmp: &Path) {
         let data = b"some more test data";
