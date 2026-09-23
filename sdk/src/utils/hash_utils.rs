@@ -280,7 +280,6 @@ pub(crate) fn hash_buffer_size_from_kb(kb: usize) -> NonZeroUsize {
 }
 
 /// Make `hash_stream_by_alg_with_progress` configurable with `max_hash_buffer_size_in_bytes`.
-/// e.g. makes it configurable in tests too.
 fn hash_stream_by_alg_with_progress_impl<R, F>(
     alg: &str,
     data: &mut R,

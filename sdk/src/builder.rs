@@ -11109,10 +11109,9 @@ mod tests {
         Ok(())
     }
 
-    /// `core.hash_buffer_size_in_kb` must reach the hasher, not just validate.
-    /// The file-level hash fires one progress tick per buffer-sized read range, so a
-    /// small buffer produces strictly more Hashing ticks over the same asset than a
-    /// buffer large enough to swallow it in one range.
+    /// Setting `core.hash_buffer_size_in_kb` must reach the hasher, not just validate.
+    /// Progress fires ticks when reaching a range, so here we check by forcing a tick,
+    /// and verifying it fired as expected.
     #[test]
     fn test_hash_buffer_size_setting_reaches_hasher() -> Result<()> {
         use std::sync::Mutex;
@@ -11140,16 +11139,12 @@ mod tests {
             Ok(count)
         }
 
-        // 1 KB is far smaller than TEST_IMAGE, so the hash is read in many ranges.
+        // 1 KB is smaller than TEST_IMAGE, so many ticks fire/many range reads.
         let small_buffer_ticks = count_hashing_ticks(1)?;
-        // 256 MB swallows the whole asset in a single range.
+        // 256 MB is larger than the asset, only one tick max (one range was enough).
         let large_buffer_ticks = count_hashing_ticks(256 * 1024)?;
 
-        assert!(
-            small_buffer_ticks > large_buffer_ticks,
-            "a 1 KB hash buffer should produce more Hashing ticks than a 256 MB one, \
-             got {small_buffer_ticks} vs {large_buffer_ticks}"
-        );
+        assert!(small_buffer_ticks > large_buffer_ticks);
         Ok(())
     }
 
