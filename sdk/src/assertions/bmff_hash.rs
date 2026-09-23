@@ -1422,6 +1422,10 @@ impl BmffHash {
                         ));
                     }
 
+                    // reject fragments whose auxiliary proof boxes have been
+                    // reordered relative to their declared Merkle leaf location
+                    Self::verify_sequential_merkle_locations(bmff_merkle)?;
+
                     // build Merkle tree for the moof chucks minus the excluded ranges
                     for (index, boxes) in moof_chunks.iter().enumerate() {
                         // include just the range of this chunk so exclude boxes before and after
@@ -1576,6 +1580,10 @@ impl BmffHash {
                         let chunk_bmff_mms = track_to_bmff_merkle_map
                             .get(&mm.local_id)
                             .ok_or(Error::HashMismatch("Merkle location not found".to_owned()))?;
+
+                        // reject chunks whose auxiliary proof boxes have been
+                        // reordered relative to their declared Merkle leaf location
+                        Self::verify_sequential_merkle_locations(chunk_bmff_mms)?;
 
                         // finalize leaf hashes
                         let mut leaf_hashes = Vec::new();
@@ -2127,6 +2135,31 @@ impl BmffHash {
         Ok(())
     }
 
+    /// Per the C2PA spec (validation of a BMFF Merkle tree requires that "the
+    /// location values for a given Merkle tree start at zero and increments
+    /// by one for each following chunk"), reject a group of `BmffMerkleMap`
+    /// auxiliary proof boxes whose declared `location` values are not
+    /// exactly `0..len` in the order the boxes physically appear in the
+    /// asset.
+    ///
+    /// Without this, an attacker can swap two equal-sized chunks together
+    /// with their own auxiliary Merkle-proof UUID boxes: each (bytes, proof)
+    /// pair stays internally consistent against its untouched `location`,
+    /// so the physical reordering goes undetected even though the Claim,
+    /// signature, and Merkle root are unchanged.
+    fn verify_sequential_merkle_locations(bmff_mm: &[BmffMerkleMap]) -> crate::Result<()> {
+        if bmff_mm
+            .iter()
+            .enumerate()
+            .any(|(index, mm)| mm.location != index)
+        {
+            return Err(Error::C2PAValidation(
+                ASSERTION_BMFFHASH_MALFORMED.to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Reject a Merkle tree whose leaf vector would exceed the
     /// `MAX_MERKLE_LEAVES_SIZE` memory budget for the resolved hash algorithm.
     /// Centralizes the budget check used by both Merkle-tree construction
@@ -2511,6 +2544,10 @@ impl BmffHash {
                     ));
                 }
 
+                // reject mdat chunks whose auxiliary proof boxes have been
+                // reordered relative to their declared Merkle leaf location
+                Self::verify_sequential_merkle_locations(bmff_mm)?;
+
                 // check all the ranges in this for this mdat
                 for (range_index, range) in ranges.iter().enumerate() {
                     // hash the entire fragment minus exclusions
@@ -2792,6 +2829,144 @@ mod bmff_hash_tests {
         let mut reader: Box<dyn ReadSeek> = Box::new(Cursor::new(vec![0u8; 64]));
         // Result may be an error (hash mismatch on fake data) but must not panic.
         let _ = bmff_hash.validate_merkle_maps_mdat_boxes(reader.as_mut(), &c2pa_boxes);
+    }
+
+    /// Builds a real (non-fabricated) two-leaf Merkle tree over two 8-byte
+    /// mdat chunks, along with the honest `BmffHash` assertion and auxiliary
+    /// `BmffMerkleMap` proof boxes a signer would produce for it, plus a
+    /// reader over the physical asset bytes (16-byte mdat exclusion header,
+    /// then chunk 0, then chunk 1).
+    ///
+    /// Returns `(bmff_hash, honest_bmff_merkle, honest_asset_bytes)`.
+    fn bmff_merkle_reorder_fixture() -> (BmffHash, Vec<BmffMerkleMap>, Vec<u8>) {
+        let alg = "sha256";
+        let chunk0 = b"AAAAAAAA".to_vec();
+        let chunk1 = b"BBBBBBBB".to_vec();
+
+        let leaf0 = hash_by_alg(alg, &chunk0, None);
+        let leaf1 = hash_by_alg(alg, &chunk1, None);
+
+        let tree = C2PAMerkleTree::from_leaves(
+            vec![MerkleNode(leaf0.clone()), MerkleNode(leaf1.clone())],
+            alg,
+            false,
+        );
+        let root = tree.get_root().expect("tree must have a root").clone();
+        let proof0 = tree
+            .get_proof_by_index(0, 10)
+            .expect("proof for leaf 0 must exist");
+        let proof1 = tree
+            .get_proof_by_index(1, 10)
+            .expect("proof for leaf 1 must exist");
+
+        let merkle_map = MerkleMap {
+            unique_id: 0,
+            local_id: 0,
+            count: 2,
+            alg: Some(alg.to_string()),
+            init_hash: None,
+            hashes: VecByteBuf(vec![ByteBuf::from(root)]),
+            fixed_block_size: Some(8),
+            variable_block_sizes: None,
+        };
+
+        let mut bmff_hash = BmffHash::new("test", alg, None);
+        bmff_hash.set_merkle(vec![merkle_map]);
+
+        let honest_bmff_merkle = vec![
+            BmffMerkleMap {
+                unique_id: 0,
+                local_id: 0,
+                location: 0,
+                hashes: Some(VecByteBuf(proof0.into_iter().map(ByteBuf::from).collect())),
+            },
+            BmffMerkleMap {
+                unique_id: 0,
+                local_id: 0,
+                location: 1,
+                hashes: Some(VecByteBuf(proof1.into_iter().map(ByteBuf::from).collect())),
+            },
+        ];
+
+        // 16-byte mdat exclusion header (spec-mandated, unhashed) followed by
+        // the two chunks in their honest, physical order.
+        let mut honest_asset_bytes = vec![0u8; 16];
+        honest_asset_bytes.extend_from_slice(&chunk0);
+        honest_asset_bytes.extend_from_slice(&chunk1);
+
+        (bmff_hash, honest_bmff_merkle, honest_asset_bytes)
+    }
+
+    fn bmff_merkle_reorder_c2pa_boxes(bmff_merkle: Vec<BmffMerkleMap>) -> C2PABmffBoxes {
+        C2PABmffBoxes {
+            manifest_bytes: None,
+            original_bytes: None,
+            update_bytes: None,
+            c2pa_box_present: true,
+            manifest_box_bytes: None,
+            update_box_bytes: None,
+            bmff_merkle,
+            bmff_merkle_box_infos: Vec::new(),
+            box_infos: vec![BoxInfoLite {
+                path: "mdat".to_string(),
+                offset: 0,
+                size: 32,
+            }],
+            xmp: None,
+            manifest_box_offset: None,
+            update_box_offset: None,
+            first_aux_uuid_offset: 0,
+            xmp_box_offset: 0,
+            xmp_box_size: 0,
+        }
+    }
+
+    /// Sanity check for the fixture itself: the honest, untampered asset with
+    /// its proof boxes in canonical (ascending-location) order must validate
+    /// successfully. This proves the fixture is realistic, not just an
+    /// artificial guard-clause trigger.
+    #[test]
+    fn test_validate_merkle_maps_mdat_boxes_accepts_honest_order() {
+        let (bmff_hash, honest_bmff_merkle, honest_bytes) = bmff_merkle_reorder_fixture();
+        let c2pa_boxes = bmff_merkle_reorder_c2pa_boxes(honest_bmff_merkle);
+        let mut reader: Box<dyn ReadSeek> = Box::new(Cursor::new(honest_bytes));
+
+        bmff_hash
+            .validate_merkle_maps_mdat_boxes(reader.as_mut(), &c2pa_boxes)
+            .expect("honest, untampered chunk order must validate");
+    }
+
+    /// A keyless attacker swaps two equal-sized mdat chunks together with
+    /// their own auxiliary Merkle-proof UUID boxes. Each (bytes, proof) pair
+    /// stays internally self-consistent — the proof still correctly
+    /// reconstructs the unchanged Merkle root — so before the fix this
+    /// validated as `Trusted` despite the physical byte order (and thus
+    /// rendered media) having changed. The fix requires that a Merkle
+    /// group's `location` values are exactly `0..len` in physical box order
+    /// (per the C2PA spec's Merkle validation requirements), which this
+    /// reordering violates.
+    #[test]
+    fn test_validate_merkle_maps_mdat_boxes_rejects_chunk_and_proof_reordering() {
+        let (bmff_hash, mut honest_bmff_merkle, honest_bytes) = bmff_merkle_reorder_fixture();
+
+        // Swap the physical byte order of the two chunks in the asset...
+        let mut swapped_bytes = honest_bytes[..16].to_vec();
+        swapped_bytes.extend_from_slice(&honest_bytes[24..32]); // chunk 1's bytes first
+        swapped_bytes.extend_from_slice(&honest_bytes[16..24]); // then chunk 0's bytes
+
+        // ...and move their corresponding proof boxes together with them,
+        // leaving each box's own `location`/`hashes` untouched.
+        honest_bmff_merkle.swap(0, 1);
+        let swapped_bmff_merkle = honest_bmff_merkle;
+
+        let c2pa_boxes = bmff_merkle_reorder_c2pa_boxes(swapped_bmff_merkle);
+        let mut reader: Box<dyn ReadSeek> = Box::new(Cursor::new(swapped_bytes));
+
+        let result = bmff_hash.validate_merkle_maps_mdat_boxes(reader.as_mut(), &c2pa_boxes);
+        assert!(
+            matches!(result, Err(Error::C2PAValidation(_))),
+            "chunk+proof reordering must be rejected, got {result:?}"
+        );
     }
 
     /// Verifies that a small mdat box (size < 16) does not cause integer underflow
