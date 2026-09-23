@@ -103,9 +103,9 @@ fn add_xmp_key(xmp: &str, key: &str, value: &str) -> Result<String> {
     let mut target_length = orig_length.max(4096);
     // Remove the ending xpacket if present for easier manipulation
     let xpacket_end = "<?xpacket end";
-    let xpacket_end_length = XMP_END.len();
     let xmp_body = if let Some(pos) = xmp.rfind(xpacket_end) {
-        target_length = orig_length - xpacket_end_length;
+        // Use pos, not orig_length - XMP_END.len(): the trailer may be shorter than XMP_END, which would underflow.
+        target_length = pos;
         xmp[..pos].trim_end()
     } else {
         xmp
@@ -217,9 +217,9 @@ fn remove_xmp_key(xmp: &str, key: &str) -> Result<String> {
 
     let mut target_length = orig_length.max(4096);
     let xpacket_end = "<?xpacket end";
-    let xpacket_end_length = XMP_END.len();
     let xmp_body = if let Some(pos) = xmp.rfind(xpacket_end) {
-        target_length = orig_length - xpacket_end_length;
+        // See add_xmp_key: use pos to avoid underflowing target_length.
+        target_length = pos;
         xmp[..pos].trim_end()
     } else {
         xmp
@@ -433,6 +433,35 @@ mod tests {
         let unicorn = extract_provenance(&xmp);
         println!("{xmp}");
         assert_eq!(unicorn, Some(PROVENANCE.to_string()));
+    }
+
+    // Regression test: a truncated trailer shorter than XMP_END must not underflow target_length.
+    #[test]
+    fn add_xmp_key_truncated_trailer_does_not_underflow() {
+        let truncated = "<?xpacket end";
+        assert_eq!(truncated.len(), 13);
+
+        let xmp = add_provenance(truncated, PROVENANCE).expect("adding provenance");
+        assert_eq!(extract_provenance(&xmp), None);
+    }
+
+    #[test]
+    fn remove_xmp_key_truncated_trailer_does_not_underflow() {
+        let truncated = "<?xpacket end";
+        assert_eq!(truncated.len(), 13);
+
+        let xmp = remove_provenance(truncated).expect("removing provenance");
+        assert_eq!(extract_provenance(&xmp), None);
+    }
+
+    // Control: a complete trailer should still round-trip normally.
+    #[test]
+    fn add_xmp_key_full_trailer_still_works() {
+        let xmp = add_provenance(XMP_DATA, PROVENANCE).expect("adding provenance");
+        assert_eq!(extract_provenance(&xmp), Some(PROVENANCE.to_string()));
+        assert!(xmp
+            .trim_end()
+            .ends_with(std::str::from_utf8(XMP_END).unwrap()));
     }
 
     #[c2pa_test_async]
