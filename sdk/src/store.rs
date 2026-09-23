@@ -10266,6 +10266,28 @@ pub mod tests {
         redirect.assert_calls(1);
     }
 
+    // SSRF via a manifest URL that *directly* names a cloud-metadata address, no redirect involved
+    // (CAI-13326, the residual issue left after CAI-12574 closed the redirect vector).
+    //
+    // Under the DEFAULT policy (no `allowed_network_hosts` configured), the initial request is
+    // still rejected when it directly targets a link-local/cloud-metadata address. No network call
+    // is made at all — the guard rejects before dialing out — so this test needs no mock server.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "fetch_remote_manifests"))]
+    #[test]
+    fn test_remote_manifest_direct_metadata_url_blocked() {
+        let context = Context::new();
+        let result =
+            Store::fetch_remote_manifest("http://169.254.169.254/latest/meta-data/", &context);
+
+        let err =
+            result.expect_err("a direct request to a cloud-metadata address must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("link-local") || msg.contains("cloud-metadata"),
+            "error should explain the blocked link-local/metadata target, got: {msg}"
+        );
+    }
+
     // With `allow_redirects = false`, the SDK refuses to follow any redirect at all.
     #[cfg(all(not(target_arch = "wasm32"), feature = "fetch_remote_manifests"))]
     #[test]
