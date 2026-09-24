@@ -115,6 +115,23 @@ impl ClaimGeneratorInfo {
     pub fn get(&self, key: &str) -> Option<&Value> {
         self.other.get(key)
     }
+
+    /// Move an untyped specVersion into its typed field without emitting duplicate keys.
+    pub(crate) fn normalize_spec_version(&mut self) -> crate::Result<()> {
+        if let Some(value) = self.other.get("specVersion") {
+            let version = value.as_str().ok_or_else(|| {
+                crate::Error::BadParam("claim_generator_info specVersion must be a string".into())
+            })?;
+            if self.spec_version.as_deref().is_some_and(|v| v != version) {
+                return Err(crate::Error::BadParam(
+                    "conflicting claim_generator_info specVersion values".into(),
+                ));
+            }
+            self.spec_version = Some(version.to_owned());
+            self.other.remove("specVersion");
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

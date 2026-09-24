@@ -1650,6 +1650,9 @@ impl Builder {
             claim_generator_info.push(info);
         }
 
+        for info in &mut claim_generator_info {
+            info.normalize_spec_version()?;
+        }
         claim_generator_info[0].insert("org.contentauth.c2pa_rs", env!("CARGO_PKG_VERSION"));
 
         // Build the claim_generator string since this is required
@@ -4338,6 +4341,52 @@ mod tests {
         // convert back to json and compare to original
         let builder_json = serde_json::to_string(&builder.definition).unwrap();
         assert_eq!(builder_json, stripped_json);
+    }
+
+    #[test]
+    fn test_claim_generator_info_spec_version_insert_roundtrip() {
+        for typed in [Some("2.4.0"), None] {
+            let mut info = ClaimGeneratorInfo::new("test app");
+            info.spec_version = typed.map(str::to_owned);
+            info.insert("specVersion", "2.4.0");
+            let mut builder = Builder::default();
+            builder.definition.claim_generator_info = vec![info];
+            let claim = builder.to_claim().unwrap();
+            let info = &claim.claim_generator_info().unwrap()[0];
+            let info_bytes = c2pa_cbor::to_vec(info).unwrap();
+            assert_eq!(
+                c2pa_cbor::from_slice::<ClaimGeneratorInfo>(&info_bytes).unwrap(),
+                *info
+            );
+            assert_eq!(claim.spec_version().map(String::as_str), Some("2.4.0"));
+            let bytes = c2pa_cbor::to_vec(&claim).unwrap();
+            let restored = Claim::from_data(claim.label(), &bytes).unwrap();
+            assert_eq!(restored.spec_version().map(String::as_str), Some("2.4.0"));
+        }
+    }
+
+    #[test]
+    fn test_claim_generator_info_spec_version_rejects_invalid_insert() {
+        for typed in [None, Some("2.4.0")] {
+            for value in [
+                json!(null),
+                json!(24),
+                json!(true),
+                json!([]),
+                json!({}),
+                json!("2.3.0"),
+            ] {
+                if typed.is_none() && value.is_string() {
+                    continue; // A string is only invalid here if it conflicts with the typed field.
+                }
+                let mut info = ClaimGeneratorInfo::new("test app");
+                info.spec_version = typed.map(str::to_owned);
+                info.insert("specVersion", value);
+                let mut builder = Builder::default();
+                builder.definition.claim_generator_info = vec![info];
+                assert!(matches!(builder.to_claim(), Err(Error::BadParam(_))));
+            }
+        }
     }
 
     #[test]
