@@ -5325,7 +5325,7 @@ verify_after_sign = true
     fn test_c2pa_reader_from_manifest_data_and_stream_null_format() {
         let source_image = include_bytes!(fixture_path!("C.jpg"));
         let mut stream = TestStream::new(source_image.to_vec());
-        let manifest_data = vec![0u8; 100];
+        let manifest_data = [0u8; 100];
 
         let reader = unsafe {
             c2pa_reader_from_manifest_data_and_stream(

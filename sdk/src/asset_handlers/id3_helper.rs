@@ -411,7 +411,6 @@ pub(crate) mod test_helpers {
     /// (`MAX_FRAME_CONTENT_SIZE` in `stream::frame::content`); this builds a
     /// frame that inflates just past that cap and asserts the read fails
     /// fast instead of exhausting memory.
-    ///
     pub(crate) fn run_read_cai_zlib_bomb_rejected(handler: &dyn AssetIO, audio_payload: &[u8]) {
         use std::io::Write;
 
