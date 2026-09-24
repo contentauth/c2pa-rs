@@ -440,6 +440,17 @@ impl BoxHash {
             }
         }
 
+        // Every box present in the asset must be named in the `boxes` array; a
+        // truncated list leaves trailing boxes (e.g. all scan/pixel data)
+        // completely unhashed while still returning a match (CAI-13354). Per
+        // C2PA 2.4 §15.12.3, any box present in the asset but absent from the
+        // list must be rejected with `assertion.boxesHash.unknownBox`.
+        if source_index != source_bms.len() {
+            return Err(Error::HashMismatch(
+                ASSERTION_BOXHASH_UNKNOWN_BOX.to_owned(),
+            ));
+        }
+
         Ok(metadata_exclusion_used)
     }
 
@@ -1245,6 +1256,46 @@ mod tests {
         let result =
             bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &mock, &mut |_, _| Ok(()));
         assert!(!result.unwrap());
+    }
+
+    /// A `boxes` list that names fewer boxes than the asset contains leaves the
+    /// trailing boxes (e.g. scan/pixel data) completely unhashed. Every box
+    /// present in the asset must be named or the manifest is rejected with
+    /// `unknownBox` (C2PA 2.4 §15.12.3, CAI-13354).
+    #[test]
+    fn test_verify_rejects_truncated_box_list() {
+        let alg = "sha256";
+        let mut mock = MockMABH::new();
+        mock.expect_get_box_map().returning(|_| {
+            Ok(vec![
+                AssetBoxMap::new(vec!["C2PA".to_string()], 0, 10),
+                AssetBoxMap::new(vec!["AAAA".to_string()], 10, 10),
+            ])
+        });
+
+        let data: Vec<u8> = (0..20).collect();
+        let mut reader = Cursor::new(data);
+
+        // Names only the C2PA box, omitting the trailing content box entirely.
+        let bh = BoxHash {
+            boxes: vec![BoxMap {
+                names: vec![C2PA_BOXHASH.to_string()],
+                alg: Some(alg.to_string()),
+                hash: ByteBuf::from(vec![]),
+                excluded: None,
+                exclusions: None,
+                pad: ByteBuf::from(vec![]),
+                range_start: 0,
+                range_len: 10,
+            }],
+        };
+
+        let result =
+            bh.verify_stream_hash_with_progress(&mut reader, Some(alg), &mock, &mut |_, _| Ok(()));
+        assert!(
+            matches!(&result, Err(Error::HashMismatch(s)) if s == ASSERTION_BOXHASH_UNKNOWN_BOX),
+            "unexpected result: {result:?}"
+        );
     }
 
     #[test]
