@@ -316,42 +316,35 @@ fn finalize_identity_assertion(
     // TO DO: Think through how errors map into crate::Error.
 
     if let Some(assertion_size) = size {
-        // Make sure enough padding/room is left for the 15 bytes of padding fields.
-        let min_size = assertion_cbor.len().checked_add(15).ok_or_else(|| {
-            crate::Error::BadParam(format!(
-                "Assertion larger than expected {assertion_size} bytes"
-            ))
-        })?;
-
-        if assertion_size < min_size {
+        if assertion_cbor.len() > assertion_size {
             // TO DO: Think about how to signal this in such a way that
             // the AsyncCredentialHolder implementor understands the problem.
             return Err(crate::Error::BadParam(format!("Serialized assertion is {len} bytes, which exceeds the planned size of {assertion_size} bytes", len = assertion_cbor.len())));
         }
 
-        ia.pad1 = vec![0u8; assertion_size - assertion_cbor.len() - 15];
+        if assertion_size - assertion_cbor.len() < 15 {
+            ia.pad1 = vec![0u8; assertion_size - assertion_cbor.len()];
+        } else {
+            ia.pad1 = vec![0u8; assertion_size - assertion_cbor.len() - 15];
 
-        assertion_cbor.clear();
-        c2pa_cbor::to_writer(&mut assertion_cbor, &ia)
-            .map_err(|e| crate::Error::BadParam(e.to_string()))?;
-        // TO DO: Think through how errors map into crate::Error.
+            assertion_cbor.clear();
+            c2pa_cbor::to_writer(&mut assertion_cbor, &ia)
+                .map_err(|e| crate::Error::BadParam(e.to_string()))?;
+            // TO DO: Think through how errors map into crate::Error.
 
-        ia.pad2 = Some(ByteBuf::from(vec![
-            0u8;
-            assertion_size - assertion_cbor.len() - 6
-        ]));
-
-        assertion_cbor.clear();
-        c2pa_cbor::to_writer(&mut assertion_cbor, &ia)
-            .map_err(|e| crate::Error::BadParam(e.to_string()))?;
-        // TO DO: Think through how errors map into crate::Error.
-
-        if assertion_cbor.len() != assertion_size {
-            return Err(crate::Error::BadParam(format!(
-                "Padded assertion is {len} bytes, expected {assertion_size} bytes",
-                len = assertion_cbor.len()
-            )));
+            ia.pad2 = Some(ByteBuf::from(vec![
+                0u8;
+                assertion_size - assertion_cbor.len() - 6
+            ]));
         }
+
+        assertion_cbor.clear();
+        c2pa_cbor::to_writer(&mut assertion_cbor, &ia)
+            .map_err(|e| crate::Error::BadParam(e.to_string()))?;
+        // TO DO: Think through how errors map into crate::Error.
+
+        // TO DO: See if this approach ever fails. IMHO it "should" work for all cases.
+        assert_eq!(assertion_size, assertion_cbor.len());
     }
 
     Ok(DynamicAssertionContent::Cbor(assertion_cbor))
@@ -506,9 +499,8 @@ mod tests {
         assert_eq!(nc_json, "{}");
     }
 
-    /// Reserve size can't hold assert + the 15 padding bytes.
     #[test]
-    fn rejects_reserve_size_that_is_too_small() {
+    fn pads_to_every_reserve_size() {
         use super::{finalize_identity_assertion, DynamicAssertionContent};
 
         let signer_payload = SignerPayload {
@@ -524,12 +516,15 @@ mod tests {
         };
         let unpadded_len = unpadded.len();
 
-        for size in [0usize, 1, unpadded_len, unpadded_len + 14] {
-            match finalize_identity_assertion(signer_payload.clone(), Some(size), Ok(vec![])) {
-                Err(crate::Error::BadParam(_)) => {}
-                Err(e) => panic!("expected BadParam, got {e:?}"),
-                Ok(_) => panic!("a reserve size that is too small must panic"),
-            }
+        for size in unpadded_len..=unpadded_len + 300 {
+            let DynamicAssertionContent::Cbor(padded) =
+                finalize_identity_assertion(signer_payload.clone(), Some(size), Ok(vec![]))
+                    .unwrap()
+            else {
+                panic!("expected CBOR content");
+            };
+            assert_eq!(padded.len(), size);
+            c2pa_cbor::from_slice::<IdentityAssertion>(&padded).unwrap();
         }
     }
 }

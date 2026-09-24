@@ -33,12 +33,10 @@ pub trait CredentialHolder {
     /// Returns the designated `sig_type` value for this kind of credential.
     fn sig_type(&self) -> &'static str;
 
-    /// Returns the maximum expected size in bytes of the `signature`
-    /// field for the identity assertion which will be subsequently
-    /// returned by the [`sign`] function. Signing will fail if the
-    /// subsequent signature is larger than this number of bytes.
+    /// Returns the size in bytes the complete serialized identity
+    /// assertion will be padded to. Content generation fails with
+    /// [`Error::BadParam`] if the assertion is larger than this.
     ///
-    /// [`sign`]: Self::sign
     /// [`Error::BadParam`]: crate::Error::BadParam
     fn reserve_size(&self) -> usize;
 
@@ -69,12 +67,10 @@ pub trait AsyncCredentialHolder: MaybeSync + MaybeSend {
     /// Returns the designated `sig_type` value for this kind of credential.
     fn sig_type(&self) -> &'static str;
 
-    /// Returns the maximum expected size in bytes of the `signature`
-    /// field for the identity assertion which will be subsequently
-    /// returned by the [`sign`] function. Signing will fail if the
-    /// subsequent signature is larger than this number of bytes.
+    /// Returns the size in bytes the complete serialized identity
+    /// assertion will be padded to. Content generation fails with
+    /// [`Error::BadParam`] if the assertion is larger than this.
     ///
-    /// [`sign`]: Self::sign
     /// [`Error::BadParam`]: crate::Error::BadParam
     fn reserve_size(&self) -> usize;
 

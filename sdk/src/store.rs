@@ -2658,9 +2658,7 @@ impl Store {
         let mut assertions = Vec::new();
         for da in dyn_assertions.iter() {
             let reserve_size = da.reserve_size()?;
-            let data1 = c2pa_cbor::ser::to_vec_packed(&vec![0; reserve_size])?;
-            let cbor_delta = data1.len() - reserve_size;
-            let da_data = c2pa_cbor::ser::to_vec_packed(&vec![0; reserve_size - cbor_delta])?;
+            let da_data = dynamic_assertion_placeholder(&da.label(), reserve_size)?;
             assertions.push(UserCbor::new(&da.label(), da_data));
         }
 
@@ -4498,6 +4496,51 @@ impl std::fmt::Display for Store {
         let report = &ManifestStoreReport::from_store(self).unwrap_or_default();
         f.write_str(&format!("{}", report))
     }
+}
+
+/// Length in bytes of a CBOR array head announcing `n` elements.
+fn cbor_array_header_len(n: usize) -> usize {
+    match n as u64 {
+        0..=23 => 1,
+        24..=0xff => 2,
+        0x100..=0xffff => 3,
+        0x1_0000..=0xffff_ffff => 5,
+        _ => 9,
+    }
+}
+
+/// Builds an array-of-uints CBOR placeholder of exactly `reserve_size` bytes.
+fn dynamic_assertion_placeholder(label: &str, reserve_size: usize) -> Result<Vec<u8>> {
+    // Every CBOR data item is at least one byte long.
+    if reserve_size == 0 {
+        return Err(Error::BadParam(format!(
+            "dynamic assertion {label} has a reserve size of 0 bytes"
+        )));
+    }
+
+    // Largest element count whose all-zero encoding still fits.
+    let mut count = reserve_size - 1;
+    while count > reserve_size - cbor_array_header_len(count) {
+        count -= 1;
+    }
+    let extra = reserve_size - cbor_array_header_len(count) - count;
+
+    let too_large = |_| {
+        Error::BadParam(format!(
+            "dynamic assertion {label} reserve size of {reserve_size} bytes is too large"
+        ))
+    };
+    let mut elements: Vec<u8> = Vec::new();
+    elements.try_reserve_exact(count).map_err(too_large)?;
+    elements.resize(count, 0);
+    elements[..extra].fill(24);
+
+    // Reserved up front so encoding never reallocates.
+    let mut data: Vec<u8> = Vec::new();
+    data.try_reserve_exact(reserve_size).map_err(too_large)?;
+    c2pa_cbor::to_writer_deterministic(&mut data, &elements)?;
+    debug_assert_eq!(data.len(), reserve_size);
+    Ok(data)
 }
 
 /// `InvalidClaimError` provides additional detail on error cases for [`Store::from_jumbf`].
@@ -9121,6 +9164,25 @@ pub mod tests {
 
         assert!(!report.has_any_error());
         // std::fs::write("target/test.jpg", result).unwrap();
+    }
+
+    #[test]
+    fn dynamic_assertion_placeholder_has_exact_size() {
+        assert!(matches!(
+            dynamic_assertion_placeholder("x", 0),
+            Err(Error::BadParam(_))
+        ));
+
+        for size in (1..=300usize).chain(65_500..=65_600) {
+            let data = dynamic_assertion_placeholder("x", size).unwrap();
+            assert_eq!(data.len(), size, "reserve size {size}");
+            c2pa_cbor::from_slice::<Vec<u8>>(&data).unwrap();
+        }
+
+        assert!(matches!(
+            dynamic_assertion_placeholder("x", usize::MAX),
+            Err(Error::BadParam(_))
+        ));
     }
 
     /// Two dynamic assertions that share a label must each land in their own
