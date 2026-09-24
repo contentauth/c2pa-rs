@@ -960,6 +960,117 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a CAWG identity assertion.
     pub const CAWG_ICA_UNTRUSTED_ISSUER: &str = "cawg.ica.untrusted_issuer";
 
+    /// The CAWG identity assertion CBOR is not valid.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_IDENTITY_CBOR_INVALID: &str = "cawg.identity.cbor.invalid";
+
+    /// The CAWG identity assertion signature type is unknown.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_IDENTITY_SIG_TYPE_UNKNOWN: &str = "cawg.identity.sig_type.unknown";
+
+    /// The CAWG identity assertion padding is invalid.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_IDENTITY_PAD_INVALID: &str = "cawg.identity.pad.invalid";
+
+    /// The CAWG identity assertion is well formed.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_IDENTITY_WELL_FORMED: &str = "cawg.identity.well-formed";
+
+    /// A referenced CAWG identity assertion is missing or has a mismatched hash.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_IDENTITY_ASSERTION_MISMATCH: &str = "cawg.identity.assertion.mismatch";
+
+    /// A CAWG identity assertion does not reference a hard-binding assertion.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_IDENTITY_HARD_BINDING_MISSING: &str = "cawg.identity.hard_binding_missing";
+
+    /// A CAWG identity assertion references the same assertion more than once.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_IDENTITY_ASSERTION_DUPLICATE: &str = "cawg.identity.assertion.duplicate";
+
+    /// A CAWG identity claims aggregation credential was validated.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_ICA_CREDENTIAL_VALID: &str = "cawg.ica.credential_valid";
+
+    /// A CAWG identity claims aggregation COSE_Sign1 structure is invalid.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_ICA_INVALID_COSE_SIGN1: &str = "cawg.ica.invalid_cose_sign1";
+
+    /// A CAWG identity claims aggregation credential uses an invalid algorithm.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_ICA_INVALID_ALG: &str = "cawg.ica.invalid_alg";
+
+    /// A CAWG identity claims aggregation credential has an invalid content type.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_ICA_INVALID_CONTENT_TYPE: &str = "cawg.ica.invalid_content_type";
+
+    /// A CAWG identity claims aggregation verifiable credential is invalid.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_ICA_INVALID_VERIFIABLE_CREDENTIAL: &str =
+        "cawg.ica.invalid_verifiable_credential";
+
+    /// A CAWG identity claims aggregation issuer is invalid.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_ICA_INVALID_ISSUER: &str = "cawg.ica.invalid_issuer";
+
+    /// The DID document for a CAWG identity claims aggregation credential is unavailable.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_ICA_DID_UNAVAILABLE: &str = "cawg.ica.did_unavailable";
+
+    /// The DID document for a CAWG identity claims aggregation credential is invalid.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_ICA_INVALID_DID_DOCUMENT: &str = "cawg.ica.invalid_did_document";
+
+    /// The CAWG identity claims aggregation signature does not match.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_ICA_SIGNATURE_MISMATCH: &str = "cawg.ica.signature_mismatch";
+
+    /// The CAWG identity claims aggregation timestamp was validated.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_ICA_TIME_STAMP_VALIDATED: &str = "cawg.ica.time_stamp.validated";
+
+    /// The CAWG identity claims aggregation timestamp is invalid.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_ICA_TIME_STAMP_INVALID: &str = "cawg.ica.time_stamp.invalid";
+
+    /// The valid-from time is missing from a CAWG identity claims aggregation credential.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_ICA_VALID_FROM_MISSING: &str = "cawg.ica.valid_from.missing";
+
+    /// The valid-from time in a CAWG identity claims aggregation credential is invalid.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_ICA_VALID_FROM_INVALID: &str = "cawg.ica.valid_from.invalid";
+
+    /// The valid-until time in a CAWG identity claims aggregation credential is invalid.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_ICA_VALID_UNTIL_INVALID: &str = "cawg.ica.valid_until.invalid";
+
+    /// A CAWG identity claims aggregation signer payload does not match the asset.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_ICA_SIGNER_PAYLOAD_MISMATCH: &str = "cawg.ica.signer_payload.mismatch";
+
     /// A chain of trust from the CAWG identity assertion's X.509 signing
     /// certificate to a trust anchor configuration was verified.
     ///
