@@ -4654,6 +4654,14 @@ pub mod tests {
     use crate::{
         assertions::{Action, Actions, Uuid},
         claim::AssertionStoreJsonFormat,
+        identity::{
+            builder::{
+                CredentialHolder, IdentityAssertionBuilder, IdentityAssertionSigner,
+                IdentityBuilderError,
+            },
+            tests::fixtures::{manifest_json, parent_json, NaiveCredentialHolder},
+            SignerPayload,
+        },
         jumbf_io::load_jumbf_from_stream,
         settings::SettingsValidate,
         status_tracker::{LogItem, StatusTracker},
@@ -4662,7 +4670,7 @@ pub mod tests {
             test::{create_test_claim, create_test_streams, fixture_path},
             test_signer::{async_test_signer, test_signer},
         },
-        ClaimGeneratorInfo, DigitalSourceType, SigningAlg,
+        Builder, ClaimGeneratorInfo, DigitalSourceType, Reader, SigningAlg,
     };
 
     fn create_editing_claim(claim: &mut Claim) -> Result<&mut Claim> {
@@ -9167,22 +9175,64 @@ pub mod tests {
     }
 
     #[test]
-    fn dynamic_assertion_placeholder_has_exact_size() {
-        assert!(matches!(
-            dynamic_assertion_placeholder("x", 0),
-            Err(Error::BadParam(_))
-        ));
+    fn test_identity_assertion_gets_enough_reserve_size() {
+        struct SizedCredentialHolder(usize);
 
-        for size in (1..=300usize).chain(65_500..=65_600) {
-            let data = dynamic_assertion_placeholder("x", size).unwrap();
-            assert_eq!(data.len(), size, "reserve size {size}");
-            c2pa_cbor::from_slice::<Vec<u8>>(&data).unwrap();
+        impl CredentialHolder for SizedCredentialHolder {
+            fn sig_type(&self) -> &'static str {
+                NaiveCredentialHolder {}.sig_type()
+            }
+
+            fn reserve_size(&self) -> usize {
+                self.0
+            }
+
+            fn sign(
+                &self,
+                _signer_payload: &SignerPayload,
+            ) -> std::result::Result<Vec<u8>, IdentityBuilderError> {
+                Ok(vec![])
+            }
         }
 
-        assert!(matches!(
-            dynamic_assertion_placeholder("x", usize::MAX),
-            Err(Error::BadParam(_))
-        ));
+        let format = "image/jpeg";
+
+        for reserve_size in (246..=266).chain(65_536..=65_544) {
+            let mut source = Cursor::new(include_bytes!("../tests/fixtures/CA.jpg"));
+            let mut dest = Cursor::new(Vec::new());
+
+            let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
+            builder
+                .add_ingredient_from_stream(parent_json(), format, &mut source)
+                .unwrap();
+            builder
+                .add_resource(
+                    "thumbnail.jpg",
+                    Cursor::new(include_bytes!("../tests/fixtures/thumbnail.jpg")),
+                )
+                .unwrap();
+
+            let mut signer = IdentityAssertionSigner::from_test_credentials(SigningAlg::Ps256);
+            signer.add_identity_assertion(IdentityAssertionBuilder::for_credential_holder(
+                SizedCredentialHolder(reserve_size),
+            ));
+
+            builder
+                .sign(&signer, format, &mut source, &mut dest)
+                .unwrap_or_else(|e| panic!("reserve size {reserve_size}: {e:?}"));
+
+            dest.rewind().unwrap();
+            let reader = Reader::default().with_stream(format, &mut dest).unwrap();
+            assert!(
+                reader
+                    .validation_status()
+                    .unwrap_or_default()
+                    .iter()
+                    .all(|s| s.code() == "cawg.identity.sig_type.unknown"),
+                "reserve size {reserve_size}: {:?}",
+                reader.validation_status()
+            );
+        }
     }
 
     /// Two dynamic assertions that share a label must each land in their own
