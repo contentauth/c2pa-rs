@@ -28,7 +28,7 @@ use crate::Manifest;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionData},
     assertions::{
-        self, labels, AssertionMetadata, AssetType, CertificateStatus, DigitalSourceType,
+        self, labels, Action, AssertionMetadata, AssetType, CertificateStatus, DigitalSourceType,
         EmbeddedData, Relationship,
     },
     claim::{Claim, ClaimAssetData},
@@ -1182,14 +1182,20 @@ impl Ingredient {
     }
 
     /// Converts a higher level Ingredient into the appropriate components in a claim.
+    ///
+    /// Returns the ingredient's hashed URI, plus any non-inception actions recovered from a
+    /// manifest dropped by ingredient chain compaction (see
+    /// [`IngredientsSettings::compact_parent_of_chain`](crate::settings::builder::IngredientsSettings::compact_parent_of_chain)),
+    /// for the caller to carry forward onto the new manifest's own actions assertion.
     pub(crate) fn add_to_claim(
         &self,
         claim: &mut Claim,
         redactions: Option<Vec<String>>,
         resources: Option<&ResourceStore>, // use alternate resource store (for Builder model)
         context: &Context,
-    ) -> Result<HashedUri> {
+    ) -> Result<(HashedUri, Vec<Action>)> {
         let mut thumbnail = None;
+        let mut flattened_actions = Vec::new();
         // for Builder model, ingredient resources may be in the manifest
         let get_resource = |id: &str| {
             self.resources.get(id).or_else(|_| {
@@ -1218,8 +1224,9 @@ impl Ingredient {
                 let manifest_data = get_resource(&resource_ref.identifier)?;
 
                 // have Store check and load ingredients and add them to a claim
-                let ingredient_store =
+                let (ingredient_store, dropped_actions) =
                     Store::load_ingredient_to_claim(claim, &manifest_data, redactions, context)?;
+                flattened_actions = dropped_actions;
 
                 let ingredient_active_claim = ingredient_store
                     .provenance_claim()
@@ -1442,7 +1449,8 @@ impl Ingredient {
             .informational_uri
             .clone_from(&self.informational_uri);
         ingredient_assertion.data_types.clone_from(&self.data_types);
-        claim.add_assertion(&ingredient_assertion)
+        let uri = claim.add_assertion(&ingredient_assertion)?;
+        Ok((uri, flattened_actions))
     }
 
     /// Asynchronously create an Ingredient from a binary manifest (.c2pa) and asset bytes,
