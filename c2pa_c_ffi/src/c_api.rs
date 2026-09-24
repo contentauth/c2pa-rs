@@ -1356,13 +1356,17 @@ pub unsafe extern "C" fn c2pa_reader_detailed_json(reader_ptr: *mut C2paReader) 
 
 /// Returns a crJSON string generated from a C2paReader.
 ///
+/// Returns NULL on failure, including crJSON export errors. Call c2pa_error
+/// for the error message.
+///
 /// # Safety
 /// The returned value MUST be released by calling c2pa_free
 /// and it is no longer valid after that call.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_reader_crjson(reader_ptr: *mut C2paReader) -> *mut c_char {
     let c2pa_reader = deref_or_return_null!(reader_ptr, C2paReader);
-    to_c_string(c2pa_reader.crjson())
+    let crjson = ok_or_return_null!(c2pa_reader.crjson_checked());
+    to_c_string(crjson)
 }
 
 /// Returns the remote url of the manifest if it was obtained remotely.
@@ -4835,6 +4839,127 @@ verify_after_sign = true
         assert!(!c_str.is_null());
         let result = unsafe { c2pa_free(c_str as *mut c_void) };
         assert_eq!(result, 0);
+    }
+
+    #[test]
+    fn test_c2pa_reader_crjson_export_error() {
+        use std::io::Cursor;
+
+        // This CBOR ingredient decodes, but crJSON serialization rejects an
+        // activeManifest without validationResults. Disable verification so the
+        // malformed assertion reaches the real exporter.
+        let context = Context::new()
+            .with_settings(r#"{"verify":{"verify_after_sign":false,"verify_after_reading":false}}"#)
+            .unwrap();
+        let context = Arc::new(context);
+        let mut builder = C2paBuilder::from_shared_context(&context);
+        builder
+            .add_assertion(
+                "test.ingredient.xx",
+                &serde_json::json!({
+                    "relationship": "componentOf",
+                    "activeManifest": {
+                        "url": "self#jumbf=/c2pa/urn:uuid:00000000-0000-0000-0000-000000000000",
+                        "alg": "sha256",
+                        "hash": vec![0; 32]
+                    }
+                }),
+            )
+            .unwrap();
+        let signer = create_signer::from_keys(
+            include_bytes!(fixture_path!("certs/ed25519.pub")),
+            include_bytes!(fixture_path!("certs/ed25519.pem")),
+            SigningAlg::Ed25519,
+            None,
+        )
+        .unwrap();
+        let mut source = Cursor::new(include_bytes!(fixture_path!("IMG_0003.jpg")));
+        let mut dest = Cursor::new(Vec::new());
+        builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
+            .unwrap();
+        // The generic assertion builder normalizes versioned labels. Replace
+        // this equal-length label in the signed bytes to retain ingredient v3.
+        let bytes = dest.get_mut();
+        let offsets: Vec<_> = bytes
+            .windows(b"test.ingredient.xx".len())
+            .enumerate()
+            .filter_map(|(i, value)| (value == b"test.ingredient.xx").then_some(i))
+            .collect();
+        assert!(!offsets.is_empty());
+        for offset in offsets {
+            bytes[offset..offset + b"c2pa.ingredient.v3".len()]
+                .copy_from_slice(b"c2pa.ingredient.v3");
+        }
+        dest.rewind().unwrap();
+        let reader = C2paReader::from_shared_context(&context)
+            .with_stream("image/jpeg", dest)
+            .unwrap();
+        let export_error = reader.crjson_checked().unwrap_err();
+        assert!(matches!(export_error, c2pa::Error::JsonError(_)));
+        assert_eq!(
+            export_error.to_string(),
+            "Ingredient v3 activeManifest requires validationResults to be present"
+        );
+        let expected_error = CimplError::from(export_error).to_string();
+        let reader = box_tracked!(reader);
+        CimplError::take_last();
+
+        let json = unsafe { c2pa_reader_crjson(reader) };
+        let error = unsafe { c2pa_error() };
+        let message = if error.is_null() {
+            None
+        } else {
+            Some(
+                unsafe { CStr::from_ptr(error) }
+                    .to_str()
+                    .unwrap()
+                    .to_owned(),
+            )
+        };
+        unsafe {
+            c2pa_free(json as *const c_void);
+            c2pa_free(error as *const c_void);
+            c2pa_free(reader as *const c_void);
+        }
+        assert!(
+            json.is_null(),
+            "export failure must not return a JSON string"
+        );
+        assert_eq!(message.as_deref(), Some(expected_error.as_str()));
+    }
+
+    #[test]
+    fn test_c2pa_reader_crjson_success() {
+        let context = Context::new()
+            .with_settings(r#"{"verify":{"verify_after_reading":false}}"#)
+            .unwrap();
+        let reader = C2paReader::from_context(context)
+            .with_stream(
+                "image/jpeg",
+                std::io::Cursor::new(include_bytes!(fixture_path!("C.jpg"))),
+            )
+            .unwrap();
+
+        // An ordinary empty reader is also a successful export, not an error.
+        for (reader, has_manifests) in [(C2paReader::default(), false), (reader, true)] {
+            let reader = box_tracked!(reader);
+            CimplError::take_last();
+            let json = unsafe { c2pa_reader_crjson(reader) };
+            assert!(!json.is_null());
+            assert!(CimplError::last_message().is_none());
+            let value: serde_json::Value =
+                serde_json::from_slice(unsafe { CStr::from_ptr(json) }.to_bytes()).unwrap();
+            assert_eq!(value["jsonGenerator"]["name"], "c2pa-rs");
+            assert_eq!(
+                !value["manifests"].as_array().unwrap().is_empty(),
+                has_manifests
+            );
+            unsafe {
+                assert_eq!(c2pa_free(json as *const c_void), 0);
+                assert_eq!(c2pa_free(reader as *const c_void), 0);
+            }
+        }
     }
 
     #[test]
