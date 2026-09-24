@@ -2138,6 +2138,156 @@ pub unsafe extern "C" fn c2pa_builder_sign_context(
     out_bytes_or_return_int!(manifest_bytes, manifest_bytes_ptr)
 }
 
+// Resolve before signing: the SDK flattens rendition directories and fragment names.
+#[cfg(feature = "file_io")]
+fn fragmented_signed_init_path(
+    asset_pattern: &str,
+    fragments_glob: &str,
+    output_dir: &std::path::Path,
+) -> c2pa::Result<std::path::PathBuf> {
+    use std::collections::HashSet;
+
+    let bad_param = |message: &str| c2pa::Error::BadParam(message.to_owned());
+    let expand = |pattern: &str| -> c2pa::Result<Vec<std::path::PathBuf>> {
+        glob::glob(pattern)
+            .map_err(|e| c2pa::Error::BadParam(format!("Invalid glob pattern: {e}")))?
+            .map(|entry| {
+                entry.map_err(|e| c2pa::Error::BadParam(format!("Error reading glob path: {e}")))
+            })
+            .collect()
+    };
+    let inits = expand(asset_pattern)?;
+    let mut first_output = None;
+    let mut rendition_dirs = HashSet::new();
+    for init in inits {
+        let parent = init
+            .parent()
+            .ok_or_else(|| bad_param("Init segment has no parent directory"))?;
+        let parent_str = parent
+            .to_str()
+            .ok_or_else(|| bad_param("Init directory is not valid UTF-8"))?;
+        // The SDK reinterprets the expanded parent as part of the fragment glob.
+        if glob::Pattern::escape(parent_str) != parent_str {
+            return Err(bad_param(
+                "Init directories must not contain glob metacharacters",
+            ));
+        }
+        let dir_name = parent
+            .file_name()
+            .ok_or_else(|| bad_param("Init segment parent has no directory name"))?;
+        let rendition_dir = output_dir.join(dir_name);
+        if !rendition_dirs.insert(rendition_dir.clone()) {
+            return Err(c2pa::Error::BadParam(format!(
+                "Fragmented output directory collision: {}",
+                rendition_dir.display()
+            )));
+        }
+        match std::fs::symlink_metadata(&rendition_dir) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+            Ok(_) => {
+                return Err(c2pa::Error::BadParam(format!(
+                    "Fragmented output directory already exists: {}",
+                    rendition_dir.display()
+                )))
+            }
+        }
+        let init_name = init
+            .file_name()
+            .ok_or_else(|| bad_param("Init segment has no file name"))?;
+        let mut names = HashSet::from([init_name.to_string_lossy().into_owned()]);
+        // Match the SDK's join and glob semantics, including relative paths.
+        let fragment_pattern = parent.join(fragments_glob);
+        let fragments = expand(
+            fragment_pattern
+                .to_str()
+                .ok_or_else(|| bad_param("Fragment glob is not valid UTF-8"))?,
+        )?;
+        if fragments.is_empty() {
+            return Err(bad_param("At least one fragment path must be provided"));
+        }
+        for fragment in fragments {
+            let name = fragment
+                .file_name()
+                .ok_or_else(|| bad_param("Fragment has no file name"))?
+                .to_string_lossy()
+                .into_owned();
+            if !names.insert(name.clone()) {
+                return Err(c2pa::Error::BadParam(format!(
+                    "Fragmented output file collision: {}",
+                    rendition_dir.join(name).display()
+                )));
+            }
+        }
+        first_output.get_or_insert_with(|| rendition_dir.join(init_name));
+    }
+    first_output.ok_or_else(|| bad_param("At least one init segment path must be provided"))
+}
+
+/// Signs fragmented BMFF renditions (init segments and media fragments).
+///
+/// All renditions receive the same embedded manifest. Outputs are written to
+/// `<output_dir>/<init parent directory name>/<file name>`, flattening fragment
+/// subdirectories. Each init must have a distinct parent directory name, and its
+/// output subdirectory must not already exist. Output collisions are rejected
+/// before signing. Other errors may leave partial outputs.
+///
+/// # Parameters
+/// * `builder_ptr` - Builder with a manifest definition.
+/// * `signer_ptr` - Signer to use; ownership is retained by the caller.
+/// * `asset_path` - UTF-8 init path or glob pattern matching one or more inits.
+/// * `fragments_glob` - UTF-8 glob relative to each init's directory, e.g. `seg-*.m4s`.
+/// * `output_dir` - UTF-8 output directory path; created if needed.
+/// * `manifest_bytes_ptr` - Optional out-pointer for the embedded manifest bytes.
+///   Release returned bytes with `c2pa_free`. NULL skips allocation, not signing.
+///
+/// Paths use glob syntax, even for a single init; escape literal metacharacters
+/// with bracket expressions (e.g. `[[]` for `[`). Inputs and output directories
+/// must not be changed concurrently while signing. Init directory names must not
+/// contain literal glob metacharacters, because the SDK reuses them in fragment globs.
+///
+/// # Returns
+/// Manifest byte length on success, or -1 on error (retrieve with `c2pa_error`).
+/// A non-NULL out-pointer is set to NULL on error.
+/// Available with the `file_io` feature.
+///
+/// # Safety
+/// Handles must be valid C2PA handles. Strings must be readable, NULL-terminated
+/// C strings. A non-NULL `manifest_bytes_ptr` must point to writable pointer storage.
+#[cfg(feature = "file_io")]
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_sign_fragmented(
+    builder_ptr: *mut C2paBuilder,
+    signer_ptr: *mut C2paSigner,
+    asset_path: *const c_char,
+    fragments_glob: *const c_char,
+    output_dir: *const c_char,
+    manifest_bytes_ptr: *mut *const c_uchar,
+) -> i64 {
+    if !manifest_bytes_ptr.is_null() {
+        *manifest_bytes_ptr = std::ptr::null();
+    }
+    let mut builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let signer = deref_or_return_int!(signer_ptr, C2paSigner);
+    let asset_path = cstr_or_return_int!(asset_path);
+    let fragments_glob = cstr_or_return_int!(fragments_glob);
+    let output_dir = cstr_or_return_int!(output_dir);
+    let signed_init = ok_or_return_int!(fragmented_signed_init_path(
+        &asset_path,
+        &fragments_glob,
+        std::path::Path::new(&output_dir),
+    ));
+
+    ok_or_return_int!(builder.sign_fragmented_files(
+        signer.signer.as_ref(),
+        std::path::Path::new(&asset_path),
+        std::path::Path::new(&fragments_glob),
+        std::path::Path::new(&output_dir),
+    ));
+    let bytes = ok_or_return_int!(c2pa::jumbf_io::load_jumbf_from_file(signed_init));
+    out_bytes_or_return_int!(bytes, manifest_bytes_ptr)
+}
+
 /// Frees a C2PA manifest returned by c2pa_builder_sign.
 ///
 /// **Note**: This function is maintained for backward compatibility. New code should
@@ -3212,6 +3362,272 @@ mod tests {
         assert!(!builder.is_null());
 
         (signer, builder)
+    }
+
+    #[cfg(feature = "file_io")]
+    mod fragmented {
+        use std::{fs, path::Path};
+
+        use super::*;
+
+        fn write_rendition(dir: &Path, init_name: &str, fragment_name: &str, payload: u8) {
+            fn bmff_box(kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
+                [
+                    ((data.len() + 8) as u32).to_be_bytes().as_slice(),
+                    kind,
+                    data,
+                ]
+                .concat()
+            }
+            fs::create_dir_all(dir).unwrap();
+            let init = [
+                bmff_box(b"ftyp", b"isom\0\0\0\0isom"),
+                bmff_box(b"moov", &bmff_box(b"udta", &bmff_box(b"test", &[payload]))),
+            ]
+            .concat();
+            let fragment = [bmff_box(b"moof", &[]), bmff_box(b"mdat", &[payload; 32])].concat();
+            fs::write(dir.join(init_name), init).unwrap();
+            fs::write(dir.join(fragment_name), fragment).unwrap();
+        }
+
+        #[test]
+        fn sign_single_and_glob() {
+            for (init_name, multi, relative, return_bytes) in [
+                ("init.mp4", false, false, true),
+                ("init.m4s", false, true, true),
+                ("init.cmfv", true, false, true),
+                ("init[1].m4s", true, false, true),
+                ("init.mp4", false, false, false),
+                #[cfg(unix)]
+                ("init*.m4s", true, false, true),
+            ] {
+                // Relative patterns are tested without changing process-wide working directory.
+                let cwd = std::env::current_dir().unwrap();
+                let temp = tempfile::tempdir_in(&cwd).unwrap();
+                let input = temp.path().join("input");
+                let output = temp.path().join("output");
+                let renditions = if multi {
+                    vec!["high", "low"]
+                } else {
+                    vec!["high"]
+                };
+                for (i, rendition) in renditions.iter().enumerate() {
+                    write_rendition(&input.join(rendition), init_name, "seg-1.m4s", i as u8);
+                    // Two leaves exercise actual fragment Merkle proofs.
+                    write_rendition(&input.join(rendition), init_name, "seg-2.m4s", i as u8 + 2);
+                }
+                let pattern_root = if relative {
+                    input.strip_prefix(&cwd).unwrap()
+                } else {
+                    &input
+                };
+                let pattern = format!(
+                    "{}/{}/{}",
+                    glob::Pattern::escape(pattern_root.to_str().unwrap()),
+                    if multi { "*" } else { "high" },
+                    glob::Pattern::escape(init_name),
+                );
+                let pattern = CString::new(pattern).unwrap();
+                let fragments = CString::new("seg-*.m4s").unwrap();
+                let output_c = CString::new(output.to_str().unwrap()).unwrap();
+                let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+                assert_eq!(
+                    unsafe {
+                        c2pa_builder_set_intent(
+                            builder,
+                            C2paBuilderIntent::Create,
+                            C2paDigitalSourceType::DigitalCreation,
+                        )
+                    },
+                    0
+                );
+                let mut bytes = std::ptr::null();
+                let len = unsafe {
+                    c2pa_builder_sign_fragmented(
+                        builder,
+                        signer,
+                        pattern.as_ptr(),
+                        fragments.as_ptr(),
+                        output_c.as_ptr(),
+                        if return_bytes {
+                            &mut bytes
+                        } else {
+                            std::ptr::null_mut()
+                        },
+                    )
+                };
+                assert!(len > 0, "{init_name}: {:?}", CimplError::last_message());
+                for rendition in renditions {
+                    let signed_init = output.join(rendition).join(init_name);
+                    let embedded = c2pa::jumbf_io::load_jumbf_from_file(&signed_init).unwrap();
+                    assert_eq!(len as usize, embedded.len());
+                    if return_bytes {
+                        assert_eq!(
+                            unsafe { std::slice::from_raw_parts(bytes, len as usize) },
+                            embedded
+                        );
+                    }
+                    let signed_fragments = ["seg-1.m4s", "seg-2.m4s"]
+                        .map(|name| output.join(rendition).join(name))
+                        .to_vec();
+                    let settings = c2pa::Settings::new()
+                        .with_value("verify.verify_trust", false)
+                        .unwrap();
+                    let context = c2pa::Context::new().with_settings(settings).unwrap();
+                    let reader = c2pa::Reader::from_context(context)
+                        .with_fragmented_files(&signed_init, &signed_fragments)
+                        .unwrap();
+                    assert_eq!(reader.validation_status(), None, "{reader}");
+                    assert!(reader
+                        .validation_results()
+                        .unwrap()
+                        .active_manifest()
+                        .unwrap()
+                        .success()
+                        .iter()
+                        .any(|status| status.code() == "assertion.bmffHash.match"));
+                }
+                if return_bytes {
+                    assert_eq!(unsafe { c2pa_free(bytes.cast()) }, 0);
+                }
+                assert_eq!(unsafe { c2pa_free(builder.cast()) }, 0);
+                assert_eq!(unsafe { c2pa_free(signer.cast()) }, 0);
+            }
+        }
+
+        #[test]
+        fn rejects_collisions_before_writes() {
+            for case in ["renditions", "existing", "fragments", "init_fragment"] {
+                let temp = tempfile::tempdir().unwrap();
+                let input = temp.path().join("input");
+                let output = temp.path().join("output");
+                write_rendition(&input.join("a/video"), "init.m4s", "seg-a.m4s", 1);
+                let mut fragment_pattern = "seg-*.m4s";
+                match case {
+                    "renditions" => {
+                        // Different fragment names avoid the SDK's create_new fragment protection.
+                        write_rendition(&input.join("b/video"), "init.m4s", "seg-b.m4s", 2);
+                    }
+                    "existing" => {
+                        fs::create_dir_all(output.join("video")).unwrap();
+                        fs::write(output.join("video/init.m4s"), b"do not overwrite").unwrap();
+                    }
+                    "fragments" => {
+                        fs::create_dir_all(input.join("a/video/sub")).unwrap();
+                        fs::copy(
+                            input.join("a/video/seg-a.m4s"),
+                            input.join("a/video/sub/seg-a.m4s"),
+                        )
+                        .unwrap();
+                        fragment_pattern = "**/seg-*.m4s";
+                    }
+                    "init_fragment" => fragment_pattern = "*.m4s",
+                    _ => unreachable!(),
+                }
+                let pattern =
+                    CString::new(format!("{}/*/video/init.m4s", input.display())).unwrap();
+                let fragments = CString::new(fragment_pattern).unwrap();
+                let output_c = CString::new(output.to_str().unwrap()).unwrap();
+                let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+                let mut bytes = std::ptr::dangling();
+                let result = unsafe {
+                    c2pa_builder_sign_fragmented(
+                        builder,
+                        signer,
+                        pattern.as_ptr(),
+                        fragments.as_ptr(),
+                        output_c.as_ptr(),
+                        &mut bytes,
+                    )
+                };
+                assert_eq!(result, -1, "{case}");
+                assert!(bytes.is_null());
+                let error = unsafe { c2pa_error() };
+                let message = unsafe { CStr::from_ptr(error) }.to_str().unwrap();
+                assert!(
+                    message.contains(if case == "existing" {
+                        "already exists"
+                    } else {
+                        "collision"
+                    }),
+                    "{message}"
+                );
+                assert_eq!(unsafe { c2pa_free(error.cast()) }, 0);
+                if case == "existing" {
+                    assert_eq!(
+                        fs::read(output.join("video/init.m4s")).unwrap(),
+                        b"do not overwrite"
+                    );
+                    assert_eq!(fs::read_dir(output.join("video")).unwrap().count(), 1);
+                } else {
+                    assert!(!output.exists(), "preflight must not create outputs");
+                }
+                assert!(checkout_exclusive::<C2paBuilder>(builder).is_ok());
+                assert!(checkout_exclusive::<C2paSigner>(signer).is_ok());
+                assert_eq!(unsafe { c2pa_free(builder.cast()) }, 0);
+                assert_eq!(unsafe { c2pa_free(signer.cast()) }, 0);
+            }
+        }
+
+        #[test]
+        fn rejects_literal_glob_directory_before_writes() {
+            let temp = tempfile::tempdir().unwrap();
+            let input = temp.path().join("video[1]");
+            let output = temp.path().join("output");
+            write_rendition(&input, "init.m4s", "seg-1.m4s", 1);
+            let pattern = glob::Pattern::escape(input.join("init.m4s").to_str().unwrap());
+            let error = fragmented_signed_init_path(&pattern, "seg-*.m4s", &output).unwrap_err();
+            assert!(error.to_string().contains("glob metacharacters"));
+            assert!(!output.exists());
+        }
+
+        #[test]
+        fn rejects_invalid_patterns_and_handles() {
+            let temp = tempfile::tempdir().unwrap();
+            let output = temp.path().join("output");
+            let output_c = CString::new(output.to_str().unwrap()).unwrap();
+            let fragments = CString::new("seg-*.m4s").unwrap();
+            let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+            for pattern in [
+                "[".to_owned(),
+                format!("{}/missing/*.m4s", temp.path().display()),
+            ] {
+                let pattern = CString::new(pattern).unwrap();
+                let mut bytes = std::ptr::dangling();
+                assert_eq!(
+                    unsafe {
+                        c2pa_builder_sign_fragmented(
+                            builder,
+                            signer,
+                            pattern.as_ptr(),
+                            fragments.as_ptr(),
+                            output_c.as_ptr(),
+                            &mut bytes,
+                        )
+                    },
+                    -1
+                );
+                assert!(bytes.is_null());
+                assert!(!output.exists());
+            }
+            let mut bytes = std::ptr::dangling();
+            assert_eq!(
+                unsafe {
+                    c2pa_builder_sign_fragmented(
+                        std::ptr::null_mut(),
+                        signer,
+                        std::ptr::null(),
+                        fragments.as_ptr(),
+                        output_c.as_ptr(),
+                        &mut bytes,
+                    )
+                },
+                -1
+            );
+            assert!(bytes.is_null());
+            assert_eq!(unsafe { c2pa_free(builder.cast()) }, 0);
+            assert_eq!(unsafe { c2pa_free(signer.cast()) }, 0);
+        }
     }
 
     #[test]
