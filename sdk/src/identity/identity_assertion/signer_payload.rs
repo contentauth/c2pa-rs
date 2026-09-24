@@ -17,9 +17,16 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    assertions::labels::is_hard_binding_label, dynamic_assertion::PartialClaim,
-    identity::ValidationError, log_current_item, status_tracker::StatusTracker, HashedUri,
-    Manifest,
+    assertions::labels::is_hard_binding_label,
+    dynamic_assertion::PartialClaim,
+    identity::ValidationError,
+    log_current_item,
+    status_tracker::StatusTracker,
+    validation_status::{
+        CAWG_IDENTITY_ASSERTION_DUPLICATE, CAWG_IDENTITY_ASSERTION_MISMATCH,
+        CAWG_IDENTITY_HARD_BINDING_MISSING,
+    },
+    HashedUri, Manifest,
 };
 
 /// A set of _referenced assertions_ and other related data, known overall as
@@ -83,7 +90,7 @@ impl SignerPayload {
                     "referenced assertion not in claim",
                     "SignerPayload::check_against_manifest"
                 )
-                .validation_status("cawg.identity.assertion.mismatch")
+                .validation_status(CAWG_IDENTITY_ASSERTION_MISMATCH)
                 .failure(
                     status_tracker,
                     ValidationError::<E>::AssertionNotInClaim(ref_assertion.url().to_owned()),
@@ -109,7 +116,7 @@ impl SignerPayload {
                 "no hard binding assertion",
                 "SignerPayload::check_against_manifest"
             )
-            .validation_status("cawg.identity.hard_binding_missing")
+            .validation_status(CAWG_IDENTITY_HARD_BINDING_MISSING)
             .failure(status_tracker, ValidationError::<E>::NoHardBindingAssertion)?;
         }
 
@@ -123,7 +130,7 @@ impl SignerPayload {
                     "multiple references to same assertion",
                     "SignerPayload::check_against_manifest"
                 )
-                .validation_status("cawg.identity.assertion.duplicate")
+                .validation_status(CAWG_IDENTITY_ASSERTION_DUPLICATE)
                 .failure(
                     status_tracker,
                     ValidationError::<E>::DuplicateAssertionReference(label.clone()),
@@ -186,7 +193,7 @@ impl SignerPayload {
                     "referenced assertion not in claim",
                     "SignerPayload::check_against_manifest"
                 )
-                .validation_status("cawg.identity.assertion.mismatch")
+                .validation_status(CAWG_IDENTITY_ASSERTION_MISMATCH)
                 .failure(
                     status_tracker,
                     ValidationError::<E>::AssertionNotInClaim(ref_assertion.url().to_owned()),
@@ -212,7 +219,7 @@ impl SignerPayload {
                 "no hard binding assertion",
                 "SignerPayload::check_against_manifest"
             )
-            .validation_status("cawg.identity.hard_binding_missing")
+            .validation_status(CAWG_IDENTITY_HARD_BINDING_MISSING)
             .failure(status_tracker, ValidationError::<E>::NoHardBindingAssertion)?;
         }
 
@@ -226,7 +233,7 @@ impl SignerPayload {
                     "multiple references to same assertion",
                     "SignerPayload::check_against_manifest"
                 )
-                .validation_status("cawg.identity.assertion.duplicate")
+                .validation_status(CAWG_IDENTITY_ASSERTION_DUPLICATE)
                 .failure(
                     status_tracker,
                     ValidationError::<E>::DuplicateAssertionReference(label.clone()),
