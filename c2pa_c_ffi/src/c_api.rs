@@ -5325,7 +5325,7 @@ verify_after_sign = true
     fn test_c2pa_reader_from_manifest_data_and_stream_null_format() {
         let source_image = include_bytes!(fixture_path!("C.jpg"));
         let mut stream = TestStream::new(source_image.to_vec());
-        let manifest_data = [0u8; 100];
+        let manifest_data = vec![0u8; 100];
 
         let reader = unsafe {
             c2pa_reader_from_manifest_data_and_stream(
@@ -5545,7 +5545,7 @@ verify_after_sign = true
         // Supply a single dummy SHA-256 leaf hash for one mdat box (1 chunk).
         // The Merkle leaves is derived from these; the video will not validate but
         // this exercises the full C API call path.
-        let leaf_data: [u8; 4096] = [0xab; 4096];
+        let leaf_data: Vec<u8> = vec![0xab; 4096];
         let result = unsafe {
             c2pa_builder_hash_mdat_bytes(builder, 0, leaf_data.as_ptr(), leaf_data.len(), true)
         };

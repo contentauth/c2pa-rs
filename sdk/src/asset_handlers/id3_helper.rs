@@ -412,10 +412,6 @@ pub(crate) mod test_helpers {
     /// frame that inflates just past that cap and asserts the read fails
     /// fast instead of exhausting memory.
     ///
-    /// Not run under WASI: its CI sandbox caps linear memory well below
-    /// 256 MiB, so approaching the cap trips a hard wasm trap instead of the
-    /// graceful `Result::Err` this test wants to observe.
-    #[cfg(not(target_os = "wasi"))]
     pub(crate) fn run_read_cai_zlib_bomb_rejected(handler: &dyn AssetIO, audio_payload: &[u8]) {
         use std::io::Write;
 
@@ -434,7 +430,7 @@ pub(crate) mod test_helpers {
         // MiB cap while compressing down to a few hundred bytes on disk.
         const INFLATED_LEN: u64 = 256 * 1024 * 1024 + 1024 * 1024;
         let mut encoder = ZlibEncoder::new(Vec::new(), Compression::best());
-        let chunk = [0u8; 1024 * 1024];
+        let chunk = vec![0u8; 1024 * 1024];
         let mut written = 0u64;
         while written < INFLATED_LEN {
             let n = std::cmp::min(chunk.len() as u64, INFLATED_LEN - written) as usize;

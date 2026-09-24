@@ -312,11 +312,9 @@ pub mod tests {
     }
 
     #[test]
-    #[cfg(not(target_os = "wasi"))]
     fn test_read_cai_zlib_bomb_rejected() {
         // CAI-13353 / VULN-38328 regression: a compressed ID3v2.4 frame must
-        // not be allowed to decompress without bound. Skipped under WASI;
-        // see the helper's doc comment for why.
+        // not be allowed to decompress without bound.
         test_helpers::run_read_cai_zlib_bomb_rejected(&Mp3IO::new("mp3"), &[]);
     }
 
