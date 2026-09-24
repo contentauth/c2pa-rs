@@ -7104,6 +7104,94 @@ mod tests {
         );
     }
 
+    /// Repro for CAI-13657 / CAI-13477: on every PDF incremental save, T5 re-parents the new
+    /// manifest onto only the previous save's output (via `parentOf`) -- it never touches
+    /// earlier saves directly. But `Store::load_ingredient_to_claim` re-embeds every claim
+    /// already present in the ingredient's store, so the ancestor chain deepens by one manifest
+    /// per save instead of staying bounded to origin + current. Bump `CHAIN_DEPTH` to simulate
+    /// more or fewer incremental saves.
+
+    #[test]
+    fn test_repeated_parent_of_chaining_grows_manifest_store_unbounded() {
+        const CHAIN_DEPTH: usize = 5;
+        let signer = test_signer(SigningAlg::Ps256);
+
+        // Save 0 (origin): sign a fresh manifest onto a clean asset with no prior manifest.
+        let mut current = Cursor::new(Vec::new());
+        let mut origin_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Save 0 (origin)".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let created_action =
+            Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty);
+        origin_builder
+            .add_assertion(Actions::LABEL, &Actions::new().add_action(created_action))
+            .unwrap();
+        origin_builder
+            .sign(
+                signer.as_ref(),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+                &mut current,
+            )
+            .unwrap();
+
+        // Saves 1..=CHAIN_DEPTH: each save re-parents onto only the immediately PREVIOUS
+        // save's output -- exactly as a real incremental-save flow does -- so any growth
+        // observed below comes from the SDK's own chaining logic, not from the test reaching
+        // further back into history itself.
+        for i in 1..=CHAIN_DEPTH {
+            let mut save_builder = Builder {
+                definition: ManifestDefinition {
+                    claim_version: Some(2),
+                    title: Some(format!("Save {i}")),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            // Edit intent auto-adds the required `c2pa.opened` action tied to the parentOf
+            // ingredient below -- exactly what a real incremental save records.
+            save_builder.set_intent(BuilderIntent::Edit);
+
+            current.set_position(0);
+            save_builder
+                .add_ingredient_from_stream(
+                    json!({ "title": format!("Save {}", i - 1), "relationship": "parentOf" })
+                        .to_string(),
+                    "image/jpeg",
+                    &mut current,
+                )
+                .unwrap();
+
+            current.set_position(0);
+            let mut next = Cursor::new(Vec::new());
+            save_builder
+                .sign(signer.as_ref(), "image/jpeg", &mut current, &mut next)
+                .unwrap();
+            current = next;
+        }
+
+        // Read back the final asset and count the manifests actually embedded in its store.
+        current.set_position(0);
+        let reader = Reader::from_stream("jpeg", &mut current).expect("read final chained asset");
+        let manifest_count = reader.manifests().len();
+
+        // BUG (CAI-13657 / CAI-13477): today the store holds CHAIN_DEPTH + 1 manifests
+        // (origin + one per save) because the full ancestor chain is re-embedded on every
+        // save, instead of staying bounded to origin + current (2 manifests) regardless of
+        // CHAIN_DEPTH. This assertion documents today's buggy unbounded-growth behavior --
+        // once the compact-manifest fix lands, change this to `assert_eq!(manifest_count, 2)`.
+        assert_eq!(
+            manifest_count,
+            CHAIN_DEPTH + 1,
+            "manifest store grew unbounded with save count instead of staying compact"
+        );
+    }
+
     #[test]
     fn test_redaction_assertion_via_archive() {
         Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
