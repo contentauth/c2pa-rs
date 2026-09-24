@@ -19,7 +19,7 @@ use x509_parser::{
     certificate::{BasicExtension, X509Certificate},
     der_parser::{ber::parse_ber_sequence, oid},
     extensions::ParsedExtension,
-    num_bigint::{BigInt, Sign},
+    num_bigint::BigInt,
     oid_registry::Oid,
     x509::{AlgorithmIdentifier, X509Version},
 };
@@ -596,8 +596,7 @@ const SECP384R1_OID: Oid<'static> = oid!(1.3.132 .0 .34);
 const PRIME256V1_OID: Oid<'static> = oid!(1.2.840 .10045 .3 .1 .7);
 
 fn is_valid_rsa_public_exponent(exponent: &BigInt) -> bool {
-    exponent.sign() == Sign::Plus
-        && exponent >= &BigInt::from(3u32)
+    exponent >= &BigInt::from(3u32)
         && exponent
             .magnitude()
             .to_u32_digits()
