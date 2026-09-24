@@ -5280,7 +5280,7 @@ verify_after_sign = true
         // Supply a single dummy SHA-256 leaf hash for one mdat box (1 chunk).
         // The Merkle leaves is derived from these; the video will not validate but
         // this exercises the full C API call path.
-        let leaf_data: [u8; 4096] = [0xab; 4096];
+        let leaf_data: Vec<u8> = vec![0xab; 4096];
         let result = unsafe {
             c2pa_builder_hash_mdat_bytes(builder, 0, leaf_data.as_ptr(), leaf_data.len(), true)
         };
