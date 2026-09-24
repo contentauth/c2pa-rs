@@ -2138,9 +2138,9 @@ pub unsafe extern "C" fn c2pa_builder_sign_context(
     out_bytes_or_return_int!(manifest_bytes, manifest_bytes_ptr)
 }
 
-// Resolve before signing: the SDK flattens rendition directories and fragment names.
+// Preflight the flattened SDK layout, then exclusively reserve directories and inits.
 #[cfg(feature = "file_io")]
-fn fragmented_signed_init_path(
+fn reserve_fragmented_output(
     asset_pattern: &str,
     fragments_glob: &str,
     output_dir: &std::path::Path,
@@ -2157,7 +2157,7 @@ fn fragmented_signed_init_path(
             .collect()
     };
     let inits = expand(asset_pattern)?;
-    let mut first_output = None;
+    let mut outputs = Vec::new();
     let mut rendition_dirs = HashSet::new();
     for init in inits {
         let parent = init
@@ -2204,7 +2204,10 @@ fn fragmented_signed_init_path(
                 .ok_or_else(|| bad_param("Fragment glob is not valid UTF-8"))?,
         )?;
         if fragments.is_empty() {
-            return Err(bad_param("At least one fragment path must be provided"));
+            return Err(c2pa::Error::BadParam(format!(
+                "No fragments matched glob: {}",
+                fragment_pattern.display()
+            )));
         }
         for fragment in fragments {
             let name = fragment
@@ -2219,9 +2222,40 @@ fn fragmented_signed_init_path(
                 )));
             }
         }
-        first_output.get_or_insert_with(|| rendition_dir.join(init_name));
+        let signed_init = rendition_dir.join(init_name);
+        outputs.push((rendition_dir, signed_init));
     }
-    first_output.ok_or_else(|| bad_param("At least one init segment path must be provided"))
+    let first_output = outputs
+        .first()
+        .map(|(_, init)| init.clone())
+        .ok_or_else(|| {
+            c2pa::Error::BadParam(format!("No init segments matched glob: {asset_pattern}"))
+        })?;
+
+    // Let the destination filesystem detect aliases (including Unicode normalization).
+    // Do not reuse or remove existing entries, even after a partial reservation failure.
+    std::fs::create_dir_all(output_dir)?;
+    for (dir, init) in outputs {
+        std::fs::create_dir(&dir).map_err(|e| {
+            c2pa::Error::BadParam(format!(
+                "Could not reserve output directory {}: {e}",
+                dir.display()
+            ))
+        })?;
+        // Fragment writes use create_new; reserving the init prevents an aliased fragment
+        // from being created and then silently overwritten by the SDK's init copy.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&init)
+            .map_err(|e| {
+                c2pa::Error::BadParam(format!(
+                    "Could not reserve output init {}: {e}",
+                    init.display()
+                ))
+            })?;
+    }
+    Ok(first_output)
 }
 
 /// Signs fragmented BMFF renditions (init segments and media fragments).
@@ -2229,8 +2263,12 @@ fn fragmented_signed_init_path(
 /// All renditions receive the same embedded manifest. Outputs are written to
 /// `<output_dir>/<init parent directory name>/<file name>`, flattening fragment
 /// subdirectories. Each init must have a distinct parent directory name, and its
-/// output subdirectory must not already exist. Output collisions are rejected
-/// before signing. Other errors may leave partial outputs.
+/// output subdirectory must not already exist. Lexical collisions and existing
+/// output directories are rejected before writing. Directories and init files
+/// are then exclusively reserved, letting the filesystem detect aliased names.
+/// Fragment creation rejects aliases with reserved init files or other fragments.
+/// Reservation or signing errors may leave empty or partial outputs; no automatic
+/// cleanup is performed.
 ///
 /// # Parameters
 /// * `builder_ptr` - Builder with a manifest definition.
@@ -2242,9 +2280,11 @@ fn fragmented_signed_init_path(
 ///   Release returned bytes with `c2pa_free`. NULL skips allocation, not signing.
 ///
 /// Paths use glob syntax, even for a single init; escape literal metacharacters
-/// with bracket expressions (e.g. `[[]` for `[`). Inputs and output directories
-/// must not be changed concurrently while signing. Init directory names must not
-/// contain literal glob metacharacters, because the SDK reuses them in fragment globs.
+/// with bracket expressions (e.g. `[[]` for `[`). Each matched init path must have
+/// a named parent directory (e.g. `video/init.m4s`, not just `init.m4s`). No component
+/// of the matched init's full parent path may contain literal glob metacharacters,
+/// because the SDK reuses that path in fragment globs. Keep outputs outside input
+/// globs. Inputs and output directories must not be changed concurrently while signing.
 ///
 /// # Returns
 /// Manifest byte length on success, or -1 on error (retrieve with `c2pa_error`).
@@ -2272,7 +2312,7 @@ pub unsafe extern "C" fn c2pa_builder_sign_fragmented(
     let asset_path = cstr_or_return_int!(asset_path);
     let fragments_glob = cstr_or_return_int!(fragments_glob);
     let output_dir = cstr_or_return_int!(output_dir);
-    let signed_init = ok_or_return_int!(fragmented_signed_init_path(
+    let signed_init = ok_or_return_int!(reserve_fragmented_output(
         &asset_path,
         &fragments_glob,
         std::path::Path::new(&output_dir),
@@ -3570,14 +3610,188 @@ mod tests {
         }
 
         #[test]
+        fn reserves_outputs_exclusively() {
+            let temp = tempfile::tempdir().unwrap();
+            let input = temp.path().join("input");
+            let output = temp.path().join("output");
+            for name in ["high", "low"] {
+                write_rendition(&input.join(name), "init.m4s", "seg-1.m4s", 1);
+            }
+            let pattern = format!("{}/*/init.m4s", input.display());
+            let first = reserve_fragmented_output(&pattern, "seg-*.m4s", &output).unwrap();
+            assert_eq!(first, output.join("high/init.m4s"));
+            for name in ["high", "low"] {
+                let dir = output.join(name);
+                assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+                let init = dir.join("init.m4s");
+                assert_eq!(fs::metadata(&init).unwrap().len(), 0);
+                assert_eq!(
+                    fs::create_dir(&dir).unwrap_err().kind(),
+                    std::io::ErrorKind::AlreadyExists
+                );
+                // This is also the SDK fragment writer's allocation mode.
+                assert_eq!(
+                    fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&init)
+                        .unwrap_err()
+                        .kind(),
+                    std::io::ErrorKind::AlreadyExists
+                );
+            }
+            fs::write(&first, b"owned by caller now").unwrap();
+            assert!(reserve_fragmented_output(&pattern, "seg-*.m4s", &output).is_err());
+            assert_eq!(fs::read(first).unwrap(), b"owned by caller now");
+        }
+
+        #[test]
+        fn rejects_filesystem_aliases() {
+            for (left, right) in [("Video", "video"), ("\u{e9}", "e\u{301}")] {
+                let probe = tempfile::tempdir().unwrap();
+                fs::create_dir(probe.path().join(left)).unwrap();
+                if !probe.path().join(right).exists() {
+                    eprintln!(
+                        "Skipping alias pair {left:?}/{right:?}: distinct on this filesystem"
+                    );
+                    continue;
+                }
+                for directory_alias in [true, false] {
+                    let temp = tempfile::tempdir().unwrap();
+                    let input = temp.path().join("input");
+                    let output = temp.path().join("output");
+                    let (pattern, fragments, signed_init) = if directory_alias {
+                        write_rendition(&input.join("a").join(left), "init.m4s", "seg-a.m4s", 1);
+                        write_rendition(
+                            &input.join("b").join(right),
+                            "init-other.m4s",
+                            "seg-b.m4s",
+                            2,
+                        );
+                        (
+                            format!("{}/*/*/init*.m4s", input.display()),
+                            "seg-*.m4s",
+                            output.join(left).join("init.m4s"),
+                        )
+                    } else {
+                        let dir = input.join("video");
+                        let init_name = format!("{left}.m4s");
+                        write_rendition(&dir, &init_name, "seg-1.m4s", 1);
+                        // Keep the source fragment separate so it cannot alias the source init.
+                        fs::create_dir(dir.join("sub")).unwrap();
+                        fs::rename(
+                            dir.join("seg-1.m4s"),
+                            dir.join("sub").join(format!("{right}.m4s")),
+                        )
+                        .unwrap();
+                        (
+                            dir.join(&init_name).to_str().unwrap().to_owned(),
+                            "sub/*.m4s",
+                            output.join("video").join(init_name),
+                        )
+                    };
+                    fs::create_dir(&output).unwrap();
+                    fs::write(output.join("keep"), b"caller file").unwrap();
+                    let pattern = CString::new(pattern).unwrap();
+                    let fragments = CString::new(fragments).unwrap();
+                    let output_c = CString::new(output.to_str().unwrap()).unwrap();
+                    let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+                    let mut bytes = std::ptr::dangling();
+                    assert_eq!(
+                        unsafe {
+                            c2pa_builder_sign_fragmented(
+                                builder,
+                                signer,
+                                pattern.as_ptr(),
+                                fragments.as_ptr(),
+                                output_c.as_ptr(),
+                                &mut bytes,
+                            )
+                        },
+                        -1
+                    );
+                    assert!(bytes.is_null());
+                    if directory_alias {
+                        assert!(CimplError::last_message()
+                            .unwrap()
+                            .contains("Could not reserve output directory"));
+                    }
+                    assert_eq!(fs::metadata(&signed_init).unwrap().len(), 0);
+                    assert_eq!(
+                        fs::read_dir(signed_init.parent().unwrap()).unwrap().count(),
+                        1
+                    );
+                    assert_eq!(fs::read(output.join("keep")).unwrap(), b"caller file");
+                    assert_eq!(unsafe { c2pa_free(builder.cast()) }, 0);
+                    assert_eq!(unsafe { c2pa_free(signer.cast()) }, 0);
+                }
+            }
+        }
+
+        #[test]
+        fn signing_failure_leaves_reservations_and_null_manifest() {
+            let temp = tempfile::tempdir().unwrap();
+            let input = temp.path().join("video");
+            let output = temp.path().join("output");
+            write_rendition(&input, "init.m4s", "seg-1.m4s", 1);
+            fs::write(input.join("seg-1.m4s"), b"invalid BMFF").unwrap();
+            let pattern = CString::new(input.join("init.m4s").to_str().unwrap()).unwrap();
+            let fragments = CString::new("seg-*.m4s").unwrap();
+            let output_c = CString::new(output.to_str().unwrap()).unwrap();
+            let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+            let mut bytes = std::ptr::dangling();
+            assert_eq!(
+                unsafe {
+                    c2pa_builder_sign_fragmented(
+                        builder,
+                        signer,
+                        pattern.as_ptr(),
+                        fragments.as_ptr(),
+                        output_c.as_ptr(),
+                        &mut bytes,
+                    )
+                },
+                -1
+            );
+            assert!(bytes.is_null());
+            assert_eq!(
+                fs::metadata(output.join("video/init.m4s")).unwrap().len(),
+                0
+            );
+            assert_eq!(fs::read(input.join("seg-1.m4s")).unwrap(), b"invalid BMFF");
+            assert_eq!(unsafe { c2pa_free(builder.cast()) }, 0);
+            assert_eq!(unsafe { c2pa_free(signer.cast()) }, 0);
+        }
+
+        #[test]
         fn rejects_literal_glob_directory_before_writes() {
             let temp = tempfile::tempdir().unwrap();
-            let input = temp.path().join("video[1]");
+            let input = temp.path().join("video[1]/nested");
             let output = temp.path().join("output");
             write_rendition(&input, "init.m4s", "seg-1.m4s", 1);
             let pattern = glob::Pattern::escape(input.join("init.m4s").to_str().unwrap());
-            let error = fragmented_signed_init_path(&pattern, "seg-*.m4s", &output).unwrap_err();
+            let error = reserve_fragmented_output(&pattern, "seg-*.m4s", &output).unwrap_err();
             assert!(error.to_string().contains("glob metacharacters"));
+            assert!(!output.exists());
+        }
+
+        #[test]
+        fn no_matches_are_descriptive() {
+            let temp = tempfile::tempdir().unwrap();
+            let input = temp.path().join("video");
+            let output = temp.path().join("output");
+            let pattern = input.join("init.m4s");
+            let pattern = pattern.to_str().unwrap();
+            let error = reserve_fragmented_output(pattern, "seg-*.m4s", &output).unwrap_err();
+            assert!(error
+                .to_string()
+                .contains(&format!("No init segments matched glob: {pattern}")));
+            write_rendition(&input, "init.m4s", "seg-1.m4s", 1);
+            let error = reserve_fragmented_output(pattern, "missing-*.m4s", &output).unwrap_err();
+            assert!(error.to_string().contains("No fragments matched glob:"));
+            assert!(error
+                .to_string()
+                .contains(input.join("missing-*.m4s").to_str().unwrap()));
             assert!(!output.exists());
         }
 

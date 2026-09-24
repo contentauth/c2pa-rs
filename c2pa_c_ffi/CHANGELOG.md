@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-* Add `c2pa_builder_sign_fragmented` (with `file_io`) for signing single or glob-selected BMFF renditions and returning their embedded manifest. Reject output collisions before signing.
+* Add `c2pa_builder_sign_fragmented` (with `file_io`) for signing single or glob-selected BMFF renditions and returning their embedded manifest. Preflight output names and exclusively reserve rendition directories and init files to prevent overwrites, including filesystem aliases. Reservation or signing errors may leave empty or partial outputs.
 
 ## [0.88.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.87.0...c2pa-c-ffi-v0.88.0)
 _11 June 2026_

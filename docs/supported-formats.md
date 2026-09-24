@@ -14,6 +14,7 @@ The following table summarizes the supported media (asset) file formats. This in
 | `avi`           | `video/msvideo`, `video/x-msvideo`, `video/avi`, `application/x-troff-msvideo`  |
 | `avif`          | `image/avif`                                                                    |
 | `c2pa`          | `application/x-c2pa-manifest-store`                                             |
+| `cmfv`          | `video/mp4`                                                                    |
 | `dng`           | `image/x-adobe-dng`                                                             |
 | `flac`          | `audio/flac`                                                                    |
 | `gif`           | `image/gif`                                                                     |
@@ -22,8 +23,9 @@ The following table summarizes the supported media (asset) file formats. This in
 | `jpg`, `jpeg`   | `image/jpeg`                                                                    |
 | `jxl`           | `image/jxl`                                                                     |
 | `m4a`           | `audio/mp4`                                                                     |
+| `m4s`           | `video/iso.segment`                                                             |
 | `mp3`           | `audio/mpeg`                                                                    |
-| `mp4`           | `video/mp4`, `application/mp4` <br/>Fragmented MP4 (DASH) supported only for file-based operations from the Rust library. |
+| `mp4`           | `video/mp4`, `application/mp4`                                                  |
 | `mov`           | `video/quicktime`                                                               |
 | `pdf`           | `application/pdf`                                                               |
 | `png`           | `image/png`                                                                     |
@@ -32,6 +34,10 @@ The following table summarizes the supported media (asset) file formats. This in
 | `txt`           | `text/plain`                                                                    |
 | `wav`           | `audio/wav`                                                                     |
 | `webp`          | `image/webp`                                                                    |
+
+Fragmented BMFF (DASH/CMAF) signing is available through Rust's
+`Builder::sign_fragmented_files` and the C API's `c2pa_builder_sign_fragmented`,
+with the `file_io` feature. Init segments may use `.mp4`, `.m4s`, or `.cmfv` extensions.
 
 ## Experimental feature: Text formats
 
