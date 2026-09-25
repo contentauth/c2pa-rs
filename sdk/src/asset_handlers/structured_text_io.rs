@@ -62,6 +62,27 @@ static SUPPORTED_TYPES: [&str; 28] = [
     "text/yaml",
 ];
 
+/// Each extension's MIME type. The default [`AssetIO::mime_type_map`] pairs every extension
+/// with the first MIME type in [`SUPPORTED_TYPES`], which would resolve e.g. `script.py` to
+/// `application/atom+xml` and embed an XML comment in it. `ini` has no registered MIME type
+/// and stays resolved by extension.
+const EXTENSION_MIME_TYPES: [(&str, &str); 14] = [
+    ("atom", "application/atom+xml"),
+    ("css", "text/css"),
+    ("js", "text/javascript"),
+    ("mjs", "text/javascript"),
+    ("md", "text/markdown"),
+    ("markdown", "text/markdown"),
+    ("py", "text/x-python"),
+    ("rss", "application/rss+xml"),
+    ("sql", "application/sql"),
+    ("tex", "application/x-tex"),
+    ("toml", "application/toml"),
+    ("vtt", "text/vtt"),
+    ("yaml", "application/yaml"),
+    ("yml", "application/yaml"),
+];
+
 const PLACEHOLDER_STORE: &[u8] = b"placeholder manifest";
 
 fn comment_style(asset_type: &str) -> Option<CommentStyle> {
@@ -386,6 +407,13 @@ impl AssetIO for StructuredTextIO {
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
+
+    fn mime_type_map(&self) -> Vec<(String, String)> {
+        EXTENSION_MIME_TYPES
+            .iter()
+            .map(|(ext, mime)| (ext.to_string(), mime.to_string()))
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -403,6 +431,26 @@ mod tests {
         let mut output = Cursor::new(Vec::new());
         io.write_c2pa(&mut input, &mut output, store).unwrap();
         String::from_utf8(output.into_inner()).unwrap()
+    }
+
+    #[test]
+    fn each_extension_maps_to_its_own_mime_type() {
+        let map: std::collections::HashMap<String, String> =
+            StructuredTextIO::new("md").mime_type_map().into_iter().collect();
+        for (ext, mime) in [
+            ("md", "text/markdown"),
+            ("py", "text/x-python"),
+            ("yaml", "application/yaml"),
+            ("css", "text/css"),
+            ("atom", "application/atom+xml"),
+        ] {
+            assert_eq!(map.get(ext).map(String::as_str), Some(mime), "{ext}");
+        }
+
+        // resolving a file's format by extension must keep its comment syntax
+        let context = crate::Context::new();
+        let format = context.io().format_from_path("script.py").unwrap();
+        assert!(matches!(comment_style(&format), Some(CommentStyle::Line("#"))));
     }
 
     fn read_back(asset_type: &str, text: &str) -> Result<Vec<u8>> {
