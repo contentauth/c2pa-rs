@@ -51,3 +51,11 @@ The Rust library supports the following text formats when the `unstable_structur
 | `toml`           | `application/toml`      |
 | `vtt`            | `text/vtt`              |
 | `yaml`, `yml`    | `application/yaml`      |
+
+## Experimental feature: MIDI
+
+The Rust library supports Standard MIDI Files when the `unstable_midi` feature is enabled.
+
+| Extensions      | MIME type                                   |
+| --------------- | ------------------------------------------- |
+| `mid`, `midi`   | `audio/mid`, `audio/midi`, `audio/x-midi`   |
