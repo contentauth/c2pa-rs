@@ -992,7 +992,10 @@ impl Claim {
         if let Some(md) = self.metadata() {
             claim_map.serialize_field(METADATA_F, md)?;
         }
-        if let Some(spec_version) = self.spec_version() {
+        // only a legacy claim-level specVersion is written here; Spec 2.4 carries it in
+        // claim_generator_info, and writing that value again would also add a map entry the
+        // length above does not count
+        if let Some(spec_version) = &self.spec_version {
             claim_map.serialize_field(SPEC_VERSION_F, spec_version)?;
         }
 
@@ -5694,6 +5697,27 @@ pub mod tests {
         claim.add_claim_generator_info(cgi);
 
         assert_eq!(claim.spec_version().map(|s| s.as_str()), Some("2.4.0"));
+    }
+
+    #[test]
+    fn test_spec_version_in_claim_generator_info_round_trips() {
+        let mut claim = Claim::new("test", Some("test"), 2);
+        let mut cgi = ClaimGeneratorInfo::new("test app");
+        cgi.set_spec_version("2.4.0");
+        claim.add_claim_generator_info(cgi);
+
+        let data = claim.data().unwrap();
+        let decoded = Claim::from_data("test", &data).unwrap();
+        assert_eq!(decoded.spec_version().map(|s| s.as_str()), Some("2.4.0"));
+
+        // specVersion is not also written as the deprecated claim-level field
+        let value: c2pa_cbor::Value = c2pa_cbor::from_slice(&data).unwrap();
+        assert!(matches!(
+            &value,
+            c2pa_cbor::Value::Map(map) if !map
+                .keys()
+                .any(|k| matches!(k, c2pa_cbor::Value::Text(t) if t == SPEC_VERSION_F))
+        ));
     }
 
     #[test]
