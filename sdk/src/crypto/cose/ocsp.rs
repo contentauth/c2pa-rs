@@ -95,126 +95,113 @@ pub fn check_ocsp_status(
         }
     }
 
-    match get_ocsp_der(sign1) {
-        Some(ocsp_response_der) => {
-            let mut ocsp_log = StatusTracker::default();
-            let result = if _sync {
-                check_stapled_ocsp_response(
-                    sign1,
-                    &ocsp_response_der,
-                    data,
-                    ctp,
-                    tst_info,
-                    &mut ocsp_log,
-                    context.settings(),
+    if let Some(ocsp_response_der) = get_ocsp_der(sign1) {
+        let mut ocsp_log = StatusTracker::default();
+        let result = if _sync {
+            check_stapled_ocsp_response(
+                sign1,
+                &ocsp_response_der,
+                data,
+                ctp,
+                tst_info,
+                &mut ocsp_log,
+                context.settings(),
+            )
+        } else {
+            check_stapled_ocsp_response_async(
+                sign1,
+                &ocsp_response_der,
+                data,
+                ctp,
+                tst_info,
+                &mut ocsp_log,
+                context.settings(),
+            )
+            .await
+        };
+
+        // we only care about OCSP value log info if the result is OK
+        if let Ok(ocsp_response) = result {
+            if ocsp_log.has_status(validation_status::SIGNING_CREDENTIAL_REVOKED) {
+                return Err(log_item!(
+                    "",
+                    format!(
+                        "signing cert revoked: {}",
+                        ocsp_response.certificate_serial_num
+                    ),
+                    "check_ocsp_status"
                 )
-            } else {
-                check_stapled_ocsp_response_async(
-                    sign1,
-                    &ocsp_response_der,
-                    data,
-                    ctp,
-                    tst_info,
-                    &mut ocsp_log,
-                    context.settings(),
-                )
-                .await
-            };
-
-            // we only care about OCSP value log info if the result is OK
-            if let Ok(ocsp_response) = result {
-                if ocsp_log.has_status(validation_status::SIGNING_CREDENTIAL_REVOKED) {
-                    return Err(log_item!(
-                        "",
-                        format!(
-                            "signing cert revoked: {}",
-                            ocsp_response.certificate_serial_num
-                        ),
-                        "check_ocsp_status"
-                    )
-                    .validation_status(SIGNING_CREDENTIAL_REVOKED)
-                    .failure_as_err(
-                        validation_log,
-                        CoseError::CertificateTrustError(
-                            CertificateTrustError::CertificateNotTrusted,
-                        ),
-                    ));
-                }
-
-                // If certificate is confirmed not revoked, return success
-                if ocsp_log.has_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED) {
-                    log_item!(
-                        "",
-                        format!(
-                            "signing cert not revoked: {}",
-                            ocsp_response.certificate_serial_num
-                        ),
-                        "check_ocsp_status"
-                    )
-                    .validation_status(SIGNING_CREDENTIAL_NOT_REVOKED)
-                    .success(validation_log);
-
-                    return Ok(ocsp_response);
-                }
+                .validation_status(SIGNING_CREDENTIAL_REVOKED)
+                .failure_as_err(
+                    validation_log,
+                    CoseError::CertificateTrustError(CertificateTrustError::CertificateNotTrusted),
+                ));
             }
-            // errors mean we don't interpret the value
-            Ok(OcspResponse::default())
+
+            // If certificate is confirmed not revoked, return success
+            if ocsp_log.has_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED) {
+                log_item!(
+                    "",
+                    format!(
+                        "signing cert not revoked: {}",
+                        ocsp_response.certificate_serial_num
+                    ),
+                    "check_ocsp_status"
+                )
+                .validation_status(SIGNING_CREDENTIAL_NOT_REVOKED)
+                .success(validation_log);
+
+                return Ok(ocsp_response);
+            }
         }
 
-        None => match fetch_policy {
-            OcspFetchPolicy::FetchAllowed => {
-                if _sync {
-                    fetch_and_check_ocsp_response(
-                        sign1,
-                        data,
-                        ctp,
-                        tst_info,
-                        validation_log,
-                        context,
-                    )
-                } else {
-                    fetch_and_check_ocsp_response_async(
-                        sign1,
-                        data,
-                        ctp,
-                        tst_info,
-                        validation_log,
-                        context,
-                    )
-                    .await
-                }
-            }
-            OcspFetchPolicy::DoNotFetch => {
-                if let Some(ocsp_response_ders) = ocsp_responses {
-                    if !ocsp_response_ders.is_empty() {
-                        if _sync {
-                            process_ocsp_responses(
-                                sign1,
-                                data,
-                                ctp,
-                                ocsp_response_ders,
-                                tst_info,
-                                validation_log,
-                                context.settings(),
-                            )
-                        } else {
-                            process_ocsp_responses_async(
-                                sign1,
-                                data,
-                                ctp,
-                                ocsp_response_ders,
-                                tst_info,
-                                validation_log,
-                                context.settings(),
-                            )
-                            .await
-                        }
-                    } else {
-                        log_item!("", "OCSP fetching skipped", "check_ocsp_status")
-                            .validation_status(SIGNING_CREDENTIAL_OCSP_SKIPPED)
-                            .informational(validation_log);
+        // If the stapled response could not be validated and online fetching is disabled,
+        // return default without logging SIGNING_CREDENTIAL_OCSP_SKIPPED.
+        if fetch_policy == OcspFetchPolicy::DoNotFetch {
+            return Ok(OcspResponse::default());
+        }
+    }
 
-                        Ok(OcspResponse::default())
+    match fetch_policy {
+        OcspFetchPolicy::FetchAllowed => {
+            if _sync {
+                fetch_and_check_ocsp_response(sign1, data, ctp, tst_info, validation_log, context)
+            } else {
+                fetch_and_check_ocsp_response_async(
+                    sign1,
+                    data,
+                    ctp,
+                    tst_info,
+                    validation_log,
+                    context,
+                )
+                .await
+            }
+        }
+        OcspFetchPolicy::DoNotFetch => {
+            if let Some(ocsp_response_ders) = ocsp_responses {
+                if !ocsp_response_ders.is_empty() {
+                    if _sync {
+                        process_ocsp_responses(
+                            sign1,
+                            data,
+                            ctp,
+                            ocsp_response_ders,
+                            tst_info,
+                            validation_log,
+                            context.settings(),
+                        )
+                    } else {
+                        process_ocsp_responses_async(
+                            sign1,
+                            data,
+                            ctp,
+                            ocsp_response_ders,
+                            tst_info,
+                            validation_log,
+                            context.settings(),
+                        )
+                        .await
                     }
                 } else {
                     log_item!("", "OCSP fetching skipped", "check_ocsp_status")
@@ -223,8 +210,14 @@ pub fn check_ocsp_status(
 
                     Ok(OcspResponse::default())
                 }
+            } else {
+                log_item!("", "OCSP fetching skipped", "check_ocsp_status")
+                    .validation_status(SIGNING_CREDENTIAL_OCSP_SKIPPED)
+                    .informational(validation_log);
+
+                Ok(OcspResponse::default())
             }
-        },
+        }
     }
 }
 
@@ -645,12 +638,14 @@ fn validate_fetched_ocsp(
         // certificate carrying id-kp-OCSPSigning satisfies it.
         let ocsp_cert_chain = extend_ocsp_cert_chain(ocsp_certs, subject_chain);
 
+        // Live-fetched OCSP responses are signed by short-lived responder
+        // certificates that rotate frequently. While `from_der_checked` above
+        // evaluates `revocationTime` against the historical `signing_time`,
+        // the responder's own certificate validity and authorization (RFC 6960
+        // section 3.2 requirement 4) must be evaluated at current time (`None`),
+        // matching `check_end_entity_certificate_profile` above.
         if ctp
-            .check_certificate_trust(
-                &ocsp_cert_chain,
-                first_cert,
-                signing_time.map(|t| t.timestamp()),
-            )
+            .check_certificate_trust(&ocsp_cert_chain, first_cert, None)
             .is_err()
         {
             return OcspResponse::default();
@@ -859,6 +854,33 @@ mod tests {
         );
 
         assert!(resp.revoked_at.is_none());
+    }
+
+    #[test]
+    fn validate_fetched_ocsp_accepts_current_responder_for_historical_signing_time() {
+        // Live-fetched OCSP responses are signed by responder certificates that
+        // rotate frequently (their `notBefore` is often newer than an asset's
+        // historical `signing_time`). Here `test_time` (2024-02-01) is after
+        // the certificate's `revocationTime` (2023-02-01), but before the
+        // responder fixture certificate's `notBefore` (2025-03-07).
+        // `validate_fetched_ocsp` must evaluate the responder certificate's
+        // validity at current time while still evaluating `revocationTime`
+        // against `signing_time`.
+        let rsp = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_revoked.der");
+        let chain = ocsp_signing_chain();
+        let test_time = Utc.with_ymd_and_hms(2024, 2, 1, 8, 0, 0).unwrap();
+
+        let mut ctp = CertificateTrustPolicy::new();
+        ctp.add_end_entity_credentials(include_bytes!(
+            "../../../tests/fixtures/crypto/ocsp/ocsp_responder.pem"
+        ))
+        .unwrap();
+
+        let mut log = StatusTracker::default();
+        let resp = validate_fetched_ocsp(rsp, &chain, &ctp, Some(test_time), &mut log);
+
+        assert!(resp.revoked_at.is_some());
+        assert!(log.has_status(SIGNING_CREDENTIAL_REVOKED));
     }
 
     #[test]
