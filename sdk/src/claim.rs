@@ -132,6 +132,29 @@ impl ClaimAssetData<'_> {
             ClaimAssetData::StreamFragments(_, _, asset_type) => Some((*asset_type).to_owned()),
         }
     }
+
+    /// Returns the asset bytes when the asset is plain text, whose data hash is verified over
+    /// NFC-normalized text rather than the raw bytes (A.8).
+    #[cfg(feature = "unstable_plain_text")]
+    fn plain_text_content(&mut self) -> Result<Option<Vec<u8>>> {
+        use crate::asset_handlers::plain_text_io::is_plain_text_format;
+
+        if !self.format().is_some_and(|f| is_plain_text_format(&f)) {
+            return Ok(None);
+        }
+        Ok(match self {
+            #[cfg(feature = "file_io")]
+            ClaimAssetData::Path(path) => Some(std::fs::read(path)?),
+            ClaimAssetData::Bytes(bytes, _) => Some(bytes.to_vec()),
+            ClaimAssetData::Stream(stream, _) => {
+                let mut content = Vec::new();
+                stream.rewind()?;
+                stream.read_to_end(&mut content)?;
+                Some(content)
+            }
+            _ => None,
+        })
+    }
 }
 
 #[derive(PartialEq, Debug, Eq, Clone, Hash)]
@@ -2993,8 +3016,16 @@ impl Claim {
                     }
 
                     if !dh.is_remote_hash() {
+                        // plain text is checked against its wrapper and hashed after NFC
+                        // normalization (A.8), below
+                        #[cfg(feature = "unstable_plain_text")]
+                        let plain_text = asset_data.plain_text_content()?;
+                        #[cfg(not(feature = "unstable_plain_text"))]
+                        let plain_text: Option<Vec<u8>> = None;
+
                         if let Some(exclusions) = &dh.exclusions {
-                            if !data_hash_exclusions_match_manifest(
+                            if plain_text.is_none()
+                                && !data_hash_exclusions_match_manifest(
                                 exclusions,
                                 svi.manifest_store_range.as_ref(),
                                 svi.is_embedded,
@@ -3032,6 +3063,56 @@ impl Claim {
                         let mut cb = |step, total| {
                             context.check_progress(ProgressPhase::VerifyingAssetHash, step, total)
                         };
+
+                        // an exclusion must cover a wrapper, and the text is hashed after NFC
+                        // normalization (A.8)
+                        #[cfg(feature = "unstable_plain_text")]
+                        if let Some(content) = plain_text {
+                            use crate::asset_handlers::plain_text_io::verify_text_data_hash;
+
+                            match verify_text_data_hash(&dh, &content, claim.alg()) {
+                                Ok(true) => {
+                                    log_item!(
+                                        claim.assertion_uri(&hash_binding_assertion.label()),
+                                        "data hash valid",
+                                        "verify_internal"
+                                    )
+                                    .validation_status(validation_status::ASSERTION_DATAHASH_MATCH)
+                                    .success(validation_log);
+                                }
+                                Ok(false) => {
+                                    log_item!(
+                                        claim.assertion_uri(&hash_binding_assertion.label()),
+                                        "data hash exclusion does not cover the text manifest wrapper",
+                                        "verify_internal"
+                                    )
+                                    .validation_status(
+                                        validation_status::ASSERTION_DATAHASH_MALFORMED,
+                                    )
+                                    .failure(
+                                        validation_log,
+                                        Error::InvalidAsset(
+                                            "data hash exclusion does not cover the text manifest wrapper"
+                                                .to_string(),
+                                        ),
+                                    )?;
+                                }
+                                Err(e) => {
+                                    log_item!(
+                                        claim.assertion_uri(&hash_binding_assertion.label()),
+                                        format!("asset hash error, name: {name}, error: {e}"),
+                                        "verify_internal"
+                                    )
+                                    .validation_status(validation_status::ASSERTION_DATAHASH_MISMATCH)
+                                    .failure(
+                                        validation_log,
+                                        Error::HashMismatch(format!("Asset hash failure: {e}")),
+                                    )?;
+                                }
+                            }
+                            continue;
+                        }
+
                         let hash_result = match asset_data {
                             #[cfg(feature = "file_io")]
                             ClaimAssetData::Path(asset_path) => {

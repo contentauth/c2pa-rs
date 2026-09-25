@@ -3712,10 +3712,22 @@ impl Store {
             Ok(manifest_bytes) => Ok((manifest_bytes, None)),
             Err(Error::JumbfNotFound) => {
                 stream.rewind()?;
-                if let Some(ext_ref) =
+                let xmp_ref =
                     crate::utils::xmp_inmemory_utils::XmpInfo::from_source(stream, asset_type)
-                        .provenance
-                {
+                        .provenance;
+                // formats that keep the remote manifest URL outside XMP (e.g. an HTML link element)
+                let ext_ref = match xmp_ref {
+                    Some(url) => Some(url),
+                    None => {
+                        stream.rewind()?;
+                        context
+                            .io()
+                            .handler(asset_type)
+                            .and_then(|h| h.remote_manifest_url_ref())
+                            .and_then(|r| r.read_manifest_url(stream))
+                    }
+                };
+                if let Some(ext_ref) = ext_ref {
                     let jumbf = if _sync {
                         Store::handle_remote_manifest(&ext_ref, context)?
                     } else {
