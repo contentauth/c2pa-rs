@@ -45,7 +45,7 @@ use crate::{
         DigitalSourceType, EmbeddedData, ExclusionsMap, Metadata, SoftwareAgent, Thumbnail,
         TimeStamp, User, UserCbor,
     },
-    claim::Claim,
+    claim::{Claim, ClaimAssertionType},
     context::{Context, ProgressPhase},
     crypto::cose,
     error::{Error, Result},
@@ -607,7 +607,21 @@ impl Builder {
     pub fn intent(&self) -> Option<BuilderIntent> {
         let mut intent = self.intent.clone();
         if intent.is_none() {
-            intent = self.context.settings().builder.intent.clone();
+            let settings = self.context.settings();
+            intent = settings.builder.intent.clone();
+
+            if intent.is_none() {
+                // Backwards compatibility: `auto_created_action`/`auto_opened_action` predate
+                // `BuilderIntent` and are now equivalent to a `Create`/`Edit` intent.
+                let actions = &settings.builder.actions;
+                if actions.auto_created_action.enabled {
+                    if let Some(source_type) = &actions.auto_created_action.source_type {
+                        intent = Some(BuilderIntent::Create(source_type.clone()));
+                    }
+                } else if actions.auto_opened_action.enabled {
+                    intent = Some(BuilderIntent::Edit);
+                }
+            }
         }
         intent
     }
@@ -1759,117 +1773,26 @@ impl Builder {
             }
         }
 
-        // Verify all requested redactions were applied to some ingredient
-        if let Some(redactions) = &definition.redactions {
-            let applied = claim.redactions().map(|r| r.as_slice()).unwrap_or_default();
-            for redaction in redactions {
-                if !applied.contains(redaction) {
-                    return Err(Error::AssertionRedactionNotFound);
-                }
-            }
-        }
-
-        let mut found_actions = false;
         // A manifest may carry more than one actions assertion (a created-list assertion, which
-        // holds the inception action, and a gathered-list assertion). Only the first one may
-        // carry an inception, so clear this once we have seen an actions assertion.
-        let mut allow_inception = true;
+        // holds the inception action, and one or more gathered-list assertions). Committing any
+        // of them to the claim is deferred until every declared Actions assertion has been
+        // pre-processed, so the one that belongs in `created_assertions` can be selected
+        // holistically instead of by declaration order.
+        let mut pending_actions: Vec<(usize, bool, Actions)> = Vec::new();
         // add any additional assertions
-        for manifest_assertion in &definition.assertions {
+        for (def_index, manifest_assertion) in definition.assertions.iter().enumerate() {
             let (match_label, version, _instance) = parse_label(manifest_assertion.label());
             match match_label {
                 l if l.starts_with(Actions::LABEL) => {
-                    found_actions = true;
-
-                    let mut actions: Actions = manifest_assertion.to_assertion()?;
-
-                    let mut updates = Vec::new();
-                    //#[allow(clippy::explicit_counter_loop)]
-                    for (index, action) in actions.actions_mut().iter_mut().enumerate() {
-                        // find and remove the temporary ingredientIds parameter
-                        let ids = action.extract_ingredient_ids();
-
-                        if let Some(ids) = ids {
-                            let mut update = action.clone();
-                            let mut uris = Vec::new();
-                            for id in ids {
-                                if let Some((_relationship, hash_url)) = ingredient_map.get(&id) {
-                                    // todo: check for relationship/action mismatches
-                                    uris.push(hash_url.clone());
-                                } else {
-                                    log::error!("Action ingredientId not found: {id}");
-                                    if claim.version() >= 2 {
-                                        return Err(Error::AssertionSpecificError(format!(
-                                            "Action ingredientId not found: {id}"
-                                        )));
-                                    }
-                                }
-                            }
-
-                            update = update.set_parameter("ingredients", uris)?;
-
-                            updates.push((index, update));
-                        }
-                    }
-                    for update in updates {
-                        actions = actions.update_action(update.0, update.1);
-                    }
-
-                    if let Some(templates) = actions.templates.as_mut() {
-                        for template in templates {
-                            // replace icon with hashed_uri
-                            template.icon = match template.icon.take() {
-                                Some(icon) => {
-                                    Some(icon.to_hashed_uri(&self.resources, &mut claim)?)
-                                }
-                                None => None,
-                            };
-
-                            // replace software agent with hashed_uri
-                            template.software_agent = match template.software_agent.take() {
-                                Some(mut info) => {
-                                    if let Some(icon) = info.icon.as_mut() {
-                                        let icon =
-                                            icon.to_hashed_uri(&self.resources, &mut claim)?;
-                                        info.set_icon(icon);
-                                    }
-                                    Some(info)
-                                }
-                                agent => agent,
-                            };
-                        }
-                    }
-
-                    // convert icons in software agents to hashed uris
-                    let actions_mut = actions.actions_mut();
-                    #[allow(clippy::needless_range_loop)]
-                    // clippy is wrong here, we reference index twice
-                    for index in 0..actions_mut.len() {
-                        let action = &actions_mut[index];
-                        if let Some(SoftwareAgent::ClaimGeneratorInfo(info)) =
-                            action.software_agent()
-                        {
-                            if let Some(icon) = info.icon.as_ref() {
-                                let mut info = info.to_owned();
-                                let icon_uri = icon.to_hashed_uri(&self.resources, &mut claim)?;
-                                let update = info.set_icon(icon_uri);
-                                let mut action = action.to_owned();
-                                action = action.set_software_agent(update.to_owned());
-                                actions_mut[index] = action;
-                            }
-                        }
-                    }
-
-                    // Do this at the end of the preprocessing step to ensure all ingredient references
-                    // are resolved to their hashed URIs.
-                    self.add_actions_assertion_settings(
+                    let actions = self.process_actions_assertion(
+                        manifest_assertion,
+                        &mut claim,
                         &ingredient_map,
-                        &mut actions,
-                        allow_inception,
                     )?;
-                    allow_inception = false;
+                    pending_actions.push((def_index, manifest_assertion.created(), actions));
 
-                    add_assertion(&mut claim, &actions, manifest_assertion.created())
+                    // Committing to the claim is deferred to `finalize_actions` below.
+                    Ok(HashedUri::new(String::new(), None, &[]))
                 }
                 #[allow(deprecated)]
                 CreativeWork::LABEL => {
@@ -1914,64 +1837,166 @@ impl Builder {
             }?;
         }
 
-        if !found_actions {
-            let mut actions = Actions::new();
-            self.add_actions_assertion_settings(&ingredient_map, &mut actions, true)?;
-
-            if !actions.actions().is_empty() {
-                // Per spec, only the actions assertion carrying the manifest's inception
-                // action is required to live in `created_assertions` rather than
-                // `gathered_assertions`. Settings can add other, non-inception actions here
-                // too (e.g. via `builder.actions.actions`), and those don't need to be forced
-                // into `created_assertions`.
-                let has_inception = actions
-                    .actions()
-                    .iter()
-                    .any(|a| matches!(a.action(), c2pa_action::CREATED | c2pa_action::OPENED));
-                add_assertion(&mut claim, &actions, has_inception)?;
-            }
-        }
+        self.finalize_actions(&mut claim, &ingredient_map, pending_actions)?;
 
         Ok(claim)
     }
 
-    /// Adds [ActionsSettings][crate::settings::ActionsSettings] to an
-    /// [Actions][crate::assertions::Actions] assertion.
+    /// Resolves ingredient references and icons in a declared [Actions][crate::assertions::Actions]
+    /// assertion into their final, claim-ready form.
     ///
-    /// This function takes into account the [Settings][crate::Settings]:
-    /// * `builder.actions.auto_opened_action`
-    /// * `builder.actions.templates`
-    /// * `builder.actions.actions`
-    /// * `builder.actions.all_actions_included`
-    /// * `builder.actions.auto_all_actions_included`
-    /// * For more, see [Builder::add_auto_actions_assertions]
-    ///
-    /// Only the first actions assertion of a manifest may carry an inception (created/opened)
-    /// action, so `allow_inception` must only be true for that assertion.
-    ///
-    /// Per the C2PA spec's [All actions included](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_all_actions_included)
-    /// section, a claim generator that opens an asset strictly to record its `c2pa.opened`
-    /// action, with no other action recorded for that manifest, shall set `allActionsIncluded`
-    /// to `true`. When `builder.actions.auto_all_actions_included` is enabled, this function
-    /// checks for that condition only after every other source of actions (templates, the
-    /// `builder.actions.actions` setting, and the auto-inserted inception/placed actions) has
-    /// been merged in, so the check happens at the end of this function rather than the start —
-    /// otherwise it could wrongly fire before a later merge adds a second action.
-    ///
-    /// Note that a redaction performed via [`ManifestDefinition::redactions`] is applied earlier,
-    /// while ingredients are being added to the claim, and by itself is invisible to this
-    /// function: nothing here inspects `redactions`. Per spec, a `c2pa.redacted` [`Action`] must
-    /// be added to `actions.actions` alongside the corresponding entry in `redactions` (which is
-    /// the caller's responsibility, as in every redaction test in this module) for a redaction
-    /// to be counted against the "no other action recorded" condition above.
-    fn add_actions_assertion_settings(
+    /// This turns `ingredientIds` action parameters into real [`HashedUri`]s (via
+    /// `ingredient_map`), and resolves template/software-agent icons into hashed URIs, adding
+    /// those icon assertions to `claim` as a side effect. It does **not** apply
+    /// [ActionsSettings][crate::settings::ActionsSettings] or commit the result to `claim` —
+    /// that's deferred to [`Builder::finalize_actions`] once every declared Actions assertion in
+    /// the manifest has been seen, so the one that belongs in `created_assertions` can be chosen
+    /// holistically instead of by declaration order.
+    fn process_actions_assertion(
         &self,
+        assertion_def: &AssertionDefinition,
+        claim: &mut Claim,
         ingredient_map: &HashMap<String, (&Relationship, HashedUri)>,
-        actions: &mut Actions,
-        allow_inception: bool,
-    ) -> Result<()> {
-        let all_actions_included_explicit = actions.all_actions_included.is_some();
+    ) -> Result<Actions> {
+        let mut actions: Actions = assertion_def.to_assertion()?;
 
+        let mut updates = Vec::new();
+        //#[allow(clippy::explicit_counter_loop)]
+        for (index, action) in actions.actions_mut().iter_mut().enumerate() {
+            // find and remove the temporary ingredientIds parameter
+            let ids = action.extract_ingredient_ids();
+
+            if let Some(ids) = ids {
+                let mut update = action.clone();
+                let mut uris = Vec::new();
+                for id in ids {
+                    if let Some((_relationship, hash_url)) = ingredient_map.get(&id) {
+                        // todo: check for relationship/action mismatches
+                        uris.push(hash_url.clone());
+                    } else {
+                        log::error!("Action ingredientId not found: {id}");
+                        if claim.version() >= 2 {
+                            return Err(Error::AssertionSpecificError(format!(
+                                "Action ingredientId not found: {id}"
+                            )));
+                        }
+                    }
+                }
+
+                update = update.set_parameter("ingredients", uris)?;
+
+                updates.push((index, update));
+            }
+        }
+        for update in updates {
+            actions = actions.update_action(update.0, update.1);
+        }
+
+        if let Some(templates) = actions.templates.as_mut() {
+            for template in templates {
+                // replace icon with hashed_uri
+                template.icon = match template.icon.take() {
+                    Some(icon) => Some(icon.to_hashed_uri(&self.resources, claim)?),
+                    None => None,
+                };
+
+                // replace software agent with hashed_uri
+                template.software_agent = match template.software_agent.take() {
+                    Some(mut info) => {
+                        if let Some(icon) = info.icon.as_mut() {
+                            let icon = icon.to_hashed_uri(&self.resources, claim)?;
+                            info.set_icon(icon);
+                        }
+                        Some(info)
+                    }
+                    agent => agent,
+                };
+            }
+        }
+
+        // convert icons in software agents to hashed uris
+        for action in actions.actions_mut().iter_mut() {
+            if let Some(SoftwareAgent::ClaimGeneratorInfo(info)) = action.software_agent() {
+                if let Some(icon) = info.icon.as_ref() {
+                    let mut info = info.to_owned();
+                    let icon_uri = icon.to_hashed_uri(&self.resources, claim)?;
+                    let update = info.set_icon(icon_uri);
+                    *action = std::mem::take(action).set_software_agent(update.to_owned());
+                }
+            }
+        }
+
+        Ok(actions)
+    }
+
+    /// Returns the position in `pending` of the Actions assertion that must carry the
+    /// manifest's inception (`c2pa.created`/`c2pa.opened`) action, per the C2PA 2.4 rule that
+    /// the inception action must be the first action of the first `c2pa.actions`/
+    /// `c2pa.actions.v2` assertion in `created_assertions` — not merely the first one declared.
+    /// Returns `None` if no pending Actions assertion is eligible.
+    ///
+    /// An assertion is eligible either because it's marked `created: true`, or because it
+    /// already declares an inception action itself — a manifest that writes `c2pa.created`
+    /// directly into an actions assertion's data clearly intends that assertion to be the
+    /// inception one, whether or not it separately set `created: true` on the assertion
+    /// definition. `pending` is built in ascending declaration order, so the *first* eligible
+    /// entry is also the one with the smallest declaration position, giving a deterministic
+    /// result when more than one is eligible; [`Builder::finalize_actions`] separately
+    /// guarantees this assertion is pushed to the claim before any other actions assertion,
+    /// regardless of declaration position.
+    fn select_inception_target(pending: &[(usize, bool, Actions)]) -> Option<usize> {
+        pending.iter().position(|(_, created, actions)| {
+            *created
+                || actions
+                    .actions()
+                    .iter()
+                    .any(|a| matches!(a.action(), c2pa_action::CREATED | c2pa_action::OPENED))
+        })
+    }
+
+    /// Validates, across every declared Actions assertion, that at most one already contains a
+    /// `c2pa.created`/`c2pa.opened` action, and that if one does, it's the `target` (the
+    /// position selected by [`Builder::select_inception_target`] to carry the inception action).
+    fn validate_declared_inception(
+        pending: &[(usize, bool, Actions)],
+        target: Option<usize>,
+    ) -> Result<()> {
+        let mut declared_inception =
+            pending
+                .iter()
+                .enumerate()
+                .filter_map(|(pos, (_, _, actions))| {
+                    actions
+                        .actions()
+                        .iter()
+                        .any(|a| matches!(a.action(), c2pa_action::CREATED | c2pa_action::OPENED))
+                        .then_some(pos)
+                });
+
+        let Some(first) = declared_inception.next() else {
+            return Ok(());
+        };
+
+        if declared_inception.next().is_some() {
+            return Err(Error::BadParam(
+                "A manifest's actions assertions may contain at most one c2pa.created or c2pa.opened action"
+                    .to_string(),
+            ));
+        }
+
+        if Some(first) != target {
+            return Err(Error::BadParam(
+                "Only the actions assertion marked created: true may contain a created or opened action"
+                    .to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Merges the [ActionsSettings][crate::settings::ActionsSettings] `templates` and `actions`
+    /// lists into `actions`.
+    fn merge_actions_settings(&self, actions: &mut Actions) -> Result<()> {
         let action_templates = &self.context.settings().builder.actions.templates;
 
         if let Some(action_templates) = action_templates {
@@ -2003,139 +2028,70 @@ impl Builder {
             }
         }
 
-        // Check after the settings actions are merged in, since they may add an inception too.
-        if !allow_inception
-            && actions
-                .actions()
-                .iter()
-                .any(|a| matches!(a.action(), c2pa_action::CREATED | c2pa_action::OPENED))
-        {
-            return Err(Error::BadParam(
-                "Only the first actions assertion may contain a created or opened action"
-                    .to_string(),
-            ));
-        }
-
-        self.add_auto_actions_assertions_settings(ingredient_map, actions, allow_inception)?;
-
-        if !all_actions_included_explicit {
-            let auto_all_actions_included = self
-                .context
-                .settings()
-                .builder
-                .actions
-                .auto_all_actions_included;
-
-            // Now that every other source of actions has been merged in above, a sole
-            // `c2pa.opened` action means this manifest records nothing but that inception
-            // action, which the spec requires to be reported as `allActionsIncluded: true`.
-            // The SDK can only see changes that were recorded as actions (e.g. a redaction
-            // performed without a matching `c2pa.redacted` action would go unnoticed here),
-            // so this detection is opt-in via `auto_all_actions_included` rather than always-on.
-            actions.all_actions_included = if auto_all_actions_included
-                && allow_inception
-                && actions.actions().len() == 1
-                && actions.actions()[0].action() == c2pa_action::OPENED
-            {
-                Some(true)
-            } else {
-                self.context.settings().builder.actions.all_actions_included
-            };
-        }
-
         Ok(())
     }
 
-    /// Adds c2pa.created, c2pa.opened, and c2pa.placed actions for the specified [Actions][crate::assertions::Actions]
-    /// assertion if the conditons are applicable as defined in the spec.
+    /// Inserts the intent-driven `c2pa.created`/`c2pa.opened` inception action into `actions`, if
+    /// it doesn't already contain one and an intent is set.
     ///
-    /// This function takes into account the [Settings][crate::Settings]:
-    /// * `builder.actions.auto_created_action`
-    /// * `builder.actions.auto_opened_action`
-    /// * `builder.actions.auto_placed_action`
-    ///
-    /// A manifest may contain more than one actions assertion, but only the first one may carry
-    /// the inception (created/opened) action, so `allow_inception` must only be true for it.
-    fn add_auto_actions_assertions_settings(
+    /// This function takes into account the [Settings][crate::Settings] used to resolve
+    /// [`Builder::intent`] when no explicit intent has been set.
+    fn insert_auto_inception_action(
         &self,
-        ingredient_map: &HashMap<String, (&Relationship, HashedUri)>,
         actions: &mut Actions,
-        allow_inception: bool,
+        ingredient_map: &HashMap<String, (&Relationship, HashedUri)>,
     ) -> Result<()> {
-        let settings = self.context.settings();
         // https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_mandatory_presence_of_at_least_one_actions_assertion
-        let auto_created = settings.builder.actions.auto_created_action.enabled;
-        let auto_opened = settings.builder.actions.auto_opened_action.enabled;
+        if actions.actions.iter().any(|action| {
+            action.action() == c2pa_action::CREATED || action.action() == c2pa_action::OPENED
+        }) {
+            return Ok(());
+        }
 
-        if allow_inception
-            && (self.intent().is_some() || auto_created || auto_opened)
-            && !actions.actions.iter().any(|action| {
-                action.action() == c2pa_action::CREATED || action.action() == c2pa_action::OPENED
-            })
-        {
+        if let Some(intent) = self.intent() {
             // look for a parentOf relationship ingredient in the ingredient map and return a copy of the hashed URI if found.
             let parent_ingredient_uri = ingredient_map
                 .iter()
                 .find(|(_, (relationship, _))| *relationship == &Relationship::ParentOf)
                 .map(|(_, (_, uri))| uri.clone());
 
-            let action = match self.intent() {
-                Some(BuilderIntent::Create(source_type)) => {
+            let action = match intent {
+                BuilderIntent::Create(source_type) => {
                     if parent_ingredient_uri.is_some() {
                         return Err(Error::BadParam(
                             "Cannot have ParentOf ingredient with a Create intent".to_string(),
                         ));
                     }
-                    Some(Action::new(c2pa_action::CREATED).set_source_type(source_type.clone()))
+                    Action::new(c2pa_action::CREATED).set_source_type(source_type)
                 }
-                Some(BuilderIntent::Edit) | Some(BuilderIntent::Update) => {
-                    if let Some(parent_ingredient_uri) = parent_ingredient_uri {
-                        Some(
-                            Action::new(c2pa_action::OPENED)
-                                .set_parameter("ingredients", vec![parent_ingredient_uri])?,
-                        )
-                    } else {
-                        return Err(Error::BadParam(
-                            "Must have ParentOf ingredient for an Edit or Update intent"
-                                .to_string(),
-                        ));
-                    }
-                }
-                None => {
-                    // handle auto_opened and auto_created settings if no intent was set
-                    if auto_opened && parent_ingredient_uri.is_some() {
-                        // only add if we have a parent ingredient
-                        if let Some(parent_uri) = &parent_ingredient_uri {
-                            let mut action = Action::new(c2pa_action::OPENED)
-                                .set_parameter("ingredients", vec![parent_uri])?;
-                            if let Some(source_type) =
-                                &settings.builder.actions.auto_opened_action.source_type
-                            {
-                                action = action.set_source_type(source_type.clone());
-                            }
-                            Some(action)
-                        } else {
-                            None
-                        }
-                    } else if auto_created {
-                        let mut action = Action::new(c2pa_action::CREATED);
-                        if let Some(source_type) =
-                            &settings.builder.actions.auto_created_action.source_type
-                        {
-                            action = action.set_source_type(source_type.clone());
-                        }
-                        Some(action)
-                    } else {
-                        None
-                    }
+                BuilderIntent::Edit | BuilderIntent::Update => {
+                    let Some(parent_ingredient_uri) = parent_ingredient_uri else {
+                        // No ParentOf ingredient is known yet. `to_claim` runs before
+                        // `maybe_add_parent` in the sign flow, so one may still be added later
+                        // from the input stream — leave the inception action for that caller to
+                        // insert once the parent is known, rather than failing here.
+                        return Ok(());
+                    };
+                    Action::new(c2pa_action::OPENED)
+                        .set_parameter("ingredients", vec![parent_ingredient_uri])?
                 }
             };
 
             // we know there are no other created or opened actions, so we can safely insert at the front
-            if let Some(action) = action {
-                actions.actions.insert(0, action);
-            }
+            actions.actions.insert(0, action);
         }
+
+        Ok(())
+    }
+
+    /// Inserts a `c2pa.placed` action for every `ComponentOf` ingredient not already referenced
+    /// by one, per `builder.actions.auto_placed_action`.
+    fn insert_auto_placed_actions(
+        &self,
+        actions: &mut Actions,
+        ingredient_map: &HashMap<String, (&Relationship, HashedUri)>,
+    ) -> Result<()> {
+        let settings = self.context.settings();
 
         // https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_relationship
         if settings.builder.actions.auto_placed_action.enabled {
@@ -2173,13 +2129,151 @@ impl Builder {
         Ok(())
     }
 
+    /// Auto-detects the [All actions included](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_all_actions_included)
+    /// condition and sets `actions.all_actions_included` accordingly, per
+    /// `builder.actions.auto_all_actions_included`.
+    ///
+    /// `is_sole_action_context` must only be true when `actions` is the assertion eligible to
+    /// carry the manifest's inception action (the target, or the freshly synthesized assertion
+    /// when there is no target) — a sole `c2pa.opened` action only means "nothing else was
+    /// recorded for this manifest" in that context.
+    ///
+    /// Must be called after every other source of actions (templates, the
+    /// `builder.actions.actions` setting, and the auto-inserted inception/placed actions) has
+    /// been merged in, since an earlier check could wrongly fire before a later merge adds a
+    /// second action.
+    fn maybe_set_all_actions_included(&self, actions: &mut Actions, is_sole_action_context: bool) {
+        if actions.all_actions_included.is_some() {
+            return;
+        }
+
+        let auto_all_actions_included = self
+            .context
+            .settings()
+            .builder
+            .actions
+            .auto_all_actions_included;
+
+        // A sole `c2pa.opened` action means this manifest records nothing but that inception
+        // action, which the spec requires to be reported as `allActionsIncluded: true`.
+        // The SDK can only see changes that were recorded as actions (e.g. a redaction
+        // performed without a matching `c2pa.redacted` action would go unnoticed here),
+        // so this detection is opt-in via `auto_all_actions_included` rather than always-on.
+        actions.all_actions_included = if auto_all_actions_included
+            && is_sole_action_context
+            && actions.actions().len() == 1
+            && actions.actions()[0].action() == c2pa_action::OPENED
+        {
+            Some(true)
+        } else {
+            self.context.settings().builder.actions.all_actions_included
+        };
+    }
+
+    /// Selects the Actions assertion that carries the manifest's inception action, validates
+    /// cross-assertion invariants, applies [ActionsSettings][crate::settings::ActionsSettings]
+    /// only to that assertion, and commits every pending Actions assertion to `claim`.
+    ///
+    /// The resolved (or freshly synthesized) inception-eligible assertion is always pushed to
+    /// `claim` before any other pending Actions assertion, even when a *gathered* one was
+    /// declared earlier than the `target`. This matters beyond the created/gathered bucket
+    /// split: `Claim::verify_actions` additionally requires that whichever actions assertion is
+    /// pushed to the assertion store *first* is the only one allowed to contain an inception
+    /// action — a raw push-order rule, not a created-vs-gathered one.
+    ///
+    /// Note that a redaction performed via [`ManifestDefinition::redactions`] is applied earlier,
+    /// while ingredients are being added to the claim, and by itself is invisible to this
+    /// function: nothing here inspects `redactions`. Per spec, a `c2pa.redacted` [`Action`] must
+    /// be added to `actions.actions` alongside the corresponding entry in `redactions` (which is
+    /// the caller's responsibility, as in every redaction test in this module) for a redaction
+    /// to be counted against the "no other action recorded" condition in
+    /// [`Builder::maybe_set_all_actions_included`].
+    fn finalize_actions(
+        &self,
+        claim: &mut Claim,
+        ingredient_map: &HashMap<String, (&Relationship, HashedUri)>,
+        mut pending: Vec<(usize, bool, Actions)>,
+    ) -> Result<()> {
+        let target = Self::select_inception_target(&pending);
+        Self::validate_declared_inception(&pending, target)?;
+
+        // Resolve the one assertion eligible to carry the inception action: either the
+        // designated `target` entry (removed here so the loop below doesn't also commit it),
+        // or a freshly synthesized one when nothing declared was eligible.
+        let mut designated = match target {
+            Some(pos) => pending.remove(pos).2,
+            None => Actions::new(),
+        };
+
+        self.merge_actions_settings(&mut designated)?;
+        self.insert_auto_inception_action(&mut designated, ingredient_map)?;
+        self.insert_auto_placed_actions(&mut designated, ingredient_map)?;
+
+        let has_inception = designated
+            .actions()
+            .iter()
+            .any(|a| matches!(a.action(), c2pa_action::CREATED | c2pa_action::OPENED));
+        // A resolved `target` is always the manifest's created-list assertion, even if it ends
+        // up without an inception action; a synthesized fallback is only forced into
+        // `created_assertions` if it actually carries one.
+        let commit_as_created = target.is_some() || has_inception;
+        // "No other action recorded for this manifest" (see `maybe_set_all_actions_included`)
+        // must hold across every other pending Actions assertion too, not just within
+        // `designated` — a caller who declared other actions via `add_action()` (landing in a
+        // separate gathered assertion, since it wasn't eligible to be `target`) has recorded
+        // more than a bare `c2pa.opened`, even though `designated` itself is inception-only.
+        let is_sole_action_context = commit_as_created
+            && pending
+                .iter()
+                .all(|(_, _, actions)| actions.actions().is_empty());
+        self.maybe_set_all_actions_included(&mut designated, is_sole_action_context);
+
+        if target.is_some() || !designated.actions().is_empty() {
+            if commit_as_created {
+                claim.add_created_assertion(&designated)?;
+            } else {
+                claim.add_assertion(&designated)?;
+            }
+        }
+
+        for (_, created, actions) in pending {
+            if created {
+                claim.add_created_assertion(&actions)?;
+            } else {
+                claim.add_assertion(&actions)?;
+            }
+        }
+
+        Ok(())
+    }
+
     /// Converts the `Builder` into a [`Store`].
     ///
     /// This functioin calls [`Builder::to_claim`] internally. Use [`Builder::to_store_with_claim`]
     /// if the [`Claim`] is constructed manually.
     fn to_store(&self) -> Result<Store> {
         let claim = self.to_claim()?;
+        self.verify_redactions_applied(&claim)?;
         self.to_store_with_claim(claim)
+    }
+
+    /// Verify that every requested redaction (`definition.redactions`) was actually applied to
+    /// some ingredient's claim.
+    ///
+    /// Must only run once every ingredient that could satisfy a redaction has had a chance to
+    /// apply it. For [`Builder::sign`] that includes the auto-added parent ingredient from
+    /// [`Builder::maybe_add_parent`], which runs *after* [`Builder::to_claim`] returns — so this
+    /// cannot live inside `to_claim` itself without being premature for that case.
+    fn verify_redactions_applied(&self, claim: &Claim) -> Result<()> {
+        if let Some(redactions) = &self.definition.redactions {
+            let applied = claim.redactions().map(|r| r.as_slice()).unwrap_or_default();
+            for redaction in redactions {
+                if !applied.contains(redaction) {
+                    return Err(Error::AssertionRedactionNotFound);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Converts the `Builder` into a [`Store`] with the specified [`Claim`], usually obtained
@@ -2198,7 +2292,12 @@ impl Builder {
     }
 
     #[cfg(feature = "add_thumbnails")]
-    fn maybe_add_thumbnail<R>(&mut self, format: &str, stream: &mut R) -> Result<&mut Self>
+    fn maybe_add_thumbnail<R>(
+        &mut self,
+        claim: &mut Claim,
+        format: &str,
+        stream: &mut R,
+    ) -> Result<&mut Self>
     where
         R: Read + Seek + ?Sized,
     {
@@ -2210,7 +2309,7 @@ impl Builder {
         // check settings to see if we should auto generate a thumbnail
         let auto_thumbnail = self.context.settings().builder.thumbnail.enabled;
 
-        if self.definition.thumbnail.is_none() && auto_thumbnail {
+        if claim.thumbnail().is_none() && auto_thumbnail {
             self.context
                 .check_progress(ProgressPhase::Thumbnail, 1, 1)?;
             stream.rewind()?;
@@ -2224,27 +2323,34 @@ impl Builder {
                 )?
             {
                 stream.rewind()?;
+                let thumb_format = output_format.to_string();
 
-                // Do not write this as a file when reading from files
-                #[cfg(feature = "file_io")]
-                let base_path = self.resources.take_base_path();
-                self.resources
-                    .add(self.definition.instance_id.clone(), image)?;
-                #[cfg(feature = "file_io")]
-                if let Some(path) = base_path {
-                    self.resources.set_base_path(path)
-                }
-                self.definition.thumbnail = Some(ResourceRef::new(
-                    output_format.to_string(),
-                    self.definition.instance_id.clone(),
-                ));
+                let thumbnail = if claim.version() >= 2 {
+                    EmbeddedData::new(
+                        labels::CLAIM_THUMBNAIL,
+                        format_to_mime(&thumb_format),
+                        image.clone(),
+                    )
+                } else {
+                    Thumbnail::new(
+                        &labels::add_thumbnail_format(labels::CLAIM_THUMBNAIL, &thumb_format),
+                        image.clone(),
+                    )
+                    .into()
+                };
+                claim.add_created_assertion(&thumbnail)?;
             }
         }
         Ok(self)
     }
 
     /// Maybe add a parent ingredient to the manifest.
-    fn maybe_add_parent<R>(&mut self, format: &str, stream: &mut R) -> Result<&mut Self>
+    fn maybe_add_parent<R>(
+        &mut self,
+        claim: &mut Claim,
+        format: &str,
+        stream: &mut R,
+    ) -> Result<&mut Self>
     where
         R: Read + Seek + Send,
     {
@@ -2255,11 +2361,11 @@ impl Builder {
         );
         // Don't auto-add a parentOf ingredient if the user's manifest already declares a
         // c2pa.created or c2pa.opened action — those are mutually exclusive with auto-parent.
-        let has_created_or_opened = self.definition.assertions.iter().any(|a| {
-            if !a.label.starts_with(crate::assertions::Actions::LABEL) {
+        let has_created_or_opened = claim.created_action_assertions().into_iter().any(|a| {
+            if !a.label().starts_with(crate::assertions::Actions::LABEL) {
                 return false;
             }
-            let Ok(actions) = a.to_assertion::<crate::assertions::Actions>() else {
+            let Ok(actions) = crate::assertions::Actions::from_assertion(a.assertion()) else {
                 return false;
             };
             actions.actions().iter().any(|act| {
@@ -2270,16 +2376,61 @@ impl Builder {
                 )
             })
         });
-        if auto_parent
-            && !has_created_or_opened
-            && !self.definition.ingredients.iter().any(|i| i.is_parent())
-        {
+
+        let has_parent = matches!(claim.parent_claim_uri(), Ok(Some(_)));
+        if auto_parent && !has_created_or_opened && !has_parent {
             let parent_def = serde_json::json!({
                 "relationship": "parentOf",
             });
             stream.rewind()?;
-            self.add_ingredient_from_stream(parent_def.to_string(), format, stream)?;
+
+            let ingredient = Ingredient::from_json(&parent_def.to_string())?;
+            ingredient.chain_resolver_to(&mut self.resources);
+
+            let ingredient = if format == "c2pa" || format == "application/c2pa" {
+                let mut archive_ingredient = self.ingredient_from_archive(stream)?;
+                archive_ingredient.merge(&ingredient);
+                archive_ingredient
+            } else {
+                ingredient.with_stream(format, stream, &self.context)?
+            };
+
+            let uri = ingredient.add_to_claim(
+                claim,
+                self.definition.redactions.clone(),
+                Some(&self.resources),
+                &self.context,
+            )?;
             stream.rewind()?;
+
+            // `to_claim` runs before this ingredient exists, so it couldn't insert the
+            // inception action for it (see `insert_auto_inception_action`). Add it now that
+            // the parent is known. Per spec, the inception action must be the first action of
+            // the first actions assertion in `created_assertions`, so if `to_claim` already
+            // designated a created actions assertion (e.g. a user-declared `created: true`
+            // assertion holding other actions), patch the inception action into that one rather
+            // than adding a second, later created assertion.
+            let opened =
+                Action::new(c2pa_action::OPENED).set_parameter("ingredients", vec![uri])?;
+
+            if let Some(existing) = claim.created_action_assertions().first() {
+                let mut actions = Actions::from_assertion(existing.assertion())?;
+                actions.actions.insert(0, opened);
+                let is_sole_action_context = claim.action_assertions().len() == 1;
+                self.maybe_set_all_actions_included(&mut actions, is_sole_action_context);
+                claim.update_assertion(
+                    actions.to_assertion()?,
+                    |ca| ca.assertion_type() == ClaimAssertionType::Created,
+                    |_, a| Ok(a),
+                )?;
+            } else {
+                let mut actions = Actions::new().add_action(opened);
+                self.maybe_set_all_actions_included(
+                    &mut actions,
+                    claim.action_assertions().is_empty(),
+                );
+                claim.add_created_assertion(&actions)?;
+            }
         }
         Ok(self)
     }
@@ -3223,22 +3374,26 @@ impl Builder {
         W: Write + Read + Seek + Send,
     {
         let format = format_to_mime(format);
-        self.definition.format.clone_from(&format);
-        if let Some(instance_id) = XmpInfo::from_source(source, &format).instance_id {
-            self.definition.instance_id = instance_id;
-        }
+
         source.rewind()?;
 
         #[cfg(feature = "file_io")]
         self.apply_resource_base_path();
 
-        self.maybe_add_parent(&format, source)?;
+        let mut claim = self.to_claim()?;
+        claim.format = Some(format.clone());
+
+        if let Some(instance_id) = XmpInfo::from_source(source, &format).instance_id {
+            claim.instance_id = instance_id;
+        }
+
+        self.maybe_add_parent(&mut claim, &format, source)?;
 
         // generate thumbnail if we don't already have one
         #[cfg(feature = "add_thumbnails")]
-        self.maybe_add_thumbnail(&format, source)?;
+        self.maybe_add_thumbnail(&mut claim, &format, source)?;
 
-        let mut claim = self.to_claim()?;
+        self.verify_redactions_applied(&claim)?;
 
         if let Some(tsa_url) = signer.time_authority_url() {
             if _sync {
@@ -3632,6 +3787,29 @@ impl Builder {
         self.context
             .check_progress(ProgressPhase::AddingIngredient, 1, 1)?;
 
+        let ingredient = if _sync {
+            self.ingredient_from_archive(stream)?
+        } else {
+            self.ingredient_from_archive_async(stream).await?
+        };
+
+        self.add_ingredient(ingredient);
+        self.definition
+            .ingredients
+            .last_mut()
+            .ok_or(Error::IngredientNotFound)
+    }
+
+    /// Builds an [`Ingredient`] from an archive stream without adding it to the builder.
+    ///
+    /// This holds the shared logic between [`Self::add_ingredient_from_archive`] and
+    /// [`Self::maybe_add_parent`], which needs the constructed ingredient without pushing
+    /// it onto `self.definition.ingredients`.
+    #[async_generic]
+    fn ingredient_from_archive<R>(&self, stream: &mut R) -> Result<Ingredient>
+    where
+        R: Read + Seek + Send,
+    {
         let reader = if _sync {
             Reader::from_shared_context(&self.context).with_stream("application/c2pa", stream)?
         } else {
@@ -3665,11 +3843,7 @@ impl Builder {
         if let Some(id) = ingredient_id {
             ingredient.set_label(id);
         }
-        self.add_ingredient(ingredient);
-        self.definition
-            .ingredients
-            .last_mut()
-            .ok_or(Error::IngredientNotFound)
+        Ok(ingredient)
     }
 
     /// Creates a working store from the builder.
@@ -4388,7 +4562,7 @@ mod tests {
     }
 
     #[test]
-    fn test_auto_inception_out_of_order_inception_errors() {
+    fn test_created_bucket_takes_inception_regardless_of_declaration_order() {
         #[cfg(target_os = "wasi")]
         Settings::reset().unwrap();
 
@@ -4418,12 +4592,58 @@ mod tests {
             .unwrap();
         builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
 
-        let err = builder.to_claim().unwrap_err();
-        assert!(
-            matches!(err, Error::BadParam(ref message)
-                if message.contains("first actions assertion")),
-            "expected a BadParam about the first actions assertion, got: {err:?}"
+        let claim = builder.to_claim().unwrap();
+
+        // The created-list assertion is correctly identified as the inception target
+        // regardless of declaration order.
+        let created_assertions = claim.created_action_assertions();
+        assert_eq!(created_assertions.len(), 1);
+        let created_actions = Actions::from_assertion(created_assertions[0].assertion()).unwrap();
+        assert_eq!(
+            created_actions.actions().first().unwrap().action(),
+            c2pa_action::CREATED
         );
+
+        // The gathered assertion is untouched.
+        let gathered_assertions = claim.gathered_action_assertions();
+        assert_eq!(gathered_assertions.len(), 1);
+        let gathered_actions = Actions::from_assertion(gathered_assertions[0].assertion()).unwrap();
+        assert_eq!(
+            gathered_actions.actions().first().unwrap().action(),
+            c2pa_action::CROPPED
+        );
+    }
+
+    #[test]
+    fn test_declared_gathered_actions_get_separate_synthesized_created_assertion() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let mut builder = Builder::from_context(test_context());
+        builder
+            .add_ingredient_from_stream(parent_json(), "image/jpeg", &mut Cursor::new(TEST_IMAGE))
+            .unwrap();
+        builder
+            .add_action(Action::new(c2pa_action::CROPPED))
+            .unwrap();
+        builder.set_intent(BuilderIntent::Edit);
+
+        let claim = builder.to_claim().unwrap();
+
+        // No declared Actions assertion is marked `created: true`, so a fresh, separate
+        // created assertion is synthesized to carry the inception action.
+        let created_assertions = claim.created_action_assertions();
+        assert_eq!(created_assertions.len(), 1);
+        let created_actions = Actions::from_assertion(created_assertions[0].assertion()).unwrap();
+        assert_eq!(created_actions.actions().len(), 1);
+        assert_eq!(created_actions.actions()[0].action(), c2pa_action::OPENED);
+
+        // The original gathered assertion (from `add_action`) is untouched.
+        let gathered_assertions = claim.gathered_action_assertions();
+        assert_eq!(gathered_assertions.len(), 1);
+        let gathered_actions = Actions::from_assertion(gathered_assertions[0].assertion()).unwrap();
+        assert_eq!(gathered_actions.actions().len(), 1);
+        assert_eq!(gathered_actions.actions()[0].action(), c2pa_action::CROPPED);
     }
 
     #[test]
@@ -4956,15 +5176,25 @@ mod tests {
         let reader = Reader::default()
             .with_stream("image/jpeg", &mut output)
             .unwrap();
+        let manifest = reader.active_manifest().unwrap();
 
-        let actions: Actions = reader
-            .active_manifest()
-            .unwrap()
-            .find_assertion(Actions::LABEL)
-            .unwrap();
+        // The auto-inserted inception action lands in its own created assertion, separate from
+        // the `c2pa.cropped` assertion declared via `add_action()` (which wasn't eligible to be
+        // the inception target). Across the two, the manifest records more than a bare
+        // `c2pa.opened`, so `allActionsIncluded` must not be forced on either one.
+        let actions_assertions: Vec<Actions> = manifest
+            .assertions()
+            .iter()
+            .filter(|a| a.label().starts_with(Actions::LABEL))
+            .map(|a| a.to_assertion().unwrap())
+            .collect();
+        assert_eq!(actions_assertions.len(), 2);
 
-        assert_eq!(actions.actions().len(), 2);
-        assert_eq!(actions.all_actions_included, None);
+        let total_actions: usize = actions_assertions.iter().map(|a| a.actions().len()).sum();
+        assert_eq!(total_actions, 2);
+        assert!(actions_assertions
+            .iter()
+            .all(|a| a.all_actions_included.is_none()));
     }
 
     // A value the caller explicitly authored into the actions assertion data is a statement
@@ -10677,15 +10907,22 @@ mod tests {
 
         // Resolve the placed action's URL → ingredient.title and confirm it's "Ingredient B"
         // (proves identity rather than relying on JUMBF slot ordering).
+        //
+        // A plain declared `c2pa.actions` assertion (not marked `created: true`) is not eligible
+        // to carry the auto-inserted inception action (see
+        // `Builder::test_declared_gathered_actions_get_separate_synthesized_created_assertion`),
+        // so the manifest ends up with two separate `c2pa.actions`-labeled assertions: a
+        // synthesized one holding just the inception action, and this test's own declared one
+        // holding the `c2pa.placed` action. Search all of them rather than just the first.
         dest.rewind()?;
         let reader = Reader::from_shared_context(&context).with_stream("image/jpeg", &mut dest)?;
         let manifest = reader.active_manifest().expect("active manifest present");
         let placed_url: &str = manifest
             .assertions()
             .iter()
-            .find(|a| a.label().contains("c2pa.actions"))
-            .and_then(|a| a.value().ok())
-            .and_then(|v: &serde_json::Value| {
+            .filter(|a| a.label().contains("c2pa.actions"))
+            .filter_map(|a| a.value().ok())
+            .find_map(|v: &serde_json::Value| {
                 v["actions"]
                     .as_array()?
                     .iter()
@@ -10779,26 +11016,32 @@ mod tests {
         let reader = Reader::from_shared_context(&context).with_stream("image/jpeg", &mut dest)?;
         print!("reader JSON: {}", reader.json());
         let manifest = reader.active_manifest().expect("active manifest present");
-        let actions_value: serde_json::Value = manifest
+
+        // A plain declared `c2pa.actions` assertion (not marked `created: true`) is not eligible
+        // to carry the auto-inserted inception action (see
+        // `Builder::test_declared_gathered_actions_get_separate_synthesized_created_assertion`),
+        // so the manifest ends up with two separate `c2pa.actions`-labeled assertions: a
+        // synthesized one holding just the inception action, and this test's own declared one
+        // holding both `c2pa.placed` actions. Search all of them rather than just the first.
+        let placed_urls: Vec<&str> = manifest
             .assertions()
             .iter()
-            .find(|a| a.label().contains("c2pa.actions"))
-            .and_then(|a| a.value().ok().cloned())
-            .expect("c2pa.actions assertion present");
-
-        // Verify ingredients and actions were properly linked
-        let placed_urls: Vec<&str> = actions_value["actions"]
-            .as_array()
-            .expect("actions array")
-            .iter()
-            .filter(|act| act["action"] == "c2pa.placed")
-            .filter_map(|act| {
-                act.get("parameters")?
-                    .get("ingredients")?
-                    .as_array()?
-                    .first()?
-                    .get("url")?
-                    .as_str()
+            .filter(|a| a.label().contains("c2pa.actions"))
+            .filter_map(|a| a.value().ok())
+            .flat_map(|actions_value: &serde_json::Value| {
+                actions_value["actions"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|act| act["action"] == "c2pa.placed")
+                    .filter_map(|act| {
+                        act.get("parameters")?
+                            .get("ingredients")?
+                            .as_array()?
+                            .first()?
+                            .get("url")?
+                            .as_str()
+                    })
             })
             .collect();
         assert_eq!(

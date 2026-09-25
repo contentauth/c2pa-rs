@@ -1426,7 +1426,7 @@ impl Claim {
         &mut self,
         assertion_builder: &impl AssertionBase,
     ) -> Result<C2PAAssertion> {
-        self.add_assertion_impl(assertion_builder, &DefaultSalt::default(), false)
+        self.add_assertion_impl(assertion_builder, &DefaultSalt::default(), false, None)
     }
 
     /// Same as add_assertion but forces addition to created_assertions for Claims V2
@@ -1434,7 +1434,38 @@ impl Claim {
         &mut self,
         assertion_builder: &impl AssertionBase,
     ) -> Result<C2PAAssertion> {
-        self.add_assertion_impl(assertion_builder, &DefaultSalt::default(), true)
+        self.add_assertion_impl(assertion_builder, &DefaultSalt::default(), true, None)
+    }
+
+    /// Same as `add_assertion`/`add_created_assertion`, but reuses `preferred_label` verbatim
+    /// (instead of assigning the next positional `__N` instance) when that label is a free slot
+    /// for this assertion's base label.
+    ///
+    /// A round-tripped ingredient (rebuilt via [`crate::Ingredient::from_ingredient_uri`], e.g.
+    /// through [`crate::Builder::with_archive`] or [`crate::Reader::into_builder`]) already carries
+    /// the JUMBF label it was assigned the first time it was added to a claim. Re-adding it to a
+    /// new claim via plain positional numbering can silently assign that label to a *different*
+    /// ingredient whenever ingredients are re-processed in a different relative order — which
+    /// happens whenever ingredients land in different created/gathered buckets, since a claim's
+    /// V2 wire format only preserves order within each bucket, not the original interleaving
+    /// across both (see `Claim::from_value`). Any reference to the old label that was already
+    /// baked into a `HashedUri` (e.g. an action's `ingredientIds`) would then point at the wrong
+    /// ingredient. Reusing the label keeps that identity stable across reloads.
+    ///
+    /// Falls back to positional numbering if `preferred_label` doesn't share this assertion's
+    /// base label, or if it's already taken by another assertion in this claim.
+    pub(crate) fn add_assertion_with_preferred_label(
+        &mut self,
+        assertion_builder: &impl AssertionBase,
+        add_as_created_assertion: bool,
+        preferred_label: Option<&str>,
+    ) -> Result<C2PAAssertion> {
+        self.add_assertion_impl(
+            assertion_builder,
+            &DefaultSalt::default(),
+            add_as_created_assertion,
+            preferred_label,
+        )
     }
 
     fn compatibility_checks(&self, assertion: &Assertion) -> Result<()> {
@@ -1514,6 +1545,7 @@ impl Claim {
         assertion_builder: &impl AssertionBase,
         salt_generator: &impl SaltGenerator,
         add_as_created_assertion: bool,
+        preferred_label: Option<&str>,
     ) -> Result<C2PAAssertion> {
         // Enforce the per-manifest assertion limit to prevent resource exhaustion
         // regardless of how the claim is constructed.
@@ -1527,8 +1559,19 @@ impl Claim {
         let assertion = assertion_builder.to_assertion()?;
         let assertion_label = assertion.label();
 
-        // Update label if there are multiple instances of the same claim type.
-        let as_label = self.make_assertion_instance_label(assertion_label.as_ref());
+        // Update label if there are multiple instances of the same claim type. Reuse
+        // `preferred_label` verbatim when it names a free slot for this assertion's base label
+        // (see `add_assertion_with_preferred_label`); otherwise fall back to the next positional
+        // instance.
+        let as_label = match preferred_label {
+            Some(label)
+                if labels::parse_label(label).0 == labels::parse_label(&assertion_label).0
+                    && !self.assertion_store.iter().any(|ca| ca.label() == label) =>
+            {
+                label.to_string()
+            }
+            _ => self.make_assertion_instance_label(assertion_label.as_ref()),
+        };
         // get base label and instance
         let (base_label, _version, instance) = labels::parse_label(&as_label);
 
@@ -2292,7 +2335,7 @@ impl Claim {
         }
 
         // perform all actions checks
-        for (index, actions_assertion) in all_actions.iter().enumerate() {
+        for actions_assertion in all_actions.iter() {
             let actions = Actions::from_assertion(actions_assertion.assertion())?;
             let label = to_assertion_uri(claim.label(), &actions_assertion.label());
 
@@ -2369,8 +2412,11 @@ impl Claim {
                     }
                 }
 
-                // 2.a created or opened must be first action
-                if index != 0
+                // 2.a created or opened must be first action (within its own assertion — which
+                // actions assertion is allowed to hold it at all is enforced by the
+                // "only first action can be created or opened" check above; `index`, the
+                // position of `actions_assertion` among `all_actions`, is irrelevant here).
+                if action_index != 0
                     && (action.action() == c2pa_action::OPENED
                         || action.action() == c2pa_action::CREATED)
                 {
@@ -4619,24 +4665,23 @@ impl Claim {
         &self,
         assertion_label: &str,
     ) -> Option<(&C2PAAssertion, ClaimAssertionType)> {
+        // Match by the exact (label, instance) pair, not a substring: `url().contains(...)` would
+        // wrongly match e.g. "c2pa.actions.v2" against a URL for "c2pa.actions.v2__1" (whose label
+        // is a textual superset of the one being looked up), misclassifying which bucket an
+        // assertion belongs to whenever both instances exist.
+        let is_exact_match = |hashed_uri: &&C2PAAssertion| {
+            let (raw_label, instance) = Claim::assertion_label_from_link(&hashed_uri.url());
+            Claim::label_with_instance(&raw_label, instance) == assertion_label
+        };
+
         if self.version() < 2 {
-            let a = self
-                .assertions()
-                .iter()
-                .find(|hashed_uri| hashed_uri.url().contains(assertion_label))?;
+            let a = self.assertions().iter().find(is_exact_match)?;
 
             Some((a, ClaimAssertionType::V1))
-        } else if let Some(a) = self
-            .created_assertions()
-            .iter()
-            .find(|hashed_uri| hashed_uri.url().contains(assertion_label))
-        {
+        } else if let Some(a) = self.created_assertions().iter().find(is_exact_match) {
             Some((a, ClaimAssertionType::Created))
         } else {
-            let a = self
-                .gathered_assertions()?
-                .iter()
-                .find(|hashed_uri| hashed_uri.url().contains(assertion_label))?;
+            let a = self.gathered_assertions()?.iter().find(is_exact_match)?;
 
             Some((a, ClaimAssertionType::Gathered))
         }
