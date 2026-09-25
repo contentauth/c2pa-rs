@@ -1773,16 +1773,6 @@ impl Builder {
             }
         }
 
-        // Verify all requested redactions were applied to some ingredient
-        if let Some(redactions) = &definition.redactions {
-            let applied = claim.redactions().map(|r| r.as_slice()).unwrap_or_default();
-            for redaction in redactions {
-                if !applied.contains(redaction) {
-                    return Err(Error::AssertionRedactionNotFound);
-                }
-            }
-        }
-
         // A manifest may carry more than one actions assertion (a created-list assertion, which
         // holds the inception action, and one or more gathered-list assertions). Committing any
         // of them to the claim is deferred until every declared Actions assertion has been
@@ -2263,7 +2253,27 @@ impl Builder {
     /// if the [`Claim`] is constructed manually.
     fn to_store(&self) -> Result<Store> {
         let claim = self.to_claim()?;
+        self.verify_redactions_applied(&claim)?;
         self.to_store_with_claim(claim)
+    }
+
+    /// Verify that every requested redaction (`definition.redactions`) was actually applied to
+    /// some ingredient's claim.
+    ///
+    /// Must only run once every ingredient that could satisfy a redaction has had a chance to
+    /// apply it. For [`Builder::sign`] that includes the auto-added parent ingredient from
+    /// [`Builder::maybe_add_parent`], which runs *after* [`Builder::to_claim`] returns — so this
+    /// cannot live inside `to_claim` itself without being premature for that case.
+    fn verify_redactions_applied(&self, claim: &Claim) -> Result<()> {
+        if let Some(redactions) = &self.definition.redactions {
+            let applied = claim.redactions().map(|r| r.as_slice()).unwrap_or_default();
+            for redaction in redactions {
+                if !applied.contains(redaction) {
+                    return Err(Error::AssertionRedactionNotFound);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Converts the `Builder` into a [`Store`] with the specified [`Claim`], usually obtained
@@ -3382,6 +3392,8 @@ impl Builder {
         // generate thumbnail if we don't already have one
         #[cfg(feature = "add_thumbnails")]
         self.maybe_add_thumbnail(&mut claim, &format, source)?;
+
+        self.verify_redactions_applied(&claim)?;
 
         if let Some(tsa_url) = signer.time_authority_url() {
             if _sync {
@@ -10895,15 +10907,22 @@ mod tests {
 
         // Resolve the placed action's URL → ingredient.title and confirm it's "Ingredient B"
         // (proves identity rather than relying on JUMBF slot ordering).
+        //
+        // A plain declared `c2pa.actions` assertion (not marked `created: true`) is not eligible
+        // to carry the auto-inserted inception action (see
+        // `Builder::test_declared_gathered_actions_get_separate_synthesized_created_assertion`),
+        // so the manifest ends up with two separate `c2pa.actions`-labeled assertions: a
+        // synthesized one holding just the inception action, and this test's own declared one
+        // holding the `c2pa.placed` action. Search all of them rather than just the first.
         dest.rewind()?;
         let reader = Reader::from_shared_context(&context).with_stream("image/jpeg", &mut dest)?;
         let manifest = reader.active_manifest().expect("active manifest present");
         let placed_url: &str = manifest
             .assertions()
             .iter()
-            .find(|a| a.label().contains("c2pa.actions"))
-            .and_then(|a| a.value().ok())
-            .and_then(|v: &serde_json::Value| {
+            .filter(|a| a.label().contains("c2pa.actions"))
+            .filter_map(|a| a.value().ok())
+            .find_map(|v: &serde_json::Value| {
                 v["actions"]
                     .as_array()?
                     .iter()
@@ -10997,26 +11016,32 @@ mod tests {
         let reader = Reader::from_shared_context(&context).with_stream("image/jpeg", &mut dest)?;
         print!("reader JSON: {}", reader.json());
         let manifest = reader.active_manifest().expect("active manifest present");
-        let actions_value: serde_json::Value = manifest
+
+        // A plain declared `c2pa.actions` assertion (not marked `created: true`) is not eligible
+        // to carry the auto-inserted inception action (see
+        // `Builder::test_declared_gathered_actions_get_separate_synthesized_created_assertion`),
+        // so the manifest ends up with two separate `c2pa.actions`-labeled assertions: a
+        // synthesized one holding just the inception action, and this test's own declared one
+        // holding both `c2pa.placed` actions. Search all of them rather than just the first.
+        let placed_urls: Vec<&str> = manifest
             .assertions()
             .iter()
-            .find(|a| a.label().contains("c2pa.actions"))
-            .and_then(|a| a.value().ok().cloned())
-            .expect("c2pa.actions assertion present");
-
-        // Verify ingredients and actions were properly linked
-        let placed_urls: Vec<&str> = actions_value["actions"]
-            .as_array()
-            .expect("actions array")
-            .iter()
-            .filter(|act| act["action"] == "c2pa.placed")
-            .filter_map(|act| {
-                act.get("parameters")?
-                    .get("ingredients")?
-                    .as_array()?
-                    .first()?
-                    .get("url")?
-                    .as_str()
+            .filter(|a| a.label().contains("c2pa.actions"))
+            .filter_map(|a| a.value().ok())
+            .flat_map(|actions_value: &serde_json::Value| {
+                actions_value["actions"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|act| act["action"] == "c2pa.placed")
+                    .filter_map(|act| {
+                        act.get("parameters")?
+                            .get("ingredients")?
+                            .as_array()?
+                            .first()?
+                            .get("url")?
+                            .as_str()
+                    })
             })
             .collect();
         assert_eq!(

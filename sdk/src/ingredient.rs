@@ -312,6 +312,21 @@ impl Ingredient {
             .unwrap_or_else(|| self.instance_id().to_string())
     }
 
+    /// The JUMBF label this ingredient was assigned the last time it was added to a claim
+    /// (populated by [`Ingredient::from_ingredient_uri`] when reconstructing an ingredient from
+    /// an existing claim, e.g. via [`crate::Builder::with_archive`] or
+    /// [`crate::Reader::into_builder`]), if any.
+    ///
+    /// Distinct from a caller-supplied bookkeeping [`label`](Self::label) (e.g. `"CA.jpg"`,
+    /// used only to key action `ingredientIds`): this is only ever a real `c2pa.ingredient`
+    /// assertion label, and [`Ingredient::add_to_claim`] uses it to keep a round-tripped
+    /// ingredient's identity stable across reloads instead of letting it be reassigned by
+    /// positional numbering (see `Claim::add_assertion_with_preferred_label`).
+    fn assigned_claim_label(&self) -> Option<&str> {
+        self.label()
+            .filter(|label| labels::parse_label(label).0 == labels::INGREDIENT)
+    }
+
     /// Returns the provenance URI if available.
     pub fn provenance(&self) -> Option<&str> {
         self.provenance.as_deref()
@@ -1459,11 +1474,11 @@ impl Ingredient {
             .informational_uri
             .clone_from(&self.informational_uri);
         ingredient_assertion.data_types.clone_from(&self.data_types);
-        if self.is_parent() || self.is_created.unwrap_or(false) {
-            claim.add_created_assertion(&ingredient_assertion)
-        } else {
-            claim.add_assertion(&ingredient_assertion)
-        }
+        claim.add_assertion_with_preferred_label(
+            &ingredient_assertion,
+            self.is_parent() || self.is_created.unwrap_or(false),
+            self.assigned_claim_label(),
+        )
     }
 
     /// Asynchronously create an Ingredient from a binary manifest (.c2pa) and asset bytes,
