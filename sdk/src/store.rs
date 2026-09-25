@@ -25,9 +25,10 @@ use log::error;
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError},
     assertions::{
+        c2pa_action,
         labels::{self, CLAIM},
-        BmffHash, BoxHash, CertificateStatus, CollectionHash, DataBox, DataHash, Ingredient,
-        Relationship, TimeStamp, User, UserCbor,
+        Action, Actions, BmffHash, BoxHash, CertificateStatus, CollectionHash, DataBox, DataHash,
+        Ingredient, Relationship, TimeStamp, User, UserCbor,
     },
     asset_io::{ObjectLocations, ObjectType, ReadSeek, ReadWriteSeek},
     claim::{
@@ -4175,18 +4176,67 @@ impl Store {
         Ok(())
     }
 
+    /// Walks a claim's own `parentOf` ingredient chain within `store`, starting at `start`, to
+    /// find the eldest ancestor claim (the one with no `parentOf` ingredient of its own, i.e.
+    /// the manifest that recorded the chain's `c2pa.created` action). Returns `start` itself if
+    /// it has no `parentOf` ingredient, or if its `parentOf` ingredient's manifest isn't present
+    /// in `store`.
+    fn find_ingredient_chain_origin<'a>(store: &'a Store, start: &'a Claim) -> &'a Claim {
+        let mut current = start;
+        loop {
+            let parent_uri = current.ingredient_assertions().into_iter().find_map(|ia| {
+                let ingredient = Ingredient::from_assertion(ia.assertion()).ok()?;
+                if ingredient.relationship == Relationship::ParentOf {
+                    ingredient.c2pa_manifest()
+                } else {
+                    None
+                }
+            });
+
+            let Some(parent_uri) = parent_uri else {
+                return current;
+            };
+
+            let parent_label = Store::manifest_label_from_path(&parent_uri.url());
+            match store.get_claim(&parent_label) {
+                Some(parent_claim) => current = parent_claim,
+                None => return current,
+            }
+        }
+    }
+
+    /// Collects the non-inception actions (i.e. everything other than `c2pa.created` /
+    /// `c2pa.opened`) recorded across all of `claim`'s actions assertions, so they can be
+    /// carried forward onto a new manifest when `claim` itself is dropped by
+    /// [`Store::load_ingredient_to_claim`]'s chain compaction.
+    fn flatten_non_inception_actions(claim: &Claim) -> Vec<Action> {
+        claim
+            .action_assertions()
+            .into_iter()
+            .filter_map(|ca| Actions::from_assertion(ca.assertion()).ok())
+            .flat_map(|actions| actions.actions().to_owned())
+            .filter(|action| !matches!(action.action(), c2pa_action::CREATED | c2pa_action::OPENED))
+            .collect()
+    }
+
     /// Load Store from memory and add its content as a claim ingredient
     /// claim: claim to add an ingredient
     /// provenance_label: label of the provenance claim used as key into ingredient map
     /// data: jumbf data block
     /// returns new Store with ingredients loaded, claim is modified to include resolved
     /// ingredients conflicts
+    ///
+    /// Also returns any non-inception actions recovered from a manifest dropped by chain
+    /// compaction (see
+    /// [`IngredientsSettings::compact_parent_of_chain`](crate::settings::builder::IngredientsSettings::compact_parent_of_chain)),
+    /// for the caller to carry forward onto the new manifest's own actions assertion. Empty
+    /// when compaction is disabled or there was nothing to compact.
     pub fn load_ingredient_to_claim(
         claim: &mut Claim,
         data: &[u8],
         redactions: Option<Vec<String>>,
         context: &Context,
-    ) -> Result<Store> {
+    ) -> Result<(Store, Vec<Action>)> {
         // constants for ingredient conflict reasons
         const CONFLICTING_MANIFEST: usize = 1; // Conflicts with another C2PA Manifest
 
@@ -4194,7 +4244,7 @@ impl Store {
         let mut to_remove_from_incoming = Vec::new();
 
         let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-        let i_store = Store::from_jumbf_with_context(data, &mut report, context)?;
+        let mut i_store = Store::from_jumbf_with_context(data, &mut report, context)?;
 
         let empty_store = Store::default();
 
@@ -4415,12 +4465,57 @@ impl Store {
         }
 
         let claims_to_add: Vec<Claim> = i_store_mut.claims().into_iter().cloned().collect();
+
+        // When enabled, bound the embedded ancestor chain to the chain's origin manifest
+        // instead of re-embedding every claim already present in the ingredient's store. See
+        // `IngredientsSettings::compact_parent_of_chain` for the full rationale.
+        if context
+            .settings()
+            .builder
+            .ingredients
+            .compact_parent_of_chain
+        {
+            if let Some(active_claim) = i_store.provenance_claim() {
+                let active_label = active_claim.label().to_owned();
+                let origin_label = Store::find_ingredient_chain_origin(&i_store, active_claim)
+                    .label()
+                    .to_owned();
+
+                if origin_label != active_label {
+                    if let Some(origin_claim) =
+                        claims_to_add.iter().find(|c| c.label() == origin_label)
+                    {
+                        let origin_claim = origin_claim.clone();
+
+                        let flattened_actions = claims_to_add
+                            .iter()
+                            .filter(|c| c.label() != origin_label)
+                            .flat_map(Store::flatten_non_inception_actions)
+                            .collect();
+
+                        claim.add_ingredient_data(
+                            vec![origin_claim.clone()],
+                            Some(final_redactions.into_iter().collect()),
+                            &svi.ingredient_references,
+                        )?;
+
+                        // Point the caller at the origin claim as this ingredient's "active"
+                        // manifest, so the new manifest's own ingredient assertion references
+                        // the origin instead of the (now-dropped) immediate parent.
+                        i_store.set_provenance_path(&origin_claim);
+
+                        return Ok((i_store, flattened_actions));
+                    }
+                }
+            }
+        }
+
         claim.add_ingredient_data(
             claims_to_add,
             Some(final_redactions.into_iter().collect()),
             &svi.ingredient_references,
         )?;
-        Ok(i_store)
+        Ok((i_store, Vec::new()))
     }
 
     /// Fetches ocsp response ders from the specified manifests.
@@ -6391,7 +6486,7 @@ pub mod tests {
         // create a new update manifest
         let mut claim = Claim::new("adobe unit test", Some("update_manifest"), 1);
         output_stream.rewind().unwrap();
-        let mut new_store = Store::load_ingredient_to_claim(
+        let (mut new_store, _) = Store::load_ingredient_to_claim(
             &mut claim,
             &load_jumbf_from_stream(format, &mut output_stream).unwrap(),
             None,
@@ -6476,7 +6571,7 @@ pub mod tests {
         // create a new update manifest
         let mut claim = Claim::new("adobe unit test", Some("update_manifest"), 1);
         output_stream.rewind().unwrap();
-        let mut new_store = Store::load_ingredient_to_claim(
+        let (mut new_store, _) = Store::load_ingredient_to_claim(
             &mut claim,
             &load_jumbf_from_stream(format, &mut output_stream).unwrap(),
             None,
@@ -6553,7 +6648,7 @@ pub mod tests {
         ingredient_stream.rewind().unwrap();
         let (manifest_bytes, _) =
             Store::load_jumbf_from_stream(format, &mut ingredient_stream, &context).unwrap();
-        let mut new_store =
+        let (mut new_store, _) =
             Store::load_ingredient_to_claim(&mut claim, &manifest_bytes, None, &context).unwrap();
 
         let ingredient_hashes = new_store.get_manifest_box_hashes(pc);
@@ -6940,7 +7035,7 @@ pub mod tests {
             &context,
         )
         .unwrap();
-        let mut redacted_store = Store::load_ingredient_to_claim(
+        let (mut redacted_store, _) = Store::load_ingredient_to_claim(
             &mut claim,
             &manifest_bytes,
             Some(vec![redacted_uri.clone()]),
@@ -7234,7 +7329,7 @@ pub mod tests {
         )
         .unwrap();
 
-        let mut redacted_store = Store::load_ingredient_to_claim(
+        let (mut redacted_store, _) = Store::load_ingredient_to_claim(
             &mut claim,
             &manifest_bytes,
             Some(vec![redacted_uri]),
@@ -7396,7 +7491,7 @@ pub mod tests {
 
         output_stream.rewind().unwrap();
         let ingredient_vec = load_jumbf_from_stream(format, &mut output_stream).unwrap();
-        let mut redacted_store = Store::load_ingredient_to_claim(
+        let (mut redacted_store, _) = Store::load_ingredient_to_claim(
             &mut claim,
             &ingredient_vec,
             Some(vec![redacted_uri]),
@@ -7481,7 +7576,7 @@ pub mod tests {
         // created redacted uri
         let redacted_uri2 = to_assertion_uri(pc.label(), TEST_USER_ASSERTION);
 
-        let mut redacted_store2 = Store::load_ingredient_to_claim(
+        let (mut redacted_store2, _) = Store::load_ingredient_to_claim(
             &mut claim2,
             &ingredient_vec,
             Some(vec![redacted_uri2]),
@@ -10026,7 +10121,7 @@ pub mod tests {
         let (m1_jumbf, _) =
             Store::load_jumbf_from_stream(format, &mut Cursor::new(m1_vec.clone()), &context)
                 .unwrap();
-        let mut m2_store =
+        let (mut m2_store, _) =
             Store::load_ingredient_to_claim(&mut m2_claim, &m1_jumbf, None, &context).unwrap();
 
         let m1_hashes = m1_store_loaded.get_manifest_box_hashes(m1_pc);
@@ -10346,7 +10441,7 @@ pub mod tests {
         let (m1_jumbf, _) =
             Store::load_jumbf_from_stream(format, &mut Cursor::new(m1_vec.clone()), &context)
                 .unwrap();
-        let mut m2_store =
+        let (mut m2_store, _) =
             Store::load_ingredient_to_claim(&mut m2_claim, &m1_jumbf, None, &context).unwrap();
 
         let m1_hashes = m1_store_loaded.get_manifest_box_hashes(m1_pc);
@@ -10549,7 +10644,7 @@ pub mod tests {
             let (prev_jumbf, _) =
                 Store::load_jumbf_from_stream(format, &mut Cursor::new(prev_vec), &build_context)
                     .unwrap();
-            let mut store =
+            let (mut store, _) =
                 Store::load_ingredient_to_claim(&mut claim, &prev_jumbf, None, &build_context)
                     .unwrap();
 

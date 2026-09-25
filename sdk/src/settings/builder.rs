@@ -465,6 +465,30 @@ impl SettingsValidate for ActionsSettings {
     }
 }
 
+/// Settings for configuring how the [`Builder`][crate::Builder] embeds ingredient manifests.
+#[cfg_attr(feature = "json_schema", derive(JsonSchema))]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct IngredientsSettings {
+    /// When adding a `parentOf` ingredient whose own manifest store already contains an
+    /// ancestor chain (i.e. it was itself built by adding a `parentOf` ingredient), embed
+    /// only the chain's origin (eldest) manifest instead of the ingredient's full ancestor
+    /// store.
+    ///
+    /// This bounds the manifest store to at most two manifests (origin + current) no matter
+    /// how many times an asset has been incrementally re-signed, instead of growing by one
+    /// manifest per save -- see the "PDF incremental save" scenario in CAI-13657 /
+    /// CAI-13477. Non-inception actions (i.e. everything other than `c2pa.created` /
+    /// `c2pa.opened`) recorded on the manifest this drops are copied onto the new manifest's
+    /// own actions assertion, so a trace of what happened between origin and current
+    /// survives, but the dropped manifest is no longer independently signed or timestamped
+    /// in the store.
+    ///
+    /// Disabled by default (`false`): dropping the direct signature/timestamp chain for
+    /// intermediate saves is a provenance tradeoff that should be an explicit choice, not
+    /// silent default behavior.
+    pub compact_parent_of_chain: bool,
+}
+
 /// The scope of manifests to fetch timestamps for.
 ///
 /// See [`TimeStampSettings`] for more information.
@@ -545,6 +569,8 @@ pub struct BuilderSettings {
     ///
     /// For more information on the reasoning behind this field see [ActionsSettings].
     pub actions: ActionsSettings,
+    /// Settings for configuring how ingredient manifests are embedded.
+    pub ingredients: IngredientsSettings,
     // TODO: this setting affects fetching and generation of the assertion; needs clarification
     /// Whether to create [`CertificateStatus`] assertions for manifests to store certificate revocation
     /// status. The assertion can be fetched for the active manifest or for all manifests (including
@@ -636,6 +662,7 @@ impl Default for BuilderSettings {
             claim_generator_info: None,
             thumbnail: ThumbnailSettings::default(),
             actions: ActionsSettings::default(),
+            ingredients: IngredientsSettings::default(),
             certificate_status_fetch: None,
             certificate_status_should_override: None,
             intent: None,
