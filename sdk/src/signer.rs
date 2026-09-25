@@ -112,6 +112,14 @@ pub trait Signer {
         None
     }
 
+    /// OCSP responses for the signing certificate chain, signing certificate first.
+    ///
+    /// Defaults to the [`ocsp_val`](Signer::ocsp_val) response, if any. Override this
+    /// to also staple responses for intermediate CA certificates.
+    fn ocsp_vals(&self) -> Vec<Vec<u8>> {
+        self.ocsp_val().into_iter().collect()
+    }
+
     /// If this returns true the sign function is responsible for for direct handling of the COSE structure.
     ///
     /// This is useful for cases where the signer needs to handle the COSE structure directly.
@@ -226,6 +234,14 @@ pub trait AsyncSigner: MaybeSend + MaybeSync {
         None
     }
 
+    /// OCSP responses for the signing certificate chain, signing certificate first.
+    ///
+    /// Defaults to the [`ocsp_val`](AsyncSigner::ocsp_val) response, if any. Override this
+    /// to also staple responses for intermediate CA certificates.
+    async fn ocsp_vals(&self) -> Vec<Vec<u8>> {
+        self.ocsp_val().await.into_iter().collect()
+    }
+
     /// If this returns true the sign function is responsible for for direct handling of the COSE structure.
     ///
     /// This is useful for cases where the signer needs to handle the COSE structure directly.
@@ -261,6 +277,10 @@ impl<T: ?Sized + Signer> Signer for Box<T> {
 
     fn ocsp_val(&self) -> Option<Vec<u8>> {
         (**self).ocsp_val()
+    }
+
+    fn ocsp_vals(&self) -> Vec<Vec<u8>> {
+        (**self).ocsp_vals()
     }
 
     fn direct_cose_handling(&self) -> bool {
@@ -329,12 +349,76 @@ impl<T: ?Sized + AsyncSigner> AsyncSigner for Box<T> {
         (**self).ocsp_val().await
     }
 
+    async fn ocsp_vals(&self) -> Vec<Vec<u8>> {
+        (**self).ocsp_vals().await
+    }
+
     fn direct_cose_handling(&self) -> bool {
         (**self).direct_cose_handling()
     }
 
     fn dynamic_assertions(&self) -> Vec<Box<dyn AsyncDynamicAssertion>> {
         (**self).dynamic_assertions()
+    }
+}
+
+/// Wraps a [`Signer`] to staple pre-fetched OCSP responses after its own.
+///
+/// See [`create_signer::with_ocsp_responses`](crate::create_signer::with_ocsp_responses).
+pub(crate) struct OcspStapledSigner {
+    pub(crate) signer: BoxedSigner,
+    pub(crate) ocsp_responses: Vec<Vec<u8>>,
+}
+
+impl Signer for OcspStapledSigner {
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+        self.signer.sign(data)
+    }
+
+    fn alg(&self) -> SigningAlg {
+        self.signer.alg()
+    }
+
+    fn certs(&self) -> Result<Vec<Vec<u8>>> {
+        self.signer.certs()
+    }
+
+    fn reserve_size(&self) -> usize {
+        self.signer.reserve_size() + self.ocsp_responses.iter().map(Vec::len).sum::<usize>()
+    }
+
+    fn ocsp_val(&self) -> Option<Vec<u8>> {
+        self.ocsp_vals().into_iter().next()
+    }
+
+    fn ocsp_vals(&self) -> Vec<Vec<u8>> {
+        let mut ocsp_vals = self.signer.ocsp_vals();
+        ocsp_vals.extend(self.ocsp_responses.iter().cloned());
+        ocsp_vals
+    }
+
+    fn direct_cose_handling(&self) -> bool {
+        self.signer.direct_cose_handling()
+    }
+
+    fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+        self.signer.dynamic_assertions()
+    }
+
+    fn time_authority_url(&self) -> Option<String> {
+        self.signer.time_authority_url()
+    }
+
+    fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+        self.signer.timestamp_request_headers()
+    }
+
+    fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+        self.signer.timestamp_request_body(message)
+    }
+
+    fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+        self.signer.send_timestamp_request(message)
     }
 }
 
