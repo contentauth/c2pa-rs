@@ -804,7 +804,15 @@ fn test_ingredient_arbitrary_metadata_fields() -> Result<()> {
         "should have at least one ingredient"
     );
 
-    let ingredient = &ingredients[0];
+    // Signing with `BuilderIntent::Edit` (the default intent in test_settings.toml) also
+    // auto-adds a `parentOf` ingredient derived from the source stream, which lands in the
+    // claim's created-assertions bucket and so sorts before this explicitly-declared
+    // `componentOf` one once the file is read back — find it by title rather than assuming
+    // it's first.
+    let ingredient = ingredients
+        .iter()
+        .find(|i| i["title"].as_str() == Some("Test Ingredient"))
+        .expect("should have ingredient titled 'Test Ingredient'");
 
     assert_eq!(
         ingredient["metadata"]["dateTime"].as_str(),
