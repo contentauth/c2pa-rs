@@ -2506,4 +2506,141 @@ pub mod tests {
             "an unreferenced insideValidity attestation suppressed a genuine expiry finding"
         );
     }
+
+    // Deeply nested ingredients across a mix of ingredient versions:
+    //   A (active) --v3--> B --v2--> C --v1--> D
+    // Each ingredient records its referenced manifest's (untrusted) signer status. The
+    // live re-check reproduces all three, and they must de-duplicate across every level
+    // and version (matched by content, since nested ingredients carry historical URIs),
+    // leaving no ingredient-delta failures so the trusted active manifest is Trusted.
+    #[test]
+    fn from_store_deeply_nested_mixed_version_ingredients_dedup() {
+        // Build bottom-up so each parent references its child's real generated label.
+        let d_claim = Claim::new("gen-d", None, 1);
+        let d_label = d_claim.label().to_string();
+
+        // C --v1 ingredient--> D  (v1 carries `validation_status`, not `validation_results`)
+        let mut c_claim = Claim::new("gen-c", None, 1);
+        let c_label = c_claim.label().to_string();
+        c_claim
+            .add_assertion(&Ingredient {
+                relationship: Relationship::ComponentOf,
+                version: 1,
+                // v1/v2 ingredients require title/format and reference via `c2pa_manifest`,
+                // recording history in `validation_status` (only v3 uses validation_results).
+                title: Some("D".to_string()),
+                format: Some("image/jpeg".to_string()),
+                instance_id: Some("xmp:iid:level-d".to_string()), // v1 ingredients require instanceID
+                c2pa_manifest: Some(HashedUri::new(
+                    labels::to_manifest_uri(&d_label),
+                    Some("sha256".into()),
+                    &[0u8; 32],
+                )),
+                validation_status: Some(vec![ValidationStatus::new_failure(
+                    SIGNING_CREDENTIAL_UNTRUSTED,
+                )
+                .set_url(labels::to_signature_uri(&d_label))]),
+                ..Default::default()
+            })
+            .unwrap();
+
+        // B --v2 ingredient--> C
+        let mut b_claim = Claim::new("gen-b", None, 2);
+        let b_label = b_claim.label().to_string();
+        b_claim
+            .add_assertion(&Ingredient {
+                relationship: Relationship::ComponentOf,
+                version: 2,
+                title: Some("C".to_string()),
+                format: Some("image/jpeg".to_string()),
+                c2pa_manifest: Some(HashedUri::new(
+                    labels::to_manifest_uri(&c_label),
+                    Some("sha256".into()),
+                    &[0u8; 32],
+                )),
+                validation_status: Some(vec![ValidationStatus::new_failure(
+                    SIGNING_CREDENTIAL_UNTRUSTED,
+                )
+                .set_url(labels::to_signature_uri(&c_label))]),
+                ..Default::default()
+            })
+            .unwrap();
+
+        // A (active) --v3 ingredient--> B
+        let mut a_claim = Claim::new("gen-a", None, 3);
+        let a_label = a_claim.label().to_string();
+        let mut b_results = ValidationResults::default();
+        b_results.add_status(
+            ValidationStatus::new_failure(SIGNING_CREDENTIAL_UNTRUSTED)
+                .set_url(labels::to_signature_uri(&b_label)),
+        );
+        a_claim
+            .add_assertion(&Ingredient {
+                relationship: Relationship::ComponentOf,
+                version: 3,
+                active_manifest: Some(HashedUri::new(
+                    labels::to_manifest_uri(&b_label),
+                    Some("sha256".into()),
+                    &[0u8; 32],
+                )),
+                validation_results: Some(b_results),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let mut store = Store::new();
+        store.insert_restored_claim(d_label.clone(), d_claim);
+        store.insert_restored_claim(c_label.clone(), c_claim);
+        store.insert_restored_claim(b_label.clone(), b_claim);
+        store.insert_restored_claim(a_label.clone(), a_claim); // active, inserted last
+
+        // The active manifest's own signature is fully trusted.
+        let mut tracker = StatusTracker::default();
+        log_item!(a_label.clone(), "claim signature valid", "verify")
+            .validation_status(CLAIM_SIGNATURE_VALIDATED)
+            .success(&mut tracker);
+        log_item!(a_label.clone(), "inside validity", "verify")
+            .validation_status(CLAIM_SIGNATURE_INSIDE_VALIDITY)
+            .success(&mut tracker);
+        log_item!(a_label.clone(), "signing credential trusted", "verify")
+            .validation_status(SIGNING_CREDENTIAL_TRUSTED)
+            .success(&mut tracker);
+
+        // Live re-check reproduces the untrusted finding at each nested level. The exact
+        // ingredient_uri is irrelevant to de-dup (matching is by content); it only needs
+        // to be ingredient-scoped and not the active manifest.
+        for (parent, sig_label) in [
+            (&a_label, &b_label),
+            (&b_label, &c_label),
+            (&c_label, &d_label),
+        ] {
+            let ingredient_uri = labels::to_assertion_uri(parent, assertions::labels::INGREDIENT);
+            tracker.push_ingredient_uri(ingredient_uri);
+            let _ = log_item!(labels::to_signature_uri(sig_label), "untrusted", "verify")
+                .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
+                .failure(&mut tracker, "signing certificate untrusted");
+            tracker.pop_ingredient_uri();
+        }
+
+        let results = ValidationResults::from_store(&store, &tracker);
+
+        // Every nested untrusted finding was recorded by its ingredient, so all
+        // de-duplicate: no ingredient-delta failures survive.
+        let ingredient_failures: Vec<&str> = results
+            .ingredient_deltas
+            .as_ref()
+            .map(|deltas| {
+                deltas
+                    .iter()
+                    .flat_map(|idv| idv.validation_deltas().failure().iter())
+                    .map(|s| s.code())
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(
+            ingredient_failures.is_empty(),
+            "nested ingredient findings were not de-duplicated: {ingredient_failures:?}"
+        );
+        assert_eq!(results.validation_state(), ValidationState::Trusted);
+    }
 }
