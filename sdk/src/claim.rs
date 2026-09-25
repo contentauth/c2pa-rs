@@ -2035,8 +2035,8 @@ impl Claim {
         let sign1 = parse_cose_sign1(sig, data, validation_log)?;
 
         let certificate_serial_num = get_signing_cert_serial_num(&sign1)?.to_string();
-        // check certificate revocation
-        if _sync {
+        // check certificate revocation (revocation/trust failures are already recorded in validation_log)
+        let ocsp_result = if _sync {
             check_ocsp_status(
                 &sign1,
                 data,
@@ -2045,7 +2045,7 @@ impl Claim {
                 svi.timestamps.get(claim.label()),
                 validation_log,
                 context,
-            )?;
+            )
         } else {
             check_ocsp_status_async(
                 &sign1,
@@ -2056,7 +2056,13 @@ impl Claim {
                 validation_log,
                 context,
             )
-            .await?;
+            .await
+        };
+        if let Err(err) = ocsp_result {
+            if !matches!(err, Error::CertificateTrustError(_)) {
+                validation_log.pop_current_uri();
+                return Err(err);
+            }
         }
 
         context.check_progress(ProgressPhase::VerifyingSignature, 1, 1)?;
