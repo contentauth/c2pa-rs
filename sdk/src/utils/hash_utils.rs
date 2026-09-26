@@ -31,7 +31,7 @@ use crate::{
     Error, Result,
 };
 
-const MAX_HASH_BUF: usize = 256 * 1024 * 1024; // cap memory usage to 256MB
+const MAX_HASH_BUF: usize = 16 * 1024 * 1024; // cap memory usage to 256MB
 
 /// Size of the next chunk to read, given how much of the range is left and the
 /// configured buffer cap.
