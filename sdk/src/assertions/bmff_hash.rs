@@ -66,6 +66,10 @@ use crate::{
 
 const ASSERTION_CREATION_VERSION: usize = 3;
 
+#[cfg(test)]
+#[path = "single_file_bmff_tests.rs"]
+mod single_file_bmff_tests;
+
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct UserHashInfo {
     pub xpath: String, // path name of top level box, the path for the c2pa box should be "/c2pa".
@@ -1206,6 +1210,153 @@ impl BmffHash {
         moof_list
     }
 
+    /// Reserve a leaf-row Merkle map and one UUID per fragment. Hashes must be
+    /// filled only after the manifest and all UUIDs have their final positions:
+    /// v3 hashes include absolute root-box offsets, not segment-relative offsets.
+    pub(crate) fn prepare_single_file_merkle(
+        &mut self,
+        reader: &mut dyn ReadSeek,
+        max_leaves: usize,
+    ) -> crate::Result<Option<Vec<Vec<u8>>>> {
+        let boxes = read_bmff_c2pa_boxes(reader)?;
+        if !boxes.box_infos.iter().any(|b| b.path == "moov")
+            || !boxes.box_infos.iter().any(|b| b.path == "moof")
+        {
+            return Ok(None);
+        }
+        if !boxes.bmff_merkle.is_empty() {
+            return Err(Error::BadParam(
+                "re-signing single-file fragmented BMFF with existing Merkle boxes is unsupported; use an update manifest".into(),
+            ));
+        }
+        let fragments = Self::split_fragment_boxes(&boxes.box_infos);
+        if fragments.len() > max_leaves {
+            return Err(Error::BadParam(
+                "single-file fragment count exceeds core.merkle_tree_max_leaves".into(),
+            ));
+        }
+        if fragments.is_empty()
+            || fragments
+                .iter()
+                .any(|run| !run.iter().any(|b| b.path == "mdat"))
+        {
+            return Err(Error::BadParam(
+                "single-file BMFF requires mdat in every fragment".into(),
+            ));
+        }
+        let local_id = crate::asset_handlers::bmff_io::single_file_fragment_track_id(reader)?;
+        let alg = self.alg.as_deref().ok_or(Error::UnsupportedType)?;
+        let hash_size = hash_size_by_alg(alg)?;
+        if (fragments.len() as u64).saturating_mul(hash_size as u64) > MAX_MERKLE_LEAVES_SIZE {
+            return Err(Error::BadParam(
+                "single-file fragment Merkle map exceeds memory limit".into(),
+            ));
+        }
+        // A leaf row (zero proofs) avoids variable-size proof rewrites. The UUID
+        // still identifies each fragment's leaf, as required by A.5.4.1.2.
+        let mut uuids = Vec::with_capacity(fragments.len());
+        let largest_map = BmffMerkleMap {
+            unique_id: 0,
+            local_id,
+            location: fragments.len() - 1,
+            hashes: None,
+        };
+        let map_size = c2pa_cbor::to_vec(&largest_map)
+            .map_err(|e| Error::AssertionEncoding(e.to_string()))?
+            .len();
+        for location in 0..fragments.len() {
+            let map = BmffMerkleMap {
+                unique_id: 0,
+                local_id,
+                location,
+                hashes: None,
+            };
+            let mut cbor =
+                c2pa_cbor::to_vec(&map).map_err(|e| Error::AssertionEncoding(e.to_string()))?;
+            // All UUID boxes in a tree have the same size, including across
+            // CBOR integer-width boundaries at locations 24 and 256.
+            cbor.resize(map_size, 0);
+            let mut uuid = Vec::new();
+            crate::asset_handlers::bmff_io::write_c2pa_box(
+                &mut uuid,
+                &[],
+                crate::asset_handlers::bmff_io::MERKLE,
+                &cbor,
+                0,
+            )?;
+            uuids.push(uuid);
+        }
+        let placeholder = ByteBuf::from(vec![0; hash_size]);
+        self.hash = None;
+        self.bmff_version = 3;
+        self.merkle = Some(vec![MerkleMap {
+            unique_id: 0,
+            local_id,
+            count: fragments.len(),
+            alg: Some(alg.to_owned()),
+            init_hash: Some(placeholder.clone()),
+            hashes: VecByteBuf(vec![placeholder; fragments.len()]),
+            fixed_block_size: None,
+            variable_block_sizes: None,
+        }]);
+        Ok(Some(uuids))
+    }
+
+    pub(crate) fn finalize_single_file_merkle<F>(
+        &mut self,
+        reader: &mut dyn ReadSeek,
+        progress: &mut F,
+    ) -> crate::Result<()>
+    where
+        F: FnMut(u32, u32) -> crate::Result<()>,
+    {
+        let boxes = read_bmff_c2pa_boxes(reader)?;
+        let fragments = Self::split_fragment_boxes(&boxes.box_infos);
+        let size = stream_len(reader)?;
+        let exclusions = bmff_to_jumbf_exclusions(reader, &self.exclusions, true)?;
+        let map = self
+            .merkle
+            .as_mut()
+            .and_then(|maps| maps.first_mut())
+            .ok_or_else(|| Error::BadParam("missing fragment Merkle map".into()))?;
+        if fragments.len() != map.count || boxes.bmff_merkle.len() != map.count {
+            return Err(Error::BadParam(
+                "fragment count changed during signing".into(),
+            ));
+        }
+        let alg = map.alg.as_deref().ok_or(Error::UnsupportedType)?;
+        let mut init_exclusions = exclusions.clone();
+        let first = fragments[0][0].offset;
+        init_exclusions.push(HashRange::new(first, size - first));
+        map.init_hash = Some(ByteBuf::from(hash_stream_by_alg_with_progress(
+            alg,
+            reader,
+            Some(init_exclusions),
+            true,
+            progress,
+        )?));
+        for (index, run) in fragments.iter().enumerate() {
+            let start = run[0].offset;
+            let last = &run[run.len() - 1];
+            let end = if index + 1 == fragments.len() {
+                size
+            } else {
+                last.offset + last.size
+            };
+            let mut ranges = exclusions.clone();
+            ranges.push(HashRange::new(0, start));
+            ranges.push(HashRange::new(end, size - end));
+            map.hashes.0[index] = ByteBuf::from(hash_stream_by_alg_with_progress(
+                alg,
+                reader,
+                Some(ranges),
+                true,
+                progress,
+            )?);
+        }
+        Ok(())
+    }
+
     #[cfg(feature = "file_io")]
     pub fn verify_hash(
         &self,
@@ -1437,7 +1588,10 @@ impl BmffHash {
                         curr_exclusions.push(before_box_exclusion);
 
                         // after box exclusion continues to the end of the file
+                        // The final fragment extends through EOF, including any
+                        // short suffix that is not itself a parsed root box.
                         let after_box_start = match boxes.last() {
+                            _ if index + 1 == moof_chunks.len() => size,
                             Some(last) => last.offset + last.size,
                             None => 0,
                         };
