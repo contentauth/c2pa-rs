@@ -170,6 +170,42 @@ fn is_tolerated_manifest_failure_code(code: &str) -> bool {
         || code.starts_with(CAWG_IDENTITY_STATUS_PREFIX)
 }
 
+/// Labels of the active claim and every manifest transitively referenced by its
+/// ingredient assertions. Claims outside this set are in the store but not part of
+/// the verified provenance, so their ingredient assertions must not take part in
+/// validation-status reconciliation.
+fn referenced_claim_labels(store: &Store) -> HashSet<String> {
+    let mut referenced = HashSet::new();
+    let Some(active) = store.provenance_claim() else {
+        return referenced;
+    };
+    let mut queue = vec![active.label().to_string()];
+    referenced.insert(active.label().to_string());
+
+    while let Some(label) = queue.pop() {
+        let Some(claim) = store.get_claim(&label) else {
+            continue;
+        };
+        for a in claim.ingredient_assertions() {
+            let Ok(ingredient) = Ingredient::from_assertion(a.assertion()) else {
+                continue;
+            };
+            let ingredient_label = ingredient
+                .active_manifest
+                .as_ref()
+                .or(ingredient.c2pa_manifest.as_ref())
+                .map(|m| m.url())
+                .and_then(|uri| manifest_label_from_uri(&uri));
+            if let Some(label) = ingredient_label {
+                if referenced.insert(label.clone()) {
+                    queue.push(label);
+                }
+            }
+        }
+    }
+    referenced
+}
+
 impl ValidationResults {
     pub(crate) fn from_store(store: &Store, validation_log: &StatusTracker) -> Self {
         let mut results = ValidationResults::default();
@@ -267,23 +303,22 @@ impl ValidationResults {
                 .iter()
                 .any(|s| s.ingredient_uri().is_some() && !is_active_manifest(s.url()))
             {
-                // Collect all the ValidationStatus records from all the ingredients in the
-                // store, in a single pass that also builds `attested_inside_validity` -- since
-                // we need to process v1, v2 and v3 ingredients, we process all in the same
-                // format. Statuses are moved (not cloned) into `ingredient_statuses`, so this
-                // costs no more allocation than the flat collection this replaced.
+                // Only reconcile against ingredient assertions from claims referenced by the
+                // active manifest's ingredient tree; an unreferenced claim is never verified, so
+                // it must not cancel findings about other manifests. Nested ingredients keep the
+                // historical ingredient_uri, so statuses are matched by content, not by URI.
+                let referenced = referenced_claim_labels(store);
+
                 let mut ingredient_statuses: Vec<ValidationStatus> = Vec::new();
 
-                // Only trust a `claimSignature.insideValidity` attestation as authoritative
-                // about a manifest label when it was reported by the ingredient *for that same
-                // label*, i.e. it is self-attested. Without this, an ingredient could "vouch"
-                // for some other, unrelated manifest label elsewhere in the store and suppress a
-                // genuine, live-detected certificate-expiry finding for it.
+                // Trust a `claimSignature.insideValidity` attestation only when the ingredient
+                // reported it for its own label (self-attested), so it can't vouch for another.
                 let mut attested_inside_validity: HashSet<String> = HashSet::new();
 
                 for (own_label, group_statuses) in store
                     .claims()
                     .iter()
+                    .filter(|c| referenced.contains(c.label()))
                     .flat_map(|c| c.ingredient_assertions())
                     .filter_map(|a| Ingredient::from_assertion(a.assertion()).ok())
                     .filter_map(get_statuses)
@@ -302,23 +337,11 @@ impl ValidationResults {
                     ingredient_statuses.extend(group_statuses);
                 }
 
-                // Drop a status only if it is a genuine re-report of what an ingredient already
-                // attested: it must be scoped to an ingredient AND not describe the active
-                // manifest AND match an ingredient attestation. Any status describing the active
-                // manifest is kept unconditionally so an attacker-authored ingredient assertion
-                // cannot cancel a genuine active-manifest failure.
-                //
-                // Two independent signals identify an active-manifest status, and each covers a
-                // gap in the other:
-                //  - `ingredient_uri().is_none()` — the validator logged the status outside any
-                //    ingredient-recursion scope. This catches failures recorded against the bare
-                //    manifest-label form (`urn:c2pa:...`), which URL parsing does not resolve to
-                //    the active manifest.
-                //  - `is_active_manifest(s.url())` — the URL names a box inside the active
-                //    manifest. This catches active-manifest findings that `ingredient_checks`
-                //    logs while an ingredient URI is pushed (so `ingredient_uri` is set), e.g.
-                //    `assertion.ingredient.malformed`.
-                // Neither signal can be forged by ingredient assertion content.
+                // Drop a status only if it re-reports what a referenced ingredient already
+                // attested: it must be ingredient-scoped, not describe the active manifest, and
+                // match an ingredient status. Active-manifest statuses (no ingredient_uri, or a
+                // url inside the active manifest) are always kept so an ingredient assertion
+                // can't cancel a genuine active-manifest failure.
                 statuses.retain(|s| {
                     let attested_historical_expiry = s.code()
                         == validation_status::SIGNING_CREDENTIAL_EXPIRED
@@ -1921,15 +1944,17 @@ pub mod tests {
         let mut outer_claim = Claim::new("test-generator", None, 2);
         outer_claim.add_assertion(&ingredient).unwrap();
         let outer_label = outer_claim.label().to_string();
+        // Use the ingredient assertion's real URI, exactly as `ingredient_checks` pushes it.
+        let ingredient_uri = labels::to_assertion_uri(
+            &outer_label,
+            &outer_claim.ingredient_assertions()[0].label(),
+        );
 
         let mut store = Store::new();
         store.insert_restored_claim(outer_label.clone(), outer_claim);
 
         let mut tracker = StatusTracker::default();
-        tracker.push_ingredient_uri(labels::to_assertion_uri(
-            &outer_label,
-            assertions::labels::INGREDIENT,
-        ));
+        tracker.push_ingredient_uri(ingredient_uri);
         let _ = log_item!(
             assertion_url.clone(),
             "hash does not match assertion data",
@@ -1954,6 +1979,88 @@ pub mod tests {
 
         // check that there are no failures since they were attested to
         assert!(delta_failures.is_empty());
+    }
+
+    #[test]
+    fn from_store_unreferenced_claim_cannot_suppress_referenced_failure() {
+        // Active claim genuinely nests a victim ingredient. Live validation finds a
+        // general tampering failure (dataHash mismatch) on the victim. A wholly
+        // UNREFERENCED attacker claim forges an ingredient assertion carrying the same
+        // (code,url) failure -> it must NOT suppress the genuine live finding. De-dup is
+        // scoped to the ingredient that recorded a status (by ingredient_uri), so the
+        // unrelated claim keys into a different URI and cannot cancel this finding.
+        let victim_label = "urn:uuid:victim";
+        let victim_manifest_uri = labels::to_manifest_uri(victim_label);
+        let victim_assertion_url = format!("{victim_manifest_uri}/c2pa.assertions/c2pa.hash.data");
+
+        let mut outer_claim = Claim::new("test-generator", None, 2);
+        let outer_label = outer_claim.label().to_string();
+        let victim_ingredient = Ingredient {
+            relationship: Relationship::ComponentOf,
+            version: 3,
+            active_manifest: Some(HashedUri::new(
+                victim_manifest_uri,
+                Some("sha256".into()),
+                &[0u8; 32],
+            )),
+            validation_results: Some(ValidationResults::default()),
+            ..Default::default()
+        };
+        outer_claim.add_assertion(&victim_ingredient).unwrap();
+        // The ingredient assertion's real URI, exactly as `ingredient_checks` pushes it.
+        let ingredient_uri = labels::to_assertion_uri(
+            &outer_label,
+            &outer_claim.ingredient_assertions()[0].label(),
+        );
+
+        // Unreferenced attacker claim forging the matching failure.
+        let mut attacker_claim = Claim::new("attacker-generator", None, 2);
+        let attacker_label = attacker_claim.label().to_string();
+        let mut forged = ValidationResults::default();
+        forged.add_status(
+            ValidationStatus::new_failure(ASSERTION_DATAHASH_MISMATCH)
+                .set_url(&victim_assertion_url),
+        );
+        let attacker_ingredient = Ingredient {
+            relationship: Relationship::ComponentOf,
+            version: 3,
+            active_manifest: Some(HashedUri::new(
+                labels::to_manifest_uri("urn:uuid:attacker-unrelated"),
+                Some("sha256".into()),
+                &[0u8; 32],
+            )),
+            validation_results: Some(forged),
+            ..Default::default()
+        };
+        attacker_claim.add_assertion(&attacker_ingredient).unwrap();
+
+        let mut store = Store::new();
+        // Insert the attacker claim first so the outer/victim-referencing claim is the
+        // active (provenance) manifest, matching the real scenario.
+        store.insert_restored_claim(attacker_label, attacker_claim);
+        store.insert_restored_claim(outer_label.clone(), outer_claim);
+
+        // The live re-check of the referenced victim genuinely finds a hash mismatch.
+        let mut tracker = StatusTracker::default();
+        tracker.push_ingredient_uri(ingredient_uri);
+        let _ = log_item!(
+            victim_assertion_url.clone(),
+            "hash mismatch",
+            "verify_internal"
+        )
+        .validation_status(ASSERTION_DATAHASH_MISMATCH)
+        .failure(&mut tracker, "hash mismatch");
+        tracker.pop_ingredient_uri();
+
+        let results = ValidationResults::from_store(&store, &tracker);
+        assert!(
+            results
+                .validation_errors()
+                .unwrap_or_default()
+                .iter()
+                .any(|s| s.code() == ASSERTION_DATAHASH_MISMATCH),
+            "unreferenced claim suppressed a genuine referenced-claim failure"
+        );
     }
 
     #[test]
@@ -2163,6 +2270,11 @@ pub mod tests {
             ..Default::default()
         };
         outer_claim.add_assertion(&ingredient).unwrap();
+        // Use the ingredient assertion's real URI, exactly as `ingredient_checks` pushes it.
+        let ingredient_uri = labels::to_assertion_uri(
+            &outer_label,
+            &outer_claim.ingredient_assertions()[0].label(),
+        );
 
         let mut store = Store::new();
         store.insert_restored_claim(outer_label.clone(), outer_claim);
@@ -2180,7 +2292,6 @@ pub mod tests {
         .validation_status(CLAIM_SIGNATURE_INSIDE_VALIDITY)
         .success(&mut tracker);
 
-        let ingredient_uri = labels::to_assertion_uri(&outer_label, assertions::labels::INGREDIENT);
         tracker.push_ingredient_uri(ingredient_uri);
         let _ = log_item!(
             inner_signature_uri.clone(),
@@ -2239,6 +2350,11 @@ pub mod tests {
             ..Default::default()
         };
         outer_claim.add_assertion(&victim_ingredient).unwrap();
+        // The ingredient assertion's real URI, exactly as `ingredient_checks` pushes it.
+        let ingredient_uri = labels::to_assertion_uri(
+            &outer_label,
+            &outer_claim.ingredient_assertions()[0].label(),
+        );
 
         // A wholly separate claim, unrelated to the outer/active manifest's real ingredient
         // chain, whose own ingredient assertion just happens to forge an attestation naming the
@@ -2266,8 +2382,10 @@ pub mod tests {
         attacker_claim.add_assertion(&attacker_ingredient).unwrap();
 
         let mut store = Store::new();
-        store.insert_restored_claim(outer_label.clone(), outer_claim);
+        // Insert the attacker claim first so the outer/victim-referencing claim is the
+        // active (provenance) manifest, matching the real scenario.
         store.insert_restored_claim(attacker_label, attacker_claim);
+        store.insert_restored_claim(outer_label.clone(), outer_claim);
 
         let mut tracker = StatusTracker::default();
 
@@ -2283,7 +2401,6 @@ pub mod tests {
         .success(&mut tracker);
 
         // The live re-check of the victim ingredient genuinely finds its certificate has expired.
-        let ingredient_uri = labels::to_assertion_uri(&outer_label, assertions::labels::INGREDIENT);
         tracker.push_ingredient_uri(ingredient_uri);
         let _ = log_item!(
             victim_signature_uri.clone(),
@@ -2308,5 +2425,222 @@ pub mod tests {
             "an unrelated ingredient's forged attestation suppressed a genuine expiry finding: {:?}",
             results.validation_errors()
         );
+    }
+
+    // Variant of the test above where the attacker's UNREFERENCED ingredient claims the
+    // victim's own label as its `active_manifest` (own_label == victim) and forges an
+    // `insideValidity` attestation for it. The old label-set expiry guard would have
+    // admitted this (self-attestation for own_label) and suppressed the genuine expiry;
+    // scoping the guard to the recording ingredient's URI must reject it.
+    #[test]
+    fn from_store_unreferenced_insidevalidity_cannot_suppress_expiry() {
+        let victim_manifest_uri = labels::to_manifest_uri("urn:uuid:victim");
+        let victim_signature_uri = labels::to_signature_uri("urn:uuid:victim");
+
+        let mut outer_claim = Claim::new("test-generator", None, 2);
+        let outer_label = outer_claim.label().to_string();
+        let victim_ingredient = Ingredient {
+            relationship: Relationship::ComponentOf,
+            version: 3,
+            active_manifest: Some(HashedUri::new(
+                victim_manifest_uri.clone(),
+                Some("sha256".into()),
+                &[0u8; 32],
+            )),
+            validation_results: Some(ValidationResults::default()),
+            ..Default::default()
+        };
+        outer_claim.add_assertion(&victim_ingredient).unwrap();
+        let ingredient_uri = labels::to_assertion_uri(
+            &outer_label,
+            &outer_claim.ingredient_assertions()[0].label(),
+        );
+
+        // Unreferenced attacker claim whose ingredient claims the victim's own label and
+        // forges an insideValidity attestation for the victim signature.
+        let mut attacker_claim = Claim::new("attacker-generator", None, 2);
+        let attacker_label = attacker_claim.label().to_string();
+        let mut forged = ValidationResults::default();
+        forged.add_status(
+            ValidationStatus::new(CLAIM_SIGNATURE_INSIDE_VALIDITY)
+                .set_kind(LogKind::Success)
+                .set_url(&victim_signature_uri),
+        );
+        let attacker_ingredient = Ingredient {
+            relationship: Relationship::ComponentOf,
+            version: 3,
+            active_manifest: Some(HashedUri::new(
+                victim_manifest_uri,
+                Some("sha256".into()),
+                &[0u8; 32],
+            )),
+            validation_results: Some(forged),
+            ..Default::default()
+        };
+        attacker_claim.add_assertion(&attacker_ingredient).unwrap();
+
+        let mut store = Store::new();
+        // Insert the attacker claim first so the outer/victim-referencing claim is the
+        // active (provenance) manifest, matching the real scenario.
+        store.insert_restored_claim(attacker_label, attacker_claim);
+        store.insert_restored_claim(outer_label.clone(), outer_claim);
+
+        let mut tracker = StatusTracker::default();
+        tracker.push_ingredient_uri(ingredient_uri);
+        let _ = log_item!(
+            victim_signature_uri.clone(),
+            "certificate expired",
+            "verify"
+        )
+        .validation_status(SIGNING_CREDENTIAL_EXPIRED)
+        .failure(&mut tracker, "certificate expired");
+        tracker.pop_ingredient_uri();
+
+        let results = ValidationResults::from_store(&store, &tracker);
+        assert!(
+            results
+                .validation_errors()
+                .unwrap_or_default()
+                .iter()
+                .any(|status| status.code() == SIGNING_CREDENTIAL_EXPIRED),
+            "an unreferenced insideValidity attestation suppressed a genuine expiry finding"
+        );
+    }
+
+    // Deeply nested ingredients across a mix of ingredient versions:
+    //   A (active) --v3--> B --v2--> C --v1--> D
+    // Each ingredient records its referenced manifest's (untrusted) signer status. The
+    // live re-check reproduces all three, and they must de-duplicate across every level
+    // and version (matched by content, since nested ingredients carry historical URIs),
+    // leaving no ingredient-delta failures so the trusted active manifest is Trusted.
+    #[test]
+    fn from_store_deeply_nested_mixed_version_ingredients_dedup() {
+        // Build bottom-up so each parent references its child's real generated label.
+        let d_claim = Claim::new("gen-d", None, 1);
+        let d_label = d_claim.label().to_string();
+
+        // C --v1 ingredient--> D  (v1 carries `validation_status`, not `validation_results`)
+        let mut c_claim = Claim::new("gen-c", None, 1);
+        let c_label = c_claim.label().to_string();
+        c_claim
+            .add_assertion(&Ingredient {
+                relationship: Relationship::ComponentOf,
+                version: 1,
+                // v1/v2 ingredients require title/format and reference via `c2pa_manifest`,
+                // recording history in `validation_status` (only v3 uses validation_results).
+                title: Some("D".to_string()),
+                format: Some("image/jpeg".to_string()),
+                instance_id: Some("xmp:iid:level-d".to_string()), // v1 ingredients require instanceID
+                c2pa_manifest: Some(HashedUri::new(
+                    labels::to_manifest_uri(&d_label),
+                    Some("sha256".into()),
+                    &[0u8; 32],
+                )),
+                validation_status: Some(vec![ValidationStatus::new_failure(
+                    SIGNING_CREDENTIAL_UNTRUSTED,
+                )
+                .set_url(labels::to_signature_uri(&d_label))]),
+                ..Default::default()
+            })
+            .unwrap();
+
+        // B --v2 ingredient--> C
+        let mut b_claim = Claim::new("gen-b", None, 2);
+        let b_label = b_claim.label().to_string();
+        b_claim
+            .add_assertion(&Ingredient {
+                relationship: Relationship::ComponentOf,
+                version: 2,
+                title: Some("C".to_string()),
+                format: Some("image/jpeg".to_string()),
+                c2pa_manifest: Some(HashedUri::new(
+                    labels::to_manifest_uri(&c_label),
+                    Some("sha256".into()),
+                    &[0u8; 32],
+                )),
+                validation_status: Some(vec![ValidationStatus::new_failure(
+                    SIGNING_CREDENTIAL_UNTRUSTED,
+                )
+                .set_url(labels::to_signature_uri(&c_label))]),
+                ..Default::default()
+            })
+            .unwrap();
+
+        // A (active) --v3 ingredient--> B
+        let mut a_claim = Claim::new("gen-a", None, 3);
+        let a_label = a_claim.label().to_string();
+        let mut b_results = ValidationResults::default();
+        b_results.add_status(
+            ValidationStatus::new_failure(SIGNING_CREDENTIAL_UNTRUSTED)
+                .set_url(labels::to_signature_uri(&b_label)),
+        );
+        a_claim
+            .add_assertion(&Ingredient {
+                relationship: Relationship::ComponentOf,
+                version: 3,
+                active_manifest: Some(HashedUri::new(
+                    labels::to_manifest_uri(&b_label),
+                    Some("sha256".into()),
+                    &[0u8; 32],
+                )),
+                validation_results: Some(b_results),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let mut store = Store::new();
+        store.insert_restored_claim(d_label.clone(), d_claim);
+        store.insert_restored_claim(c_label.clone(), c_claim);
+        store.insert_restored_claim(b_label.clone(), b_claim);
+        store.insert_restored_claim(a_label.clone(), a_claim); // active, inserted last
+
+        // The active manifest's own signature is fully trusted.
+        let mut tracker = StatusTracker::default();
+        log_item!(a_label.clone(), "claim signature valid", "verify")
+            .validation_status(CLAIM_SIGNATURE_VALIDATED)
+            .success(&mut tracker);
+        log_item!(a_label.clone(), "inside validity", "verify")
+            .validation_status(CLAIM_SIGNATURE_INSIDE_VALIDITY)
+            .success(&mut tracker);
+        log_item!(a_label.clone(), "signing credential trusted", "verify")
+            .validation_status(SIGNING_CREDENTIAL_TRUSTED)
+            .success(&mut tracker);
+
+        // Live re-check reproduces the untrusted finding at each nested level. The exact
+        // ingredient_uri is irrelevant to de-dup (matching is by content); it only needs
+        // to be ingredient-scoped and not the active manifest.
+        for (parent, sig_label) in [
+            (&a_label, &b_label),
+            (&b_label, &c_label),
+            (&c_label, &d_label),
+        ] {
+            let ingredient_uri = labels::to_assertion_uri(parent, assertions::labels::INGREDIENT);
+            tracker.push_ingredient_uri(ingredient_uri);
+            let _ = log_item!(labels::to_signature_uri(sig_label), "untrusted", "verify")
+                .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
+                .failure(&mut tracker, "signing certificate untrusted");
+            tracker.pop_ingredient_uri();
+        }
+
+        let results = ValidationResults::from_store(&store, &tracker);
+
+        // Every nested untrusted finding was recorded by its ingredient, so all
+        // de-duplicate: no ingredient-delta failures survive.
+        let ingredient_failures: Vec<&str> = results
+            .ingredient_deltas
+            .as_ref()
+            .map(|deltas| {
+                deltas
+                    .iter()
+                    .flat_map(|idv| idv.validation_deltas().failure().iter())
+                    .map(|s| s.code())
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(
+            ingredient_failures.is_empty(),
+            "nested ingredient findings were not de-duplicated: {ingredient_failures:?}"
+        );
+        assert_eq!(results.validation_state(), ValidationState::Trusted);
     }
 }
