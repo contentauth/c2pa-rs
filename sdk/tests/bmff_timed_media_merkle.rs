@@ -1237,6 +1237,12 @@ fn build_merkle_uuid_box_with_u32_location(
 /// A `location = u32::MAX` merkle box must be rejected with an error, not
 /// panic. (Before the checked conversion, this input panicked with an
 /// integer-overflow abort at `bmff_hash.rs:1508`.)
+///
+/// This is now caught even earlier sequential-location
+/// check (locations must be exactly `0..len`), which reports
+/// `C2PAValidation` ("assertion.bmffHash.malformed") rather than falling
+/// through to the checked-conversion `HashMismatch` path — still a clean,
+/// non-panicking rejection.
 #[test]
 fn location_u32_max_does_not_panic() {
     let track = TrackSpec {
@@ -1280,7 +1286,10 @@ fn location_u32_max_does_not_panic() {
         .verify_stream_hash(&mut reader, Some("sha256"))
         .expect_err("a location of u32::MAX must be rejected, not overflow");
     assert!(
-        matches!(err, c2pa::Error::HashMismatch(_)),
+        matches!(
+            err,
+            c2pa::Error::HashMismatch(_) | c2pa::Error::C2PAValidation(_)
+        ),
         "expected a clean rejection, got: {err:?}"
     );
 }
