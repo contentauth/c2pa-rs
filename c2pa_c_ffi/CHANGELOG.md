@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.91.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.91.0...c2pa-c-ffi-v0.91.1)
+_26 September 2026_
+
+### Fixed
+
+* Bump id3 to 1.17.2 to cap decompressed ID3v2 frame size (backport #2699) ([#2716](https://github.com/contentauth/c2pa-rs/pull/2716))
+
 ## [0.91.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-c-ffi-v0.90.22...c2pa-c-ffi-v0.91.0)
 _21 September 2026_
 

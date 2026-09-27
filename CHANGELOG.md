@@ -9,6 +9,26 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.91.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.91.0...c2pa-v0.91.1)
+_26 September 2026_
+
+### Added
+
+* Implement pdf manifest writing (backport #2666) ([#2700](https://github.com/contentauth/c2pa-rs/pull/2700))
+
+### Fixed
+
+* Ignore unreferenced claims when reconciling validation statuses (backport #2686) ([#2735](https://github.com/contentauth/c2pa-rs/pull/2735))
+* Validate live OCSP responder certs at current time and complete claim verification on revocation (backport #2688) ([#2724](https://github.com/contentauth/c2pa-rs/pull/2724))
+* Skip only the real C2PA jumb box in JPEG XL box hashing (backport #2695) ([#2723](https://github.com/contentauth/c2pa-rs/pull/2723))
+* CAWG identity assertion mismatch reporting (backport #2713) ([#2719](https://github.com/contentauth/c2pa-rs/pull/2719))
+* Reject invalid RSA public exponents in certificate profiles (CAI-13156) (backport #2712) ([#2718](https://github.com/contentauth/c2pa-rs/pull/2718))
+* Bump id3 to 1.17.2 to cap decompressed ID3v2 frame size (backport #2699) ([#2716](https://github.com/contentauth/c2pa-rs/pull/2716))
+* Check values to avoid underflow in identity flows (backport #2697) ([#2711](https://github.com/contentauth/c2pa-rs/pull/2711))
+* Bound cumulative TIFF IFD entry byte counts to file size (backport #2669) ([#2706](https://github.com/contentauth/c2pa-rs/pull/2706))
+* Reject oversized XMP instead of panicking on JPEG APP1 write (backport #2687) ([#2705](https://github.com/contentauth/c2pa-rs/pull/2705))
+* Harden against integer underflow attacks in XMP trailer parsing (backport #2670) ([#2704](https://github.com/contentauth/c2pa-rs/pull/2704))
+
 ## [0.91.0](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.90.22...c2pa-v0.91.0)
 _21 September 2026_
 
