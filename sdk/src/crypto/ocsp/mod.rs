@@ -216,16 +216,18 @@ impl OcspResponse {
                     }
 
                     if !in_range {
+                        // The responder said `good`, so the certificate is not
+                        // revoked; the response simply does not prove the status
+                        // at the reference instant (its [thisUpdate, nextUpdate]
+                        // window does not cover that time). That is an
+                        // inconclusive outcome, not a revocation.
                         log_item!(
                             "OCSP_RESPONSE",
-                            "certificate revoked",
+                            "OCSP response outside its validity window",
                             "check_ocsp_response"
                         )
-                        .validation_status(validation_codes::SIGNING_CREDENTIAL_REVOKED)
-                        .failure_no_throw(
-                            &mut internal_validation_log,
-                            OcspError::CertificateRevoked,
-                        );
+                        .validation_status(validation_codes::SIGNING_CREDENTIAL_OCSP_UNKNOWN)
+                        .informational(&mut internal_validation_log);
                     } else {
                         // As soon as we find one successful match, nothing else matters.
                         log_item!(
@@ -650,6 +652,9 @@ mod tests {
         wasm_bindgen_test
     )]
     fn validity() {
+        // Regression test for #2644: a `good` OCSP response whose validity
+        // window does not cover the reference instant must be reported as
+        // inconclusive (SIGNING_CREDENTIAL_OCSP_UNKNOWN), never as a revocation.
         let rsp_data = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_good.der");
 
         let mut validation_log = StatusTracker::default();
@@ -665,8 +670,16 @@ mod tests {
         .unwrap();
 
         assert!(ocsp_data.revoked_at.is_none());
-        assert!(validation_log.has_any_error());
-        assert!(validation_log.has_status(SIGNING_CREDENTIAL_REVOKED));
+        assert!(!validation_log.has_any_error());
+        assert!(!validation_log.has_status(SIGNING_CREDENTIAL_REVOKED));
+        assert!(validation_log.has_status(SIGNING_CREDENTIAL_OCSP_UNKNOWN));
+
+        let item = validation_log
+            .logged_items()
+            .iter()
+            .find(|item| item.validation_status.as_deref() == Some(SIGNING_CREDENTIAL_OCSP_UNKNOWN))
+            .expect("SIGNING_CREDENTIAL_OCSP_UNKNOWN log item");
+        assert_eq!(item.kind, LogKind::Informational);
     }
 
     #[test]
