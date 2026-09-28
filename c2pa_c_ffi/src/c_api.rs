@@ -3536,8 +3536,111 @@ mod tests {
         }
 
         #[test]
+        fn sign_bunny_segmented_renditions() {
+            // Reuse the upstream Big Buck Bunny DASH fixtures, also exercised by
+            // sdk/tests/test_builder.rs, rather than adding generated media:
+            // https://github.com/contentauth/c2pa-rs/tree/main/sdk/tests/fixtures/bunny
+            // Big Buck Bunny: (c) Blender Foundation, CC BY 3.0,
+            // https://peach.blender.org/about/
+            let fixtures =
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../sdk/tests/fixtures/bunny");
+            let names = ["bunny_89283bps", "bunny_595491bps", "bunny_791182bps"];
+            let init_name = "BigBuckBunny_2s_init.mp4";
+            let settings = c2pa::Settings::new()
+                .with_value("verify.verify_trust", false)
+                .unwrap();
+            let context = c2pa::Context::new()
+                .with_settings(settings)
+                .unwrap()
+                .into_shared();
+
+            for multi in [false, true] {
+                let output = tempfile::tempdir().unwrap();
+                let pattern = CString::new(format!(
+                    "{}/{}/{init_name}",
+                    glob::Pattern::escape(fixtures.to_str().unwrap()),
+                    if multi { "*" } else { names[0] },
+                ))
+                .unwrap();
+                let fragments = CString::new("BigBuckBunny_2s*.m4s").unwrap();
+                let output_c = CString::new(output.path().to_str().unwrap()).unwrap();
+                let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+                assert_eq!(
+                    unsafe {
+                        c2pa_builder_set_intent(
+                            builder,
+                            C2paBuilderIntent::Create,
+                            C2paDigitalSourceType::DigitalCreation,
+                        )
+                    },
+                    0
+                );
+                let mut bytes = std::ptr::null();
+                let len = unsafe {
+                    c2pa_builder_sign_fragmented(
+                        builder,
+                        signer,
+                        pattern.as_ptr(),
+                        fragments.as_ptr(),
+                        output_c.as_ptr(),
+                        &mut bytes,
+                    )
+                };
+                assert!(len > 0, "{:?}", CimplError::last_message());
+                assert!(!bytes.is_null());
+                let returned = unsafe { std::slice::from_raw_parts(bytes, len as usize) };
+                let renditions = if multi { &names[..] } else { &names[..1] };
+                assert_eq!(
+                    fs::read_dir(output.path()).unwrap().count(),
+                    renditions.len()
+                );
+                for name in renditions {
+                    let signed_dir = output.path().join(name);
+                    let signed_init = signed_dir.join(init_name);
+                    assert_eq!(
+                        c2pa::jumbf_io::load_jumbf_from_file(&signed_init).unwrap(),
+                        returned,
+                        "{name}: embedded manifest differs from returned bytes"
+                    );
+                    let fragment_pattern = fixtures.join(name).join("BigBuckBunny_2s*.m4s");
+                    let signed_fragments: Vec<_> = glob::glob(fragment_pattern.to_str().unwrap())
+                        .unwrap()
+                        .map(|path| signed_dir.join(path.unwrap().file_name().unwrap()))
+                        .collect();
+                    assert!(signed_fragments.len() > 1);
+                    assert_eq!(
+                        fs::read_dir(&signed_dir).unwrap().count(),
+                        signed_fragments.len() + 1
+                    );
+                    let reader = c2pa::Reader::from_shared_context(&context)
+                        .with_fragmented_files(&signed_init, &signed_fragments)
+                        .unwrap();
+                    assert_eq!(reader.validation_status(), None, "{name}: {reader}");
+                    assert!(reader
+                        .validation_results()
+                        .unwrap()
+                        .active_manifest()
+                        .unwrap()
+                        .success()
+                        .iter()
+                        .any(|status| status.code()
+                            == c2pa::validation_status::ASSERTION_BMFFHASH_MATCH));
+                }
+                assert_eq!(unsafe { c2pa_free(bytes.cast()) }, 0);
+                assert_eq!(unsafe { c2pa_free(builder.cast()) }, 0);
+                assert_eq!(unsafe { c2pa_free(signer.cast()) }, 0);
+            }
+        }
+
+        #[test]
         fn rejects_collisions_before_writes() {
-            for case in ["renditions", "existing", "fragments", "init_fragment"] {
+            for case in [
+                "renditions",
+                "multiple_inits",
+                "existing",
+                "fragments",
+                "init_fragment",
+            ] {
                 let temp = tempfile::tempdir().unwrap();
                 let input = temp.path().join("input");
                 let output = temp.path().join("output");
@@ -3547,6 +3650,13 @@ mod tests {
                     "renditions" => {
                         // Different fragment names avoid the SDK's create_new fragment protection.
                         write_rendition(&input.join("b/video"), "init.m4s", "seg-b.m4s", 2);
+                    }
+                    "multiple_inits" => {
+                        fs::copy(
+                            input.join("a/video/init.m4s"),
+                            input.join("a/video/init-other.m4s"),
+                        )
+                        .unwrap();
                     }
                     "existing" => {
                         fs::create_dir_all(output.join("video")).unwrap();
@@ -3565,7 +3675,7 @@ mod tests {
                     _ => unreachable!(),
                 }
                 let pattern =
-                    CString::new(format!("{}/*/video/init.m4s", input.display())).unwrap();
+                    CString::new(format!("{}/*/video/init*.m4s", input.display())).unwrap();
                 let fragments = CString::new(fragment_pattern).unwrap();
                 let output_c = CString::new(output.to_str().unwrap()).unwrap();
                 let (signer, builder) = setup_signer_and_builder_for_signing_tests();

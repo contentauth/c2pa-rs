@@ -39,6 +39,27 @@ Fragmented BMFF (DASH/CMAF) signing is available through Rust's
 `Builder::sign_fragmented_files` and the C API's `c2pa_builder_sign_fragmented`,
 with the `file_io` feature. Init segments may use `.mp4`, `.m4s`, or `.cmfv` extensions.
 
+Both APIs flatten outputs to `<output>/<init parent directory name>/<file name>`.
+The SDK rejects collisions between written rendition-directory and segment-file
+names before output writes, including multiple inits in the same directory. Init
+names remain native, while fragment names use the writer's lossy UTF-8 conversion.
+Empty fragment matches and non-directory output entries are also rejected during
+preflight. Existing rendition output directories with matching canonical paths
+(including symlink aliases) are rejected, and errors inspecting or resolving
+existing output entries are returned before writes. This is not a full filesystem
+identity check: aliases with different canonical paths (e.g. directory hard links
+or bind mounts) are not detected. Absent directories are not checked for
+case/Unicode aliases; direct Rust
+callers still need an exclusive destination ownership policy suitable for their
+filesystem. Keep inputs separate from outputs and use fresh output directories;
+existing output init files can still be overwritten.
+The C API additionally requires absent rendition directories and exclusively
+reserves directories and init files, letting the destination filesystem reject
+aliases (including case and Unicode normalization aliases). Those reservations
+remain compatible with the SDK preflight. Signing is not transactional:
+reservation/signing failures may leave empty or partial outputs, including an empty
+output root. Neither API supports concurrent changes to inputs or outputs.
+
 ## Experimental feature: Text formats
 
 The Rust library supports the following text formats when the `unstable_structured_text` feature is enabled.
