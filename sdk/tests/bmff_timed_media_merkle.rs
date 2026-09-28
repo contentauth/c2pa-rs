@@ -490,6 +490,60 @@ fn valid_multi_chunk_verifies() {
         .expect("multi-chunk asset should verify");
 }
 
+/// A keyless attacker physically swaps the two equal-size auxiliary Merkle
+/// proof `uuid` boxes for a two-chunk timed-media track, leaving each box's
+/// own `location` field untouched. Without a check tying `location` to
+/// physical box order, each chunk's root hash would still validate against
+/// its own untouched `location`, so the swap (and thus which physical chunk
+/// each root claims to describe) would go undetected.
+#[test]
+fn timed_media_rejects_uuid_box_reordering() {
+    let track = TrackSpec {
+        track_id: 1,
+        stsc: vec![StscEntry {
+            first_chunk: 1,
+            samples_per_chunk: 1,
+            sample_description_index: 1,
+        }],
+        sample_sizes: SampleSizes::Variable(vec![5, 7]),
+        use_co64: false,
+    };
+    let samples: [&[u8]; 2] = [b"aaaaa", b"bbbbbbb"];
+    let (file, roots) = build_single_track_asset(track, &samples);
+    assert_eq!(roots.len(), 2, "expected two chunks, one per sample");
+
+    // The two merkle uuid boxes (location 0 and location 1) are the only
+    // `uuid` boxes in this asset and sit back-to-back right after `ftyp`.
+    // Their CBOR-encoded location fields (0 and 1) are both single-byte, so
+    // the boxes are equal length and can be swapped in place without
+    // disturbing any subsequent chunk offsets.
+    let uuid0 = build_merkle_uuid_box(0, 1, 0);
+    let uuid1 = build_merkle_uuid_box(0, 1, 1);
+    assert_eq!(
+        uuid0.len(),
+        uuid1.len(),
+        "fixture assumption: equal-size uuid boxes"
+    );
+
+    let uuid_start = file
+        .windows(4)
+        .position(|w| w == b"uuid")
+        .expect("uuid box present")
+        - 4; // back up over the 4-byte box-size prefix to the box start
+    let mut swapped = file.clone();
+    swapped[uuid_start..uuid_start + uuid1.len()].copy_from_slice(&uuid1);
+    swapped[uuid_start + uuid1.len()..uuid_start + uuid1.len() + uuid0.len()]
+        .copy_from_slice(&uuid0);
+
+    let bmff_hash = track_merkle_assertion(1, &roots);
+    let mut reader = Cursor::new(swapped);
+    let result = bmff_hash.verify_stream_hash(&mut reader, Some("sha256"));
+    assert!(
+        matches!(result, Err(c2pa::Error::C2PAValidation(_))),
+        "uuid box reordering must be rejected, got {result:?}"
+    );
+}
+
 /// Several samples packed into a single chunk (`samples_per_chunk > 1`). The
 /// chunk root hashes the concatenation of every sample in the chunk, exercising
 /// the intra-chunk offset accumulation.
@@ -1238,11 +1292,10 @@ fn build_merkle_uuid_box_with_u32_location(
 /// panic. (Before the checked conversion, this input panicked with an
 /// integer-overflow abort at `bmff_hash.rs:1508`.)
 ///
-/// This is now caught even earlier sequential-location
-/// check (locations must be exactly `0..len`), which reports
-/// `C2PAValidation` ("assertion.bmffHash.malformed") rather than falling
-/// through to the checked-conversion `HashMismatch` path — still a clean,
-/// non-panicking rejection.
+/// This is now caught even earlier by the sequential-location check
+/// (locations must be exactly `0..len`), which deterministically reports
+/// `C2PAValidation` ("assertion.bmffHash.malformed") before the
+/// checked-conversion `HashMismatch` path is ever reached.
 #[test]
 fn location_u32_max_does_not_panic() {
     let track = TrackSpec {
@@ -1286,11 +1339,8 @@ fn location_u32_max_does_not_panic() {
         .verify_stream_hash(&mut reader, Some("sha256"))
         .expect_err("a location of u32::MAX must be rejected, not overflow");
     assert!(
-        matches!(
-            err,
-            c2pa::Error::HashMismatch(_) | c2pa::Error::C2PAValidation(_)
-        ),
-        "expected a clean rejection, got: {err:?}"
+        matches!(err, c2pa::Error::C2PAValidation(_)),
+        "expected C2PAValidation (bmffHash malformed) from the sequential-location check, got: {err:?}"
     );
 }
 
