@@ -378,7 +378,7 @@ impl Signer for CawgX509IdentitySigner {
 struct ArcCredentialHolder(Arc<dyn CredentialHolder + Send + Sync>);
 
 impl CredentialHolder for ArcCredentialHolder {
-    fn sig_type(&self) -> &'static str {
+    fn sig_type(&self) -> &str {
         self.0.sig_type()
     }
 

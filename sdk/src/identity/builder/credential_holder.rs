@@ -31,7 +31,10 @@ use crate::{
 /// [§8. Credentials, signatures, and validation methods]: https://cawg.io/identity/1.1-draft/#_credentials_signatures_and_validation_methods
 pub trait CredentialHolder {
     /// Returns the designated `sig_type` value for this kind of credential.
-    fn sig_type(&self) -> &'static str;
+    ///
+    /// The value may be borrowed from the holder, so it can be determined at
+    /// runtime rather than being a `'static` constant.
+    fn sig_type(&self) -> &str;
 
     /// Returns the maximum expected size in bytes of the `signature`
     /// field for the identity assertion which will be subsequently
@@ -67,7 +70,10 @@ pub trait CredentialHolder {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait AsyncCredentialHolder: MaybeSync + MaybeSend {
     /// Returns the designated `sig_type` value for this kind of credential.
-    fn sig_type(&self) -> &'static str;
+    ///
+    /// The value may be borrowed from the holder, so it can be determined at
+    /// runtime rather than being a `'static` constant.
+    fn sig_type(&self) -> &str;
 
     /// Returns the maximum expected size in bytes of the `signature`
     /// field for the identity assertion which will be subsequently
