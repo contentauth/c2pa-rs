@@ -951,7 +951,6 @@ impl HandlerRegistry {
     /// [`Error::JumbfNotFound`] — it returns whatever [`C2paReader::read_c2pa`] returns,
     /// matching the legacy `jumbf_io::load_jumbf_from_file` behavior.
     #[cfg(feature = "file_io")]
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn read_c2pa_from_file<P: AsRef<Path>>(&self, in_path: P) -> Result<Vec<u8>> {
         let ext = in_path
             .as_ref()

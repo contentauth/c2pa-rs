@@ -2324,7 +2324,11 @@ pub unsafe extern "C" fn c2pa_builder_sign_fragmented(
         std::path::Path::new(&fragments_glob),
         std::path::Path::new(&output_dir),
     ));
-    let bytes = ok_or_return_int!(c2pa::jumbf_io::load_jumbf_from_file(signed_init));
+    // Read back through the signing Builder's Context so its custom asset
+    // handlers are honored exactly as they were when writing the output.
+    let bytes = ok_or_return_int!(builder
+        .context()
+        .read_embedded_manifest_from_file(&signed_init));
     out_bytes_or_return_int!(bytes, manifest_bytes_ptr)
 }
 
