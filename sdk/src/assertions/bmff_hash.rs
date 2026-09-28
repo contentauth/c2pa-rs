@@ -1173,8 +1173,8 @@ impl BmffHash {
         bmff_merkle_box_infos: Vec<BoxInfoLite>,
     ) -> crate::Result<HashMap<usize, BmffMerkleGroup>> {
         if bmff_merkle_map.len() != bmff_merkle_box_infos.len() {
-            return Err(Error::C2PAValidation(
-                ASSERTION_BMFFHASH_MALFORMED.to_string(),
+            return Err(Error::HashMismatch(
+                "MerkleMap and MerkleBoxInfo count mismatch".to_string(),
             ));
         }
 
@@ -2180,8 +2180,8 @@ impl BmffHash {
         box_infos: &[BoxInfoLite],
     ) -> crate::Result<()> {
         if bmff_mm.len() != box_infos.len() {
-            return Err(Error::C2PAValidation(
-                ASSERTION_BMFFHASH_MALFORMED.to_string(),
+            return Err(Error::HashMismatch(
+                "MerkleMap and MerkleBoxInfo count mismatch".to_string(),
             ));
         }
 
@@ -2197,8 +2197,8 @@ impl BmffHash {
             .enumerate()
             .any(|(index, (_, location))| *location != index)
         {
-            return Err(Error::C2PAValidation(
-                ASSERTION_BMFFHASH_MALFORMED.to_string(),
+            return Err(Error::HashMismatch(
+                "MerkleMap and MerkleBoxInfo mismatch".to_string(),
             ));
         }
         Ok(())
@@ -3031,7 +3031,7 @@ mod bmff_hash_tests {
 
         let result = bmff_hash.validate_merkle_maps_mdat_boxes(reader.as_mut(), &c2pa_boxes);
         assert!(
-            matches!(result, Err(Error::C2PAValidation(_))),
+            matches!(result, Err(Error::HashMismatch(_))),
             "chunk+proof reordering must be rejected, got {result:?}"
         );
     }
@@ -3117,7 +3117,7 @@ mod bmff_hash_tests {
 
         let result = BmffHash::verify_sequential_merkle_locations(&bmff_mm, &box_infos);
         assert!(
-            matches!(result, Err(Error::C2PAValidation(_))),
+            matches!(result, Err(Error::HashMismatch(_))),
             "non-sequential physical order must be rejected, got {result:?}"
         );
     }

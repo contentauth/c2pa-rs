@@ -539,7 +539,7 @@ fn timed_media_rejects_uuid_box_reordering() {
     let mut reader = Cursor::new(swapped);
     let result = bmff_hash.verify_stream_hash(&mut reader, Some("sha256"));
     assert!(
-        matches!(result, Err(c2pa::Error::C2PAValidation(_))),
+        matches!(result, Err(c2pa::Error::HashMismatch(_))),
         "uuid box reordering must be rejected, got {result:?}"
     );
 }
@@ -1290,12 +1290,7 @@ fn build_merkle_uuid_box_with_u32_location(
 
 /// A `location = u32::MAX` merkle box must be rejected with an error, not
 /// panic. (Before the checked conversion, this input panicked with an
-/// integer-overflow abort at `bmff_hash.rs:1508`.)
-///
-/// This is now caught even earlier by the sequential-location check
-/// (locations must be exactly `0..len`), which deterministically reports
-/// `C2PAValidation` ("assertion.bmffHash.malformed") before the
-/// checked-conversion `HashMismatch` path is ever reached.
+/// integer-overflow abort.)
 #[test]
 fn location_u32_max_does_not_panic() {
     let track = TrackSpec {
@@ -1339,8 +1334,8 @@ fn location_u32_max_does_not_panic() {
         .verify_stream_hash(&mut reader, Some("sha256"))
         .expect_err("a location of u32::MAX must be rejected, not overflow");
     assert!(
-        matches!(err, c2pa::Error::C2PAValidation(_)),
-        "expected C2PAValidation (bmffHash malformed) from the sequential-location check, got: {err:?}"
+        matches!(err, c2pa::Error::HashMismatch(_)),
+        "expected HashMismatch from the sequential-location check, got: {err:?}"
     );
 }
 
