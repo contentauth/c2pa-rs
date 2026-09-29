@@ -3563,9 +3563,7 @@ impl Claim {
             if claim
                 .claim_assertion_store()
                 .iter()
-                .filter(|ca| ca.label_raw().contains(CLAIM_THUMBNAIL))
-                .count()
-                > 1
+                .any(|ca| ca.label_raw().contains(CLAIM_THUMBNAIL))
             {
                 log_item!(
                     claim.uri(),
@@ -6135,6 +6133,35 @@ pub mod tests {
                 .any(|item| item.validation_status.as_deref()
                     == Some(validation_status::ASSERTION_CLOUD_DATA_ACTIONS)),
             "should log ASSERTION_CLOUD_DATA_ACTIONS"
+        );
+    }
+
+    #[test]
+    fn test_update_manifest_with_claim_thumbnail_rejected() {
+        let mut claim = create_test_claim().expect("create test claim");
+        claim.set_update_manifest(true);
+        claim
+            .add_assertion(&assertions::EmbeddedData::new(
+                assertions::labels::JPEG_CLAIM_THUMBNAIL,
+                "image/jpeg",
+                vec![0xff, 0xd8, 0xff],
+            ))
+            .expect("add claim thumbnail");
+
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+        Claim::verify_internal(
+            &claim,
+            &StoreValidationInfo::default(),
+            Err(Error::CoseSignature),
+            &mut validation_log,
+            &Context::new(),
+        )
+        .expect("verification should continue to report validation statuses");
+
+        assert!(
+            validation_log.has_status(validation_status::MANIFEST_UPDATE_INVALID),
+            "an update manifest containing one claim thumbnail should be invalid"
         );
     }
 
