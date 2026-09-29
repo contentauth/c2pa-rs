@@ -574,6 +574,10 @@ impl Context {
     /// This does not validate the manifest or fetch remote manifests/sidecars;
     /// use [`crate::Reader`] for validation. The file extension selects the handler,
     /// with this Context's custom handlers taking precedence over built-ins.
+    ///
+    /// This is the Context-aware counterpart of [`crate::jumbf_io::load_jumbf_from_file`],
+    /// which always uses the built-in handlers. Use it where a manifest written through
+    /// this Context must be read back with the same handlers.
     #[cfg(feature = "file_io")]
     pub fn read_embedded_manifest_from_file(
         &self,

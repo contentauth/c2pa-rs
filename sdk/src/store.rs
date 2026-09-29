@@ -2868,8 +2868,8 @@ impl Store {
     /// failures may leave empty or partial outputs. This is not a full filesystem
     /// identity check: absent directory aliases and aliases with different canonical
     /// paths are not detected. Existing non-source init files may still be
-    /// overwritten. Callers must ensure outputs do not alias other outputs on the
-    /// destination filesystem.
+    /// overwritten. Callers must keep outputs separate from inputs and ensure
+    /// outputs do not alias other outputs on the destination filesystem.
     #[cfg(feature = "file_io")]
     pub fn save_to_bmff_fragmented<P: AsRef<Path>>(
         &mut self,
