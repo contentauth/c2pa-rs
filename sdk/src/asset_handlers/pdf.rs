@@ -688,8 +688,9 @@ mod tests {
 
     #[test]
     fn test_rejects_pdf_with_oversized_xref_stream() {
-        use flate2::{write::ZlibEncoder, Compression};
         use std::io::Cursor;
+
+        use flate2::{write::ZlibEncoder, Compression};
 
         const XREF_ENTRY_COUNT: usize = 10_000_000;
         const XREF_ENTRY_SIZE: usize = 7;
