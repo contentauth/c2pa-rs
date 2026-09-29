@@ -1566,6 +1566,7 @@ impl Claim {
         let as_label = match preferred_label {
             Some(label)
                 if labels::parse_label(label).0 == labels::parse_label(&assertion_label).0
+                    && labels::parse_label(label).1 == labels::parse_label(&assertion_label).1
                     && !self.assertion_store.iter().any(|ca| ca.label() == label) =>
             {
                 label.to_string()
@@ -4378,7 +4379,7 @@ impl Claim {
         self.gathered_assertions.as_ref()
     }
 
-    /// Returns the cbor binary value of the claim data.
+    /// Return the cbor binary value of the claim data.
     /// If this claim was read from a file, returns the exact byte
     /// sequence that was read from the file. If this claim was
     /// constructed locally, contains the claim data that was/will be

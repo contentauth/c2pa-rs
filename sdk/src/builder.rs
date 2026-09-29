@@ -1861,7 +1861,6 @@ impl Builder {
         let mut actions: Actions = assertion_def.to_assertion()?;
 
         let mut updates = Vec::new();
-        //#[allow(clippy::explicit_counter_loop)]
         for (index, action) in actions.actions_mut().iter_mut().enumerate() {
             // find and remove the temporary ingredientIds parameter
             let ids = action.extract_ingredient_ids();
@@ -2309,7 +2308,14 @@ impl Builder {
         // check settings to see if we should auto generate a thumbnail
         let auto_thumbnail = self.context.settings().builder.thumbnail.enabled;
 
-        if claim.thumbnail().is_none() && auto_thumbnail {
+        // A thumbnail ref with format "none" explicitly opts out of auto generation
+        let opted_out = self
+            .definition
+            .thumbnail
+            .as_ref()
+            .is_some_and(|t| t.format == "none");
+
+        if claim.thumbnail().is_none() && auto_thumbnail && !opted_out {
             self.context
                 .check_progress(ProgressPhase::Thumbnail, 1, 1)?;
             stream.rewind()?;
@@ -10493,6 +10499,41 @@ mod tests {
         assert!(mime_types.contains(&"image/avif".to_string()));
         assert!(mime_types.contains(&"image/heic".to_string()));
         assert!(mime_types.contains(&"image/heif".to_string()));
+    }
+
+    /// `format: "none"` on the definition's thumbnail must suppress the claim thumbnail.
+    #[test]
+    fn test_thumbnail_format_none_suppresses_claim_thumbnail() {
+        let build = |thumbnail: serde_json::Value| {
+            let mut builder = Builder::from_context(test_context())
+                .with_definition(
+                    json!({
+                        "format": "image/jpeg",
+                        "thumbnail": thumbnail,
+                        "assertions": [{
+                            "label": "c2pa.actions.v2",
+                            "data": { "actions": [{
+                                "action": "c2pa.created",
+                                "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
+                            }]}
+                        }]
+                    })
+                    .to_string(),
+                )
+                .unwrap();
+            builder
+                .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
+                .unwrap();
+            builder.to_claim().unwrap()
+        };
+
+        // Control: a real thumbnail ref is added to the claim.
+        let claim = build(json!({ "format": "image/jpeg", "identifier": "thumbnail.jpg" }));
+        assert!(claim.thumbnail().is_some());
+
+        // "none" skips it, even though the resource exists.
+        let claim = build(json!({ "format": "none", "identifier": "thumbnail.jpg" }));
+        assert!(claim.thumbnail().is_none());
     }
 
     #[cfg(all(feature = "add_thumbnails", feature = "file_io"))]
