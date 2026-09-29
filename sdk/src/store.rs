@@ -2862,11 +2862,14 @@ impl Store {
     /// and matching canonical paths of existing rendition output directories before
     /// writing. Init names remain native; fragment names use lossy UTF-8 conversion.
     /// Empty fragment matches and non-directory output entries are also rejected
-    /// during preflight. Later signing failures may leave empty or partial outputs.
-    /// This is not a full filesystem identity check: absent directory aliases and
-    /// aliases with different canonical paths are not detected. Existing init files
-    /// may still be overwritten. Callers must ensure outputs do not alias inputs or
-    /// other outputs on the destination filesystem.
+    /// during preflight, as are output rendition directories that are source
+    /// directories and existing output inits that are source files (by canonical
+    /// path, and on Unix by file identity to catch hard links). Later signing
+    /// failures may leave empty or partial outputs. This is not a full filesystem
+    /// identity check: absent directory aliases and aliases with different canonical
+    /// paths are not detected. Existing non-source init files may still be
+    /// overwritten. Callers must ensure outputs do not alias other outputs on the
+    /// destination filesystem.
     #[cfg(feature = "file_io")]
     pub fn save_to_bmff_fragmented<P: AsRef<Path>>(
         &mut self,
@@ -2991,6 +2994,67 @@ impl Store {
                 }
             }
             renditions.push((init_path, fragments, new_output_path));
+        }
+
+        // Outputs must never resolve to source media: an output rendition directory
+        // may not be a source directory, and an existing output init (the only file
+        // the writer overwrites) may not be a source file, including via symlinks or
+        // (on Unix) hard links. Fragment outputs are created exclusively.
+        #[cfg(unix)]
+        fn file_identity(metadata: &std::fs::Metadata) -> Option<(u64, u64)> {
+            use std::os::unix::fs::MetadataExt;
+            Some((metadata.dev(), metadata.ino()))
+        }
+        #[cfg(not(unix))]
+        fn file_identity(_: &std::fs::Metadata) -> Option<(u64, u64)> {
+            None
+        }
+        let mut source_dirs = HashSet::new();
+        let mut source_files = HashSet::new();
+        let mut source_identities = HashSet::new();
+        for (init_path, fragments, _) in &renditions {
+            for source in std::iter::once(*init_path).chain(fragments.iter()) {
+                let canonical = std::fs::canonicalize(source)?;
+                if let Some(parent) = canonical.parent() {
+                    source_dirs.insert(parent.to_path_buf());
+                }
+                if let Some(identity) = file_identity(&std::fs::metadata(&canonical)?) {
+                    source_identities.insert(identity);
+                }
+                source_files.insert(canonical);
+            }
+        }
+        for (init_path, _, new_output_path) in &renditions {
+            if std::fs::symlink_metadata(new_output_path).is_ok() {
+                let canonical = std::fs::canonicalize(new_output_path)?;
+                if source_dirs.contains(&canonical) {
+                    return Err(Error::BadParam(format!(
+                        "Fragmented output directory {} is a source directory",
+                        new_output_path.display()
+                    )));
+                }
+            }
+            let init_name = init_path
+                .file_name()
+                .ok_or_else(|| Error::BadParam("init segment has no file name".to_string()))?;
+            let output_init = new_output_path.join(init_name);
+            match std::fs::symlink_metadata(&output_init) {
+                Ok(_) => {
+                    // A dangling link would be followed by the init writer.
+                    let canonical = std::fs::canonicalize(&output_init)?;
+                    let identity = file_identity(&std::fs::metadata(&canonical)?);
+                    if source_files.contains(&canonical)
+                        || identity.is_some_and(|id| source_identities.contains(&id))
+                    {
+                        return Err(Error::BadParam(format!(
+                            "Fragmented output init {} is a source file",
+                            output_init.display()
+                        )));
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e.into()),
+            }
         }
 
         if !output_path.as_ref().exists() {

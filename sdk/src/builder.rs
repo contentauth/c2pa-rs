@@ -3578,13 +3578,16 @@ impl Builder {
     /// Init names remain native; fragment names use lossy UTF-8 conversion, matching
     /// the fragment writer. Empty fragment matches, non-directory output entries,
     /// and errors inspecting or resolving existing output entries are also rejected
-    /// before writes.
+    /// before writes. So are output rendition directories that are source
+    /// directories, and existing output inits that are source files (compared by
+    /// canonical path, and on Unix also by file identity to catch hard links).
     /// This is not a full filesystem identity check: absent directories are not
     /// checked for case/Unicode aliases, nor are aliases with different canonical
-    /// paths detected (e.g. directory hard links or bind mounts). Callers must keep
-    /// outputs separate from inputs and ensure exclusive ownership of distinct
-    /// destinations on the output filesystem. Existing output init files may be
-    /// overwritten; use fresh output directories. Do not change inputs or outputs
+    /// paths detected (e.g. directory hard links or bind mounts, or file hard links
+    /// on non-Unix platforms). Callers must keep outputs separate from inputs and
+    /// ensure exclusive ownership of distinct destinations on the output filesystem.
+    /// Existing non-source output init files may be overwritten; use fresh output
+    /// directories. Do not change inputs or outputs
     /// concurrently while signing. Signing is not transactional: later failures may
     /// leave empty or partial outputs, including an empty output root.
     ///

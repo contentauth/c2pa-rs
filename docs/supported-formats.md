@@ -46,13 +46,16 @@ names remain native, while fragment names use the writer's lossy UTF-8 conversio
 Empty fragment matches and non-directory output entries are also rejected during
 preflight. Existing rendition output directories with matching canonical paths
 (including symlink aliases) are rejected, and errors inspecting or resolving
-existing output entries are returned before writes. This is not a full filesystem
-identity check: aliases with different canonical paths (e.g. directory hard links
-or bind mounts) are not detected. Absent directories are not checked for
+existing output entries are returned before writes. Output rendition directories
+that are source directories, and existing output inits that are source files, are
+also rejected (by canonical path, and on Unix by file identity to catch hard links).
+This is not a full filesystem identity check: aliases with different canonical
+paths (e.g. directory hard links, bind mounts, or file hard links on non-Unix
+platforms) are not detected. Absent directories are not checked for
 case/Unicode aliases; direct Rust
 callers still need an exclusive destination ownership policy suitable for their
 filesystem. Keep inputs separate from outputs and use fresh output directories;
-existing output init files can still be overwritten.
+existing non-source output init files can still be overwritten.
 The C API additionally requires absent rendition directories and exclusively
 reserves directories and init files, letting the destination filesystem reject
 aliases (including case and Unicode normalization aliases). Those reservations

@@ -529,6 +529,115 @@ fn test_builder_fragmented_existing_output_aliases_before_writes() -> Result<()>
     Ok(())
 }
 
+#[cfg(all(any(unix, windows), feature = "file_io"))]
+#[test]
+fn test_builder_fragmented_outputs_never_resolve_to_sources() -> Result<()> {
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink as symlink_file;
+    #[cfg(windows)]
+    use std::os::windows::fs::symlink_file;
+    use std::{fs, path::Path};
+
+    fn tree(root: &Path) -> Result<Vec<(std::path::PathBuf, Vec<u8>)>> {
+        let mut files = Vec::new();
+        for entry in fs::read_dir(root)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                files.extend(tree(&path)?);
+            } else {
+                files.push((path.clone(), fs::read(&path)?));
+            }
+        }
+        files.sort();
+        Ok(files)
+    }
+
+    let fixtures =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bunny/bunny_89283bps");
+    let context = test_context().into_shared();
+    let mut cases = vec!["source_dir", "init_symlink", "control"];
+    if cfg!(unix) {
+        // Hard links are detected by file identity only on Unix.
+        cases.push("init_hardlink");
+    }
+    for case in cases {
+        let temp = common::tempdirectory()?;
+        let input = temp.path().join("input");
+        let video = input.join("video");
+        // A subdirectory glob: flattened fragment names do not exist in the source
+        // directory, so fragment create_new cannot catch output == source.
+        fs::create_dir_all(video.join("sub"))?;
+        fs::copy(
+            fixtures.join("BigBuckBunny_2s_init.mp4"),
+            video.join("init.mp4"),
+        )?;
+        fs::copy(
+            fixtures.join("BigBuckBunny_2s1.m4s"),
+            video.join("sub/seg-1.m4s"),
+        )?;
+        let output = if case == "source_dir" {
+            input.clone()
+        } else {
+            temp.path().join("output")
+        };
+        let output_init = output.join("video/init.mp4");
+        match case {
+            "init_symlink" => {
+                fs::create_dir_all(output.join("video"))?;
+                match symlink_file(video.join("init.mp4"), &output_init) {
+                    Ok(()) => {}
+                    Err(e)
+                        if matches!(
+                            e.kind(),
+                            io::ErrorKind::PermissionDenied | io::ErrorKind::Unsupported
+                        ) =>
+                    {
+                        eprintln!("Skipping output init symlink regression: {e}");
+                        continue;
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+            }
+            "init_hardlink" => {
+                fs::create_dir_all(output.join("video"))?;
+                fs::hard_link(video.join("init.mp4"), &output_init)?;
+            }
+            "control" => {
+                fs::create_dir_all(output.join("video"))?;
+                fs::write(&output_init, b"caller init")?;
+            }
+            _ => {}
+        }
+        let before = tree(&input)?;
+        let mut builder = Builder::from_shared_context(&context);
+        builder.set_intent(BuilderIntent::Create(c2pa::DigitalSourceType::Empty));
+        let result = builder.sign_fragmented_files(
+            context.signer()?,
+            video.join("init.mp4").as_path(),
+            Path::new("sub/*.m4s"),
+            &output,
+        );
+        if case == "control" {
+            // An unrelated existing output init keeps the documented overwrite policy.
+            result.map_err(|e| format!("control: {e}")).unwrap();
+            assert_ne!(fs::read(&output_init)?, b"caller init");
+        } else {
+            let error = result.unwrap_err();
+            let expected = if case == "source_dir" {
+                "is a source directory"
+            } else {
+                "is a source file"
+            };
+            assert!(
+                matches!(&error, Error::BadParam(message) if message.ends_with(expected)),
+                "{case}: {error}"
+            );
+        }
+        assert_eq!(tree(&input)?, before, "{case}: sources changed");
+    }
+    Ok(())
+}
+
 #[test]
 fn test_builder_remote_url_no_embed() -> Result<()> {
     let mut settings = test_settings();
