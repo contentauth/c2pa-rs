@@ -992,7 +992,7 @@ impl Claim {
         if let Some(md) = self.metadata() {
             claim_map.serialize_field(METADATA_F, md)?;
         }
-        if let Some(spec_version) = self.spec_version() {
+        if let Some(spec_version) = &self.spec_version {
             claim_map.serialize_field(SPEC_VERSION_F, spec_version)?;
         }
 
@@ -3904,7 +3904,7 @@ impl Claim {
     ///    `assertion.cloud-data.hardBinding`.
     /// 3. In an update manifest the referenced assertion must not be an actions
     ///    assertion — failure code `assertion.cloud-data.actions`.
-    ///     
+    ///
     /// No fetching of the cloud data is performed, only the structure of the assertion is checked.
     fn verify_cloud_data(claim: &Claim, validation_log: &mut StatusTracker) -> Result<()> {
         use assertions::CloudData;
@@ -5694,6 +5694,47 @@ pub mod tests {
         claim.add_claim_generator_info(cgi);
 
         assert_eq!(claim.spec_version().map(|s| s.as_str()), Some("2.4.0"));
+    }
+
+    #[test]
+    fn test_spec_version_in_claim_generator_info_round_trips() {
+        let mut claim = Claim::new("test", Some("test"), 2);
+        let mut cgi = ClaimGeneratorInfo::new("test app");
+        cgi.set_spec_version("2.4.0");
+        claim.add_claim_generator_info(cgi);
+
+        let data = claim.data().unwrap();
+        let decoded = Claim::from_data("test", &data).unwrap();
+        assert_eq!(decoded.spec_version().map(|s| s.as_str()), Some("2.4.0"));
+
+        let value: c2pa_cbor::Value = c2pa_cbor::from_slice(&data).unwrap();
+        assert!(matches!(
+            &value,
+            c2pa_cbor::Value::Map(map) if !map
+                .keys()
+                .any(|k| matches!(k, c2pa_cbor::Value::Text(t) if t == SPEC_VERSION_F))
+        ));
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_legacy_claim_level_spec_version_round_trips() {
+        // legacy callers that set the claim-level specVersion field directly
+        let mut claim = Claim::new("test", Some("test"), 2);
+        claim.add_claim_generator_info(ClaimGeneratorInfo::new("test app"));
+        claim.set_spec_version(Some("2.3".to_owned()));
+
+        let data = claim.data().unwrap();
+        let decoded = Claim::from_data("test", &data).unwrap();
+        assert_eq!(decoded.spec_version.as_deref(), Some("2.3"));
+
+        let value: c2pa_cbor::Value = c2pa_cbor::from_slice(&data).unwrap();
+        assert!(matches!(
+            &value,
+            c2pa_cbor::Value::Map(map) if map
+                .keys()
+                .any(|k| matches!(k, c2pa_cbor::Value::Text(t) if t == SPEC_VERSION_F))
+        ));
     }
 
     #[test]
