@@ -1659,9 +1659,12 @@ mod tests {
 
         #[cfg(feature = "file_io")]
         {
-            let file = tempfile::Builder::new().suffix(".jpg").tempfile().unwrap();
+            // WASI has no temp_dir(); use the crate's WASI-aware helper.
+            let dir = crate::utils::io_utils::tempdirectory().unwrap();
+            let file = dir.path().join("custom.jpg");
+            std::fs::write(&file, b"").unwrap();
             assert_eq!(
-                ctx.read_embedded_manifest_from_file(file.path()).unwrap(),
+                ctx.read_embedded_manifest_from_file(&file).unwrap(),
                 b"custom-cai"
             );
         }
