@@ -884,6 +884,34 @@ mod tests {
     }
 
     #[test]
+    fn validate_fetched_ocsp_status_uses_signature_uri() {
+        // Regression for #2726: status codes from a fetched OCSP response must
+        // carry the claim signature box URI (the caller's current URI), not
+        // the "OCSP_RESPONSE" placeholder.
+        let rsp = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_revoked.der");
+        let chain = ocsp_signing_chain();
+        let test_time = Utc.with_ymd_and_hms(2024, 2, 1, 8, 0, 0).unwrap();
+        let signature_uri = "self#jumbf=/c2pa/urn:c2pa:test/c2pa.signature";
+
+        let mut ctp = CertificateTrustPolicy::new();
+        ctp.add_end_entity_credentials(include_bytes!(
+            "../../../tests/fixtures/crypto/ocsp/ocsp_responder.pem"
+        ))
+        .unwrap();
+
+        let mut log = StatusTracker::default();
+        log.push_current_uri(signature_uri);
+        validate_fetched_ocsp(rsp, &chain, &ctp, Some(test_time), &mut log);
+
+        let item = log
+            .logged_items()
+            .iter()
+            .find(|item| item.validation_status.as_deref() == Some(SIGNING_CREDENTIAL_REVOKED))
+            .unwrap();
+        assert_eq!(item.label, signature_uri);
+    }
+
+    #[test]
     fn validate_fetched_ocsp_ignores_unusable_response() {
         // An undecodable response yields no cert data and no status.
         let chain = ocsp_signing_chain();

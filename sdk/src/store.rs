@@ -2028,12 +2028,17 @@ impl Store {
 
                 // save the ocsp_ders stored in the StoreValidationInfo
                 for ocsp_der in certificate_status_assertion.as_ref() {
-                    if let Ok(response) = OcspResponse::from_der_checked(
+                    // OCSP status codes refer to the claim signature box
+                    validation_log.push_current_uri(found_claim.signature_uri());
+                    let checked = OcspResponse::from_der_checked(
                         ocsp_der,
                         &signing_cert_chain,
                         None,
                         validation_log,
-                    ) {
+                    );
+                    validation_log.pop_current_uri();
+
+                    if let Ok(response) = checked {
                         let ocsp_ders = svi
                             .certificate_statuses
                             .entry(response.certificate_serial_num)
@@ -4459,7 +4464,10 @@ impl Store {
                 }
 
                 let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
-                let ocsp_response_der = if _sync {
+
+                // OCSP status codes refer to the claim signature box
+                validation_log.push_current_uri(claim.signature_uri());
+                let ocsp_response = if _sync {
                     fetch_and_check_ocsp_response(
                         &sign1,
                         &data,
@@ -4467,8 +4475,7 @@ impl Store {
                         None,
                         validation_log,
                         context,
-                    )?
-                    .ocsp_der
+                    )
                 } else {
                     fetch_and_check_ocsp_response_async(
                         &sign1,
@@ -4478,9 +4485,10 @@ impl Store {
                         validation_log,
                         context,
                     )
-                    .await?
-                    .ocsp_der
+                    .await
                 };
+                validation_log.pop_current_uri();
+                let ocsp_response_der = ocsp_response?.ocsp_der;
 
                 if !ocsp_response_der.is_empty() {
                     oscp_response_ders.push((manifest_label, ocsp_response_der));
