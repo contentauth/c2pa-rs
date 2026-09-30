@@ -216,16 +216,24 @@ impl OcspResponse {
                     }
 
                     if !in_range {
+                        // A `good` response outside its applicable time window
+                        // does not attest that the certificate was revoked; it
+                        // simply cannot speak to the status at the reference
+                        // instant (the signing time, or the current time when no
+                        // signing time was supplied). Reporting it as a
+                        // revocation failed certificate trust for certificates
+                        // that were never revoked -- a clock skew of a single
+                        // second between the responder and the validator was
+                        // enough to trigger it. Treat it as inconclusive, the
+                        // same way an explicit `unknown` certStatus is handled
+                        // below.
                         log_item!(
                             "OCSP_RESPONSE",
-                            "certificate revoked",
+                            "certStatus is good but the response is outside its applicable time window",
                             "check_ocsp_response"
                         )
-                        .validation_status(validation_codes::SIGNING_CREDENTIAL_REVOKED)
-                        .failure_no_throw(
-                            &mut internal_validation_log,
-                            OcspError::CertificateRevoked,
-                        );
+                        .validation_status(validation_codes::SIGNING_CREDENTIAL_OCSP_UNKNOWN)
+                        .informational(&mut internal_validation_log);
                     } else {
                         // As soon as we find one successful match, nothing else matters.
                         log_item!(
@@ -650,6 +658,11 @@ mod tests {
         wasm_bindgen_test
     )]
     fn validity() {
+        // `response_good.der` reports `certStatus = good` with
+        // `thisUpdate = 2025-03-07` and no `nextUpdate` (the window therefore
+        // ends 24 h after `producedAt`). A signing time after that window proves
+        // nothing about the status at the signing instant, so it must surface as
+        // inconclusive rather than as a revocation (#2644).
         let rsp_data = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_good.der");
 
         let mut validation_log = StatusTracker::default();
@@ -665,8 +678,18 @@ mod tests {
         .unwrap();
 
         assert!(ocsp_data.revoked_at.is_none());
-        assert!(validation_log.has_any_error());
-        assert!(validation_log.has_status(SIGNING_CREDENTIAL_REVOKED));
+        // A `good` response outside its window is not a revocation, and it must
+        // not be reported as an error either: nothing has been disproved.
+        assert!(!validation_log.has_status(SIGNING_CREDENTIAL_REVOKED));
+        assert!(validation_log.has_status(SIGNING_CREDENTIAL_OCSP_UNKNOWN));
+        assert!(!validation_log.has_any_error());
+
+        let item = validation_log
+            .logged_items()
+            .iter()
+            .find(|item| item.validation_status.as_deref() == Some(SIGNING_CREDENTIAL_OCSP_UNKNOWN))
+            .expect("SIGNING_CREDENTIAL_OCSP_UNKNOWN log item");
+        assert_eq!(item.kind, LogKind::Informational);
     }
 
     #[test]
