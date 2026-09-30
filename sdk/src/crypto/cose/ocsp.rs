@@ -235,7 +235,7 @@ fn process_ocsp_responses(
 ) -> Result<OcspResponse, CoseError> {
     for ocsp_response_der in ocsp_response_ders {
         let mut current_validation_log = StatusTracker::default();
-        if let Ok(ocsp_response) = if _sync {
+        let ocsp_response = if _sync {
             check_stapled_ocsp_response(
                 sign1,
                 ocsp_response_der,
@@ -256,7 +256,8 @@ fn process_ocsp_responses(
                 settings,
             )
             .await
-        } {
+        };
+        if let Ok(ocsp_response) = ocsp_response {
             // If certificate is revoked, return error immediately
             if current_validation_log.has_status(validation_status::SIGNING_CREDENTIAL_REVOKED) {
                 return Err(log_item!(
