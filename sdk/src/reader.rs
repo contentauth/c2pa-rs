@@ -247,35 +247,6 @@ impl Reader {
         Ok(self)
     }
 
-    /// Create a manifest store [`Reader`] from a stream.  A Reader is used to validate C2PA data from an asset.
-    ///
-    /// # Arguments
-    /// * `format` - The format of the stream.  MIME type or extension that maps to a MIME type.
-    /// * `stream` - The stream to read from.  Must implement the Read and Seek traits.
-    ///   Send trait is required for sync operations and Sync trait is required for async operations.
-    /// # Returns
-    /// A [`Reader`] for the manifest store.
-    /// # Note
-    /// [CAWG identity assertions](https://cawg.io/identity/) require async calls for validation.
-    #[deprecated(
-        since = "0.79.4",
-        note = "Use `Reader::from_context(context).with_stream(format, stream)` instead, passing a `Context` explicitly rather than relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    #[async_generic]
-    pub fn from_stream(format: &str, stream: impl Read + Seek + MaybeSend) -> Result<Reader> {
-        // Legacy behavior: explicitly get global settings for backward compatibility
-        let settings = crate::settings::get_thread_local_settings();
-        let context = Context::new().with_settings(settings)?;
-
-        if _sync {
-            Reader::from_context(context).with_stream(format, stream)
-        } else {
-            Reader::from_context(context)
-                .with_stream_async(format, stream)
-                .await
-        }
-    }
-
     #[cfg(feature = "file_io")]
     /// Add manifest store from a file to the [`Reader`].
     /// If the `fetch_remote_manifests` feature is enabled, and the asset refers to a remote manifest, the function fetches a remote manifest.
@@ -365,47 +336,6 @@ impl Reader {
         }
     }
 
-    /// Create a manifest store [`Reader`] from a file.
-    /// If the `fetch_remote_manifests` feature is enabled, and the asset refers to a remote manifest, the function fetches a remote manifest.
-    ///
-    /// NOTE: If the file does not have a manifest store, the function will check for a sidecar manifest with the same base file name and a .c2pa extension.
-    ///
-    /// # Arguments
-    /// * `path` - The path to the file.
-    ///
-    /// # Returns
-    /// A [`Reader`] for the manifest store.
-    ///
-    /// # Errors
-    /// Returns an [`Error`] when the manifest data cannot be read from the specified file.  If there's no error upon reading, you must still check validation status to ensure that the manifest data is validated.  That is, even if there are no errors, the data still might not be valid.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use c2pa::Reader;
-    /// let reader = Reader::from_file("path/to/file.jpg").unwrap();
-    /// ```
-    ///
-    /// # Note
-    /// [CAWG identity assertions](https://cawg.io/identity/) require async calls for validation.
-    #[cfg(feature = "file_io")]
-    #[deprecated(
-        since = "0.79.4",
-        note = "Use `Reader::from_context(context).with_file(path)` instead, passing a `Context` explicitly rather than relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    #[async_generic]
-    pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Reader> {
-        // Legacy behavior: explicitly get thread-local settings for backward compatibility
-        let settings = crate::settings::get_thread_local_settings();
-        let context = Context::new().with_settings(settings)?;
-
-        if _sync {
-            Reader::from_context(context).with_file(path)
-        } else {
-            Reader::from_context(context).with_file_async(path).await
-        }
-    }
-
     /// Create a manifest store [`Reader`] from a JSON string.
     /// # Arguments
     /// * `json` - A JSON string containing a manifest store definition.
@@ -461,39 +391,6 @@ impl Reader {
             self.with_store_async(store, &mut validation_log).await
         }?;
         Ok(self)
-    }
-
-    /// Create a manifest store [`Reader`] from existing `c2pa_data` and a stream.
-    /// Use this to validate a remote manifest or a sidecar manifest.
-    /// # Arguments
-    /// * `c2pa_data` - A C2PA manifest store in JUMBF format.
-    /// * `format` - The format of the stream.
-    /// * `stream` - The stream to verify the store against.
-    /// # Returns
-    /// A [`Reader`] for the manifest store.
-    /// # Errors
-    /// This function returns an [`Error`] ef the c2pa_data is not valid, or severe errors occur in validation.
-    /// You must check validation status for non-severe errors.
-    #[deprecated(
-        since = "0.79.4",
-        note = "Use `Reader::from_context(context).with_manifest_data_and_stream(c2pa_data, format, stream)` instead, passing a `Context` explicitly rather than relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    #[async_generic]
-    pub fn from_manifest_data_and_stream(
-        c2pa_data: &[u8],
-        format: &str,
-        stream: impl Read + Seek + MaybeSend,
-    ) -> Result<Reader> {
-        // Get thread-local settings (if any) for backward compatibility
-        let settings = crate::settings::get_thread_local_settings();
-        let context = Context::new().with_settings(settings).unwrap_or_default();
-        if _sync {
-            Reader::from_context(context).with_manifest_data_and_stream(c2pa_data, format, stream)
-        } else {
-            Reader::from_context(context)
-                .with_manifest_data_and_stream_async(c2pa_data, format, stream)
-                .await
-        }
     }
 
     /// Add manifest store from an initial segment and a fragment stream to the [`Reader`].
@@ -608,23 +505,6 @@ impl Reader {
             }
             Err(e) => Err(e),
         }
-    }
-
-    /// Loads a [`Reader`]` from an initial segment and fragments.  This
-    /// would be used to load and validate fragmented MP4 files that span
-    /// multiple separate asset files.
-    #[cfg(feature = "file_io")]
-    #[deprecated(
-        since = "0.79.4",
-        note = "Use `Reader::from_context(context).with_fragmented_files(path, fragments)` instead, passing a `Context` explicitly rather than relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub fn from_fragmented_files<P: AsRef<std::path::Path>>(
-        path: P,
-        fragments: &Vec<std::path::PathBuf>,
-    ) -> Result<Reader> {
-        let settings = crate::settings::get_thread_local_settings();
-        let context = Context::new().with_settings(settings)?;
-        Reader::from_context(context).with_fragmented_files(path, fragments)
     }
 
     /// Returns a [Vec] of mime types that [c2pa-rs] is able to read.
@@ -778,7 +658,7 @@ impl Reader {
     /// ```no_run
     /// use c2pa::Reader;
     /// let stream = std::io::Cursor::new(include_bytes!("../tests/fixtures/CA.jpg"));
-    /// let reader = Reader::from_stream("image/jpeg", stream).unwrap();
+    /// let reader = Reader::default().with_stream("image/jpeg", stream).unwrap();
     /// let status = reader.validation_status();
     /// ```
     pub fn validation_status(&self) -> Option<&[ValidationStatus]> {
@@ -799,7 +679,7 @@ impl Reader {
     /// ```no_run
     /// use c2pa::Reader;
     /// let stream = std::io::Cursor::new(include_bytes!("../tests/fixtures/CA.jpg"));
-    /// let reader = Reader::from_stream("image/jpeg", stream).unwrap();
+    /// let reader = Reader::default().with_stream("image/jpeg", stream).unwrap();
     /// let status = reader.validation_results();
     /// ```
     pub fn validation_results(&self) -> Option<&ValidationResults> {
@@ -957,7 +837,7 @@ impl Reader {
     /// # Example
     /// ```no_run
     /// use c2pa::Reader;
-    /// let reader = Reader::from_file("path/to/file.jpg").unwrap();
+    /// let reader = Reader::default().with_file("path/to/file.jpg").unwrap();
     /// reader.to_folder("path/to/folder").unwrap();
     /// ```
     #[cfg(feature = "file_io")]
@@ -1425,8 +1305,11 @@ pub mod tests {
 
         // Validate the forged pair through the detached-manifest path (c2patool
         // --external-manifest / a sidecar or remote manifest workflow).
-        let result =
-            Reader::from_manifest_data_and_stream(&jumbf, "image/jpeg", Cursor::new(forged));
+        let result = Reader::default().with_manifest_data_and_stream(
+            &jumbf,
+            "image/jpeg",
+            Cursor::new(forged),
+        );
         let state = result
             .map(|r| r.validation_state())
             .unwrap_or(ValidationState::Invalid);
@@ -1843,12 +1726,18 @@ pub mod tests {
         let thumbnail1 = b"the first super real thumbnail";
         let thumbnail2 = b"the second super real thumbnail";
 
-        let mut ingredient1 = Ingredient::new_v2("Ingredient One", "image/jpeg");
+        let mut ingredient1 = Ingredient::from_json(
+            r#"{"title":"Ingredient One","format":"image/jpeg"}"#,
+        )
+        .unwrap();
         ingredient1
             .set_thumbnail("image/jpeg", thumbnail1.to_vec())
             .unwrap();
 
-        let mut ingredient2 = Ingredient::new_v2("Ingredient Two", "image/jpeg");
+        let mut ingredient2 = Ingredient::from_json(
+            r#"{"title":"Ingredient Two","format":"image/jpeg"}"#,
+        )
+        .unwrap();
         ingredient2
             .set_thumbnail("image/jpeg", thumbnail2.to_vec())
             .unwrap();

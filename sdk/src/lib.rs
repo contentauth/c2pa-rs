@@ -37,7 +37,7 @@
 //!
 //! # fn main() -> Result<()> {
 //! let stream = std::fs::File::open("tests/fixtures/C.jpg")?;
-//! let reader = Reader::from_stream("image/jpeg", stream)?;
+//! let reader = Reader::default().with_stream("image/jpeg", stream)?;
 //! println!("{}", reader.json());
 //!
 //! if let Some(manifest) = reader.active_manifest() {
