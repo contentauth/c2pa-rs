@@ -164,6 +164,7 @@ impl Store {
 
         // use the incoming trust settings
         store.ctp.clear();
+        store.ctp.add_default_valid_ekus();
 
         // Add all of the trust anchors
         if let Some(anchors) = &settings.trust.anchors {
@@ -4601,6 +4602,7 @@ pub mod tests {
     use sha2::Sha256;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
+    use x509_parser::extensions::ExtendedKeyUsage;
 
     use super::*;
     #[cfg(feature = "file_io")]
@@ -10633,6 +10635,61 @@ pub mod tests {
             validated <= 4 * DEPTH,
             "shared ingredient subtrees must be verified only once"
         );
+    }
+
+    #[test]
+    fn test_from_context_single_eku_certs() {
+        const C2PA_CLAIM_SIGNING: &str = "1.3.6.1.4.1.62558.2.1";
+        const DOCUMENT_SIGNING: &str = "1.3.6.1.5.5.7.3.36";
+        const EMAIL_PROTECTION: &str = "1.3.6.1.5.5.7.3.4";
+
+        fn eku(oid: &str) -> ExtendedKeyUsage<'static> {
+            let mut eku = ExtendedKeyUsage {
+                any: false,
+                server_auth: false,
+                client_auth: false,
+                code_signing: false,
+                email_protection: false,
+                time_stamping: false,
+                ocsp_signing: false,
+                other: Vec::new(),
+            };
+
+            match oid {
+                EMAIL_PROTECTION => eku.email_protection = true,
+                DOCUMENT_SIGNING => eku.other.push(asn1_rs::oid!(1.3.6 .1 .5 .5 .7 .3 .36)),
+                C2PA_CLAIM_SIGNING => eku.other.push(asn1_rs::oid!(1.3.6 .1 .4 .1 .62558 .2 .1)),
+                other => panic!("unhandled OID {other}"),
+            }
+
+            eku
+        }
+
+        let cases = [
+            ("C2PA claim signing", C2PA_CLAIM_SIGNING),
+            ("documentSigning", DOCUMENT_SIGNING),
+            ("emailProtection", EMAIL_PROTECTION),
+        ];
+
+        let defaults = CertificateTrustPolicy::default();
+        for (name, oid) in cases {
+            assert!(
+                defaults.has_allowed_eku(&eku(oid)).is_some(),
+                "{name} ({oid}) should be accepted by the built-in EKU list"
+            );
+        }
+
+        // default settings overrides these when compiling for test, so we reset them here
+        let mut settings = Settings::default();
+        settings.trust.trust_config = None;
+        settings.trust.anchors = None;
+
+        let context = Context::new().with_settings(settings).unwrap();
+        let store = Store::from_context(&context);
+
+        for (_, oid) in cases {
+            assert!(store.ctp.has_allowed_eku(&eku(oid)).is_some());
+        }
     }
 
     #[test]

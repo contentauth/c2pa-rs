@@ -82,7 +82,7 @@ pub enum TrustListKind {
 )]
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct TrustAnchor {
-    /// Specifies the details of a specific trust list.  
+    /// Specifies the details of a specific trust list.
     ///
     /// Normally this option contains the official C2PA-recognized trust anchors found here:
     /// <https://github.com/c2pa-org/conformance-public/tree/main/trust-list>
@@ -229,6 +229,9 @@ pub struct Trust {
 
     /// List of allowed extended key usage (EKU) object identifiers (OID) that
     /// certificates must have.
+    ///
+    /// The EKUs defined by the C2PA specification are always accepted. Any OIDs
+    /// listed here are added to that set rather than replacing it.
     pub trust_config: Option<String>,
 
     #[deprecated(
@@ -1908,7 +1911,7 @@ pub mod tests {
                             "trust_anchors": "",
                             "trust_uri": "custom_ica_trust_anchor",
                             "trust_kind": "cawg",
-                            "trusted_ica_issuers": ["did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9"] 
+                            "trusted_ica_issuers": ["did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9"]
                         }
                     ]
                 }
@@ -1947,7 +1950,7 @@ pub mod tests {
                             "trust_anchors": "",
                             "trust_uri": "custom_ica_trust_anchor",
                             "trust_kind": "cawg",
-                            "trusted_ica_issuers": ["did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9"] 
+                            "trusted_ica_issuers": ["did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9"]
                         }
                     ]
                 }
