@@ -609,19 +609,6 @@ impl Builder {
         if intent.is_none() {
             let settings = self.context.settings();
             intent = settings.builder.intent.clone();
-
-            if intent.is_none() {
-                // Backwards compatibility: `auto_created_action`/`auto_opened_action` predate
-                // `BuilderIntent` and are now equivalent to a `Create`/`Edit` intent.
-                let actions = &settings.builder.actions;
-                if actions.auto_created_action.enabled {
-                    if let Some(source_type) = &actions.auto_created_action.source_type {
-                        intent = Some(BuilderIntent::Create(source_type.clone()));
-                    }
-                } else if actions.auto_opened_action.enabled {
-                    intent = Some(BuilderIntent::Edit);
-                }
-            }
         }
         intent
     }
@@ -1790,51 +1777,52 @@ impl Builder {
                         &ingredient_map,
                     )?;
                     pending_actions.push((def_index, manifest_assertion.created(), actions));
-
-                    // Committing to the claim is deferred to `finalize_actions` below.
-                    Ok(HashedUri::new(String::new(), None, &[]))
                 }
                 #[allow(deprecated)]
                 CreativeWork::LABEL => {
                     let cw: CreativeWork = manifest_assertion.to_assertion()?;
-                    claim.add_assertion(&cw)
+                    claim.add_assertion(&cw)?;
                 }
                 #[allow(deprecated)]
                 Exif::LABEL => {
                     let exif: Exif = manifest_assertion.to_assertion()?;
-                    add_assertion(&mut claim, &exif, manifest_assertion.created())
+                    add_assertion(&mut claim, &exif, manifest_assertion.created())?;
                 }
                 BoxHash::LABEL => {
                     let box_hash: BoxHash = manifest_assertion.to_assertion()?;
-                    claim.add_assertion(&box_hash)
+                    claim.add_assertion(&box_hash)?;
                 }
                 DataHash::LABEL => {
                     let data_hash: DataHash = manifest_assertion.to_assertion()?;
-                    claim.add_assertion(&data_hash)
+                    claim.add_assertion(&data_hash)?;
                 }
                 BmffHash::LABEL => {
                     let mut bmff_hash: BmffHash = manifest_assertion.to_assertion()?;
                     bmff_hash.set_bmff_version(version);
-                    claim.add_assertion(&bmff_hash)
+                    claim.add_assertion(&bmff_hash)?;
                 }
                 Metadata::LABEL => {
                     // user metadata will go through the fallback path
                     let metadata: Metadata = manifest_assertion.to_assertion()?;
-                    add_assertion(&mut claim, &metadata, manifest_assertion.created())
+                    add_assertion(&mut claim, &metadata, manifest_assertion.created())?;
                 }
                 _ => match &manifest_assertion.data {
-                    AssertionData::Json(value) => add_assertion(
-                        &mut claim,
-                        &User::new(manifest_assertion.label(), &serde_json::to_string(&value)?),
-                        manifest_assertion.created(),
-                    ),
-                    AssertionData::Cbor(value) => add_assertion(
-                        &mut claim,
-                        &UserCbor::new(manifest_assertion.label(), c2pa_cbor::to_vec(value)?),
-                        manifest_assertion.created(),
-                    ),
+                    AssertionData::Json(value) => {
+                        add_assertion(
+                            &mut claim,
+                            &User::new(manifest_assertion.label(), &serde_json::to_string(&value)?),
+                            manifest_assertion.created(),
+                        )?;
+                    }
+                    AssertionData::Cbor(value) => {
+                        add_assertion(
+                            &mut claim,
+                            &UserCbor::new(manifest_assertion.label(), c2pa_cbor::to_vec(value)?),
+                            manifest_assertion.created(),
+                        )?;
+                    }
                 },
-            }?;
+            };
         }
 
         self.finalize_actions(&mut claim, &ingredient_map, pending_actions)?;
@@ -2047,39 +2035,77 @@ impl Builder {
             return Ok(());
         }
 
-        if let Some(intent) = self.intent() {
-            // look for a parentOf relationship ingredient in the ingredient map and return a copy of the hashed URI if found.
-            let parent_ingredient_uri = ingredient_map
-                .iter()
-                .find(|(_, (relationship, _))| *relationship == &Relationship::ParentOf)
-                .map(|(_, (_, uri))| uri.clone());
+        let settings = self.context.settings();
+        let opened_source_type = settings
+            .builder
+            .actions
+            .auto_opened_action
+            .source_type
+            .clone();
+        let created_source_type = settings
+            .builder
+            .actions
+            .auto_created_action
+            .source_type
+            .clone();
 
-            let action = match intent {
-                BuilderIntent::Create(source_type) => {
-                    if parent_ingredient_uri.is_some() {
-                        return Err(Error::BadParam(
-                            "Cannot have ParentOf ingredient with a Create intent".to_string(),
-                        ));
+        // look for a parentOf relationship ingredient in the ingredient map and return a copy of the hashed URI if found.
+        let parent_ingredient_uri = ingredient_map
+            .iter()
+            .find(|(_, (relationship, _))| *relationship == &Relationship::ParentOf)
+            .map(|(_, (_, uri))| uri.clone());
+
+        let action = match self.intent() {
+            Some(BuilderIntent::Create(source_type)) => {
+                if parent_ingredient_uri.is_some() {
+                    return Err(Error::BadParam(
+                        "Cannot have ParentOf ingredient with a Create intent".to_string(),
+                    ));
+                }
+                Action::new(c2pa_action::CREATED).set_source_type(source_type)
+            }
+            Some(BuilderIntent::Edit) | Some(BuilderIntent::Update) => {
+                let Some(parent_ingredient_uri) = parent_ingredient_uri else {
+                    // No ParentOf ingredient is known yet. `to_claim` runs before
+                    // `maybe_add_parent` in the sign flow, so one may still be added later
+                    // from the input stream — leave the inception action for that caller to
+                    // insert once the parent is known, rather than failing here.
+                    return Ok(());
+                };
+                let mut action = Action::new(c2pa_action::OPENED)
+                    .set_parameter("ingredients", vec![parent_ingredient_uri])?;
+                if let Some(source_type) = opened_source_type {
+                    action = action.set_source_type(source_type);
+                }
+                action
+            }
+            None => {
+                if let (true, Some(parent_uri)) = (
+                    settings.builder.actions.auto_opened_action.enabled,
+                    parent_ingredient_uri.clone(),
+                ) {
+                    let mut action = Action::new(c2pa_action::OPENED)
+                        .set_parameter("ingredients", vec![parent_uri])?;
+                    if let Some(source_type) = opened_source_type {
+                        action = action.set_source_type(source_type);
                     }
-                    Action::new(c2pa_action::CREATED).set_source_type(source_type)
+                    action
+                } else if settings.builder.actions.auto_created_action.enabled
+                    && parent_ingredient_uri.is_none()
+                {
+                    let mut action = Action::new(c2pa_action::CREATED);
+                    if let Some(source_type) = created_source_type {
+                        action = action.set_source_type(source_type);
+                    }
+                    action
+                } else {
+                    return Ok(());
                 }
-                BuilderIntent::Edit | BuilderIntent::Update => {
-                    let Some(parent_ingredient_uri) = parent_ingredient_uri else {
-                        // No ParentOf ingredient is known yet. `to_claim` runs before
-                        // `maybe_add_parent` in the sign flow, so one may still be added later
-                        // from the input stream — leave the inception action for that caller to
-                        // insert once the parent is known, rather than failing here.
-                        return Ok(());
-                    };
-                    Action::new(c2pa_action::OPENED)
-                        .set_parameter("ingredients", vec![parent_ingredient_uri])?
-                }
-            };
+            }
+        };
 
-            // we know there are no other created or opened actions, so we can safely insert at the front
-            actions.actions.insert(0, action);
-        }
-
+        // Insert the auto-generated action at the front of the actions list.
+        actions.actions.insert(0, action);
         Ok(())
     }
 
@@ -2416,8 +2442,21 @@ impl Builder {
             // designated a created actions assertion (e.g. a user-declared `created: true`
             // assertion holding other actions), patch the inception action into that one rather
             // than adding a second, later created assertion.
-            let opened =
+            let mut opened =
                 Action::new(c2pa_action::OPENED).set_parameter("ingredients", vec![uri])?;
+
+            // Set the source type for the auto opened action if specified in the builder settings.
+            if let Some(source_type) = self
+                .context
+                .settings()
+                .builder
+                .actions
+                .auto_opened_action
+                .source_type
+                .clone()
+            {
+                opened = opened.set_source_type(source_type);
+            }
 
             if let Some(existing) = claim.created_action_assertions().first() {
                 let mut actions = Actions::from_assertion(existing.assertion())?;
