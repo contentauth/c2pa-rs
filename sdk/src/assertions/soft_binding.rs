@@ -36,11 +36,13 @@ pub struct SoftBinding {
     #[serde(rename = "alg-params", skip_serializing_if = "Option::is_none")]
     pub alg_params: Option<String>,
 
+    /// Zero-filled padding used to reserve space in the encoded CBOR assertion.
     #[serde(default, with = "serde_bytes")]
-    pad: Vec<u8>,
+    pub pad: Vec<u8>,
 
+    /// Additional zero-filled padding used to reach the required encoded size.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pad2: Option<serde_bytes::ByteBuf>,
+    pub pad2: Option<serde_bytes::ByteBuf>,
 
     /// Additional metadata of the soft binding. Useful for binding-specific information.
     #[serde(rename = "bindingMetadata", skip_serializing_if = "Option::is_none")]
@@ -64,18 +66,14 @@ impl SoftBinding {
         self.url.as_ref()
     }
 
-    /// Zero-filled bytes used for filling up space.
-    ///
-    /// This field is not applicable to `c2pa-rs` as it employs a single step processing approach to precompute assertion sizes, unlike the
-    /// "[Multiple Step Processing](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_multiple_step_processing)"
-    /// approach described by the spec.
+    /// Returns the padding used to reserve space in the encoded CBOR assertion.
     pub fn pad(&self) -> &[u8] {
         &self.pad
     }
 
     /// Zero-filled bytes used for filling up space.
     ///
-    /// See [`SoftBinding::pad`] for more information.
+    /// See [`SoftBinding::pad2`] for more information.
     pub fn pad2(&self) -> Option<&[u8]> {
         self.pad2.as_ref().map(|bytes| bytes.as_slice())
     }
@@ -413,5 +411,92 @@ pub mod tests {
         // get the algorithm strings
         let alg_strings = list.algorithm_strings();
         assert_eq!(alg_strings, vec!["com.example.watermark.alg1"]);
+    }
+
+    #[test]
+    fn test_padding_json_cbor_round_trip() {
+        // Exercise CBOR byte-string length encoding boundaries.
+        for length in [0usize, 1, 23, 24, 255, 256] {
+            let padding = vec![0u8; length];
+            let json = serde_json::json!({
+                "alg": "phash",
+                "blocks": [],
+                "pad": padding.clone(),
+                "pad2": padding.clone()
+            });
+
+            let original: SoftBinding = serde_json::from_value(json.clone()).unwrap();
+            assert_eq!(original.pad(), padding.as_slice());
+            assert_eq!(original.pad2(), Some(padding.as_slice()));
+
+            let assertion = original.to_assertion().unwrap();
+
+            // Inspect the encoded CBOR, not just its deserialized Rust fields:
+            // byte arrays must be CBOR byte strings rather than CBOR arrays.
+            let encoded: Value = c2pa_cbor::from_slice(assertion.data()).unwrap();
+            let Value::Map(fields) = encoded else {
+                panic!("expected a CBOR map");
+            };
+
+            for name in ["pad", "pad2"] {
+                let value = fields.iter().find_map(|(key, value)| {
+                    (key == &Value::Text(name.to_owned())).then_some(value)
+                });
+                assert_eq!(
+                    value,
+                    Some(&Value::Bytes(padding.clone())),
+                    "{name} must be a CBOR byte string"
+                );
+            }
+
+            let restored = SoftBinding::from_assertion(&assertion).unwrap();
+            assert_eq!(restored, original);
+            assert_eq!(serde_json::to_value(&restored).unwrap(), json);
+
+            // Passing through JSON again must preserve the binary assertion.
+            let from_json: SoftBinding =
+                serde_json::from_value(serde_json::to_value(&restored).unwrap()).unwrap();
+            let reencoded = from_json.to_assertion().unwrap();
+            assert_eq!(reencoded.data(), assertion.data());
+        }
+    }
+
+    #[test]
+    fn test_padding_can_be_set_and_preserved() {
+        let mut original = SoftBinding::default();
+        original.pad = vec![0; 24];
+        original.pad2 = Some(serde_bytes::ByteBuf::from(vec![0; 256]));
+
+        let json = serde_json::to_value(&original).unwrap();
+        let from_json: SoftBinding = serde_json::from_value(json).unwrap();
+        let assertion = from_json.to_assertion().unwrap();
+        let restored = SoftBinding::from_assertion(&assertion).unwrap();
+
+        assert_eq!(restored, original);
+    }
+
+    #[test]
+    fn test_absent_pad2_json_cbor_round_trip() {
+        let json = serde_json::json!({
+            "alg": "phash",
+            "blocks": [],
+            "pad": [0, 0]
+        });
+
+        let original: SoftBinding = serde_json::from_value(json.clone()).unwrap();
+        let assertion = original.to_assertion().unwrap();
+
+        let encoded: Value = c2pa_cbor::from_slice(assertion.data()).unwrap();
+        let Value::Map(fields) = encoded else {
+            panic!("expected a CBOR map");
+        };
+        assert!(!fields
+            .iter()
+            .any(|(key, _)| key == &Value::Text("pad2".to_owned())));
+
+        let restored = SoftBinding::from_assertion(&assertion).unwrap();
+        assert_eq!(restored.pad(), &[0, 0]);
+        assert_eq!(restored.pad2(), None);
+        assert_eq!(serde_json::to_value(&restored).unwrap(), json);
     }
 }
