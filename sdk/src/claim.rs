@@ -4666,18 +4666,13 @@ impl Claim {
         &self,
         assertion_label: &str,
     ) -> Option<(&C2PAAssertion, ClaimAssertionType)> {
-        // Match by the exact (label, instance) pair, not a substring: `url().contains(...)` would
-        // wrongly match e.g. "c2pa.actions.v2" against a URL for "c2pa.actions.v2__1" (whose label
-        // is a textual superset of the one being looked up), misclassifying which bucket an
-        // assertion belongs to whenever both instances exist.
-        let is_exact_match = |hashed_uri: &&C2PAAssertion| {
-            let (raw_label, instance) = Claim::assertion_label_from_link(&hashed_uri.url());
-            Claim::label_with_instance(&raw_label, instance) == assertion_label
-        };
+        // `assertion_label` is the full label (with version and instance). Every
+        // assertion URL ends with `c2pa.assertions/<label>`, so match that suffix.
+        let suffix = format!("{ASSERTIONS}/{assertion_label}");
+        let is_exact_match = |hashed_uri: &&C2PAAssertion| hashed_uri.url().ends_with(&suffix);
 
         if self.version() < 2 {
             let a = self.assertions().iter().find(is_exact_match)?;
-
             Some((a, ClaimAssertionType::V1))
         } else if let Some(a) = self.created_assertions().iter().find(is_exact_match) {
             Some((a, ClaimAssertionType::Created))
