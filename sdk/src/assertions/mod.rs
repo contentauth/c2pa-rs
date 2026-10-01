@@ -97,6 +97,7 @@ pub use embedded_data::EmbeddedData;
 pub mod region_of_interest;
 
 mod soft_binding;
+pub(crate) use soft_binding::soft_binding_bytes_to_bstr;
 pub use soft_binding::{SoftBinding, SoftBindingBlock, SoftBindingMetadata, SoftBindingScope};
 
 mod cloud_data;
