@@ -235,7 +235,7 @@ fn process_ocsp_responses(
 ) -> Result<OcspResponse, CoseError> {
     for ocsp_response_der in ocsp_response_ders {
         let mut current_validation_log = StatusTracker::default();
-        if let Ok(ocsp_response) = if _sync {
+        let ocsp_response = if _sync {
             check_stapled_ocsp_response(
                 sign1,
                 ocsp_response_der,
@@ -256,7 +256,8 @@ fn process_ocsp_responses(
                 settings,
             )
             .await
-        } {
+        };
+        if let Ok(ocsp_response) = ocsp_response {
             // If certificate is revoked, return error immediately
             if current_validation_log.has_status(validation_status::SIGNING_CREDENTIAL_REVOKED) {
                 return Err(log_item!(
@@ -881,6 +882,34 @@ mod tests {
 
         assert!(resp.revoked_at.is_some());
         assert!(log.has_status(SIGNING_CREDENTIAL_REVOKED));
+    }
+
+    #[test]
+    fn validate_fetched_ocsp_status_uses_signature_uri() {
+        // Regression for #2726: status codes from a fetched OCSP response must
+        // carry the claim signature box URI (the caller's current URI), not
+        // the "OCSP_RESPONSE" placeholder.
+        let rsp = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_revoked.der");
+        let chain = ocsp_signing_chain();
+        let test_time = Utc.with_ymd_and_hms(2024, 2, 1, 8, 0, 0).unwrap();
+        let signature_uri = "self#jumbf=/c2pa/urn:c2pa:test/c2pa.signature";
+
+        let mut ctp = CertificateTrustPolicy::new();
+        ctp.add_end_entity_credentials(include_bytes!(
+            "../../../tests/fixtures/crypto/ocsp/ocsp_responder.pem"
+        ))
+        .unwrap();
+
+        let mut log = StatusTracker::default();
+        log.push_current_uri(signature_uri);
+        validate_fetched_ocsp(rsp, &chain, &ctp, Some(test_time), &mut log);
+
+        let item = log
+            .logged_items()
+            .iter()
+            .find(|item| item.validation_status.as_deref() == Some(SIGNING_CREDENTIAL_REVOKED))
+            .unwrap();
+        assert_eq!(item.label, signature_uri);
     }
 
     #[test]
