@@ -463,9 +463,11 @@ pub mod tests {
 
     #[test]
     fn test_padding_can_be_set_and_preserved() {
-        let mut original = SoftBinding::default();
-        original.pad = vec![0; 24];
-        original.pad2 = Some(serde_bytes::ByteBuf::from(vec![0; 256]));
+        let original = SoftBinding {
+            pad: vec![0; 24],
+            pad2: Some(serde_bytes::ByteBuf::from(vec![0; 256])),
+            ..Default::default()
+        };
 
         let json = serde_json::to_value(&original).unwrap();
         let from_json: SoftBinding = serde_json::from_value(json).unwrap();
