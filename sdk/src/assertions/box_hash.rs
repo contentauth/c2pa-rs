@@ -130,6 +130,44 @@ impl BoxMap {
     }
 }
 
+/// Reads through to `inner`, but returns zero for every byte in `ranges` (absolute
+/// `(start, length)` pairs), so a format's "treated as zero" fields hash consistently.
+struct ZeroedRanges<'a, R: ?Sized> {
+    inner: &'a mut R,
+    ranges: Vec<(u64, u64)>,
+}
+
+impl<'a, R: Read + Seek + ?Sized> ZeroedRanges<'a, R> {
+    fn new(inner: &'a mut R, bms: &[AssetBoxMap]) -> Self {
+        let ranges = bms
+            .iter()
+            .flat_map(|bm| bm.hashed_as_zero.clone())
+            .collect();
+        ZeroedRanges { inner, ranges }
+    }
+}
+
+impl<R: Read + Seek + ?Sized> Read for ZeroedRanges<'_, R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let pos = self.inner.stream_position()?;
+        let n = self.inner.read(buf)?;
+        for &(start, len) in &self.ranges {
+            let lo = start.max(pos);
+            let hi = start.saturating_add(len).min(pos + n as u64);
+            if lo < hi {
+                buf[(lo - pos) as usize..(hi - pos) as usize].fill(0);
+            }
+        }
+        Ok(n)
+    }
+}
+
+impl<R: Read + Seek + ?Sized> Seek for ZeroedRanges<'_, R> {
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        self.inner.seek(pos)
+    }
+}
+
 /// A named box's absolute range plus the permitted exclusion sub-ranges
 /// measured for it from the live asset. Keeping these together (rather than
 /// as two parallel vectors) makes it impossible for a caller to push one
@@ -319,6 +357,7 @@ impl BoxHash {
         }
 
         let source_bms = bhp.get_box_map(reader)?;
+        let reader = &mut ZeroedRanges::new(reader, &source_bms);
         let mut source_index = 0;
 
         if let Some(first_expected_bms) = source_bms.get(source_index) {
@@ -365,7 +404,14 @@ impl BoxHash {
                                 skip_c2pa = true;
                             }
                         } else {
-                            let len_to_this_seg = next_source_bm.range_start - inclusion.start();
+                            // Grouped boxes must be in file order; a box listed before one
+                            // it follows in the file is a mismatch, not an underflow.
+                            let len_to_this_seg = next_source_bm
+                                .range_start
+                                .checked_sub(inclusion.start())
+                                .ok_or_else(|| {
+                                    Error::HashMismatch("Box hash ranges out of order".to_owned())
+                                })?;
                             inclusion.set_length(len_to_this_seg + next_source_bm.range_len);
                         }
                     }
@@ -535,6 +581,7 @@ impl BoxHash {
     {
         // get source box list
         let source_bms = bhp.get_box_map(reader)?;
+        let reader = &mut ZeroedRanges::new(reader, &source_bms);
 
         if minimal_form {
             let mut before_c2pa = BoxMap {
