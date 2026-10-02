@@ -1008,6 +1008,43 @@ fn test_builder_unsupported_format_remote_url_rejected() -> Result<()> {
     Ok(())
 }
 
+/// ONNX models carry the manifest in a `metadata_props` entry, bound by a data hash that
+/// excludes only the Base64-encoded manifest.
+#[test]
+fn test_builder_sign_onnx() -> Result<()> {
+    let context = Context::new().with_settings(test_settings())?.into_shared();
+
+    for data in [
+        &include_bytes!("fixtures/sample1.onnx")[..],
+        &include_bytes!("fixtures/sample2_functions.onnx")[..],
+    ] {
+        let mut builder = Builder::from_shared_context(&context);
+        builder.set_intent(BuilderIntent::Edit);
+        let mut dest = Cursor::new(Vec::new());
+        builder.save_to_stream("onnx", &mut Cursor::new(data), &mut dest)?;
+
+        dest.rewind()?;
+        let reader = Reader::from_shared_context(&context).with_stream("onnx", &mut dest)?;
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        // Changing the model is detected: here `producer_name` and a byte inside the graph.
+        // Both come before the inserted entry, so they keep their offsets.
+        let signed = dest.into_inner();
+        for position in [6, data.len() / 2] {
+            let mut tampered = signed.clone();
+            tampered[position] ^= 0x01;
+            let state = Reader::from_shared_context(&context)
+                .with_stream("onnx", Cursor::new(&tampered))
+                .map(|r| r.validation_state());
+            assert!(
+                !matches!(state, Ok(ValidationState::Trusted)),
+                "tampering at byte {position} was not detected"
+            );
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn test_builder_compressed_manifests() -> Result<()> {
     let mut settings = test_settings();
