@@ -1216,6 +1216,34 @@ fn test_builder_resign_zip() -> Result<()> {
     Ok(())
 }
 
+/// A PowerPoint slideshow (`.ppsx`) is an OOXML package like `.pptx`, differing only in the
+/// main part's content type, and is signed through the ZIP handler.
+#[test]
+fn test_builder_sign_ppsx() -> Result<()> {
+    let context = Context::new().with_settings(test_settings())?.into_shared();
+
+    for format in [
+        "ppsx",
+        "application/vnd.openxmlformats-officedocument.presentationml.slideshow",
+    ] {
+        let mut builder = Builder::from_shared_context(&context);
+        builder.set_intent(BuilderIntent::Edit);
+
+        let mut source = Cursor::new(include_bytes!("fixtures/sample1.ppsx"));
+        let mut dest = Cursor::new(Vec::new());
+        builder.save_to_stream(format, &mut source, &mut dest)?;
+
+        dest.rewind()?;
+        let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
+        assert_eq!(
+            reader.validation_state(),
+            ValidationState::Trusted,
+            "{format}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn test_builder_compressed_manifests() -> Result<()> {
     let mut settings = test_settings();
