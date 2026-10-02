@@ -1257,7 +1257,8 @@ impl Builder {
     ///
     /// This only records the label on the builder. During signing, any matching manifest(s) will
     /// have a [`TimeStamp`] assertion generated using the configured timestamping authority
-    /// ([`Signer::time_authority_url`]) if a timestamp for that manifest does not already exist.
+    /// ([`Signer::time_authority_url`], with any [`Signer::timestamp_request_headers`]) if a
+    /// timestamp for that manifest does not already exist.
     ///
     /// If [`TimeStampSettings::enabled`] is specified, the manifest labels specified here and the
     /// manifest labels obtained from the setting's scope will be merged and fetched.
@@ -1267,6 +1268,7 @@ impl Builder {
     /// - `urn:c2pa:fa479510-2a7d-c165-7b26-488a267f4c6a`
     ///
     /// [`Signer::time_authority_url`]: crate::Signer::time_authority_url
+    /// [`Signer::timestamp_request_headers`]: crate::Signer::timestamp_request_headers
     /// [`TimeStamp`]: crate::assertions::TimeStamp
     /// [`TimeStampSettings::enabled`]: crate::settings::builder::TimeStampSettings::enabled
     pub fn add_timestamp(&mut self, manifest_label: impl Into<String>) -> &mut Self {
@@ -2491,9 +2493,15 @@ impl Builder {
     #[async_generic(async_signature(
         &self,
         tsa_url: &str,
+        tsa_headers: Option<Vec<(String, String)>>,
         provenance_claim: &mut Claim,
     ))]
-    fn maybe_add_timestamp(&self, tsa_url: &str, provenance_claim: &mut Claim) -> Result<()> {
+    fn maybe_add_timestamp(
+        &self,
+        tsa_url: &str,
+        tsa_headers: Option<Vec<(String, String)>>,
+        provenance_claim: &mut Claim,
+    ) -> Result<()> {
         let settings = self.context().settings();
 
         if !settings.builder.auto_timestamp_assertion.enabled
@@ -2573,13 +2581,20 @@ impl Builder {
                 if _sync {
                     timestamp_assertion.refresh_timestamp(
                         tsa_url,
+                        tsa_headers.clone(),
                         &manifest_label,
                         &signature,
                         context,
                     )?;
                 } else {
                     timestamp_assertion
-                        .refresh_timestamp_async(tsa_url, &manifest_label, &signature, context)
+                        .refresh_timestamp_async(
+                            tsa_url,
+                            tsa_headers.clone(),
+                            &manifest_label,
+                            &signature,
+                            context,
+                        )
                         .await?;
                 }
             }
@@ -3441,10 +3456,14 @@ impl Builder {
         self.verify_redactions_applied(&claim)?;
 
         if let Some(tsa_url) = signer.time_authority_url() {
+            // Ingredient time stamps go to the same TSA as the claim signature, so
+            // they need the same (possibly authenticating) headers.
+            let tsa_headers = signer.timestamp_request_headers();
             if _sync {
-                self.maybe_add_timestamp(&tsa_url, &mut claim)?;
+                self.maybe_add_timestamp(&tsa_url, tsa_headers, &mut claim)?;
             } else {
-                self.maybe_add_timestamp_async(&tsa_url, &mut claim).await?
+                self.maybe_add_timestamp_async(&tsa_url, tsa_headers, &mut claim)
+                    .await?
             }
         }
 
