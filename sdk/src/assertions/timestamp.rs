@@ -57,8 +57,13 @@ impl TimeStamp {
 
     /// Refresh the timestamp token for a given manifest id.
     ///
+    /// `tsa_headers` are sent with the request in addition to the `Content-Type` header, which
+    /// lets a signer authenticate to its TSA (see [`Signer::timestamp_request_headers`]).
+    ///
     /// The signature is expected to be the `signature` field of the `COSE_Sign1_Tagged` structure
     /// found in the C2PA claim signature box of the manifest corresponding to the `manifest_id`.
+    ///
+    /// [`Signer::timestamp_request_headers`]: crate::Signer::timestamp_request_headers
     //
     // The `signature` is normally obtained from [`Store::get_cose_sign1_signature`].
     //
@@ -67,14 +72,16 @@ impl TimeStamp {
     pub(crate) fn refresh_timestamp(
         &mut self,
         tsa_url: &str,
+        tsa_headers: Option<Vec<(String, String)>>,
         manifest_id: &str,
         signature: &[u8],
         context: &Context,
     ) -> Result<()> {
         let timestamp_token = if _sync {
-            TimeStamp::send_timestamp_token_request(tsa_url, signature, context)?
+            TimeStamp::send_timestamp_token_request(tsa_url, tsa_headers, signature, context)?
         } else {
-            TimeStamp::send_timestamp_token_request_async(tsa_url, signature, context).await?
+            TimeStamp::send_timestamp_token_request_async(tsa_url, tsa_headers, signature, context)
+                .await?
         };
 
         self.0
@@ -83,7 +90,8 @@ impl TimeStamp {
         Ok(())
     }
 
-    /// Send a timestamp token request to the `tsa_url` with the given `message`.
+    /// Send a timestamp token request to the `tsa_url` with the given `message`,
+    /// attaching `headers` to the HTTP request.
     ///
     /// This function will verify the structure of the returned response but not the trust.
     ///
@@ -91,11 +99,11 @@ impl TimeStamp {
     #[async_generic]
     pub(crate) fn send_timestamp_token_request(
         tsa_url: &str,
+        headers: Option<Vec<(String, String)>>,
         message: &[u8],
         context: &Context,
     ) -> Result<Vec<u8>> {
         let body = crate::crypto::time_stamp::default_rfc3161_message(message)?;
-        let headers = None;
 
         let bytes = if _sync {
             crate::crypto::time_stamp::default_rfc3161_request(
