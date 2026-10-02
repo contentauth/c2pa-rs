@@ -2,6 +2,22 @@
 
 Refer to the [CHANGELOG](https://github.com/contentauth/c2pa-rs/blob/main/CHANGELOG.md) for detailed changes derived from Git commit history.
 
+## Version 0.92.0
+
+### Removal of deprecated APIs
+
+This release removes Rust and C APIs previously marked for removal in 0.92.0. Migrate callers to the explicit `Context` APIs and the unified embeddable signing workflow before upgrading.
+
+| Removed API area | Replacement |
+|---|---|
+| Context-free `Builder` and `Reader` constructors | `Builder::default()` / `Reader::default()` with methods such as `with_definition`, `with_archive`, `with_stream`, and `with_file` |
+| Thread-local `Settings` configuration and signer access | Configure `Settings` on a `Context`, then pass the context to `Builder` or `Reader` |
+| Legacy DataHash/BoxHash split-signing and manifest-composition methods | Use `Builder::placeholder()`, `update_hash_from_stream()`, and `sign_embeddable()` |
+| Legacy `Ingredient` constructors and wrapper APIs | Deserialize an ingredient definition and load it using the active stream-based APIs |
+| Context-free C constructors, settings/signer helpers, and typed free functions | Use context-based C APIs and `c2pa_free()` |
+
+Several deprecated assertion fields, constants, and accessors were also removed. Consult the current Rust API and C headers for the supported assertion and ownership interfaces.
+
 ## Version 0.88.0
 
 ### Removal of deprecated APIs
@@ -41,7 +57,7 @@ Release 0.79.4 deprecates all legacy thread-local configuration APIs in favor of
 
 `Builder::default()` and `Reader::default()` are now the idiomatic way to construct with default settings, replacing the more verbose `Builder::from_context(Context::new())` and `Reader::from_context(Context::new())`.
 
-The following methods are now deprecated:
+The following APIs were deprecated in 0.79.4 and removed in 0.92.0:
 
 | Deprecated | Use instead |
 |---|---|
@@ -60,7 +76,7 @@ To use custom settings, create a `Context` with `Context::new().with_settings(..
 
 ### C FFI
 
-The following C API functions are deprecated:
+The following C API functions were deprecated in 0.79.4 and removed in 0.92.0:
 
 | Deprecated | Use instead |
 |---|---|
@@ -74,7 +90,7 @@ The following C API functions are deprecated:
 | `c2pa_read_file`, `c2pa_read_ingredient_file`, `c2pa_sign_file` | Context-based equivalents (removed in [Version 0.88.0](#version-0880)) |
 | `c2pa_reader_free`, `c2pa_builder_free`, `c2pa_string_free`, `c2pa_manifest_bytes_free`, `c2pa_signer_free`, `c2pa_release_string`, `c2pa_signature_free` | `c2pa_free()` |
 
-C and C++ headers now emit compiler deprecation warnings when deprecated functions are called.
+The corresponding C and C++ declarations have been removed from the headers.
 
 ## Version 0.77.0
 

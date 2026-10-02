@@ -18,7 +18,6 @@ use std::{
 
 // C has no namespace so we prefix things with C2PA to make them unique (as namespace)
 use c2pa::{
-    assertions::DataHash,
     create_signer,
     identity::{
         builder::{CredentialHolder, IdentityBuilderError},
@@ -509,34 +508,6 @@ pub unsafe extern "C" fn c2pa_error_set_last(error_str: *const c_char) -> c_int 
     0
 }
 
-/// Load Settings from a string.
-/// Sets thread-local settings.
-///
-/// # Errors
-/// Returns -1 if there were errors, otherwise returns 0.
-/// The error string can be retrieved by calling c2pa_error.
-///
-/// # Safety
-/// Reads from NULL-terminated C strings.
-#[no_mangle]
-#[deprecated(
-    since = "0.79.4",
-    note = "Use `c2pa_settings_new()` and `c2pa_context_builder_set_settings()` to configure a context explicitly. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-)]
-pub unsafe extern "C" fn c2pa_load_settings(
-    settings: *const c_char,
-    format: *const c_char,
-) -> c_int {
-    let settings = cstr_or_return_int!(settings);
-    let format = cstr_or_return_int!(format);
-    // The C API is inherently stateful: callers invoke c2pa_load_settings once and subsequent
-    // C API calls inherit those settings via thread-local storage. This is by design.
-    #[allow(deprecated)]
-    let result = C2paSettings::from_string(&settings, &format);
-    ok_or_return_int!(result);
-    0 // returns 0 on success
-}
-
 /// Creates a new C2PA settings object with default values.
 ///
 /// # Safety
@@ -929,25 +900,9 @@ pub struct C2paSignerInfo {
     pub ta_url: *const c_char,
 }
 
-/// Frees a string allocated by Rust.
-///
-/// # Safety
-/// The string must not have been modified in C.
-/// The string can only be freed once and is invalid after this call.
-#[no_mangle]
-#[deprecated(
-    since = "0.79.4",
-    note = "Use `c2pa_free()` instead, which works for all pointer types. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-)]
-pub unsafe extern "C" fn c2pa_release_string(s: *mut c_char) {
-    cimpl_free!(s);
-}
-
 /// Frees any pointer allocated by this library.
 ///
-/// This is the **recommended** free function for all C2PA objects. It replaces the
-/// type-specific free functions (like `c2pa_string_free`, `c2pa_reader_free`, etc.)
-/// which are maintained only for backward compatibility.
+/// This is the recommended free function for every pointer allocated by this library.
 ///
 /// ## Why use c2pa_free?
 ///
@@ -972,11 +927,10 @@ pub unsafe extern "C" fn c2pa_release_string(s: *mut c_char) {
 ///
 /// # Safety
 ///
-/// * The pointer must have been allocated by this library (e.g., from c2pa_context_new(),
-///   c2pa_settings_new(), c2pa_builder_from_json(), etc.)
+/// * The pointer must have been allocated by this library (e.g., from `c2pa_context_new()`,
+///   `c2pa_settings_new()`, `c2pa_builder_from_context()`, etc.).
 /// * The pointer must not have been modified in C.
 /// * The pointer can only be freed once and is invalid after this call.
-/// * Do not mix this with type-specific free functions for the same pointer.
 ///
 /// # Returns
 ///
@@ -985,37 +939,17 @@ pub unsafe extern "C" fn c2pa_release_string(s: *mut c_char) {
 /// # Example (C)
 ///
 /// ```c
-/// // Create various objects
-/// C2paReader* reader = c2pa_reader_from_file("image.jpg", "json");
+/// // Create a reader and retrieve its JSON representation.
+/// C2paReader* reader = c2pa_reader_new();
 /// char* json = c2pa_reader_json(reader);
-/// C2paBuilder* builder = c2pa_builder_from_json(json);
 ///
-/// // Free everything with the same function
+/// // Free both pointers with the same function.
 /// c2pa_free(json);
 /// c2pa_free(reader);
-/// c2pa_free(builder);
 /// ```
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_free(ptr: *const c_void) -> c_int {
     cimpl_free!(ptr as *mut c_void)
-}
-
-/// Frees a string allocated by Rust.
-///
-/// **Note**: This function is maintained for backward compatibility. New code should
-/// use [`c2pa_free`] instead, which works for all pointer types.
-///
-/// # Safety
-/// Reads from NULL-terminated C strings.
-/// The string must not have been modified in C.
-/// The string can only be freed once and is invalid after this call.
-#[no_mangle]
-#[deprecated(
-    since = "0.79.4",
-    note = "Use `c2pa_free()` instead, which works for all pointer types. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-)]
-pub unsafe extern "C" fn c2pa_string_free(s: *mut c_char) {
-    cimpl_free!(s);
 }
 
 /// Frees an array of char* pointers created by Rust, and all of their contents.
@@ -1069,38 +1003,6 @@ pub unsafe extern "C" fn c2pa_reader_new() -> *mut C2paReader {
 pub unsafe extern "C" fn c2pa_reader_from_context(context: *mut C2paContext) -> *mut C2paReader {
     let context = deref_or_return_null!(context, C2paContext);
     box_tracked!(C2paReader::from_shared_context(&context))
-}
-
-/// # Example
-/// ```c
-/// auto result = c2pa_reader_from_stream("image/jpeg", stream);
-/// if (result == NULL) {
-///     let error = c2pa_error();
-///     printf("Error: %s\n", error);
-///     c2pa_string_free(error);
-/// }
-/// ```
-///
-/// # Safety
-/// format must be a valid NULL-terminated C string pointer.
-/// stream must be a valid pointer to a C2paStream.
-#[no_mangle]
-#[deprecated(
-    since = "0.79.4",
-    note = "Use `c2pa_reader_from_context()` with an explicit context instead of relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-)]
-pub unsafe extern "C" fn c2pa_reader_from_stream(
-    format: *const c_char,
-    stream: *mut C2paStream,
-) -> *mut C2paReader {
-    let format = cstr_or_return_null!(format);
-    let mut stream = deref_mut_or_return_null!(stream, C2paStream);
-
-    // Legacy C API: inherits thread-local settings set by c2pa_load_settings.
-    // Prefer c2pa_reader_from_context for new C API usage.
-    #[allow(deprecated)]
-    let reader = ok_or_return_null!(C2paReader::from_stream(&format, &mut *stream));
-    box_tracked!(reader)
 }
 
 /// Configures an existing reader with a stream.
@@ -1226,112 +1128,6 @@ pub unsafe extern "C" fn c2pa_reader_with_fragment(
     box_tracked!(reader)
 }
 
-/// Creates a new C2paReader from a shared Context.
-///
-/// # Safety
-///
-/// * `context` must be a valid pointer to a C2paContext object.
-/// * The context pointer remains valid after this call and can be reused.
-///
-/// # Returns
-///
-/// A pointer to a newly allocated C2paReader, or NULL on error.
-/// Creates and verifies a C2paReader from a file path.
-/// This allows a client to use Rust's file I/O to read the file
-/// Parameters
-/// * path: pointer to a C string with the file path in UTF-8.
-///
-/// # Errors
-/// Returns NULL if there were errors, otherwise returns a pointer to a ManifestStore.
-/// The error string can be retrieved by calling c2pa_error.
-///
-/// # Safety
-/// Reads from NULL-terminated C strings.
-/// The returned value MUST be released by calling c2pa_free
-/// and it is no longer valid after that call.
-///
-/// # Example
-/// ```c
-/// auto result = c2pa_reader_from_file("path/to/file.jpg");
-/// if (result == NULL) {
-///    let error = c2pa_error();
-///   printf("Error: %s\n", error);
-///   c2pa_string_free(error);
-/// }
-/// }
-/// ```
-#[cfg(feature = "file_io")]
-#[no_mangle]
-#[deprecated(
-    since = "0.79.4",
-    note = "Use `c2pa_reader_from_context()` with an explicit context instead of relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-)]
-#[allow(deprecated)]
-pub unsafe fn c2pa_reader_from_file(path: *const c_char) -> *mut C2paReader {
-    let path = cstr_or_return_null!(path);
-    // Legacy C API: inherits thread-local settings set by c2pa_load_settings.
-    let result = C2paReader::from_file(&path);
-    box_tracked!(ok_or_return_null!(result))
-}
-
-/// Creates and verifies a C2paReader from an asset stream with the given format and manifest data.
-///
-/// Parameters
-/// * format: pointer to a C string with the mime type or extension.
-/// * stream: pointer to a C2paStream.
-/// * manifest_data: pointer to the manifest data bytes.
-/// * manifest_size: size of the manifest data bytes.
-///
-/// # Errors
-/// Returns NULL if there were errors, otherwise returns a pointer to a ManifestStore.
-/// The error string can be retrieved by calling c2pa_error.
-///
-/// # Safety
-/// Reads from NULL-terminated C strings.
-/// The returned value MUST be released by calling c2pa_free
-/// and it is no longer valid after that call.
-#[no_mangle]
-#[deprecated(
-    since = "0.79.4",
-    note = "Use `c2pa_reader_from_context()` then `c2pa_reader_with_manifest_data_and_stream()` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-)]
-pub unsafe extern "C" fn c2pa_reader_from_manifest_data_and_stream(
-    format: *const c_char,
-    stream: *mut C2paStream,
-    manifest_data: *const c_uchar,
-    manifest_size: usize,
-) -> *mut C2paReader {
-    let format = cstr_or_return_null!(format);
-    let mut stream = deref_mut_or_return_null!(stream, C2paStream);
-
-    let manifest_bytes = bytes_or_return_null!(manifest_data, manifest_size, "manifest_data");
-
-    // Legacy C API: inherits thread-local settings set by c2pa_load_settings.
-    #[allow(deprecated)]
-    let reader = ok_or_return_null!(C2paReader::from_manifest_data_and_stream(
-        manifest_bytes,
-        &format,
-        &mut *stream
-    ));
-    box_tracked!(reader)
-}
-
-/// Frees a C2paReader allocated by Rust.
-///
-/// **Note**: This function is maintained for backward compatibility. New code should
-/// use [`c2pa_free`] instead, which works for all pointer types.
-///
-/// # Safety
-/// The C2paReader can only be freed once and is invalid after this call.
-#[no_mangle]
-#[deprecated(
-    since = "0.79.4",
-    note = "Use `c2pa_free()` instead, which works for all pointer types. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-)]
-pub unsafe extern "C" fn c2pa_reader_free(reader_ptr: *mut C2paReader) {
-    cimpl_free!(reader_ptr);
-}
-
 /// Returns a JSON string generated from a C2paReader.
 ///
 /// # Safety
@@ -1447,41 +1243,6 @@ pub unsafe extern "C" fn c2pa_reader_supported_mime_types(
     c2pa_mime_types_to_c_array(C2paReader::supported_mime_types(), count)
 }
 
-/// Creates a C2paBuilder from a JSON manifest definition string.
-///
-/// # Errors
-/// Returns NULL if there were errors, otherwise returns a pointer to a Builder.
-/// The error string can be retrieved by calling c2pa_error.
-///
-/// # Safety
-/// Reads from NULL-terminated C strings.
-/// The returned value MUST be released by calling c2pa_free
-/// and it is no longer valid after that call.
-///
-/// # Example
-/// ```c
-/// auto result = c2pa_builder_from_json(manifest_json);
-/// if (result == NULL) {
-///     auto error = c2pa_error();
-///     printf("Error: %s\n", error);
-///     c2pa_string_free(error);
-/// }
-/// ```
-#[no_mangle]
-#[deprecated(
-    since = "0.79.4",
-    note = "Use `c2pa_builder_from_context()` then `c2pa_builder_set_definition()` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-)]
-pub unsafe extern "C" fn c2pa_builder_from_json(manifest_json: *const c_char) -> *mut C2paBuilder {
-    let manifest_json = cstr_or_return_null!(manifest_json);
-    // Legacy C API: inherits thread-local settings set by c2pa_load_settings.
-    // Prefer c2pa_builder_from_context for new C API usage.
-    #[allow(deprecated)]
-    let result = C2paBuilder::from_json(&manifest_json);
-    let result = ok_or_return_null!(result);
-    box_tracked!(result)
-}
-
 /// Creates a C2paBuilder from a shared Context.
 ///
 /// The context can be reused to create multiple builders and readers.
@@ -1510,39 +1271,6 @@ pub unsafe extern "C" fn c2pa_builder_from_context(context: *mut C2paContext) ->
     box_tracked!(C2paBuilder::from_shared_context(&context))
 }
 
-/// Create a C2paBuilder from an archive stream.
-///
-/// # Errors
-/// Returns NULL if there were errors, otherwise returns a pointer to a Builder.
-/// The error string can be retrieved by calling c2pa_error.
-///
-/// # Safety
-/// Reads from NULL-terminated C strings.
-/// The returned value MUST be released by calling c2pa_free
-/// and it is no longer valid after that call.
-///
-/// # Example
-/// ```c
-/// auto result = c2pa_builder_from_archive(stream);
-/// if (result == NULL) {
-///     auto error = c2pa_error();
-///     printf("Error: %s\n", error);
-///     c2pa_string_free(error);
-/// }
-/// ```
-#[no_mangle]
-#[deprecated(
-    since = "0.79.4",
-    note = "Use `c2pa_builder_from_context()` then `c2pa_builder_with_archive()` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-)]
-#[allow(deprecated)]
-pub unsafe extern "C" fn c2pa_builder_from_archive(stream: *mut C2paStream) -> *mut C2paBuilder {
-    let mut stream = deref_mut_or_return_null!(stream, C2paStream);
-    box_tracked!(ok_or_return_null!(C2paBuilder::from_archive(
-        &mut (*stream)
-    )))
-}
-
 /// Returns an array of char* pointers to the supported mime types.
 /// The caller is responsible for freeing the array.
 ///
@@ -1557,22 +1285,6 @@ pub unsafe extern "C" fn c2pa_builder_supported_mime_types(
     count: *mut usize,
 ) -> *const *const c_char {
     c2pa_mime_types_to_c_array(C2paBuilder::supported_mime_types(), count)
-}
-
-/// Frees a C2paBuilder allocated by Rust.
-///
-/// **Note**: This function is maintained for backward compatibility. New code should
-/// use [`c2pa_free`] instead, which works for all pointer types.
-///
-/// # Safety
-/// The C2paBuilder can only be freed once and is invalid after this call.
-#[no_mangle]
-#[deprecated(
-    since = "0.79.4",
-    note = "Use `c2pa_free()` instead, which works for all pointer types. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-)]
-pub unsafe extern "C" fn c2pa_builder_free(builder_ptr: *mut C2paBuilder) {
-    cimpl_free!(builder_ptr);
 }
 
 /// Updates the builder with a new manifest definition.
@@ -2085,116 +1797,6 @@ pub unsafe extern "C" fn c2pa_builder_sign_context(
     out_bytes_or_return_int!(manifest_bytes, manifest_bytes_ptr)
 }
 
-/// Frees a C2PA manifest returned by c2pa_builder_sign.
-///
-/// **Note**: This function is maintained for backward compatibility. New code should
-/// use [`c2pa_free`] instead, which works for all pointer types.
-///
-/// # Safety
-/// The bytes can only be freed once and are invalid after this call.
-#[no_mangle]
-#[deprecated(
-    since = "0.79.4",
-    note = "Use `c2pa_free()` instead, which works for all pointer types. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-)]
-pub unsafe extern "C" fn c2pa_manifest_bytes_free(manifest_bytes_ptr: *const c_uchar) {
-    cimpl_free!(manifest_bytes_ptr);
-}
-
-/// Creates a hashed placeholder from a Builder.
-/// The placeholder is used to reserve size in an asset for later signing.
-///
-/// # Parameters
-/// * builder_ptr: pointer to a Builder.
-/// * reserved_size: the size required for a signature from the intended signer.
-/// * format: pointer to a C string with the mime type or extension.
-/// * manifest_bytes_ptr: pointer to a pointer to a c_uchar to return manifest_bytes.
-/// * (pass NULL to query only the length; nothing is allocated or written)
-///
-/// # Errors
-/// Returns -1 if there were errors, otherwise returns the size of the manifest_bytes.
-/// The error string can be retrieved by calling c2pa_error.
-///
-/// # Safety
-/// Reads from NULL-terminated C strings.
-/// If manifest_bytes_ptr is not NULL, the returned value MUST be released by calling c2pa_free
-/// and it is no longer valid after that call.
-#[no_mangle]
-#[deprecated(
-    since = "0.91.0",
-    note = "Use `c2pa_builder_placeholder()` instead, which also supports dynamic assertions (e.g., CAWG identity). Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-)]
-pub unsafe extern "C" fn c2pa_builder_data_hashed_placeholder(
-    builder_ptr: *mut C2paBuilder,
-    reserved_size: usize,
-    format: *const c_char,
-    manifest_bytes_ptr: *mut *const c_uchar,
-) -> i64 {
-    let mut builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
-    let format = cstr_or_return_int!(format);
-    #[allow(deprecated)]
-    let result = builder.data_hashed_placeholder(reserved_size, &format);
-    let manifest_bytes = ok_or_return_int!(result);
-    out_bytes_or_return_int!(manifest_bytes, manifest_bytes_ptr)
-}
-
-/// Sign a Builder using the specified signer and data hash.
-/// The data hash is a JSON string containing DataHash information for the asset.
-/// This is a low-level method for advanced use cases where the caller handles embedding the manifest.
-///
-/// # Parameters
-/// * builder_ptr: pointer to a Builder.
-/// * signer: pointer to a C2paSigner.
-/// * data_hash: pointer to a C string with the JSON data hash.
-/// * format: pointer to a C string with the mime type or extension.
-/// * asset: pointer to a C2paStream (may be NULL to use pre calculated hashes).
-/// * manifest_bytes_ptr: pointer to a pointer to a c_uchar to return manifest_bytes.
-/// * (pass NULL to query only the length; nothing is allocated or written)
-///
-/// # Errors
-/// Returns -1 if there were errors, otherwise returns the size of the manifest_bytes.
-/// The error string can be retrieved by calling c2pa_error.
-///
-/// # Safety
-/// Reads from NULL-terminated C strings.
-/// If manifest_bytes_ptr is not NULL, the returned value MUST be released by calling c2pa_free
-/// and it is no longer valid after that call.
-#[no_mangle]
-#[deprecated(
-    since = "0.91.0",
-    note = "Use `c2pa_builder_update_hash_from_stream()` and `c2pa_builder_sign_embeddable()` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-)]
-pub unsafe extern "C" fn c2pa_builder_sign_data_hashed_embeddable(
-    builder_ptr: *mut C2paBuilder,
-    signer_ptr: *mut C2paSigner,
-    data_hash: *const c_char,
-    format: *const c_char,
-    asset: *mut C2paStream,
-    manifest_bytes_ptr: *mut *const c_uchar,
-) -> i64 {
-    let mut builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
-    let c2pa_signer = deref_or_return_int!(signer_ptr, C2paSigner);
-    let data_hash_json = cstr_or_return_int!(data_hash);
-    let format = cstr_or_return_int!(format);
-
-    let mut data_hash: DataHash = ok_or_return_int!(serde_json::from_str(&data_hash_json)
-        .map_err(|e| Error::from_c2pa_error(c2pa::Error::JsonError(e))));
-
-    if let Some(mut asset) = deref_mut_option_or_return_int!(asset, C2paStream) {
-        // calc hashes from the asset stream
-        ok_or_return_int!(data_hash
-            .gen_hash_from_stream(&mut *asset)
-            .map_err(Error::from_c2pa_error));
-    }
-
-    #[allow(deprecated)]
-    let result =
-        builder.sign_data_hashed_embeddable(c2pa_signer.signer.as_ref(), &data_hash, &format);
-
-    let manifest_bytes = ok_or_return_int!(result);
-    out_bytes_or_return_int!(manifest_bytes, manifest_bytes_ptr)
-}
-
 /// Returns whether a placeholder manifest is required for the given format.
 ///
 /// # Parameters
@@ -2509,54 +2111,6 @@ pub unsafe extern "C" fn c2pa_builder_update_hash_from_stream(
     let mut stream = deref_mut_or_return_int!(stream, C2paStream);
     ok_or_return_int!(builder.update_hash_from_stream(&format, &mut *stream));
     0
-}
-
-/// Convert a binary c2pa manifest into an embeddable version for the given format.
-/// A raw manifest (in application/c2pa format) can be uploaded to the cloud but
-/// it cannot be embedded directly into an asset without extra processing.
-/// This method converts the raw manifest into an embeddable version that can be
-/// embedded into an asset.
-///
-/// # Parameters
-/// * format: pointer to a C string with the mime type or extension.
-/// * manifest_bytes_ptr: pointer to a c_uchar with the raw manifest bytes.
-/// * manifest_bytes_size: the size of the manifest_bytes.
-/// * result_bytes_ptr: pointer to a pointer to a c_uchar to return the embeddable manifest bytes.
-/// * (pass NULL to query only the length; nothing is allocated or written)
-///
-/// # Errors
-/// Returns -1 if there were errors, otherwise returns the size of the result_bytes.
-/// The error string can be retrieved by calling c2pa_error.
-///
-/// # Safety
-/// Reads from NULL-terminated C strings.
-/// The returned value MUST be released by calling c2pa_free
-/// and it is no longer valid after that call.
-#[no_mangle]
-#[deprecated(
-    since = "0.91.0",
-    note = "Use `c2pa_builder_compose_manifest()` instead, so custom asset I/O handlers registered on the builder's Context are consulted. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-)]
-pub unsafe extern "C" fn c2pa_format_embeddable(
-    format: *const c_char,
-    manifest_bytes_ptr: *const c_uchar,
-    manifest_bytes_size: usize,
-    result_bytes_ptr: *mut *const c_uchar,
-) -> i64 {
-    let format = cstr_or_return_int!(format);
-    ptr_or_return_int!(manifest_bytes_ptr);
-
-    let bytes = bytes_or_return_int!(
-        manifest_bytes_ptr,
-        manifest_bytes_size,
-        "manifest_bytes_ptr"
-    );
-
-    // Legacy C API: no Builder/Context available, so only the built-in global registry is used.
-    #[allow(deprecated)]
-    let result = c2pa::Builder::composed_manifest(bytes, &format);
-    let result_bytes = ok_or_return_int!(result);
-    out_bytes_or_return_int!(result_bytes, result_bytes_ptr)
 }
 
 /// Convert a binary C2PA manifest into an embeddable version for the given format.
@@ -2972,29 +2526,6 @@ pub unsafe extern "C" fn c2pa_signer_from_info(signer_info: &C2paSignerInfo) -> 
     }
 }
 
-/// Creates a C2paSigner from the settings.
-/// The signer is created from the settings defined in the c2pa_settings.json file.
-///
-/// # Errors
-/// Returns NULL if there were errors, otherwise returns a pointer to a C2paSigner.
-/// The error string can be retrieved by calling c2pa_error.
-/// # Safety
-/// The returned value MUST be released by calling c2pa_free
-/// and it is no longer valid after that call.
-#[no_mangle]
-#[deprecated(
-    since = "0.79.4",
-    note = "Use `c2pa_context_builder_set_signer()` to configure a signer on a context instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-)]
-pub unsafe extern "C" fn c2pa_signer_from_settings() -> *mut C2paSigner {
-    // Legacy C API: reads signer configuration from thread-local settings (set by c2pa_load_settings).
-    #[allow(deprecated)]
-    let signer = ok_or_return_null!(C2paSettings::signer());
-    box_tracked!(C2paSigner {
-        signer: Box::new(signer),
-    })
-}
-
 /// Returns the size to reserve for the signature for this signer.
 ///
 /// # Parameters
@@ -3010,22 +2541,6 @@ pub unsafe extern "C" fn c2pa_signer_from_settings() -> *mut C2paSigner {
 pub unsafe extern "C" fn c2pa_signer_reserve_size(signer_ptr: *mut C2paSigner) -> i64 {
     let c2pa_signer = deref_or_return_int!(signer_ptr, C2paSigner);
     c2pa_signer.signer.reserve_size() as i64
-}
-
-/// Frees a C2paSigner allocated by Rust.
-///
-/// **Note**: This function is maintained for backward compatibility. New code should
-/// use [`c2pa_free`] instead, which works for all pointer types.
-///
-/// # Safety
-/// The C2paSigner can only be freed once and is invalid after this call.
-#[no_mangle]
-#[deprecated(
-    since = "0.79.4",
-    note = "Use `c2pa_free()` instead, which works for all pointer types. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-)]
-pub unsafe extern "C" fn c2pa_signer_free(signer_ptr: *const C2paSigner) {
-    cimpl_free!(signer_ptr);
 }
 
 #[no_mangle]
@@ -3049,21 +2564,6 @@ pub unsafe extern "C" fn c2pa_ed25519_sign(
 }
 
 #[no_mangle]
-/// Frees a signature allocated by Rust.
-///
-/// **Note**: This function is maintained for backward compatibility. New code should
-/// use [`c2pa_free`] instead, which works for all pointer types.
-///
-/// # Safety
-/// The signature can only be freed once and is invalid after this call.
-#[deprecated(
-    since = "0.79.4",
-    note = "Use `c2pa_free()` instead, which works for all pointer types. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-)]
-pub unsafe extern "C" fn c2pa_signature_free(signature_ptr: *const u8) {
-    cimpl_free!(signature_ptr);
-}
-
 /// Returns a [*const *const c_char] with the contents of of the provided [Vec<String>].
 ///
 /// # Parameters
@@ -3134,6 +2634,62 @@ mod tests {
         ($path:expr) => {
             concat!("../../sdk/tests/fixtures/", $path)
         };
+    }
+
+    unsafe fn c2pa_builder_from_json(manifest_json: *const c_char) -> *mut C2paBuilder {
+        let context = c2pa_context_new();
+        let builder = c2pa_builder_from_context(context);
+        let builder = c2pa_builder_with_definition(builder, manifest_json);
+        let _ = c2pa_free(context as *const c_void);
+        builder
+    }
+
+    unsafe fn c2pa_reader_from_stream(
+        format: *const c_char,
+        stream: *mut C2paStream,
+    ) -> *mut C2paReader {
+        let reader = c2pa_reader_new();
+        c2pa_reader_with_stream(reader, format, stream)
+    }
+
+    unsafe fn c2pa_reader_from_manifest_data_and_stream(
+        format: *const c_char,
+        stream: *mut C2paStream,
+        manifest_data: *const c_uchar,
+        manifest_size: usize,
+    ) -> *mut C2paReader {
+        let reader = c2pa_reader_new();
+        c2pa_reader_with_manifest_data_and_stream(
+            reader,
+            format,
+            stream,
+            manifest_data,
+            manifest_size,
+        )
+    }
+
+    unsafe fn c2pa_reader_free(reader: *mut C2paReader) {
+        let _ = c2pa_free(reader as *const c_void);
+    }
+
+    unsafe fn c2pa_builder_free(builder: *mut C2paBuilder) {
+        let _ = c2pa_free(builder as *const c_void);
+    }
+
+    unsafe fn c2pa_manifest_bytes_free(bytes: *const c_uchar) {
+        let _ = c2pa_free(bytes as *const c_void);
+    }
+
+    unsafe fn c2pa_signer_free(signer: *const C2paSigner) {
+        let _ = c2pa_free(signer as *const c_void);
+    }
+
+    unsafe fn c2pa_signature_free(signature: *const u8) {
+        let _ = c2pa_free(signature as *const c_void);
+    }
+
+    unsafe fn c2pa_string_free(string: *mut c_char) {
+        let _ = c2pa_free(string as *const c_void);
     }
 
     /// Helper to create a signer and builder for testing
@@ -3655,15 +3211,6 @@ mod tests {
         let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
         unsafe { c2pa_free(error as *const c_void) };
         assert_eq!(error_str.to_str().unwrap(), "");
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_c2pa_load_settings() {
-        let settings = CString::new("{}").unwrap();
-        let format = CString::new("json").unwrap();
-        let result = unsafe { c2pa_load_settings(settings.as_ptr(), format.as_ptr()) };
-        assert_eq!(result, 0);
     }
 
     #[test]
@@ -4332,53 +3879,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "file_io")]
-    #[allow(deprecated)]
-    fn test_reader_from_file_cawg_identity() {
-        let settings = CString::new(include_bytes!(
-            "../tests/fixtures/trust/cawg_test_settings.toml"
-        ))
-        .unwrap();
-        let format = CString::new("toml").unwrap();
-        let result = unsafe { c2pa_load_settings(settings.as_ptr(), format.as_ptr()) };
-        assert_eq!(result, 0);
-
-        let base = env!("CARGO_MANIFEST_DIR");
-        let path =
-            CString::new(format!("{base}/../sdk/tests/fixtures/C_with_CAWG_data.jpg")).unwrap();
-        let reader = unsafe { c2pa_reader_from_file(path.as_ptr()) };
-        if reader.is_null() {
-            let error = unsafe { c2pa_error() };
-            let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
-            unsafe { c2pa_free(error as *const c_void) };
-            panic!("Failed to create reader: {}", error_str.to_str().unwrap());
-        }
-        assert!(!reader.is_null());
-        let json = unsafe { c2pa_reader_json(reader) };
-        assert!(!json.is_null());
-        let json_str = unsafe { CStr::from_ptr(json) }.to_owned();
-        unsafe { c2pa_free(json as *const c_void) };
-        println!("JSON Report: {}", json_str.to_str().unwrap());
-        let json_report = json_str.to_str().unwrap();
-        assert!(json_report.contains("cawg.identity"));
-        assert!(json_report.contains("cawg.identity.well-formed"));
-        unsafe { c2pa_reader_free(reader) };
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_c2pa_signer_from_settings() {
-        const SETTINGS: &str = include_str!("../../sdk/tests/fixtures/test_settings.json");
-        let settings = CString::new(SETTINGS).unwrap();
-        let format = CString::new("json").unwrap();
-        let result = unsafe { c2pa_load_settings(settings.as_ptr(), format.as_ptr()) };
-        assert_eq!(result, 0);
-        let signer = unsafe { c2pa_signer_from_settings() };
-        assert!(!signer.is_null());
-        unsafe { c2pa_signer_free(signer) };
-    }
-
-    #[test]
     fn test_c2pa_settings_new() {
         let settings = unsafe { c2pa_settings_new() };
         assert!(!settings.is_null());
@@ -4752,31 +4252,6 @@ verify_after_sign = true
 
     #[test]
     #[allow(deprecated)]
-    fn test_c2pa_format_embeddable() {
-        // This function requires manifest bytes, which is complex to set up.
-        // For now, test with minimal setup to verify it doesn't crash
-        let jpeg_format = CString::new("image/jpeg").unwrap();
-        let placeholder_bytes = b"placeholder";
-        let mut result_ptr: *const c_uchar = std::ptr::null();
-
-        let _result = unsafe {
-            c2pa_format_embeddable(
-                jpeg_format.as_ptr(),
-                placeholder_bytes.as_ptr(),
-                placeholder_bytes.len(),
-                &mut result_ptr,
-            )
-        };
-
-        // Function should execute without crashing - that's the main test
-        // The result value depends on whether the placeholder is valid
-        if !result_ptr.is_null() {
-            unsafe { c2pa_free(result_ptr as *const c_void) };
-        }
-    }
-
-    #[test]
-    #[allow(deprecated)]
     fn test_c2pa_builder_add_ingredient_from_stream() {
         let manifest_def = CString::new("{}").unwrap();
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
@@ -5098,44 +4573,6 @@ verify_after_sign = true
     fn test_c2pa_signer_reserve_size_null() {
         let size = unsafe { c2pa_signer_reserve_size(std::ptr::null_mut()) };
         assert_eq!(size, -1, "Null signer should return -1");
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_c2pa_string_free_backward_compat() {
-        // Test that string_free works for backward compatibility
-        let test_str = CString::new("test string").unwrap();
-        let c_str = to_c_string(test_str.to_str().unwrap().to_string());
-        assert!(!c_str.is_null());
-
-        // Should not crash
-        unsafe {
-            c2pa_string_free(c_str);
-        }
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_c2pa_string_free_null() {
-        // Should handle null gracefully
-        unsafe {
-            c2pa_string_free(std::ptr::null_mut());
-        }
-        // If we get here, it handled null without crashing
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_c2pa_release_string() {
-        // Test the deprecated c2pa_release_string function
-        let test_str = CString::new("test string for release").unwrap();
-        let c_str = to_c_string(test_str.to_str().unwrap().to_string());
-        assert!(!c_str.is_null());
-
-        // Should not crash
-        unsafe {
-            c2pa_release_string(c_str);
-        }
     }
 
     #[test]

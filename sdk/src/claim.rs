@@ -80,6 +80,8 @@ use crate::{
     validation_status, ClaimGeneratorInfo,
 };
 
+const LEGACY_WATERMARKED_ACTION: &str = "c2pa.watermarked";
+
 const BUILD_HASH_ALG: &str = "sha256";
 const BUILD_VER_SUPPORT: usize = 2;
 
@@ -1305,15 +1307,6 @@ impl Claim {
             }
             None => self.spec_version.as_ref(), // legacy case where SpecVersion was including in Claim map
         }
-    }
-
-    /// Deprecated in  C2PA 2.4 or greater compatible manifests. Replaced by equiveaent value in ClaimGeneratorInfo.
-    #[deprecated(
-        since = "0.91.0",
-        note = "The `specVersion` claim field is deprecated from C2PA spec version 2.4. Use `ClaimGeneratorInfo::set_spec_version` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub fn set_spec_version(&mut self, spec_version: Option<String>) {
-        self.spec_version = spec_version;
     }
 
     pub fn add_claim_generator_hint(&mut self, hint_key: &str, hint_value: Value) {
@@ -2832,10 +2825,8 @@ impl Claim {
                 }
 
                 // check watermarks for required softbinding
-                // `c2pa_action::WATERMARKED` is deprecated for producing new content (spec 2.2+),
-                // but validators must still recognize it in older manifests.
-                #[allow(deprecated)]
-                if action.action() == c2pa_action::WATERMARKED
+                // Validators must still recognize the legacy action in existing manifests.
+                if action.action() == LEGACY_WATERMARKED_ACTION
                     || action.action() == c2pa_action::WATERMARKED_BOUND
                 {
                     // there must be at least one soft binding assertions, in the future there may be
@@ -5717,27 +5708,6 @@ pub mod tests {
     }
 
     #[test]
-    #[allow(deprecated)]
-    fn test_legacy_claim_level_spec_version_round_trips() {
-        // legacy callers that set the claim-level specVersion field directly
-        let mut claim = Claim::new("test", Some("test"), 2);
-        claim.add_claim_generator_info(ClaimGeneratorInfo::new("test app"));
-        claim.set_spec_version(Some("2.3".to_owned()));
-
-        let data = claim.data().unwrap();
-        let decoded = Claim::from_data("test", &data).unwrap();
-        assert_eq!(decoded.spec_version.as_deref(), Some("2.3"));
-
-        let value: c2pa_cbor::Value = c2pa_cbor::from_slice(&data).unwrap();
-        assert!(matches!(
-            &value,
-            c2pa_cbor::Value::Map(map) if map
-                .keys()
-                .any(|k| matches!(k, c2pa_cbor::Value::Text(t) if t == SPEC_VERSION_F))
-        ));
-    }
-
-    #[test]
     fn test_spec_version_none_when_not_set_in_claim_generator_info() {
         let mut claim = Claim::new("test", Some("test"), 2);
         claim.add_claim_generator_info(ClaimGeneratorInfo::new("test app"));
@@ -6108,7 +6078,7 @@ pub mod tests {
 
     #[test]
     fn test_watermarked_action_without_soft_binding_logs_missing() {
-        let log = verify_watermark_action(Action::new(c2pa_action::WATERMARKED), false);
+        let log = verify_watermark_action(Action::new(LEGACY_WATERMARKED_ACTION), false);
         assert!(
             log.has_status(validation_status::ACTION_ASSERTION_SOFTBINDING_MISSING),
             "c2pa.watermarked without soft binding should log ACTION_ASSERTION_SOFTBINDING_MISSING"
@@ -6126,7 +6096,7 @@ pub mod tests {
 
     #[test]
     fn test_watermarked_action_with_soft_binding_passes() {
-        let log = verify_watermark_action(Action::new(c2pa_action::WATERMARKED), true);
+        let log = verify_watermark_action(Action::new(LEGACY_WATERMARKED_ACTION), true);
         assert!(
             !log.has_status(validation_status::ACTION_ASSERTION_SOFTBINDING_MISSING),
             "c2pa.watermarked with soft binding present should not log ACTION_ASSERTION_SOFTBINDING_MISSING"

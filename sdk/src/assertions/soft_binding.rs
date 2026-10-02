@@ -46,24 +46,9 @@ pub struct SoftBinding {
     #[serde(rename = "bindingMetadata", skip_serializing_if = "Option::is_none")]
     pub binding_metadata: Option<SoftBindingMetadata>,
 
-    #[serde(skip_serializing)]
-    url: Option<UriT>,
 }
 
-#[allow(unused)]
 impl SoftBinding {
-    /// A file or http(s) URL to where the bytes that are being hashed lived.
-    ///
-    /// This is useful for cases where the data lives in a different file chunk or side-car
-    /// than the claim.
-    #[deprecated(
-        since = "0.59.0",
-        note = "Use the asset reference assertion instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub fn url(&self) -> Option<&UriT> {
-        self.url.as_ref()
-    }
-
     /// Zero-filled bytes used for filling up space.
     ///
     /// This field is not applicable to `c2pa-rs` as it employs a single step processing approach to precompute assertion sizes, unlike the
@@ -103,21 +88,6 @@ pub struct SoftBindingScope {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub region: Option<RegionOfInterest>,
 
-    #[serde(skip_serializing)]
-    #[serde(default, with = "serde_bytes")]
-    extent: Option<serde_bytes::ByteBuf>,
-}
-
-#[allow(unused)]
-impl SoftBindingScope {
-    /// In algorithm specific format, the part of the digital content over which the soft binding value has been computed.
-    #[deprecated(
-        since = "0.59.0",
-        note = "Use the `region` field instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub fn extent(&self) -> Option<&[u8]> {
-        self.extent.as_ref().map(|b| b.as_slice())
-    }
 }
 
 /// Soft binding timespan for temporal assets.
@@ -369,12 +339,9 @@ pub mod tests {
             ]
         });
 
-        let mut original: SoftBinding = serde_json::from_value(json).unwrap();
+        let original: SoftBinding = serde_json::from_value(json).unwrap();
         let assertion = original.to_assertion().unwrap();
         let result = SoftBinding::from_assertion(&assertion).unwrap();
-
-        // Deprecated fields shouldn't be serialized.
-        original.url = None;
 
         assert_eq!(result, original);
     }
