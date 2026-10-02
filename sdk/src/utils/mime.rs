@@ -44,6 +44,12 @@ pub fn extension_to_mime(extension: &str) -> Option<&'static str> {
         "arw" => "image/x-sony-arw",
         "nef" => "image/x-nikon-nef",
         "c2pa" | "application/x-c2pa-manifest-store" | "application/c2pa" => "application/c2pa",
+        // Delimited-data text formats. The C2PA specification forbids embedding a manifest in
+        // these (their record grammar has no room for one), so they are signed with a sidecar
+        // manifest only and have no asset handler. They are mapped here so that `dc:format`
+        // records the IANA media type rather than the bare extension.
+        "csv" => "text/csv",
+        "tsv" => "text/tab-separated-values",
         // Text formats handled by the experimental structured-text asset handler. Gated so a
         // default build (feature disabled) resolves these extensions exactly as before, with no
         // handler registered for them. See docs/experimental-features.md.
@@ -131,6 +137,8 @@ pub fn format_to_extension(format: &str) -> Option<&'static str> {
         "arw" | "image/x-sony-arw" => "arw",
         "nef" | "image/x-nikon-nef" => "nef",
         "c2pa" | "application/x-c2pa-manifest-store" | "application/c2pa" => "c2pa",
+        "csv" | "text/csv" => "csv",
+        "tsv" | "text/tab-separated-values" => "tsv",
         _ => return None,
     })
 }
@@ -181,5 +189,30 @@ mod tests {
         assert_eq!(format_to_mime("\timage/png\n"), "image/png");
         assert_eq!(format_to_mime("  JPG  "), "image/jpeg");
         assert_eq!(format_to_mime("  image/svg+xml  "), "image/svg+xml");
+    }
+
+    #[test]
+    fn test_delimited_text_mime_types() {
+        assert_eq!(format_to_mime("csv"), "text/csv");
+        assert_eq!(format_to_mime("CSV"), "text/csv");
+        assert_eq!(format_to_mime("tsv"), "text/tab-separated-values");
+        assert_eq!(format_to_mime("text/csv"), "text/csv");
+        assert_eq!(
+            format_to_mime("text/tab-separated-values"),
+            "text/tab-separated-values"
+        );
+        assert_eq!(
+            format_from_path("data/table.csv").as_deref(),
+            Some("text/csv")
+        );
+        assert_eq!(
+            mime_from_path("data/table.tsv").as_deref(),
+            Some("text/tab-separated-values")
+        );
+        assert_eq!(format_to_extension("text/csv"), Some("csv"));
+        assert_eq!(
+            format_to_extension("text/tab-separated-values"),
+            Some("tsv")
+        );
     }
 }
