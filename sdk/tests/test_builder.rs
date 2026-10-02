@@ -1008,6 +1008,33 @@ fn test_builder_unsupported_format_remote_url_rejected() -> Result<()> {
     Ok(())
 }
 
+/// Real-world ZIP-based documents store their entries deflated. Hashing them must not
+/// require decompression, which is not compiled in.
+#[test]
+fn test_builder_sign_deflated_zip_formats() -> Result<()> {
+    let context = Context::new().with_settings(test_settings())?.into_shared();
+
+    for (format, data) in [
+        ("docx", &include_bytes!("fixtures/sample1.docx")[..]),
+        ("odt", &include_bytes!("fixtures/sample1.odt")[..]),
+    ] {
+        let mut builder = Builder::from_shared_context(&context);
+        builder.set_intent(BuilderIntent::Edit);
+
+        let mut dest = Cursor::new(Vec::new());
+        builder.save_to_stream(format, &mut Cursor::new(data), &mut dest)?;
+
+        dest.rewind()?;
+        let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
+        assert_eq!(
+            reader.validation_state(),
+            ValidationState::Trusted,
+            "{format}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn test_builder_compressed_manifests() -> Result<()> {
     let mut settings = test_settings();
