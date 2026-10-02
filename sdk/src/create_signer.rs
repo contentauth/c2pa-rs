@@ -130,6 +130,29 @@ pub fn from_credential_holder(
     ))
 }
 
+/// Creates a [`Signer`](crate::Signer) that staples pre-fetched OCSP responses into
+/// every signature `signer` produces (the COSE `rVals.ocspVals` header), after any
+/// responses `signer` supplies itself.
+///
+/// Order the responses along the certificate chain, signing certificate first:
+/// validators check the first response against the signing certificate. The caller
+/// fetches the responses and keeps them fresh. Signers that handle COSE directly
+/// ([`direct_cose_handling`](crate::Signer::direct_cose_handling)) do not staple them.
+///
+/// # Arguments
+///
+/// * `signer` - Signs the C2PA claim
+/// * `ocsp_responses` - DER-encoded OCSP responses
+pub fn with_ocsp_responses(signer: BoxedSigner, ocsp_responses: Vec<Vec<u8>>) -> BoxedSigner {
+    if ocsp_responses.is_empty() {
+        return signer;
+    }
+    Box::new(crate::signer::OcspStapledSigner {
+        signer,
+        ocsp_responses,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
@@ -143,7 +166,7 @@ mod tests {
     use crate::{
         identity::tests::fixtures::{manifest_json, parent_json},
         utils::test_signer::test_signer,
-        Builder, Reader, SigningAlg,
+        Builder, Reader, Signer, SigningAlg,
     };
 
     const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
@@ -189,6 +212,46 @@ mod tests {
             .assertions()
             .iter()
             .any(|a| a.label().contains("cawg.identity")));
+    }
+
+    /// Verify that `with_ocsp_responses` staples its responses after those of the
+    /// wrapped signer, in order, and reserves room for them.
+    #[c2pa_test_async]
+    async fn with_ocsp_responses_staples_in_order() {
+        use coset::{cbor::value::Value, TaggedCborSerializable};
+
+        let first = include_bytes!("../tests/fixtures/ocsp_good.data").to_vec();
+        let second = include_bytes!("../tests/fixtures/crypto/ocsp/response_good.der").to_vec();
+
+        let c2pa_signer = test_signer(SigningAlg::Ps256);
+        let reserve_size = c2pa_signer.reserve_size();
+        let signer = super::with_ocsp_responses(
+            super::with_ocsp_responses(c2pa_signer, vec![first.clone()]),
+            vec![second.clone()],
+        );
+        assert_eq!(signer.ocsp_vals(), vec![first.clone(), second.clone()]);
+        assert_eq!(
+            signer.reserve_size(),
+            reserve_size + first.len() + second.len()
+        );
+
+        assert_eq!(signer.ocsp_val(), Some(first.clone()));
+        let signed = crate::cose_sign::cose_sign(
+            signer.as_ref(),
+            b"claim",
+            signer.reserve_size(),
+            crate::crypto::cose::TimeStampStorage::V2_sigTst2_CTT,
+            &crate::Settings::default(),
+        )
+        .unwrap();
+        let cose = coset::CoseSign1::from_tagged_slice(&signed).unwrap();
+        assert!(cose.unprotected.rest.contains(&(
+            coset::Label::Text("rVals".into()),
+            Value::Map(vec![(
+                Value::Text("ocspVals".into()),
+                Value::Array(vec![Value::Bytes(first), Value::Bytes(second)]),
+            )]),
+        )));
     }
 
     /// A credential holder that records the `signer_payload` it was asked to

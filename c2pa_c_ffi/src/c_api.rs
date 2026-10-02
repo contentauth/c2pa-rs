@@ -3012,6 +3012,57 @@ pub unsafe extern "C" fn c2pa_signer_reserve_size(signer_ptr: *mut C2paSigner) -
     c2pa_signer.signer.reserve_size() as i64
 }
 
+/// Staples a DER-encoded OCSP response into every signature the signer produces
+/// (the `rVals.ocspVals` COSE header).
+///
+/// Calls stack: call once per certificate along the chain, signing certificate
+/// first, since validators check the first response against the signing certificate.
+/// The caller fetches the responses and keeps them fresh; OCSP responses expire, so
+/// create a new signer when they are refreshed.
+///
+/// This consumes the original signer and returns a new signer.
+///
+/// # Errors
+/// Returns NULL if the signer pointer is NULL or `ocsp_response` is NULL or empty;
+/// call `c2pa_error` to retrieve the error string. On failure the input signer is
+/// NOT consumed.
+///
+/// # Safety
+/// `signer_ptr` must have been created by a `c2pa_signer_*` function and not yet freed.
+/// After a successful call it is invalid — do NOT pass it to `c2pa_free`.
+/// `ocsp_response` is read during this call only.
+/// The returned value MUST be released by calling `c2pa_free`.
+///
+/// # Example
+/// ```c
+/// C2paSigner* signer = c2pa_signer_create(ctx, sign_cb, C2PA_SIGNING_ALG_ES256, certs, NULL);
+/// C2paSigner* stapled = c2pa_signer_with_ocsp_response(signer, leaf_ocsp, leaf_ocsp_len);
+/// if (stapled == NULL) {
+///     // signer is still owned and usable
+///     auto error = c2pa_error();
+///     printf("Error: %s\n", error);
+///     c2pa_string_free(error);
+/// } else {
+///     signer = stapled; // repeat with each intermediate CA's response
+/// }
+/// ```
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_signer_with_ocsp_response(
+    signer_ptr: *mut C2paSigner,
+    ocsp_response: *const c_uchar,
+    ocsp_response_len: usize,
+) -> *mut C2paSigner {
+    let ocsp_response = bytes_or_return_null!(ocsp_response, ocsp_response_len, "ocsp_response");
+    let c2pa_signer = untrack_or_return_null!(signer_ptr, C2paSigner);
+    let signer = create_signer::with_ocsp_responses(
+        Box::new(c2pa_signer.signer),
+        vec![ocsp_response.to_vec()],
+    );
+    box_tracked!(C2paSigner {
+        signer: Box::new(signer),
+    })
+}
+
 /// Frees a C2paSigner allocated by Rust.
 ///
 /// **Note**: This function is maintained for backward compatibility. New code should
@@ -5098,6 +5149,79 @@ verify_after_sign = true
     fn test_c2pa_signer_reserve_size_null() {
         let size = unsafe { c2pa_signer_reserve_size(std::ptr::null_mut()) };
         assert_eq!(size, -1, "Null signer should return -1");
+    }
+
+    #[test]
+    fn test_signer_with_ocsp_response() {
+        let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
+        let mut source_stream = TestStream::new(source_image.to_vec());
+        let mut dest_stream = TestStream::new(Vec::new());
+        let first = include_bytes!(fixture_path!("ocsp_good.data"));
+        let second = include_bytes!(fixture_path!("crypto/ocsp/response_good.der"));
+
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+        let action_json = CString::new(r#"{"action": "c2pa.created", "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"}"#).unwrap();
+        assert_eq!(
+            unsafe { c2pa_builder_add_action(builder, action_json.as_ptr()) },
+            0
+        );
+        let reserve_size = unsafe { c2pa_signer_reserve_size(signer) };
+        let signer = unsafe { c2pa_signer_with_ocsp_response(signer, first.as_ptr(), first.len()) };
+        assert!(!signer.is_null());
+        let signer =
+            unsafe { c2pa_signer_with_ocsp_response(signer, second.as_ptr(), second.len()) };
+        assert!(!signer.is_null());
+        assert_eq!(
+            unsafe { c2pa_signer_reserve_size(signer) },
+            reserve_size + (first.len() + second.len()) as i64
+        );
+
+        let format = CString::new("image/jpeg").unwrap();
+        let mut manifest_bytes_ptr = std::ptr::null();
+        let result = unsafe {
+            c2pa_builder_sign(
+                builder,
+                format.as_ptr(),
+                source_stream.as_ptr(),
+                dest_stream.as_ptr(),
+                signer,
+                &mut manifest_bytes_ptr,
+            )
+        };
+        assert!(
+            result > 0,
+            "signing failed: {:?}",
+            CimplError::last_message()
+        );
+        let manifest_bytes =
+            unsafe { std::slice::from_raw_parts(manifest_bytes_ptr, result as usize) };
+        let position = |der: &[u8]| {
+            manifest_bytes
+                .windows(der.len())
+                .position(|w| w == der)
+                .unwrap()
+        };
+        assert!(position(first) < position(second));
+
+        unsafe {
+            c2pa_free(manifest_bytes_ptr as *const c_void);
+            c2pa_free(signer as *const c_void);
+            c2pa_free(builder as *const c_void);
+        }
+    }
+
+    #[test]
+    fn test_signer_with_ocsp_response_empty_leaves_signer_alone() {
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+        let ocsp_response: [u8; 0] = [];
+        let result = unsafe { c2pa_signer_with_ocsp_response(signer, ocsp_response.as_ptr(), 0) };
+        assert!(result.is_null());
+        assert!(checkout_exclusive::<C2paSigner>(signer).is_ok());
+
+        unsafe {
+            c2pa_free(signer as *const c_void);
+            c2pa_free(builder as *const c_void);
+        }
     }
 
     #[test]

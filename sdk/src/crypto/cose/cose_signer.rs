@@ -41,9 +41,9 @@ pub(crate) trait CoseSigner: TimeStampProvider {
     /// Return the signing certificate chain, end-entity first, each in DER form.
     fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError>;
 
-    /// Return a pre-queried OCSP response for the signing certificate, if any.
-    fn ocsp_response(&self) -> Option<Vec<u8>> {
-        None
+    /// Return pre-queried OCSP responses for the signing certificate chain, if any.
+    fn ocsp_responses(&self) -> Vec<Vec<u8>> {
+        Vec::new()
     }
 }
 
@@ -60,9 +60,9 @@ pub(crate) trait AsyncCoseSigner: AsyncTimeStampProvider + MaybeSync + MaybeSend
     /// Return the signing certificate chain, end-entity first, each in DER form.
     fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError>;
 
-    /// Return a pre-queried OCSP response for the signing certificate, if any.
-    async fn ocsp_response(&self) -> Option<Vec<u8>> {
-        None
+    /// Return pre-queried OCSP responses for the signing certificate chain, if any.
+    async fn ocsp_responses(&self) -> Vec<Vec<u8>> {
+        Vec::new()
     }
 }
 
