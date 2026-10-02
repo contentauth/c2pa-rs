@@ -75,7 +75,7 @@ use crate::{
     salt::{DefaultSalt, SaltGenerator},
     settings::{Settings, MAX_ASSERTIONS},
     status_tracker::{ErrorBehavior, StatusTracker},
-    store::StoreValidationInfo,
+    store::{Store, StoreValidationInfo},
     utils::hash_utils::{hash_by_alg, vec_compare, HashRange},
     validation_status, ClaimGeneratorInfo,
 };
@@ -426,6 +426,44 @@ fn data_hash_exclusions_match_manifest(
         // (embedded); a detached manifest on an unrelated asset is rejected (#2643).
         None => is_embedded,
     }
+}
+
+/// How far the signed exclusion may be widened, in bytes, to accommodate
+/// update manifests appended since the binding claim was signed (#2645).
+///
+/// The widening exists because the manifest store grew. Its legitimate size
+/// is the measured size of the appended update manifest boxes plus file
+/// format framing: the most inflating embedding (base64 text) grows bytes
+/// by a factor of 4/3 and segment or chunk headers add a small per-chunk
+/// overhead, so 3/2x plus a flat allowance covers every supported embedding
+/// with margin. A recomputed manifest store range wider than this would
+/// exclude bytes that are neither manifest store nor padding from the data
+/// hash, so the caller rejects instead of trusting the range.
+///
+/// Returns `u64::MAX` (no bound) when no appended update manifest can be
+/// measured, preserving the previous behavior rather than guessing.
+fn update_manifest_widening_limit(svi: &StoreValidationInfo) -> u64 {
+    let mut update_bytes: u64 = 0;
+    let mut measured = false;
+    for update_claim in svi
+        .manifest_map
+        .values()
+        .filter(|claim| claim.update_manifest())
+    {
+        match Store::manifest_box_length(update_claim) {
+            Ok(length) => {
+                update_bytes = update_bytes.saturating_add(length);
+                measured = true;
+            }
+            Err(_) => return u64::MAX,
+        }
+    }
+
+    if !measured {
+        return u64::MAX;
+    }
+
+    update_bytes + update_bytes / 2 + 4096
 }
 
 impl Claim {
@@ -2972,6 +3010,36 @@ impl Claim {
                                 if let Some(pos) =
                                     exclusions.iter().position(|r| r.start() == range.start())
                                 {
+                                    // Bound the widening to the measured size of
+                                    // the appended update manifest(s). A
+                                    // scanner-supplied range that grows the
+                                    // signed exclusion by more than that would
+                                    // exclude non-manifest bytes from the data
+                                    // hash, so reject it here instead of
+                                    // trusting every format scanner to bound
+                                    // its own measurement (C2PA 15.12.1, #2645).
+                                    let widening =
+                                        range.length().saturating_sub(exclusions[pos].length());
+                                    if widening > update_manifest_widening_limit(svi) {
+                                        log_item!(
+                                            claim.assertion_uri(
+                                                &hash_binding_assertion.label()
+                                            ),
+                                            "data hash exclusion widened beyond the appended update manifest size",
+                                            "verify_internal"
+                                        )
+                                        .validation_status(
+                                            validation_status::ASSERTION_DATAHASH_MISMATCH,
+                                        )
+                                        .failure(
+                                            validation_log,
+                                            Error::HashMismatch(
+                                                "data hash exclusion widened beyond the appended update manifest size"
+                                                    .to_string(),
+                                            ),
+                                        )?;
+                                    }
+
                                     // find the adjustment length
                                     start_offset = range.start();
                                     start_adjust =
