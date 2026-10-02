@@ -1147,6 +1147,37 @@ fn test_builder_sign_deflated_zip_with_data_descriptors() -> Result<()> {
     Ok(())
 }
 
+/// OPC consumers such as PowerPoint and Word reject or "repair" a package containing a part
+/// with no declared content type, which removes the manifest. Signing must declare one.
+#[test]
+fn test_builder_ooxml_declares_c2pa_content_type() -> Result<()> {
+    use std::io::Read;
+
+    let context = Context::new().with_settings(test_settings())?.into_shared();
+    let mut builder = Builder::from_shared_context(&context);
+    builder.set_intent(BuilderIntent::Edit);
+
+    let mut source = Cursor::new(include_bytes!("fixtures/sample1.docx"));
+    let mut dest = Cursor::new(Vec::new());
+    builder.save_to_stream("docx", &mut source, &mut dest)?;
+
+    dest.rewind()?;
+    let reader = Reader::from_shared_context(&context).with_stream("docx", &mut dest)?;
+    assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+    let mut archive = zip::ZipArchive::new(dest).unwrap();
+    let mut content_types = String::new();
+    archive
+        .by_name("[Content_Types].xml")
+        .unwrap()
+        .read_to_string(&mut content_types)?;
+    assert!(
+        content_types.contains(r#"<Default Extension="c2pa" ContentType="application/c2pa"/>"#),
+        "{content_types}"
+    );
+    Ok(())
+}
+
 #[test]
 fn test_builder_compressed_manifests() -> Result<()> {
     let mut settings = test_settings();

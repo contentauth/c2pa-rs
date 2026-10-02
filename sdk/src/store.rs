@@ -29,6 +29,7 @@ use crate::{
         BmffHash, BoxHash, CertificateStatus, CollectionHash, DataBox, DataHash, Ingredient,
         Relationship, TimeStamp, User, UserCbor,
     },
+    asset_handlers::zip_io::declare_opc_c2pa_content_type,
     asset_io::{ObjectLocations, ObjectType, ReadSeek, ReadWriteSeek},
     claim::{
         check_ocsp_status, check_ocsp_status_async, Claim, ClaimAssertion, ClaimAssetData,
@@ -3402,6 +3403,23 @@ impl Store {
             // file entries. when we insert the real manifest we can go back and hash the central directory.
             let mut new_collection_hash = None;
             if pc.collection_hash_assertions().is_empty() {
+                // An OPC package must declare a content type for the manifest part. Doing so
+                // changes `[Content_Types].xml`, so it must happen before the entries are hashed.
+                if !remove_manifests {
+                    let mut declared = io_utils::stream_with_fs_fallback(threshold, input_len)?;
+                    let changed = if source_is_intermediate {
+                        intermediate_stream.rewind()?;
+                        declare_opc_c2pa_content_type(&mut intermediate_stream, &mut declared)?
+                    } else {
+                        input_stream.rewind()?;
+                        declare_opc_c2pa_content_type(input_stream, &mut declared)?
+                    };
+                    if changed {
+                        intermediate_stream = declared;
+                        source_is_intermediate = true;
+                    }
+                }
+
                 let mut placeholder_collection_hash = CollectionHash::new(pc.alg().to_owned());
                 if source_is_intermediate {
                     intermediate_stream.rewind()?;
