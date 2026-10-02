@@ -69,10 +69,12 @@ const FULL_BOX_TYPES: &[&str; 80] = &[
     "txtC", "mime", "uri ", "uriI", "hmhd", "sthd", "vvhd", "medc",
 ];
 
-static SUPPORTED_TYPES: [&str; 15] = [
+static SUPPORTED_TYPES: [&str; 19] = [
     "avif",
     "heif",
     "heic",
+    "heifs",
+    "heics",
     "mp4",
     "m4a",
     "mov",
@@ -82,6 +84,8 @@ static SUPPORTED_TYPES: [&str; 15] = [
     "image/avif",
     "image/heic",
     "image/heif",
+    "image/heic-sequence",
+    "image/heif-sequence",
     "video/mp4",
     "video/quicktime",
     "video/x-m4v",
@@ -2018,6 +2022,8 @@ impl AssetIO for BmffIO {
             ("avif", "image/avif"),
             ("heif", "image/heif"),
             ("heic", "image/heic"),
+            ("heifs", "image/heif-sequence"),
+            ("heics", "image/heic-sequence"),
             ("mp4", "video/mp4"),
             ("m4a", "audio/mp4"),
             ("mov", "video/quicktime"),
