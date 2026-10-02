@@ -259,7 +259,7 @@ where
     let range = match reader.index_for_path(Path::new(MANIFEST_PATH)) {
         Some(index) => {
             let file = reader
-                .by_index(index)
+                .by_index_raw(index)
                 .map_err(|e| Error::InvalidAsset(format!("could not read the ZIP: {e}")))?;
             let crc_start = file.central_header_start() + CENTRAL_DIRECTORY_CRC_OFFSET;
             vec![
@@ -339,13 +339,15 @@ where
 {
     let mut reader = ZipArchive::new(&mut *stream)
         .map_err(|e| Error::InvalidAsset(format!("could not read the ZIP: {e}")))?;
-    let file_names: Vec<String> = reader.file_names().map(|name| name.to_owned()).collect();
-
     let mut entries = Vec::new();
-    for file_name in file_names {
+    for index in 0..reader.len() {
+        // Raw access: only offsets are needed, and the hash is over the stored (compressed)
+        // bytes, so the entry must not be decompressed. Decompression is not compiled in
+        // (`zip` is built without default features), so `by_name` fails on deflated entries.
         let file = reader
-            .by_name(&file_name)
+            .by_index_raw(index)
             .map_err(|e| Error::InvalidAsset(format!("could not read the ZIP: {e}")))?;
+        let file_name = file.name().to_owned();
 
         let path = match file.enclosed_name() {
             Some(path) => path,
