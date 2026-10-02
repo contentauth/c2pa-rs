@@ -100,7 +100,7 @@ jobs:
           cargo llvm-cov --tests --features "$FEATURES" --lcov --output-path lcov-openssl.info
 
       - name: Filter out tests
-        uses: scouten/uncover-tests@af7baaca5bf5189b968573d5f14627c2e1ea0704 # v1.1.0
+        uses: scouten/uncover-tests@f3bbdfb953b5989f48d8dfad0a88a83c4d914389 # v1.1.1
         with:
           input-file: lcov-openssl.info
           output-file: lcov-openssl.filtered.info
@@ -148,7 +148,7 @@ jobs:
           cargo llvm-cov -p c2pa --tests --no-default-features --features "$FEATURES" --lcov --output-path lcov-rust_native_crypto.info
 
       - name: Filter out tests
-        uses: scouten/uncover-tests@af7baaca5bf5189b968573d5f14627c2e1ea0704 # v1.1.0
+        uses: scouten/uncover-tests@f3bbdfb953b5989f48d8dfad0a88a83c4d914389 # v1.1.1
         with:
           input-file: lcov-rust_native_crypto.info
           output-file: lcov-rust_native_crypto.filtered.info
