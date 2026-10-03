@@ -1107,6 +1107,7 @@ mod tests {
                 excluded: None,
                 range_start: 0,
                 range_len: 10,
+                hashed_as_zero: vec![],
                 allowed_exclusions: vec![AllowedExclusion {
                     start: 0,
                     length: 10,
@@ -1152,6 +1153,7 @@ mod tests {
                 excluded: None,
                 range_start: 0,
                 range_len: 10,
+                hashed_as_zero: vec![],
                 allowed_exclusions: vec![],
             }])
         });
@@ -1192,6 +1194,7 @@ mod tests {
                 excluded: None,
                 range_start: 0,
                 range_len: 10,
+                hashed_as_zero: vec![],
                 allowed_exclusions: vec![AllowedExclusion {
                     start: 0,
                     length: 10,
@@ -1239,6 +1242,7 @@ mod tests {
                 excluded: None,
                 range_start: 0,
                 range_len: 10,
+                hashed_as_zero: vec![],
                 allowed_exclusions: vec![],
             }])
         });
@@ -1276,6 +1280,7 @@ mod tests {
                 excluded: None,
                 range_start: 0,
                 range_len: 10,
+                hashed_as_zero: vec![],
                 allowed_exclusions: vec![AllowedExclusion {
                     start: 0,
                     length: 10,
@@ -1711,6 +1716,7 @@ mod tests {
                 excluded: None,
                 range_start: 0,
                 range_len: 10,
+                hashed_as_zero: vec![],
                 allowed_exclusions: vec![],
             }])
         });
@@ -1748,6 +1754,7 @@ mod tests {
                     excluded: None,
                     range_start: 0,
                     range_len: 10,
+                    hashed_as_zero: vec![],
                     // Only ranges within an AssetMetadata/ManifestOrPadding
                     // range may be excluded (spec §15.12.3).
                     allowed_exclusions: vec![AllowedExclusion {
@@ -1761,6 +1768,7 @@ mod tests {
                     excluded: None,
                     range_start: 10,
                     range_len: 10,
+                    hashed_as_zero: vec![],
                     allowed_exclusions: vec![AllowedExclusion {
                         start: 0,
                         length: 10,
@@ -1834,6 +1842,7 @@ mod tests {
                     excluded: None,
                     range_start: 0,
                     range_len: 10,
+                    hashed_as_zero: vec![],
                     allowed_exclusions: vec![AllowedExclusion {
                         start: 0,
                         length: 10,
@@ -1845,6 +1854,7 @@ mod tests {
                     excluded: None,
                     range_start: 10,
                     range_len: 5,
+                    hashed_as_zero: vec![],
                     allowed_exclusions: vec![AllowedExclusion {
                         start: 0,
                         length: 5,
@@ -1856,6 +1866,7 @@ mod tests {
                     excluded: None,
                     range_start: 15,
                     range_len: 10,
+                    hashed_as_zero: vec![],
                     allowed_exclusions: vec![AllowedExclusion {
                         start: 0,
                         length: 10,
