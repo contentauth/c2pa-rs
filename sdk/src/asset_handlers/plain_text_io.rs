@@ -31,20 +31,24 @@
 //! hashing of a canonical-NFC file is exactly NFC-hashing, so the generic engine
 //! produces the spec-correct hash without needing a transform hook.
 //!
-//! This guarantees correctness for anything this handler embeds. It does not — and,
-//! absent a hash-transform hook in [`AssetIO`], cannot — repair a third-party `.txt`
-//! asset that was produced non-NFC and never normalized before its hash was computed;
-//! verifying such an asset falls back to raw-byte comparison like every other format.
-//! That is a limitation of the current [`AssetIO`] surface, not of this handler.
+//! Validation does not rely on that: [`verify_text_data_hash`] removes the excluded bytes,
+//! NFC-normalizes the rest and hashes it, so text that was converted to another
+//! normalization form after signing still validates. It also rejects a data hash whose
+//! exclusion does not exactly cover a wrapper (`assertion.dataHash.malformed`).
 
 use unicode_normalization::UnicodeNormalization;
 
 use crate::{
+    assertions::DataHash,
     asset_io::{
         AssetIO, C2paReader, C2paWriter, ObjectLocations, ObjectType, ReadSeek, ReadWriteSeek,
     },
     error::{Error, Result},
-    utils::io_utils::{stream_len, ReaderUtils},
+    utils::{
+        hash_utils::{verify_by_alg, HashRange},
+        io_utils::{stream_len, ReaderUtils},
+        mime::normalize_format,
+    },
 };
 
 const SUPPORTED_TYPES: [&str; 2] = ["txt", "text/plain"];
@@ -401,6 +405,51 @@ fn normalized_clean_text(text: &str) -> String {
     strip_all_wrappers(text).nfc().collect()
 }
 
+/// Returns true when `format` (an extension or MIME type) is handled as plain text.
+pub(crate) fn is_plain_text_format(format: &str) -> bool {
+    SUPPORTED_TYPES.contains(&normalize_format(format).as_str())
+}
+
+/// Verifies a `c2pa.hash.data` binding over plain text (A.8): the excluded bytes are removed,
+/// the rest is NFC-normalized and hashed as UTF-8.
+///
+/// Returns `Ok(false)` when an exclusion does not exactly cover a wrapper, which makes the
+/// data hash malformed rather than mismatched.
+pub(crate) fn verify_text_data_hash(dh: &DataHash, content: &[u8], alg: &str) -> Result<bool> {
+    let text = std::str::from_utf8(content)
+        .map_err(|_| Error::HashMismatch("text asset is not valid UTF-8".to_string()))?;
+
+    let mut exclusions: Vec<HashRange> = dh.exclusions.clone().unwrap_or_default();
+    exclusions.sort_by_key(|r| r.start());
+
+    let wrappers = wrapper::locate_all(text);
+    let covers_wrapper = |r: &HashRange| {
+        wrappers
+            .iter()
+            .any(|w| r.start() == w.start as u64 && r.length() == w.length as u64)
+    };
+    if !exclusions.iter().all(covers_wrapper) {
+        return Ok(false);
+    }
+
+    let mut remaining = String::with_capacity(text.len());
+    let mut cursor = 0;
+    for r in &exclusions {
+        let start = r.start() as usize;
+        remaining.push_str(&text[cursor..start]);
+        cursor = start + r.length() as usize;
+    }
+    remaining.push_str(&text[cursor.min(text.len())..]);
+    let normalized: String = remaining.nfc().collect();
+
+    let alg = dh.alg.as_deref().unwrap_or(alg);
+    if verify_by_alg(alg, &dh.hash, normalized.as_bytes(), None) {
+        Ok(true)
+    } else {
+        Err(Error::HashMismatch("Hashes do not match".to_string()))
+    }
+}
+
 pub struct PlainTextIO {
     _asset_type: String,
 }
@@ -645,5 +694,54 @@ mod tests {
         let io = PlainTextIO::new("text/plain");
         assert!(io.supported_types().contains(&"text/plain"));
         assert!(io.supported_types().contains(&"txt"));
+    }
+
+    /// A data hash over `text` with the wrapper excluded, as the signing flow produces it.
+    fn signed_hash(text: &str) -> (DataHash, wrapper::Wrapper) {
+        let w = wrapper::extract(text).unwrap();
+        let mut dh = DataHash::new("jumbf manifest", "sha256");
+        dh.add_exclusion(HashRange::new(w.start as u64, w.length as u64));
+        dh.gen_hash_from_stream(&mut Cursor::new(text.as_bytes().to_vec()))
+            .unwrap();
+        (dh, w)
+    }
+
+    #[test]
+    fn text_hash_validates_after_conversion_to_nfd() {
+        let signed = embed("Caf\u{e9} au lait.", b"store");
+        let (dh, _) = signed_hash(&signed);
+        assert!(verify_text_data_hash(&dh, signed.as_bytes(), "sha256").unwrap());
+
+        // With no embedded wrapper (e.g. a sidecar manifest) the whole text is hashed, so
+        // converting it to NFD afterwards must not break the binding.
+        let mut sidecar_dh = DataHash::new("jumbf manifest", "sha256");
+        sidecar_dh
+            .gen_hash_from_stream(&mut Cursor::new("Caf\u{e9} au lait.".as_bytes().to_vec()))
+            .unwrap();
+        let nfd = "Cafe\u{301} au lait.";
+        assert!(verify_text_data_hash(&sidecar_dh, nfd.as_bytes(), "sha256").unwrap());
+    }
+
+    #[test]
+    fn text_hash_detects_tampering() {
+        let signed = embed("The quick brown fox.", b"store");
+        let (dh, _) = signed_hash(&signed);
+        let tampered = signed.replacen("quick", "quack", 1);
+        assert!(verify_text_data_hash(&dh, tampered.as_bytes(), "sha256").is_err());
+    }
+
+    #[test]
+    fn exclusion_not_covering_the_wrapper_is_malformed() {
+        let signed = embed("Some text.", b"store");
+        let (dh, _) = signed_hash(&signed);
+        let shifted = signed.replacen("Some", "Some more", 1);
+        assert!(!verify_text_data_hash(&dh, shifted.as_bytes(), "sha256").unwrap());
+    }
+
+    #[test]
+    fn plain_text_format_detection() {
+        assert!(is_plain_text_format("txt"));
+        assert!(is_plain_text_format(" Text/Plain "));
+        assert!(!is_plain_text_format("md"));
     }
 }
