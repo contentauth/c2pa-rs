@@ -219,8 +219,16 @@ impl OcspResponse {
                         // The responder said `good`, so the certificate is not
                         // revoked; the response simply does not prove the status
                         // at the reference instant (its [thisUpdate, nextUpdate]
-                        // window does not cover that time). That is an
-                        // inconclusive outcome, not a revocation.
+                        // window does not cover that time). Treat that as
+                        // inconclusive rather than a revocation.
+                        //
+                        // Note: C2PA 2.4 §15.9.2 (online OCSP) would classify
+                        // this "Else" case as `signingCredential.ocsp.revoked`,
+                        // but that contradicts the `good` status and is
+                        // inconsistent with §15.9.1 (stapled), which only
+                        // reports `revoked` for a literal `revoked` certStatus.
+                        // We follow §15.9.1's behavior to avoid a false
+                        // revocation from responder/validator clock skew (#2644).
                         log_item!(
                             "OCSP_RESPONSE",
                             "OCSP response outside its validity window",
