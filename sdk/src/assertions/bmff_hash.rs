@@ -54,7 +54,7 @@ use crate::{
     settings::Settings,
     utils::{
         hash_utils::{
-            concat_and_hash, hash_size_by_alg, hash_stream_by_alg,
+            concat_and_hash, hash_by_alg, hash_size_by_alg, hash_stream_by_alg,
             hash_stream_by_alg_with_progress, vec_compare, verify_stream_by_alg, HashRange, Hasher,
         },
         io_utils::stream_len,
