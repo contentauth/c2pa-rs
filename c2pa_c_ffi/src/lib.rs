@@ -11,22 +11,24 @@
 // each license.
 
 /// This module exports a C2PA library
-mod c2pa_stream;
-#[macro_use]
-mod cimpl;
-mod c_api;
-mod error;
-mod maybe_send_sync;
-mod signer_info;
-
 pub use c2pa::{
     AsyncSigner, Builder, Error as C2paError, Reader, Result as C2paResult, Signer, SigningAlg,
 };
+
+mod c2pa_stream;
+mod c_api;
+mod error;
+mod macros;
+mod maybe_send_sync;
+mod signer_info;
+
 pub use c2pa_stream::*;
 pub use c_api::*;
-// Re-export for macro use
-#[doc(hidden)]
-pub use cimpl::cimpl_error::CimplError;
-pub use cimpl::*;
+pub use cimpl::{
+    checkout_exclusive, checkout_shared, cimpl_free, is_safe_buffer_size,
+    safe_slice_from_raw_parts, to_c_bytes, to_c_string, track_arc, track_arc_mutex, track_box,
+    untrack_owned, untrack_owned_pair, CimplError, ExclusiveCheckout, SharedCheckout,
+    TypedExclusive, TypedShared,
+};
 pub use error::{Error, Result};
 pub use signer_info::SignerInfo;

@@ -13,7 +13,7 @@
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-/// Defines all possible errors that can occur in this library
+/// Error categories published by the C FFI, distinct from the SDK's errors.
 pub enum C2paError {
     #[error("Assertion: {0}")]
     Assertion(String),
@@ -63,9 +63,11 @@ pub type Error = C2paError;
 pub type Result<T> = std::result::Result<T, Error>;
 
 impl C2paError {
-    /// Returns the last error message stored in thread-local storage
+    /// Returns the last error using the published C API categories, without clearing it.
     pub fn last_message() -> String {
-        crate::cimpl::CimplError::last_message().unwrap_or_default()
+        cimpl::Error::last_message()
+            .map(|message| Self::from(message).to_string())
+            .unwrap_or_default()
     }
 
     // Convert c2pa errors to published API errors
@@ -157,34 +159,37 @@ impl C2paError {
     }
 }
 
-impl From<c2pa::Error> for crate::cimpl::CimplError {
+impl From<c2pa::Error> for Error {
     fn from(val: c2pa::Error) -> Self {
-        C2paError::from_c2pa_error(val).into()
+        C2paError::from_c2pa_error(val)
     }
 }
 
-impl From<C2paError> for crate::cimpl::CimplError {
+impl From<C2paError> for cimpl::Error {
     fn from(err: C2paError) -> Self {
-        // `err.to_string()` is already formatted as "Variant: message" by the
-        // #[error(...)] templates above, so it can be stored as-is.
-        crate::cimpl::CimplError::from_formatted(err.to_string())
+        // Preserve the published prefix rather than deriving it from Debug.
+        let message = err.to_string();
+        let (variant, details) = message
+            .split_once(": ")
+            .expect("C2paError always formats as 'Variant: message'");
+        Self::new(variant, details)
     }
 }
 
-impl From<std::io::Error> for crate::cimpl::CimplError {
+impl From<std::io::Error> for Error {
     fn from(err: std::io::Error) -> Self {
-        C2paError::Io(err.to_string()).into()
+        C2paError::Io(err.to_string())
     }
 }
 
-impl From<serde_json::Error> for crate::cimpl::CimplError {
+impl From<serde_json::Error> for Error {
     fn from(err: serde_json::Error) -> Self {
-        C2paError::Json(err.to_string()).into()
+        C2paError::Json(err.to_string())
     }
 }
 
-impl From<crate::cimpl::CimplError> for C2paError {
-    fn from(err: crate::cimpl::CimplError) -> Self {
+impl From<cimpl::Error> for C2paError {
+    fn from(err: cimpl::Error) -> Self {
         // The message is formatted as "Variant: details"; parse it back into
         // the matching C2paError variant (falling back to Other).
         C2paError::from(err.message())
@@ -209,33 +214,46 @@ impl From<String> for C2paError {
     }
 }
 
-// impl From<&str> for Error {
-//     fn from(err: &str) -> Self {
-//         let parts: Vec<&str> = err.split(": ").collect();
-//         if parts.len() == 2 {
-//             Self::from_type_and_message(parts[0], parts[1])
-//         } else {
-//             Self::Other(err.to_string())
-//         }
-//     }
-// }
+/// Converts domain errors at the C boundary without remapping cimpl errors.
+pub(crate) trait IntoCimplError {
+    fn into_cimpl_error(self) -> cimpl::Error;
+}
 
-// impl From<String> for Error {
-//     fn from(err: String) -> Self {
-//         Error::from(err.as_str())
-//     }
-// }
+impl IntoCimplError for cimpl::Error {
+    fn into_cimpl_error(self) -> cimpl::Error {
+        self
+    }
+}
 
-// impl From<crate::cimpl::cimpl_error::CimplError> for Error {
-//     fn from(err: crate::cimpl::cimpl_error::CimplError) -> Self {
-//         Error::Other(err.to_string())
-//     }
-// }
+impl IntoCimplError for C2paError {
+    fn into_cimpl_error(self) -> cimpl::Error {
+        self.into()
+    }
+}
+
+impl IntoCimplError for c2pa::Error {
+    fn into_cimpl_error(self) -> cimpl::Error {
+        C2paError::from(self).into()
+    }
+}
+
+impl IntoCimplError for std::io::Error {
+    fn into_cimpl_error(self) -> cimpl::Error {
+        C2paError::from(self).into()
+    }
+}
+
+impl IntoCimplError for serde_json::Error {
+    fn into_cimpl_error(self) -> cimpl::Error {
+        C2paError::from(self).into()
+    }
+}
 
 #[cfg(test)]
 mod tests {
+    use cimpl::Error as CimplError;
+
     use super::*;
-    use crate::cimpl::CimplError;
 
     #[test]
     fn test_c2pa_error_roundtrip_manifest_not_found() {
@@ -317,17 +335,14 @@ mod tests {
 
     #[test]
     fn test_remote_manifest_fetch_maps_to_remote_prefix_for_c2pa_c() {
-        // c2pa-c Builder.SignStreamCloudUrl test expects error_message.rfind("Remote:", 0) == 0
+        // c2pa-c checks this prefix to select its exception type.
         let c2pa_err = c2pa::Error::RemoteManifestFetch(
             "an error occurred from the underlying http resolver".to_string(),
         );
-        let cimpl_err: CimplError = c2pa_err.into();
-        let msg = cimpl_err.message();
-        assert!(
-            msg.starts_with("Remote:"),
-            "C2paException in c2pa-c checks for 'Remote:' prefix; got: {}",
-            msg
-        );
+        let expected = format!("Remote: {c2pa_err}");
+        let cimpl_err = c2pa_err.into_cimpl_error();
+        assert!(cimpl_err.message().starts_with("Remote:"));
+        assert_eq!(cimpl_err.message(), expected);
     }
 
     #[test]
@@ -365,5 +380,39 @@ mod tests {
         let err: C2paError = CimplError::invalid_buffer_size(999, "data").into();
         assert!(matches!(err, C2paError::InvalidBufferSize(_)), "got {err}");
         assert_eq!(err.to_string(), "InvalidBufferSize: 999 for 'data'");
+    }
+
+    #[test]
+    fn test_last_message_preserves_published_categories() {
+        let cases = [
+            (
+                CimplError::null_parameter("reader"),
+                "NullParameter: reader",
+            ),
+            (
+                CimplError::invalid_buffer_size(999, "data"),
+                "InvalidBufferSize: 999 for 'data'",
+            ),
+            (
+                CimplError::new("PointerInUse", "handle busy"),
+                "PointerInUse: handle busy",
+            ),
+            (
+                CimplError::new("Remote", "resolver: failed"),
+                "Remote: resolver: failed",
+            ),
+            (
+                CimplError::string_too_long("format"),
+                "Other: StringTooLong: format",
+            ),
+        ];
+        for (error, expected) in cases {
+            let raw_message = error.message().to_owned();
+            error.set_last();
+            assert_eq!(C2paError::last_message(), expected);
+            assert_eq!(C2paError::last_message(), expected);
+            assert_eq!(CimplError::take_last().unwrap().message(), raw_message);
+        }
+        assert_eq!(C2paError::last_message(), "");
     }
 }
