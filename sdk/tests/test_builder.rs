@@ -1008,6 +1008,214 @@ fn test_builder_unsupported_format_remote_url_rejected() -> Result<()> {
     Ok(())
 }
 
+/// Real-world ZIP-based documents store their entries deflated. Hashing them must not
+/// require decompression, which is not compiled in.
+#[test]
+fn test_builder_sign_deflated_zip_formats() -> Result<()> {
+    let context = Context::new().with_settings(test_settings())?.into_shared();
+
+    for (format, data) in [
+        ("docx", &include_bytes!("fixtures/sample1.docx")[..]),
+        ("odt", &include_bytes!("fixtures/sample1.odt")[..]),
+    ] {
+        let mut builder = Builder::from_shared_context(&context);
+        builder.set_intent(BuilderIntent::Edit);
+
+        let mut dest = Cursor::new(Vec::new());
+        builder.save_to_stream(format, &mut Cursor::new(data), &mut dest)?;
+
+        dest.rewind()?;
+        let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
+        assert_eq!(
+            reader.validation_state(),
+            ValidationState::Trusted,
+            "{format}"
+        );
+    }
+    Ok(())
+}
+
+/// Builds a ZIP the way streaming writers do: each entry is deflated and has the "data
+/// descriptor" flag set, so its CRC and sizes follow the data rather than being in its local
+/// header. The `zip` crate can't write deflated entries here (decompression and compression
+/// aren't compiled in), so the archive is assembled by hand.
+fn deflated_zip_with_data_descriptors(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    use std::io::Write;
+
+    const DATA_DESCRIPTOR_FLAG: u16 = 1 << 3;
+    const DEFLATED: u16 = 8;
+    const VERSION: u16 = 20;
+    const DOS_DATE_1980_01_01: u16 = (1 << 5) | 1;
+
+    let mut zip = Vec::new();
+    let mut central_directory = Vec::new();
+    for (name, contents) in entries {
+        let mut encoder =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(contents).unwrap();
+        let compressed = encoder.finish().unwrap();
+        let mut crc = flate2::Crc::new();
+        crc.update(contents);
+        let (crc, compressed_len, len) =
+            (crc.sum(), compressed.len() as u32, contents.len() as u32);
+        let offset = zip.len() as u32;
+
+        // Local file header, with the CRC and sizes left zero.
+        zip.extend(0x0403_4b50u32.to_le_bytes());
+        for field in [
+            VERSION,
+            DATA_DESCRIPTOR_FLAG,
+            DEFLATED,
+            0,
+            DOS_DATE_1980_01_01,
+        ] {
+            zip.extend(field.to_le_bytes());
+        }
+        zip.extend([0u8; 12]); // CRC, compressed size, uncompressed size
+        zip.extend((name.len() as u16).to_le_bytes());
+        zip.extend(0u16.to_le_bytes()); // extra field length
+        zip.extend(name.as_bytes());
+        zip.extend(&compressed);
+
+        // Data descriptor.
+        for field in [0x0807_4b50, crc, compressed_len, len] {
+            zip.extend(field.to_le_bytes());
+        }
+
+        // Central directory header.
+        central_directory.extend(0x0201_4b50u32.to_le_bytes());
+        for field in [
+            VERSION,
+            VERSION,
+            DATA_DESCRIPTOR_FLAG,
+            DEFLATED,
+            0,
+            DOS_DATE_1980_01_01,
+        ] {
+            central_directory.extend(field.to_le_bytes());
+        }
+        for field in [crc, compressed_len, len] {
+            central_directory.extend(field.to_le_bytes());
+        }
+        central_directory.extend((name.len() as u16).to_le_bytes());
+        central_directory.extend([0u8; 8]); // extra, comment, disk, internal attributes
+        central_directory.extend(0u32.to_le_bytes()); // external attributes
+        central_directory.extend(offset.to_le_bytes());
+        central_directory.extend(name.as_bytes());
+    }
+
+    // End of central directory record.
+    let central_directory_offset = zip.len() as u32;
+    zip.extend(&central_directory);
+    zip.extend(0x0605_4b50u32.to_le_bytes());
+    zip.extend([0u8; 4]); // disk numbers
+    zip.extend((entries.len() as u16).to_le_bytes());
+    zip.extend((entries.len() as u16).to_le_bytes());
+    zip.extend((central_directory.len() as u32).to_le_bytes());
+    zip.extend(central_directory_offset.to_le_bytes());
+    zip.extend(0u16.to_le_bytes()); // comment length
+    zip
+}
+
+/// Deflated entries with data descriptors, as streaming ZIP writers produce.
+#[test]
+fn test_builder_sign_deflated_zip_with_data_descriptors() -> Result<()> {
+    let context = Context::new().with_settings(test_settings())?.into_shared();
+    let first = "Content Credentials ".repeat(200);
+    let data = deflated_zip_with_data_descriptors(&[
+        ("first.txt", first.as_bytes()),
+        ("dir/second.txt", b"second entry"),
+    ]);
+
+    let mut builder = Builder::from_shared_context(&context);
+    builder.set_intent(BuilderIntent::Edit);
+    let mut dest = Cursor::new(Vec::new());
+    builder.save_to_stream("zip", &mut Cursor::new(&data), &mut dest)?;
+
+    dest.rewind()?;
+    let reader = Reader::from_shared_context(&context).with_stream("zip", &mut dest)?;
+    assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+    // Changing a byte of the first entry's compressed data is detected. It starts after the
+    // 30-byte local header and the 9-byte name, and keeps its offset when signing.
+    let mut tampered = dest.into_inner();
+    tampered[30 + "first.txt".len() + 2] ^= 0x01;
+    let state = Reader::from_shared_context(&context)
+        .with_stream("zip", Cursor::new(&tampered))
+        .map(|r| r.validation_state());
+    assert!(!matches!(state, Ok(ValidationState::Trusted)));
+    Ok(())
+}
+
+/// OPC consumers such as PowerPoint and Word reject or "repair" a package containing a part
+/// with no declared content type, which removes the manifest. Signing must declare one.
+#[test]
+fn test_builder_ooxml_declares_c2pa_content_type() -> Result<()> {
+    use std::io::Read;
+
+    let context = Context::new().with_settings(test_settings())?.into_shared();
+    let mut builder = Builder::from_shared_context(&context);
+    builder.set_intent(BuilderIntent::Edit);
+
+    let mut source = Cursor::new(include_bytes!("fixtures/sample1.docx"));
+    let mut dest = Cursor::new(Vec::new());
+    builder.save_to_stream("docx", &mut source, &mut dest)?;
+
+    dest.rewind()?;
+    let reader = Reader::from_shared_context(&context).with_stream("docx", &mut dest)?;
+    assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+    let mut archive = zip::ZipArchive::new(dest).unwrap();
+    let mut content_types = String::new();
+    archive
+        .by_name("[Content_Types].xml")
+        .unwrap()
+        .read_to_string(&mut content_types)?;
+    assert!(
+        content_types.contains(r#"<Default Extension="c2pa" ContentType="application/c2pa"/>"#),
+        "{content_types}"
+    );
+    Ok(())
+}
+
+/// Re-signing a signed ZIP-based file replaces the previous manifest's bytes rather than
+/// leaving them in the file.
+#[test]
+fn test_builder_resign_zip() -> Result<()> {
+    let context = Context::new().with_settings(test_settings())?.into_shared();
+    for (format, data) in [
+        ("docx", &include_bytes!("fixtures/sample1.docx")[..]),
+        ("odt", &include_bytes!("fixtures/sample1.odt")[..]),
+    ] {
+        let mut current = data.to_vec();
+        for round in 1..=3 {
+            let mut builder = Builder::from_shared_context(&context);
+            builder.set_intent(BuilderIntent::Edit);
+            let mut dest = Cursor::new(Vec::new());
+            builder.save_to_stream(format, &mut Cursor::new(&current), &mut dest)?;
+            current = dest.into_inner();
+
+            let reader =
+                Reader::from_shared_context(&context).with_stream(format, Cursor::new(&current))?;
+            assert_eq!(reader.validation_state(), ValidationState::Trusted);
+            assert_eq!(reader.manifests().len(), round);
+
+            // Exactly one manifest in the file: the previous manifest's local header (and its
+            // data after it) must not have been left behind.
+            let name = b"META-INF/content_credential.c2pa";
+            let local_headers = current
+                .windows(30 + name.len())
+                .filter(|w| w.starts_with(b"PK\x03\x04") && &w[30..] == name)
+                .count();
+            assert_eq!(
+                local_headers, 1,
+                "{format}: earlier manifests left in the file"
+            );
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn test_builder_compressed_manifests() -> Result<()> {
     let mut settings = test_settings();
