@@ -54,7 +54,7 @@ use crate::{
     settings::Settings,
     utils::{
         hash_utils::{
-            concat_and_hash, hash_by_alg, hash_size_by_alg, hash_stream_by_alg,
+            concat_and_hash, hash_size_by_alg, hash_stream_by_alg,
             hash_stream_by_alg_with_progress, vec_compare, verify_stream_by_alg, HashRange, Hasher,
         },
         io_utils::stream_len,
@@ -2585,7 +2585,10 @@ mod bmff_hash_tests {
     use std::io::Cursor;
 
     use super::*;
-    use crate::asset_handlers::bmff_io::{BoxInfoLite, C2PABmffBoxes};
+    use crate::{
+        asset_handlers::bmff_io::{BoxInfoLite, C2PABmffBoxes},
+        utils::hash_utils::hash_by_alg,
+    };
 
     /// `set_default_exclusions` (no args) must keep excluding `/free`/`/skip`,
     /// matching its existing, documented default behavior.
