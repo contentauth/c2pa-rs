@@ -3293,6 +3293,35 @@ impl Store {
             }
         }
 
+        // Formats whose only hard binding is a box hash (fonts) always get one, with a box
+        // per region so that it doesn't depend on how regions are laid out in the file.
+        if pc.hash_assertions().is_empty() && !pc.update_manifest() {
+            if let Some(box_hash_handler) = io_handler
+                .and_then(|h| h.asset_box_hash_ref())
+                .filter(|h| h.requires_box_hash())
+            {
+                if !source_is_intermediate {
+                    input_stream.rewind()?;
+                    std::io::copy(input_stream, &mut intermediate_stream)?;
+                    source_is_intermediate = true;
+                }
+                intermediate_stream.rewind()?;
+
+                let mut bh = BoxHash { boxes: Vec::new() };
+                let mut cb =
+                    |step, total| context.check_progress(ProgressPhase::Hashing, step, total);
+                bh.generate_box_hash_from_stream_with_progress(
+                    &mut intermediate_stream,
+                    pc.alg(),
+                    box_hash_handler,
+                    false,
+                    &mut cb,
+                )?;
+                pc.add_assertion(&bh)?;
+                intermediate_stream.rewind()?;
+            }
+        }
+
         if is_bmff {
             // 2) Get hash ranges if needed, do not generate for update manifests
             let mut needs_hash = false;

@@ -1008,6 +1008,57 @@ fn test_builder_unsupported_format_remote_url_rejected() -> Result<()> {
     Ok(())
 }
 
+/// OpenType and TrueType fonts carry the manifest in a `C2PA` table, bound by a box hash
+/// over the font's tables.
+#[test]
+fn test_builder_sign_fonts() -> Result<()> {
+    let context = Context::new().with_settings(test_settings())?.into_shared();
+
+    for (formats, data) in [
+        (
+            ["ttf", "font/ttf"],
+            &include_bytes!("fixtures/sample1.ttf")[..],
+        ),
+        (
+            ["otf", "font/otf"],
+            &include_bytes!("fixtures/sample1.otf")[..],
+        ),
+    ] {
+        for format in formats {
+            let mut builder = Builder::from_shared_context(&context);
+            builder.set_intent(BuilderIntent::Edit);
+            let mut dest = Cursor::new(Vec::new());
+            builder.save_to_stream(format, &mut Cursor::new(data), &mut dest)?;
+
+            dest.rewind()?;
+            let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
+            assert_eq!(
+                reader.validation_state(),
+                ValidationState::Trusted,
+                "{format}"
+            );
+
+            // Changing `head.unitsPerEm` (offset 18 in the table) invalidates the box hash.
+            let mut tampered = dest.into_inner();
+            let num_tables = u16::from_be_bytes([tampered[4], tampered[5]]) as usize;
+            let head = tampered[12..12 + num_tables * 16]
+                .chunks(16)
+                .find(|record| &record[0..4] == b"head")
+                .map(|record| u32::from_be_bytes(record[8..12].try_into().unwrap()) as usize)
+                .unwrap();
+            tampered[head + 18] ^= 0x01;
+            let state = Reader::from_shared_context(&context)
+                .with_stream(format, Cursor::new(&tampered))
+                .map(|r| r.validation_state());
+            assert!(
+                !matches!(state, Ok(ValidationState::Trusted)),
+                "{format}: tampering was not detected"
+            );
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn test_builder_compressed_manifests() -> Result<()> {
     let mut settings = test_settings();
