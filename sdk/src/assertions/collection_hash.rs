@@ -26,9 +26,12 @@ const ASSERTION_CREATION_VERSION: usize = 1;
 /// A collection hash is used to hash multiple files within a collection (e.g. a folder or a zip file).
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct CollectionHash {
-    // We use a hash map to avoid potential duplicates.
-    //
     /// Map of file path to their metadata for the collection.
+    ///
+    /// Note, while this type does not accurately represent the specifications definition,
+    /// it is properly serialized as an array of objects internally. This was done for
+    /// backwards compatibility with the existing SDK implementation.
+    #[serde(with = "compat")]
     pub uris: HashMap<PathBuf, UriHashedDataMap>,
 
     /// Algorithm used to hash the files.
@@ -366,6 +369,122 @@ impl AssertionBase for CollectionHash {
 
 impl AssertionCbor for CollectionHash {}
 
+/// C2PA requires [`CollectionHash::uris`] to be encoded as an array of objects, but
+/// we currently define them as a hash map of objects.
+///
+/// This custom ser/de encodes and decodes the correct type while maintaining backwards
+/// compatibility for existing (non-standard) SDK behavior.
+mod compat {
+    use std::{collections::HashMap, fmt, path::PathBuf};
+
+    use serde::{
+        de::{MapAccess, SeqAccess, Visitor},
+        Deserialize, Deserializer, Serialize, Serializer,
+    };
+
+    use super::{AssetType, UriHashedDataMap};
+
+    /// On-wire representation of a single [`UriHashedDataMap`] entry.
+    #[derive(Serialize, Deserialize)]
+    struct StandardUriHashedDataMap {
+        uri: PathBuf,
+
+        #[serde(with = "serde_bytes", skip_serializing_if = "Option::is_none")]
+        hash: Option<Vec<u8>>,
+
+        #[serde(skip_serializing_if = "Option::is_none")]
+        size: Option<u64>,
+
+        #[serde(rename = "dc:format", skip_serializing_if = "Option::is_none")]
+        dc_format: Option<String>,
+
+        #[serde(skip_serializing_if = "Option::is_none")]
+        data_types: Option<Vec<AssetType>>,
+    }
+
+    impl StandardUriHashedDataMap {
+        fn into_parts(self) -> (PathBuf, UriHashedDataMap) {
+            (
+                self.uri,
+                UriHashedDataMap {
+                    hash: self.hash,
+                    size: self.size,
+                    dc_format: self.dc_format,
+                    data_types: self.data_types,
+                },
+            )
+        }
+    }
+
+    pub(super) fn serialize<S>(
+        uris: &HashMap<PathBuf, UriHashedDataMap>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut entries: Vec<StandardUriHashedDataMap> = uris
+            .iter()
+            .map(|(uri, map)| StandardUriHashedDataMap {
+                uri: uri.clone(),
+                hash: map.hash.clone(),
+                size: map.size,
+                dc_format: map.dc_format.clone(),
+                data_types: map.data_types.clone(),
+            })
+            .collect();
+
+        // sort by URI for deterministic output
+        entries.sort_by(|a, b| a.uri.cmp(&b.uri));
+        entries.serialize(serializer)
+    }
+
+    /// Accepts both the spec-compliant array form and the legacy map form.
+    struct UrisVisitor;
+
+    impl<'de> Visitor<'de> for UrisVisitor {
+        type Value = HashMap<PathBuf, UriHashedDataMap>;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("an array of URI entries or a map keyed by URI")
+        }
+
+        // spec compliant impl
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: SeqAccess<'de>,
+        {
+            let mut uris = HashMap::with_capacity(seq.size_hint().unwrap_or(0));
+            while let Some(entry) = seq.next_element::<StandardUriHashedDataMap>()? {
+                let (uri, map) = entry.into_parts();
+                uris.insert(uri, map);
+            }
+            Ok(uris)
+        }
+
+        // backwards compat impl
+        fn visit_map<A>(self, mut access: A) -> Result<Self::Value, A::Error>
+        where
+            A: MapAccess<'de>,
+        {
+            let mut uris = HashMap::with_capacity(access.size_hint().unwrap_or(0));
+            while let Some((uri, map)) = access.next_entry::<PathBuf, UriHashedDataMap>()? {
+                uris.insert(uri, map);
+            }
+            Ok(uris)
+        }
+    }
+
+    pub(super) fn deserialize<'de, D>(
+        deserializer: D,
+    ) -> Result<HashMap<PathBuf, UriHashedDataMap>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(UrisVisitor)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
@@ -416,6 +535,58 @@ mod tests {
 
         let mut stream = Cursor::new(ZIP_SAMPLE1);
         restored.verify_zip_stream_hash(&mut stream, None)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_uris_serialize_as_array_of_objects() -> Result<()> {
+        let collection = gen_zip_collection_hash()?;
+
+        let wire: serde_json::Value = serde_json::to_value(&collection)?;
+        let entries = wire["uris"]
+            .as_array()
+            .ok_or_else(|| Error::BadParam("`uris` must serialize as an array".to_owned()))?;
+        assert_eq!(entries.len(), collection.uris.len());
+
+        for entry in entries {
+            assert!(entry["uri"].is_string(), "each entry must carry a `uri`");
+            assert!(entry["hash"].is_array(), "each entry must carry a `hash`");
+        }
+
+        let restored: CollectionHash = serde_json::from_value(wire)?;
+        assert_eq!(restored.uris, collection.uris);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_uris_read_legacy_map_and_array_forms() -> Result<()> {
+        let collection = gen_zip_collection_hash()?;
+        let array_form = c2pa_cbor::to_vec(&collection)?;
+
+        #[derive(Serialize)]
+        struct LegacyCollectionHash {
+            uris: HashMap<PathBuf, UriHashedDataMap>,
+            alg: String,
+            #[serde(with = "serde_bytes", skip_serializing_if = "Option::is_none")]
+            zip_central_directory_hash: Option<Vec<u8>>,
+        }
+        let legacy_src = gen_zip_collection_hash()?;
+        let legacy = LegacyCollectionHash {
+            uris: legacy_src.uris,
+            alg: legacy_src.alg,
+            zip_central_directory_hash: legacy_src.zip_central_directory_hash,
+        };
+        let map_form = c2pa_cbor::to_vec(&legacy)?;
+
+        let from_array: CollectionHash = c2pa_cbor::from_slice(&array_form)?;
+        let from_map: CollectionHash = c2pa_cbor::from_slice(&map_form)?;
+        assert_eq!(from_array, collection);
+        assert_eq!(from_map, collection);
+
+        let mut stream = Cursor::new(ZIP_SAMPLE1);
+        from_map.verify_zip_stream_hash(&mut stream, None)?;
 
         Ok(())
     }
