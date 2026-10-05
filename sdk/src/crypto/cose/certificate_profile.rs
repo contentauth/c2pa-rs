@@ -202,6 +202,20 @@ pub fn check_certificate_profile(
         return Err(CertificateProfileError::UnsupportedAlgorithm);
     }
 
+    // https://datatracker.ietf.org/doc/html/rfc8410#section-3
+    // Ed25519 spec: "For all of the OIDs, the parameters MUST be absent."
+    if *cert_alg == ED25519_OID && signcert.signature_algorithm.parameters.is_some() {
+        log_item!(
+            "",
+            "certificate Ed25519 signature algorithm parameters must be absent",
+            "check_certificate_profile"
+        )
+        .validation_status(SIGNING_CREDENTIAL_INVALID)
+        .failure_no_throw(validation_log, CertificateProfileError::InvalidCertificate);
+
+        return Err(CertificateProfileError::InvalidCertificate);
+    }
+
     // Verify RSA_PSS parameters.
     if *cert_alg == RSASSA_PSS_OID {
         if let Some(parameters) = &signcert.signature_algorithm.parameters {
@@ -316,6 +330,20 @@ pub fn check_certificate_profile(
         } else {
             return Err(CertificateProfileError::InvalidCertificate);
         }
+    }
+
+    // https://datatracker.ietf.org/doc/html/rfc8410#section-3
+    // Ed25519 spec: "For all of the OIDs, the parameters MUST be absent."
+    if skpi_alg.algorithm == ED25519_OID && skpi_alg.parameters.is_some() {
+        log_item!(
+            "",
+            "certificate Ed25519 public key parameters must be absent",
+            "check_certificate_profile"
+        )
+        .validation_status(SIGNING_CREDENTIAL_INVALID)
+        .failure_no_throw(validation_log, CertificateProfileError::InvalidCertificate);
+
+        return Err(CertificateProfileError::InvalidCertificate);
     }
 
     // Check modulus minimum length for RSA & PSS algorithms.
