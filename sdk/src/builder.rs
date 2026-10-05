@@ -2393,7 +2393,16 @@ impl Builder {
         );
         // Don't auto-add a parentOf ingredient if the user's manifest already declares a
         // c2pa.created or c2pa.opened action — those are mutually exclusive with auto-parent.
-        let has_created_or_opened = claim.created_action_assertions().into_iter().any(|a| {
+        // v1 claims have no created/gathered split, so their declared actions live in the single
+        // actions list rather than `created_action_assertions()`; inspect all action assertions
+        // for v1 so the guard isn't bypassed (which would auto-add a second actions assertion and
+        // fail validation with "only one action assertion allowed for v1 claims").
+        let action_assertions = if claim.version() < 2 {
+            claim.action_assertions()
+        } else {
+            claim.created_action_assertions()
+        };
+        let has_created_or_opened = action_assertions.into_iter().any(|a| {
             if !a.label().starts_with(crate::assertions::Actions::LABEL) {
                 return false;
             }
@@ -4689,6 +4698,58 @@ mod tests {
         let gathered_actions = Actions::from_assertion(gathered_assertions[0].assertion()).unwrap();
         assert_eq!(gathered_actions.actions().len(), 1);
         assert_eq!(gathered_actions.actions()[0].action(), c2pa_action::CROPPED);
+    }
+
+    // Regression (CAI-13962 / c2pa-rs#2720): a v1 claim whose manifest already declares its own
+    // c2pa.opened/created action must not get a second actions assertion auto-added under an Edit
+    // intent. v1 claims have no created/gathered split, so the auto-parent guard has to inspect
+    // all action assertions (not only `created_action_assertions()`); otherwise a second actions
+    // assertion is added and validation fails with "only one action assertion allowed for v1
+    // claims".
+    #[test]
+    fn test_v1_declared_action_blocks_auto_parent_and_second_actions_assertion() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let format = "image/jpeg";
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+
+        let manifest = json!({
+            "claim_version": 1,
+            "title": "V1 Declared Action",
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": { "actions": [ { "action": "c2pa.opened" } ] }
+                }
+            ]
+        })
+        .to_string();
+
+        let mut builder = Builder::from_context(test_context())
+            .with_definition(manifest)
+            .unwrap();
+        // Default c2patool behaviour: Edit intent with no explicitly supplied parent.
+        builder.set_intent(BuilderIntent::Edit);
+
+        let signer = test_signer(SigningAlg::Ps256);
+        builder
+            .sign(signer.as_ref(), format, &mut source, &mut dest)
+            .unwrap();
+
+        dest.rewind().unwrap();
+        let reader = Reader::from_stream(format, &mut dest).unwrap();
+        assert_ne!(reader.validation_state(), ValidationState::Invalid);
+
+        // Exactly one c2pa.actions assertion must exist for the v1 claim.
+        let active = reader.active_manifest().unwrap();
+        let action_assertions = active
+            .assertions()
+            .iter()
+            .filter(|a| a.label().starts_with("c2pa.actions"))
+            .count();
+        assert_eq!(action_assertions, 1);
     }
 
     #[test]
