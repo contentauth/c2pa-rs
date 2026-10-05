@@ -1305,6 +1305,13 @@ impl Store {
             // remember the order of the boxes to insure the box hashes can be regenerated
             let mut box_order: Vec<&str> = Vec::new();
 
+            // Core boxes may appear at most once per manifest. `manifest_map` is keyed by
+            // UUID (last-wins), so a duplicate would be dropped from the map yet still
+            // recorded twice in `box_order`; the manifest box hash is then regenerated from
+            // the single surviving box, letting byte-distinct parents collapse to the same
+            // hash (the vuln-37402 ingredient parent-swap primitive).
+            let mut seen_core_uuids: HashSet<String> = HashSet::new();
+
             // make sure there are not multiple claim boxes
             let mut claim_box_cnt = 0;
             for i in 0..cai_store_box.data_box_count() {
@@ -1327,6 +1334,28 @@ impl Store {
 
                     return Err(Error::InvalidClaim(
                         InvalidClaimError::C2paMultipleClaimBoxes,
+                    ));
+                }
+
+                // Reject a repeated non-claim core box before it reaches `manifest_map`
+                // (duplicate claim boxes are already handled above with their own status).
+                if matches!(
+                    desc_box.uuid().as_str(),
+                    CAI_ASSERTION_STORE_UUID
+                        | CAI_SIGNATURE_UUID
+                        | CAI_VERIFIABLE_CREDENTIALS_STORE_UUID
+                        | CAI_DATABOXES_STORE_UUID
+                ) && !seen_core_uuids.insert(desc_box.uuid())
+                {
+                    log_item!("JUMBF", "c2pa multiple manifest boxes found", "from_jumbf")
+                        .validation_status(validation_status::CLAIM_MALFORMED)
+                        .failure_no_throw(
+                            validation_log,
+                            Error::InvalidClaim(InvalidClaimError::C2paMultipleManifestBoxes),
+                        );
+
+                    return Err(Error::InvalidClaim(
+                        InvalidClaimError::C2paMultipleManifestBoxes,
                     ));
                 }
 
@@ -4518,6 +4547,10 @@ pub enum InvalidClaimError {
     #[error("\"c2pa\" multiple claim boxes found in manifest")]
     C2paMultipleClaimBoxes,
 
+    /// More than one core manifest box of the same type was found.
+    #[error("\"c2pa\" multiple manifest boxes of the same type found in manifest")]
+    C2paMultipleManifestBoxes,
+
     /// The claim superbox was not found.
     #[error("claim superbox not found")]
     ClaimSuperboxNotFound,
@@ -6224,6 +6257,75 @@ pub mod tests {
         assert_eq!(
             baseline_hash, tampered_hash,
             "manifest box hash must be derived from box UUIDs, not labels"
+        );
+    }
+
+    #[test]
+    fn test_duplicate_assertion_store_box_is_rejected() {
+        use crate::{
+            jumbf::boxes::{CAI_ASSERTION_STORE_UUID, CAI_MANIFEST_UUID},
+            utils::test::create_test_store,
+        };
+
+        // A manifest may contain only one of each core box. `manifest_map` is keyed by box
+        // UUID (last-wins), so a second assertion store would be dropped from the map while
+        // still counted in `box_order` and regenerated from the single surviving box. That
+        // lets two byte-distinct manifests collapse to the same manifest box hash — the
+        // vuln-37402 ingredient parent-swap primitive. Duplicating the assertion store box
+        // (editing manifest-store bytes needs no key) must now be rejected at parse time.
+
+        // Locate a JUMBF superbox by its description-box type UUID, returning its byte range.
+        // Superbox layout: [size:4][b"jumb"][desc_size:4][b"jumd"][uuid:16]..., so the
+        // 16-byte UUID sits 4 bytes after the `jumd` marker and the enclosing superbox
+        // starts 12 bytes before it.
+        fn superbox_range(jumbf: &[u8], uuid_hex: &str) -> (usize, usize) {
+            let mut needle = b"jumd".to_vec();
+            needle.extend_from_slice(&hex::decode(uuid_hex).unwrap());
+            let jumd_pos = jumbf
+                .windows(needle.len())
+                .position(|w| w == needle.as_slice())
+                .expect("superbox present");
+            let start = jumd_pos - 12;
+            let size = u32::from_be_bytes(jumbf[start..start + 4].try_into().unwrap()) as usize;
+            (start, size)
+        }
+
+        fn add_u32(buf: &mut [u8], at: usize, delta: usize) {
+            let v = u32::from_be_bytes(buf[at..at + 4].try_into().unwrap());
+            buf[at..at + 4].copy_from_slice(&(v + delta as u32).to_be_bytes());
+        }
+
+        let store = create_test_store().unwrap();
+        let jumbf = store.to_jumbf_internal(0).unwrap();
+
+        // Sanity: the untouched manifest reads back fine.
+        let mut log = StatusTracker::default();
+        Store::from_jumbf(&jumbf, &mut log).expect("baseline manifest should read");
+
+        // Duplicate the assertion store superbox in place, right after the original.
+        let (as_start, as_len) = superbox_range(&jumbf, CAI_ASSERTION_STORE_UUID);
+        let as_end = as_start + as_len;
+        let (manifest_start, _) = superbox_range(&jumbf, CAI_MANIFEST_UUID);
+
+        let mut patched = Vec::with_capacity(jumbf.len() + as_len);
+        patched.extend_from_slice(&jumbf[..as_end]);
+        patched.extend_from_slice(&jumbf[as_start..as_end]);
+        patched.extend_from_slice(&jumbf[as_end..]);
+
+        // Grow the enclosing manifest superbox and the outer CAI block to cover the copy.
+        add_u32(&mut patched, manifest_start, as_len);
+        add_u32(&mut patched, 0, as_len);
+
+        let mut log = StatusTracker::default();
+        let result = Store::from_jumbf(&patched, &mut log);
+        assert!(
+            matches!(
+                result,
+                Err(Error::InvalidClaim(
+                    InvalidClaimError::C2paMultipleManifestBoxes
+                ))
+            ),
+            "duplicate assertion store must be rejected, got {result:?}"
         );
     }
 
