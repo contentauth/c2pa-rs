@@ -638,6 +638,8 @@ mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
+    use rasn::types::Any;
+    use rasn_pkix::Certificate;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
     use x509_parser::{num_bigint::BigInt, pem::Pem};
@@ -646,7 +648,10 @@ mod tests {
     use crate::{
         crypto::cose::{check_end_entity_certificate_profile, CertificateTrustPolicy},
         status_tracker::StatusTracker,
-        validation_results::validation_codes::SIGNING_CREDENTIAL_EXPIRED,
+        utils::ephemeral_cert::generate_ephemeral_chain,
+        validation_results::validation_codes::{
+            SIGNING_CREDENTIAL_EXPIRED, SIGNING_CREDENTIAL_INVALID,
+        },
     };
 
     #[test]
@@ -712,6 +717,63 @@ mod tests {
         check_end_entity_certificate_profile(&es384_cert, &ctp, &mut validation_log, None).unwrap();
         check_end_entity_certificate_profile(&es512_cert, &ctp, &mut validation_log, None).unwrap();
         check_end_entity_certificate_profile(&ps256_cert, &ctp, &mut validation_log, None).unwrap();
+    }
+
+    // https://datatracker.ietf.org/doc/html/rfc8410#section-3
+    // Ed25519 spec: "For all of the OIDs, the parameters MUST be absent."
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn ed25519_algorithm_parameters_must_be_absent() {
+        let der_null = Any::new(vec![0x05, 0x00]);
+        let ctp = CertificateTrustPolicy::default();
+
+        let chain = generate_ephemeral_chain("ed25519-profile.local").unwrap();
+
+        let mut validation_log = StatusTracker::default();
+        check_end_entity_certificate_profile(&chain.ee_der, &ctp, &mut validation_log, None)
+            .unwrap();
+
+        // ED25519 cert with parameters in spki
+        let mut cert: Certificate = rasn::der::decode(&chain.ee_der).unwrap();
+        cert.tbs_certificate
+            .subject_public_key_info
+            .algorithm
+            .parameters = Some(der_null.clone());
+        let malformed_spki = rasn::der::encode(&cert).unwrap();
+
+        let mut validation_log = StatusTracker::default();
+        assert!(check_end_entity_certificate_profile(
+            &malformed_spki,
+            &ctp,
+            &mut validation_log,
+            None
+        )
+        .is_err());
+        assert_eq!(
+            validation_log.logged_items()[0].validation_status,
+            Some(SIGNING_CREDENTIAL_INVALID.into())
+        );
+
+        // ED25519 cert with parameters in the issuers key
+        let mut cert: Certificate = rasn::der::decode(&chain.ee_der).unwrap();
+        cert.signature_algorithm.parameters = Some(der_null);
+        let malformed_sig_alg = rasn::der::encode(&cert).unwrap();
+
+        let mut validation_log = StatusTracker::default();
+        assert!(check_end_entity_certificate_profile(
+            &malformed_sig_alg,
+            &ctp,
+            &mut validation_log,
+            None
+        )
+        .is_err());
+        assert_eq!(
+            validation_log.logged_items()[0].validation_status,
+            Some(SIGNING_CREDENTIAL_INVALID.into())
+        );
     }
 
     fn x509_der_from_pem(cert_pem: &[u8]) -> Vec<u8> {
