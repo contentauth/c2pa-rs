@@ -3720,44 +3720,46 @@ mod tests {
     }
 
     #[test]
-    fn test_c2pa_builder_from_archive_signs_with_configured_label() {
+    fn test_c2pa_builder_archive_roundtrips_configured_label() {
         let context = unsafe { c2pa_context_new() };
         let builder = unsafe { c2pa_builder_from_context(context) };
         assert!(!builder.is_null());
-        let new_label = CString::new("urn:c2pa:00000000-0000-4000-8000-000000000000").unwrap();
+        let configured_label =
+            CString::new("urn:c2pa:00000000-0000-4000-8000-000000000000").unwrap();
         assert_eq!(
-            unsafe { c2pa_builder_set_label(builder, new_label.as_ptr()) },
+            unsafe { c2pa_builder_set_label(builder, configured_label.as_ptr()) },
             0
         );
 
-        let mut archive_stream = TestStream::new(Vec::new());
+        let mut builder_archive_stream = TestStream::new(Vec::new());
         let to_archive_result =
-            unsafe { c2pa_builder_to_archive(builder, archive_stream.as_ptr()) };
+            unsafe { c2pa_builder_to_archive(builder, builder_archive_stream.as_ptr()) };
         assert_eq!(to_archive_result, 0, "{:?}", CimplError::last_message());
         unsafe { c2pa_free(builder as *mut c_void) };
 
-        archive_stream.stream_mut().rewind().unwrap();
-        let empty_builder = unsafe { c2pa_builder_from_context(context) };
-        let restored_builder =
-            unsafe { c2pa_builder_with_archive(empty_builder, archive_stream.as_ptr()) };
+        builder_archive_stream.stream_mut().rewind().unwrap();
+        let builder_to_load = unsafe { c2pa_builder_from_context(context) };
+        let loaded_builder =
+            unsafe { c2pa_builder_with_archive(builder_to_load, builder_archive_stream.as_ptr()) };
         assert!(
-            !restored_builder.is_null(),
+            !loaded_builder.is_null(),
             "{:?}",
             CimplError::last_message()
         );
 
-        let mut restored_label: *mut c_char = std::ptr::null_mut();
-        let get_label_result = unsafe { c2pa_builder_label(restored_builder, &mut restored_label) };
+        let mut label_from_archive: *mut c_char = std::ptr::null_mut();
+        let get_label_result =
+            unsafe { c2pa_builder_label(loaded_builder, &mut label_from_archive) };
         assert_eq!(get_label_result, 1);
-        assert!(!restored_label.is_null());
-        let restored_label_owned = unsafe { CStr::from_ptr(restored_label) }.to_owned();
-        unsafe { c2pa_free(restored_label as *const c_void) };
+        assert!(!label_from_archive.is_null());
+        let label_from_archive_owned = unsafe { CStr::from_ptr(label_from_archive) }.to_owned();
+        unsafe { c2pa_free(label_from_archive as *const c_void) };
         assert_eq!(
-            restored_label_owned.to_str().unwrap(),
+            label_from_archive_owned.to_str().unwrap(),
             "urn:c2pa:00000000-0000-4000-8000-000000000000"
         );
 
-        unsafe { c2pa_free(restored_builder as *mut c_void) };
+        unsafe { c2pa_free(loaded_builder as *mut c_void) };
         unsafe { c2pa_free(context as *mut c_void) };
     }
 
