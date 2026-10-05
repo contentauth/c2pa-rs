@@ -457,7 +457,12 @@ mod compat {
             let mut uris = HashMap::with_capacity(seq.size_hint().unwrap_or(0));
             while let Some(entry) = seq.next_element::<StandardUriHashedDataMap>()? {
                 let (uri, map) = entry.into_parts();
-                uris.insert(uri, map);
+                if uris.insert(uri.clone(), map).is_some() {
+                    return Err(serde::de::Error::custom(format!(
+                        "duplicate uri in collection hash: {}",
+                        uri.display()
+                    )));
+                }
             }
             Ok(uris)
         }
