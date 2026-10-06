@@ -31,7 +31,8 @@ enum CommentStyle {
 }
 
 /// A.9.2 excludes `text/html` and `image/svg+xml`, which have their own embedding sections.
-static SUPPORTED_TYPES: [&str; 28] = [
+/// Other XML-based formats use the structured-text method with XML comment syntax.
+static SUPPORTED_TYPES: [&str; 33] = [
     "atom",
     "application/atom+xml",
     "css",
@@ -56,10 +57,38 @@ static SUPPORTED_TYPES: [&str; 28] = [
     "application/toml",
     "vtt",
     "text/vtt",
+    "xhtml",
+    "application/xhtml+xml",
+    "xml",
+    "application/xml",
+    "text/xml",
     "yaml",
     "yml",
     "application/yaml",
     "text/yaml",
+];
+
+/// Each extension's MIME type. The default [`AssetIO::mime_type_map`] pairs every extension
+/// with the first MIME type in [`SUPPORTED_TYPES`], which would resolve e.g. `script.py` to
+/// `application/atom+xml` and embed an XML comment in it. `ini` has no registered MIME type
+/// and stays resolved by extension.
+const EXTENSION_MIME_TYPES: [(&str, &str); 16] = [
+    ("atom", "application/atom+xml"),
+    ("css", "text/css"),
+    ("js", "text/javascript"),
+    ("mjs", "text/javascript"),
+    ("md", "text/markdown"),
+    ("markdown", "text/markdown"),
+    ("py", "text/x-python"),
+    ("rss", "application/rss+xml"),
+    ("sql", "application/sql"),
+    ("tex", "application/x-tex"),
+    ("toml", "application/toml"),
+    ("vtt", "text/vtt"),
+    ("xhtml", "application/xhtml+xml"),
+    ("xml", "application/xml"),
+    ("yaml", "application/yaml"),
+    ("yml", "application/yaml"),
 ];
 
 const PLACEHOLDER_STORE: &[u8] = b"placeholder manifest";
@@ -72,7 +101,12 @@ fn comment_style(asset_type: &str) -> Option<CommentStyle> {
         | "rss"
         | "application/rss+xml"
         | "atom"
-        | "application/atom+xml" => CommentStyle::Block("<!--", "-->"),
+        | "application/atom+xml"
+        | "xml"
+        | "application/xml"
+        | "text/xml"
+        | "xhtml"
+        | "application/xhtml+xml" => CommentStyle::Block("<!--", "-->"),
         "yaml" | "yml" | "application/yaml" | "text/yaml" | "toml" | "application/toml" | "py"
         | "text/x-python" => CommentStyle::Line("#"),
         "ini" => CommentStyle::Line(";"),
@@ -386,6 +420,13 @@ impl AssetIO for StructuredTextIO {
     fn supported_types(&self) -> &[&str] {
         &SUPPORTED_TYPES
     }
+
+    fn mime_type_map(&self) -> Vec<(String, String)> {
+        EXTENSION_MIME_TYPES
+            .iter()
+            .map(|(ext, mime)| (ext.to_string(), mime.to_string()))
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -403,6 +444,60 @@ mod tests {
         let mut output = Cursor::new(Vec::new());
         io.write_c2pa(&mut input, &mut output, store).unwrap();
         String::from_utf8(output.into_inner()).unwrap()
+    }
+
+    #[test]
+    fn each_extension_maps_to_its_own_mime_type() {
+        let map: std::collections::HashMap<String, String> =
+            StructuredTextIO::new("md").mime_type_map().into_iter().collect();
+        for (ext, mime) in [
+            ("md", "text/markdown"),
+            ("py", "text/x-python"),
+            ("yaml", "application/yaml"),
+            ("css", "text/css"),
+            ("atom", "application/atom+xml"),
+        ] {
+            assert_eq!(map.get(ext).map(String::as_str), Some(mime), "{ext}");
+        }
+
+        // resolving a file's format by extension must keep its comment syntax
+        let context = crate::Context::new();
+        let format = context.io().format_from_path("script.py").unwrap();
+        assert!(matches!(comment_style(&format), Some(CommentStyle::Line("#"))));
+    }
+
+    #[test]
+    fn xml_block_goes_after_content_when_file_has_xml_declaration() {
+        // the declaration must stay on the first line, so the block goes at the end (A.9.3.1)
+        let source = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<root><a>1</a></root>
+";
+        for asset_type in ["xml", "application/xml", "text/xml"] {
+            let out = embed(asset_type, source, b"xml store");
+            assert!(out.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<root>"));
+            assert!(out.trim_end().ends_with("-----END C2PA MANIFEST----- -->"));
+            assert_eq!(read_back(asset_type, &out).unwrap(), b"xml store");
+        }
+    }
+
+    #[test]
+    fn xml_without_declaration_and_xhtml_round_trip() {
+        let out = embed("xml", "<root/>
+", b"store");
+        assert!(out.starts_with("<!-- -----BEGIN C2PA MANIFEST----- data:application/c2pa;base64,"));
+        assert_eq!(read_back("xml", &out).unwrap(), b"store");
+
+        let xhtml = "<?xml version=\"1.0\"?>
+<html xmlns=\"http://www.w3.org/1999/xhtml\"><head><title>t</title></head><body/></html>
+";
+        let out = embed("xhtml", xhtml, b"xhtml store");
+        assert_eq!(read_back("application/xhtml+xml", &out).unwrap(), b"xhtml store");
+
+        let map: std::collections::HashMap<String, String> =
+            StructuredTextIO::new("xml").mime_type_map().into_iter().collect();
+        assert_eq!(map.get("xml").map(String::as_str), Some("application/xml"));
+        assert_eq!(map.get("xhtml").map(String::as_str), Some("application/xhtml+xml"));
     }
 
     fn read_back(asset_type: &str, text: &str) -> Result<Vec<u8>> {
