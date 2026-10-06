@@ -1067,6 +1067,11 @@ fn sniff_container_from_stream<R: Read + Seek>(stream: &mut R) -> Option<&'stati
         return Some("png");
     }
 
+    // Apache Parquet: PAR1
+    if n >= 4 && &buf[0..4] == b"PAR1" {
+        return Some("parquet");
+    }
+
     // GIF87a or GIF89a
     if n >= 6 && &buf[0..3] == b"GIF" && (&buf[3..6] == b"87a" || &buf[3..6] == b"89a") {
         return Some("gif");
