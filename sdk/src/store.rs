@@ -867,16 +867,15 @@ impl Store {
     fn get_assertion_from_jumbf_store(
         claim: &Claim,
         assertion_box: &JUMBFSuperBox,
-        label: &str,
         check_for_legacy_assertion: bool,
         validation_log: &mut StatusTracker,
     ) -> Result<ClaimAssertion> {
         let assertion_desc_box = assertion_box.desc_box();
 
-        let (raw_label, instance) = Claim::assertion_label_from_link(label);
-        let instance_label = Claim::label_with_instance(&raw_label, instance);
+        let label = assertion_desc_box.label();
+        let (raw_label, instance) = Claim::assertion_label_from_link(&label);
         let (assertion_hashed_uri, claim_assertion_type) = claim
-            .assertion_hashed_uri_from_label(&instance_label)
+            .assertion_hashed_uri_from_label(&label)
             .ok_or_else(|| {
                 log_item!(
                     label.to_owned(),
@@ -887,7 +886,7 @@ impl Store {
                 .failure_as_err(
                     validation_log,
                     Error::AssertionMissing {
-                        url: instance_label.to_string(),
+                        url: label.to_string(),
                     },
                 )
             })?;
@@ -924,7 +923,7 @@ impl Store {
                     )?;
                 }
 
-                let hash = Claim::calc_assertion_box_hash(label, &assertion, salt.clone(), &alg)?;
+                let hash = Claim::calc_assertion_box_hash(&label, &assertion, salt.clone(), &alg)?;
                 Ok(ClaimAssertion::new(
                     assertion,
                     instance,
@@ -944,7 +943,7 @@ impl Store {
                 let media_type = ef_box.media_type();
                 let assertion =
                     Assertion::from_data_binary(&raw_label, &media_type, data_box.data());
-                let hash = Claim::calc_assertion_box_hash(label, &assertion, salt.clone(), &alg)?;
+                let hash = Claim::calc_assertion_box_hash(&label, &assertion, salt.clone(), &alg)?;
                 Ok(ClaimAssertion::new(
                     assertion,
                     instance,
@@ -976,7 +975,7 @@ impl Store {
                     )?;
                 }
 
-                let hash = Claim::calc_assertion_box_hash(label, &assertion, salt.clone(), &alg)?;
+                let hash = Claim::calc_assertion_box_hash(&label, &assertion, salt.clone(), &alg)?;
                 Ok(ClaimAssertion::new(
                     assertion,
                     instance,
@@ -997,8 +996,7 @@ impl Store {
                 if uuid_str == C2PA_REDACTION_UUID {
                     let data = uuid_box.data();
                     if !is_zero(data) {
-                        let assertion_absolute_uri =
-                            to_assertion_uri(claim.label(), &instance_label);
+                        let assertion_absolute_uri = to_assertion_uri(claim.label(), &label);
                         log_item!(
                             assertion_absolute_uri,
                             "redacted assertion data must be zeros or empty",
@@ -1014,7 +1012,7 @@ impl Store {
                     }
                 }
 
-                let hash = Claim::calc_assertion_box_hash(label, &assertion, salt.clone(), &alg)?;
+                let hash = Claim::calc_assertion_box_hash(&label, &assertion, salt.clone(), &alg)?;
                 Ok(ClaimAssertion::new(
                     assertion,
                     instance,
@@ -1517,14 +1515,11 @@ impl Store {
                 let assertion_box = assertion_store_box
                     .data_box_as_superbox(idx)
                     .ok_or(Error::JumbfBoxNotFound)?;
-                let assertion_desc_box = assertion_box.desc_box();
 
                 // Add assertions to claim after validation
-                let label = assertion_desc_box.label();
                 match Store::get_assertion_from_jumbf_store(
                     &claim,
                     assertion_box,
-                    &label,
                     check_for_legacy_assertion,
                     validation_log,
                 ) {
@@ -2029,12 +2024,17 @@ impl Store {
 
                 // save the ocsp_ders stored in the StoreValidationInfo
                 for ocsp_der in certificate_status_assertion.as_ref() {
-                    if let Ok(response) = OcspResponse::from_der_checked(
+                    // OCSP status codes refer to the claim signature box
+                    validation_log.push_current_uri(found_claim.signature_uri());
+                    let checked = OcspResponse::from_der_checked(
                         ocsp_der,
                         &signing_cert_chain,
                         None,
                         validation_log,
-                    ) {
+                    );
+                    validation_log.pop_current_uri();
+
+                    if let Ok(response) = checked {
                         let ocsp_ders = svi
                             .certificate_statuses
                             .entry(response.certificate_serial_num)
@@ -4554,7 +4554,10 @@ impl Store {
                 }
 
                 let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
-                let ocsp_response_der = if _sync {
+
+                // OCSP status codes refer to the claim signature box
+                validation_log.push_current_uri(claim.signature_uri());
+                let ocsp_response = if _sync {
                     fetch_and_check_ocsp_response(
                         &sign1,
                         &data,
@@ -4562,8 +4565,7 @@ impl Store {
                         None,
                         validation_log,
                         context,
-                    )?
-                    .ocsp_der
+                    )
                 } else {
                     fetch_and_check_ocsp_response_async(
                         &sign1,
@@ -4573,9 +4575,10 @@ impl Store {
                         validation_log,
                         context,
                     )
-                    .await?
-                    .ocsp_der
+                    .await
                 };
+                validation_log.pop_current_uri();
+                let ocsp_response_der = ocsp_response?.ocsp_der;
 
                 if !ocsp_response_der.is_empty() {
                     oscp_response_ders.push((manifest_label, ocsp_response_der));
