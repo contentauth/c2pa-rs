@@ -4830,7 +4830,9 @@ pub(crate) fn check_ocsp_status(
 ) -> Result<OcspResponse> {
     // Moved here instead of c2pa-crypto because of the dependency on settings.
 
-    let fetch_policy = if context.settings().verify.ocsp_fetch {
+    let fetch_policy = if context.settings().verify.ocsp_fetch
+        || context.settings().verify.ocsp_fetch_should_override
+    {
         OcspFetchPolicy::FetchAllowed
     } else {
         OcspFetchPolicy::DoNotFetch

@@ -61,6 +61,24 @@ pub fn check_ocsp_status(
     validation_log: &mut StatusTracker,
     context: &Context,
 ) -> Result<OcspResponse, CoseError> {
+    if fetch_policy == OcspFetchPolicy::FetchAllowed
+        && context.settings().verify.ocsp_fetch_should_override
+    {
+        return if _sync {
+            fetch_and_check_ocsp_response(sign1, data, ctp, tst_info, validation_log, context)
+        } else {
+            fetch_and_check_ocsp_response_async(
+                sign1,
+                data,
+                ctp,
+                tst_info,
+                validation_log,
+                context,
+            )
+            .await
+        };
+    }
+
     if context
         .settings()
         .builder
@@ -1254,5 +1272,130 @@ mod tests {
             &context,
         );
         assert!(log2.has_status(SIGNING_CREDENTIAL_OCSP_INACCESSIBLE));
+    }
+
+    #[test]
+    fn check_ocsp_status_fetch_override_bypasses_staple() {
+        use std::{
+            io::Read,
+            sync::{
+                atomic::{AtomicUsize, Ordering},
+                Arc,
+            },
+        };
+
+        use coset::{cbor::value::Value, CoseSign1, Header, Label, ProtectedHeader};
+        use http::{Request, Response};
+
+        use super::{check_ocsp_status, OcspFetchPolicy};
+        use crate::{
+            context::Context,
+            crypto::cose::{CertificateTrustPolicy, TrustAnchorType},
+            http::{HttpResolverError, SyncHttpResolver},
+            settings::Settings,
+            status_tracker::StatusTracker,
+            validation_status::{
+                SIGNING_CREDENTIAL_OCSP_INACCESSIBLE, SIGNING_CREDENTIAL_REVOKED,
+            },
+        };
+
+        let full_chain = cert_chain_pem_to_der(include_bytes!(
+            "../../../tests/fixtures/crypto/ocsp/ocsp_chain.pem"
+        ))
+        .unwrap();
+        let revoked =
+            include_bytes!("../../../tests/fixtures/crypto/ocsp/response_revoked.der").to_vec();
+
+        let mut unprotected = Header::default();
+        unprotected.rest.push((
+            Label::Text("x5chain".to_string()),
+            Value::Array(full_chain.iter().cloned().map(Value::Bytes).collect()),
+        ));
+        unprotected.rest.push((
+            Label::Text("rVals".to_string()),
+            Value::Map(vec![(
+                Value::Text("ocspVals".to_string()),
+                Value::Array(vec![Value::Bytes(revoked)]),
+            )]),
+        ));
+        let sign1 = CoseSign1 {
+            protected: ProtectedHeader::default(),
+            unprotected,
+            payload: None,
+            signature: vec![0u8; 8],
+        };
+
+        let responder = include_bytes!("../../../tests/fixtures/crypto/ocsp/ocsp_responder.pem");
+        let mut anchored = CertificateTrustPolicy::new();
+        anchored
+            .add_trust_anchors(
+                include_bytes!("../../../tests/fixtures/crypto/ocsp/ocsp_chain.pem"),
+                "https://c2pa-rs/test",
+                TrustAnchorType::Manifest,
+                None,
+            )
+            .unwrap();
+        anchored.add_end_entity_credentials(responder).unwrap();
+
+        #[derive(Clone)]
+        struct CountingFailingResolver(Arc<AtomicUsize>);
+
+        impl SyncHttpResolver for CountingFailingResolver {
+            fn http_resolve(
+                &self,
+                _request: Request<Vec<u8>>,
+            ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Ok(Response::builder()
+                    .status(404)
+                    .body(Box::new(std::io::empty()) as Box<dyn Read>)
+                    .unwrap())
+            }
+        }
+
+        // Case 1 (default verify.ocsp_fetch_should_override == false, OcspFetchPolicy::FetchAllowed):
+        // calling check_ocsp_status uses the stapled revoked response and does NOT query the resolver.
+        let counter1 = Arc::new(AtomicUsize::new(0));
+        let context1 = Context::new().with_resolver(CountingFailingResolver(counter1.clone()));
+        let mut log1 = StatusTracker::default();
+        let result1 = check_ocsp_status(
+            &sign1,
+            b"data",
+            OcspFetchPolicy::FetchAllowed,
+            &anchored,
+            None,
+            None,
+            &mut log1,
+            &context1,
+        );
+        assert!(result1.is_err());
+        assert!(log1.has_status(SIGNING_CREDENTIAL_REVOKED));
+        assert_eq!(counter1.load(Ordering::SeqCst), 0);
+
+        // Case 2 (verify.ocsp_fetch_should_override == true, OcspFetchPolicy::FetchAllowed):
+        // calling check_ocsp_status bypasses the stapled revoked response and queries the resolver.
+        let counter2 = Arc::new(AtomicUsize::new(0));
+        let settings = Settings::new()
+            .with_json(r#"{"verify": {"ocsp_fetch": true, "ocsp_fetch_should_override": true}}"#)
+            .unwrap();
+        let context2 = Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .with_resolver(CountingFailingResolver(counter2.clone()));
+        let mut log2 = StatusTracker::default();
+        let result2 = check_ocsp_status(
+            &sign1,
+            b"data",
+            OcspFetchPolicy::FetchAllowed,
+            &anchored,
+            None,
+            None,
+            &mut log2,
+            &context2,
+        );
+        assert!(result2.is_ok());
+        assert!(log2.has_status(SIGNING_CREDENTIAL_OCSP_INACCESSIBLE));
+        assert!(!log2.has_status(SIGNING_CREDENTIAL_REVOKED));
+        assert!(counter2.load(Ordering::SeqCst) > 0);
     }
 }
