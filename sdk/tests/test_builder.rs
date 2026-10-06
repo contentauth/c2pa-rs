@@ -1008,6 +1008,94 @@ fn test_builder_unsupported_format_remote_url_rejected() -> Result<()> {
     Ok(())
 }
 
+/// CSV and TSV have a record grammar that cannot hold a manifest, so the C2PA specification
+/// requires an external (sidecar) manifest covering the complete file. Each case is signed by
+/// extension to check that the extension resolves to the IANA media type.
+const DELIMITED_TEXT_CASES: [(&str, &str, &[u8]); 2] = [
+    (
+        "csv",
+        "text/csv",
+        b"id,name,score\r\n1,\"Smith, J\",9.5\r\n2,Lee,8.0\r\n",
+    ),
+    (
+        "tsv",
+        "text/tab-separated-values",
+        b"id\tname\tscore\n1\tSmith\t9.5\n2\tLee\t8.0\n",
+    ),
+];
+
+#[test]
+fn test_builder_delimited_text_sidecar() -> Result<()> {
+    let context = Context::new().with_settings(test_settings())?.into_shared();
+
+    for (ext, mime, data) in DELIMITED_TEXT_CASES {
+        let mut builder = Builder::from_shared_context(&context);
+        builder.set_intent(BuilderIntent::Edit);
+        builder.set_no_embed(true);
+
+        let mut source = Cursor::new(data);
+        let mut dest = Cursor::new(Vec::new());
+        let manifest_data = builder.save_to_stream(ext, &mut source, &mut dest)?;
+
+        // The asset itself is left untouched.
+        assert_eq!(dest.into_inner(), data, "{ext}: output differs from input");
+
+        source.rewind()?;
+        let reader = Reader::from_shared_context(&context).with_manifest_data_and_stream(
+            &manifest_data,
+            mime,
+            &mut source,
+        )?;
+        assert_eq!(reader.validation_state(), ValidationState::Trusted, "{ext}");
+        // The parent ingredient's `dc:format` is the IANA media type, not the extension.
+        let ingredients = reader.active_manifest().unwrap().ingredients();
+        assert_eq!(ingredients[0].format(), Some(mime), "{ext}");
+
+        // The data hash covers every byte, including the first and last.
+        for pos in [0, data.len() - 1] {
+            let mut tampered = data.to_vec();
+            tampered[pos] ^= 0x01;
+            let reader = Reader::from_shared_context(&context).with_manifest_data_and_stream(
+                &manifest_data,
+                mime,
+                Cursor::new(tampered),
+            )?;
+            assert_eq!(
+                reader.validation_state(),
+                ValidationState::Invalid,
+                "{ext}: byte {pos} not covered by the data hash"
+            );
+            assert!(reader
+                .validation_status()
+                .unwrap_or_default()
+                .iter()
+                .any(|s| s.code() == validation_status::ASSERTION_DATAHASH_MISMATCH));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn test_builder_delimited_text_embed_rejected() -> Result<()> {
+    let context = Context::new().with_settings(test_settings())?.into_shared();
+
+    for (ext, mime, data) in DELIMITED_TEXT_CASES {
+        for format in [ext, mime] {
+            let mut builder = Builder::from_shared_context(&context);
+            builder.set_intent(BuilderIntent::Edit);
+            // no_embed is NOT set: embedding into CSV or TSV is not allowed.
+
+            let mut dest = Cursor::new(Vec::new());
+            let result = builder.save_to_stream(format, &mut Cursor::new(data), &mut dest);
+            assert!(
+                matches!(result, Err(Error::UnsupportedType)),
+                "{format}: expected UnsupportedType, got {result:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn test_builder_compressed_manifests() -> Result<()> {
     let mut settings = test_settings();
