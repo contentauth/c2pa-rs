@@ -437,4 +437,55 @@ mod tests {
         assert!(!key_matches(ES384, SigningAlg::Es256));
         assert!(!key_matches(ES512, SigningAlg::Es256));
     }
+
+    /// A chain whose end-entity certificate carries no `O=` (Organization)
+    /// attribute. Every other chain under `tests/fixtures/certs` includes one,
+    /// so this is the only fixture that exercises the missing-attribute path.
+    const ES256_NO_ORG_CHAIN: &[u8] =
+        include_bytes!("../../../tests/fixtures/certs/es256_no_org.pub");
+    const ES256_NO_ORG_KEY: &[u8] =
+        include_bytes!("../../../tests/fixtures/certs/es256_no_org.pem");
+
+    /// A certificate without an Organization attribute is missing optional
+    /// information, not a verification failure (#2262, fixed in #2540).
+    ///
+    /// `verify_signature` must still succeed, and `issuer_org` must come back as
+    /// `None` rather than the whole call erroring out.
+    #[test]
+    fn verify_signature_succeeds_without_organization_attribute() {
+        use c2pa_raw_crypto::signer_from_private_key;
+
+        use crate::{
+            crypto::{
+                cert_chain_pem_to_der,
+                cose::{sign, RawSignerCoseSigner, TimeStampStorage, Verifier},
+            },
+            status_tracker::StatusTracker,
+        };
+
+        let signer = signer_from_private_key(ES256_NO_ORG_KEY, SigningAlg::Es256).unwrap();
+        let cert_chain = cert_chain_pem_to_der(ES256_NO_ORG_CHAIN).unwrap();
+
+        let data: &[u8] = b"c2pa certificate info regression payload";
+        let cose_sign1 = sign(
+            &RawSignerCoseSigner::new(signer.as_ref(), &cert_chain),
+            data,
+            None,
+            TimeStampStorage::V1_sigTst,
+        )
+        .unwrap();
+
+        let mut validation_log = StatusTracker::default();
+        // Before #2540 this call failed outright with
+        // `CoseError::MissingSigningCertificateChain` for a chain like this one.
+        let cert_info = Verifier::IgnoreProfileAndTrustPolicy
+            .verify_signature(&cose_sign1, data, b"", None, &mut validation_log)
+            .unwrap();
+
+        // The absent attribute surfaces as `None`, not as a hard error.
+        assert_eq!(cert_info.issuer_org, None);
+        // The rest of the certificate info is still extracted as usual.
+        assert_eq!(cert_info.common_name.as_deref(), Some("C2PA Signer"));
+        assert!(cert_info.validated);
+    }
 }
