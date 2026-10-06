@@ -169,7 +169,9 @@ uuid = { version = "1.23.2", features = ["serde", "v4"] }
 web-time = "1.1"
 x509-parser = "0.18.1"
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
-zip = { version = "8.6.0", default-features = false }
+zip = { version = "8.6.0", default-features = false, features = [
+    "deflate-flate2-zlib-rs",
+] }
 
 # lopdf's rayon needs real threads: native always has them, WASM only with atomics.
 [target.'cfg(any(not(target_arch = "wasm32"), target_feature = "atomics"))'.dependencies]
