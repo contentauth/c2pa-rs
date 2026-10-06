@@ -605,12 +605,21 @@ pub struct Verify {
     /// Whether to fetch the certificates OCSP status during validation.
     ///
     /// Revocation status is checked in the following order:
-    /// 1. The OCSP staple stored in the COSE claim of the manifest
-    /// 2. Otherwise if `ocsp_fetch` is enabled, it fetches a new OCSP status
-    /// 3. Otherwise if `ocsp_fetch` is disabled, it checks `CertificateStatus` assertions
+    /// 1. If [`Verify::ocsp_fetch_should_override`] is enabled, it fetches a new OCSP status
+    /// 2. Otherwise, the OCSP staple stored in the COSE claim of the manifest
+    /// 3. Otherwise if `ocsp_fetch` is enabled, it fetches a new OCSP status
+    /// 4. Otherwise if `ocsp_fetch` is disabled, it checks `CertificateStatus` assertions
     ///
     /// The default value is false.
     pub ocsp_fetch: bool,
+    /// Whether to always fetch a live OCSP response during validation, overriding any
+    /// stapled OCSP response in the COSE claim or [`CertificateStatus`] assertions.
+    ///
+    /// The default value is false.
+    ///
+    /// [`CertificateStatus`]: crate::assertions::CertificateStatus
+    #[serde(default)]
+    pub ocsp_fetch_should_override: bool,
     /// Whether to fetch remote manifests in the following scenarios:
     /// - Constructing a [`Reader`]
     /// - Adding an [`Ingredient`] to the [`Builder`]
@@ -648,6 +657,7 @@ impl Default for Verify {
             verify_trust: true,
             verify_timestamp_trust: !cfg!(test), // verify timestamp trust unless in test mode
             ocsp_fetch: false,
+            ocsp_fetch_should_override: false,
             remote_manifest_fetch: true,
             skip_ingredient_conflict_resolution: false,
             strict_v1_validation: false,
