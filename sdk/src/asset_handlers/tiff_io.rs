@@ -654,12 +654,17 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
     }
 
     // Start with a copy of the source file to writer, then we will adjust the IFDs and add new tags as needed.
-    // Use this constructor if you are cloning with C2PA mode
+    // Use this constructor if you are cloning with C2PA mode.
+    //
+    // `copy_len`, if given, copies only that many leading bytes of the source. It drops a trailing
+    // C2PA manifest (and an IFD about to be rewritten) that would otherwise be left in the file
+    // unreferenced; see `trailing_c2pa_cut`.
     pub fn new_from_source<R: Read + Seek + ?Sized>(
         endianness: Endianness,
         big_tiff: bool,
         writer: T,
         source: &mut R,
+        copy_len: Option<u64>,
     ) -> Result<TiffCloner<T>> {
         let bo = ByteOrdered::runtime(writer, endianness);
 
@@ -674,7 +679,17 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
 
         // start with copy of source file to writer, then we will adjust the IFDs and add new tags as needed
         source.rewind()?;
-        std::io::copy(source, tc.writer.inner_mut())?;
+        match copy_len {
+            Some(len) => {
+                let copied = std::io::copy(&mut source.take(len), tc.writer.inner_mut())?;
+                if copied != len {
+                    return Err(Error::InvalidAsset("TIFF/DNG out of range".to_string()));
+                }
+            }
+            None => {
+                std::io::copy(source, tc.writer.inner_mut())?;
+            }
+        }
         source.rewind()?;
 
         Ok(tc)
@@ -1369,10 +1384,16 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
                         self.big_tiff,
                     )?;
 
-                    // read old data
+                    // read old data: just the manifest, not whatever follows it in the file
                     let mut c2pa_buf: Vec<u8> = safe_vec(existing_c2pa_entry.value_count, None)?;
                     self.writer.seek(SeekFrom::Start(c2pa_offset))?;
-                    std::io::copy(&mut self.writer, &mut c2pa_buf)?;
+                    let copied = std::io::copy(
+                        &mut (&mut self.writer).take(existing_c2pa_entry.value_count),
+                        &mut c2pa_buf,
+                    )?;
+                    if copied != existing_c2pa_entry.value_count {
+                        return Err(Error::InvalidAsset("TIFF/DNG out of range".to_string()));
+                    }
 
                     // write manifest at the end of asset
                     let new_c2pa_offset = self.writer.seek(SeekFrom::End(0))?;
@@ -2280,6 +2301,54 @@ impl<T: Read + Write + Seek> TiffCloner<T> {
     }
 }
 
+/// How a clone changes the C2PA manifest, for [`trailing_c2pa_cut`].
+enum C2paChange {
+    /// Replaced by a manifest of this many bytes.
+    Replace(u64),
+    Remove,
+}
+
+/// When the existing C2PA manifest is the last thing in the file and is being replaced by one of a
+/// different size, or removed, returns how many leading bytes of the source to copy so that it
+/// isn't left in the file unreferenced. A same-size replacement is patched in place instead.
+///
+/// For a single-page TIFF, whose first IFD is rewritten, the cut also drops that IFD when it
+/// directly precedes the manifest, since nothing else refers to it. A multi-page TIFF keeps its
+/// C2PA IFD: the cloner re-reads the IFD chain before unlinking it.
+fn trailing_c2pa_cut(
+    last_ifd: &ImageFileDirectory,
+    single_page: bool,
+    endianness: Endianness,
+    big_tiff: bool,
+    source_len: u64,
+    change: C2paChange,
+) -> Result<Option<u64>> {
+    let Some(entry) = last_ifd.entries.get(&C2PA_TAG) else {
+        return Ok(None);
+    };
+    let inline_len = if big_tiff { 8 } else { 4 };
+    if entry.entry_type != C2PA_FIELD_TYPE || entry.value_count <= inline_len {
+        return Ok(None);
+    }
+    let manifest_offset = decode_offset(entry.value_offset, endianness, big_tiff)?;
+    if manifest_offset.checked_add(entry.value_count) != Some(source_len) {
+        return Ok(None);
+    }
+    if matches!(change, C2paChange::Replace(len) if len == entry.value_count) {
+        return Ok(None);
+    }
+
+    let (count_len, entry_len, next_len) = if big_tiff { (8, 20, 8) } else { (2, 12, 4) };
+    let ifd_end = last_ifd
+        .offset
+        .checked_add(count_len + last_ifd.entry_cnt * entry_len + next_len);
+    if single_page && ifd_end == Some(manifest_offset) {
+        Ok(Some(last_ifd.offset))
+    } else {
+        Ok(Some(manifest_offset))
+    }
+}
+
 fn tiff_clone_with_tags<R: Read + Seek + ?Sized, W: Read + Write + Seek + ?Sized>(
     asset_writer: &mut W,
     asset_reader: &mut R,
@@ -2293,8 +2362,24 @@ fn tiff_clone_with_tags<R: Read + Seek + ?Sized, W: Read + Write + Seek + ?Sized
         big_tiff,
     } = map_tiff(asset_reader)?;
 
+    let copy_len = match (
+        tiff_tags.iter().find(|t| t.entry_tag == C2PA_TAG),
+        page_tokens.last(),
+    ) {
+        (Some(new_c2pa), Some(last_page)) => trailing_c2pa_cut(
+            &tiff_tree[*last_page].data,
+            page_tokens.len() == 1,
+            endianness,
+            big_tiff,
+            stream_len(asset_reader)?,
+            C2paChange::Replace(new_c2pa.value_count),
+        )?,
+        _ => None,
+    };
+
     let mut bo = ByteOrdered::new(asset_writer, endianness);
-    let mut tc = TiffCloner::new_from_source(endianness, big_tiff, &mut bo, asset_reader)?;
+    let mut tc =
+        TiffCloner::new_from_source(endianness, big_tiff, &mut bo, asset_reader, copy_len)?;
 
     tc.clone_c2pa_mode(
         asset_reader,
@@ -2600,8 +2685,16 @@ impl C2paWriter for TiffIO {
 
         // we remove tag if found and rewrite the file
         if tiff_tree[*last_page].data.entries.contains_key(&C2PA_TAG) {
+            let copy_len = trailing_c2pa_cut(
+                &tiff_tree[*last_page].data,
+                page_tokens.len() == 1,
+                e,
+                big_tiff,
+                stream_len(input_stream)?,
+                C2paChange::Remove,
+            )?;
             let mut bo = ByteOrdered::new(output_stream, e);
-            let mut tc = TiffCloner::new_from_source(e, big_tiff, &mut bo, input_stream)?;
+            let mut tc = TiffCloner::new_from_source(e, big_tiff, &mut bo, input_stream, copy_len)?;
 
             tc.clone_c2pa_mode(
                 input_stream,
@@ -3572,4 +3665,112 @@ pub mod tests {
         println!("IFD {}", idfs[token].data.entry_cnt);
     }
     */
+
+    fn fixture(name: &str) -> Vec<u8> {
+        std::fs::read(crate::utils::test::fixture_path(name)).unwrap()
+    }
+
+    fn write(input: &[u8], store: &[u8]) -> Vec<u8> {
+        let mut output = Cursor::new(Vec::new());
+        TiffIO {}
+            .write_c2pa(&mut Cursor::new(input), &mut output, store)
+            .unwrap();
+        output.into_inner()
+    }
+
+    fn occurrences(haystack: &[u8], needle: &[u8]) -> usize {
+        haystack
+            .windows(needle.len())
+            .filter(|w| *w == needle)
+            .count()
+    }
+
+    /// Distinct, recognizable manifest stand-ins of the given length.
+    fn manifest(marker: u8, len: usize) -> Vec<u8> {
+        (0..len).map(|i| marker ^ (i % 251) as u8).collect()
+    }
+
+    #[test]
+    fn test_resign_replaces_trailing_manifest() {
+        let (first, larger, smaller) = (manifest(1, 1000), manifest(2, 3000), manifest(3, 500));
+        for name in ["test.tiff", "MultiPage.tif"] {
+            let original = fixture(name);
+
+            let mut current = write(&original, &first);
+            for next in [&larger, &smaller] {
+                current = write(&current, next);
+            }
+
+            assert_eq!(
+                TiffIO {}.read_c2pa(&mut Cursor::new(&current)).unwrap(),
+                smaller,
+                "{name}"
+            );
+            // No earlier manifest is left in the file, and re-signing gives the same size as
+            // signing the original once.
+            assert_eq!(occurrences(&current, &first), 0, "{name}");
+            assert_eq!(occurrences(&current, &larger), 0, "{name}");
+            assert_eq!(current.len(), write(&original, &smaller).len(), "{name}");
+        }
+    }
+
+    #[test]
+    fn test_same_size_resign_patches_in_place() {
+        // The signing flow writes a placeholder, then the final manifest of the same size.
+        let original = fixture("test.tiff");
+        let placeholder = write(&original, &[0; 800]);
+        let signed = write(&placeholder, &manifest(4, 800));
+        assert_eq!(signed.len(), placeholder.len());
+        assert_eq!(
+            TiffIO {}.read_c2pa(&mut Cursor::new(&signed)).unwrap(),
+            manifest(4, 800)
+        );
+    }
+
+    #[test]
+    fn test_remove_drops_trailing_manifest() {
+        let store = manifest(5, 1000);
+        for name in ["test.tiff", "MultiPage.tif"] {
+            let signed = write(&fixture(name), &store);
+            let mut removed = Cursor::new(Vec::new());
+            TiffIO {}
+                .remove_c2pa(&mut Cursor::new(&signed), &mut removed)
+                .unwrap();
+            let removed = removed.into_inner();
+
+            assert!(matches!(
+                TiffIO {}.read_c2pa(&mut Cursor::new(&removed)),
+                Err(Error::JumbfNotFound)
+            ));
+            assert_eq!(occurrences(&removed, &store), 0, "{name}");
+        }
+    }
+
+    #[test]
+    fn test_xmp_update_relocates_only_the_manifest() {
+        // Writing XMP to a signed multi-page TIFF rewrites its first IFD and moves the
+        // manifest to the end of the file. Only the manifest is moved.
+        let store = manifest(6, 2000);
+        let signed = write(&fixture("MultiPage.tif"), &store);
+        let xmp = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"/>"#;
+        let mut updated = Cursor::new(Vec::new());
+        TiffIO {}
+            .write_xmp(&mut Cursor::new(&signed), &mut updated, xmp)
+            .unwrap();
+        let updated = updated.into_inner();
+
+        assert_eq!(
+            TiffIO {}.read_c2pa(&mut Cursor::new(&updated)).unwrap(),
+            store
+        );
+        let last = updated
+            .windows(store.len())
+            .rposition(|w| w == store.as_slice())
+            .unwrap();
+        assert_eq!(
+            last + store.len(),
+            updated.len(),
+            "data follows the manifest"
+        );
+    }
 }
