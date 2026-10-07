@@ -7544,18 +7544,23 @@ mod tests {
         // Every save's `c2pa.edited` action should still be traceable on the final manifest,
         // even though the manifests that originally recorded them (saves 1..CHAIN_DEPTH - 1)
         // were dropped -- their non-inception actions get flattened forward on each compaction.
-        let actions: Actions = active
-            .find_assertion(Actions::LABEL)
-            .expect("active manifest should have an actions assertion");
-        let edited_count = actions
-            .actions()
+        let edited_count: usize = active
+            .assertions()
             .iter()
-            .filter(|a| a.action() == c2pa_action::EDITED)
-            .count();
+            .filter(|assertion| assertion.label().starts_with(Actions::LABEL))
+            .map(|assertion| {
+                assertion
+                    .to_assertion::<Actions>()
+                    .expect("actions assertion should deserialize")
+                    .actions()
+                    .iter()
+                    .filter(|action| action.action() == c2pa_action::EDITED)
+                    .count()
+            })
+            .sum();
         assert_eq!(
             edited_count, CHAIN_DEPTH,
-            "every save's c2pa.edited action should survive compaction, flattened onto the \
-             final manifest"
+            "every save's c2pa.edited action should survive compaction on the final manifest"
         );
     }
 
