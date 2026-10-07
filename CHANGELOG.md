@@ -9,6 +9,19 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.91.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.91.1...c2pa-v0.91.2)
+_06 October 2026_
+
+### Fixed
+
+* Derive manifest box order from JUMBF type UUID, not label (backport #2739) ([#2784](https://github.com/contentauth/c2pa-rs/pull/2784))
+* Reject BMFF Merkle proof boxes with non-sequential locations (backport #2702) ([#2740](https://github.com/contentauth/c2pa-rs/pull/2740))
+* Limit xref-decompression in lopdf to 64 MB (CAI-13300) (backport #2744) ([#2776](https://github.com/contentauth/c2pa-rs/pull/2776))
+* Reject thumbnails in update manifests (CAI-13254) (backport #2743) ([#2777](https://github.com/contentauth/c2pa-rs/pull/2777))
+* Do not depend on target dir location in test (backport #2754) ([#2763](https://github.com/contentauth/c2pa-rs/pull/2763))
+* Rust 1.99 Clippy warning (backport #2749) ([#2750](https://github.com/contentauth/c2pa-rs/pull/2750))
+* Only encode claim CBOR with specVersion if it's present in claim (backport #2746) ([#2747](https://github.com/contentauth/c2pa-rs/pull/2747))
+
 ## [0.91.1](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.91.0...c2pa-v0.91.1)
 _26 September 2026_
 
