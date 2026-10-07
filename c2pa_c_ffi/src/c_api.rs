@@ -1799,7 +1799,7 @@ pub unsafe extern "C" fn c2pa_builder_set_label(
     builder_ptr: *mut C2paBuilder,
     label: *const c_char,
 ) -> c_int {
-    let mut builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
     let label = cstr_or_return_int!(label);
     builder.definition.label = Some(label);
     0 as c_int
@@ -3174,7 +3174,7 @@ unsafe fn c2pa_mime_types_to_c_array(strs: Vec<String>, count: *mut usize) -> *c
 #[cfg(test)]
 mod tests {
     use std::{
-        ffi::CString,
+        ffi::{CStr, CString},
         io::{Read, Seek},
         panic::catch_unwind,
     };
