@@ -2825,7 +2825,7 @@ pub unsafe extern "C" fn c2pa_identity_signer_create(
 /// A [`CredentialHolder`] backed by a C callback.
 struct CallbackCredentialHolder {
     context: *const (),
-    sig_type: &'static str,
+    sig_type: String,
     reserve_size: usize,
     callback: CredentialHolderCallback,
 }
@@ -2836,8 +2836,8 @@ unsafe impl Send for CallbackCredentialHolder {}
 unsafe impl Sync for CallbackCredentialHolder {}
 
 impl CredentialHolder for CallbackCredentialHolder {
-    fn sig_type(&self) -> &'static str {
-        self.sig_type
+    fn sig_type(&self) -> &str {
+        &self.sig_type
     }
 
     fn reserve_size(&self) -> usize {
@@ -2957,11 +2957,6 @@ pub unsafe extern "C" fn c2pa_identity_signer_create_with_credential_holder(
 
     let refs: Vec<&str> = referenced_assertions.iter().map(|s| s.as_str()).collect();
     let role_refs: Vec<&str> = roles.iter().map(|s| s.as_str()).collect();
-
-    // `CredentialHolder::sig_type` returns `&'static str`; the value is owned by
-    // the holder for the life of the signer, so leaking one small string per
-    // signer creation is the cost of matching that trait.
-    let sig_type: &'static str = Box::leak(sig_type.into_boxed_str());
 
     let holder = CallbackCredentialHolder {
         context: context as *const (),
@@ -6279,6 +6274,82 @@ verify_after_sign = true
         let error = unsafe { CString::from_raw(c2pa_error()) };
         assert!(error.to_str().unwrap().contains("reserve_size"));
         unsafe { c2pa_free(signer as *const c_void) };
+    }
+
+    /// Returns a fixed signature without touching shared test state.
+    unsafe extern "C" fn fixed_credential_holder(
+        _context: *const (),
+        _data: *const c_uchar,
+        _len: usize,
+        signed_bytes: *mut c_uchar,
+        signed_len: usize,
+    ) -> isize {
+        let signature: &[u8] = b"OWNED-SIG-TYPE-SIGNATURE";
+        if signature.len() > signed_len {
+            return -1;
+        }
+        std::ptr::copy_nonoverlapping(signature.as_ptr(), signed_bytes, signature.len());
+        signature.len() as isize
+    }
+
+    /// The holder copies `sig_type` at creation, so the caller may free its
+    /// string before signing and the signed manifest still carries the value.
+    #[test]
+    #[allow(deprecated)]
+    fn test_credential_holder_owns_sig_type_after_caller_frees_it() {
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+        assert_eq!(
+            unsafe {
+                c2pa_builder_set_intent(
+                    builder,
+                    C2paBuilderIntent::Create,
+                    C2paDigitalSourceType::DigitalCapture,
+                )
+            },
+            0
+        );
+        let sig_type = CString::new("INVALID.identity.owned_sig_type").unwrap();
+        let signer = unsafe {
+            c2pa_identity_signer_create_with_credential_holder(
+                signer,
+                sig_type.as_ptr(),
+                1024,
+                std::ptr::null(),
+                fixed_credential_holder,
+                std::ptr::null(),
+                std::ptr::null(),
+            )
+        };
+        assert!(!signer.is_null(), "{:?}", CimplError::last_message());
+        drop(sig_type);
+
+        let mut source = TestStream::new(include_bytes!(fixture_path!("IMG_0003.jpg")).to_vec());
+        let mut dest = TestStream::new(Vec::new());
+        let format = CString::new("image/jpeg").unwrap();
+        let mut manifest = std::ptr::null();
+        let result = unsafe {
+            c2pa_builder_sign(
+                builder,
+                format.as_ptr(),
+                source.as_ptr(),
+                dest.as_ptr(),
+                signer,
+                &mut manifest,
+            )
+        };
+        assert!(result > 0, "{:?}", CimplError::last_message());
+
+        dest.stream_mut().rewind().unwrap();
+        let reader = c2pa::Reader::default()
+            .with_stream("image/jpeg", &mut *dest.stream_mut())
+            .unwrap();
+        assert!(reader.json().contains("INVALID.identity.owned_sig_type"));
+
+        unsafe {
+            c2pa_free(manifest as *const c_void);
+            c2pa_free(signer as *const c_void);
+            c2pa_free(builder as *const c_void);
+        }
     }
 
     /// Verify that `c2pa_identity_signer_create` fails gracefully when either
