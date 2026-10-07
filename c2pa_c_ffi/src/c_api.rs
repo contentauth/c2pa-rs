@@ -258,8 +258,9 @@ pub type SignerCallback = unsafe extern "C" fn(
 /// `data` holds the CBOR serialization of the identity assertion's
 /// `signer_payload` (`len` bytes): the same bytes an X.509 holder signs.
 /// The callback writes the signature bytes into `signed_bytes` (capacity
-/// `signed_len`, the `reserve_size` given at creation) and returns the number
-/// of bytes written, or a negative value on failure.
+/// `signed_len`, computed from the complete assertion reservation and the actual
+/// signer payload) and returns the number of bytes written, or a negative value
+/// on failure.
 ///
 /// The callback may block (for example on a network request) and must be
 /// safe to call more than once for one signing operation.
@@ -2849,14 +2850,29 @@ impl CredentialHolder for CallbackCredentialHolder {
         c2pa_cbor::to_writer(&mut payload_cbor, signer_payload)
             .map_err(|e| IdentityBuilderError::CborGenerationError(e.to_string()))?;
 
-        let mut signed_bytes: Vec<u8> = vec![0; self.reserve_size];
+        let capacity = c2pa::identity::builder::IdentityAssertionBuilder::signature_capacity(
+            signer_payload,
+            self.reserve_size,
+        )
+        .map_err(|e| IdentityBuilderError::CborGenerationError(e.to_string()))?;
+        // Retain the creation-time allocation envelope for legacy callbacks,
+        // while advertising and enforcing only the usable signature capacity.
+        let mut signed_bytes = Vec::new();
+        signed_bytes
+            .try_reserve_exact(self.reserve_size)
+            .map_err(|e| {
+                IdentityBuilderError::SignerError(format!(
+                    "signature buffer allocation failed: {e}"
+                ))
+            })?;
+        signed_bytes.resize(self.reserve_size, 0);
         let signed_size = unsafe {
             (self.callback)(
                 self.context,
                 payload_cbor.as_ptr(),
                 payload_cbor.len(),
                 signed_bytes.as_mut_ptr(),
-                self.reserve_size,
+                capacity,
             )
         };
         if signed_size < 0 {
@@ -2865,7 +2881,7 @@ impl CredentialHolder for CallbackCredentialHolder {
             )));
         }
         let signed_size = signed_size as usize;
-        if signed_size > self.reserve_size {
+        if signed_size > capacity {
             return Err(IdentityBuilderError::BoxSizeTooSmall);
         }
         signed_bytes.truncate(signed_size);
@@ -2894,8 +2910,10 @@ impl CredentialHolder for CallbackCredentialHolder {
 /// * `c2pa_signer`: A `C2paSigner` used to sign the C2PA claim. Consumed by this call.
 /// * `sig_type`: The identity assertion's `sig_type` (NULL-terminated UTF-8), for example
 ///   `cawg.identity_claims_aggregation`.
-/// * `reserve_size`: The maximum size in bytes of the signature the callback will return.
-///   Signing fails if the callback returns more.
+/// * `reserve_size`: The reserved size of the COMPLETE encoded identity assertion,
+///   including signer payload, signature and padding. The callback's `signed_len`
+///   is the actual remaining signature capacity and may be smaller. Signing fails
+///   if the payload cannot fit or the callback returns more than `signed_len`.
 /// * `context`: An opaque pointer passed back to the callback.
 /// * `callback`: The [`CredentialHolderCallback`].
 /// * `referenced_assertions`: A NULL-terminated array of NULL-terminated UTF-8 strings naming
@@ -2906,7 +2924,7 @@ impl CredentialHolder for CallbackCredentialHolder {
 ///
 /// # Errors
 /// Returns NULL if the signer pointer is NULL, `sig_type` is NULL or empty, or
-/// `reserve_size` is 0; call `c2pa_error` to retrieve the error string. On failure the
+/// `reserve_size` is 0 or exceeds ISIZE_MAX; call `c2pa_error` for details. On failure the
 /// input signer is NOT consumed.
 ///
 /// # Safety
@@ -2944,8 +2962,8 @@ pub unsafe extern "C" fn c2pa_identity_signer_create_with_credential_holder(
         CimplError::null_parameter("sig_type (empty)").set_last();
         return std::ptr::null_mut();
     }
-    if reserve_size == 0 {
-        CimplError::null_parameter("reserve_size (0)").set_last();
+    if reserve_size == 0 || reserve_size > isize::MAX as usize {
+        CimplError::other("reserve_size must be between 1 and ISIZE_MAX").set_last();
         return std::ptr::null_mut();
     }
     // Every parameter is validated before the signer is consumed, so a failed
@@ -6034,6 +6052,220 @@ verify_after_sign = true
     /// `signer_payload` CBOR it was handed and returns a recognizable signature.
     static HOLDER_CALLS: std::sync::Mutex<Vec<Vec<u8>>> = std::sync::Mutex::new(Vec::new());
 
+    struct CapacityCallbackState {
+        short_by: usize,
+        oversized_return: bool,
+        offered: std::sync::atomic::AtomicUsize,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    #[test]
+    fn credential_callback_retains_allocation_but_enforces_logical_capacity() {
+        struct LegacyCallbackState {
+            reserve_size: usize,
+            return_oversized: bool,
+            offered: std::sync::atomic::AtomicUsize,
+        }
+
+        unsafe extern "C" fn legacy_credential_holder(
+            context: *const (),
+            _data: *const c_uchar,
+            _len: usize,
+            out: *mut c_uchar,
+            capacity: usize,
+        ) -> isize {
+            let state = &*(context as *const LegacyCallbackState);
+            state
+                .offered
+                .store(capacity, std::sync::atomic::Ordering::SeqCst);
+            // Deliberately model a legacy callback that uses its original
+            // reservation rather than signed_len. The retained buffer makes
+            // this write bounded, but the public callback contract forbids it.
+            std::ptr::write_bytes(out, 0xa5, state.reserve_size);
+            if state.return_oversized {
+                state.reserve_size as isize
+            } else {
+                capacity as isize
+            }
+        }
+
+        use c2pa::identity::{builder::IdentityBuilderError, SignerPayload};
+
+        let payload = SignerPayload {
+            referenced_assertions: vec![],
+            sig_type: "INVALID.legacy_callback".into(),
+            roles: vec![],
+        };
+        for return_oversized in [false, true] {
+            let state = LegacyCallbackState {
+                reserve_size: 512,
+                return_oversized,
+                offered: std::sync::atomic::AtomicUsize::new(0),
+            };
+            let holder = CallbackCredentialHolder {
+                context: &state as *const _ as *const (),
+                sig_type: "INVALID.legacy_callback",
+                reserve_size: state.reserve_size,
+                callback: legacy_credential_holder,
+            };
+            let result = holder.sign(&payload);
+            let offered = state.offered.load(std::sync::atomic::Ordering::SeqCst);
+            assert!(offered > 0 && offered < state.reserve_size);
+            if return_oversized {
+                assert!(matches!(result, Err(IdentityBuilderError::BoxSizeTooSmall)));
+            } else {
+                assert_eq!(result.unwrap(), vec![0xa5; offered]);
+            }
+        }
+    }
+
+    unsafe extern "C" fn capacity_credential_holder(
+        context: *const (),
+        _data: *const c_uchar,
+        _len: usize,
+        out: *mut c_uchar,
+        capacity: usize,
+    ) -> isize {
+        use std::sync::atomic::Ordering;
+        let state = &*(context as *const CapacityCallbackState);
+        state.offered.store(capacity, Ordering::SeqCst);
+        state.calls.fetch_add(1, Ordering::SeqCst);
+        if state.oversized_return {
+            return capacity as isize + 1;
+        }
+        let Some(written) = capacity.checked_sub(state.short_by) else {
+            return -1;
+        };
+        std::ptr::write_bytes(out, 0xa5, written);
+        written as isize
+    }
+
+    /// The callback is offered the signature capacity left in the complete
+    /// assertion reservation, and any result up to that capacity fills the
+    /// reservation exactly. An over-reported count fails without panicking.
+    #[test]
+    #[allow(deprecated)]
+    fn credential_callback_capacity_fills_complete_reservation() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use c2pa::{
+            dynamic_assertion::{DynamicAssertion, DynamicAssertionContent, PartialClaim},
+            identity::builder::IdentityAssertionBuilder,
+        };
+
+        for budget in [1, 23, 24, 25, 255, 256, 512, 1024, 65535, 65536] {
+            for short_by in [0, 1, 2, 14, 15, 16, 23, 24] {
+                let state = CapacityCallbackState {
+                    short_by,
+                    oversized_return: false,
+                    offered: AtomicUsize::new(0),
+                    calls: AtomicUsize::new(0),
+                };
+                let holder = CallbackCredentialHolder {
+                    context: &state as *const _ as *const (),
+                    sig_type: "INVALID.capacity_callback",
+                    reserve_size: budget,
+                    callback: capacity_credential_holder,
+                };
+                let iab = IdentityAssertionBuilder::for_credential_holder(holder);
+                let content = iab.content("cawg.identity", Some(budget), &PartialClaim::default());
+                if state.calls.load(Ordering::SeqCst) == 0 {
+                    assert!(
+                        content.is_err(),
+                        "undersized wrapper must fail before callback"
+                    );
+                } else {
+                    let DynamicAssertionContent::Cbor(bytes) = content.unwrap() else {
+                        panic!("expected CBOR")
+                    };
+                    assert_eq!(bytes.len(), budget);
+                    let value: c2pa_cbor::Value = c2pa_cbor::from_slice(&bytes).unwrap();
+                    let c2pa_cbor::Value::Map(map) = value else {
+                        panic!("expected map")
+                    };
+                    let c2pa_cbor::Value::Bytes(sig) =
+                        &map[&c2pa_cbor::Value::Text("signature".into())]
+                    else {
+                        panic!("expected signature bytes")
+                    };
+                    assert_eq!(sig.len(), state.offered.load(Ordering::SeqCst) - short_by);
+                    assert!(state.offered.load(Ordering::SeqCst) < budget);
+                }
+            }
+        }
+
+        // Exercise the actual extern-C path, including a lying return count.
+        // A panic in that path aborts the test process rather than unwinding.
+        for oversized_return in [false, true] {
+            let state = CapacityCallbackState {
+                short_by: 0,
+                oversized_return,
+                offered: AtomicUsize::new(0),
+                calls: AtomicUsize::new(0),
+            };
+            let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+            let sig_type = CString::new("INVALID.capacity_callback").unwrap();
+            assert_eq!(
+                unsafe {
+                    c2pa_builder_set_intent(
+                        builder,
+                        C2paBuilderIntent::Create,
+                        C2paDigitalSourceType::DigitalCapture,
+                    )
+                },
+                0
+            );
+            let signer = unsafe {
+                c2pa_identity_signer_create_with_credential_holder(
+                    signer,
+                    sig_type.as_ptr(),
+                    1024,
+                    &state as *const _ as *const c_void,
+                    capacity_credential_holder,
+                    std::ptr::null(),
+                    std::ptr::null(),
+                )
+            };
+            assert!(!signer.is_null());
+            let mut source =
+                TestStream::new(include_bytes!(fixture_path!("IMG_0003.jpg")).to_vec());
+            let mut dest = TestStream::new(Vec::new());
+            let format = CString::new("image/jpeg").unwrap();
+            let mut manifest = std::ptr::null();
+            let result = unsafe {
+                c2pa_builder_sign(
+                    builder,
+                    format.as_ptr(),
+                    source.as_ptr(),
+                    dest.as_ptr(),
+                    signer,
+                    &mut manifest,
+                )
+            };
+            assert!(state.calls.load(Ordering::SeqCst) > 0);
+            assert_eq!(
+                result > 0,
+                !oversized_return,
+                "{:?}",
+                CimplError::last_message()
+            );
+            if !oversized_return {
+                dest.stream_mut().rewind().unwrap();
+                let reader = c2pa::Reader::default()
+                    .with_stream("image/jpeg", &mut *dest.stream_mut())
+                    .unwrap();
+                assert!(reader.json().contains("INVALID.capacity_callback"));
+            }
+            unsafe {
+                if !manifest.is_null() {
+                    c2pa_free(manifest as *const c_void);
+                }
+                c2pa_free(signer as *const c_void);
+                c2pa_free(builder as *const c_void);
+            }
+        }
+    }
+
     unsafe extern "C" fn test_credential_holder(
         context: *const (),
         data: *const c_uchar,
@@ -6276,6 +6508,23 @@ verify_after_sign = true
             )
         };
         assert!(result.is_null(), "expected NULL for reserve_size 0");
+        let error = unsafe { CString::from_raw(c2pa_error()) };
+        assert!(error.to_str().unwrap().contains("reserve_size"));
+        let result = unsafe {
+            c2pa_identity_signer_create_with_credential_holder(
+                signer,
+                sig_type.as_ptr(),
+                usize::MAX,
+                &marker as *const &[u8] as *const c_void,
+                test_credential_holder,
+                refs.as_ptr(),
+                refs.as_ptr(),
+            )
+        };
+        assert!(
+            result.is_null(),
+            "oversized reservation must not allocate or consume signer"
+        );
         let error = unsafe { CString::from_raw(c2pa_error()) };
         assert!(error.to_str().unwrap().contains("reserve_size"));
         unsafe { c2pa_free(signer as *const c_void) };
