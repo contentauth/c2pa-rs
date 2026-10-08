@@ -3352,19 +3352,25 @@ mod bmff_hash_tests {
     }
 
     /// Parsed boxes for required-field regressions, not a signed or playable asset.
-    fn fragmented_init_hash_fixture() -> (Vec<u8>, BmffHash) {
+    fn fragmented_init_hash_fixture(version: usize) -> (Vec<u8>, BmffHash) {
         use crate::asset_handlers::bmff_io::{write_c2pa_box, MERKLE};
 
         let init = tm_box(b"moov", &[]);
         let moof = tm_box(b"moof", &[]);
         let mdat = tm_box(b"mdat", b"ordinary fragment");
         let mut init_digest = Sha256::new();
-        init_digest.update(0u64.to_be_bytes());
+        if version > 1 {
+            init_digest.update(0u64.to_be_bytes());
+        }
         init_digest.update(&init);
         let mut leaf_digest = Sha256::new();
-        leaf_digest.update((init.len() as u64).to_be_bytes());
+        if version > 1 {
+            leaf_digest.update((init.len() as u64).to_be_bytes());
+        }
         leaf_digest.update(&moof);
-        leaf_digest.update(((init.len() + moof.len()) as u64).to_be_bytes());
+        if version > 1 {
+            leaf_digest.update(((init.len() + moof.len()) as u64).to_be_bytes());
+        }
         leaf_digest.update(&mdat);
         let mut asset = [init, moof, mdat].concat();
         let proof = BmffMerkleMap {
@@ -3382,6 +3388,7 @@ mod bmff_hash_tests {
         )
         .unwrap();
         let mut assertion = BmffHash::new("required initHash", "sha256", None);
+        assertion.set_bmff_version(version);
         assertion.set_default_exclusions();
         assertion.set_merkle(vec![MerkleMap {
             unique_id: 1,
@@ -3398,9 +3405,8 @@ mod bmff_hash_tests {
 
     #[test]
     fn whole_file_fragmented_map_requires_init_hash() {
-        for version in [2, 3] {
-            let (asset, mut assertion) = fragmented_init_hash_fixture();
-            assertion.set_bmff_version(version);
+        for version in [1, 2, 3] {
+            let (asset, mut assertion) = fragmented_init_hash_fixture(version);
             assertion.merkle.as_mut().unwrap()[0].init_hash = None;
             let result = assertion.verify_stream_hash(&mut Cursor::new(asset), None);
             assert!(
@@ -3413,9 +3419,8 @@ mod bmff_hash_tests {
 
     #[test]
     fn whole_file_fragmented_map_with_init_hash_verifies() {
-        for version in [2, 3] {
-            let (asset, mut assertion) = fragmented_init_hash_fixture();
-            assertion.set_bmff_version(version);
+        for version in [1, 2, 3] {
+            let (asset, assertion) = fragmented_init_hash_fixture(version);
             assertion
                 .verify_stream_hash(&mut Cursor::new(asset), None)
                 .unwrap();
@@ -3424,26 +3429,30 @@ mod bmff_hash_tests {
 
     #[test]
     fn whole_file_fragmented_file_hash_does_not_replace_init_hash() {
-        let (asset, mut assertion) = fragmented_init_hash_fixture();
-        assertion
-            .gen_hash_from_stream(&mut Cursor::new(&asset))
-            .unwrap();
-        assert!(assertion.hash().is_some());
-        assertion.merkle.as_mut().unwrap()[0].init_hash = None;
-        assert!(matches!(
-            assertion.verify_stream_hash(&mut Cursor::new(asset), None),
-            Err(Error::C2PAValidation(code)) if code == ASSERTION_BMFFHASH_MALFORMED
-        ));
+        for version in [1, 2, 3] {
+            let (asset, mut assertion) = fragmented_init_hash_fixture(version);
+            assertion
+                .gen_hash_from_stream(&mut Cursor::new(&asset))
+                .unwrap();
+            assert!(assertion.hash().is_some());
+            assertion.merkle.as_mut().unwrap()[0].init_hash = None;
+            assert!(matches!(
+                assertion.verify_stream_hash(&mut Cursor::new(asset), None),
+                Err(Error::C2PAValidation(code)) if code == ASSERTION_BMFFHASH_MALFORMED
+            ));
+        }
     }
 
     #[test]
     fn whole_file_fragmented_incorrect_init_hash_is_a_mismatch() {
-        let (asset, mut assertion) = fragmented_init_hash_fixture();
-        assertion.merkle.as_mut().unwrap()[0].init_hash = Some(ByteBuf::from(vec![0; 32]));
-        assert!(matches!(
-            assertion.verify_stream_hash(&mut Cursor::new(asset), None),
-            Err(Error::HashMismatch(_))
-        ));
+        for version in [1, 2, 3] {
+            let (asset, mut assertion) = fragmented_init_hash_fixture(version);
+            assertion.merkle.as_mut().unwrap()[0].init_hash = Some(ByteBuf::from(vec![0; 32]));
+            assert!(matches!(
+                assertion.verify_stream_hash(&mut Cursor::new(asset), None),
+                Err(Error::HashMismatch(message)) if message == "BMFF file level hash mismatch"
+            ));
+        }
     }
 
     fn tm_fullbox(fourcc: &[u8; 4], payload: &[u8]) -> Vec<u8> {
