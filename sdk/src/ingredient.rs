@@ -14,7 +14,7 @@
 #![deny(missing_docs)]
 #[cfg(feature = "file_io")]
 use std::path::Path;
-use std::{borrow::Cow, io::Cursor, sync::Arc};
+use std::{borrow::Cow, sync::Arc};
 
 use async_generic::async_generic;
 use log::debug;
@@ -31,7 +31,7 @@ use crate::{
         self, labels, AssertionMetadata, AssetType, CertificateStatus, DigitalSourceType,
         EmbeddedData, Relationship,
     },
-    claim::{Claim, ClaimAssetData},
+    claim::Claim,
     context::Context,
     crypto::base64,
     error::{Error, Result},
@@ -43,10 +43,8 @@ use crate::{
             DATABOXES,
         },
     },
-    log_item,
     read_seek::ReadSeek,
     resource_store::{ResourceRef, ResourceStore, StoreResolver},
-    settings::get_thread_local_settings,
     status_tracker::StatusTracker,
     store::Store,
     utils::{
@@ -182,64 +180,6 @@ impl Ingredient {
     /// * `title` - A user-displayable name for this ingredient (often a filename).
     /// * `format` - The MIME media type of the ingredient, for example `image/jpeg`.
     /// * `instance_id` - A unique identifier, such as the value of the ingredient's `xmpMM:InstanceID`.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use c2pa::Ingredient;
-    /// let ingredient = Ingredient::new("title", "image/jpeg", "ed610ae51f604002be3dbf0c589a2f1f");
-    /// ```
-    ///
-    /// Use [`Builder::add_ingredient_from_stream`](crate::Builder::add_ingredient_from_stream)
-    /// to derive an `Ingredient` from an asset instead of constructing a standalone one from scratch.
-    #[deprecated(
-        since = "0.91.0",
-        note = "Building a standalone `Ingredient` from scratch is no longer the recommended pattern. Use `Builder::add_ingredient_from_stream` to derive an `Ingredient` from an asset instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub fn new<S>(title: S, format: S, instance_id: S) -> Self
-    where
-        S: Into<String>,
-    {
-        Self {
-            title: Some(title.into()),
-            format: Some(format.into()),
-            instance_id: Some(instance_id.into()),
-            ..Default::default()
-        }
-    }
-
-    /// Constructs a new V2 `Ingredient`.
-    ///
-    /// # Arguments
-    ///
-    /// * `title` - A user-displayable name for this ingredient (often a filename).
-    /// * `format` - The MIME media type of the ingredient, for example `image/jpeg`.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use c2pa::Ingredient;
-    /// let ingredient = Ingredient::new_v2("title", "image/jpeg");
-    /// ```
-    ///
-    /// Use [`Builder::add_ingredient_from_stream`](crate::Builder::add_ingredient_from_stream)
-    /// to derive an `Ingredient` from an asset instead of constructing a standalone one from scratch.
-    #[deprecated(
-        since = "0.91.0",
-        note = "Building a standalone `Ingredient` from scratch is no longer the recommended pattern. Use `Builder::add_ingredient_from_stream` to derive an `Ingredient` from an asset instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub fn new_v2<S1, S2>(title: S1, format: S2) -> Self
-    where
-        S1: Into<String>,
-        S2: Into<String>,
-    {
-        Self {
-            title: Some(title.into()),
-            format: Some(format.into()),
-            ..Default::default()
-        }
-    }
-
     // try to determine if this is a V2 ingredient
     // pub(crate) fn is_v2(&self) -> bool {
     //     self.instance_id.is_none()
@@ -818,25 +758,6 @@ impl Ingredient {
         (assertion.content_type(), assertion.data())
     }
 
-    /// Creates an `Ingredient` from a stream using thread-local settings.
-    ///
-    /// This does not set title or hash.
-    /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
-    ///
-    /// Pass an explicit [`Context`](crate::Context) via `add_stream_internal` instead.
-    #[deprecated(
-        since = "0.88.0",
-        note = "Use `with_stream` with an explicit `Context` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub fn from_stream(format: &str, stream: &mut dyn ReadSeek) -> Result<Self> {
-        // Legacy behavior: explicitly get global settings for backward compatibility
-        let settings = get_thread_local_settings();
-        let context = Context::new().with_settings(settings)?;
-        let ingredient = Self::from_stream_info(stream, format, "untitled");
-        stream.rewind()?;
-        ingredient.add_stream_internal(format, stream, &context)
-    }
-
     /// Create an Ingredient from JSON.
     pub fn from_json(json: &str) -> Result<Self> {
         serde_json::from_str(json).map_err(Error::JsonError)
@@ -972,98 +893,6 @@ impl Ingredient {
         self.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream), context)?;
 
         Ok(self)
-    }
-
-    /// Creates an `Ingredient` from a memory buffer (async version) using thread-local settings.
-    ///
-    /// This does not set title or hash.
-    /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
-    ///
-    /// Use [`Builder::from_context`](crate::Builder::from_context) with an explicit [`Context`](crate::Context) instead.
-    #[deprecated(
-        since = "0.79.4",
-        note = "Use `with_stream` with an explicit `Context` instead of relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    #[allow(deprecated)]
-    pub async fn from_memory_async(format: &str, buffer: &[u8]) -> Result<Self> {
-        let mut stream = Cursor::new(buffer);
-        Self::from_stream_async(format, &mut stream).await
-    }
-
-    /// Creates an `Ingredient` from a stream (async version) using thread-local settings.
-    ///
-    /// This does not set title or hash.
-    /// Thumbnail will be set only if one can be retrieved from a previous valid manifest.
-    ///
-    /// Use [`Builder::from_context`](crate::Builder::from_context) with an explicit [`Context`](crate::Context) instead.
-    #[deprecated(
-        since = "0.79.4",
-        note = "Use `with_stream_async` with an explicit `Context` instead of relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub async fn from_stream_async(format: &str, stream: &mut dyn ReadSeek) -> Result<Self> {
-        // Legacy behavior: explicitly get global settings for backward compatibility
-        let settings = get_thread_local_settings();
-        let context = Context::new().with_settings(settings)?;
-        Self::from_stream_async_with_settings(format, stream, &context).await
-    }
-
-    pub(crate) async fn from_stream_async_with_settings(
-        format: &str,
-        stream: &mut dyn ReadSeek,
-        context: &Context,
-    ) -> Result<Self> {
-        let mut ingredient = Self::from_stream_info(stream, format, "untitled");
-        stream.rewind()?;
-
-        let mut validation_log = StatusTracker::default();
-
-        // retrieve the manifest bytes from embedded, sidecar or remote and convert to store if found
-        let (result, manifest_bytes) =
-            match Store::load_jumbf_from_stream_async(format, stream, context).await {
-                Ok((manifest_bytes, _)) => {
-                    (
-                        // generate a store from the buffer and then validate from the asset path
-                        match Store::from_jumbf_with_context(
-                            &manifest_bytes,
-                            &mut validation_log,
-                            context,
-                        ) {
-                            Ok(store) => {
-                                // verify the store
-                                Store::verify_store_async(
-                                    &store,
-                                    Some(&mut ClaimAssetData::Stream(stream, format)),
-                                    &mut validation_log,
-                                    context,
-                                )
-                                .await
-                                .map(|_| store)
-                            }
-                            Err(e) => {
-                                log_item!(
-                                    "asset",
-                                    "error loading asset",
-                                    "Ingredient::from_stream_async"
-                                )
-                                .failure_no_throw(&mut validation_log, &e);
-
-                                Err(e)
-                            }
-                        },
-                        Some(manifest_bytes),
-                    )
-                }
-                Err(err) => (Err(err), None),
-            };
-
-        // set validation status from result and log
-        ingredient.update_validation_status(result, manifest_bytes, &validation_log, context)?;
-
-        // create a thumbnail if we don't already have a manifest with a thumb we can use
-        #[cfg(feature = "add_thumbnails")]
-        ingredient.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream), context)?;
-
-        Ok(ingredient)
     }
 
     /// Creates an Ingredient from a store and a URI to an ingredient assertion.
@@ -1481,110 +1310,6 @@ impl Ingredient {
         )
     }
 
-    /// Asynchronously create an Ingredient from a binary manifest (.c2pa) and asset bytes,
-    /// using thread-local settings.
-    ///
-    /// Use [`Ingredient::from_manifest_and_asset_stream_async`] with an explicit
-    /// [`Context`](crate::Context) instead.
-    ///
-    /// # Example: Create an Ingredient from a binary manifest (.c2pa) and asset bytes
-    /// ```
-    /// use c2pa::{Result, Ingredient};
-    ///
-    /// # fn main() -> Result<()> {
-    /// #    async {
-    ///         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
-    ///         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
-    ///
-    ///         let ingredient = Ingredient::from_manifest_and_asset_bytes_async(manifest_bytes.to_vec(), "image/jpeg", asset_bytes)
-    ///             .await
-    ///             .unwrap();
-    ///
-    ///         println!("{}", ingredient);
-    /// #    };
-    /// #
-    /// #    Ok(())
-    /// }
-    /// ```
-    #[deprecated(
-        since = "0.79.4",
-        note = "Pass an explicit `Context` via `from_manifest_and_asset_stream_async` instead of relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    #[allow(deprecated)]
-    pub async fn from_manifest_and_asset_bytes_async<M: Into<Vec<u8>>>(
-        manifest_bytes: M,
-        format: &str,
-        asset_bytes: &[u8],
-    ) -> Result<Self> {
-        let mut stream = Cursor::new(asset_bytes);
-        Self::from_manifest_and_asset_stream_async(manifest_bytes, format, &mut stream).await
-    }
-
-    /// Asynchronously create an Ingredient from a binary manifest (.c2pa) and asset,
-    /// using thread-local settings.
-    ///
-    /// Pass an explicit [`Context`](crate::Context) instead of relying on thread-local settings.
-    #[deprecated(
-        since = "0.79.4",
-        note = "Pass an explicit `Context` instead of relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub async fn from_manifest_and_asset_stream_async<M: Into<Vec<u8>>>(
-        manifest_bytes: M,
-        format: &str,
-        stream: &mut dyn ReadSeek,
-    ) -> Result<Self> {
-        // Legacy behavior: explicitly get global settings for backward compatibility
-        let settings = get_thread_local_settings();
-        let context = Context::new().with_settings(settings)?;
-        let mut ingredient = Self::from_stream_info(stream, format, "untitled");
-
-        let mut validation_log = StatusTracker::default();
-
-        let manifest_bytes: Vec<u8> = manifest_bytes.into();
-        // generate a store from the buffer and then validate from the asset path
-        let result =
-            match Store::from_jumbf_with_context(&manifest_bytes, &mut validation_log, &context) {
-                Ok(store) => {
-                    // verify the store
-                    stream.rewind()?;
-
-                    Store::verify_store_async(
-                        &store,
-                        Some(&mut ClaimAssetData::Stream(stream, format)),
-                        &mut validation_log,
-                        &context,
-                    )
-                    .await
-                    .map(|_| store)
-                }
-                Err(e) => {
-                    // add a log entry for the error so we act like verify
-                    log_item!(
-                        "asset",
-                        "error loading file",
-                        "from_manifest_and_asset_stream_async"
-                    )
-                    .failure_no_throw(&mut validation_log, &e);
-
-                    Err(e)
-                }
-            };
-
-        // set validation status from result and log
-        ingredient.update_validation_status(
-            result,
-            Some(manifest_bytes),
-            &validation_log,
-            &context,
-        )?;
-
-        // create a thumbnail if we don't already have a manifest with a thumb we can use
-        #[cfg(feature = "add_thumbnails")]
-        ingredient.maybe_add_thumbnail(format, &mut std::io::BufReader::new(stream), &context)?;
-
-        Ok(ingredient)
-    }
-
     /// Automatically generate a thumbnail for the ingredient if missing and enabled in settings.
     ///
     /// This function takes into account the [Settings][crate::settings::Settings]:
@@ -1740,6 +1465,7 @@ mod tests {
     #![allow(deprecated)]
 
     use c2pa_macros::c2pa_test_async;
+    use std::io::Cursor;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::*;
 
@@ -1778,7 +1504,10 @@ mod tests {
         wasm_bindgen_test
     )]
     fn test_ingredient_api() {
-        let mut ingredient = Ingredient::new("title", "format", "instance_id");
+        let mut ingredient = Ingredient::from_json(
+            r#"{"title":"title","format":"format","instance_id":"instance_id"}"#,
+        )
+        .unwrap();
         ingredient
             .resources_mut()
             .add("id", "data".as_bytes().to_vec())
@@ -1833,7 +1562,10 @@ mod tests {
 
     #[test]
     fn test_digital_source_type() {
-        let mut ingredient = Ingredient::new("title", "format", "instance_id");
+        let mut ingredient = Ingredient::from_json(
+            r#"{"title":"title","format":"format","instance_id":"instance_id"}"#,
+        )
+        .unwrap();
         assert_eq!(ingredient.digital_source_type(), None);
 
         ingredient.set_digital_source_type(DigitalSourceType::TrainedAlgorithmicData);
@@ -1978,26 +1710,25 @@ mod tests {
 
     #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory_and_manifest() {
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
-
         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let manifest_bytes = include_bytes!("../tests/fixtures/cloud_manifest.c2pa");
         let format = "image/jpeg";
-        let ingredient = Ingredient::from_manifest_and_asset_bytes_async(
-            manifest_bytes.to_vec(),
-            format,
-            asset_bytes,
-        )
-        .await
-        .unwrap();
+        let context = crate::Context::new()
+            .with_settings(r#"{"verify": {"verify_trust": false}}"#)
+            .unwrap();
+        let reader = Reader::from_context(context)
+            .with_manifest_data_and_stream(
+                manifest_bytes,
+                format,
+                std::io::Cursor::new(asset_bytes),
+            )
+            .unwrap();
         #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
         web_sys::console::debug_2(
             &"ingredient_from_memory_async:".into(),
-            &ingredient.to_string().into(),
+            &reader.to_string().into(),
         );
-        assert_eq!(ingredient.validation_status(), None);
-        assert!(ingredient.manifest_data().is_some());
-        assert!(ingredient.provenance().is_some());
+        assert_eq!(reader.validation_status(), None);
     }
 
     #[c2pa_test_async]
@@ -2007,22 +1738,21 @@ mod tests {
         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let bad_manifest_bytes = b"not a real c2pa manifest".to_vec();
         let format = "image/jpeg";
-        let ingredient = Ingredient::from_manifest_and_asset_bytes_async(
-            bad_manifest_bytes,
+        let result = Reader::default().with_manifest_data_and_stream(
+            &bad_manifest_bytes,
             format,
-            asset_bytes,
-        )
-        .await
-        .expect("ingredient should load even with a bad manifest");
-
-        assert_eq!(ingredient.format(), Some(format));
-        let statuses = ingredient.validation_status().unwrap();
-        assert_eq!(statuses[0].code(), validation_status::GENERAL_ERROR);
+            std::io::Cursor::new(asset_bytes),
+        );
+        assert!(
+            result.is_err(),
+            "invalid detached manifests must be rejected"
+        );
     }
 
     #[test]
     fn test_ingredient_thumbnail_uri_is_absolute() {
-        let mut ingredient = Ingredient::new_v2("Test Ingredient", "image/jpeg");
+        let mut ingredient =
+            Ingredient::from_json(r#"{"title":"Test Ingredient","format":"image/jpeg"}"#).unwrap();
         ingredient
             .set_thumbnail("image/jpeg", b"a super real thumbnail".to_vec())
             .unwrap();
@@ -2232,7 +1962,10 @@ mod tests {
     fn test_file_based_ingredient() {
         let mut folder = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         folder.push("tests/fixtures");
-        let mut ingredient = Ingredient::new("title", "format", "instance_id");
+        let mut ingredient = Ingredient::from_json(
+            r#"{"title":"title","format":"format","instance_id":"instance_id"}"#,
+        )
+        .unwrap();
         ingredient.resources.set_base_path(folder);
 
         assert_eq!(ingredient.thumbnail_ref(), None);
@@ -2254,7 +1987,8 @@ mod tests {
     #[test]
     fn test_input_to_ingredient() {
         // create an inputTo ingredient
-        let mut ingredient = Ingredient::new_v2("prompt", "text/plain");
+        let mut ingredient =
+            Ingredient::from_json(r#"{"title":"prompt","format":"text/plain"}"#).unwrap();
         ingredient.relationship = Relationship::InputTo;
 
         // add a resource containing our data
@@ -2293,7 +2027,8 @@ mod tests {
     fn test_input_to_file_based_ingredient() {
         let mut folder = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         folder.push("tests/fixtures");
-        let mut ingredient = Ingredient::new_v2("title", "format");
+        let mut ingredient =
+            Ingredient::from_json(r#"{"title":"title","format":"format"}"#).unwrap();
         ingredient.resources.set_base_path(folder);
         //let mut _data_ref = ResourceRef::new("image/jpeg", "foo");
         //data_ref.data_types = vec!["c2pa.types.dataset.pytorch".to_string()];

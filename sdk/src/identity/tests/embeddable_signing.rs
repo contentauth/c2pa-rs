@@ -19,7 +19,6 @@
 use std::io::{Cursor, Seek, SeekFrom, Write};
 
 use crate::{
-    assertions::DataHash,
     identity::{
         builder::{IdentityAssertionBuilder, IdentityAssertionSigner},
         x509::X509CredentialHolder,
@@ -151,47 +150,6 @@ fn sign_embeddable_includes_identity_assertion() {
     assert!(
         has_identity_assertion(&reader),
         "cawg.identity assertion missing from sign_embeddable() output"
-    );
-}
-
-/// The data-hashed placeholder workflow cannot reserve space for dynamic
-/// assertions, so signing with an [`IdentityAssertionSigner`] must fail loudly
-/// rather than silently emit a manifest without the identity assertion.
-#[test]
-#[allow(deprecated)]
-fn data_hashed_embeddable_rejects_identity_signer() {
-    let format = "application/c2pa";
-    let signer = identity_signer();
-
-    let mut builder = Builder::default()
-        .with_definition(super::fixtures::manifest_json())
-        .unwrap();
-    builder
-        .add_ingredient_from_stream(
-            super::fixtures::parent_json(),
-            "image/jpeg",
-            &mut Cursor::new(TEST_INGREDIENT),
-        )
-        .unwrap();
-    builder
-        .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
-        .unwrap();
-
-    let placeholder = builder
-        .data_hashed_placeholder(crate::Signer::reserve_size(&signer), format)
-        .unwrap();
-
-    let mut dh = DataHash::new("source_hash", "sha256");
-    dh.exclusions = Some(vec![HashRange::new(0, placeholder.len() as u64)]);
-    let mut ph_stream = Cursor::new(placeholder.clone());
-    dh.gen_hash_from_stream(&mut ph_stream).unwrap();
-
-    let result = builder.sign_data_hashed_embeddable(&signer, &dh, format);
-
-    assert!(
-        result.is_err(),
-        "sign_data_hashed_embeddable must reject a signer with dynamic assertions instead of \
-         silently dropping them"
     );
 }
 

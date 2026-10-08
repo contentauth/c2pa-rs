@@ -27,17 +27,16 @@ use crate::{
         x509::X509CredentialHolder,
         SignerPayload,
     },
-    settings::{Settings, SettingsValidate},
+    settings::SettingsValidate,
     signer::OwnedSignerWrapper,
     BoxedSigner, Error, Result, Signer,
 };
 
 /// Settings for configuring a local or remote [`Signer`].
 ///
-/// A [`Signer`] can be obtained by calling the [`signer()`] function.
+/// A [`Signer`] can be created with [`SignerSettings::c2pa_signer`].
 ///
 /// [`Signer`]: crate::Signer
-/// [`signer()`]: crate::settings::Settings::signer
 #[cfg_attr(feature = "json_schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -78,42 +77,6 @@ pub enum SignerSettings {
 }
 
 impl SignerSettings {
-    // TODO: add async signer
-    /// Returns the constructed signer from the thread-local `signer` settings field.
-    ///
-    /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings].
-    ///
-    /// Configure the signer via a [`Context`](crate::Context) passed explicitly to
-    /// [`Builder::from_context`](crate::Builder::from_context) instead.
-    #[deprecated(
-        note = "Configure the signer via `Context` and pass it to `Builder::from_context` instead of using thread-local signer settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub fn signer() -> Result<BoxedSigner> {
-        let signer_info = match Settings::get_thread_local_value::<Option<SignerSettings>>("signer")
-        {
-            Ok(Some(signer_info)) => signer_info,
-            #[cfg(test)]
-            _ => {
-                return Ok(crate::utils::test_signer::test_signer(SigningAlg::Ps256));
-            }
-            #[cfg(not(test))]
-            _ => {
-                return Err(Error::MissingSignerSettings);
-            }
-        };
-
-        let c2pa_signer = Self::c2pa_signer(signer_info)?;
-
-        // TO DISCUSS: What if get_value returns an Err(...)?
-        if let Ok(Some(cawg_x509_settings)) =
-            Settings::get_thread_local_value::<Option<SignerSettings>>("cawg_x509_signer")
-        {
-            cawg_x509_settings.cawg_signer(c2pa_signer)
-        } else {
-            Ok(c2pa_signer)
-        }
-    }
-
     /// Returns a c2pa signer using the provided signer settings.
     pub fn c2pa_signer(self) -> Result<BoxedSigner> {
         match self {
@@ -622,13 +585,6 @@ pub mod tests {
                     .into()
             });
         })
-    }
-
-    /// Legacy test verifying the deprecated thread-local signer API still works.
-    #[test]
-    #[allow(deprecated)]
-    fn test_thread_local_signer() {
-        assert!(Settings::signer().is_ok());
     }
 
     #[test]
