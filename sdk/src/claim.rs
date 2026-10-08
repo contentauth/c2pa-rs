@@ -75,7 +75,7 @@ use crate::{
     salt::{DefaultSalt, SaltGenerator},
     settings::{Settings, MAX_ASSERTIONS},
     status_tracker::{ErrorBehavior, StatusTracker},
-    store::StoreValidationInfo,
+    store::{Store, StoreValidationInfo},
     utils::hash_utils::{hash_by_alg, vec_compare, HashRange},
     validation_status, ClaimGeneratorInfo,
 };
@@ -425,6 +425,72 @@ fn data_hash_exclusions_match_manifest(
         // Manifest not in this asset: allow only if it was read from here
         // (embedded); a detached manifest on an unrelated asset is rejected (#2643).
         None => is_embedded,
+    }
+}
+
+/// Whether assets of this format store the manifest store base64-inflated.
+/// Only the text embeddings do: the SVG handler and, when their features are
+/// compiled in, the plain/structured text handlers. The text modules are
+/// feature-gated out otherwise, in which case those formats cannot occur.
+fn format_inflates_store(format: Option<&str>) -> bool {
+    let Some(format) = format else {
+        return false;
+    };
+    let f = format.to_lowercase();
+    if crate::asset_handlers::svg_io::SUPPORTED_TYPES.contains(&f.as_str()) {
+        return true;
+    }
+    #[cfg(feature = "unstable_plain_text")]
+    if crate::asset_handlers::plain_text_io::SUPPORTED_TYPES.contains(&f.as_str()) {
+        return true;
+    }
+    #[cfg(feature = "unstable_structured_text")]
+    if crate::asset_handlers::structured_text_io::SUPPORTED_TYPES.contains(&f.as_str()) {
+        return true;
+    }
+    false
+}
+
+/// How far the signed exclusion may be widened, in bytes, to accommodate
+/// update manifests appended since the binding claim was signed (#2645).
+///
+/// The widening exists because the manifest store grew. Its legitimate size
+/// is the measured size of the appended update manifest boxes plus file
+/// format framing. Only the base64 text embeddings (SVG and the
+/// `plain_text_io` / `structured_text_io` types) inflate stored bytes, by a
+/// factor of 4/3. Raw-byte embeddings store the manifest store as-is, so they
+/// get no multiplier. A flat allowance covers segment or chunk headers in
+/// either case. A recomputed manifest store range wider than this would
+/// exclude bytes that are neither manifest store nor padding from the data
+/// hash, so the caller rejects instead of trusting the range.
+///
+/// Returns `u64::MAX` (no bound) when no appended update manifest can be
+/// measured, preserving the previous behavior rather than guessing.
+fn update_manifest_widening_limit(svi: &StoreValidationInfo, format: Option<&str>) -> u64 {
+    let mut update_bytes: u64 = 0;
+    let mut measured = false;
+    for update_claim in svi
+        .manifest_map
+        .values()
+        .filter(|claim| claim.update_manifest())
+    {
+        match Store::manifest_box_length(update_claim) {
+            Ok(length) => {
+                update_bytes = update_bytes.saturating_add(length);
+                measured = true;
+            }
+            Err(_) => return u64::MAX,
+        }
+    }
+
+    if !measured {
+        return u64::MAX;
+    }
+
+    if format_inflates_store(format) {
+        update_bytes + update_bytes / 3 + 4096
+    } else {
+        update_bytes + 4096
     }
 }
 
@@ -3019,6 +3085,41 @@ impl Claim {
                                 if let Some(pos) =
                                     exclusions.iter().position(|r| r.start() == range.start())
                                 {
+                                    // Bound the widening to the measured size of
+                                    // the appended update manifest(s). A
+                                    // scanner-supplied range that grows the
+                                    // signed exclusion by more than that would
+                                    // exclude non-manifest bytes from the data
+                                    // hash, so reject it here instead of
+                                    // trusting every format scanner to bound
+                                    // its own measurement (C2PA 15.12.1, #2645).
+                                    let widening =
+                                        range.length().saturating_sub(exclusions[pos].length());
+                                    if widening
+                                        > update_manifest_widening_limit(
+                                            svi,
+                                            asset_data.format().as_deref(),
+                                        )
+                                    {
+                                        log_item!(
+                                            claim.assertion_uri(
+                                                &hash_binding_assertion.label()
+                                            ),
+                                            "data hash exclusion widened beyond the appended update manifest size",
+                                            "verify_internal"
+                                        )
+                                        .validation_status(
+                                            validation_status::ASSERTION_DATAHASH_MISMATCH,
+                                        )
+                                        .failure(
+                                            validation_log,
+                                            Error::HashMismatch(
+                                                "data hash exclusion widened beyond the appended update manifest size"
+                                                    .to_string(),
+                                            ),
+                                        )?;
+                                    }
+
                                     // find the adjustment length
                                     start_offset = range.start();
                                     start_adjust =
@@ -6264,5 +6365,29 @@ pub mod tests {
             validation_log.has_any_error(),
             "actions in cloud-data of a non-update manifest should fail"
         );
+    }
+
+    #[test]
+    fn test_format_inflates_store_matches_base64_handlers() {
+        // Every type a base64-embedding handler claims must take the
+        // inflated widening bound (update manifests in update_manifest.jpg
+        // exercise the raw-byte branch end to end).
+        for t in crate::asset_handlers::svg_io::SUPPORTED_TYPES {
+            assert!(format_inflates_store(Some(t)), "{t} should inflate");
+        }
+        #[cfg(feature = "unstable_plain_text")]
+        for t in crate::asset_handlers::plain_text_io::SUPPORTED_TYPES {
+            assert!(format_inflates_store(Some(t)), "{t} should inflate");
+        }
+        #[cfg(feature = "unstable_structured_text")]
+        for t in crate::asset_handlers::structured_text_io::SUPPORTED_TYPES {
+            assert!(format_inflates_store(Some(t)), "{t} should inflate");
+        }
+
+        assert!(format_inflates_store(Some("SVG")));
+        for t in ["jpg", "jpeg", "png", "tif", "mp4", "application/pdf"] {
+            assert!(!format_inflates_store(Some(t)), "{t} should not inflate");
+        }
+        assert!(!format_inflates_store(None));
     }
 }
