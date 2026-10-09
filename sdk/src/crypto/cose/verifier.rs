@@ -29,15 +29,15 @@ use crate::{
         base64::encode,
         cose::{
             cert_chain_from_sign1, check_end_entity_certificate_profile, parse_cose_sign1,
-            signing_alg_from_sign1, CertificateInfo, CertificateTrustPolicy, CoseError,
-            TrustAnchorType,
+            signing_alg_from_sign1, CertificateInfo, CertificateTrustError, CertificateTrustPolicy,
+            CoseError, TrustAnchorType,
         },
     },
     log_item,
     status_tracker::StatusTracker,
     validation_results::validation_codes::{
-        ALGORITHM_UNSUPPORTED, SIGNING_CREDENTIAL_INVALID, SIGNING_CREDENTIAL_TRUSTED,
-        SIGNING_CREDENTIAL_UNTRUSTED,
+        ALGORITHM_UNSUPPORTED, CLAIM_SIGNATURE_OUTSIDE_VALIDITY, SIGNING_CREDENTIAL_INVALID,
+        SIGNING_CREDENTIAL_TRUSTED, SIGNING_CREDENTIAL_UNTRUSTED,
     },
 };
 
@@ -333,11 +333,29 @@ impl Verifier<'_> {
 
                 Ok((tat, Some(trust_uri)))
             }
-            Err(e) => Err(
-                log_item!("", "signing certificate untrusted", "verify_cose")
-                    .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
-                    .failure_as_err(validation_log, e.into()),
-            ),
+            Err(e) => {
+                // C2PA requires every CA certificate in the chain to be valid at
+                // the validation time, and reports a failure as
+                // claimSignature.outsideValidity.
+                if e == CertificateTrustError::CaCertificateOutsideValidity {
+                    log_item!(
+                        "",
+                        "certificate chain outside validity period",
+                        "verify_cose"
+                    )
+                    .validation_status(CLAIM_SIGNATURE_OUTSIDE_VALIDITY)
+                    .failure_no_throw(
+                        validation_log,
+                        CertificateTrustError::CaCertificateOutsideValidity,
+                    );
+                }
+
+                Err(
+                    log_item!("", "signing certificate untrusted", "verify_cose")
+                        .validation_status(SIGNING_CREDENTIAL_UNTRUSTED)
+                        .failure_as_err(validation_log, e.into()),
+                )
+            }
         }
     }
 }
