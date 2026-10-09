@@ -81,11 +81,17 @@ pub(crate) fn check_certificate_trust(
     };
     let check_time = x509_parser::time::ASN1Time::from_timestamp(check_time)
         .map_err(|_| CertificateTrustError::CertificateNotTrusted)?;
-    for cert in &full_chain {
+    for (depth, cert) in full_chain.iter().enumerate() {
         let (_, chain_cert) = X509Certificate::from_der(cert)
             .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?;
         if !chain_cert.validity().is_valid_at(check_time) {
-            return Err(CertificateTrustError::CertificateNotTrusted);
+            // The end-entity certificate's validity is reported by the
+            // certificate profile check.
+            return Err(if depth == 0 {
+                CertificateTrustError::CertificateNotTrusted
+            } else {
+                CertificateTrustError::CaCertificateOutsideValidity
+            });
         }
     }
 
