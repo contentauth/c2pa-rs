@@ -423,8 +423,13 @@ impl<'a> CrJsonExporter<'a> {
         if ca.label_raw().starts_with(assertion_labels::INGREDIENT) {
             return match Ingredient::from_assertion(assertion) {
                 Ok(ingredient) => {
-                    let v = serde_json::to_value(&ingredient).map_err(Error::JsonError)?;
-                    Ok(Some(fix_hash_encoding(v)))
+                    match serde_json::to_value(&ingredient) {
+                        Ok(value) => Ok(Some(fix_hash_encoding(value))),
+                        // The writer serializer rejects incomplete ingredient structures.
+                        // Reporting a read asset must still expose those bytes and the
+                        // validation failure rather than fail the entire crJSON export.
+                        Err(_) => Ok(assertion.as_json_object().ok().map(fix_hash_encoding)),
+                    }
                 }
                 Err(_) => Ok(None),
             };
