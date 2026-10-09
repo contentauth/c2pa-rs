@@ -992,7 +992,7 @@ impl Claim {
         if let Some(md) = self.metadata() {
             claim_map.serialize_field(METADATA_F, md)?;
         }
-        if let Some(spec_version) = self.spec_version() {
+        if let Some(spec_version) = &self.spec_version {
             claim_map.serialize_field(SPEC_VERSION_F, spec_version)?;
         }
 
@@ -1426,7 +1426,7 @@ impl Claim {
         &mut self,
         assertion_builder: &impl AssertionBase,
     ) -> Result<C2PAAssertion> {
-        self.add_assertion_impl(assertion_builder, &DefaultSalt::default(), false)
+        self.add_assertion_impl(assertion_builder, &DefaultSalt::default(), false, None)
     }
 
     /// Same as add_assertion but forces addition to created_assertions for Claims V2
@@ -1434,7 +1434,38 @@ impl Claim {
         &mut self,
         assertion_builder: &impl AssertionBase,
     ) -> Result<C2PAAssertion> {
-        self.add_assertion_impl(assertion_builder, &DefaultSalt::default(), true)
+        self.add_assertion_impl(assertion_builder, &DefaultSalt::default(), true, None)
+    }
+
+    /// Same as `add_assertion`/`add_created_assertion`, but reuses `preferred_label` verbatim
+    /// (instead of assigning the next positional `__N` instance) when that label is a free slot
+    /// for this assertion's base label.
+    ///
+    /// A round-tripped ingredient (rebuilt via [`crate::Ingredient::from_ingredient_uri`], e.g.
+    /// through [`crate::Builder::with_archive`] or [`crate::Reader::into_builder`]) already carries
+    /// the JUMBF label it was assigned the first time it was added to a claim. Re-adding it to a
+    /// new claim via plain positional numbering can silently assign that label to a *different*
+    /// ingredient whenever ingredients are re-processed in a different relative order — which
+    /// happens whenever ingredients land in different created/gathered buckets, since a claim's
+    /// V2 wire format only preserves order within each bucket, not the original interleaving
+    /// across both (see `Claim::from_value`). Any reference to the old label that was already
+    /// baked into a `HashedUri` (e.g. an action's `ingredientIds`) would then point at the wrong
+    /// ingredient. Reusing the label keeps that identity stable across reloads.
+    ///
+    /// Falls back to positional numbering if `preferred_label` doesn't share this assertion's
+    /// base label, or if it's already taken by another assertion in this claim.
+    pub(crate) fn add_assertion_with_preferred_label(
+        &mut self,
+        assertion_builder: &impl AssertionBase,
+        add_as_created_assertion: bool,
+        preferred_label: Option<&str>,
+    ) -> Result<C2PAAssertion> {
+        self.add_assertion_impl(
+            assertion_builder,
+            &DefaultSalt::default(),
+            add_as_created_assertion,
+            preferred_label,
+        )
     }
 
     fn compatibility_checks(&self, assertion: &Assertion) -> Result<()> {
@@ -1514,6 +1545,7 @@ impl Claim {
         assertion_builder: &impl AssertionBase,
         salt_generator: &impl SaltGenerator,
         add_as_created_assertion: bool,
+        preferred_label: Option<&str>,
     ) -> Result<C2PAAssertion> {
         // Enforce the per-manifest assertion limit to prevent resource exhaustion
         // regardless of how the claim is constructed.
@@ -1527,8 +1559,20 @@ impl Claim {
         let assertion = assertion_builder.to_assertion()?;
         let assertion_label = assertion.label();
 
-        // Update label if there are multiple instances of the same claim type.
-        let as_label = self.make_assertion_instance_label(assertion_label.as_ref());
+        // Update label if there are multiple instances of the same claim type. Reuse
+        // `preferred_label` verbatim when it names a free slot for this assertion's base label
+        // (see `add_assertion_with_preferred_label`); otherwise fall back to the next positional
+        // instance.
+        let as_label = match preferred_label {
+            Some(label)
+                if labels::parse_label(label).0 == labels::parse_label(&assertion_label).0
+                    && labels::parse_label(label).1 == labels::parse_label(&assertion_label).1
+                    && !self.assertion_store.iter().any(|ca| ca.label() == label) =>
+            {
+                label.to_string()
+            }
+            _ => self.make_assertion_instance_label(assertion_label.as_ref()),
+        };
         // get base label and instance
         let (base_label, _version, instance) = labels::parse_label(&as_label);
 
@@ -2035,8 +2079,8 @@ impl Claim {
         let sign1 = parse_cose_sign1(sig, data, validation_log)?;
 
         let certificate_serial_num = get_signing_cert_serial_num(&sign1)?.to_string();
-        // check certificate revocation
-        if _sync {
+        // check certificate revocation (revocation/trust failures are already recorded in validation_log)
+        let ocsp_result = if _sync {
             check_ocsp_status(
                 &sign1,
                 data,
@@ -2045,7 +2089,7 @@ impl Claim {
                 svi.timestamps.get(claim.label()),
                 validation_log,
                 context,
-            )?;
+            )
         } else {
             check_ocsp_status_async(
                 &sign1,
@@ -2056,7 +2100,13 @@ impl Claim {
                 validation_log,
                 context,
             )
-            .await?;
+            .await
+        };
+        if let Err(err) = ocsp_result {
+            if !matches!(err, Error::CertificateTrustError(_)) {
+                validation_log.pop_current_uri();
+                return Err(err);
+            }
         }
 
         context.check_progress(ProgressPhase::VerifyingSignature, 1, 1)?;
@@ -2286,7 +2336,7 @@ impl Claim {
         }
 
         // perform all actions checks
-        for (index, actions_assertion) in all_actions.iter().enumerate() {
+        for actions_assertion in all_actions.iter() {
             let actions = Actions::from_assertion(actions_assertion.assertion())?;
             let label = to_assertion_uri(claim.label(), &actions_assertion.label());
 
@@ -2363,8 +2413,11 @@ impl Claim {
                     }
                 }
 
-                // 2.a created or opened must be first action
-                if index != 0
+                // 2.a created or opened must be first action (within its own assertion — which
+                // actions assertion is allowed to hold it at all is enforced by the
+                // "only first action can be created or opened" check above; `index`, the
+                // position of `actions_assertion` among `all_actions`, is irrelevant here).
+                if action_index != 0
                     && (action.action() == c2pa_action::OPENED
                         || action.action() == c2pa_action::CREATED)
                 {
@@ -3557,9 +3610,7 @@ impl Claim {
             if claim
                 .claim_assertion_store()
                 .iter()
-                .filter(|ca| ca.label_raw().contains(CLAIM_THUMBNAIL))
-                .count()
-                > 1
+                .any(|ca| ca.label_raw().contains(CLAIM_THUMBNAIL))
             {
                 log_item!(
                     claim.uri(),
@@ -3898,7 +3949,7 @@ impl Claim {
     ///    `assertion.cloud-data.hardBinding`.
     /// 3. In an update manifest the referenced assertion must not be an actions
     ///    assertion — failure code `assertion.cloud-data.actions`.
-    ///     
+    ///
     /// No fetching of the cloud data is performed, only the structure of the assertion is checked.
     fn verify_cloud_data(claim: &Claim, validation_log: &mut StatusTracker) -> Result<()> {
         use assertions::CloudData;
@@ -4326,7 +4377,7 @@ impl Claim {
         self.gathered_assertions.as_ref()
     }
 
-    /// Returns the cbor binary value of the claim data.
+    /// Return the cbor binary value of the claim data.
     /// If this claim was read from a file, returns the exact byte
     /// sequence that was read from the file. If this claim was
     /// constructed locally, contains the claim data that was/will be
@@ -4613,24 +4664,18 @@ impl Claim {
         &self,
         assertion_label: &str,
     ) -> Option<(&C2PAAssertion, ClaimAssertionType)> {
-        if self.version() < 2 {
-            let a = self
-                .assertions()
-                .iter()
-                .find(|hashed_uri| hashed_uri.url().contains(assertion_label))?;
+        // `assertion_label` is the full label (with version and instance). Every
+        // assertion URL ends with `c2pa.assertions/<label>`, so match that suffix.
+        let suffix = format!("{ASSERTIONS}/{assertion_label}");
+        let is_exact_match = |hashed_uri: &&C2PAAssertion| hashed_uri.url().ends_with(&suffix);
 
+        if self.version() < 2 {
+            let a = self.assertions().iter().find(is_exact_match)?;
             Some((a, ClaimAssertionType::V1))
-        } else if let Some(a) = self
-            .created_assertions()
-            .iter()
-            .find(|hashed_uri| hashed_uri.url().contains(assertion_label))
-        {
+        } else if let Some(a) = self.created_assertions().iter().find(is_exact_match) {
             Some((a, ClaimAssertionType::Created))
         } else {
-            let a = self
-                .gathered_assertions()?
-                .iter()
-                .find(|hashed_uri| hashed_uri.url().contains(assertion_label))?;
+            let a = self.gathered_assertions()?.iter().find(is_exact_match)?;
 
             Some((a, ClaimAssertionType::Gathered))
         }
@@ -5691,6 +5736,47 @@ pub mod tests {
     }
 
     #[test]
+    fn test_spec_version_in_claim_generator_info_round_trips() {
+        let mut claim = Claim::new("test", Some("test"), 2);
+        let mut cgi = ClaimGeneratorInfo::new("test app");
+        cgi.set_spec_version("2.4.0");
+        claim.add_claim_generator_info(cgi);
+
+        let data = claim.data().unwrap();
+        let decoded = Claim::from_data("test", &data).unwrap();
+        assert_eq!(decoded.spec_version().map(|s| s.as_str()), Some("2.4.0"));
+
+        let value: c2pa_cbor::Value = c2pa_cbor::from_slice(&data).unwrap();
+        assert!(matches!(
+            &value,
+            c2pa_cbor::Value::Map(map) if !map
+                .keys()
+                .any(|k| matches!(k, c2pa_cbor::Value::Text(t) if t == SPEC_VERSION_F))
+        ));
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_legacy_claim_level_spec_version_round_trips() {
+        // legacy callers that set the claim-level specVersion field directly
+        let mut claim = Claim::new("test", Some("test"), 2);
+        claim.add_claim_generator_info(ClaimGeneratorInfo::new("test app"));
+        claim.set_spec_version(Some("2.3".to_owned()));
+
+        let data = claim.data().unwrap();
+        let decoded = Claim::from_data("test", &data).unwrap();
+        assert_eq!(decoded.spec_version.as_deref(), Some("2.3"));
+
+        let value: c2pa_cbor::Value = c2pa_cbor::from_slice(&data).unwrap();
+        assert!(matches!(
+            &value,
+            c2pa_cbor::Value::Map(map) if map
+                .keys()
+                .any(|k| matches!(k, c2pa_cbor::Value::Text(t) if t == SPEC_VERSION_F))
+        ));
+    }
+
+    #[test]
     fn test_spec_version_none_when_not_set_in_claim_generator_info() {
         let mut claim = Claim::new("test", Some("test"), 2);
         claim.add_claim_generator_info(ClaimGeneratorInfo::new("test app"));
@@ -6129,6 +6215,35 @@ pub mod tests {
                 .any(|item| item.validation_status.as_deref()
                     == Some(validation_status::ASSERTION_CLOUD_DATA_ACTIONS)),
             "should log ASSERTION_CLOUD_DATA_ACTIONS"
+        );
+    }
+
+    #[test]
+    fn test_update_manifest_with_claim_thumbnail_rejected() {
+        let mut claim = create_test_claim().expect("create test claim");
+        claim.set_update_manifest(true);
+        claim
+            .add_assertion(&assertions::EmbeddedData::new(
+                assertions::labels::JPEG_CLAIM_THUMBNAIL,
+                "image/jpeg",
+                vec![0xff, 0xd8, 0xff],
+            ))
+            .expect("add claim thumbnail");
+
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+        Claim::verify_internal(
+            &claim,
+            &StoreValidationInfo::default(),
+            Err(Error::CoseSignature),
+            &mut validation_log,
+            &Context::new(),
+        )
+        .expect("verification should continue to report validation statuses");
+
+        assert!(
+            validation_log.has_status(validation_status::MANIFEST_UPDATE_INVALID),
+            "an update manifest containing one claim thumbnail should be invalid"
         );
     }
 

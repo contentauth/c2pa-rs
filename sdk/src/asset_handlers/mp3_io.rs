@@ -312,6 +312,13 @@ pub mod tests {
     }
 
     #[test]
+    fn test_read_cai_zlib_bomb_rejected() {
+        // CAI-13353 / VULN-38328 regression: a compressed ID3v2.4 frame must
+        // not be allowed to decompress without bound.
+        test_helpers::run_read_cai_zlib_bomb_rejected(&Mp3IO::new("mp3"), &[]);
+    }
+
+    #[test]
     fn test_get_handler_and_reader() {
         let mp3_io = Mp3IO::new("mp3");
         let handler = mp3_io.get_handler("audio/mpeg");
