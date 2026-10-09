@@ -17,7 +17,7 @@ use asn1_rs::FromDer;
 use async_generic::async_generic;
 use bcder::OctetString;
 use c2pa_raw_crypto::validator_for_sig_and_hash_algs;
-use chrono::{offset::LocalResult, DateTime, TimeZone, Utc};
+use chrono::{DateTime, Utc};
 use der::asn1::ObjectIdentifier;
 use rasn::{prelude::*, types};
 use rasn_cms::{CertificateChoices, SignerIdentifier};
@@ -56,6 +56,76 @@ fn signed_attributes_digested_content(
     } else {
         Ok(None)
     }
+}
+
+// Returns the signed attributes of the SignerInfo whose signature is `signature`,
+// as they were encoded in the time stamp, with the IMPLICIT [0] tag replaced by a
+// SET OF tag (RFC 5652 section 5.4). The signature covers these bytes, which can
+// differ from a DER re-encoding of the decoded attributes when the signer did not
+// sort them.
+fn received_signed_attributes(ts: &[u8], signature: &[u8]) -> Option<Vec<u8>> {
+    use asn1_rs::{Any, Class, FromBer, Tag};
+
+    fn children(data: &[u8]) -> Option<Vec<Any<'_>>> {
+        let mut rest = data;
+        let mut items = Vec::new();
+        while !rest.is_empty() {
+            let (rem, item) = Any::from_ber(rest).ok()?;
+            items.push(item);
+            rest = rem;
+        }
+        Some(items)
+    }
+
+    let (_, outer) = Any::from_ber(ts).ok()?;
+    let outer_items = children(outer.data)?;
+
+    // A TimeStampResp starts with a PKIStatusInfo; otherwise this is the token.
+    let is_response = outer_items.first().is_some_and(|status| {
+        status.tag() == Tag::Sequence
+            && children(status.data)
+                .and_then(|s| s.first().map(|v| v.tag() == Tag::Integer))
+                .unwrap_or(false)
+    });
+    let content_info_items = if is_response {
+        children(outer_items.get(1)?.data)?
+    } else {
+        outer_items
+    };
+
+    let content = content_info_items.get(1)?;
+    let (_, signed_data) = Any::from_ber(content.data).ok()?;
+    let signer_infos = children(signed_data.data)?.pop()?;
+
+    for signer_info in children(signer_infos.data)? {
+        let fields = children(signer_info.data)?;
+        let matches = fields.iter().any(|f| {
+            f.class() == Class::Universal && f.tag() == Tag::OctetString && f.data == signature
+        });
+        if !matches {
+            continue;
+        }
+        let attrs = fields
+            .iter()
+            .find(|f| f.class() == Class::ContextSpecific && f.tag() == Tag(0))?;
+
+        let len = attrs.data.len();
+        let mut out = vec![0x31];
+        if len < 0x80 {
+            out.push(len as u8);
+        } else {
+            let len_bytes: Vec<u8> = len
+                .to_be_bytes()
+                .into_iter()
+                .skip_while(|b| *b == 0)
+                .collect();
+            out.push(0x80 | len_bytes.len() as u8);
+            out.extend_from_slice(&len_bytes);
+        }
+        out.extend_from_slice(attrs.data);
+        return Some(out);
+    }
+    None
 }
 
 /// Decode the TimeStampToken info and verify it against the supplied data and trust policy
@@ -168,7 +238,7 @@ pub fn verify_time_stamp(
 
         // Load TstInfo. We will verify its contents below against signed
         // values.
-        let Ok(Some(mut tst)) = tst_info_from_signed_data(&sd) else {
+        let Ok(Some(tst)) = tst_info_from_signed_data(&sd) else {
             log_item!("", "timestamp response had no TstInfo", "verify_time_stamp")
                 .validation_status(TIMESTAMP_MALFORMED)
                 .informational(&mut current_validation_log);
@@ -180,41 +250,12 @@ pub fn verify_time_stamp(
         let mi = &tst.message_imprint;
 
         // Check for time stamp expiration.
-        let mut signing_time = generalized_time_to_datetime(tst.gen_time.clone()).timestamp();
+        // The attested time is the TSTInfo genTime (C2PA validation, RFC 3161). A CMS
+        // signingTime attribute is not the attested time and is not used.
+        let signing_time = generalized_time_to_datetime(tst.gen_time.clone()).timestamp();
 
         // Check the signer info's signed attributes.
         if let Some(attributes) = &signer_info.signed_attrs {
-            // If there is a signed signing time attribute use it
-            if let Some(Some(attrib_signing_time)) = attributes
-                .to_vec()
-                .iter()
-                .find(|attr| attr.r#type == Oid::ISO_MEMBER_BODY_US_RSADSI_PKCS9_SIGNING_TIME)
-                .map(|attr| {
-                    if attr.values.len() != 1 {
-                        // per CMS spec can only contain 1 signing time value
-                        return None;
-                    }
-
-                    attr.values
-                        .to_vec()
-                        .first()
-                        .and_then(|v| rasn::der::decode::<rasn_pkix::Time>(v.as_bytes()).ok())
-                })
-            {
-                let signed_signing_time = match attrib_signing_time {
-                    rasn_pkix::Time::Utc(date_time) => date_time.timestamp(),
-                    rasn_pkix::Time::General(date_time) => {
-                        generalized_time_to_datetime(date_time).timestamp()
-                    }
-                };
-
-                if let Some(gt) = timestamp_to_generalized_time(signed_signing_time) {
-                    // Use actual signed time.
-                    signing_time = generalized_time_to_datetime(gt.clone()).timestamp();
-                    tst.gen_time = gt;
-                };
-            }
-
             // Check that the mandatory signed message digest is self-consistent.
             match attributes
                 .to_vec()
@@ -338,7 +379,9 @@ pub fn verify_time_stamp(
         // use those as the TBS else the TBS is the value of the ContentInfo
         let tbs = match signed_attributes_digested_content(signer_info) {
             Ok(sdc) => match sdc {
-                Some(tbs) => tbs,
+                Some(tbs) => {
+                    received_signed_attributes(ts, signer_info.signature.as_ref()).unwrap_or(tbs)
+                }
                 None => match &sd.encap_content_info.content {
                     Some(d) => d.to_vec(),
                     None => {
@@ -637,14 +680,6 @@ fn generalized_time_to_datetime<T: Into<DateTime<Utc>>>(gt: T) -> DateTime<Utc> 
     gt.into()
 }
 
-fn timestamp_to_generalized_time(dt: i64) -> Option<crate::crypto::asn1::GeneralizedTime> {
-    match Utc.timestamp_opt(dt, 0) {
-        // try_into fails for dates outside der's supported 1970-9999 range
-        LocalResult::Single(time) => time.try_into().ok(),
-        _ => None,
-    }
-}
-
 /// Digest algorithm enum compatible with bcder OIDs
 #[derive(Clone, Copy, Debug)]
 enum DigestAlgorithm {
@@ -876,4 +911,58 @@ fn validate_timestamp_sig(
     validator
         .validate(&sig_val.to_bytes(), tbs, signing_key_der)
         .map_err(|_| TimeStampError::InvalidData)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    const DATA: &[u8] = b"some sample content to sign";
+
+    #[test]
+    fn verifies_signed_attributes_in_encoded_order() {
+        // The signer wrote its signed attributes in an order other than DER's
+        // sorted order, and signed that encoding.
+        let ts =
+            include_bytes!("../../../tests/fixtures/crypto/time_stamp/unsorted_signed_attrs.tst");
+        let mut log = StatusTracker::default();
+
+        verify_time_stamp(
+            ts,
+            DATA,
+            &CertificateTrustPolicy::default(),
+            &mut log,
+            false,
+        )
+        .unwrap();
+
+        assert!(log.has_status(TIMESTAMP_VALIDATED));
+        assert!(!log.has_status(TIMESTAMP_UNTRUSTED));
+    }
+
+    #[test]
+    fn uses_gen_time_not_cms_signing_time() {
+        // genTime is within the signing certificate's validity; the CMS
+        // signingTime attribute is after the certificate expires.
+        let ts = include_bytes!(
+            "../../../tests/fixtures/crypto/time_stamp/signing_time_after_expiry.tst"
+        );
+        let mut log = StatusTracker::default();
+
+        let tst = verify_time_stamp(
+            ts,
+            DATA,
+            &CertificateTrustPolicy::default(),
+            &mut log,
+            false,
+        )
+        .unwrap();
+
+        let gen_time = generalized_time_to_datetime(tst.gen_time).timestamp();
+        assert_eq!(gen_time, 1_735_689_600); // 2025-01-01T00:00:00Z
+        assert!(log.has_status(TIMESTAMP_VALIDATED));
+        assert!(!log.has_status(TIMESTAMP_OUTSIDE_VALIDITY));
+    }
 }
