@@ -1717,30 +1717,32 @@ impl Store {
                         )?;
             }
 
+            // This is a structural failure of the enclosing manifest's ingredient
+            // assertion, not a failure of the referenced ingredient manifest.
+            // Report it before entering the ingredient validation scope.
+            if ingredient_assertion
+                .version()
+                .is_some_and(|version| version >= 3)
+                && ingredient_assertion.active_manifest.is_some()
+                && ingredient_assertion.validation_results.is_none()
+            {
+                log_item!(
+                    jumbf::labels::to_assertion_uri(claim.label(), &i.label()),
+                    "ingredient V3 must have validation results",
+                    "ingredient_checks"
+                )
+                .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
+                .failure(
+                    validation_log,
+                    Error::ValidationRule("ingredient V3 missing validation status".to_string()),
+                )?;
+            }
+
             validation_log
                 .push_ingredient_uri(jumbf::labels::to_assertion_uri(claim.label(), &i.label()));
 
             // is this an ingredient
             if let Some(c2pa_manifest) = ingredient_assertion.c2pa_manifest() {
-                // if this is a v3 ingredient then it must have validation report indicating it was validated
-                if let Some(ingredient_version) = ingredient_assertion.version() {
-                    if ingredient_version >= 3 && ingredient_assertion.validation_results.is_none()
-                    {
-                        log_item!(
-                            jumbf::labels::to_assertion_uri(claim.label(), &i.label()),
-                            "ingredient V3 must have validation results",
-                            "ingredient_checks"
-                        )
-                        .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
-                        .failure(
-                            validation_log,
-                            Error::ValidationRule(
-                                "ingredient V3 missing validation status".to_string(),
-                            ),
-                        )?;
-                    }
-                }
-
                 let label = Store::manifest_label_from_path(&c2pa_manifest.url());
 
                 if let Some(ingredient) = store.get_claim(&label) {
@@ -10569,6 +10571,63 @@ pub mod tests {
     // unconditional `continue` for `Relationship::InputTo`, so the ingredient
     // manifest was never checked against its signed hash. The success code
     // `ingredient.manifest.validated` is only emitted when that check runs.
+    #[test]
+    fn test_missing_v3_results_are_enclosing_manifest_failures() {
+        for relationship in [
+            Relationship::ParentOf,
+            Relationship::ComponentOf,
+            Relationship::InputTo,
+        ] {
+            let context = Context::new();
+            let store = Store::from_context(&context);
+            let mut claim = create_test_claim().unwrap();
+            let mut ingredient = Ingredient::new_v3(relationship);
+            ingredient.active_manifest = Some(HashedUri::new(
+                "self#jumbf=/c2pa/urn:c2pa:missing".to_owned(),
+                None,
+                &[1; 32],
+            ));
+            ingredient.validation_results = Some(crate::ValidationResults::default());
+            let valid = ingredient.to_assertion().unwrap();
+            let mut value: c2pa_cbor::Value = c2pa_cbor::from_slice(valid.data()).unwrap();
+            if let c2pa_cbor::Value::Map(map) = &mut value {
+                map.remove(&c2pa_cbor::Value::Text("validationResults".into()));
+            }
+            let malformed =
+                Assertion::from_data_cbor(&valid.label(), &c2pa_cbor::to_vec(&value).unwrap());
+            let assertion = crate::claim::ClaimAssertion::new(
+                malformed,
+                0,
+                &[1; 32],
+                claim.alg(),
+                None,
+                crate::claim::ClaimAssertionType::Created,
+            );
+            claim.put_assertion_store(assertion);
+            let mut tracker = StatusTracker::default();
+            Store::ingredient_checks(
+                &store,
+                &claim,
+                &StoreValidationInfo::default(),
+                &mut tracker,
+                0,
+                &context,
+                &mut HashSet::new(),
+            )
+            .unwrap();
+            let failure = tracker
+                .logged_items()
+                .iter()
+                .find(|item| {
+                    item.validation_status.as_deref()
+                        == Some(validation_status::ASSERTION_INGREDIENT_MALFORMED)
+                })
+                .expect("missing structural failure");
+            assert!(failure.ingredient_uri.is_none());
+            assert_eq!(failure.label.as_ref(), claim.assertion_uri(&valid.label()));
+        }
+    }
+
     #[test]
     fn test_input_to_ingredient_is_validated() {
         let context = Context::new();
