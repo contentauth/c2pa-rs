@@ -10173,7 +10173,20 @@ pub mod tests {
 
         let mut report = StatusTracker::default();
         output.rewind().unwrap();
-        Store::from_stream("zip", &mut output, &mut report, &context).unwrap();
+        let restored = Store::from_stream("zip", &mut output, &mut report, &context).unwrap();
+        let bindings = restored
+            .provenance_claim()
+            .unwrap()
+            .collection_hash_assertions();
+        let value: c2pa_cbor::Value =
+            c2pa_cbor::from_slice(bindings[0].assertion().data()).unwrap();
+        let c2pa_cbor::Value::Map(map) = value else {
+            panic!("expected collection map")
+        };
+        assert!(matches!(
+            map.get(&c2pa_cbor::Value::Text("uris".into())),
+            Some(c2pa_cbor::Value::Array(_))
+        ));
 
         assert!(
             report.has_status(validation_status::ASSERTION_COLLECTIONHASH_MATCH),
