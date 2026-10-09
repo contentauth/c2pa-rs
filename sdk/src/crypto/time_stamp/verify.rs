@@ -27,7 +27,7 @@ use sha2::{Sha256, Sha384, Sha512};
 use crate::{
     crypto::{
         asn1::rfc3161::{Accuracy, TstInfo},
-        cose::{check_end_entity_certificate_profile, CertificateTrustPolicy},
+        cose::{check_end_entity_certificate_profile, CertificateTrustPolicy, TrustAnchorType},
         time_stamp::{
             response::{signed_data_from_time_stamp_response, tst_info_from_signed_data},
             TimeStampError,
@@ -520,7 +520,15 @@ pub fn verify_time_stamp(
                 continue;
             }
 
-            match ctp.check_certificate_trust(
+            // A time-stamp signer must chain to a TSA trust anchor. Without a
+            // TSA trust list, keep accepting any configured anchor.
+            let anchor_type = ctp
+                .anchor_sets()
+                .any(|a| a.trust_anchor_type == TrustAnchorType::TSA)
+                .then_some(TrustAnchorType::TSA);
+
+            match ctp.check_certificate_trust_for(
+                anchor_type,
                 &ordered_cert_ders[0..],
                 &ordered_cert_ders[0],
                 Some(signing_time),
