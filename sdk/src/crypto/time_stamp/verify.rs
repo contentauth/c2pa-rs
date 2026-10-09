@@ -58,6 +58,76 @@ fn signed_attributes_digested_content(
     }
 }
 
+// Returns the signed attributes of the SignerInfo whose signature is `signature`,
+// as they were encoded in the time stamp, with the IMPLICIT [0] tag replaced by a
+// SET OF tag (RFC 5652 section 5.4). The signature covers these bytes, which can
+// differ from a DER re-encoding of the decoded attributes when the signer did not
+// sort them.
+fn received_signed_attributes(ts: &[u8], signature: &[u8]) -> Option<Vec<u8>> {
+    use asn1_rs::{Any, Class, FromBer, Tag};
+
+    fn children(data: &[u8]) -> Option<Vec<Any<'_>>> {
+        let mut rest = data;
+        let mut items = Vec::new();
+        while !rest.is_empty() {
+            let (rem, item) = Any::from_ber(rest).ok()?;
+            items.push(item);
+            rest = rem;
+        }
+        Some(items)
+    }
+
+    let (_, outer) = Any::from_ber(ts).ok()?;
+    let outer_items = children(outer.data)?;
+
+    // A TimeStampResp starts with a PKIStatusInfo; otherwise this is the token.
+    let is_response = outer_items.first().is_some_and(|status| {
+        status.tag() == Tag::Sequence
+            && children(status.data)
+                .and_then(|s| s.first().map(|v| v.tag() == Tag::Integer))
+                .unwrap_or(false)
+    });
+    let content_info_items = if is_response {
+        children(outer_items.get(1)?.data)?
+    } else {
+        outer_items
+    };
+
+    let content = content_info_items.get(1)?;
+    let (_, signed_data) = Any::from_ber(content.data).ok()?;
+    let signer_infos = children(signed_data.data)?.pop()?;
+
+    for signer_info in children(signer_infos.data)? {
+        let fields = children(signer_info.data)?;
+        let matches = fields.iter().any(|f| {
+            f.class() == Class::Universal && f.tag() == Tag::OctetString && f.data == signature
+        });
+        if !matches {
+            continue;
+        }
+        let attrs = fields
+            .iter()
+            .find(|f| f.class() == Class::ContextSpecific && f.tag() == Tag(0))?;
+
+        let len = attrs.data.len();
+        let mut out = vec![0x31];
+        if len < 0x80 {
+            out.push(len as u8);
+        } else {
+            let len_bytes: Vec<u8> = len
+                .to_be_bytes()
+                .into_iter()
+                .skip_while(|b| *b == 0)
+                .collect();
+            out.push(0x80 | len_bytes.len() as u8);
+            out.extend_from_slice(&len_bytes);
+        }
+        out.extend_from_slice(attrs.data);
+        return Some(out);
+    }
+    None
+}
+
 /// Decode the TimeStampToken info and verify it against the supplied data and trust policy
 #[async_generic]
 pub fn verify_time_stamp(
@@ -338,7 +408,9 @@ pub fn verify_time_stamp(
         // use those as the TBS else the TBS is the value of the ContentInfo
         let tbs = match signed_attributes_digested_content(signer_info) {
             Ok(sdc) => match sdc {
-                Some(tbs) => tbs,
+                Some(tbs) => {
+                    received_signed_attributes(ts, signer_info.signature.as_ref()).unwrap_or(tbs)
+                }
                 None => match &sd.encap_content_info.content {
                     Some(d) => d.to_vec(),
                     None => {
@@ -876,4 +948,34 @@ fn validate_timestamp_sig(
     validator
         .validate(&sig_val.to_bytes(), tbs, signing_key_der)
         .map_err(|_| TimeStampError::InvalidData)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    const DATA: &[u8] = b"some sample content to sign";
+
+    #[test]
+    fn verifies_signed_attributes_in_encoded_order() {
+        // The signer wrote its signed attributes in an order other than DER's
+        // sorted order, and signed that encoding.
+        let ts =
+            include_bytes!("../../../tests/fixtures/crypto/time_stamp/unsorted_signed_attrs.tst");
+        let mut log = StatusTracker::default();
+
+        verify_time_stamp(
+            ts,
+            DATA,
+            &CertificateTrustPolicy::default(),
+            &mut log,
+            false,
+        )
+        .unwrap();
+
+        assert!(log.has_status(TIMESTAMP_VALIDATED));
+        assert!(!log.has_status(TIMESTAMP_UNTRUSTED));
+    }
 }
