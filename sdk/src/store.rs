@@ -1392,9 +1392,18 @@ impl Store {
             // retrieve the claim & validate
             let claim_superbox = manifest_boxes
                 .get(CAI_CLAIM_UUID)
-                .ok_or(Error::InvalidClaim(
-                    InvalidClaimError::ClaimSuperboxNotFound,
-                ))?
+                .ok_or_else(|| {
+                    log_item!(
+                        to_manifest_uri(&cai_store_desc_box.label()),
+                        "claim box missing",
+                        "from_jumbf"
+                    )
+                    .validation_status(validation_status::CLAIM_MISSING)
+                    .failure_as_err(
+                        validation_log,
+                        Error::InvalidClaim(InvalidClaimError::ClaimSuperboxNotFound),
+                    )
+                })?
                 .sbox;
             let claim_desc_box = manifest_boxes
                 .get(CAI_CLAIM_UUID)
@@ -1413,9 +1422,18 @@ impl Store {
             if claim_desc_box.uuid() == CAI_CLAIM_UUID {
                 // must be have only one claim
                 if claim_superbox.data_box_count() > 1 {
-                    return Err(Error::InvalidClaim(InvalidClaimError::DuplicateClaimBox {
-                        label: claim_desc_box.label(),
-                    }));
+                    return Err(log_item!(
+                        to_manifest_uri(&cai_store_desc_box.label()),
+                        "claim has multiple content boxes",
+                        "from_jumbf"
+                    )
+                    .validation_status(validation_status::CLAIM_MALFORMED)
+                    .failure_as_err(
+                        validation_log,
+                        Error::InvalidClaim(InvalidClaimError::DuplicateClaimBox {
+                            label: claim_desc_box.label(),
+                        }),
+                    ));
                 }
                 // better be, but just in case...
 
@@ -1431,11 +1449,16 @@ impl Store {
                                 return Err(Error::PrereleaseError);
                             }
                             None => {
-                                log_item!("JUMBF", "error loading claim data", "from_jumbf")
-                                    .failure_no_throw(
-                                        validation_log,
-                                        Error::InvalidClaim(InvalidClaimError::ClaimBoxData),
-                                    );
+                                log_item!(
+                                    to_manifest_uri(&cai_store_desc_box.label()),
+                                    "error loading claim data",
+                                    "from_jumbf"
+                                )
+                                .validation_status(validation_status::CLAIM_CBOR_INVALID)
+                                .failure_no_throw(
+                                    validation_log,
+                                    Error::InvalidClaim(InvalidClaimError::ClaimBoxData),
+                                );
 
                                 return Err(Error::InvalidClaim(InvalidClaimError::ClaimBoxData));
                             }
@@ -1485,12 +1508,31 @@ impl Store {
             let cbor_box = claim_superbox
                 .data_box_as_cbor_box(0)
                 .ok_or(Error::JumbfBoxNotFound)?;
-            let mut claim = Claim::from_data(&cai_store_desc_box.label(), cbor_box.cbor())
-                .map_err(|e| {
-                    log_item!(CLAIM, "CLAIM CBOR could not be decoded", "from_jumbf")
-                        .validation_status(CLAIM_MALFORMED)
-                        .failure_as_err(validation_log, e)
+            let claim_uri = format!(
+                "{}/{}",
+                to_manifest_uri(&cai_store_desc_box.label()),
+                claim_box_ver
+            );
+            let claim_value: c2pa_cbor::Value =
+                c2pa_cbor::from_slice(cbor_box.cbor()).map_err(|e| {
+                    log_item!(
+                        claim_uri.clone(),
+                        "claim CBOR could not be decoded",
+                        "from_jumbf"
+                    )
+                    .validation_status(validation_status::CLAIM_CBOR_INVALID)
+                    .failure_as_err(
+                        validation_log,
+                        Error::ClaimDecoding(format!("claim_cbor: {e}")),
+                    )
                 })?;
+            let mut claim =
+                Claim::from_value(claim_value, &cai_store_desc_box.label(), cbor_box.cbor())
+                    .map_err(|e| {
+                        log_item!(claim_uri, "claim fields could not be decoded", "from_jumbf")
+                            .validation_status(CLAIM_MALFORMED)
+                            .failure_as_err(validation_log, e)
+                    })?;
 
             // the claim must have an algorithm to be able to process internal hashes
             if claim.alg_raw().is_none() {
@@ -1532,6 +1574,30 @@ impl Store {
                 ))?
                 .sbox;
 
+            // Unsigned assertion boxes cannot supply a claim's hard binding.
+            // Classify the missing signed reference before loading such boxes.
+            let missing_binding_reference = !is_update_manifest
+                && !claim.assertions().iter().any(|reference| {
+                    let (label, _) = Claim::assertion_label_from_link(&reference.url());
+                    let label = crate::assertions::labels::base(&label);
+                    matches!(
+                        label,
+                        crate::assertions::labels::DATA_HASH
+                            | crate::assertions::labels::BMFF_HASH
+                            | crate::assertions::labels::BOX_HASH
+                            | crate::assertions::labels::COLLECTION_HASH
+                    )
+                });
+            if missing_binding_reference {
+                log_item!(
+                    claim.uri(),
+                    "claim has no hard binding reference",
+                    "from_jumbf"
+                )
+                .validation_status(validation_status::HARD_BINDINGS_MISSING)
+                .failure(validation_log, Error::ClaimMissingHardBinding)?;
+            }
+
             let num_assertions = assertion_store_box.data_box_count();
 
             // Reject manifests that embed more assertions than the configured limit to
@@ -1548,6 +1614,22 @@ impl Store {
                 let assertion_box = assertion_store_box
                     .data_box_as_superbox(idx)
                     .ok_or(Error::JumbfBoxNotFound)?;
+
+                if missing_binding_reference {
+                    let label = assertion_box.desc_box().label();
+                    let (raw_label, _) = Claim::assertion_label_from_link(&label);
+                    let raw_label = crate::assertions::labels::base(&raw_label);
+                    if matches!(
+                        raw_label,
+                        crate::assertions::labels::DATA_HASH
+                            | crate::assertions::labels::BMFF_HASH
+                            | crate::assertions::labels::BOX_HASH
+                            | crate::assertions::labels::COLLECTION_HASH
+                    ) && claim.assertion_hashed_uri_from_label(&label).is_none()
+                    {
+                        continue;
+                    }
+                }
 
                 // Add assertions to claim after validation
                 match Store::get_assertion_from_jumbf_store(
@@ -1946,6 +2028,12 @@ impl Store {
 
         // find the manifest with the hash binding
         svi.binding_claim = self.get_hash_binding_manifest(claim).ok_or_else(|| {
+            if validation_log.logged_items().iter().any(|item| {
+                item.validation_status.as_deref() == Some(validation_status::HARD_BINDINGS_MISSING)
+                    && item.label == claim.uri()
+            }) {
+                return Error::ClaimMissingHardBinding;
+            }
             log_item!(
                 to_manifest_uri(claim.label()),
                 "could not find manifest with hard binding",
@@ -2111,12 +2199,19 @@ impl Store {
         };
 
         // get info needed to complete validation
-        let svi = store.get_store_validation_info(
+        let svi = match store.get_store_validation_info(
             claim,
             asset_data.as_deref_mut(),
             validation_log,
             context,
-        )?;
+        ) {
+            // The status has already been recorded. Keep the decoded manifest
+            // available to readers when validation is configured to continue.
+            Err(Error::ClaimMissingHardBinding) if !validation_log.stops_on_error() => {
+                return Ok(())
+            }
+            result => result?,
+        };
 
         // Per spec §15.11.3.3.1, any box present at a redacted URI must contain only 0x00
         // bytes, regardless of its JUMBF type — reject with `assertion.notRedacted` otherwise.
@@ -3888,8 +3983,10 @@ impl Store {
         // First we convert the JUMBF into a usable store.
         let mut store = Store::from_jumbf_with_context(c2pa_data, validation_log, context)
             .inspect_err(|e| {
-                log_item!("asset", "error loading file", "load_from_asset")
-                    .failure_no_throw(validation_log, e);
+                if !validation_log.has_any_error() {
+                    log_item!("asset", "error loading file", "load_from_asset")
+                        .failure_no_throw(validation_log, e);
+                }
             })?;
         store.embedded = embedded;
 

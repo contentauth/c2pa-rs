@@ -357,9 +357,11 @@ impl ValidationResults {
                             && !attested_historical_expiry)
                 })
             }
-            for status in statuses {
-                results.add_status(status);
-            }
+        }
+        // A structurally rejected store may have no decodable active claim.
+        // Its failure statuses must still be visible to callers.
+        for status in statuses {
+            results.add_status(status);
         }
         results.validation_time = Some(Utc::now().to_rfc3339());
         results
