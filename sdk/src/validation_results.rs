@@ -343,9 +343,11 @@ impl ValidationResults {
                 // url inside the active manifest) are always kept so an ingredient assertion
                 // can't cancel a genuine active-manifest failure.
                 statuses.retain(|s| {
-                    let attested_historical_expiry = s.code()
-                        == validation_status::SIGNING_CREDENTIAL_EXPIRED
-                        && s.ingredient_uri().is_some()
+                    let attested_historical_expiry = matches!(
+                        s.code(),
+                        validation_status::SIGNING_CREDENTIAL_EXPIRED
+                            | validation_status::CLAIM_SIGNATURE_OUTSIDE_VALIDITY
+                    ) && s.ingredient_uri().is_some()
                         && !is_active_manifest(s.url())
                         && s.url()
                             .and_then(manifest_label_from_uri)
@@ -1525,8 +1527,8 @@ pub mod tests {
             ASSERTION_INGREDIENT_MALFORMED, CAWG_X509_ALGORITHM_UNSUPPORTED,
             CAWG_X509_CREDENTIAL_INVALID, CAWG_X509_CREDENTIAL_UNTRUSTED,
             CAWG_X509_SIGNATURE_MISMATCH, CAWG_X509_SIGNATURE_OUTSIDE_VALIDITY, CLAIM_MALFORMED,
-            CLAIM_SIGNATURE_INSIDE_VALIDITY, CLAIM_SIGNATURE_VALIDATED, SIGNING_CREDENTIAL_EXPIRED,
-            SIGNING_CREDENTIAL_TRUSTED, SIGNING_CREDENTIAL_UNTRUSTED,
+            CLAIM_SIGNATURE_INSIDE_VALIDITY, CLAIM_SIGNATURE_OUTSIDE_VALIDITY,
+            CLAIM_SIGNATURE_VALIDATED, SIGNING_CREDENTIAL_TRUSTED, SIGNING_CREDENTIAL_UNTRUSTED,
         },
         HashedUri, Relationship,
     };
@@ -2298,7 +2300,7 @@ pub mod tests {
             "certificate expired",
             "check_certificate_profile"
         )
-        .validation_status(SIGNING_CREDENTIAL_EXPIRED)
+        .validation_status(CLAIM_SIGNATURE_OUTSIDE_VALIDITY)
         .failure(&mut tracker, "certificate expired");
         tracker.pop_ingredient_uri();
 
@@ -2309,7 +2311,7 @@ pub mod tests {
                 .validation_errors()
                 .unwrap_or_default()
                 .iter()
-                .all(|status| status.code() != SIGNING_CREDENTIAL_EXPIRED),
+                .all(|status| status.code() != CLAIM_SIGNATURE_OUTSIDE_VALIDITY),
             "ingredient attestation should suppress nested expiry delta: {:?}",
             results.validation_errors()
         );
@@ -2407,7 +2409,7 @@ pub mod tests {
             "certificate expired",
             "check_certificate_profile"
         )
-        .validation_status(SIGNING_CREDENTIAL_EXPIRED)
+        .validation_status(CLAIM_SIGNATURE_OUTSIDE_VALIDITY)
         .failure(&mut tracker, "certificate expired");
         tracker.pop_ingredient_uri();
 
@@ -2421,7 +2423,7 @@ pub mod tests {
                 .validation_errors()
                 .unwrap_or_default()
                 .iter()
-                .any(|status| status.code() == SIGNING_CREDENTIAL_EXPIRED),
+                .any(|status| status.code() == CLAIM_SIGNATURE_OUTSIDE_VALIDITY),
             "an unrelated ingredient's forged attestation suppressed a genuine expiry finding: {:?}",
             results.validation_errors()
         );
@@ -2492,7 +2494,7 @@ pub mod tests {
             "certificate expired",
             "verify"
         )
-        .validation_status(SIGNING_CREDENTIAL_EXPIRED)
+        .validation_status(CLAIM_SIGNATURE_OUTSIDE_VALIDITY)
         .failure(&mut tracker, "certificate expired");
         tracker.pop_ingredient_uri();
 
@@ -2502,7 +2504,7 @@ pub mod tests {
                 .validation_errors()
                 .unwrap_or_default()
                 .iter()
-                .any(|status| status.code() == SIGNING_CREDENTIAL_EXPIRED),
+                .any(|status| status.code() == CLAIM_SIGNATURE_OUTSIDE_VALIDITY),
             "an unreferenced insideValidity attestation suppressed a genuine expiry finding"
         );
     }
