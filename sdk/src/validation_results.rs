@@ -761,6 +761,9 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a C2PA assertion.
     pub const ASSERTION_HASHEDURI_MATCH: &str = "assertion.hashedURI.match";
 
+    /// All located asset parts match their hashes.
+    pub const ASSERTION_MULTI_ASSET_HASH_MATCH: &str = "assertion.multiAssetHash.match";
+
     /// Hash of a byte range of the asset matches the hash declared in the
     /// data hash assertion.
     ///
@@ -1240,6 +1243,14 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a C2PA assertion.
     pub const ASSERTION_DATAHASH_MISMATCH: &str = "assertion.dataHash.mismatch";
 
+    /// The multi-asset hash structure or coverage is invalid.
+    pub const ASSERTION_MULTI_ASSET_HASH_MALFORMED: &str = "assertion.multiAssetHash.malformed";
+    /// A required asset part is absent.
+    pub const ASSERTION_MULTI_ASSET_HASH_MISSING_PART: &str =
+        "assertion.multiAssetHash.missingPart";
+    /// A located asset part is truncated or fails its hash.
+    pub const ASSERTION_MULTI_ASSET_HASH_MISMATCH: &str = "assertion.multiAssetHash.mismatch";
+
     /// The hash of a box-based asset does not match the hash declared
     /// in the BMFF hash assertion.
     ///
@@ -1480,6 +1491,7 @@ pub mod validation_codes {
             | TIMESTAMP_TRUSTED
             | TIMESTAMP_VALIDATED
             | ASSERTION_HASHEDURI_MATCH
+            | ASSERTION_MULTI_ASSET_HASH_MATCH
             | ASSERTION_DATAHASH_MATCH
             | ASSERTION_BMFFHASH_MATCH
             | ASSERTION_ACCESSIBLE

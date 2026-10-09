@@ -2958,6 +2958,81 @@ impl Claim {
         }
     }
 
+    // Called only after an ordinary hash mismatch; structural failures are not recoverable.
+    fn verify_multi_asset_fallback(
+        &self,
+        asset_data: &mut ClaimAssetData<'_>,
+        validation_log: &mut StatusTracker,
+        context: &Context,
+    ) -> Result<bool> {
+        if !self
+            .assertion_store
+            .iter()
+            .any(|a| a.label_raw() == labels::MULTI_ASSET_HASH)
+        {
+            return Ok(false);
+        }
+        let format = asset_data.format().ok_or(Error::UnsupportedType)?;
+        let result = match asset_data {
+            #[cfg(feature = "file_io")]
+            ClaimAssetData::Path(path) => crate::multi_asset::verify(
+                self,
+                &self.assertion_store,
+                &mut std::fs::File::open(path)?,
+                &format,
+                context,
+            ),
+            ClaimAssetData::Bytes(bytes, _) => crate::multi_asset::verify(
+                self,
+                &self.assertion_store,
+                &mut std::io::Cursor::new(*bytes),
+                &format,
+                context,
+            ),
+            ClaimAssetData::Stream(stream, _) => {
+                crate::multi_asset::verify(self, &self.assertion_store, *stream, &format, context)
+            }
+            _ => return Err(Error::UnsupportedType),
+        };
+        let uri = self.assertion_uri(labels::MULTI_ASSET_HASH);
+        match result {
+            Ok(()) => {
+                log_item!(uri, "multi-asset hash valid", "verify_hash_binding")
+                    .validation_status(validation_status::ASSERTION_MULTI_ASSET_HASH_MATCH)
+                    .success(validation_log);
+            }
+            Err(Error::OperationCancelled) => return Err(Error::OperationCancelled),
+            Err(e) => {
+                let code = match &e {
+                    Error::C2PAValidation(code)
+                        if code == validation_status::ASSERTION_MULTI_ASSET_HASH_MALFORMED =>
+                    {
+                        validation_status::ASSERTION_MULTI_ASSET_HASH_MALFORMED
+                    }
+                    Error::C2PAValidation(code)
+                        if code == validation_status::ASSERTION_MULTI_ASSET_HASH_MISSING_PART =>
+                    {
+                        validation_status::ASSERTION_MULTI_ASSET_HASH_MISSING_PART
+                    }
+                    Error::C2PAValidation(code)
+                        if code == validation_status::ALGORITHM_UNSUPPORTED =>
+                    {
+                        validation_status::ALGORITHM_UNSUPPORTED
+                    }
+                    _ => validation_status::ASSERTION_MULTI_ASSET_HASH_MISMATCH,
+                };
+                log_item!(
+                    uri,
+                    format!("multi-asset hash error: {e}"),
+                    "verify_hash_binding"
+                )
+                .validation_status(code)
+                .failure(validation_log, e)?;
+            }
+        }
+        Ok(true)
+    }
+
     pub(crate) fn verify_hash_binding(
         claim: &Claim,
         asset_data: &mut ClaimAssetData<'_>,
@@ -3001,6 +3076,7 @@ impl Claim {
             }
 
             // while this is a vec the spec only expects one at the moment and is checked above
+            let hash_assertions_len = hash_assertions.len();
             for hash_binding_assertion in hash_assertions {
                 if hash_binding_assertion
                     .label_raw()
@@ -3119,6 +3195,23 @@ impl Claim {
                                 continue;
                             }
                             Err(e) => {
+                                if matches!(e, Error::HashMismatch(_))
+                                    && dh.exclusions.as_ref().is_none_or(|ranges| {
+                                        data_hash_exclusions_match_manifest(
+                                            ranges,
+                                            svi.manifest_store_range.as_ref(),
+                                            svi.is_embedded,
+                                        )
+                                    })
+                                    && hash_assertions_len == 1
+                                    && claim.verify_multi_asset_fallback(
+                                        asset_data,
+                                        validation_log,
+                                        context,
+                                    )?
+                                {
+                                    continue;
+                                }
                                 log_item!(
                                     claim.assertion_uri(&hash_binding_assertion.label()),
                                     format!("asset hash error, name: {name}, error: {e}"),
@@ -3353,6 +3446,18 @@ impl Claim {
                                 validation_status::ASSERTION_BOXESHASH_MALFORMED,
                                 validation_status::ASSERTION_BOXHASH_MISMATCH,
                             );
+
+                            if err_str == validation_status::ASSERTION_BOXHASH_MISMATCH
+                                && matches!(e, Error::HashMismatch(_))
+                                && hash_assertions_len == 1
+                                && claim.verify_multi_asset_fallback(
+                                    asset_data,
+                                    validation_log,
+                                    context,
+                                )?
+                            {
+                                continue;
+                            }
 
                             log_item!(
                                 claim.assertion_uri(&hash_binding_assertion.label()),
