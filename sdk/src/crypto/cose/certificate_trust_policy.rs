@@ -544,6 +544,11 @@ pub enum CertificateTrustError {
     #[error("the certificate is not trusted")]
     CertificateNotTrusted,
 
+    /// A CA certificate in the chain was outside its validity period at the
+    /// time the chain was evaluated.
+    #[error("a CA certificate in the chain is outside its validity period")]
+    CaCertificateOutsideValidity,
+
     /// The certificate contains an invalid extended key usage (EKU) value.
     #[error("the certificate contains an invalid extended key usage (EKU) value")]
     InvalidEku,
@@ -991,8 +996,11 @@ zGxQnM2hCA==
         let expired_certs = cert_ders_from_pem(include_bytes!(
             "../../../tests/fixtures/crypto/cose/chain_trust_expired_intermediate.pub"
         ));
-        ctp.check_certificate_trust(&expired_certs[1..], &expired_certs[0], None)
-            .expect_err("an expired intermediate CA certificate must not be trusted");
+        assert_eq!(
+            ctp.check_certificate_trust(&expired_certs[1..], &expired_certs[0], None),
+            Err(CertificateTrustError::CaCertificateOutsideValidity),
+            "an expired intermediate CA certificate must not be trusted"
+        );
     }
 
     /// Regression: an ordinary end-entity certificate (`basicConstraints
