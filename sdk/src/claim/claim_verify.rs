@@ -24,6 +24,8 @@ use crate::{
         Actions, BmffHash, BoxHash, CollectionHash, DataHash, DataMap, Ingredient, Metadata,
         Relationship,
     },
+    asset_handlers::riff_io::RiffIO,
+    asset_io::AssetIO,
     claim::Claim,
     context::{Context, ProgressPhase},
     cose_validator::{
@@ -102,15 +104,17 @@ pub(crate) const ALLOWED_UPDATE_MANIFEST_ACTIONS: [&str; 4] = [
 /// Per C2PA 15.12, the exclusion range containing the manifest store must hold only
 /// the manifest store and padding. `manifest_store_range` is the manifest's real
 /// location, found independently by re-parsing the asset; a legitimate exclusion
-/// covers exactly it. A mismatch means the exclusion covers non-manifest bytes -- a
+/// covers exactly it, optionally retaining the 8-byte RIFF chunk header in the
+/// hash. A mismatch means the exclusion covers non-manifest bytes -- a
 /// detached manifest applied to an unrelated asset, or content injected into the
 /// space freed by shrinking the manifest.
 ///
 /// This fails closed: an exclusion that cannot be checked against a manifest found
 /// in the asset (none there, or the lookup failed) does not match.
-fn data_hash_exclusions_match_manifest(
+pub(super) fn data_hash_exclusions_match_manifest(
     exclusions: &[HashRange],
     manifest_store_range: Option<&HashRange>,
+    asset_format: Option<&str>,
 ) -> bool {
     // Remote/sidecar manifests carry a placeholder exclusion that excludes no
     // bytes; the whole asset is hashed, so there is nothing to police.
@@ -121,7 +125,31 @@ fn data_hash_exclusions_match_manifest(
     // An exclusion must cover exactly the manifest found in this asset. With none
     // found, nothing may be excluded: a detached manifest on an unrelated asset
     // (#2643), or one whose location could not be determined.
-    manifest_store_range.is_some_and(|range| exclusions.contains(range))
+    let Some(range) = manifest_store_range else {
+        return false;
+    };
+    if exclusions.contains(range) {
+        return true;
+    }
+    // RIFF embeds the manifest as chunk data. The chunk identifier and
+    // length can remain in the hash, so allow that exact payload range.
+    let is_riff = asset_format.is_some_and(|format| {
+        let format = crate::utils::mime::format_to_mime(format);
+        RiffIO::new(&format)
+            .supported_types()
+            .contains(&format.as_str())
+    });
+    is_riff
+        && range.length() >= 8
+        && range.start().checked_add(8).is_some_and(|start| {
+            let payload_length = range.length() - 8;
+            exclusions.contains(&HashRange::new(start, payload_length))
+                // RIFF chunks are word-aligned. A trailing alignment byte
+                // may remain hashed along with the chunk header.
+                || (payload_length > 0
+                    && payload_length % 2 == 0
+                    && exclusions.contains(&HashRange::new(start, payload_length - 1)))
+        })
 }
 
 impl Claim {
@@ -1217,6 +1245,7 @@ impl Claim {
                             if !data_hash_exclusions_match_manifest(
                                 exclusions,
                                 svi.manifest_store_range.as_ref(),
+                                asset_data.format().as_deref(),
                             ) {
                                 let description = match &svi.manifest_location_error {
                                     Some(error) => format!(
@@ -1237,6 +1266,9 @@ impl Claim {
                                             .to_string(),
                                     ),
                                 )?;
+                                // Continue validating other bindings, but never emit a
+                                // match for this rejected exclusion range.
+                                continue;
                             }
 
                             // there are extra exclusion then log the information code about extra exclusion
@@ -2308,22 +2340,32 @@ mod tests {
         let wrong = [HashRange::new(100, 60)];
         let placeholder = [HashRange::new(0, 0)];
 
-        assert!(data_hash_exclusions_match_manifest(&exact, Some(&manifest)));
+        assert!(data_hash_exclusions_match_manifest(
+            &exact,
+            Some(&manifest),
+            None
+        ));
         assert!(data_hash_exclusions_match_manifest(
             &with_extra,
-            Some(&manifest)
+            Some(&manifest),
+            None
         ));
         assert!(!data_hash_exclusions_match_manifest(
             &wrong,
-            Some(&manifest)
+            Some(&manifest),
+            None
         ));
 
         // Nothing excluded: nothing to check, wherever the manifest is.
-        assert!(data_hash_exclusions_match_manifest(&placeholder, None));
-        assert!(data_hash_exclusions_match_manifest(&[], None));
+        assert!(data_hash_exclusions_match_manifest(
+            &placeholder,
+            None,
+            None
+        ));
+        assert!(data_hash_exclusions_match_manifest(&[], None, None));
 
         // Bytes excluded but no manifest located (absent, or the lookup failed):
         // fails closed, even for a manifest read from the asset itself.
-        assert!(!data_hash_exclusions_match_manifest(&exact, None));
+        assert!(!data_hash_exclusions_match_manifest(&exact, None, None));
     }
 }
