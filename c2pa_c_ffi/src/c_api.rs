@@ -3439,7 +3439,7 @@ mod tests {
             for (init_name, multi, relative, return_bytes) in [
                 ("init.mp4", false, false, true),
                 ("init.m4s", false, true, true),
-                ("init.cmfv", true, false, true),
+                ("init.m4v", true, false, true),
                 ("init[1].m4s", true, false, true),
                 ("init.mp4", false, false, false),
                 #[cfg(unix)]

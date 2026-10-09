@@ -14,7 +14,6 @@ The following table summarizes the supported media (asset) file formats. This in
 | `avi`           | `video/msvideo`, `video/x-msvideo`, `video/avi`, `application/x-troff-msvideo`  |
 | `avif`          | `image/avif`                                                                    |
 | `c2pa`          | `application/x-c2pa-manifest-store`                                             |
-| `cmfv`          | `video/mp4`                                                                    |
 | `dng`           | `image/x-adobe-dng`                                                             |
 | `flac`          | `audio/flac`                                                                    |
 | `gif`           | `image/gif`                                                                     |
@@ -37,7 +36,8 @@ The following table summarizes the supported media (asset) file formats. This in
 
 Fragmented BMFF (DASH/CMAF) signing is available through Rust's
 `Builder::sign_fragmented_files` and the C API's `c2pa_builder_sign_fragmented`,
-with the `file_io` feature. Init segments may use `.mp4`, `.m4s`, or `.cmfv` extensions.
+with the `file_io` feature. Init segments may use any registered BMFF extension,
+including `.mp4` and `.m4s`.
 
 Both APIs flatten outputs to `<output>/<init parent directory name>/<file name>`.
 The SDK rejects collisions between written rendition-directory and segment-file

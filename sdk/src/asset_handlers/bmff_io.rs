@@ -69,7 +69,7 @@ const FULL_BOX_TYPES: &[&str; 80] = &[
     "txtC", "mime", "uri ", "uriI", "hmhd", "sthd", "vvhd", "medc",
 ];
 
-static SUPPORTED_TYPES: [&str; 18] = [
+static SUPPORTED_TYPES: [&str; 17] = [
     "avif",
     "heif",
     "heic",
@@ -78,7 +78,6 @@ static SUPPORTED_TYPES: [&str; 18] = [
     "mov",
     "m4v",
     "m4s",
-    "cmfv",
     "application/mp4",
     "audio/mp4",
     "image/avif",
@@ -2026,7 +2025,6 @@ impl AssetIO for BmffIO {
             ("mov", "video/quicktime"),
             ("m4v", "video/x-m4v"),
             ("m4s", "video/iso.segment"),
-            ("cmfv", "video/mp4"),
         ]
         .into_iter()
         .map(|(ext, mime)| (ext.to_string(), mime.to_string()))
@@ -3157,16 +3155,14 @@ pub mod tests {
     #[test]
     fn test_fragmented_extensions() {
         let registry = crate::jumbf_io::default_handler_registry();
-        for (extension, mime) in [("m4s", "video/iso.segment"), ("cmfv", "video/mp4")] {
-            assert!(registry.handler(extension).is_some());
-            assert!(registry.handler(mime).is_some());
-            assert!(registry.is_bmff_format(extension));
-            assert_eq!(registry.mime_for(extension), Some(mime));
-            assert_eq!(
-                registry.format_from_path(format!("init.{extension}")),
-                Some(mime.to_owned())
-            );
-        }
+        assert!(registry.handler("m4s").is_some());
+        assert!(registry.handler("video/iso.segment").is_some());
+        assert!(registry.is_bmff_format("m4s"));
+        assert_eq!(registry.mime_for("m4s"), Some("video/iso.segment"));
+        assert_eq!(
+            registry.format_from_path("init.m4s"),
+            Some("video/iso.segment".to_owned())
+        );
     }
 
     #[test]
