@@ -18,7 +18,7 @@ use std::{
 
 use quick_xml::{
     events::{BytesStart, BytesText, Event},
-    name::ResolveResult,
+    name::{QName, ResolveResult},
     NsReader, Writer,
 };
 
@@ -67,6 +67,10 @@ fn metadata_element_name(root: &BytesStart) -> String {
         ),
         None => METADATA.to_string(),
     }
+}
+
+fn is_manifest_path(xml_path: &[String]) -> bool {
+    xml_path == [SVG, METADATA, MANIFEST]
 }
 
 pub struct SvgIO {}
@@ -222,7 +226,7 @@ fn detect_manifest_location(
                     }
                 }
 
-                if xml_path == [SVG, METADATA, MANIFEST] {
+                if is_manifest_path(&xml_path) {
                     detected_level = DetectedTagsDepth::Manifest;
                     insertion_point = xml_reader.buffer_position();
                 }
@@ -232,7 +236,7 @@ fn detect_manifest_location(
                     insertion_point = xml_reader.buffer_position();
                 }
             }
-            Ok(Event::Text(e)) if xml_path == [SVG, METADATA, MANIFEST] => {
+            Ok(Event::Text(e)) if is_manifest_path(&xml_path) => {
                 // Reject double payloads which would make hashing ambiguous.
                 if output.is_some() {
                     return Err(Error::InvalidAsset(
@@ -468,7 +472,7 @@ impl C2paWriter for SvgIO {
                         }
                         Ok(Event::Text(e)) => {
                             // add manifest data
-                            if xml_path == [SVG, METADATA, MANIFEST] {
+                            if is_manifest_path(&xml_path) {
                                 writer
                                     .write_event(Event::Text(BytesText::new(&encoded)))
                                     .map_err(|_e| Error::XmlWriteError)?;
@@ -588,7 +592,6 @@ impl C2paWriter for SvgIO {
         input_stream: &mut dyn ReadSeek,
         output_stream: &mut dyn ReadWriteSeek,
     ) -> Result<()> {
-        detect_manifest_location(input_stream)?;
         input_stream.rewind()?;
         let buf_reader = BufReader::new(input_stream);
         let mut reader = NsReader::from_reader(buf_reader);
@@ -600,47 +603,50 @@ impl C2paWriter for SvgIO {
         let mut xml_path: Vec<String> = Vec::new();
 
         loop {
-            match reader.read_event_into(&mut buf) {
-                Ok(Event::Start(e)) => {
+            let event = reader
+                .read_event_into(&mut buf)
+                .map_err(|_e| Error::InvalidAsset("XML invalid".to_string()))?;
+
+            match event {
+                Event::Start(e) => {
                     xml_path.push(canonical_element_name(
                         &e,
                         reader.resolver().resolve_element(e.name()).0,
                     ));
-
-                    if xml_path == [SVG, METADATA, MANIFEST] {
-                        // skip the manifest
-                        continue;
+                    if is_manifest_path(&xml_path) {
+                        xml_path.pop();
+                        // Skip without decoding, so corrupt or duplicate manifests can still be removed.
+                        let end = e.name().as_ref().to_vec();
+                        reader
+                            .read_to_end_into(QName(&end), &mut buf)
+                            .map_err(|_e| Error::InvalidAsset("XML invalid".to_string()))?;
                     } else {
                         writer
                             .write_event(Event::Start(e))
-                            .map_err(|_e| Error::XmlWriteError)?; // pass Event through
+                            .map_err(|_e| Error::XmlWriteError)?;
                     }
                 }
-                Ok(Event::Text(e)) => {
-                    if xml_path == [SVG, METADATA, MANIFEST] {
-                        // skip the manifest
-                        continue;
-                    } else {
+                Event::Empty(e) => {
+                    xml_path.push(canonical_element_name(
+                        &e,
+                        reader.resolver().resolve_element(e.name()).0,
+                    ));
+                    let is_manifest = is_manifest_path(&xml_path);
+                    xml_path.pop();
+                    if !is_manifest {
                         writer
-                            .write_event(Event::Text(e))
-                            .map_err(|_e| Error::XmlWriteError)?; // pass Event through
+                            .write_event(Event::Empty(e))
+                            .map_err(|_e| Error::XmlWriteError)?;
                     }
                 }
-                Ok(Event::Eof) => break,
-                Ok(Event::End(e)) => {
-                    if xml_path == [SVG, METADATA, MANIFEST] {
-                        // skip the manifest
-                        xml_path.pop();
-                        continue;
-                    } else {
-                        xml_path.pop();
-                        writer
-                            .write_event(Event::End(e))
-                            .map_err(|_e| Error::XmlWriteError)?; // pass Event through
-                    }
+                Event::End(e) => {
+                    xml_path.pop();
+                    writer
+                        .write_event(Event::End(e))
+                        .map_err(|_e| Error::XmlWriteError)?;
                 }
-                Ok(e) => writer.write_event(e).map_err(|_e| Error::XmlWriteError)?,
-                Err(_e) => return Err(Error::InvalidAsset("XML invalid".to_string())),
+                Event::Eof => break,
+                e => writer.write_event(e).map_err(|_e| Error::XmlWriteError)?,
             }
             buf.clear();
         }
@@ -799,7 +805,7 @@ pub mod tests {
     }
 
     #[test]
-    fn test_svg_rejects_multiple_c2pa_payloads() {
+    fn test_svg_read_rejects_multiple_c2pa_payloads() {
         let svg_io = SvgIO::new("svg");
         for input in [
             r#"<svg xmlns="http://www.w3.org/2000/svg"><metadata><c2pa:manifest>SlVNQkY=</c2pa:manifest><y:manifest xmlns:y="http://c2pa.org/manifest">T1RIRVI=</y:manifest></metadata></svg>"#,
@@ -810,14 +816,48 @@ pub mod tests {
                 svg_io.read_c2pa(&mut Cursor::new(input.as_bytes())),
                 Err(Error::InvalidAsset(_))
             ));
-            assert!(matches!(
-                svg_io.remove_c2pa(
-                    &mut Cursor::new(input.as_bytes()),
-                    &mut Cursor::new(Vec::new())
-                ),
-                Err(Error::InvalidAsset(_))
-            ));
+            // Removal stays tolerant so ambiguous files can still be cleaned.
+            let mut output = Cursor::new(Vec::new());
+            svg_io
+                .remove_c2pa(&mut Cursor::new(input.as_bytes()), &mut output)
+                .unwrap();
+            assert!(!std::str::from_utf8(output.get_ref())
+                .unwrap()
+                .contains(":manifest"));
         }
+    }
+
+    #[test]
+    fn test_svg_removal_drops_whole_manifest() {
+        const NS: &str =
+            r#"xmlns="http://www.w3.org/2000/svg" xmlns:c2pa="http://c2pa.org/manifest""#;
+        let remove = |body: &str| {
+            let mut output = Cursor::new(Vec::new());
+            SvgIO::new("svg")
+                .remove_c2pa(
+                    &mut Cursor::new(format!("<svg {NS}>{body}").into_bytes()),
+                    &mut output,
+                )
+                .map(|_| String::from_utf8(output.into_inner()).unwrap())
+        };
+        let cleaned = format!("<svg {NS}><metadata></metadata><rect/></svg>");
+        for manifest in [
+            "<c2pa:manifest>!!!notb64</c2pa:manifest>",
+            "<c2pa:manifest/>",
+            "<c2pa:manifest><![CDATA[x]]><!--c--><?pi x?><g><rect/></g></c2pa:manifest>",
+        ] {
+            let body = format!("<metadata>{manifest}</metadata><rect/></svg>");
+            assert_eq!(remove(&body).unwrap(), cleaned, "{manifest}");
+        }
+        assert!(matches!(
+            remove("<metadata><c2pa:manifest>AAAA"),
+            Err(Error::InvalidAsset(_))
+        ));
+        let wrong_parent = "<g><c2pa:manifest>AAAA</c2pa:manifest></g></svg>";
+        assert_eq!(
+            remove(wrong_parent).unwrap(),
+            format!("<svg {NS}>{wrong_parent}")
+        );
     }
 
     #[test]
