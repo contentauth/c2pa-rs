@@ -221,6 +221,7 @@ Here's the `Settings` JSON with all default values:
   "core": {
     "merkle_tree_chunk_size_in_kb": null,
     "merkle_tree_max_proofs": 5,
+    "merkle_tree_max_leaves": 10000,
     "backing_store_memory_threshold_in_mb": 512,
     "decode_identity_assertions": true,
     "allowed_network_hosts": null,
@@ -266,6 +267,35 @@ Here's the `Settings` JSON with all default values:
 ```
 
 ## Configuration examples
+
+Ordinary embedded `Builder::sign`/`sign_file` (including async signing) automatically uses
+fragment Merkle binding for a single BMFF file containing `moov` and `moof`/`mdat`.
+This path stores a leaf row and one equal-size, zero-padded Merkle UUID before
+each moof. The primary manifest's auxiliary locator points to the first UUID's
+final absolute offset. `initHash` and fragment hashes use the final absolute
+root-box offsets; the final fragment covers EOF, including raw trailing bytes.
+It takes
+precedence over `core.merkle_tree_chunk_size_in_kb` and is bounded by
+`core.merkle_tree_max_leaves` (default 10,000) plus the hash-memory budget.
+Exceeding the limit fails rather than silently falling back to a flat hash.
+
+Supported media has one stable track: `localId` is the tkhd track ID and every
+moof must contain one matching tfhd. Multiplexed or changing track layouts fail
+explicitly. Media uses default-base-is-moof or explicit in-fragment tfhd bases,
+with trun sample ranges contained in that fragment's mdat boxes. Unsupported
+implicit bases, cross-fragment sample ranges, hybrid initialization media,
+saio/iloc auxiliary addressing, ssix and hierarchical sidx fail explicitly.
+Existing Merkle-bound single-file fMP4 requires an update manifest instead of
+ordinary re-signing; historical flat-bound fMP4 remains verifiable and can be
+re-signed. Flat MP4, caller-supplied bindings, segmented signing and VSI retain
+their separate binding paths.
+
+Automatic single-file fragment signing requires an embedded manifest, optionally
+with a remote URL. Detached/sidecar-only signing fails explicitly: upstream
+readers reject auxiliary-only C2PA assets during automatic manifest discovery.
+Updates preserve raw EOF suffixes, but reject a terminal size-zero box that would
+consume an appended update UUID. Size-changing metadata writes on fragmented
+files also apply the supported addressing restrictions to caller-supplied bindings.
 
 ### Minimal configuration
 
