@@ -87,6 +87,11 @@ pub trait AsyncPostValidator {
 }
 
 /// Use a Reader to read and validate a manifest store.
+///
+/// Structural claim failures are exposed through [`Self::validation_results`]
+/// with [`ValidationState::Invalid`]. When a claim cannot be decoded, no
+/// manifest is available through [`Self::active_manifest`]. Reading errors,
+/// unsupported features, and assets without a manifest still return errors.
 #[skip_serializing_none]
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "json_schema", derive(JsonSchema), schemars(default))]
@@ -237,7 +242,8 @@ impl Reader {
             Store::from_stream(format, stream, &mut validation_log, &self.context)
         } else {
             Store::from_stream_async(format, stream, &mut validation_log, &self.context).await
-        }?;
+        };
+        let store = self.store_or_structural_report(store, &validation_log)?;
 
         if _sync {
             self.with_store(store, &mut validation_log)
@@ -318,7 +324,7 @@ impl Reader {
             Store::from_stream_async(&format, &mut file, &mut validation_log, &self.context).await
         };
 
-        match store {
+        match self.store_or_structural_report(store, &validation_log) {
             Err(Error::JumbfNotFound) => {
                 // if not embedded or cloud, check for sidecar first and load if it exists
                 let potential_sidecar_path = path.with_extension("c2pa");
@@ -342,7 +348,8 @@ impl Reader {
                             &self.context,
                         )
                         .await
-                    }?;
+                    };
+                    let store = self.store_or_structural_report(store, &validation_log)?;
                     if _sync {
                         self.with_store(store, &mut validation_log)
                     } else {
@@ -426,8 +433,9 @@ impl Reader {
     /// # Returns
     /// The updated [`Reader`] with the added manifest store.
     /// # Errors
-    /// This function returns an [`Error`] if the c2pa_data is not valid, or severe errors occur in validation.
-    /// You must check validation status for non-severe errors.
+    /// This function returns an [`Error`] for reading errors or unsupported features.
+    /// Structural claim failures are returned in validation results; check
+    /// [`Self::validation_state`] even when reading succeeds.
     #[async_generic]
     pub fn with_manifest_data_and_stream(
         mut self,
@@ -454,7 +462,8 @@ impl Reader {
                 &self.context,
             )
             .await
-        }?;
+        };
+        let store = self.store_or_structural_report(store, &validation_log)?;
         if _sync {
             self.with_store(store, &mut validation_log)
         } else {
@@ -533,7 +542,8 @@ impl Reader {
                 &self.context,
             )
             .await
-        }?;
+        };
+        let store = self.store_or_structural_report(store, &validation_log)?;
 
         if _sync {
             self.with_store(store, &mut validation_log)
@@ -595,13 +605,14 @@ impl Reader {
 
         let mut init_segment = std::fs::File::open(path.as_ref())?;
 
-        match Store::load_from_file_and_fragments(
+        let result = Store::load_from_file_and_fragments(
             &asset_type,
             &mut init_segment,
             fragments,
             &mut validation_log,
             &self.context,
-        ) {
+        );
+        match self.store_or_structural_report(result, &validation_log) {
             Ok(store) => {
                 self.with_store(store, &mut validation_log)?;
                 Ok(self)
@@ -998,6 +1009,45 @@ impl Reader {
             }
         }
         Ok(())
+    }
+
+    // A malformed manifest cannot produce a usable Store, but the public
+    // reader can still expose the typed validation failure. Operational errors
+    // and unsupported features retain their existing error behavior.
+    fn store_or_structural_report(
+        &self,
+        result: Result<Store>,
+        log: &StatusTracker,
+    ) -> Result<Store> {
+        use crate::{store::InvalidClaimError, validation_status};
+        match result {
+            Err(
+                error @ (Error::ClaimDecoding(_)
+                | Error::InvalidClaim(
+                    InvalidClaimError::ClaimSuperboxNotFound
+                    | InvalidClaimError::C2paMultipleClaimBoxes
+                    | InvalidClaimError::DuplicateClaimBox { .. }
+                    | InvalidClaimError::C2paMultipleManifestBoxes
+                    | InvalidClaimError::ClaimBoxData
+                    | InvalidClaimError::ClaimDescriptionBoxInvalid,
+                )),
+            ) => {
+                if [
+                    validation_status::CLAIM_MISSING,
+                    validation_status::CLAIM_MULTIPLE,
+                    validation_status::CLAIM_CBOR_INVALID,
+                    validation_status::CLAIM_MALFORMED,
+                ]
+                .iter()
+                .any(|code| log.has_status(code))
+                {
+                    Ok(Store::from_context(&self.context))
+                } else {
+                    Err(error)
+                }
+            }
+            other => other,
+        }
     }
 
     #[async_generic()]
@@ -1986,5 +2036,182 @@ pub mod tests {
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod structural_tests {
+    #![allow(clippy::unwrap_used)]
+
+    use std::io::Cursor;
+
+    use super::*;
+    use crate::{status_tracker::ErrorBehavior, validation_status};
+
+    const CASES: &[(&[u8], &str)] = &[
+        (
+            include_bytes!("../tests/fixtures/conformance/claim_missing.jpg"),
+            validation_status::CLAIM_MISSING,
+        ),
+        (
+            include_bytes!("../tests/fixtures/conformance/claim_multiple.jpg"),
+            validation_status::CLAIM_MULTIPLE,
+        ),
+        (
+            include_bytes!("../tests/fixtures/conformance/claim_cbor_invalid.jpg"),
+            validation_status::CLAIM_CBOR_INVALID,
+        ),
+        (
+            include_bytes!("../tests/fixtures/conformance/hard_bindings_missing.jpg"),
+            validation_status::HARD_BINDINGS_MISSING,
+        ),
+        (
+            include_bytes!("../tests/fixtures/conformance/missing_instance_id.jpg"),
+            validation_status::CLAIM_MALFORMED,
+        ),
+    ];
+
+    fn check(reader: &Reader, code: &str) {
+        assert_eq!(reader.validation_state(), ValidationState::Invalid);
+        assert!(reader
+            .validation_status()
+            .unwrap()
+            .iter()
+            .any(|s| s.code() == code));
+        assert!(reader
+            .validation_results()
+            .unwrap()
+            .validation_status()
+            .iter()
+            .any(|s| s.code() == code));
+        assert!(reader.json_checked().unwrap().contains(code));
+        let encoded = serde_json::to_string(reader).unwrap();
+        let decoded: Reader = serde_json::from_str(&encoded).unwrap();
+        assert!(decoded
+            .validation_status()
+            .unwrap()
+            .iter()
+            .any(|s| s.code() == code));
+        if code == validation_status::HARD_BINDINGS_MISSING {
+            assert!(
+                reader.active_manifest().is_some(),
+                "retain the decoded manifest"
+            );
+        } else {
+            assert!(
+                reader.active_manifest().is_none(),
+                "do not invent a claim after decoding failed"
+            );
+        }
+    }
+
+    #[test]
+    fn structural_failures_are_public_validation_results() {
+        for &(bytes, code) in CASES {
+            let reader = Reader::from_context(Context::new())
+                .with_stream("image/jpeg", Cursor::new(bytes))
+                .unwrap();
+            check(&reader, code);
+            let context = Context::new();
+            let (manifest, _) =
+                Store::load_jumbf_from_stream("image/jpeg", &mut Cursor::new(bytes), &context)
+                    .unwrap();
+            let reader = Reader::from_context(context)
+                .with_manifest_data_and_stream(&manifest, "image/jpeg", Cursor::new(bytes))
+                .unwrap();
+            check(&reader, code);
+        }
+    }
+
+    #[tokio::test]
+    async fn structural_failures_are_public_validation_results_async() {
+        for &(bytes, code) in CASES {
+            let reader = Reader::from_context(Context::new())
+                .with_stream_async("image/jpeg", Cursor::new(bytes))
+                .await
+                .unwrap();
+            check(&reader, code);
+            let context = Context::new();
+            let (manifest, _) =
+                Store::load_jumbf_from_stream("image/jpeg", &mut Cursor::new(bytes), &context)
+                    .unwrap();
+            let reader = Reader::from_context(context)
+                .with_manifest_data_and_stream_async(&manifest, "image/jpeg", Cursor::new(bytes))
+                .await
+                .unwrap();
+            check(&reader, code);
+        }
+    }
+
+    #[cfg(feature = "file_io")]
+    #[test]
+    fn structural_file_failures_are_validation_results() {
+        for &(bytes, code) in CASES {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("structural.jpg");
+            std::fs::write(&path, bytes).unwrap();
+            let reader = Reader::from_context(Context::new())
+                .with_file(&path)
+                .unwrap();
+            check(&reader, code);
+        }
+    }
+
+    #[test]
+    fn structural_low_level_errors_preserve_status_codes() {
+        for &(bytes, code) in CASES {
+            let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+            assert!(Store::from_stream(
+                "image/jpeg",
+                Cursor::new(bytes),
+                &mut report,
+                &Context::new()
+            )
+            .is_err());
+            assert!(
+                report.has_status(code),
+                "{code}: {:?}",
+                report.logged_items()
+            );
+        }
+    }
+
+    #[test]
+    fn recorded_structural_status_does_not_mask_operational_errors() {
+        let reader = Reader::from_context(Context::new());
+        let mut report = StatusTracker::default();
+        log_item!("manifest", "missing claim", "test")
+            .validation_status(validation_status::CLAIM_MISSING)
+            .failure_no_throw(&mut report, Error::ProvenanceMissing);
+        for error in [
+            Error::IoError(std::io::Error::other("read failed")),
+            Error::OperationCancelled,
+            Error::InvalidClaim(crate::store::InvalidClaimError::ClaimVersionTooNew),
+            Error::TooManyAssertions { max: 1 },
+        ] {
+            assert!(reader
+                .store_or_structural_report(Err(error), &report)
+                .is_err());
+        }
+    }
+
+    #[test]
+    fn nonstructural_errors_remain_errors() {
+        let reader = Reader::from_context(Context::new());
+        assert!(matches!(
+            reader.with_stream(
+                "image/jpeg",
+                Cursor::new(include_bytes!("../tests/fixtures/no_manifest.jpg"))
+            ),
+            Err(Error::JumbfNotFound)
+        ));
+        let reader = Reader::from_context(Context::new());
+        assert!(reader
+            .with_stream("image/jpeg", Cursor::new(b"not a JPEG"))
+            .is_err());
+        let reader = Reader::from_context(Context::new());
+        assert!(reader
+            .with_manifest_data_and_stream(b"not JUMBF", "image/jpeg", Cursor::new(b"asset"))
+            .is_err());
     }
 }
