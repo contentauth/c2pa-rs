@@ -31,11 +31,12 @@ fn raw_crypto_oid_to_bcder_oid(oid: &c2pa_raw_crypto::Oid) -> bcder::Oid {
 
 pub(crate) fn check_certificate_trust(
     ctp: &CertificateTrustPolicy,
+    anchor_type: Option<TrustAnchorType>,
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
     signing_time_epoch: Option<i64>,
 ) -> Result<(TrustAnchorType, String), CertificateTrustError> {
-    if ctp.anchor_sets().count() == 0 {
+    if ctp.anchor_sets_of_type(anchor_type).count() == 0 {
         return Err(CertificateTrustError::CertificateNotTrusted);
     }
 
@@ -89,7 +90,7 @@ pub(crate) fn check_certificate_trust(
         }
     }
 
-    for anchor_set in ctp.anchor_sets() {
+    for anchor_set in ctp.anchor_sets_of_type(anchor_type) {
         // Process each anchor set
 
         // Build anchors and check against trust anchors.

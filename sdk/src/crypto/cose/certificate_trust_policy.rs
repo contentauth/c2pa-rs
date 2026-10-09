@@ -189,6 +189,41 @@ impl CertificateTrustPolicy {
         end_entity_cert_der: &[u8],
         signing_time_epoch: Option<i64>,
     ) -> Result<(TrustAnchorType, String), CertificateTrustError> {
+        if _sync {
+            self.check_certificate_trust_for(
+                None,
+                chain_der,
+                end_entity_cert_der,
+                signing_time_epoch,
+            )
+        } else {
+            self.check_certificate_trust_for_async(
+                None,
+                chain_der,
+                end_entity_cert_der,
+                signing_time_epoch,
+            )
+            .await
+        }
+    }
+
+    /// Evaluate a certificate against the trust policy, as
+    /// [`check_certificate_trust`](Self::check_certificate_trust) does, but
+    /// when `anchor_type` is given, only accept a chain to trust anchors of
+    /// that type.
+    ///
+    /// A claim signer must chain to a manifest trust anchor and a time-stamp
+    /// signer to a TSA trust anchor; an anchor on the other list does not make
+    /// the certificate trusted.
+    #[allow(unused)] // parameters may be unused in some cases
+    #[async_generic]
+    pub fn check_certificate_trust_for(
+        &self,
+        anchor_type: Option<TrustAnchorType>,
+        chain_der: &[Vec<u8>],
+        end_entity_cert_der: &[u8],
+        signing_time_epoch: Option<i64>,
+    ) -> Result<(TrustAnchorType, String), CertificateTrustError> {
         if self.passthrough {
             return Ok((TrustAnchorType::NoCheck, String::new()));
         }
@@ -205,6 +240,7 @@ impl CertificateTrustPolicy {
         {
             return super::certificate_trust::rust_native::check_certificate_trust(
                 self,
+                anchor_type,
                 chain_der,
                 end_entity_cert_der,
                 signing_time_epoch,
@@ -218,6 +254,7 @@ impl CertificateTrustPolicy {
         {
             return super::certificate_trust::openssl::check_certificate_trust(
                 self,
+                anchor_type,
                 chain_der,
                 end_entity_cert_der,
                 signing_time_epoch,
@@ -438,6 +475,17 @@ impl CertificateTrustPolicy {
     /// Each TrustAnchor will be returned.
     pub(crate) fn anchor_sets(&self) -> impl Iterator<Item = &'_ TrustAnchor> {
         self.trust_anchors.iter()
+    }
+
+    /// Returns the anchor sets of type `anchor_type`, or every anchor set when
+    /// it is `None`.
+    pub(crate) fn anchor_sets_of_type(
+        &self,
+        anchor_type: Option<TrustAnchorType>,
+    ) -> impl Iterator<Item = &'_ TrustAnchor> {
+        self.trust_anchors
+            .iter()
+            .filter(move |a| anchor_type.is_none_or(|t| a.trust_anchor_type == t))
     }
 
     /// Returns the anchors set by name and type
@@ -993,6 +1041,42 @@ zGxQnM2hCA==
         ));
         ctp.check_certificate_trust(&expired_certs[1..], &expired_certs[0], None)
             .expect_err("an expired intermediate CA certificate must not be trusted");
+    }
+
+    /// A trust anchor only counts for the kind of trust list it was added to:
+    /// a certificate that chains to a TSA trust anchor is not a trusted claim
+    /// signer.
+    #[test]
+    fn test_anchor_type_is_respected() {
+        let mut ctp = CertificateTrustPolicy::new();
+        ctp.add_trust_anchors(
+            include_bytes!("../../../tests/fixtures/crypto/cose/chain_trust_root.pub"),
+            "http://some_tsa_trust_list",
+            TrustAnchorType::TSA,
+            None,
+        )
+        .unwrap();
+
+        let certs = cert_ders_from_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/cose/chain_trust_valid.pub"
+        ));
+
+        ctp.check_certificate_trust_for(
+            Some(TrustAnchorType::Manifest),
+            &certs[1..],
+            &certs[0],
+            None,
+        )
+        .expect_err("a TSA trust anchor must not make a claim signer trusted");
+
+        let (anchor_type, _) = ctp
+            .check_certificate_trust_for(Some(TrustAnchorType::TSA), &certs[1..], &certs[0], None)
+            .expect("the certificate chains to a TSA trust anchor");
+        assert_eq!(anchor_type, TrustAnchorType::TSA);
+
+        // Without an anchor type, any anchor is accepted.
+        ctp.check_certificate_trust(&certs[1..], &certs[0], None)
+            .expect("check_certificate_trust accepts any anchor type");
     }
 
     /// Regression: an ordinary end-entity certificate (`basicConstraints
