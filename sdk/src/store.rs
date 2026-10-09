@@ -1520,6 +1520,7 @@ impl Store {
 
             // retrieve & set signature for each claim
             claim.set_signature_val(sig_data.cbor().clone()); // load the stored signature
+            claim.set_signature_box_label(sig_desc_box.label());
 
             // set the compression status
             claim.set_compressed_manifest(store_box.compressed_store);
