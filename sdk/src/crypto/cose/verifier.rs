@@ -137,6 +137,7 @@ impl Verifier<'_> {
         }
 
         // check the trust for this item
+        let trust_log_start = validation_log.logged_items().len();
         let result = if _sync {
             self.verify_trust(&sign1, tst_info, validation_log)
         } else {
@@ -161,13 +162,19 @@ impl Verifier<'_> {
         };
 
         // check the profile of the cert
-        if _sync {
+        let profile_failed = if _sync {
             self.verify_profile(&sign1, tst_info, override_ekus, validation_log)
         } else {
             self.verify_profile_async(&sign1, tst_info, override_ekus, validation_log)
                 .await
         }
-        .ok(); // Ignore errors here - they have already been logged.
+        .is_err(); // Errors have already been logged.
+
+        // A certificate that fails the profile check is not a trusted signing
+        // credential, even when it chains to a trust anchor.
+        if profile_failed {
+            validation_log.remove_status_since(trust_log_start, SIGNING_CREDENTIAL_TRUSTED);
+        }
 
         // Reconstruct payload and additional data as it should have been at time of
         // signing.
@@ -436,5 +443,71 @@ mod tests {
         assert!(!key_matches(ES256, SigningAlg::Es512));
         assert!(!key_matches(ES384, SigningAlg::Es256));
         assert!(!key_matches(ES512, SigningAlg::Es256));
+    }
+
+    /// A certificate that fails the certificate profile check is not a trusted
+    /// signing credential, even when it chains to a trust anchor.
+    #[test]
+    fn profile_failure_is_not_trusted() {
+        use std::borrow::Cow;
+
+        use c2pa_raw_crypto::signer_from_private_key;
+
+        use super::Verifier;
+        use crate::{
+            crypto::{
+                cert_chain_pem_to_der,
+                cose::{CertificateTrustPolicy, TrustAnchorType},
+            },
+            settings::Settings,
+            signer::RawSignerWrapper,
+            status_tracker::StatusTracker,
+            validation_results::validation_codes::{
+                SIGNING_CREDENTIAL_INVALID, SIGNING_CREDENTIAL_TRUSTED,
+            },
+        };
+
+        // The leaf has no digitalSignature key usage but chains to the root.
+        let cert_chain =
+            include_bytes!("../../../tests/fixtures/crypto/cose/no_digital_signature.pub");
+        let private_key =
+            include_bytes!("../../../tests/fixtures/crypto/cose/no_digital_signature.priv");
+        let root = include_bytes!("../../../tests/fixtures/crypto/cose/key_usage_root.pub");
+
+        let signer = RawSignerWrapper::new(
+            signer_from_private_key(private_key, SigningAlg::Es256).unwrap(),
+            cert_chain_pem_to_der(cert_chain).unwrap(),
+            None,
+        );
+
+        let mut claim = crate::claim::Claim::new("profile_test", Some("contentauth"), 1);
+        claim.build().unwrap();
+        let claim_bytes = claim.data().unwrap();
+
+        let mut settings = Settings::default();
+        settings.verify.verify_trust = false;
+        let cose_bytes =
+            crate::cose_sign::sign_claim(&claim_bytes, &signer, 10000, &settings).unwrap();
+
+        let mut ctp = CertificateTrustPolicy::new();
+        ctp.add_trust_anchors(
+            root,
+            "http://some_trust_list",
+            TrustAnchorType::Manifest,
+            None,
+        )
+        .unwrap();
+
+        let mut log = StatusTracker::default();
+        let _ = Verifier::VerifyTrustPolicy(Cow::Owned(ctp)).verify_signature(
+            &cose_bytes,
+            &claim_bytes,
+            b"",
+            None,
+            &mut log,
+        );
+
+        assert!(log.has_status(SIGNING_CREDENTIAL_INVALID));
+        assert!(!log.has_status(SIGNING_CREDENTIAL_TRUSTED));
     }
 }

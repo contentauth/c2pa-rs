@@ -12849,4 +12849,100 @@ mod tests {
             assert_no_action_failures(sign_and_read(opened));
         }
     }
+
+    /// A signing credential that a stapled OCSP response reports as revoked is
+    /// not trusted, even though its certificate chain reaches a trust anchor.
+    #[test]
+    fn revoked_signing_credential_is_not_trusted() {
+        use c2pa_raw_crypto::{signer_from_private_key, RawSigner};
+
+        use crate::{
+            crypto::{cert_chain_pem_to_der, cose::cose_reserve_size},
+            validation_status::{
+                ValidationStatus, SIGNING_CREDENTIAL_REVOKED, SIGNING_CREDENTIAL_TRUSTED,
+            },
+        };
+
+        struct OcspSigner {
+            raw_signer: Box<dyn RawSigner>,
+            cert_chain: Vec<Vec<u8>>,
+            ocsp_rsp: Vec<u8>,
+        }
+
+        impl Signer for OcspSigner {
+            fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+                Ok(self.raw_signer.sign(data)?)
+            }
+
+            fn alg(&self) -> SigningAlg {
+                SigningAlg::Es256
+            }
+
+            fn certs(&self) -> Result<Vec<Vec<u8>>> {
+                Ok(self.cert_chain.clone())
+            }
+
+            fn reserve_size(&self) -> usize {
+                cose_reserve_size(
+                    self.raw_signer.max_signature_size(),
+                    &self.cert_chain,
+                    false,
+                    Some(&self.ocsp_rsp),
+                )
+            }
+
+            fn ocsp_val(&self) -> Option<Vec<u8>> {
+                Some(self.ocsp_rsp.clone())
+            }
+        }
+
+        // A response from a test responder saying the es256 test signer was
+        // revoked on 2025-01-01.
+        let signer = OcspSigner {
+            raw_signer: signer_from_private_key(
+                include_bytes!("../tests/fixtures/certs/es256.pem"),
+                SigningAlg::Es256,
+            )
+            .unwrap(),
+            cert_chain: cert_chain_pem_to_der(include_bytes!("../tests/fixtures/certs/es256.pub"))
+                .unwrap(),
+            ocsp_rsp: include_bytes!("../tests/fixtures/crypto/ocsp/es256_revoked_response.der")
+                .to_vec(),
+        };
+
+        let format = "image/jpeg";
+        let mut source = Cursor::new(TEST_IMAGE_CLEAN);
+        let mut dest = Cursor::new(Vec::new());
+        let sign_context = Context::new()
+            .with_settings(json!({"verify": {"verify_after_sign": false}}))
+            .unwrap();
+        Builder::from_context(sign_context)
+            .sign(&signer, format, &mut source, &mut dest)
+            .unwrap();
+
+        // Trust the test certificates, and the test OCSP responder directly.
+        let read_context = Context::new()
+            .with_settings(json!({
+                "trust": {"anchors": [{
+                    "trust_anchors": include_str!("../tests/fixtures/certs/trust/test_cert_root_bundle.pem"),
+                    "trust_kind": "manifest",
+                    "allowed_list": include_str!("../tests/fixtures/crypto/ocsp/es256_revoked_responder.pem"),
+                }]},
+                "verify": {"ocsp_fetch": false},
+            }))
+            .unwrap();
+        dest.rewind().unwrap();
+        let reader = Reader::from_context(read_context)
+            .with_stream(format, &mut dest)
+            .unwrap();
+
+        let results = reader
+            .validation_results()
+            .unwrap()
+            .active_manifest()
+            .unwrap();
+        let has = |codes: &[ValidationStatus], code: &str| codes.iter().any(|s| s.code() == code);
+        assert!(has(results.failure(), SIGNING_CREDENTIAL_REVOKED));
+        assert!(!has(results.success(), SIGNING_CREDENTIAL_TRUSTED));
+    }
 }
