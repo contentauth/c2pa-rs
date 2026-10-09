@@ -2244,6 +2244,29 @@ impl Claim {
             return Ok(()); // no further checks for v1 claims
         }
 
+        // An actions assertion that cannot be decoded cannot be checked against the
+        // rules below. If its CBOR is not well-formed, it has already been reported as
+        // assertion.cbor.invalid; otherwise report it as a malformed actions assertion.
+        for actions_assertion in all_actions.iter() {
+            let assertion = actions_assertion.assertion();
+            if Actions::from_assertion(assertion).is_ok()
+                || c2pa_cbor::from_slice::<c2pa_cbor::Value>(assertion.data()).is_err()
+            {
+                continue;
+            }
+            let label = to_assertion_uri(claim.label(), &actions_assertion.label());
+            log_item!(
+                label,
+                "actions assertion could not be decoded",
+                "verify_actions"
+            )
+            .validation_status(validation_status::ASSERTION_ACTION_MALFORMED)
+            .failure(
+                validation_log,
+                Error::ValidationRule("actions assertion could not be decoded".into()),
+            )?;
+        }
+
         // 1. make sure every action has an actions array that is not empty
         if let Some(bad_assertion) = all_actions.iter().find(|a| {
             if let Ok(actions) = Actions::from_assertion(a.assertion()) {
@@ -2270,12 +2293,17 @@ impl Claim {
         }
 
         let mut first_actions_assertion = None;
+        let mut first_actions_undecodable = false;
 
         // check created actions then gathered actions if not found in created actions
         // starting with 2.4 these assertion can only be in created assertions
         for actions in [&created_actions, &gathered_actions] {
             if let Some(assertion) = actions.first() {
-                let first_actions = Actions::from_assertion(assertion.assertion())?;
+                let Ok(first_actions) = Actions::from_assertion(assertion.assertion()) else {
+                    // already reported above
+                    first_actions_undecodable = true;
+                    continue;
+                };
                 let first_actions_first_action = &first_actions.actions().first();
 
                 if let Some(first_actions_first_action) = first_actions_first_action {
@@ -2322,7 +2350,10 @@ impl Claim {
         }
 
         // 2.a first actions assertion must start with an open or created action, do not apply to update manifests
-        if first_actions_assertion.is_none() && !claim.update_manifest() {
+        if first_actions_assertion.is_none()
+            && !first_actions_undecodable
+            && !claim.update_manifest()
+        {
             log_item!(
                 claim_label,
                 "first action must be created or opened",
@@ -2337,7 +2368,9 @@ impl Claim {
 
         // perform all actions checks
         for actions_assertion in all_actions.iter() {
-            let actions = Actions::from_assertion(actions_assertion.assertion())?;
+            let Ok(actions) = Actions::from_assertion(actions_assertion.assertion()) else {
+                continue; // already reported above
+            };
             let label = to_assertion_uri(claim.label(), &actions_assertion.label());
 
             // 1. Actions must have actions array
@@ -3589,7 +3622,10 @@ impl Claim {
         if claim.update_manifest() {
             // must be one of the allowed actions
             for aa in claim.action_assertions() {
-                let actions = Actions::from_assertion(aa.assertion())?;
+                // an undecodable actions assertion has already been reported
+                let Ok(actions) = Actions::from_assertion(aa.assertion()) else {
+                    continue;
+                };
                 for action in actions.actions() {
                     if !ALLOWED_UPDATE_MANIFEST_ACTIONS
                         .iter()
