@@ -38,6 +38,64 @@ use crate::{
 };
 
 #[test]
+fn rejected_hard_bindings_are_skipped_before_decoding() {
+    use crate::{
+        assertions::labels,
+        claim::{ClaimAssertion, ClaimAssetData},
+    };
+
+    for label in [
+        labels::DATA_HASH,
+        labels::BMFF_HASH,
+        labels::BOX_HASH,
+        labels::COLLECTION_HASH,
+    ] {
+        for relative in [true, false] {
+            let mut claim = Claim::new("test", None, 2);
+            let uri = if relative {
+                format!("self#jumbf=c2pa.assertions/{label}")
+            } else {
+                claim.assertion_uri(label)
+            };
+            let references = [
+                vec![HashedUri::new(uri.clone(), None, &[1; 32])],
+                Vec::new(),
+                vec![HashedUri::new(
+                    to_assertion_uri("urn:c2pa:other", label),
+                    None,
+                    &[2; 32],
+                )],
+                vec![
+                    HashedUri::new(uri.clone(), None, &[2; 32]),
+                    HashedUri::new(uri, None, &[1; 32]),
+                ],
+            ];
+            // Invalid CBOR would fail decoding if the rejected assertion were used.
+            claim.assertion_store.push(ClaimAssertion::new(
+                Assertion::new(label, None, AssertionData::Cbor(vec![0xff])),
+                0,
+                &[2; 32],
+                "sha256",
+                None,
+                ClaimAssertionType::Created,
+            ));
+            let svi = StoreValidationInfo {
+                binding_claim: claim.label().to_owned(),
+                ..Default::default()
+            };
+            for references in references {
+                claim.assertions = references;
+                let mut tracker = StatusTracker::default();
+                let mut asset = ClaimAssetData::Bytes(b"asset", "image/jpeg");
+                Claim::verify_hash_binding(&claim, &mut asset, &svi, &mut tracker, &Context::new())
+                    .unwrap();
+                assert!(tracker.logged_items().is_empty(), "{label}");
+            }
+        }
+    }
+}
+
+#[test]
 fn test_build_claim() {
     // Create a new claim.
     let mut claim = create_test_claim().expect("create test claim");
