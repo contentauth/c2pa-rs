@@ -3002,6 +3002,33 @@ impl Claim {
 
             // while this is a vec the spec only expects one at the moment and is checked above
             for hash_binding_assertion in hash_assertions {
+                // Continuing after assertion validation errors must not promote
+                // untrusted assertion bytes into an asset binding. Require a
+                // reference in this claim whose hash authenticates this assertion.
+                let binding_uri =
+                    to_normalized_uri(&claim.assertion_uri(&hash_binding_assertion.label()));
+                let mut references = claim
+                    .assertions()
+                    .iter()
+                    .filter(|reference| {
+                        let uri = if reference.is_relative_url() {
+                            to_absolute_uri(claim.label(), &reference.url())
+                        } else {
+                            reference.url()
+                        };
+                        to_normalized_uri(&uri) == binding_uri
+                    })
+                    .peekable();
+                let authenticated = references.peek().is_some()
+                    && references.all(|reference| {
+                        vec_compare(hash_binding_assertion.hash(), &reference.hash())
+                    });
+                if !authenticated {
+                    // Assertion validation already reports mismatched or undeclared
+                    // assertions. Do not parse or use a rejected hard binding.
+                    continue;
+                }
+
                 if hash_binding_assertion
                     .label_raw()
                     .starts_with(DataHash::LABEL)
@@ -4870,6 +4897,65 @@ pub mod tests {
 
     use super::*;
     use crate::{resource_store::UriOrResource, utils::test::create_test_claim, DigitalSourceType};
+
+    #[test]
+    fn rejected_hard_bindings_are_skipped_before_decoding() {
+        for label in [
+            labels::DATA_HASH,
+            labels::BMFF_HASH,
+            labels::BOX_HASH,
+            labels::COLLECTION_HASH,
+        ] {
+            for relative in [true, false] {
+                let mut claim = Claim::new("test", None, 2);
+                let uri = if relative {
+                    format!("self#jumbf=c2pa.assertions/{label}")
+                } else {
+                    claim.assertion_uri(label)
+                };
+                let references = [
+                    vec![HashedUri::new(uri.clone(), None, &[1; 32])],
+                    Vec::new(),
+                    vec![HashedUri::new(
+                        to_assertion_uri("urn:c2pa:other", label),
+                        None,
+                        &[2; 32],
+                    )],
+                    vec![
+                        HashedUri::new(uri.clone(), None, &[2; 32]),
+                        HashedUri::new(uri, None, &[1; 32]),
+                    ],
+                ];
+                // Invalid CBOR would fail decoding if the rejected assertion were used.
+                claim.assertion_store.push(ClaimAssertion::new(
+                    Assertion::new(label, None, AssertionData::Cbor(vec![0xff])),
+                    0,
+                    &[2; 32],
+                    "sha256",
+                    None,
+                    ClaimAssertionType::Created,
+                ));
+                let svi = StoreValidationInfo {
+                    binding_claim: claim.label().to_owned(),
+                    ..Default::default()
+                };
+                for references in references {
+                    claim.assertions = references;
+                    let mut tracker = StatusTracker::default();
+                    let mut asset = ClaimAssetData::Bytes(b"asset", "image/jpeg");
+                    Claim::verify_hash_binding(
+                        &claim,
+                        &mut asset,
+                        &svi,
+                        &mut tracker,
+                        &Context::new(),
+                    )
+                    .unwrap();
+                    assert!(tracker.logged_items().is_empty(), "{label}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn test_build_claim() {
