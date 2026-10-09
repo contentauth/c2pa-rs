@@ -17,7 +17,7 @@ use asn1_rs::FromDer;
 use async_generic::async_generic;
 use bcder::OctetString;
 use c2pa_raw_crypto::validator_for_sig_and_hash_algs;
-use chrono::{offset::LocalResult, DateTime, TimeZone, Utc};
+use chrono::{DateTime, Utc};
 use der::asn1::ObjectIdentifier;
 use rasn::{prelude::*, types};
 use rasn_cms::{CertificateChoices, SignerIdentifier};
@@ -238,7 +238,7 @@ pub fn verify_time_stamp(
 
         // Load TstInfo. We will verify its contents below against signed
         // values.
-        let Ok(Some(mut tst)) = tst_info_from_signed_data(&sd) else {
+        let Ok(Some(tst)) = tst_info_from_signed_data(&sd) else {
             log_item!("", "timestamp response had no TstInfo", "verify_time_stamp")
                 .validation_status(TIMESTAMP_MALFORMED)
                 .informational(&mut current_validation_log);
@@ -250,41 +250,12 @@ pub fn verify_time_stamp(
         let mi = &tst.message_imprint;
 
         // Check for time stamp expiration.
-        let mut signing_time = generalized_time_to_datetime(tst.gen_time.clone()).timestamp();
+        // The attested time is the TSTInfo genTime (C2PA validation, RFC 3161). A CMS
+        // signingTime attribute is not the attested time and is not used.
+        let signing_time = generalized_time_to_datetime(tst.gen_time.clone()).timestamp();
 
         // Check the signer info's signed attributes.
         if let Some(attributes) = &signer_info.signed_attrs {
-            // If there is a signed signing time attribute use it
-            if let Some(Some(attrib_signing_time)) = attributes
-                .to_vec()
-                .iter()
-                .find(|attr| attr.r#type == Oid::ISO_MEMBER_BODY_US_RSADSI_PKCS9_SIGNING_TIME)
-                .map(|attr| {
-                    if attr.values.len() != 1 {
-                        // per CMS spec can only contain 1 signing time value
-                        return None;
-                    }
-
-                    attr.values
-                        .to_vec()
-                        .first()
-                        .and_then(|v| rasn::der::decode::<rasn_pkix::Time>(v.as_bytes()).ok())
-                })
-            {
-                let signed_signing_time = match attrib_signing_time {
-                    rasn_pkix::Time::Utc(date_time) => date_time.timestamp(),
-                    rasn_pkix::Time::General(date_time) => {
-                        generalized_time_to_datetime(date_time).timestamp()
-                    }
-                };
-
-                if let Some(gt) = timestamp_to_generalized_time(signed_signing_time) {
-                    // Use actual signed time.
-                    signing_time = generalized_time_to_datetime(gt.clone()).timestamp();
-                    tst.gen_time = gt;
-                };
-            }
-
             // Check that the mandatory signed message digest is self-consistent.
             match attributes
                 .to_vec()
@@ -709,14 +680,6 @@ fn generalized_time_to_datetime<T: Into<DateTime<Utc>>>(gt: T) -> DateTime<Utc> 
     gt.into()
 }
 
-fn timestamp_to_generalized_time(dt: i64) -> Option<crate::crypto::asn1::GeneralizedTime> {
-    match Utc.timestamp_opt(dt, 0) {
-        // try_into fails for dates outside der's supported 1970-9999 range
-        LocalResult::Single(time) => time.try_into().ok(),
-        _ => None,
-    }
-}
-
 /// Digest algorithm enum compatible with bcder OIDs
 #[derive(Clone, Copy, Debug)]
 enum DigestAlgorithm {
@@ -977,5 +940,29 @@ mod tests {
 
         assert!(log.has_status(TIMESTAMP_VALIDATED));
         assert!(!log.has_status(TIMESTAMP_UNTRUSTED));
+    }
+
+    #[test]
+    fn uses_gen_time_not_cms_signing_time() {
+        // genTime is within the signing certificate's validity; the CMS
+        // signingTime attribute is after the certificate expires.
+        let ts = include_bytes!(
+            "../../../tests/fixtures/crypto/time_stamp/signing_time_after_expiry.tst"
+        );
+        let mut log = StatusTracker::default();
+
+        let tst = verify_time_stamp(
+            ts,
+            DATA,
+            &CertificateTrustPolicy::default(),
+            &mut log,
+            false,
+        )
+        .unwrap();
+
+        let gen_time = generalized_time_to_datetime(tst.gen_time).timestamp();
+        assert_eq!(gen_time, 1_735_689_600); // 2025-01-01T00:00:00Z
+        assert!(log.has_status(TIMESTAMP_VALIDATED));
+        assert!(!log.has_status(TIMESTAMP_OUTSIDE_VALIDITY));
     }
 }
