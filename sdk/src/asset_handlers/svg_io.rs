@@ -233,6 +233,12 @@ fn detect_manifest_location(
                 }
             }
             Ok(Event::Text(e)) if xml_path == [SVG, METADATA, MANIFEST] => {
+                // Reject double payloads which would make hashing ambiguous.
+                if output.is_some() {
+                    return Err(Error::InvalidAsset(
+                        "multiple c2pa manifest payloads".to_string(),
+                    ));
+                }
                 let encoded_content = e
                     .decode()
                     .map_err(|_e| {
@@ -398,6 +404,7 @@ impl C2paWriter for SvgIO {
             }
             DetectedTagsDepth::Metadata => {
                 // add manifest case
+                let mut inserted = false;
                 loop {
                     match reader.read_event_into(&mut buf) {
                         Ok(Event::Start(mut e)) => {
@@ -417,10 +424,11 @@ impl C2paWriter for SvgIO {
                                 .map_err(|_e| Error::XmlWriteError)?;
 
                             // add manifest data
-                            if xml_path == [SVG, METADATA] {
+                            if xml_path == [SVG, METADATA] && !inserted {
                                 writer
                                     .write_event(create_manifest_tag(store_bytes, false, METADATA)?)
                                     .map_err(|_e| Error::XmlWriteError)?;
+                                inserted = true;
                             }
                         }
                         Ok(Event::Eof) => break,
@@ -580,6 +588,8 @@ impl C2paWriter for SvgIO {
         input_stream: &mut dyn ReadSeek,
         output_stream: &mut dyn ReadWriteSeek,
     ) -> Result<()> {
+        detect_manifest_location(input_stream)?;
+        input_stream.rewind()?;
         let buf_reader = BufReader::new(input_stream);
         let mut reader = NsReader::from_reader(buf_reader);
 
@@ -786,6 +796,42 @@ pub mod tests {
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn test_svg_rejects_multiple_c2pa_payloads() {
+        let svg_io = SvgIO::new("svg");
+        for input in [
+            r#"<svg xmlns="http://www.w3.org/2000/svg"><metadata><c2pa:manifest>SlVNQkY=</c2pa:manifest><y:manifest xmlns:y="http://c2pa.org/manifest">T1RIRVI=</y:manifest></metadata></svg>"#,
+            r#"<svg xmlns="http://www.w3.org/2000/svg"><metadata><c2pa:manifest>SlVNQkY=</c2pa:manifest></metadata><metadata><c2pa:manifest>T1RIRVI=</c2pa:manifest></metadata></svg>"#,
+            r#"<svg xmlns="http://www.w3.org/2000/svg"><metadata><c2pa:manifest>SlVN<!--x-->QkY=</c2pa:manifest></metadata></svg>"#,
+        ] {
+            assert!(matches!(
+                svg_io.read_c2pa(&mut Cursor::new(input.as_bytes())),
+                Err(Error::InvalidAsset(_))
+            ));
+            assert!(matches!(
+                svg_io.remove_c2pa(
+                    &mut Cursor::new(input.as_bytes()),
+                    &mut Cursor::new(Vec::new())
+                ),
+                Err(Error::InvalidAsset(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn test_svg_no_double_metadata_write() {
+        let input = r#"<svg xmlns="http://www.w3.org/2000/svg"><metadata></metadata><metadata></metadata></svg>"#;
+        let svg_io = SvgIO::new("svg");
+        let mut output = Cursor::new(Vec::new());
+        svg_io
+            .write_c2pa(&mut Cursor::new(input.as_bytes()), &mut output, b"JUMBF")
+            .unwrap();
+        let xml = std::str::from_utf8(output.get_ref()).unwrap();
+        assert_eq!(xml.matches("<c2pa:manifest>").count(), 1);
+        assert!(xml.find("<c2pa:manifest>").unwrap() < xml.find("</metadata>").unwrap());
+        assert_eq!(svg_io.read_c2pa(&mut output).unwrap(), b"JUMBF");
     }
 
     fn assert_c2pa_namespace_on_svg_root(xml: &str) {
