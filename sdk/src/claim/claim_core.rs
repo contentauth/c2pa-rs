@@ -125,6 +125,9 @@ pub struct Claim {
     ingredients_list: Vec<String>,
 
     pub(super) signature_val: Vec<u8>, // the signature of the loaded/saved claim
+    // Actual description label read from the signature box. New claims have no
+    // loaded box yet and use the canonical label when generating JUMBF.
+    pub(super) signature_box_label: Option<String>,
 
     // root of CAI store
     #[allow(dead_code)]
@@ -270,6 +273,7 @@ impl Claim {
             remote_manifest: RemoteManifest::NoRemote,
             root: jumbf::labels::MANIFEST_STORE.to_string(),
             signature_val: Vec::new(),
+            signature_box_label: None,
             ingredients_store: HashMap::new(),
             ingredients_list: Vec::new(),
             label: l,
@@ -372,6 +376,7 @@ impl Claim {
             remote_manifest: RemoteManifest::NoRemote,
             root: jumbf::labels::MANIFEST_STORE.to_string(),
             signature_val: Vec::new(),
+            signature_box_label: None,
             ingredients_store: HashMap::new(),
             ingredients_list: Vec::new(),
             label,
@@ -522,6 +527,7 @@ impl Claim {
                 ingredients_store: HashMap::new(),
                 ingredients_list: Vec::new(),
                 signature_val: Vec::new(),
+                signature_box_label: None,
                 root: jumbf::labels::MANIFEST_STORE.to_string(),
                 label: label.to_string(),
                 conflict_label: None,
@@ -606,6 +612,7 @@ impl Claim {
                 ingredients_store: HashMap::new(),
                 ingredients_list: Vec::new(),
                 signature_val: Vec::new(),
+                signature_box_label: None,
                 root: jumbf::labels::MANIFEST_STORE.to_string(),
                 label: label.to_string(),
                 conflict_label: None,
@@ -895,6 +902,10 @@ impl Claim {
     fn add_signature_box_link(&mut self) {
         // full path to signature box
         self.signature = self.signature_uri();
+    }
+
+    pub(crate) fn set_signature_box_label(&mut self, label: String) {
+        self.signature_box_label = Some(label);
     }
 
     ///  set signature of the claim
