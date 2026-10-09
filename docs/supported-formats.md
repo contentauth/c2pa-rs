@@ -51,3 +51,11 @@ The Rust library supports the following text formats when the `unstable_structur
 | `toml`           | `application/toml`      |
 | `vtt`            | `text/vtt`              |
 | `yaml`, `yml`    | `application/yaml`      |
+
+## Experimental feature: GLB
+
+The Rust library supports binary glTF 2.0 (GLB) when the `unstable_glb` feature is enabled. The manifest is carried in a dedicated `C2PA` chunk, following the GLB section of the C2PA specification working draft.
+
+| Extensions | MIME type           |
+| ---------- | ------------------- |
+| `glb`      | `model/gltf-binary` |
