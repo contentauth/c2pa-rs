@@ -267,6 +267,67 @@ fn test_builder_fragmented() -> Result<()> {
     Ok(())
 }
 
+/// The offset-aware fragment reader reaches the verifier: a multi-file
+/// fragment verifies at offset 0, as with `with_fragment`, and the same
+/// fragment at another offset is reported as a hash mismatch.
+#[cfg(not(target_arch = "wasm32"))]
+#[cfg(feature = "file_io")]
+#[tokio::test]
+async fn test_reader_fragment_at_offset() -> Result<()> {
+    use std::path::PathBuf;
+
+    use common::tempdirectory;
+
+    let context = test_context().into_shared();
+    let mut builder = Builder::from_shared_context(&context);
+    builder.set_intent(BuilderIntent::Create(c2pa::DigitalSourceType::Empty));
+    let tempdir = tempdirectory().expect("temp dir");
+    let input = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/bunny/bunny_89283bps/BigBuckBunny_2s_init.mp4");
+    builder.sign_fragmented_files(
+        context.signer()?,
+        &input,
+        &PathBuf::from("BigBuckBunny_2s1.m4s"),
+        &tempdir.path().to_path_buf(),
+    )?;
+    let output = tempdir.path().join("bunny_89283bps");
+    let init = std::fs::read(output.join("BigBuckBunny_2s_init.mp4"))?;
+    let fragment = std::fs::read(output.join("BigBuckBunny_2s1.m4s"))?;
+
+    let mismatch = |reader: &Reader| {
+        reader.validation_status().is_some_and(|statuses| {
+            statuses
+                .iter()
+                .any(|s| s.code() == validation_status::ASSERTION_BMFFHASH_MISMATCH)
+        })
+    };
+
+    for offset in [0, 1] {
+        let sync_reader = Reader::from_shared_context(&context).with_fragment_at_offset(
+            "video/mp4",
+            Cursor::new(&init),
+            Cursor::new(&fragment),
+            offset,
+        )?;
+        let async_reader = Reader::from_shared_context(&context)
+            .with_fragment_at_offset_async(
+                "video/mp4",
+                Cursor::new(&init),
+                Cursor::new(&fragment),
+                offset,
+            )
+            .await?;
+        for reader in [&sync_reader, &async_reader] {
+            if offset == 0 {
+                assert_eq!(reader.validation_status(), None);
+            } else {
+                assert!(mismatch(reader), "{:?}", reader.validation_status());
+            }
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn test_builder_remote_url_no_embed() -> Result<()> {
     let mut settings = test_settings();

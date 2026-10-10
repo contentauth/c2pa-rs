@@ -3600,6 +3600,260 @@ mod bmff_hash_tests {
             .expect("oversized-but-consistent local_id should verify, not panic");
     }
 
+    // Single-file ("flat") fragmented BMFF: one init region, then one
+    // `merkle` uuid box immediately before each `moof`. Each leaf covers the
+    // uuid box (excluded), its `moof`, and everything up to the next uuid box,
+    // hashed with absolute root-box offsets. The expected hashes below are
+    // computed independently from the specification's `offset || box`
+    // definition rather than with the hashing code under test.
+    mod fragment_at_offset {
+        use super::*;
+        use crate::{
+            asset_handlers::bmff_io::{write_c2pa_box, MERKLE},
+            utils::hash_utils::hash_by_alg,
+        };
+
+        const INIT: &[u8] =
+            include_bytes!("../../tests/fixtures/bunny/bunny_89283bps/BigBuckBunny_2s_init.mp4");
+        const FRAGMENTS: [&[u8]; 3] = [
+            include_bytes!("../../tests/fixtures/bunny/bunny_89283bps/BigBuckBunny_2s1.m4s"),
+            include_bytes!("../../tests/fixtures/bunny/bunny_89283bps/BigBuckBunny_2s10.m4s"),
+            include_bytes!("../../tests/fixtures/bunny/bunny_89283bps/BigBuckBunny_2s100.m4s"),
+        ];
+
+        /// Root boxes of `data` as (type, start, end).
+        fn roots(data: &[u8]) -> Vec<([u8; 4], usize, usize)> {
+            let mut out = Vec::new();
+            let mut at = 0;
+            while at < data.len() {
+                let size = u32::from_be_bytes(data[at..at + 4].try_into().unwrap()) as usize;
+                assert!(size >= 8, "test fixtures use 32-bit box sizes");
+                out.push((data[at + 4..at + 8].try_into().unwrap(), at, at + size));
+                at += size;
+            }
+            out
+        }
+
+        fn root_bytes<'a>(data: &'a [u8], kind: &[u8; 4]) -> &'a [u8] {
+            let (_, start, end) = roots(data).into_iter().find(|r| &r.0 == kind).unwrap();
+            &data[start..end]
+        }
+
+        fn merkle_box(location: usize) -> Vec<u8> {
+            let mm = BmffMerkleMap {
+                unique_id: 1,
+                local_id: 1,
+                location,
+                hashes: None,
+            };
+            let mut out = Vec::new();
+            write_c2pa_box(&mut out, &[], MERKLE, &c2pa_cbor::to_vec(&mm).unwrap(), 0).unwrap();
+            out
+        }
+
+        /// The spec's v2/v3 input for the root boxes of `data` that the default
+        /// exclusions keep: `absolute offset || box` for each of them.
+        fn spec_hash(data: &[u8], base: u64) -> Vec<u8> {
+            let mut input = Vec::new();
+            for (kind, start, end) in roots(data) {
+                // default exclusions: ftyp, mfra, free, skip, and C2PA uuid boxes
+                // (the only uuid boxes in these layouts)
+                if matches!(&kind, b"ftyp" | b"mfra" | b"free" | b"skip" | b"uuid") {
+                    continue;
+                }
+                input.extend_from_slice(&(base + start as u64).to_be_bytes());
+                input.extend_from_slice(&data[start..end]);
+            }
+            hash_by_alg("sha256", &input, None)
+        }
+
+        struct Flat {
+            init: Vec<u8>,
+            /// (absolute offset, leaf bytes)
+            leaves: Vec<(u64, Vec<u8>)>,
+            hash: BmffHash,
+        }
+
+        /// Build a flat layout from the bunny DASH fixtures. When
+        /// `trailing_sidx` is set, the second fragment's `styp` and `sidx` sit
+        /// after the first leaf's `mdat`, so they belong to the first leaf.
+        fn flat(trailing_sidx: bool) -> Flat {
+            let init = INIT.to_vec();
+            let mut leaves = Vec::new();
+            let mut at = init.len() as u64;
+            for (i, fragment) in FRAGMENTS.iter().enumerate() {
+                let mut leaf = merkle_box(i);
+                leaf.extend_from_slice(root_bytes(fragment, b"moof"));
+                leaf.extend_from_slice(root_bytes(fragment, b"mdat"));
+                if trailing_sidx && i == 0 {
+                    leaf.extend_from_slice(root_bytes(FRAGMENTS[1], b"styp"));
+                    leaf.extend_from_slice(root_bytes(FRAGMENTS[1], b"sidx"));
+                }
+                let len = leaf.len() as u64;
+                leaves.push((at, leaf));
+                at += len;
+            }
+
+            let leaf_hashes = leaves
+                .iter()
+                .map(|(at, leaf)| spec_hash(leaf, *at))
+                .collect();
+            let hash = bmff_hash(&init, leaf_hashes);
+            Flat { init, leaves, hash }
+        }
+
+        fn bmff_hash(init: &[u8], leaf_hashes: Vec<Vec<u8>>) -> BmffHash {
+            let mut hash = BmffHash::new("test", "sha256", None);
+            hash.set_default_exclusions();
+            hash.set_merkle(vec![MerkleMap {
+                unique_id: 1,
+                local_id: 1,
+                count: leaf_hashes.len(),
+                alg: Some("sha256".to_string()),
+                init_hash: Some(ByteBuf::from(spec_hash(init, 0))),
+                hashes: VecByteBuf(leaf_hashes.into_iter().map(ByteBuf::from).collect()),
+                fixed_block_size: None,
+                variable_block_sizes: None,
+            }]);
+            hash
+        }
+
+        fn verify(flat: &Flat, segment: &[u8], offset: u64) -> crate::Result<()> {
+            flat.hash.verify_stream_segment_at_offset(
+                &mut Cursor::new(&flat.init),
+                &mut Cursor::new(segment),
+                offset,
+                Some("sha256"),
+            )
+        }
+
+        fn assert_mismatch(result: crate::Result<()>, why: &str) {
+            assert!(
+                matches!(result, Err(Error::HashMismatch(_))),
+                "{why}: {result:?}"
+            );
+        }
+
+        #[test]
+        fn leaves_verify_at_their_absolute_offset() {
+            for trailing_sidx in [false, true] {
+                let flat = flat(trailing_sidx);
+                for (at, leaf) in &flat.leaves {
+                    verify(&flat, leaf, *at).unwrap();
+                }
+            }
+        }
+
+        #[test]
+        fn wrong_offsets_are_rejected() {
+            let flat = flat(false);
+            for (i, (at, leaf)) in flat.leaves.iter().enumerate() {
+                // zero is the multi-file behavior; every leaf here starts after the init
+                assert_mismatch(verify(&flat, leaf, 0), "zero offset");
+                assert_mismatch(verify(&flat, leaf, at - 1), "one byte early");
+                assert_mismatch(verify(&flat, leaf, at + 1), "one byte late");
+                let other = flat.leaves[(i + 1) % flat.leaves.len()].0;
+                assert_mismatch(verify(&flat, leaf, other), "another leaf's offset");
+            }
+        }
+
+        #[test]
+        fn wrong_cuts_are_rejected() {
+            let flat = flat(true);
+            let (first_at, first) = &flat.leaves[0];
+            let (second_at, second) = &flat.leaves[1];
+            let sidx_start = roots(first)
+                .into_iter()
+                .find(|r| &r.0 == b"styp")
+                .unwrap()
+                .1;
+
+            // the first leaf stops short: its trailing styp/sidx belong to it
+            assert_mismatch(
+                verify(&flat, &first[..sidx_start], *first_at),
+                "leaf without its trailing sidx",
+            );
+
+            // a segment cut at the sidx: styp + sidx + the second leaf
+            let mut at_sidx = first[sidx_start..].to_vec();
+            at_sidx.extend_from_slice(second);
+            assert_mismatch(
+                verify(&flat, &at_sidx, first_at + sidx_start as u64),
+                "segment cut at the sidx",
+            );
+
+            // the correct leaves still verify
+            verify(&flat, first, *first_at).unwrap();
+            verify(&flat, second, *second_at).unwrap();
+        }
+
+        #[test]
+        fn media_tamper_is_rejected() {
+            let flat = flat(false);
+            let (at, leaf) = &flat.leaves[1];
+            let mut tampered = leaf.clone();
+            let last = tampered.len() - 1;
+            tampered[last] ^= 1;
+            assert_mismatch(verify(&flat, &tampered, *at), "tampered mdat");
+        }
+
+        #[test]
+        fn offset_overflow_is_an_error_not_a_panic() {
+            let flat = flat(false);
+            let (_, leaf) = &flat.leaves[0];
+            let result = verify(&flat, leaf, u64::MAX);
+            assert!(matches!(result, Err(Error::BadParam(_))), "{result:?}");
+        }
+
+        #[test]
+        fn zero_offset_keeps_multi_file_behavior() {
+            // Multi-file layout: each leaf is its own file, hashed from 0.
+            let flat_layout = flat(false);
+            let multi = bmff_hash(
+                &flat_layout.init,
+                flat_layout
+                    .leaves
+                    .iter()
+                    .map(|(_, leaf)| spec_hash(leaf, 0))
+                    .collect(),
+            );
+            for (at, leaf) in &flat_layout.leaves {
+                let mut init = Cursor::new(&flat_layout.init);
+                multi
+                    .verify_stream_segment(&mut init, &mut Cursor::new(leaf), Some("sha256"))
+                    .unwrap();
+                multi
+                    .verify_stream_segment_at_offset(
+                        &mut init,
+                        &mut Cursor::new(leaf),
+                        0,
+                        Some("sha256"),
+                    )
+                    .unwrap();
+                assert_mismatch(
+                    multi.verify_stream_segment_at_offset(
+                        &mut init,
+                        &mut Cursor::new(leaf),
+                        *at,
+                        Some("sha256"),
+                    ),
+                    "multi-file leaf at a flat offset",
+                );
+            }
+        }
+
+        #[test]
+        fn missing_init_hash_is_still_malformed() {
+            let mut flat = flat(false);
+            flat.hash.merkle.as_mut().unwrap()[0].init_hash = None;
+            let (at, leaf) = &flat.leaves[0];
+            assert!(matches!(
+                verify(&flat, leaf, *at),
+                Err(Error::C2PAValidation(code)) if code == ASSERTION_BMFFHASH_MALFORMED
+            ));
+        }
+    }
+
     /// Demonstrates that a caller outside this crate's own `Store`/`Builder`
     /// orchestration can construct a fully correct BMFF hard binding using
     /// only `BmffHash`'s own public API: build the assertion, compute its
