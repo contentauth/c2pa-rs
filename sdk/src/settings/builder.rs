@@ -202,7 +202,7 @@ impl TryFrom<ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
     type Error = Error;
 
     fn try_from(value: ClaimGeneratorInfoSettings) -> Result<Self> {
-        Ok(ClaimGeneratorInfo {
+        let mut info = ClaimGeneratorInfo {
             name: value.name,
             version: value.version,
             icon: value.icon.map(UriOrResource::ResourceRef),
@@ -224,7 +224,9 @@ impl TryFrom<ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
                         .map_err(|err| err.into())
                 })
                 .collect::<Result<HashMap<String, serde_json::Value>>>()?,
-        })
+        };
+        info.normalize_spec_version()?;
+        Ok(info)
     }
 }
 
@@ -232,7 +234,7 @@ impl TryFrom<&ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
     type Error = Error;
 
     fn try_from(value: &ClaimGeneratorInfoSettings) -> Result<Self> {
-        Ok(ClaimGeneratorInfo {
+        let mut info = ClaimGeneratorInfo {
             name: value.name.clone(),
             version: value.version.clone(),
             icon: value
@@ -257,7 +259,9 @@ impl TryFrom<&ClaimGeneratorInfoSettings> for ClaimGeneratorInfo {
                         .map_err(|err| err.into())
                 })
                 .collect::<Result<HashMap<String, serde_json::Value>>>()?,
-        })
+        };
+        info.normalize_spec_version()?;
+        Ok(info)
     }
 }
 
@@ -698,6 +702,57 @@ pub mod tests {
         };
 
         assert!(actions_settings.validate().is_ok());
+    }
+
+    #[test]
+    fn test_claim_generator_info_spec_version_conversion() {
+        let settings: ClaimGeneratorInfoSettings = serde_json::from_value(serde_json::json!({
+            "name": "test app",
+            "specVersion": "2.4.0",
+            "org.example.custom": true
+        }))
+        .unwrap();
+        for info in [
+            ClaimGeneratorInfo::try_from(&settings).unwrap(),
+            ClaimGeneratorInfo::try_from(settings).unwrap(),
+        ] {
+            assert_eq!(info.get_spec_version().map(String::as_str), Some("2.4.0"));
+            assert!(!info.other.contains_key("specVersion"));
+            assert_eq!(
+                info.get("org.example.custom"),
+                Some(&serde_json::json!(true))
+            );
+            let bytes = c2pa_cbor::to_vec(&info).unwrap();
+            assert_eq!(
+                c2pa_cbor::from_slice::<ClaimGeneratorInfo>(&bytes).unwrap(),
+                info
+            );
+        }
+    }
+
+    #[test]
+    fn test_claim_generator_info_spec_version_rejects_non_strings() {
+        for value in [
+            serde_json::json!(null),
+            serde_json::json!(24),
+            serde_json::json!(true),
+            serde_json::json!(["2.4.0"]),
+            serde_json::json!({"version": "2.4.0"}),
+        ] {
+            let settings: ClaimGeneratorInfoSettings = serde_json::from_value(serde_json::json!({
+                "name": "test app",
+                "specVersion": value
+            }))
+            .unwrap();
+            assert!(matches!(
+                ClaimGeneratorInfo::try_from(&settings),
+                Err(Error::BadParam(_))
+            ));
+            assert!(matches!(
+                ClaimGeneratorInfo::try_from(settings),
+                Err(Error::BadParam(_))
+            ));
+        }
     }
 
     #[test]
