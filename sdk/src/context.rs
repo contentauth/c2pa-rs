@@ -568,6 +568,24 @@ impl Context {
         &self.io
     }
 
+    /// Extracts the embedded manifest store using this Context's asset handler.
+    ///
+    /// Returns the handler's bytes without parsing or re-serializing the store.
+    /// This does not validate the manifest or fetch remote manifests/sidecars;
+    /// use [`crate::Reader`] for validation. The file extension selects the handler,
+    /// with this Context's custom handlers taking precedence over built-ins.
+    ///
+    /// This is the Context-aware counterpart of [`crate::jumbf_io::load_jumbf_from_file`],
+    /// which always uses the built-in handlers. Use it where a manifest written through
+    /// this Context must be read back with the same handlers.
+    #[cfg(feature = "file_io")]
+    pub fn read_embedded_manifest_from_file(
+        &self,
+        path: impl AsRef<std::path::Path>,
+    ) -> Result<Vec<u8>> {
+        self.io.read_c2pa_from_file(path)
+    }
+
     /// Configure this Context with a custom cryptographic signer.
     ///
     /// **Note:** In most cases, you don't need to call this method. Instead, configure signer
@@ -1637,11 +1655,23 @@ mod tests {
             }
 
             fn supported_types(&self) -> &[&str] {
-                &["image/jpeg"]
+                &["jpg", "image/jpeg"]
             }
         }
 
         let ctx = Context::new().with_io_handler(CustomHandler);
+
+        #[cfg(feature = "file_io")]
+        {
+            // WASI has no temp_dir(); use the crate's WASI-aware helper.
+            let dir = crate::utils::io_utils::tempdirectory().unwrap();
+            let file = dir.path().join("custom.jpg");
+            std::fs::write(&file, b"").unwrap();
+            assert_eq!(
+                ctx.read_embedded_manifest_from_file(&file).unwrap(),
+                b"custom-cai"
+            );
+        }
 
         // Custom handler claims "image/jpeg" — it should win over the built-in.
         let handler = ctx.io().handler("image/jpeg");

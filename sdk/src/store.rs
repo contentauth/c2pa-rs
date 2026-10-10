@@ -2857,6 +2857,19 @@ impl Store {
     }
 
     /// Embed the claims store as jumbf into fragmented assets.
+    ///
+    /// Rejects collisions between the names written in the flattened output layout
+    /// and matching canonical paths of existing rendition output directories before
+    /// writing. Init names remain native; fragment names use lossy UTF-8 conversion.
+    /// Empty fragment matches and non-directory output entries are also rejected
+    /// during preflight, as are output rendition directories that are source
+    /// directories and existing output inits that are source files (by canonical
+    /// path, and on Unix by file identity to catch hard links). Later signing
+    /// failures may leave empty or partial outputs. This is not a full filesystem
+    /// identity check: absent directory aliases and aliases with different canonical
+    /// paths are not detected. Existing non-source init files may still be
+    /// overwritten. Callers must keep outputs separate from inputs and ensure
+    /// outputs do not alias other outputs on the destination filesystem.
     #[cfg(feature = "file_io")]
     pub fn save_to_bmff_fragmented<P: AsRef<Path>>(
         &mut self,
@@ -2872,33 +2885,19 @@ impl Store {
             ));
         }
 
-        let mut output_map = HashMap::new();
-
-        // make sure output path is not a file
+        // Preserve the root-file error before inspecting any rendition children.
         if output_path.as_ref().is_file() {
             return Err(crate::Error::BadParam(
                 "output_path must be a folder".to_string(),
             ));
         }
 
-        // mak sure we can make the output folder
-        if !output_path.as_ref().exists() {
-            // ensure the path exists
-            std::fs::create_dir_all(output_path.as_ref()).map_err(|e| {
-                Error::BadParam(format!(
-                    "failed to create output directory for fragments: {e}"
-                ))
-            })?;
-        }
-
-        // add dynamic assertions placeholders to the store
-        let dynamic_assertions = signer.dynamic_assertions();
-        if !dynamic_assertions.is_empty() {
-            self.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
-        }
-
-        // add a Merkle tree map for each init segment and its associated fragments
-        for (i, init_path) in init_paths.iter().enumerate() {
+        // Validate the whole flattened layout before creating any output.
+        // Existing directories/inits are allowed (the FFI reserves them exclusively).
+        let mut rendition_dirs = HashSet::new();
+        let mut canonical_rendition_dirs = HashSet::new();
+        let mut renditions = Vec::new();
+        for init_path in init_paths {
             // make sure it is a supported BMFF format
             match context.io().supported_extension(init_path.as_ref()) {
                 Some(ext) => {
@@ -2935,6 +2934,12 @@ impl Store {
                     }
                 }
             }
+            if fragments.is_empty() {
+                return Err(Error::BadParam(format!(
+                    "No fragments matched glob: {}",
+                    frag_glob.display()
+                )));
+            }
 
             let new_output_path = output_path.as_ref().join(
                 init_dir
@@ -2942,6 +2947,133 @@ impl Store {
                     .ok_or(Error::BadParam("init segment bad file name".to_string()))?,
             );
 
+            if !rendition_dirs.insert(new_output_path.clone()) {
+                return Err(Error::BadParam(format!(
+                    "Fragmented output directory collision: {}; rendition directories must have distinct names",
+                    new_output_path.display()
+                )));
+            }
+            // Existing entries must resolve, including FFI-owned reservations.
+            // A dangling symlink is an error, not an absent destination.
+            match std::fs::symlink_metadata(&new_output_path) {
+                Ok(_) => {
+                    let canonical = std::fs::canonicalize(&new_output_path)?;
+                    if !std::fs::metadata(&canonical)?.is_dir() {
+                        return Err(Error::BadParam(format!(
+                            "Fragmented output path must be a folder: {}",
+                            new_output_path.display()
+                        )));
+                    }
+                    if !canonical_rendition_dirs.insert(canonical.clone()) {
+                        return Err(Error::BadParam(format!(
+                            "Fragmented output directory collision: {} resolves to already used directory {}",
+                            new_output_path.display(),
+                            canonical.display()
+                        )));
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e.into()),
+            }
+            let init_name = init_path
+                .file_name()
+                .ok_or_else(|| Error::BadParam("init segment has no file name".to_string()))?;
+            let mut names = HashSet::from([init_name.to_os_string()]);
+            for fragment in &fragments {
+                // Match add_merkle_for_fragmented's lossy fragment output names,
+                // while the init writer retains its native name.
+                let name = fragment
+                    .file_name()
+                    .ok_or_else(|| Error::BadParam("fragment has no file name".to_string()))?
+                    .to_string_lossy();
+                if !names.insert(std::ffi::OsString::from(name.as_ref())) {
+                    return Err(Error::BadParam(format!(
+                        "Fragmented output file collision: {}",
+                        new_output_path.join(name.as_ref()).display()
+                    )));
+                }
+            }
+            renditions.push((init_path, fragments, new_output_path));
+        }
+
+        // Outputs must never resolve to source media: an output rendition directory
+        // may not be a source directory, and an existing output init (the only file
+        // the writer overwrites) may not be a source file, including via symlinks or
+        // (on Unix) hard links. Fragment outputs are created exclusively.
+        #[cfg(unix)]
+        fn file_identity(metadata: &std::fs::Metadata) -> Option<(u64, u64)> {
+            use std::os::unix::fs::MetadataExt;
+            Some((metadata.dev(), metadata.ino()))
+        }
+        #[cfg(not(unix))]
+        fn file_identity(_: &std::fs::Metadata) -> Option<(u64, u64)> {
+            None
+        }
+        let mut source_dirs = HashSet::new();
+        let mut source_files = HashSet::new();
+        let mut source_identities = HashSet::new();
+        for (init_path, fragments, _) in &renditions {
+            for source in std::iter::once(*init_path).chain(fragments.iter()) {
+                let canonical = std::fs::canonicalize(source)?;
+                if let Some(parent) = canonical.parent() {
+                    source_dirs.insert(parent.to_path_buf());
+                }
+                if let Some(identity) = file_identity(&std::fs::metadata(&canonical)?) {
+                    source_identities.insert(identity);
+                }
+                source_files.insert(canonical);
+            }
+        }
+        for (init_path, _, new_output_path) in &renditions {
+            if std::fs::symlink_metadata(new_output_path).is_ok() {
+                let canonical = std::fs::canonicalize(new_output_path)?;
+                if source_dirs.contains(&canonical) {
+                    return Err(Error::BadParam(format!(
+                        "Fragmented output directory {} is a source directory",
+                        new_output_path.display()
+                    )));
+                }
+            }
+            let init_name = init_path
+                .file_name()
+                .ok_or_else(|| Error::BadParam("init segment has no file name".to_string()))?;
+            let output_init = new_output_path.join(init_name);
+            match std::fs::symlink_metadata(&output_init) {
+                Ok(_) => {
+                    // A dangling link would be followed by the init writer.
+                    let canonical = std::fs::canonicalize(&output_init)?;
+                    let identity = file_identity(&std::fs::metadata(&canonical)?);
+                    if source_files.contains(&canonical)
+                        || identity.is_some_and(|id| source_identities.contains(&id))
+                    {
+                        return Err(Error::BadParam(format!(
+                            "Fragmented output init {} is a source file",
+                            output_init.display()
+                        )));
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
+
+        if !output_path.as_ref().exists() {
+            std::fs::create_dir_all(output_path.as_ref()).map_err(|e| {
+                Error::BadParam(format!(
+                    "failed to create output directory for fragments: {e}"
+                ))
+            })?;
+        }
+
+        // add dynamic assertions placeholders to the store
+        let dynamic_assertions = signer.dynamic_assertions();
+        if !dynamic_assertions.is_empty() {
+            self.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
+        }
+
+        let mut output_map = HashMap::new();
+        // add a Merkle tree map for each init segment and its associated fragments
+        for (i, (init_path, fragments, new_output_path)) in renditions.into_iter().enumerate() {
             // add the Merkle tree map for this rendition
             // creating fragments in the output location
             let unique_id = i + 1;

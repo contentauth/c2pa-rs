@@ -267,6 +267,377 @@ fn test_builder_fragmented() -> Result<()> {
     Ok(())
 }
 
+#[cfg(all(not(target_arch = "wasm32"), feature = "file_io"))]
+#[test]
+fn test_builder_fragmented_collisions_before_writes() -> Result<()> {
+    use std::{fs, path::Path};
+
+    let fixtures =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bunny/bunny_89283bps");
+    let context = test_context().into_shared();
+    for case in ["renditions", "multiple_inits", "fragments", "init_fragment"] {
+        for existing_output in [false, true] {
+            let temp = common::tempdirectory()?;
+            let input = temp.path().join("input");
+            let output = temp.path().join("output");
+            let mut files = vec![
+                ("a/video/init.mp4", "BigBuckBunny_2s_init.mp4"),
+                ("a/video/seg-a.m4s", "BigBuckBunny_2s1.m4s"),
+            ];
+            let mut fragment_pattern = "seg-*.m4s";
+            match case {
+                "renditions" => {
+                    // Different fragment names bypass create_new's protection:
+                    // without preflight, both inits would overwrite video/init.mp4.
+                    files.push(("b/video/init.mp4", "BigBuckBunny_2s_init.mp4"));
+                    files.push(("b/video/seg-b.m4s", "BigBuckBunny_2s10.m4s"));
+                }
+                "multiple_inits" => {
+                    files.push(("a/video/init-other.mp4", "BigBuckBunny_2s_init.mp4"));
+                }
+                "fragments" => {
+                    files.push(("a/video/sub/seg-a.m4s", "BigBuckBunny_2s10.m4s"));
+                    fragment_pattern = "**/seg-*.m4s";
+                }
+                "init_fragment" => {
+                    files.push(("a/video/sub/init.mp4", "BigBuckBunny_2s1.m4s"));
+                    fragment_pattern = "sub/*.mp4";
+                }
+                _ => unreachable!(),
+            }
+            let mut sources = Vec::new();
+            for (dest, source) in files {
+                let path = input.join(dest);
+                fs::create_dir_all(path.parent().unwrap())?;
+                let bytes = fs::read(fixtures.join(source))?;
+                fs::write(&path, &bytes)?;
+                sources.push((path, bytes));
+            }
+            if existing_output {
+                fs::create_dir(&output)?;
+                fs::write(output.join("keep"), b"caller file")?;
+            }
+            let mut builder = Builder::from_shared_context(&context);
+            builder.set_intent(BuilderIntent::Create(c2pa::DigitalSourceType::Empty));
+            let error = builder
+                .sign_fragmented_files(
+                    context.signer()?,
+                    input.join("*/video/init*.mp4").as_path(),
+                    Path::new(fragment_pattern),
+                    &output,
+                )
+                .unwrap_err();
+            let collision = if matches!(case, "renditions" | "multiple_inits") {
+                "Fragmented output directory collision:"
+            } else {
+                "Fragmented output file collision:"
+            };
+            assert!(
+                matches!(&error, Error::BadParam(message) if message.starts_with(collision)),
+                "{case}: {error}"
+            );
+            if existing_output {
+                assert_eq!(fs::read_dir(&output)?.count(), 1, "{case}");
+                assert_eq!(fs::read(output.join("keep"))?, b"caller file");
+            } else {
+                assert!(
+                    !output.exists(),
+                    "{case}: preflight must not create outputs"
+                );
+            }
+            for (path, bytes) in sources {
+                assert_eq!(fs::read(&path)?, bytes, "{case}: {}", path.display());
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "file_io"))]
+#[test]
+fn test_builder_fragmented_preflight_errors_before_writes() -> Result<()> {
+    use std::{fs, path::Path};
+
+    let fixtures =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bunny/bunny_89283bps");
+    let context = test_context().into_shared();
+    for case in ["empty_fragments", "output_file", "root_file"] {
+        let temp = common::tempdirectory()?;
+        let input = temp.path().join("input");
+        let output = temp.path().join("output");
+        let mut sources = Vec::new();
+        // The first rendition is valid: detecting a problem in the second must
+        // happen before any output for the first rendition is created.
+        for name in ["a", "b"] {
+            let dir = input.join(name);
+            fs::create_dir_all(&dir)?;
+            let mut files = vec![("init.mp4", "BigBuckBunny_2s_init.mp4")];
+            if name == "a" || case != "empty_fragments" {
+                files.push(("seg-1.m4s", "BigBuckBunny_2s1.m4s"));
+            }
+            for (dest, source) in files {
+                let path = dir.join(dest);
+                let bytes = fs::read(fixtures.join(source))?;
+                fs::write(&path, &bytes)?;
+                sources.push((path, bytes));
+            }
+        }
+        let expected = match case {
+            "empty_fragments" => format!(
+                "No fragments matched glob: {}",
+                input.join("b").join("seg-*.m4s").display()
+            ),
+            "output_file" => {
+                fs::create_dir(&output)?;
+                fs::write(output.join("b"), b"caller file")?;
+                format!(
+                    "Fragmented output path must be a folder: {}",
+                    output.join("b").display()
+                )
+            }
+            "root_file" => {
+                fs::write(&output, b"caller file")?;
+                "output_path must be a folder".to_owned()
+            }
+            _ => unreachable!(),
+        };
+        let mut builder = Builder::from_shared_context(&context);
+        builder.set_intent(BuilderIntent::Create(c2pa::DigitalSourceType::Empty));
+        let error = builder
+            .sign_fragmented_files(
+                context.signer()?,
+                input.join("*/init.mp4").as_path(),
+                Path::new("seg-*.m4s"),
+                &output,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(&error, Error::BadParam(message) if message == &expected),
+            "{case}: {error}"
+        );
+        match case {
+            "empty_fragments" => assert!(!output.exists()),
+            "output_file" => {
+                assert_eq!(fs::read_dir(&output)?.count(), 1);
+                assert_eq!(fs::read(output.join("b"))?, b"caller file");
+            }
+            "root_file" => assert_eq!(fs::read(&output)?, b"caller file"),
+            _ => unreachable!(),
+        }
+        for (path, bytes) in sources {
+            assert_eq!(fs::read(&path)?, bytes, "{case}: {}", path.display());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(all(any(unix, windows), feature = "file_io"))]
+#[test]
+fn test_builder_fragmented_existing_output_aliases_before_writes() -> Result<()> {
+    #[cfg(unix)]
+    use std::os::unix::fs::{symlink as symlink_dir, symlink as symlink_file};
+    #[cfg(windows)]
+    use std::os::windows::fs::{symlink_dir, symlink_file};
+    use std::{fs, path::Path};
+
+    let fixtures =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bunny/bunny_89283bps");
+    let context = test_context().into_shared();
+    for target in ["low", "missing", "file"] {
+        let temp = common::tempdirectory()?;
+        let input = temp.path().join("input");
+        let output = temp.path().join("output");
+        let mut sources = Vec::new();
+        for (name, fragment) in [
+            ("low", "BigBuckBunny_2s1.m4s"),
+            ("high", "BigBuckBunny_2s10.m4s"),
+        ] {
+            let dir = input.join(name);
+            fs::create_dir_all(&dir)?;
+            // Disjoint fragment names must not let create_new mask init overwrite.
+            for (dest, source) in [
+                (dir.join("init.mp4"), "BigBuckBunny_2s_init.mp4"),
+                (dir.join(format!("seg-{name}.m4s")), fragment),
+            ] {
+                let bytes = fs::read(fixtures.join(source))?;
+                fs::write(&dest, &bytes)?;
+                sources.push((dest, bytes));
+            }
+        }
+        fs::create_dir_all(output.join("low"))?;
+        fs::write(output.join("low/init.mp4"), b"caller init")?;
+        let symlink_result = if target == "file" {
+            fs::write(output.join("file"), b"caller file")?;
+            symlink_file(target, output.join("high"))
+        } else {
+            symlink_dir(target, output.join("high"))
+        };
+        match symlink_result {
+            Ok(()) => {}
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::PermissionDenied | io::ErrorKind::Unsupported
+                ) =>
+            {
+                eprintln!("Skipping output symlink regression: {e}");
+                return Ok(());
+            }
+            Err(e) => return Err(e.into()),
+        }
+        let mut builder = Builder::from_shared_context(&context);
+        builder.set_intent(BuilderIntent::Create(c2pa::DigitalSourceType::Empty));
+        let error = builder
+            .sign_fragmented_files(
+                context.signer()?,
+                input.join("*/init.mp4").as_path(),
+                Path::new("seg-*.m4s"),
+                &output,
+            )
+            .unwrap_err();
+        if target == "low" {
+            assert!(
+                matches!(&error, Error::BadParam(message)
+                if message.starts_with("Fragmented output directory collision:")),
+                "{error}"
+            );
+        } else if target == "file" {
+            assert!(
+                matches!(&error, Error::BadParam(message)
+                if message.starts_with("Fragmented output path must be a folder:")),
+                "{error}"
+            );
+            assert_eq!(fs::read(output.join("file"))?, b"caller file");
+        } else {
+            assert!(
+                matches!(&error, Error::IoError(e)
+                if e.kind() == io::ErrorKind::NotFound),
+                "{error}"
+            );
+        }
+        assert_eq!(
+            fs::read_dir(&output)?.count(),
+            if target == "file" { 3 } else { 2 }
+        );
+        assert_eq!(fs::read_dir(output.join("low"))?.count(), 1);
+        assert_eq!(fs::read(output.join("low/init.mp4"))?, b"caller init");
+        assert_eq!(fs::read_link(output.join("high"))?, Path::new(target));
+        for (path, bytes) in sources {
+            assert_eq!(fs::read(&path)?, bytes, "{}", path.display());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(all(any(unix, windows), feature = "file_io"))]
+#[test]
+fn test_builder_fragmented_outputs_never_resolve_to_sources() -> Result<()> {
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink as symlink_file;
+    #[cfg(windows)]
+    use std::os::windows::fs::symlink_file;
+    use std::{fs, path::Path};
+
+    fn tree(root: &Path) -> Result<Vec<(std::path::PathBuf, Vec<u8>)>> {
+        let mut files = Vec::new();
+        for entry in fs::read_dir(root)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                files.extend(tree(&path)?);
+            } else {
+                files.push((path.clone(), fs::read(&path)?));
+            }
+        }
+        files.sort();
+        Ok(files)
+    }
+
+    let fixtures =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/bunny/bunny_89283bps");
+    let context = test_context().into_shared();
+    let mut cases = vec!["source_dir", "init_symlink", "control"];
+    if cfg!(unix) {
+        // Hard links are detected by file identity only on Unix.
+        cases.push("init_hardlink");
+    }
+    for case in cases {
+        let temp = common::tempdirectory()?;
+        let input = temp.path().join("input");
+        let video = input.join("video");
+        // A subdirectory glob: flattened fragment names do not exist in the source
+        // directory, so fragment create_new cannot catch output == source.
+        fs::create_dir_all(video.join("sub"))?;
+        fs::copy(
+            fixtures.join("BigBuckBunny_2s_init.mp4"),
+            video.join("init.mp4"),
+        )?;
+        fs::copy(
+            fixtures.join("BigBuckBunny_2s1.m4s"),
+            video.join("sub/seg-1.m4s"),
+        )?;
+        let output = if case == "source_dir" {
+            input.clone()
+        } else {
+            temp.path().join("output")
+        };
+        let output_init = output.join("video/init.mp4");
+        match case {
+            "init_symlink" => {
+                fs::create_dir_all(output.join("video"))?;
+                match symlink_file(video.join("init.mp4"), &output_init) {
+                    Ok(()) => {}
+                    Err(e)
+                        if matches!(
+                            e.kind(),
+                            io::ErrorKind::PermissionDenied | io::ErrorKind::Unsupported
+                        ) =>
+                    {
+                        eprintln!("Skipping output init symlink regression: {e}");
+                        continue;
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+            }
+            "init_hardlink" => {
+                fs::create_dir_all(output.join("video"))?;
+                fs::hard_link(video.join("init.mp4"), &output_init)?;
+            }
+            "control" => {
+                fs::create_dir_all(output.join("video"))?;
+                fs::write(&output_init, b"caller init")?;
+            }
+            _ => {}
+        }
+        let before = tree(&input)?;
+        let mut builder = Builder::from_shared_context(&context);
+        builder.set_intent(BuilderIntent::Create(c2pa::DigitalSourceType::Empty));
+        let result = builder.sign_fragmented_files(
+            context.signer()?,
+            video.join("init.mp4").as_path(),
+            Path::new("sub/*.m4s"),
+            &output,
+        );
+        if case == "control" {
+            // An unrelated existing output init keeps the documented overwrite policy.
+            result.map_err(|e| format!("control: {e}")).unwrap();
+            assert_ne!(fs::read(&output_init)?, b"caller init");
+        } else {
+            let error = result.unwrap_err();
+            let expected = if case == "source_dir" {
+                "is a source directory"
+            } else {
+                "is a source file"
+            };
+            assert!(
+                matches!(&error, Error::BadParam(message) if message.ends_with(expected)),
+                "{case}: {error}"
+            );
+        }
+        assert_eq!(tree(&input)?, before, "{case}: sources changed");
+    }
+    Ok(())
+}
+
 #[test]
 fn test_builder_remote_url_no_embed() -> Result<()> {
     let mut settings = test_settings();

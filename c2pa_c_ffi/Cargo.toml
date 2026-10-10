@@ -19,7 +19,7 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 
 [features]
 default = ["c2pa/openssl", "http", "add_thumbnails"]
-file_io = ["c2pa/file_io"]
+file_io = ["c2pa/file_io", "dep:glob"]
 rust_native_crypto = ["c2pa/rust_native_crypto"]
 # HTTP and thumbnails: not enabled by default because reqwest pulls in wasm-bindgen-futures
 # (incompatible with -Z build-std=panic_abort on wasm32-unknown-emscripten).
@@ -34,6 +34,7 @@ c2pa = { workspace = true, features = [
     "pdf",
 ] }
 c2pa_cbor = "0.78.0"
+glob = { version = "0.3.3", optional = true }
 libc = "0.2.186"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"

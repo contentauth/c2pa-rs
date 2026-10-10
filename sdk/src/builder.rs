@@ -3570,13 +3570,34 @@ impl Builder {
     ///
     /// Note: Currently this does not support files with existing C2PA manifest.
     ///
+    /// Outputs use `<output_path>/<init parent directory name>/<file name>`,
+    /// flattening fragment subdirectories. Each init must have a distinct parent
+    /// directory name, even when the init file names differ. Collisions between
+    /// written directory/file names, and existing rendition output directories
+    /// resolving to the same canonical path, are rejected before output writes.
+    /// Init names remain native; fragment names use lossy UTF-8 conversion, matching
+    /// the fragment writer. Empty fragment matches, non-directory output entries,
+    /// and errors inspecting or resolving existing output entries are also rejected
+    /// before writes. So are output rendition directories that are source
+    /// directories, and existing output inits that are source files (compared by
+    /// canonical path, and on Unix also by file identity to catch hard links).
+    /// This is not a full filesystem identity check: absent directories are not
+    /// checked for case/Unicode aliases, nor are aliases with different canonical
+    /// paths detected (e.g. directory hard links or bind mounts, or file hard links
+    /// on non-Unix platforms). Callers must keep outputs separate from inputs and
+    /// ensure exclusive ownership of distinct destinations on the output filesystem.
+    /// Existing non-source output init files may be overwritten; use fresh output
+    /// directories. Do not change inputs or outputs
+    /// concurrently while signing. Signing is not transactional: later failures may
+    /// leave empty or partial outputs, including an empty output root.
+    ///
     /// # Arguments
     /// * `signer` - The signer to use.
     /// * `asset_path` - The path to the primary asset file or glob pattern if there are mulitple init segments in a set.
     /// * `fragment_glob` - The glob pattern to the fragmented files. Do not use the full path, only the
     /// *   pattern to find the fragmented files in the same directory/subdirectory as the asset file. For example,
     /// *   if your fragmented files are named `video_1.m4s`, `video_2.m4s`, etc., then the glob pattern should be `video_*.m4s`.
-    /// * `output_path` - The path to the output file.
+    /// * `output_path` - The path to the output directory.
     ///
     /// # Errors
     /// * Returns an [`Error`] if the manifest cannot be signed.

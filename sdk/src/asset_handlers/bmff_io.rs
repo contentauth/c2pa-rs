@@ -69,7 +69,7 @@ const FULL_BOX_TYPES: &[&str; 80] = &[
     "txtC", "mime", "uri ", "uriI", "hmhd", "sthd", "vvhd", "medc",
 ];
 
-static SUPPORTED_TYPES: [&str; 15] = [
+static SUPPORTED_TYPES: [&str; 17] = [
     "avif",
     "heif",
     "heic",
@@ -77,12 +77,14 @@ static SUPPORTED_TYPES: [&str; 15] = [
     "m4a",
     "mov",
     "m4v",
+    "m4s",
     "application/mp4",
     "audio/mp4",
     "image/avif",
     "image/heic",
     "image/heif",
     "video/mp4",
+    "video/iso.segment",
     "video/quicktime",
     "video/x-m4v",
 ];
@@ -2022,6 +2024,7 @@ impl AssetIO for BmffIO {
             ("m4a", "audio/mp4"),
             ("mov", "video/quicktime"),
             ("m4v", "video/x-m4v"),
+            ("m4s", "video/iso.segment"),
         ]
         .into_iter()
         .map(|(ext, mime)| (ext.to_string(), mime.to_string()))
@@ -3148,6 +3151,19 @@ pub mod tests {
         io_utils::tempdirectory,
         test::{fixture_path, temp_dir_path},
     };
+
+    #[test]
+    fn test_fragmented_extensions() {
+        let registry = crate::jumbf_io::default_handler_registry();
+        assert!(registry.handler("m4s").is_some());
+        assert!(registry.handler("video/iso.segment").is_some());
+        assert!(registry.is_bmff_format("m4s"));
+        assert_eq!(registry.mime_for("m4s"), Some("video/iso.segment"));
+        assert_eq!(
+            registry.format_from_path("init.m4s"),
+            Some("video/iso.segment".to_owned())
+        );
+    }
 
     #[test]
     fn test_read_deep_nesting() {

@@ -29,6 +29,7 @@ pub fn extension_to_mime(extension: &str) -> Option<&'static str> {
         "heif" => "image/heif",
         "mp2" | "mpa" | "mpe" | "mpeg" | "mpg" | "mpv2" => "video/mpeg",
         "mp4" => "video/mp4",
+        "m4s" => "video/iso.segment",
         "avi" => "video/avi",
         "avif" => "image/avif",
         "mov" | "qt" => "video/quicktime",
@@ -116,6 +117,7 @@ pub fn format_to_extension(format: &str) -> Option<&'static str> {
         "heif" | "image/heif" => "heif",
         "mp2" | "mpa" | "mpe" | "mpeg" | "mpg" | "mpv2" | "video/mpeg" => "mp2",
         "mp4" | "video/mp4" => "mp4",
+        "m4s" | "video/iso.segment" => "m4s",
         "avif" | "image/avif" => "avif",
         "avi" | "video/avi" => "avi",
         "mov" | "qt" | "video/quicktime" => "mov",
@@ -173,6 +175,20 @@ mod tests {
         assert_eq!(format_to_mime("image/jpeg"), "image/jpeg");
         assert_eq!(format_to_mime("jpg"), "image/jpeg");
         assert_eq!(format_to_mime("image/svg+xml"), "image/svg+xml");
+    }
+
+    #[test]
+    fn test_fragmented_formats() {
+        let registry = crate::jumbf_io::default_handler_registry();
+        assert_eq!(extension_to_mime("m4s"), registry.mime_for("m4s"));
+        assert_eq!(format_to_mime("M4S"), "video/iso.segment");
+        assert_eq!(format_to_extension("m4s"), Some("m4s"));
+        assert_eq!(
+            mime_from_path("init.m4s"),
+            Some("video/iso.segment".to_owned())
+        );
+        assert_eq!(format_to_extension("video/iso.segment"), Some("m4s"));
+        assert_eq!(format_to_extension("video/mp4"), Some("mp4"));
     }
 
     #[test]
