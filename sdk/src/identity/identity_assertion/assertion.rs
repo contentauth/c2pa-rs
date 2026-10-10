@@ -42,8 +42,10 @@ use crate::{
     jumbf::labels::to_assertion_uri,
     log_current_item, log_item,
     settings::TrustListKind,
-    status_tracker::StatusTracker,
-    validation_status::{CAWG_X509_SIGNATURE_MISMATCH, CAWG_X509_SIGNATURE_VALIDATED},
+    status_tracker::{LogKind, StatusTracker},
+    validation_status::{
+        CAWG_X509_CREDENTIAL_UNTRUSTED, CAWG_X509_SIGNATURE_MISMATCH, CAWG_X509_SIGNATURE_VALIDATED,
+    },
     Manifest, Reader,
 };
 
@@ -308,6 +310,11 @@ impl IdentityAssertion {
         context: &Context,
     ) -> Result<serde_json::Value, ValidationError<String>> {
         let settings = context.settings();
+
+        // Remember where this assertion's log items start, so that we can tell
+        // whether validation reported a failure before issuing a success code.
+        let first_item = status_tracker.logged_items().len();
+
         self.check_padding(status_tracker)?;
 
         self.signer_payload
@@ -411,12 +418,20 @@ impl IdentityAssertion {
             };
             let result = info.to_summary();
 
-            log_current_item!(
-                "CAWG X.509 identity signature valid",
-                "validate_partial_claim"
-            )
-            .validation_status("cawg.identity.well-formed")
-            .success(status_tracker);
+            // CAWG Identity 1.3 §7.2: `cawg.identity.well-formed` means the
+            // identity assertion was validated. Don't issue it if a §7.1 check
+            // (padding, referenced assertions, hard binding) or the signature
+            // itself failed. `cawg.x509.credential.untrusted` alone doesn't
+            // prevent it: "well-formed" is defined as validated with no root of
+            // trust identified for the named actor.
+            if !has_validation_failure(status_tracker, first_item) {
+                log_current_item!(
+                    "CAWG X.509 identity signature valid",
+                    "validate_partial_claim"
+                )
+                .validation_status("cawg.identity.well-formed")
+                .success(status_tracker);
+            }
             // TO DO (CAI-7980): Should instead issue `cawg.identity.trusted` if the
             // signing cert is found on a configured trust list.
 
@@ -506,6 +521,17 @@ impl Debug for IdentityAssertion {
             .field("label", &self.label)
             .finish()
     }
+}
+
+/// True if any failure other than `cawg.x509.credential.untrusted` was logged
+/// at index `first_item` or later.
+fn has_validation_failure(status_tracker: &StatusTracker, first_item: usize) -> bool {
+    status_tracker.logged_items()[first_item..]
+        .iter()
+        .any(|item| {
+            item.kind == LogKind::Failure
+                && item.validation_status.as_deref() != Some(CAWG_X509_CREDENTIAL_UNTRUSTED)
+        })
 }
 
 #[cfg(test)]
