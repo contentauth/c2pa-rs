@@ -3283,7 +3283,17 @@ impl Store {
 
         // Check to see if manifest compression is requested, BMFF and ZIP are not supported for compression since the manifest
         // needs to be in a specific location and compression would change the size of the manifest which would break the offsets
-        if pc.compressed() {
+        // Some formats (e.g. GLB) mandate a `c2pa.hash.boxes` hard binding, so
+        // use the box-hash path for them even when compression is not requested.
+        #[cfg(feature = "unstable_glb")]
+        let format_requires_box_hash = !pc.update_manifest()
+            && io_handler
+                .and_then(|h| h.asset_box_hash_ref())
+                .is_some_and(|bh| bh.requires_box_hash());
+        #[cfg(not(feature = "unstable_glb"))]
+        let format_requires_box_hash = false;
+
+        if pc.compressed() || format_requires_box_hash {
             // If compression is desired use BoxHashing for compatible formats, otherwise fall back to regular hashing.
             match io_handler.and_then(|h| h.asset_box_hash_ref()) {
                 Some(box_hash_handler) if !is_bmff && !is_zip => {
