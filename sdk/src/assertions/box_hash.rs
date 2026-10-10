@@ -244,7 +244,7 @@ pub struct BoxHash {
 
 /// Folds the `ContainerLength` ranges a handler declares into the caller's
 /// exclusion requests, keeping them ordered by box and start offset.
-#[cfg(feature = "unstable_glb")]
+#[cfg(any(feature = "unstable_glb", feature = "unstable_matroska"))]
 fn with_container_length_exclusions(
     requests: &[BoxHashExclusionRequest],
     source_bms: &[AssetBoxMap],
@@ -565,9 +565,9 @@ impl BoxHash {
 
         // Ranges the handler marks as `ContainerLength` are mandatory
         // exclusions (their value changes when the manifest is embedded).
-        #[cfg(feature = "unstable_glb")]
+        #[cfg(any(feature = "unstable_glb", feature = "unstable_matroska"))]
         let merged_requests = with_container_length_exclusions(exclusion_requests, &source_bms);
-        #[cfg(feature = "unstable_glb")]
+        #[cfg(any(feature = "unstable_glb", feature = "unstable_matroska"))]
         let exclusion_requests = merged_requests.as_slice();
 
         if minimal_form {

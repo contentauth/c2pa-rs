@@ -3283,14 +3283,14 @@ impl Store {
 
         // Check to see if manifest compression is requested, BMFF and ZIP are not supported for compression since the manifest
         // needs to be in a specific location and compression would change the size of the manifest which would break the offsets
-        // Some formats (e.g. GLB) mandate a `c2pa.hash.boxes` hard binding, so
+        // Some formats (e.g. GLB, Matroska) mandate a `c2pa.hash.boxes` hard binding, so
         // use the box-hash path for them even when compression is not requested.
-        #[cfg(feature = "unstable_glb")]
+        #[cfg(any(feature = "unstable_glb", feature = "unstable_matroska"))]
         let format_requires_box_hash = !pc.update_manifest()
             && io_handler
                 .and_then(|h| h.asset_box_hash_ref())
                 .is_some_and(|bh| bh.requires_box_hash());
-        #[cfg(not(feature = "unstable_glb"))]
+        #[cfg(not(any(feature = "unstable_glb", feature = "unstable_matroska")))]
         let format_requires_box_hash = false;
 
         if pc.compressed() || format_requires_box_hash {
@@ -3301,6 +3301,25 @@ impl Store {
                     if pc.box_hash_assertions().is_empty() {
                         // no user box hash assertion, so use box hashing
                         let mut bh = BoxHash { boxes: Vec::new() };
+
+                        // Formats whose embedding changes hashed bytes (e.g. Matroska)
+                        // are hashed in the layout they will have once embedded.
+                        #[cfg(feature = "unstable_matroska")]
+                        if !remove_manifests {
+                            let mut prepared =
+                                io_utils::stream_with_fs_fallback(threshold, input_len)?;
+                            let src: &mut dyn ReadSeek = if source_is_intermediate {
+                                &mut intermediate_stream
+                            } else {
+                                &mut *input_stream
+                            };
+                            src.rewind()?;
+                            if box_hash_handler.prepare_box_hash_stream(src, &mut prepared)? {
+                                prepared.rewind()?;
+                                intermediate_stream = prepared;
+                                source_is_intermediate = true;
+                            }
+                        }
 
                         if !source_is_intermediate {
                             // Box-hash generation requires a seekable intermediate; populate it

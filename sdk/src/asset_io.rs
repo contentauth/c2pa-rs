@@ -491,10 +491,11 @@ pub enum ExclusionKind {
     AssetMetadata,
     /// A container-level length field whose value necessarily changes when the
     /// C2PA Manifest Store is embedded (e.g. the GLB header `length`, bytes
-    /// 8-11). Unlike the other kinds, which only describe what a claim
+    /// 8-11, or the Matroska `Segment` and `Attachments` Element Data Sizes).
+    /// Unlike the other kinds, which only describe what a claim
     /// generator *may* exclude, ranges of this kind are a format requirement:
     /// box-hash generation always excludes them.
-    #[cfg(feature = "unstable_glb")]
+    #[cfg(any(feature = "unstable_glb", feature = "unstable_matroska"))]
     ContainerLength,
 }
 
@@ -569,10 +570,29 @@ pub trait AssetBoxHash {
     /// generates the binding automatically during signing.
     ///
     /// Defaults to `false`; formats whose specification mandates box hashing
-    /// (e.g. GLB) return `true`.
-    #[cfg(feature = "unstable_glb")]
+    /// (e.g. GLB, Matroska) return `true`.
+    #[cfg(any(feature = "unstable_glb", feature = "unstable_matroska"))]
     fn requires_box_hash(&self) -> bool {
         false
+    }
+
+    /// For formats where embedding a manifest changes bytes that the box hash
+    /// covers (e.g. Matroska, where the `SeekHead` gains a `Seek` entry and
+    /// an existing `Attachments` element may be relocated), writes `input` to
+    /// `output` in the layout it will have once a C2PA Manifest Store is
+    /// embedded, with a placeholder store, and returns `true`. The box hash is
+    /// then computed over `output`, and the final store replaces the
+    /// placeholder without changing any hashed byte.
+    ///
+    /// Returns `false`, writing nothing, when the format needs no preparation
+    /// (the default).
+    #[cfg(feature = "unstable_matroska")]
+    fn prepare_box_hash_stream(
+        &self,
+        _input: &mut dyn ReadSeek,
+        _output: &mut dyn ReadWriteSeek,
+    ) -> Result<bool> {
+        Ok(false)
     }
 }
 
