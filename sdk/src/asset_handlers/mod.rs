@@ -15,9 +15,13 @@ pub mod bmff_io;
 pub mod c2pa_io;
 pub mod flac_io;
 pub mod gif_io;
+#[cfg(feature = "unstable_glb")]
+pub mod glb_io;
 pub(crate) mod id3_helper;
 pub mod jpeg_io;
 pub mod jpegxl_io;
+#[cfg(feature = "unstable_matroska")]
+pub mod matroska_io;
 pub mod mp3_io;
 #[cfg(feature = "unstable_plain_text")]
 pub mod plain_text_io;

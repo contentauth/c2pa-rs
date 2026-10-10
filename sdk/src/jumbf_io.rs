@@ -17,6 +17,10 @@ use std::{collections::HashMap, io::Cursor, sync::Arc};
 
 use lazy_static::lazy_static;
 
+#[cfg(feature = "unstable_glb")]
+use crate::asset_handlers::glb_io::GlbIO;
+#[cfg(feature = "unstable_matroska")]
+use crate::asset_handlers::matroska_io::MatroskaIO;
 #[cfg(feature = "pdf")]
 use crate::asset_handlers::pdf_io::PdfIO;
 #[cfg(feature = "unstable_plain_text")]
@@ -51,6 +55,10 @@ lazy_static! {
         Box::new(Mp3IO::new("")),
         Box::new(GifIO::new("")),
         Box::new(FlacIO::new("")),
+        #[cfg(feature = "unstable_glb")]
+        Box::new(GlbIO::new("")),
+        #[cfg(feature = "unstable_matroska")]
+        Box::new(MatroskaIO::new("")),
         #[cfg(feature = "unstable_structured_text")]
         Box::new(StructuredTextIO::new("")),
         #[cfg(feature = "unstable_plain_text")]
@@ -365,6 +373,9 @@ pub mod tests {
 
         let plain_text_supported = supported.iter().any(|s| s == "txt");
         assert_eq!(plain_text_supported, cfg!(feature = "unstable_plain_text"));
+
+        let matroska_supported = supported.iter().any(|s| s == "webm");
+        assert_eq!(matroska_supported, cfg!(feature = "unstable_matroska"));
 
         assert!(supported.iter().any(|s| s == "jpg"));
         assert!(supported.iter().any(|s| s == "jpeg"));

@@ -242,6 +242,33 @@ pub struct BoxHash {
     pub boxes: Vec<BoxMap>,
 }
 
+/// Folds the `ContainerLength` ranges a handler declares into the caller's
+/// exclusion requests, keeping them ordered by box and start offset.
+#[cfg(any(feature = "unstable_glb", feature = "unstable_matroska"))]
+fn with_container_length_exclusions(
+    requests: &[BoxHashExclusionRequest],
+    source_bms: &[AssetBoxMap],
+) -> Vec<BoxHashExclusionRequest> {
+    let mut merged = requests.to_vec();
+    for (source_index, bm) in source_bms.iter().enumerate() {
+        for a in &bm.allowed_exclusions {
+            if a.kind == ExclusionKind::ContainerLength
+                && !merged.iter().any(|r| {
+                    r.source_box_index == source_index && r.start == a.start && r.length == a.length
+                })
+            {
+                merged.push(BoxHashExclusionRequest {
+                    source_box_index: source_index,
+                    start: a.start,
+                    length: a.length,
+                });
+            }
+        }
+    }
+    merged.sort_by_key(|r| (r.source_box_index, r.start));
+    merged
+}
+
 impl BoxHash {
     pub const LABEL: &'static str = labels::BOX_HASH;
 
@@ -535,6 +562,13 @@ impl BoxHash {
     {
         // get source box list
         let source_bms = bhp.get_box_map(reader)?;
+
+        // Ranges the handler marks as `ContainerLength` are mandatory
+        // exclusions (their value changes when the manifest is embedded).
+        #[cfg(any(feature = "unstable_glb", feature = "unstable_matroska"))]
+        let merged_requests = with_container_length_exclusions(exclusion_requests, &source_bms);
+        #[cfg(any(feature = "unstable_glb", feature = "unstable_matroska"))]
+        let exclusion_requests = merged_requests.as_slice();
 
         if minimal_form {
             let mut before_c2pa = BoxMap {

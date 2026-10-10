@@ -51,3 +51,21 @@ The Rust library supports the following text formats when the `unstable_structur
 | `toml`           | `application/toml`      |
 | `vtt`            | `text/vtt`              |
 | `yaml`, `yml`    | `application/yaml`      |
+
+## Experimental feature: GLB
+
+The Rust library supports binary glTF 2.0 (GLB) when the `unstable_glb` feature is enabled. The manifest is carried in a dedicated `C2PA` chunk, following the GLB section of the C2PA specification working draft.
+
+| Extensions | MIME type           |
+| ---------- | ------------------- |
+| `glb`      | `model/gltf-binary` |
+
+## Experimental feature: Matroska and WebM
+
+The Rust library supports Matroska and WebM when the `unstable_matroska` feature is enabled. The manifest is carried in an `AttachedFile` (`FileMediaType` `application/c2pa`) of an `Attachments` element placed at the end of the `Segment`, following the Matroska section of the C2PA specification working draft. Files with unknown-size elements (for example, unfinalized `MediaRecorder` or live recordings) or with more than one `Segment` are not supported; finalize or remux them first.
+
+| Extensions      | MIME type                                                  |
+| --------------- | ---------------------------------------------------------- |
+| `mkv`, `mk3d`   | `video/matroska`, `video/x-matroska`, `video/matroska-3d`  |
+| `mka`           | `audio/matroska`, `audio/x-matroska`                       |
+| `webm`          | `video/webm`, `audio/webm`                                 |
