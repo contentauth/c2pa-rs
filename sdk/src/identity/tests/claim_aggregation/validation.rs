@@ -582,6 +582,76 @@ async fn missing_vc() {
     assert!(log_items.next().is_none());
 }
 
+/// Validate the only identity assertion in an ICA fixture and return the
+/// result plus the failure codes that were logged.
+async fn validate_ica_fixture(
+    test_image: &[u8],
+) -> (
+    Result<crate::identity::claim_aggregation::IcaCredential, ValidationError<IcaValidationError>>,
+    Vec<String>,
+) {
+    let mut test_image = Cursor::new(test_image);
+    let reader = crate::identity::tests::read_manifest("image/jpeg", &mut test_image).await;
+    let manifest = reader.active_manifest().unwrap();
+    let mut st = StatusTracker::default();
+    let ia = IdentityAssertion::from_manifest(manifest, &mut st)
+        .next()
+        .unwrap()
+        .unwrap();
+
+    let context = ica_test_context();
+    let isv = IcaSignatureVerifier::new(&context);
+    let result = ia.validate(manifest, &mut st, &isv).await;
+
+    let failures = st
+        .logged_items()
+        .iter()
+        .filter(|li| li.kind == LogKind::Failure)
+        .inspect(|li| assert!(li.label.ends_with("/c2pa.assertions/cawg.identity")))
+        .map(|li| {
+            li.validation_status
+                .clone()
+                .unwrap_or_default()
+                .into_owned()
+        })
+        .collect();
+    (result, failures)
+}
+
+#[c2pa_test_async]
+async fn verified_identities_empty() {
+    // If the `verifiedIdentities` property is missing, is not an array, or is
+    // empty, the validator MUST issue the failure code
+    // `cawg.ica.verified_identities.missing` but MAY continue validation.
+    let (result, failures) = validate_ica_fixture(include_bytes!(
+        "../fixtures/claim_aggregation/ica_validation/verified_identities_empty.jpg"
+    ))
+    .await;
+
+    assert_eq!(
+        result.unwrap_err(),
+        ValidationError::SignatureError(IcaValidationError::VerifiedIdentitiesMissing)
+    );
+    assert_eq!(failures, vec!["cawg.ica.verified_identities.missing"]);
+}
+
+#[c2pa_test_async]
+async fn verified_identity_missing_provider_name() {
+    // If any entry in `verifiedIdentities` does not meet the requirements of
+    // §8.1.2.5 (here: `provider.name` is missing), the validator MUST issue the
+    // failure code `cawg.ica.verified_identities.invalid`.
+    let (result, failures) = validate_ica_fixture(include_bytes!(
+        "../fixtures/claim_aggregation/ica_validation/verified_identity_missing_provider_name.jpg"
+    ))
+    .await;
+
+    assert!(matches!(
+        result.unwrap_err(),
+        ValidationError::SignatureError(IcaValidationError::VerifiedIdentitiesInvalid(_))
+    ));
+    assert_eq!(failures, vec!["cawg.ica.verified_identities.invalid"]);
+}
+
 #[c2pa_test_async]
 async fn invalid_vc() {
     // ^^ Same as above but the VC is corrupted rather than missing.
