@@ -302,6 +302,90 @@ mod tests {
         assert_eq!(reader.validation_state(), ValidationState::Valid);
     }
 
+    /// Two identity assertions in one manifest (`cawg.identity` and
+    /// `cawg.identity__1`) must each be validated and reported under their own
+    /// label. CAWG Identity 1.3 §7.2: "The `url` field for a status code MUST
+    /// always be the label of the identity assertion."
+    #[cfg(not(target_arch = "wasm32"))]
+    #[c2pa_test_async]
+    async fn multiple_identity_assertions_report_their_own_label() {
+        use crate::{
+            identity::{
+                builder::{AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner},
+                tests::fixtures::{cert_chain_and_private_key_for_alg, manifest_json, parent_json},
+                x509::AsyncX509CredentialHolder,
+            },
+            Builder, SigningAlg,
+        };
+
+        const TEST_IMAGE: &[u8] = include_bytes!("../../tests/fixtures/CA.jpg");
+        const TEST_THUMBNAIL: &[u8] = include_bytes!("../../tests/fixtures/thumbnail.jpg");
+
+        let x509_holder = || {
+            let (chain, key) = cert_chain_and_private_key_for_alg(SigningAlg::Ed25519);
+            AsyncX509CredentialHolder::from_async_raw_signer(
+                c2pa_raw_crypto::signer_from_private_key(&key, SigningAlg::Ed25519).unwrap(),
+                crate::crypto::cert_chain_pem_to_der(&chain).unwrap(),
+            )
+        };
+
+        let format = "image/jpeg";
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+
+        let mut builder = Builder::default().with_definition(manifest_json()).unwrap();
+        builder
+            .add_ingredient_from_stream(parent_json(), format, &mut source)
+            .unwrap();
+        builder
+            .add_resource("thumbnail.jpg", Cursor::new(TEST_THUMBNAIL))
+            .unwrap();
+
+        let mut signer = AsyncIdentityAssertionSigner::from_test_credentials(SigningAlg::Ps256);
+        let mut creator = AsyncIdentityAssertionBuilder::for_credential_holder(x509_holder());
+        creator.add_roles(&["cawg.creator"]);
+        signer.add_identity_assertion(creator);
+        let mut editor = AsyncIdentityAssertionBuilder::for_credential_holder(x509_holder());
+        editor.add_roles(&["cawg.editor"]);
+        signer.add_identity_assertion(editor);
+
+        builder
+            .sign_async(&signer, format, &mut source, &mut dest)
+            .await
+            .unwrap();
+
+        dest.set_position(0);
+        let reader = Reader::default()
+            .with_stream_async(format, &mut dest)
+            .await
+            .unwrap();
+
+        let results = reader.validation_results().unwrap();
+        let statuses = results.active_manifest().unwrap();
+        let well_formed_for = |label: &str| {
+            statuses.success().iter().any(|s| {
+                s.code() == "cawg.identity.well-formed"
+                    && s.url().is_some_and(|u| u.ends_with(&format!("/{label}")))
+            })
+        };
+        assert!(well_formed_for("cawg.identity"));
+        assert!(well_formed_for("cawg.identity__1"));
+
+        // Each assertion's decoded value is kept under its own label: the two
+        // carry different roles.
+        let report: serde_json::Value = serde_json::from_str(&reader.json()).unwrap();
+        let assertions = report["manifests"][reader.active_label().unwrap()]["assertions"]
+            .as_array()
+            .unwrap();
+        let roles: Vec<String> = assertions
+            .iter()
+            .filter(|a| a["label"] == "cawg.identity")
+            .map(|a| a["data"]["signer_payload"]["role"][0].to_string())
+            .collect();
+        assert_eq!(roles.len(), 2, "both identity assertions are reported");
+        assert_ne!(roles[0], roles[1], "each keeps its own decoded value");
+    }
+
     #[c2pa_test_async]
     async fn test_cawg_validate_with_hard_binding_missing() {
         let mut stream = Cursor::new(NO_HARD_BINDING);
