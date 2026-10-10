@@ -1982,7 +1982,7 @@ impl Store {
                     reader.rewind()?;
                     positions
                 }
-                ClaimAssetData::StreamFragment(reader, _read1, typ) => {
+                ClaimAssetData::StreamFragment(reader, _read1, typ, _) => {
                     let format = typ.to_owned();
                     io.object_locations(&format, reader)
                 }
@@ -3951,15 +3951,67 @@ impl Store {
     /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
     #[async_generic(async_signature(
         format: &str,
-        mut stream: impl Read + Seek + MaybeSend,
-        mut fragment: impl Read + Seek + MaybeSend,
+        stream: impl Read + Seek + MaybeSend,
+        fragment: impl Read + Seek + MaybeSend,
         validation_log: &mut StatusTracker,
         context: &Context,
     ))]
     pub fn load_fragment_from_stream(
         format: &str,
+        stream: impl Read + Seek + MaybeSend,
+        fragment: impl Read + Seek + MaybeSend,
+        validation_log: &mut StatusTracker,
+        context: &Context,
+    ) -> Result<Store> {
+        if _sync {
+            Store::load_fragment_from_stream_at_offset(
+                format,
+                stream,
+                fragment,
+                0,
+                validation_log,
+                context,
+            )
+        } else {
+            Store::load_fragment_from_stream_at_offset_async(
+                format,
+                stream,
+                fragment,
+                0,
+                validation_log,
+                context,
+            )
+            .await
+        }
+    }
+
+    /// Load Store from an initialization segment stream and a fragment that
+    /// was cut out of a single-file fragmented BMFF asset.
+    ///
+    /// `fragment_base_offset` is the absolute byte offset of the fragment's
+    /// first byte within that asset; it lets the hard-binding check reproduce
+    /// the absolute root-box offsets the asset was signed with. Pass `0` for
+    /// fragments that are their own files (the multi-file form), which is
+    /// what [`Store::load_fragment_from_stream`] does.
+    ///
+    /// asset_type: asset extension or mime type
+    /// stream: reference to initial segment asset
+    /// fragment: reference to fragment asset
+    /// fragment_base_offset: absolute offset of `fragment` in the single-file asset
+    /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
+    #[async_generic(async_signature(
+        format: &str,
         mut stream: impl Read + Seek + MaybeSend,
         mut fragment: impl Read + Seek + MaybeSend,
+        fragment_base_offset: u64,
+        validation_log: &mut StatusTracker,
+        context: &Context,
+    ))]
+    pub fn load_fragment_from_stream_at_offset(
+        format: &str,
+        mut stream: impl Read + Seek + MaybeSend,
+        mut fragment: impl Read + Seek + MaybeSend,
+        fragment_base_offset: u64,
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<Store> {
@@ -3975,7 +4027,12 @@ impl Store {
         let verify = context.settings().verify.verify_after_reading;
 
         if verify {
-            let mut fragment = ClaimAssetData::StreamFragment(&mut stream, &mut fragment, format);
+            let mut fragment = ClaimAssetData::StreamFragment(
+                &mut stream,
+                &mut fragment,
+                format,
+                fragment_base_offset,
+            );
             if _sync {
                 Store::verify_store(&store, Some(&mut fragment), validation_log, context)
             } else {

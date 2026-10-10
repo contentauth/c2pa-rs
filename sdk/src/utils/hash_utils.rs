@@ -267,6 +267,41 @@ where
     )
 }
 
+/// Like [`hash_stream_by_alg_with_progress`], but every BMFF v2/v3 root-box
+/// offset marker contributes `bmff_base_offset + marker` to the hash instead
+/// of the marker alone.
+///
+/// The marker is the box's position within `data`. When `data` is a
+/// fragment cut out of a larger single-file fragmented BMFF asset, the
+/// specification requires the box's absolute offset in that asset, which is
+/// the fragment's own absolute offset plus the box's position inside the
+/// fragment. Passing `0` reproduces the plain behavior, which is correct
+/// for whole assets and for fragments that are their own files.
+pub(crate) fn hash_stream_by_alg_at_offset_with_progress<R, F>(
+    alg: &str,
+    data: &mut R,
+    hash_range: Option<Vec<HashRange>>,
+    is_exclusion: bool,
+    bmff_base_offset: u64,
+    progress: &mut F,
+) -> Result<Vec<u8>>
+where
+    R: Read + Seek + ?Sized,
+    F: FnMut(u32, u32) -> Result<()>,
+{
+    let max_hash_buf = NonZeroUsize::new(MAX_HASH_BUF)
+        .ok_or(Error::BadParam("invalid max_hash_buf".to_string()))?;
+    hash_stream_impl(
+        alg,
+        data,
+        hash_range,
+        is_exclusion,
+        bmff_base_offset,
+        progress,
+        max_hash_buf,
+    )
+}
+
 /// Make `hash_stream_by_alg_with_progress` configurable with `max_hash_buf`.
 /// e.g. makes it configurable in tests too.
 fn hash_stream_by_alg_with_progress_impl<R, F>(
@@ -274,6 +309,30 @@ fn hash_stream_by_alg_with_progress_impl<R, F>(
     data: &mut R,
     hash_range: Option<Vec<HashRange>>,
     is_exclusion: bool,
+    progress: &mut F,
+    max_hash_buf: NonZeroUsize,
+) -> Result<Vec<u8>>
+where
+    R: Read + Seek + ?Sized,
+    F: FnMut(u32, u32) -> Result<()>,
+{
+    hash_stream_impl(
+        alg,
+        data,
+        hash_range,
+        is_exclusion,
+        0,
+        progress,
+        max_hash_buf,
+    )
+}
+
+fn hash_stream_impl<R, F>(
+    alg: &str,
+    data: &mut R,
+    hash_range: Option<Vec<HashRange>>,
+    is_exclusion: bool,
+    bmff_base_offset: u64,
     progress: &mut F,
     max_hash_buf: NonZeroUsize,
 ) -> Result<Vec<u8>>
@@ -462,7 +521,10 @@ where
 
             // check to see if this range is an BMFF V2 offset to include in the hash
             if bmff_v2_starts.contains(start) && end == start {
-                hasher_enum.update(&start.to_be_bytes());
+                let absolute = start.checked_add(bmff_base_offset).ok_or(Error::BadParam(
+                    "BMFF base offset overflows the root box offset".to_string(),
+                ))?;
+                hasher_enum.update(&absolute.to_be_bytes());
                 continue;
             }
 
@@ -499,7 +561,10 @@ where
 
             // check to see if this range is an BMFF V2 offset to include in the hash
             if bmff_v2_starts.contains(start) && end == start {
-                hasher_enum.update(&start.to_be_bytes());
+                let absolute = start.checked_add(bmff_base_offset).ok_or(Error::BadParam(
+                    "BMFF base offset overflows the root box offset".to_string(),
+                ))?;
+                hasher_enum.update(&absolute.to_be_bytes());
                 continue;
             }
 
@@ -560,6 +625,29 @@ where
     R: Read + Seek + ?Sized,
 {
     hash_stream_by_alg_with_progress(alg, data, hash_range, is_exclusion, &mut |_, _| Ok(()))
+}
+
+/// Hash a stream like [`hash_stream_by_alg`], treating `data` as if it
+/// started at byte `bmff_base_offset` of a larger BMFF asset: each root-box
+/// offset marker is hashed as `bmff_base_offset + marker`.
+pub(crate) fn hash_stream_by_alg_at_offset<R>(
+    alg: &str,
+    data: &mut R,
+    hash_range: Option<Vec<HashRange>>,
+    is_exclusion: bool,
+    bmff_base_offset: u64,
+) -> Result<Vec<u8>>
+where
+    R: Read + Seek + ?Sized,
+{
+    hash_stream_by_alg_at_offset_with_progress(
+        alg,
+        data,
+        hash_range,
+        is_exclusion,
+        bmff_base_offset,
+        &mut |_, _| Ok(()),
+    )
 }
 
 // verify the hash using the specified algorithm
