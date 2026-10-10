@@ -13,6 +13,10 @@
 
 mod common;
 
+#[cfg(feature = "file_io")]
+#[path = "common/embed_manifest.rs"]
+mod embed_manifest;
+
 /// Complete functional integration test with parent and ingredients.
 // Isolate from wasm by wrapping in module.
 #[cfg(feature = "file_io")]
@@ -20,7 +24,7 @@ mod integration_1 {
     use std::{io, path::PathBuf};
 
     use c2pa::{
-        assertions::{c2pa_action, Action, Actions, AssetReference, Metadata},
+        assertions::{AssetReference, Metadata},
         validation_status::CAWG_X509_CREDENTIAL_UNTRUSTED,
         Builder, Context, Reader, Result, Settings, ValidationState,
     };
@@ -28,7 +32,10 @@ mod integration_1 {
     #[allow(unused)] // different code path for WASI
     use tempfile::{tempdir, TempDir};
 
-    use super::common::test_context;
+    use super::{
+        common::test_context,
+        embed_manifest::{sign_embed_manifest, verify_embed_manifest},
+    };
 
     /// Returns the path to a fixture file.
     fn fixture_path(file_name: &str) -> PathBuf {
@@ -56,75 +63,11 @@ mod integration_1 {
     #[cfg(feature = "file_io")]
     fn test_embed_manifest() -> Result<()> {
         let context = test_context().into_shared();
-
-        // set up parent and destination paths
         let temp_dir = tempdirectory()?;
         let output_path = temp_dir.path().join("test_file.jpg");
-        let parent_path = fixture_path("earth_apollo17.jpg");
-        let ingredient_path = fixture_path("libpng-test.png");
 
-        // let generator = ClaimGeneratorInfo::new("app");
-        // create a new Manifest
-        let mut builder = Builder::from_shared_context(&context);
-
-        // allocate actions so we can add them
-        let mut actions = Actions::new();
-
-        // add an action assertion stating that we imported this file
-        actions = actions.add_action(
-            Action::new(c2pa_action::OPENED)
-                .set_when("2015-06-26T16:43:23+0200")
-                .set_parameter("name".to_owned(), "import")?
-                .add_ingredient_id("apollo17")?,
-        );
-
-        let ingredient_json = serde_json::json!({
-            "name": "Earth from Apollo 17",
-            "description": "A photo of Earth taken from Apollo 17",
-            "relationship": "parentOf",
-            "label": "apollo17"
-        });
-        // set the parent ingredient
-        let mut parent_file = std::fs::File::open(&parent_path)?;
-        builder.add_ingredient_from_stream(
-            ingredient_json.to_string(),
-            "image/jpeg",
-            &mut parent_file,
-        )?;
-
-        actions = actions.add_action(
-            Action::new("c2pa.edit").set_parameter("name".to_owned(), "brightnesscontrast")?,
-        );
-
-        // add an action assertion stating that we imported this file
-        actions = actions.add_action(
-            Action::new(c2pa_action::EDITED)
-                .set_parameter("name".to_owned(), "import")?
-                .add_ingredient_id("apollo17")?,
-        );
-
-        let mut ingredient_file = std::fs::File::open(&ingredient_path)?;
-        builder.add_ingredient_from_stream("{}", "image/png", &mut ingredient_file)?;
-
-        builder.add_assertion(Actions::LABEL, &actions)?;
-
-        // sign and embed into the target file
-        let signer = context.signer()?;
-        builder.sign_file(signer, &parent_path, &output_path)?;
-
-        // read our new file with embedded manifest
-        let mut file = std::fs::File::open(&output_path)?;
-        let reader = Reader::from_shared_context(&context).with_stream("image/jpeg", &mut file)?;
-
-        println!("{reader}");
-
-        assert!(reader.active_manifest().is_some());
-        if let Some(manifest) = reader.active_manifest() {
-            assert!(manifest.title().is_some());
-            assert_eq!(manifest.ingredients().len(), 2);
-        } else {
-            panic!("no manifest in store");
-        }
+        sign_embed_manifest(&context, context.signer()?, &fixture_path(""), &output_path)?;
+        verify_embed_manifest(&context, &output_path)?;
         Ok(())
     }
 
