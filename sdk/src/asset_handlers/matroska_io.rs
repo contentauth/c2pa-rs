@@ -695,7 +695,8 @@ fn locate_attachments(r: &mut dyn ReadSeek) -> Result<Option<Elem>> {
         let Ok(e) = read_elem(r, pos, seg_end) else {
             break;
         };
-        if e.id == ID_CRC32 {
+        // Skip a CRC-32, and the Void that replaces one in an embedded asset.
+        if e.id == ID_CRC32 || e.id == ID_VOID {
             pos = e.end();
             continue;
         }
@@ -980,13 +981,27 @@ fn plan_write(r: &mut dyn ReadSeek, layout: &Layout, store: &[u8]) -> Result<Pla
         Some(pieces)
     };
 
-    // Top-Level Elements; an Attachments element that is not the last one is
+    // Top-Level Elements; an Attachments element that is not the last one, and
+    // a CRC-32 Top-Level Element (whose value would cover the manifest), are
     // replaced by a Void of the same size.
     let last = layout.children.len().saturating_sub(1);
     let first_non_crc = layout.children.iter().position(|e| e.id != ID_CRC32);
-    let first_seekhead = first_non_crc.filter(|&i| layout.children[i].id == ID_SEEKHEAD);
+    let first_seekhead = layout
+        .children
+        .iter()
+        .position(|e| e.id != ID_CRC32 && e.id != ID_VOID)
+        .filter(|&i| layout.children[i].id == ID_SEEKHEAD);
     let mut base = Vec::new();
     for (i, e) in layout.children.iter().enumerate() {
+        if e.id == ID_CRC32 {
+            base.push(Item {
+                pieces: void_pieces(e.total_len(), None)
+                    .ok_or_else(|| invalid("cannot replace the Segment CRC-32"))?,
+                elem: Some(*e),
+                role: Role::Void,
+            });
+            continue;
+        }
         if e.id == ID_ATTACHMENTS {
             if i != last {
                 base.push(Item {
@@ -1458,7 +1473,7 @@ impl AssetBoxHash for MatroskaIO {
             .with_allowed_exclusions(container_length_exclusion()),
         ];
         let mut c2pa_offset = None;
-        for e in &layout.children {
+        for (i, e) in layout.children.iter().enumerate() {
             if e.id != ID_ATTACHMENTS {
                 maps.push(BoxMap::new(
                     vec![element_box_name(e.id)],
@@ -1480,11 +1495,28 @@ impl AssetBoxHash for MatroskaIO {
                 )
                 .with_allowed_exclusions(container_length_exclusion()),
             );
-            for (c, info) in attachments_children(input_stream, e)? {
+            let children = attachments_children(input_stream, e)?;
+            let c2pa_count = children.iter().filter(|(_, i)| i.is_some()).count();
+            if c2pa_count > 1 {
+                return Err(Error::TooManyManifestStores);
+            }
+            // The Attachments element holding the C2PA AttachedFile shall be
+            // the last Top-Level Element, and the C2PA AttachedFile its last
+            // child.
+            if c2pa_count == 1 {
+                if i + 1 != layout.children.len() {
+                    return Err(invalid(
+                        "the Attachments element is not the last Top-Level Element",
+                    ));
+                }
+                if children.last().is_none_or(|(_, info)| info.is_none()) {
+                    return Err(invalid(
+                        "the C2PA AttachedFile is not the last child of the Attachments element",
+                    ));
+                }
+            }
+            for (c, info) in children {
                 if info.is_some() {
-                    if c2pa_offset.is_some() {
-                        return Err(Error::TooManyManifestStores);
-                    }
                     c2pa_offset = Some(c.offset);
                     maps.push(
                         BoxMap::new(vec![C2PA_BOXHASH.to_string()], c.offset, c.total_len())
@@ -2088,14 +2120,12 @@ mod tests {
         t[cluster.data_offset() as usize + 20] ^= 0x01;
         assert!(verify(&t).is_err());
 
-        // An extra Top-Level Element after Attachments (Segment size updated).
-        let mut extra = signed.clone();
-        extra.extend([0xec, 0x81, 0x00]);
-        let seg = l.segment.offset as usize;
-        let new_size = l.segment.data_len + 3;
-        extra[seg + 4..seg + 12].copy_from_slice(&encode_size(new_size, 8).unwrap());
+        // An extra Top-Level Element after Attachments (Segment size updated):
+        // the Attachments element is no longer the last Top-Level Element.
+        let extra = append_top_level(&signed, &[0xec, 0x81, 0x00]);
         let err = verify(&extra).unwrap_err();
-        assert!(format!("{err}").contains("unknownBox"), "{err}");
+        assert!(format!("{err}").contains("not the last Top-Level"), "{err}");
+        let seg = l.segment.offset as usize;
 
         // Trailing data after the Segment.
         let mut trailing = signed.clone();
@@ -2225,6 +2255,108 @@ mod tests {
         );
     }
 
+    /// Appends `bytes` as Top-Level Elements after the last one, updating the
+    /// Segment size.
+    fn append_top_level(b: &[u8], bytes: &[u8]) -> Vec<u8> {
+        let l = layout(b);
+        let seg = l.segment.offset as usize;
+        let mut out = b.to_vec();
+        out.extend(bytes);
+        let size = encode_size(l.segment.data_len + bytes.len() as u64, 8).unwrap();
+        out[seg + 4..seg + 12].copy_from_slice(&size);
+        out
+    }
+
+    /// Appends `bytes` as children of the last (Attachments) Top-Level
+    /// Element, updating the Attachments and Segment sizes.
+    fn append_to_attachments(b: &[u8], bytes: &[u8]) -> Vec<u8> {
+        let l = layout(b);
+        let att = *l.children.last().unwrap();
+        assert_eq!(att.id, ID_ATTACHMENTS);
+        let mut out = append_top_level(b, bytes);
+        let size = encode_size(att.data_len + bytes.len() as u64, 8).unwrap();
+        out[att.offset as usize + 4..att.offset as usize + 12].copy_from_slice(&size);
+        out
+    }
+
+    fn font_attached_file() -> Vec<u8> {
+        let d = [
+            element(ID_FILE_NAME, b"font.ttf").unwrap(),
+            element(ID_FILE_MEDIA_TYPE, b"font/ttf").unwrap(),
+            element(ID_FILE_UID, &[1, 2, 3, 4]).unwrap(),
+            element(ID_FILE_DATA, b"not really a font").unwrap(),
+        ]
+        .concat();
+        element(ID_ATTACHED_FILE, &d).unwrap()
+    }
+
+    #[test]
+    fn test_placement_violations_rejected() {
+        let (signed, bh) = signed_layout_and_hash(OPUS);
+        let verify = |b: &[u8]| bh.verify_in_memory_hash(b, Some("sha256"), &io());
+        verify(&signed).unwrap();
+
+        // A Tags element after the Attachments element.
+        let tags = element(ID_TAGS, &[]).unwrap();
+        let t = append_top_level(&signed, &tags);
+        assert_eq!(
+            io().read_c2pa(&mut Cursor::new(&t)).unwrap(),
+            fake_store(b"final")
+        );
+        let err = io().get_box_map(&mut Cursor::new(&t)).unwrap_err();
+        assert!(format!("{err}").contains("not the last Top-Level"), "{err}");
+        assert!(verify(&t).is_err());
+
+        // Another AttachedFile after the C2PA AttachedFile.
+        let t = append_to_attachments(&signed, &font_attached_file());
+        assert_eq!(
+            io().read_c2pa(&mut Cursor::new(&t)).unwrap(),
+            fake_store(b"final")
+        );
+        let err = io().get_box_map(&mut Cursor::new(&t)).unwrap_err();
+        assert!(format!("{err}").contains("not the last child"), "{err}");
+        assert!(verify(&t).is_err());
+    }
+
+    #[test]
+    fn test_other_placement_rules_not_rejected() {
+        // A claim generator that wrote no Seek entry for the Attachments
+        // element and kept a CRC-32 in it: the bytes are hashed, so a
+        // validator does not reject the manifest.
+        let prepared = write(OPUS, PLACEHOLDER_STORE);
+        let mut odd = prepared.clone();
+        let p = odd
+            .windows(6)
+            .position(|w| w == [0x53, 0xab, 0x84, 0x19, 0x41, 0xa4])
+            .unwrap();
+        odd[p + 3] = 0x1a; // SeekID no longer Attachments
+                           // Insert a CRC-32 as the first child of the Attachments element.
+        let l = layout(&odd);
+        let att = *l.children.last().unwrap();
+        let crc = element(ID_CRC32, &[0, 0, 0, 0]).unwrap();
+        let at = att.data_offset() as usize;
+        let mut b = odd[..at].to_vec();
+        b.extend(&crc);
+        b.extend(&odd[at..]);
+        let n = crc.len() as u64;
+        let (seg, a) = (l.segment.offset as usize, att.offset as usize);
+        b[seg + 4..seg + 12].copy_from_slice(&encode_size(l.segment.data_len + n, 8).unwrap());
+        b[a + 4..a + 12].copy_from_slice(&encode_size(att.data_len + n, 8).unwrap());
+        assert!(names(&b).iter().any(|n| n == "BF"));
+
+        let mut bh = BoxHash { boxes: Vec::new() };
+        bh.generate_box_hash_from_stream(&mut Cursor::new(&b), "sha256", &io(), false)
+            .unwrap();
+        // Write the final store in place (a placeholder-sized store).
+        let store = fake_store(&[3u8; PLACEHOLDER_STORE.len() - 8]);
+        let mut s = Cursor::new(b);
+        io().patch_c2pa(&mut s, &store).unwrap();
+        let signed = s.into_inner();
+        assert_eq!(io().read_c2pa(&mut Cursor::new(&signed)).unwrap(), store);
+        bh.verify_in_memory_hash(&signed, Some("sha256"), &io())
+            .unwrap();
+    }
+
     // -- Synthetic layouts -------------------------------------------------
 
     fn ebml_header(max_size_len: Option<u8>) -> Vec<u8> {
@@ -2298,6 +2430,17 @@ mod tests {
     /// EBML Header + Segment with `[SeekHead][Info][Cues][Cluster][Cluster]`
     /// (Cues before the Clusters, so that Cues growth moves the Clusters).
     fn synthetic(with_seekhead: bool, seg_size_len: u8, max_size_len: Option<u8>) -> Vec<u8> {
+        synthetic_with(with_seekhead, seg_size_len, max_size_len, false)
+    }
+
+    /// [`synthetic`], optionally with a Segment-level CRC-32 first.
+    fn synthetic_with(
+        with_seekhead: bool,
+        seg_size_len: u8,
+        max_size_len: Option<u8>,
+        seg_crc: bool,
+    ) -> Vec<u8> {
+        let crc_len = if seg_crc { 6 } else { 0 };
         let info = element(ID_INFO, &element(0x2ad7b1, &[0x0f, 0x42, 0x40]).unwrap()).unwrap();
         let clen = cluster(0, 65_415, 0).len() as u64;
         let sh_len = if with_seekhead {
@@ -2306,7 +2449,7 @@ mod tests {
             0
         } as u64;
         let cues_len = cues(&[0, 0]).len() as u64;
-        let info_pos = sh_len;
+        let info_pos = crc_len + sh_len;
         let cues_pos = info_pos + info.len() as u64;
         let c0_pos = cues_pos + cues_len;
         let c1_pos = c0_pos + clen;
@@ -2320,6 +2463,11 @@ mod tests {
         seg.extend(cues(&[c0_pos, c1_pos]));
         seg.extend(&c0);
         seg.extend(&c1);
+        if seg_crc {
+            let mut with_crc = element(ID_CRC32, &crc32(&seg).to_le_bytes()).unwrap();
+            with_crc.extend(seg);
+            seg = with_crc;
+        }
         let mut out = ebml_header(max_size_len);
         out.extend(id_bytes(ID_SEGMENT));
         out.extend(encode_size(seg.len() as u64, seg_size_len).unwrap());
@@ -2387,6 +2535,78 @@ mod tests {
             locate_attachments(&mut Cursor::new(&out[..])).unwrap(),
             layout(&out).children.last().copied()
         );
+    }
+
+    /// Moves the first SeekHead of an ffmpeg layout (`[SeekHead][Void]...`)
+    /// 6 octets later, into its Void, and adds a Segment-level CRC-32 in front:
+    /// no other Top-Level Element moves.
+    fn with_segment_crc(src: &[u8]) -> Vec<u8> {
+        let l = layout(src);
+        let (sh, void) = (l.children[0], l.children[1]);
+        assert_eq!((sh.id, void.id), (ID_SEEKHEAD, ID_VOID));
+        let mut seg = src[sh.offset as usize..sh.end() as usize].to_vec();
+        let v = void_pieces(void.total_len() - 6, Some(void.size_len)).unwrap();
+        let mut vb = Vec::new();
+        write_pieces(&mut Cursor::new(src), &mut Cursor::new(&mut vb), &v).unwrap();
+        seg.extend(vb);
+        seg.extend(&src[void.end() as usize..]);
+        let mut out = src[..l.segment.data_offset() as usize].to_vec();
+        out.extend(element(ID_CRC32, &crc32(&seg).to_le_bytes()).unwrap());
+        out.extend(seg);
+        assert_eq!(out.len(), src.len());
+        out
+    }
+
+    #[test]
+    fn test_segment_crc_replaced_with_void() {
+        let src = with_segment_crc(VP9_OPUS);
+        let before = layout(&src);
+        assert_eq!(before.children[0].id, ID_CRC32);
+        check_positions(&src);
+        let out = write(&src, &fake_store(b"m"));
+        let after = layout(&out);
+        // A Void of the same total size, at the same place.
+        let (crc, void) = (before.children[0], after.children[0]);
+        assert_eq!(
+            (void.id, void.offset, void.total_len()),
+            (ID_VOID, crc.offset, crc.total_len())
+        );
+        assert_eq!(after.children[1].id, ID_SEEKHEAD);
+        // The SeekHead used its Void; nothing else moved.
+        let info = |l: &Layout| l.children.iter().find(|e| e.id == ID_INFO).unwrap().offset;
+        assert_eq!(info(&after), info(&before));
+        let from = info(&before) as usize;
+        assert_eq!(&out[from..src.len()], &src[from..]);
+        assert!(top_level_ids(&out).iter().all(|&id| id != ID_CRC32));
+        check_positions(&out);
+        // The Attachments element is located through the SeekHead after the Void.
+        assert_eq!(
+            locate_attachments(&mut Cursor::new(&out[..])).unwrap(),
+            after.children.last().copied()
+        );
+
+        // Without a SeekHead, the new SeekHead follows the Void.
+        let src = synthetic_with(false, 8, None, true);
+        assert_eq!(top_level_ids(&src)[..2], [ID_CRC32, ID_INFO]);
+        let out = write(&src, &fake_store(b"m"));
+        let ids = top_level_ids(&out);
+        assert_eq!(ids[..3], [ID_VOID, ID_SEEKHEAD, ID_INFO]);
+        assert_eq!(layout(&out).children[0].total_len(), 6);
+        check_positions(&out);
+        assert_eq!(check_cluster_positions(&out), 2);
+
+        // Signing and verifying.
+        for src in [
+            with_segment_crc(VP9_OPUS),
+            synthetic_with(false, 8, None, true),
+        ] {
+            let signed = sign(&src, "video/webm");
+            assert_valid(&read_json(&signed, "video/webm").unwrap());
+            assert_eq!(top_level_ids(&signed)[0], ID_VOID);
+            let resigned = sign(&signed, "video/webm");
+            assert_valid(&read_json(&resigned, "video/webm").unwrap());
+            assert_eq!(top_level_ids(&resigned), top_level_ids(&signed));
+        }
     }
 
     #[test]
@@ -2492,6 +2712,18 @@ mod tests {
         signed[c.data_offset() as usize + 40] ^= 0x01;
         let json = read_json(&signed, "video/webm").unwrap();
         assert!(json.contains("assertion.boxesHash.mismatch"), "{json}");
+    }
+
+    #[test]
+    fn test_e2e_placement_violations_fail() {
+        let signed = sign(OPUS, "audio/webm");
+        for t in [
+            append_top_level(&signed, &element(ID_TAGS, &[]).unwrap()),
+            append_to_attachments(&signed, &font_attached_file()),
+        ] {
+            let json = read_json(&t, "audio/webm").unwrap();
+            assert!(json.contains("assertion.boxesHash.mismatch"), "{json}");
+        }
     }
 
     #[test]
