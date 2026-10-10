@@ -702,7 +702,7 @@ async fn invalid_issuer_did() {
         .err_val
         .as_ref()
         .unwrap()
-        .starts_with("SignatureError(UnsupportedIssuerDid(\"invalid DID `not-did:jwk:"));
+        .starts_with("SignatureError(InvalidIssuerDid(\"invalid DID `not-did:jwk:"));
 
     assert_eq!(
         li.validation_status.as_ref().unwrap(),
@@ -721,7 +721,7 @@ async fn unsupported_did_method() {
 
     let format = "image/jpeg";
     let test_image =
-        include_bytes!("../fixtures/claim_aggregation/ica_validation/invalid_issuer_did.jpg");
+        include_bytes!("../fixtures/claim_aggregation/ica_validation/unsupported_did_method.jpg");
 
     let mut test_image = Cursor::new(test_image);
 
@@ -758,21 +758,21 @@ async fn unsupported_did_method() {
 
     assert_eq!(
         li.label,
-        "self#jumbf=/c2pa/test:urn:uuid:3bf72495-6f83-4634-be3f-ca8c423e830e/c2pa.assertions/cawg.identity"
+        "self#jumbf=/c2pa/test:urn:uuid:eaf7b398-08b5-4963-9463-77f2b629fdd4/c2pa.assertions/cawg.identity"
     );
 
-    assert_eq!(li.description, "Invalid issuer DID");
+    assert_eq!(li.description, "Unsupported issuer DID method");
     assert_eq!(li.crate_name, "c2pa");
 
     assert!(li
         .err_val
         .as_ref()
         .unwrap()
-        .starts_with("SignatureError(UnsupportedIssuerDid(\"invalid DID `not-did:jwk:"));
+        .starts_with("SignatureError(UnsupportedIssuerDid(\"unsupported DID method example"));
 
     assert_eq!(
         li.validation_status.as_ref().unwrap(),
-        "cawg.ica.invalid_issuer"
+        "cawg.ica.did_unsupported_method"
     );
 
     assert!(log_items.next().is_none());
