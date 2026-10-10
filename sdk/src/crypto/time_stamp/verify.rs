@@ -449,21 +449,22 @@ pub fn verify_time_stamp(
         }
 
         // Make sure the time stamp is valid for the specified data.
-        let digest_algorithm = match DigestAlgorithm::try_from(&mi.hash_algorithm.algorithm) {
-            Ok(d) => d,
-            Err(_) => {
-                log_item!(
-                    "",
-                    "timestamp unknown message digest algorithm",
-                    "verify_time_stamp"
-                )
-                .validation_status(TIMESTAMP_UNTRUSTED)
-                .informational(&mut current_validation_log);
+        let digest_algorithm =
+            match DigestAlgorithm::for_message_imprint(&mi.hash_algorithm.algorithm) {
+                Some(d) => d,
+                None => {
+                    log_item!(
+                        "",
+                        "timestamp unknown message digest algorithm",
+                        "verify_time_stamp"
+                    )
+                    .validation_status(TIMESTAMP_UNTRUSTED)
+                    .informational(&mut current_validation_log);
 
-                last_err = TimeStampError::UnsupportedAlgorithm;
-                continue;
-            }
-        };
+                    last_err = TimeStampError::UnsupportedAlgorithm;
+                    continue;
+                }
+            };
 
         let mut h = digest_algorithm.digester();
         h.update(data);
@@ -665,6 +666,13 @@ impl DigestAlgorithm {
             DigestAlgorithm::Sha384 => Hasher::Sha384(<Sha384 as sha2::Digest>::new()),
             DigestAlgorithm::Sha512 => Hasher::Sha512(<Sha512 as sha2::Digest>::new()),
         }
+    }
+
+    // C2PA 13.1/15.8.2: a messageImprint must use SHA-256/384/512. SHA-1 is only tolerated for the CMS digest.
+    fn for_message_imprint(oid: &bcder::Oid) -> Option<Self> {
+        Self::try_from(oid)
+            .ok()
+            .filter(|d| !matches!(d, DigestAlgorithm::Sha1))
     }
 }
 
@@ -876,4 +884,278 @@ fn validate_timestamp_sig(
     validator
         .validate(&sig_val.to_bytes(), tbs, signing_key_der)
         .map_err(|_| TimeStampError::InvalidData)
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use std::str::FromStr;
+
+    use super::DigestAlgorithm;
+
+    fn oid(s: &str) -> bcder::Oid {
+        bcder::Oid::from_str(s).expect("valid OID")
+    }
+
+    #[test]
+    fn message_imprint_rejects_sha1_and_unlisted_algorithms() {
+        for o in [
+            "1.3.14.3.2.26",          // SHA-1
+            "2.16.840.1.101.3.4.2.4", // SHA-224
+            "2.16.840.1.101.3.4.2.8", // SHA3-256
+            "1.2.840.113549.2.5",     // MD5
+        ] {
+            assert!(
+                DigestAlgorithm::for_message_imprint(&oid(o)).is_none(),
+                "{o}"
+            );
+        }
+    }
+
+    #[test]
+    fn message_imprint_accepts_sha2() {
+        for o in [
+            "2.16.840.1.101.3.4.2.1",
+            "2.16.840.1.101.3.4.2.2",
+            "2.16.840.1.101.3.4.2.3",
+        ] {
+            assert!(DigestAlgorithm::for_message_imprint(&oid(o)).is_some());
+        }
+    }
+
+    #[test]
+    fn cms_digest_still_accepts_sha1() {
+        assert!(DigestAlgorithm::try_from(&oid("1.3.14.3.2.26")).is_ok());
+    }
+}
+
+/// Builds a signed RFC 3161 token locally so `verify_time_stamp` is exercised end to end.
+#[cfg(all(test, feature = "openssl", not(target_arch = "wasm32")))]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod message_imprint_regression {
+    use openssl::{
+        asn1::Asn1Time,
+        bn::BigNum,
+        ec::{EcGroup, EcKey},
+        hash::{hash, MessageDigest},
+        nid::Nid,
+        pkey::PKey,
+        sign::Signer,
+        x509::{extension::ExtendedKeyUsage, X509Builder, X509NameBuilder},
+    };
+
+    use super::{generalized_time_to_datetime, verify_time_stamp};
+    use crate::{
+        crypto::{cose::CertificateTrustPolicy, time_stamp::TimeStampError},
+        status_tracker::StatusTracker,
+        validation_status::{TIMESTAMP_TRUSTED, TIMESTAMP_UNTRUSTED, TIMESTAMP_VALIDATED},
+    };
+
+    const OID_MD5: &[u8] = &[0x06, 0x08, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x02, 0x05];
+    const OID_SHA1: &[u8] = &[0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a];
+    const OID_SHA224: &[u8] = &[
+        0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x04,
+    ];
+    const OID_SHA256: &[u8] = &[
+        0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01,
+    ];
+    const OID_SHA384: &[u8] = &[
+        0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02,
+    ];
+    const OID_SHA512: &[u8] = &[
+        0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03,
+    ];
+    const OID_SHA3_256: &[u8] = &[
+        0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x08,
+    ];
+    const OID_ECDSA_SHA256: &[u8] = &[0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02];
+    const OID_SIGNED_DATA: &[u8] = &[
+        0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x02,
+    ];
+    const OID_TST_INFO: &[u8] = &[
+        0x06, 0x0b, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x10, 0x01, 0x04,
+    ];
+    const OID_POLICY: &[u8] = &[0x06, 0x03, 0x2a, 0x03, 0x04];
+
+    // DER integer 1
+    const INT_1: &[u8] = &[0x02, 0x01, 0x01];
+
+    const DATA: &[u8] = b"claim signature bytes";
+
+    fn tlv(tag: u8, body: &[u8]) -> Vec<u8> {
+        let len = body.len();
+        let mut out = vec![tag];
+        if len < 0x80 {
+            out.push(len as u8);
+        } else if len <= 0xff {
+            out.extend([0x81, len as u8]);
+        } else {
+            out.extend([0x82, (len >> 8) as u8, len as u8]);
+        }
+        out.extend_from_slice(body);
+        out
+    }
+
+    fn cat(parts: &[&[u8]]) -> Vec<u8> {
+        parts.concat()
+    }
+
+    /// Returns a signed time-stamp token (genTime 2020-01-01) whose messageImprint
+    /// covers `DATA` using the given digest.
+    fn build_token(imprint_oid: &[u8], imprint_md: MessageDigest) -> Vec<u8> {
+        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+        let key = PKey::from_ec_key(EcKey::generate(&group).unwrap()).unwrap();
+
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_nid(Nid::COMMONNAME, "Test TSA")
+            .unwrap();
+        let name = name.build();
+
+        let mut cb = X509Builder::new().unwrap();
+        cb.set_version(2).unwrap();
+        cb.set_serial_number(&BigNum::from_u32(1).unwrap().to_asn1_integer().unwrap())
+            .unwrap();
+        cb.set_subject_name(&name).unwrap();
+        cb.set_issuer_name(&name).unwrap();
+        cb.set_pubkey(&key).unwrap();
+        cb.set_not_before(&Asn1Time::from_unix(1_500_000_000).unwrap())
+            .unwrap();
+        cb.set_not_after(&Asn1Time::from_unix(1_900_000_000).unwrap())
+            .unwrap();
+        cb.append_extension(ExtendedKeyUsage::new().time_stamping().build().unwrap())
+            .unwrap();
+        cb.sign(&key, MessageDigest::sha256()).unwrap();
+        let cert = cb.build();
+
+        let imprint_hash = hash(imprint_md, DATA).unwrap();
+        let message_imprint = tlv(
+            0x30,
+            &cat(&[
+                &tlv(0x30, &cat(&[imprint_oid, &[0x05, 0x00]])),
+                &tlv(0x04, &imprint_hash),
+            ]),
+        );
+        let tst_info = tlv(
+            0x30,
+            &cat(&[
+                INT_1,
+                OID_POLICY,
+                &message_imprint,
+                INT_1,
+                &tlv(0x18, b"20200101000000Z"),
+            ]),
+        );
+
+        // No signed attributes, so the signature covers the TSTInfo content directly.
+        let signature = Signer::new(MessageDigest::sha256(), &key)
+            .unwrap()
+            .sign_oneshot_to_vec(&tst_info)
+            .unwrap();
+
+        let issuer_and_serial = tlv(0x30, &cat(&[&cert.issuer_name().to_der().unwrap(), INT_1]));
+        let signer_info = tlv(
+            0x30,
+            &cat(&[
+                INT_1,
+                &issuer_and_serial,
+                &tlv(0x30, OID_SHA256),
+                &tlv(0x30, OID_ECDSA_SHA256),
+                &tlv(0x04, &signature),
+            ]),
+        );
+        let signed_data = tlv(
+            0x30,
+            &cat(&[
+                &[0x02, 0x01, 0x03],
+                &tlv(0x31, &tlv(0x30, OID_SHA256)),
+                &tlv(
+                    0x30,
+                    &cat(&[OID_TST_INFO, &tlv(0xa0, &tlv(0x04, &tst_info))]),
+                ),
+                &tlv(0xa0, &cert.to_der().unwrap()),
+                &tlv(0x31, &signer_info),
+            ]),
+        );
+
+        tlv(0x30, &cat(&[OID_SIGNED_DATA, &tlv(0xa0, &signed_data)]))
+    }
+
+    #[test]
+    fn allowed_message_imprint_algorithms_are_accepted() {
+        for (name, oid, md) in [
+            ("SHA-256", OID_SHA256, MessageDigest::sha256()),
+            ("SHA-384", OID_SHA384, MessageDigest::sha384()),
+            ("SHA-512", OID_SHA512, MessageDigest::sha512()),
+        ] {
+            let token = build_token(oid, md);
+            let mut log = StatusTracker::default();
+
+            let result = verify_time_stamp(
+                &token,
+                DATA,
+                &CertificateTrustPolicy::default(),
+                &mut log,
+                false,
+            );
+            assert!(result.is_ok(), "{name}: {result:?}");
+            let tst = result.unwrap();
+
+            assert_eq!(
+                generalized_time_to_datetime(tst.gen_time.clone()).timestamp(),
+                1_577_836_800,
+                "{name}"
+            );
+            assert!(log.has_status(TIMESTAMP_VALIDATED), "{name}");
+            assert!(log.has_status(TIMESTAMP_TRUSTED), "{name}");
+        }
+    }
+
+    #[test]
+    fn disallowed_message_imprint_algorithms_are_untrusted_and_ignored() {
+        // Each token has a valid signature and a matching imprint; only the algorithm is
+        // disallowed (C2PA 15.8.2: anything other than SHA-256/384/512).
+        for (name, oid, md) in [
+            ("SHA-1", OID_SHA1, MessageDigest::sha1()),
+            ("SHA-224", OID_SHA224, MessageDigest::sha224()),
+            ("SHA3-256", OID_SHA3_256, MessageDigest::sha3_256()),
+            ("MD5", OID_MD5, MessageDigest::md5()),
+        ] {
+            let token = build_token(oid, md);
+            let mut log = StatusTracker::default();
+
+            let result = verify_time_stamp(
+                &token,
+                DATA,
+                &CertificateTrustPolicy::default(),
+                &mut log,
+                false,
+            );
+
+            assert!(
+                matches!(result, Err(TimeStampError::UnsupportedAlgorithm)),
+                "{name}: {result:?}"
+            );
+            assert!(log.has_status(TIMESTAMP_UNTRUSTED), "{name}");
+            assert!(!log.has_status(TIMESTAMP_VALIDATED), "{name}");
+            assert!(!log.has_status(TIMESTAMP_TRUSTED), "{name}");
+        }
+    }
+
+    #[test]
+    fn mismatched_imprint_is_rejected() {
+        // Guards against the positive tests passing without the imprint being compared.
+        let token = build_token(OID_SHA256, MessageDigest::sha256());
+        let mut log = StatusTracker::default();
+
+        let result = verify_time_stamp(
+            &token,
+            b"different data",
+            &CertificateTrustPolicy::default(),
+            &mut log,
+            false,
+        );
+
+        assert!(matches!(result, Err(TimeStampError::InvalidData)));
+        assert!(!log.has_status(TIMESTAMP_TRUSTED));
+    }
 }
