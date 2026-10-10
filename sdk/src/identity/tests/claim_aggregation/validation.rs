@@ -583,6 +583,56 @@ async fn missing_vc() {
 }
 
 #[c2pa_test_async]
+async fn revocation_unsupported() {
+    // If the `credentialStatus` entry is present but does not contain a
+    // revocation list supported by the validator, the validator MAY continue
+    // validation and SHOULD issue the failure code
+    // `cawg.ica.revocation.unsupported`.
+    let format = "image/jpeg";
+    let test_image =
+        include_bytes!("../fixtures/claim_aggregation/ica_validation/revocation_unsupported.jpg");
+    let mut test_image = Cursor::new(test_image);
+
+    let reader = crate::identity::tests::read_manifest(format, &mut test_image).await;
+    let manifest = reader.active_manifest().unwrap();
+    let mut st = StatusTracker::default();
+    let ia = IdentityAssertion::from_manifest(manifest, &mut st)
+        .next()
+        .unwrap()
+        .unwrap();
+
+    let context = ica_test_context();
+    let isv = IcaSignatureVerifier::new(&context);
+
+    // Validation continues: the credential is still returned.
+    let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
+    assert_eq!(
+        ica_vc.credential_subjects.first().c2pa_asset,
+        ia.signer_payload
+    );
+
+    let codes = |kind: LogKind| {
+        st.logged_items()
+            .iter()
+            .filter(|li| li.kind == kind)
+            .map(|li| {
+                li.validation_status
+                    .clone()
+                    .unwrap_or_default()
+                    .into_owned()
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        codes(LogKind::Failure),
+        vec!["cawg.ica.revocation.unsupported"]
+    );
+
+    // A failure code was issued, so the credential is not reported as valid.
+    assert!(!codes(LogKind::Success).contains(&"cawg.ica.credential_valid".to_owned()));
+}
+
+#[c2pa_test_async]
 async fn invalid_vc() {
     // ^^ Same as above but the VC is corrupted rather than missing.
 

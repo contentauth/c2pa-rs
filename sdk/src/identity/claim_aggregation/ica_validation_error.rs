@@ -90,6 +90,11 @@ pub enum IcaValidationError {
     /// `c2paAsset` does not match `signer_payload`
     #[error("c2paAsset does not match signer_payload")]
     SignerPayloadMismatch,
+
+    /// The credential's `credentialStatus` uses a revocation method that is not
+    /// supported.
+    #[error("unsupported credential revocation method ({0})")]
+    UnsupportedRevocationMethod(String),
 }
 
 impl From<coset::CoseError> for ValidationError<IcaValidationError> {
