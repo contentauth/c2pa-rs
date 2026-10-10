@@ -114,7 +114,12 @@ pub enum ClaimAssetData<'a> {
     Path(&'a Path),
     Bytes(&'a [u8], &'a str),
     Stream(&'a mut dyn ReadSeek, &'a str),
-    StreamFragment(&'a mut dyn ReadSeek, &'a mut dyn ReadSeek, &'a str),
+    /// An initialization segment and one fragment. The `u64` is the fragment's
+    /// absolute byte offset in a single-file fragmented asset, or `0` when the
+    /// fragment is its own file. See [`BmffHash::verify_stream_segment_at_offset`].
+    ///
+    /// [`BmffHash::verify_stream_segment_at_offset`]: crate::assertions::BmffHash::verify_stream_segment_at_offset
+    StreamFragment(&'a mut dyn ReadSeek, &'a mut dyn ReadSeek, &'a str, u64),
     #[cfg(feature = "file_io")]
     StreamFragments(&'a mut dyn ReadSeek, &'a Vec<std::path::PathBuf>, &'a str),
 }
@@ -127,7 +132,7 @@ impl ClaimAssetData<'_> {
             ClaimAssetData::Path(path) => crate::format_from_path(path),
             ClaimAssetData::Bytes(_, asset_type)
             | ClaimAssetData::Stream(_, asset_type)
-            | ClaimAssetData::StreamFragment(_, _, asset_type) => Some((*asset_type).to_owned()),
+            | ClaimAssetData::StreamFragment(_, _, asset_type, _) => Some((*asset_type).to_owned()),
             #[cfg(feature = "file_io")]
             ClaimAssetData::StreamFragments(_, _, asset_type) => Some((*asset_type).to_owned()),
         }
@@ -3208,13 +3213,18 @@ impl Claim {
                                 Some(claim.alg()),
                                 &mut cb,
                             ),
-                        ClaimAssetData::StreamFragment(initseg_data, fragment_data, _) => dh
-                            .verify_stream_segment_with_progress(
-                                *initseg_data,
-                                *fragment_data,
-                                Some(claim.alg()),
-                                &mut cb,
-                            ),
+                        ClaimAssetData::StreamFragment(
+                            initseg_data,
+                            fragment_data,
+                            _,
+                            fragment_base_offset,
+                        ) => dh.verify_stream_segment_with_progress(
+                            *initseg_data,
+                            *fragment_data,
+                            *fragment_base_offset,
+                            Some(claim.alg()),
+                            &mut cb,
+                        ),
                         #[cfg(feature = "file_io")]
                         ClaimAssetData::StreamFragments(initseg_data, fragment_paths, _) => dh
                             .verify_stream_segments_with_progress(

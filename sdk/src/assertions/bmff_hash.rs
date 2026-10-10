@@ -55,7 +55,8 @@ use crate::{
     utils::{
         hash_utils::{
             concat_and_hash, hash_by_alg, hash_size_by_alg, hash_stream_by_alg,
-            hash_stream_by_alg_with_progress, vec_compare, verify_stream_by_alg, HashRange, Hasher,
+            hash_stream_by_alg_at_offset, hash_stream_by_alg_with_progress, vec_compare,
+            verify_stream_by_alg, HashRange, Hasher,
         },
         io_utils::stream_len,
         merkle::{C2PAMerkleTree, MerkleAccumulator, MerkleNode},
@@ -1819,15 +1820,73 @@ impl BmffHash {
         fragment_stream: &mut dyn ReadSeek,
         alg: Option<&str>,
     ) -> crate::Result<()> {
-        self.verify_stream_segment_with_progress(init_stream, fragment_stream, alg, &mut |_, _| {
-            Ok(())
-        })
+        self.verify_stream_segment_with_progress(
+            init_stream,
+            fragment_stream,
+            0,
+            alg,
+            &mut |_, _| Ok(()),
+        )
+    }
+
+    /// Verify one fragment that was cut out of a single-file fragmented BMFF
+    /// asset (a "single flat MP4 file" with one `moof`/`mdat` pair per
+    /// fragment) without the whole file.
+    ///
+    /// The leaf hashes of such an asset cover absolute root-box offsets, so a
+    /// fragment handed over on its own (for example one byte-range segment of
+    /// an HLS playlist) only hashes correctly when the verifier knows where
+    /// the fragment sat in the file. `fragment_base_offset` is that position:
+    /// the absolute byte offset of `fragment_stream`'s first byte within the
+    /// asset. The leaf itself is still located through the fragment's
+    /// `merkle` uuid box; the offset only reproduces the hashed bytes.
+    ///
+    /// The check succeeds when the two streams reproduce exactly the root
+    /// boxes the signer hashed for this leaf, at the same absolute offsets.
+    /// Excluded boxes contribute no bytes, but every box must stay at its
+    /// original position, since a missing box before a hashed one shifts that
+    /// box's offset. With the default exclusions that means:
+    ///
+    /// * `init_stream` is every byte before the first `merkle` uuid box, or
+    ///   equivalently before the first `moof` (the uuid box is excluded from
+    ///   the hash either way).
+    /// * `fragment_stream` starts at a `merkle` uuid box and ends right
+    ///   before the next one, or at end of file for the last fragment. The
+    ///   bytes between two `moof` boxes belong to the earlier leaf, so a
+    ///   trailing `sidx` written ahead of the next fragment stays with this
+    ///   fragment.
+    ///
+    /// A fragment cut anywhere else (for example at a `sidx`), or one that
+    /// stops short of the next `merkle` uuid box, then fails with a hash
+    /// mismatch, as does the right fragment at the wrong offset. A caller
+    /// whose segments are cut elsewhere must regroup the bytes into leaves
+    /// first.
+    ///
+    /// The offset is supplied by the caller, so this proves the bytes belong
+    /// to the leaf they name, not that the caller fetched them from where it
+    /// says: a player must take the offset from its own request. Passing `0`
+    /// is the multi-file behavior of [`BmffHash::verify_stream_segment`].
+    pub fn verify_stream_segment_at_offset(
+        &self,
+        init_stream: &mut dyn ReadSeek,
+        fragment_stream: &mut dyn ReadSeek,
+        fragment_base_offset: u64,
+        alg: Option<&str>,
+    ) -> crate::Result<()> {
+        self.verify_stream_segment_with_progress(
+            init_stream,
+            fragment_stream,
+            fragment_base_offset,
+            alg,
+            &mut |_, _| Ok(()),
+        )
     }
 
     pub(crate) fn verify_stream_segment_with_progress<F>(
         &self,
         init_stream: &mut dyn ReadSeek,
         fragment_stream: &mut dyn ReadSeek,
+        fragment_base_offset: u64,
         alg: Option<&str>,
         progress: &mut F,
     ) -> crate::Result<()>
@@ -1905,12 +1964,14 @@ impl BmffHash {
 
                         Self::progress_tick(&mut step, progress)?;
 
-                        // hash the entire fragment minus exclusions
-                        let hash = hash_stream_by_alg(
+                        // hash the entire fragment minus exclusions, with root-box
+                        // offsets relative to the fragment's position in the asset
+                        let hash = hash_stream_by_alg_at_offset(
                             alg,
                             fragment_stream,
                             Some(fragment_exclusions),
                             true,
+                            fragment_base_offset,
                         )?;
 
                         // check MerkleMap for the hash

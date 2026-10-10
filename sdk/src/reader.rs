@@ -569,6 +569,90 @@ impl Reader {
         }
     }
 
+    /// Add manifest store from an initial segment and one fragment of a
+    /// single-file fragmented MP4 to the [`Reader`].
+    ///
+    /// Use this when the fragment was cut out of a single-file fragmented
+    /// asset (a byte-range HLS segment, for example) rather than stored as a
+    /// file of its own. `fragment_base_offset` is the absolute byte offset of
+    /// the fragment's first byte within that asset; the hard binding of such
+    /// an asset covers absolute box offsets, so without it the hash cannot
+    /// match. The required cut points are documented on
+    /// [`BmffHash::verify_stream_segment_at_offset`].
+    ///
+    /// [`BmffHash::verify_stream_segment_at_offset`]: crate::assertions::BmffHash::verify_stream_segment_at_offset
+    /// # Arguments
+    /// * `format` - The format of the stream.
+    /// * `stream` - The initial segment stream.
+    /// * `fragment` - The fragment stream.
+    /// * `fragment_base_offset` - Absolute offset of `fragment` in the single-file asset.
+    /// # Returns
+    /// The updated [`Reader`] with the added manifest store.
+    /// # Errors
+    /// This function returns an [`Error`] if the streams are not valid, or severe errors occur in validation.
+    /// You must check validation status for non-severe errors.
+    #[async_generic]
+    pub fn with_fragment_at_offset(
+        mut self,
+        format: &str,
+        mut stream: impl Read + Seek + MaybeSend,
+        mut fragment: impl Read + Seek + MaybeSend,
+        fragment_base_offset: u64,
+    ) -> Result<Self> {
+        let mut validation_log = StatusTracker::default();
+
+        let store = if _sync {
+            Store::load_fragment_from_stream_at_offset(
+                format,
+                &mut stream,
+                &mut fragment,
+                fragment_base_offset,
+                &mut validation_log,
+                &self.context,
+            )
+        } else {
+            Store::load_fragment_from_stream_at_offset_async(
+                format,
+                &mut stream,
+                &mut fragment,
+                fragment_base_offset,
+                &mut validation_log,
+                &self.context,
+            )
+            .await
+        }?;
+
+        if _sync {
+            self.with_store(store, &mut validation_log)
+        } else {
+            self.with_store_async(store, &mut validation_log).await
+        }?;
+        Ok(self)
+    }
+
+    /// Create a [`Reader`] from an initial segment and one fragment of a
+    /// single-file fragmented MP4. See [`Reader::with_fragment_at_offset`].
+    #[async_generic]
+    pub fn from_fragment_at_offset(
+        format: &str,
+        stream: impl Read + Seek + MaybeSend,
+        fragment: impl Read + Seek + MaybeSend,
+        fragment_base_offset: u64,
+    ) -> Result<Self> {
+        if _sync {
+            Reader::default().with_fragment_at_offset(
+                format,
+                stream,
+                fragment,
+                fragment_base_offset,
+            )
+        } else {
+            Reader::default()
+                .with_fragment_at_offset_async(format, stream, fragment, fragment_base_offset)
+                .await
+        }
+    }
+
     /// Add manifest store from an initial segment and fragments to the [`Reader`].
     /// This would be used to load and validate fragmented MP4 files that span
     /// multiple separate asset files.
