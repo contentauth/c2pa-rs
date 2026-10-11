@@ -16,18 +16,18 @@ use std::str::FromStr;
 use asn1_rs::FromDer;
 use async_generic::async_generic;
 use bcder::OctetString;
+use c2pa_raw_crypto::validator_for_sig_and_hash_algs;
 use chrono::{offset::LocalResult, DateTime, TimeZone, Utc};
 use der::asn1::ObjectIdentifier;
 use rasn::{prelude::*, types};
 use rasn_cms::{CertificateChoices, SignerIdentifier};
 use sha1::Sha1;
-use sha2::{Digest as _, Sha256, Sha384, Sha512};
+use sha2::{Sha256, Sha384, Sha512};
 
 use crate::{
     crypto::{
-        asn1::rfc3161::TstInfo,
+        asn1::rfc3161::{Accuracy, TstInfo},
         cose::{check_end_entity_certificate_profile, CertificateTrustPolicy},
-        raw_signature::validator_for_sig_and_hash_algs,
         time_stamp::{
             response::{signed_data_from_time_stamp_response, tst_info_from_signed_data},
             TimeStampError,
@@ -211,8 +211,7 @@ pub fn verify_time_stamp(
                 if let Some(gt) = timestamp_to_generalized_time(signed_signing_time) {
                     // Use actual signed time.
                     signing_time = generalized_time_to_datetime(gt.clone()).timestamp();
-                    let dt: chrono::DateTime<chrono::Utc> = gt.into();
-                    tst.gen_time = dt.into();
+                    tst.gen_time = gt;
                 };
             }
 
@@ -416,67 +415,27 @@ pub fn verify_time_stamp(
         };
 
         // Verify signature of time stamp signature.
-        if _sync {
-            // IMPORTANT: The synchronous implementation of validate_timestamp_sync
-            // on WASM is unable to support _some_ signature algorithms. The async path
-            // should be used whenever possible (for WASM, at least).
-            if validate_timestamp_sig(&sig_alg, &hash_alg, &sig_val, &tbs, &signing_key_der)
-                .is_err()
-            {
-                log_item!(
-                    "",
-                    "timestamp signed data did not match signature",
-                    "verify_time_stamp"
-                )
-                .validation_status(TIMESTAMP_UNTRUSTED)
-                .informational(&mut current_validation_log);
+        if validate_timestamp_sig(&sig_alg, &hash_alg, &sig_val, &tbs, &signing_key_der).is_err() {
+            log_item!(
+                "",
+                "timestamp signed data did not match signature",
+                "verify_time_stamp"
+            )
+            .validation_status(TIMESTAMP_UNTRUSTED)
+            .informational(&mut current_validation_log);
 
-                last_err = TimeStampError::Untrusted;
-                continue;
-            }
-        } else {
-            #[cfg(not(target_arch = "wasm32"))]
-            if validate_timestamp_sig(&sig_alg, &hash_alg, &sig_val, &tbs, &signing_key_der)
-                .is_err()
-            {
-                log_item!(
-                    "",
-                    "timestamp signed data did not match signature",
-                    "verify_time_stamp"
-                )
-                .validation_status(TIMESTAMP_UNTRUSTED)
-                .informational(&mut current_validation_log);
-
-                last_err = TimeStampError::Untrusted;
-                continue;
-            }
-
-            // NOTE: We're keeping the WASM-specific async path alive for now because it
-            // supports more signature algorithms. Look for future WASM platform to provide
-            // the opportunity to unify.
-            #[cfg(target_arch = "wasm32")]
-            if validate_timestamp_sig_async(&sig_alg, &hash_alg, &sig_val, &tbs, &signing_key_der)
-                .await
-                .is_err()
-            {
-                log_item!(
-                    "",
-                    "timestamp signed data did not match signature",
-                    "verify_time_stamp"
-                )
-                .validation_status(TIMESTAMP_UNTRUSTED)
-                .informational(&mut current_validation_log);
-
-                last_err = TimeStampError::Untrusted;
-                continue;
-            }
+            last_err = TimeStampError::Untrusted;
+            continue;
         }
 
         // Make sure the time stamp's cert was valid for the stated signing time.
         let not_before = time_to_datetime(cert.tbs_certificate.validity.not_before).timestamp();
         let not_after = time_to_datetime(cert.tbs_certificate.validity.not_after).timestamp();
+        let accuracy_margin = tst_accuracy_seconds(tst.accuracy.as_ref());
 
-        if !(signing_time >= not_before && signing_time <= not_after) {
+        if !(signing_time >= not_before.saturating_sub(accuracy_margin)
+            && signing_time <= not_after.saturating_add(accuracy_margin))
+        {
             log_item!(
                 "",
                 "timestamp signer outside of certificate validity",
@@ -533,14 +492,14 @@ pub fn verify_time_stamp(
 
         // the certificate must be on the trust list to be considered valid
         if verify_trust {
-            let mut adjusted_ctp = ctp.clone();
+            let mut adjusted_ctp = CertificateTrustPolicy::default();
 
             // Order certificates from leaf to root before trust validation
             let ordered_cert_ders = order_certificates_leaf_to_root(&cert_ders, cert_pos)?;
 
             // make sure this is a timestamping EKU
             adjusted_ctp.clear_ekus();
-            adjusted_ctp.add_valid_ekus(TIMESTAMP_OID_STR.as_bytes()); // timestamp signing EKU
+            adjusted_ctp.add_mandatory_ekus(TIMESTAMP_OID_STR.as_bytes()); // timestamp signing EKU
             if check_end_entity_certificate_profile(
                 &ordered_cert_ders[0],
                 &adjusted_ctp,
@@ -561,38 +520,54 @@ pub fn verify_time_stamp(
                 continue;
             }
 
-            if adjusted_ctp
-                .check_certificate_trust(
-                    &ordered_cert_ders[0..],
-                    &ordered_cert_ders[0],
-                    Some(signing_time),
-                )
-                .is_err()
-            {
-                log_item!(
-                    "",
-                    format!("timestamp cert untrusted: {}", &common_name),
-                    "verify_time_stamp"
-                )
-                .validation_status(TIMESTAMP_UNTRUSTED)
-                .informational(&mut current_validation_log);
+            match ctp.check_certificate_trust(
+                &ordered_cert_ders[0..],
+                &ordered_cert_ders[0],
+                Some(signing_time),
+            ) {
+                Err(_) => {
+                    log_item!(
+                        "",
+                        format!("timestamp cert untrusted: {}", &common_name),
+                        "verify_time_stamp"
+                    )
+                    .validation_status(TIMESTAMP_UNTRUSTED)
+                    .informational(&mut current_validation_log);
 
-                last_err = TimeStampError::Untrusted;
-                continue;
+                    last_err = TimeStampError::Untrusted;
+                    continue;
+                }
+                Ok((_trust_type, trust_uri)) => {
+                    log_item!(
+                        "",
+                        format!(
+                            "timestamp cert trusted: {}, trust list: {}",
+                            &common_name, &trust_uri
+                        ),
+                        "verify_time_stamp"
+                    )
+                    .validation_status(TIMESTAMP_TRUSTED)
+                    .set_trust_list_uri(&trust_uri)
+                    .success(&mut current_validation_log);
+
+                    validation_log.append(&current_validation_log);
+                    return Ok(tst);
+                }
             }
+        } else {
+            // this is the 1.x backward compatibility case, since there were no trust lists for timestamps
+            log_item!(
+                "",
+                format!("legacy timestamp cert trusted: {}", &common_name),
+                "verify_time_stamp"
+            )
+            .validation_status(TIMESTAMP_TRUSTED)
+            .success(&mut current_validation_log);
+
+            // If we find a valid value, we're done.
+            validation_log.append(&current_validation_log);
+            return Ok(tst);
         }
-
-        log_item!(
-            "",
-            format!("timestamp cert trusted: {}", &common_name),
-            "verify_time_stamp"
-        )
-        .validation_status(TIMESTAMP_TRUSTED)
-        .success(&mut current_validation_log);
-
-        // If we find a valid value, we're done.
-        validation_log.append(&current_validation_log);
-        return Ok(tst);
     }
 
     validation_log.append(&current_validation_log);
@@ -664,7 +639,8 @@ fn generalized_time_to_datetime<T: Into<DateTime<Utc>>>(gt: T) -> DateTime<Utc> 
 
 fn timestamp_to_generalized_time(dt: i64) -> Option<crate::crypto::asn1::GeneralizedTime> {
     match Utc.timestamp_opt(dt, 0) {
-        LocalResult::Single(time) => Some(time.into()),
+        // try_into fails for dates outside der's supported 1970-9999 range
+        LocalResult::Single(time) => time.try_into().ok(),
         _ => None,
     }
 }
@@ -681,10 +657,13 @@ enum DigestAlgorithm {
 impl DigestAlgorithm {
     fn digester(self) -> Hasher {
         match self {
-            DigestAlgorithm::Sha1 => Hasher::Sha1(Sha1::new()),
-            DigestAlgorithm::Sha256 => Hasher::Sha256(Sha256::new()),
-            DigestAlgorithm::Sha384 => Hasher::Sha384(Sha384::new()),
-            DigestAlgorithm::Sha512 => Hasher::Sha512(Sha512::new()),
+            // `Sha1` follows the `digest` 0.10 traits, while `Sha2*` follows
+            // `digest` 0.11, so each `new()` must be fully qualified to the
+            // matching `Digest` trait.
+            DigestAlgorithm::Sha1 => Hasher::Sha1(<Sha1 as sha1::Digest>::new()),
+            DigestAlgorithm::Sha256 => Hasher::Sha256(<Sha256 as sha2::Digest>::new()),
+            DigestAlgorithm::Sha384 => Hasher::Sha384(<Sha384 as sha2::Digest>::new()),
+            DigestAlgorithm::Sha512 => Hasher::Sha512(<Sha512 as sha2::Digest>::new()),
         }
     }
 }
@@ -851,6 +830,35 @@ fn order_certificates_leaf_to_root(
     Ok(ordered_certs)
 }
 
+/// bcder is non-negative and big-endian
+fn integer_to_i64(int: &bcder::Integer) -> i64 {
+    let bytes = int.as_slice();
+    if bytes.is_empty() || bytes.len() > 8 {
+        return 0;
+    }
+    let mut result = 0i64;
+    for &b in bytes {
+        result = (result << 8) | (b as i64);
+    }
+    result
+}
+
+/// Convert a TSTInfo Accuracy value to a whole-second margin (ceiling).
+fn tst_accuracy_seconds(accuracy: Option<&Accuracy>) -> i64 {
+    let Some(acc) = accuracy else {
+        return 0;
+    };
+    let secs = acc.seconds.as_ref().map(integer_to_i64).unwrap_or(0);
+    let millis = acc.millis.as_ref().map(integer_to_i64).unwrap_or(0);
+    let micros = acc.micros.as_ref().map(integer_to_i64).unwrap_or(0);
+    let total_micros = secs
+        .saturating_mul(1_000_000)
+        .saturating_add(millis.saturating_mul(1_000))
+        .saturating_add(micros);
+    // ceiling division to full seconds
+    total_micros.saturating_add(999_999) / 1_000_000
+}
+
 fn validate_timestamp_sig(
     sig_alg: &bcder::Oid,
     hash_alg: &bcder::Oid,
@@ -858,37 +866,14 @@ fn validate_timestamp_sig(
     tbs: &[u8],
     signing_key_der: &[u8],
 ) -> Result<(), TimeStampError> {
-    let Some(validator) = validator_for_sig_and_hash_algs(sig_alg, hash_alg) else {
+    let Some(validator) = validator_for_sig_and_hash_algs(
+        &c2pa_raw_crypto::Oid::new(sig_alg.as_ref()),
+        &c2pa_raw_crypto::Oid::new(hash_alg.as_ref()),
+    ) else {
         return Err(TimeStampError::UnsupportedAlgorithm);
     };
 
     validator
         .validate(&sig_val.to_bytes(), tbs, signing_key_der)
         .map_err(|_| TimeStampError::InvalidData)
-}
-
-#[cfg(target_arch = "wasm32")]
-async fn validate_timestamp_sig_async(
-    sig_alg: &bcder::Oid,
-    hash_alg: &bcder::Oid,
-    sig_val: &OctetString,
-    tbs: &[u8],
-    signing_key_der: &[u8],
-) -> Result<(), TimeStampError> {
-    if let Some(validator) =
-        crate::crypto::raw_signature::async_validator_for_sig_and_hash_algs(sig_alg, hash_alg)
-    {
-        validator
-            .validate_async(&sig_val.to_bytes(), tbs, signing_key_der)
-            .await
-            .map_err(|_| TimeStampError::InvalidData)
-    } else if let Some(validator) =
-        crate::crypto::raw_signature::validator_for_sig_and_hash_algs(sig_alg, hash_alg)
-    {
-        validator
-            .validate(&sig_val.to_bytes(), tbs, signing_key_der)
-            .map_err(|_| TimeStampError::InvalidData)
-    } else {
-        Err(TimeStampError::UnsupportedAlgorithm)
-    }
 }

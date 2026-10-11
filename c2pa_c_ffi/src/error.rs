@@ -37,6 +37,16 @@ pub enum C2paError {
     NotSupported(String),
     #[error("Other: {0}")]
     Other(String),
+    #[error("PointerInUse: {0}")]
+    PointerInUse(String),
+    #[error("WrongWrapperKind: {0}")]
+    WrongWrapperKind(String),
+    #[error("ForeignProcess: {0}")]
+    ForeignProcess(String),
+    #[error("TrackingRefused: {0}")]
+    TrackingRefused(String),
+    #[error("InvalidBufferSize: {0}")]
+    InvalidBufferSize(String),
     #[error("NullParameter: {0}")]
     NullParameter(String),
     #[error("Remote: {0}")]
@@ -53,28 +63,6 @@ pub type Error = C2paError;
 pub type Result<T> = std::result::Result<T, Error>;
 
 impl C2paError {
-    /// Returns the error code for this error type
-    pub fn code(&self) -> i32 {
-        match self {
-            Self::Assertion(_) => 100,
-            Self::AssertionNotFound(_) => 101,
-            Self::Decoding(_) => 102,
-            Self::Encoding(_) => 103,
-            Self::FileNotFound(_) => 104,
-            Self::Io(_) => 105,
-            Self::Json(_) => 106,
-            Self::Manifest(_) => 107,
-            Self::ManifestNotFound(_) => 108,
-            Self::NotSupported(_) => 109,
-            Self::Other(_) => 110,
-            Self::NullParameter(_) => 111,
-            Self::RemoteManifest(_) => 112,
-            Self::ResourceNotFound(_) => 113,
-            Self::Signature(_) => 114,
-            Self::Verify(_) => 115,
-        }
-    }
-
     /// Returns the last error message stored in thread-local storage
     pub fn last_message() -> String {
         crate::cimpl::CimplError::last_message().unwrap_or_default()
@@ -155,6 +143,11 @@ impl C2paError {
             "NotSupported" => Self::NotSupported(error_message),
             "Other" => Self::Other(error_message),
             "NullParameter" => Self::NullParameter(error_message),
+            "PointerInUse" => Self::PointerInUse(error_message),
+            "WrongWrapperKind" => Self::WrongWrapperKind(error_message),
+            "ForeignProcess" => Self::ForeignProcess(error_message),
+            "TrackingRefused" => Self::TrackingRefused(error_message),
+            "InvalidBufferSize" => Self::InvalidBufferSize(error_message),
             "Remote" => Self::RemoteManifest(error_message),
             "ResourceNotFound" => Self::ResourceNotFound(error_message),
             "Signature" => Self::Signature(error_message),
@@ -166,47 +159,35 @@ impl C2paError {
 
 impl From<c2pa::Error> for crate::cimpl::CimplError {
     fn from(val: c2pa::Error) -> Self {
-        let c2pa_error = C2paError::from_c2pa_error(val);
-        crate::cimpl::CimplError::new(c2pa_error.code(), c2pa_error.to_string())
+        C2paError::from_c2pa_error(val).into()
     }
 }
 
 impl From<C2paError> for crate::cimpl::CimplError {
     fn from(err: C2paError) -> Self {
-        crate::cimpl::CimplError::new(err.code(), err.to_string())
+        // `err.to_string()` is already formatted as "Variant: message" by the
+        // #[error(...)] templates above, so it can be stored as-is.
+        crate::cimpl::CimplError::from_formatted(err.to_string())
     }
 }
 
 impl From<std::io::Error> for crate::cimpl::CimplError {
     fn from(err: std::io::Error) -> Self {
-        let c2pa_error = C2paError::Io(err.to_string());
-        crate::cimpl::CimplError::new(c2pa_error.code(), c2pa_error.to_string())
+        C2paError::Io(err.to_string()).into()
     }
 }
 
 impl From<serde_json::Error> for crate::cimpl::CimplError {
     fn from(err: serde_json::Error) -> Self {
-        let c2pa_error = C2paError::Json(err.to_string());
-        crate::cimpl::CimplError::new(c2pa_error.code(), c2pa_error.to_string())
+        C2paError::Json(err.to_string()).into()
     }
 }
 
 impl From<crate::cimpl::CimplError> for C2paError {
     fn from(err: crate::cimpl::CimplError) -> Self {
-        // Map CimplError codes to appropriate C2paError variants
-        match err.code() {
-            1 => C2paError::NullParameter(err.message().to_string()),
-            2 => C2paError::Other(err.message().to_string()), // StringTooLong
-            3 => C2paError::Other(err.message().to_string()), // InvalidHandle
-            4 => C2paError::Other(err.message().to_string()), // WrongHandleType
-            5 => C2paError::Other(err.message().to_string()), // Other
-            // Codes 100+ are C2paError codes - parse the message to reconstruct
-            code if code >= 100 => {
-                // The message format is "ErrorType: message"
-                C2paError::from(err.message())
-            }
-            _ => C2paError::Other(err.to_string()),
-        }
+        // The message is formatted as "Variant: details"; parse it back into
+        // the matching C2paError variant (falling back to Other).
+        C2paError::from(err.message())
     }
 }
 
@@ -264,7 +245,6 @@ mod tests {
 
         // Convert to CimplError (as happens when storing)
         let cimpl_err: CimplError = original.into();
-        assert_eq!(cimpl_err.code(), 108); // ManifestNotFound code
         assert_eq!(cimpl_err.message(), "ManifestNotFound: test label");
 
         // Convert back to C2paError
@@ -298,33 +278,32 @@ mod tests {
     #[test]
     fn test_c2pa_error_roundtrip_all_variants() {
         let test_cases = vec![
-            (C2paError::Assertion("test".into()), 100),
-            (C2paError::AssertionNotFound("test".into()), 101),
-            (C2paError::Decoding("test".into()), 102),
-            (C2paError::Encoding("test".into()), 103),
-            (C2paError::FileNotFound("test".into()), 104),
-            (C2paError::Io("test".into()), 105),
-            (C2paError::Json("test".into()), 106),
-            (C2paError::Manifest("test".into()), 107),
-            (C2paError::ManifestNotFound("test".into()), 108),
-            (C2paError::NotSupported("test".into()), 109),
-            (C2paError::Other("test".into()), 110),
-            (C2paError::NullParameter("test".into()), 111),
-            (C2paError::RemoteManifest("test".into()), 112),
-            (C2paError::ResourceNotFound("test".into()), 113),
-            (C2paError::Signature("test".into()), 114),
-            (C2paError::Verify("test".into()), 115),
+            C2paError::Assertion("test".into()),
+            C2paError::AssertionNotFound("test".into()),
+            C2paError::Decoding("test".into()),
+            C2paError::Encoding("test".into()),
+            C2paError::FileNotFound("test".into()),
+            C2paError::Io("test".into()),
+            C2paError::Json("test".into()),
+            C2paError::Manifest("test".into()),
+            C2paError::ManifestNotFound("test".into()),
+            C2paError::NotSupported("test".into()),
+            C2paError::Other("test".into()),
+            C2paError::NullParameter("test".into()),
+            C2paError::RemoteManifest("test".into()),
+            C2paError::ResourceNotFound("test".into()),
+            C2paError::Signature("test".into()),
+            C2paError::Verify("test".into()),
+            C2paError::InvalidBufferSize("test".into()),
+            C2paError::PointerInUse("test".into()),
+            C2paError::WrongWrapperKind("test".into()),
+            C2paError::ForeignProcess("test".into()),
+            C2paError::TrackingRefused("test".into()),
         ];
 
-        for (original, expected_code) in test_cases {
+        for original in test_cases {
             let original_str = original.to_string();
             let cimpl_err: CimplError = original.into();
-            assert_eq!(
-                cimpl_err.code(),
-                expected_code,
-                "Code mismatch for {}",
-                original_str
-            );
 
             let recovered: C2paError = cimpl_err.into();
             let recovered_str = recovered.to_string();
@@ -379,13 +358,12 @@ mod tests {
         // Other (code 5)
         let err: C2paError = CimplError::other("generic error").into();
         assert!(matches!(err, C2paError::Other(_)));
+    }
 
-        // MutexPoisoned (code 6)
-        let err: C2paError = CimplError::mutex_poisoned().into();
-        assert!(matches!(err, C2paError::Other(_)));
-
-        // InvalidBufferSize (code 7)
+    #[test]
+    fn test_cimpl_typed_errors_keep_their_type() {
         let err: C2paError = CimplError::invalid_buffer_size(999, "data").into();
-        assert!(matches!(err, C2paError::Other(_)));
+        assert!(matches!(err, C2paError::InvalidBufferSize(_)), "got {err}");
+        assert_eq!(err.to_string(), "InvalidBufferSize: 999 for 'data'");
     }
 }

@@ -16,7 +16,7 @@
 use chrono::{DateTime, Utc};
 use x509_parser::num_bigint::BigUint;
 
-use crate::crypto::raw_signature::SigningAlg;
+use crate::SigningAlg;
 
 /// Summary information about an X.509 signing certificate and the validation
 /// performed on it.

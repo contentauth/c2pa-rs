@@ -41,6 +41,9 @@ pub struct ClaimGeneratorInfo {
         skip_serializing_if = "Option::is_none"
     )]
     pub operating_system: Option<String>,
+    /// The version of the specification used to produce this manifest (SemVer)
+    #[serde(rename = "specVersion", skip_serializing_if = "Option::is_none")]
+    pub spec_version: Option<String>,
     // Any other values that are not part of the standard
     #[serde(flatten)]
     pub(crate) other: HashMap<String, Value>,
@@ -53,6 +56,7 @@ impl Default for ClaimGeneratorInfo {
             version: Some(env!("CARGO_PKG_VERSION").to_string()),
             icon: None,
             operating_system: None,
+            spec_version: None,
             other: HashMap::new(),
         }
     }
@@ -65,6 +69,7 @@ impl ClaimGeneratorInfo {
             version: None,
             icon: None,
             operating_system: None, // todo: decide if we want to fill in this value
+            spec_version: None,
             other: HashMap::new(),
         }
     }
@@ -84,6 +89,16 @@ impl ClaimGeneratorInfo {
     pub fn set_icon<S: Into<UriOrResource>>(&mut self, uri_or_resource: S) -> &mut Self {
         self.icon = Some(uri_or_resource.into());
         self
+    }
+
+    /// Get the SpecVersion
+    pub fn get_spec_version(&self) -> Option<&String> {
+        self.spec_version.as_ref()
+    }
+
+    /// Sets the SpecVersion used to create this manifest
+    pub fn set_spec_version<S: Into<String>>(&mut self, spec_version: S) {
+        self.spec_version = Some(spec_version.into());
     }
 
     /// Adds a new key/value pair to the generator info.

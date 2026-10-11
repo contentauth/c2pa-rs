@@ -118,6 +118,9 @@ impl From<DidWebError> for ValidationError<IcaValidationError> {
     fn from(err: DidWebError) -> Self {
         match err {
             DidWebError::Client(_) => Self::InternalError(err.to_string()),
+            DidWebError::DidMismatch { .. } => {
+                Self::SignatureError(IcaValidationError::InvalidDidDocument(err.to_string()))
+            }
             _ => Self::SignatureError(IcaValidationError::DidResolutionError(err.to_string())),
         }
     }

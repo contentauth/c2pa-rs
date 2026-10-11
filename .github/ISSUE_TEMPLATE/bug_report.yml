@@ -8,7 +8,6 @@ body:
       description: Which tool or component are you having problems with?
       options:
         - c2pa-rs
-        - c2patool
         - c2pa-c
         - Other
     validations:

@@ -1,5 +1,27 @@
 name: Release-plz
 
+# Publishes pending releases, then opens or updates the next release PR.
+#
+# Under the open-source release process (see docs/release-process.md), crates
+# are published ONLY from release-line branches -- never from `main` (which is
+# nightly-like and intentionally unpublished) and never from release-candidate
+# branches (which bake before promotion). A push to a release-line branch
+# first publishes any merged release PR, then runs release-plz `release-pr`
+# from a fresh checkout so newly-created tags are included in its baseline.
+#
+# release-plz creates the `c2pa-v*` tag here; that tag then drives the binary
+# builds in library-release.yml. This workflow no longer builds binaries
+# itself -- keeping binary builds tag-driven means release-candidate builds
+# (which never reach this workflow) produce the same binaries via
+# release-rc.yml's tags.
+#
+# When the `c2pa` crate itself is among the packages published, this also
+# dispatches a cross-repo notification (repository_dispatch, authenticated
+# with the CROSS_ORG_PR_TOKEN org token) -- so contentauth/c2patool can
+# immediately open a PR bumping its `stable` branch's `c2pa` dependency,
+# instead of waiting for a scheduled poll. See c2patool's
+# docs/release-process.md, "c2pa-rs release bump".
+
 permissions:
   pull-requests: write
   contents: write
@@ -7,72 +29,121 @@ permissions:
 on:
   push:
     branches:
-      - main
-  pull_request:
-    types: [opened, synchronize, reopened, labeled]
+      - stable # currently-active release line
+      - 'v0.*' # long-lived per-line branches (backports to retired lines)
 
 jobs:
-#   dry-run-release-plz:
-#     name: Release-plz dry run
-#     runs-on: ubuntu-latest
-#     if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'release')
-# 
-#     steps:
-#       - name: Checkout repository
-#         uses: actions/checkout@v6
-#         with:
-#           fetch-depth: 0
-#           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
-#           ref: ${{ github.head_ref }}
-# 
-#       - name: Install Rust toolchain
-#         uses: dtolnay/rust-toolchain@stable
-# 
-#       - name: Dry-run release-plz
-#         uses: MarcoIeni/release-plz-action@v0.5.129
-#         with:
-#           command: release
-#           dry_run: true
-#           verbose: true
-#         env:
-#           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
-#           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_SECRET }}
+  # Refuse to publish if a [patch]/git dependency is present. Such deps are used
+  # only transiently while co-developing an extracted crate (e.g.
+  # c2pa_cbor); they must be settled to a published version before any
+  # release, because crates.io requires every dependency to resolve to a
+  # published version.
+  guard-no-patch-deps:
+    name: Guard against patch/git dependencies
+    uses: ./.github/workflows/check-no-patch-deps.yml
 
   release-plz:
     name: Release-plz
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
-
-    outputs:
-      c2patool-release-tag: ${{ steps.sniff-c2patool-release-tag.outputs.tag }}
+    needs: guard-no-patch-deps
+    # Defense in depth: release-candidate branches must never publish, even if
+    # one were ever added to the triggers above. RC branches are named
+    # `<version>-rc` (no numeric suffix), so match on `-rc` rather than `-rc.`.
+    if: ${{ !contains(github.ref_name, '-rc') }}
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          token: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          token: ${{ secrets.RELEASE_PLZ_ORG_TOKEN }}
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Run release-plz
-        id: release-plz
-        uses: MarcoIeni/release-plz-action@v0.5.129
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
+          toolchain: stable
+
+      # Make cargo-semver-checks available so release-plz uses it as an extra
+      # guard against an accidental breaking change shipping as an additive
+      # (0.x.y) release. (The hard gate is semver-checks.yml on the release PR.)
+      - name: Install cargo-semver-checks
+        uses: taiki-e/install-action@4684b8405694ae9dd42c9f39ba901a70ae83f4a3 # v2.82.9
+        with:
+          tool: cargo-semver-checks
+
+      - name: Run release-plz (publish)
+        id: release-plz
+        uses: MarcoIeni/release-plz-action@aec534bbd8631793b9b3b8f1ee6cd886c322e17f # v0.5.133
+        with:
+          command: release
           verbose: true
         env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_SECRET }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_ORG_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_ORG_TOKEN }}
 
       - name: Debug release-plz outputs
         env:
-          PR: ${{ steps.release-plz.outputs.pr }}
+          RELEASES: ${{ steps.release-plz.outputs.releases }}
         run: |
-          echo "=== Release-plz outputs ==="
-          echo "RP output: $PR"
-          echo "========================="
+          echo "=== Release-plz releases ==="
+          echo "$RELEASES"
+          echo "==========================="
 
+      # `releases` is a JSON array of every package release-plz just published
+      # (this repo hosts several crates); only a `c2pa` entry is relevant to
+      # c2patool. Silently does nothing on a release batch that doesn't
+      # include `c2pa` (e.g. a c2pa-crypto-only release).
+      - name: Notify c2patool of a new c2pa release
+        if: steps.release-plz.outputs.releases_created == 'true'
+        env:
+          # RELEASE_PLZ_ORG_TOKEN lacks repository_dispatch permission on
+          # contentauth/c2patool (confirmed empirically: it returns a 403).
+          # CROSS_ORG_PR_TOKEN is the org token actually scoped for this
+          # cross-repo call.
+          GH_TOKEN: ${{ secrets.CROSS_ORG_PR_TOKEN }}
+          RELEASES: ${{ steps.release-plz.outputs.releases }}
+        run: |
+          VERSION=$(echo "$RELEASES" | jq -r '.[] | select(.package_name == "c2pa") | .version')
+          if [ -z "$VERSION" ]; then
+            echo "No 'c2pa' crate in this release batch; nothing to notify."
+            exit 0
+          fi
+          echo "Dispatching c2patool release-bump for c2pa $VERSION"
+          gh api repos/contentauth/c2patool/dispatches \
+            -f event_type=c2pa-rs-release \
+            -F "client_payload[version]=$VERSION"
+
+  release-pr:
+    name: Release PR
+    runs-on: ubuntu-latest
+    needs: release-plz
+
+    steps:
+      # This checkout intentionally happens after publishing so release-plz sees
+      # tags created by the preceding job when it calculates the next version.
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PLZ_ORG_TOKEN }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
+
+      - name: Run release-plz (release-pr)
+        uses: MarcoIeni/release-plz-action@aec534bbd8631793b9b3b8f1ee6cd886c322e17f # v0.5.133
+        with:
+          command: release-pr
+          verbose: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_ORG_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_ORG_TOKEN }}
+
+      # release-plz sometimes opens a new release branch + PR instead of
+      # updating the existing one, leaving the old branch behind. Delete stale
+      # release-plz branches to reduce noise, keeping the most recent.
       - name: Clean up stale release-plz branches
         run: |
           git --no-pager branch --remote |\
@@ -80,89 +151,4 @@ jobs:
             sort -r |\
             tail -n +2 |\
             sed 's/origin\///' |\
-            xargs -I {} git push origin --delete {}
-
-      - name: Identify c2patool release
-        id: sniff-c2patool-release-tag
-        env:
-          RELEASES: ${{ steps.release-plz.outputs.releases }}
-        run: |
-          tag=$(echo "$RELEASES" | jq -r '.[] | select(.package_name == "c2patool") | .tag // empty')
-          echo "c2patool tag: ${tag:-<none>}"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-
-  publish-c2patool-binaries:
-    name: Publish c2patool binaries
-    runs-on: ${{ matrix.os }}
-    needs: release-plz
-
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ macos-latest, ubuntu-latest, windows-latest ]
-        rust_version: [ stable ]
-        experimental: [ false ]
-        include:
-          - os: macos-latest
-            artifact_name: c2patool_mac_universal.zip
-            uploaded_asset_name: ${{ needs.release-plz.outputs.c2patool-release-tag }}-universal-apple-darwin.zip
-            sbom_asset_name: ${{ needs.release-plz.outputs.c2patool-release-tag }}-universal-apple-darwin-sbom.json
-          - os: ubuntu-latest
-            artifact_name: c2patool_linux_intel.tar.gz
-            uploaded_asset_name: ${{ needs.release-plz.outputs.c2patool-release-tag }}-x86_64-unknown-linux-gnu.tar.gz
-            sbom_asset_name: ${{ needs.release-plz.outputs.c2patool-release-tag }}-x86_64-unknown-linux-gnu-sbom.json
-          - os: windows-latest
-            artifact_name: c2patool_win_intel.zip
-            uploaded_asset_name: ${{ needs.release-plz.outputs.c2patool-release-tag }}-x86_64-pc-windows-msvc.zip
-            sbom_asset_name: ${{ needs.release-plz.outputs.c2patool-release-tag }}-x86_64-pc-windows-msvc-sbom.json
-
-    steps:
-      - name: Checkout repository
-        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: actions/checkout@v6
-
-      - name: Install Rust toolchain
-        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ matrix.rust_version }}
-          components: llvm-tools-preview
-
-      - name: Install cargo-sbom
-        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: baptiste0928/cargo-install@v3
-        with:
-          crate: cargo-sbom
-          version: '0.9.1'
-
-      - name: Cache Rust dependencies
-        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: Swatinem/rust-cache@v2
-
-      - name: Run make release
-        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        run: cd cli && make release
-
-      - name: Upload binary to GitHub
-        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: svenstaro/upload-release-action@2.11.5
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: target/${{ matrix.artifact_name }}
-          asset_name: ${{ matrix.uploaded_asset_name }}
-          tag: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-          overwrite: true
-
-      - name: Generate SBOM
-        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        run: cd cli && cargo sbom > c2patool-sbom.json
-
-      - name: Upload SBOM to Github
-        if: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-        uses: svenstaro/upload-release-action@2.11.5
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: cli/c2patool-sbom.json
-          asset_name: ${{ matrix.sbom_asset_name }}
-          tag: ${{ needs.release-plz.outputs.c2patool-release-tag }}
-          overwrite: true
+            xargs -r -I {} git push origin --delete {}

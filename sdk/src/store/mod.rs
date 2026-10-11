@@ -11,9 +11,12 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#[cfg(feature = "file_io")]
+use std::path::{Path, PathBuf};
 use std::{
+    cmp::Ordering,
     collections::{HashMap, HashSet},
-    io::Cursor,
+    io::{Cursor, Read, Seek},
 };
 
 use async_generic::async_generic;
@@ -23,44 +26,59 @@ use crate::{
     assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError},
     assertions::{
         labels::{self, CLAIM},
-        DataBox, Ingredient, Relationship, User, UserCbor,
+        BmffHash, BoxHash, CertificateStatus, CollectionHash, DataBox, DataHash, Ingredient,
+        Relationship, TimeStamp, User, UserCbor,
     },
-    claim::{check_ocsp_status, check_ocsp_status_async, Claim, ClaimAssertion},
+    asset_io::{ObjectLocations, ObjectType, ReadSeek, ReadWriteSeek},
+    claim::{
+        check_ocsp_status, check_ocsp_status_async, Claim, ClaimAssertion, ClaimAssetData,
+        RemoteManifest,
+    },
     context::{Context, ProgressPhase},
     cose_sign::{cose_sign, cose_sign_async},
     cose_validator::{verify_cose, verify_cose_async},
     crypto::{
         asn1::rfc3161::TstInfo,
         cose::{
-            fetch_and_check_ocsp_response, fetch_and_check_ocsp_response_async, parse_cose_sign1,
-            CertificateTrustPolicy, TimeStampStorage,
+            cert_chain_from_sign1, fetch_and_check_ocsp_response,
+            fetch_and_check_ocsp_response_async, parse_cose_sign1, CertificateTrustPolicy,
+            TimeStampStorage, TrustAnchorType,
         },
         hash::sha256,
+        ocsp::OcspResponse,
+        time_stamp::verify_time_stamp,
     },
     dynamic_assertion::{
         AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
     },
     error::{Error, Result},
-    hash_utils::{hash_by_alg, vec_compare},
+    hash_utils::{hash_by_alg, hash_size_by_alg, vec_compare, verify_by_alg},
     hashed_uri::HashedUri,
     jumbf::{
         self,
         boxes::*,
         labels::{
-            manifest_label_from_uri, manifest_label_to_parts, to_assertion_uri, ASSERTIONS,
-            CREDENTIALS, DATABOXES, SIGNATURE,
+            assertion_label_from_uri, manifest_label_from_uri, manifest_label_to_parts,
+            to_assertion_uri, to_manifest_uri, ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE,
         },
     },
     log_item,
     manifest_store_report::ManifestStoreReport,
-    settings::{builder::OcspFetchScope, get_thread_local_settings, Settings, MAX_ASSERTIONS},
+    maybe_send_sync::MaybeSend,
+    settings::{
+        builder::OcspFetchScope, get_thread_local_settings, Settings, TrustListKind, MAX_ASSERTIONS,
+    },
     status_tracker::{ErrorBehavior, StatusTracker},
-    utils::{hash_utils::HashRange, is_zero},
+    utils::{
+        hash_utils::HashRange,
+        io_utils::{self, insert_data_at, stream_len},
+        is_zero,
+    },
     validation_results::validation_codes::{
         ASSERTION_CBOR_INVALID, ASSERTION_JSON_INVALID, ASSERTION_MISSING, CLAIM_MALFORMED,
     },
     validation_status::{self, ALGORITHM_UNSUPPORTED},
-    AsyncSigner, Signer,
+    AsyncSigner, Signer, ValidationResults, ValidationState,
 };
 
 const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
@@ -74,6 +92,9 @@ const DEFAULT_MANIFEST_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 /// 8 MB thread stack, ~3 000 levels causes an unrecoverable stack overflow (exit 134).
 /// A limit of 200 uses only ~540 KB of stack, providing a large safety margin while
 /// accommodating any realistic provenance chain depth.
+///
+/// Bounds path length only: independent of the `visited` memoization in `ingredient_checks`.
+/// A shared-subtree DAG can have short paths yet exponentially many paths through it.
 const MAX_INGREDIENT_DEPTH: usize = 200;
 
 pub(crate) struct ManifestHashes {
@@ -92,6 +113,7 @@ pub(crate) struct StoreValidationInfo<'a> {
     pub update_manifest_label: Option<String>,    // label of the update manifest if it exists
     pub manifest_store_range: Option<HashRange>, // range of the manifest store in the asset for data hash exclusions
     pub certificate_statuses: HashMap<String, Vec<Vec<u8>>>, // list of certificate status assertions for each serial
+    pub is_embedded: bool, // whether the manifest was read out of the asset being validated, vs. supplied separately (sidecar/remote)
 }
 
 /// A `Store` maintains a list of `Claim` structs.
@@ -140,21 +162,46 @@ impl Store {
         let mut store = Store::new();
         let settings = context.settings();
 
-        // load the trust handler settings, don't worry about status as these are checked during setting generation
-        if let Some(ta) = &settings.trust.trust_anchors {
-            let _v = store.add_trust(ta.as_bytes());
-        }
+        // use the incoming trust settings
+        store.ctp.clear();
 
-        if let Some(pa) = &settings.trust.user_anchors {
-            let _v = store.add_user_trust_anchors(pa.as_bytes());
+        // Add all of the trust anchors
+        if let Some(anchors) = &settings.trust.anchors {
+            for anchor in anchors {
+                let trust_list_uri = match &anchor.trust_uri {
+                    Some(uri) => uri.to_string(),
+                    None => format!(
+                        "https://c2pa-rs/unknown_trust_list_{}",
+                        extfmt::Hexlify(&hash_by_alg(
+                            "sha256",
+                            anchor.trust_anchors.as_bytes(),
+                            None
+                        ))
+                    ),
+                };
+
+                let trust_list_type = match anchor.trust_kind {
+                    TrustListKind::Manifest => TrustAnchorType::Manifest,
+                    TrustListKind::TSA => TrustAnchorType::TSA,
+                    TrustListKind::CAWG => TrustAnchorType::CAWG,
+                };
+
+                // Anchors are pre-validated when loading the settings
+                let _v = store.add_trust_anchor(
+                    anchor.trust_anchors.as_bytes(),
+                    &trust_list_uri,
+                    trust_list_type,
+                    anchor.trust_config.clone(),
+                );
+
+                if let Some(al) = &anchor.allowed_list {
+                    let _v = store.add_trust_allowed_list(al.as_bytes());
+                }
+            }
         }
 
         if let Some(tc) = &settings.trust.trust_config {
             let _v = store.add_trust_config(tc.as_bytes());
-        }
-
-        if let Some(al) = &settings.trust.allowed_list {
-            let _v = store.add_trust_allowed_list(al.as_bytes());
         }
 
         store
@@ -183,17 +230,21 @@ impl Store {
         self.embedded
     }
 
-    /// Load set of trust anchors used for certificate validation. [u8] containing the
-    /// trust anchors is passed in the trust_vec variable.
-    pub fn add_trust(&mut self, trust_vec: &[u8]) -> Result<()> {
-        Ok(self.ctp.add_trust_anchors(trust_vec)?)
-    }
-
-    // Load set of user trust anchors used for certificate validation. [u8] to the
-    /// user trust anchors is passed in the trust_vec variable.  This can be called multiple times
-    /// if there are additional trust stores.
-    pub fn add_user_trust_anchors(&mut self, trust_vec: &[u8]) -> Result<()> {
-        Ok(self.ctp.add_user_trust_anchors(trust_vec)?)
+    /// Load named trust anchor sets. [u8] containing the
+    /// trust anchors is passed in the trust_vec variable.  The trust_list_uri
+    /// is the URI of the trust list per C2PA specification. The TrustAnchorType
+    /// indicates the intended use.  trust_config is an optional byte array containing
+    /// the trust configuration data for this trust list.
+    pub fn add_trust_anchor(
+        &mut self,
+        trust_vec: &[u8],
+        trust_list_uri: &str,
+        trust_list_type: TrustAnchorType,
+        trust_config: Option<String>,
+    ) -> Result<()> {
+        Ok(self
+            .ctp
+            .add_trust_anchors(trust_vec, trust_list_uri, trust_list_type, trust_config)?)
     }
 
     pub fn add_trust_config(&mut self, trust_vec: &[u8]) -> Result<()> {
@@ -815,16 +866,15 @@ impl Store {
     fn get_assertion_from_jumbf_store(
         claim: &Claim,
         assertion_box: &JUMBFSuperBox,
-        label: &str,
         check_for_legacy_assertion: bool,
         validation_log: &mut StatusTracker,
     ) -> Result<ClaimAssertion> {
         let assertion_desc_box = assertion_box.desc_box();
 
-        let (raw_label, instance) = Claim::assertion_label_from_link(label);
-        let instance_label = Claim::label_with_instance(&raw_label, instance);
+        let label = assertion_desc_box.label();
+        let (raw_label, instance) = Claim::assertion_label_from_link(&label);
         let (assertion_hashed_uri, claim_assertion_type) = claim
-            .assertion_hashed_uri_from_label(&instance_label)
+            .assertion_hashed_uri_from_label(&label)
             .ok_or_else(|| {
                 log_item!(
                     label.to_owned(),
@@ -835,7 +885,7 @@ impl Store {
                 .failure_as_err(
                     validation_log,
                     Error::AssertionMissing {
-                        url: instance_label.to_string(),
+                        url: label.to_string(),
                     },
                 )
             })?;
@@ -872,7 +922,7 @@ impl Store {
                     )?;
                 }
 
-                let hash = Claim::calc_assertion_box_hash(label, &assertion, salt.clone(), &alg)?;
+                let hash = Claim::calc_assertion_box_hash(&label, &assertion, salt.clone(), &alg)?;
                 Ok(ClaimAssertion::new(
                     assertion,
                     instance,
@@ -892,7 +942,7 @@ impl Store {
                 let media_type = ef_box.media_type();
                 let assertion =
                     Assertion::from_data_binary(&raw_label, &media_type, data_box.data());
-                let hash = Claim::calc_assertion_box_hash(label, &assertion, salt.clone(), &alg)?;
+                let hash = Claim::calc_assertion_box_hash(&label, &assertion, salt.clone(), &alg)?;
                 Ok(ClaimAssertion::new(
                     assertion,
                     instance,
@@ -924,7 +974,7 @@ impl Store {
                     )?;
                 }
 
-                let hash = Claim::calc_assertion_box_hash(label, &assertion, salt.clone(), &alg)?;
+                let hash = Claim::calc_assertion_box_hash(&label, &assertion, salt.clone(), &alg)?;
                 Ok(ClaimAssertion::new(
                     assertion,
                     instance,
@@ -945,8 +995,7 @@ impl Store {
                 if uuid_str == C2PA_REDACTION_UUID {
                     let data = uuid_box.data();
                     if !is_zero(data) {
-                        let assertion_absolute_uri =
-                            to_assertion_uri(claim.label(), &instance_label);
+                        let assertion_absolute_uri = to_assertion_uri(claim.label(), &label);
                         log_item!(
                             assertion_absolute_uri,
                             "redacted assertion data must be zeros or empty",
@@ -962,7 +1011,7 @@ impl Store {
                     }
                 }
 
-                let hash = Claim::calc_assertion_box_hash(label, &assertion, salt.clone(), &alg)?;
+                let hash = Claim::calc_assertion_box_hash(&label, &assertion, salt.clone(), &alg)?;
                 Ok(ClaimAssertion::new(
                     assertion,
                     instance,
@@ -1026,6 +1075,8 @@ impl Store {
 
         let manifest_type = if claim.update_manifest() {
             ManifestType::UpdateManifest
+        } else if claim.is_c2md() {
+            ManifestType::C2md
         } else {
             ManifestType::Manifest
         };
@@ -1241,15 +1292,25 @@ impl Store {
             let cai_store_box = store_box.super_box();
             let cai_store_desc_box = cai_store_box.desc_box();
 
-            // ignore unknown boxes per the spec
+            // ignore unknown boxes per the spec. A c2md manifest is a standard
+            // manifest that consumers shall accept (C2PA spec 11.2.2), so it is
+            // read the same as a c2ma manifest.
             if cai_store_desc_box.uuid() != CAI_UPDATE_MANIFEST_UUID
                 && cai_store_desc_box.uuid() != CAI_MANIFEST_UUID
+                && cai_store_desc_box.uuid() != CAI_MANIFEST_C2MD_UUID
             {
                 continue;
             }
 
             // remember the order of the boxes to insure the box hashes can be regenerated
             let mut box_order: Vec<&str> = Vec::new();
+
+            // Core boxes may appear at most once per manifest. `manifest_map` is keyed by
+            // UUID (last-wins), so a duplicate would be dropped from the map yet still
+            // recorded twice in `box_order`; the manifest box hash is then regenerated from
+            // the single surviving box, letting byte-distinct parents collapse to the same
+            // hash (the vuln-37402 ingredient parent-swap primitive).
+            let mut seen_core_uuids: HashSet<String> = HashSet::new();
 
             // make sure there are not multiple claim boxes
             let mut claim_box_cnt = 0;
@@ -1276,14 +1337,41 @@ impl Store {
                     ));
                 }
 
-                let (box_label, _instance) =
-                    Claim::box_name_label_instance(desc_box.label().as_ref());
-                match box_label.as_ref() {
-                    ASSERTIONS => box_order.push(ASSERTIONS),
-                    CLAIM => box_order.push(CLAIM),
-                    SIGNATURE => box_order.push(SIGNATURE),
-                    CREDENTIALS => box_order.push(CREDENTIALS),
-                    DATABOXES => box_order.push(DATABOXES),
+                // Reject a repeated non-claim core box before it reaches `manifest_map`
+                // (duplicate claim boxes are already handled above with their own status).
+                if matches!(
+                    desc_box.uuid().as_str(),
+                    CAI_ASSERTION_STORE_UUID
+                        | CAI_SIGNATURE_UUID
+                        | CAI_VERIFIABLE_CREDENTIALS_STORE_UUID
+                        | CAI_DATABOXES_STORE_UUID
+                ) && !seen_core_uuids.insert(desc_box.uuid())
+                {
+                    log_item!("JUMBF", "c2pa multiple manifest boxes found", "from_jumbf")
+                        .validation_status(validation_status::CLAIM_MALFORMED)
+                        .failure_no_throw(
+                            validation_log,
+                            Error::InvalidClaim(InvalidClaimError::C2paMultipleManifestBoxes),
+                        );
+
+                    return Err(Error::InvalidClaim(
+                        InvalidClaimError::C2paMultipleManifestBoxes,
+                    ));
+                }
+
+                // Derive the box order from the authoritative JUMBF type UUID,
+                // not the description label. Core boxes are located by UUID in
+                // `manifest_map`, so the manifest box hash must be regenerated
+                // from the same UUIDs; otherwise a box whose label disagrees
+                // with its UUID (e.g. a claim box relabeled `c2pa.databoxes`)
+                // would be reconstructed as different content, letting distinct
+                // parents collapse to the same hash.
+                match desc_box.uuid().as_str() {
+                    CAI_ASSERTION_STORE_UUID => box_order.push(ASSERTIONS),
+                    CAI_CLAIM_UUID => box_order.push(CLAIM),
+                    CAI_SIGNATURE_UUID => box_order.push(SIGNATURE),
+                    CAI_VERIFIABLE_CREDENTIALS_STORE_UUID => box_order.push(CREDENTIALS),
+                    CAI_DATABOXES_STORE_UUID => box_order.push(DATABOXES),
                     _ => {
                         log_item!("JUMBF", "unrecognized manifest box", "from_jumbf")
                             .validation_status(validation_status::CLAIM_MULTIPLE)
@@ -1296,6 +1384,7 @@ impl Store {
             }
 
             let is_update_manifest = cai_store_desc_box.uuid() == CAI_UPDATE_MANIFEST_UUID;
+            let is_c2md = cai_store_desc_box.uuid() == CAI_MANIFEST_C2MD_UUID;
 
             // get map of boxes in this manifest
             let manifest_boxes = Store::manifest_map(cai_store_box)?;
@@ -1424,6 +1513,7 @@ impl Store {
 
             // set the  type of manifest
             claim.set_update_manifest(is_update_manifest);
+            claim.set_is_c2md(is_c2md);
 
             // set order to process JUMBF boxes
             claim.set_box_order(box_order);
@@ -1458,14 +1548,11 @@ impl Store {
                 let assertion_box = assertion_store_box
                     .data_box_as_superbox(idx)
                     .ok_or(Error::JumbfBoxNotFound)?;
-                let assertion_desc_box = assertion_box.desc_box();
 
                 // Add assertions to claim after validation
-                let label = assertion_desc_box.label();
                 match Store::get_assertion_from_jumbf_store(
                     &claim,
                     assertion_box,
-                    &label,
                     check_for_legacy_assertion,
                     validation_log,
                 ) {
@@ -1598,77 +1685,104 @@ impl Store {
     /// Signs an already hashed manifest with dynamic assertion support.
     ///
     /// # Arguments
-    /// * `signer` - The signer to use.
-    /// * `settings` - The settings to use.
+    /// * `context` - The active context with signer and settings.
+    /// * `target_len` - When `Some`, the returned bytes are zero-padded up to
+    ///   this length if the signed jumbf comes out smaller (e.g. because a
+    ///   placeholder over-reserved space for exclusions/assertions that ended
+    ///   up smaller once filled with real content). Pass the length of a
+    ///   previously-embedded placeholder so the composed result is
+    ///   byte-for-byte the same size and can be patched in place. The JUMBF
+    ///   parser honours its own internal length field and ignores trailing
+    ///   padding bytes.
     /// # Returns
     /// * The signed manifest bytes.
     /// # Errors
     /// * Returns an [`Error`] if the placeholder cannot be signed.
-    pub fn sign_manifest(&mut self, signer: &dyn Signer, context: &Context) -> Result<Vec<u8>> {
+    /// * Returns [`Error::BadParam`] if `target_len` is `Some` and the signed
+    ///   jumbf is larger than the placeholder reserved, since the caller can no
+    ///   longer patch it into the pre-allocated space in place.
+    pub fn sign_manifest(
+        &mut self,
+        context: &Context,
+        target_len: Option<usize>,
+    ) -> Result<Vec<u8>> {
         let settings = context.settings();
+        let signer = context.signer()?;
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
 
         // if user did not supply a hash
-        if pc.hash_assertions().is_empty() {
+        let hash_assertions = pc.hash_assertions();
+        if hash_assertions.is_empty() {
             return Err(Error::BadParam(
                 "Claim must have a valid hard binding assertion".to_string(),
             ));
         };
 
-        // Write dynamic assertions only if placeholders were added during placeholder generation.
-        // We check if the dynamic assertion labels exist in the claim - if not, placeholders
-        // weren't added and we should skip writing to avoid size mismatches.
-        let dynamic_assertions = signer.dynamic_assertions();
-        if !dynamic_assertions.is_empty() {
-            // Check if placeholders exist for these dynamic assertions
-            let has_placeholders = {
-                dynamic_assertions
-                    .iter()
-                    .all(|da| pc.assertion_hashed_uri_from_label(&da.label()).is_some())
-            };
-
-            if has_placeholders {
-                let mut preliminary_claim = PartialClaim::default();
-                {
-                    for assertion in pc.assertions() {
-                        preliminary_claim.add_assertion(assertion);
-                    }
-                }
-
-                // Drop pc before calling write_dynamic_assertions
-                let _ = pc;
-
-                let _modified =
-                    self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
-
-                // Get pc again
-                let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
-                let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
-
-                let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-                pc.set_signature_val(sig);
-
-                let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
-
-                if context.settings().verify.verify_after_sign {
-                    self.verify_store_strict(None, context)?;
-                }
-
-                return Ok(jumbf_bytes);
-            }
-        }
+        // BMFF mdat Merkle-leaf hashing intentionally grows the signed jumbf
+        // beyond `Builder::placeholder`'s reservation (leaf hashes aren't known
+        // until the real content is hashed), so the caller is responsible for
+        // over-reserving embedding space itself. That's safe for BMFF because
+        // the reserved space is a self-describing `free` box rather than a raw
+        // byte range: `inject_manifest_into_free_box` writes the real manifest
+        // and re-splits whatever's left into a smaller trailing `free` box, so
+        // later box offsets never shift as long as the manifest fits inside the
+        // caller's `free` box. We have no way to see that box's size from here,
+        // so exempt BmffHash bindings from the oversize check below and let
+        // that later patch step be the actual ceiling check; every other hard
+        // binding commits to an exact, reproducible size.
+        let is_bmff_binding = hash_assertions
+            .iter()
+            .any(|ca| ca.assertion().label_root() == BmffHash::LABEL);
 
         context.check_progress(ProgressPhase::Signing, 1, 1)?;
 
-        // No dynamic assertions - sign directly
-        let sig = self.sign_claim(pc, signer, signer.reserve_size(), settings)?;
+        // Reserve placeholder slots for any dynamic assertions exposed by the
+        // signer, then write their real content in place. This must reuse the
+        // same `dynamic_assertions()` result across the whole operation –
+        // draining it on an earlier call is what silently dropped identity
+        // assertions in issue #2055.
+        let dynamic_assertions = signer.dynamic_assertions();
+        let sig = if !dynamic_assertions.is_empty() {
+            self.add_dynamic_assertion_placeholders(&dynamic_assertions)?;
+
+            let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+            let mut preliminary_claim = PartialClaim::default();
+            for assertion in pc.assertions() {
+                preliminary_claim.add_assertion(assertion);
+            }
+
+            self.write_dynamic_assertions(&dynamic_assertions, &mut preliminary_claim)?;
+
+            // Get pc again: write_dynamic_assertions replaced placeholder content
+            // with the real assertions and cleared cached claim data, so the
+            // claim must be re-fetched before signing.
+            let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+            self.sign_claim(pc, signer, signer.reserve_size(), settings)?
+        } else {
+            // No dynamic assertions - sign directly using the claim fetched above.
+            self.sign_claim(pc, signer, signer.reserve_size(), settings)?
+        };
+
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
         pc.set_signature_val(sig);
 
-        let jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
+        let mut jumbf_bytes = self.to_jumbf_internal(signer.reserve_size())?;
 
         if context.settings().verify.verify_after_sign {
             self.verify_store_strict(None, context)?;
+        }
+
+        if let Some(len) = target_len {
+            match jumbf_bytes.len().cmp(&len) {
+                Ordering::Less => jumbf_bytes.resize(len, 0u8),
+                Ordering::Greater if !is_bmff_binding => {
+                    return Err(Error::BadParam(format!(
+                        "signed jumbf ({} bytes) exceeds placeholder-reserved size ({len} bytes)",
+                        jumbf_bytes.len()
+                    )))
+                }
+                _ => {}
+            }
         }
 
         Ok(jumbf_bytes)
@@ -1746,8 +1860,14 @@ impl Store {
     }
 
     /// Write the dynamic assertions to the manifest.
-    /// Note: This assumes each dynamic assertion label is unique (no instance suffixes).
-    /// Multiple dynamic assertions with different labels are supported.
+    ///
+    /// Dynamic assertions are matched to the placeholders written by
+    /// [`add_dynamic_assertion_placeholders`] by label AND instance, in the
+    /// same order, so several dynamic assertions may share one label (for
+    /// example two `cawg.identity` assertions from different credential
+    /// holders, which become `cawg.identity` and `cawg.identity__1`).
+    ///
+    /// [`add_dynamic_assertion_placeholders`]: Self::add_dynamic_assertion_placeholders
     #[async_generic(async_signature(
         &mut self,
         dyn_assertions: &[Box<dyn AsyncDynamicAssertion>],
@@ -1765,10 +1885,18 @@ impl Store {
 
         let mut final_assertions = Vec::new();
 
+        // Placeholders were added in this same order, so the n-th dynamic
+        // assertion carrying a given label is instance n of that label.
+        let mut instances: HashMap<String, usize> = HashMap::new();
+
         for da in dyn_assertions.iter() {
-            // Use the dynamic assertion's label directly.
-            // This assumes each dynamic assertion label is unique (no instance suffixes needed).
-            let label = da.label();
+            let base_label = da.label();
+            let instance = match instances.get(&base_label) {
+                Some(n) => n + 1,
+                None => 0,
+            };
+            instances.insert(base_label.clone(), instance);
+            let label = Claim::label_with_instance(&base_label, instance);
 
             let da_size = da.reserve_size()?;
             let da_data = if _sync {
@@ -1779,10 +1907,12 @@ impl Store {
 
             match da_data {
                 DynamicAssertionContent::Cbor(data) => {
-                    final_assertions.push(UserCbor::new(&label, data).to_assertion()?);
+                    final_assertions
+                        .push((instance, UserCbor::new(&base_label, data).to_assertion()?));
                 }
                 DynamicAssertionContent::Json(data) => {
-                    final_assertions.push(User::new(&label, &data).to_assertion()?);
+                    final_assertions
+                        .push((instance, User::new(&base_label, &data).to_assertion()?));
                 }
                 DynamicAssertionContent::Binary(format, data) => {
                     //final_assertions.push(EmbeddedData::to_binary_assertion(&EmbeddedData::new(&label, format, data))?);
@@ -1791,8 +1921,8 @@ impl Store {
         }
 
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
-        for assertion in final_assertions {
-            pc.replace_assertion(assertion)?;
+        for (instance, assertion) in final_assertions {
+            pc.replace_assertion_instance(assertion, instance)?;
         }
 
         // clear the provenance claim data since the contents are now different
@@ -1811,6 +1941,20 @@ impl Store {
 
     // get the manifest that should be used for hash binding checks
     fn get_hash_binding_manifest(&self, claim: &Claim) -> Option<String> {
+        self.get_hash_binding_manifest_impl(claim, &mut HashSet::new())
+    }
+
+    fn get_hash_binding_manifest_impl(
+        &self,
+        claim: &Claim,
+        visited: &mut HashSet<String>,
+    ) -> Option<String> {
+        if !visited.insert(claim.label().to_owned()) {
+            // A cyclic chain has no binding manifest.
+            // None maps to a validation error in this case.
+            return None;
+        }
+
         // is this claim valid
         if !claim.update_manifest() && !claim.hash_assertions().is_empty() {
             return Some(claim.label().to_owned());
@@ -1825,7 +1969,7 @@ impl Store {
                     if let Some(parent) = self.get_claim(&parent_label) {
                         // recurse until we find
                         if parent.update_manifest() {
-                            return self.get_hash_binding_manifest(parent);
+                            return self.get_hash_binding_manifest_impl(parent, visited);
                         } else if !parent.hash_assertions().is_empty() {
                             return Some(parent.label().to_owned());
                         }
@@ -2141,22 +2285,13 @@ impl Store {
                                 to_both.append(&mut differences);
                             }
                         } else {
-                            let new_version = match claim
+                            // First conflict for this label starts at version 1
+                            let new_version = claim
                                 .claim_ingredient_store()
                                 .keys()
-                                .filter_map(|label| match manifest_label_to_parts(label) {
-                                    Some(mp) => mp.version,
-                                    None => None,
-                                })
+                                .filter_map(|label| manifest_label_to_parts(label)?.version)
                                 .max()
-                            {
-                                Some(last_conflict_version) => last_conflict_version + 1,
-                                None => {
-                                    return Err(Error::OtherError(
-                                        "ingredient label malformed".into(),
-                                    ))
-                                }
-                            };
+                                .map_or(1, |last_conflict_version| last_conflict_version + 1);
 
                             // make new ingredient label
                             let mut new_mp = manifest_label_to_parts(&conflict_label)
@@ -2190,6 +2325,64 @@ impl Store {
         if let Some(redactions) = redactions {
             for r in redactions {
                 final_redactions.insert(r);
+            }
+        }
+
+        // For each redaction that targets an ingredient assertion, remove the corresponding
+        // entry from ingredient_references. If no other claim still references that ingredient
+        // claim, drop it from the incoming store entirely.
+        for redaction_uri in &final_redactions {
+            let assertion_label = match assertion_label_from_uri(redaction_uri) {
+                Some(l) => l,
+                None => continue,
+            };
+
+            // Only act on ingredient assertions.
+            if !assertion_label.starts_with(labels::INGREDIENT) {
+                continue;
+            }
+
+            // The redaction URI encodes which claim owns the assertion.
+            let claim_label = match manifest_label_from_uri(redaction_uri) {
+                Some(l) => l,
+                None => continue,
+            };
+
+            // Find the owning claim and then the specific assertion within it.
+            let Some(owning_claim) = i_store.get_claim(&claim_label) else {
+                continue;
+            };
+
+            let Some(ia) = owning_claim
+                .ingredient_assertions()
+                .into_iter()
+                .find(|a| a.label() == assertion_label)
+            else {
+                continue;
+            };
+
+            // Recover the referenced manifest URL from active_manifest or c2pa_manifest.
+            let Ok(ingredient_assertion) = Ingredient::from_assertion(ia.assertion()) else {
+                continue;
+            };
+
+            let Some(manifest_ref) = ingredient_assertion.c2pa_manifest() else {
+                continue;
+            };
+
+            let ingredient_label = Store::manifest_label_from_path(&manifest_ref.url());
+
+            let now_unreferenced =
+                if let Some(refs) = svi.ingredient_references.get_mut(&ingredient_label) {
+                    refs.remove(&claim_label);
+                    refs.is_empty()
+                } else {
+                    false
+                };
+
+            if now_unreferenced {
+                svi.ingredient_references.remove(&ingredient_label);
+                to_remove_from_incoming.push(ingredient_label);
             }
         }
 
@@ -2253,7 +2446,10 @@ impl Store {
                 }
 
                 let sign1 = parse_cose_sign1(&sig, &data, validation_log)?;
-                let ocsp_response_der = if _sync {
+
+                // OCSP status codes refer to the claim signature box
+                validation_log.push_current_uri(claim.signature_uri());
+                let ocsp_response = if _sync {
                     fetch_and_check_ocsp_response(
                         &sign1,
                         &data,
@@ -2261,8 +2457,7 @@ impl Store {
                         None,
                         validation_log,
                         context,
-                    )?
-                    .ocsp_der
+                    )
                 } else {
                     fetch_and_check_ocsp_response_async(
                         &sign1,
@@ -2272,9 +2467,10 @@ impl Store {
                         validation_log,
                         context,
                     )
-                    .await?
-                    .ocsp_der
+                    .await
                 };
+                validation_log.pop_current_uri();
+                let ocsp_response_der = ocsp_response?.ocsp_der;
 
                 if !ocsp_response_der.is_empty() {
                     oscp_response_ders.push((manifest_label, ocsp_response_der));
@@ -2286,10 +2482,11 @@ impl Store {
         Ok(oscp_response_ders)
     }
 }
+
 impl std::fmt::Display for Store {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let report = &ManifestStoreReport::from_store(self).unwrap_or_default();
-        f.write_str(&format!("{}", &report))
+        f.write_str(&format!("{}", report))
     }
 }
 
@@ -2302,6 +2499,10 @@ pub enum InvalidClaimError {
 
     #[error("\"c2pa\" multiple claim boxes found in manifest")]
     C2paMultipleClaimBoxes,
+
+    /// More than one core manifest box of the same type was found.
+    #[error("\"c2pa\" multiple manifest boxes of the same type found in manifest")]
+    C2paMultipleManifestBoxes,
 
     /// The claim superbox was not found.
     #[error("claim superbox not found")]

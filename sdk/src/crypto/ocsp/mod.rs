@@ -15,15 +15,14 @@
 
 use std::str::FromStr;
 
+use c2pa_raw_crypto::RawSignatureValidationError;
 use chrono::{DateTime, NaiveDateTime, Utc};
-use rasn_ocsp::{BasicOcspResponse, CertStatus, OcspResponseStatus};
-use rasn_pkix::CrlReason;
+use rasn_ocsp::{BasicOcspResponse, CertId, CertStatus, OcspResponseStatus};
+use rasn_pkix::{Certificate, CrlReason};
 use thiserror::Error;
 
 use crate::{
-    crypto::{internal::time, raw_signature::RawSignatureValidationError},
-    log_item,
-    status_tracker::StatusTracker,
+    crypto::internal::time, log_item, status_tracker::StatusTracker,
     validation_results::validation_codes,
 };
 
@@ -63,8 +62,16 @@ impl OcspResponse {
     /// The correct usage when there is no attested signing time
     /// to pass a signing_time of None.  The OCSP responses the
     /// follow the current time rules as outlined in the C2PA spec.
+    ///
+    /// `signing_cert_chain` is the certificate chain of the credential whose
+    /// revocation status is being checked (`chain[0]` is the end-entity
+    /// certificate, `chain[1]` its issuer).  Per RFC 6960 §4.1.1/§4.2.1 every
+    /// single response in the OCSP response whose `certId` does not identify
+    /// that certificate is ignored, so a validly-signed response issued for an
+    /// unrelated certificate cannot produce a status for the signer.
     pub(crate) fn from_der_checked(
         der: &[u8],
+        signing_cert_chain: &[Vec<u8>],
         signing_time: Option<DateTime<Utc>>,
         validation_log: &mut StatusTracker,
     ) -> Result<Self, OcspError> {
@@ -154,6 +161,16 @@ impl OcspResponse {
         }
 
         for single_response in &response_data.responses {
+            // RFC 6960 §4.1.1/§4.2.1: only a single response whose `certId`
+            // identifies the signing certificate tells us anything about that
+            // certificate. Skip any response for a different certificate;
+            // otherwise an attacker could staple a validly-signed "good"
+            // response issued for an unrelated certificate and obtain a false
+            // "not revoked" attestation for a revoked signing certificate.
+            if !cert_id_matches_signer(&single_response.cert_id, signing_cert_chain) {
+                continue;
+            }
+
             let cert_status = &single_response.cert_status;
 
             // Extract certificate serial number from cert_id
@@ -199,25 +216,17 @@ impl OcspResponse {
                     }
 
                     if !in_range {
-                        log_item!(
-                            "OCSP_RESPONSE",
-                            "certificate revoked",
-                            "check_ocsp_response"
-                        )
-                        .validation_status(validation_codes::SIGNING_CREDENTIAL_REVOKED)
-                        .failure_no_throw(
-                            &mut internal_validation_log,
-                            OcspError::CertificateRevoked,
-                        );
+                        log_item!("", "certificate revoked", "check_ocsp_response")
+                            .validation_status(validation_codes::SIGNING_CREDENTIAL_REVOKED)
+                            .failure_no_throw(
+                                &mut internal_validation_log,
+                                OcspError::CertificateRevoked,
+                            );
                     } else {
                         // As soon as we find one successful match, nothing else matters.
-                        log_item!(
-                            "OCSP_RESPONSE",
-                            "certificate not revoked",
-                            "check_ocsp_response"
-                        )
-                        .validation_status(validation_codes::SIGNING_CREDENTIAL_NOT_REVOKED)
-                        .success(validation_log);
+                        log_item!("", "certificate not revoked", "check_ocsp_response")
+                            .validation_status(validation_codes::SIGNING_CREDENTIAL_NOT_REVOKED)
+                            .success(validation_log);
 
                         return Ok(output);
                     }
@@ -253,7 +262,7 @@ impl OcspResponse {
 
                                 let msg = format!("certificate revoked at: {utc_with_offset}");
 
-                                log_item!("OCSP_RESPONSE", msg, "check_ocsp_response")
+                                log_item!("", msg, "check_ocsp_response")
                                     .validation_status(validation_codes::SIGNING_CREDENTIAL_REVOKED)
                                     .failure_no_throw(
                                         &mut internal_validation_log,
@@ -285,7 +294,7 @@ impl OcspResponse {
 
                             if !in_range {
                                 log_item!(
-                                    "OCSP_RESPONSE",
+                                    "",
                                     format!("certificate revoked at: {}", utc_with_offset),
                                     "check_ocsp_response"
                                 )
@@ -306,28 +315,21 @@ impl OcspResponse {
                             }
                         }
                     } else {
-                        log_item!(
-                            "OCSP_RESPONSE",
-                            "certificate revoked",
-                            "check_ocsp_response"
-                        )
-                        .validation_status(validation_codes::SIGNING_CREDENTIAL_REVOKED)
-                        .failure_no_throw(
-                            &mut internal_validation_log,
-                            OcspError::CertificateRevoked,
-                        );
+                        log_item!("", "certificate revoked", "check_ocsp_response")
+                            .validation_status(validation_codes::SIGNING_CREDENTIAL_REVOKED)
+                            .failure_no_throw(
+                                &mut internal_validation_log,
+                                OcspError::CertificateRevoked,
+                            );
                         output.revoked_at =
                             Some(DateTime::from_naive_utc_and_offset(revoked_at_native, Utc));
                     }
                 }
 
                 CertStatus::Unknown(_) => {
-                    log_item!("OCSP_RESPONSE", "unknown certStatus", "check_ocsp_response")
+                    log_item!("", "unknown certStatus", "check_ocsp_response")
                         .validation_status(validation_codes::SIGNING_CREDENTIAL_OCSP_UNKNOWN)
-                        .failure_no_throw(
-                            &mut internal_validation_log,
-                            OcspError::CertificateStatusUnknown,
-                        );
+                        .informational(&mut internal_validation_log);
                 }
             }
         }
@@ -346,14 +348,81 @@ fn validate_ocsp_sig(
     tbs: &[u8],
     signing_key_der: &[u8],
 ) -> Result<(), RawSignatureValidationError> {
-    if let Some(validator) =
-        crate::crypto::raw_signature::validator_for_sig_and_hash_algs(sig_alg, hash_alg)
-    {
+    if let Some(validator) = c2pa_raw_crypto::validator_for_sig_and_hash_algs(
+        &c2pa_raw_crypto::Oid::new(sig_alg.as_ref()),
+        &c2pa_raw_crypto::Oid::new(hash_alg.as_ref()),
+    ) {
         validator
             .validate(&sig_val.to_bytes(), tbs, signing_key_der)
             .map_err(|e| RawSignatureValidationError::CryptoLibraryError(e.to_string()))
     } else {
         Err(RawSignatureValidationError::UnsupportedAlgorithm)
+    }
+}
+
+/// Returns `true` only if `cert_id` identifies the end-entity certificate
+/// described by `signing_cert_chain` (`chain[0]` = end-entity certificate,
+/// `chain[1]` = its issuer), per RFC 6960 §4.1.1.
+///
+/// The `serialNumber`, `issuerNameHash`, and `issuerKeyHash` must all match.
+/// Fails closed (returns `false`) if the chain, the issuer certificate, or the
+/// `certId` hash algorithm is missing or cannot be reconstructed.
+fn cert_id_matches_signer(cert_id: &CertId, signing_cert_chain: &[Vec<u8>]) -> bool {
+    // Both the end-entity certificate and its issuer are required to
+    // reconstruct the certId: the serial number comes from the end-entity
+    // certificate, and the issuer hashes come from the issuer certificate.
+    let (Some(subject_der), Some(issuer_der)) =
+        (signing_cert_chain.first(), signing_cert_chain.get(1))
+    else {
+        return false;
+    };
+
+    let Ok(subject) = rasn::der::decode::<Certificate>(subject_der) else {
+        return false;
+    };
+    let Ok(issuer) = rasn::der::decode::<Certificate>(issuer_der) else {
+        return false;
+    };
+
+    // serialNumber identifies the end-entity certificate.
+    if cert_id.serial_number != subject.tbs_certificate.serial_number {
+        return false;
+    }
+
+    // issuerNameHash and issuerKeyHash are computed over the issuer using the
+    // hash algorithm named in the response's certId (this matches how the OCSP
+    // request is constructed in `ocsp/fetch.rs`).
+    let Ok(issuer_name_raw) = rasn::der::encode(&issuer.tbs_certificate.subject) else {
+        return false;
+    };
+    let issuer_key_raw = issuer
+        .tbs_certificate
+        .subject_public_key_info
+        .subject_public_key
+        .as_raw_slice();
+
+    let Some(expected_name_hash) = hash_by_oid(&cert_id.hash_algorithm.algorithm, &issuer_name_raw)
+    else {
+        return false;
+    };
+    let Some(expected_key_hash) = hash_by_oid(&cert_id.hash_algorithm.algorithm, issuer_key_raw)
+    else {
+        return false;
+    };
+
+    cert_id.issuer_name_hash.as_ref() == expected_name_hash.as_slice()
+        && cert_id.issuer_key_hash.as_ref() == expected_key_hash.as_slice()
+}
+
+/// Hashes `data` with the digest algorithm identified by `alg`, or returns
+/// `None` if it is not an OCSP `certId` digest algorithm we support.
+fn hash_by_oid(alg: &rasn::types::ObjectIdentifier, data: &[u8]) -> Option<Vec<u8>> {
+    match alg.to_string().as_str() {
+        // SHA-1 (the default OCSP certId digest per RFC 6960)
+        "1.3.14.3.2.26" => Some(crate::crypto::hash::sha1(data)),
+        // SHA-256
+        "2.16.840.1.101.3.4.2.1" => Some(crate::crypto::hash::sha256(data)),
+        _ => None,
     }
 }
 
@@ -410,12 +479,24 @@ mod tests {
 
     use crate::{
         crypto::ocsp::OcspResponse,
-        status_tracker::StatusTracker,
+        status_tracker::{LogKind, StatusTracker},
         validation_status::{
             SIGNING_CREDENTIAL_NOT_REVOKED, SIGNING_CREDENTIAL_OCSP_UNKNOWN,
             SIGNING_CREDENTIAL_REVOKED,
         },
     };
+
+    /// The signing certificate chain (end-entity + issuer) that the
+    /// `response_*.der` fixtures were issued for. Used to satisfy the RFC 6960
+    /// certId binding check.
+    fn signing_cert_chain() -> Vec<Vec<u8>> {
+        let pem = include_bytes!("../../../tests/fixtures/crypto/ocsp/ocsp_chain.pem");
+        pem::parse_many(pem)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.into_contents())
+            .collect()
+    }
 
     #[test]
     #[cfg_attr(
@@ -429,8 +510,13 @@ mod tests {
 
         let test_time = Utc.with_ymd_and_hms(2023, 2, 1, 8, 0, 0).unwrap();
 
-        let ocsp_data =
-            OcspResponse::from_der_checked(rsp_data, Some(test_time), &mut validation_log).unwrap();
+        let ocsp_data = OcspResponse::from_der_checked(
+            rsp_data,
+            &signing_cert_chain(),
+            Some(test_time),
+            &mut validation_log,
+        )
+        .unwrap();
 
         assert_eq!(ocsp_data.revoked_at, None);
         assert!(ocsp_data.ocsp_certs.is_some());
@@ -449,11 +535,48 @@ mod tests {
 
         let test_time = Utc.with_ymd_and_hms(2024, 2, 1, 8, 0, 0).unwrap();
 
-        let ocsp_data =
-            OcspResponse::from_der_checked(rsp_data, Some(test_time), &mut validation_log).unwrap();
+        let ocsp_data = OcspResponse::from_der_checked(
+            rsp_data,
+            &signing_cert_chain(),
+            Some(test_time),
+            &mut validation_log,
+        )
+        .unwrap();
 
         assert!(ocsp_data.revoked_at.is_some());
         assert!(validation_log.has_status(SIGNING_CREDENTIAL_REVOKED));
+    }
+
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn revoked_status_uses_current_uri() {
+        // OCSP status codes must identify the claim signature box (the
+        // tracker's current URI), not a placeholder label.
+        let rsp_data = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_revoked.der");
+        let signature_uri = "self#jumbf=/c2pa/urn:c2pa:test/c2pa.signature";
+
+        let mut validation_log = StatusTracker::default();
+        validation_log.push_current_uri(signature_uri);
+
+        let test_time = Utc.with_ymd_and_hms(2024, 2, 1, 8, 0, 0).unwrap();
+
+        OcspResponse::from_der_checked(
+            rsp_data,
+            &signing_cert_chain(),
+            Some(test_time),
+            &mut validation_log,
+        )
+        .unwrap();
+
+        let item = validation_log
+            .logged_items()
+            .iter()
+            .find(|item| item.validation_status.as_deref() == Some(SIGNING_CREDENTIAL_REVOKED))
+            .expect("SIGNING_CREDENTIAL_REVOKED log item");
+        assert_eq!(item.label, signature_uri);
     }
 
     #[test]
@@ -468,12 +591,23 @@ mod tests {
 
         let test_time = Utc.with_ymd_and_hms(2024, 2, 1, 8, 0, 0).unwrap();
 
-        let ocsp_data =
-            OcspResponse::from_der_checked(rsp_data, Some(test_time), &mut validation_log).unwrap();
+        let ocsp_data = OcspResponse::from_der_checked(
+            rsp_data,
+            &signing_cert_chain(),
+            Some(test_time),
+            &mut validation_log,
+        )
+        .unwrap();
 
         assert!(ocsp_data.revoked_at.is_none());
-        assert!(validation_log.has_any_error());
         assert!(validation_log.has_status(SIGNING_CREDENTIAL_OCSP_UNKNOWN));
+
+        let item = validation_log
+            .logged_items()
+            .iter()
+            .find(|item| item.validation_status.as_deref() == Some(SIGNING_CREDENTIAL_OCSP_UNKNOWN))
+            .expect("SIGNING_CREDENTIAL_OCSP_UNKNOWN log item");
+        assert_eq!(item.kind, LogKind::Informational);
     }
 
     /// Crafted OcspResponse DER with `certs = Some([])` (present but empty).
@@ -524,7 +658,7 @@ mod tests {
         // `basic_response.certs = Some([])`.  The fix uses `.first()` and
         // returns Ok(output) (with ocsp_certs = None) instead of panicking.
         let mut log = StatusTracker::default();
-        let result = OcspResponse::from_der_checked(OCSP_EMPTY_CERTS_DER, None, &mut log);
+        let result = OcspResponse::from_der_checked(OCSP_EMPTY_CERTS_DER, &[], None, &mut log);
         assert!(result.is_ok());
         // certs were empty so no cert data flows through
         assert!(result.unwrap().ocsp_certs.is_none());
@@ -542,11 +676,49 @@ mod tests {
 
         let test_time = Utc.with_ymd_and_hms(2026, 2, 1, 8, 0, 0).unwrap();
 
-        let ocsp_data =
-            OcspResponse::from_der_checked(rsp_data, Some(test_time), &mut validation_log).unwrap();
+        let ocsp_data = OcspResponse::from_der_checked(
+            rsp_data,
+            &signing_cert_chain(),
+            Some(test_time),
+            &mut validation_log,
+        )
+        .unwrap();
 
         assert!(ocsp_data.revoked_at.is_none());
         assert!(validation_log.has_any_error());
         assert!(validation_log.has_status(SIGNING_CREDENTIAL_REVOKED));
+    }
+
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn good_response_for_wrong_cert_is_ignored() {
+        // Regression test for VULN-34623: a validly-signed "good" OCSP response
+        // whose certId does not identify the signing certificate must not
+        // produce a SIGNING_CREDENTIAL_NOT_REVOKED attestation.
+        let rsp_data = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_good.der");
+
+        let mut validation_log = StatusTracker::default();
+
+        let test_time = Utc.with_ymd_and_hms(2023, 2, 1, 8, 0, 0).unwrap();
+
+        // Reverse the chain so chain[0] is the root, whose serial number does
+        // not match the response's certId serial number.
+        let mut wrong_chain = signing_cert_chain();
+        wrong_chain.reverse();
+
+        let ocsp_data = OcspResponse::from_der_checked(
+            rsp_data,
+            &wrong_chain,
+            Some(test_time),
+            &mut validation_log,
+        )
+        .unwrap();
+
+        // No single response bound to the signer, so no status was learned.
+        assert!(ocsp_data.certificate_serial_num.is_empty());
+        assert!(!validation_log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
     }
 }

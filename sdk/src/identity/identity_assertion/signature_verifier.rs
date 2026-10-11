@@ -18,6 +18,7 @@ use serde::Serialize;
 
 use crate::{
     identity::{SignerPayload, ValidationError},
+    maybe_send_sync::MaybeSync,
     status_tracker::StatusTracker,
 };
 
@@ -29,7 +30,7 @@ use crate::{
 /// from the credential and signature.
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-pub trait SignatureVerifier: Sync {
+pub trait SignatureVerifier: MaybeSync {
     /// The `Output` type provides credential-type specific information that is
     /// derived from the signature. Typically, this describes the named actor,
     /// but may also contain information about the time of signing or the

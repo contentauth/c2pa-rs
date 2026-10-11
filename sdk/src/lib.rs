@@ -196,13 +196,11 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 // Public modules
 /// The `assertions` module contains the definitions for the assertions that are part of the C2PA specification.
 pub mod assertions;
-
 /// The `cose_sign` module contains the definitions for the COSE signing algorithms.
 pub mod cose_sign;
 
 /// The `create_signer` module contains the definitions for the signers that are part of the C2PA specification.
 pub mod create_signer;
-
 /// Cryptography primitives.
 #[doc(hidden)]
 pub mod crypto;
@@ -243,11 +241,30 @@ pub use assertions::DigitalSourceType;
 #[doc(inline)]
 pub use assertions::Relationship;
 pub use builder::{Builder, BuilderIntent, HashType, ManifestDefinition};
+pub use c2pa_raw_crypto::{RawSignatureValidationError, RawSigner, RawSignerError, SigningAlg};
 pub use callback_signer::{CallbackFunc, CallbackSigner};
 pub use claim_generator_info::ClaimGeneratorInfo;
 #[doc(inline)]
 pub use context::{Context, ProgressCallbackFunc, ProgressPhase};
-pub use crypto::raw_signature::SigningAlg;
+
+/// JSON Schema proxy for [`SigningAlg`].
+///
+/// `c2pa_raw_crypto::SigningAlg` intentionally does not depend on `schemars`,
+/// so it does not implement [`schemars::JsonSchema`]. SDK types that expose a
+/// `SigningAlg` in their JSON schema reference this mirror (whose variants match
+/// `SigningAlg`'s serialized form) via `#[schemars(with = "...")]`.
+#[cfg(feature = "json_schema")]
+#[derive(schemars::JsonSchema)]
+#[allow(dead_code)]
+pub(crate) enum SigningAlgSchema {
+    Es256,
+    Es384,
+    Es512,
+    Ps256,
+    Ps384,
+    Ps512,
+    Ed25519,
+}
 pub use error::{Error, Result};
 #[doc(hidden)]
 pub use external_manifest::ManifestPatchCallback;
@@ -290,10 +307,12 @@ pub(crate) mod manifest_assertion;
 pub(crate) mod manifest_store_report;
 /// The `maybe_send_sync` module contains traits for conditional Send bounds based on target architecture.
 pub(crate) mod maybe_send_sync;
+pub(crate) mod read_seek;
 pub(crate) mod reader;
 pub(crate) mod resource_store;
 pub(crate) mod salt;
 pub(crate) mod signer;
+pub(crate) mod spec_versions;
 pub(crate) mod store;
 
 pub(crate) mod utils;

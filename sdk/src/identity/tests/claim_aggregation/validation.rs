@@ -26,9 +26,13 @@ use wasm_bindgen_test::wasm_bindgen_test;
 use crate::{
     identity::{
         claim_aggregation::{IcaSignatureVerifier, IcaValidationError},
-        tests::fixtures::claim_aggregation::ica_credential_example,
+        tests::{
+            fixtures::claim_aggregation::ica_credential_example, ica_test_context,
+            ICA_FIXTURE_JWK_ISSUER,
+        },
         IdentityAssertion, ValidationError,
     },
+    settings::TrustAnchor,
     status_tracker::{LogKind, StatusTracker},
 };
 
@@ -66,7 +70,8 @@ async fn success_case() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let context = ica_test_context();
+    let isv = IcaSignatureVerifier::new(&context);
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -130,7 +135,8 @@ async fn invalid_cose_sign1() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let context = ica_test_context();
+    let isv = IcaSignatureVerifier::new(&context);
 
     let ica_err = ia.validate(manifest, &mut st, &isv).await.unwrap_err();
 
@@ -210,7 +216,8 @@ async fn invalid_cose_sign_alg() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let context = ica_test_context();
+    let isv = IcaSignatureVerifier::new(&context);
 
     let ica_err = ia.validate(manifest, &mut st, &isv).await.unwrap_err();
 
@@ -272,7 +279,8 @@ async fn missing_cose_sign_alg() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let context = ica_test_context();
+    let isv = IcaSignatureVerifier::new(&context);
 
     let ica_err = ia.validate(manifest, &mut st, &isv).await.unwrap_err();
 
@@ -335,7 +343,8 @@ async fn invalid_content_type() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let context = ica_test_context();
+    let isv = IcaSignatureVerifier::new(&context);
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -398,7 +407,8 @@ async fn invalid_content_type_assigned() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let context = ica_test_context();
+    let isv = IcaSignatureVerifier::new(&context);
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -460,7 +470,8 @@ async fn missing_content_type() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let context = ica_test_context();
+    let isv = IcaSignatureVerifier::new(&context);
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -534,7 +545,8 @@ async fn missing_vc() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let context = ica_test_context();
+    let isv = IcaSignatureVerifier::new(&context);
 
     let ica_err = ia.validate(manifest, &mut st, &isv).await.unwrap_err();
 
@@ -592,7 +604,8 @@ async fn invalid_vc() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let context = ica_test_context();
+    let isv = IcaSignatureVerifier::new(&context);
 
     let ica_err = ia.validate(manifest, &mut st, &isv).await.unwrap_err();
 
@@ -659,7 +672,8 @@ async fn invalid_issuer_did() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let context = ica_test_context();
+    let isv = IcaSignatureVerifier::new(&context);
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -724,7 +738,8 @@ async fn unsupported_did_method() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let context = ica_test_context();
+    let isv = IcaSignatureVerifier::new(&context);
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -787,7 +802,8 @@ async fn unresolvable_did() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let context = ica_test_context();
+    let isv = IcaSignatureVerifier::new(&context);
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -850,7 +866,8 @@ async fn did_doc_without_assertion_method() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let context = ica_test_context();
+    let isv = IcaSignatureVerifier::new(&context);
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -886,16 +903,126 @@ async fn did_doc_without_assertion_method() {
     assert!(log_items.next().is_none());
 }
 
-// #[test]
-// #[ignore]
-// fn did_is_untrusted() {
-//     // The validator SHALL verify that the issuer’s DID is present or can be
-//     // traced to its preconfigured list of trustable entities. If the issuer
-// is     // not verifiably trusted, the validator MUST issue the failure code
-//     // `cawg.ica.untrusted_issuer` but MAY continue validation.
+#[c2pa_test_async]
+async fn did_is_untrusted() {
+    // The validator SHALL verify that the issuer's DID is present or can be
+    // traced to its preconfigured list of trustable entities. If the issuer is
+    // not verifiably trusted, the validator MUST issue the failure code
+    // `cawg.ica.untrusted_issuer` but MAY continue validation.
 
-//     // TO DO (CAI-7980): Add option to configure trusted ICA issuers.
-// }
+    let format = "image/jpeg";
+    let test_image = include_bytes!("../fixtures/claim_aggregation/ica_validation/success.jpg");
+
+    let mut test_image = Cursor::new(test_image);
+
+    let reader = crate::identity::tests::read_manifest(format, &mut test_image).await;
+    assert_eq!(reader.validation_status(), None);
+
+    let manifest = reader.active_manifest().unwrap();
+    let mut st = StatusTracker::default();
+    let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
+
+    // Should find exactly one identity assertion.
+    let ia = ia_iter.next().unwrap().unwrap();
+    assert!(ia_iter.next().is_none());
+    drop(ia_iter);
+
+    // Use a verifier that trusts NO issuers, so this credential's self-issued
+    // `did:jwk` is treated as untrusted. (This mirrors the secure production
+    // default; the allow-list must be set explicitly to empty here because the
+    // `#[cfg(test)]` default trusts the bundled fixture issuers.)
+    let mut settings = crate::settings::Settings::default();
+    settings.trust.clear_trusted_ica_issuers();
+    let context = crate::Context::new().with_settings(settings).unwrap();
+    let isv = IcaSignatureVerifier::new(&context);
+
+    // The credential is otherwise well-formed and its signature is valid, so
+    // validation still succeeds and returns the credential.
+    let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
+
+    let expected_identities = ica_credential_example::ica_example_identities();
+    let subject = ica_vc.credential_subjects.first();
+    assert_eq!(subject.verified_identities, expected_identities);
+
+    // Because the issuer is untrusted, the `cawg.ica.credential_valid` success
+    // code MUST NOT be issued. The only logged item is the untrusted-issuer
+    // notice, which is recorded informationally (not as a failure) because it is
+    // scoped to the identity assertion and does not fail the manifest.
+    let mut log_items = st.logged_items().iter();
+
+    let li = log_items.next().unwrap();
+
+    assert_eq!(li.kind, LogKind::Informational);
+    assert_eq!(
+        li.label,
+        "self#jumbf=/c2pa/test:urn:uuid:71b584f1-da28-4bf7-89a8-417be6bb07ac/c2pa.assertions/cawg.identity"
+    );
+    assert_eq!(li.description, "ICA issuer is not a trusted issuer");
+    assert_eq!(li.crate_name, "c2pa");
+    assert_eq!(
+        li.validation_status.as_ref().unwrap(),
+        "cawg.ica.untrusted_issuer"
+    );
+
+    assert!(log_items.next().is_none());
+}
+
+#[c2pa_test_async]
+async fn issuer_trusted_on_allow_list() {
+    // When the issuer's DID is present on the configured allow-list, no
+    // untrusted-issuer failure is generated and the credential is reported as
+    // valid.
+
+    let format = "image/jpeg";
+    let test_image = include_bytes!("../fixtures/claim_aggregation/ica_validation/success.jpg");
+
+    let mut test_image = Cursor::new(test_image);
+
+    let reader = crate::identity::tests::read_manifest(format, &mut test_image).await;
+    assert_eq!(reader.validation_status(), None);
+
+    let manifest = reader.active_manifest().unwrap();
+    let mut st = StatusTracker::default();
+    let mut ia_iter = IdentityAssertion::from_manifest(manifest, &mut st);
+
+    let ia = ia_iter.next().unwrap().unwrap();
+    assert!(ia_iter.next().is_none());
+    drop(ia_iter);
+
+    // Trust exactly the issuer that signed this fixture.
+    // CAWG anchors are separate from Signer anchors so we need to add CAWG anchor.
+    // Let's just add a CAWG specific anchor..
+    let mut settings = crate::settings::get_thread_local_settings();
+    if let Some(anchors) = &mut settings.trust.anchors {
+        // make sure there is a CAWG trust anchor with the ICA fixture issuers.
+        let cawg_anchor = TrustAnchor {
+            trust_kind: crate::settings::TrustListKind::CAWG,
+            trusted_ica_issuers: Some(vec![ICA_FIXTURE_JWK_ISSUER.to_string()]),
+            trust_uri: Some("cawg_trust".to_string()),
+            ..Default::default()
+        };
+
+        anchors.push(cawg_anchor);
+    }
+    let context = crate::Context::new().with_settings(settings).unwrap();
+    let isv = IcaSignatureVerifier::new(&context);
+
+    let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
+    assert_eq!(ica_vc.issuer, ICA_FIXTURE_JWK_ISSUER);
+
+    // The only logged item is the `cawg.ica.credential_valid` success code.
+    let mut log_items = st.logged_items().iter();
+
+    let li = log_items.next().unwrap();
+
+    assert_eq!(li.kind, LogKind::Success);
+    assert_eq!(
+        li.validation_status.as_ref().unwrap(),
+        "cawg.ica.credential_valid"
+    );
+
+    assert!(log_items.next().is_none());
+}
 
 #[c2pa_test_async]
 async fn signature_mismatch() {
@@ -926,7 +1053,8 @@ async fn signature_mismatch() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let context = ica_test_context();
+    let isv = IcaSignatureVerifier::new(&context);
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -994,7 +1122,8 @@ async fn valid_time_stamp() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let context = ica_test_context();
+    let isv = IcaSignatureVerifier::new(&context);
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -1081,7 +1210,8 @@ async fn invalid_time_stamp() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let context = ica_test_context();
+    let isv = IcaSignatureVerifier::new(&context);
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -1150,7 +1280,8 @@ async fn valid_from_missing() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let context = ica_test_context();
+    let isv = IcaSignatureVerifier::new(&context);
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -1218,7 +1349,8 @@ async fn valid_from_in_future() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let context = ica_test_context();
+    let isv = IcaSignatureVerifier::new(&context);
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -1291,7 +1423,8 @@ async fn valid_from_after_time_stamp() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let context = ica_test_context();
+    let isv = IcaSignatureVerifier::new(&context);
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -1387,7 +1520,8 @@ async fn valid_until_in_future() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let context = ica_test_context();
+    let isv = IcaSignatureVerifier::new(&context);
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -1456,7 +1590,8 @@ async fn valid_until_in_past() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let context = ica_test_context();
+    let isv = IcaSignatureVerifier::new(&context);
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 
@@ -1544,7 +1679,8 @@ async fn signer_payload_mismatch() {
     drop(ia_iter);
 
     // And that identity assertion should be valid for this manifest.
-    let isv = IcaSignatureVerifier {};
+    let context = ica_test_context();
+    let isv = IcaSignatureVerifier::new(&context);
 
     let ica_vc = ia.validate(manifest, &mut st, &isv).await.unwrap();
 

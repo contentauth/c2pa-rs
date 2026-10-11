@@ -4,8 +4,6 @@
 
 #[cfg(feature = "file_io")]
 use std::fs;
-#[cfg(feature = "file_io")]
-use std::path::PathBuf;
 use std::{
     io::{Read, Seek, SeekFrom, Write},
     sync::{
@@ -27,30 +25,28 @@ use super::*;
 #[cfg(feature = "file_io")]
 use crate::{
     assertion::AssertionJson,
-    assertions::{labels::BOX_HASH, BoxHash, DataHash},
-    asset_io::HashBlockObjectType,
-    jumbf_io::{get_assetio_handler_from_path, load_jumbf_from_file, save_jumbf_to_file},
+    assertions::{labels::BOX_HASH, BoxHash},
+    hashed_uri::HashedUri,
+    jumbf_io::get_assetio_handler_from_path,
     utils::{
         hash_utils::Hasher,
         io_utils::tempdirectory,
-        test::{temp_dir_path, write_jpeg_placeholder_file},
+        test::{temp_dir_path, write_jpeg_placeholder_file, TEST_USER_ASSERTION},
         test_signer::test_cawg_signer,
     },
 };
 use crate::{
     assertions::{Action, Actions, Uuid},
-    asset_io::CAIReadWrite,
-    claim::{AssertionStoreJsonFormat, ClaimAssetData},
-    crypto::raw_signature::SigningAlg,
-    hashed_uri::HashedUri,
+    claim::AssertionStoreJsonFormat,
     jumbf_io::load_jumbf_from_stream,
+    settings::SettingsValidate,
     status_tracker::{LogItem, StatusTracker},
     utils::{
         patch::patch_bytes,
-        test::{create_test_claim, create_test_streams, fixture_path, TEST_USER_ASSERTION},
+        test::{create_test_claim, create_test_streams, fixture_path},
         test_signer::{async_test_signer, test_signer},
     },
-    ClaimGeneratorInfo, DigitalSourceType,
+    ClaimGeneratorInfo, DigitalSourceType, SigningAlg,
 };
 
 fn create_editing_claim(claim: &mut Claim) -> Result<&mut Claim> {
@@ -338,6 +334,7 @@ fn test_unknown_asset_type_generation() {
 }
 
 #[test]
+#[cfg(feature = "file_io")]
 fn test_detects_unverifiable_signature() {
     let context = crate::context::Context::new();
 
@@ -391,7 +388,7 @@ fn test_detects_unverifiable_signature() {
 #[test]
 #[cfg(feature = "file_io")]
 fn test_sign_with_expired_cert() {
-    use crate::{create_signer, crypto::raw_signature::SigningAlg};
+    use crate::{create_signer, SigningAlg};
 
     let context = Context::new();
 
@@ -444,12 +441,15 @@ fn test_jumbf_replacement_generation() {
     let op = temp_dir_path(&temp_dir, "replacement_test.jpg");
 
     // grab jumbf from original
-    let original_jumbf = load_jumbf_from_file(&ap).unwrap();
+    let original_jumbf = context.io().read_c2pa_from_file(&ap).unwrap();
 
     // replace with new jumbf
-    save_jumbf_to_file(&jumbf_bytes, &ap, Some(&op)).unwrap();
+    context
+        .io()
+        .write_c2pa_to_file(&jumbf_bytes, &ap, Some(&op))
+        .unwrap();
 
-    let saved_jumbf = load_jumbf_from_file(&op).unwrap();
+    let saved_jumbf = context.io().read_c2pa_from_file(&op).unwrap();
 
     // saved data should be the new data
     assert_eq!(&jumbf_bytes, &saved_jumbf);
@@ -768,6 +768,7 @@ fn test_png_compressed_jumbf_generation() {
 }
 
 #[test]
+#[cfg(feature = "file_io")]
 fn test_get_data_boxes() {
     // Create a new claim.
     use crate::jumbf::labels::to_relative_uri;
@@ -1422,11 +1423,17 @@ fn test_unsupported_type_without_external_manifest() {
     let (format, mut input_stream, _output_stream) = create_test_streams("unsupported_type.txt");
     let mut report = StatusTracker::default();
     let result = Store::from_stream(format, &mut input_stream, &mut report, &context);
-    assert!(matches!(result, Err(Error::UnsupportedType)));
+    // `unsupported_type.txt` is `.txt`/`text/plain`: unsupported by default, but a real
+    // (unsigned) type once the experimental plain-text handler registers that extension.
+    if cfg!(feature = "unstable_plain_text") {
+        assert!(matches!(result, Err(Error::JumbfNotFound)));
+        assert!(report.has_error(Error::JumbfNotFound));
+    } else {
+        assert!(matches!(result, Err(Error::UnsupportedType)));
+        assert!(report.has_error(Error::UnsupportedType));
+    }
     println!("Error report: {report:?}");
     assert!(!report.logged_items().is_empty());
-
-    assert!(report.has_error(Error::UnsupportedType));
 }
 
 fn make_brotli_bomb_jumbf(decompressed_size: usize) -> Vec<u8> {
@@ -1488,6 +1495,207 @@ fn test_from_jumbf_with_context_rejects_brotli_bomb() {
     );
 
     assert!(result.is_err());
+}
+
+#[test]
+fn test_from_jumbf_reads_c2md_standard_manifest() {
+    use crate::{
+        jumbf::boxes::{CAI_MANIFEST_C2MD_UUID, CAI_MANIFEST_UUID},
+        utils::test::create_test_store,
+    };
+
+    // Per C2PA spec 11.2.2, a manifest using the c2md JUMBF type UUID is a
+    // standard manifest that consumers shall accept. Build a normal (c2ma)
+    // manifest, rewrite its superbox type UUID to c2md, and confirm the
+    // store still reads the manifest instead of silently skipping it.
+    let store = create_test_store().unwrap();
+    let jumbf = store.to_jumbf_internal(0).unwrap();
+
+    // Flip the manifest superbox type UUID from c2ma to c2md in place.
+    let c2ma = hex::decode(CAI_MANIFEST_UUID).unwrap();
+    let c2md = hex::decode(CAI_MANIFEST_C2MD_UUID).unwrap();
+    let pos = jumbf
+        .windows(c2ma.len())
+        .position(|w| w == c2ma.as_slice())
+        .expect("manifest c2ma UUID present");
+    let mut patched = jumbf.clone();
+    patched[pos..pos + c2md.len()].copy_from_slice(&c2md);
+
+    let mut log = StatusTracker::default();
+    let restored = Store::from_jumbf(&patched, &mut log).expect("c2md manifest should be read");
+    assert_eq!(
+        restored.claims().len(),
+        store.claims().len(),
+        "c2md manifest should be read as a standard manifest"
+    );
+}
+
+#[test]
+fn test_c2md_manifest_preserved_on_round_trip() {
+    use crate::{
+        jumbf::boxes::{CAI_MANIFEST_C2MD_UUID, CAI_MANIFEST_UUID},
+        utils::test::create_test_store,
+    };
+
+    // A c2md manifest must keep its c2md tag if the store is
+    // re-serialized (e.g. when it is copied as part of adding an update
+    // manifest or embedding it as an ingredient's manifest store) -
+    // claim generators must not synthesize new c2ma/c2um boxes for data
+    // that was never theirs to retag.
+    let store = create_test_store().unwrap();
+    let jumbf = store.to_jumbf_internal(0).unwrap();
+
+    let c2ma = hex::decode(CAI_MANIFEST_UUID).unwrap();
+    let c2md = hex::decode(CAI_MANIFEST_C2MD_UUID).unwrap();
+    let pos = jumbf
+        .windows(c2ma.len())
+        .position(|w| w == c2ma.as_slice())
+        .expect("manifest c2ma UUID present");
+    let mut patched = jumbf.clone();
+    patched[pos..pos + c2md.len()].copy_from_slice(&c2md);
+
+    let mut log = StatusTracker::default();
+    let restored = Store::from_jumbf(&patched, &mut log).expect("c2md manifest should be read");
+
+    // Re-serialize the store that was read from a c2md-tagged manifest.
+    let round_tripped = restored.to_jumbf_internal(0).unwrap();
+
+    let c2md_count = round_tripped
+        .windows(c2md.len())
+        .filter(|w| *w == c2md.as_slice())
+        .count();
+    let c2ma_count = round_tripped
+        .windows(c2ma.len())
+        .filter(|w| *w == c2ma.as_slice())
+        .count();
+
+    assert_eq!(
+        c2md_count, 1,
+        "c2md tag should survive re-serialization of the store"
+    );
+    assert_eq!(
+        c2ma_count, 0,
+        "a c2md manifest must not be rewritten as c2ma on round-trip"
+    );
+}
+
+#[test]
+fn test_manifest_box_hash_uses_box_uuid_not_label() {
+    use crate::utils::test::create_test_store;
+
+    // Core boxes (claim, signature, assertion store) are located by their
+    // JUMBF type UUID, so the manifest box hash must be regenerated from the
+    // same UUIDs. Relabeling the signature box as `c2pa.databoxes` while
+    // leaving its type UUID intact must not change the manifest box hash: if
+    // the box order were derived from the label, the signature box would be
+    // dropped from the regenerated manifest and byte-distinct parents could
+    // collapse to the same hash, defeating ingredient validation
+    // (vuln-37402).
+    let store = create_test_store().unwrap();
+    let jumbf = store.to_jumbf_internal(0).unwrap();
+
+    // Baseline: load the untouched manifest and record its box hash.
+    let mut log = StatusTracker::default();
+    let baseline = Store::from_jumbf(&jumbf, &mut log).unwrap();
+    let baseline_pc = baseline.provenance_claim().unwrap();
+    let baseline_hash = baseline
+        .get_manifest_box_hashes(baseline_pc)
+        .manifest_box_hash;
+    assert!(!baseline_hash.is_empty());
+
+    // Relabel the signature description box `c2pa.signature` ->
+    // `c2pa.databoxes` (same byte length, null terminator preserved) while
+    // leaving its type UUID unchanged. It is the last occurrence of the
+    // label in the stream, after the claim and its placeholder signature.
+    let old_label = b"c2pa.signature\0";
+    let new_label = b"c2pa.databoxes";
+    let pos = jumbf
+        .windows(old_label.len())
+        .rposition(|w| w == old_label)
+        .expect("signature box label present");
+    let mut patched = jumbf.clone();
+    patched[pos..pos + new_label.len()].copy_from_slice(new_label);
+
+    let mut log = StatusTracker::default();
+    let tampered = Store::from_jumbf(&patched, &mut log).unwrap();
+    let tampered_pc = tampered.provenance_claim().unwrap();
+    let tampered_hash = tampered
+        .get_manifest_box_hashes(tampered_pc)
+        .manifest_box_hash;
+
+    assert_eq!(
+        baseline_hash, tampered_hash,
+        "manifest box hash must be derived from box UUIDs, not labels"
+    );
+}
+
+#[test]
+fn test_duplicate_assertion_store_box_is_rejected() {
+    use crate::{
+        jumbf::boxes::{CAI_ASSERTION_STORE_UUID, CAI_MANIFEST_UUID},
+        utils::test::create_test_store,
+    };
+
+    // A manifest may contain only one of each core box. `manifest_map` is keyed by box
+    // UUID (last-wins), so a second assertion store would be dropped from the map while
+    // still counted in `box_order` and regenerated from the single surviving box. That
+    // lets two byte-distinct manifests collapse to the same manifest box hash — the
+    // vuln-37402 ingredient parent-swap primitive. Duplicating the assertion store box
+    // (editing manifest-store bytes needs no key) must now be rejected at parse time.
+
+    // Locate a JUMBF superbox by its description-box type UUID, returning its byte range.
+    // Superbox layout: [size:4][b"jumb"][desc_size:4][b"jumd"][uuid:16]..., so the
+    // 16-byte UUID sits 4 bytes after the `jumd` marker and the enclosing superbox
+    // starts 12 bytes before it.
+    fn superbox_range(jumbf: &[u8], uuid_hex: &str) -> (usize, usize) {
+        let mut needle = b"jumd".to_vec();
+        needle.extend_from_slice(&hex::decode(uuid_hex).unwrap());
+        let jumd_pos = jumbf
+            .windows(needle.len())
+            .position(|w| w == needle.as_slice())
+            .expect("superbox present");
+        let start = jumd_pos - 12;
+        let size = u32::from_be_bytes(jumbf[start..start + 4].try_into().unwrap()) as usize;
+        (start, size)
+    }
+
+    fn add_u32(buf: &mut [u8], at: usize, delta: usize) {
+        let v = u32::from_be_bytes(buf[at..at + 4].try_into().unwrap());
+        buf[at..at + 4].copy_from_slice(&(v + delta as u32).to_be_bytes());
+    }
+
+    let store = create_test_store().unwrap();
+    let jumbf = store.to_jumbf_internal(0).unwrap();
+
+    // Sanity: the untouched manifest reads back fine.
+    let mut log = StatusTracker::default();
+    Store::from_jumbf(&jumbf, &mut log).expect("baseline manifest should read");
+
+    // Duplicate the assertion store superbox in place, right after the original.
+    let (as_start, as_len) = superbox_range(&jumbf, CAI_ASSERTION_STORE_UUID);
+    let as_end = as_start + as_len;
+    let (manifest_start, _) = superbox_range(&jumbf, CAI_MANIFEST_UUID);
+
+    let mut patched = Vec::with_capacity(jumbf.len() + as_len);
+    patched.extend_from_slice(&jumbf[..as_end]);
+    patched.extend_from_slice(&jumbf[as_start..as_end]);
+    patched.extend_from_slice(&jumbf[as_end..]);
+
+    // Grow the enclosing manifest superbox and the outer CAI block to cover the copy.
+    add_u32(&mut patched, manifest_start, as_len);
+    add_u32(&mut patched, 0, as_len);
+
+    let mut log = StatusTracker::default();
+    let result = Store::from_jumbf(&patched, &mut log);
+    assert!(
+        matches!(
+            result,
+            Err(Error::InvalidClaim(
+                InvalidClaimError::C2paMultipleManifestBoxes
+            ))
+        ),
+        "duplicate assertion store must be rejected, got {result:?}"
+    );
 }
 
 #[test]
@@ -1756,6 +1964,68 @@ fn test_update_manifest_v1() {
     assert!(!report.has_any_error());
 }
 
+#[test]
+fn test_bad_update_manifest_v1() {
+    use crate::{hashed_uri::HashedUri, utils::test::create_test_store_v1};
+
+    let context = crate::context::Context::new();
+
+    let (format, mut input_stream, mut output_stream) = create_test_streams("earth_apollo17.jpg");
+    let signer = test_signer(SigningAlg::Ps256);
+
+    // get default store with default claim
+    let mut store = create_test_store_v1().unwrap();
+
+    // save to output
+    store
+        .save_to_stream(
+            format,
+            &mut input_stream,
+            &mut output_stream,
+            signer.as_ref(),
+            &context,
+        )
+        .unwrap();
+
+    let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+    // read back in
+    output_stream.rewind().unwrap();
+    let restored_store =
+        Store::from_stream(format, &mut output_stream, &mut report, &context).unwrap();
+    let pc = restored_store.provenance_claim().unwrap();
+
+    // should be a regular manifest
+    assert!(!pc.update_manifest());
+
+    // create a new update manifest
+    let mut claim = Claim::new("adobe unit test", Some("update_manifest"), 1);
+    output_stream.rewind().unwrap();
+    let mut new_store = Store::load_ingredient_to_claim(
+        &mut claim,
+        &load_jumbf_from_stream(format, &mut output_stream).unwrap(),
+        None,
+        &context,
+    )
+    .unwrap();
+
+    let ingredient_hashes = new_store.get_manifest_box_hashes(pc);
+    let parent_hashed_uri = HashedUri::new(
+        restored_store.provenance_path().unwrap(),
+        Some(pc.alg().to_string()),
+        &ingredient_hashes.manifest_box_hash,
+    );
+
+    // missing signature Hashed URI.  Should fail
+    let ingredient = Ingredient::new_v3(Relationship::ParentOf)
+        .set_parent()
+        .set_c2pa_manifest_from_hashed_uri(Some(parent_hashed_uri));
+
+    claim.add_assertion(&ingredient).unwrap();
+
+    // won't serialize because it must have activeManifest
+    assert!(new_store.commit_update_manifest(claim).is_err());
+}
+
 ///Test for Update Manifest V2
 #[test]
 fn test_update_manifest_v2() {
@@ -1889,6 +2159,7 @@ fn test_update_manifest_v2() {
 }
 
 #[test]
+#[cfg(feature = "file_io")]
 fn test_update_manifest_v2_bmff() {
     use crate::{
         hashed_uri::HashedUri, jumbf::labels::to_signature_uri, ClaimGeneratorInfo,
@@ -2180,7 +2451,7 @@ fn test_ingredient_conflict_with_current_manifest() {
     claim.add_claim_generator_info(cgi);
 
     // created redacted uri
-    let redacted_uri = to_assertion_uri(pc.label(), labels::SCHEMA_ORG);
+    let redacted_uri = to_assertion_uri(pc.label(), labels::SCHEMA_ORG_INTERNAL);
 
     let (manifest_bytes, _) =
         Store::load_jumbf_from_stream(format, &mut Cursor::new(ingredient_vec.clone()), &context)
@@ -2340,8 +2611,81 @@ fn test_ingredient_conflict_with_current_manifest() {
     // make sure the redaction stuck
     let redacted_claim = resolved_store.get_claim(pc.label()).unwrap();
     assert!(redacted_claim
-        .get_assertion(labels::SCHEMA_ORG, 0)
+        .get_assertion(labels::SCHEMA_ORG_INTERNAL, 0)
         .is_none());
+}
+
+#[test]
+fn test_ingredient_labels_versioned_on_conflict() {
+    // A manifest URN identifies a manifest, not its bytes.
+    // The same manifest can reach one asset by two routes
+    // and have only one of the copies change along the way.
+    // Two ingredients (from the different paths)
+    // then carry the same label with different (bytes) content.
+    //
+    // See https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_copying_existing_manifests
+    // (C2PA spec 2.4 section 18.16.12)
+    //
+    // Here the three ingredients differ by databox content, triggering relabelling.
+    // The first conflict must start at version 1 instead of erroring.
+    let context = Context::new();
+    let signer = test_signer(SigningAlg::Ps256);
+    let shared_label = "urn:c2pa:11111111-2222-4333-8444-555555555555";
+
+    let signed_ingredient = |variant: &str| -> Vec<u8> {
+        let mut store = Store::from_context(&Context::new());
+        let mut claim =
+            Claim::new_with_user_guid("ingredient label conflict test", shared_label, 2).unwrap();
+        claim.add_claim_generator_info(ClaimGeneratorInfo::new("conflict_test"));
+        claim
+            .add_databox("text/plain", variant.as_bytes().to_vec(), None)
+            .unwrap();
+        let actions = Actions::new()
+            .add_action(Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty));
+        claim.add_assertion(&actions).unwrap();
+        store.commit_claim(claim).unwrap();
+
+        let (format, mut input, mut output) = create_test_streams("earth_apollo17.jpg");
+        store
+            .save_to_stream(format, &mut input, &mut output, signer.as_ref(), &context)
+            .unwrap();
+        output.rewind().unwrap();
+        let (bytes, _) = Store::load_jumbf_from_stream(format, &mut output, &context).unwrap();
+        bytes
+    };
+
+    // Preparing 3 ingredient varints, which will have the same shared URN.
+    // They will have different databox content, dependent on the variant.
+    let bytes_a = signed_ingredient("variant-a");
+    let bytes_b = signed_ingredient("variant-b");
+    let bytes_c = signed_ingredient("variant-c");
+
+    let mut claim = Claim::new(
+        "ingredient label conflict test top level",
+        Some("c2pa-rs-sdk-test"),
+        2,
+    );
+    claim.add_claim_generator_info(ClaimGeneratorInfo::new("outer"));
+
+    // No conflict on this load...
+    Store::load_ingredient_to_claim(&mut claim, &bytes_a, None, &context).unwrap();
+    // First conflict happens at this load.
+    Store::load_ingredient_to_claim(&mut claim, &bytes_b, None, &context).unwrap();
+    // This is the second conflict.
+    Store::load_ingredient_to_claim(&mut claim, &bytes_c, None, &context).unwrap();
+
+    let keys: Vec<&String> = claim.claim_ingredient_store().keys().collect();
+    let has = |label: &str| keys.iter().any(|k| k.as_str() == label);
+    assert!(has(shared_label));
+    // Verifies conflict resolution labelling
+    assert!(
+        has(&format!("{shared_label}::1_1")),
+        "on first conflict, relabel should have version 1, got: {keys:?}"
+    );
+    assert!(
+        has(&format!("{shared_label}::2_1")),
+        "second conflict should relabel to version 2, got: {keys:?}"
+    );
 }
 
 #[test]
@@ -2392,7 +2736,7 @@ fn test_ingredient_conflict_with_incoming_manifest() {
     claim.add_claim_generator_info(cgi);
 
     // created redacted uri
-    let redacted_uri = to_assertion_uri(pc.label(), labels::SCHEMA_ORG);
+    let redacted_uri = to_assertion_uri(pc.label(), labels::SCHEMA_ORG_INTERNAL);
 
     let (manifest_bytes, _) =
         Store::load_jumbf_from_stream(format, &mut Cursor::new(ingredient_vec.clone()), &context)
@@ -2490,7 +2834,7 @@ fn test_ingredient_conflict_with_incoming_manifest() {
     // the confict_store is adjusted to remove the conflicting claim
     let not_redacted_claim = new_claim.claim_ingredient(pc.label()).unwrap();
     assert!(not_redacted_claim
-        .get_assertion(labels::SCHEMA_ORG, 0)
+        .get_assertion(labels::SCHEMA_ORG_INTERNAL, 0)
         .is_some());
 
     // load ingredient with redaction
@@ -2504,11 +2848,12 @@ fn test_ingredient_conflict_with_incoming_manifest() {
     // the confict_store is adjusted to remove the conflicting claim
     let redacted_claim = new_claim.claim_ingredient(pc.label()).unwrap();
     assert!(redacted_claim
-        .get_assertion(labels::SCHEMA_ORG, 0)
+        .get_assertion(labels::SCHEMA_ORG_INTERNAL, 0)
         .is_none());
 }
 
 #[test]
+#[cfg(feature = "file_io")]
 fn test_ingredient_conflicting_redactions_to_same_manifest() {
     use crate::{
         hashed_uri::HashedUri, jumbf::labels::to_signature_uri, utils::test::create_test_store_v1,
@@ -2553,7 +2898,7 @@ fn test_ingredient_conflicting_redactions_to_same_manifest() {
     claim.add_claim_generator_info(cgi.clone());
 
     // created redacted uri
-    let redacted_uri = to_assertion_uri(pc.label(), labels::SCHEMA_ORG);
+    let redacted_uri = to_assertion_uri(pc.label(), labels::SCHEMA_ORG_INTERNAL);
 
     output_stream.rewind().unwrap();
     let ingredient_vec = load_jumbf_from_stream(format, &mut output_stream).unwrap();
@@ -2732,12 +3077,220 @@ fn test_ingredient_conflicting_redactions_to_same_manifest() {
     // Check that both redactions are present
     let redacted_claim = new_claim.claim_ingredient(pc.label()).unwrap();
     assert!(redacted_claim
-        .get_assertion(labels::SCHEMA_ORG, 0)
+        .get_assertion(labels::SCHEMA_ORG_INTERNAL, 0)
         .is_none());
 
     assert!(redacted_claim
         .get_assertion(TEST_USER_ASSERTION, 0)
         .is_none());
+}
+
+// A URI listed in a claim's `redacted_assertions` must, if any box is still
+// present at that location, contain only zero bytes regardless of the box's JUMBF type
+// (spec 2.x §15.11.3.3.1). The honest builder removes the assertion entirely, so we
+// reproduce the attack by building a legitimately-redacted asset and then injecting a
+// non-zero CBOR assertion box back into the redacted slot — exactly what an attacker does
+// by editing the manifest-store bytes (no key required, since redaction suppresses the
+// ingredient manifest hash mismatch). Before the fix this forged box surfaced as a genuine
+// assertion with no failures; it must now be rejected with `assertion.notRedacted`.
+#[test]
+fn test_forged_content_in_redacted_slot_is_rejected() {
+    use crate::{
+        assertions::C2paReason, claim::ClaimAssertionType, Builder, BuilderIntent, Reader,
+    };
+
+    const TEST_IMAGE: &[u8] = include_bytes!("../../tests/fixtures/CA.jpg");
+    const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
+
+    // Read the parent so we can address the assertion we are going to redact.
+    let mut input = Cursor::new(TEST_IMAGE);
+    let parent = Reader::default()
+        .with_stream("image/jpeg", &mut input)
+        .expect("read parent");
+    let parent_manifest_label = parent.active_label().unwrap().to_owned();
+    let redacted_uri = to_assertion_uri(&parent_manifest_label, ASSERTION_LABEL);
+
+    // Produce a normal, spec-compliant redaction of that assertion.
+    let mut builder = Builder::default();
+    builder.set_intent(BuilderIntent::Edit);
+    builder.definition.redactions = Some(vec![redacted_uri.clone()]);
+    let redacted_action = Action::new("c2pa.redacted")
+        .set_reason(C2paReason::PiiPresent)
+        .set_parameter("redacted".to_owned(), redacted_uri.clone())
+        .unwrap();
+    builder.add_action(redacted_action).unwrap();
+
+    let signer = test_signer(SigningAlg::Ps256);
+    let mut output = Cursor::new(Vec::new());
+    builder
+        .sign(signer.as_ref(), "image/jpeg", &mut input, &mut output)
+        .expect("builder sign");
+    output.set_position(0);
+
+    let mut load_report = StatusTracker::default();
+    let mut store =
+        Store::from_stream("image/jpeg", &mut output, &mut load_report, &Context::new())
+            .expect("load store");
+
+    // Baseline: the honest redaction removes the assertion, so nothing sits at the
+    // redacted URI and no notRedacted failure is raised.
+    let mut baseline_report = StatusTracker::default();
+    let _ = Store::verify_store(&store, None, &mut baseline_report, &Context::new());
+    assert!(
+        !baseline_report.has_status(validation_status::ASSERTION_NOT_REDACTED),
+        "a properly redacted (removed) assertion must not raise assertion.notRedacted"
+    );
+
+    // Attack: plant a non-zero CBOR assertion box back into the redacted slot of the
+    // ingredient (parent) manifest. `data()` for this box is non-zero, so the reader must
+    // reject it even though its box type is not the C2PA Redaction UUID placeholder.
+    let alg = store
+        .get_claim(&parent_manifest_label)
+        .expect("parent claim present")
+        .alg()
+        .to_owned();
+    // A small non-zero CBOR map ({"x": 1}); the exact contents don't matter, only that
+    // they are not all-zero.
+    let forged = Assertion::from_data_cbor(ASSERTION_LABEL, &[0xa1, 0x61, 0x78, 0x01]);
+    let forged_hash = Claim::calc_assertion_box_hash(ASSERTION_LABEL, &forged, None, &alg).unwrap();
+    let forged_ca = ClaimAssertion::new(
+        forged,
+        0,
+        &forged_hash,
+        &alg,
+        None,
+        ClaimAssertionType::Created,
+    );
+    store
+        .get_claim_mut(&parent_manifest_label)
+        .expect("parent claim present")
+        .put_assertion_store(forged_ca);
+
+    let mut attack_report = StatusTracker::default();
+    let _ = Store::verify_store(&store, None, &mut attack_report, &Context::new());
+    assert!(
+        attack_report.has_status(validation_status::ASSERTION_NOT_REDACTED),
+        "forged non-zero content at a redacted URI must be rejected with assertion.notRedacted"
+    );
+}
+
+// `Reader::with_store` used to independently re-derive `assertion.notRedacted`
+// from presence alone (no zero check), by comparing the claim's declared redactions
+// against assertions that failed to resolve. That logic predates the zero-content check
+// above and had no coverage for a *present* redacted box, so it both missed the forged
+// case's already-correct failure being logged twice, and false-positived on a validly
+// zeroed box. Drive the same scenarios through `Reader::with_store` (not just
+// `Store::verify_store`) to prove that's fixed.
+#[test]
+fn test_redacted_slot_content_through_reader() {
+    use crate::{
+        assertions::C2paReason, claim::ClaimAssertionType, Builder, BuilderIntent, Reader,
+    };
+
+    const TEST_IMAGE: &[u8] = include_bytes!("../../tests/fixtures/CA.jpg");
+    const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
+
+    // Build a legitimately-redacted asset and return the loaded store plus the label
+    // of the manifest whose assertion was redacted.
+    fn build_redacted_store(image: &[u8]) -> (Store, String) {
+        let mut input = Cursor::new(image);
+        let parent = Reader::default()
+            .with_stream("image/jpeg", &mut input)
+            .expect("read parent");
+        let parent_manifest_label = parent.active_label().unwrap().to_owned();
+        let redacted_uri = to_assertion_uri(&parent_manifest_label, ASSERTION_LABEL);
+
+        let mut builder = Builder::default();
+        builder.set_intent(BuilderIntent::Edit);
+        builder.definition.redactions = Some(vec![redacted_uri.clone()]);
+        let redacted_action = Action::new("c2pa.redacted")
+            .set_reason(C2paReason::PiiPresent)
+            .set_parameter("redacted".to_owned(), redacted_uri)
+            .unwrap();
+        builder.add_action(redacted_action).unwrap();
+
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut output = Cursor::new(Vec::new());
+        builder
+            .sign(signer.as_ref(), "image/jpeg", &mut input, &mut output)
+            .expect("builder sign");
+        output.set_position(0);
+
+        let mut load_report = StatusTracker::default();
+        let store =
+            Store::from_stream("image/jpeg", &mut output, &mut load_report, &Context::new())
+                .expect("load store");
+        (store, parent_manifest_label)
+    }
+
+    // Replace the redacted slot's (removed) assertion with a present box built from
+    // `assertion`, exactly as an attacker editing the manifest-store bytes would.
+    fn plant_assertion(store: &mut Store, parent_manifest_label: &str, assertion: Assertion) {
+        let alg = store
+            .get_claim(parent_manifest_label)
+            .expect("parent claim present")
+            .alg()
+            .to_owned();
+        let hash = Claim::calc_assertion_box_hash(ASSERTION_LABEL, &assertion, None, &alg).unwrap();
+        let claim_assertion =
+            ClaimAssertion::new(assertion, 0, &hash, &alg, None, ClaimAssertionType::Created);
+        store
+            .get_claim_mut(parent_manifest_label)
+            .expect("parent claim present")
+            .put_assertion_store(claim_assertion);
+    }
+
+    fn count_status(log: &StatusTracker, code: &str) -> usize {
+        log.logged_items()
+            .iter()
+            .filter(|item| item.validation_status.as_deref() == Some(code))
+            .count()
+    }
+
+    // A validly zeroed box left in the redacted slot (the spec's alternative to full
+    // removal) must not be flagged at all: not `assertion.notRedacted` (it *is*
+    // correctly redacted) and not `assertion.missing` (it's present, just empty).
+    {
+        let (mut store, parent_manifest_label) = build_redacted_store(TEST_IMAGE);
+        let zeroed = Assertion::from_data_uuid(ASSERTION_LABEL, C2PA_REDACTION_UUID, &[0u8; 4]);
+        plant_assertion(&mut store, &parent_manifest_label, zeroed);
+
+        let mut validation_log = StatusTracker::default();
+        let _ = Store::verify_store(&store, None, &mut validation_log, &Context::new());
+        let mut reader = Reader::default();
+        let _ = reader.with_store(store, &mut validation_log);
+
+        assert_eq!(
+            count_status(&validation_log, validation_status::ASSERTION_NOT_REDACTED),
+            0,
+            "a present, zeroed redacted box must not raise assertion.notRedacted"
+        );
+        assert_eq!(
+            count_status(&validation_log, validation_status::ASSERTION_MISSING),
+            0,
+            "a present, zeroed redacted box must not be counted as missing"
+        );
+    }
+
+    // A forged, non-zero box in the redacted slot must be rejected exactly once, by
+    // `Store::verify_store`'s zero-content check — not a second time by
+    // `Reader::with_store`'s (now removed) presence-only reconciliation.
+    {
+        let (mut store, parent_manifest_label) = build_redacted_store(TEST_IMAGE);
+        let forged = Assertion::from_data_cbor(ASSERTION_LABEL, &[0xa1, 0x61, 0x78, 0x01]);
+        plant_assertion(&mut store, &parent_manifest_label, forged);
+
+        let mut validation_log = StatusTracker::default();
+        let _ = Store::verify_store(&store, None, &mut validation_log, &Context::new());
+        let mut reader = Reader::default();
+        let _ = reader.with_store(store, &mut validation_log);
+
+        assert_eq!(
+            count_status(&validation_log, validation_status::ASSERTION_NOT_REDACTED),
+            1,
+            "forged non-zero content at a redacted URI must be rejected exactly once"
+        );
+    }
 }
 
 #[test]
@@ -3502,27 +4055,29 @@ async fn test_boxhash_embeddable_manifest_async() {
         .unwrap();
 
     // get composed version for embedding to JPEG
-    let cm = Store::get_composed_manifest(&em, "image/jpeg").unwrap();
+    let cm = Store::get_composed_manifest(&em, "image/jpeg", &context).unwrap();
 
     // insert manifest into output asset
     let jpeg_io = get_assetio_handler_from_path(&ap).unwrap();
-    let ol = jpeg_io.get_object_locations(&ap).unwrap();
-
-    let cai_loc = ol
-        .iter()
-        .find(|o| o.htype == HashBlockObjectType::Cai)
+    let mut input_file = std::fs::File::open(&ap).unwrap();
+    let ol = jpeg_io
+        .get_writer("jpg")
+        .unwrap()
+        .get_object_locations(&mut input_file)
         .unwrap();
 
+    let cai_loc = ol.iter().find(|o| o.htype == ObjectType::C2pa).unwrap();
+
     // remove any existing manifest
-    jpeg_io.read_cai_store(&ap).unwrap();
+    jpeg_io.get_reader().read_c2pa(&mut input_file).unwrap();
 
     // build new asset in memory inserting new manifest
     let outbuf = Vec::new();
     let mut out_stream = Cursor::new(outbuf);
-    let mut input_file = std::fs::File::open(&ap).unwrap();
+    input_file.rewind().unwrap();
 
     // write before
-    let mut before = vec![0u8; cai_loc.offset];
+    let mut before = vec![0u8; usize::try_from(cai_loc.offset).unwrap()];
     input_file.read_exact(before.as_mut_slice()).unwrap();
     out_stream.write_all(&before).unwrap();
 
@@ -3576,27 +4131,29 @@ fn test_boxhash_embeddable_manifest() {
         .unwrap();
 
     // get composed version for embedding to JPEG
-    let cm = Store::get_composed_manifest(&em, "jpg").unwrap();
+    let cm = Store::get_composed_manifest(&em, "jpg", &context).unwrap();
 
     // insert manifest into output asset
     let jpeg_io = get_assetio_handler_from_path(&ap).unwrap();
-    let ol = jpeg_io.get_object_locations(&ap).unwrap();
-
-    let cai_loc = ol
-        .iter()
-        .find(|o| o.htype == HashBlockObjectType::Cai)
+    let mut input_file = std::fs::File::open(&ap).unwrap();
+    let ol = jpeg_io
+        .get_writer("jpg")
+        .unwrap()
+        .get_object_locations(&mut input_file)
         .unwrap();
 
+    let cai_loc = ol.iter().find(|o| o.htype == ObjectType::C2pa).unwrap();
+
     // remove any existing manifest
-    jpeg_io.read_cai_store(&ap).unwrap();
+    jpeg_io.get_reader().read_c2pa(&mut input_file).unwrap();
 
     // build new asset in memory inserting new manifest
     let outbuf = Vec::new();
     let mut out_stream = Cursor::new(outbuf);
-    let mut input_file = std::fs::File::open(&ap).unwrap();
+    input_file.rewind().unwrap();
 
     // write before
-    let mut before = vec![0u8; cai_loc.offset];
+    let mut before = vec![0u8; usize::try_from(cai_loc.offset).unwrap()];
     input_file.read_exact(before.as_mut_slice()).unwrap();
     out_stream.write_all(&before).unwrap();
 
@@ -3640,7 +4197,7 @@ async fn test_datahash_embeddable_manifest_async() {
 
     // get a placeholder the manifest
     let placeholder = store
-        .get_data_hashed_manifest_placeholder(signer.reserve_size(), "jpeg")
+        .get_data_hashed_manifest_placeholder(signer.reserve_size(), "jpeg", &context)
         .unwrap();
 
     let temp_dir = tempdirectory().unwrap();
@@ -3715,7 +4272,7 @@ fn test_datahash_embeddable_manifest() {
 
     // get a placeholder the manifest
     let placeholder = store
-        .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg")
+        .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg", &context)
         .unwrap();
 
     let temp_dir = tempdirectory().unwrap();
@@ -3765,6 +4322,97 @@ fn test_datahash_embeddable_manifest() {
 }
 
 #[test]
+fn test_sign_manifest_reserves_dynamic_assertion_placeholders_itself() {
+    // A signer that advertises a dynamic assertion, with the caller never
+    // reserving a placeholder slot for it. `sign_manifest` must reserve (and
+    // fill in) that slot itself rather than requiring the caller to call
+    // `add_dynamic_assertion_placeholders` first (see issue #2055 review for
+    // why placeholder slots and real content must come from the same
+    // `dynamic_assertions()` call).
+    #[derive(Serialize)]
+    struct TestAssertion {
+        my_tag: String,
+    }
+
+    #[derive(Debug)]
+    struct TestDynamicAssertion {}
+
+    impl DynamicAssertion for TestDynamicAssertion {
+        fn label(&self) -> String {
+            "com.mycompany.myassertion".to_string()
+        }
+
+        fn reserve_size(&self) -> Result<usize> {
+            let assertion = TestAssertion {
+                my_tag: "some value I will replace".to_string(),
+            };
+            Ok(c2pa_cbor::to_vec(&assertion)?.len())
+        }
+
+        fn content(
+            &self,
+            _label: &str,
+            _size: Option<usize>,
+            _claim: &PartialClaim,
+        ) -> Result<DynamicAssertionContent> {
+            let assertion = TestAssertion {
+                my_tag: "some value I will replace".to_string(),
+            };
+            Ok(DynamicAssertionContent::Cbor(
+                c2pa_cbor::to_vec(&assertion).unwrap(),
+            ))
+        }
+    }
+
+    struct DynamicSigner(crate::BoxedSigner);
+
+    impl crate::Signer for DynamicSigner {
+        fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+            self.0.sign(data)
+        }
+
+        fn alg(&self) -> SigningAlg {
+            self.0.alg()
+        }
+
+        fn certs(&self) -> Result<Vec<Vec<u8>>> {
+            self.0.certs()
+        }
+
+        fn reserve_size(&self) -> usize {
+            self.0.reserve_size()
+        }
+
+        fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+            vec![Box::new(TestDynamicAssertion {})]
+        }
+    }
+
+    let signer = DynamicSigner(test_signer(SigningAlg::Ps256));
+    let context = crate::context::Context::new().with_signer(signer);
+
+    let mut store = Store::from_context(&context);
+    store.commit_claim(create_test_claim().unwrap()).unwrap();
+
+    // Reserve the hard-binding placeholder only – no dynamic-assertion slots.
+    let reserve_size = context.signer().unwrap().reserve_size();
+    store
+        .get_data_hashed_manifest_placeholder(reserve_size, "jpeg", &context)
+        .unwrap();
+
+    let jumbf_bytes = store.sign_manifest(&context, None).unwrap();
+
+    let mut validation_log = StatusTracker::default();
+    let signed_store = Store::from_jumbf(&jumbf_bytes, &mut validation_log).unwrap();
+    let pc = signed_store.provenance_claim().unwrap();
+    assert!(
+        pc.assertion_hashed_uri_from_label("com.mycompany.myassertion")
+            .is_some(),
+        "dynamic assertion should be present in the signed manifest"
+    );
+}
+
+#[test]
 #[cfg(feature = "file_io")]
 fn test_datahash_embeddable_manifest_user_hashed() {
     let context = crate::context::Context::new();
@@ -3791,7 +4439,7 @@ fn test_datahash_embeddable_manifest_user_hashed() {
 
     // get a placeholder for the manifest
     let placeholder = store
-        .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg")
+        .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg", &context)
         .unwrap();
 
     let temp_dir = tempdirectory().unwrap();
@@ -3957,6 +4605,135 @@ fn test_dynamic_assertions() {
 
     assert!(!report.has_any_error());
     // std::fs::write("target/test.jpg", result).unwrap();
+}
+
+/// Two dynamic assertions that share a label must each land in their own
+/// placeholder (`label` and `label__1`) with their own content and size.
+/// Before the instance-aware replacement, both contents were written into
+/// the first placeholder, leaving the second one as zeros and, when the two
+/// reserve sizes differed, shifting the manifest so the data hash no longer
+/// matched.
+#[test]
+fn test_dynamic_assertions_same_label_twice() {
+    let context = crate::context::Context::new();
+
+    #[derive(Serialize)]
+    struct TestAssertion {
+        my_tag: String,
+    }
+
+    #[derive(Debug)]
+    struct TestDynamicAssertion {
+        tag: String,
+    }
+
+    impl DynamicAssertion for TestDynamicAssertion {
+        fn label(&self) -> String {
+            "com.mycompany.myassertion".to_string()
+        }
+
+        fn reserve_size(&self) -> Result<usize> {
+            let assertion = TestAssertion {
+                my_tag: self.tag.clone(),
+            };
+            Ok(c2pa_cbor::to_vec(&assertion)?.len())
+        }
+
+        fn content(
+            &self,
+            label: &str,
+            _size: Option<usize>,
+            _claim: &PartialClaim,
+        ) -> Result<DynamicAssertionContent> {
+            // The label handed to us carries the instance suffix.
+            let expected = if self.tag.len() > 8 {
+                "com.mycompany.myassertion__1"
+            } else {
+                "com.mycompany.myassertion"
+            };
+            assert_eq!(label, expected);
+
+            let assertion = TestAssertion {
+                my_tag: self.tag.clone(),
+            };
+
+            Ok(DynamicAssertionContent::Cbor(
+                c2pa_cbor::to_vec(&assertion).unwrap(),
+            ))
+        }
+    }
+
+    struct DynamicSigner(Box<dyn Signer>);
+
+    impl crate::Signer for DynamicSigner {
+        fn sign(&self, data: &[u8]) -> crate::error::Result<Vec<u8>> {
+            self.0.sign(data)
+        }
+
+        fn alg(&self) -> SigningAlg {
+            self.0.alg()
+        }
+
+        fn certs(&self) -> crate::Result<Vec<Vec<u8>>> {
+            self.0.certs()
+        }
+
+        fn reserve_size(&self) -> usize {
+            self.0.reserve_size()
+        }
+
+        fn time_authority_url(&self) -> Option<String> {
+            self.0.time_authority_url()
+        }
+
+        fn ocsp_val(&self) -> Option<Vec<u8>> {
+            self.0.ocsp_val()
+        }
+
+        // Two dynamic assertions with the SAME label and DIFFERENT sizes.
+        fn dynamic_assertions(&self) -> Vec<Box<dyn crate::dynamic_assertion::DynamicAssertion>> {
+            vec![
+                Box::new(TestDynamicAssertion {
+                    tag: "first".to_string(),
+                }),
+                Box::new(TestDynamicAssertion {
+                    tag: "second, and longer".to_string(),
+                }),
+            ]
+        }
+    }
+
+    let file_buffer = include_bytes!("../../tests/fixtures/earth_apollo17.jpg").to_vec();
+    let mut buf_io = Cursor::new(file_buffer);
+
+    let mut store = Store::from_context(&context);
+    let claim1 = create_test_claim().unwrap();
+    let signer = DynamicSigner(test_signer(SigningAlg::Ps256));
+    store.commit_claim(claim1).unwrap();
+
+    let mut result_stream = Cursor::new(Vec::new());
+    store
+        .save_to_stream("jpeg", &mut buf_io, &mut result_stream, &signer, &context)
+        .unwrap();
+    result_stream.rewind().unwrap();
+
+    let mut report = StatusTracker::default();
+    let new_store =
+        Store::from_stream("image/jpeg", &mut result_stream, &mut report, &context).unwrap();
+    assert!(!report.has_any_error(), "{report:?}");
+
+    let claim = new_store.provenance_claim().unwrap();
+    let mut tags = Vec::new();
+    for label in ["com.mycompany.myassertion", "com.mycompany.myassertion__1"] {
+        let ca = claim
+            .claim_assertion_store()
+            .iter()
+            .find(|ca| ca.label() == label)
+            .unwrap_or_else(|| panic!("missing {label}"));
+        let value: serde_json::Value = c2pa_cbor::from_slice(ca.assertion().data()).unwrap();
+        tags.push(value["my_tag"].as_str().unwrap().to_string());
+    }
+    assert_eq!(tags, vec!["first", "second, and longer"]);
 }
 
 #[c2pa_test_async]
@@ -4130,7 +4907,7 @@ fn test_fragmented_jumbf_generation() {
     store.commit_claim(claim).unwrap();
 
     // Do we generate JUMBF?
-    let signer = test_cawg_signer(SigningAlg::Ps256, &[labels::SCHEMA_ORG]).unwrap();
+    let signer = test_cawg_signer(SigningAlg::Ps256, &[labels::SCHEMA_ORG_INTERNAL]).unwrap();
 
     store
         .save_to_bmff_fragmented(
@@ -4196,6 +4973,7 @@ fn test_fragmented_jumbf_generation() {
 }
 
 #[test]
+#[cfg(feature = "file_io")]
 fn test_bogus_cert() {
     use crate::builder::{Builder, BuilderIntent};
 
@@ -4320,14 +5098,14 @@ fn test_stream_context_handling_for_c_ffi_layer() {
 
     /// Stream wrapper that simulates the streams like it would be in C FFI layer.
     /// Needed to repro a use-after-free bug from the FFI layer.
-    struct FlushTrackingStream<T: CAIReadWrite> {
+    struct FlushTrackingStream<T: ReadWriteSeek> {
         inner: T,
         buffer: Vec<u8>,
         flush_called: Arc<AtomicBool>,
         dropped: Arc<AtomicBool>,
     }
 
-    impl<T: CAIReadWrite> FlushTrackingStream<T> {
+    impl<T: ReadWriteSeek> FlushTrackingStream<T> {
         fn new(inner: T, flush_called: Arc<AtomicBool>, dropped: Arc<AtomicBool>) -> Self {
             Self {
                 inner,
@@ -4338,13 +5116,13 @@ fn test_stream_context_handling_for_c_ffi_layer() {
         }
     }
 
-    impl<T: CAIReadWrite> Read for FlushTrackingStream<T> {
+    impl<T: ReadWriteSeek> Read for FlushTrackingStream<T> {
         fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
             self.inner.read(buf)
         }
     }
 
-    impl<T: CAIReadWrite> Write for FlushTrackingStream<T> {
+    impl<T: ReadWriteSeek> Write for FlushTrackingStream<T> {
         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
             // Simulate buffering behavior
             if !self.buffer.is_empty() {
@@ -4369,7 +5147,7 @@ fn test_stream_context_handling_for_c_ffi_layer() {
         }
     }
 
-    impl<T: CAIReadWrite> Seek for FlushTrackingStream<T> {
+    impl<T: ReadWriteSeek> Seek for FlushTrackingStream<T> {
         fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
             // Check if we're trying to seek without flushing first
             // Simulates a crash scenario where the stream is accessed
@@ -4377,8 +5155,8 @@ fn test_stream_context_handling_for_c_ffi_layer() {
             if !self.buffer.is_empty() && !self.flush_called.load(Ordering::SeqCst) {
                 // This is a use-after-free error simulation for the way the FFI layer handles streams
                 return Err(std::io::Error::other(
-                        "Simulated use-after-free: attempting to seek with unflushed buffer (similar to accessing freed FFI context)",
-                    ));
+                    "Simulated use-after-free: attempting to seek with unflushed buffer (similar to accessing freed FFI context)",
+                ));
             }
             self.inner.seek(pos)
         }
@@ -4387,8 +5165,8 @@ fn test_stream_context_handling_for_c_ffi_layer() {
             // Suffer the same troubles as seek
             if !self.buffer.is_empty() && !self.flush_called.load(Ordering::SeqCst) {
                 return Err(std::io::Error::other(
-                        "Simulated use-after-free: attempting to rewind with unflushed buffer (similar to accessing freed FFI context)",
-                    ));
+                    "Simulated use-after-free: attempting to rewind with unflushed buffer (similar to accessing freed FFI context)",
+                ));
             }
             self.inner.rewind()
         }
@@ -4398,7 +5176,7 @@ fn test_stream_context_handling_for_c_ffi_layer() {
         }
     }
 
-    impl<T: CAIReadWrite> Drop for FlushTrackingStream<T> {
+    impl<T: ReadWriteSeek> Drop for FlushTrackingStream<T> {
         fn drop(&mut self) {
             self.dropped.store(true, Ordering::SeqCst);
             // Dropping without flush frees the context
@@ -4482,11 +5260,11 @@ fn test_stream_context_handling_for_c_ffi_layer_no_use_after_free() {
         fn check_valid(&self) -> std::io::Result<()> {
             if self.magic != 0xdeadbeefcafebabe {
                 return Err(std::io::Error::other(
-                        format!(
-                            "Use-after-free detected: StreamContext magic is 0x{:X} (expected 0xDEADBEEFCAFEBABE)",
-                            self.magic
-                        ),
-                    ));
+                    format!(
+                        "Use-after-free detected: StreamContext magic is 0x{:X} (expected 0xDEADBEEFCAFEBABE)",
+                        self.magic
+                    ),
+                ));
             }
             Ok(())
         }
@@ -4671,10 +5449,684 @@ fn test_ingredient_depth_limit_ingredient_checks() {
         &mut validation_log,
         MAX_INGREDIENT_DEPTH,
         &context,
+        &mut HashSet::new(),
     );
 
     assert!(
         matches!(result, Err(Error::InvalidAsset(_))),
         "expected Err(InvalidAsset) for depth >= MAX_INGREDIENT_DEPTH, got: {result:?}"
     );
+}
+
+// Verify that when an ingredient assertion is included in final_redactions, the claim it
+// referenced is removed from the incoming store and from svi.ingredient_references.
+#[test]
+fn test_redacted_ingredient_assertion_removes_claim() {
+    use crate::{
+        hashed_uri::HashedUri, jumbf::labels::to_signature_uri, utils::test::create_test_store_v1,
+        ClaimGeneratorInfo, ValidationResults,
+    };
+
+    let context = Context::new();
+    let signer = test_signer(SigningAlg::Ps256);
+
+    // --- Build M1: a simple signed manifest with no sub-ingredients. ---
+    let (format, mut input_stream, mut m1_output) = create_test_streams("earth_apollo17.jpg");
+    let mut m1_store = create_test_store_v1().unwrap();
+    m1_store
+        .save_to_stream(
+            format,
+            &mut input_stream,
+            &mut m1_output,
+            signer.as_ref(),
+            &context,
+        )
+        .unwrap();
+
+    m1_output.rewind().unwrap();
+    let m1_vec = m1_output.get_ref().clone();
+    let mut m1_report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+    let m1_store_loaded = Store::from_stream(
+        format,
+        Cursor::new(m1_vec.clone()),
+        &mut m1_report,
+        &context,
+    )
+    .unwrap();
+    let m1_pc = m1_store_loaded.provenance_claim().unwrap();
+    let m1_label = m1_pc.label().to_owned();
+
+    // --- Build M2: an update manifest whose ingredient assertion points to M1. ---
+    let mut m2_claim = Claim::new("test", Some("m2_ingredient_redact"), 2);
+    m2_claim.add_claim_generator_info(ClaimGeneratorInfo::new("test"));
+
+    let (m1_jumbf, _) =
+        Store::load_jumbf_from_stream(format, &mut Cursor::new(m1_vec.clone()), &context).unwrap();
+    let mut m2_store =
+        Store::load_ingredient_to_claim(&mut m2_claim, &m1_jumbf, None, &context).unwrap();
+
+    let m1_hashes = m1_store_loaded.get_manifest_box_hashes(m1_pc);
+    let parent_uri = HashedUri::new(
+        m1_store_loaded.provenance_path().unwrap(),
+        Some(m1_pc.alg().to_string()),
+        &m1_hashes.manifest_box_hash,
+    );
+    let sig_uri = HashedUri::new(
+        to_signature_uri(m1_pc.label()),
+        Some(m1_pc.alg().to_string()),
+        &m1_hashes.signature_box_hash,
+    );
+
+    let m1_validation = ValidationResults::from_store(&m1_store_loaded, &m1_report);
+    let parent_ingredient = Ingredient::new_v3(Relationship::ParentOf)
+        .set_active_manifests_and_signature_from_hashed_uri(Some(parent_uri), Some(sig_uri))
+        .set_validation_results(Some(m1_validation));
+    m2_claim.add_assertion(&parent_ingredient).unwrap();
+
+    // An action referencing the ingredient is required by the update manifest schema.
+    let ia = m2_claim.ingredient_assertions()[0];
+    let ia_hashed_uri = HashedUri::new(
+        to_assertion_uri(m2_claim.label(), &ia.label()),
+        Some(m2_claim.alg().to_owned()),
+        ia.hash(),
+    );
+    let actions = Actions::new().add_action(
+        Action::new("c2pa.opened")
+            .set_parameter("ingredients", vec![ia_hashed_uri])
+            .unwrap(),
+    );
+    m2_claim.add_assertion(&actions).unwrap();
+
+    m2_store.commit_update_manifest(m2_claim).unwrap();
+    m1_output.rewind().unwrap();
+    let mut m2_output = Cursor::new(Vec::new());
+    m2_store
+        .save_to_stream(
+            format,
+            &mut m1_output,
+            &mut m2_output,
+            signer.as_ref(),
+            &context,
+        )
+        .unwrap();
+
+    // Load M2 back to discover the exact labels and ingredient assertion label.
+    m2_output.rewind().unwrap();
+    let m2_vec = m2_output.get_ref().clone();
+    let mut m2_report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+    let m2_store_loaded = Store::from_stream(
+        format,
+        Cursor::new(m2_vec.clone()),
+        &mut m2_report,
+        &context,
+    )
+    .unwrap();
+    let m2_pc = m2_store_loaded.provenance_claim().unwrap();
+    let m2_label = m2_pc.label().to_owned();
+
+    // Build a redaction URI targeting M2's ingredient assertion (which points to M1).
+    let m2_ingredient_assertions = m2_pc.ingredient_assertions();
+    assert!(
+        !m2_ingredient_assertions.is_empty(),
+        "M2 should have an ingredient assertion"
+    );
+    let ingredient_redaction_uri =
+        to_assertion_uri(m2_pc.label(), &m2_ingredient_assertions[0].label());
+
+    // --- Load M2 into M3 with the ingredient assertion redacted. ---
+    let mut m3_claim = Claim::new("test", Some("m3_ingredient_redact"), 2);
+    m3_claim.add_claim_generator_info(ClaimGeneratorInfo::new("test"));
+
+    let (m2_jumbf, _) =
+        Store::load_jumbf_from_stream(format, &mut Cursor::new(m2_vec), &context).unwrap();
+    Store::load_ingredient_to_claim(
+        &mut m3_claim,
+        &m2_jumbf,
+        Some(vec![ingredient_redaction_uri]),
+        &context,
+    )
+    .unwrap();
+
+    // M2 (the provenance claim of the incoming store) must still be present.
+    assert!(
+        m3_claim.claim_ingredient(&m2_label).is_some(),
+        "M2 should remain in M3's ingredients"
+    );
+
+    // M1 must have been removed: its only reference (M2's ingredient assertion) was redacted.
+    assert!(
+        m3_claim.claim_ingredient(&m1_label).is_none(),
+        "M1 should be removed because its only referencing assertion was redacted"
+    );
+}
+
+const COLLECTION_ZIP: &[u8] = include_bytes!("../../tests/fixtures/sample1.zip");
+
+#[test]
+fn test_store_verify_zip_collection_hash() {
+    let mut claim = create_test_claim().unwrap();
+
+    let mut collection = CollectionHash::new(claim.alg().to_owned());
+    collection
+        .gen_hash_from_zip_stream(&mut Cursor::new(COLLECTION_ZIP))
+        .unwrap();
+    claim.add_created_assertion(&collection).unwrap();
+
+    let mut store = Store::from_context(&Context::new());
+    store.commit_claim(claim).unwrap();
+    let claim = store.provenance_claim().unwrap();
+
+    let svi = StoreValidationInfo {
+        binding_claim: claim.label().to_string(),
+        ..Default::default()
+    };
+    let context = Context::new();
+    let mut report = StatusTracker::default();
+    let mut asset_data = ClaimAssetData::Bytes(COLLECTION_ZIP, "zip");
+
+    Claim::verify_hash_binding(claim, &mut asset_data, &svi, &mut report, &context).unwrap();
+
+    assert!(report.has_status(validation_status::ASSERTION_COLLECTIONHASH_MATCH));
+}
+
+#[test]
+fn test_sign_zip_generates_valid_collection_hash() {
+    let mut context = Context::new();
+    context.settings_mut().verify.verify_after_sign = false;
+
+    let mut store = Store::from_context(&context);
+    store.commit_claim(create_test_claim().unwrap()).unwrap();
+
+    let signer = test_signer(SigningAlg::Ps256);
+    let mut input = Cursor::new(COLLECTION_ZIP.to_vec());
+    let mut output = Cursor::new(Vec::new());
+    store
+        .save_to_stream("zip", &mut input, &mut output, signer.as_ref(), &context)
+        .unwrap();
+
+    let mut report = StatusTracker::default();
+    output.rewind().unwrap();
+    Store::from_stream("zip", &mut output, &mut report, &context).unwrap();
+
+    assert!(
+        report.has_status(validation_status::ASSERTION_COLLECTIONHASH_MATCH),
+        "the generated collection hash should verify against the signed ZIP"
+    );
+}
+
+#[test]
+fn test_sign_zip_update_manifest_is_unsupported() {
+    let mut context = Context::new();
+    context.settings_mut().verify.verify_after_sign = false;
+
+    let mut claim = create_test_claim().unwrap();
+    claim.set_update_manifest(true);
+
+    let mut store = Store::from_context(&context);
+    store.commit_claim(claim).unwrap();
+
+    let signer = test_signer(SigningAlg::Ps256);
+    let mut input = Cursor::new(COLLECTION_ZIP.to_vec());
+    let mut output = Cursor::new(Vec::new());
+    let result = store.save_to_stream("zip", &mut input, &mut output, signer.as_ref(), &context);
+
+    assert!(
+        matches!(&result, Err(Error::BadParam(msg)) if msg.contains("update manifests are not supported")),
+        "expected update manifests to be rejected for ZIP, got {result:?}"
+    );
+}
+
+// SSRF via HTTP redirect during remote-manifest fetch
+// (CAI-12574 / HackerOne #3784091).
+//
+// The report's PoC embeds a remote-manifest URL that an attacker server answers with a 302
+// redirect to an internal / cloud-metadata endpoint (e.g. 169.254.169.254). The SDK must not
+// follow that redirect. These tests drive the actual `fetch_remote_manifest` path rather than
+// the resolver in isolation.
+//
+// Under the DEFAULT policy (`allow_redirects = true`), the initial (loopback, in this hermetic
+// test) request is allowed, and the redirect is followed up to the point where its target is
+// seen to be an internal address, which is then rejected as `RedirectTargetDisallowed`.
+#[cfg(all(not(target_arch = "wasm32"), feature = "fetch_remote_manifests"))]
+#[test]
+fn test_remote_manifest_redirect_to_internal_blocked() {
+    use httpmock::prelude::*;
+
+    let server = MockServer::start();
+
+    let redirect = server.mock(|when, then| {
+        when.method(GET).path("/redirect-to-internal");
+        then.status(302)
+            .header("Location", "http://169.254.169.254/latest/meta-data/");
+    });
+
+    let context = Context::new();
+    let result = Store::fetch_remote_manifest(&server.url("/redirect-to-internal"), &context);
+
+    // The redirect to an internal address is rejected with an explanatory message.
+    let err = result.expect_err("the redirect to an internal address must be rejected");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("redirect") && msg.contains("internal"),
+        "error should explain the blocked internal redirect, got: {msg}"
+    );
+
+    // The redirect endpoint is hit once; the internal target is never contacted.
+    redirect.assert_calls(1);
+}
+
+// SSRF via a manifest URL that *directly* names a cloud-metadata address, no redirect involved
+// (CAI-13326, the residual issue left after CAI-12574 closed the redirect vector).
+//
+// Under the DEFAULT policy (no `allowed_network_hosts` configured), the initial request is
+// still rejected when it directly targets a link-local/cloud-metadata address. No network call
+// is made at all — the guard rejects before dialing out — so this test needs no mock server.
+#[cfg(all(not(target_arch = "wasm32"), feature = "fetch_remote_manifests"))]
+#[test]
+fn test_remote_manifest_direct_metadata_url_blocked() {
+    let context = Context::new();
+    let result = Store::fetch_remote_manifest("http://169.254.169.254/latest/meta-data/", &context);
+
+    let err = result.expect_err("a direct request to a cloud-metadata address must be rejected");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("link-local") || msg.contains("cloud-metadata"),
+        "error should explain the blocked link-local/metadata target, got: {msg}"
+    );
+}
+
+// With `allow_redirects = false`, the SDK refuses to follow any redirect at all.
+#[cfg(all(not(target_arch = "wasm32"), feature = "fetch_remote_manifests"))]
+#[test]
+fn test_remote_manifest_redirects_disabled() {
+    use httpmock::prelude::*;
+
+    let server = MockServer::start();
+
+    let redirect = server.mock(|when, then| {
+        when.method(GET).path("/redirect");
+        then.status(302).header("Location", server.url("/target"));
+    });
+    let target = server.mock(|when, then| {
+        when.method(GET).path("/target");
+        then.status(200).body("SSRF_CONFIRMED");
+    });
+
+    let context = Context::new()
+        .with_settings("[core]\nallow_redirects = false\n")
+        .unwrap();
+    let result = Store::fetch_remote_manifest(&server.url("/redirect"), &context);
+
+    assert!(
+        result.is_err(),
+        "allow_redirects = false must not follow the redirect"
+    );
+
+    // The redirect endpoint is hit once; the target is never contacted.
+    redirect.assert_calls(1);
+    target.assert_calls(0);
+}
+
+/// Builds a signed regular manifest (M2) that references a separately-signed
+/// manifest (M1) as an `inputTo` ingredient.
+///
+/// When `corrupt_hash` is true, M2's ingredient assertion commits (under M2's
+/// COSE signature) to a bogus `activeManifest` box hash, simulating an
+/// `inputTo` ingredient whose manifest bytes were altered after signing.
+/// `verify_after_sign` is disabled so the corrupt asset can be written and the
+/// detection exercised on the read-back path.
+///
+/// Returns the asset mime format and the signed M2 bytes.
+fn build_asset_with_input_to_ingredient(corrupt_hash: bool) -> (&'static str, Vec<u8>) {
+    use crate::{
+        hashed_uri::HashedUri, jumbf::labels::to_signature_uri, utils::test::create_test_store,
+        ClaimGeneratorInfo, ValidationResults,
+    };
+
+    let mut context = Context::new();
+    context.settings_mut().verify.verify_after_sign = false;
+    let signer = test_signer(SigningAlg::Ps256);
+
+    // --- M1: a standalone signed ingredient manifest. ---
+    let (format, mut m1_input, mut m1_output) = create_test_streams("earth_apollo17.jpg");
+    let mut m1_store = create_test_store().unwrap();
+    m1_store
+        .save_to_stream(
+            format,
+            &mut m1_input,
+            &mut m1_output,
+            signer.as_ref(),
+            &context,
+        )
+        .unwrap();
+    m1_output.rewind().unwrap();
+    let m1_vec = m1_output.get_ref().clone();
+
+    let mut m1_report = StatusTracker::default();
+    let m1_store_loaded = Store::from_stream(
+        format,
+        Cursor::new(m1_vec.clone()),
+        &mut m1_report,
+        &context,
+    )
+    .unwrap();
+    let m1_pc = m1_store_loaded.provenance_claim().unwrap();
+
+    // --- M2: a regular manifest referencing M1 as an inputTo ingredient. ---
+    let mut m2_claim = Claim::new("input_to_test", Some("m2_input_to"), 2);
+    m2_claim.add_claim_generator_info(ClaimGeneratorInfo::new("test"));
+
+    let (m1_jumbf, _) =
+        Store::load_jumbf_from_stream(format, &mut Cursor::new(m1_vec.clone()), &context).unwrap();
+    let mut m2_store =
+        Store::load_ingredient_to_claim(&mut m2_claim, &m1_jumbf, None, &context).unwrap();
+
+    let m1_hashes = m1_store_loaded.get_manifest_box_hashes(m1_pc);
+    let mut manifest_box_hash = m1_hashes.manifest_box_hash.clone();
+    if corrupt_hash {
+        // Flip a byte so the signed hash no longer matches M1's actual bytes.
+        manifest_box_hash[0] ^= 0xff;
+    }
+    let parent_uri = HashedUri::new(
+        m1_store_loaded.provenance_path().unwrap(),
+        Some(m1_pc.alg().to_string()),
+        &manifest_box_hash,
+    );
+    let sig_uri = HashedUri::new(
+        to_signature_uri(m1_pc.label()),
+        Some(m1_pc.alg().to_string()),
+        &m1_hashes.signature_box_hash,
+    );
+
+    let m1_validation = ValidationResults::from_store(&m1_store_loaded, &m1_report);
+    let input_to_ingredient = Ingredient::new_v3(Relationship::InputTo)
+        .set_active_manifests_and_signature_from_hashed_uri(Some(parent_uri), Some(sig_uri))
+        .set_validation_results(Some(m1_validation));
+    m2_claim.add_assertion(&input_to_ingredient).unwrap();
+
+    // A created action plus an edit that consumes the inputTo ingredient.
+    let ia = m2_claim.ingredient_assertions()[0];
+    let ia_hashed_uri = HashedUri::new(
+        to_assertion_uri(m2_claim.label(), &ia.label()),
+        Some(m2_claim.alg().to_owned()),
+        ia.hash(),
+    );
+    let actions = Actions::new()
+        .add_action(Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty))
+        .add_action(
+            Action::new("c2pa.edited")
+                .set_parameter("ingredients", vec![ia_hashed_uri])
+                .unwrap(),
+        );
+    m2_claim.add_assertion(&actions).unwrap();
+
+    m2_store.commit_claim(m2_claim).unwrap();
+
+    let (_f, mut m2_input, mut m2_output) = create_test_streams("earth_apollo17.jpg");
+    m2_store
+        .save_to_stream(
+            format,
+            &mut m2_input,
+            &mut m2_output,
+            signer.as_ref(),
+            &context,
+        )
+        .unwrap();
+    m2_output.rewind().unwrap();
+    (format, m2_output.get_ref().clone())
+}
+
+// A well-formed `inputTo` ingredient must actually be hash-validated, not
+// skipped. Regression guard for the vuln where `ingredient_checks` did an
+// unconditional `continue` for `Relationship::InputTo`, so the ingredient
+// manifest was never checked against its signed hash. The success code
+// `ingredient.manifest.validated` is only emitted when that check runs.
+#[test]
+fn test_input_to_ingredient_is_validated() {
+    let context = Context::new();
+    let (format, m2_vec) = build_asset_with_input_to_ingredient(false);
+
+    let mut report = StatusTracker::default();
+    Store::from_stream(format, Cursor::new(m2_vec), &mut report, &context).unwrap();
+
+    assert!(
+        !report.has_any_error(),
+        "valid inputTo ingredient should not produce errors: {:?}",
+        report.logged_items()
+    );
+    assert!(
+        report.has_status(validation_status::INGREDIENT_MANIFEST_VALIDATED),
+        "inputTo ingredient manifest must be hash-validated, got: {:?}",
+        report.logged_items()
+    );
+}
+
+// Tampering an `inputTo` ingredient's manifest (so its bytes no longer match
+// the hash the active claim signed) must be caught. Before the fix this path
+// was skipped entirely and the asset reported Valid, forging source
+// attribution. It must now surface `ingredient.manifest.mismatch`.
+#[test]
+fn test_input_to_ingredient_hash_mismatch_detected() {
+    let context = Context::new();
+    let (format, m2_vec) = build_asset_with_input_to_ingredient(true);
+
+    let mut report = StatusTracker::default();
+    let _ = Store::from_stream(format, Cursor::new(m2_vec), &mut report, &context);
+
+    assert!(
+        report.has_status(validation_status::INGREDIENT_MANIFEST_MISMATCH),
+        "tampered inputTo ingredient must be detected as a manifest mismatch, got: {:?}",
+        report.logged_items()
+    );
+    assert!(
+        report.has_any_error(),
+        "tampered inputTo ingredient must fail validation"
+    );
+}
+
+// Cyclic `parentOf` chains also lead to going through cycles.
+#[test]
+fn test_hash_binding_manifest_parent_cycle_terminates() {
+    use crate::{hashed_uri::HashedUri, jumbf::labels::to_manifest_uri, ClaimGeneratorInfo};
+
+    let mut store = Store::new();
+
+    let mut claim_a = Claim::new("cycle_a", Some("contentauth"), 2);
+    let mut claim_b = Claim::new("cycle_b", Some("contentauth"), 2);
+    claim_a.add_claim_generator_info(ClaimGeneratorInfo::new("test"));
+    claim_b.add_claim_generator_info(ClaimGeneratorInfo::new("test"));
+    claim_a.set_update_manifest(true);
+    claim_b.set_update_manifest(true);
+
+    let label_a = claim_a.label().to_owned();
+    let label_b = claim_b.label().to_owned();
+
+    // Create the cycle:
+    // Point claims at each other, each as the other's parentOf.
+    for (claim, parent_label) in [(&mut claim_a, &label_b), (&mut claim_b, &label_a)] {
+        let parent_uri = HashedUri::new(
+            to_manifest_uri(parent_label),
+            Some(claim.alg().to_owned()),
+            &[0u8; 32],
+        );
+
+        // Here we just want an(y) ingredient to finish creating cycles.
+        let ingredient = Ingredient::new_v2("parent", "image/jpeg")
+            .set_parent()
+            .set_c2pa_manifest_from_hashed_uri(Some(parent_uri));
+        claim.add_assertion(&ingredient).unwrap();
+    }
+
+    store.insert_restored_claim(label_a.clone(), claim_a);
+    store.insert_restored_claim(label_b, claim_b);
+
+    // Called directly in the test to verify the scenario,
+    // otherwise currently call order of (more) public APIs prevents this.
+    let binding = store.get_hash_binding_manifest(store.get_claim(&label_a).unwrap());
+    assert!(
+        binding.is_none(),
+        "a parentOf cycle has no binding manifest and must terminate, got {binding:?}"
+    );
+}
+
+// Manifest stores with deep inputTo ingredients links shouldn't cause exponential recursive checks
+// (when verify is on).
+#[test]
+fn test_shared_ingredient_inputto_graph_verified_once() {
+    use crate::{
+        hashed_uri::HashedUri, jumbf::labels::to_signature_uri, utils::test::create_test_store,
+        ClaimGeneratorInfo, ValidationResults,
+    };
+
+    const DEPTH: usize = 13;
+
+    let mut build_context = Context::new();
+    // Turn some settings off to allow building the test asset.
+    build_context.settings_mut().verify.verify_after_sign = false;
+    build_context.settings_mut().verify.verify_after_reading = false;
+    let signer = test_signer(SigningAlg::Ps256);
+
+    // This is a leaf node...
+    let (format, mut leaf_input, mut leaf_output) = create_test_streams("earth_apollo17.jpg");
+    create_test_store()
+        .unwrap()
+        .save_to_stream(
+            format,
+            &mut leaf_input,
+            &mut leaf_output,
+            signer.as_ref(),
+            &build_context,
+        )
+        .unwrap();
+    leaf_output.rewind().unwrap();
+    let mut prev_vec = leaf_output.get_ref().clone();
+
+    // Each level references the previous level's manifest
+    // via 2 inputTo ingredient assertions pointing at the same child.
+    for level in 1..DEPTH {
+        let mut prev_report = StatusTracker::default();
+        let prev_store = Store::from_stream(
+            format,
+            Cursor::new(prev_vec.clone()),
+            &mut prev_report,
+            &build_context,
+        )
+        .unwrap();
+        let prev_pc = prev_store.provenance_claim().unwrap();
+        let prev_hashes = prev_store.get_manifest_box_hashes(prev_pc);
+
+        let mut claim = Claim::new("deep_shared", Some(&format!("m{level}")), 2);
+        claim.add_claim_generator_info(ClaimGeneratorInfo::new("test"));
+
+        let (prev_jumbf, _) =
+            Store::load_jumbf_from_stream(format, &mut Cursor::new(prev_vec), &build_context)
+                .unwrap();
+        let mut store =
+            Store::load_ingredient_to_claim(&mut claim, &prev_jumbf, None, &build_context).unwrap();
+
+        for _ in 0..2 {
+            let parent_uri = HashedUri::new(
+                prev_store.provenance_path().unwrap(),
+                Some(prev_pc.alg().to_string()),
+                &prev_hashes.manifest_box_hash,
+            );
+            let sig_uri = HashedUri::new(
+                to_signature_uri(prev_pc.label()),
+                Some(prev_pc.alg().to_string()),
+                &prev_hashes.signature_box_hash,
+            );
+            let validation = ValidationResults::from_store(&prev_store, &prev_report);
+            let ingredient = Ingredient::new_v3(Relationship::InputTo)
+                .set_active_manifests_and_signature_from_hashed_uri(Some(parent_uri), Some(sig_uri))
+                .set_validation_results(Some(validation));
+            claim.add_assertion(&ingredient).unwrap();
+        }
+
+        let mut actions = Actions::new()
+            .add_action(Action::new("c2pa.created").set_source_type(DigitalSourceType::Empty));
+        for ia in claim.ingredient_assertions() {
+            let ia_hashed_uri = HashedUri::new(
+                to_assertion_uri(claim.label(), &ia.label()),
+                Some(claim.alg().to_owned()),
+                ia.hash(),
+            );
+            actions = actions.add_action(
+                Action::new("c2pa.edited")
+                    .set_parameter("ingredients", vec![ia_hashed_uri])
+                    .unwrap(),
+            );
+        }
+        claim.add_assertion(&actions).unwrap();
+        store.commit_claim(claim).unwrap();
+
+        let (_f, mut input, mut output) = create_test_streams("earth_apollo17.jpg");
+        store
+            .save_to_stream(
+                format,
+                &mut input,
+                &mut output,
+                signer.as_ref(),
+                &build_context,
+            )
+            .unwrap();
+        output.rewind().unwrap();
+        prev_vec = output.get_ref().clone();
+    }
+
+    // Starting verification from the top manifest will walk the graph we built.
+    // (Default context re-enables the verification settings).
+    let mut report = StatusTracker::default();
+    Store::from_stream(format, Cursor::new(prev_vec), &mut report, &Context::new()).unwrap();
+
+    // Memoization bounds validation steps...
+    let validated = report
+        .logged_items()
+        .iter()
+        .filter(|i| {
+            i.validation_status.as_deref() == Some(validation_status::INGREDIENT_MANIFEST_VALIDATED)
+        })
+        .count();
+
+    // ... so here we verify the validation count stayed below the bounds.
+    assert!(
+        validated <= 4 * DEPTH,
+        "shared ingredient subtrees must be verified only once"
+    );
+}
+
+#[test]
+fn test_custom_anchor_ekus() {
+    let mut context = crate::context::Context::new();
+
+    // test adding to actual image
+    let ap = fixture_path("C.jpg");
+
+    let mut stream = std::fs::File::open(&ap).unwrap();
+    let format = "image/jpeg";
+
+    let (manifest_bytes, _remote_url) =
+        Store::load_jumbf_from_stream(format, &mut stream, &context).unwrap();
+
+    let mut log = StatusTracker::default();
+    let _store = Store::from_jumbf_with_context(&manifest_bytes, &mut log, &context).unwrap();
+
+    assert!(!log.has_any_error());
+
+    // modify the settings so that the default EKUs are in the anchors
+    let mut settings = Settings::default();
+    let ekus = settings.trust.trust_config.take();
+
+    let anchors = settings.trust.anchors.as_mut().unwrap();
+    assert!(anchors.len() == 1); // this test expects one anchor set
+    anchors[0].trust_config = ekus;
+    settings.validate().unwrap();
+    context.set_settings(settings).unwrap();
+
+    stream.rewind().unwrap();
+
+    // with alternate Context
+    log = StatusTracker::default();
+    let _store = Store::from_stream(format, &mut stream, &mut log, &context).unwrap();
+
+    assert!(!log.has_any_error());
 }

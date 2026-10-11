@@ -16,6 +16,7 @@ use bcder::{decode::Constructed, encode::Values};
 use http::header;
 
 use crate::{
+    context::Context,
     crypto::{
         asn1::rfc3161::{TimeStampReq, TimeStampResp},
         cose::CertificateTrustPolicy,
@@ -25,7 +26,7 @@ use crate::{
             TimeStampError,
         },
     },
-    http::{AsyncHttpResolver, HttpResolverError, SyncHttpResolver},
+    http::HttpResolverError,
     status_tracker::StatusTracker,
 };
 
@@ -35,19 +36,13 @@ use crate::{
 /// If successful, responds with the raw bytestream of the response.
 ///
 /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
-#[async_generic(async_signature(
-    url: &str,
-    headers: Option<Vec<(String, String)>>,
-    data: &[u8],
-    message: &[u8],
-    http_resolver: &(impl AsyncHttpResolver + ?Sized),
-))]
+#[async_generic]
 pub fn default_rfc3161_request(
     url: &str,
     headers: Option<Vec<(String, String)>>,
     data: &[u8],
     message: &[u8],
-    http_resolver: &(impl SyncHttpResolver + ?Sized),
+    context: &Context,
 ) -> Result<Vec<u8>, TimeStampError> {
     let request = Constructed::decode(
         bcder::decode::SliceSource::new(data),
@@ -59,9 +54,9 @@ pub fn default_rfc3161_request(
     })?;
 
     let ts = if _sync {
-        time_stamp_request_http(url, headers, &request, http_resolver)?
+        time_stamp_request_http(url, headers, &request, context)?
     } else {
-        time_stamp_request_http_async(url, headers, &request, http_resolver).await?
+        time_stamp_request_http_async(url, headers, &request, context).await?
     };
 
     let mut local_log = StatusTracker::default();
@@ -77,17 +72,12 @@ pub fn default_rfc3161_request(
     Ok(ts)
 }
 
-#[async_generic(async_signature(
-    url: &str,
-    headers: Option<Vec<(String, String)>>,
-    timestamp_request: &TimeStampReq,
-    http_resolver: &(impl AsyncHttpResolver + ?Sized),
-))]
+#[async_generic]
 fn time_stamp_request_http(
     url: &str,
     headers: Option<Vec<(String, String)>>,
     timestamp_request: &TimeStampReq,
-    http_resolver: &(impl SyncHttpResolver + ?Sized),
+    context: &Context,
 ) -> Result<Vec<u8>, TimeStampError> {
     // This function exists to work around a bug in serialization of
     // TimeStampResp so we just return the data directly.
@@ -112,9 +102,12 @@ fn time_stamp_request_http(
     let request = request.header(header::CONTENT_TYPE, HTTP_CONTENT_TYPE_REQUEST);
 
     let response = if _sync {
-        http_resolver.http_resolve(request.body(body).map_err(HttpResolverError::Http)?)?
+        context
+            .resolver()
+            .http_resolve(request.body(body).map_err(HttpResolverError::Http)?)?
     } else {
-        http_resolver
+        context
+            .resolver_async()
             .http_resolve_async(request.body(body).map_err(HttpResolverError::Http)?)
             .await?
     };

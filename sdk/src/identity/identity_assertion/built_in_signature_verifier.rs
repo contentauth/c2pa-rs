@@ -33,7 +33,7 @@ use crate::{
 pub struct BuiltInSignatureVerifier<'a> {
     /// Configuration to use when an identity claims aggregation credential is
     /// presented.
-    pub ica_verifier: IcaSignatureVerifier,
+    pub ica_verifier: IcaSignatureVerifier<'a>,
 
     /// Configuration to use when an X.509 credential is presented.
     pub x509_verifier: X509SignatureVerifier<'a>,
@@ -194,7 +194,7 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::{
-        crypto::raw_signature,
+        context::Context,
         identity::{
             builder::{
                 AsyncIdentityAssertionBuilder, AsyncIdentityAssertionSigner,
@@ -237,15 +237,14 @@ mod tests {
         let (cawg_cert_chain, cawg_private_key) =
             cert_chain_and_private_key_for_alg(SigningAlg::Ed25519);
 
-        let cawg_raw_signer = raw_signature::async_signer_from_cert_chain_and_private_key(
-            &cawg_cert_chain,
-            &cawg_private_key,
-            SigningAlg::Ed25519,
-            None,
-        )
-        .unwrap();
+        let cawg_raw_signer =
+            c2pa_raw_crypto::signer_from_private_key(&cawg_private_key, SigningAlg::Ed25519)
+                .unwrap();
 
-        let x509_holder = AsyncX509CredentialHolder::from_async_raw_signer(cawg_raw_signer);
+        let x509_holder = AsyncX509CredentialHolder::from_async_raw_signer(
+            cawg_raw_signer,
+            crate::crypto::cert_chain_pem_to_der(&cawg_cert_chain).unwrap(),
+        );
         let iab = AsyncIdentityAssertionBuilder::for_credential_holder(x509_holder);
         c2pa_signer.add_identity_assertion(iab);
 
@@ -270,7 +269,8 @@ mod tests {
         drop(ia_iter);
 
         // And that identity assertion should be valid for this manifest.
-        let verifier = default_built_in_signature_verifier();
+        let context = Context::new();
+        let verifier = default_built_in_signature_verifier(&context);
         let sig_info = ia.validate(manifest, &mut st, &verifier).await.unwrap();
 
         let BuiltInCredential::X509Signature(sig_info) = sig_info else {
@@ -298,6 +298,14 @@ mod tests {
         let settings = crate::settings::Settings::default()
             .with_value("verify.verify_trust", false)
             .unwrap()
+            .with_value(
+                "soft_binding.soft_binding_algorithms",
+                [
+                    "com.adobe.trustmark.P".to_string(),
+                    "com.adobe.icn.dense".to_string(),
+                ],
+            )
+            .unwrap()
             .with_value("core.decode_identity_assertions", false)
             .unwrap();
         let context = crate::Context::new()
@@ -320,7 +328,8 @@ mod tests {
         drop(ia_iter);
 
         // And that identity assertion should be valid for this manifest.
-        let verifier = default_built_in_signature_verifier();
+        let context = Context::new();
+        let verifier = default_built_in_signature_verifier(&context);
         let ica = ia.validate(manifest, &mut st, &verifier).await.unwrap();
 
         let BuiltInCredential::IdentityClaimsAggregationCredential(ica) = ica else {
@@ -377,7 +386,7 @@ mod tests {
 
         assert_eq!(
             ia_json,
-            r#"{"urn:uuid:19e83793-4427-4161-b682-a53b975a6f72":[{"sig_type":"cawg.identity_claims_aggregation","referenced_assertions":["c2pa.hash.data"],"named_actor":{"@context":["https://www.w3.org/ns/credentials/v2","https://cawg.io/identity/1.1/ica/context/"],"type":["VerifiableCredential","IdentityClaimsAggregationCredential"],"issuer":"did:web:connected-identities.identity-stage.adobe.com","validFrom":"2025-04-09T22:46:13Z","verifiedIdentities":[{"type":"cawg.social_media","username":"testuser23","uri":"https://net.s2stagehance.com/testuser23","verifiedAt":"2025-04-09T22:45:26Z","provider":{"id":"https://behance.net","name":"behance"}}],"credentialSchema":[{"id":"https://cawg.io/identity/1.1/ica/schema/","type":"JSONSchema"}]}}]}"#
+            r#"{"urn:uuid:19e83793-4427-4161-b682-a53b975a6f72":[{"sig_type":"cawg.identity_claims_aggregation","referenced_assertions":["c2pa.hash.data"],"named_actor":{"@context":["https://www.w3.org/ns/credentials/v2","https://cawg.io/identity/1.1/ica/context/"],"type":["VerifiableCredential","IdentityClaimsAggregationCredential"],"issuer":"did:web:connected-identities.identity-stage.adobe.com","validFrom":"2025-04-09T22:46:13Z","verifiedIdentities":[{"type":"cawg.social_media","username":"testuser23","uri":"https://net.s2stagehance.com/testuser23","verifiedAt":"2025-04-09T22:45:26Z","provider":{"id":"https://behance.net","name":"behance"}}],"c2paAsset":{"referenced_assertions":[{"url":"self#jumbf=c2pa.assertions/c2pa.hash.data","alg":"sha256","hash":[222,12,254,33,138,24,216,89,74,194,44,202,254,234,79,175,58,31,243,141,143,60,113,134,81,85,8,248,86,167,211,178]}],"sig_type":"cawg.identity_claims_aggregation"},"credentialSchema":[{"id":"https://cawg.io/identity/1.1/ica/schema/","type":"JSONSchema"}]}}]}"#
         );
 
         // Check the summary report for this manifest.
@@ -387,7 +396,7 @@ mod tests {
 
         assert_eq!(
             ia_json,
-            r#"[{"sig_type":"cawg.identity_claims_aggregation","referenced_assertions":["c2pa.hash.data"],"named_actor":{"@context":["https://www.w3.org/ns/credentials/v2","https://cawg.io/identity/1.1/ica/context/"],"type":["VerifiableCredential","IdentityClaimsAggregationCredential"],"issuer":"did:web:connected-identities.identity-stage.adobe.com","validFrom":"2025-04-09T22:46:13Z","verifiedIdentities":[{"type":"cawg.social_media","username":"testuser23","uri":"https://net.s2stagehance.com/testuser23","verifiedAt":"2025-04-09T22:45:26Z","provider":{"id":"https://behance.net","name":"behance"}}],"credentialSchema":[{"id":"https://cawg.io/identity/1.1/ica/schema/","type":"JSONSchema"}]}}]"#
+            r#"[{"sig_type":"cawg.identity_claims_aggregation","referenced_assertions":["c2pa.hash.data"],"named_actor":{"@context":["https://www.w3.org/ns/credentials/v2","https://cawg.io/identity/1.1/ica/context/"],"type":["VerifiableCredential","IdentityClaimsAggregationCredential"],"issuer":"did:web:connected-identities.identity-stage.adobe.com","validFrom":"2025-04-09T22:46:13Z","verifiedIdentities":[{"type":"cawg.social_media","username":"testuser23","uri":"https://net.s2stagehance.com/testuser23","verifiedAt":"2025-04-09T22:45:26Z","provider":{"id":"https://behance.net","name":"behance"}}],"c2paAsset":{"referenced_assertions":[{"url":"self#jumbf=c2pa.assertions/c2pa.hash.data","alg":"sha256","hash":[222,12,254,33,138,24,216,89,74,194,44,202,254,234,79,175,58,31,243,141,143,60,113,134,81,85,8,248,86,167,211,178]}],"sig_type":"cawg.identity_claims_aggregation"},"credentialSchema":[{"id":"https://cawg.io/identity/1.1/ica/schema/","type":"JSONSchema"}]}}]"#
         );
     }
 
@@ -432,7 +441,8 @@ mod tests {
         drop(ia_iter);
 
         // And that identity assertion should be valid for this manifest.
-        let verifier = default_built_in_signature_verifier();
+        let context = Context::new();
+        let verifier = default_built_in_signature_verifier(&context);
         let err = ia.validate(manifest, &mut st, &verifier).await.unwrap_err();
 
         match err {

@@ -36,9 +36,12 @@ impl ThumbnailFormat {
     /// Create a new [ThumbnailFormat] from the given format extension or mime type.
     ///
     /// If the format is unsupported, this function will return `None`.
+    /// `from_extension` lowercases internally but `from_mime_type` does not, so
+    /// normalize first to accept uppercase MIME types (RFC 2045 section 5.1).
     pub fn new(format: &str) -> Option<ThumbnailFormat> {
-        ImageFormat::from_extension(format)
-            .or_else(|| ImageFormat::from_mime_type(format))
+        let format = format.to_lowercase();
+        ImageFormat::from_extension(&format)
+            .or_else(|| ImageFormat::from_mime_type(&format))
             .and_then(|format| ThumbnailFormat::try_from(format).ok())
     }
 }
@@ -219,6 +222,8 @@ where
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::unwrap_used)]
+    #![allow(clippy::expect_used)]
+    #![allow(clippy::panic)]
 
     use image::GenericImageView;
 
@@ -432,6 +437,50 @@ pub mod tests {
         ImageReader::with_format(Cursor::new(bytes), format.into())
             .decode()
             .unwrap();
+    }
+
+    /// Formats are matched as mimetypes with case-insensitively.
+    ///
+    /// `ignore_errors` is disabled so an unresolved format surfaces as an `Err`
+    /// rather than the silent `Ok(None)` the default settings produce.
+    #[test]
+    fn test_make_thumbnail_bytes_from_stream_format_case_insensitive() {
+        let settings = Settings::new()
+            .with_toml(
+                &toml::toml! {
+                    [builder.thumbnail]
+                    prefer_smallest_format = false
+                    ignore_errors = false
+                }
+                .to_string(),
+            )
+            .expect("settings should build");
+
+        // (format, source image, expected resolved format)
+        let cases = [
+            ("image/jpeg", TEST_JPEG, ThumbnailFormat::Jpeg),
+            ("IMAGE/JPEG", TEST_JPEG, ThumbnailFormat::Jpeg),
+            ("Image/Jpeg", TEST_JPEG, ThumbnailFormat::Jpeg),
+            ("image/png", TEST_PNG, ThumbnailFormat::Png),
+            ("IMAGE/PNG", TEST_PNG, ThumbnailFormat::Png),
+            // Extensions already resolve case-insensitively via
+            // `ImageFormat::from_extension`; pin that so it cannot regress.
+            ("jpg", TEST_JPEG, ThumbnailFormat::Jpeg),
+            ("JPG", TEST_JPEG, ThumbnailFormat::Jpeg),
+        ];
+
+        for (input, source, expected) in cases {
+            let (format, bytes) =
+                make_thumbnail_bytes_from_stream(input, Cursor::new(source), &settings)
+                    .unwrap_or_else(|err| panic!("{input} should be a supported format: {err}"))
+                    .unwrap_or_else(|| panic!("{input} should produce a thumbnail"));
+
+            assert_eq!(format, expected, "wrong format resolved for {input}");
+
+            ImageReader::with_format(Cursor::new(bytes), format.into())
+                .decode()
+                .unwrap_or_else(|err| panic!("{input} thumbnail should decode: {err}"));
+        }
     }
 
     #[test]
