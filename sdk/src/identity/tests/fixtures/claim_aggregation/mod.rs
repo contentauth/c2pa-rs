@@ -12,3 +12,6 @@
 // each license.
 
 pub(crate) mod ica_credential_example;
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "default_http"))]
+mod regenerate_ica_validation;

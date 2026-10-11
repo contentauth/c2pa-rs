@@ -139,6 +139,8 @@ impl SignatureVerifier for IcaSignatureVerifier<'_> {
 
         ok &= self.cross_check_signer_payload(&ica_credential, signer_payload, status_tracker)?;
 
+        ok &= self.check_verified_identities(payload_bytes, status_tracker)?;
+
         if ok {
             log_current_item!(
                 "ICA credential is valid",
@@ -235,7 +237,7 @@ impl SignatureVerifier for IcaSignatureVerifier<'_> {
 
         ok &= self.cross_check_signer_payload(&ica_credential, signer_payload, status_tracker)?;
 
-        // TO DO (CAI-7994): CAWG SDK should inspect verifiedIdentities array.
+        ok &= self.check_verified_identities(payload_bytes, status_tracker)?;
 
         if ok {
             log_current_item!(
@@ -427,19 +429,12 @@ impl<'a> IcaSignatureVerifier<'a> {
         payload_bytes: &[u8],
         status_tracker: &mut StatusTracker,
     ) -> Result<IcaCredential, ValidationError<IcaValidationError>> {
-        let mut ica_credential: IcaCredential =
-            serde_json::from_slice(payload_bytes).map_err(|err| {
-                let err = ValidationError::from(err);
-
-                log_current_item!(
-                    "Invalid JSON-LD for verifiable credential",
-                    "IcaSignatureVerifier::check_signature"
-                )
-                .validation_status("cawg.ica.invalid_verifiable_credential")
-                .failure_no_throw(status_tracker, err.clone());
-
-                err
-            })?;
+        let mut ica_credential: IcaCredential = match serde_json::from_slice(payload_bytes) {
+            Ok(credential) => credential,
+            Err(err) => {
+                return Err(self.report_unparseable_vc(payload_bytes, err, status_tracker));
+            }
+        };
 
         // Post-process c2pa_asset to decode from base64 to raw binary.
         let subject = ica_credential.credential_subjects.first_mut();
@@ -462,6 +457,94 @@ impl<'a> IcaSignatureVerifier<'a> {
         subject.c2pa_asset.referenced_assertions = decoded_assertions;
 
         Ok(ica_credential)
+    }
+
+    /// Check `verifiedIdentities` of a credential that deserialized
+    /// successfully against the type-specific requirements of CAWG Identity
+    /// Assertion 1.3 §8.1.2.5 (for example, `address` for
+    /// `cawg.crypto_wallet`). Problems are reported as
+    /// `cawg.ica.verified_identities.invalid`; validation continues, and `false`
+    /// is returned so that `cawg.ica.credential_valid` is withheld.
+    fn check_verified_identities(
+        &self,
+        payload_bytes: &[u8],
+        status_tracker: &mut StatusTracker,
+    ) -> Result<bool, ValidationError<IcaValidationError>> {
+        let problem = serde_json::from_slice::<serde_json::Value>(payload_bytes)
+            .ok()
+            .and_then(|vc| verified_identities_problem(&vc));
+        let Some(problem) = problem else {
+            return Ok(true);
+        };
+
+        log_current_item!(
+            "Invalid verifiedIdentities entry",
+            "IcaSignatureVerifier::check_signature"
+        )
+        .validation_status("cawg.ica.verified_identities.invalid")
+        .failure(status_tracker, ValidationError::SignatureError(problem))?;
+
+        Ok(false)
+    }
+
+    /// Report a verifiable credential that could not be deserialized.
+    ///
+    /// CAWG Identity Assertion 1.3 §8.1.5 defines specific failure codes for
+    /// problems with `verifiedIdentities` (`cawg.ica.verified_identities.missing`
+    /// and `cawg.ica.verified_identities.invalid`). Those problems also make
+    /// strict deserialization fail, so check for them before falling back to
+    /// `cawg.ica.invalid_verifiable_credential`. That code is still reported if
+    /// the credential is also invalid for some other reason.
+    fn report_unparseable_vc(
+        &self,
+        payload_bytes: &[u8],
+        err: serde_json::Error,
+        status_tracker: &mut StatusTracker,
+    ) -> ValidationError<IcaValidationError> {
+        let vc_err = ValidationError::from(err);
+
+        let vi_problem = serde_json::from_slice::<serde_json::Value>(payload_bytes)
+            .ok()
+            .and_then(|vc| verified_identities_problem(&vc).map(|problem| (vc, problem)));
+
+        let Some((mut vc, problem)) = vi_problem else {
+            log_current_item!(
+                "Invalid JSON-LD for verifiable credential",
+                "IcaSignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.ica.invalid_verifiable_credential")
+            .failure_no_throw(status_tracker, vc_err.clone());
+            return vc_err;
+        };
+
+        let (code, description) = match &problem {
+            IcaValidationError::VerifiedIdentitiesMissing => (
+                "cawg.ica.verified_identities.missing",
+                "verifiedIdentities is missing or empty",
+            ),
+            _ => (
+                "cawg.ica.verified_identities.invalid",
+                "Invalid verifiedIdentities entry",
+            ),
+        };
+        let vi_err = ValidationError::SignatureError(problem);
+        log_current_item!(description, "IcaSignatureVerifier::check_signature")
+            .validation_status(code)
+            .failure_no_throw(status_tracker, vi_err.clone());
+
+        // If the credential still doesn't parse with a well-formed
+        // verifiedIdentities, it is also invalid for another reason.
+        set_verified_identities(&mut vc, placeholder_verified_identities());
+        if serde_json::from_value::<IcaCredential>(vc).is_err() {
+            log_current_item!(
+                "Invalid JSON-LD for verifiable credential",
+                "IcaSignatureVerifier::check_signature"
+            )
+            .validation_status("cawg.ica.invalid_verifiable_credential")
+            .failure_no_throw(status_tracker, vc_err);
+        }
+
+        vi_err
     }
 
     // Discover public key for issuer DID and validate signature.
@@ -911,5 +994,197 @@ impl<'a> IcaSignatureVerifier<'a> {
         }
 
         Ok(true)
+    }
+}
+
+/// The credential subject of a verifiable credential (`credentialSubject`, or
+/// its first entry when it is an array).
+fn credential_subject_mut(vc: &mut serde_json::Value) -> Option<&mut serde_json::Value> {
+    match vc.get_mut("credentialSubject")? {
+        serde_json::Value::Array(subjects) => subjects.first_mut(),
+        subject => Some(subject),
+    }
+}
+
+fn set_verified_identities(vc: &mut serde_json::Value, identities: serde_json::Value) {
+    if let Some(serde_json::Value::Object(subject)) = credential_subject_mut(vc) {
+        subject.insert("verifiedIdentities".to_owned(), identities);
+    }
+}
+
+/// A single well-formed verified identity, used to tell whether a credential
+/// that failed to deserialize has problems beyond `verifiedIdentities`.
+fn placeholder_verified_identities() -> serde_json::Value {
+    serde_json::json!([{
+        "type": "cawg.placeholder",
+        "provider": { "id": "https://placeholder.invalid", "name": "placeholder" },
+        "verifiedAt": "1970-01-01T00:00:00Z"
+    }])
+}
+
+/// Check `credentialSubject.verifiedIdentities` against CAWG Identity
+/// Assertion 1.3 §8.1.2.5 and return the first problem found, if any.
+fn verified_identities_problem(vc: &serde_json::Value) -> Option<IcaValidationError> {
+    use serde_json::Value;
+
+    let subject = match vc.get("credentialSubject") {
+        Some(Value::Array(subjects)) => subjects.first(),
+        other => other,
+    };
+    let identities = match subject.and_then(|s| s.get("verifiedIdentities")) {
+        Some(Value::Array(identities)) if !identities.is_empty() => identities,
+        _ => return Some(IcaValidationError::VerifiedIdentitiesMissing),
+    };
+
+    let non_empty_string =
+        |v: Option<&Value>| v.and_then(Value::as_str).is_some_and(|s| !s.is_empty());
+    let invalid = |index: usize, reason: &str| {
+        Some(IcaValidationError::VerifiedIdentitiesInvalid(format!(
+            "entry {index}: {reason}"
+        )))
+    };
+
+    for (index, identity) in identities.iter().enumerate() {
+        let Value::Object(identity) = identity else {
+            return invalid(index, "not an object");
+        };
+        if !non_empty_string(identity.get("type")) {
+            return invalid(index, "type must be a non-empty string");
+        }
+        match identity.get("provider") {
+            Some(Value::Object(provider)) => {
+                if !non_empty_string(provider.get("name")) {
+                    return invalid(index, "provider.name must be a non-empty string");
+                }
+            }
+            _ => return invalid(index, "provider must be an object"),
+        }
+        let verified_at = identity.get("verifiedAt").and_then(Value::as_str);
+        if verified_at.is_none_or(|t| chrono::DateTime::parse_from_rfc3339(t).is_err()) {
+            return invalid(index, "verifiedAt must be an RFC 3339 date-time");
+        }
+        for field in ["name", "username", "address", "uri"] {
+            if let Some(value) = identity.get(field) {
+                if !non_empty_string(Some(value)) {
+                    return invalid(
+                        index,
+                        &format!("{field} must be a non-empty string if present"),
+                    );
+                }
+            }
+        }
+        // Fields that §8.1.2.5 requires for specific verified identity types.
+        let identity_type = identity
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let required_field = match identity_type {
+            "cawg.document_verification" => Some("name"),
+            "cawg.social_media" => Some("username"),
+            "cawg.crypto_wallet" => Some("address"),
+            "cawg.web_site" => Some("uri"),
+            _ => None,
+        };
+        if let Some(field) = required_field {
+            if !non_empty_string(identity.get(field)) {
+                return invalid(index, &format!("{field} is required for {identity_type}"));
+            }
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use serde_json::{json, Value};
+
+    use super::{verified_identities_problem, IcaValidationError};
+
+    fn vc_with(identities: Value) -> Value {
+        json!({ "credentialSubject": { "verifiedIdentities": identities } })
+    }
+
+    fn valid_identity() -> Value {
+        json!({
+            "type": "cawg.social_media",
+            "username": "example",
+            "provider": { "id": "https://social.example", "name": "Example Social" },
+            "verifiedAt": "2024-05-27T08:40:39Z"
+        })
+    }
+
+    #[test]
+    fn accepts_valid_identities() {
+        assert_eq!(
+            verified_identities_problem(&vc_with(json!([valid_identity()]))),
+            None
+        );
+        // credentialSubject may also be an array.
+        let vc = json!({ "credentialSubject": [{ "verifiedIdentities": [valid_identity()] }] });
+        assert_eq!(verified_identities_problem(&vc), None);
+    }
+
+    #[test]
+    fn missing_or_empty_is_missing() {
+        for vc in [
+            json!({ "credentialSubject": {} }),
+            vc_with(json!([])),
+            vc_with(json!("not an array")),
+            json!({}),
+        ] {
+            assert_eq!(
+                verified_identities_problem(&vc),
+                Some(IcaValidationError::VerifiedIdentitiesMissing),
+                "{vc}"
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_entries_are_invalid() {
+        let mutations: Vec<fn(&mut Value)> = vec![
+            |v| v["type"] = json!(""),
+            |v| {
+                v.as_object_mut().unwrap().remove("provider");
+            },
+            |v| {
+                v["provider"].as_object_mut().unwrap().remove("name");
+            },
+            |v| {
+                v.as_object_mut().unwrap().remove("verifiedAt");
+            },
+            |v| v["verifiedAt"] = json!("last Tuesday"),
+            |v| v["username"] = json!(""),
+            // Type-specific required fields (§8.1.2.5).
+            |v| {
+                v.as_object_mut().unwrap().remove("username");
+            },
+            |v| {
+                v["type"] = json!("cawg.crypto_wallet");
+            },
+            |v| {
+                v["type"] = json!("cawg.document_verification");
+            },
+            |v| {
+                v["type"] = json!("cawg.web_site");
+            },
+        ];
+        for mutate in mutations {
+            let mut identity = valid_identity();
+            mutate(&mut identity);
+            assert!(
+                matches!(
+                    verified_identities_problem(&vc_with(json!([identity.clone()]))),
+                    Some(IcaValidationError::VerifiedIdentitiesInvalid(_))
+                ),
+                "{identity}"
+            );
+        }
+        assert!(matches!(
+            verified_identities_problem(&vc_with(json!(["not an object"]))),
+            Some(IcaValidationError::VerifiedIdentitiesInvalid(_))
+        ));
     }
 }
