@@ -1013,6 +1013,12 @@ pub mod validation_codes {
     /// Any corresponding URL should point to a CAWG identity assertion.
     pub const CAWG_IDENTITY_HARD_BINDING_MISSING: &str = "cawg.identity.hard_binding_missing";
 
+    /// A CAWG identity assertion references a hard-binding assertion other than
+    /// the one in its own claim.
+    ///
+    /// Any corresponding URL should point to a CAWG identity assertion.
+    pub const CAWG_IDENTITY_HARD_BINDING_INCORRECT: &str = "cawg.identity.hard_binding_incorrect";
+
     /// A CAWG identity assertion references the same assertion more than once.
     ///
     /// Any corresponding URL should point to a CAWG identity assertion.

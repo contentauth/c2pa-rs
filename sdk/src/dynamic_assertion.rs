@@ -135,6 +135,7 @@ pub trait AsyncDynamicAssertion: MaybeSync + MaybeSend {
 #[derive(Debug, Default, Eq, PartialEq)]
 pub struct PartialClaim {
     assertion_uris: Vec<HashedUri>,
+    ingredient_assertion_uris: Vec<HashedUri>,
 }
 
 impl PartialClaim {
@@ -145,5 +146,15 @@ impl PartialClaim {
 
     pub(crate) fn add_assertion(&mut self, assertion: &HashedUri) {
         self.assertion_uris.push(assertion.clone());
+    }
+
+    /// Assertions in this claim's ingredient claims (traced recursively), with
+    /// absolute URIs. Only populated when validating a claim that was read.
+    pub(crate) fn ingredient_assertions(&self) -> Iter<'_, HashedUri> {
+        self.ingredient_assertion_uris.iter()
+    }
+
+    pub(crate) fn add_ingredient_assertion(&mut self, assertion: HashedUri) {
+        self.ingredient_assertion_uris.push(assertion);
     }
 }

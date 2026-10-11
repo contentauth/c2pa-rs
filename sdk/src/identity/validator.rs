@@ -302,6 +302,52 @@ mod tests {
         assert_eq!(reader.validation_state(), ValidationState::Valid);
     }
 
+    /// cawg.* failure codes reported for the active manifest.
+    async fn cawg_failures(asset: &[u8]) -> Vec<String> {
+        let reader = Reader::default()
+            .with_stream_async("image/jpeg", Cursor::new(asset))
+            .await
+            .unwrap();
+        reader
+            .validation_results()
+            .unwrap()
+            .active_manifest()
+            .unwrap()
+            .failure()
+            .iter()
+            .map(|s| s.code().to_string())
+            .filter(|c| c.starts_with("cawg."))
+            .collect()
+    }
+
+    /// CAWG Identity 1.3 §5.1.1: a referenced assertion may be in "the C2PA claim
+    /// or any ingredient's claim". This identity assertion also references the
+    /// ingredient manifest's `c2pa.actions` assertion.
+    #[c2pa_test_async]
+    async fn identity_assertion_may_reference_ingredient_claim() {
+        const REFERENCES_INGREDIENT: &[u8] =
+            include_bytes!("tests/fixtures/validation_method/references_ingredient_assertion.jpg");
+
+        assert_eq!(
+            cawg_failures(REFERENCES_INGREDIENT).await,
+            Vec::<String>::new()
+        );
+    }
+
+    /// CAWG Identity 1.3 §7.1 step 4: referencing a hard binding other than the
+    /// claim's own (here, the ingredient manifest's `c2pa.hash.data`) is
+    /// `cawg.identity.hard_binding_incorrect`.
+    #[c2pa_test_async]
+    async fn identity_assertion_with_ingredient_hard_binding() {
+        const HARD_BINDING_INCORRECT: &[u8] =
+            include_bytes!("tests/fixtures/validation_method/hard_binding_incorrect.jpg");
+
+        assert_eq!(
+            cawg_failures(HARD_BINDING_INCORRECT).await,
+            vec!["cawg.identity.hard_binding_incorrect"]
+        );
+    }
+
     #[c2pa_test_async]
     async fn test_cawg_validate_with_hard_binding_missing() {
         let mut stream = Cursor::new(NO_HARD_BINDING);

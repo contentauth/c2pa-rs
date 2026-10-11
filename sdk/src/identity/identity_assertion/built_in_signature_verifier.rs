@@ -106,6 +106,9 @@ fn map_err_to_built_in<E: Into<BuiltInSignatureError>>(
         }
 
         ValidationError::NoHardBindingAssertion => ValidationError::NoHardBindingAssertion,
+        ValidationError::IncorrectHardBindingAssertion(s) => {
+            ValidationError::IncorrectHardBindingAssertion(s)
+        }
         ValidationError::UnknownSignatureType(s) => ValidationError::UnknownSignatureType(s),
         ValidationError::SignatureMismatch => ValidationError::SignatureMismatch,
         ValidationError::InvalidPadding => ValidationError::InvalidPadding,
