@@ -2753,6 +2753,64 @@ pub unsafe extern "C" fn c2pa_signer_create(
     })
 }
 
+/// Creates a signer whose callback returns a complete tagged COSE_Sign1.
+///
+/// The callback receives the serialized C2PA claim bytes. Its output buffer is
+/// exactly `reserve_size` bytes, which is also the reserved claim signature box
+/// size. It must write and return exactly this many bytes, including COSE padding,
+/// or return a negative value on failure. It must never write past the buffer.
+///
+/// The callback supplies the algorithm, certificate chain, and any timestamps
+/// within the COSE object. The SDK does not construct or perform post-signing
+/// verification of the returned COSE in this path.
+///
+/// Returns NULL and sets `InvalidBufferSize` when `reserve_size` is zero or cannot
+/// be represented by the callback's return type. Free the signer with `c2pa_free()`.
+///
+/// # Safety
+///
+/// The callback and any context it accesses must remain valid for the lifetime
+/// of the signer, including if ownership is transferred to a context. They must
+/// be safe for concurrent calls. The context is borrowed and is not freed by the
+/// SDK. The callback must not unwind across the FFI boundary. Callbacks that
+/// perform remote requests must enforce their own timeout.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_signer_create_direct_cose(
+    context: *const c_void,
+    callback: SignerCallback,
+    reserve_size: usize,
+) -> *mut C2paSigner {
+    if reserve_size == 0 || reserve_size > isize::MAX as usize {
+        CimplError::invalid_buffer_size(reserve_size, "reserve_size").set_last();
+        return std::ptr::null_mut();
+    }
+
+    let c_callback = move |context: *const (), data: &[u8]| {
+        let mut cose = Vec::new();
+        cose.try_reserve_exact(reserve_size)
+            .map_err(|_| c2pa::Error::CoseSignature)?;
+        cose.resize(reserve_size, 0);
+        let written = unsafe {
+            callback(
+                context,
+                data.as_ptr(),
+                data.len(),
+                cose.as_mut_ptr(),
+                reserve_size,
+            )
+        };
+        if written < 0 || written as usize != reserve_size {
+            return Err(c2pa::Error::CoseSignature);
+        }
+        Ok(cose)
+    };
+    let signer =
+        CallbackSigner::new_direct_cose(c_callback, reserve_size).set_context(context as *const ());
+    box_tracked!(C2paSigner {
+        signer: Box::new(signer),
+    })
+}
+
 /// Creates a C2paSigner that handles both C2PA claim signing and X.509 identity assertion signing
 /// by combining two existing [`C2paSigner`] instances.
 ///
@@ -4325,6 +4383,94 @@ mod tests {
 
         assert_eq!(unsafe { c2pa_free(string as *mut c_void) }, 0);
         drop(ptrs);
+    }
+
+    #[test]
+    fn direct_cose_callback_signer_passes_claim_context_and_capacity() {
+        unsafe extern "C" fn callback(
+            context: *const (),
+            data: *const c_uchar,
+            len: usize,
+            output: *mut c_uchar,
+            capacity: usize,
+        ) -> isize {
+            assert_eq!(*(context as *const u32), 42);
+            assert_eq!(std::slice::from_raw_parts(data, len), b"claim bytes");
+            assert_eq!(capacity, 4);
+            std::ptr::copy_nonoverlapping([0xd2, 0x84, 0x40, 0xa0].as_ptr(), output, 4);
+            4
+        }
+        let context = 42u32;
+        let signer = unsafe {
+            c2pa_signer_create_direct_cose(&context as *const u32 as *const c_void, callback, 4)
+        };
+        assert!(!signer.is_null());
+        assert_eq!(unsafe { c2pa_signer_reserve_size(signer) }, 4);
+        {
+            let signer = checkout_exclusive::<C2paSigner>(signer).unwrap();
+            assert!(signer.signer.direct_cose_handling());
+            assert_eq!(
+                signer.signer.sign(b"claim bytes").unwrap(),
+                [0xd2, 0x84, 0x40, 0xa0]
+            );
+        }
+        assert_eq!(unsafe { c2pa_free(signer as *mut c_void) }, 0);
+    }
+
+    #[test]
+    fn direct_cose_callback_signer_rejects_wrong_lengths_and_failure() {
+        unsafe extern "C" fn callback(
+            context: *const (),
+            _data: *const c_uchar,
+            _len: usize,
+            _output: *mut c_uchar,
+            _capacity: usize,
+        ) -> isize {
+            *(context as *const isize)
+        }
+        for written in [-1isize, 0, 3, 5] {
+            let signer = unsafe {
+                c2pa_signer_create_direct_cose(
+                    &written as *const isize as *const c_void,
+                    callback,
+                    4,
+                )
+            };
+            assert!(!signer.is_null());
+            {
+                let signer = checkout_exclusive::<C2paSigner>(signer).unwrap();
+                assert!(matches!(
+                    signer.signer.sign(b"claim"),
+                    Err(c2pa::Error::CoseSignature)
+                ));
+            }
+            assert_eq!(unsafe { c2pa_free(signer as *mut c_void) }, 0);
+        }
+    }
+
+    #[test]
+    fn direct_cose_callback_signer_rejects_invalid_reserve_size() {
+        unsafe extern "C" fn callback(
+            _context: *const (),
+            _data: *const c_uchar,
+            _len: usize,
+            _output: *mut c_uchar,
+            _capacity: usize,
+        ) -> isize {
+            panic!("must not call callback for invalid reserve size")
+        }
+        for size in [0, usize::MAX] {
+            let signer =
+                unsafe { c2pa_signer_create_direct_cose(std::ptr::null(), callback, size) };
+            assert!(signer.is_null());
+            let error = unsafe { c2pa_error() };
+            assert!(!error.is_null());
+            assert!(unsafe { CStr::from_ptr(error) }
+                .to_str()
+                .unwrap()
+                .starts_with("InvalidBufferSize:"));
+            assert_eq!(unsafe { c2pa_free(error as *mut c_void) }, 0);
+        }
     }
 
     #[test]
