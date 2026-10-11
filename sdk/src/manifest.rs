@@ -11,7 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::{borrow::Cow, slice::Iter, sync::Arc};
+use std::{borrow::Cow, collections::HashSet, slice::Iter, sync::Arc};
 
 use async_generic::async_generic;
 use log::debug;
@@ -24,7 +24,7 @@ use uuid::Uuid;
 use crate::{
     assertion::{AssertionBase, AssertionData},
     assertions::{labels, Actions, AssertionMetadata, EmbeddedData, Metadata, SoftwareAgent},
-    claim::{ClaimAssertionType, RemoteManifest},
+    claim::{Claim, ClaimAssertionType, RemoteManifest},
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
     hashed_uri::HashedUri,
@@ -639,6 +639,12 @@ impl Manifest {
                     for a in claim.assertions() {
                         partial_claim.add_assertion(a);
                     }
+                    add_ingredient_claim_assertions(
+                        store,
+                        claim,
+                        &mut partial_claim,
+                        &mut HashSet::from([claim.label().to_owned()]),
+                    );
 
                     let uri = to_assertion_uri(manifest_label, label);
                     validation_log.push_current_uri(&uri);
@@ -761,6 +767,44 @@ impl SignatureInfo {
     // returns the cert chain for this signature
     pub fn cert_chain(&self) -> &str {
         &self.cert_chain
+    }
+}
+
+/// Add the assertions of `claim`'s ingredient claims, traced recursively, to
+/// `partial_claim` with absolute URIs. CAWG Identity Assertion 1.3 §5.1.1
+/// allows an identity assertion to reference assertions in "the C2PA claim
+/// or any ingredient's claim".
+fn add_ingredient_claim_assertions(
+    store: &Store,
+    claim: &Claim,
+    partial_claim: &mut PartialClaim,
+    visited: &mut HashSet<String>,
+) {
+    for i in claim.ingredient_assertions() {
+        let Ok(ingredient) = crate::assertions::Ingredient::from_assertion(i.assertion()) else {
+            continue;
+        };
+        let Some(manifest_uri) = ingredient.c2pa_manifest() else {
+            continue;
+        };
+        let label = Store::manifest_label_from_path(&manifest_uri.url());
+        if !visited.insert(label.clone()) {
+            continue;
+        }
+        let Some(ingredient_claim) = store.get_claim(&label) else {
+            continue;
+        };
+        for a in ingredient_claim.assertions() {
+            if let Some(assertion_label) = crate::jumbf::labels::assertion_label_from_uri(&a.url())
+            {
+                partial_claim.add_ingredient_assertion(HashedUri::new(
+                    to_assertion_uri(&label, &assertion_label),
+                    a.alg(),
+                    &a.hash(),
+                ));
+            }
+        }
+        add_ingredient_claim_assertions(store, ingredient_claim, partial_claim, visited);
     }
 }
 

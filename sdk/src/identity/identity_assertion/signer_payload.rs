@@ -24,7 +24,7 @@ use crate::{
     status_tracker::StatusTracker,
     validation_status::{
         CAWG_IDENTITY_ASSERTION_DUPLICATE, CAWG_IDENTITY_ASSERTION_MISMATCH,
-        CAWG_IDENTITY_HARD_BINDING_MISSING,
+        CAWG_IDENTITY_HARD_BINDING_INCORRECT, CAWG_IDENTITY_HARD_BINDING_MISSING,
     },
     HashedUri, Manifest,
 };
@@ -62,9 +62,9 @@ impl SignerPayload {
         status_tracker: &mut StatusTracker,
     ) -> Result<(), ValidationError<E>> {
         // All assertions mentioned in referenced_assertions also need to be referenced
-        // in the claim.
-        for ref_assertion in self.referenced_assertions.iter() {
-            if let Some(claim_assertion) = partial_claim.assertions().find(|a| {
+        // in the claim or (CAWG Identity 1.3 §5.1.1) in an ingredient's claim.
+        let in_own_claim = |ref_assertion: &HashedUri| {
+            partial_claim.assertions().find(|a| {
                 // HACKY workaround for absolute assertion URLs as of c2pa-rs 0.36.0.
                 // See https://github.com/contentauth/c2pa-rs/pull/603.
                 let url = a.url();
@@ -73,7 +73,16 @@ impl SignerPayload {
                 }
                 let url = ABSOLUTE_URL_PREFIX.replace(&url, "");
                 url == ref_assertion.url()
-            }) {
+            })
+        };
+
+        for ref_assertion in self.referenced_assertions.iter() {
+            let found = in_own_claim(ref_assertion).or_else(|| {
+                partial_claim
+                    .ingredient_assertions()
+                    .find(|a| a.url() == ref_assertion.url())
+            });
+            if let Some(claim_assertion) = found {
                 if claim_assertion.hash() != ref_assertion.hash() {
                     log_current_item!(
                         "referenced assertion hash mismatch",
@@ -105,19 +114,37 @@ impl SignerPayload {
             .map(|ra| ra.url().to_owned())
             .collect();
 
-        if !ref_assertion_labels.iter().any(|ra| {
-            if let Some((_jumbf_prefix, label)) = ra.rsplit_once('/') {
-                is_hard_binding_label(label)
-            } else {
-                false
-            }
-        }) {
+        // Exactly the claim's own hard binding must be referenced (§7.1 step 4).
+        let hard_binding_refs: Vec<&HashedUri> = self
+            .referenced_assertions
+            .iter()
+            .filter(|ra| {
+                ra.url()
+                    .rsplit_once('/')
+                    .is_some_and(|(_jumbf_prefix, label)| is_hard_binding_label(label))
+            })
+            .collect();
+
+        if hard_binding_refs.is_empty() {
             log_current_item!(
                 "no hard binding assertion",
                 "SignerPayload::check_against_manifest"
             )
             .validation_status(CAWG_IDENTITY_HARD_BINDING_MISSING)
             .failure(status_tracker, ValidationError::<E>::NoHardBindingAssertion)?;
+        } else if let Some(other) = hard_binding_refs
+            .iter()
+            .find(|ra| in_own_claim(ra).is_none())
+        {
+            log_current_item!(
+                "hard binding assertion is not the claim's own",
+                "SignerPayload::check_against_partial_claim"
+            )
+            .validation_status(CAWG_IDENTITY_HARD_BINDING_INCORRECT)
+            .failure(
+                status_tracker,
+                ValidationError::<E>::IncorrectHardBindingAssertion(other.url().to_owned()),
+            )?;
         }
 
         // Make sure no assertion references are duplicated.
