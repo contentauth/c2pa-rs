@@ -302,6 +302,41 @@ mod tests {
         assert_eq!(reader.validation_state(), ValidationState::Valid);
     }
 
+    /// An identity assertion that doesn't match the CDDL (here, `signer_payload`
+    /// is missing) is reported as `cawg.identity.cbor.invalid` (CAWG Identity
+    /// 1.3 §7.1 step 1). The rest of the manifest still loads.
+    #[c2pa_test_async]
+    async fn malformed_identity_assertion_reports_cbor_invalid() {
+        const MALFORMED_CBOR: &[u8] =
+            include_bytes!("tests/fixtures/validation_method/malformed_cbor.jpg");
+
+        let reader = Reader::default()
+            .with_stream_async("image/jpeg", Cursor::new(MALFORMED_CBOR))
+            .await
+            .unwrap();
+
+        // The manifest is loaded rather than rejected as a whole.
+        assert!(reader.active_manifest().is_some());
+
+        let results = reader.validation_results().unwrap();
+        let failures = results.active_manifest().unwrap().failure();
+
+        let cbor_invalid = failures
+            .iter()
+            .find(|s| s.code() == "cawg.identity.cbor.invalid")
+            .unwrap();
+        assert!(cbor_invalid
+            .url()
+            .is_some_and(|u| u.ends_with("/c2pa.assertions/cawg.identity")));
+
+        assert!(
+            !failures
+                .iter()
+                .any(|s| s.code() == "assertion.required.missing"),
+            "{failures:?}"
+        );
+    }
+
     #[c2pa_test_async]
     async fn test_cawg_validate_with_hard_binding_missing() {
         let mut stream = Cursor::new(NO_HARD_BINDING);
