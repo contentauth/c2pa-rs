@@ -91,7 +91,7 @@ async fn success_case() {
 
     assert_eq!(
         li.label,
-        "self#jumbf=/c2pa/test:urn:uuid:71b584f1-da28-4bf7-89a8-417be6bb07ac/c2pa.assertions/cawg.identity"
+        "self#jumbf=/c2pa/urn:c2pa:6f6c5403-0a6e-4926-9ea1-9114454ab46c:test/c2pa.assertions/cawg.identity"
     );
 
     assert_eq!(li.description, "ICA credential is valid");
@@ -155,7 +155,7 @@ async fn invalid_cose_sign1() {
 
     assert_eq!(
         li.label,
-        "self#jumbf=/c2pa/test:urn:uuid:3572182b-dc6d-4781-a237-f866924d2f47/c2pa.assertions/cawg.identity"
+        "self#jumbf=/c2pa/urn:c2pa:0fec024f-bb99-47f9-9f4d-8187a579a038:test/c2pa.assertions/cawg.identity"
     );
 
     assert_eq!(li.description, "Invalid COSE_Sign1 data structure");
@@ -236,7 +236,7 @@ async fn invalid_cose_sign_alg() {
 
     assert_eq!(
         li.label,
-        "self#jumbf=/c2pa/test:urn:uuid:44f2c7e6-66f0-40d9-bbac-49bac24abe65/c2pa.assertions/cawg.identity"
+        "self#jumbf=/c2pa/urn:c2pa:0cf93a54-8132-4143-b8c9-041607e755ef:test/c2pa.assertions/cawg.identity"
     );
 
     assert_eq!(li.description, "Invalid COSE_Sign1 signature algorithm");
@@ -297,7 +297,7 @@ async fn missing_cose_sign_alg() {
 
     assert_eq!(
         li.label,
-        "self#jumbf=/c2pa/test:urn:uuid:0b13bcdc-4942-4d73-9666-0ea2e9e124aa/c2pa.assertions/cawg.identity"
+        "self#jumbf=/c2pa/urn:c2pa:950e4af7-962a-4196-91fe-06bc3188fc50:test/c2pa.assertions/cawg.identity"
     );
 
     assert_eq!(li.description, "Missing COSE_Sign1 signature algorithm");
@@ -363,7 +363,7 @@ async fn invalid_content_type() {
 
     assert_eq!(
         li.label,
-        "self#jumbf=/c2pa/test:urn:uuid:d9286754-694e-44cb-a465-e7016516dade/c2pa.assertions/cawg.identity"
+        "self#jumbf=/c2pa/urn:c2pa:58bc4349-87db-44e8-9283-7fa45d655a02:test/c2pa.assertions/cawg.identity"
     );
 
     assert_eq!(li.description, "Invalid COSE_Sign1 content type header");
@@ -427,7 +427,7 @@ async fn invalid_content_type_assigned() {
 
     assert_eq!(
         li.label,
-        "self#jumbf=/c2pa/test:urn:uuid:d7a97a73-2508-474b-b4fc-2d273b643e73/c2pa.assertions/cawg.identity"
+        "self#jumbf=/c2pa/urn:c2pa:e965c8a0-886c-46ca-a9a1-b63942c7fa61:test/c2pa.assertions/cawg.identity"
     );
 
     assert_eq!(li.description, "Invalid COSE_Sign1 content type header");
@@ -490,7 +490,7 @@ async fn missing_content_type() {
 
     assert_eq!(
         li.label,
-        "self#jumbf=/c2pa/test:urn:uuid:4b29a885-a12b-49e6-83b6-e3701abc6a24/c2pa.assertions/cawg.identity"
+        "self#jumbf=/c2pa/urn:c2pa:30f9a685-2c01-420c-96bf-ccf1dca8955e:test/c2pa.assertions/cawg.identity"
     );
 
     assert_eq!(li.description, "Invalid COSE_Sign1 content type header");
@@ -563,7 +563,7 @@ async fn missing_vc() {
 
     assert_eq!(
         li.label,
-        "self#jumbf=/c2pa/test:urn:uuid:2db725ac-fd2a-496c-ab1c-6c0fafe7989d/c2pa.assertions/cawg.identity"
+        "self#jumbf=/c2pa/urn:c2pa:985e7072-5cb9-4d53-84ab-98b997367836:test/c2pa.assertions/cawg.identity"
     );
 
     assert_eq!(li.description, "Missing COSE_Sign1 payload");
@@ -653,6 +653,51 @@ async fn verified_identity_missing_provider_name() {
 }
 
 #[c2pa_test_async]
+async fn crypto_wallet_missing_address() {
+    // If the `type` of a verified identity is `cawg.crypto_wallet`, the
+    // `verifiedIdentities[?].address` property MUST be present (§8.1.2.5).
+    // Otherwise the validator MUST issue `cawg.ica.verified_identities.invalid`;
+    // it may continue validation, but must not issue `cawg.ica.credential_valid`.
+    let format = "image/jpeg";
+    let test_image = include_bytes!(
+        "../fixtures/claim_aggregation/ica_validation/crypto_wallet_missing_address.jpg"
+    );
+    let mut test_image = Cursor::new(test_image);
+
+    let reader = crate::identity::tests::read_manifest(format, &mut test_image).await;
+    let manifest = reader.active_manifest().unwrap();
+    let mut st = StatusTracker::default();
+    let ia = IdentityAssertion::from_manifest(manifest, &mut st)
+        .next()
+        .unwrap()
+        .unwrap();
+
+    let context = ica_test_context();
+    let isv = IcaSignatureVerifier::new(&context);
+
+    // Validation continues: the credential is still returned.
+    ia.validate(manifest, &mut st, &isv).await.unwrap();
+
+    let codes = |kind: LogKind| {
+        st.logged_items()
+            .iter()
+            .filter(|li| li.kind == kind)
+            .map(|li| {
+                li.validation_status
+                    .clone()
+                    .unwrap_or_default()
+                    .into_owned()
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        codes(LogKind::Failure),
+        vec!["cawg.ica.verified_identities.invalid"]
+    );
+    assert!(!codes(LogKind::Success).contains(&"cawg.ica.credential_valid".to_owned()));
+}
+
+#[c2pa_test_async]
 async fn invalid_vc() {
     // ^^ Same as above but the VC is corrupted rather than missing.
 
@@ -694,7 +739,7 @@ async fn invalid_vc() {
 
     assert_eq!(
         li.label,
-        "self#jumbf=/c2pa/test:urn:uuid:10a7d93c-b747-4ef5-b734-032d5a3628f7/c2pa.assertions/cawg.identity"
+        "self#jumbf=/c2pa/urn:c2pa:6b554cb9-27c7-49f2-a7b5-2ba8441402cc:test/c2pa.assertions/cawg.identity"
     );
 
     assert_eq!(li.description, "Invalid JSON-LD for verifiable credential");
@@ -762,7 +807,7 @@ async fn invalid_issuer_did() {
 
     assert_eq!(
         li.label,
-        "self#jumbf=/c2pa/test:urn:uuid:3bf72495-6f83-4634-be3f-ca8c423e830e/c2pa.assertions/cawg.identity"
+        "self#jumbf=/c2pa/urn:c2pa:7c317bab-a71d-4945-aaab-edbd421719e0:test/c2pa.assertions/cawg.identity"
     );
 
     assert_eq!(li.description, "Invalid issuer DID");
@@ -828,7 +873,7 @@ async fn unsupported_did_method() {
 
     assert_eq!(
         li.label,
-        "self#jumbf=/c2pa/test:urn:uuid:3bf72495-6f83-4634-be3f-ca8c423e830e/c2pa.assertions/cawg.identity"
+        "self#jumbf=/c2pa/urn:c2pa:7c317bab-a71d-4945-aaab-edbd421719e0:test/c2pa.assertions/cawg.identity"
     );
 
     assert_eq!(li.description, "Invalid issuer DID");
@@ -889,7 +934,7 @@ async fn unresolvable_did() {
     let li = log_items.next().unwrap();
 
     assert_eq!(li.kind, LogKind::Failure);
-    assert_eq!(li.label, "self#jumbf=/c2pa/test:urn:uuid:e3d867e8-c875-4daa-910e-b5ae2b1b45f3/c2pa.assertions/cawg.identity");
+    assert_eq!(li.label, "self#jumbf=/c2pa/urn:c2pa:3f985a2c-306a-4299-b811-d49a014b02e2:test/c2pa.assertions/cawg.identity");
     assert_eq!(li.description, "Unable to resolve issuer DID");
     assert_eq!(li.crate_name, "c2pa");
 
@@ -954,7 +999,7 @@ async fn did_doc_without_assertion_method() {
 
     assert_eq!(li.kind, LogKind::Failure);
 
-    assert_eq!(li.label,   "self#jumbf=/c2pa/test:urn:uuid:f3fdb6a6-46d3-41f5-ad13-0ff57948347e/c2pa.assertions/cawg.identity");
+    assert_eq!(li.label,   "self#jumbf=/c2pa/urn:c2pa:b332d9ff-cbed-403f-9338-445387cabbb8:test/c2pa.assertions/cawg.identity");
 
     // Safari's fetch fails with "Unable to resolve issuer DID" instead of "Invalid issuer DID document".
     let valid_description = li.description == "Invalid issuer DID document"
@@ -1025,7 +1070,7 @@ async fn did_is_untrusted() {
     assert_eq!(li.kind, LogKind::Informational);
     assert_eq!(
         li.label,
-        "self#jumbf=/c2pa/test:urn:uuid:71b584f1-da28-4bf7-89a8-417be6bb07ac/c2pa.assertions/cawg.identity"
+        "self#jumbf=/c2pa/urn:c2pa:6f6c5403-0a6e-4926-9ea1-9114454ab46c:test/c2pa.assertions/cawg.identity"
     );
     assert_eq!(li.description, "ICA issuer is not a trusted issuer");
     assert_eq!(li.crate_name, "c2pa");
@@ -1143,7 +1188,7 @@ async fn signature_mismatch() {
 
     assert_eq!(
         li.label,
-        "self#jumbf=/c2pa/test:urn:uuid:0dcbec68-4952-40d9-bb01-3be603f32a33/c2pa.assertions/cawg.identity"
+        "self#jumbf=/c2pa/urn:c2pa:d363fcda-05d7-4bc7-934b-03034a9bfdfd:test/c2pa.assertions/cawg.identity"
 );
 
     assert_eq!(li.description, "Signature does not match credential");
@@ -1206,7 +1251,7 @@ async fn valid_time_stamp() {
 
     let tst_info = subject.time_stamp.as_ref().unwrap();
 
-    assert_eq!(tst_info.gen_time.to_string(), "20250423194523Z");
+    assert_eq!(tst_info.gen_time.to_string(), "20261011020729Z");
 
     let mut log_items = st.logged_items().iter();
 
@@ -1216,7 +1261,7 @@ async fn valid_time_stamp() {
 
     assert_eq!(
         li.label,
-        "self#jumbf=/c2pa/test:urn:uuid:0e16ab9b-e3e8-425e-a83b-fa2846f178e9/c2pa.assertions/cawg.identity"
+        "self#jumbf=/c2pa/urn:c2pa:3ac67fff-aa8e-4cb4-85ad-a29370bccecf:test/c2pa.assertions/cawg.identity"
     );
 
     assert_eq!(li.description, "Time stamp validated");
@@ -1233,7 +1278,7 @@ async fn valid_time_stamp() {
 
     assert_eq!(
         li.label,
-        "self#jumbf=/c2pa/test:urn:uuid:0e16ab9b-e3e8-425e-a83b-fa2846f178e9/c2pa.assertions/cawg.identity"
+        "self#jumbf=/c2pa/urn:c2pa:3ac67fff-aa8e-4cb4-85ad-a29370bccecf:test/c2pa.assertions/cawg.identity"
     );
 
     assert_eq!(li.description, "ICA credential is valid");
@@ -1302,7 +1347,7 @@ async fn invalid_time_stamp() {
 
     assert_eq!(
         li.label,
-        "self#jumbf=/c2pa/test:urn:uuid:4caa21a4-0d9c-43ed-aa7b-5dcd4ae20e20/c2pa.assertions/cawg.identity"
+        "self#jumbf=/c2pa/urn:c2pa:93cc4576-027a-475d-af1a-faa17ec41456:test/c2pa.assertions/cawg.identity"
     );
 
     assert_eq!(li.description, "Time stamp does not match credential");
@@ -1372,7 +1417,7 @@ async fn valid_from_missing() {
 
     assert_eq!(
         li.label,
-        "self#jumbf=/c2pa/test:urn:uuid:0a1587c4-b125-4f0d-aeaa-994f10d1f736/c2pa.assertions/cawg.identity"
+        "self#jumbf=/c2pa/urn:c2pa:fecdb1aa-6b39-4975-8c44-951f9483f3bb:test/c2pa.assertions/cawg.identity"
     );
 
     assert_eq!(li.description, "credential does not have a validFrom date");
@@ -1440,7 +1485,7 @@ async fn valid_from_in_future() {
 
     assert_eq!(
         li.label,
-        "self#jumbf=/c2pa/test:urn:uuid:ebec2691-55ae-4255-a116-14e721c0a3cc/c2pa.assertions/cawg.identity"
+        "self#jumbf=/c2pa/urn:c2pa:36518468-acb9-4a48-a0a1-f4c90c8ce791:test/c2pa.assertions/cawg.identity"
     );
 
     assert_eq!(
@@ -1514,7 +1559,7 @@ async fn valid_from_after_time_stamp() {
 
     assert_eq!(
         li.label,
-        "self#jumbf=/c2pa/test:urn:uuid:8e926af3-e3d4-4945-bcc3-c2680bc50526/c2pa.assertions/cawg.identity"
+        "self#jumbf=/c2pa/urn:c2pa:8edb60d4-c65a-4002-bba1-4d67f5a0004c:test/c2pa.assertions/cawg.identity"
     );
 
     assert_eq!(li.description, "Time stamp validated");
@@ -1531,7 +1576,7 @@ async fn valid_from_after_time_stamp() {
 
     assert_eq!(
         li.label,
-        "self#jumbf=/c2pa/test:urn:uuid:8e926af3-e3d4-4945-bcc3-c2680bc50526/c2pa.assertions/cawg.identity"
+        "self#jumbf=/c2pa/urn:c2pa:8edb60d4-c65a-4002-bba1-4d67f5a0004c:test/c2pa.assertions/cawg.identity"
     );
 
     assert_eq!(
@@ -1610,7 +1655,7 @@ async fn valid_until_in_future() {
 
     assert_eq!(
         li.label,
-        "self#jumbf=/c2pa/test:urn:uuid:13e59d1a-1373-4d18-94ad-3116713ba95a/c2pa.assertions/cawg.identity"
+        "self#jumbf=/c2pa/urn:c2pa:8905c652-8f31-4b40-bde6-44dbb9cc78bc:test/c2pa.assertions/cawg.identity"
     );
 
     assert_eq!(li.description, "ICA credential is valid");
@@ -1681,7 +1726,7 @@ async fn valid_until_in_past() {
 
     assert_eq!(
         li.label,
-        "self#jumbf=/c2pa/test:urn:uuid:afffd936-e004-4bd0-aad3-7965f8eccb7c/c2pa.assertions/cawg.identity"
+        "self#jumbf=/c2pa/urn:c2pa:48ef57c6-c036-45b5-8c94-baa4894a746c:test/c2pa.assertions/cawg.identity"
     );
 
     assert_eq!(
@@ -1770,7 +1815,7 @@ async fn signer_payload_mismatch() {
 
     assert_eq!(
         li.label,
-        "self#jumbf=/c2pa/test:urn:uuid:96f26ecf-c335-4a43-ba4f-55acb5fdcd79/c2pa.assertions/cawg.identity"
+        "self#jumbf=/c2pa/urn:c2pa:99bebfa4-a543-4c66-bf56-5a05e9f9dbf2:test/c2pa.assertions/cawg.identity"
     );
 
     assert_eq!(li.description, "c2paAsset does not match signer_payload");
