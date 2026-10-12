@@ -1512,11 +1512,17 @@ impl AssetBoxHash for MatroskaIO {
                             )]),
                     );
                 } else {
-                    maps.push(BoxMap::new(
-                        vec![element_box_name(c.id)],
-                        c.offset,
-                        c.total_len(),
-                    ));
+                    let bm = BoxMap::new(vec![element_box_name(c.id)], c.offset, c.total_len());
+                    // Other tags are asset metadata: a claim generator may
+                    // exclude their Element Data.
+                    maps.push(if c.id == ID_TAG {
+                        bm.with_allowed_exclusions(vec![AllowedExclusion::after_header(
+                            c.header_len,
+                            c.total_len(),
+                        )])
+                    } else {
+                        bm
+                    });
                 }
             }
         }
@@ -2183,6 +2189,37 @@ mod tests {
         bh.generate_box_hash_from_stream(&mut Cursor::new(&prepared), "sha256", &io(), false)
             .unwrap();
         (write(&prepared, &fake_store(b"final")), bh)
+    }
+
+    #[test]
+    fn test_other_tag_excludable_as_metadata() {
+        // A claim generator may exclude the Element Data of another Tag; that
+        // tag can then change (same size) without breaking the hard binding.
+        let prepared = write(VP9_OPUS, PLACEHOLDER_STORE);
+        let maps = io().get_box_map(&mut Cursor::new(&prepared)).unwrap();
+        let i = maps.iter().position(|m| m.names[0] == "7373").unwrap();
+        let a = maps[i].allowed_exclusions[0];
+        assert_eq!(a.kind, ExclusionKind::AssetMetadata);
+        let mut bh = BoxHash { boxes: Vec::new() };
+        bh.generate_box_hash_from_stream_with_exclusions(
+            &mut Cursor::new(&prepared),
+            "sha256",
+            &io(),
+            false,
+            &[crate::assertions::BoxHashExclusionRequest {
+                source_box_index: i,
+                start: a.start,
+                length: a.length,
+            }],
+        )
+        .unwrap();
+        let mut signed = write(&prepared, &fake_store(b"final"));
+        bh.verify_in_memory_hash(&signed, Some("sha256"), &io())
+            .unwrap();
+        let tag = tags_kids(&signed, &the_tags(&signed))[0].0;
+        signed[tag.end() as usize - 1] ^= 1;
+        bh.verify_in_memory_hash(&signed, Some("sha256"), &io())
+            .unwrap();
     }
 
     #[test]
