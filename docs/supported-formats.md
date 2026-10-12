@@ -62,7 +62,7 @@ The Rust library supports binary glTF 2.0 (GLB) when the `unstable_glb` feature 
 
 ## Experimental feature: Matroska and WebM
 
-The Rust library supports Matroska and WebM when the `unstable_matroska` feature is enabled. The manifest is carried in an `AttachedFile` (`FileMediaType` `application/c2pa`) of an `Attachments` element placed at the end of the `Segment`, following the Matroska section of the C2PA specification working draft. Files with unknown-size elements (for example, unfinalized `MediaRecorder` or live recordings) or with more than one `Segment` are not supported; finalize or remux them first.
+The Rust library supports Matroska and WebM when the `unstable_matroska` feature is enabled. The manifest is carried as the `TagBinary` of a `SimpleTag` named `C2PA_MANIFEST`, in a whole-Segment `Tag` of the `Segment`'s `Tags` element, which the writer places at the end of the `Segment`, following the Matroska section of the C2PA specification working draft. Files with unknown-size elements (for example, unfinalized `MediaRecorder` or live recordings) or with more than one `Segment` are not supported; finalize or remux them first.
 
 | Extensions      | MIME type                                                  |
 | --------------- | ---------------------------------------------------------- |

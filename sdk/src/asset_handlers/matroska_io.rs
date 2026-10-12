@@ -20,18 +20,20 @@
 //! * The asset is one EBML Header followed by one `Segment` whose Element Data
 //!   Size is encoded on 8 octets and reaches the end of the asset; no
 //!   Top-Level Element has an unknown size, and `EBMLMaxSizeLength` is 8.
-//! * The C2PA Manifest Store is the `FileData` of an `AttachedFile` whose
-//!   `FileMediaType` is `application/c2pa` (the "C2PA `AttachedFile`", named
-//!   `content_credential.c2pa`). It is the last child of the `Attachments`
-//!   element, which is the last Top-Level Element, has an 8-octet Element
-//!   Data Size, no `CRC-32`, and is referenced by a `Seek` of the first
-//!   `SeekHead`. An `Attachments` element found elsewhere is relocated to the
-//!   end byte for byte and replaced by a `Void` of the same size.
+//! * The C2PA Manifest Store is the `TagBinary` of a `SimpleTag` whose
+//!   `TagName` is `C2PA_MANIFEST`, in a `Tag` whose `Targets` is empty (the
+//!   whole Segment): the "C2PA `Tag`". It is a child of the `Segment`'s single
+//!   `Tags` element, which has an 8-octet Element Data Size, no `CRC-32`, and
+//!   is referenced by a `Seek` of the first `SeekHead`. This writer places that
+//!   `Tags` element last (RFC 9559, section 25.3.2): a `Tags` element found
+//!   elsewhere is relocated to the end with its children byte for byte, and
+//!   replaced by a `Void` of the same size. Readers accept any position.
 //! * The hard binding is `c2pa.hash.boxes`: the EBML Header (`1A45DFA3`), a
 //!   12-byte `SEGh` box with its 8-octet size excluded, one box per
 //!   Top-Level Element named by its Element ID in uppercase hex, and, in place
-//!   of the `Attachments` element, a 12-byte `ATTh` box with its size excluded
-//!   followed by one box per child, the C2PA `AttachedFile` being `C2PA`.
+//!   of the `Tags` element holding the C2PA `Tag`, a 12-byte `TAGh` box with
+//!   its size excluded followed by one box per child, the C2PA `Tag` being
+//!   `C2PA`. Other `Tag` elements are hashed.
 //!
 //! The EBML reader and writer are minimal and in-tree: only Element IDs and
 //! sizes are decoded, plus the few elements that carry Segment Positions
@@ -88,33 +90,31 @@ const ID_CUE_CODEC_STATE: u32 = 0xea;
 const ID_CUE_REFERENCE: u32 = 0xdb;
 const ID_CUE_REF_CLUSTER: u32 = 0x97;
 const ID_ATTACHMENTS: u32 = 0x1941_a469;
-const ID_ATTACHED_FILE: u32 = 0x61a7;
-const ID_FILE_DESCRIPTION: u32 = 0x467e;
-const ID_FILE_NAME: u32 = 0x466e;
-const ID_FILE_MEDIA_TYPE: u32 = 0x4660;
-const ID_FILE_DATA: u32 = 0x465c;
-const ID_FILE_UID: u32 = 0x46ae;
+const ID_TAG: u32 = 0x7373;
+const ID_TARGETS: u32 = 0x63c0;
+const ID_SIMPLE_TAG: u32 = 0x67c8;
+const ID_TAG_NAME: u32 = 0x45a3;
+const ID_TAG_BINARY: u32 = 0x4485;
 const ID_VOID: u32 = 0xec;
 const ID_CRC32: u32 = 0xbf;
 
-/// `FileName` of the C2PA `AttachedFile`.
-pub(crate) const C2PA_FILE_NAME: &str = "content_credential.c2pa";
-/// `FileMediaType` identifying the C2PA `AttachedFile`.
-pub(crate) const C2PA_MEDIA_TYPE: &str = "application/c2pa";
+/// `TagName` of the `SimpleTag` that carries the C2PA Manifest Store.
+pub(crate) const C2PA_TAG_NAME: &str = "C2PA_MANIFEST";
 /// Box name of the `Segment` header (ID + 8-octet size).
 pub(crate) const SEGMENT_HEADER_BOX: &str = "SEGh";
-/// Box name of the `Attachments` header (ID + 8-octet size).
-pub(crate) const ATTACHMENTS_HEADER_BOX: &str = "ATTh";
+/// Box name of the header (ID + 8-octet size) of the `Tags` element that
+/// holds the C2PA `Tag`.
+pub(crate) const TAGS_HEADER_BOX: &str = "TAGh";
 
 /// Length of a 4-octet Element ID followed by an 8-octet Element Data Size.
 const WIDE_HEADER_LEN: u64 = 12;
-/// Offset of the Element Data Size within a `SEGh`/`ATTh` box.
+/// Offset of the Element Data Size within a `SEGh`/`TAGh` box.
 const SIZE_FIELD_OFFSET: u64 = 4;
-/// Required length of the `Segment` and `Attachments` Element Data Sizes, and
+/// Required length of the `Segment` and `Tags` Element Data Sizes, and
 /// required `EBMLMaxSizeLength`.
 const WIDE_SIZE_LEN: u8 = 8;
 /// Upper bound for metadata elements decoded in memory (`SeekHead`, `Cues`,
-/// EBML Header, `AttachedFile` metadata children).
+/// EBML Header, `Tag` metadata children).
 const MAX_IN_MEMORY_ELEMENT: u64 = 64 * 1024 * 1024;
 /// Nesting limit when decoding `SeekHead`/`Cues` trees.
 const MAX_TREE_DEPTH: usize = 8;
@@ -477,48 +477,53 @@ fn seek_node(target: u32, pos: u64) -> Node {
 }
 
 /// Updates the `Seek` entries of a `SeekHead`: positions are mapped through
-/// `map`, the `Attachments` entries are set to `att_pos` (or removed when there
-/// is no `Attachments` element), and one is added when `ensure` is set.
+/// `map`, and the `Tags` entries are replaced by a single one at `tags_pos`
+/// in the first `SeekHead` (added if missing), or removed when there is no
+/// `Tags` element.
 fn rewrite_seekhead(
     nodes: &mut Vec<Node>,
     map: &dyn Fn(u64) -> u64,
-    att_pos: Option<u64>,
-    ensure: bool,
+    tags_pos: Option<u64>,
+    first: bool,
 ) -> bool {
-    let att_id = id_bytes(ID_ATTACHMENTS);
+    let tags_id = id_bytes(ID_TAGS);
     let mut changed = false;
     let mut found = false;
     nodes.retain_mut(|n| {
         if n.id != ID_SEEK {
             return true;
         }
-        let is_att = seek_target(n) == Some(att_id.as_slice());
+        let is_tags = seek_target(n) == Some(tags_id.as_slice());
         let Body::Master(children) = &mut n.body else {
             return true;
         };
-        if is_att {
-            let Some(p) = att_pos else {
-                changed = true;
-                return false;
-            };
-            found = true;
-            for c in children.iter_mut() {
-                if let (ID_SEEK_POSITION, Body::Leaf(b)) = (c.id, &mut c.body) {
-                    changed |= set_uint(b, p);
-                }
-            }
-        } else {
+        if !is_tags {
             changed |= remap_positions(children, map);
+            return true;
         }
-        true
+        match tags_pos {
+            Some(p) if first && !found => {
+                found = true;
+                for c in children.iter_mut() {
+                    if let (ID_SEEK_POSITION, Body::Leaf(b)) = (c.id, &mut c.body) {
+                        changed |= set_uint(b, p);
+                    }
+                }
+                true
+            }
+            _ => {
+                changed = true;
+                false
+            }
+        }
     });
-    if ensure && !found {
-        if let Some(p) = att_pos {
+    if first && !found {
+        if let Some(p) = tags_pos {
             let at = nodes
                 .iter()
                 .rposition(|n| n.id == ID_SEEK)
                 .map_or(nodes.len(), |i| i + 1);
-            nodes.insert(at, seek_node(ID_ATTACHMENTS, p));
+            nodes.insert(at, seek_node(ID_TAGS, p));
             changed = true;
         }
     }
@@ -537,21 +542,6 @@ struct Layout {
     segment: Elem,
     /// Top-Level Elements (children of the `Segment`), in file order.
     children: Vec<Elem>,
-}
-
-impl Layout {
-    fn attachments(&self) -> Result<Option<(usize, Elem)>> {
-        let mut it = self
-            .children
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| e.id == ID_ATTACHMENTS);
-        let first = it.next().map(|(i, e)| (i, *e));
-        if it.next().is_some() {
-            return Err(invalid("more than one Attachments element"));
-        }
-        Ok(first)
-    }
 }
 
 /// Reads and checks the EBML Header (`DocType` `matroska` or `webm`).
@@ -614,44 +604,54 @@ fn parse_layout(r: &mut dyn ReadSeek) -> Result<Layout> {
     })
 }
 
+/// A `Tag` element, with the C2PA `SimpleTag`s it holds.
 #[derive(Debug, Clone)]
-struct AttachedFileInfo {
+struct TagInfo {
     elem: Elem,
-    children: Vec<Elem>,
-    is_c2pa: bool,
+    /// `SimpleTag` children whose `TagName` is [`C2PA_TAG_NAME`].
+    c2pa_simple_tags: usize,
+    /// The `TagBinary` of the first C2PA `SimpleTag`, if it has one.
+    binary: Option<Elem>,
 }
 
-impl AttachedFileInfo {
-    fn file_data(&self) -> Option<Elem> {
-        self.children.iter().find(|c| c.id == ID_FILE_DATA).copied()
+impl TagInfo {
+    fn is_c2pa(&self) -> bool {
+        self.c2pa_simple_tags > 0
     }
 }
 
-fn parse_attached_file(r: &mut dyn ReadSeek, e: &Elem) -> Result<AttachedFileInfo> {
-    let children = read_children(r, e.data_offset(), e.end())?;
-    let mut is_c2pa = false;
-    for c in children.iter().filter(|c| c.id == ID_FILE_MEDIA_TYPE) {
-        is_c2pa = read_short_string(r, c)?
-            .is_some_and(|m| m.trim().eq_ignore_ascii_case(C2PA_MEDIA_TYPE));
-    }
-    Ok(AttachedFileInfo {
+fn parse_tag(r: &mut dyn ReadSeek, e: &Elem) -> Result<TagInfo> {
+    let mut info = TagInfo {
         elem: *e,
-        children,
-        is_c2pa,
-    })
+        c2pa_simple_tags: 0,
+        binary: None,
+    };
+    for st in read_children(r, e.data_offset(), e.end())? {
+        if st.id != ID_SIMPLE_TAG {
+            continue;
+        }
+        let children = read_children(r, st.data_offset(), st.end())?;
+        let mut is_c2pa = false;
+        for c in children.iter().filter(|c| c.id == ID_TAG_NAME) {
+            is_c2pa = read_short_string(r, c)?.is_some_and(|n| n == C2PA_TAG_NAME);
+        }
+        if is_c2pa {
+            if info.c2pa_simple_tags == 0 {
+                info.binary = children.iter().find(|c| c.id == ID_TAG_BINARY).copied();
+            }
+            info.c2pa_simple_tags += 1;
+        }
+    }
+    Ok(info)
 }
 
-/// The children of an `Attachments` element, with the C2PA `AttachedFile`s
-/// identified.
-fn attachments_children(
-    r: &mut dyn ReadSeek,
-    att: &Elem,
-) -> Result<Vec<(Elem, Option<AttachedFileInfo>)>> {
-    read_children(r, att.data_offset(), att.end())?
+/// The children of a `Tags` element, with the C2PA `Tag`s identified.
+fn tags_children(r: &mut dyn ReadSeek, tags: &Elem) -> Result<Vec<(Elem, Option<TagInfo>)>> {
+    read_children(r, tags.data_offset(), tags.end())?
         .into_iter()
         .map(|c| {
-            let info = if c.id == ID_ATTACHED_FILE {
-                Some(parse_attached_file(r, &c)?).filter(|i| i.is_c2pa)
+            let info = if c.id == ID_TAG {
+                Some(parse_tag(r, &c)?).filter(TagInfo::is_c2pa)
             } else {
                 None
             };
@@ -660,28 +660,28 @@ fn attachments_children(
         .collect()
 }
 
-/// The single C2PA `AttachedFile` of an `Attachments` element; `None` if there
-/// is none or more than one.
-fn single_c2pa_attached_file(r: &mut dyn ReadSeek, att: &Elem) -> Result<Option<AttachedFileInfo>> {
-    let mut found: Vec<AttachedFileInfo> = attachments_children(r, att)?
-        .into_iter()
-        .filter_map(|(_, i)| i)
-        .collect();
-    Ok(if found.len() == 1 { found.pop() } else { None })
+/// Number of C2PA `SimpleTag`s in a `Tags` element.
+fn c2pa_count(children: &[(Elem, Option<TagInfo>)]) -> usize {
+    children
+        .iter()
+        .filter_map(|(_, i)| i.as_ref())
+        .map(|i| i.c2pa_simple_tags)
+        .sum()
 }
 
-/// Locates the `Attachments` element as the specification's "Locating the
-/// Manifest Store" procedure does: through the first `SeekHead`, falling back
-/// to a scan of the Top-Level Elements. Tolerates an unknown-size `Segment`.
-fn locate_attachments(r: &mut dyn ReadSeek) -> Result<Option<Elem>> {
+/// Locates the `Tags` elements as the specification's "Locating the Manifest
+/// Store" procedure does: the ones referenced by the first `SeekHead`, or, if
+/// it references none, every `Tags` Top-Level Element found by a scan.
+/// Tolerates an unknown-size `Segment`.
+fn locate_tags(r: &mut dyn ReadSeek) -> Result<Vec<Elem>> {
     let file_len = stream_len(r)?;
     let ebml = parse_ebml_header(r)?;
     if ebml.end() >= file_len {
-        return Ok(None);
+        return Ok(vec![]);
     }
     let h = read_header_at(r, ebml.end())?;
     if h.id != ID_SEGMENT {
-        return Ok(None);
+        return Ok(vec![]);
     }
     let seg_data = ebml.end() + (h.id_len + h.size_len) as u64;
     let seg_end = h
@@ -690,6 +690,7 @@ fn locate_attachments(r: &mut dyn ReadSeek) -> Result<Option<Elem>> {
         .map_or(file_len, |e| e.min(file_len));
 
     // Via the first SeekHead.
+    let mut found = Vec::new();
     let mut pos = seg_data;
     while pos < seg_end {
         let Ok(e) = read_elem(r, pos, seg_end) else {
@@ -702,9 +703,9 @@ fn locate_attachments(r: &mut dyn ReadSeek) -> Result<Option<Elem>> {
         }
         if e.id == ID_SEEKHEAD {
             let nodes = parse_nodes(&read_data(r, &e)?, 0)?;
-            let att_id = id_bytes(ID_ATTACHMENTS);
+            let tags_id = id_bytes(ID_TAGS);
             for seek in nodes.iter().filter(|n| n.id == ID_SEEK) {
-                if seek_target(seek) != Some(att_id.as_slice()) {
+                if seek_target(seek) != Some(tags_id.as_slice()) {
                     continue;
                 }
                 let Body::Master(children) = &seek.body else {
@@ -716,9 +717,9 @@ fn locate_attachments(r: &mut dyn ReadSeek) -> Result<Option<Elem>> {
                         continue;
                     };
                     if at < seg_end {
-                        if let Ok(att) = read_elem(r, at, seg_end) {
-                            if att.id == ID_ATTACHMENTS {
-                                return Ok(Some(att));
+                        if let Ok(t) = read_elem(r, at, seg_end) {
+                            if t.id == ID_TAGS && !found.contains(&t) {
+                                found.push(t);
                             }
                         }
                     }
@@ -727,6 +728,9 @@ fn locate_attachments(r: &mut dyn ReadSeek) -> Result<Option<Elem>> {
         }
         break;
     }
+    if !found.is_empty() {
+        return Ok(found);
+    }
 
     // Fallback: scan the Top-Level Elements.
     let mut pos = seg_data;
@@ -734,23 +738,36 @@ fn locate_attachments(r: &mut dyn ReadSeek) -> Result<Option<Elem>> {
         let Ok(e) = read_elem(r, pos, seg_end) else {
             break;
         };
-        if e.id == ID_ATTACHMENTS {
-            return Ok(Some(e));
+        if e.id == ID_TAGS {
+            found.push(e);
         }
         pos = e.end();
     }
-    Ok(None)
+    Ok(found)
 }
 
-/// The C2PA `AttachedFile` and its `FileData`, located per the specification.
-fn locate_c2pa(r: &mut dyn ReadSeek) -> Result<Option<(AttachedFileInfo, Elem)>> {
-    let Some(att) = locate_attachments(r)? else {
+/// The C2PA `Tag`, its `TagBinary` and the `Tags` element holding it, located
+/// per the specification: there shall be exactly one C2PA `SimpleTag` in the
+/// located `Tags` elements.
+fn locate_c2pa(r: &mut dyn ReadSeek) -> Result<Option<(TagInfo, Elem, Elem)>> {
+    let mut hits = Vec::new();
+    let mut count = 0;
+    for tags in locate_tags(r)? {
+        let children = tags_children(r, &tags)?;
+        count += c2pa_count(&children);
+        hits.extend(
+            children
+                .into_iter()
+                .filter_map(|(_, i)| i.map(|i| (i, tags))),
+        );
+    }
+    if count != 1 {
+        return Ok(None);
+    }
+    let Some((tag, tags)) = hits.pop() else {
         return Ok(None);
     };
-    let Some(af) = single_c2pa_attached_file(r, &att)? else {
-        return Ok(None);
-    };
-    Ok(af.file_data().map(|fd| (af, fd)))
+    Ok(tag.binary.map(|b| (tag, b, tags)))
 }
 
 // ---------------------------------------------------------------------------
@@ -826,7 +843,7 @@ enum Role {
     Cues,
     Cluster,
     Void,
-    Attachments,
+    Tags,
 }
 
 #[derive(Debug, Clone)]
@@ -843,60 +860,21 @@ impl Item {
     }
 }
 
-/// The C2PA `AttachedFile` element for `store`. An existing C2PA
-/// `AttachedFile` that already has the specified shape keeps its children (and
-/// so its `FileUID`), with only its `FileData` replaced.
-fn c2pa_attached_file(
-    r: &mut dyn ReadSeek,
-    store: &[u8],
-    existing: Option<&AttachedFileInfo>,
-) -> Result<Vec<u8>> {
-    let mut file_data = id_bytes(ID_FILE_DATA);
-    file_data.extend(encode_size(store.len() as u64, WIDE_SIZE_LEN)?);
-    file_data.extend_from_slice(store);
-
-    let reusable = existing.filter(|af| {
-        let count = |id| af.children.iter().filter(|c| c.id == id).count();
-        af.children.iter().all(|c| {
-            matches!(
-                c.id,
-                ID_FILE_NAME
-                    | ID_FILE_MEDIA_TYPE
-                    | ID_FILE_UID
-                    | ID_FILE_DATA
-                    | ID_FILE_DESCRIPTION
-            )
-        }) && [ID_FILE_NAME, ID_FILE_MEDIA_TYPE, ID_FILE_UID, ID_FILE_DATA]
-            .iter()
-            .all(|&id| count(id) == 1)
-            && count(ID_FILE_DESCRIPTION) <= 1
-    });
-
-    let mut data = Vec::new();
-    match reusable {
-        Some(af) => {
-            for c in &af.children {
-                if c.id == ID_FILE_DATA {
-                    data.extend_from_slice(&file_data);
-                } else {
-                    data.extend(read_bytes(r, c.offset, c.total_len())?);
-                }
-            }
-        }
-        None => {
-            let uid = loop {
-                let (v, _) = uuid::Uuid::new_v4().as_u64_pair();
-                if v != 0 {
-                    break v;
-                }
-            };
-            data.extend(element(ID_FILE_NAME, C2PA_FILE_NAME.as_bytes())?);
-            data.extend(element(ID_FILE_MEDIA_TYPE, C2PA_MEDIA_TYPE.as_bytes())?);
-            data.extend(element(ID_FILE_UID, &uid.to_be_bytes())?);
-            data.extend_from_slice(&file_data);
-        }
-    }
-    element_with_size_len(ID_ATTACHED_FILE, &data, WIDE_SIZE_LEN)
+/// The C2PA `Tag` element for `store`: an empty `Targets` (the whole
+/// Segment) and one `SimpleTag` with the [`C2PA_TAG_NAME`] `TagName` and the
+/// store as its `TagBinary`.
+fn c2pa_tag(store: &[u8]) -> Result<Vec<u8>> {
+    let simple_tag = [
+        element(ID_TAG_NAME, C2PA_TAG_NAME.as_bytes())?,
+        element(ID_TAG_BINARY, store)?,
+    ]
+    .concat();
+    let data = [
+        element(ID_TARGETS, &[])?,
+        element(ID_SIMPLE_TAG, &simple_tag)?,
+    ]
+    .concat();
+    element(ID_TAG, &data)
 }
 
 /// The EBML Header with `EBMLMaxSizeLength` set to 8 when it has another value.
@@ -934,8 +912,8 @@ fn cluster_position_child(r: &mut dyn ReadSeek, cluster: &Elem) -> Result<Option
     Ok(None)
 }
 
-/// Computes the output of embedding `store` (or of removing the C2PA
-/// `AttachedFile` when `store` is empty) as a list of pieces.
+/// Computes the output of embedding `store` (or of removing the C2PA `Tag`
+/// when `store` is empty) as a list of pieces.
 struct Plan {
     ebml_header: Vec<u8>,
     items: Vec<Item>,
@@ -944,46 +922,70 @@ struct Plan {
 fn plan_write(r: &mut dyn ReadSeek, layout: &Layout, store: &[u8]) -> Result<Plan> {
     let ebml_header = normalized_ebml_header(r, &layout.ebml)?;
     let seg_data = layout.segment.data_offset();
-    let existing_att = layout.attachments()?;
+    let tags_elems: Vec<Elem> = layout
+        .children
+        .iter()
+        .filter(|e| e.id == ID_TAGS)
+        .copied()
+        .collect();
 
-    // Children of the new Attachments element, other than the C2PA AttachedFile.
-    let mut att_children = Vec::new();
-    let mut c2pa_files = Vec::new();
-    if let Some((_, att)) = existing_att {
-        for (c, info) in attachments_children(r, &att)? {
+    // Children of the new Tags element: those of every existing Tags element
+    // in order, without CRC-32 elements. A single existing C2PA Tag is
+    // replaced in place; otherwise any C2PA Tags are dropped and the new one
+    // is appended.
+    let mut tags_children_pieces: Vec<Option<Piece>> = Vec::new();
+    let mut c2pa_slots = Vec::new();
+    for t in &tags_elems {
+        for (c, info) in tags_children(r, t)? {
             if c.id == ID_CRC32 {
                 continue;
             }
             match info {
-                Some(i) => c2pa_files.push(i),
-                None => att_children.push(Piece::Copy {
+                Some(i) => {
+                    c2pa_slots.push((tags_children_pieces.len(), i.c2pa_simple_tags));
+                    tags_children_pieces.push(None);
+                }
+                None => tags_children_pieces.push(Some(Piece::Copy {
                     start: c.offset,
                     len: c.total_len(),
-                }),
+                })),
             }
         }
     }
     let c2pa = if store.is_empty() {
         None
     } else {
-        let existing = (c2pa_files.len() == 1).then(|| &c2pa_files[0]);
-        Some(c2pa_attached_file(r, store, existing)?)
+        Some(c2pa_tag(store)?)
     };
-    let new_att = if att_children.is_empty() && c2pa.is_none() {
+    let in_place = match c2pa_slots.as_slice() {
+        [(slot, 1)] => Some(*slot),
+        _ => None,
+    };
+    let mut children: Vec<Piece> = Vec::new();
+    for (i, p) in tags_children_pieces.into_iter().enumerate() {
+        match p {
+            Some(p) => children.push(p),
+            None if Some(i) == in_place => children.extend(c2pa.clone().map(Piece::Bytes)),
+            None => {}
+        }
+    }
+    if in_place.is_none() {
+        children.extend(c2pa.map(Piece::Bytes));
+    }
+    let new_tags = if children.is_empty() {
         None
     } else {
-        let data_len = pieces_len(&att_children) + c2pa.as_ref().map_or(0, |c| c.len() as u64);
-        let mut header = id_bytes(ID_ATTACHMENTS);
-        header.extend(encode_size(data_len, WIDE_SIZE_LEN)?);
+        let mut header = id_bytes(ID_TAGS);
+        header.extend(encode_size(pieces_len(&children), WIDE_SIZE_LEN)?);
         let mut pieces = vec![Piece::Bytes(header)];
-        pieces.extend(att_children);
-        pieces.extend(c2pa.map(Piece::Bytes));
+        pieces.extend(children);
         Some(pieces)
     };
 
-    // Top-Level Elements; an Attachments element that is not the last one, and
-    // a CRC-32 Top-Level Element (whose value would cover the manifest), are
-    // replaced by a Void of the same size.
+    // Top-Level Elements. Every Tags element is replaced by a Void of the same
+    // size (RFC 9559, section 25.3.2), except a single one that is already the
+    // last Top-Level Element, which is rewritten in place. A CRC-32 Top-Level
+    // Element, whose value would cover the manifest, also becomes a Void.
     let last = layout.children.len().saturating_sub(1);
     let first_non_crc = layout.children.iter().position(|e| e.id != ID_CRC32);
     let first_seekhead = layout
@@ -993,24 +995,20 @@ fn plan_write(r: &mut dyn ReadSeek, layout: &Layout, store: &[u8]) -> Result<Pla
         .filter(|&i| layout.children[i].id == ID_SEEKHEAD);
     let mut base = Vec::new();
     for (i, e) in layout.children.iter().enumerate() {
-        if e.id == ID_CRC32 {
+        if e.id == ID_CRC32 || (e.id == ID_TAGS && !(tags_elems.len() == 1 && i == last)) {
             base.push(Item {
-                pieces: void_pieces(e.total_len(), None)
-                    .ok_or_else(|| invalid("cannot replace the Segment CRC-32"))?,
+                pieces: void_pieces(e.total_len(), None).ok_or_else(|| {
+                    invalid(format!(
+                        "cannot replace {} with a Void",
+                        element_box_name(e.id)
+                    ))
+                })?,
                 elem: Some(*e),
                 role: Role::Void,
             });
             continue;
         }
-        if e.id == ID_ATTACHMENTS {
-            if i != last {
-                base.push(Item {
-                    pieces: void_pieces(e.total_len(), None)
-                        .ok_or_else(|| invalid("cannot replace Attachments"))?,
-                    elem: Some(*e),
-                    role: Role::Void,
-                });
-            }
+        if e.id == ID_TAGS {
             continue;
         }
         let role = match e.id {
@@ -1031,11 +1029,11 @@ fn plan_write(r: &mut dyn ReadSeek, layout: &Layout, store: &[u8]) -> Result<Pla
             role,
         });
     }
-    if let Some(p) = new_att {
+    if let Some(p) = new_tags {
         base.push(Item {
             pieces: p,
             elem: None,
-            role: Role::Attachments,
+            role: Role::Tags,
         });
     }
 
@@ -1058,11 +1056,11 @@ fn starts(items: &[Item]) -> Vec<u64> {
         .collect()
 }
 
-fn attachments_pos(items: &[Item]) -> Option<u64> {
+fn tags_pos(items: &[Item]) -> Option<u64> {
     let s = starts(items);
     items
         .iter()
-        .position(|it| it.role == Role::Attachments)
+        .position(|it| it.role == Role::Tags)
         .map(|i| s[i])
 }
 
@@ -1071,11 +1069,11 @@ fn attachments_pos(items: &[Item]) -> Option<u64> {
 /// `None` when there is not enough room.
 fn plan_in_place(r: &mut dyn ReadSeek, base: &[Item]) -> Result<Option<Vec<Item>>> {
     let mut items = base.to_vec();
-    let att_pos = attachments_pos(&items);
+    let tags_pos = tags_pos(&items);
     let has_first = items
         .iter()
         .any(|it| it.role == Role::SeekHead { first: true });
-    if att_pos.is_some() && !has_first {
+    if tags_pos.is_some() && !has_first {
         return Ok(None);
     }
     let identity = |p: u64| p;
@@ -1090,7 +1088,7 @@ fn plan_in_place(r: &mut dyn ReadSeek, base: &[Item]) -> Result<Option<Vec<Item>
             continue;
         };
         let mut nodes = parse_nodes(&read_data(r, &elem)?, 0)?;
-        if !rewrite_seekhead(&mut nodes, &identity, att_pos, first) {
+        if !rewrite_seekhead(&mut nodes, &identity, tags_pos, first) {
             i += 1;
             continue;
         }
@@ -1126,11 +1124,11 @@ fn plan_shifted(
     seg_data: u64,
     new_seekhead_at: usize,
 ) -> Result<Vec<Item>> {
-    let has_att = items.iter().any(|it| it.role == Role::Attachments);
+    let has_tags = items.iter().any(|it| it.role == Role::Tags);
     let has_first = items
         .iter()
         .any(|it| it.role == Role::SeekHead { first: true });
-    if has_att && !has_first {
+    if has_tags && !has_first {
         items.insert(
             new_seekhead_at.min(items.len()),
             Item {
@@ -1175,16 +1173,16 @@ fn plan_shifted(
                 _ => p,
             }
         };
-        let att_pos = items
+        let tags_pos = items
             .iter()
-            .position(|it| it.role == Role::Attachments)
+            .position(|it| it.role == Role::Tags)
             .map(|i| new_starts[i]);
 
         for (i, it) in items.iter_mut().enumerate() {
             match (it.role, it.elem) {
                 (Role::SeekHead { first }, Some(e)) => {
                     let mut nodes = trees[i].clone().unwrap_or_default();
-                    it.pieces = if rewrite_seekhead(&mut nodes, &map, att_pos, first) {
+                    it.pieces = if rewrite_seekhead(&mut nodes, &map, tags_pos, first) {
                         vec![Piece::Bytes(serialize_node(&Node {
                             id: ID_SEEKHEAD,
                             size_len: e.size_len,
@@ -1257,16 +1255,16 @@ fn plan_shifted(
         // A new SeekHead references the main Top-Level Elements.
         if let Some(i) = items.iter().position(|it| it.role == Role::NewSeekHead) {
             let mut seeks = Vec::new();
-            for target in [ID_INFO, ID_TRACKS, ID_CHAPTERS, ID_TAGS, ID_CUES] {
+            for target in [ID_INFO, ID_TRACKS, ID_CHAPTERS, ID_ATTACHMENTS, ID_CUES] {
                 if let Some(j) = items
                     .iter()
-                    .position(|it| it.elem.is_some_and(|e| e.id == target))
+                    .position(|it| it.role != Role::Void && it.elem.is_some_and(|e| e.id == target))
                 {
                     seeks.push(seek_node(target, new_starts[j]));
                 }
             }
-            if let Some(p) = att_pos {
-                seeks.push(seek_node(ID_ATTACHMENTS, p));
+            if let Some(p) = tags_pos {
+                seeks.push(seek_node(ID_TAGS, p));
             }
             items[i].pieces = vec![Piece::Bytes(element(
                 ID_SEEKHEAD,
@@ -1330,10 +1328,8 @@ pub struct MatroskaIO {
 
 impl C2paReader for MatroskaIO {
     fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>> {
-        let (_, fd) = locate_c2pa(input_stream)?.ok_or(Error::JumbfNotFound)?;
-        input_stream.seek(SeekFrom::Start(fd.data_offset()))?;
-        let mut data = vec![0u8; fd.data_len as usize];
-        input_stream.read_exact(&mut data)?;
+        let (_, bin, _) = locate_c2pa(input_stream)?.ok_or(Error::JumbfNotFound)?;
+        let data = read_bytes_unbounded(input_stream, bin.data_offset(), bin.data_len)?;
         if data.is_empty() {
             return Err(Error::JumbfNotFound);
         }
@@ -1346,9 +1342,18 @@ impl C2paReader for MatroskaIO {
     }
 }
 
+/// Reads `len` octets at `pos` (a manifest store may exceed the in-memory
+/// bound used for metadata elements).
+fn read_bytes_unbounded(r: &mut dyn ReadSeek, pos: u64, len: u64) -> Result<Vec<u8>> {
+    r.seek(SeekFrom::Start(pos))?;
+    let mut data = vec![0u8; len as usize];
+    r.read_exact(&mut data)?;
+    Ok(data)
+}
+
 impl C2paWriter for MatroskaIO {
-    /// Embeds `store` as the C2PA `AttachedFile`, replacing an existing one.
-    /// An empty `store` removes the C2PA `AttachedFile`.
+    /// Embeds `store` as the C2PA `Tag`, replacing an existing one. An empty
+    /// `store` removes the C2PA `Tag`.
     fn write_c2pa(
         &self,
         input_stream: &mut dyn ReadSeek,
@@ -1357,12 +1362,10 @@ impl C2paWriter for MatroskaIO {
     ) -> Result<()> {
         let layout = parse_layout(input_stream)?;
         if store_bytes.is_empty() {
-            let has_c2pa = match layout.attachments()? {
-                Some((_, att)) => attachments_children(input_stream, &att)?
-                    .iter()
-                    .any(|(_, i)| i.is_some()),
-                None => false,
-            };
+            let mut has_c2pa = false;
+            for t in layout.children.iter().filter(|e| e.id == ID_TAGS) {
+                has_c2pa |= c2pa_count(&tags_children(input_stream, t)?) > 0;
+            }
             if !has_c2pa {
                 input_stream.rewind()?;
                 output_stream.rewind()?;
@@ -1388,8 +1391,8 @@ impl C2paWriter for MatroskaIO {
             let len = with_c2pa.get_ref().len() as u64;
             (&mut with_c2pa, len)
         };
-        let (af, _) = locate_c2pa(stream)?.ok_or(Error::JumbfNotFound)?;
-        let e = af.elem;
+        let (tag, _, _) = locate_c2pa(stream)?.ok_or(Error::JumbfNotFound)?;
+        let e = tag.elem;
         let mut locs = vec![
             ObjectLocations {
                 offset: 0,
@@ -1422,16 +1425,16 @@ impl C2paWriter for MatroskaIO {
 }
 
 impl AssetPatch for MatroskaIO {
-    /// Overwrites the `FileData` of the C2PA `AttachedFile` in place when the
-    /// store has the same size.
+    /// Overwrites the `TagBinary` of the C2PA `Tag` in place when the store
+    /// has the same size.
     fn patch_c2pa(&self, stream: &mut dyn ReadWriteSeek, store_bytes: &[u8]) -> Result<()> {
-        let (_, fd) = locate_c2pa(stream)?.ok_or(Error::JumbfNotFound)?;
-        if fd.data_len != store_bytes.len() as u64 {
+        let (_, bin, _) = locate_c2pa(stream)?.ok_or(Error::JumbfNotFound)?;
+        if bin.data_len != store_bytes.len() as u64 {
             return Err(Error::InvalidAsset(
-                "patch_c2pa: store size does not match existing Matroska C2PA AttachedFile".into(),
+                "patch_c2pa: store size does not match existing Matroska C2PA Tag".into(),
             ));
         }
-        stream.seek(SeekFrom::Start(fd.data_offset()))?;
+        stream.seek(SeekFrom::Start(bin.data_offset()))?;
         stream.write_all(store_bytes)?;
         Ok(())
     }
@@ -1447,13 +1450,14 @@ fn container_length_exclusion() -> Vec<AllowedExclusion> {
 
 impl AssetBoxHash for MatroskaIO {
     /// Boxes per the Matroska-specific box hash handling: `1A45DFA3`, `SEGh`,
-    /// each Top-Level Element by Element ID, and `ATTh` plus the children of
-    /// the `Attachments` element (the C2PA `AttachedFile` as `C2PA`).
+    /// each Top-Level Element by Element ID, and, in place of the `Tags`
+    /// element holding the C2PA `Tag`, `TAGh` plus its children (the C2PA
+    /// `Tag` as `C2PA`). The `Tags` element may be anywhere in the `Segment`.
     ///
-    /// Without a C2PA `AttachedFile`, `ATTh` (when the asset does not end with
-    /// an `Attachments` element) and `C2PA` placeholders are appended at the
-    /// end of the asset; the hashes are only meaningful for an asset already in
-    /// its embedded layout (see [`AssetBoxHash::prepare_box_hash_stream`]).
+    /// Without a C2PA `Tag`, `TAGh` and `C2PA` placeholders are appended at
+    /// the end of the asset; the hashes are only meaningful for an asset
+    /// already in its embedded layout (see
+    /// [`AssetBoxHash::prepare_box_hash_stream`]).
     fn get_box_map(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<BoxMap>> {
         let layout = parse_layout(input_stream)?;
         if layout.segment.size_len != WIDE_SIZE_LEN || layout.segment.id_len() != 4 {
@@ -1461,7 +1465,6 @@ impl AssetBoxHash for MatroskaIO {
                 "the Segment Element Data Size is not encoded on 8 octets",
             ));
         }
-        layout.attachments()?;
 
         let mut maps = vec![
             BoxMap::new(vec![element_box_name(ID_EBML)], 0, layout.ebml.total_len()),
@@ -1473,48 +1476,32 @@ impl AssetBoxHash for MatroskaIO {
             .with_allowed_exclusions(container_length_exclusion()),
         ];
         let mut c2pa_offset = None;
-        for (i, e) in layout.children.iter().enumerate() {
-            if e.id != ID_ATTACHMENTS {
+        for e in &layout.children {
+            let children = if e.id == ID_TAGS {
+                Some(tags_children(input_stream, e)?)
+            } else {
+                None
+            };
+            let Some(children) = children.filter(|c| c2pa_count(c) > 0) else {
                 maps.push(BoxMap::new(
                     vec![element_box_name(e.id)],
                     e.offset,
                     e.total_len(),
                 ));
                 continue;
+            };
+            if c2pa_count(&children) > 1 || c2pa_offset.is_some() {
+                return Err(Error::TooManyManifestStores);
             }
             if e.size_len != WIDE_SIZE_LEN {
                 return Err(invalid(
-                    "the Attachments Element Data Size is not encoded on 8 octets",
+                    "the Element Data Size of the Tags element holding the C2PA Tag is not encoded on 8 octets",
                 ));
             }
             maps.push(
-                BoxMap::new(
-                    vec![ATTACHMENTS_HEADER_BOX.to_string()],
-                    e.offset,
-                    WIDE_HEADER_LEN,
-                )
-                .with_allowed_exclusions(container_length_exclusion()),
+                BoxMap::new(vec![TAGS_HEADER_BOX.to_string()], e.offset, WIDE_HEADER_LEN)
+                    .with_allowed_exclusions(container_length_exclusion()),
             );
-            let children = attachments_children(input_stream, e)?;
-            let c2pa_count = children.iter().filter(|(_, i)| i.is_some()).count();
-            if c2pa_count > 1 {
-                return Err(Error::TooManyManifestStores);
-            }
-            // The Attachments element holding the C2PA AttachedFile shall be
-            // the last Top-Level Element, and the C2PA AttachedFile its last
-            // child.
-            if c2pa_count == 1 {
-                if i + 1 != layout.children.len() {
-                    return Err(invalid(
-                        "the Attachments element is not the last Top-Level Element",
-                    ));
-                }
-                if children.last().is_none_or(|(_, info)| info.is_none()) {
-                    return Err(invalid(
-                        "the C2PA AttachedFile is not the last child of the Attachments element",
-                    ));
-                }
-            }
             for (c, info) in children {
                 if info.is_some() {
                     c2pa_offset = Some(c.offset);
@@ -1535,23 +1522,17 @@ impl AssetBoxHash for MatroskaIO {
         }
 
         if let Some(offset) = c2pa_offset {
-            // The `C2PA` box shall be the AttachedFile from which the Manifest
-            // Store is located.
-            let located = locate_c2pa(input_stream)?.map(|(af, _)| af.elem.offset);
+            // The `C2PA` box shall be the Tag from which the Manifest Store is
+            // located.
+            let located = locate_c2pa(input_stream)?.map(|(tag, _, _)| tag.elem.offset);
             if located != Some(offset) {
                 return Err(invalid(
-                    "the C2PA AttachedFile is not the one located through the SeekHead",
+                    "the C2PA Tag is not the one located through the SeekHead",
                 ));
             }
         } else {
             let end = layout.file_len;
-            if layout.children.last().map(|e| e.id) != Some(ID_ATTACHMENTS) {
-                maps.push(BoxMap::new(
-                    vec![ATTACHMENTS_HEADER_BOX.to_string()],
-                    end,
-                    0,
-                ));
-            }
+            maps.push(BoxMap::new(vec![TAGS_HEADER_BOX.to_string()], end, 0));
             maps.push(
                 BoxMap::new(vec![C2PA_BOXHASH.to_string()], end, 0)
                     .with_allowed_exclusions(vec![AllowedExclusion::whole_box(0)]),
@@ -1752,13 +1733,22 @@ mod tests {
         checked
     }
 
-    fn c2pa_af(b: &[u8]) -> AttachedFileInfo {
-        locate_c2pa(&mut Cursor::new(b)).unwrap().unwrap().0
+    /// The C2PA `Tag` of an asset and the `Tags` element holding it.
+    fn c2pa_tag_of(b: &[u8]) -> (TagInfo, Elem) {
+        let (tag, _, tags) = locate_c2pa(&mut Cursor::new(b)).unwrap().unwrap();
+        (tag, tags)
     }
 
-    fn child_bytes<'a>(b: &'a [u8], af: &AttachedFileInfo, id: u32) -> &'a [u8] {
-        let c = af.children.iter().find(|c| c.id == id).unwrap();
-        &b[c.data_offset() as usize..c.end() as usize]
+    fn tags_kids(b: &[u8], tags: &Elem) -> Vec<(Elem, Option<TagInfo>)> {
+        tags_children(&mut Cursor::new(b), tags).unwrap()
+    }
+
+    fn the_tags(b: &[u8]) -> Elem {
+        let l = layout(b);
+        let mut it = l.children.iter().filter(|e| e.id == ID_TAGS);
+        let t = *it.next().unwrap();
+        assert!(it.next().is_none(), "more than one Tags element");
+        t
     }
 
     #[test]
@@ -1767,10 +1757,10 @@ mod tests {
         assert_eq!(encode_size(126, 1).unwrap(), [0xfe]);
         assert!(encode_size(127, 1).is_err()); // reserved (unknown size)
         assert_eq!(encode_size(5, 8).unwrap(), [1, 0, 0, 0, 0, 0, 0, 5]);
-        assert_eq!(id_bytes(ID_ATTACHMENTS), [0x19, 0x41, 0xa4, 0x69]);
+        assert_eq!(id_bytes(ID_TAGS), [0x12, 0x54, 0xc3, 0x67]);
         assert_eq!(element_box_name(ID_CLUSTER), "1F43B675");
         assert_eq!(element_box_name(ID_VOID), "EC");
-        assert_eq!(element_box_name(ID_ATTACHED_FILE), "61A7");
+        assert_eq!(element_box_name(ID_TAG), "7373");
         assert_eq!(encode_uint(0x1234, 1), [0x12, 0x34]);
         assert_eq!(encode_uint(5, 2), [0, 5]);
         assert_eq!(crc32(b"123456789"), 0xcbf4_3926);
@@ -1779,6 +1769,18 @@ mod tests {
             assert_eq!(pieces_len(&v), total);
         }
         assert!(void_pieces(1, None).is_none());
+        // The C2PA Tag: Tag(Targets(), SimpleTag(TagName, TagBinary)).
+        assert_eq!(
+            c2pa_tag(b"xy").unwrap(),
+            [
+                &[0x73, 0x73, 0x9b, 0x63, 0xc0, 0x80, 0x67, 0xc8, 0x95][..],
+                &[0x45, 0xa3, 0x8d],
+                b"C2PA_MANIFEST",
+                &[0x44, 0x85, 0x82],
+                b"xy",
+            ]
+            .concat()
+        );
     }
 
     #[test]
@@ -1803,34 +1805,37 @@ mod tests {
             let store = fake_store(b"manifest store");
             let out = write(src, &store);
             let l = layout(&out);
-            // Attachments is the last Top-Level Element, with an 8-octet size,
-            // and the C2PA AttachedFile is its last child.
-            let att = *l.children.last().unwrap();
-            assert_eq!(att.id, ID_ATTACHMENTS);
-            assert_eq!(att.size_len, 8);
-            let kids = attachments_children(&mut Cursor::new(&out[..]), &att).unwrap();
+            // One Tags element, the last Top-Level Element, with an 8-octet
+            // size, no CRC-32, and the C2PA Tag as its last child.
+            let tags = the_tags(&out);
+            assert_eq!(Some(&tags), l.children.last());
+            assert_eq!(tags.size_len, 8);
+            let kids = tags_kids(&out, &tags);
             assert!(kids.last().unwrap().1.is_some());
             assert!(kids.iter().all(|(c, _)| c.id != ID_CRC32));
-            let af = c2pa_af(&out);
+            let (tag, _) = c2pa_tag_of(&out);
             assert_eq!(
-                child_bytes(&out, &af, ID_FILE_NAME),
-                C2PA_FILE_NAME.as_bytes()
-            );
-            assert_eq!(
-                child_bytes(&out, &af, ID_FILE_MEDIA_TYPE),
-                C2PA_MEDIA_TYPE.as_bytes()
-            );
-            assert_ne!(decode_uint(child_bytes(&out, &af, ID_FILE_UID)), Some(0));
-            assert_eq!(
-                af.children.iter().map(|c| c.id).collect::<Vec<_>>(),
-                [ID_FILE_NAME, ID_FILE_MEDIA_TYPE, ID_FILE_UID, ID_FILE_DATA]
+                &out[tag.elem.offset as usize..tag.elem.end() as usize],
+                c2pa_tag(&store).unwrap()
             );
             assert_eq!(io().read_c2pa(&mut Cursor::new(&out)).unwrap(), store);
             check_positions(&out);
             check_crcs(&out);
 
-            // No Top-Level Element other than SeekHead/Void (and a relocated
-            // Attachments) moved: the Clusters are byte-identical in place.
+            // The original Tag children are kept byte for byte, in order.
+            let old = the_tags(src);
+            let old_kids: Vec<&[u8]> = tags_kids(src, &old)
+                .iter()
+                .filter(|(c, _)| c.id != ID_CRC32)
+                .map(|(c, _)| &src[c.offset as usize..c.end() as usize])
+                .collect();
+            let new_kids: Vec<&[u8]> = kids[..kids.len() - 1]
+                .iter()
+                .map(|(c, _)| &out[c.offset as usize..c.end() as usize])
+                .collect();
+            assert_eq!(old_kids, new_kids);
+
+            // No Cluster moved: they are byte-identical in place.
             let before = layout(src);
             for e in before.children.iter().filter(|e| e.id == ID_CLUSTER) {
                 let r = e.offset as usize..e.end() as usize;
@@ -1848,16 +1853,19 @@ mod tests {
             a.children[0].total_len() + a.children[1].total_len(),
             b.children[0].total_len() + b.children[1].total_len()
         );
-        assert!(b.children[0].total_len() > a.children[0].total_len());
         assert_eq!(b.children[1].id, ID_VOID);
-        // The located Attachments comes from the Seek entry.
-        let att = locate_attachments(&mut Cursor::new(&out[..]))
-            .unwrap()
-            .unwrap();
-        assert_eq!(Some(att), b.children.last().copied());
-        // Everything after the Void and before the Attachments is unchanged.
-        let from = b.children[2].offset as usize;
-        assert_eq!(&out[from..VP9_OPUS.len()], &VP9_OPUS[from..]);
+        // The located Tags element comes from the Seek entry.
+        let located = locate_tags(&mut Cursor::new(&out[..])).unwrap();
+        assert_eq!(located, vec![*b.children.last().unwrap()]);
+        // Info, Tracks, Clusters and Cues are unchanged and in place.
+        for e in a
+            .children
+            .iter()
+            .filter(|e| matches!(e.id, ID_INFO | ID_TRACKS | ID_CLUSTER | ID_CUES))
+        {
+            let r = e.offset as usize..e.end() as usize;
+            assert_eq!(&out[r.clone()], &VP9_OPUS[r]);
+        }
     }
 
     #[test]
@@ -1867,30 +1875,27 @@ mod tests {
             out[..layout(&out).children[0].end() as usize],
             H264_CRC[..layout(H264_CRC).children[0].end() as usize]
         );
-        assert_eq!(check_crcs(&out), 11);
+        // The relocated Tags element loses its CRC-32; the old one is a Void.
+        assert_eq!(check_crcs(&out), 10);
         check_positions(&out);
     }
 
     #[test]
-    fn test_replace_only_changes_c2pa_attached_file() {
+    fn test_replace_only_changes_c2pa_tag() {
         for (_, src) in FIXTURES {
             let a = write(src, &fake_store(b"first manifest"));
             let b = write(&a, &fake_store(&[9u8; 3000]));
             let (la, lb) = (layout(&a), layout(&b));
-            let (af_a, af_b) = (c2pa_af(&a), c2pa_af(&b));
-            assert_eq!(af_a.elem.offset, af_b.elem.offset);
-            // Same FileUID.
-            assert_eq!(
-                child_bytes(&a, &af_a, ID_FILE_UID),
-                child_bytes(&b, &af_b, ID_FILE_UID)
-            );
-            // Identical bytes up to the C2PA AttachedFile, except the Segment
-            // and Attachments sizes.
+            let (tag_a, tags_a) = c2pa_tag_of(&a);
+            let (tag_b, _) = c2pa_tag_of(&b);
+            assert_eq!(tag_a.elem.offset, tag_b.elem.offset);
+            // Identical bytes up to the C2PA Tag, except the Segment and Tags
+            // sizes.
             let seg_size = la.segment.offset as usize + 4..la.segment.offset as usize + 12;
-            let att = la.children.last().unwrap().offset as usize;
-            let att_size = att + 4..att + 12;
-            for i in 0..af_a.elem.offset as usize {
-                if !seg_size.contains(&i) && !att_size.contains(&i) {
+            let t = tags_a.offset as usize;
+            let tags_size = t + 4..t + 12;
+            for i in 0..tag_a.elem.offset as usize {
+                if !seg_size.contains(&i) && !tags_size.contains(&i) {
                     assert_eq!(a[i], b[i], "byte {i} changed");
                 }
             }
@@ -1904,31 +1909,56 @@ mod tests {
 
     #[test]
     fn test_remove() {
-        // ffmpeg layouts are restored byte for byte.
-        for src in [VP9_OPUS, VP9_ALPHA, OPUS, H264_CRC] {
+        for (_, src) in FIXTURES {
             let signed = write(src, &fake_store(b"x"));
             let mut out = Cursor::new(Vec::new());
             io().remove_c2pa(&mut Cursor::new(&signed), &mut out)
                 .unwrap();
-            assert_eq!(out.into_inner(), src);
+            let out = out.into_inner();
+            assert!(matches!(
+                io().read_c2pa(&mut Cursor::new(&out)),
+                Err(Error::JumbfNotFound)
+            ));
+            // The other tags stay, in the last Top-Level Element.
+            let tags = the_tags(&out);
+            assert_eq!(Some(&tags), layout(&out).children.last());
+            assert_eq!(
+                tags_kids(&out, &tags).len(),
+                tags_kids(src, &the_tags(src))
+                    .iter()
+                    .filter(|(c, _)| c.id != ID_CRC32)
+                    .count()
+            );
+            check_positions(&out);
+            // Signing again gives the same layout as signing the original.
+            assert_eq!(
+                top_level_ids(&write(&out, &fake_store(b"x"))),
+                top_level_ids(&signed)
+            );
         }
-        // The relocated font stays (at the end), without the C2PA AttachedFile.
+        // An mkvmerge layout (Tags already last) is restored up to the Tags
+        // element, whose size is now encoded on 8 octets.
         let signed = write(H264_FONT, &fake_store(b"x"));
         let mut out = Cursor::new(Vec::new());
         io().remove_c2pa(&mut Cursor::new(&signed), &mut out)
             .unwrap();
         let out = out.into_inner();
-        assert!(matches!(
-            io().read_c2pa(&mut Cursor::new(&out)),
-            Err(Error::JumbfNotFound)
-        ));
-        assert_eq!(*top_level_ids(&out).last().unwrap(), ID_ATTACHMENTS);
-        check_positions(&out);
+        let (a, b) = (the_tags(H264_FONT), the_tags(&out));
+        assert_eq!(a.offset, b.offset);
+        let from = layout(H264_FONT).children[2].offset as usize;
+        assert_eq!(
+            &out[from..a.offset as usize],
+            &H264_FONT[from..a.offset as usize]
+        );
+        assert_eq!(
+            &out[b.data_offset() as usize..],
+            &H264_FONT[a.data_offset() as usize..]
+        );
         // Removing from an asset without a manifest is a no-op.
         let mut out = Cursor::new(Vec::new());
-        io().remove_c2pa(&mut Cursor::new(H264_FONT), &mut out)
+        io().remove_c2pa(&mut Cursor::new(VP9_OPUS), &mut out)
             .unwrap();
-        assert_eq!(out.into_inner(), H264_FONT);
+        assert_eq!(out.into_inner(), VP9_OPUS);
     }
 
     #[test]
@@ -1957,51 +1987,48 @@ mod tests {
     }
 
     #[test]
-    fn test_relocation_keeps_font_byte_identical() {
-        let src = H264_FONT;
+    fn test_relocation_keeps_tags_byte_identical() {
+        // ffmpeg writes Tags before the Clusters.
+        let src = VP9_OPUS;
         let before = layout(src);
-        let (ai, old_att) = before
+        let (ti, old_tags) = before
             .children
             .iter()
             .enumerate()
-            .find(|(_, e)| e.id == ID_ATTACHMENTS)
+            .find(|(_, e)| e.id == ID_TAGS)
             .map(|(i, e)| (i, *e))
             .unwrap();
-        assert!(ai < before.children.len() - 1);
-        let font = attachments_children(&mut Cursor::new(src), &old_att).unwrap()[0].0;
-        let font_bytes = &src[font.offset as usize..font.end() as usize];
+        assert!(ti < before.children.len() - 1);
+        let first_tag = tags_kids(src, &old_tags)[0].0;
+        let first_tag_bytes = &src[first_tag.offset as usize..first_tag.end() as usize];
 
         let out = write(src, &fake_store(b"m"));
         let after = layout(&out);
-        // Same number of Top-Level Elements before the end; the old
-        // Attachments is now a Void of the same size at the same offset.
-        let void = after.children[ai];
+        // The old Tags is now a Void of the same size at the same offset, and
+        // no other Top-Level Element moved.
+        let void = after.children[ti];
         assert_eq!(
             (void.id, void.offset, void.total_len()),
-            (ID_VOID, old_att.offset, old_att.total_len())
+            (ID_VOID, old_tags.offset, old_tags.total_len())
         );
-        for (a, b) in before.children.iter().zip(&after.children).skip(1) {
-            if a.id != ID_ATTACHMENTS && a.id != ID_VOID {
+        for (a, b) in before.children.iter().zip(&after.children).skip(2) {
+            if a.id != ID_TAGS {
                 assert_eq!(
                     (a.id, a.offset, a.total_len()),
                     (b.id, b.offset, b.total_len())
                 );
             }
         }
-        // The font is the first child of the new, last Attachments element.
-        let att = *after.children.last().unwrap();
-        assert_eq!(att.id, ID_ATTACHMENTS);
-        let kids = attachments_children(&mut Cursor::new(&out[..]), &att).unwrap();
-        assert_eq!(kids.len(), 2);
+        let tags = *after.children.last().unwrap();
+        assert_eq!(tags.id, ID_TAGS);
+        let kids = tags_kids(&out, &tags);
         let f = kids[0].0;
-        assert_eq!(&out[f.offset as usize..f.end() as usize], font_bytes);
+        assert_eq!(&out[f.offset as usize..f.end() as usize], first_tag_bytes);
         check_positions(&out);
 
-        assert_eq!(
-            names(&out)[names(&out).len() - 3..],
-            ["ATTh".to_string(), "61A7".to_string(), "C2PA".to_string()]
-        );
-        // The font is hashed: tampering with it breaks the box hash.
+        let n = names(&out);
+        assert_eq!(n[n.len() - 5..], ["TAGh", "7373", "7373", "7373", "C2PA"]);
+        // The other tags are hashed: tampering with one breaks the box hash.
         let mut bh = BoxHash { boxes: Vec::new() };
         bh.generate_box_hash_from_stream(&mut Cursor::new(&out), "sha256", &io(), false)
             .unwrap();
@@ -2015,15 +2042,74 @@ mod tests {
     }
 
     #[test]
+    fn test_tags_already_last_merged_in_place() {
+        // mkvmerge writes Tags last, after the Cues; the font attachment before
+        // the Clusters is an ordinary Top-Level Element.
+        let src = H264_FONT;
+        let out = write(src, &fake_store(b"m"));
+        let (a, b) = (layout(src), layout(&out));
+        assert_eq!(a.children.len(), b.children.len());
+        let old = the_tags(src);
+        let new = the_tags(&out);
+        assert_eq!(old.offset, new.offset);
+        // Everything before the Tags element, other than the SeekHead and its
+        // Void, is unchanged.
+        let from = a.children[2].offset as usize;
+        assert_eq!(
+            &out[from..old.offset as usize],
+            &src[from..old.offset as usize]
+        );
+        let n = names(&out);
+        assert!(n.contains(&"1941A469".to_string()));
+        assert_eq!(n[n.len() - 5..], ["TAGh", "7373", "7373", "7373", "C2PA"]);
+    }
+
+    #[test]
+    fn test_several_tags_elements_merged() {
+        // A second Tags element after the Cues, not referenced by the SeekHead.
+        let extra_tag = element(
+            ID_TAG,
+            &[
+                element(ID_TARGETS, &[]).unwrap(),
+                element(
+                    ID_SIMPLE_TAG,
+                    &[
+                        element(ID_TAG_NAME, b"COMMENT").unwrap(),
+                        element(0x4487, b"second").unwrap(),
+                    ]
+                    .concat(),
+                )
+                .unwrap(),
+            ]
+            .concat(),
+        )
+        .unwrap();
+        let src = append_top_level(OPUS, &element(ID_TAGS, &extra_tag).unwrap());
+        let out = write(&src, &fake_store(b"m"));
+        let tags = the_tags(&out);
+        let kids = tags_kids(&out, &tags);
+        assert_eq!(kids.len(), 4);
+        let k = kids[2].0;
+        assert_eq!(&out[k.offset as usize..k.end() as usize], extra_tag);
+        assert!(kids[3].1.is_some());
+        check_positions(&out);
+        assert_eq!(
+            io().read_c2pa(&mut Cursor::new(&out)).unwrap(),
+            fake_store(b"m")
+        );
+    }
+
+    #[test]
     fn test_box_map_matches_spec_example() {
-        // The draft's example: SeekHead, Void, Info, Tracks, Clusters, Cues,
-        // then ATTh and C2PA. ffmpeg also writes Tags (1254C367).
+        // The draft's example: SeekHead, Void, Info, Tracks, the Void that
+        // replaced ffmpeg's Tags, the Clusters, Cues, then TAGh, ffmpeg's two
+        // Tag elements and C2PA.
         let out = write(VP9_ALPHA, &fake_store(b"m"));
         let mut expected = vec![
-            "1A45DFA3", "SEGh", "114D9B74", "EC", "1549A966", "1654AE6B", "1254C367",
+            "1A45DFA3", "SEGh", "114D9B74", "EC", "1549A966", "1654AE6B", "EC",
         ];
         expected.extend(["1F43B675"; 4]);
-        expected.extend(["1C53BB6B", "ATTh", "C2PA"]);
+        expected.extend(["1C53BB6B", "TAGh", "7373", "7373", "C2PA"]);
         assert_eq!(names(&out), expected);
 
         let maps = io().get_box_map(&mut Cursor::new(&out)).unwrap();
@@ -2047,15 +2133,14 @@ mod tests {
                     .collect::<Vec<_>>()
             });
             match b.names[0].as_str() {
-                "SEGh" | "ATTh" => assert_eq!(excl, Some(vec![(4, 8, None)]), "{json}"),
+                "SEGh" | "TAGh" => assert_eq!(excl, Some(vec![(4, 8, None)]), "{json}"),
                 _ => assert_eq!(excl, None, "box {i}"),
             }
         }
         let c2pa = bh.boxes.last().unwrap();
         assert_eq!(c2pa.names, ["C2PA"]);
         assert_eq!(c2pa.hash.as_ref(), [0]);
-        // The example also hashes the four Clusters as one range: the
-        // generated per-box form and the minimal form both verify.
+        // The minimal form (consecutive boxes in one range) also verifies.
         let mut minimal = BoxHash { boxes: Vec::new() };
         minimal
             .generate_box_hash_from_stream(&mut Cursor::new(&out), "sha256", &io(), true)
@@ -2069,18 +2154,12 @@ mod tests {
     fn test_box_map_placeholder_without_manifest() {
         let n = names(VP9_OPUS);
         assert_eq!(n[..2], ["1A45DFA3", "SEGh"]);
-        assert_eq!(n[n.len() - 2..], ["ATTh", "C2PA"]);
+        assert_eq!(n[n.len() - 2..], ["TAGh", "C2PA"]);
+        // Without a C2PA Tag, a Tags element is an ordinary box.
+        assert!(n.contains(&"1254C367".to_string()));
         let maps = io().get_box_map(&mut Cursor::new(VP9_OPUS)).unwrap();
         assert_eq!(maps.last().unwrap().range_start, VP9_OPUS.len() as u64);
         assert_eq!(maps.last().unwrap().range_len, 0);
-        // After removal of the manifest, an Attachments element at the end
-        // only gets a C2PA placeholder.
-        let signed = write(H264_FONT, &fake_store(b"x"));
-        let mut out = Cursor::new(Vec::new());
-        io().remove_c2pa(&mut Cursor::new(&signed), &mut out)
-            .unwrap();
-        let n = names(&out.into_inner());
-        assert_eq!(n[n.len() - 3..], ["ATTh", "61A7", "C2PA"]);
     }
 
     #[test]
@@ -2120,11 +2199,16 @@ mod tests {
         t[cluster.data_offset() as usize + 20] ^= 0x01;
         assert!(verify(&t).is_err());
 
-        // An extra Top-Level Element after Attachments (Segment size updated):
-        // the Attachments element is no longer the last Top-Level Element.
+        // A byte in another Tag of the Tags element.
+        let tags = the_tags(&signed);
+        let k = tags_kids(&signed, &tags)[0].0;
+        let mut t = signed.clone();
+        t[k.end() as usize - 1] ^= 0x01;
+        assert!(verify(&t).is_err());
+
+        // An extra Top-Level Element after Tags (Segment size updated).
         let extra = append_top_level(&signed, &[0xec, 0x81, 0x00]);
-        let err = verify(&extra).unwrap_err();
-        assert!(format!("{err}").contains("not the last Top-Level"), "{err}");
+        assert!(verify(&extra).is_err());
         let seg = l.segment.offset as usize;
 
         // Trailing data after the Segment.
@@ -2137,19 +2221,18 @@ mod tests {
         short[seg + 4..seg + 12].copy_from_slice(&encode_size(l.segment.data_len - 1, 8).unwrap());
         assert!(verify(&short).is_err());
 
-        // An Attachments size that does not match its children.
-        let att = l.children.last().unwrap().offset as usize;
-        let mut bad_att = signed.clone();
-        let v = l.children.last().unwrap().data_len + 2;
-        bad_att[att + 4..att + 12].copy_from_slice(&encode_size(v, 8).unwrap());
-        assert!(verify(&bad_att).is_err());
+        // A Tags size that does not match its children.
+        let t = tags.offset as usize;
+        let mut bad_tags = signed.clone();
+        bad_tags[t + 4..t + 12].copy_from_slice(&encode_size(tags.data_len + 2, 8).unwrap());
+        assert!(verify(&bad_tags).is_err());
 
         // An element inserted before the Clusters (a Top-Level Element not
         // listed in the assertion).
-        let tags = l.children.iter().find(|e| e.id == ID_TAGS).unwrap();
-        let mut moved = signed[..tags.offset as usize].to_vec();
+        let tracks = l.children.iter().find(|e| e.id == ID_TRACKS).unwrap();
+        let mut moved = signed[..tracks.offset as usize].to_vec();
         moved.extend([0xec, 0x80]);
-        moved.extend(&signed[tags.offset as usize..]);
+        moved.extend(&signed[tracks.offset as usize..]);
         moved[seg + 4..seg + 12].copy_from_slice(&encode_size(l.segment.data_len + 2, 8).unwrap());
         assert!(verify(&moved).is_err());
     }
@@ -2215,33 +2298,30 @@ mod tests {
         ));
     }
 
+    /// The offset of the `SeekID` value of the Seek entry for Tags.
+    fn tags_seek_id_at(b: &[u8]) -> usize {
+        b.windows(7)
+            .position(|w| w == [0x53, 0xab, 0x84, 0x12, 0x54, 0xc3, 0x67])
+            .unwrap()
+            + 3
+    }
+
     #[test]
-    fn test_locate_and_multiple_c2pa_attached_files() {
+    fn test_locate_and_multiple_c2pa_tags() {
         let signed = write(OPUS, &fake_store(b"m"));
         // Without the Seek entry, the scan of Top-Level Elements finds it.
         let mut no_seek = signed.clone();
-        let p = no_seek
-            .windows(6)
-            .position(|w| w == [0x53, 0xab, 0x84, 0x19, 0x41, 0xa4])
-            .unwrap();
-        no_seek[p + 3] = 0x1a; // SeekID no longer Attachments
+        no_seek[tags_seek_id_at(&signed)] = 0x1a; // SeekID no longer Tags
         assert_eq!(
             io().read_c2pa(&mut Cursor::new(&no_seek)).unwrap(),
             fake_store(b"m")
         );
 
-        // Two C2PA AttachedFiles: treated as if no manifest were present.
-        let l = layout(&signed);
-        let af = c2pa_af(&signed);
-        let af_bytes = signed[af.elem.offset as usize..af.elem.end() as usize].to_vec();
-        let mut two = signed.clone();
-        two.extend(&af_bytes);
-        let att = l.children.last().unwrap().offset as usize;
-        let seg = l.segment.offset as usize;
-        let n = af_bytes.len() as u64;
-        two[att + 4..att + 12]
-            .copy_from_slice(&encode_size(l.children.last().unwrap().data_len + n, 8).unwrap());
-        two[seg + 4..seg + 12].copy_from_slice(&encode_size(l.segment.data_len + n, 8).unwrap());
+        // Two C2PA Tags: treated as if no manifest were present.
+        let (tag, tags) = c2pa_tag_of(&signed);
+        let tag_bytes = signed[tag.elem.offset as usize..tag.elem.end() as usize].to_vec();
+        let two = append_to_tags(&signed, &tag_bytes);
+        let _ = tags;
         assert!(matches!(
             io().read_c2pa(&mut Cursor::new(&two)),
             Err(Error::JumbfNotFound)
@@ -2253,6 +2333,38 @@ mod tests {
             io().read_c2pa(&mut Cursor::new(&fixed)).unwrap(),
             fake_store(b"n")
         );
+        assert_eq!(
+            tags_kids(&fixed, &the_tags(&fixed))
+                .iter()
+                .filter(|(_, i)| i.is_some())
+                .count(),
+            1
+        );
+
+        // A C2PA_MANIFEST SimpleTag with a TagString, not a TagBinary: no
+        // manifest.
+        let string_tag = element(
+            ID_TAG,
+            &[
+                element(ID_TARGETS, &[]).unwrap(),
+                element(
+                    ID_SIMPLE_TAG,
+                    &[
+                        element(ID_TAG_NAME, C2PA_TAG_NAME.as_bytes()).unwrap(),
+                        element(0x4487, b"not binary").unwrap(),
+                    ]
+                    .concat(),
+                )
+                .unwrap(),
+            ]
+            .concat(),
+        )
+        .unwrap();
+        let t = append_top_level(OPUS, &element(ID_TAGS, &string_tag).unwrap());
+        assert!(matches!(
+            io().read_c2pa(&mut Cursor::new(&t)),
+            Err(Error::JumbfNotFound)
+        ));
     }
 
     /// Appends `bytes` as Top-Level Elements after the last one, updating the
@@ -2267,81 +2379,79 @@ mod tests {
         out
     }
 
-    /// Appends `bytes` as children of the last (Attachments) Top-Level
-    /// Element, updating the Attachments and Segment sizes.
-    fn append_to_attachments(b: &[u8], bytes: &[u8]) -> Vec<u8> {
+    /// Appends `bytes` as children of the last (Tags) Top-Level Element,
+    /// updating the Tags and Segment sizes.
+    fn append_to_tags(b: &[u8], bytes: &[u8]) -> Vec<u8> {
         let l = layout(b);
-        let att = *l.children.last().unwrap();
-        assert_eq!(att.id, ID_ATTACHMENTS);
+        let tags = *l.children.last().unwrap();
+        assert_eq!(tags.id, ID_TAGS);
         let mut out = append_top_level(b, bytes);
-        let size = encode_size(att.data_len + bytes.len() as u64, 8).unwrap();
-        out[att.offset as usize + 4..att.offset as usize + 12].copy_from_slice(&size);
+        let size = encode_size(tags.data_len + bytes.len() as u64, 8).unwrap();
+        out[tags.offset as usize + 4..tags.offset as usize + 12].copy_from_slice(&size);
         out
     }
 
-    fn font_attached_file() -> Vec<u8> {
-        let d = [
-            element(ID_FILE_NAME, b"font.ttf").unwrap(),
-            element(ID_FILE_MEDIA_TYPE, b"font/ttf").unwrap(),
-            element(ID_FILE_UID, &[1, 2, 3, 4]).unwrap(),
-            element(ID_FILE_DATA, b"not really a font").unwrap(),
+    fn comment_tag() -> Vec<u8> {
+        let st = [
+            element(ID_TAG_NAME, b"COMMENT").unwrap(),
+            element(0x4487, b"added after").unwrap(),
         ]
         .concat();
-        element(ID_ATTACHED_FILE, &d).unwrap()
+        element(
+            ID_TAG,
+            &[
+                element(ID_TARGETS, &[]).unwrap(),
+                element(ID_SIMPLE_TAG, &st).unwrap(),
+            ]
+            .concat(),
+        )
+        .unwrap()
     }
 
     #[test]
-    fn test_placement_violations_rejected() {
-        let (signed, bh) = signed_layout_and_hash(OPUS);
-        let verify = |b: &[u8]| bh.verify_in_memory_hash(b, Some("sha256"), &io());
-        verify(&signed).unwrap();
-
-        // A Tags element after the Attachments element.
-        let tags = element(ID_TAGS, &[]).unwrap();
-        let t = append_top_level(&signed, &tags);
-        assert_eq!(
-            io().read_c2pa(&mut Cursor::new(&t)).unwrap(),
-            fake_store(b"final")
+    fn test_any_position_accepted() {
+        // A claim generator that placed the Tags element before the last
+        // Top-Level Element, and the C2PA Tag before another Tag: the box map
+        // follows the asset, so the hash generated over that layout verifies.
+        let prepared = write(OPUS, PLACEHOLDER_STORE);
+        let b = append_top_level(
+            &append_to_tags(&prepared, &comment_tag()),
+            &[0xec, 0x81, 0x00],
         );
-        let err = io().get_box_map(&mut Cursor::new(&t)).unwrap_err();
-        assert!(format!("{err}").contains("not the last Top-Level"), "{err}");
-        assert!(verify(&t).is_err());
-
-        // Another AttachedFile after the C2PA AttachedFile.
-        let t = append_to_attachments(&signed, &font_attached_file());
-        assert_eq!(
-            io().read_c2pa(&mut Cursor::new(&t)).unwrap(),
-            fake_store(b"final")
-        );
-        let err = io().get_box_map(&mut Cursor::new(&t)).unwrap_err();
-        assert!(format!("{err}").contains("not the last child"), "{err}");
-        assert!(verify(&t).is_err());
+        let n = names(&b);
+        assert_eq!(n[n.len() - 4..], ["7373", "C2PA", "7373", "EC"]);
+        let mut bh = BoxHash { boxes: Vec::new() };
+        bh.generate_box_hash_from_stream(&mut Cursor::new(&b), "sha256", &io(), false)
+            .unwrap();
+        let store = fake_store(&[3u8; PLACEHOLDER_STORE.len() - 8]);
+        let mut s = Cursor::new(b);
+        io().patch_c2pa(&mut s, &store).unwrap();
+        let signed = s.into_inner();
+        assert_eq!(io().read_c2pa(&mut Cursor::new(&signed)).unwrap(), store);
+        bh.verify_in_memory_hash(&signed, Some("sha256"), &io())
+            .unwrap();
     }
 
     #[test]
     fn test_other_placement_rules_not_rejected() {
-        // A claim generator that wrote no Seek entry for the Attachments
-        // element and kept a CRC-32 in it: the bytes are hashed, so a
-        // validator does not reject the manifest.
+        // A claim generator that wrote no Seek entry for the Tags element and
+        // kept a CRC-32 in it: the bytes are hashed, so a validator does not
+        // reject the manifest.
         let prepared = write(OPUS, PLACEHOLDER_STORE);
         let mut odd = prepared.clone();
-        let p = odd
-            .windows(6)
-            .position(|w| w == [0x53, 0xab, 0x84, 0x19, 0x41, 0xa4])
-            .unwrap();
-        odd[p + 3] = 0x1a; // SeekID no longer Attachments
-                           // Insert a CRC-32 as the first child of the Attachments element.
+        odd[tags_seek_id_at(&prepared)] = 0x1a; // SeekID no longer Tags
+                                                // Insert a CRC-32 as the first child of the Tags element.
         let l = layout(&odd);
-        let att = *l.children.last().unwrap();
+        let tags = *l.children.last().unwrap();
         let crc = element(ID_CRC32, &[0, 0, 0, 0]).unwrap();
-        let at = att.data_offset() as usize;
+        let at = tags.data_offset() as usize;
         let mut b = odd[..at].to_vec();
         b.extend(&crc);
         b.extend(&odd[at..]);
         let n = crc.len() as u64;
-        let (seg, a) = (l.segment.offset as usize, att.offset as usize);
+        let (seg, t) = (l.segment.offset as usize, tags.offset as usize);
         b[seg + 4..seg + 12].copy_from_slice(&encode_size(l.segment.data_len + n, 8).unwrap());
-        b[a + 4..a + 12].copy_from_slice(&encode_size(att.data_len + n, 8).unwrap());
+        b[t + 4..t + 12].copy_from_slice(&encode_size(tags.data_len + n, 8).unwrap());
         assert!(names(&b).iter().any(|n| n == "BF"));
 
         let mut bh = BoxHash { boxes: Vec::new() };
@@ -2355,6 +2465,31 @@ mod tests {
         assert_eq!(io().read_c2pa(&mut Cursor::new(&signed)).unwrap(), store);
         bh.verify_in_memory_hash(&signed, Some("sha256"), &io())
             .unwrap();
+    }
+
+    #[test]
+    fn test_legacy_attachments_manifest_not_read() {
+        // An application/c2pa AttachedFile (an earlier draft) is not a
+        // manifest for this handler, and stays an ordinary Top-Level Element.
+        let af = [
+            element(0x466e, b"content_credential.c2pa").unwrap(),
+            element(0x4660, b"application/c2pa").unwrap(),
+            element(0x46ae, &[1, 2, 3, 4]).unwrap(),
+            element(0x465c, &fake_store(b"old")).unwrap(),
+        ]
+        .concat();
+        let att = element(ID_ATTACHMENTS, &element(0x61a7, &af).unwrap()).unwrap();
+        let src = append_top_level(OPUS, &att);
+        assert!(matches!(
+            io().read_c2pa(&mut Cursor::new(&src)),
+            Err(Error::JumbfNotFound)
+        ));
+        let out = write(&src, &fake_store(b"new"));
+        assert!(names(&out).contains(&"1941A469".to_string()));
+        assert_eq!(
+            io().read_c2pa(&mut Cursor::new(&out)).unwrap(),
+            fake_store(b"new")
+        );
     }
 
     // -- Synthetic layouts -------------------------------------------------
@@ -2514,8 +2649,8 @@ mod tests {
         assert!(cues_len(&out) > cues_len(&src));
         let l = layout(&out);
         assert_eq!(
-            locate_attachments(&mut Cursor::new(&out[..])).unwrap(),
-            l.children.last().copied()
+            locate_tags(&mut Cursor::new(&out[..])).unwrap(),
+            vec![*l.children.last().unwrap()]
         );
         // Box hash over the embedded layout.
         let (signed, bh) = signed_layout_and_hash(&src);
@@ -2529,11 +2664,11 @@ mod tests {
         let out = write(&src, &fake_store(b"m"));
         let ids = top_level_ids(&out);
         assert_eq!(ids[0], ID_SEEKHEAD);
-        assert_eq!(*ids.last().unwrap(), ID_ATTACHMENTS);
+        assert_eq!(*ids.last().unwrap(), ID_TAGS);
         check_positions(&out);
         assert_eq!(
-            locate_attachments(&mut Cursor::new(&out[..])).unwrap(),
-            layout(&out).children.last().copied()
+            locate_tags(&mut Cursor::new(&out[..])).unwrap(),
+            vec![*layout(&out).children.last().unwrap()]
         );
     }
 
@@ -2572,17 +2707,22 @@ mod tests {
             (ID_VOID, crc.offset, crc.total_len())
         );
         assert_eq!(after.children[1].id, ID_SEEKHEAD);
-        // The SeekHead used its Void; nothing else moved.
-        let info = |l: &Layout| l.children.iter().find(|e| e.id == ID_INFO).unwrap().offset;
-        assert_eq!(info(&after), info(&before));
-        let from = info(&before) as usize;
-        assert_eq!(&out[from..src.len()], &src[from..]);
+        // The SeekHead used its Void; Info, Tracks, Clusters and Cues did not
+        // move.
+        for e in before
+            .children
+            .iter()
+            .filter(|e| matches!(e.id, ID_INFO | ID_TRACKS | ID_CLUSTER | ID_CUES))
+        {
+            let r = e.offset as usize..e.end() as usize;
+            assert_eq!(&out[r.clone()], &src[r]);
+        }
         assert!(top_level_ids(&out).iter().all(|&id| id != ID_CRC32));
         check_positions(&out);
-        // The Attachments element is located through the SeekHead after the Void.
+        // The Tags element is located through the SeekHead after the Void.
         assert_eq!(
-            locate_attachments(&mut Cursor::new(&out[..])).unwrap(),
-            after.children.last().copied()
+            locate_tags(&mut Cursor::new(&out[..])).unwrap(),
+            vec![*after.children.last().unwrap()]
         );
 
         // Without a SeekHead, the new SeekHead follows the Void.
@@ -2681,7 +2821,7 @@ mod tests {
             assert_valid(&read_json(&signed, format).unwrap());
             let l = layout(&signed);
             assert_eq!(l.segment.end(), signed.len() as u64);
-            assert_eq!(*top_level_ids(&signed).last().unwrap(), ID_ATTACHMENTS);
+            assert_eq!(*top_level_ids(&signed).last().unwrap(), ID_TAGS);
             check_positions(&signed);
             check_crcs(&signed);
             // Clusters are untouched.
@@ -2715,14 +2855,18 @@ mod tests {
     }
 
     #[test]
-    fn test_e2e_placement_violations_fail() {
+    fn test_e2e_unlisted_elements_fail() {
+        // A Top-Level Element after the Tags element, or a Tag added to it
+        // after signing: neither is covered by the assertion.
         let signed = sign(OPUS, "audio/webm");
         for t in [
-            append_top_level(&signed, &element(ID_TAGS, &[]).unwrap()),
-            append_to_attachments(&signed, &font_attached_file()),
+            append_top_level(&signed, &[0xec, 0x81, 0x00]),
+            append_to_tags(&signed, &comment_tag()),
         ] {
-            let json = read_json(&t, "audio/webm").unwrap();
-            assert!(json.contains("assertion.boxesHash.mismatch"), "{json}");
+            let v: serde_json::Value =
+                serde_json::from_str(&read_json(&t, "audio/webm").unwrap()).unwrap();
+            let failures = v["validation_results"]["activeManifest"]["failure"].to_string();
+            assert!(failures.contains("assertion.boxesHash"), "{v}");
         }
     }
 
