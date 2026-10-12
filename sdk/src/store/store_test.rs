@@ -1,11 +1,27 @@
+// Copyright 2022 Adobe. All rights reserved.
+// This file is licensed to you under the Apache License,
+// Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+// or the MIT license (http://opensource.org/licenses/MIT),
+// at your option.
+
+// Unless required by applicable law or agreed to in writing,
+// this software is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
+// implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+// specific language governing permissions and limitations under
+// each license.
+
 #![allow(clippy::expect_used)]
 #![allow(clippy::panic)]
 #![allow(clippy::unwrap_used)]
 
 #[cfg(feature = "file_io")]
 use std::fs;
+#[cfg(feature = "file_io")]
+use std::path::PathBuf;
 use std::{
-    io::{Read, Seek, SeekFrom, Write},
+    collections::HashSet,
+    io::{Cursor, Read, Seek, SeekFrom, Write},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -21,7 +37,7 @@ use sha2::Sha256;
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
-use super::store_core::*;
+use super::store_core::MAX_INGREDIENT_DEPTH;
 #[cfg(feature = "file_io")]
 use crate::{
     assertion::AssertionJson,
@@ -36,17 +52,31 @@ use crate::{
     },
 };
 use crate::{
-    assertions::{Action, Actions, Uuid},
-    claim::AssertionStoreJsonFormat,
+    assertion::{Assertion, AssertionData},
+    assertions::{
+        labels, Action, Actions, CollectionHash, DataHash, Ingredient, Relationship, Uuid,
+    },
+    asset_io::{ObjectType, ReadWriteSeek},
+    claim::{AssertionStoreJsonFormat, Claim, ClaimAssertion, ClaimAssetData},
+    context::Context,
+    dynamic_assertion::{
+        AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
+    },
+    error::{Error, Result},
+    jumbf::{boxes::C2PA_REDACTION_UUID, labels::to_assertion_uri},
     jumbf_io::load_jumbf_from_stream,
-    settings::SettingsValidate,
-    status_tracker::{LogItem, StatusTracker},
+    settings::{Settings, SettingsValidate},
+    status_tracker::{ErrorBehavior, LogItem, StatusTracker},
+    store::{InvalidClaimError, Store, StoreValidationInfo},
     utils::{
+        hash_utils::HashRange,
         patch::patch_bytes,
         test::{create_test_claim, create_test_streams, fixture_path},
         test_signer::{async_test_signer, test_signer},
     },
-    ClaimGeneratorInfo, DigitalSourceType, SigningAlg,
+    validation_status,
+    validation_status::ALGORITHM_UNSUPPORTED,
+    AsyncSigner, ClaimGeneratorInfo, DigitalSourceType, Signer, SigningAlg,
 };
 
 fn create_editing_claim(claim: &mut Claim) -> Result<&mut Claim> {

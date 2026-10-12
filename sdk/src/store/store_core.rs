@@ -11,74 +11,59 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#[cfg(feature = "file_io")]
-pub(super) use std::path::{Path, PathBuf};
-pub(super) use std::{
+use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet},
-    io::{Cursor, Read, Seek},
+    io::Cursor,
 };
 
-pub(super) use async_generic::async_generic;
-pub(super) use log::error;
+use async_generic::async_generic;
+use log::error;
 
-pub(super) use crate::{
+use crate::{
     assertion::{Assertion, AssertionBase, AssertionData, AssertionDecodeError},
     assertions::{
         labels::{self, CLAIM},
-        BmffHash, BoxHash, CertificateStatus, CollectionHash, DataBox, DataHash, Ingredient,
-        Relationship, TimeStamp, User, UserCbor,
+        BmffHash, DataBox, Ingredient, Relationship, User, UserCbor,
     },
-    asset_io::{ObjectLocations, ObjectType, ReadSeek, ReadWriteSeek},
-    claim::{
-        check_ocsp_status, check_ocsp_status_async, Claim, ClaimAssertion, ClaimAssetData,
-        RemoteManifest,
-    },
+    claim::{check_ocsp_status, check_ocsp_status_async, Claim, ClaimAssertion},
     context::{Context, ProgressPhase},
     cose_sign::{cose_sign, cose_sign_async},
     cose_validator::{verify_cose, verify_cose_async},
     crypto::{
         asn1::rfc3161::TstInfo,
         cose::{
-            cert_chain_from_sign1, fetch_and_check_ocsp_response,
-            fetch_and_check_ocsp_response_async, parse_cose_sign1, CertificateTrustPolicy,
-            TimeStampStorage, TrustAnchorType,
+            fetch_and_check_ocsp_response, fetch_and_check_ocsp_response_async, parse_cose_sign1,
+            CertificateTrustPolicy, TimeStampStorage, TrustAnchorType,
         },
         hash::sha256,
-        ocsp::OcspResponse,
-        time_stamp::verify_time_stamp,
     },
     dynamic_assertion::{
         AsyncDynamicAssertion, DynamicAssertion, DynamicAssertionContent, PartialClaim,
     },
     error::{Error, Result},
-    hash_utils::{hash_by_alg, hash_size_by_alg, vec_compare, verify_by_alg},
+    hash_utils::{hash_by_alg, vec_compare},
     hashed_uri::HashedUri,
     jumbf::{
         self,
         boxes::*,
         labels::{
             assertion_label_from_uri, manifest_label_from_uri, manifest_label_to_parts,
-            to_assertion_uri, to_manifest_uri, ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE,
+            to_assertion_uri, ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE,
         },
     },
     log_item,
     manifest_store_report::ManifestStoreReport,
-    maybe_send_sync::MaybeSend,
     settings::{
         builder::OcspFetchScope, get_thread_local_settings, Settings, TrustListKind, MAX_ASSERTIONS,
     },
     status_tracker::{ErrorBehavior, StatusTracker},
-    utils::{
-        hash_utils::HashRange,
-        io_utils::{self, insert_data_at, stream_len},
-        is_zero,
-    },
+    utils::{hash_utils::HashRange, is_zero},
     validation_results::validation_codes::{
         ASSERTION_CBOR_INVALID, ASSERTION_JSON_INVALID, ASSERTION_MISSING, CLAIM_MALFORMED,
     },
     validation_status::{self, ALGORITHM_UNSUPPORTED},
-    AsyncSigner, Signer, ValidationResults, ValidationState,
+    AsyncSigner, Signer,
 };
 
 pub(super) const MANIFEST_STORE_EXT: &str = "c2pa"; // file extension for external manifests
@@ -121,9 +106,9 @@ pub(crate) struct StoreValidationInfo<'a> {
 /// Typically, this list of `Claim`s represents all of the claims in an asset.
 #[derive(Debug)]
 pub struct Store {
-    pub(super) claims_map: HashMap<String, Claim>,
+    claims_map: HashMap<String, Claim>,
     pub(super) claims: Vec<String>, // maintains order of claims
-    pub(super) manifest_box_hash_cache: HashMap<String, (Vec<u8>, Vec<u8>)>,
+    manifest_box_hash_cache: HashMap<String, (Vec<u8>, Vec<u8>)>,
     pub(super) label: String,
     pub(super) provenance_path: Option<String>,
     pub(super) ctp: CertificateTrustPolicy,
@@ -520,7 +505,7 @@ impl Store {
 
     // Returns placeholder that will be searched for and replaced
     // with actual signature data.
-    pub(super) fn sign_claim_placeholder(claim: &Claim, min_reserve_size: usize) -> Vec<u8> {
+    fn sign_claim_placeholder(claim: &Claim, min_reserve_size: usize) -> Vec<u8> {
         let placeholder_str = format!("signature placeholder:{}", claim.label());
         let mut placeholder = sha256(placeholder_str.as_bytes());
 
@@ -808,7 +793,7 @@ impl Store {
         }
     }
 
-    pub(super) fn add_assertion_to_jumbf_store(
+    fn add_assertion_to_jumbf_store(
         store: &mut CAIAssertionStore,
         claim_assertion: &ClaimAssertion,
     ) -> Result<()> {
@@ -858,12 +843,12 @@ impl Store {
     }
 
     // look for old style hashing to determine if this is a pre 1.0 claim
-    pub(super) fn is_old_assertion(alg: &str, data: &[u8], original_hash: &[u8]) -> bool {
+    fn is_old_assertion(alg: &str, data: &[u8], original_hash: &[u8]) -> bool {
         let old_hash = hash_by_alg(alg, data, None);
         vec_compare(&old_hash, original_hash)
     }
 
-    pub(super) fn get_assertion_from_jumbf_store(
+    fn get_assertion_from_jumbf_store(
         claim: &Claim,
         assertion_box: &JUMBFSuperBox,
         check_for_legacy_assertion: bool,
@@ -1069,10 +1054,7 @@ impl Store {
         }
     }
 
-    pub(super) fn build_manifest_box(
-        claim: &Claim,
-        min_reserve_size: usize,
-    ) -> Result<CAIManifest> {
+    fn build_manifest_box(claim: &Claim, min_reserve_size: usize) -> Result<CAIManifest> {
         // box label
         let label = claim.label();
 
@@ -1221,10 +1203,7 @@ impl Store {
     // base_version_label - is the source label
     // desired_version_label - is the label to compare to the base
     // returns true if desired version is <= base version
-    pub(super) fn check_label_version(
-        base_version_label: &str,
-        desired_version_label: &str,
-    ) -> bool {
+    fn check_label_version(base_version_label: &str, desired_version_label: &str) -> bool {
         labels::version(desired_version_label) <= labels::version(base_version_label)
     }
 
@@ -1257,7 +1236,7 @@ impl Store {
         )
     }
 
-    pub(super) fn from_jumbf_impl(
+    fn from_jumbf_impl(
         mut store: Store,
         buffer: &[u8],
         validation_log: &mut StatusTracker,
@@ -1950,7 +1929,7 @@ impl Store {
         self.get_hash_binding_manifest_impl(claim, &mut HashSet::new())
     }
 
-    pub(super) fn get_hash_binding_manifest_impl(
+    fn get_hash_binding_manifest_impl(
         &self,
         claim: &Claim,
         visited: &mut HashSet<String>,
@@ -1987,7 +1966,7 @@ impl Store {
     }
 
     // determine if the only changes are redacted assertions
-    pub(super) fn manifest_differs_by_redaction(
+    fn manifest_differs_by_redaction(
         c1: &Claim,
         c2: &Claim,
         redactions: &[String],

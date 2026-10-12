@@ -1,9 +1,38 @@
+// Copyright 2022 Adobe. All rights reserved.
+// This file is licensed to you under the Apache License,
+// Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+// or the MIT license (http://opensource.org/licenses/MIT),
+// at your option.
+
+// Unless required by applicable law or agreed to in writing,
+// this software is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
+// implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+// specific language governing permissions and limitations under
+// each license.
+
 #![allow(clippy::expect_used)]
 #![allow(clippy::unwrap_used)]
 #![allow(deprecated)]
 
-use super::claim_core::*;
-use crate::{resource_store::UriOrResource, utils::test::create_test_claim, DigitalSourceType};
+use serde_json::{json, Value};
+
+use super::claim_core::{GH_FULL_VERSION_LIST, SPEC_VERSION_F};
+use crate::{
+    assertion::{Assertion, AssertionBase, AssertionData},
+    assertions::{self, c2pa_action, Action, Actions, Ingredient, Relationship},
+    claim::{AssertionStoreJsonFormat, Claim, ClaimAssertionType},
+    context::Context,
+    error::{Error, Result},
+    hashed_uri::HashedUri,
+    jumbf::labels::to_assertion_uri,
+    resource_store::UriOrResource,
+    settings::Settings,
+    status_tracker::{ErrorBehavior, StatusTracker},
+    store::StoreValidationInfo,
+    utils::test::create_test_claim,
+    validation_status, ClaimGeneratorInfo, DigitalSourceType,
+};
 
 #[test]
 fn test_build_claim() {

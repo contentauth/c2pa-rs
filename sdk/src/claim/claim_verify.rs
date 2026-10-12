@@ -1,4 +1,45 @@
-use super::claim_core::*;
+// Copyright 2022 Adobe. All rights reserved.
+// This file is licensed to you under the Apache License,
+// Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+// or the MIT license (http://opensource.org/licenses/MIT),
+// at your option.
+
+// Unless required by applicable law or agreed to in writing,
+// this software is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR REPRESENTATIONS OF ANY KIND, either express or
+// implied. See the LICENSE-MIT and LICENSE-APACHE files for the
+// specific language governing permissions and limitations under
+// each license.
+
+use async_generic::async_generic;
+
+use crate::{
+    assertion::{Assertion, AssertionBase, AssertionData},
+    assertions::{
+        self, c2pa_action, labels,
+        labels::{CLAIM_THUMBNAIL, DATABOX_STORE},
+        Actions, BmffHash, BoxHash, CollectionHash, DataHash, DataMap, Ingredient, Metadata,
+        Relationship,
+    },
+    claim::{check_ocsp_status, check_ocsp_status_async, Claim, ClaimAssetData},
+    context::{Context, ProgressPhase},
+    cose_validator::{get_signing_cert_serial_num, verify_cose, verify_cose_async},
+    crypto::cose::{parse_cose_sign1, CertificateInfo, CertificateTrustPolicy},
+    error::{Error, Result},
+    hashed_uri::HashedUri,
+    jumbf,
+    jumbf::labels::{
+        assertion_label_from_uri, manifest_label_from_uri, manifest_label_to_parts,
+        to_absolute_uri, to_assertion_uri, to_manifest_uri, to_signature_uri,
+    },
+    log_item,
+    resource_store::UriOrResource,
+    settings::Settings,
+    status_tracker::StatusTracker,
+    store::StoreValidationInfo,
+    utils::hash_utils::{vec_compare, HashRange},
+    validation_status,
+};
 
 pub(crate) const ALLOWED_UPDATE_MANIFEST_ACTIONS: [&str; 4] = [
     "c2pa.edited.metadata",
@@ -13,7 +54,7 @@ pub(crate) const ALLOWED_UPDATE_MANIFEST_ACTIONS: [&str; 4] = [
 /// covers exactly it. A mismatch means the exclusion covers non-manifest bytes -- a
 /// detached manifest applied to an unrelated asset, or content injected into the
 /// space freed by shrinking the manifest.
-pub(super) fn data_hash_exclusions_match_manifest(
+fn data_hash_exclusions_match_manifest(
     exclusions: &[HashRange],
     manifest_store_range: Option<&HashRange>,
     is_embedded: bool,
@@ -167,7 +208,7 @@ impl Claim {
     // Build a diagnostic message for ingredientMismatch errors, showing the failing
     // action's index, type, each referenced ingredient URL, and the actual relationship
     // found (vs. the expected one).
-    pub(super) fn ingredient_mismatch_msg(
+    fn ingredient_mismatch_msg(
         claim: &Claim,
         action_index: usize,
         action_type: &str,
@@ -916,7 +957,7 @@ impl Claim {
     }
 
     // check the validity of icons in a ClaimGeneratorInfo
-    pub(super) fn verify_icons(
+    fn verify_icons(
         claim: &Claim,
         icon_uris: &[&HashedUri],
         validation_log: &mut StatusTracker,
@@ -954,7 +995,7 @@ impl Claim {
     /// Classifies a hash-verification failure into its format's `malformed`
     /// or `mismatch` validation-status constant, based on whether `e` carries
     /// that format's own `malformed` code.
-    pub(super) fn classify_hash_verification_error(
+    fn classify_hash_verification_error(
         e: &Error,
         malformed: &'static str,
         mismatch: &'static str,
@@ -2076,10 +2117,7 @@ impl Claim {
 
     // Perform metadata validation check.
     // Check the structure only.  C2PA 2.4 no longer requires checking against allowed fields.
-    pub(super) fn verify_metadata(
-        claim: &Claim,
-        _validation_log: &mut StatusTracker,
-    ) -> Result<()> {
+    fn verify_metadata(claim: &Claim, _validation_log: &mut StatusTracker) -> Result<()> {
         for metadata_assertion in claim.metadata_assertions() {
             Metadata::from_assertion(metadata_assertion.assertion())?;
         }

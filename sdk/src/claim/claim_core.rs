@@ -12,39 +12,36 @@
 // each license.
 
 #[cfg(feature = "file_io")]
-pub(super) use std::path::Path;
-pub(super) use std::{
+use std::path::Path;
+use std::{
     collections::{HashMap, HashSet},
     fmt,
     sync::Arc,
 };
 
-pub(super) use async_generic::async_generic;
-pub(super) use coset::CoseSign1;
-pub(super) use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
-pub(super) use serde_json::{json, Map, Value};
-pub(super) use uuid::Uuid;
+use async_generic::async_generic;
+use coset::CoseSign1;
+use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
+use serde_json::{json, Map, Value};
+use uuid::Uuid;
 
-pub(super) use crate::{
+use crate::{
     assertion::{
         cbor_to_crjson, get_thumbnail_image_type, get_thumbnail_instance, get_thumbnail_type,
         Assertion, AssertionBase, AssertionData,
     },
     assertions::{
-        self, c2pa_action,
+        self,
         labels::{
             self, ACTIONS, ASSERTION_METADATA, ASSERTION_STORE, BMFF_HASH, CLAIM_THUMBNAIL,
             DATABOX_STORE, METADATA_LABEL_REGEX,
         },
-        Action, Actions, AssertionMetadata, AssetType, BmffHash, BoxHash, CollectionHash, DataBox,
-        DataHash, DataMap, Ingredient, Metadata, Relationship, V2_DEPRECATED_ACTIONS,
+        Action, Actions, AssertionMetadata, AssetType, BmffHash, DataBox, DataHash, Ingredient,
+        Relationship, V2_DEPRECATED_ACTIONS,
     },
     cbor_types::map_cbor_to_type,
-    context::{Context, ProgressPhase},
-    cose_validator::{
-        get_signing_cert_serial_num, get_signing_info, get_signing_info_async, verify_cose,
-        verify_cose_async,
-    },
+    context::Context,
+    cose_validator::{get_signing_info, get_signing_info_async},
     crypto::{
         asn1::rfc3161::TstInfo,
         base64,
@@ -63,35 +60,30 @@ pub(super) use crate::{
             JUMBFCBORContentBox, JumbfEmbeddedFileBox,
         },
         labels::{
-            assertion_label_from_uri, box_name_from_uri, manifest_label_from_uri,
-            manifest_label_to_parts, to_absolute_uri, to_assertion_uri, to_databox_uri,
-            to_manifest_uri, to_normalized_uri, to_signature_uri, ASSERTIONS, CLAIM, CREDENTIALS,
-            DATABOX, DATABOXES, SIGNATURE,
+            box_name_from_uri, manifest_label_from_uri, manifest_label_to_parts, to_databox_uri,
+            to_normalized_uri, ASSERTIONS, CLAIM, CREDENTIALS, DATABOX, DATABOXES, SIGNATURE,
         },
     },
-    log_item,
     read_seek::ReadSeek,
-    resource_store::UriOrResource,
     salt::{DefaultSalt, SaltGenerator},
     settings::{Settings, MAX_ASSERTIONS},
     status_tracker::{ErrorBehavior, StatusTracker},
-    store::StoreValidationInfo,
-    utils::hash_utils::{hash_by_alg, vec_compare, HashRange},
-    validation_status, ClaimGeneratorInfo,
+    utils::hash_utils::{hash_by_alg, vec_compare},
+    ClaimGeneratorInfo,
 };
 
-pub(super) const BUILD_HASH_ALG: &str = "sha256";
-pub(super) const BUILD_VER_SUPPORT: usize = 2;
+const BUILD_HASH_ALG: &str = "sha256";
+const BUILD_VER_SUPPORT: usize = 2;
 
 /// JSON structure representing an Assertion reference in a Claim's "assertions" list.
-pub(super) use HashedUri as C2PAAssertion;
+use HashedUri as C2PAAssertion;
 
 pub(super) const GH_FULL_VERSION_LIST: &str = "Sec-CH-UA-Full-Version-List";
-pub(super) const GH_UA: &str = "Sec-CH-UA";
-pub(super) const C2PA_NAMESPACE_V2: &str = "urn:c2pa";
-pub(super) const C2PA_NAMESPACE_V1: &str = "urn:uuid";
+const GH_UA: &str = "Sec-CH-UA";
+const C2PA_NAMESPACE_V2: &str = "urn:c2pa";
+const C2PA_NAMESPACE_V1: &str = "urn:uuid";
 
-pub(super) const _V2_SPEC_DEPRECATED_ASSERTIONS: [&str; 4] = [
+const _V2_SPEC_DEPRECATED_ASSERTIONS: [&str; 4] = [
     "stds.iptc",
     "stds.iptc.photo-metadata",
     "stds.exif",
@@ -142,10 +134,10 @@ pub enum ClaimAssertionType {
 pub struct ClaimAssertion {
     pub(super) assertion: Assertion,
     pub(super) instance: usize,
-    pub(super) hash_val: Vec<u8>,
-    pub(super) hash_alg: String,
-    pub(super) salt: Option<Vec<u8>>,
-    pub(super) typ: ClaimAssertionType,
+    hash_val: Vec<u8>,
+    hash_alg: String,
+    salt: Option<Vec<u8>>,
+    typ: ClaimAssertionType,
 }
 
 impl ClaimAssertion {
@@ -244,20 +236,20 @@ impl fmt::Debug for ClaimAssertion {
 }
 
 // Claim field names
-pub(super) const CLAIM_GENERATOR_F: &str = "claim_generator";
-pub(super) const CLAIM_GENERATOR_INFO_F: &str = "claim_generator_info";
-pub(super) const CLAIM_GENERATOR_HINTS_F: &str = "claim_generator_hints";
-pub(super) const SIGNATURE_F: &str = "signature";
-pub(super) const ASSERTIONS_F: &str = "assertions";
-pub(super) const DC_FORMAT_F: &str = "dc:format";
-pub(super) const INSTANCE_ID_F: &str = "instanceID";
-pub(super) const DC_TITLE_F: &str = "dc:title";
-pub(super) const REDACTED_ASSERTIONS_F: &str = "redacted_assertions";
-pub(super) const ALG_F: &str = "alg";
-pub(super) const ALG_SOFT_F: &str = "alg_soft";
-pub(super) const METADATA_F: &str = "metadata";
-pub(super) const CREATED_ASSERTIONS_F: &str = "created_assertions";
-pub(super) const GATHERED_ASSERTIONS_F: &str = "gathered_assertions";
+const CLAIM_GENERATOR_F: &str = "claim_generator";
+const CLAIM_GENERATOR_INFO_F: &str = "claim_generator_info";
+const CLAIM_GENERATOR_HINTS_F: &str = "claim_generator_hints";
+const SIGNATURE_F: &str = "signature";
+const ASSERTIONS_F: &str = "assertions";
+const DC_FORMAT_F: &str = "dc:format";
+const INSTANCE_ID_F: &str = "instanceID";
+const DC_TITLE_F: &str = "dc:title";
+const REDACTED_ASSERTIONS_F: &str = "redacted_assertions";
+const ALG_F: &str = "alg";
+const ALG_SOFT_F: &str = "alg_soft";
+const METADATA_F: &str = "metadata";
+const CREATED_ASSERTIONS_F: &str = "created_assertions";
+const GATHERED_ASSERTIONS_F: &str = "gathered_assertions";
 pub(super) const SPEC_VERSION_F: &str = "specVersion";
 
 /// A `Claim` gathers together all the `Assertion`s about an asset
@@ -271,7 +263,7 @@ pub(super) const SPEC_VERSION_F: &str = "specVersion";
 #[derive(Debug, Default, Clone)]
 pub struct Claim {
     // external manifest
-    pub(super) remote_manifest: RemoteManifest,
+    remote_manifest: RemoteManifest,
 
     // root of CAI store
     pub(super) update_manifest: bool,
@@ -279,10 +271,10 @@ pub struct Claim {
     // true if this claim was read from a `c2md`-tagged superbox (C2PA spec
     // 11.2.2) rather than an ordinary `c2ma` standard manifest. Preserved so
     // the original tag survives round-trips (e.g. ingredient copies).
-    pub(super) is_c2md: bool,
+    is_c2md: bool,
 
     // true if manifest is or will be stored compressed
-    pub(super) compressed: bool,
+    compressed: bool,
 
     pub title: Option<String>, // title for this claim, generally the name of the containing asset
 
@@ -291,30 +283,30 @@ pub struct Claim {
     pub instance_id: String, // instance Id of document containing this claim
 
     // Internal list of ingredients
-    pub(super) ingredients_store: HashMap<String, Claim>,
+    ingredients_store: HashMap<String, Claim>,
 
     // Internal ingredients order
-    pub(super) ingredients_list: Vec<String>,
+    ingredients_list: Vec<String>,
 
     pub(super) signature_val: Vec<u8>, // the signature of the loaded/saved claim
 
     // root of CAI store
     #[allow(dead_code)]
-    pub(super) root: String,
+    root: String,
 
     // internal scratch objects
     pub(super) label: String, // label of claim
 
     // relabel claim when there is an ingredient conflict
-    pub(super) conflict_label: Option<String>,
+    conflict_label: Option<String>,
 
     // Internal list of assertions for claim.
     // These are serialized manually based on need.
-    pub(super) assertion_store: Vec<ClaimAssertion>,
+    assertion_store: Vec<ClaimAssertion>,
 
     // Internal list of verifiable credentials for claim.
     // These are serialized manually based on need.
-    pub(super) vc_store: Vec<(HashedUri, AssertionData)>, //  V1 feature
+    vc_store: Vec<(HashedUri, AssertionData)>, //  V1 feature
 
     pub(super) claim_generator: Option<String>, // generator of this claim
 
@@ -322,14 +314,14 @@ pub struct Claim {
 
     pub(super) signature: String,              // link to signature box
     pub(super) assertions: Vec<C2PAAssertion>, // list of assertion or created_assertions (V1 assertions or V2 created and gathered combined) hashed URIs.
-    pub(super) created_assertions: Vec<C2PAAssertion>, // list of assertion or created_assertions (V1) hashed URIs.
-    pub(super) gathered_assertions: Option<Vec<C2PAAssertion>>, // list of gather_assertions (>= V2)
+    created_assertions: Vec<C2PAAssertion>, // list of assertion or created_assertions (V1) hashed URIs.
+    gathered_assertions: Option<Vec<C2PAAssertion>>, // list of gather_assertions (>= V2)
 
     // original JSON bytes of claim; only present when reading from asset
     pub(super) original_bytes: Option<Vec<u8>>,
 
     // original JUMBF box order need to recalculate JUMBF box hash
-    pub(super) original_box_order: Option<Vec<&'static str>>,
+    original_box_order: Option<Vec<&'static str>>,
 
     pub(super) redacted_assertions: Option<Vec<String>>, // list of redacted assertions
 
@@ -337,13 +329,13 @@ pub struct Claim {
 
     pub(super) alg_soft: Option<String>, // hashing algorithm for soft bindings
 
-    pub(super) claim_generator_hints: Option<HashMap<String, Value>>,
+    claim_generator_hints: Option<HashMap<String, Value>>,
 
     pub(super) metadata: Option<Vec<AssertionMetadata>>,
 
-    pub(super) data_boxes: Vec<(HashedUri, DataBox)>, /* list of the data boxes and their hashed URIs found for this manifest */
+    data_boxes: Vec<(HashedUri, DataBox)>, /* list of the data boxes and their hashed URIs found for this manifest */
 
-    pub(super) claim_version: usize,
+    claim_version: usize,
 
     // deprecated in C2PA 2.4
     pub(super) spec_version: Option<String>, // The version of the specification against which the validation was performed (SemVer formatted string)
@@ -804,7 +796,7 @@ impl Claim {
         }
     }
 
-    pub(super) fn serialize_v1<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    fn serialize_v1<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
@@ -877,7 +869,7 @@ impl Claim {
         claim_map.end()
     }
 
-    pub(super) fn serialize_v2<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    fn serialize_v2<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
@@ -1064,7 +1056,7 @@ impl Claim {
     }
 
     // Add link to the signature box for this claim.
-    pub(super) fn add_signature_box_link(&mut self) {
+    fn add_signature_box_link(&mut self) {
         // full path to signature box
         self.signature = self.signature_uri();
     }
@@ -1434,7 +1426,7 @@ impl Claim {
         )
     }
 
-    pub(super) fn compatibility_checks(&self, assertion: &Assertion) -> Result<()> {
+    fn compatibility_checks(&self, assertion: &Assertion) -> Result<()> {
         let assertion_version = assertion.get_ver();
         let assertion_label = assertion.label();
 
@@ -1478,7 +1470,7 @@ impl Claim {
 
     /// Determine if an assertion should be added as a created or gathered assertion
     /// for Claims V2 and later
-    pub(super) fn claim_assertion_type(
+    fn claim_assertion_type(
         &self,
         base_label: &str,
         add_as_created_assertion: bool,
@@ -1506,7 +1498,7 @@ impl Claim {
 
     /// Add an assertion to this claim
     /// Allows setting the salt generator and whether to add as created assertion for Claims V2
-    pub(super) fn add_assertion_impl(
+    fn add_assertion_impl(
         &mut self,
         assertion_builder: &impl AssertionBase,
         salt_generator: &impl SaltGenerator,
@@ -2230,7 +2222,7 @@ impl Claim {
     }
 
     // insert new ingredient
-    pub(super) fn insert_ingredient(&mut self, label: String, claim: Claim) {
+    fn insert_ingredient(&mut self, label: String, claim: Claim) {
         self.ingredients_store.insert(label.clone(), claim);
         self.ingredients_list.push(label);
     }
@@ -2607,7 +2599,7 @@ impl Claim {
     // Given a proposed label, make a new label that is unique within this
     // assertion store. Typically this is done by adding `__{n}` where `n` is
     // an integer starting from 1. Ingredient thumbnails have special handling.
-    pub(super) fn make_assertion_instance_label(&self, assertion_label: &str) -> String {
+    fn make_assertion_instance_label(&self, assertion_label: &str) -> String {
         let cnt = self.next_instance(assertion_label);
 
         Claim::label_with_instance(assertion_label, cnt)
@@ -2654,7 +2646,7 @@ impl Claim {
     }
 
     // Get the next highest instance label
-    pub(super) fn next_instance(&self, in_label: &str) -> usize {
+    fn next_instance(&self, in_label: &str) -> usize {
         let (label, _) = Claim::assertion_label_from_link(in_label);
         match self
             .assertion_store
