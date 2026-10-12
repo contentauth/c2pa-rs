@@ -3283,7 +3283,17 @@ impl Store {
 
         // Check to see if manifest compression is requested, BMFF and ZIP are not supported for compression since the manifest
         // needs to be in a specific location and compression would change the size of the manifest which would break the offsets
-        if pc.compressed() {
+        // Some formats (e.g. GLB, Matroska) mandate a `c2pa.hash.boxes` hard binding, so
+        // use the box-hash path for them even when compression is not requested.
+        #[cfg(feature = "unstable_box_hash_hooks")]
+        let format_requires_box_hash = !pc.update_manifest()
+            && io_handler
+                .and_then(|h| h.asset_box_hash_ref())
+                .is_some_and(|bh| bh.requires_box_hash());
+        #[cfg(not(feature = "unstable_box_hash_hooks"))]
+        let format_requires_box_hash = false;
+
+        if pc.compressed() || format_requires_box_hash {
             // If compression is desired use BoxHashing for compatible formats, otherwise fall back to regular hashing.
             match io_handler.and_then(|h| h.asset_box_hash_ref()) {
                 Some(box_hash_handler) if !is_bmff && !is_zip => {
@@ -3291,6 +3301,25 @@ impl Store {
                     if pc.box_hash_assertions().is_empty() {
                         // no user box hash assertion, so use box hashing
                         let mut bh = BoxHash { boxes: Vec::new() };
+
+                        // Formats whose embedding changes hashed bytes (e.g. Matroska)
+                        // are hashed in the layout they will have once embedded.
+                        #[cfg(feature = "unstable_box_hash_hooks")]
+                        if !remove_manifests {
+                            let mut prepared =
+                                io_utils::stream_with_fs_fallback(threshold, input_len)?;
+                            let src: &mut dyn ReadSeek = if source_is_intermediate {
+                                &mut intermediate_stream
+                            } else {
+                                &mut *input_stream
+                            };
+                            src.rewind()?;
+                            if box_hash_handler.prepare_box_hash_stream(src, &mut prepared)? {
+                                prepared.rewind()?;
+                                intermediate_stream = prepared;
+                                source_is_intermediate = true;
+                            }
+                        }
 
                         if !source_is_intermediate {
                             // Box-hash generation requires a seekable intermediate; populate it
@@ -10822,5 +10851,381 @@ pub mod tests {
         let _store = Store::from_stream(format, &mut stream, &mut log, &context).unwrap();
 
         assert!(!log.has_any_error());
+    }
+}
+
+/// Tests for the `unstable_box_hash_hooks` extension points, using a minimal
+/// in-test container format rather than a real one.
+#[cfg(all(test, feature = "unstable_box_hash_hooks"))]
+mod box_hash_hooks_tests {
+    #![allow(clippy::unwrap_used)]
+
+    use std::io::{Cursor, SeekFrom};
+
+    use crate::{
+        asset_io::{
+            AllowedExclusion, AssetBoxHash, AssetIO, BoxMap, C2paReader, C2paWriter, ExclusionKind,
+            ObjectLocations, ObjectType, ReadSeek, ReadWriteSeek, C2PA_BOXHASH,
+        },
+        utils::{test::test_context, test_signer::test_signer},
+        Builder, Context, Error, Reader, Result, SigningAlg,
+    };
+
+    // "TOYF" format: a 12-byte header (magic, u32 LE total length, u32 LE offset
+    // of the C2PA chunk or 0), then chunks of (4-byte tag, u32 LE length, data).
+    // Embedding a manifest changes both header fields, like GLB's length and
+    // Matroska's SeekHead.
+    const MAGIC: &[u8; 4] = b"TOYF";
+    const HEADER_LEN: u64 = 12;
+    const FORMAT: &str = "application/x-toyf";
+
+    #[derive(Clone, Copy)]
+    struct ToyIO {
+        require_box_hash: bool,
+        declare_length: bool,
+        prepare: bool,
+    }
+
+    const ALL_HOOKS: ToyIO = ToyIO {
+        require_box_hash: true,
+        declare_length: true,
+        prepare: true,
+    };
+
+    struct Chunk {
+        tag: [u8; 4],
+        offset: u64,
+        data: Vec<u8>,
+    }
+
+    impl Chunk {
+        fn total_len(&self) -> u64 {
+            8 + self.data.len() as u64
+        }
+    }
+
+    fn parse(stream: &mut dyn ReadSeek) -> Result<Vec<Chunk>> {
+        let mut bytes = Vec::new();
+        stream.rewind()?;
+        stream.read_to_end(&mut bytes)?;
+        if bytes.len() < HEADER_LEN as usize || &bytes[..4] != MAGIC {
+            return Err(Error::InvalidAsset("not a TOYF file".into()));
+        }
+        let mut chunks = Vec::new();
+        let mut pos = HEADER_LEN as usize;
+        while pos < bytes.len() {
+            let tag: [u8; 4] = bytes[pos..pos + 4].try_into().unwrap();
+            let len = u32::from_le_bytes(bytes[pos + 4..pos + 8].try_into().unwrap()) as usize;
+            chunks.push(Chunk {
+                tag,
+                offset: pos as u64,
+                data: bytes[pos + 8..pos + 8 + len].to_vec(),
+            });
+            pos += 8 + len;
+        }
+        Ok(chunks)
+    }
+
+    fn build(chunks: &[Chunk], store: Option<&[u8]>) -> Vec<u8> {
+        let mut body = Vec::new();
+        for c in chunks.iter().filter(|c| &c.tag != b"C2PA") {
+            body.extend_from_slice(&c.tag);
+            body.extend_from_slice(&(c.data.len() as u32).to_le_bytes());
+            body.extend_from_slice(&c.data);
+        }
+        let c2pa_offset = match store {
+            Some(store) => {
+                let offset = HEADER_LEN as u32 + body.len() as u32;
+                body.extend_from_slice(b"C2PA");
+                body.extend_from_slice(&(store.len() as u32).to_le_bytes());
+                body.extend_from_slice(store);
+                offset
+            }
+            None => 0,
+        };
+        let mut out = MAGIC.to_vec();
+        out.extend_from_slice(&(HEADER_LEN as u32 + body.len() as u32).to_le_bytes());
+        out.extend_from_slice(&c2pa_offset.to_le_bytes());
+        out.extend_from_slice(&body);
+        out
+    }
+
+    fn sample() -> Vec<u8> {
+        let data = Chunk {
+            tag: *b"DATA",
+            offset: 0,
+            data: b"payload bytes of the toy asset".to_vec(),
+        };
+        build(&[data], None)
+    }
+
+    impl C2paReader for ToyIO {
+        fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>> {
+            parse(input_stream)?
+                .into_iter()
+                .find(|c| &c.tag == b"C2PA")
+                .map(|c| c.data)
+                .ok_or(Error::JumbfNotFound)
+        }
+
+        fn read_xmp(&self, _input_stream: &mut dyn ReadSeek) -> Option<String> {
+            None
+        }
+    }
+
+    impl C2paWriter for ToyIO {
+        fn write_c2pa(
+            &self,
+            input_stream: &mut dyn ReadSeek,
+            output_stream: &mut dyn ReadWriteSeek,
+            store_bytes: &[u8],
+        ) -> Result<()> {
+            let chunks = parse(input_stream)?;
+            let store = (!store_bytes.is_empty()).then_some(store_bytes);
+            output_stream.rewind()?;
+            output_stream.write_all(&build(&chunks, store))?;
+            Ok(())
+        }
+
+        fn get_object_locations(
+            &self,
+            input_stream: &mut dyn ReadSeek,
+        ) -> Result<Vec<ObjectLocations>> {
+            // Locate the C2PA chunk where it will be once embedded, so the
+            // data hash exclusion doesn't change size between passes.
+            let mut with_c2pa = Cursor::new(Vec::new());
+            let mut chunks = parse(input_stream)?;
+            if !chunks.iter().any(|c| &c.tag == b"C2PA") {
+                self.write_c2pa(input_stream, &mut with_c2pa, &[0; 4])?;
+                chunks = parse(&mut with_c2pa)?;
+            }
+            let c = chunks.iter().find(|c| &c.tag == b"C2PA").unwrap();
+            Ok(vec![
+                ObjectLocations {
+                    offset: 0,
+                    length: c.offset,
+                    htype: ObjectType::Other,
+                },
+                ObjectLocations {
+                    offset: c.offset,
+                    length: c.total_len(),
+                    htype: ObjectType::C2pa,
+                },
+            ])
+        }
+
+        fn remove_c2pa(
+            &self,
+            input_stream: &mut dyn ReadSeek,
+            output_stream: &mut dyn ReadWriteSeek,
+        ) -> Result<()> {
+            self.write_c2pa(input_stream, output_stream, &[])
+        }
+    }
+
+    impl AssetBoxHash for ToyIO {
+        fn get_box_map(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<BoxMap>> {
+            let len = input_stream.seek(SeekFrom::End(0))?;
+            let chunks = parse(input_stream)?;
+            let header_exclusions = if self.declare_length {
+                vec![AllowedExclusion {
+                    start: 4,
+                    length: 4,
+                    kind: ExclusionKind::ContainerLength,
+                }]
+            } else {
+                vec![]
+            };
+            let mut maps = vec![BoxMap::new(vec!["TOYh".into()], 0, HEADER_LEN)
+                .with_allowed_exclusions(header_exclusions)];
+            for c in &chunks {
+                let name = String::from_utf8_lossy(&c.tag).into_owned();
+                let bm = BoxMap::new(vec![name], c.offset, c.total_len());
+                maps.push(if &c.tag == b"C2PA" {
+                    bm.with_allowed_exclusions(vec![AllowedExclusion::whole_box(c.total_len())])
+                } else {
+                    bm
+                });
+            }
+            if !chunks.iter().any(|c| &c.tag == b"C2PA") {
+                maps.push(
+                    BoxMap::new(vec![C2PA_BOXHASH.into()], len, 0)
+                        .with_allowed_exclusions(vec![AllowedExclusion::whole_box(0)]),
+                );
+            }
+            Ok(maps)
+        }
+
+        fn requires_box_hash(&self) -> bool {
+            self.require_box_hash
+        }
+
+        fn prepare_box_hash_stream(
+            &self,
+            input: &mut dyn ReadSeek,
+            output: &mut dyn ReadWriteSeek,
+        ) -> Result<bool> {
+            if !self.prepare {
+                return Ok(false);
+            }
+            // Same layout as after embedding: the C2PA chunk exists and the
+            // header points at it. Its content is a placeholder.
+            self.write_c2pa(input, output, &[0])?;
+            Ok(true)
+        }
+    }
+
+    impl AssetIO for ToyIO {
+        fn new(_asset_type: &str) -> Self {
+            ALL_HOOKS
+        }
+
+        fn get_handler(&self, _asset_type: &str) -> Box<dyn AssetIO> {
+            Box::new(*self)
+        }
+
+        fn get_reader(&self) -> &dyn C2paReader {
+            self
+        }
+
+        fn get_writer(&self, _asset_type: &str) -> Option<Box<dyn C2paWriter>> {
+            Some(Box::new(*self))
+        }
+
+        fn asset_box_hash_ref(&self) -> Option<&dyn AssetBoxHash> {
+            Some(self)
+        }
+
+        fn supported_types(&self) -> &[&str] {
+            &["toyf", FORMAT]
+        }
+    }
+
+    fn context(handler: ToyIO) -> Context {
+        let mut context = test_context().with_io_handler(handler);
+        // Validation is checked explicitly below, so a mismatch is reported
+        // rather than failing the sign call.
+        context.settings_mut().verify.verify_after_sign = false;
+        context
+    }
+
+    fn sign(handler: ToyIO) -> Vec<u8> {
+        let context = context(handler).into_shared();
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut builder = Builder::from_shared_context(&context)
+            .with_definition(
+                serde_json::json!({
+                    "title": "toy",
+                    "format": FORMAT,
+                    "assertions": [{
+                        "label": "c2pa.actions",
+                        "data": {"actions": [{
+                            "action": "c2pa.created",
+                            "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia"
+                        }]}
+                    }]
+                })
+                .to_string(),
+            )
+            .unwrap();
+        let mut out = Cursor::new(Vec::new());
+        builder
+            .sign(
+                signer.as_ref(),
+                FORMAT,
+                &mut Cursor::new(sample()),
+                &mut out,
+            )
+            .unwrap();
+        out.into_inner()
+    }
+
+    fn read(handler: ToyIO, bytes: &[u8]) -> serde_json::Value {
+        let context = context(handler).into_shared();
+        let reader = Reader::from_shared_context(&context)
+            .with_stream(FORMAT, Cursor::new(bytes))
+            .unwrap();
+        serde_json::from_str(&reader.json()).unwrap()
+    }
+
+    fn results(v: &serde_json::Value) -> String {
+        v["validation_results"]["activeManifest"].to_string()
+    }
+
+    fn failures(v: &serde_json::Value) -> Vec<String> {
+        v["validation_results"]["activeManifest"]["failure"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .map(|f| f["code"].as_str().unwrap().to_owned())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn test_all_hooks_sign_and_verify() {
+        let signed = sign(ALL_HOOKS);
+        let v = read(ALL_HOOKS, &signed);
+        assert!(failures(&v).is_empty(), "{}", results(&v));
+        assert!(results(&v).contains("assertion.boxesHash.match"), "{v}");
+        assert!(!results(&v).contains("assertion.dataHash"), "{v}");
+    }
+
+    #[test]
+    fn test_all_hooks_tampered_payload_fails() {
+        let mut signed = sign(ALL_HOOKS);
+        let data_start = HEADER_LEN as usize + 8;
+        signed[data_start] ^= 0x01;
+        let v = read(ALL_HOOKS, &signed);
+        assert!(
+            failures(&v).contains(&"assertion.boxesHash.mismatch".to_owned()),
+            "{}",
+            results(&v)
+        );
+    }
+
+    #[test]
+    fn test_without_requires_box_hash_uses_data_hash() {
+        let handler = ToyIO {
+            require_box_hash: false,
+            ..ALL_HOOKS
+        };
+        let v = read(handler, &sign(handler));
+        assert!(failures(&v).is_empty(), "{}", results(&v));
+        assert!(results(&v).contains("assertion.dataHash.match"), "{v}");
+        assert!(!results(&v).contains("assertion.boxesHash"), "{v}");
+    }
+
+    #[test]
+    fn test_without_container_length_exclusion_fails() {
+        // The header's total length changes between the hashed layout (with a
+        // placeholder store) and the final file.
+        let handler = ToyIO {
+            declare_length: false,
+            ..ALL_HOOKS
+        };
+        let v = read(handler, &sign(handler));
+        assert!(
+            failures(&v).contains(&"assertion.boxesHash.mismatch".to_owned()),
+            "{}",
+            results(&v)
+        );
+    }
+
+    #[test]
+    fn test_without_prepared_layout_fails() {
+        // The header's C2PA offset changes from 0 to the chunk position when
+        // the manifest is embedded, and that field is hashed.
+        let handler = ToyIO {
+            prepare: false,
+            ..ALL_HOOKS
+        };
+        let v = read(handler, &sign(handler));
+        assert!(
+            failures(&v).contains(&"assertion.boxesHash.mismatch".to_owned()),
+            "{}",
+            results(&v)
+        );
     }
 }
