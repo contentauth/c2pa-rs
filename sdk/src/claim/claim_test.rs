@@ -1441,3 +1441,41 @@ fn test_verify_cloud_data_actions_in_non_update_manifest_not_allowed() {
         "actions in cloud-data of a non-update manifest should fail"
     );
 }
+
+#[test]
+fn test_inside_validity_not_reported_with_outside_validity() {
+    use crate::{crypto::cose::CertificateInfo, jumbf::labels::to_signature_uri, log_item};
+
+    let claim = create_test_claim().expect("create test claim");
+    let verify = |validation_log: &mut StatusTracker| {
+        let _ = Claim::verify_internal(
+            &claim,
+            &StoreValidationInfo::default(),
+            Ok(CertificateInfo {
+                validated: true,
+                ..Default::default()
+            }),
+            validation_log,
+            &Context::new(),
+        );
+    };
+
+    // A CA certificate in the claim's chain was outside its validity period.
+    let mut validation_log =
+        StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+    log_item!(
+        to_signature_uri(claim.label()),
+        "certificate chain outside validity period",
+        "test"
+    )
+    .validation_status(validation_status::CLAIM_SIGNATURE_OUTSIDE_VALIDITY)
+    .failure_no_throw(&mut validation_log, Error::CoseSignature);
+    verify(&mut validation_log);
+    assert!(!validation_log.has_status(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY));
+
+    // Without it, insideValidity is reported as before.
+    let mut validation_log =
+        StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+    verify(&mut validation_log);
+    assert!(validation_log.has_status(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY));
+}
