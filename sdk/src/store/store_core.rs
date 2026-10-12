@@ -47,6 +47,7 @@ use crate::{
     jumbf::{
         self,
         boxes::*,
+        c2pa_encoding::{build_assertion_box, build_signature_box},
         labels::{
             assertion_label_from_uri, manifest_label_from_uri, manifest_label_to_parts,
             to_assertion_uri, ASSERTIONS, CREDENTIALS, DATABOXES, SIGNATURE,
@@ -797,48 +798,12 @@ impl Store {
         store: &mut CAIAssertionStore,
         claim_assertion: &ClaimAssertion,
     ) -> Result<()> {
-        // Grab assertion data object.
-        let d = claim_assertion.assertion().decode_data();
-
-        match d {
-            AssertionData::Json(_) => {
-                let mut json_data = CAIJSONAssertionBox::new(&claim_assertion.label());
-                json_data.add_json(claim_assertion.assertion().data().to_vec());
-                if let Some(salt) = claim_assertion.salt() {
-                    json_data.set_salt(salt.clone())?;
-                }
-                store.add_assertion(Box::new(json_data));
-            }
-            AssertionData::Binary(_) => {
-                // TODO: Handle other binary box types if needed.
-                let mut data = JumbfEmbeddedFileBox::new(&claim_assertion.label());
-                data.add_data(
-                    claim_assertion.assertion().data().to_vec(),
-                    claim_assertion.assertion().mime_type(),
-                    None,
-                );
-                if let Some(salt) = claim_assertion.salt() {
-                    data.set_salt(salt.clone())?;
-                }
-                store.add_assertion(Box::new(data));
-            }
-            AssertionData::Cbor(_) => {
-                let mut cbor_data = CAICBORAssertionBox::new(&claim_assertion.label());
-                cbor_data.add_cbor(claim_assertion.assertion().data().to_vec());
-                if let Some(salt) = claim_assertion.salt() {
-                    cbor_data.set_salt(salt.clone())?;
-                }
-                store.add_assertion(Box::new(cbor_data));
-            }
-            AssertionData::Uuid(s, _) => {
-                let mut uuid_data = CAIUUIDAssertionBox::new(&claim_assertion.label());
-                uuid_data.add_uuid(s, claim_assertion.assertion().data().to_vec())?;
-                if let Some(salt) = claim_assertion.salt() {
-                    uuid_data.set_salt(salt.clone())?;
-                }
-                store.add_assertion(Box::new(uuid_data));
-            }
-        }
+        let assertion_box = build_assertion_box(
+            &claim_assertion.label(),
+            claim_assertion.assertion(),
+            claim_assertion.salt().clone(),
+        )?;
+        store.add_assertion(assertion_box.into_box());
         Ok(())
     }
 
@@ -1093,16 +1058,12 @@ impl Store {
                 }
                 SIGNATURE => {
                     // create a signature and add placeholder data to the CAI store.
-                    let mut sigb = CAISignatureBox::new();
                     let signed_data = match claim.signature_val().is_empty() {
                         false => claim.signature_val().clone(), // existing claims have sig values
                         true => Store::sign_claim_placeholder(claim, min_reserve_size), /* empty is the new sig to be replaced */
                     };
 
-                    let sigc = JUMBFCBORContentBox::new(signed_data);
-                    sigb.add_signature(Box::new(sigc));
-
-                    cai_store.add_box(Box::new(sigb)); // add signature to manifest
+                    cai_store.add_box(Box::new(build_signature_box(signed_data)));
                 }
                 CREDENTIALS => {
                     // add vc_store if needed

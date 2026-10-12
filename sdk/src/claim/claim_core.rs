@@ -11,8 +11,6 @@
 // specific language governing permissions and limitations under
 // each license.
 
-#[cfg(feature = "file_io")]
-use std::path::Path;
 use std::{
     collections::{HashMap, HashSet},
     fmt,
@@ -54,17 +52,12 @@ use crate::{
     error::{Error, Result},
     hashed_uri::HashedUri,
     jumbf::{
-        self,
-        boxes::{
-            CAICBORAssertionBox, CAIJSONAssertionBox, CAISignatureBox, CAIUUIDAssertionBox,
-            JUMBFCBORContentBox, JumbfEmbeddedFileBox,
-        },
+        self, c2pa_encoding,
         labels::{
             box_name_from_uri, manifest_label_from_uri, manifest_label_to_parts, to_databox_uri,
             to_normalized_uri, ASSERTIONS, CLAIM, CREDENTIALS, DATABOX, DATABOXES, SIGNATURE,
         },
     },
-    read_seek::ReadSeek,
     salt::{DefaultSalt, SaltGenerator},
     settings::{Settings, MAX_ASSERTIONS},
     status_tracker::{ErrorBehavior, StatusTracker},
@@ -89,35 +82,6 @@ const _V2_SPEC_DEPRECATED_ASSERTIONS: [&str; 4] = [
     "stds.exif",
     "c2pa.endorsement",
 ];
-
-// Enum to encapsulate the data type of the source asset.  This simplifies
-// having different implementations for functions as a single entry point can be
-// used to handle different data types.
-#[allow(dead_code)] // Bytes and third param in StreamFragment not used without v1_api feature
-pub enum ClaimAssetData<'a> {
-    #[cfg(feature = "file_io")]
-    Path(&'a Path),
-    Bytes(&'a [u8], &'a str),
-    Stream(&'a mut dyn ReadSeek, &'a str),
-    StreamFragment(&'a mut dyn ReadSeek, &'a mut dyn ReadSeek, &'a str),
-    #[cfg(feature = "file_io")]
-    StreamFragments(&'a mut dyn ReadSeek, &'a Vec<std::path::PathBuf>, &'a str),
-}
-
-impl ClaimAssetData<'_> {
-    /// Returns the asset's format (MIME type or extension), if it can be determined.
-    pub(crate) fn format(&self) -> Option<String> {
-        match self {
-            #[cfg(feature = "file_io")]
-            ClaimAssetData::Path(path) => crate::format_from_path(path),
-            ClaimAssetData::Bytes(_, asset_type)
-            | ClaimAssetData::Stream(_, asset_type)
-            | ClaimAssetData::StreamFragment(_, _, asset_type) => Some((*asset_type).to_owned()),
-            #[cfg(feature = "file_io")]
-            ClaimAssetData::StreamFragments(_, _, asset_type) => Some((*asset_type).to_owned()),
-        }
-    }
-}
 
 #[derive(PartialEq, Debug, Eq, Clone, Hash)]
 pub enum ClaimAssertionType {
@@ -1314,18 +1278,7 @@ impl Claim {
     }
 
     pub fn calc_sig_box_hash(claim: &Claim, alg: &str) -> Result<Vec<u8>> {
-        let mut hash_bytes = Vec::with_capacity(2048);
-
-        // create a signature and add placeholder data to the CAI store.
-        let mut sigb = CAISignatureBox::new();
-        let signed_data = claim.signature_val().clone();
-
-        let sigc = JUMBFCBORContentBox::new(signed_data);
-        sigb.add_signature(Box::new(sigc));
-
-        sigb.super_box().write_box_payload(&mut hash_bytes)?;
-
-        Ok(hash_by_alg(alg, &hash_bytes, None))
+        c2pa_encoding::calc_signature_box_hash(claim.signature_val().clone(), alg)
     }
 
     pub fn calc_assertion_box_hash(
@@ -1334,48 +1287,7 @@ impl Claim {
         salt: Option<Vec<u8>>,
         alg: &str,
     ) -> Result<Vec<u8>> {
-        // Grab assertion data object.
-        let d = assertion.decode_data();
-
-        let mut hash_bytes = Vec::with_capacity(2048);
-
-        match d {
-            AssertionData::Json(_) => {
-                let mut json_data = CAIJSONAssertionBox::new(label);
-                json_data.add_json(assertion.data().to_vec());
-                if let Some(salt) = salt {
-                    json_data.set_salt(salt)?;
-                }
-                json_data.super_box().write_box_payload(&mut hash_bytes)?;
-            }
-            AssertionData::Binary(_) => {
-                // TODO: Handle other binary box types if needed.
-                let mut data = JumbfEmbeddedFileBox::new(label);
-                data.add_data(assertion.data().to_vec(), assertion.mime_type(), None);
-                if let Some(salt) = salt {
-                    data.set_salt(salt)?;
-                }
-                data.super_box().write_box_payload(&mut hash_bytes)?;
-            }
-            AssertionData::Cbor(_) => {
-                let mut cbor_data = CAICBORAssertionBox::new(label);
-                cbor_data.add_cbor(assertion.data().to_vec());
-                if let Some(salt) = salt {
-                    cbor_data.set_salt(salt)?;
-                }
-                cbor_data.super_box().write_box_payload(&mut hash_bytes)?;
-            }
-            AssertionData::Uuid(uuid_str, _) => {
-                let mut data = CAIUUIDAssertionBox::new(label);
-                data.add_uuid(uuid_str, assertion.data().to_vec())?;
-                if let Some(salt) = salt {
-                    data.set_salt(salt)?;
-                }
-                data.super_box().write_box_payload(&mut hash_bytes)?;
-            }
-        }
-
-        Ok(hash_by_alg(alg, &hash_bytes, None))
+        c2pa_encoding::calc_assertion_box_hash(label, assertion, salt, alg)
     }
 
     /// Add an assertion to this claim and verify

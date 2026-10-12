@@ -11,6 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#[cfg(feature = "file_io")]
+use std::path::Path;
+
 use async_generic::async_generic;
 
 use crate::{
@@ -21,7 +24,7 @@ use crate::{
         Actions, BmffHash, BoxHash, CollectionHash, DataHash, DataMap, Ingredient, Metadata,
         Relationship,
     },
-    claim::{check_ocsp_status, check_ocsp_status_async, Claim, ClaimAssetData},
+    claim::{check_ocsp_status, check_ocsp_status_async, Claim},
     context::{Context, ProgressPhase},
     cose_validator::{get_signing_cert_serial_num, verify_cose, verify_cose_async},
     crypto::cose::{parse_cose_sign1, CertificateInfo, CertificateTrustPolicy},
@@ -33,6 +36,7 @@ use crate::{
         to_absolute_uri, to_assertion_uri, to_manifest_uri, to_signature_uri,
     },
     log_item,
+    read_seek::ReadSeek,
     resource_store::UriOrResource,
     settings::Settings,
     status_tracker::StatusTracker,
@@ -40,6 +44,35 @@ use crate::{
     utils::hash_utils::{vec_compare, HashRange},
     validation_status,
 };
+
+// Enum to encapsulate the data type of the source asset.  This simplifies
+// having different implementations for functions as a single entry point can be
+// used to handle different data types.
+#[allow(dead_code)] // Bytes and third param in StreamFragment not used without v1_api feature
+pub enum ClaimAssetData<'a> {
+    #[cfg(feature = "file_io")]
+    Path(&'a Path),
+    Bytes(&'a [u8], &'a str),
+    Stream(&'a mut dyn ReadSeek, &'a str),
+    StreamFragment(&'a mut dyn ReadSeek, &'a mut dyn ReadSeek, &'a str),
+    #[cfg(feature = "file_io")]
+    StreamFragments(&'a mut dyn ReadSeek, &'a Vec<std::path::PathBuf>, &'a str),
+}
+
+impl ClaimAssetData<'_> {
+    /// Returns the asset's format (MIME type or extension), if it can be determined.
+    pub(crate) fn format(&self) -> Option<String> {
+        match self {
+            #[cfg(feature = "file_io")]
+            ClaimAssetData::Path(path) => crate::format_from_path(path),
+            ClaimAssetData::Bytes(_, asset_type)
+            | ClaimAssetData::Stream(_, asset_type)
+            | ClaimAssetData::StreamFragment(_, _, asset_type) => Some((*asset_type).to_owned()),
+            #[cfg(feature = "file_io")]
+            ClaimAssetData::StreamFragments(_, _, asset_type) => Some((*asset_type).to_owned()),
+        }
+    }
+}
 
 pub(crate) const ALLOWED_UPDATE_MANIFEST_ACTIONS: [&str; 4] = [
     "c2pa.edited.metadata",
