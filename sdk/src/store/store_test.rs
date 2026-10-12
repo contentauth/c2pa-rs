@@ -41,11 +41,12 @@ use super::store_core::MAX_INGREDIENT_DEPTH;
 #[cfg(feature = "file_io")]
 use crate::{
     assertion::AssertionJson,
-    assertions::{labels::BOX_HASH, BoxHash},
+    assertions::{labels::BOX_HASH, BoxHash, DataHash},
+    asset_io::ObjectType,
     hashed_uri::HashedUri,
     jumbf_io::get_assetio_handler_from_path,
     utils::{
-        hash_utils::Hasher,
+        hash_utils::{HashRange, Hasher},
         io_utils::tempdirectory,
         test::{temp_dir_path, write_jpeg_placeholder_file, TEST_USER_ASSERTION},
         test_signer::test_cawg_signer,
@@ -53,10 +54,8 @@ use crate::{
 };
 use crate::{
     assertion::{Assertion, AssertionData},
-    assertions::{
-        labels, Action, Actions, CollectionHash, DataHash, Ingredient, Relationship, Uuid,
-    },
-    asset_io::{ObjectType, ReadWriteSeek},
+    assertions::{labels, Action, Actions, CollectionHash, Ingredient, Relationship, Uuid},
+    asset_io::ReadWriteSeek,
     claim::{AssertionStoreJsonFormat, Claim, ClaimAssertion, ClaimAssetData},
     context::Context,
     dynamic_assertion::{
@@ -69,7 +68,6 @@ use crate::{
     status_tracker::{ErrorBehavior, LogItem, StatusTracker},
     store::{InvalidClaimError, Store, StoreValidationInfo},
     utils::{
-        hash_utils::HashRange,
         patch::patch_bytes,
         test::{create_test_claim, create_test_streams, fixture_path},
         test_signer::{async_test_signer, test_signer},
