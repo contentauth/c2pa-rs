@@ -11,13 +11,14 @@
 // specific language governing permissions and limitations under
 // each license.
 
+mod invalid_claim;
 mod store_core;
 mod store_io;
 mod store_signature;
 mod store_verify;
 
-pub use self::store_core::{InvalidClaimError, Store};
 pub(crate) use self::store_verify::StoreValidationInfo;
+pub use self::{invalid_claim::InvalidClaimError, store_core::Store};
 
 #[cfg(test)]
 pub mod store_test;

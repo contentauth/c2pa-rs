@@ -50,7 +50,7 @@ use crate::{
     manifest_store_report::ManifestStoreReport,
     settings::{get_thread_local_settings, TrustListKind, MAX_ASSERTIONS},
     status_tracker::{ErrorBehavior, StatusTracker},
-    store::StoreValidationInfo,
+    store::{InvalidClaimError, StoreValidationInfo},
     utils::is_zero,
     validation_results::validation_codes::{
         ASSERTION_CBOR_INVALID, ASSERTION_JSON_INVALID, ASSERTION_MISSING, CLAIM_MALFORMED,
@@ -2162,77 +2162,4 @@ impl std::fmt::Display for Store {
         let report = &ManifestStoreReport::from_store(self).unwrap_or_default();
         f.write_str(&format!("{}", report))
     }
-}
-
-/// `InvalidClaimError` provides additional detail on error cases for [`Store::from_jumbf`].
-#[derive(Debug, thiserror::Error)]
-pub enum InvalidClaimError {
-    /// The "c2pa" block was not found in the asset.
-    #[error("\"c2pa\" block not found")]
-    C2paBlockNotFound,
-
-    #[error("\"c2pa\" multiple claim boxes found in manifest")]
-    C2paMultipleClaimBoxes,
-
-    /// More than one core manifest box of the same type was found.
-    #[error("\"c2pa\" multiple manifest boxes of the same type found in manifest")]
-    C2paMultipleManifestBoxes,
-
-    /// The claim superbox was not found.
-    #[error("claim superbox not found")]
-    ClaimSuperboxNotFound,
-
-    /// The claim description box was not found.
-    #[error("claim description box not found")]
-    ClaimDescriptionBoxNotFound,
-
-    /// More than one claim description box was found.
-    #[error("more than one claim description box was found for {label}")]
-    DuplicateClaimBox { label: String },
-
-    /// The expected data not found in claim box.
-    #[error("claim cbor box not valid")]
-    ClaimBoxData,
-
-    /// The claim has a version that is newer than supported by this crate.
-    #[error("claim version is too new, not supported")]
-    ClaimVersionTooNew,
-
-    /// The claim has a version does not match JUMBF box label.
-    #[error("claim version does not match JUMBF box label")]
-    ClaimBoxVersion,
-
-    /// The claim description box could not be parsed.
-    #[error("claim description box was invalid")]
-    ClaimDescriptionBoxInvalid,
-
-    /// The claim signature box was not found.
-    #[error("claim signature box was not found")]
-    ClaimSignatureBoxNotFound,
-
-    /// The claim signature description box was not found.
-    #[error("claim signature description box was not found")]
-    ClaimSignatureDescriptionBoxNotFound,
-
-    /// The claim signature description box was invalid.
-    #[error("claim signature description box was invalid")]
-    ClaimSignatureDescriptionBoxInvalid,
-
-    /// The assertion store superbox was not found.
-    #[error("assertion store superbox not found")]
-    AssertionStoreSuperboxNotFound,
-
-    /// The verifiable credentials store could not be read.
-    #[error("the verifiable credentials store could not be read")]
-    VerifiableCredentialStoreInvalid,
-
-    /// The feature is not supported by version
-    #[error("the manifest contained a feature not support by version")]
-    UnsupportedFeature(String),
-
-    /// The assertion store does not contain the expected number of assertions.
-    #[error(
-        "unexpected number of assertions in assertion store (expected {expected}, found {found})"
-    )]
-    AssertionCountMismatch { expected: usize, found: usize },
 }
