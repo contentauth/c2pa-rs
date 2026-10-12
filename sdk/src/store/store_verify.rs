@@ -12,7 +12,7 @@
 // each license.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     io::{Cursor, Seek},
 };
 
@@ -25,17 +25,34 @@ use crate::{
     asset_io::ObjectType,
     claim::{Claim, ClaimAssetData},
     context::{Context, ProgressPhase},
-    crypto::{cose::cert_chain_from_sign1, ocsp::OcspResponse, time_stamp::verify_time_stamp},
+    crypto::{
+        asn1::rfc3161::TstInfo, cose::cert_chain_from_sign1, ocsp::OcspResponse,
+        time_stamp::verify_time_stamp,
+    },
     error::{Error, Result},
     hash_utils::{vec_compare, verify_by_alg},
     jumbf,
     jumbf::labels::to_manifest_uri,
     log_item,
     status_tracker::StatusTracker,
-    store::{Store, StoreValidationInfo},
+    store::Store,
     utils::{hash_utils::HashRange, is_zero},
     validation_status, ValidationResults, ValidationState,
 };
+
+// internal struct to pass around info needed to optimally complete validation
+#[derive(Default)]
+pub(crate) struct StoreValidationInfo<'a> {
+    pub redactions: Vec<String>, // list of redactions found in claim hierarchy
+    pub ingredient_references: HashMap<String, HashSet<String>>, // mapping in ingredients to list of claims that reference it
+    pub manifest_map: HashMap<String, &'a Claim>, // list of the addressable items in ingredient, saves re-parsing the items during validation
+    pub binding_claim: String,                    // name of the claim that has the hash binding
+    pub timestamps: HashMap<String, TstInfo>,     // list of timestamp assertions for each claim
+    pub update_manifest_label: Option<String>,    // label of the update manifest if it exists
+    pub manifest_store_range: Option<HashRange>, // range of the manifest store in the asset for data hash exclusions
+    pub certificate_statuses: HashMap<String, Vec<Vec<u8>>>, // list of certificate status assertions for each serial
+    pub is_embedded: bool, // whether the manifest was read out of the asset being validated, vs. supplied separately (sidecar/remote)
+}
 
 impl Store {
     // recursively walk the ingredients and validate

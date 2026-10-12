@@ -13,10 +13,11 @@
 
 mod store_core;
 mod store_io;
+mod store_signature;
 mod store_verify;
 
-pub(crate) use self::store_core::StoreValidationInfo;
 pub use self::store_core::{InvalidClaimError, Store};
+pub(crate) use self::store_verify::StoreValidationInfo;
 
 #[cfg(test)]
 pub mod store_test;

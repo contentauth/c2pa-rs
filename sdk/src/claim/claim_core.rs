@@ -17,8 +17,6 @@ use std::{
     sync::Arc,
 };
 
-use async_generic::async_generic;
-use coset::CoseSign1;
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
@@ -39,16 +37,7 @@ use crate::{
     },
     cbor_types::map_cbor_to_type,
     context::Context,
-    cose_validator::{get_signing_info, get_signing_info_async},
-    crypto::{
-        asn1::rfc3161::TstInfo,
-        base64,
-        cose::{
-            get_ocsp_der, parse_cose_sign1, CertificateInfo, CertificateTrustPolicy,
-            OcspFetchPolicy,
-        },
-        ocsp::OcspResponse,
-    },
+    crypto::base64,
     error::{Error, Result},
     hashed_uri::HashedUri,
     jumbf::{
@@ -59,8 +48,7 @@ use crate::{
         },
     },
     salt::{DefaultSalt, SaltGenerator},
-    settings::{Settings, MAX_ASSERTIONS},
-    status_tracker::{ErrorBehavior, StatusTracker},
+    settings::MAX_ASSERTIONS,
     utils::hash_utils::{hash_by_alg, vec_compare},
     ClaimGeneratorInfo,
 };
@@ -1035,17 +1023,6 @@ impl Claim {
         &self.signature_val
     }
 
-    /// Returns the `COSE_Sign1_Tagged` structure found in the claim signature box.
-    pub fn cose_sign1(&self) -> Result<CoseSign1> {
-        let sig = self.signature_val();
-        let data = self.data()?;
-        let mut validation_log =
-            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-
-        let sign1 = parse_cose_sign1(sig, &data, &mut validation_log)?;
-        Ok(sign1)
-    }
-
     /// get claim generator
     pub fn claim_generator(&self) -> Option<&str> {
         self.claim_generator.as_deref()
@@ -1865,38 +1842,6 @@ impl Claim {
         }
     }
 
-    /// Return information about the signature
-    #[async_generic]
-    pub fn signature_info(&self) -> Option<CertificateInfo> {
-        let sig = self.signature_val();
-        let data = self.data().ok()?;
-        let mut validation_log =
-            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-
-        if _sync {
-            Some(get_signing_info(sig, &data, &mut validation_log, false))
-        } else {
-            Some(get_signing_info_async(sig, &data, &mut validation_log, false).await)
-        }
-    }
-
-    /// Get the signing certificate chain as PEM bytes
-    pub fn get_cert_chain(&self, settings: &Settings) -> Result<Vec<u8>> {
-        let sig = self.signature_val();
-        let data = self.data()?;
-        let mut validation_log =
-            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-
-        let vi = get_signing_info(
-            sig,
-            &data,
-            &mut validation_log,
-            settings.verify.verify_timestamp_trust,
-        );
-
-        Ok(vi.cert_chain)
-    }
-
     ///Returns list of metadata assertions
     pub fn metadata_assertions(&self) -> Vec<&ClaimAssertion> {
         let mut mda: Vec<&ClaimAssertion> = self
@@ -2619,72 +2564,5 @@ impl Claim {
                 let url = crate::jumbf::labels::to_absolute_uri(self.label(), &t.url());
                 HashedUri::new(url, t.alg(), &t.hash())
             })
-    }
-
-    /// Checks whether or not ocsp values are present in claim
-    pub fn has_ocsp_vals(&self) -> bool {
-        if !self.certificate_status_assertions().is_empty() {
-            return false;
-        }
-
-        let data = match self.data() {
-            Ok(data) => data,
-            Err(_) => return false,
-        };
-
-        let sig = self.signature_val().clone();
-        let mut validation_log = StatusTracker::default();
-
-        let sign1 = match parse_cose_sign1(&sig, &data, &mut validation_log) {
-            Ok(sign1) => sign1,
-            Err(_) => return false,
-        };
-
-        get_ocsp_der(&sign1).is_some()
-    }
-}
-
-#[allow(dead_code, clippy::too_many_arguments)]
-#[async_generic]
-pub(crate) fn check_ocsp_status(
-    sign1: &coset::CoseSign1,
-    data: &[u8],
-    ctp: &CertificateTrustPolicy,
-    ocsp_responses: Option<&Vec<Vec<u8>>>,
-    tst_info: Option<&TstInfo>,
-    validation_log: &mut StatusTracker,
-    context: &Context,
-) -> Result<OcspResponse> {
-    // Moved here instead of c2pa-crypto because of the dependency on settings.
-
-    let fetch_policy = if context.settings().verify.ocsp_fetch {
-        OcspFetchPolicy::FetchAllowed
-    } else {
-        OcspFetchPolicy::DoNotFetch
-    };
-
-    if _sync {
-        Ok(crate::crypto::cose::check_ocsp_status(
-            sign1,
-            data,
-            fetch_policy,
-            ctp,
-            ocsp_responses,
-            tst_info,
-            validation_log,
-            context,
-        )?)
-    } else {
-        Ok(crate::crypto::cose::check_ocsp_status_async(
-            sign1,
-            data,
-            fetch_policy,
-            ctp,
-            ocsp_responses,
-            tst_info,
-            validation_log,
-            context,
-        )
-        .await?)
     }
 }
