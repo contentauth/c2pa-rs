@@ -1370,6 +1370,61 @@ fn test_update_manifest_with_claim_thumbnail_rejected() {
 }
 
 #[test]
+fn test_claim_signature_not_validated_after_credential_rejected() {
+    use crate::{crypto::cose::CertificateInfo, jumbf::labels::to_signature_uri, log_item};
+
+    let claim = create_test_claim().expect("create test claim");
+    let signature_uri = to_signature_uri(claim.label());
+    let verify = |validation_log: &mut StatusTracker| {
+        let _ = Claim::verify_internal(
+            &claim,
+            &StoreValidationInfo::default(),
+            Ok(CertificateInfo {
+                validated: true,
+                ..Default::default()
+            }),
+            validation_log,
+            &Context::new(),
+        );
+    };
+
+    // The claim's signing credential was rejected.
+    let mut validation_log =
+        StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+    log_item!(
+        signature_uri.clone(),
+        "certificate params incorrect",
+        "test"
+    )
+    .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
+    .failure_no_throw(&mut validation_log, Error::CoseSignature);
+    verify(&mut validation_log);
+    assert!(!validation_log.has_status(validation_status::CLAIM_SIGNATURE_VALIDATED));
+
+    // A rejection logged for a different claim's signature does not count.
+    let mut validation_log =
+        StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+    log_item!(
+        "self#jumbf=/c2pa/other/c2pa.signature",
+        "certificate params incorrect",
+        "test"
+    )
+    .validation_status(validation_status::SIGNING_CREDENTIAL_INVALID)
+    .failure_no_throw(&mut validation_log, Error::CoseSignature);
+    verify(&mut validation_log);
+    assert!(validation_log.has_status(validation_status::CLAIM_SIGNATURE_VALIDATED));
+
+    // An untrusted signing credential does not stop the claim being Valid.
+    let mut validation_log =
+        StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+    log_item!(signature_uri, "signing certificate untrusted", "test")
+        .validation_status(validation_status::SIGNING_CREDENTIAL_UNTRUSTED)
+        .failure_no_throw(&mut validation_log, Error::CoseSignature);
+    verify(&mut validation_log);
+    assert!(validation_log.has_status(validation_status::CLAIM_SIGNATURE_VALIDATED));
+}
+
+#[test]
 fn test_verify_cloud_data_actions_in_non_update_manifest_not_allowed() {
     let mut validation_log = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
     let mut claim = create_test_claim().expect("create test claim");
