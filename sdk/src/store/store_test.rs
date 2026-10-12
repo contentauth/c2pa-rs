@@ -21,7 +21,7 @@ use sha2::Sha256;
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
-use super::*;
+use super::store_core::*;
 #[cfg(feature = "file_io")]
 use crate::{
     assertion::AssertionJson,
@@ -1439,9 +1439,8 @@ fn test_unsupported_type_without_external_manifest() {
 fn make_brotli_bomb_jumbf(decompressed_size: usize) -> Vec<u8> {
     use brotli::enc::BrotliEncoderParams;
 
-    use crate::{
-        jumbf::boxes::{Cai, JUMBFBrotliContentBox, JUMBFSuperBox, CAI_MANIFEST_UUID},
-        store::BMFFBox,
+    use crate::jumbf::boxes::{
+        BMFFBox, Cai, JUMBFBrotliContentBox, JUMBFSuperBox, CAI_MANIFEST_UUID,
     };
 
     let payload = vec![0u8; decompressed_size];
