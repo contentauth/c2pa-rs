@@ -11,6 +11,7 @@
 // specific language governing permissions and limitations under
 // each license.
 
+mod claim_assertion;
 mod claim_core;
 mod claim_signature;
 mod claim_verify;
@@ -19,7 +20,8 @@ mod claim_verify;
 pub(crate) use self::claim_core::AssertionStoreJsonFormat;
 pub(crate) use self::claim_verify::ALLOWED_UPDATE_MANIFEST_ACTIONS;
 pub use self::{
-    claim_core::{Claim, ClaimAssertion, ClaimAssertionType, RemoteManifest},
+    claim_assertion::{ClaimAssertion, ClaimAssertionType},
+    claim_core::{Claim, RemoteManifest},
     claim_verify::ClaimAssetData,
 };
 
