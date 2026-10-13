@@ -6,7 +6,10 @@ use std::{
     rc::Rc,
 };
 
-use quick_xml::{events::Event, Reader as XmlReader, XmlVersion};
+use quick_xml::{
+    events::{BytesStart, Event},
+    Reader as XmlReader, XmlVersion,
+};
 use zip::{
     result::ZipResult, write::SimpleFileOptions, CompressionMethod, HasZipMetadata, ZipArchive,
     ZipWriter,
@@ -24,10 +27,16 @@ const MANIFEST_PATH: &str = "META-INF/content_credential.c2pa";
 /// document or OpenXPS file. Every part in such a package needs a declared content type.
 const OPC_CONTENT_TYPES_PATH: &str = "[Content_Types].xml";
 const OPC_C2PA_DEFAULT: &str = r#"<Default Extension="c2pa" ContentType="application/c2pa"/>"#;
-/// The largest `[Content_Types].xml` that is decompressed. Real ones are a few kilobytes, even
-/// with thousands of parts; the cap stops a small, highly compressed entry from expanding to
-/// fill memory.
-const MAX_CONTENT_TYPES_LEN: u64 = 16 * 1024 * 1024;
+/// The package relationships part of an OPC package.
+const OPC_PACKAGE_RELS_PATH: &str = "_rels/.rels";
+/// The type of the package relationship that targets the manifest. The C2PA specification does
+/// not define one yet (proposed in c2pa-org/specs-core#2608), so this value may change.
+const OPC_C2PA_RELATIONSHIP_TYPE: &str = "http://c2pa.org/relationships/manifest-store";
+const OPC_C2PA_RELATIONSHIP_ID: &str = "rIdC2pa";
+/// The largest OPC part (`[Content_Types].xml` or `_rels/.rels`) that is decompressed. Real ones
+/// are a few kilobytes, even with thousands of parts; the cap stops a small, highly compressed
+/// entry from expanding to fill memory.
+const MAX_OPC_PART_LEN: u64 = 16 * 1024 * 1024;
 
 const END_OF_CENTRAL_DIRECTORY_SIGNATURE: [u8; 4] = [0x50, 0x4b, 0x05, 0x06];
 const CENTRAL_DIRECTORY_HEADER_LEN: usize = 46;
@@ -455,23 +464,29 @@ impl Seek for AppendStream<'_> {
     }
 }
 
-/// Declares a content type for the C2PA manifest in an Open Packaging Conventions (OPC) package,
-/// such as an OOXML document or OpenXPS file.
+/// Declares the C2PA manifest part in an Open Packaging Conventions (OPC) package, such as an
+/// OOXML document or OpenXPS file.
 ///
-/// OPC consumers such as PowerPoint and Word reject or "repair" a package containing a part with
-/// no declared content type, and repairing removes the manifest. Declaring it changes
-/// `[Content_Types].xml`, so this must happen before the collection hash is computed.
+/// Two declarations are needed, and both change parts that are hashed, so this must happen
+/// before the collection hash is computed:
+/// - A content type in `[Content_Types].xml`. OPC consumers such as PowerPoint and Word reject
+///   or "repair" a package containing a part with no declared content type, and repairing
+///   removes the manifest.
+/// - A package relationship in `_rels/.rels` that targets the manifest. Word, Excel and
+///   PowerPoint keep only the parts that a relationship reaches, so without one they silently
+///   drop the manifest the next time the file is saved.
 ///
-/// If the package needs the declaration, writes a copy of it to `output_stream` with the content
-/// types part updated and returns `true`. All other entries are copied without being
-/// recompressed. Otherwise writes nothing and returns `false`.
-pub(crate) fn declare_opc_c2pa_content_type(
+/// If the package needs either declaration, writes a copy of it to `output_stream` with those
+/// parts updated and returns `true`. All other entries are copied without being recompressed.
+/// Otherwise writes nothing and returns `false`.
+pub(crate) fn declare_opc_c2pa_part(
     input_stream: &mut dyn ReadSeek,
     output_stream: &mut dyn ReadWriteSeek,
 ) -> Result<bool> {
-    let Some(content_types) = opc_content_types_with_c2pa(input_stream)? else {
+    let changes = opc_parts_with_c2pa(input_stream)?;
+    if changes.is_empty() {
         return Ok(false);
-    };
+    }
 
     let rewrite =
         |input_stream: &mut dyn ReadSeek, output_stream: &mut dyn ReadWriteSeek| -> ZipResult<()> {
@@ -482,14 +497,14 @@ pub(crate) fn declare_opc_c2pa_content_type(
 
             for index in 0..reader.len() {
                 let file = reader.by_index_raw(index)?;
-                if file.name() == OPC_CONTENT_TYPES_PATH {
+                if let Some((name, contents)) = changes.iter().find(|(n, _)| *n == file.name()) {
                     let mut options =
                         SimpleFileOptions::DEFAULT.compression_method(CompressionMethod::Deflated);
                     if let Some(time) = file.last_modified() {
                         options = options.last_modified_time(time);
                     }
-                    writer.start_file(OPC_CONTENT_TYPES_PATH, options)?;
-                    io::Write::write_all(&mut writer, content_types.as_bytes())?;
+                    writer.start_file(*name, options)?;
+                    io::Write::write_all(&mut writer, contents.as_bytes())?;
                 } else {
                     writer.raw_copy_file(file)?;
                 }
@@ -499,51 +514,64 @@ pub(crate) fn declare_opc_c2pa_content_type(
         };
     rewrite(input_stream, output_stream).map_err(|e| {
         Error::InvalidAsset(format!(
-            "could not declare the C2PA content type in the ZIP: {e}"
+            "could not declare the C2PA manifest part in the ZIP: {e}"
         ))
     })?;
 
     Ok(true)
 }
 
-/// Returns the OPC content types part with a content type declared for the C2PA manifest, or
-/// `None` if the archive is not an OPC package or the part already declares one.
-fn opc_content_types_with_c2pa(input_stream: &mut dyn ReadSeek) -> Result<Option<String>> {
+/// Returns the OPC parts that must change to declare the C2PA manifest, as `(path, contents)`
+/// pairs. Empty if the archive is not an OPC package or both declarations are already present.
+fn opc_parts_with_c2pa(input_stream: &mut dyn ReadSeek) -> Result<Vec<(&'static str, String)>> {
     input_stream.rewind()?;
     let mut reader = ZipArchive::new(&mut *input_stream)
         .map_err(|e| Error::InvalidAsset(format!("could not read the ZIP: {e}")))?;
-    let Some(index) = reader.index_for_name(OPC_CONTENT_TYPES_PATH) else {
+
+    // An OPC package always has a content types part; other ZIP-based formats are left alone.
+    let Some(content_types) = read_opc_part(&mut reader, OPC_CONTENT_TYPES_PATH)? else {
+        return Ok(Vec::new());
+    };
+    let mut changes = Vec::new();
+    if let Some(updated) = add_c2pa_content_type(&content_types) {
+        changes.push((OPC_CONTENT_TYPES_PATH, updated));
+    }
+    // A package without relationships has no document to open, so don't create the part.
+    if let Some(rels) = read_opc_part(&mut reader, OPC_PACKAGE_RELS_PATH)? {
+        if let Some(updated) = add_c2pa_relationship(&rels) {
+            changes.push((OPC_PACKAGE_RELS_PATH, updated));
+        }
+    }
+    Ok(changes)
+}
+
+/// Reads a small XML part of an OPC package. Returns `None` if the part is missing or is not
+/// UTF-8; OPC allows UTF-8 or UTF-16, Office writes UTF-8, and anything else is left untouched.
+fn read_opc_part<R: Read + Seek>(reader: &mut ZipArchive<R>, name: &str) -> Result<Option<String>> {
+    let Some(index) = reader.index_for_name(name) else {
         return Ok(None);
     };
 
     // Check the declared size, then read through a hard limit in case it is wrong.
-    let too_large = || {
-        Error::InvalidAsset(format!(
-            "`{OPC_CONTENT_TYPES_PATH}` is larger than {MAX_CONTENT_TYPES_LEN} bytes"
-        ))
-    };
+    let too_large =
+        || Error::InvalidAsset(format!("`{name}` is larger than {MAX_OPC_PART_LEN} bytes"));
     let declared_len = reader
         .by_index_raw(index)
         .map_err(|e| Error::InvalidAsset(format!("could not read the ZIP: {e}")))?
         .size();
-    if declared_len > MAX_CONTENT_TYPES_LEN {
+    if declared_len > MAX_OPC_PART_LEN {
         return Err(too_large());
     }
     let mut bytes = Vec::new();
     reader
         .by_index(index)
         .map_err(|e| Error::InvalidAsset(format!("could not read the ZIP: {e}")))?
-        .take(MAX_CONTENT_TYPES_LEN + 1)
+        .take(MAX_OPC_PART_LEN + 1)
         .read_to_end(&mut bytes)?;
-    if bytes.len() as u64 > MAX_CONTENT_TYPES_LEN {
+    if bytes.len() as u64 > MAX_OPC_PART_LEN {
         return Err(too_large());
     }
-    // OPC allows UTF-8 or UTF-16; Office writes UTF-8. Leave anything else untouched.
-    let Ok(content_types) = String::from_utf8(bytes) else {
-        return Ok(None);
-    };
-
-    Ok(add_c2pa_content_type(&content_types))
+    Ok(String::from_utf8(bytes).ok())
 }
 
 /// Inserts a `Default` element for the `c2pa` extension as the first child of `Types`, unless the
@@ -556,20 +584,7 @@ fn add_c2pa_content_type(content_types: &str) -> Option<String> {
     loop {
         match reader.read_event().ok()? {
             Event::Start(e) | Event::Empty(e) => {
-                let is_empty = content_types
-                    .as_bytes()
-                    .get(reader.buffer_position() as usize - 2)
-                    == Some(&b'/');
-                let attribute = |name: &[u8]| {
-                    e.attributes()
-                        .flatten()
-                        .find(|a| a.key.local_name().as_ref().eq_ignore_ascii_case(name))
-                        .and_then(|a| {
-                            a.normalized_value(XmlVersion::default())
-                                .ok()
-                                .map(|v| v.into_owned())
-                        })
-                };
+                let is_empty = is_empty_element(content_types, &reader);
                 match e.local_name().as_ref() {
                     b"Types" if insert_at.is_none() => {
                         if is_empty {
@@ -578,13 +593,13 @@ fn add_c2pa_content_type(content_types: &str) -> Option<String> {
                         insert_at = Some(reader.buffer_position() as usize);
                     }
                     b"Default"
-                        if attribute(b"Extension")
+                        if xml_attribute(&e, b"Extension")
                             .is_some_and(|v| v.eq_ignore_ascii_case("c2pa")) =>
                     {
                         return None;
                     }
                     b"Override"
-                        if attribute(b"PartName").is_some_and(|v| {
+                        if xml_attribute(&e, b"PartName").is_some_and(|v| {
                             v.eq_ignore_ascii_case(&format!("/{MANIFEST_PATH}"))
                         }) =>
                     {
@@ -604,6 +619,77 @@ fn add_c2pa_content_type(content_types: &str) -> Option<String> {
         &content_types[..insert_at],
         &content_types[insert_at..]
     ))
+}
+
+/// Inserts a package relationship that targets the manifest as the first child of
+/// `Relationships`, unless one already does or a relationship already has the C2PA type (for
+/// example when an already signed file is signed again). OPC compares part names
+/// case-insensitively, and a target may be written with or without a leading `/`. Returns `None`
+/// if nothing needs to change, or if the part is not well-formed XML with a non-empty
+/// `Relationships` element, so it is left alone.
+fn add_c2pa_relationship(rels: &str) -> Option<String> {
+    let mut reader = XmlReader::from_str(rels);
+    let mut insert_at = None;
+    let mut ids = Vec::new();
+    loop {
+        match reader.read_event().ok()? {
+            Event::Start(e) | Event::Empty(e) => {
+                let is_empty = is_empty_element(rels, &reader);
+                match e.local_name().as_ref() {
+                    b"Relationships" if insert_at.is_none() => {
+                        if is_empty {
+                            return None; // A package with no relationships has nothing to open.
+                        }
+                        insert_at = Some(reader.buffer_position() as usize);
+                    }
+                    b"Relationship" => {
+                        let targets_manifest = xml_attribute(&e, b"Target").is_some_and(|v| {
+                            v.trim_start_matches('/')
+                                .eq_ignore_ascii_case(MANIFEST_PATH)
+                        });
+                        let has_c2pa_type = xml_attribute(&e, b"Type")
+                            .is_some_and(|v| v == OPC_C2PA_RELATIONSHIP_TYPE);
+                        if targets_manifest || has_c2pa_type {
+                            return None;
+                        }
+                        ids.extend(xml_attribute(&e, b"Id"));
+                    }
+                    _ => {}
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+
+    let insert_at = insert_at?;
+    // Relationship IDs must be unique within the part.
+    let id = std::iter::once(OPC_C2PA_RELATIONSHIP_ID.to_owned())
+        .chain((1..).map(|n| format!("{OPC_C2PA_RELATIONSHIP_ID}{n}")))
+        .find(|id| !ids.contains(id))?;
+    Some(format!(
+        r#"{}<Relationship Id="{id}" Type="{OPC_C2PA_RELATIONSHIP_TYPE}" Target="{MANIFEST_PATH}"/>{}"#,
+        &rels[..insert_at],
+        &rels[insert_at..]
+    ))
+}
+
+/// Whether the element `reader` has just read ends with `/>`.
+fn is_empty_element(xml: &str, reader: &XmlReader<&[u8]>) -> bool {
+    xml.as_bytes().get(reader.buffer_position() as usize - 2) == Some(&b'/')
+}
+
+/// The normalized value of an attribute, matching its local name case-insensitively.
+fn xml_attribute(element: &BytesStart, name: &[u8]) -> Option<String> {
+    element
+        .attributes()
+        .flatten()
+        .find(|a| a.key.local_name().as_ref().eq_ignore_ascii_case(name))
+        .and_then(|a| {
+            a.normalized_value(XmlVersion::default())
+                .ok()
+                .map(|v| v.into_owned())
+        })
 }
 
 /// Computes the byte ranges for the ZIP central directory, skipping the manifest's checksum (if present).
@@ -991,12 +1077,26 @@ mod tests {
         }
     }
 
-    fn content_types(stream: &mut (impl Read + Seek)) -> Option<String> {
+    fn part(stream: &mut (impl Read + Seek), name: &str) -> Option<String> {
         let mut reader = ZipArchive::new(stream).unwrap();
-        let mut file = reader.by_name(OPC_CONTENT_TYPES_PATH).ok()?;
+        let mut file = reader.by_name(name).ok()?;
         let mut xml = String::new();
         file.read_to_string(&mut xml).unwrap();
         Some(xml)
+    }
+
+    fn content_types(stream: &mut (impl Read + Seek)) -> Option<String> {
+        part(stream, OPC_CONTENT_TYPES_PATH)
+    }
+
+    fn package_rels(stream: &mut (impl Read + Seek)) -> Option<String> {
+        part(stream, OPC_PACKAGE_RELS_PATH)
+    }
+
+    /// Number of package relationships that target the manifest.
+    fn c2pa_relationships(rels: &str) -> usize {
+        rels.matches(&format!(r#"Target="{MANIFEST_PATH}""#))
+            .count()
     }
 
     #[test]
@@ -1024,14 +1124,18 @@ mod tests {
     }
 
     #[test]
-    fn test_declare_opc_c2pa_content_type() {
+    fn test_declare_opc_c2pa_part() {
         let mut stream = Cursor::new(include_bytes!("../../tests/fixtures/sample1.docx"));
         assert!(!content_types(&mut stream).unwrap().contains("c2pa"));
+        assert!(!package_rels(&mut stream).unwrap().contains("c2pa"));
 
         let mut declared = Cursor::new(Vec::new());
-        assert!(declare_opc_c2pa_content_type(&mut stream, &mut declared).unwrap());
+        assert!(declare_opc_c2pa_part(&mut stream, &mut declared).unwrap());
         let xml = content_types(&mut declared).unwrap();
         assert_eq!(xml.matches(OPC_C2PA_DEFAULT).count(), 1);
+        let rels = package_rels(&mut declared).unwrap();
+        assert_eq!(c2pa_relationships(&rels), 1, "{rels}");
+        assert!(rels.contains(OPC_C2PA_RELATIONSHIP_TYPE), "{rels}");
 
         // Every other entry is copied unchanged.
         let mut original = ZipArchive::new(&mut stream).unwrap();
@@ -1041,7 +1145,7 @@ mod tests {
             let a = original.by_index_raw(index).unwrap();
             let b = copy.by_index_raw(index).unwrap();
             assert_eq!(a.name(), b.name());
-            if a.name() != OPC_CONTENT_TYPES_PATH {
+            if a.name() != OPC_CONTENT_TYPES_PATH && a.name() != OPC_PACKAGE_RELS_PATH {
                 assert_eq!(a.crc32(), b.crc32(), "{}", a.name());
                 assert_eq!(a.compressed_size(), b.compressed_size(), "{}", a.name());
             }
@@ -1050,15 +1154,101 @@ mod tests {
 
         // Already declared: nothing to do.
         let mut again = Cursor::new(Vec::new());
-        assert!(!declare_opc_c2pa_content_type(&mut declared, &mut again).unwrap());
+        assert!(!declare_opc_c2pa_part(&mut declared, &mut again).unwrap());
         assert!(again.get_ref().is_empty());
+    }
+
+    /// A package that already declares the content type but has no relationship to the manifest
+    /// (for example one signed before the relationship was added) only gets the relationship.
+    #[test]
+    fn test_declare_adds_missing_relationship_only() {
+        let types = format!(r#"<Types xmlns="x">{OPC_C2PA_DEFAULT}</Types>"#);
+        let rels = r#"<Relationships xmlns="r"><Relationship Id="rId1" Type="t" Target="word/document.xml"/></Relationships>"#;
+        let zip = build_zip(&[
+            (
+                OPC_CONTENT_TYPES_PATH,
+                types.as_bytes(),
+                CompressionMethod::Deflated,
+            ),
+            (
+                OPC_PACKAGE_RELS_PATH,
+                rels.as_bytes(),
+                CompressionMethod::Deflated,
+            ),
+        ]);
+
+        let mut declared = Cursor::new(Vec::new());
+        assert!(declare_opc_c2pa_part(&mut Cursor::new(&zip), &mut declared).unwrap());
+        assert_eq!(content_types(&mut declared).unwrap(), types);
+        assert_eq!(c2pa_relationships(&package_rels(&mut declared).unwrap()), 1);
+    }
+
+    /// Without `_rels/.rels` there is nothing to attach a relationship to; the content type is
+    /// still declared and no relationships part is created.
+    #[test]
+    fn test_declare_without_package_rels() {
+        let zip = build_zip(&[(
+            OPC_CONTENT_TYPES_PATH,
+            br#"<Types xmlns="x"><Default Extension="xml" ContentType="application/xml"/></Types>"#,
+            CompressionMethod::Deflated,
+        )]);
+        let mut declared = Cursor::new(Vec::new());
+        assert!(declare_opc_c2pa_part(&mut Cursor::new(&zip), &mut declared).unwrap());
+        assert!(content_types(&mut declared)
+            .unwrap()
+            .contains(OPC_C2PA_DEFAULT));
+        assert_eq!(package_rels(&mut declared), None);
+    }
+
+    #[test]
+    fn test_add_c2pa_relationship() {
+        let rels = r#"<?xml version="1.0"?><Relationships xmlns="r"><Relationship Id="rId1" Type="t" Target="ppt/presentation.xml"/></Relationships>"#;
+        assert_eq!(
+            add_c2pa_relationship(rels).unwrap(),
+            format!(
+                r#"<?xml version="1.0"?><Relationships xmlns="r"><Relationship Id="{OPC_C2PA_RELATIONSHIP_ID}" Type="{OPC_C2PA_RELATIONSHIP_TYPE}" Target="{MANIFEST_PATH}"/><Relationship Id="rId1" Type="t" Target="ppt/presentation.xml"/></Relationships>"#
+            )
+        );
+
+        // Already present, e.g. when re-signing: by target (any case, with or without a leading
+        // slash) or by relationship type.
+        for present in [
+            format!(r#"<Relationships><Relationship Id="a" Type="t" Target="{MANIFEST_PATH}"/></Relationships>"#),
+            r#"<Relationships><Relationship Id="a" Type="t" Target="/meta-inf/CONTENT_CREDENTIAL.c2pa"/></Relationships>"#.to_owned(),
+            format!(r#"<Relationships><Relationship Id='a' Type='{OPC_C2PA_RELATIONSHIP_TYPE}' Target='x.c2pa'/></Relationships>"#),
+            format!(r#"<pr:Relationships xmlns:pr="r"><pr:Relationship Id="a" Type="t" Target="{MANIFEST_PATH}"/></pr:Relationships>"#),
+        ] {
+            assert_eq!(add_c2pa_relationship(&present), None, "{present}");
+        }
+
+        // The ID does not collide with an existing one.
+        let taken = format!(
+            r#"<Relationships><Relationship Id="{OPC_C2PA_RELATIONSHIP_ID}" Type="t" Target="a"/><Relationship Id="{OPC_C2PA_RELATIONSHIP_ID}1" Type="t" Target="b"/></Relationships>"#
+        );
+        assert!(add_c2pa_relationship(&taken)
+            .unwrap()
+            .contains(&format!(r#"Id="{OPC_C2PA_RELATIONSHIP_ID}2""#)));
+
+        // A relationship mentioned only in a comment does not count.
+        let commented = format!(
+            r#"<!-- <Relationship Target="{MANIFEST_PATH}"/> --><Relationships><Relationship Id="a" Type="t" Target="b"/></Relationships>"#
+        );
+        assert_eq!(
+            c2pa_relationships(&add_c2pa_relationship(&commented).unwrap()),
+            2 // the comment plus the new relationship
+        );
+
+        // Not a usable relationships part.
+        assert_eq!(add_c2pa_relationship("<Relationships/>"), None);
+        assert_eq!(add_c2pa_relationship("not xml"), None);
+        assert_eq!(add_c2pa_relationship("<Relationships><Relationship"), None);
     }
 
     #[test]
     fn test_declare_skips_non_opc_packages() {
         let mut stream = Cursor::new(include_bytes!("../../tests/fixtures/sample1.odt"));
         let mut output = Cursor::new(Vec::new());
-        assert!(!declare_opc_c2pa_content_type(&mut stream, &mut output).unwrap());
+        assert!(!declare_opc_c2pa_part(&mut stream, &mut output).unwrap());
         assert!(output.get_ref().is_empty());
     }
 
@@ -1139,12 +1329,32 @@ mod tests {
     #[test]
     fn test_content_types_size_is_capped() {
         let mut xml = b"<Types>".to_vec();
-        xml.resize(MAX_CONTENT_TYPES_LEN as usize + 1024, b' ');
+        xml.resize(MAX_OPC_PART_LEN as usize + 1024, b' ');
         xml.extend(b"</Types>");
         let zip = build_zip(&[(OPC_CONTENT_TYPES_PATH, &xml, CompressionMethod::Deflated)]);
         assert!(zip.len() < 1024 * 1024);
         assert!(matches!(
-            declare_opc_c2pa_content_type(&mut Cursor::new(&zip), &mut Cursor::new(Vec::new())),
+            declare_opc_c2pa_part(&mut Cursor::new(&zip), &mut Cursor::new(Vec::new())),
+            Err(Error::InvalidAsset(_))
+        ));
+    }
+
+    #[test]
+    fn test_package_rels_size_is_capped() {
+        let mut rels = b"<Relationships>".to_vec();
+        rels.resize(MAX_OPC_PART_LEN as usize + 1024, b' ');
+        rels.extend(b"</Relationships>");
+        let zip = build_zip(&[
+            (
+                OPC_CONTENT_TYPES_PATH,
+                b"<Types><Default Extension=\"x\" ContentType=\"y\"/></Types>",
+                CompressionMethod::Deflated,
+            ),
+            (OPC_PACKAGE_RELS_PATH, &rels, CompressionMethod::Deflated),
+        ]);
+        assert!(zip.len() < 1024 * 1024);
+        assert!(matches!(
+            declare_opc_c2pa_part(&mut Cursor::new(&zip), &mut Cursor::new(Vec::new())),
             Err(Error::InvalidAsset(_))
         ));
     }

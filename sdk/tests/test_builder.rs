@@ -1147,6 +1147,27 @@ fn test_builder_sign_deflated_zip_with_data_descriptors() -> Result<()> {
     Ok(())
 }
 
+/// Reads a part of a ZIP-based file as text.
+fn zip_part(zip: &[u8], name: &str) -> String {
+    use std::io::Read;
+
+    let mut archive = zip::ZipArchive::new(Cursor::new(zip)).unwrap();
+    let mut text = String::new();
+    archive
+        .by_name(name)
+        .unwrap()
+        .read_to_string(&mut text)
+        .unwrap();
+    text
+}
+
+/// Package relationships in `_rels/.rels` that target the manifest.
+fn manifest_relationships(zip: &[u8]) -> usize {
+    zip_part(zip, "_rels/.rels")
+        .matches(r#"Target="META-INF/content_credential.c2pa""#)
+        .count()
+}
+
 /// OPC consumers such as PowerPoint and Word reject or "repair" a package containing a part
 /// with no declared content type, which removes the manifest. Signing must declare one.
 #[test]
@@ -1174,6 +1195,32 @@ fn test_builder_ooxml_declares_c2pa_content_type() -> Result<()> {
     assert!(
         content_types.contains(r#"<Default Extension="c2pa" ContentType="application/c2pa"/>"#),
         "{content_types}"
+    );
+    Ok(())
+}
+
+/// Word, Excel and PowerPoint keep only the parts that a relationship reaches, and silently drop
+/// the rest when they save. Signing must add a package relationship to the manifest so that it
+/// survives an edit in Office (and the edit is then reported as a hash mismatch).
+#[test]
+fn test_builder_ooxml_adds_manifest_relationship() -> Result<()> {
+    let context = Context::new().with_settings(test_settings())?.into_shared();
+    let mut builder = Builder::from_shared_context(&context);
+    builder.set_intent(BuilderIntent::Edit);
+
+    let source = include_bytes!("fixtures/sample1.docx");
+    assert_eq!(manifest_relationships(source), 0);
+    let mut dest = Cursor::new(Vec::new());
+    builder.save_to_stream("docx", &mut Cursor::new(&source[..]), &mut dest)?;
+    let signed = dest.into_inner();
+
+    let reader = Reader::from_shared_context(&context).with_stream("docx", Cursor::new(&signed))?;
+    assert_eq!(reader.validation_state(), ValidationState::Trusted);
+    let rels = zip_part(&signed, "_rels/.rels");
+    assert_eq!(manifest_relationships(&signed), 1, "{rels}");
+    assert!(
+        rels.contains(r#"Type="http://c2pa.org/relationships/manifest-store""#),
+        "{rels}"
     );
     Ok(())
 }
@@ -1211,6 +1258,15 @@ fn test_builder_resign_zip() -> Result<()> {
                 local_headers, 1,
                 "{format}: earlier manifests left in the file"
             );
+
+            // Re-signing must not add a second relationship to the manifest.
+            if format == "docx" {
+                assert_eq!(
+                    manifest_relationships(&current),
+                    1,
+                    "{format}: round {round}"
+                );
+            }
         }
     }
     Ok(())
