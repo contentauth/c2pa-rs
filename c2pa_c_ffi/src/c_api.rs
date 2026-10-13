@@ -3454,54 +3454,6 @@ mod tests {
     }
 
     #[test]
-    fn test_reader_with_stream_cawg_identity() {
-        let builder = unsafe { c2pa_context_builder_new() };
-        assert!(!builder.is_null());
-
-        let settings = unsafe { c2pa_settings_new() };
-        assert!(!settings.is_null());
-        let format = CString::new("toml").unwrap();
-        let settings_data = CString::new(include_str!(
-            "../tests/fixtures/trust/cawg_test_settings.toml"
-        ))
-        .unwrap();
-        assert_eq!(
-            unsafe {
-                c2pa_settings_update_from_string(settings, settings_data.as_ptr(), format.as_ptr())
-            },
-            0
-        );
-        assert_eq!(
-            unsafe { c2pa_context_builder_set_settings(builder, settings) },
-            0
-        );
-
-        let context = unsafe { c2pa_context_builder_build(builder) };
-        assert!(!context.is_null());
-        let reader = unsafe { c2pa_reader_from_context(context) };
-        assert!(!reader.is_null());
-
-        let image = include_bytes!("../../sdk/tests/fixtures/C_with_CAWG_data.jpg");
-        let mut stream = TestStream::new(image.to_vec());
-        let format = CString::new("image/jpeg").unwrap();
-        let reader = unsafe { c2pa_reader_with_stream(reader, format.as_ptr(), stream.as_ptr()) };
-        assert!(!reader.is_null());
-
-        let json = unsafe { c2pa_reader_json(reader) };
-        assert!(!json.is_null());
-        let json_str = unsafe { CStr::from_ptr(json) }.to_string_lossy();
-        assert!(json_str.contains("cawg.identity"));
-        assert!(json_str.contains("cawg.identity.well-formed"));
-
-        unsafe {
-            assert_eq!(c2pa_free(json as *const c_void), 0);
-            assert_eq!(c2pa_free(settings as *const c_void), 0);
-            assert_eq!(c2pa_free(context as *const c_void), 0);
-            assert_eq!(c2pa_free(reader as *const c_void), 0);
-        }
-    }
-
-    #[test]
     fn test_c2pa_reader_with_stream_from_context() {
         // Create a context with custom settings
         let builder = unsafe { c2pa_context_builder_new() };
@@ -4077,6 +4029,56 @@ mod tests {
     }
 
     #[test]
+    fn test_reader_from_stream_cawg_identity() {
+        let builder = unsafe { c2pa_context_builder_new() };
+        assert!(!builder.is_null());
+
+        let settings = unsafe { c2pa_settings_new() };
+        assert!(!settings.is_null());
+        let format = CString::new("toml").unwrap();
+        let settings_data = CString::new(include_str!(
+            "../tests/fixtures/trust/cawg_test_settings.toml"
+        ))
+        .unwrap();
+        assert_eq!(
+            unsafe {
+                c2pa_settings_update_from_string(settings, settings_data.as_ptr(), format.as_ptr())
+            },
+            0
+        );
+        assert_eq!(
+            unsafe { c2pa_context_builder_set_settings(builder, settings) },
+            0
+        );
+
+        let context = unsafe { c2pa_context_builder_build(builder) };
+        assert!(!context.is_null());
+        let reader = unsafe { c2pa_reader_from_context(context) };
+        assert!(!reader.is_null());
+
+        let image = include_bytes!("../../sdk/tests/fixtures/C_with_CAWG_data.jpg");
+        let mut stream = TestStream::new(image.to_vec());
+        let format = CString::new("image/jpeg").unwrap();
+        let reader = unsafe { c2pa_reader_with_stream(reader, format.as_ptr(), stream.as_ptr()) };
+        assert!(!reader.is_null());
+
+        let json = unsafe { c2pa_reader_json(reader) };
+        assert!(!json.is_null());
+        let json_str = unsafe { CStr::from_ptr(json) }
+            .to_string_lossy()
+            .into_owned();
+        assert!(json_str.contains("cawg.identity"));
+        assert!(json_str.contains("cawg.identity.well-formed"));
+
+        unsafe {
+            assert_eq!(c2pa_free(json as *const c_void), 0);
+            assert_eq!(c2pa_free(settings as *const c_void), 0);
+            assert_eq!(c2pa_free(context as *const c_void), 0);
+            assert_eq!(c2pa_free(reader as *const c_void), 0);
+        }
+    }
+
+    #[test]
     fn test_c2pa_settings_new() {
         let settings = unsafe { c2pa_settings_new() };
         assert!(!settings.is_null());
@@ -4445,6 +4447,78 @@ verify_after_sign = true
         unsafe {
             c2pa_free(builder as *mut c_void);
             c2pa_free(context as *mut c_void);
+        }
+    }
+
+    #[test]
+    fn test_c2pa_builder_compose_manifest() {
+        const SETTINGS: &str = include_str!(fixture_path!("test_settings.json"));
+
+        let settings = unsafe { c2pa_settings_new() };
+        assert!(!settings.is_null());
+        let settings_data = CString::new(SETTINGS).unwrap();
+        let settings_format = CString::new("json").unwrap();
+        assert_eq!(
+            unsafe {
+                c2pa_settings_update_from_string(
+                    settings,
+                    settings_data.as_ptr(),
+                    settings_format.as_ptr(),
+                )
+            },
+            0
+        );
+
+        let context_builder = unsafe { c2pa_context_builder_new() };
+        assert!(!context_builder.is_null());
+        assert_eq!(
+            unsafe { c2pa_context_builder_set_settings(context_builder, settings) },
+            0
+        );
+        let context = unsafe { c2pa_context_builder_build(context_builder) };
+        assert!(!context.is_null());
+
+        let builder = unsafe { c2pa_builder_from_context(context) };
+        assert!(!builder.is_null());
+        let format = CString::new("image/jpeg").unwrap();
+        let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
+        let mut source_stream = TestStream::new(source_image.to_vec());
+        assert_eq!(
+            unsafe {
+                c2pa_builder_update_hash_from_stream(
+                    builder,
+                    format.as_ptr(),
+                    source_stream.as_ptr(),
+                )
+            },
+            0
+        );
+
+        let mut manifest_bytes = std::ptr::null();
+        let manifest_size =
+            unsafe { c2pa_builder_sign_embeddable(builder, format.as_ptr(), &mut manifest_bytes) };
+        assert!(manifest_size > 0, "sign_embeddable should succeed");
+        assert!(!manifest_bytes.is_null());
+
+        let mut composed_bytes = std::ptr::null();
+        let composed_size = unsafe {
+            c2pa_builder_compose_manifest(
+                builder,
+                format.as_ptr(),
+                manifest_bytes,
+                manifest_size as usize,
+                &mut composed_bytes,
+            )
+        };
+        assert!(composed_size > 0, "compose_manifest should succeed");
+        assert!(!composed_bytes.is_null());
+
+        unsafe {
+            assert_eq!(c2pa_free(manifest_bytes as *const c_void), 0);
+            assert_eq!(c2pa_free(composed_bytes as *const c_void), 0);
+            assert_eq!(c2pa_free(settings as *const c_void), 0);
+            assert_eq!(c2pa_free(context as *const c_void), 0);
+            assert_eq!(c2pa_free(builder as *const c_void), 0);
         }
     }
 
