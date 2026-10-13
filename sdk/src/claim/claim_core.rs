@@ -1745,130 +1745,91 @@ impl Claim {
     /// For v2+ claims, only created assertions are returned; gathered hash
     /// assertions are excluded because hard bindings must be in created_assertions.
     pub fn hash_assertions(&self) -> Vec<&ClaimAssertion> {
-        let assertion_type = if self.claim_version >= 2 {
-            Some(ClaimAssertionType::Created)
-        } else {
-            None
-        };
+        let created_only = self.claim_version >= 2;
 
-        let dummy_data = AssertionData::Cbor(Vec::new());
-        let dummy_hash = Assertion::new(DataHash::LABEL, None, dummy_data);
-        let mut data_hashes = self.assertions_by_type(&dummy_hash, assertion_type.clone());
+        self.assertion_store
+            .iter()
+            .filter(|ca| {
+                labels::HASH_LABELS.contains(&ca.assertion().label_root().as_str())
+                    && (!created_only || ca.assertion_type() == ClaimAssertionType::Created)
+            })
+            .collect()
+    }
 
-        // add in BMFF hashes
-        let dummy_bmff_data = AssertionData::Cbor(Vec::new());
-        let dummy_bmff_hash = Assertion::new(assertions::labels::BMFF_HASH, None, dummy_bmff_data);
-        data_hashes.append(&mut self.assertions_by_type(&dummy_bmff_hash, assertion_type.clone()));
-
-        // add in box hashes
-        let dummy_box_data = AssertionData::Cbor(Vec::new());
-        let dummy_box_hash = Assertion::new(assertions::labels::BOX_HASH, None, dummy_box_data);
-        data_hashes.append(&mut self.assertions_by_type(&dummy_box_hash, assertion_type.clone()));
-
-        // add in collection hashes
-        let dummy_collection_data = AssertionData::Cbor(Vec::new());
-        let dummy_collection_hash = Assertion::new(
-            assertions::labels::COLLECTION_HASH,
-            None,
-            dummy_collection_data,
-        );
-        data_hashes.append(&mut self.assertions_by_type(&dummy_collection_hash, assertion_type));
-
-        // remove any multipart hashes, those are handled elsewhere
-        data_hashes
-            .retain(|x: &&ClaimAssertion| !x.label_raw().ends_with(assertions::labels::PART));
-
-        data_hashes
+    /// Returns assertions whose label root (no version or instance suffix) equals `label`.
+    fn assertions_by_label(
+        &self,
+        label: &str,
+        assertion_type: Option<ClaimAssertionType>,
+    ) -> Vec<&ClaimAssertion> {
+        self.assertion_store
+            .iter()
+            .filter(|ca| {
+                ca.assertion().label_root() == label
+                    && assertion_type
+                        .as_ref()
+                        .is_none_or(|t| ca.assertion_type() == *t)
+            })
+            .collect()
     }
 
     pub fn bmff_hash_assertions(&self) -> Vec<&ClaimAssertion> {
-        // add in an BMFF hashes
-        let dummy_bmff_data = AssertionData::Cbor(Vec::new());
-        let dummy_bmff_hash = Assertion::new(assertions::labels::BMFF_HASH, None, dummy_bmff_data);
-        self.assertions_by_type(&dummy_bmff_hash, None)
+        self.assertions_by_label(labels::BMFF_HASH, None)
     }
 
     /// Return list of soft binding assertions.
     pub fn soft_binding_assertions(&self) -> Vec<&ClaimAssertion> {
-        let dummy_data = AssertionData::Cbor(Vec::new());
-        let dummy = Assertion::new(assertions::labels::SOFT_BINDING, None, dummy_data);
-        self.assertions_by_type(&dummy, None)
+        self.assertions_by_label(labels::SOFT_BINDING, None)
     }
 
     /// Return list of cloud data assertions.
     pub fn cloud_data_assertions(&self) -> Vec<&ClaimAssertion> {
-        let dummy_data = AssertionData::Cbor(Vec::new());
-        let dummy = Assertion::new(assertions::labels::CLOUD_DATA, None, dummy_data);
-        self.assertions_by_type(&dummy, None)
+        self.assertions_by_label(labels::CLOUD_DATA, None)
     }
 
     pub fn data_hash_assertions(&self) -> Vec<&ClaimAssertion> {
-        let dummy_hash_data = AssertionData::Cbor(Vec::new());
-        let dummy_data_hash = Assertion::new(assertions::labels::DATA_HASH, None, dummy_hash_data);
-        self.assertions_by_type(&dummy_data_hash, None)
+        self.assertions_by_label(labels::DATA_HASH, None)
     }
 
     pub fn box_hash_assertions(&self) -> Vec<&ClaimAssertion> {
-        // add in an BMFF hashes
-        let dummy_box_data = AssertionData::Cbor(Vec::new());
-        let dummy_box_hash = Assertion::new(assertions::labels::BOX_HASH, None, dummy_box_data);
-        self.assertions_by_type(&dummy_box_hash, None)
+        self.assertions_by_label(labels::BOX_HASH, None)
     }
 
     pub fn collection_hash_assertions(&self) -> Vec<&ClaimAssertion> {
-        let dummy_collection_data = AssertionData::Cbor(Vec::new());
-        let dummy_collection_hash = Assertion::new(
-            assertions::labels::COLLECTION_HASH,
-            None,
-            dummy_collection_data,
-        );
-        self.assertions_by_type(&dummy_collection_hash, None)
+        self.assertions_by_label(labels::COLLECTION_HASH, None)
     }
 
     /// Return list of ingredient assertions. This function
     /// is only useful on committed or loaded claims since ingredients
     /// are resolved at commit time.
     pub fn ingredient_assertions(&self) -> Vec<&ClaimAssertion> {
-        let dummy_data = AssertionData::Cbor(Vec::new());
-        let dummy_ingredient = Assertion::new(assertions::labels::INGREDIENT, None, dummy_data);
-        self.assertions_by_type(&dummy_ingredient, None)
+        self.assertions_by_label(labels::INGREDIENT, None)
     }
 
     /// Return list of timestamp assertions.
     pub fn timestamp_assertions(&self) -> Vec<&ClaimAssertion> {
-        let dummy_data = AssertionData::Cbor(Vec::new());
-        let dummy_timestamp = Assertion::new(assertions::labels::TIMESTAMP, None, dummy_data);
-        self.assertions_by_type(&dummy_timestamp, None)
+        self.assertions_by_label(labels::TIMESTAMP, None)
     }
 
     /// Returns list of certificate status assertions.
     pub fn certificate_status_assertions(&self) -> Vec<&ClaimAssertion> {
-        let dummy_data = AssertionData::Cbor(Vec::new());
-        let dummy_certificate_status =
-            Assertion::new(assertions::labels::CERTIFICATE_STATUS, None, dummy_data);
-        self.assertions_by_type(&dummy_certificate_status, None)
+        self.assertions_by_label(labels::CERTIFICATE_STATUS, None)
     }
 
     /// Return list of action assertions.
     /// Created assertions have higher priority than gathered assertions
     pub fn action_assertions(&self) -> Vec<&ClaimAssertion> {
-        let dummy_data = AssertionData::Cbor(Vec::new());
-        let dummy_ingredient = Assertion::new(assertions::labels::ACTIONS, None, dummy_data);
-        self.assertions_by_type(&dummy_ingredient, None)
+        self.assertions_by_label(labels::ACTIONS, None)
     }
 
     /// Return list of gathered action assertions.
     pub fn gathered_action_assertions(&self) -> Vec<&ClaimAssertion> {
-        let dummy_data = AssertionData::Cbor(Vec::new());
-        let dummy_ingredient = Assertion::new(assertions::labels::ACTIONS, None, dummy_data);
-        self.assertions_by_type(&dummy_ingredient, Some(ClaimAssertionType::Gathered))
+        self.assertions_by_label(labels::ACTIONS, Some(ClaimAssertionType::Gathered))
     }
 
     /// Return list of action assertions.
     pub fn created_action_assertions(&self) -> Vec<&ClaimAssertion> {
-        let dummy_data = AssertionData::Cbor(Vec::new());
-        let dummy_ingredient = Assertion::new(assertions::labels::ACTIONS, None, dummy_data);
-        self.assertions_by_type(&dummy_ingredient, Some(ClaimAssertionType::Created))
+        self.assertions_by_label(labels::ACTIONS, Some(ClaimAssertionType::Created))
     }
 
     /// Return reference to the internal claim assertion store.
