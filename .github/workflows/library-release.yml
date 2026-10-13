@@ -129,7 +129,7 @@ jobs:
         if: contains(matrix.target, 'unknown-linux-gnu')
         run: |
           sudo apt-get install -y rpm ruby-dev build-essential
-          sudo gem install fpm --no-document
+          sudo gem install fpm -v 1.16.0 --no-document
 
           VERSION=$(cargo metadata --format-version 1 --no-deps | \
             python3 -c "import sys,json; d=json.load(sys.stdin); \
@@ -147,18 +147,19 @@ jobs:
             RPM_ARCH=x86_64
           fi
 
-          # Generate pkg-config file (no leading whitespace)
+          # Generate pkg-config file. YAML strips the block indentation, so the
+          # heredoc body reaches the shell with no leading whitespace.
           cat > /tmp/c2pa.pc << 'PCEOF'
-prefix=/usr
-libdir=${prefix}/lib
-includedir=${prefix}/include
+          prefix=/usr
+          libdir=${prefix}/lib
+          includedir=${prefix}/include
 
-Name: c2pa
-Description: C2PA content authenticity library
-Version: PKGVER
-Libs: -L${libdir} -lc2pa_c
-Cflags: -I${includedir}
-PCEOF
+          Name: c2pa
+          Description: C2PA content authenticity library
+          Version: PKGVER
+          Libs: -L${libdir} -lc2pa_c
+          Cflags: -I${includedir}
+          PCEOF
           sed -i "s/PKGVER/$VERSION/" /tmp/c2pa.pc
 
           mkdir -p target/artifacts
@@ -178,15 +179,15 @@ PCEOF
             --package "target/artifacts/libc2pa_${VERSION}_${DEB_ARCH}.deb" \
             "$LIB=/usr/lib/libc2pa_c.so"
 
-          # libc2pa-dev — header, linker .so, and pkg-config; depends on runtime
+          # libc2pa-dev — header and pkg-config only; the .so is owned by libc2pa
+          # (no SONAME is set, so the unversioned name is the runtime name)
           fpm -s dir -t deb "${COMMON_ARGS[@]}" \
             --name libc2pa-dev \
             --version "$VERSION" \
             --architecture "$DEB_ARCH" \
             --description "C2PA content authenticity library - development files" \
-            --depends "libc2pa (= $VERSION)" \
+            --depends "libc2pa (= $VERSION-1)" \
             --package "target/artifacts/libc2pa-dev_${VERSION}_${DEB_ARCH}.deb" \
-            "$LIB=/usr/lib/libc2pa_c.so" \
             "$HDR=/usr/include/c2pa.h" \
             "/tmp/c2pa.pc=/usr/lib/pkgconfig/c2pa.pc"
 
@@ -207,9 +208,37 @@ PCEOF
             --description "C2PA content authenticity library - development files" \
             --depends "libc2pa = $VERSION" \
             --package "target/artifacts/libc2pa-dev-${VERSION}-1.${RPM_ARCH}.rpm" \
-            "$LIB=/usr/lib/libc2pa_c.so" \
             "$HDR=/usr/include/c2pa.h" \
             "/tmp/c2pa.pc=/usr/lib/pkgconfig/c2pa.pc"
+
+      # Install the x86_64 packages in clean distro containers and build a
+      # program against them via pkg-config. aarch64 packages are not run here.
+      - name: Smoke test Linux packages
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          cat > /tmp/smoke.c << 'CEOF'
+          #include <stdio.h>
+          #include "c2pa.h"
+          int main(void) {
+            char *v = c2pa_version();
+            if (!v) return 1;
+            printf("%s\n", v);
+            c2pa_string_free(v);
+            return 0;
+          }
+          CEOF
+          docker run --rm -v "$PWD/target/artifacts:/pkgs:ro" -v /tmp/smoke.c:/smoke.c:ro \
+            debian:stable bash -euxc '
+              apt-get update && apt-get install -y gcc pkg-config
+              apt-get install -y /pkgs/libc2pa_*_amd64.deb /pkgs/libc2pa-dev_*_amd64.deb
+              gcc /smoke.c $(pkg-config --cflags --libs c2pa) -o /smoke
+              /smoke'
+          docker run --rm -v "$PWD/target/artifacts:/pkgs:ro" -v /tmp/smoke.c:/smoke.c:ro \
+            fedora:latest bash -euxc '
+              dnf install -y gcc pkgconf-pkg-config
+              dnf install -y /pkgs/libc2pa-*.x86_64.rpm
+              gcc /smoke.c $(pkg-config --cflags --libs c2pa) -o /smoke
+              /smoke'
 
       - name: Upload build artifacts (Android)
         if: contains(matrix.target, 'android')
