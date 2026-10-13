@@ -489,6 +489,14 @@ pub enum ExclusionKind {
     ManifestOrPadding,
     /// Asset metadata (EXIF/XMP/IPTC-equivalent) per spec §9.2.6.
     AssetMetadata,
+    /// A container-level length field whose value necessarily changes when the
+    /// C2PA Manifest Store is embedded (e.g. the GLB header `length`, bytes
+    /// 8-11, or the Matroska `Segment` and `Attachments` Element Data Sizes).
+    /// Unlike the other kinds, which only describe what a claim
+    /// generator *may* exclude, ranges of this kind are a format requirement:
+    /// box-hash generation always excludes them.
+    #[cfg(any(feature = "unstable_glb", feature = "unstable_matroska"))]
+    ContainerLength,
 }
 
 /// A box-relative byte range a format handler has determined is safe to
@@ -556,6 +564,36 @@ pub trait AssetBoxHash {
     /// information. If the C2PA manifest isn't present yet, include a placeholder
     /// entry at the location it would occupy once written.
     fn get_box_map(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<BoxMap>>;
+
+    /// Whether this format's hard binding must be a `c2pa.hash.boxes`
+    /// assertion (rather than the default `c2pa.hash.data`) when the SDK
+    /// generates the binding automatically during signing.
+    ///
+    /// Defaults to `false`; formats whose specification mandates box hashing
+    /// (e.g. GLB, Matroska) return `true`.
+    #[cfg(any(feature = "unstable_glb", feature = "unstable_matroska"))]
+    fn requires_box_hash(&self) -> bool {
+        false
+    }
+
+    /// For formats where embedding a manifest changes bytes that the box hash
+    /// covers (e.g. Matroska, where the `SeekHead` gains a `Seek` entry and
+    /// an existing `Attachments` element may be relocated), writes `input` to
+    /// `output` in the layout it will have once a C2PA Manifest Store is
+    /// embedded, with a placeholder store, and returns `true`. The box hash is
+    /// then computed over `output`, and the final store replaces the
+    /// placeholder without changing any hashed byte.
+    ///
+    /// Returns `false`, writing nothing, when the format needs no preparation
+    /// (the default).
+    #[cfg(feature = "unstable_matroska")]
+    fn prepare_box_hash_stream(
+        &self,
+        _input: &mut dyn ReadSeek,
+        _output: &mut dyn ReadWriteSeek,
+    ) -> Result<bool> {
+        Ok(false)
+    }
 }
 
 /// Writes a remote manifest URL into an asset, so a reader can find the manifest
