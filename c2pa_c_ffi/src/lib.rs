@@ -10,6 +10,10 @@
 // specific language governing permissions and limitations under
 // each license.
 
+#![cfg_attr(not(test), deny(clippy::expect_used))]
+#![cfg_attr(not(test), deny(clippy::panic))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+
 /// This module exports a C2PA library
 pub use c2pa::{
     AsyncSigner, Builder, Error as C2paError, Reader, Result as C2paResult, Signer, SigningAlg,

@@ -620,12 +620,14 @@ pub unsafe extern "C" fn c2pa_settings_set_value(
     // Convert to appropriate type and set value
     let result = match parsed_value {
         serde_json::Value::Bool(b) => settings.set_value(&path, b),
-        serde_json::Value::Number(n) if n.is_i64() => {
-            settings.set_value(&path, n.as_i64().unwrap())
-        }
-        serde_json::Value::Number(n) if n.is_f64() => {
-            settings.set_value(&path, n.as_f64().unwrap())
-        }
+        serde_json::Value::Number(n) if n.is_i64() => n
+            .as_i64()
+            .ok_or_else(|| c2pa::Error::BadParam("Invalid number format".to_string()))
+            .and_then(|value| settings.set_value(&path, value)),
+        serde_json::Value::Number(n) if n.is_f64() => n
+            .as_f64()
+            .ok_or_else(|| c2pa::Error::BadParam("Invalid number format".to_string()))
+            .and_then(|value| settings.set_value(&path, value)),
         serde_json::Value::Number(_) => {
             Err(c2pa::Error::BadParam("Invalid number format".to_string()))
         }

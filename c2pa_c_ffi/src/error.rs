@@ -171,7 +171,7 @@ impl From<C2paError> for cimpl::Error {
         let message = err.to_string();
         let (variant, details) = message
             .split_once(": ")
-            .expect("C2paError always formats as 'Variant: message'");
+            .unwrap_or(("Other", message.as_str()));
         Self::new(variant, details)
     }
 }
