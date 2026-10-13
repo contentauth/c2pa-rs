@@ -23,8 +23,11 @@
 //! * The C2PA Manifest Store is the `TagBinary` of a `SimpleTag` whose
 //!   `TagName` is `C2PA_MANIFEST`, in a `Tag` whose `Targets` is empty (the
 //!   whole Segment): the "C2PA `Tag`". It is a child of the `Segment`'s single
-//!   `Tags` element, which has an 8-octet Element Data Size, no `CRC-32`, and
-//!   is referenced by a `Seek` of the first `SeekHead`. This writer places that
+//!   `Tags` element, which has an 8-octet Element Data Size and is referenced
+//!   by a `Seek` of the first `SeekHead`. That `Tags` element starts with a
+//!   `CRC-32` when one of the source `Tags` elements did (or, when there was
+//!   none, when the other Top-Level Elements carry one), recomputed whenever
+//!   the store changes. This writer places that
 //!   `Tags` element last (RFC 9559, section 25.3.2): a `Tags` element found
 //!   elsewhere is relocated to the end with its children byte for byte, and
 //!   replaced by a `Void` of the same size. Readers accept any position.
@@ -33,7 +36,8 @@
 //!   Top-Level Element named by its Element ID in uppercase hex, and, in place
 //!   of the `Tags` element holding the C2PA `Tag`, a 12-byte `TAGh` box with
 //!   its size excluded followed by one box per child, the C2PA `Tag` being
-//!   `C2PA`. Other `Tag` elements are hashed.
+//!   `C2PA`. Other `Tag` elements are hashed. A `CRC-32` child is a `BF` box
+//!   whose 4-octet value is always excluded, since it covers the store.
 //!
 //! The EBML reader and writer are minimal and in-tree: only Element IDs and
 //! sizes are decoded, plus the few elements that carry Segment Positions
@@ -877,6 +881,71 @@ fn c2pa_tag(store: &[u8]) -> Result<Vec<u8>> {
     element(ID_TAG, &data)
 }
 
+/// Whether the first child of master element `e` is a 4-octet `CRC-32`.
+fn starts_with_crc(r: &mut dyn ReadSeek, e: &Elem) -> Result<bool> {
+    if e.data_len == 0 {
+        return Ok(false);
+    }
+    Ok(read_elem(r, e.data_offset(), e.end()).is_ok_and(|c| c.id == ID_CRC32 && c.data_len == 4))
+}
+
+/// Whether the rewritten `Tags` element gets a `CRC-32`: when any source `Tags`
+/// element had one, or, without a source `Tags` element, when the other
+/// Top-Level Elements carry one (RFC 9559, section 6.2), so the asset stays
+/// consistent with how it was muxed.
+fn tags_crc_wanted(r: &mut dyn ReadSeek, layout: &Layout, tags_elems: &[Elem]) -> Result<bool> {
+    if !tags_elems.is_empty() {
+        for t in tags_elems {
+            if starts_with_crc(r, t)? {
+                return Ok(true);
+            }
+        }
+        return Ok(false);
+    }
+    for e in layout.children.iter().filter(|e| {
+        matches!(
+            e.id,
+            ID_SEEKHEAD | ID_INFO | ID_TRACKS | ID_CHAPTERS | ID_CUES | ID_ATTACHMENTS
+        )
+    }) {
+        if starts_with_crc(r, e)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The bytes `pieces` produce.
+fn materialize(r: &mut dyn ReadSeek, pieces: &[Piece]) -> Result<Vec<u8>> {
+    let mut out = Vec::with_capacity(pieces_len(pieces) as usize);
+    for p in pieces {
+        match p {
+            Piece::Copy { start, len } => out.extend(read_bytes_unbounded(r, *start, *len)?),
+            Piece::Bytes(b) => out.extend_from_slice(b),
+            Piece::Zeros(n) => out.resize(out.len() + *n as usize, 0),
+        }
+    }
+    Ok(out)
+}
+
+/// A `CRC-32` element over `data`.
+fn crc_element(data: &[u8]) -> Result<Vec<u8>> {
+    element(ID_CRC32, &crc32(data).to_le_bytes())
+}
+
+/// Recomputes the leading `CRC-32` of the `Tags` element `tags`, if it has
+/// one, after its content changed in place.
+fn refresh_tags_crc(s: &mut dyn ReadWriteSeek, tags: &Elem) -> Result<()> {
+    let first = read_elem(s, tags.data_offset(), tags.end())?;
+    if first.id != ID_CRC32 || first.data_len != 4 {
+        return Ok(());
+    }
+    let data = read_bytes_unbounded(s, first.end(), tags.end() - first.end())?;
+    s.seek(SeekFrom::Start(first.data_offset()))?;
+    s.write_all(&crc32(&data).to_le_bytes())?;
+    Ok(())
+}
+
 /// The EBML Header with `EBMLMaxSizeLength` set to 8 when it has another value.
 fn normalized_ebml_header(r: &mut dyn ReadSeek, ebml: &Elem) -> Result<Vec<u8>> {
     let raw = read_bytes(r, ebml.offset, ebml.total_len())?;
@@ -930,9 +999,10 @@ fn plan_write(r: &mut dyn ReadSeek, layout: &Layout, store: &[u8]) -> Result<Pla
         .collect();
 
     // Children of the new Tags element: those of every existing Tags element
-    // in order, without CRC-32 elements. A single existing C2PA Tag is
-    // replaced in place; otherwise any C2PA Tags are dropped and the new one
-    // is appended.
+    // in order, without their CRC-32 elements (a new one is computed below). A
+    // single existing C2PA Tag is replaced in place; otherwise any C2PA Tags
+    // are dropped and the new one is appended.
+    let keep_crc = tags_crc_wanted(r, layout, &tags_elems)?;
     let mut tags_children_pieces: Vec<Option<Piece>> = Vec::new();
     let mut c2pa_slots = Vec::new();
     for t in &tags_elems {
@@ -975,10 +1045,15 @@ fn plan_write(r: &mut dyn ReadSeek, layout: &Layout, store: &[u8]) -> Result<Pla
     let new_tags = if children.is_empty() {
         None
     } else {
+        let mut body = Vec::new();
+        if keep_crc {
+            body.push(Piece::Bytes(crc_element(&materialize(r, &children)?)?));
+        }
+        body.extend(children);
         let mut header = id_bytes(ID_TAGS);
-        header.extend(encode_size(pieces_len(&children), WIDE_SIZE_LEN)?);
+        header.extend(encode_size(pieces_len(&body), WIDE_SIZE_LEN)?);
         let mut pieces = vec![Piece::Bytes(header)];
-        pieces.extend(children);
+        pieces.extend(body);
         Some(pieces)
     };
 
@@ -1426,9 +1501,9 @@ impl C2paWriter for MatroskaIO {
 
 impl AssetPatch for MatroskaIO {
     /// Overwrites the `TagBinary` of the C2PA `Tag` in place when the store
-    /// has the same size.
+    /// has the same size, and recomputes the `Tags` `CRC-32` if there is one.
     fn patch_c2pa(&self, stream: &mut dyn ReadWriteSeek, store_bytes: &[u8]) -> Result<()> {
-        let (_, bin, _) = locate_c2pa(stream)?.ok_or(Error::JumbfNotFound)?;
+        let (_, bin, tags) = locate_c2pa(stream)?.ok_or(Error::JumbfNotFound)?;
         if bin.data_len != store_bytes.len() as u64 {
             return Err(Error::InvalidAsset(
                 "patch_c2pa: store size does not match existing Matroska C2PA Tag".into(),
@@ -1436,8 +1511,21 @@ impl AssetPatch for MatroskaIO {
         }
         stream.seek(SeekFrom::Start(bin.data_offset()))?;
         stream.write_all(store_bytes)?;
-        Ok(())
+        refresh_tags_crc(stream, &tags)
     }
+}
+
+/// The value of a `CRC-32` element in the `Tags` element holding the C2PA
+/// `Tag`: it covers the store, so like the element sizes it necessarily
+/// changes when the store is embedded, and is always excluded. It reuses
+/// [`ExclusionKind::ContainerLength`] for that "always excluded" semantics,
+/// although it is a checksum rather than a length.
+fn tags_crc_exclusion(crc: &Elem) -> Vec<AllowedExclusion> {
+    vec![AllowedExclusion {
+        start: crc.header_len,
+        length: crc.data_len,
+        kind: ExclusionKind::ContainerLength,
+    }]
 }
 
 fn container_length_exclusion() -> Vec<AllowedExclusion> {
@@ -1514,15 +1602,20 @@ impl AssetBoxHash for MatroskaIO {
                 } else {
                     let bm = BoxMap::new(vec![element_box_name(c.id)], c.offset, c.total_len());
                     // Other tags are asset metadata: a claim generator may
-                    // exclude their Element Data.
-                    maps.push(if c.id == ID_TAG {
-                        bm.with_allowed_exclusions(vec![AllowedExclusion::after_header(
-                            c.header_len,
-                            c.total_len(),
-                        )])
-                    } else {
-                        bm
-                    });
+                    // exclude their Element Data. A leading CRC-32's value
+                    // covers the store and is always excluded.
+                    maps.push(
+                        if c.id == ID_CRC32 && c.data_len == 4 && c.offset == e.data_offset() {
+                            bm.with_allowed_exclusions(tags_crc_exclusion(&c))
+                        } else if c.id == ID_TAG {
+                            bm.with_allowed_exclusions(vec![AllowedExclusion::after_header(
+                                c.header_len,
+                                c.total_len(),
+                            )])
+                        } else {
+                            bm
+                        },
+                    );
                 }
             }
         }
@@ -1812,11 +1905,17 @@ mod tests {
             let out = write(src, &store);
             let l = layout(&out);
             // One Tags element, the last Top-Level Element, with an 8-octet
-            // size, no CRC-32, and the C2PA Tag as its last child.
+            // size, a leading CRC-32 exactly when the source Tags had one, and
+            // the C2PA Tag as its last child.
             let tags = the_tags(&out);
             assert_eq!(Some(&tags), l.children.last());
             assert_eq!(tags.size_len, 8);
-            let kids = tags_kids(&out, &tags);
+            let src_crc = starts_with_crc(&mut Cursor::new(src), &the_tags(src)).unwrap();
+            let mut kids = tags_kids(&out, &tags);
+            assert_eq!(kids[0].0.id == ID_CRC32, src_crc);
+            if src_crc {
+                kids.remove(0);
+            }
             assert!(kids.last().unwrap().1.is_some());
             assert!(kids.iter().all(|(c, _)| c.id != ID_CRC32));
             let (tag, _) = c2pa_tag_of(&out);
@@ -1881,9 +1980,74 @@ mod tests {
             out[..layout(&out).children[0].end() as usize],
             H264_CRC[..layout(H264_CRC).children[0].end() as usize]
         );
-        // The relocated Tags element loses its CRC-32; the old one is a Void.
-        assert_eq!(check_crcs(&out), 10);
+        // The relocated Tags element keeps a CRC-32, recomputed over its new
+        // content; the old one is a Void.
+        assert_eq!(check_crcs(&out), 11);
+        assert!(starts_with_crc(&mut Cursor::new(&out[..]), &the_tags(&out)).unwrap());
         check_positions(&out);
+    }
+
+    /// `H264_CRC` with its Tags element replaced by a Void of the same size:
+    /// CRC-32s on the other Top-Level Elements, no Tags.
+    fn crc_without_tags() -> Vec<u8> {
+        let mut b = H264_CRC.to_vec();
+        let t = the_tags(H264_CRC);
+        let void = materialize(
+            &mut Cursor::new(H264_CRC),
+            &void_pieces(t.total_len(), None).unwrap(),
+        )
+        .unwrap();
+        b[t.offset as usize..t.end() as usize].copy_from_slice(&void);
+        assert!(layout(&b).children.iter().all(|e| e.id != ID_TAGS));
+        b
+    }
+
+    #[test]
+    fn test_tags_crc_kept_only_when_the_asset_uses_crcs() {
+        // Source Tags with a CRC-32: kept and correct.
+        let out = write(H264_CRC, &fake_store(b"crc"));
+        assert!(starts_with_crc(&mut Cursor::new(&out[..]), &the_tags(&out)).unwrap());
+        assert_eq!(check_crcs(&out), 11);
+        // Source without any CRC-32: none added.
+        for src in [VP9_OPUS, OPUS] {
+            assert!(!starts_with_crc(&mut Cursor::new(src), &the_tags(src)).unwrap());
+            let out = write(src, &fake_store(b"x"));
+            assert!(!starts_with_crc(&mut Cursor::new(&out[..]), &the_tags(&out)).unwrap());
+        }
+        // No Tags at all, CRC-32s on the other Top-Level Elements: added.
+        let src = crc_without_tags();
+        let out = write(&src, &fake_store(b"x"));
+        assert!(starts_with_crc(&mut Cursor::new(&out[..]), &the_tags(&out)).unwrap());
+        check_crcs(&out);
+    }
+
+    #[test]
+    fn test_tags_crc_recomputed_on_patch() {
+        let mut s = Cursor::new(write(H264_CRC, &fake_store(b"aaaa")));
+        let before = check_crcs(s.get_ref());
+        io().patch_c2pa(&mut s, &fake_store(b"bbbb")).unwrap();
+        assert_eq!(io().read_c2pa(&mut s).unwrap(), fake_store(b"bbbb"));
+        assert_eq!(check_crcs(s.get_ref()), before);
+    }
+
+    #[test]
+    fn test_tags_crc_box_excluded() {
+        let out = write(H264_CRC, &fake_store(b"crc"));
+        let tags = the_tags(&out);
+        let maps = io().get_box_map(&mut Cursor::new(&out)).unwrap();
+        let i = maps.iter().position(|m| m.names == ["TAGh"]).unwrap();
+        let crc = &maps[i + 1];
+        assert_eq!(crc.names, ["BF"]);
+        assert_eq!(crc.range_start, tags.data_offset());
+        assert_eq!(crc.range_len, 6);
+        assert_eq!(
+            crc.allowed_exclusions,
+            vec![AllowedExclusion {
+                start: 2,
+                length: 4,
+                kind: ExclusionKind::ContainerLength,
+            }]
+        );
     }
 
     #[test]
@@ -1896,15 +2060,21 @@ mod tests {
             let (tag_b, _) = c2pa_tag_of(&b);
             assert_eq!(tag_a.elem.offset, tag_b.elem.offset);
             // Identical bytes up to the C2PA Tag, except the Segment and Tags
-            // sizes.
+            // sizes and the Tags CRC-32 value.
             let seg_size = la.segment.offset as usize + 4..la.segment.offset as usize + 12;
             let t = tags_a.offset as usize;
             let tags_size = t + 4..t + 12;
+            let crc_value = t + 14..t + 18;
+            let has_crc = starts_with_crc(&mut Cursor::new(&a[..]), &tags_a).unwrap();
             for i in 0..tag_a.elem.offset as usize {
-                if !seg_size.contains(&i) && !tags_size.contains(&i) {
+                if !seg_size.contains(&i)
+                    && !tags_size.contains(&i)
+                    && !(has_crc && crc_value.contains(&i))
+                {
                     assert_eq!(a[i], b[i], "byte {i} changed");
                 }
             }
+            check_crcs(&b);
             assert_eq!(lb.segment.end(), b.len() as u64);
             assert_eq!(
                 io().read_c2pa(&mut Cursor::new(&b)).unwrap(),
@@ -1925,16 +2095,16 @@ mod tests {
                 io().read_c2pa(&mut Cursor::new(&out)),
                 Err(Error::JumbfNotFound)
             ));
-            // The other tags stay, in the last Top-Level Element.
+            // The other tags stay, in the last Top-Level Element, with the
+            // source's CRC-32 choice.
             let tags = the_tags(&out);
             assert_eq!(Some(&tags), layout(&out).children.last());
+            let src_tags = the_tags(src);
             assert_eq!(
                 tags_kids(&out, &tags).len(),
-                tags_kids(src, &the_tags(src))
-                    .iter()
-                    .filter(|(c, _)| c.id != ID_CRC32)
-                    .count()
+                tags_kids(src, &src_tags).len()
             );
+            check_crcs(&out);
             check_positions(&out);
             // Signing again gives the same layout as signing the original.
             assert_eq!(
@@ -2875,6 +3045,29 @@ mod tests {
         for src in [synthetic(true, 8, None), synthetic(false, 4, Some(4))] {
             let signed = sign(&src, "video/webm");
             assert_valid(&read_json(&signed, "video/webm").unwrap());
+        }
+    }
+
+    #[test]
+    fn test_e2e_tags_crc() {
+        for (format, src) in [
+            ("video/matroska", H264_CRC.to_vec()),
+            ("video/matroska", crc_without_tags()),
+        ] {
+            let signed = sign(&src, format);
+            assert_valid(&read_json(&signed, format).unwrap());
+            assert!(starts_with_crc(&mut Cursor::new(&signed[..]), &the_tags(&signed)).unwrap());
+            check_crcs(&signed);
+            // Re-signing replaces the manifest and recomputes the CRC-32.
+            let resigned = sign(&signed, format);
+            assert_valid(&read_json(&resigned, format).unwrap());
+            check_crcs(&resigned);
+            // The CRC-32 value is outside the hard binding: changing it alone
+            // keeps the manifest valid (it is integrity-only).
+            let mut t = signed.clone();
+            let crc_at = the_tags(&signed).data_offset() as usize + 2;
+            t[crc_at] ^= 0xff;
+            assert_valid(&read_json(&t, format).unwrap());
         }
     }
 

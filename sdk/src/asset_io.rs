@@ -491,7 +491,9 @@ pub enum ExclusionKind {
     AssetMetadata,
     /// A container-level length field whose value necessarily changes when the
     /// C2PA Manifest Store is embedded (e.g. the GLB header `length`, bytes
-    /// 8-11, or the Matroska `Segment` and `Attachments` Element Data Sizes).
+    /// 8-11, or the Matroska `Segment` and `Tags` Element Data Sizes). The
+    /// Matroska handler also uses it for the `CRC-32` value of the `Tags`
+    /// element holding the manifest, a checksum that covers the store.
     /// Unlike the other kinds, which only describe what a claim
     /// generator *may* exclude, ranges of this kind are a format requirement:
     /// box-hash generation always excludes them.
