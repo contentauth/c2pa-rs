@@ -573,13 +573,11 @@ The `Context` API replaces the older thread-local `Settings` pattern. If you're 
 
 **Old approach (removed):**
 ```rust
-use c2pa::{Context, Reader};
+use c2pa::{Reader, Settings};
 
-// Configure settings explicitly for this operation.
-let context = Context::new()
-    .with_settings(include_str!("settings.toml"))?;
-let reader = Reader::from_context(context)
-    .with_stream("image/jpeg", stream)?;
+// This updates thread-local settings that affect subsequent operations.
+Settings::from_toml(include_str!("settings.toml"))?;
+let reader = Reader::from_stream("image/jpeg", stream)?;
 ```
 
 **New approach with `Context`:**
