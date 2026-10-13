@@ -3454,6 +3454,54 @@ mod tests {
     }
 
     #[test]
+    fn test_reader_with_stream_cawg_identity() {
+        let builder = unsafe { c2pa_context_builder_new() };
+        assert!(!builder.is_null());
+
+        let settings = unsafe { c2pa_settings_new() };
+        assert!(!settings.is_null());
+        let format = CString::new("toml").unwrap();
+        let settings_data = CString::new(include_str!(
+            "../tests/fixtures/trust/cawg_test_settings.toml"
+        ))
+        .unwrap();
+        assert_eq!(
+            unsafe {
+                c2pa_settings_update_from_string(settings, settings_data.as_ptr(), format.as_ptr())
+            },
+            0
+        );
+        assert_eq!(
+            unsafe { c2pa_context_builder_set_settings(builder, settings) },
+            0
+        );
+
+        let context = unsafe { c2pa_context_builder_build(builder) };
+        assert!(!context.is_null());
+        let reader = unsafe { c2pa_reader_from_context(context) };
+        assert!(!reader.is_null());
+
+        let image = include_bytes!("../../sdk/tests/fixtures/C_with_CAWG_data.jpg");
+        let mut stream = TestStream::new(image.to_vec());
+        let format = CString::new("image/jpeg").unwrap();
+        let reader = unsafe { c2pa_reader_with_stream(reader, format.as_ptr(), stream.as_ptr()) };
+        assert!(!reader.is_null());
+
+        let json = unsafe { c2pa_reader_json(reader) };
+        assert!(!json.is_null());
+        let json_str = unsafe { CStr::from_ptr(json) }.to_string_lossy();
+        assert!(json_str.contains("cawg.identity"));
+        assert!(json_str.contains("cawg.identity.well-formed"));
+
+        unsafe {
+            assert_eq!(c2pa_free(json as *const c_void), 0);
+            assert_eq!(c2pa_free(settings as *const c_void), 0);
+            assert_eq!(c2pa_free(context as *const c_void), 0);
+            assert_eq!(c2pa_free(reader as *const c_void), 0);
+        }
+    }
+
+    #[test]
     fn test_c2pa_reader_with_stream_from_context() {
         // Create a context with custom settings
         let builder = unsafe { c2pa_context_builder_new() };
