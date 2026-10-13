@@ -1743,18 +1743,23 @@ impl Builder {
         // add all ingredients to the claim
         // We use a map to track the ingredient IDs and their hashed URIs
         let mut ingredient_map = HashMap::new();
+        // Non-inception actions recovered from any manifest an ingredient's chain compaction
+        // dropped (see `IngredientsSettings::compact_parent_of_chain`), to be carried forward
+        // onto this manifest's own actions assertion below.
+        let mut flattened_actions: Vec<Action> = Vec::new();
 
         for ingredient in &definition.ingredients {
             // use the label if it exists and is not empty, otherwise use the instance_id
             let id = ingredient.effective_id_internal();
 
             // add it to the claim
-            let uri = ingredient.add_to_claim(
+            let (uri, ingredient_flattened_actions) = ingredient.add_to_claim(
                 &mut claim,
                 definition.redactions.clone(),
                 Some(&self.resources),
                 &self.context,
             )?;
+            flattened_actions.extend(ingredient_flattened_actions);
             if !id.is_empty() {
                 ingredient_map.insert(id, (ingredient.relationship(), uri));
             }
@@ -1825,7 +1830,12 @@ impl Builder {
             };
         }
 
-        self.finalize_actions(&mut claim, &ingredient_map, pending_actions)?;
+        self.finalize_actions(
+            &mut claim,
+            &ingredient_map,
+            pending_actions,
+            &flattened_actions,
+        )?;
 
         Ok(claim)
     }
@@ -2218,6 +2228,7 @@ impl Builder {
         claim: &mut Claim,
         ingredient_map: &HashMap<String, (&Relationship, HashedUri)>,
         mut pending: Vec<(usize, bool, Actions)>,
+        flattened_actions: &[Action],
     ) -> Result<()> {
         let target = Self::select_inception_target(&pending);
         Self::validate_declared_inception(&pending, target)?;
@@ -2230,6 +2241,7 @@ impl Builder {
             None => Actions::new(),
         };
 
+        designated.actions.extend(flattened_actions.iter().cloned());
         self.merge_actions_settings(&mut designated)?;
         self.insert_auto_inception_action(&mut designated, ingredient_map)?;
         self.insert_auto_placed_actions(&mut designated, ingredient_map)?;
@@ -2427,7 +2439,7 @@ impl Builder {
                 ingredient.with_stream(format, stream, &self.context)?
             };
 
-            let uri = ingredient.add_to_claim(
+            let (uri, parent_flattened_actions) = ingredient.add_to_claim(
                 claim,
                 self.definition.redactions.clone(),
                 Some(&self.resources),
@@ -2461,6 +2473,9 @@ impl Builder {
             if let Some(existing) = claim.created_action_assertions().first() {
                 let mut actions = Actions::from_assertion(existing.assertion())?;
                 actions.actions.insert(0, opened);
+                actions
+                    .actions
+                    .extend(parent_flattened_actions.iter().cloned());
                 let is_sole_action_context = claim.action_assertions().len() == 1;
                 self.maybe_set_all_actions_included(&mut actions, is_sole_action_context);
                 claim.update_assertion(
@@ -2470,6 +2485,9 @@ impl Builder {
                 )?;
             } else {
                 let mut actions = Actions::new().add_action(opened);
+                actions
+                    .actions
+                    .extend(parent_flattened_actions.iter().cloned());
                 self.maybe_set_all_actions_included(
                     &mut actions,
                     claim.action_assertions().is_empty(),
@@ -7376,6 +7394,173 @@ mod tests {
             parent2.assertions().len(),
             1,
             "ingredient 2 should have CreativeWork redacted"
+        );
+    }
+
+    /// Repro / regression test for CAI-13657 / CAI-13477: on every PDF incremental save, T5
+    /// re-parents the new manifest onto only the previous save's output (via `parentOf`) -- it
+    /// never touches earlier saves directly. Without compaction, `Store::load_ingredient_to_claim`
+    /// re-embeds every claim already present in the ingredient's store, so the ancestor chain
+    /// deepens by one manifest per save instead of staying bounded to origin + current. With
+    /// `builder.ingredients.compact_parent_of_chain` enabled, only the chain's origin manifest is
+    /// kept as the embedded parent regardless of `CHAIN_DEPTH`. Bump `CHAIN_DEPTH` to simulate
+    /// more or fewer incremental saves.
+    const CHAIN_DEPTH: usize = 5;
+
+    /// Signs `CHAIN_DEPTH` incremental saves in a row, each re-parenting only onto the
+    /// immediately previous save's output -- exactly as a real incremental-save flow does, never
+    /// reaching further back into history itself. Returns the final asset bytes, the number of
+    /// manifests physically embedded in its store, and the origin (save 0) manifest's label.
+    fn run_incremental_save_chain(compact: bool) -> (Cursor<Vec<u8>>, usize, String) {
+        let signer = test_signer(SigningAlg::Ps256);
+
+        let settings_json = if compact {
+            r#"{"builder": {"ingredients": {"compact_parent_of_chain": true}}}"#
+        } else {
+            "{}"
+        };
+        let context = std::sync::Arc::new(Context::new().with_settings(settings_json).unwrap());
+
+        // Save 0 (origin): sign a fresh manifest onto a clean asset with no prior manifest.
+        let mut current = Cursor::new(Vec::new());
+        let mut origin_builder = Builder {
+            definition: ManifestDefinition {
+                claim_version: Some(2),
+                title: Some("Save 0 (origin)".to_string()),
+                ..Default::default()
+            },
+            ..Builder::from_shared_context(&context)
+        };
+        let created_action =
+            Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty);
+        origin_builder
+            .add_assertion(Actions::LABEL, &Actions::new().add_action(created_action))
+            .unwrap();
+        origin_builder
+            .sign(
+                signer.as_ref(),
+                "image/jpeg",
+                &mut Cursor::new(TEST_IMAGE_CLEAN),
+                &mut current,
+            )
+            .unwrap();
+
+        current.set_position(0);
+        let origin_label = Reader::from_stream("jpeg", &mut current)
+            .expect("read origin")
+            .active_label()
+            .expect("origin manifest label")
+            .to_owned();
+
+        for i in 1..=CHAIN_DEPTH {
+            let mut save_builder = Builder {
+                definition: ManifestDefinition {
+                    claim_version: Some(2),
+                    title: Some(format!("Save {i}")),
+                    ..Default::default()
+                },
+                ..Builder::from_shared_context(&context)
+            };
+            // Edit intent auto-adds the required `c2pa.opened` action tied to the parentOf
+            // ingredient below -- exactly what a real incremental save records. The explicit
+            // `c2pa.edited` action stands in for whatever real edit this save represents, so we
+            // can verify it survives compaction (flattened onto later manifests) rather than
+            // vanishing along with the manifest that recorded it.
+            save_builder.set_intent(BuilderIntent::Edit);
+            save_builder
+                .add_assertion(
+                    Actions::LABEL,
+                    &Actions::new().add_action(Action::new(c2pa_action::EDITED)),
+                )
+                .unwrap();
+
+            current.set_position(0);
+            save_builder
+                .add_ingredient_from_stream(
+                    json!({ "title": format!("Save {}", i - 1), "relationship": "parentOf" })
+                        .to_string(),
+                    "image/jpeg",
+                    &mut current,
+                )
+                .unwrap();
+
+            current.set_position(0);
+            let mut next = Cursor::new(Vec::new());
+            save_builder
+                .sign(signer.as_ref(), "image/jpeg", &mut current, &mut next)
+                .unwrap();
+            current = next;
+        }
+
+        current.set_position(0);
+        let reader = Reader::from_stream("jpeg", &mut current).expect("read final chained asset");
+        let manifest_count = reader.manifests().len();
+
+        current.set_position(0);
+        (current, manifest_count, origin_label)
+    }
+
+    #[test]
+    fn test_repeated_parent_of_chaining_grows_manifest_store_unbounded() {
+        let (_, manifest_count, _) = run_incremental_save_chain(false);
+
+        // BUG (CAI-13657 / CAI-13477): without compaction, the store holds CHAIN_DEPTH + 1
+        // manifests (origin + one per save) because the full ancestor chain is re-embedded on
+        // every save, instead of staying bounded to origin + current (2 manifests) regardless of
+        // CHAIN_DEPTH.
+        assert_eq!(
+            manifest_count,
+            CHAIN_DEPTH + 1,
+            "manifest store grew unbounded with save count instead of staying compact"
+        );
+    }
+
+    #[test]
+    fn test_repeated_parent_of_chaining_stays_bounded_with_compaction() {
+        let (mut output, manifest_count, origin_label) = run_incremental_save_chain(true);
+
+        // FIX (CAI-13657 / CAI-13477): with `compact_parent_of_chain` enabled, the store stays
+        // bounded to exactly the origin manifest plus the current one, no matter how many saves
+        // happened.
+        assert_eq!(
+            manifest_count, 2,
+            "manifest store should stay bounded to origin + current when compaction is enabled"
+        );
+
+        let reader = Reader::from_stream("jpeg", &mut output).expect("read compacted asset");
+        let active = reader.active_manifest().expect("active manifest");
+        let parent = active
+            .ingredients()
+            .iter()
+            .find(|i| i.relationship() == &Relationship::ParentOf)
+            .expect("compacted manifest should still have a parentOf ingredient");
+        assert_eq!(
+            parent.active_manifest(),
+            Some(origin_label.as_str()),
+            "compacted parentOf ingredient should point at the chain's origin, not the \
+             immediately previous save"
+        );
+
+        // Every save's `c2pa.edited` action should still be traceable on the final manifest,
+        // even though the manifests that originally recorded them (saves 1..CHAIN_DEPTH - 1)
+        // were dropped -- their non-inception actions get flattened forward on each compaction.
+        let edited_count: usize = active
+            .assertions()
+            .iter()
+            .filter(|assertion| assertion.label().starts_with(Actions::LABEL))
+            .map(|assertion| {
+                assertion
+                    .to_assertion::<Actions>()
+                    .expect("actions assertion should deserialize")
+                    .actions()
+                    .iter()
+                    .filter(|action| action.action() == c2pa_action::EDITED)
+                    .count()
+            })
+            .sum();
+        assert_eq!(
+            edited_count, CHAIN_DEPTH,
+            "every save's c2pa.edited action should survive compaction on the final manifest"
         );
     }
 
