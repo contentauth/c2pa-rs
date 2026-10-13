@@ -380,7 +380,9 @@ pub enum BuilderIntent {
 ///
 /// ```
 /// # use c2pa::Result;
-/// use c2pa::Builder;
+/// use std::io::Cursor;
+///
+/// use c2pa::{Builder, Context};
 /// use serde::Serialize;
 ///
 /// #[derive(Serialize)]
@@ -389,8 +391,15 @@ pub enum BuilderIntent {
 /// }
 ///
 /// # fn main() -> Result<()> {
-/// let mut builder = Builder::default().with_definition(r#"{"title": "Test"}"#)?;
+/// let context =
+///     Context::new().with_settings(include_str!("../tests/fixtures/test_settings.toml"))?;
+/// let mut builder = Builder::from_context(context).with_definition(r#"{"title": "Test"}"#)?;
 /// builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
+///
+/// // Embed a signed manifest into the destination stream.
+/// let mut source = std::fs::File::open("tests/fixtures/C.jpg")?;
+/// let mut dest = Cursor::new(Vec::new());
+/// let _c2pa_data = builder.save_to_stream("image/jpeg", &mut source, &mut dest)?;
 /// # Ok(())
 /// # }
 /// ```
