@@ -6238,7 +6238,6 @@ mod tests {
     }
 
     #[c2pa_test_async]
-    #[cfg(target_arch = "wasm32")]
     async fn test_builder_box_hashed_embeddable() {
         use crate::{
             asset_handlers::jpeg_io::JpegIO,
@@ -6266,6 +6265,8 @@ mod tests {
             .get_box_hashed_embeddable_manifest_async(&signer, &context)
             .await
             .unwrap();
+        let manifest_bytes =
+            Store::get_composed_manifest(&manifest_bytes, "image/jpeg", &context).unwrap();
 
         // insert manifest into output asset
         let jpeg_io = JpegIO {};
@@ -6293,12 +6294,15 @@ mod tests {
 
         out_stream.rewind().unwrap();
 
-        let _reader = Reader::default()
+        let reader = Reader::default()
             .with_stream_async("image/jpeg", out_stream)
             .await
             .unwrap();
-        //println!("{reader}");
-        assert_eq!(_reader.validation_status(), None);
+        assert_eq!(
+            reader.active_manifest().unwrap().title(),
+            Some("Test_Manifest")
+        );
+        assert_eq!(reader.validation_status(), None);
     }
 
     #[cfg(feature = "file_io")]
