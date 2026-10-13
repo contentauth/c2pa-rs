@@ -51,7 +51,9 @@ use crate::{
 };
 use crate::{
     assertion::{Assertion, AssertionData},
-    assertions::{labels, Action, Actions, CollectionHash, DataHash, Ingredient, Relationship, Uuid},
+    assertions::{
+        labels, Action, Actions, CollectionHash, DataHash, Ingredient, Relationship, Uuid,
+    },
     asset_io::ReadWriteSeek,
     claim::{AssertionStoreJsonFormat, Claim, ClaimAssertion, ClaimAssetData},
     context::Context,
