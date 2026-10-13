@@ -5965,9 +5965,7 @@ mod tests {
         let reader = Reader::default().with_stream("image/jpeg", output_stream)?;
         println!("{reader}");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
-        // 7. Workflow complete. Reader::from_stream loads the asset but the manifest assertion
-        // list may not expose DataHash the same way; the full embed-then-read flow is covered
-        // by test_builder_data_hashed_embeddable which uses write_jpeg_placeholder_stream the same way.
+        // 7. The embedded manifest validates successfully after reading the completed asset.
         assert!(!signed_manifest.is_empty());
 
         Ok(())
