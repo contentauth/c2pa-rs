@@ -605,20 +605,32 @@ pub struct Verify {
     /// Whether to fetch the certificates OCSP status during validation.
     ///
     /// Revocation status is checked in the following order:
-    /// 1. If [`Verify::ocsp_fetch_should_override`] is enabled, it fetches a new OCSP status
-    /// 2. Otherwise, the OCSP staple stored in the COSE claim of the manifest
-    /// 3. Otherwise if `ocsp_fetch` is enabled, it fetches a new OCSP status
-    /// 4. Otherwise if `ocsp_fetch` is disabled, it checks `CertificateStatus` assertions
-    ///
-    /// The default value is false.
-    pub ocsp_fetch: bool,
-    /// Whether to always fetch a live OCSP response during validation, overriding any
-    /// stapled OCSP response in the COSE claim or [`CertificateStatus`] assertions.
+    /// 1. If [`Verify::ocsp_fetch_should_override`] is enabled, it fetches a new OCSP status. If the
+    ///    live fetch does not produce a definitive status (`notRevoked` or `revoked`), validation
+    ///    falls back to the remaining steps below.
+    /// 2. If `builder.certificate_status_should_override` is enabled, it checks [`CertificateStatus`]
+    ///    assertions.
+    /// 3. Otherwise, it checks the OCSP staple stored in the COSE claim (`rVals.ocspVals`) of the
+    ///    manifest.
+    /// 4. Otherwise, if `ocsp_fetch` is enabled, it fetches a new OCSP status.
+    /// 5. Otherwise, it checks [`CertificateStatus`] assertions.
     ///
     /// The default value is false.
     ///
     /// [`CertificateStatus`]: crate::assertions::CertificateStatus
-    #[serde(default)]
+    pub ocsp_fetch: bool,
+    /// Whether to always fetch a live OCSP response first during validation, before checking any
+    /// [`CertificateStatus`] assertions or stapled OCSP response in the COSE claim.
+    ///
+    /// Enabling this setting implies [`Verify::ocsp_fetch`] (you do not need to set both). It also
+    /// takes precedence over `builder.certificate_status_should_override`. If the live fetch fails
+    /// or does not produce a definitive revocation status (`notRevoked` or `revoked`), validation
+    /// falls back to the embedded [`CertificateStatus`] assertions and COSE OCSP staple before
+    /// reporting the OCSP responder as inaccessible.
+    ///
+    /// The default value is false.
+    ///
+    /// [`CertificateStatus`]: crate::assertions::CertificateStatus
     pub ocsp_fetch_should_override: bool,
     /// Whether to fetch remote manifests in the following scenarios:
     /// - Constructing a [`Reader`]
