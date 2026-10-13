@@ -25,13 +25,19 @@ The following table summarizes the supported media (asset) file formats. This in
 | `mp3`           | `audio/mpeg`                                                                    |
 | `mp4`           | `video/mp4`, `application/mp4` <br/>Fragmented MP4 (DASH) supported only for file-based operations from the Rust library. |
 | `mov`           | `video/quicktime`                                                               |
+| `otf`           | `font/otf` <br/>OpenType/TrueType (SFNT) fonts; see note below.                 |
 | `pdf`           | `application/pdf`                                                               |
 | `png`           | `image/png`                                                                     |
 | `svg`           | `image/svg+xml`                                                                 |
 | `tif`, `tiff`   | `image/tiff`                                                                    |
+| `ttf`           | `font/ttf` <br/>OpenType/TrueType (SFNT) fonts; see note below.                 |
 | `txt`           | `text/plain`                                                                    |
 | `wav`           | `audio/wav`                                                                     |
 | `webp`          | `image/webp`                                                                    |
+
+### Fonts
+
+The manifest is stored in a `C2PA` font table, and the font is bound to it with a general box hash (`c2pa.hash.boxes`) in which each table is a box, as the C2PA specification describes. The table directory, `head.checkSumAdjustment` and inter-table padding are not hashed, and the SDK recomputes the font's checksums after embedding. The specification marks the `C2PA` table layout as preliminary. Font collections (`.ttc`), WOFF and WOFF2 are not supported, and a remote manifest URI in the `C2PA` table is preserved but not used for reading.
 
 ## Experimental feature: Text formats
 

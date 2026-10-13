@@ -455,6 +455,10 @@ pub struct BoxMap {
     /// `c2pa.hash.boxes` assertion's own exclusions can be checked against it
     /// during verification.
     pub allowed_exclusions: Vec<AllowedExclusion>,
+    /// Absolute `(start, length)` byte ranges within this box that the format defines
+    /// as zero for hashing, whatever the asset contains there. For example, a font's
+    /// `head.checkSumAdjustment`, which changes whenever any table does.
+    pub hashed_as_zero: Vec<(u64, u64)>,
 }
 
 impl BoxMap {
@@ -466,7 +470,14 @@ impl BoxMap {
             range_start,
             range_len,
             allowed_exclusions: vec![],
+            hashed_as_zero: vec![],
         }
+    }
+
+    /// Attaches absolute byte ranges that are hashed as zero (see [`Self::hashed_as_zero`]).
+    pub fn with_hashed_as_zero(mut self, ranges: Vec<(u64, u64)>) -> Self {
+        self.hashed_as_zero = ranges;
+        self
     }
 
     /// Marks this region as excluded from hashing.
@@ -556,6 +567,12 @@ pub trait AssetBoxHash {
     /// information. If the C2PA manifest isn't present yet, include a placeholder
     /// entry at the location it would occupy once written.
     fn get_box_map(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<BoxMap>>;
+
+    /// Whether a general box hash is the only hard binding defined for this format, so
+    /// signing always uses one instead of a data hash. Fonts are an example.
+    fn requires_box_hash(&self) -> bool {
+        false
+    }
 }
 
 /// Writes a remote manifest URL into an asset, so a reader can find the manifest
@@ -1065,6 +1082,13 @@ fn sniff_container_from_stream<R: Read + Seek>(stream: &mut R) -> Option<&'stati
     // PNG: 89 50 4E 47 0D 0A 1A 0A
     if n >= 8 && buf[0..8] == [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] {
         return Some("png");
+    }
+
+    // OpenType / TrueType: SFNT version 1.0, `OTTO` (CFF outlines) or `true` (Apple).
+    if n >= 4
+        && (buf[0..4] == [0x00, 0x01, 0x00, 0x00] || &buf[0..4] == b"OTTO" || &buf[0..4] == b"true")
+    {
+        return Some("otf");
     }
 
     // GIF87a or GIF89a
