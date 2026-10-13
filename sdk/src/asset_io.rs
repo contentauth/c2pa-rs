@@ -489,6 +489,13 @@ pub enum ExclusionKind {
     ManifestOrPadding,
     /// Asset metadata (EXIF/XMP/IPTC-equivalent) per spec §9.2.6.
     AssetMetadata,
+    /// A container-level length field whose value necessarily changes when the
+    /// C2PA Manifest Store is embedded (e.g. the GLB header `length`, bytes
+    /// 8-11). Unlike the other kinds, which only describe what a claim
+    /// generator *may* exclude, ranges of this kind are a format requirement:
+    /// box-hash generation always excludes them.
+    #[cfg(feature = "unstable_glb")]
+    ContainerLength,
 }
 
 /// A box-relative byte range a format handler has determined is safe to
@@ -556,6 +563,17 @@ pub trait AssetBoxHash {
     /// information. If the C2PA manifest isn't present yet, include a placeholder
     /// entry at the location it would occupy once written.
     fn get_box_map(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<BoxMap>>;
+
+    /// Whether this format's hard binding must be a `c2pa.hash.boxes`
+    /// assertion (rather than the default `c2pa.hash.data`) when the SDK
+    /// generates the binding automatically during signing.
+    ///
+    /// Defaults to `false`; formats whose specification mandates box hashing
+    /// (e.g. GLB) return `true`.
+    #[cfg(feature = "unstable_glb")]
+    fn requires_box_hash(&self) -> bool {
+        false
+    }
 }
 
 /// Writes a remote manifest URL into an asset, so a reader can find the manifest
