@@ -26,18 +26,25 @@ use c2pa::{
     Builder as C2paBuilder, CallbackSigner, Context, ProgressPhase, Reader as C2paReader,
     Settings as C2paSettings, SigningAlg,
 };
+#[allow(unused_imports)] // Usage varies by feature flags and test/non-test builds
+use cimpl::{
+    box_tracked, bytes_or_return_int, bytes_or_return_null, cimpl_free, cstr_array_or_return_null,
+    cstr_option, cstr_or_return_int, cstr_or_return_null, deref_mut_option_or_return_int,
+    deref_mut_or_return, deref_mut_or_return_int, deref_mut_or_return_null, deref_or_return_false,
+    deref_or_return_int, deref_or_return_null, distinct_or_return_int, distinct_or_return_null,
+    ensure_trackable, option_to_c_string, out_bytes_or_return_int, ptr_or_return_int,
+    ptr_or_return_null, to_c_bytes, to_c_string, track_string_array, untrack_or_return_int,
+    untrack_or_return_null, untrack_owned_pair, Error as CimplError,
+};
 
-use crate::is_safe_buffer_size;
 #[cfg(test)]
 use crate::safe_slice_from_raw_parts;
-// Import macros and utilities from cimpl
-#[allow(unused_imports)] // Usage varies by feature flags and test/non-test builds
 use crate::{
-    box_tracked, bytes_or_return_int, bytes_or_return_null, c2pa_stream::C2paStream, cimpl_free,
-    cstr_or_return_int, cstr_or_return_null, deref_mut_option_or_return_int, deref_mut_or_return,
-    deref_mut_or_return_int, deref_mut_or_return_null, deref_or_return_int, deref_or_return_null,
-    error::Error, ok_or_return_int, ok_or_return_null, option_to_c_string, ptr_or_return_int,
-    signer_info::SignerInfo, to_c_bytes, to_c_string, untrack_owned_pair, CimplError,
+    c2pa_stream::C2paStream,
+    error::C2paError as Error,
+    is_safe_buffer_size,
+    macros::{ok_or_return_int, ok_or_return_null},
+    signer_info::SignerInfo,
 };
 
 // Work around limitations in cbindgen.
@@ -584,12 +591,14 @@ pub unsafe extern "C" fn c2pa_settings_set_value(
     // Convert to appropriate type and set value
     let result = match parsed_value {
         serde_json::Value::Bool(b) => settings.set_value(&path, b),
-        serde_json::Value::Number(n) if n.is_i64() => {
-            settings.set_value(&path, n.as_i64().unwrap())
-        }
-        serde_json::Value::Number(n) if n.is_f64() => {
-            settings.set_value(&path, n.as_f64().unwrap())
-        }
+        serde_json::Value::Number(n) if n.is_i64() => n
+            .as_i64()
+            .ok_or_else(|| c2pa::Error::BadParam("Invalid number format".to_string()))
+            .and_then(|value| settings.set_value(&path, value)),
+        serde_json::Value::Number(n) if n.is_f64() => n
+            .as_f64()
+            .ok_or_else(|| c2pa::Error::BadParam("Invalid number format".to_string()))
+            .and_then(|value| settings.set_value(&path, value)),
         serde_json::Value::Number(_) => {
             Err(c2pa::Error::BadParam("Invalid number format".to_string()))
         }
@@ -1436,6 +1445,59 @@ pub unsafe extern "C" fn c2pa_builder_set_remote_url(
     let mut builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
     let remote_url = cstr_or_return_int!(remote_url);
     builder.set_remote_url(&remote_url);
+    0 as c_int
+}
+
+/// Gets the builder's manifest label.
+///
+/// # Parameters
+/// * builder_ptr: pointer to a Builder. The builder is not consumed.
+/// * label_ptr: receives the label, or NULL if none is set.
+///
+/// # Returns
+/// 1 if a label is set, 0 if none, or -1 on error (see c2pa_error).
+///
+/// # Safety
+/// A label returned through `label_ptr` MUST be released by calling c2pa_free.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_label(
+    builder_ptr: *mut C2paBuilder,
+    label_ptr: *mut *mut c_char,
+) -> c_int {
+    ptr_or_return_int!(label_ptr);
+    *label_ptr = std::ptr::null_mut();
+    let builder = deref_or_return_int!(builder_ptr, C2paBuilder);
+    let Some(label) = builder.definition.label.as_deref() else {
+        return 0;
+    };
+    let label_c_string = to_c_string(label.to_owned());
+    if label_c_string.is_null() {
+        return -1;
+    }
+    *label_ptr = label_c_string;
+    1
+}
+
+/// Sets the manifest label to use for the Builder.
+///
+/// # Parameters
+/// * builder_ptr: pointer to a Builder. The builder is not consumed.
+/// * label: the label, copied. The caller may free it immediately after this call.
+///
+/// # Errors
+/// Returns -1 if there were errors, otherwise returns 0.
+/// The error string can be retrieved by calling c2pa_error.
+///
+/// # Safety
+/// Reads from a NULL-terminated C string.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_builder_set_label(
+    builder_ptr: *mut C2paBuilder,
+    label: *const c_char,
+) -> c_int {
+    let mut builder = deref_mut_or_return_int!(builder_ptr, C2paBuilder);
+    let label = cstr_or_return_int!(label);
+    builder.definition.label = Some(label);
     0 as c_int
 }
 
@@ -2300,7 +2362,7 @@ pub unsafe extern "C" fn c2pa_identity_signer_create(
     let referenced_assertions = cstr_array_or_return_null!(referenced_assertions);
     let roles = cstr_array_or_return_null!(roles);
 
-    ok_or_return_null!(crate::cimpl::ensure_trackable());
+    ok_or_return_null!(ensure_trackable());
 
     // Consume both signers, or none.
     let (c2pa_signer, identity_signer) = ok_or_return_null!(untrack_owned_pair::<C2paSigner>(
@@ -2609,7 +2671,7 @@ unsafe fn c2pa_mime_types_to_c_array(strs: Vec<String>, count: *mut usize) -> *c
     }
 
     let len = mime_ptrs.len();
-    let ptr = crate::cimpl::track_string_array(mime_ptrs);
+    let ptr = track_string_array(mime_ptrs);
     if ptr.is_null() {
         CimplError::other("could not track mime type array").set_last();
         *count = 0;
@@ -2850,9 +2912,8 @@ mod tests {
         assert!(checkout_exclusive::<C2paBuilder>(builder).is_ok());
         assert!(checkout_exclusive::<C2paSigner>(signer).is_ok());
         assert_eq!(unsafe { c2pa_free(source as *const c_void) }, 0);
-        assert_eq!(unsafe { c2pa_free(context as *const c_void) }, 0);
-        unsafe { c2pa_builder_free(builder) };
-        unsafe { c2pa_signer_free(signer) };
+        assert_eq!(unsafe { c2pa_free(builder as *const c_void) }, 0);
+        assert_eq!(unsafe { c2pa_free(signer as *const c_void) }, 0);
     }
 
     #[test]
@@ -2865,38 +2926,14 @@ mod tests {
 
         let (signer, builder) = setup_signer_and_builder_for_signing_tests();
 
-        let format = CString::new("image/jpeg").unwrap();
-        let mut manifest_bytes_ptr = std::ptr::null();
-        let _ = unsafe {
-            c2pa_builder_sign(
+        let result = unsafe {
+            c2pa_builder_set_intent(
                 builder,
-                format.as_ptr(),
-                source_stream.as_ptr(),
-                dest_stream.as_ptr(),
-                signer,
-                &mut manifest_bytes_ptr,
+                C2paBuilderIntent::Create,
+                C2paDigitalSourceType::DigitalCreation,
             )
         };
-        // let error = unsafe { c2pa_error() };
-        // let error = unsafe { CString::from_raw(error) };
-        // assert_eq!(error.to_str().unwrap(), "Other Invalid signing algorithm");
-        // assert_eq!(result, 65485);
-        unsafe {
-            c2pa_manifest_bytes_free(manifest_bytes_ptr);
-        }
-        unsafe { c2pa_builder_free(builder) };
-        unsafe { c2pa_signer_free(signer) };
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn builder_add_actions_and_sign() {
-        let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
-        let mut source_stream = TestStream::new(source_image.to_vec());
-        let dest_vec = Vec::new();
-        let mut dest_stream = TestStream::new(dest_vec);
-
-        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+        assert_eq!(result, 0);
 
         let action_json = CString::new(
             r#"{
@@ -2909,13 +2946,12 @@ mod tests {
         )
         .unwrap();
 
-        // multiple calls add multiple actions
         let result = unsafe { c2pa_builder_add_action(builder, action_json.as_ptr()) };
         assert_eq!(result, 0);
 
         let format = CString::new("image/jpeg").unwrap();
         let mut manifest_bytes_ptr = std::ptr::null();
-        let _ = unsafe {
+        let result = unsafe {
             c2pa_builder_sign(
                 builder,
                 format.as_ptr(),
@@ -2925,33 +2961,35 @@ mod tests {
                 &mut manifest_bytes_ptr,
             )
         };
+        assert!(
+            result > 0,
+            "signing failed: {:?}",
+            CimplError::last_message()
+        );
+        assert!(!manifest_bytes_ptr.is_null());
 
-        // Verify we can read the signed data back
         dest_stream.stream_mut().rewind().unwrap();
-
         let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), dest_stream.as_ptr()) };
-        if reader.is_null() {
-            if let Some(msg) = CimplError::last_message() {
-                panic!("Reader creation failed: {}", msg);
-            }
-        }
-        assert!(!reader.is_null());
-
+        assert!(
+            !reader.is_null(),
+            "reader creation failed: {:?}",
+            CimplError::last_message()
+        );
         let json = unsafe { c2pa_reader_json(reader) };
         assert!(!json.is_null());
         let json_str = unsafe { CStr::from_ptr(json) }.to_owned();
-        unsafe { c2pa_free(json as *const c_void) };
+        assert_eq!(unsafe { c2pa_free(json as *const c_void) }, 0);
         let json_content = json_str.to_str().unwrap();
-
         assert!(json_content.contains("manifest"));
+        assert!(json_content.contains("c2pa.created"));
         assert!(json_content.contains("com.example.test-action"));
 
         unsafe {
             c2pa_manifest_bytes_free(manifest_bytes_ptr);
-            c2pa_builder_free(builder);
-            c2pa_signer_free(signer);
             c2pa_reader_free(reader);
         }
+        unsafe { c2pa_builder_free(builder) };
+        unsafe { c2pa_signer_free(signer) };
     }
 
     #[test]
@@ -2998,7 +3036,6 @@ mod tests {
         assert!(!json.is_null());
 
         let json_str = unsafe { CStr::from_ptr(json) }.to_owned();
-
         unsafe { c2pa_free(json as *const c_void) };
         let json_content = json_str.to_str().unwrap();
 
@@ -3062,9 +3099,7 @@ mod tests {
 
         let json = unsafe { c2pa_reader_json(reader) };
         assert!(!json.is_null());
-
         let json_str = unsafe { CStr::from_ptr(json) }.to_owned();
-
         unsafe { c2pa_free(json as *const c_void) };
         let json_content = json_str.to_str().unwrap();
 
@@ -3162,6 +3197,112 @@ mod tests {
 
     #[test]
     #[allow(deprecated)]
+    fn test_c2pa_builder_signs_with_configured_label() {
+        let image_to_sign = include_bytes!(fixture_path!("IMG_0003.jpg"));
+        let mut source_stream = TestStream::new(image_to_sign.to_vec());
+        let mut dest_stream = TestStream::new(Vec::new());
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+
+        unsafe {
+            c2pa_builder_set_intent(
+                builder,
+                C2paBuilderIntent::Edit,
+                C2paDigitalSourceType::Empty,
+            )
+        };
+        let configured_label =
+            CString::new("urn:c2pa:00000000-0000-4000-8000-000000000000").unwrap();
+        assert_eq!(
+            unsafe { c2pa_builder_set_label(builder, configured_label.as_ptr()) },
+            0
+        );
+
+        let format = CString::new("image/jpeg").unwrap();
+        let mut manifest_bytes_ptr = std::ptr::null();
+        let sign_result = unsafe {
+            c2pa_builder_sign(
+                builder,
+                format.as_ptr(),
+                source_stream.as_ptr(),
+                dest_stream.as_ptr(),
+                signer,
+                &mut manifest_bytes_ptr,
+            )
+        };
+        assert!(
+            sign_result > 0,
+            "signing failed: {:?}",
+            CimplError::last_message()
+        );
+
+        dest_stream.stream_mut().rewind().unwrap();
+        let reader = unsafe { c2pa_reader_from_stream(format.as_ptr(), dest_stream.as_ptr()) };
+        assert!(!reader.is_null());
+        let reader_json_ptr = unsafe { c2pa_reader_json(reader) };
+        assert!(!reader_json_ptr.is_null());
+        let reader_json_str = unsafe { CStr::from_ptr(reader_json_ptr) }.to_owned();
+        unsafe { c2pa_free(reader_json_ptr as *const c_void) };
+        let reader_json: serde_json::Value =
+            serde_json::from_str(reader_json_str.to_str().unwrap()).unwrap();
+        assert_eq!(
+            reader_json["active_manifest"],
+            "urn:c2pa:00000000-0000-4000-8000-000000000000"
+        );
+
+        unsafe {
+            c2pa_manifest_bytes_free(manifest_bytes_ptr);
+            c2pa_free(reader as *mut c_void);
+            c2pa_free(builder as *mut c_void);
+            c2pa_free(signer as *mut c_void);
+        }
+    }
+
+    #[test]
+    fn test_c2pa_builder_archive_roundtrips_configured_label() {
+        let context = unsafe { c2pa_context_new() };
+        let builder = unsafe { c2pa_builder_from_context(context) };
+        assert!(!builder.is_null());
+        let configured_label =
+            CString::new("urn:c2pa:00000000-0000-4000-8000-000000000000").unwrap();
+        assert_eq!(
+            unsafe { c2pa_builder_set_label(builder, configured_label.as_ptr()) },
+            0
+        );
+
+        let mut builder_archive_stream = TestStream::new(Vec::new());
+        let to_archive_result =
+            unsafe { c2pa_builder_to_archive(builder, builder_archive_stream.as_ptr()) };
+        assert_eq!(to_archive_result, 0, "{:?}", CimplError::last_message());
+        unsafe { c2pa_free(builder as *mut c_void) };
+
+        builder_archive_stream.stream_mut().rewind().unwrap();
+        let builder_to_load = unsafe { c2pa_builder_from_context(context) };
+        let loaded_builder =
+            unsafe { c2pa_builder_with_archive(builder_to_load, builder_archive_stream.as_ptr()) };
+        assert!(
+            !loaded_builder.is_null(),
+            "{:?}",
+            CimplError::last_message()
+        );
+
+        let mut label_from_archive: *mut c_char = std::ptr::null_mut();
+        let get_label_result =
+            unsafe { c2pa_builder_label(loaded_builder, &mut label_from_archive) };
+        assert_eq!(get_label_result, 1);
+        assert!(!label_from_archive.is_null());
+        let label_from_archive_owned = unsafe { CStr::from_ptr(label_from_archive) }.to_owned();
+        unsafe { c2pa_free(label_from_archive as *const c_void) };
+        assert_eq!(
+            label_from_archive_owned.to_str().unwrap(),
+            "urn:c2pa:00000000-0000-4000-8000-000000000000"
+        );
+
+        unsafe { c2pa_free(loaded_builder as *mut c_void) };
+        unsafe { c2pa_free(context as *mut c_void) };
+    }
+
+    #[test]
+    #[allow(deprecated)]
     fn test_c2pa_builder_no_embed() {
         let manifest_def = CString::new("{}").unwrap();
         let builder = unsafe { c2pa_builder_from_json(manifest_def.as_ptr()) };
@@ -3211,6 +3352,34 @@ mod tests {
         let error_str = unsafe { CStr::from_ptr(error) }.to_owned();
         unsafe { c2pa_free(error as *const c_void) };
         assert_eq!(error_str.to_str().unwrap(), "");
+    }
+
+    #[test]
+    fn test_c2pa_error_preserves_handle_error_prefixes() {
+        let settings = unsafe { c2pa_settings_new() };
+        assert!(!settings.is_null());
+
+        let reader_json = unsafe { c2pa_reader_json(settings as *mut C2paReader) };
+        assert!(reader_json.is_null());
+        let expected = format!("Other: WrongPointerType: 0x{:x}", settings as usize);
+        for _ in 0..2 {
+            let error = unsafe { c2pa_error() };
+            assert!(!error.is_null());
+            let message = unsafe { CStr::from_ptr(error) }.to_owned();
+            assert_eq!(unsafe { c2pa_free(error as *const c_void) }, 0);
+            assert_eq!(message.to_str().unwrap(), expected);
+        }
+
+        assert_eq!(unsafe { c2pa_free(settings as *const c_void) }, 0);
+        assert_eq!(unsafe { c2pa_free(settings as *const c_void) }, -1);
+        let expected = format!("Other: UntrackedPointer: 0x{:x}", settings as usize);
+        for _ in 0..2 {
+            let error = unsafe { c2pa_error() };
+            assert!(!error.is_null());
+            let message = unsafe { CStr::from_ptr(error) }.to_owned();
+            assert_eq!(unsafe { c2pa_free(error as *const c_void) }, 0);
+            assert_eq!(message.to_str().unwrap(), expected);
+        }
     }
 
     #[test]
@@ -4647,8 +4816,8 @@ verify_after_sign = true
         let _: serde_json::Value = serde_json::from_str(json_str).unwrap();
 
         unsafe {
-            c2pa_free(json as *mut c_void);
-            c2pa_free(reader as *mut c_void);
+            c2pa_free(json as *const c_void);
+            c2pa_free(reader as *const c_void);
         }
     }
 
@@ -4916,7 +5085,7 @@ verify_after_sign = true
             c2pa_free(signed_bytes_ptr as *mut c_void);
             c2pa_free(settings as *mut c_void);
             c2pa_free(context as *mut c_void);
-            c2pa_free(builder as *mut c_void);
+            c2pa_free(builder as *const c_void);
         }
     }
 

@@ -1726,18 +1726,14 @@ pub mod tests {
         let thumbnail1 = b"the first super real thumbnail";
         let thumbnail2 = b"the second super real thumbnail";
 
-        let mut ingredient1 = Ingredient::from_json(
-            r#"{"title":"Ingredient One","format":"image/jpeg"}"#,
-        )
-        .unwrap();
+        let mut ingredient1 =
+            Ingredient::from_json(r#"{"title":"Ingredient One","format":"image/jpeg"}"#).unwrap();
         ingredient1
             .set_thumbnail("image/jpeg", thumbnail1.to_vec())
             .unwrap();
 
-        let mut ingredient2 = Ingredient::from_json(
-            r#"{"title":"Ingredient Two","format":"image/jpeg"}"#,
-        )
-        .unwrap();
+        let mut ingredient2 =
+            Ingredient::from_json(r#"{"title":"Ingredient Two","format":"image/jpeg"}"#).unwrap();
         ingredient2
             .set_thumbnail("image/jpeg", thumbnail2.to_vec())
             .unwrap();

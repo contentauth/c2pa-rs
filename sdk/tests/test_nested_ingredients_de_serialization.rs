@@ -193,9 +193,16 @@ fn test_reader_to_builder_preserves_nested_ingredients() -> Result<()> {
         .active_manifest()
         .expect("Should have active manifest");
 
-    // Verify top-level ingredient exists
+    // Verify top-level ingredient exists. Signing over `base_image` with `BuilderIntent::Edit`
+    // also auto-adds a `parentOf` ingredient, which lands in the claim's created-assertions
+    // bucket and so sorts before this explicitly-added `componentOf` one once the file is read
+    // back — find it by title rather than assuming it's first.
     assert!(!active_manifest.ingredients().is_empty());
-    let level2_ingredient = &active_manifest.ingredients()[0];
+    let level2_ingredient = active_manifest
+        .ingredients()
+        .iter()
+        .find(|i| i.title() == Some("L2"))
+        .expect("should have ingredient titled 'L2'");
 
     // Verify nested ingredient is preserved through Reader to Builder conversion
     let level2_active_manifest = level2_ingredient
@@ -257,7 +264,15 @@ fn test_ingredient_manifest_data_includes_nested_ingredients() -> Result<()> {
     let manifest_def = &builder.definition;
     assert!(!manifest_def.ingredients.is_empty());
 
-    let ingredient = &manifest_def.ingredients[0];
+    // Signing over `base_image` with `BuilderIntent::Edit` also auto-adds a `parentOf`
+    // ingredient, which lands in the claim's created-assertions bucket and so sorts before
+    // this explicitly-added `componentOf` one once the file is read back — find it by title
+    // rather than assuming it's first.
+    let ingredient = manifest_def
+        .ingredients
+        .iter()
+        .find(|i| i.title() == Some("Test ingredient"))
+        .expect("should have ingredient titled 'Test ingredient'");
 
     // The ingredient should have a manifest_data resource reference
     assert!(
@@ -320,18 +335,19 @@ fn test_deeply_nested_ingredients() -> Result<()> {
         .expect("Should have active manifest");
 
     for level in (1..=4).rev() {
-        assert!(
-            !current_manifest.ingredients().is_empty(),
-            "Should have ingredient at depth {level}"
-        );
-
-        let ingredient = &current_manifest.ingredients()[0];
+        // Each level also carries an auto-added `parentOf` ingredient (from signing over
+        // `base_image` with `BuilderIntent::Edit`), so find the explicitly-added `componentOf`
+        // ingredient by title rather than assuming it's first: since a `parentOf` ingredient
+        // always lands in the claim's created-assertions bucket while this one stays gathered,
+        // it sorts before this one once the file is read back, regardless of add order.
         let expected_title = format!("Level {level}");
-        assert_eq!(
-            ingredient.title(),
-            Some(expected_title.as_str()),
-            "Ingredient at level {level} should have correct title"
-        );
+        let ingredient = current_manifest
+            .ingredients()
+            .iter()
+            .find(|i| i.title() == Some(expected_title.as_str()))
+            .unwrap_or_else(|| {
+                panic!("Should have ingredient titled '{expected_title}' at depth {level}")
+            });
 
         if level > 1 {
             let active_manifest_label = ingredient.active_manifest().unwrap_or_else(|| {

@@ -45,7 +45,6 @@ pub struct SoftBinding {
     /// Additional metadata of the soft binding. Useful for binding-specific information.
     #[serde(rename = "bindingMetadata", skip_serializing_if = "Option::is_none")]
     pub binding_metadata: Option<SoftBindingMetadata>,
-
 }
 
 impl SoftBinding {
@@ -87,7 +86,6 @@ pub struct SoftBindingScope {
     /// Region of interest in regard to the soft binding.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub region: Option<RegionOfInterest>,
-
 }
 
 /// Soft binding timespan for temporal assets.

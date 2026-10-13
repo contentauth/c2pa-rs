@@ -230,7 +230,6 @@ pub struct Trust {
     /// List of allowed extended key usage (EKU) object identifiers (OID) that
     /// certificates must have.
     pub trust_config: Option<String>,
-
 }
 
 impl Trust {
@@ -683,10 +682,10 @@ pub struct Settings {
     ///
     /// [`Builder`]: crate::Builder
     pub builder: BuilderSettings,
-    /// Settings for configuring the base C2PA signer, accessible via [`Settings::signer`].
+    /// Settings for configuring the base C2PA signer, accessible via [`crate::Context::signer`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signer: Option<SignerSettings>,
-    /// Settings for configuring the CAWG x509 signer, accessible via [`Settings::signer`].
+    /// Settings for configuring the CAWG x509 signer, used by [`crate::Context::signer`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cawg_x509_signer: Option<SignerSettings>,
     /// List of soft binding algorithms to validate against. If not specified, soft binding errors may be generated.
@@ -1007,7 +1006,6 @@ impl Settings {
             a.validate()?;
 
             unique.insert(a);
-
         }
 
         if let Some(ua) = legacy_user_anchors {
@@ -1025,7 +1023,6 @@ impl Settings {
             a.validate()?;
 
             unique.insert(a);
-
         }
 
         settings.trust.anchors = Some(unique.into_iter().collect());
