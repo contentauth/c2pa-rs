@@ -38,15 +38,15 @@ use crate::{
     dynamic_assertion::PartialClaim,
     error::{Error, Result},
     jumbf::labels::{manifest_label_from_uri, to_absolute_uri, to_relative_uri},
-    jumbf_io, log_item,
+    log_item,
     manifest::StoreOptions,
     manifest_store_report::ManifestStoreReport,
     status_tracker::StatusTracker,
     store::Store,
     utils::hash_utils::hash_to_b64,
     validation_results::{ValidationResults, ValidationState},
-    validation_status::{ValidationStatus, ASSERTION_MISSING, ASSERTION_NOT_REDACTED},
-    Ingredient, Manifest, ManifestAssertion,
+    validation_status::{ValidationStatus, ASSERTION_MISSING},
+    Ingredient, Manifest, ManifestAssertion, ManifestAssertionKind,
 };
 
 /// MaybeSend allows for no Send bound on wasm32 targets
@@ -208,8 +208,12 @@ impl Reader {
     }
 
     /// Add manifest store from a stream to the [`Reader`].
+    ///
     /// # Arguments
-    /// * `format` - The format of the stream.  MIME type or extension that maps to a MIME type.
+    /// * `format` - The MIME type or file extension of the stream, used as a fallback when
+    ///   content-based format detection cannot determine the format from the stream's leading
+    ///   bytes.  Detection is attempted first; `format` is only used when detection returns
+    ///   no result.
     /// * `stream` - The stream to read from.  Must implement the Read and Seek traits.
     /// # Returns
     /// The updated [`Reader`] with the added manifest store.
@@ -221,6 +225,11 @@ impl Reader {
     ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
         stream.rewind()?; // Ensure stream is at the start
+
+        // Prefer the caller's format hint when it identifies the same container as the
+        // stream bytes (e.g. "dng" stays "dng" rather than being widened to "image/tiff").
+        let format_owned = self.context.io().format_from_stream(format, &mut stream);
+        let format = format_owned.as_str();
 
         self.context.check_progress(ProgressPhase::Reading, 1, 1)?;
 
@@ -249,7 +258,8 @@ impl Reader {
     /// # Note
     /// [CAWG identity assertions](https://cawg.io/identity/) require async calls for validation.
     #[deprecated(
-        note = "Use `Reader::from_context(context).with_stream(format, stream)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+        since = "0.79.4",
+        note = "Use `Reader::from_context(context).with_stream(format, stream)` instead, passing a `Context` explicitly rather than relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     #[async_generic]
     pub fn from_stream(format: &str, stream: impl Read + Seek + MaybeSend) -> Result<Reader> {
@@ -296,8 +306,9 @@ impl Reader {
     #[async_generic]
     pub fn with_file<P: AsRef<std::path::Path>>(mut self, path: P) -> Result<Self> {
         let path = path.as_ref();
-        let format = crate::format_from_path(path).ok_or(crate::Error::UnsupportedType)?;
         let mut file = File::open(path)?;
+        let path_fmt = self.context.io().format_from_path(path).unwrap_or_default();
+        let format = self.context.io().format_from_stream(&path_fmt, &mut file);
 
         // Try loading from stream first
         let mut validation_log = StatusTracker::default();
@@ -379,7 +390,8 @@ impl Reader {
     /// [CAWG identity assertions](https://cawg.io/identity/) require async calls for validation.
     #[cfg(feature = "file_io")]
     #[deprecated(
-        note = "Use `Reader::from_context(context).with_file(path)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+        since = "0.79.4",
+        note = "Use `Reader::from_context(context).with_file(path)` instead, passing a `Context` explicitly rather than relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     #[async_generic]
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Reader> {
@@ -463,7 +475,8 @@ impl Reader {
     /// This function returns an [`Error`] ef the c2pa_data is not valid, or severe errors occur in validation.
     /// You must check validation status for non-severe errors.
     #[deprecated(
-        note = "Use `Reader::from_context(context).with_manifest_data_and_stream(c2pa_data, format, stream)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+        since = "0.79.4",
+        note = "Use `Reader::from_context(context).with_manifest_data_and_stream(c2pa_data, format, stream)` instead, passing a `Context` explicitly rather than relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     #[async_generic]
     pub fn from_manifest_data_and_stream(
@@ -574,7 +587,10 @@ impl Reader {
     ) -> Result<Self> {
         let mut validation_log = StatusTracker::default();
 
-        let asset_type = jumbf_io::get_supported_file_extension(path.as_ref())
+        let asset_type = self
+            .context
+            .io()
+            .supported_extension(path.as_ref())
             .ok_or(crate::Error::UnsupportedType)?;
 
         let mut init_segment = std::fs::File::open(path.as_ref())?;
@@ -599,7 +615,8 @@ impl Reader {
     /// multiple separate asset files.
     #[cfg(feature = "file_io")]
     #[deprecated(
-        note = "Use `Reader::from_context(context).with_fragmented_files(path, fragments)` instead, passing a `Context` explicitly rather than relying on thread-local settings."
+        since = "0.79.4",
+        note = "Use `Reader::from_context(context).with_fragmented_files(path, fragments)` instead, passing a `Context` explicitly rather than relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
     )]
     pub fn from_fragmented_files<P: AsRef<std::path::Path>>(
         path: P,
@@ -612,7 +629,7 @@ impl Reader {
 
     /// Returns a [Vec] of mime types that [c2pa-rs] is able to read.
     pub fn supported_mime_types() -> Vec<String> {
-        jumbf_io::supported_reader_mime_types()
+        Context::default().io().reader_mime_types()
     }
 
     /// replace assertion values in the reader json with the values from the assertion_values map
@@ -703,7 +720,7 @@ impl Reader {
     /// Get the manifest store as a pretty-printed crJSON string.
     ///
     /// crJSON is a standardized JSON format for C2PA manifest data.
-    /// Returns `"{}"` if conversion or formatting fails.
+    /// Returns empty valid JSON `"{}"` if conversion or formatting fails.
     pub fn crjson(&self) -> String {
         self.crjson_checked().unwrap_or_else(|_| "{}".to_string())
     }
@@ -882,48 +899,48 @@ impl Reader {
     pub fn resource_to_stream(
         &self,
         uri: &str,
-        stream: impl Write + Read + Seek + MaybeSend,
+        mut stream: impl Write + Read + Seek + MaybeSend,
     ) -> Result<usize> {
-        // get the manifest referenced by the uri, or the active one if None
-        // add logic to search for local or absolute uri identifiers
-        let (manifest, label) = match manifest_label_from_uri(uri) {
-            Some(label) => (self.manifests.get(&label), label),
-            None => (
-                self.active_manifest(),
-                self.active_label().unwrap_or_default().to_string(),
-            ),
-        };
+        let explicit_label = manifest_label_from_uri(uri);
+        let label = explicit_label
+            .clone()
+            .or_else(|| self.active_label().map(str::to_owned))
+            .unwrap_or_default();
         let relative_uri = to_relative_uri(uri);
         let absolute_uri = to_absolute_uri(&label, uri);
 
-        if let Some(manifest) = manifest {
-            let find_resource = |uri: &str| -> Result<&crate::ResourceStore> {
-                let mut resources = manifest.resources();
-                if !resources.exists(uri) {
-                    // also search ingredients resources to support Reader model
-                    for ingredient in manifest.ingredients() {
-                        if ingredient.resources().exists(uri) {
-                            resources = ingredient.resources();
-                            return Ok(resources);
-                        }
+        // Search the referenced manifest's own resource store, then each of its
+        // ingredients' resource stores. Each store is resolver-backed, so this also
+        // covers assertions/databoxes and lazily-materialized ingredient data — not
+        // just resources that were added under an arbitrary identifier.
+        if let Some(manifest) = self.manifests.get(&label) {
+            for resources in std::iter::once(manifest.resources())
+                .chain(manifest.ingredients().iter().map(Ingredient::resources))
+            {
+                for candidate in [relative_uri.as_str(), absolute_uri.as_str()] {
+                    if resources.exists(candidate) {
+                        return resources
+                            .write_stream(candidate, &mut stream)
+                            .map(|len| len as usize);
                     }
-                } else {
-                    return Ok(resources);
                 }
-                Err(Error::ResourceNotFound(uri.to_owned()))
-            };
-            let result = find_resource(&relative_uri);
-            match result {
-                Ok(resource) => resource.write_stream(&relative_uri, stream),
-                Err(_) => match find_resource(&absolute_uri) {
-                    Ok(resource) => resource.write_stream(&absolute_uri, stream),
-                    Err(e) => Err(e),
-                },
             }
-        } else {
-            Err(Error::ResourceNotFound(uri.to_owned()))
         }
-        .map(|size| size as usize)
+
+        // The uri may itself name a manifest — either an explicit JUMBF manifest
+        // reference, or the bare claim label of a manifest/ingredient — in which case
+        // we stream that manifest's flattened JUMBF bytes.
+        let manifest_label = explicit_label.unwrap_or_else(|| uri.to_owned());
+        self.store
+            .get_claim(&manifest_label)
+            .ok_or_else(|| Error::ResourceNotFound(uri.to_owned()))
+            .and_then(|claim| Store::build_flat_ingredient_store(&self.store, claim))
+            .and_then(|s| s.to_jumbf_internal(0))
+            .and_then(|bytes| {
+                let len = bytes.len();
+                stream.write_all(&bytes).map_err(Error::IoError)?;
+                Ok(len)
+            })
     }
 
     /// Write all resources to a folder.
@@ -945,20 +962,39 @@ impl Reader {
     /// ```
     #[cfg(feature = "file_io")]
     pub fn to_folder<P: AsRef<std::path::Path>>(&self, path: P) -> Result<()> {
+        use crate::jumbf::labels::to_assertion_uri;
+
         std::fs::create_dir_all(&path)?;
         std::fs::write(path.as_ref().join("manifest_store.json"), self.json())?;
         let c2pa_data = self.store.to_jumbf_internal(0)?;
         std::fs::write(path.as_ref().join("manifest_data.c2pa"), c2pa_data)?;
-        for manifest in self.manifests.values() {
-            let resources = manifest.resources();
-            for (uri, data) in resources.resources() {
-                let id_path = uri_to_path(uri, manifest.label());
-                let path = path.as_ref().join(id_path);
-                if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent)?;
+
+        let write_bytes = |rel_path: std::path::PathBuf, data: &[u8]| -> Result<()> {
+            let file_path = path.as_ref().join(rel_path);
+            if let Some(parent) = file_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(file_path, data).map_err(Error::IoError)
+        };
+
+        for claim in self.store.claims() {
+            let claim_label = claim.label();
+            // Write binary (media) assertions — thumbnails, icons, embedded data
+            for ca in claim.claim_assertion_store() {
+                let assertion = ca.assertion();
+                if !matches!(
+                    assertion.content_type(),
+                    "application/cbor" | "application/json" | "application/c2pa"
+                ) {
+                    let uri = to_assertion_uri(claim_label, &ca.label());
+                    if let Some(a) = self.store.get_assertion_from_uri(&uri) {
+                        write_bytes(uri_to_path(&uri, Some(claim_label))?, a.data())?;
+                    }
                 }
-                let mut file = std::fs::File::create(&path)?;
-                file.write_all(data)?;
+            }
+            // Write databoxes
+            for (hr, databox) in claim.databoxes() {
+                write_bytes(uri_to_path(&hr.url(), Some(claim_label))?, &databox.data)?;
             }
         }
         Ok(())
@@ -983,7 +1019,7 @@ impl Reader {
                     manifest_label,
                     &mut options,
                     validation_log,
-                    self.context.settings(),
+                    &self.context,
                 )
             } else {
                 Manifest::from_store_async(
@@ -991,22 +1027,21 @@ impl Reader {
                     manifest_label,
                     &mut options,
                     validation_log,
-                    self.context.settings(),
+                    &self.context,
                 )
                 .await
             };
 
             match result {
                 Ok(mut manifest) => {
+                    // Wire up the store resolver so manifest resources (e.g. claim
+                    // thumbnails stored as JUMBF URIs) can be resolved lazily.
+                    manifest.set_store_resolver(Arc::clone(&arc_store));
                     for ingredient in manifest.ingredients_mut() {
-                        if ingredient.manifest_data_ref().is_some() {
-                            continue;
-                        }
-                        if let Some(active_label) = ingredient.active_manifest() {
-                            if arc_store.get_claim(active_label).is_some() {
-                                ingredient.set_deferred_manifest_data(Arc::clone(&arc_store))?;
-                            }
-                        }
+                        // Wire up the store resolver so ingredient resources can be
+                        // resolved on demand from claims without eager byte copies.
+                        // This also sets the deferred manifest_data ref when needed.
+                        ingredient.set_store_resolver(Arc::clone(&arc_store));
                     }
                     manifests.insert(manifest_label.to_owned(), manifest);
                 }
@@ -1022,24 +1057,13 @@ impl Reader {
 
         let validation_results = ValidationResults::from_store(arc_store.as_ref(), validation_log);
 
-        // resolve redactions
-        // Even though we validate
-        // compare options.redacted_assertions and options.missing_assertions
-        // remove all overlapping values from both arrays
-        // any remaining redacted assertions are not actually redacted
-        // any remaining missing assertions are not actually missing
-
-        let mut redacted = options.redacted_assertions.clone();
+        // Report assertions the claim references but that aren't present, excluding any
+        // that were redacted: a redacted assertion is expected to be absent (removed) or
+        // zeroed, so it must not be reported as `assertion.missing`. Whether a redacted
+        // box is validly zeroed or forged with non-zero content is `Store::verify_store`'s
+        // concern (it raises `assertion.notRedacted`); here we only resolve missing vs. redacted.
         let mut missing = options.missing_assertions.clone();
-        redacted.retain(|item| !missing.contains(item));
         missing.retain(|item| !options.redacted_assertions.contains(item));
-
-        // Add any remaining redacted assertions to the validation results
-        for uri in &redacted {
-            log_item!(uri.clone(), "assertion not redacted", "Reader::from_store")
-                .validation_status(ASSERTION_NOT_REDACTED)
-                .informational(validation_log);
-        }
 
         for uri in &missing {
             log_item!(uri.clone(), "assertion missing", "Reader::from_store")
@@ -1205,37 +1229,42 @@ impl Reader {
                 builder.definition.redactions = manifest.redactions.take();
                 let ingredients = std::mem::take(&mut manifest.ingredients);
                 for mut ingredient in ingredients {
-                    if let Some(active_manifest) = ingredient.active_manifest() {
-                        if ingredient.manifest_data_ref().is_none()
-                            && self.store.get_claim(active_manifest).is_some()
-                        {
-                            ingredient.set_deferred_manifest_data(Arc::clone(&self.store))?;
-                        }
-                    }
+                    ingredient.set_store_resolver(Arc::clone(&self.store));
                     builder.add_ingredient(ingredient);
                 }
                 for assertion in manifest.assertions.iter() {
-                    builder.add_assertion(assertion.label(), assertion.value()?)?;
-                }
-                for (uri, data) in manifest.resources().resources() {
-                    builder.add_resource(uri, std::io::Cursor::new(data))?;
+                    // Archive bookkeeping, not part of the manifest being edited.
+                    if assertion
+                        .label()
+                        .starts_with(crate::assertions::labels::ARCHIVE_METADATA)
+                    {
+                        continue;
+                    }
+                    // For archive roundtrip: keep created/gathered attribution and kind
+                    let kind = match assertion.kind() {
+                        ManifestAssertionKind::Json => Some(ManifestAssertionKind::Json),
+                        _ => None,
+                    };
+                    builder.add_assertion_impl(
+                        assertion.label(),
+                        assertion.value()?,
+                        kind,
+                        assertion.created(),
+                    )?;
                 }
             }
         }
         Ok(builder)
     }
 
-    /// Returns the [`ArchiveType`] from the active manifest's `org.contentauth.archive.metadata` assertion, if present.
-    pub(crate) fn active_archive_type(&self) -> Option<crate::assertions::labels::ArchiveType> {
+    /// Returns the archive kind from the active manifest's `org.contentauth.archive.metadata` assertion, when the archive was created by [`Builder::write_archive`].
+    /// None if the assertion is missing or malformed.
+    pub(crate) fn active_archive_kind(&self) -> Option<crate::builder::ArchiveKind> {
         let manifest = self.active_manifest()?;
         let metadata: Metadata = manifest
             .find_assertion(crate::assertions::labels::ARCHIVE_METADATA)
             .ok()?;
-        metadata
-            .value
-            .get("archive:type")
-            .and_then(|v: &Value| v.as_str())
-            .map(crate::assertions::labels::ArchiveType::from_str)
+        crate::builder::ArchiveKind::from_metadata(&metadata)
     }
 
     /// Convert a Reader into an [`Ingredient`] using the parent ingredient from the active manifest.
@@ -1249,13 +1278,7 @@ impl Reader {
             .to_owned();
 
         // populate manifest_data on demand for ingredients with an active manifest
-        if let Some(active_manifest) = ingredient.active_manifest() {
-            if ingredient.manifest_data_ref().is_none()
-                && self.store.get_claim(active_manifest).is_some()
-            {
-                ingredient.set_deferred_manifest_data(Arc::clone(&self.store))?;
-            }
-        }
+        ingredient.set_store_resolver(Arc::clone(&self.store));
 
         Ok(ingredient)
     }
@@ -1306,10 +1329,13 @@ pub mod tests {
     #![allow(clippy::expect_used)]
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
+    #![allow(deprecated)]
     use std::io::Cursor;
 
     use super::*;
     use crate::{
+        assertions::DigitalSourceType,
+        builder::BuilderIntent,
         utils::{test::test_context, test_signer::test_signer},
         Builder, SigningAlg,
     };
@@ -1345,6 +1371,70 @@ pub mod tests {
         assert_eq!(reader2.validation_state(), ValidationState::Trusted);
         //std::fs::write("../target/CA-rebuilt.jpg", dest.get_ref())?;
         Ok(())
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_detached_manifest_exclusion_hole_rejected() {
+        use crate::{assertions::DataHash, Builder};
+
+        // Sign a real asset (embedded); the attacker never holds this key.
+        let victim_src = include_bytes!("../tests/fixtures/no_manifest.jpg");
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut builder = Builder::from_context(test_context())
+            .with_definition(r#"{"title": "victim"}"#)
+            .unwrap();
+        let mut source = Cursor::new(victim_src.to_vec());
+        let mut dest = Cursor::new(Vec::new());
+        builder
+            .sign(signer.as_ref(), "image/jpeg", &mut source, &mut dest)
+            .unwrap();
+        let victim = dest.into_inner();
+
+        // Attacker lifts the signed manifest store out, byte-verbatim, no re-signing.
+        let context = test_context();
+        let mut victim_stream = Cursor::new(victim.clone());
+        let (jumbf, _remote) =
+            crate::store::Store::load_jumbf_from_stream("image/jpeg", &mut victim_stream, &context)
+                .unwrap();
+
+        // Read the signed exclusion range straight off the claim.
+        let store = crate::store::Store::from_stream(
+            "image/jpeg",
+            Cursor::new(victim.clone()),
+            &mut StatusTracker::default(),
+            &context,
+        )
+        .unwrap();
+        let claim = store.provenance_claim().unwrap();
+        let dh_assertion = claim
+            .hash_assertions()
+            .into_iter()
+            .find(|a| a.label_raw().starts_with(DataHash::LABEL))
+            .unwrap();
+        let dh = DataHash::from_assertion(dh_assertion.assertion()).unwrap();
+        let range = &dh.exclusions.unwrap()[0];
+        let (excl_start, excl_len) = (range.start() as usize, range.length() as usize);
+
+        // Overwrite exactly that range with unrelated content, keeping every byte
+        // outside it untouched.
+        let mut forged = victim.clone();
+        for b in forged[excl_start..excl_start + excl_len].iter_mut() {
+            *b = 0x41;
+        }
+
+        // Validate the forged pair through the detached-manifest path (c2patool
+        // --external-manifest / a sidecar or remote manifest workflow).
+        let result =
+            Reader::from_manifest_data_and_stream(&jumbf, "image/jpeg", Cursor::new(forged));
+        let state = result
+            .map(|r| r.validation_state())
+            .unwrap_or(ValidationState::Invalid);
+        assert_ne!(
+            state,
+            ValidationState::Trusted,
+            "a detached manifest's exclusion must not let unrelated content inside it pass validation"
+        );
     }
 
     #[test]
@@ -1534,11 +1624,81 @@ pub mod tests {
 
         let temp_dir = tempdirectory().unwrap();
         reader.to_folder(temp_dir.path())?;
-        let path = temp_dir_path(&temp_dir, "manifest_store.json");
-        assert!(path.exists());
-        let path = temp_dir_path(&temp_dir, "manifest_data.c2pa");
-        assert!(path.exists());
+        assert!(temp_dir_path(&temp_dir, "manifest_store.json").exists());
+        assert!(temp_dir_path(&temp_dir, "manifest_data.c2pa").exists());
+
+        // Collect all thumbnail files written under the manifest subdirectories.
+        let thumbnails: Vec<_> = std::fs::read_dir(temp_dir.path())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.path().is_dir())
+            .flat_map(|manifest_dir| {
+                let assertions_dir = manifest_dir.path().join("c2pa.assertions");
+                std::fs::read_dir(assertions_dir)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .filter(|e| {
+                        e.file_name()
+                            .to_string_lossy()
+                            .starts_with("c2pa.thumbnail")
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        assert!(
+            !thumbnails.is_empty(),
+            "expected thumbnail files in output folder"
+        );
+        for thumb in &thumbnails {
+            assert!(
+                thumb.metadata().unwrap().len() > 0,
+                "thumbnail file should not be empty"
+            );
+        }
         Ok(())
+    }
+
+    /// A databox label containing path traversal (as could be read straight
+    /// from an attacker-crafted asset's JUMBF `jumd` box - see
+    /// `Store::from_jumbf_impl`, which passes that label to `Claim::put_databox`
+    /// unmodified) must not let `to_folder` write outside the output folder.
+    #[test]
+    #[cfg(feature = "file_io")]
+    fn test_to_folder_rejects_path_traversal_in_databox_label() {
+        use crate::{assertions::DataBox, claim::Claim, utils::io_utils::tempdirectory};
+
+        let malicious_databox = DataBox {
+            format: "application/octet-stream".to_string(),
+            data: b"attacker controlled bytes".to_vec(),
+            data_types: None,
+        };
+        let db_cbor = c2pa_cbor::to_vec(&malicious_databox).unwrap();
+
+        let mut claim = Claim::new("test", None, 1);
+        claim.put_databox("../../../evil", &db_cbor, None).unwrap();
+
+        let mut store = Store::new();
+        store.commit_claim(claim).unwrap();
+
+        let reader = Reader {
+            store: Arc::new(store),
+            ..Default::default()
+        };
+
+        let temp_dir = tempdirectory().unwrap();
+        let result = reader.to_folder(temp_dir.path());
+        assert!(
+            result.is_err(),
+            "a databox label containing path traversal must be rejected, not written to disk"
+        );
+
+        // Confirm nothing escaped into the output folder's parent.
+        let escaped = temp_dir.path().parent().unwrap().join("evil");
+        assert!(
+            !escaped.exists(),
+            "traversal must not create files outside the output folder"
+        );
     }
 
     #[test]
@@ -1595,7 +1755,7 @@ pub mod tests {
                     .to_string();
                 #[allow(clippy::single_match)]
                 match label {
-                    "c2pa.actions" => {
+                    "c2pa.actions.v2" | "c2pa.actions" => {
                         let actions = assertion.to_assertion::<crate::assertions::Actions>()?;
                         // build a comma separated string list of actions
                         let desc = actions
@@ -1622,8 +1782,44 @@ pub mod tests {
 
         reader.post_validate(&TestValidator {})?;
 
-        println!("{reader}");
-        //Err(Error::NotImplemented("foo".to_string()))
+        // Verify the validator replaced c2pa.actions assertion data in the JSON output.
+        let json: Value = serde_json::from_str(&reader.json()).unwrap();
+        let active_label = json["active_manifest"].as_str().unwrap();
+        let assertions = json["manifests"][active_label]["assertions"]
+            .as_array()
+            .unwrap();
+        let actions_assertion = assertions
+            .iter()
+            .find(|a| {
+                matches!(
+                    a["label"].as_str(),
+                    Some("c2pa.actions.v2") | Some("c2pa.actions")
+                )
+            })
+            .expect("c2pa.actions or c2pa.actions.v2 assertion not found");
+        assert!(
+            actions_assertion["data"].is_string(),
+            "c2pa.actions data should be replaced with a string by the validator, got: {}",
+            actions_assertion["data"]
+        );
+
+        // Verify validation results contain the success statuses logged by the validator.
+        let results = reader
+            .validation_results()
+            .expect("validation results should exist after post_validate");
+        let active = results
+            .active_manifest()
+            .expect("active manifest statuses should exist");
+        let success_codes: Vec<&str> = active.success().iter().map(|s| s.code()).collect();
+        assert!(
+            success_codes.contains(&"cai.test.action"),
+            "expected cai.test.action in success statuses, got: {success_codes:?}"
+        );
+        assert!(
+            success_codes.contains(&"cai.test.something"),
+            "expected cai.test.something in success statuses, got: {success_codes:?}"
+        );
+
         Ok(())
     }
 
@@ -1660,6 +1856,7 @@ pub mod tests {
         let mut builder = Builder::default()
             .with_definition(r#"{"title": "Test Image"}"#)
             .unwrap();
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
         builder.add_ingredient(ingredient1);
         builder.add_ingredient(ingredient2);
 
@@ -1684,6 +1881,109 @@ pub mod tests {
         let mut out2 = Cursor::new(Vec::new());
         reader.resource_to_stream(&uri2, &mut out2)?;
         assert_eq!(out2.into_inner(), thumbnail2);
+
+        Ok(())
+    }
+
+    /// Verify that `resource_to_stream` can load ingredient `manifest_data`
+    /// that is lazily deferred in `source_store`.
+    #[test]
+    fn test_resource_to_stream_retrieve_deferred_manifest_data() -> Result<()> {
+        let reader = Reader::default()
+            .with_stream("image/jpeg", Cursor::new(IMAGE_WITH_INGREDIENT_MANIFEST))?;
+
+        let active = reader.active_manifest().unwrap();
+        let ingredient = active
+            .ingredients()
+            .first()
+            .expect("no ingredient in CACA.jpg");
+
+        let md_ref = ingredient
+            .manifest_data_ref()
+            .expect("ingredient has no manifest_data_ref");
+
+        // Confirm the bytes are not already in the in-memory resource store
+        assert!(
+            !ingredient
+                .resources()
+                .resources()
+                .contains_key(&md_ref.identifier),
+            "expected deferred manifest_data — lazy load path not exercised"
+        );
+
+        // resource_to_stream must succeed no matter what, loading resources
+        let mut out = Cursor::new(Vec::new());
+        let n = reader.resource_to_stream(&md_ref.identifier, &mut out)?;
+        assert!(n > 0, "expected non-empty manifest_data bytes");
+        assert!(!out.into_inner().is_empty());
+
+        Ok(())
+    }
+
+    // Regression test for a bug where `resource_to_stream` silently fell back to
+    // returning the active manifest's own JUMBF bytes for any uri that didn't match
+    // a known assertion/databox pattern, instead of erroring for an unknown resource.
+    #[test]
+    fn test_resource_to_stream_unknown_uri_errors() -> Result<()> {
+        let reader =
+            Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
+
+        for bad_uri in ["nonexistent_uri", "invalid://nonexistent"] {
+            let mut out = Cursor::new(Vec::new());
+            let result = reader.resource_to_stream(bad_uri, &mut out);
+            assert!(
+                matches!(result, Err(Error::ResourceNotFound(_))),
+                "expected ResourceNotFound for uri {bad_uri:?}, got {result:?}"
+            );
+            assert!(
+                out.into_inner().is_empty(),
+                "no bytes should be written to the stream on error for uri {bad_uri:?}"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn read_zip_signed_on_linux() -> Result<()> {
+        let mut stream = Cursor::new(include_bytes!(
+            "../tests/fixtures/cross-compatibility-zip/sample1-linux.zip"
+        ));
+        let reader = Reader::from_context(test_context()).with_stream("zip", &mut stream)?;
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        Ok(())
+    }
+
+    #[test]
+    fn read_zip_signed_on_macos() -> Result<()> {
+        let mut stream = Cursor::new(include_bytes!(
+            "../tests/fixtures/cross-compatibility-zip/sample1-macos.zip"
+        ));
+        let reader = Reader::from_context(test_context()).with_stream("zip", &mut stream)?;
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        Ok(())
+    }
+
+    #[test]
+    fn read_zip_signed_with_backslash_paths_on_windows() -> Result<()> {
+        let mut stream = Cursor::new(include_bytes!(
+            "../tests/fixtures/cross-compatibility-zip/sample1_backslash-windows.zip"
+        ));
+        let reader = Reader::from_context(test_context()).with_stream("zip", &mut stream)?;
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+        Ok(())
+    }
+
+    #[test]
+    fn read_zip_signed_with_normalized_paths_on_windows() -> Result<()> {
+        let mut stream = Cursor::new(include_bytes!(
+            "../tests/fixtures/cross-compatibility-zip/sample1-windows.zip"
+        ));
+        let reader = Reader::from_context(test_context()).with_stream("zip", &mut stream)?;
+        assert_eq!(reader.validation_state(), ValidationState::Trusted);
 
         Ok(())
     }

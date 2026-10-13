@@ -7,6 +7,7 @@ use serde_json::Value;
 use crate::{
     assertion::{AssertionBase, AssertionDecodeError},
     assertions::labels,
+    crypto::base64::decode_b64_wrapped,
     error::{Error, Result},
 };
 
@@ -68,11 +69,11 @@ impl ManifestAssertion {
     }
 
     /// An assertion label in reverse domain format with appended instance number
-    /// The instance number follows two underscores and is only added when the instance is > 1
+    /// The instance number follows two underscores and is only added when the instance is > 0
     /// This is a c2pa spec internal standard format
     pub fn label_with_instance(&self) -> String {
         match self.instance {
-            Some(i) if i > 1 => format!("{}__{}", self.label, i),
+            Some(i) if i > 0 => format!("{}__{}", self.label, i),
             _ => self.label.to_owned(),
         }
     }
@@ -181,7 +182,8 @@ impl ManifestAssertion {
     /// # }
     /// ```
     pub fn to_assertion<T: DeserializeOwned>(&self) -> Result<T> {
-        serde_json::from_value(self.value()?.to_owned()).map_err(|e| {
+        let value = resolve_b64_wrapped_bytes(self.value()?.to_owned());
+        serde_json::from_value(value).map_err(|e| {
             Error::AssertionDecoding(AssertionDecodeError::from_json_err(
                 self.label.to_owned(),
                 None,
@@ -189,6 +191,29 @@ impl ManifestAssertion {
                 e,
             ))
         })
+    }
+}
+
+/// Reverses crJSON's `b64'<base64>'` byte-string wrapper (as produced for CBOR
+/// byte strings when building this assertion's JSON value) back into a JSON
+/// number array, so typed structs with `Vec<u8>`/`serde_bytes` fields (e.g. the
+/// internal `IdentityAssertion`'s `signature`/`pad1`/`pad2`) still deserialize
+/// correctly.
+fn resolve_b64_wrapped_bytes(value: Value) -> Value {
+    match value {
+        Value::String(s) => match decode_b64_wrapped(&s) {
+            Some(bytes) => {
+                Value::Array(bytes.into_iter().map(|b| Value::Number(b.into())).collect())
+            }
+            None => Value::String(s),
+        },
+        Value::Array(arr) => Value::Array(arr.into_iter().map(resolve_b64_wrapped_bytes).collect()),
+        Value::Object(map) => Value::Object(
+            map.into_iter()
+                .map(|(k, v)| (k, resolve_b64_wrapped_bytes(v)))
+                .collect(),
+        ),
+        other => other,
     }
 }
 
@@ -220,5 +245,23 @@ pub(crate) mod tests {
         let actions = Actions::new().add_action(Action::new(c2pa_action::EDITED));
         let ma2 = ManifestAssertion::from_assertion(&actions).expect("from_assertion");
         let _actions2: Actions = ma2.to_assertion().expect("to_assertion");
+    }
+
+    #[test]
+    fn test_label_with_instance() {
+        // matches the write-side `Claim::label_with_instance`, and the spec's example
+        // (three `c2pa.metadata` assertions are labeled `c2pa.metadata`,
+        // `c2pa.metadata__1`, `c2pa.metadata__2`): the first occurrence is unsuffixed,
+        // every subsequent occurrence is suffixed starting from `__1`.
+        let base = ManifestAssertion::new(Actions::LABEL.to_owned(), Value::Null);
+
+        let ma = base.clone().set_instance(0);
+        assert_eq!(ma.label_with_instance(), Actions::LABEL);
+
+        let ma = base.clone().set_instance(1);
+        assert_eq!(ma.label_with_instance(), format!("{}__1", Actions::LABEL));
+
+        let ma = base.set_instance(2);
+        assert_eq!(ma.label_with_instance(), format!("{}__2", Actions::LABEL));
     }
 }

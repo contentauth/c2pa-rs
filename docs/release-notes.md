@@ -2,11 +2,40 @@
 
 Refer to the [CHANGELOG](https://github.com/contentauth/c2pa-rs/blob/main/CHANGELOG.md) for detailed changes derived from Git commit history.
 
+## Version 0.88.0
+
+### Removal of deprecated APIs
+
+Release 0.88.0 removes several long-deprecated APIs. These are breaking changes; update your code before upgrading.
+
+#### Rust API
+
+The following `Ingredient` methods and types have been removed:
+
+| Removed | Use instead |
+|---|---|
+| `Ingredient::from_file(path)` | Open the file and call `Ingredient::from_stream(format, &mut stream)` |
+| `Ingredient::from_file_with_folder(path, folder)` | `Ingredient::from_stream(format, &mut stream)` |
+| `Ingredient::from_file_with_options(path, options)` | `Ingredient::from_stream(format, &mut stream)` + builder setter methods |
+| `Ingredient::from_memory(format, bytes)` | `Ingredient::from_stream(format, &mut std::io::Cursor::new(bytes))` |
+| `Ingredient::set_memory_thumbnail(format, bytes)` | `Ingredient::set_thumbnail(format, bytes)` |
+| `IngredientOptions`, `DefaultOptions` | Use builder setter methods directly on `Ingredient` |
+
+#### C FFI
+
+The following C API functions have been removed:
+
+| Removed | Use instead |
+|---|---|
+| `c2pa_read_file` | `c2pa_reader_from_context()` |
+| `c2pa_read_ingredient_file` | `c2pa_reader_from_context()` |
+| `c2pa_sign_file` | `c2pa_builder_from_context()` |
+
 ## Version 0.79.4
 
 ### Deprecation of thread-local settings APIs
 
-Release 0.79.4 deprecates all legacy thread-local configuration APIs in favor of explicit [`Context`](https://docs.rs/c2pa/latest/c2pa/struct.Context.html)-based equivalents. These are not breaking changes: All deprecated methods retain their original behavior and continue to work, but will produce compiler warnings.
+Release 0.79.4 deprecates all legacy thread-local configuration APIs in favor of explicit [`Context`](https://docs.rs/c2pa/latest/c2pa/struct.Context.html)-based equivalents. These are not breaking changes: All deprecated methods retain their original behavior and continue to work, but will produce compiler warnings. Note that some of these deprecated methods were subsequently removed in [Version 0.88.0](#version-0880).
 
 ### Rust API
 
@@ -42,7 +71,7 @@ The following C API functions are deprecated:
 | `c2pa_builder_from_json` | `c2pa_builder_from_context()` + `c2pa_builder_set_definition()` |
 | `c2pa_builder_from_archive` | `c2pa_builder_from_context()` + `c2pa_builder_with_archive()` |
 | `c2pa_signer_from_settings` | `c2pa_context_builder_set_signer()` |
-| `c2pa_read_file`, `c2pa_read_ingredient_file`, `c2pa_sign_file` | Context-based equivalents |
+| `c2pa_read_file`, `c2pa_read_ingredient_file`, `c2pa_sign_file` | Context-based equivalents (removed in [Version 0.88.0](#version-0880)) |
 | `c2pa_reader_free`, `c2pa_builder_free`, `c2pa_string_free`, `c2pa_manifest_bytes_free`, `c2pa_signer_free`, `c2pa_release_string`, `c2pa_signature_free` | `c2pa_free()` |
 
 C and C++ headers now emit compiler deprecation warnings when deprecated functions are called.
@@ -51,26 +80,27 @@ C and C++ headers now emit compiler deprecation warnings when deprecated functio
 
 ### Embeddable API
 
-Release [0.77.0](https://github.com/contentauth/c2pa-rs/releases/tag/c2pa-v0.77.0) adds a new embeddable manifest API with Context/Settings, CAWG, and BMFF.v3 support. For details, see [Embeddable signing API](embeddable-api.md).
+Release [0.77.0](https://github.com/contentauth/c2pa-rs/releases/tag/c2pa-v0.77.0) adds a new embeddable manifest API with `Context`/`Settings`, CAWG, and BMFF.v3 support. For details, see [Embeddable signing API](embeddable-api.md).
 
-### API Changes for C2PA 2.2
+### API changes for C2PA 2.2
 
-`Reader` has some new methods: 
-- `validation_state()` returns `ValidationState`, which can be `Invalid`, `Valid` or `Trusted`. Use this method instead of checking for `validation_status() = None`.
+`Reader` has some new methods:
+- `validation_state()` returns `ValidationState`, which can be `Invalid`, `Valid`, or `Trusted`. Use this method instead of checking for `validation_status() = None`.
 - `validation_results()` returns `ValidationResults`, which is a more complete form of `ValidationStatus` and returns `success`, `informational`, and `failure` codes for the active manifest and ingredients. `ValidationStatus` is deprecated in favor of `ValidationResults`.
 
 `Ingredient` now supports a `validation_results()` method and a `validation_results` field.
 
 An `AssetType` assertion is now supported.
-<!-- Can we say more about this? ASK MAURICE -->
 
 ### C2PA v2 claims
 
 > [!NOTE]
-> The library now supports [C2PA v2 claims](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_claims) by default. V2 claims have many new checks and status codes.  Additionally:
+> The library now supports [C2PA v2 claims](https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_claims) by default. V2 claims have many new checks and status codes.
+
+Additionally:
 
 - The `title()` and `format()` methods of both `Manifest` and `Ingredient` objects now return an `Option<String>` because in v2 claims, `title` is optional and `format` does not exist.
-- The first `action` must be `c2pa.created` or `c2pa.opened` (which requires an ingredient). 
+- The first `action` must be `c2pa.created` or `c2pa.opened` (which requires an ingredient).
 
 > [!WARNING]
-> Implementations should not generate deprecated v1 claims.  If needed, though, you can generate v1 claims by setting the `Builder` manifest definition `claim_version` field to `1`.
+> Implementations should not generate deprecated v1 claims. If needed, though, you can generate v1 claims by setting the `Builder` manifest definition `claim_version` field to `1`.

@@ -31,7 +31,7 @@ clippy:
 	cargo clippy --features="$(FEATURES)" --all-targets -- -D warnings
 
 test-local:
-	$(CARGO_TEST) --features="$(FEATURES)" --all-targets
+	$(CARGO_TEST) --features="$(FEATURES)" --lib --tests --bins --examples
 
 # Quick SDK-only test pass: unit tests + integration tests, no examples, benches,
 # WASM, or doc checks. Use this during active development for a fast feedback loop.

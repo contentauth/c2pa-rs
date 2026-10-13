@@ -17,9 +17,10 @@ use std::sync::{
 };
 
 use crate::{
+    asset_io::{AssetIO, HandlerRegistry},
     http::{
-        restricted::RestrictedResolver, AsyncGenericResolver, AsyncHttpResolver,
-        SyncGenericResolver, SyncHttpResolver,
+        restricted::{MetadataGuardResolver, RedirectResolver, RestrictedResolver},
+        AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver,
     },
     maybe_send_sync::{MaybeSend, MaybeSync},
     settings::Settings,
@@ -267,22 +268,26 @@ impl IntoSettings for serde_json::Value {
 /// ```
 pub struct Context {
     settings: Settings,
-    sync_resolver: SyncResolverState,
-    async_resolver: AsyncResolverState,
+    sync_resolver_state: SyncResolverState,
+    async_resolver_state: AsyncResolverState,
     signer: SignerState,
     async_signer: AsyncSignerState,
     progress_callback: Option<Box<ProgressCallbackFunc>>,
     /// Embedded cancellation flag.  Any thread holding an `Arc<Context>` can call
     /// [`cancel()`](Context::cancel) without needing a separate token object.
     cancel_flag: AtomicBool,
+    /// Custom IO handlers provided by the caller, plus the built-in registry as a fallback.
+    /// Custom handlers are searched first; last-registered wins when two handlers claim the
+    /// same format.
+    io: HandlerRegistry,
 }
 
 impl Default for Context {
     fn default() -> Self {
         Self {
             settings: Settings::default(),
-            sync_resolver: SyncResolverState::Default(OnceLock::new()),
-            async_resolver: AsyncResolverState::Default(OnceLock::new()),
+            sync_resolver_state: SyncResolverState::Default(OnceLock::new()),
+            async_resolver_state: AsyncResolverState::Default(OnceLock::new()),
             #[cfg(test)]
             signer: SignerState::Custom(crate::utils::test_signer::test_signer(
                 crate::SigningAlg::Ps256,
@@ -292,6 +297,7 @@ impl Default for Context {
             async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
             progress_callback: None,
             cancel_flag: AtomicBool::new(false),
+            io: HandlerRegistry::with_fallback(crate::jumbf_io::default_handler_registry()),
         }
     }
 }
@@ -410,7 +416,7 @@ impl Context {
         mut self,
         resolver: T,
     ) -> Self {
-        self.sync_resolver = SyncResolverState::Custom(Arc::new(resolver));
+        self.sync_resolver_state = SyncResolverState::Custom(Arc::new(resolver));
         self
     }
 
@@ -418,7 +424,7 @@ impl Context {
         &mut self,
         resolver: T,
     ) -> Result<()> {
-        self.sync_resolver = SyncResolverState::Custom(Arc::new(resolver));
+        self.sync_resolver_state = SyncResolverState::Custom(Arc::new(resolver));
         Ok(())
     }
 
@@ -433,7 +439,7 @@ impl Context {
         mut self,
         resolver: T,
     ) -> Self {
-        self.async_resolver = AsyncResolverState::Custom(Arc::new(resolver));
+        self.async_resolver_state = AsyncResolverState::Custom(Arc::new(resolver));
         self
     }
 
@@ -441,56 +447,125 @@ impl Context {
         &mut self,
         resolver: T,
     ) -> Result<()> {
-        self.async_resolver = AsyncResolverState::Custom(Arc::new(resolver));
+        self.async_resolver_state = AsyncResolverState::Custom(Arc::new(resolver));
         Ok(())
     }
 
     /// Returns a reference to the sync resolver.
     ///
-    /// The default resolver is a `SyncGenericResolver` wrapped with `RestrictedResolver`
-    /// to apply host filtering from the settings.
+    /// When no custom resolver is set, the default resolver is assembled from the
+    /// [`allow_redirects`] and [`allowed_network_hosts`] settings.
+    ///
+    /// [`allow_redirects`]: crate::settings::Core::allow_redirects
+    /// [`allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
     pub fn resolver(&self) -> Arc<dyn SyncHttpResolver> {
-        match &self.sync_resolver {
+        match &self.sync_resolver_state {
             SyncResolverState::Custom(resolver) => resolver.clone(),
             SyncResolverState::Default(once_lock) => once_lock
-                .get_or_init(|| {
-                    if self.settings.core.allowed_network_hosts.is_some() {
-                        let mut resolver = RestrictedResolver::new(SyncGenericResolver::new());
-                        resolver
-                            .set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
-                        Arc::new(resolver)
-                    } else {
-                        // For backwards compatibility, we enable redirects in the default case.
-                        // Source: https://github.com/contentauth/c2pa-rs/pull/1907
-                        Arc::new(SyncGenericResolver::with_redirects().unwrap_or_default())
-                    }
-                })
+                .get_or_init(|| self.build_default_sync_resolver())
                 .clone(),
+        }
+    }
+
+    /// Builds the default sync resolver stack from the [`allow_redirects`] and
+    /// [`allowed_network_hosts`] settings.
+    ///
+    /// The base HTTP client never auto-follows redirects; a [`RedirectResolver`] follows them at the
+    /// SDK layer so it can reject hops to internal addresses (SSRF hardening, CAI-12574). An explicit
+    /// allow-list, when configured, is applied *inside* the redirect follower via
+    /// [`RestrictedResolver`], so it is re-checked on every hop. When no allow-list is configured, a
+    /// [`MetadataGuardResolver`] is applied instead, rejecting the *initial* request when it directly
+    /// names a link-local/cloud-metadata address (SSRF hardening, CAI-13326); an explicit allow-list
+    /// is a stronger, intentional policy and takes precedence over this default guard. Concrete
+    /// wrapper types are used (no intermediate `Arc<dyn ..>`) so the stack stays `Send`/`Sync` where
+    /// required, including WASM.
+    ///
+    /// [`allow_redirects`]: crate::settings::Core::allow_redirects
+    /// [`allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
+    fn build_default_sync_resolver(&self) -> Arc<dyn SyncHttpResolver> {
+        let core = &self.settings.core;
+        let client = SyncGenericResolver::new();
+
+        if let Some(allowed_hosts) = core.allowed_network_hosts.clone() {
+            let mut restricted = RestrictedResolver::new(client);
+            restricted.set_allowed_hosts(Some(allowed_hosts));
+            Arc::new(RedirectResolver::new(restricted, core.allow_redirects))
+        } else {
+            let guarded = MetadataGuardResolver::new(client);
+            Arc::new(RedirectResolver::new(guarded, core.allow_redirects))
         }
     }
 
     /// Returns a reference to the async resolver.
     ///
-    /// The default resolver is an `AsyncGenericResolver` wrapped with `RestrictedResolver`
-    /// to apply host filtering from the settings.
+    /// When no custom resolver is set, the default resolver is assembled from the
+    /// [`allow_redirects`] and [`allowed_network_hosts`] settings, mirroring the sync resolver.
+    ///
+    /// [`allow_redirects`]: crate::settings::Core::allow_redirects
+    /// [`allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
     pub fn resolver_async(&self) -> Arc<dyn AsyncHttpResolver> {
-        match &self.async_resolver {
+        match &self.async_resolver_state {
             AsyncResolverState::Custom(resolver) => resolver.clone(),
             AsyncResolverState::Default(once_lock) => once_lock
-                .get_or_init(|| {
-                    if self.settings.core.allowed_network_hosts.is_some() {
-                        let mut resolver = RestrictedResolver::new(AsyncGenericResolver::new());
-                        resolver
-                            .set_allowed_hosts(self.settings.core.allowed_network_hosts.clone());
-                        Arc::new(resolver)
-                    } else {
-                        // For backwards compatibility, we enable redirects in the default case.
-                        // Source: https://github.com/contentauth/c2pa-rs/pull/1907
-                        Arc::new(AsyncGenericResolver::with_redirects().unwrap_or_default())
-                    }
-                })
+                .get_or_init(|| self.build_default_async_resolver())
                 .clone(),
         }
+    }
+
+    /// Builds the default async resolver stack. Mirrors [`build_default_sync_resolver`].
+    ///
+    /// [`build_default_sync_resolver`]: Context::build_default_sync_resolver
+    fn build_default_async_resolver(&self) -> Arc<dyn AsyncHttpResolver> {
+        let core = &self.settings.core;
+        let client = AsyncGenericResolver::new();
+
+        if let Some(allowed_hosts) = core.allowed_network_hosts.clone() {
+            let mut restricted = RestrictedResolver::new(client);
+            restricted.set_allowed_hosts(Some(allowed_hosts));
+            Arc::new(RedirectResolver::new(restricted, core.allow_redirects))
+        } else {
+            let guarded = MetadataGuardResolver::new(client);
+            Arc::new(RedirectResolver::new(guarded, core.allow_redirects))
+        }
+    }
+
+    /// Register a custom IO handler on this Context.
+    ///
+    /// Custom handlers are consulted before the built-in global registry, so a handler
+    /// registered here can override a built-in handler for any format string it claims.
+    /// When multiple custom handlers claim the same format, the last one registered wins.
+    ///
+    /// # Arguments
+    ///
+    /// * `handler` - Any type implementing `AssetIO`
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use c2pa::{Context, AssetIO};
+    /// let context = Context::new().with_io_handler(MyCustomHandler::new(""));
+    /// let reader = c2pa::Reader::from_context(context);
+    /// ```
+    #[allow(unused)] // not public yet, but used in tests
+    pub(crate) fn with_io_handler(mut self, handler: impl AssetIO + 'static) -> Self {
+        self.io.add_handler(handler);
+        self
+    }
+
+    /// Register a custom IO handler on this Context (mutable variant).
+    #[allow(unused)] // not public yet, but used in tests
+    pub(crate) fn add_io_handler(&mut self, handler: impl AssetIO + 'static) {
+        self.io.add_handler(handler);
+    }
+
+    /// Returns this Context's [`HandlerRegistry`], for looking up asset I/O handlers and
+    /// their derived metadata (supported formats, MIME types, container families, ...).
+    ///
+    /// Custom handlers registered via [`with_io_handler`](Self::with_io_handler) are searched
+    /// before the built-in global registry; last-registered wins when two handlers claim the
+    /// same format.
+    pub(crate) fn io(&self) -> &HandlerRegistry {
+        &self.io
     }
 
     /// Configure this Context with a custom cryptographic signer.
@@ -801,10 +876,13 @@ impl Context {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
+    use http::Request;
+
     use super::*;
     #[cfg(not(target_arch = "wasm32"))]
     use crate::utils::test_signer::async_test_signer;
     use crate::{
+        http::{HttpResolverError, SyncHttpResolver},
         utils::{test::test_context, test_signer::test_signer},
         SigningAlg,
     };
@@ -873,12 +951,13 @@ mod tests {
         // create a context with FromSettings and empty settings
         let mut context = Context {
             settings: Settings::default(),
-            sync_resolver: SyncResolverState::Default(OnceLock::new()),
-            async_resolver: AsyncResolverState::Default(OnceLock::new()),
+            sync_resolver_state: SyncResolverState::Default(OnceLock::new()),
+            async_resolver_state: AsyncResolverState::Default(OnceLock::new()),
             signer: SignerState::FromSettings(OnceLock::new()),
             async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
             progress_callback: None,
             cancel_flag: AtomicBool::new(false),
+            io: HandlerRegistry::new(),
         };
 
         // Update settings to ensure no signer configuration
@@ -949,12 +1028,13 @@ mod tests {
         // Create a context without custom async signer (will try to load from settings)
         let context = Context {
             settings: Settings::default(),
-            sync_resolver: SyncResolverState::Default(OnceLock::new()),
-            async_resolver: AsyncResolverState::Default(OnceLock::new()),
+            sync_resolver_state: SyncResolverState::Default(OnceLock::new()),
+            async_resolver_state: AsyncResolverState::Default(OnceLock::new()),
             signer: SignerState::FromSettings(OnceLock::new()),
             async_signer: AsyncSignerState::FromSettings(OnceLock::new()),
             progress_callback: None,
             cancel_flag: AtomicBool::new(false),
+            io: HandlerRegistry::new(),
         };
 
         // Verify that async_signer() returns an error when no async signer settings are present
@@ -1062,23 +1142,136 @@ mod tests {
 
     #[test]
     fn test_default_sync_resolver() {
-        // Create a context with default resolver
         let context = Context::new();
-
-        // Verify we can get the default resolver
         let _resolver = context.resolver();
     }
 
     #[test]
     fn test_default_async_resolver() {
-        // Create a context with default resolver
         let context = Context::new();
-
-        // Verify we can get the default async resolver
         let _resolver = context.resolver_async();
+    }
 
-        // The test passes if we can get the async resolver without errors
-        // The default is a RestrictedResolver wrapping AsyncGenericResolver
+    // The default policy must NOT block direct requests to loopback/private hosts – that would
+    // break enterprise OCSP/timestamp endpoints and local development. Only *redirects* to internal
+    // hosts, and *direct* requests to link-local/cloud-metadata hosts (CAI-13326), are blocked. This
+    // is a deliberate, documented trade-off (an accepted risk – see the "Accepted risk" section in
+    // the `crate::http` module docs), not an oversight. Here a loopback mock server is reached
+    // successfully under the default policy.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_default_allows_direct_internal_host() {
+        use http::Request;
+        use httpmock::MockServer;
+
+        use crate::http::SyncHttpResolver;
+
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/manifest");
+            then.status(200).body([1, 2, 3]);
+        });
+
+        let resolver = Context::new().resolver();
+
+        let request = Request::get(format!("{}/manifest", server.base_url()))
+            .body(vec![])
+            .unwrap();
+        let response = resolver.http_resolve(request).unwrap();
+
+        assert_eq!(response.status(), 200);
+        mock.assert_calls(1);
+    }
+
+    // Under the default policy, a redirect whose target is an internal / cloud-metadata address is
+    // rejected as `RedirectTargetDisallowed` rather than being followed (SSRF – CAI-12574). The
+    // initial (loopback) request is allowed; only the redirect hop is blocked.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_default_blocks_redirect_to_internal_host() {
+        use http::Request;
+        use httpmock::MockServer;
+
+        use crate::http::{HttpResolverError, SyncHttpResolver};
+
+        let server = MockServer::start();
+        let redirect = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/redirect");
+            then.status(302)
+                .header("Location", "http://169.254.169.254/latest/meta-data/");
+        });
+
+        let resolver = Context::new().resolver();
+        let request = Request::get(format!("{}/redirect", server.base_url()))
+            .body(vec![])
+            .unwrap();
+        let result = resolver.http_resolve(request);
+
+        assert!(
+            matches!(
+                result,
+                Err(HttpResolverError::RedirectTargetDisallowed { .. })
+            ),
+            "a redirect to an internal address must be rejected"
+        );
+        redirect.assert_calls(1);
+    }
+
+    // Under the default policy, a request whose URI *directly* names a link-local/cloud-metadata
+    // address is rejected as `MetadataOrLinkLocalUriDisallowed` (SSRF – CAI-13326), even though no
+    // redirect is involved. No network call is made — the guard rejects before dialing out.
+    #[test]
+    fn test_default_blocks_direct_metadata_host() {
+        let resolver = Context::new().resolver();
+        let request = Request::get("http://169.254.169.254/latest/meta-data/")
+            .body(vec![])
+            .unwrap();
+        let result = resolver.http_resolve(request);
+
+        assert!(
+            matches!(
+                result,
+                Err(HttpResolverError::MetadataOrLinkLocalUriDisallowed { .. })
+            ),
+            "a direct request to a link-local/cloud-metadata address must be rejected"
+        );
+    }
+
+    // `allow_redirects = false` refuses to follow any redirect, reporting `RedirectDisallowed`.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_allow_redirects_false_refuses_redirect() {
+        use http::Request;
+        use httpmock::MockServer;
+
+        use crate::http::{HttpResolverError, SyncHttpResolver};
+
+        let server = MockServer::start();
+        let redirect = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/redirect");
+            then.status(302).header("Location", server.url("/target"));
+        });
+        let target = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/target");
+            then.status(200).body([1, 2, 3]);
+        });
+
+        let context = Context::new()
+            .with_settings("[core]\nallow_redirects = false\n")
+            .unwrap();
+        let resolver = context.resolver();
+
+        let request = Request::get(format!("{}/redirect", server.base_url()))
+            .body(vec![])
+            .unwrap();
+        let result = resolver.http_resolve(request);
+
+        assert!(
+            matches!(result, Err(HttpResolverError::RedirectDisallowed { .. })),
+            "allow_redirects = false must refuse the redirect"
+        );
+        redirect.assert_calls(1);
+        target.assert_calls(0);
     }
 
     #[test]
@@ -1108,10 +1301,7 @@ mod tests {
             }
         }
 
-        // Create a context with the custom resolver
         let context = Context::new().with_resolver(MockSyncResolver);
-
-        // Verify the custom resolver is used
         let resolver = context.resolver();
 
         // Make a test request to verify it's our mock
@@ -1189,9 +1379,9 @@ mod tests {
             [core]
             allowed_network_hosts = ["example.com", "test.org"]
         "#;
-        let context = Context::new().with_settings(settings_toml).unwrap();
 
         // Get the resolver
+        let context = Context::new().with_settings(settings_toml).unwrap();
         let _resolver = context.resolver();
 
         // Note: We can't easily test the actual restriction behavior here
@@ -1214,8 +1404,6 @@ mod tests {
     fn test_resolver_caching() {
         // Create a context
         let context = Context::new();
-
-        // Get the resolver multiple times
         let _resolver1 = context.resolver();
         let _resolver2 = context.resolver();
         let _resolver3 = context.resolver();
@@ -1417,5 +1605,138 @@ mod tests {
             SigningAlg::Es256,
             "Signer should now be Es256"
         );
+    }
+
+    #[test]
+    fn test_custom_io_handler_overrides_builtin() {
+        use crate::asset_io::{AssetIO, C2paReader, ReadSeek};
+
+        struct NoopReader;
+        impl C2paReader for NoopReader {
+            fn read_c2pa(&self, _: &mut dyn ReadSeek) -> crate::Result<Vec<u8>> {
+                Ok(b"custom-cai".to_vec())
+            }
+
+            fn read_xmp(&self, _: &mut dyn ReadSeek) -> Option<String> {
+                None
+            }
+        }
+
+        struct CustomHandler;
+        impl AssetIO for CustomHandler {
+            fn new(_: &str) -> Self {
+                CustomHandler
+            }
+
+            fn get_handler(&self, _: &str) -> Box<dyn AssetIO> {
+                Box::new(CustomHandler)
+            }
+
+            fn get_reader(&self) -> &dyn C2paReader {
+                &NoopReader
+            }
+
+            fn supported_types(&self) -> &[&str] {
+                &["image/jpeg"]
+            }
+        }
+
+        let ctx = Context::new().with_io_handler(CustomHandler);
+
+        // Custom handler claims "image/jpeg" — it should win over the built-in.
+        let handler = ctx.io().handler("image/jpeg");
+        assert!(handler.is_some(), "should find a handler for image/jpeg");
+
+        // Verify our handler is invoked by reading via get_reader_handler.
+        let reader_handler = ctx.io().reader("image/jpeg");
+        assert!(reader_handler.is_some());
+        let mut stream = std::io::Cursor::new(vec![]);
+        let result = reader_handler.unwrap().read_c2pa(&mut stream);
+        assert_eq!(result.unwrap(), b"custom-cai");
+
+        // Built-in format not claimed by the custom handler should fall through.
+        assert!(
+            ctx.io().handler("image/png").is_some(),
+            "png should still resolve via builtin"
+        );
+    }
+
+    #[test]
+    fn test_builtin_handlers_still_work_without_custom() {
+        let ctx = Context::new();
+        assert!(ctx.io().handler("image/jpeg").is_some());
+        assert!(ctx.io().handler("image/png").is_some());
+        assert!(ctx.io().handler("nonexistent/format").is_none());
+    }
+
+    #[test]
+    fn test_last_registered_custom_handler_wins() {
+        use crate::asset_io::{AssetIO, C2paReader, ReadSeek};
+
+        struct HandlerA;
+        struct ReaderA;
+        impl C2paReader for ReaderA {
+            fn read_c2pa(&self, _: &mut dyn ReadSeek) -> crate::Result<Vec<u8>> {
+                Ok(b"A".to_vec())
+            }
+
+            fn read_xmp(&self, _: &mut dyn ReadSeek) -> Option<String> {
+                None
+            }
+        }
+        impl AssetIO for HandlerA {
+            fn new(_: &str) -> Self {
+                HandlerA
+            }
+
+            fn get_handler(&self, _: &str) -> Box<dyn AssetIO> {
+                Box::new(HandlerA)
+            }
+
+            fn get_reader(&self) -> &dyn C2paReader {
+                &ReaderA
+            }
+
+            fn supported_types(&self) -> &[&str] {
+                &["x-custom/test"]
+            }
+        }
+
+        struct HandlerB;
+        struct ReaderB;
+        impl C2paReader for ReaderB {
+            fn read_c2pa(&self, _: &mut dyn ReadSeek) -> crate::Result<Vec<u8>> {
+                Ok(b"B".to_vec())
+            }
+
+            fn read_xmp(&self, _: &mut dyn ReadSeek) -> Option<String> {
+                None
+            }
+        }
+        impl AssetIO for HandlerB {
+            fn new(_: &str) -> Self {
+                HandlerB
+            }
+
+            fn get_handler(&self, _: &str) -> Box<dyn AssetIO> {
+                Box::new(HandlerB)
+            }
+
+            fn get_reader(&self) -> &dyn C2paReader {
+                &ReaderB
+            }
+
+            fn supported_types(&self) -> &[&str] {
+                &["x-custom/test"]
+            }
+        }
+
+        let ctx = Context::new()
+            .with_io_handler(HandlerA)
+            .with_io_handler(HandlerB);
+        let reader = ctx.io().reader("x-custom/test").unwrap();
+        let mut stream = std::io::Cursor::new(vec![]);
+        // HandlerB was registered last, so it should win.
+        assert_eq!(reader.read_c2pa(&mut stream).unwrap(), b"B");
     }
 }

@@ -43,8 +43,8 @@ The embeddable API supports three hard-binding strategies, selected automaticall
 
 | Mode | Assertion | Formats | Requires placeholder |
 |------|-----------|---------|----------------------|
-| [DataHash](#using-datahash-placeholder) | `DataHash` | JPEG, PNG, GIF, WebP, and others | Yes |
-| [BmffHash](#using-bmffhash-placeholder) | `BmffHash` | MP4, video (BMFF containers), AVIF, HEIF/HEIC | Yes |
+| [DataHash](#using-the-datahash-placeholder) | `DataHash` | JPEG, PNG, GIF, WebP, and others | Yes |
+| [BmffHash](#using-the-bmffhash-placeholder) | `BmffHash` | MP4, video (BMFF containers), AVIF, HEIF/HEIC | Yes |
 
 <!--
 | [BoxHash](#using-boxhash-directly) | `BoxHash` | JPEG, PNG, GIF, WebP, and others | No |

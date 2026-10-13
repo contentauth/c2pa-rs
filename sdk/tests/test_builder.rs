@@ -59,7 +59,7 @@ fn test_builder_ca_jpg() -> Result<()> {
     builder.save_to_stream(format, &mut source, &mut dest)?;
     // use this to update the known good
     // dest.set_position(0);
-    // let reader = Reader::from_stream(format, &mut dest)?;
+    // let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
     // std::fs::write("tests/known_good/CA_test.json", reader.json()).unwrap();
 
     dest.set_position(0);
@@ -86,6 +86,7 @@ fn test_builder_riff() -> Result<()> {
 // manifest as the ingredients active manifest.
 //
 // Source: https://github.com/contentauth/c2pa-rs/issues/1554
+#[cfg(test)]
 #[test]
 fn test_builder_cyclic_ingredient() -> Result<()> {
     let context = test_context().into_shared();
@@ -166,7 +167,9 @@ fn test_builder_cyclic_ingredient() -> Result<()> {
         let mut reader =
             Reader::from_context(no_verify_context).with_stream(format, cyclic_ingredient)?;
         // Ideally we'd use a sync path for this. There are limitations for tokio on WASM.
-        tokio::runtime::Runtime::new()?.block_on(reader.post_validate_async(&CawgValidator {}))?;
+        let validator_context = Context::new();
+        tokio::runtime::Runtime::new()?
+            .block_on(reader.post_validate_async(&CawgValidator::new(&validator_context)))?;
     }
 
     Ok(())
@@ -613,6 +616,84 @@ fn test_metadata_formats_json_manifest() -> Result<()> {
     Ok(())
 }
 
+/// The created/gathered attribution must be kept in the read path for metadata assertions.
+#[test]
+fn test_metadata_assertion_created_flag_round_trips() -> Result<()> {
+    let context = test_context().into_shared();
+
+    let manifest_json = r#"
+    {
+        "assertions": [
+            {
+                "label": "c2pa.metadata",
+                "kind": "Json",
+                "created": true,
+                "data": {
+                    "@context": { "exif": "http://ns.adobe.com/exif/1.0/" },
+                    "exif:GPSLatitude": "39,21.102N"
+                }
+            },
+            {
+                "label": "cawg.metadata",
+                "kind": "Json",
+                "data": {
+                    "@context": { "cawg": "http://cawg.org/ns/1.0/" },
+                    "cawg:SomeField": "SomeValue"
+                }
+            },
+            {
+                "label": "c2pa.assertion.metadata",
+                "created": true,
+                "data": {
+                    "@context": { "custom": "http://custom.org/ns/1.0/" },
+                    "custom:Field": "CustomValue"
+                }
+            }
+        ]
+    }
+    "#;
+
+    let mut builder = Builder::from_shared_context(&context).with_definition(manifest_json)?;
+    const TEST_IMAGE: &[u8] = include_bytes!("fixtures/CA.jpg");
+    let format = "image/jpeg";
+    let mut source = Cursor::new(TEST_IMAGE);
+    let mut dest = Cursor::new(Vec::new());
+
+    builder.sign(context.signer()?, format, &mut source, &mut dest)?;
+
+    dest.set_position(0);
+    let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
+
+    let created_of = |label: &str| -> bool {
+        reader
+            .active_manifest()
+            .unwrap()
+            .assertions()
+            .iter()
+            .find(|a| a.label() == label)
+            .unwrap_or_else(|| panic!("{label} should be present"))
+            .created()
+    };
+
+    // `c2pa.metadata` and `cawg.metadata` decode as Metadata,
+    // `c2pa.assertion.metadata` decodes as AssertionMetadata.
+    assert!(
+        created_of("c2pa.metadata"),
+        "a created c2pa.metadata assertion reads back as created"
+    );
+    assert!(
+        created_of("c2pa.assertion.metadata"),
+        "a created c2pa.assertion.metadata assertion reads back as created"
+    );
+    // A gathered assertion must stay gathered.
+    assert!(
+        !created_of("cawg.metadata"),
+        "a gathered metadata assertion must not read back as created"
+    );
+
+    Ok(())
+}
+
 /// Test that path traversal attempts in archive resources are blocked
 #[test]
 fn test_archive_path_traversal_protection() -> Result<()> {
@@ -723,7 +804,15 @@ fn test_ingredient_arbitrary_metadata_fields() -> Result<()> {
         "should have at least one ingredient"
     );
 
-    let ingredient = &ingredients[0];
+    // Signing with `BuilderIntent::Edit` (the default intent in test_settings.toml) also
+    // auto-adds a `parentOf` ingredient derived from the source stream, which lands in the
+    // claim's created-assertions bucket and so sorts before this explicitly-declared
+    // `componentOf` one once the file is read back — find it by title rather than assuming
+    // it's first.
+    let ingredient = ingredients
+        .iter()
+        .find(|i| i["title"].as_str() == Some("Test Ingredient"))
+        .expect("should have ingredient titled 'Test Ingredient'");
 
     assert_eq!(
         ingredient["metadata"]["dateTime"].as_str(),
@@ -754,6 +843,99 @@ fn test_ingredient_arbitrary_metadata_fields() -> Result<()> {
     assert_eq!(custom_array[0].as_str(), Some("item1"));
     assert_eq!(custom_array[1].as_str(), Some("item2"));
     assert_eq!(custom_array[2].as_str(), Some("item3"));
+
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "pdf")]
+fn test_builder_pdf() -> Result<()> {
+    let context = test_context().into_shared();
+
+    let mut source = Cursor::new(include_bytes!("fixtures/basic.pdf"));
+    let format = "application/pdf";
+
+    let mut builder = Builder::from_shared_context(&context);
+    builder.set_intent(BuilderIntent::Edit);
+
+    let mut dest = Cursor::new(Vec::new());
+    builder.sign(context.signer()?, format, &mut source, &mut dest)?;
+
+    dest.set_position(0);
+    let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
+    assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+    Ok(())
+}
+
+// A PDF that already has a manifest embedded must still sign cleanly: the
+// existing manifest is removed and replaced, not appended alongside it.
+#[test]
+#[cfg(feature = "pdf")]
+fn test_builder_pdf_resign_already_signed() -> Result<()> {
+    let context = test_context().into_shared();
+
+    let mut source = Cursor::new(include_bytes!("fixtures/express-signed.pdf"));
+    let format = "application/pdf";
+
+    let mut builder = Builder::from_shared_context(&context);
+    builder.set_intent(BuilderIntent::Edit);
+
+    let mut dest = Cursor::new(Vec::new());
+    builder.sign(context.signer()?, format, &mut source, &mut dest)?;
+
+    dest.set_position(0);
+    let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
+    assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+    Ok(())
+}
+
+// A remote (URL-only, no embedded manifest) PDF: the manifest URL is
+// written into the PDF's XMP `dcterms:provenance`, no C2PA manifest is
+// embedded, and the manifest data returned by `sign` validates against the
+// asset via that XMP reference.
+#[test]
+#[cfg(feature = "pdf")]
+fn test_builder_pdf_remote_url() -> Result<()> {
+    let context = test_context().into_shared();
+
+    let mut source = Cursor::new(include_bytes!("fixtures/basic.pdf"));
+    let format = "application/pdf";
+
+    // Deliberately non-resolving hostname (mirrors the legacy
+    // `test_builder_remote_url`'s `"http://my_remote_url"`): a real,
+    // resolvable domain here would make this test's outcome depend on live
+    // network access and on which HTTP status a third party happens to
+    // return, neither of which this test should depend on.
+    let remote_url = "https://my_remote_pdf_manifest_url/manifest.c2pa";
+
+    let mut builder = Builder::from_shared_context(&context);
+    builder.set_intent(BuilderIntent::Edit);
+    builder.set_remote_url(remote_url);
+    builder.set_no_embed(true);
+
+    let mut dest = Cursor::new(Vec::new());
+    let manifest_data = builder.sign(context.signer()?, format, &mut source, &mut dest)?;
+
+    // No manifest embedded in the asset itself: reading it back without
+    // supplying the manifest data separately must fail one way or another —
+    // exactly which `Error` variant depends on whether `fetch_remote_manifests`
+    // is enabled (attempted fetch vs. immediately surfacing the URL), which
+    // isn't what this test is about, so it isn't asserted.
+    dest.set_position(0);
+    Reader::from_shared_context(&context)
+        .with_stream(format, &mut dest)
+        .expect_err("no manifest embedded; must not read as if one were");
+
+    // The returned manifest data validates against the (unmodified-by-embedding) asset.
+    dest.set_position(0);
+    let reader = Reader::from_shared_context(&context).with_manifest_data_and_stream(
+        &manifest_data,
+        format,
+        &mut dest,
+    )?;
+    assert_eq!(reader.validation_state(), ValidationState::Trusted);
 
     Ok(())
 }

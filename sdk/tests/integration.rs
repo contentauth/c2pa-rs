@@ -21,7 +21,8 @@ mod integration_1 {
 
     use c2pa::{
         assertions::{c2pa_action, Action, Actions, AssetReference, Metadata},
-        Builder, Context, Ingredient, Reader, Result, Settings,
+        validation_status::CAWG_X509_CREDENTIAL_UNTRUSTED,
+        Builder, Context, Reader, Result, Settings, ValidationState,
     };
     use c2pa_macros::c2pa_test_async;
     #[allow(unused)] // different code path for WASI
@@ -69,15 +70,12 @@ mod integration_1 {
         // allocate actions so we can add them
         let mut actions = Actions::new();
 
-        // add a parent ingredient
-        // let mut parent = Ingredient::from_file(&parent_path)?;
-        // parent.set_is_parent();
         // add an action assertion stating that we imported this file
         actions = actions.add_action(
             Action::new(c2pa_action::OPENED)
                 .set_when("2015-06-26T16:43:23+0200")
                 .set_parameter("name".to_owned(), "import")?
-                .set_parameter("org.cai.ingredientIds", ["apollo17"])?,
+                .add_ingredient_id("apollo17")?,
         );
 
         let ingredient_json = serde_json::json!({
@@ -98,18 +96,15 @@ mod integration_1 {
             Action::new("c2pa.edit").set_parameter("name".to_owned(), "brightnesscontrast")?,
         );
 
-        // add an ingredient
-        #[allow(deprecated)]
-        let ingredient = Ingredient::from_file(&ingredient_path)?;
-
         // add an action assertion stating that we imported this file
         actions = actions.add_action(
             Action::new(c2pa_action::EDITED)
                 .set_parameter("name".to_owned(), "import")?
-                .set_parameter("org.cai.ingredientIds", ["apollo17"])?,
+                .add_ingredient_id("apollo17")?,
         );
 
-        builder.add_ingredient(ingredient);
+        let mut ingredient_file = std::fs::File::open(&ingredient_path)?;
+        builder.add_ingredient_from_stream("{}", "image/png", &mut ingredient_file)?;
 
         builder.add_assertion(Actions::LABEL, &actions)?;
 
@@ -241,7 +236,7 @@ mod integration_1 {
         if let Some(manifest) = reader.active_manifest() {
             assert!(manifest.title().is_some());
             assert_eq!(manifest.assertions().len(), 2); // one for AssetReference and one for Actions
-            let assertion_ref: AssetReference = manifest.assertions()[0].to_assertion()?;
+            let assertion_ref: AssetReference = manifest.find_assertion(AssetReference::LABEL)?;
             assert_eq!(assertion_ref, references);
         } else {
             panic!("no manifest in store");
@@ -333,15 +328,7 @@ mod integration_1 {
 
         // Read back the new file with embedded manifest.
         let mut file = std::fs::File::open(&output_path)?;
-        let mut reader =
-            Reader::from_shared_context(&context).with_stream("image/jpeg", &mut file)?;
-
-        reader
-            .post_validate_async(&c2pa::identity::validator::CawgValidator {})
-            .await
-            .unwrap();
-
-        dbg!(&reader);
+        let reader = Reader::from_shared_context(&context).with_stream("image/jpeg", &mut file)?;
 
         // The test credentials are currently flagged as untrusted.
         // This will be fixed when https://github.com/contentauth/c2pa-rs/pull/1356
@@ -356,8 +343,14 @@ mod integration_1 {
                 .last()
                 .unwrap()
                 .code(),
-            "signingCredential.untrusted"
+            CAWG_X509_CREDENTIAL_UNTRUSTED
         );
+
+        // An untrusted CAWG X.509 identity credential is scoped to that
+        // identity assertion and must not by itself invalidate the enclosing
+        // manifest (the same tolerance already given to an untrusted C2PA
+        // claim signature credential).
+        assert_eq!(reader.validation_state(), ValidationState::Valid);
 
         Ok(())
     }

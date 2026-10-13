@@ -183,6 +183,18 @@ fn test_manifest_required_fields() -> Result<()> {
             "manifest.label required"
         );
         assert!(
+            obj.get("isUpdateManifest")
+                .and_then(|v| v.as_bool())
+                .is_some(),
+            "manifest.isUpdateManifest required boolean"
+        );
+        assert!(
+            obj.get("isCompressedManifest")
+                .and_then(|v| v.as_bool())
+                .is_some(),
+            "manifest.isCompressedManifest required boolean"
+        );
+        assert!(
             obj.get("assertions")
                 .map(|v| v.is_object())
                 .unwrap_or(false),
@@ -207,6 +219,8 @@ fn test_manifest_required_fields() -> Result<()> {
         // No extra top-level keys beyond what the schema allows (additionalProperties: false).
         let allowed = [
             "label",
+            "isUpdateManifest",
+            "isCompressedManifest",
             "assertions",
             "claim",
             "claim.v2",
@@ -296,12 +310,16 @@ fn test_hash_fields_are_base64_strings() -> Result<()> {
                             "'{child_path}' must be a b64'-prefixed string, not an integer array"
                         );
                         if let Some(s) = v.as_str() {
-                            // Must start with "b64'" prefix.
+                            // Must be delimited by a "b64'" prefix and a closing "'".
                             assert!(
                                 s.starts_with("b64'"),
                                 "'{child_path}' value must start with \"b64'\" prefix, got: {s:?}"
                             );
-                            let payload = &s["b64'".len()..];
+                            assert!(
+                                s.len() > "b64'".len() && s.ends_with('\''),
+                                "'{child_path}' value must end with a closing \"'\", got: {s:?}"
+                            );
+                            let payload = &s["b64'".len()..s.len() - 1];
                             // Payload must be valid base64 if non-empty.
                             if !payload.is_empty() {
                                 use std::collections::HashSet;
@@ -451,12 +469,13 @@ fn test_claim_v2_required_fields() -> Result<()> {
                 "claim.v2.gathered_assertions must be an array"
             );
         }
-        if let Some(redacted) = obj.get("redacted_assertions") {
-            assert!(
-                redacted.is_array(),
-                "claim.v2.redacted_assertions must be an array"
-            );
-        }
+        // crJSON 3.5.1: absent redactions are still serialised, as an empty array.
+        assert!(
+            obj.get("redacted_assertions")
+                .map(|v| v.is_array())
+                .unwrap_or(false),
+            "claim.v2.redacted_assertions must be present as an array"
+        );
     }
     Ok(())
 }
