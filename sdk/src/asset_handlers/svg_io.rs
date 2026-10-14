@@ -31,7 +31,7 @@ use crate::{
     utils::io_utils::{patch_stream, stream_len, ReaderUtils},
 };
 
-static SUPPORTED_TYPES: [&str; 3] = ["svg", "application/svg+xml", "image/svg+xml"];
+pub(crate) static SUPPORTED_TYPES: [&str; 3] = ["svg", "application/svg+xml", "image/svg+xml"];
 
 const SVG: &str = "svg";
 const METADATA: &str = "metadata";
