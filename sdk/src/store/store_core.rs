@@ -1538,18 +1538,21 @@ impl Store {
     ) -> Result<Vec<u8>> {
         let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
 
+        // make sure there is only one
         if pc.hash_assertions().len() != 1 {
             return Err(Error::BadParam(
                 "Claim must have exactly one hash binding assertion".to_string(),
             ));
         }
 
+        // only allow box hash assertions to be present
         if pc.box_hash_assertions().is_empty() {
             return Err(Error::BadParam("Missing box hash assertion".to_string()));
         }
 
         context.check_progress(ProgressPhase::Signing, 1, 1)?;
 
+        // sign contents
         let sig = if _sync {
             self.sign_claim(pc, signer, signer.reserve_size(), context.settings())?
         } else {
@@ -1557,6 +1560,7 @@ impl Store {
                 .await?
         };
 
+        // save the signature back to the provenance claim so it gets included in the manifest
         let pc = self.provenance_claim_mut().ok_or(Error::ClaimEncoding)?;
         pc.set_signature_val(sig);
 
