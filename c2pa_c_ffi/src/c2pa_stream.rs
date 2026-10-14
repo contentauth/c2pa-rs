@@ -422,6 +422,109 @@ mod tests {
     use super::*;
 
     #[test]
+    fn bounded_pdf_through_c_seek_callbacks() {
+        struct PdfCallbacks {
+            file: std::fs::File,
+            read_bytes: usize,
+            largest_read: usize,
+        }
+
+        unsafe extern "C" fn read_pdf(
+            context: *mut StreamContext,
+            data: *mut u8,
+            length: isize,
+        ) -> isize {
+            let context = &mut *(context as *mut PdfCallbacks);
+            let output = slice::from_raw_parts_mut(data, length as usize);
+            match context.file.read(output) {
+                Ok(count) => {
+                    context.read_bytes += count;
+                    context.largest_read = context.largest_read.max(count);
+                    count as isize
+                }
+                Err(_) => -1,
+            }
+        }
+
+        unsafe extern "C" fn seek_pdf(
+            context: *mut StreamContext,
+            offset: isize,
+            mode: C2paSeekMode,
+        ) -> isize {
+            let context = &mut *(context as *mut PdfCallbacks);
+            let from = match mode {
+                C2paSeekMode::Start if offset >= 0 => SeekFrom::Start(offset as u64),
+                C2paSeekMode::Start => return -1,
+                C2paSeekMode::End => SeekFrom::End(offset as i64),
+                C2paSeekMode::Current => SeekFrom::Current(offset as i64),
+            };
+            context.file.seek(from).map(|n| n as isize).unwrap_or(-1)
+        }
+
+        unsafe extern "C" fn write_pdf(_: *mut StreamContext, _: *const u8, _: isize) -> isize {
+            -1
+        }
+
+        unsafe extern "C" fn flush_pdf(_: *mut StreamContext) -> isize {
+            0
+        }
+
+        // Generated sparse PDF only; no customer document or whole-file buffer.
+        let length = 1_162_403_077u64;
+        let tail = length - 1024;
+        let mut file = tempfile::tempfile().unwrap();
+        file.set_len(length).unwrap();
+        file.write_all(b"%PDF-1.7\n1 0 obj\n<< /Type /Catalog /Pages 3 0 R >>\nendobj\n")
+            .unwrap();
+        file.seek(SeekFrom::Start(128)).unwrap();
+        file.write_all(b"3 0 obj\n<< /Type /Pages /Count 1 /Kids [5 0 R] >>\nendobj\n")
+            .unwrap();
+        file.seek(SeekFrom::Start(256)).unwrap();
+        file.write_all(b"5 0 obj\n<< /Type /Page /Parent 3 0 R /MediaBox [0 0 10 10] /Resources << /XObject << /Im 2 0 R >> >> >>\nendobj\n")
+            .unwrap();
+        let terminator = b"\nendstream\nendobj\n";
+        let mut data_start = 512;
+        for _ in 0..4 {
+            let header = format!(
+                "2 0 obj\n<< /Filter /DCTDecode /Length {} >>\nstream\n",
+                tail - terminator.len() as u64 - data_start
+            );
+            data_start = 512 + header.len() as u64;
+            file.seek(SeekFrom::Start(512)).unwrap();
+            file.write_all(header.as_bytes()).unwrap();
+        }
+        file.seek(SeekFrom::Start(tail - terminator.len() as u64))
+            .unwrap();
+        file.write_all(terminator).unwrap();
+        file.write_all(b"xref\n0 6\n0000000000 65535 f \n0000000009 00000 n \n0000000512 00000 n \n0000000128 00000 n \n0000000000 65535 f \n0000000256 00000 n \ntrailer\n<< /Size 6 /Root 1 0 R >>\n")
+            .unwrap();
+        let end = format!("startxref\n{tail}\n%%EOF\n");
+        file.seek(SeekFrom::Start(length - end.len() as u64))
+            .unwrap();
+        file.write_all(end.as_bytes()).unwrap();
+        file.rewind().unwrap();
+        let mut callbacks = PdfCallbacks {
+            file,
+            read_bytes: 0,
+            largest_read: 0,
+        };
+        let mut stream = unsafe {
+            C2paStream::new(
+                &mut callbacks as *mut PdfCallbacks as *mut StreamContext,
+                read_pdf,
+                seek_pdf,
+                write_pdf,
+                flush_pdf,
+            )
+        };
+        let result = c2pa::Reader::from_context(c2pa::Context::new())
+            .with_stream("application/pdf", &mut stream);
+        assert!(matches!(result, Err(c2pa::Error::JumbfNotFound)));
+        assert!(callbacks.read_bytes < 2 * 1024 * 1024);
+        assert!(callbacks.largest_read <= 256 * 1024);
+    }
+
+    #[test]
     fn test_cstream_read() {
         let data = vec![1, 2, 3, 4, 5];
         let mut stream = TestStream::new(data);

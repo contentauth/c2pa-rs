@@ -3669,7 +3669,9 @@ impl Store {
             #[cfg(not(feature = "fetch_remote_manifests"))]
             Err(Error::RemoteManifestUrl(ext_ref.to_owned()))
         } else {
-            Err(Error::JumbfNotFound)
+            Err(Error::NotImplemented(
+                "unsupported remote manifest locator".into(),
+            ))
         }
     }
 
@@ -3692,13 +3694,21 @@ impl Store {
         stream: &mut dyn ReadSeek,
         context: &Context,
     ) -> Result<(Vec<u8>, Option<String>)> {
-        match context.io().read_c2pa(asset_type, stream) {
+        let limit = context
+            .settings()
+            .core
+            .max_decompressed_manifest_size_in_mb
+            .checked_mul(1024 * 1024)
+            .ok_or(Error::InsufficientMemory)?;
+        match context.io().read_c2pa_with_limit(asset_type, stream, limit) {
             Ok(manifest_bytes) => Ok((manifest_bytes, None)),
             Err(Error::JumbfNotFound) => {
                 stream.rewind()?;
                 if let Some(ext_ref) =
-                    crate::utils::xmp_inmemory_utils::XmpInfo::from_source(stream, asset_type)
-                        .provenance
+                    crate::utils::xmp_inmemory_utils::XmpInfo::from_source_with_context(
+                        stream, asset_type, context,
+                    )?
+                    .provenance
                 {
                     let jumbf = if _sync {
                         Store::handle_remote_manifest(&ext_ref, context)?

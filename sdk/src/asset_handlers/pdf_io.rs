@@ -11,10 +11,13 @@
 // specific language governing permissions and limitations under
 // each license.
 
-use std::path::Path;
+use std::{io::SeekFrom, path::Path};
 
 use crate::{
-    asset_handlers::pdf::{C2paPdf, Pdf},
+    asset_handlers::{
+        pdf::{C2paPdf, Pdf},
+        pdf_bounded,
+    },
     asset_io::{AssetIO, C2paReader, C2paWriter, ComposedManifestRef, ReadSeek},
     Error::{self, JumbfNotFound, NotImplemented, PdfReadError},
 };
@@ -25,7 +28,21 @@ static WRITE_NOT_IMPLEMENTED: &str = "PDF write functionality will be added in a
 pub struct PdfIO {}
 
 impl C2paReader for PdfIO {
+    fn read_c2pa_with_limit(
+        &self,
+        input_stream: &mut dyn ReadSeek,
+        limit: usize,
+    ) -> crate::Result<Vec<u8>> {
+        if input_stream.seek(SeekFrom::End(0))? > pdf_bounded::THRESHOLD {
+            return pdf_bounded::read_manifest(input_stream, limit);
+        }
+        self.read_c2pa(input_stream)
+    }
+
     fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> crate::Result<Vec<u8>> {
+        if input_stream.seek(SeekFrom::End(0))? > pdf_bounded::THRESHOLD {
+            return pdf_bounded::read_manifest(input_stream, pdf_bounded::MANIFEST);
+        }
         input_stream.rewind()?;
 
         let pdf = Pdf::from_reader(input_stream).map_err(|e| Error::InvalidAsset(e.to_string()))?;
@@ -33,15 +50,28 @@ impl C2paReader for PdfIO {
     }
 
     fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Option<String> {
-        if input_stream.rewind().is_err() {
-            return None;
+        match self.read_xmp_result(input_stream) {
+            Ok(xmp) => xmp,
+            Err(error) => {
+                log::error!("PDF metadata read failed: {error}");
+                None
+            }
         }
+    }
 
-        let Ok(pdf) = Pdf::from_reader(input_stream) else {
-            return None;
+    fn read_xmp_result(&self, input_stream: &mut dyn ReadSeek) -> crate::Result<Option<String>> {
+        let xmp = if input_stream.seek(SeekFrom::End(0))? > pdf_bounded::THRESHOLD {
+            pdf_bounded::read_xmp(input_stream)?
+        } else {
+            input_stream.rewind()?;
+            let pdf =
+                Pdf::from_reader(input_stream).map_err(|e| Error::InvalidAsset(e.to_string()))?;
+            pdf.read_xmp_result()?
         };
-
-        self.read_xmp_from_pdf(pdf)
+        if let Some(xmp) = xmp.as_deref() {
+            crate::utils::xmp_inmemory_utils::validate_xmp(xmp)?;
+        }
+        Ok(xmp)
     }
 }
 
@@ -63,6 +93,7 @@ impl PdfIO {
         }
     }
 
+    #[cfg(test)]
     fn read_xmp_from_pdf(&self, pdf: impl C2paPdf) -> Option<String> {
         pdf.read_xmp()
     }

@@ -838,8 +838,7 @@ impl Ingredient {
     ) -> Result<Self> {
         let format = format.into();
 
-        // try to get xmp info, if this fails all XmpInfo fields will be None
-        let xmp_info = XmpInfo::from_source(stream, &format);
+        let xmp_info = XmpInfo::from_source_with_context(stream, &format, context)?;
 
         if self.instance_id.is_none() {
             self.instance_id = xmp_info.instance_id;

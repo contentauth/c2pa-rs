@@ -179,9 +179,26 @@ pub trait C2paReader: Sync + Send {
     /// more than one is detected.
     fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>>;
 
+    /// Read with a caller's manifest-size limit. Streaming implementations should
+    /// enforce it before allocation; the default delegates without changing
+    /// existing handlers' allocation or size-limit behavior.
+    fn read_c2pa_with_limit(
+        &self,
+        input_stream: &mut dyn ReadSeek,
+        _limit: usize,
+    ) -> Result<Vec<u8>> {
+        self.read_c2pa(input_stream)
+    }
+
     /// Returns the asset's XMP metadata as a string, or `None` if the format
     /// doesn't carry XMP or none is present.
     fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Option<String>;
+
+    /// Fallible metadata read. Formats that can distinguish malformed metadata
+    /// from absence should override this; existing handlers retain their behavior.
+    fn read_xmp_result(&self, input_stream: &mut dyn ReadSeek) -> Result<Option<String>> {
+        Ok(self.read_xmp(input_stream))
+    }
 }
 
 /// Writes, locates, and removes the C2PA manifest store in an asset stream.
@@ -917,6 +934,7 @@ impl HandlerRegistry {
 
     /// Reads the C2PA manifest store from `stream` via the registered reader for
     /// `asset_type`, checking `fallback` if this registry has no match.
+    #[allow(dead_code)]
     pub(crate) fn read_c2pa(&self, asset_type: &str, stream: &mut dyn ReadSeek) -> Result<Vec<u8>> {
         let c2pa_block = match self.reader(asset_type) {
             Some(r) => r.read_c2pa(stream)?,
@@ -926,6 +944,20 @@ impl HandlerRegistry {
             return Err(Error::JumbfNotFound);
         }
         Ok(c2pa_block)
+    }
+
+    pub(crate) fn read_c2pa_with_limit(
+        &self,
+        asset_type: &str,
+        stream: &mut dyn ReadSeek,
+        limit: usize,
+    ) -> Result<Vec<u8>> {
+        let reader = self.reader(asset_type).ok_or(Error::UnsupportedType)?;
+        let bytes = reader.read_c2pa_with_limit(stream, limit)?;
+        if bytes.is_empty() {
+            return Err(Error::JumbfNotFound);
+        }
+        Ok(bytes)
     }
 
     /// Writes `store_bytes` as the C2PA manifest store, reading an asset of `asset_type`
