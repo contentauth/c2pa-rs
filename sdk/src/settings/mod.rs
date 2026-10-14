@@ -1324,6 +1324,8 @@ pub mod tests {
     /// Legacy test: verifies the thread-local settings API reads defaults and round-trips values.
     #[test]
     fn test_thread_local_settings() {
+        Settings::reset().unwrap();
+
         // Verify defaults are accessible via thread-local
         let settings = get_thread_local_settings();
         assert_eq!(settings.core, Core::default());
