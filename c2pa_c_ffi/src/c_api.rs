@@ -34,8 +34,8 @@ use cimpl::{
     deref_mut_or_return, deref_mut_or_return_int, deref_mut_or_return_null, deref_or_return_false,
     deref_or_return_int, deref_or_return_null, distinct_or_return_int, distinct_or_return_null,
     ensure_trackable, option_to_c_string, out_bytes_or_return_int, ptr_or_return_int,
-    ptr_or_return_null, to_c_bytes, to_c_string, track_string_array, untrack_or_return_int,
-    untrack_or_return_null, untrack_owned_pair, Error as CimplError,
+    ptr_or_return_null, some_or_return_null, to_c_bytes, to_c_string, track_string_array,
+    untrack_or_return_int, untrack_or_return_null, untrack_owned_pair, Error as CimplError,
 };
 
 #[cfg(test)]
@@ -2753,6 +2753,9 @@ pub unsafe extern "C" fn c2pa_signer_create(
     })
 }
 
+// Limit the signature box reservation and the buffer allocated for each sign call.
+const MAX_SIGNATURE_RESERVE_SIZE: usize = 1024 * 1024;
+
 /// Creates a signer whose callback returns a complete tagged COSE_Sign1.
 ///
 /// The callback receives the serialized C2PA claim bytes. Its output buffer is
@@ -2764,8 +2767,9 @@ pub unsafe extern "C" fn c2pa_signer_create(
 /// within the COSE object. The SDK does not construct or perform post-signing
 /// verification of the returned COSE in this path.
 ///
-/// Returns NULL and sets `InvalidBufferSize` when `reserve_size` is zero or cannot
-/// be represented by the callback's return type. Free the signer with `c2pa_free()`.
+/// Returns NULL and sets `NullParameter` when `callback` is NULL.
+/// Returns NULL and sets `InvalidBufferSize` when `reserve_size` is zero or exceeds
+/// 1 MiB (1,048,576 bytes). Free the signer with `c2pa_free()`.
 ///
 /// # Safety
 ///
@@ -2777,10 +2781,11 @@ pub unsafe extern "C" fn c2pa_signer_create(
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_signer_create_direct_cose(
     context: *const c_void,
-    callback: SignerCallback,
+    callback: Option<SignerCallback>,
     reserve_size: usize,
 ) -> *mut C2paSigner {
-    if reserve_size == 0 || reserve_size > isize::MAX as usize {
+    let callback = some_or_return_null!(callback, CimplError::null_parameter("callback"));
+    if reserve_size == 0 || reserve_size > MAX_SIGNATURE_RESERVE_SIZE {
         CimplError::invalid_buffer_size(reserve_size, "reserve_size").set_last();
         return std::ptr::null_mut();
     }
@@ -4402,7 +4407,11 @@ mod tests {
         }
         let context = 42u32;
         let signer = unsafe {
-            c2pa_signer_create_direct_cose(&context as *const u32 as *const c_void, callback, 4)
+            c2pa_signer_create_direct_cose(
+                &context as *const u32 as *const c_void,
+                Some(callback),
+                4,
+            )
         };
         assert!(!signer.is_null());
         assert_eq!(unsafe { c2pa_signer_reserve_size(signer) }, 4);
@@ -4432,7 +4441,7 @@ mod tests {
             let signer = unsafe {
                 c2pa_signer_create_direct_cose(
                     &written as *const isize as *const c_void,
-                    callback,
+                    Some(callback),
                     4,
                 )
             };
@@ -4449,6 +4458,45 @@ mod tests {
     }
 
     #[test]
+    fn direct_cose_callback_signer_rejects_null_callback() {
+        let signer = unsafe { c2pa_signer_create_direct_cose(std::ptr::null(), None, 4) };
+        assert!(signer.is_null());
+        let error = unsafe { c2pa_error() };
+        assert!(!error.is_null());
+        assert_eq!(
+            unsafe { CStr::from_ptr(error) }.to_str().unwrap(),
+            "NullParameter: callback"
+        );
+        assert_eq!(unsafe { c2pa_free(error as *mut c_void) }, 0);
+    }
+
+    #[test]
+    fn direct_cose_callback_signer_accepts_max_reserve_size() {
+        unsafe extern "C" fn callback(
+            _context: *const (),
+            _data: *const c_uchar,
+            _len: usize,
+            _output: *mut c_uchar,
+            _capacity: usize,
+        ) -> isize {
+            panic!("must not call callback when creating signer")
+        }
+        let signer = unsafe {
+            c2pa_signer_create_direct_cose(
+                std::ptr::null(),
+                Some(callback),
+                MAX_SIGNATURE_RESERVE_SIZE,
+            )
+        };
+        assert!(!signer.is_null());
+        assert_eq!(
+            unsafe { c2pa_signer_reserve_size(signer) },
+            MAX_SIGNATURE_RESERVE_SIZE as i64
+        );
+        assert_eq!(unsafe { c2pa_free(signer as *mut c_void) }, 0);
+    }
+
+    #[test]
     fn direct_cose_callback_signer_rejects_invalid_reserve_size() {
         unsafe extern "C" fn callback(
             _context: *const (),
@@ -4459,9 +4507,9 @@ mod tests {
         ) -> isize {
             panic!("must not call callback for invalid reserve size")
         }
-        for size in [0, usize::MAX] {
+        for size in [0, MAX_SIGNATURE_RESERVE_SIZE + 1, usize::MAX] {
             let signer =
-                unsafe { c2pa_signer_create_direct_cose(std::ptr::null(), callback, size) };
+                unsafe { c2pa_signer_create_direct_cose(std::ptr::null(), Some(callback), size) };
             assert!(signer.is_null());
             let error = unsafe { c2pa_error() };
             assert!(!error.is_null());
