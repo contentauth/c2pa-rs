@@ -6,15 +6,15 @@ name: Promote release candidate
 #
 # This workflow does NOT publish. It resets the candidate's version back to the
 # last published release and force-pushes the baked train onto `stable`; the
-# existing `release-pr.yml` then opens the reviewed `0.N.0` version + changelog
-# PR, and merging THAT is what publishes (via `release.yml`).
+# release-PR job in `release.yml` then opens the reviewed `0.N.0` version +
+# changelog PR, and merging THAT is what publishes.
 #
 # Why reset the version rather than strip `-rc` to the final number: a push to
 # `stable` whose version is already ahead of crates.io makes `release.yml` run
 # `release-plz release` and publish immediately, which would skip the reviewed
 # release PR and its generated changelog. Resetting to the last published
-# version keeps `stable` level with the registry, so `release-pr.yml` – not this
-# workflow – computes the train's bump and writes the changelog.
+# version keeps `stable` level with the registry, so the release-PR job – not
+# this workflow – computes the train's bump and writes the changelog.
 #
 # Prerequisites:
 #   * The `RELEASE_PLZ_ORG_TOKEN` identity must be allowed to force-push
@@ -85,7 +85,7 @@ jobs:
             echo "old_c2pa=$OLD_C2PA"
             echo "old_line=$OLD_LINE"
           } >> "$GITHUB_OUTPUT"
-          echo "Promoting ${{ github.ref_name }} ($RC_C2PA) onto stable; resetting to $OLD_C2PA so release-pr.yml computes the train bump."
+          echo "Promoting ${{ github.ref_name }} ($RC_C2PA) onto stable; resetting to $OLD_C2PA so the release-PR job computes the train bump."
 
       - name: Snapshot outgoing stable line
         run: |
@@ -106,7 +106,7 @@ jobs:
           # Move c2pa (and c2pa-c-ffi, which shares the workspace version) back to
           # the last published number. `stable` then sits level with crates.io,
           # so the force-push below does not trigger an immediate publish; the
-          # bump is left for release-pr.yml to compute and for a human to review.
+          # bump is left for the release-PR job to compute and for a human to review.
           #
           # A plain string replace, not `cargo set-version` (from cargo-edit) – that
           # tool refuses to ever move a version backward, with no override, so it
@@ -131,9 +131,9 @@ jobs:
 
           # Force-push rather than merge so stable's history becomes exactly the
           # coherent set of changes baked on the RC branch (see
-          # docs/release-process.md). The push triggers release-pr.yml, which
-          # opens the reviewed version + changelog PR. Pushed with a PAT so that
-          # downstream workflow actually runs – a push made with the default
+          # docs/release-process.md). The push triggers release.yml, whose
+          # release-PR job opens the reviewed version + changelog PR. Pushed with
+          # a PAT so that the downstream workflow runs – a push made with the default
           # GITHUB_TOKEN does not cascade into other workflows.
           git push --force origin "HEAD:stable"
 
@@ -145,7 +145,7 @@ jobs:
             echo "- Branch \`${{ github.ref_name }}\` (candidate \`${{ steps.ver.outputs.rc_c2pa }}\`) force-pushed onto \`stable\`, reset to \`${{ steps.ver.outputs.old_c2pa }}\`."
             echo "- Outgoing \`stable\` snapshotted as \`${{ steps.ver.outputs.old_line }}\` for backports."
             echo ""
-            echo "\`release-pr.yml\` will open the reviewed version + changelog PR on \`stable\`. **Merging that PR publishes to crates.io.**"
+            echo "The release-PR job in \`release.yml\` will open the reviewed version + changelog PR on \`stable\`. **Merging that PR publishes to crates.io.**"
             echo ""
             echo "If release-plz under-bumps (the train is breaking by policy but \`cargo-semver-checks\` detected no break), force the final number on that PR with \`release-plz set-version\`."
           } >> "$GITHUB_STEP_SUMMARY"

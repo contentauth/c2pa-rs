@@ -16,6 +16,7 @@ on:
 
 env:
   S3_BUCKET: adobe-cai-open-source-c2pa-sdk-test-assets-prod
+  RUST_TOOLCHAIN: 1.98.1
 
 jobs:
   build:
@@ -45,14 +46,14 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: target/codspeed/
-          key: codspeed-output-${{ runner.os }}-${{ hashFiles('**/Cargo.toml', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
+          key: codspeed-output-${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('**/Cargo.toml', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
           lookup-only: true
 
       - name: Install Rust toolchain
         if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
-          toolchain: stable
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install cargo-binstall
         if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
@@ -75,7 +76,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: target/codspeed/
-          key: codspeed-output-${{ runner.os }}-${{ hashFiles('**/Cargo.toml', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
+          key: codspeed-output-${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('**/Cargo.toml', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
 
   benchmarks:
     name: Benchmark (${{ matrix.bench }}${{ matrix.format && format('/{0}', matrix.format) || '' }} <${{ matrix.build_mode || 'simulation' }}>)
@@ -109,6 +110,11 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: us-east-1
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
 
@@ -119,7 +125,7 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: target/codspeed/
-          key: codspeed-output-${{ runner.os }}-${{ hashFiles('**/Cargo.toml', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
+          key: codspeed-output-${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('**/Cargo.toml', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
           fail-on-cache-miss: true
 
       - name: Set binary permissions

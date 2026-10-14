@@ -153,12 +153,13 @@ jobs:
 
       # Cut the first build (-rc.1) on the new branch: release-rc.yml sets the
       # -rc.1 versions, tags them, and those tags build prerelease binaries.
-      # Dispatched with the PAT so its subsequent tag pushes trigger the binary
-      # workflows.
+      # RELEASE_PLZ_ORG_TOKEN lacks workflow-dispatch permission on this repo
+      # (confirmed empirically: it returns a 403), so CROSS_ORG_PR_TOKEN is
+      # used here instead, matching the workaround in release.yml.
       - name: Cut first release-candidate build (-rc.1)
         if: steps.exists.outputs.skip != 'true' && steps.empty.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PLZ_ORG_TOKEN }}
+          GH_TOKEN: ${{ secrets.CROSS_ORG_PR_TOKEN }}
         run: |
           gh workflow run release-rc.yml --ref "${{ steps.ver.outputs.branch }}"
 

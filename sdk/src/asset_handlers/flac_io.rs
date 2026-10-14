@@ -389,6 +389,14 @@ mod tests {
     }
 
     #[test]
+    fn test_read_cai_zlib_bomb_rejected() {
+        // CAI-13353 / VULN-38328 regression: a compressed ID3v2.4 frame must
+        // not be allowed to decompress without bound. FLAC shares the same
+        // ID3 parsing path as MP3, so it is affected too.
+        test_helpers::run_read_cai_zlib_bomb_rejected(&FlacIO::new("flac"), MINIMAL_FLAC);
+    }
+
+    #[test]
     fn test_get_handler_and_reader() {
         let flac_io = FlacIO::new("flac");
         let handler = flac_io.get_handler("audio/flac");

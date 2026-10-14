@@ -493,6 +493,11 @@ struct Object {
     stream: Option<u64>,
 }
 
+struct ManifestData {
+    bytes: Vec<u8>,
+    range: Option<(u64, u64)>,
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Xref {
     Free,
@@ -1062,7 +1067,7 @@ impl<'a> Pdf<'a> {
         Ok(dict)
     }
 
-    fn manifest(&mut self, cap: usize) -> Result<Vec<u8>> {
+    fn manifest(&mut self, cap: usize) -> Result<ManifestData> {
         let mut catalog = self.catalog()?;
         let Some(af) = catalog.remove(b"AF".as_slice()) else {
             return Err(Error::JumbfNotFound);
@@ -1087,11 +1092,17 @@ impl<'a> Pdf<'a> {
             let mut ef = self.field(&mut file, b"EF")?.dict()?;
             let object = self.resolve(required(&mut ef, b"F")?)?;
             let mut dict = object.value.dict()?;
+            let filtered = dict.contains_key(b"Filter".as_slice());
             let bytes = self.stream_bytes(&mut dict, object.stream, cap)?;
             if bytes.is_empty() {
                 return Err(malformed("empty C2PA manifest stream"));
             }
-            found = Some(bytes);
+            let range = if filtered {
+                None
+            } else {
+                object.stream.map(|start| (start, bytes.len() as u64))
+            };
+            found = Some(ManifestData { bytes, range });
         }
         found.ok_or(Error::JumbfNotFound)
     }
@@ -1119,7 +1130,18 @@ fn required(dict: &mut Dict, key: &[u8]) -> Result<Value> {
 }
 
 pub(super) fn read_manifest(stream: &mut dyn ReadSeek, cap: usize) -> Result<Vec<u8>> {
-    Pdf::open(stream)?.manifest(cap.min(MANIFEST))
+    Ok(Pdf::open(stream)?.manifest(cap.min(MANIFEST))?.bytes)
+}
+
+pub(super) fn manifest_location(stream: &mut dyn ReadSeek) -> Result<Option<(u64, u64)>> {
+    match Pdf::open(stream)?.manifest(MANIFEST) {
+        Ok(manifest) => manifest
+            .range
+            .map(Some)
+            .ok_or_else(|| unsupported("filtered manifest has no raw decoded byte range")),
+        Err(Error::JumbfNotFound) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 pub(super) fn read_xmp(stream: &mut dyn ReadSeek) -> Result<Option<String>> {

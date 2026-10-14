@@ -18,6 +18,7 @@ use thiserror::Error;
 use crate::{
     crypto::{cose::CoseError, time_stamp::TimeStampError},
     http::HttpResolverError,
+    store::InvalidClaimError,
     ValidationResults,
 };
 
@@ -222,7 +223,7 @@ pub enum Error {
     PdfResourceLimit(String),
 
     #[error(transparent)]
-    InvalidClaim(#[from] crate::store::InvalidClaimError),
+    InvalidClaim(#[from] InvalidClaimError),
 
     #[error("asset could not be parsed: {0}")]
     InvalidAsset(String),

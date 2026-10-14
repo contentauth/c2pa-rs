@@ -804,7 +804,15 @@ fn test_ingredient_arbitrary_metadata_fields() -> Result<()> {
         "should have at least one ingredient"
     );
 
-    let ingredient = &ingredients[0];
+    // Signing with `BuilderIntent::Edit` (the default intent in test_settings.toml) also
+    // auto-adds a `parentOf` ingredient derived from the source stream, which lands in the
+    // claim's created-assertions bucket and so sorts before this explicitly-declared
+    // `componentOf` one once the file is read back — find it by title rather than assuming
+    // it's first.
+    let ingredient = ingredients
+        .iter()
+        .find(|i| i["title"].as_str() == Some("Test Ingredient"))
+        .expect("should have ingredient titled 'Test Ingredient'");
 
     assert_eq!(
         ingredient["metadata"]["dateTime"].as_str(),
@@ -835,6 +843,99 @@ fn test_ingredient_arbitrary_metadata_fields() -> Result<()> {
     assert_eq!(custom_array[0].as_str(), Some("item1"));
     assert_eq!(custom_array[1].as_str(), Some("item2"));
     assert_eq!(custom_array[2].as_str(), Some("item3"));
+
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "pdf")]
+fn test_builder_pdf() -> Result<()> {
+    let context = test_context().into_shared();
+
+    let mut source = Cursor::new(include_bytes!("fixtures/basic.pdf"));
+    let format = "application/pdf";
+
+    let mut builder = Builder::from_shared_context(&context);
+    builder.set_intent(BuilderIntent::Edit);
+
+    let mut dest = Cursor::new(Vec::new());
+    builder.sign(context.signer()?, format, &mut source, &mut dest)?;
+
+    dest.set_position(0);
+    let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
+    assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+    Ok(())
+}
+
+// A PDF that already has a manifest embedded must still sign cleanly: the
+// existing manifest is removed and replaced, not appended alongside it.
+#[test]
+#[cfg(feature = "pdf")]
+fn test_builder_pdf_resign_already_signed() -> Result<()> {
+    let context = test_context().into_shared();
+
+    let mut source = Cursor::new(include_bytes!("fixtures/express-signed.pdf"));
+    let format = "application/pdf";
+
+    let mut builder = Builder::from_shared_context(&context);
+    builder.set_intent(BuilderIntent::Edit);
+
+    let mut dest = Cursor::new(Vec::new());
+    builder.sign(context.signer()?, format, &mut source, &mut dest)?;
+
+    dest.set_position(0);
+    let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
+    assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+    Ok(())
+}
+
+// A remote (URL-only, no embedded manifest) PDF: the manifest URL is
+// written into the PDF's XMP `dcterms:provenance`, no C2PA manifest is
+// embedded, and the manifest data returned by `sign` validates against the
+// asset via that XMP reference.
+#[test]
+#[cfg(feature = "pdf")]
+fn test_builder_pdf_remote_url() -> Result<()> {
+    let context = test_context().into_shared();
+
+    let mut source = Cursor::new(include_bytes!("fixtures/basic.pdf"));
+    let format = "application/pdf";
+
+    // Deliberately non-resolving hostname (mirrors the legacy
+    // `test_builder_remote_url`'s `"http://my_remote_url"`): a real,
+    // resolvable domain here would make this test's outcome depend on live
+    // network access and on which HTTP status a third party happens to
+    // return, neither of which this test should depend on.
+    let remote_url = "https://my_remote_pdf_manifest_url/manifest.c2pa";
+
+    let mut builder = Builder::from_shared_context(&context);
+    builder.set_intent(BuilderIntent::Edit);
+    builder.set_remote_url(remote_url);
+    builder.set_no_embed(true);
+
+    let mut dest = Cursor::new(Vec::new());
+    let manifest_data = builder.sign(context.signer()?, format, &mut source, &mut dest)?;
+
+    // No manifest embedded in the asset itself: reading it back without
+    // supplying the manifest data separately must fail one way or another —
+    // exactly which `Error` variant depends on whether `fetch_remote_manifests`
+    // is enabled (attempted fetch vs. immediately surfacing the URL), which
+    // isn't what this test is about, so it isn't asserted.
+    dest.set_position(0);
+    Reader::from_shared_context(&context)
+        .with_stream(format, &mut dest)
+        .expect_err("no manifest embedded; must not read as if one were");
+
+    // The returned manifest data validates against the (unmodified-by-embedding) asset.
+    dest.set_position(0);
+    let reader = Reader::from_shared_context(&context).with_manifest_data_and_stream(
+        &manifest_data,
+        format,
+        &mut dest,
+    )?;
+    assert_eq!(reader.validation_state(), ValidationState::Trusted);
 
     Ok(())
 }

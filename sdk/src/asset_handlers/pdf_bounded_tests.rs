@@ -372,6 +372,49 @@ fn bounded_threshold_routing_exact_bytes() {
 }
 
 #[test]
+fn bounded_manifest_locations_for_hash_exclusions() {
+    use crate::asset_io::{C2paWriter, ObjectType};
+
+    for length in [THRESHOLD - 1, THRESHOLD, THRESHOLD + 1, GIANT] {
+        let mut embedded = fixture(
+            length,
+            objects(Some(EMBEDDED), None),
+            Layout::Table,
+            BTreeMap::new(),
+        );
+        let locations = PdfIO {}.get_object_locations(&mut embedded.source).unwrap();
+        assert_eq!(locations.len(), 3);
+        let manifest = &locations[1];
+        assert_eq!(manifest.htype, ObjectType::C2pa);
+        assert_eq!(manifest.length, EMBEDDED.len() as u64);
+        embedded
+            .source
+            .seek(SeekFrom::Start(manifest.offset))
+            .unwrap();
+        let mut bytes = vec![0; EMBEDDED.len()];
+        embedded.source.read_exact(&mut bytes).unwrap();
+        assert_eq!(bytes, EMBEDDED);
+        assert_eq!(locations[2].offset + locations[2].length, length);
+        if length > THRESHOLD {
+            assert_bounded(&embedded);
+        }
+    }
+    let mut absent = fixture(GIANT, objects(None, None), Layout::Table, BTreeMap::new());
+    let locations = PdfIO {}.get_object_locations(&mut absent.source).unwrap();
+    assert_eq!(locations[1].offset, GIANT);
+    assert_bounded(&absent);
+
+    let mut data = objects(Some(EMBEDDED), None);
+    data.insert(3, stream("/Filter /FlateDecode", &flate(EMBEDDED)));
+    let mut filtered = fixture(GIANT, data, Layout::Table, BTreeMap::new());
+    assert!(matches!(
+        PdfIO {}.get_object_locations(&mut filtered.source),
+        Err(Error::NotImplemented(_))
+    ));
+    assert_bounded(&filtered);
+}
+
+#[test]
 fn bounded_xref_stream_filtered_and_hybrid_objstm() {
     for layout in [
         Layout::Stream(false),

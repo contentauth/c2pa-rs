@@ -23,14 +23,14 @@ Pre-1.0, the Rust SDK aligns this with our two-track [release process](release-p
 
 Users therefore get one full published train in which the API is present but marked deprecated, with a known date on which it disappears. That window is approximately two months, covering the downstream bindings' 60-day grace period, so a binding can adopt that train and serve its own deprecation notice before the native API is removed; see [Stage 2](#stage-2-grace-period).
 
-The following worked example illustrates the lifecycle of a single deprecated API. The version numbers and dates are illustrative, reflecting the trains scheduled as of this writing (mid-2026); the normative rule is always stated relative to trains, not fixed versions or dates.
+The following worked example illustrates the lifecycle of a single deprecated API. The version numbers and dates are illustrative, reflecting the trains scheduled as of this writing (late 2026); the normative rule is always stated relative to trains, not fixed versions or dates.
 
 | Step | Where / version | Example date | What users see |
 | -- | -- | -- | -- |
-| Deprecation authored | `main` (`0.91.0-dev`) | August 2026 | Nothing yet: the change is on `main` only, not backported. |
-| **Deprecation published** | train `0.91` | mid-September 2026 | The `#[deprecated]` API and its replacement ship together; the grace-period clock starts. |
-| Removal swept onto `main` | `main` (`0.92.0-dev`) | right after the `0.91` cut | The API is deleted on `main`, but is still present in the published `0.91` line. |
-| **Removal published** | train `0.92` | mid-November 2026 | The API is gone, approximately two months after the train that published the deprecation. |
+| Deprecation authored | `main` (`0.92.0-dev`) | October 2026 | Nothing yet: the change is on `main` only, not backported. |
+| **Deprecation published** | train `0.92` | mid-November 2026 | The `#[deprecated]` API and its replacement ship together; the grace-period clock starts. |
+| Removal swept onto `main` | `main` (`0.93.0-dev`) | right after the `0.92` cut | The API is deleted on `main`, but is still present in the published `0.92` line. |
+| **Removal published** | train `0.93` | mid-January 2027 | The API is gone, approximately two months after the train that published the deprecation. |
 
 > [!IMPORTANT]
 > We deprecate an API **only once its replacement is available**. A deprecation notice must always point users to a supported alternative, so there is never a window in which the recommended path is "stop using this, and wait." (If an API is dangerous enough that we want to steer people away before a replacement exists, that is a documentation/advisory matter, or, for a security issue, the [security exception](#security-and-bug-fix-exceptions), not a routine deprecation.)
@@ -126,8 +126,8 @@ Deprecation warnings are expressed using each language's idiomatic mechanism so 
 
 ```rust
 #[deprecated(
-    since = "0.91.0",
-    note = "Use `Builder::new_v2()` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
+    since = "0.92.0",
+    note = "Use `Builder::new_v2()` instead. Will be removed in 0.93.0 (scheduled for mid-January 2027)."
 )]
 pub fn old_builder() -> Builder { ... }
 ```

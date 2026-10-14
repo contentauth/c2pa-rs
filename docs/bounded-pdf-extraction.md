@@ -120,6 +120,15 @@ cargo test -p c2pa-c-ffi --lib --no-default-features \
   --features rust_native_crypto bounded_pdf_through_c_seek_callbacks
 ```
 
-The implementation is based on matching `c2pa` and `c2pa-c-ffi` 0.91.0 release
-commit `e7cc666c3409bdaf4cea8e49046dfbf8290dff89`. It does not publish a release or
-change package versions.
+The original implementation targets matching `c2pa` and `c2pa-c-ffi` 0.91.0
+release commit `e7cc666c3409bdaf4cea8e49046dfbf8290dff89`; its tested commit is
+`a7f01e946f79a2ce9a491039e192f1aa81a71cee`. The branch subsequently merged main
+commit `09976fd6febd86168904ba14dad95b9f5bfd6c9e`, adopting main's `0.92.0-dev`
+workspace version and split Store modules. The original 0.91.0 commit remains
+available for release-pinned integrations.
+
+Main's raw manifest-range lookup for hash-exclusion validation also uses bounded
+navigation on oversized PDFs. Unfiltered manifest streams return their exact
+content range; filtered streams explicitly report that decoded bytes have no
+raw byte range, matching the existing locator's unsupported outcome. Signing
+and mutation still use the existing document-loader path.
