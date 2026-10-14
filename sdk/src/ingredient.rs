@@ -1678,12 +1678,14 @@ mod tests {
     #[cfg(not(any(feature = "fetch_remote_manifests", feature = "file_io")))]
     #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory_no_file_io() {
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
-        crate::settings::set_settings_value("verify.remote_manifest_fetch", true).unwrap();
-
         let format = "image/jpeg";
         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
-        let context = Context::new();
+        let settings = crate::Settings::new()
+            .with_value("verify.verify_trust", false)
+            .unwrap()
+            .with_value("verify.remote_manifest_fetch", true)
+            .unwrap();
+        let context = Context::new().with_settings(settings).unwrap();
         let ingredient = Ingredient::from_json(r#"{"title": "cloud.jpg"}"#)
             .unwrap()
             .with_stream_async(format, &mut std::io::Cursor::new(asset_bytes), &context)
