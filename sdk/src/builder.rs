@@ -6578,8 +6578,6 @@ mod tests {
     /// test if the sdk can add a cloud ingredient retrieved from a stream and a cloud manifest
     // This works with or without the fetch_remote_manifests feature
     async fn test_add_cloud_ingredient() {
-        crate::settings::reset_default_settings().ok();
-
         let mut input = Cursor::new(TEST_IMAGE_CLEAN);
         let mut cloud_image = Cursor::new(TEST_IMAGE_CLOUD);
 
@@ -11223,37 +11221,6 @@ mod tests {
         assert_eq!(results, vec![0, 1, 2, 3]);
 
         Ok(())
-    }
-
-    // #[test]
-    // #[should_panic(expected = "GLOBAL SETTINGS CONFIGURED BUT NOT USED")]
-    // #[cfg(debug_assertions)]
-    // fn test_builder_new_panics_with_global_settings_in_debug() {
-    //     // Clean slate
-    //     crate::settings::reset_default_settings().unwrap();
-
-    //     // Set global settings
-    //     Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))
-    //         .expect("should load settings");
-
-    //     // This should panic in debug mode
-    //     let _builder = Builder::default();
-    // }
-
-    #[allow(deprecated)]
-    #[test]
-    fn test_builder_new_succeeds_without_global_settings() {
-        // Clean slate
-        crate::settings::reset_default_settings().unwrap();
-
-        // This should NOT panic - global settings are default
-        let _builder = Builder::default();
-
-        // Verify it created a pure context
-        assert_eq!(
-            _builder.context().settings().verify.verify_trust,
-            Settings::default().verify.verify_trust
-        );
     }
 
     #[test]

@@ -1727,12 +1727,13 @@ mod tests {
 
     #[c2pa_test_async]
     async fn test_jpg_cloud_from_memory_and_bad_manifest() {
-        crate::settings::set_settings_value("builder.ignore_ingredient_errors", true).unwrap();
-
+        let context = crate::Context::new()
+            .with_settings(r#"{"builder.ignore_ingredient_errors": true}"#)
+            .unwrap();
         let asset_bytes = include_bytes!("../tests/fixtures/cloud.jpg");
         let bad_manifest_bytes = b"not a real c2pa manifest".to_vec();
         let format = "image/jpeg";
-        let result = Reader::default().with_manifest_data_and_stream(
+        let result = Reader::from_context(context).with_manifest_data_and_stream(
             &bad_manifest_bytes,
             format,
             std::io::Cursor::new(asset_bytes),

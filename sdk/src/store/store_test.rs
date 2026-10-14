@@ -1495,15 +1495,15 @@ fn make_brotli_bomb_jumbf(decompressed_size: usize) -> Vec<u8> {
 
 #[test]
 fn test_from_jumbf_rejects_brotli_bomb_via_thread_local() {
-    crate::settings::set_settings_value("core.max_decompressed_manifest_size_in_mb", 1usize)
+    let settings = Settings::new()
+        .with_value("core.max_decompressed_manifest_size_in_mb", 1usize)
         .unwrap();
-
-    let result = Store::from_jumbf(
+    let context = Context::new().with_settings(settings).unwrap();
+    let result = Store::from_jumbf_with_context(
         &make_brotli_bomb_jumbf(2 * 1024 * 1024),
         &mut StatusTracker::default(),
+        &context,
     );
-
-    crate::settings::reset_default_settings().unwrap();
     assert!(result.is_err());
 }
 
@@ -1548,7 +1548,8 @@ fn test_from_jumbf_reads_c2md_standard_manifest() {
     patched[pos..pos + c2md.len()].copy_from_slice(&c2md);
 
     let mut log = StatusTracker::default();
-    let restored = Store::from_jumbf(&patched, &mut log).expect("c2md manifest should be read");
+    let restored = Store::from_jumbf_with_context(&patched, &mut log, &Context::new())
+        .expect("c2md manifest should be read");
     assert_eq!(
         restored.claims().len(),
         store.claims().len(),
@@ -1581,7 +1582,8 @@ fn test_c2md_manifest_preserved_on_round_trip() {
     patched[pos..pos + c2md.len()].copy_from_slice(&c2md);
 
     let mut log = StatusTracker::default();
-    let restored = Store::from_jumbf(&patched, &mut log).expect("c2md manifest should be read");
+    let restored = Store::from_jumbf_with_context(&patched, &mut log, &Context::new())
+        .expect("c2md manifest should be read");
 
     // Re-serialize the store that was read from a c2md-tagged manifest.
     let round_tripped = restored.to_jumbf_internal(0).unwrap();
@@ -1622,7 +1624,7 @@ fn test_manifest_box_hash_uses_box_uuid_not_label() {
 
     // Baseline: load the untouched manifest and record its box hash.
     let mut log = StatusTracker::default();
-    let baseline = Store::from_jumbf(&jumbf, &mut log).unwrap();
+    let baseline = Store::from_jumbf_with_context(&jumbf, &mut log, &Context::new()).unwrap();
     let baseline_pc = baseline.provenance_claim().unwrap();
     let baseline_hash = baseline
         .get_manifest_box_hashes(baseline_pc)
@@ -1643,7 +1645,7 @@ fn test_manifest_box_hash_uses_box_uuid_not_label() {
     patched[pos..pos + new_label.len()].copy_from_slice(new_label);
 
     let mut log = StatusTracker::default();
-    let tampered = Store::from_jumbf(&patched, &mut log).unwrap();
+    let tampered = Store::from_jumbf_with_context(&patched, &mut log, &Context::new()).unwrap();
     let tampered_pc = tampered.provenance_claim().unwrap();
     let tampered_hash = tampered
         .get_manifest_box_hashes(tampered_pc)
@@ -1695,7 +1697,8 @@ fn test_duplicate_assertion_store_box_is_rejected() {
 
     // Sanity: the untouched manifest reads back fine.
     let mut log = StatusTracker::default();
-    Store::from_jumbf(&jumbf, &mut log).expect("baseline manifest should read");
+    Store::from_jumbf_with_context(&jumbf, &mut log, &Context::new())
+        .expect("baseline manifest should read");
 
     // Duplicate the assertion store superbox in place, right after the original.
     let (as_start, as_len) = superbox_range(&jumbf, CAI_ASSERTION_STORE_UUID);
@@ -1712,7 +1715,7 @@ fn test_duplicate_assertion_store_box_is_rejected() {
     add_u32(&mut patched, 0, as_len);
 
     let mut log = StatusTracker::default();
-    let result = Store::from_jumbf(&patched, &mut log);
+    let result = Store::from_jumbf_with_context(&patched, &mut log, &Context::new());
     assert!(
         matches!(
             result,
@@ -2569,7 +2572,9 @@ fn test_ingredient_conflict_with_current_manifest() {
     let mut original_log = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
     let (original_manifest_bytes, _) =
         Store::load_jumbf_from_stream(format, &mut Cursor::new(ingredient_vec), &context).unwrap();
-    let original_store = Store::from_jumbf(&original_manifest_bytes, &mut original_log).unwrap();
+    let original_store =
+        Store::from_jumbf_with_context(&original_manifest_bytes, &mut original_log, &context)
+            .unwrap();
     Store::load_ingredient_to_claim(&mut new_claim, &original_manifest_bytes, None, &context)
         .unwrap();
     // add original ingredient assertion as component to create conflict
@@ -2588,7 +2593,9 @@ fn test_ingredient_conflict_with_current_manifest() {
     let mut redacted_log = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
     let (redacted_manifest_bytes, _) =
         Store::load_jumbf_from_stream(format, &mut output_stream2, &context).unwrap();
-    let redacted_store = Store::from_jumbf(&redacted_manifest_bytes, &mut redacted_log).unwrap();
+    let redacted_store =
+        Store::from_jumbf_with_context(&redacted_manifest_bytes, &mut redacted_log, &context)
+            .unwrap();
     Store::load_ingredient_to_claim(
         &mut new_claim,
         &redacted_manifest_bytes,
@@ -3570,11 +3577,10 @@ fn test_bmff_jumbf_generation_claim_v1() {
 #[cfg(feature = "file_io")]
 #[test]
 fn test_jumbf_generation_with_bmffv3_fixed_block_size() {
-    // use Merkle tree with 1024 byte chunks
-    let context = crate::context::Context::new();
-
-    // use Merkle tree with 1024 byte chunks
-    crate::settings::set_settings_value("core.merkle_tree_chunk_size_in_kb", 1).unwrap();
+    // use Merkle tree with 1 MB chunks (1 KB chunks on this 64 MB asset take minutes)
+    let context = crate::context::Context::new()
+        .with_settings_value("core.merkle_tree_chunk_size_in_kb", 1024)
+        .unwrap();
 
     // test adding to actual image
     let (format, mut input_stream, mut output_stream) =
@@ -3613,13 +3619,14 @@ fn test_jumbf_generation_with_bmffv3_fixed_block_size() {
 
 #[test]
 fn test_jumbf_generation_with_bmffv3_fixed_block_size_no_proof() {
-    let context = crate::context::Context::new();
+    // use Merkle tree with 1024 byte chunks an 0 proofs (no UUID boxes)
+    let context = crate::context::Context::new()
+        .with_settings_value("core.merkle_tree_chunk_size_in_kb", 1)
+        .unwrap()
+        .with_settings_value("core.merkle_tree_max_proofs", 0)
+        .unwrap();
 
     let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
-
-    // use Merkle tree with 1024 byte chunks an 0 proofs (no UUID boxes)
-    crate::settings::set_settings_value("core.merkle_tree_chunk_size_in_kb", 1).unwrap();
-    crate::settings::set_settings_value("core.merkle_tree_max_proofs", 0).unwrap();
 
     // Create claims store.
     let mut store = Store::from_context(&context);
@@ -3654,13 +3661,13 @@ fn test_jumbf_generation_with_bmffv3_fixed_block_size_no_proof() {
 
 #[test]
 fn test_jumbf_generation_with_bmffv3_fixed_block_size_stream() {
-    let context = crate::context::Context::new();
+    // use Merkle tree with 1024 byte chunks
+    let context = crate::context::Context::new()
+        .with_settings_value("core.merkle_tree_chunk_size_in_kb", 1)
+        .unwrap();
 
     // test adding to actual image
     let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
-
-    // use Merkle tree with 1024 byte chunks
-    crate::settings::set_settings_value("core.merkle_tree_chunk_size_in_kb", 1).unwrap();
 
     // Create claims store.
     let mut store = Store::from_context(&context);
@@ -4282,7 +4289,8 @@ fn test_sign_manifest_reserves_dynamic_assertion_placeholders_itself() {
     let jumbf_bytes = store.sign_manifest(&context, None).unwrap();
 
     let mut validation_log = StatusTracker::default();
-    let signed_store = Store::from_jumbf(&jumbf_bytes, &mut validation_log).unwrap();
+    let signed_store =
+        Store::from_jumbf_with_context(&jumbf_bytes, &mut validation_log, &context).unwrap();
     let pc = signed_store.provenance_claim().unwrap();
     assert!(
         pc.assertion_hashed_uri_from_label("com.mycompany.myassertion")
@@ -4784,18 +4792,16 @@ fn test_fragmented_jumbf_generation() {
 fn test_bogus_cert() {
     use crate::builder::{Builder, BuilderIntent};
 
-    // bypass auto sig check
-    crate::settings::set_settings_value("verify.verify_after_sign", false).unwrap();
-    crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
-
     let png = include_bytes!("../../tests/fixtures/libpng-test.png"); // Randomly generated local Ed25519
     let ed25519 = include_bytes!("../../tests/fixtures/certs/ed25519.pem");
     let certs = include_bytes!("../../tests/fixtures/certs/es256.pub");
 
-    let mut context = Context::new();
     // bypass auto signature checks
-    context.settings_mut().verify.verify_after_sign = false;
-    context.settings_mut().verify.verify_trust = false;
+    let context = Context::new()
+        .with_settings_value("verify.verify_after_sign", false)
+        .unwrap()
+        .with_settings_value("verify.verify_trust", false)
+        .unwrap();
 
     let mut builder = Builder::from_context(context);
     builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));

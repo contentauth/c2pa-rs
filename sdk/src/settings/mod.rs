@@ -1254,31 +1254,31 @@ fn get_at_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
     Some(current)
 }
 
-/// Get a snapshot of the thread-local Settings, always returns a valid Settings object.
-/// If the thread-local settings cannot be deserialized, returns default Settings.
-#[allow(unused)]
-pub(crate) fn get_thread_local_settings() -> Settings {
-    SETTINGS.with_borrow(|value| serde_json::from_value(value.clone()).unwrap_or_default())
-}
+// /// Get a snapshot of the thread-local Settings, always returns a valid Settings object.
+// /// If the thread-local settings cannot be deserialized, returns default Settings.
+// #[allow(unused)]
+// pub(crate) fn get_thread_local_settings() -> Settings {
+//     SETTINGS.with_borrow(|value| serde_json::from_value(value.clone()).unwrap_or_default())
+// }
 
-/// See [Settings::set_thread_local_value] for more information.
-#[cfg(test)]
-pub(crate) fn set_settings_value<T: Into<Value>>(value_path: &str, value: T) -> Result<()> {
-    Settings::set_thread_local_value(value_path, value)
-}
+// /// See [Settings::set_thread_local_value] for more information.
+// #[cfg(test)]
+// pub(crate) fn set_settings_value<T: Into<Value>>(value_path: &str, value: T) -> Result<()> {
+//     Settings::set_thread_local_value(value_path, value)
+// }
 
-/// See [Settings::get_thread_local_value] for more information.
-#[cfg(test)]
-fn get_settings_value<T: serde::de::DeserializeOwned>(value_path: &str) -> Result<T> {
-    Settings::get_thread_local_value(value_path)
-}
+// /// See [Settings::get_thread_local_value] for more information.
+// #[cfg(test)]
+// fn get_settings_value<T: serde::de::DeserializeOwned>(value_path: &str) -> Result<T> {
+//     Settings::get_thread_local_value(value_path)
+// }
 
-/// Reset all settings back to default values.
-#[cfg(test)]
-// #[deprecated = "use `Settings::reset` instead"]
-pub fn reset_default_settings() -> Result<()> {
-    Settings::reset()
-}
+// /// Reset all settings back to default values.
+// #[cfg(test)]
+// // #[deprecated = "use `Settings::reset` instead"]
+// pub fn reset_default_settings() -> Result<()> {
+//     Settings::reset()
+// }
 
 // Used for backwards compatibility with the `config` crate.
 pub(crate) fn deserialize_case_insensitive<'de, D, T>(deserializer: D) -> Result<T, D::Error>
@@ -1320,41 +1320,6 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     use crate::utils::io_utils::tempdirectory;
     use crate::{utils::test::test_settings, SigningAlg};
-
-    /// Legacy test: verifies the thread-local settings API reads defaults and round-trips values.
-    #[test]
-    fn test_thread_local_settings() {
-        // Verify defaults are accessible via thread-local
-        let settings = get_thread_local_settings();
-        assert_eq!(settings.core, Core::default());
-        assert_eq!(settings.trust, Trust::default());
-        assert_eq!(settings.verify, Verify::default());
-        assert_eq!(settings.builder, BuilderSettings::default());
-
-        // Verify individual values can be read by path
-        assert_eq!(
-            get_settings_value::<bool>("builder.thumbnail.enabled").unwrap(),
-            BuilderSettings::default().thumbnail.enabled
-        );
-        assert_eq!(
-            get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap(),
-            Verify::default().remote_manifest_fetch
-        );
-
-        // Verify set/get round-trip via thread-local API
-        Settings::set_thread_local_value("core.merkle_tree_chunk_size_in_kb", 10).unwrap();
-        Settings::set_thread_local_value("verify.remote_manifest_fetch", false).unwrap();
-        Settings::set_thread_local_value("builder.thumbnail.enabled", false).unwrap();
-
-        assert_eq!(
-            get_settings_value::<usize>("core.merkle_tree_chunk_size_in_kb").unwrap(),
-            10
-        );
-        assert!(!get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap());
-        assert!(!get_settings_value::<bool>("builder.thumbnail.enabled").unwrap());
-
-        reset_default_settings().unwrap();
-    }
 
     #[cfg(feature = "file_io")]
     #[test]
@@ -1683,18 +1648,6 @@ pub mod tests {
             .unwrap();
         assert!(!settings.verify.verify_trust);
         assert!(!settings.verify.verify_after_sign);
-
-        // Test that it doesn't update thread-locals
-        let original = get_thread_local_settings();
-        let _settings = Settings::new()
-            .with_json(r#"{"verify": {"verify_trust": false}}"#)
-            .unwrap();
-        let after = get_thread_local_settings();
-        // thread-local settings should be unchanged
-        assert_eq!(
-            original.verify.verify_trust, after.verify.verify_trust,
-            "Builder pattern should not modify thread_local settings"
-        );
     }
 
     #[test]

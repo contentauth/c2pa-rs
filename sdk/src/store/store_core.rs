@@ -48,7 +48,7 @@ use crate::{
     },
     log_item,
     manifest_store_report::ManifestStoreReport,
-    settings::{get_thread_local_settings, TrustListKind, MAX_ASSERTIONS},
+    settings::{TrustListKind, MAX_ASSERTIONS},
     status_tracker::{ErrorBehavior, StatusTracker},
     store::{InvalidClaimError, StoreValidationInfo},
     utils::is_zero,
@@ -966,16 +966,6 @@ impl Store {
     // returns true if desired version is <= base version
     fn check_label_version(base_version_label: &str, desired_version_label: &str) -> bool {
         labels::version(desired_version_label) <= labels::version(base_version_label)
-    }
-
-    #[inline]
-    pub fn from_jumbf(buffer: &[u8], validation_log: &mut StatusTracker) -> Result<Store> {
-        // Legacy path: no Context available; read thread-local settings for backward compatibility.
-        let max_manifest_size = get_thread_local_settings()
-            .core
-            .max_decompressed_manifest_size_in_mb
-            .saturating_mul(1024 * 1024);
-        Self::from_jumbf_impl(Store::new(), buffer, validation_log, max_manifest_size)
     }
 
     #[inline]
