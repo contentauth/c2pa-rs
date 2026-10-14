@@ -1739,3 +1739,29 @@ fn test_inside_validity_not_reported_with_outside_validity() {
     verify(&mut validation_log);
     assert!(validation_log.has_status(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY));
 }
+
+#[test]
+fn test_format_inflates_store_matches_base64_handlers() {
+    use super::claim_verify::format_inflates_store;
+
+    // Every type a base64-embedding handler claims must take the
+    // inflated widening bound (update manifests in update_manifest.jpg
+    // exercise the raw-byte branch end to end).
+    for t in crate::asset_handlers::svg_io::SUPPORTED_TYPES {
+        assert!(format_inflates_store(Some(t)), "{t} should inflate");
+    }
+    #[cfg(feature = "unstable_plain_text")]
+    for t in crate::asset_handlers::plain_text_io::SUPPORTED_TYPES {
+        assert!(format_inflates_store(Some(t)), "{t} should inflate");
+    }
+    #[cfg(feature = "unstable_structured_text")]
+    for t in crate::asset_handlers::structured_text_io::SUPPORTED_TYPES {
+        assert!(format_inflates_store(Some(t)), "{t} should inflate");
+    }
+
+    assert!(format_inflates_store(Some("SVG")));
+    for t in ["jpg", "jpeg", "png", "tif", "mp4", "application/pdf"] {
+        assert!(!format_inflates_store(Some(t)), "{t} should not inflate");
+    }
+    assert!(!format_inflates_store(None));
+}
