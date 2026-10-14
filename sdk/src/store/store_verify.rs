@@ -332,7 +332,7 @@ impl Store {
         Ok(())
     }
 
-    fn get_store_validation_info<'a>(
+    pub(crate) fn get_store_validation_info<'a>(
         &'a self,
         claim: &'a Claim,
         asset_data: Option<&mut ClaimAssetData<'_>>,

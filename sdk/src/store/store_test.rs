@@ -2053,6 +2053,87 @@ fn test_bad_update_manifest_v1() {
     assert!(new_store.commit_update_manifest(claim).is_err());
 }
 
+#[test]
+#[cfg(feature = "file_io")]
+fn test_update_manifest_overwide_store_range_rejected() {
+    // Simulate a format scanner that over-measures the manifest store
+    // (#2645): foreign bytes appended right after the true store must not
+    // be swept into the signed data-hash exclusion when the exclusion is
+    // widened for the update manifest in `Claim::verify_hash_binding`.
+    let context = Context::new();
+    let (format, mut input_stream, _output_stream) = create_test_streams("update_manifest.jpg");
+    let asset = input_stream.get_ref().clone();
+
+    let mut report = StatusTracker::default();
+    let store = Store::from_stream(format, &mut input_stream, &mut report, &context).unwrap();
+    let claim = store.provenance_claim().unwrap();
+    assert!(claim.update_manifest());
+
+    // Control: with the true scanner range, the binding verifies.
+    let mut asset_data = ClaimAssetData::Bytes(&asset, format);
+    let svi = store
+        .get_store_validation_info(claim, Some(&mut asset_data), &mut report, &context)
+        .unwrap();
+    let binding_claim = store.get_claim(&svi.binding_claim).unwrap();
+    let store_range = svi
+        .manifest_store_range
+        .clone()
+        .expect("manifest store range should be resolved");
+    Claim::verify_hash_binding(binding_claim, &mut asset_data, &svi, &mut report, &context)
+        .unwrap();
+
+    // Insert foreign bytes immediately after the true manifest store and
+    // report a scanner range that covers them. The widened exclusion now
+    // covers bytes that are not manifest store or padding, so the data
+    // hash still matches; only the central widening bound can reject it.
+    let store_end = (store_range.start() + store_range.length()) as usize;
+    let mut tampered = Vec::with_capacity(asset.len() + 1_048_576);
+    tampered.extend_from_slice(&asset[..store_end]);
+    tampered.extend_from_slice(&[0xa5; 1_048_576]);
+    tampered.extend_from_slice(&asset[store_end..]);
+
+    // Build validation info from the genuine asset (as the real scanner
+    // would report it), then widen only the store range.
+    let mut asset_data = ClaimAssetData::Bytes(&asset, format);
+    let mut svi = store
+        .get_store_validation_info(claim, Some(&mut asset_data), &mut report, &context)
+        .unwrap();
+    svi.manifest_store_range = Some(crate::utils::hash_utils::HashRange::new(
+        store_range.start(),
+        store_range.length() + 1_048_576,
+    ));
+
+    // The rejection is recorded as an `assertion.dataHash.mismatch`
+    // failure (per C2PA 15.12.1) in the validation report.
+    let mut tampered_data = ClaimAssetData::Bytes(&tampered, format);
+    let mut report = StatusTracker::default();
+    Claim::verify_hash_binding(
+        binding_claim,
+        &mut tampered_data,
+        &svi,
+        &mut report,
+        &context,
+    )
+    .unwrap();
+    assert!(report.has_status(validation_status::ASSERTION_DATAHASH_MISMATCH));
+
+    // With `StopOnFirstError`, the same failure aborts verification.
+    let mut tampered_data = ClaimAssetData::Bytes(&tampered, format);
+    let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+    let result = Claim::verify_hash_binding(
+        binding_claim,
+        &mut tampered_data,
+        &svi,
+        &mut report,
+        &context,
+    );
+    assert!(
+        result.is_err(),
+        "over-wide manifest store range should be rejected"
+    );
+    assert!(report.has_status(validation_status::ASSERTION_DATAHASH_MISMATCH));
+}
+
 ///Test for Update Manifest V2
 #[test]
 fn test_update_manifest_v2() {
