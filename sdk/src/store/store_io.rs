@@ -1263,7 +1263,9 @@ impl Store {
     #[async_generic]
     fn handle_remote_manifest(ext_ref: &str, _context: &Context) -> Result<Vec<u8>> {
         // verify provenance path is remote url
-        if Store::is_valid_remote_url(ext_ref) {
+        if ext_ref.starts_with("self#jumbf=") {
+            Err(Error::JumbfNotFound)
+        } else if Store::is_valid_remote_url(ext_ref) {
             #[cfg(feature = "fetch_remote_manifests")]
             {
                 // Everything except browser wasm if fetch_remote_manifests is enabled
@@ -1548,5 +1550,56 @@ impl Store {
             }?;
         };
         Ok(store)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use c2pa_macros::c2pa_test_async;
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use super::*;
+
+    #[test]
+    fn test_missing_local_manifest() {
+        let context = Context::new();
+        let result = Store::handle_remote_manifest(
+            "self#jumbf=/c2pa/urn:uuid:54281c07-ad34-430e-bea5-112a18facf0b/c2pa.claim",
+            &context,
+        );
+
+        assert!(matches!(result, Err(Error::JumbfNotFound)));
+    }
+
+    #[c2pa_test_async]
+    async fn test_missing_local_manifest_async() {
+        let context = Context::new();
+        let result = Store::handle_remote_manifest_async(
+            "self#jumbf=/c2pa/urn:uuid:54281c07-ad34-430e-bea5-112a18facf0b/c2pa.claim",
+            &context,
+        )
+        .await;
+
+        assert!(matches!(result, Err(Error::JumbfNotFound)));
+    }
+
+    #[test]
+    fn test_remote_manifest_url_without_fetching() -> Result<()> {
+        let context =
+            Context::new().with_settings(r#"{"verify":{"remote_manifest_fetch":false}}"#)?;
+        let url = "https://example.com/manifest.c2pa";
+        let result = Store::handle_remote_manifest(url, &context);
+
+        assert!(matches!(result, Err(Error::RemoteManifestUrl(remote_url)) if remote_url == url));
+        Ok(())
+    }
+
+    #[test]
+    fn test_unsupported_remote_manifest_locator() {
+        let context = Context::new();
+        let result = Store::handle_remote_manifest("manifest.c2pa", &context);
+
+        assert!(matches!(result, Err(Error::NotImplemented(_))));
     }
 }
