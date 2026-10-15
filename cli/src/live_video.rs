@@ -662,6 +662,20 @@ fn validate_segment_manifest_box(
         }
     };
 
+    // The segment's hard binding must be a `c2pa.hash.bmff.v3` `hash` with no `merkle`
+    // (C2PA 2.5). A segment that fails it doesn't become the continuity baseline.
+    let logged_items_before = ctx.tracker.logged_items().len();
+    let _ = ctx
+        .validator
+        .validate_segment_hash_binding(&reader, ctx.tracker);
+    if has_new_live_video_failure(ctx.tracker, logged_items_before) {
+        eprintln!(
+            "Segment FAIL [{segment_path:?}]: segment BMFF hash binding is invalid \
+             (see live video failures below)"
+        );
+        return SegmentOutcome::invalid();
+    }
+
     // `validate_media_segment` returns `Ok` even when it has logged a livevideo.* failure to
     // `ctx.tracker` (the default StatusTracker behavior continues past validation failures rather
     // than raising them as errors), so a successful `Result` alone does not mean the segment

@@ -15,7 +15,7 @@ use super::{
     box_walk, fail_validation, LiveVideoValidator, SegmentState, C2PA_UUID, UUID_BOX_TYPE,
 };
 use crate::{
-    assertions::{ContinuityMethod, LiveVideoSegment},
+    assertions::{BmffHash, ContinuityMethod, LiveVideoSegment},
     error::Result,
     live_video::verifiable_segment_info::extract_vsi_payload_from_segment,
     status_tracker::StatusTracker,
@@ -127,6 +127,27 @@ impl LiveVideoValidator {
         }
         Ok(())
     }
+}
+
+/// Checks the hard binding of a per-segment C2PA Manifest. C2PA 2.5 requires a
+/// `c2pa.hash.bmff.v3` assertion whose `hash` field covers the segment and which has no
+/// `merkle` field ("for live media segments used by any of the methods defined in Live
+/// Media, the `hash` field shall be present and the `merkle` field shall be absent").
+/// Returns the reason when it doesn't.
+pub(super) fn check_per_segment_bmff_hash(
+    bmff_hash: Option<&BmffHash>,
+) -> std::result::Result<(), &'static str> {
+    let bmff_hash = bmff_hash.ok_or("manifest has no BMFF hash assertion")?;
+    if bmff_hash.bmff_version() != 3 {
+        return Err("BMFF hash assertion must be c2pa.hash.bmff.v3");
+    }
+    if bmff_hash.hash().is_none() {
+        return Err("BMFF hash assertion must have a hash field covering the segment");
+    }
+    if bmff_hash.merkle().is_some() {
+        return Err("BMFF hash assertion must not have a merkle field");
+    }
+    Ok(())
 }
 
 /// Returns `true` if the BMFF data contains a top-level box with the given FourCC type.
@@ -500,5 +521,55 @@ mod tests {
             .iter()
             .any(|i| i.validation_status.as_deref() == Some(LIVEVIDEO_SEGMENT_INVALID));
         assert!(has_segment_invalid);
+    }
+
+    fn bmff_hash_v3() -> crate::assertions::BmffHash {
+        let mut bmff_hash = crate::assertions::BmffHash::new("jumbf manifest", "sha256", None);
+        bmff_hash.set_bmff_version(3);
+        bmff_hash.set_hash(vec![0u8; 32]);
+        bmff_hash
+    }
+
+    #[test]
+    fn per_segment_bmff_hash_with_hash_and_no_merkle_passes() {
+        assert_eq!(
+            super::check_per_segment_bmff_hash(Some(&bmff_hash_v3())),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn per_segment_bmff_hash_with_merkle_fails() {
+        let mut bmff_hash = bmff_hash_v3();
+        bmff_hash.set_merkle(vec![crate::assertions::MerkleMap {
+            unique_id: 1,
+            local_id: 1,
+            count: 1,
+            alg: None,
+            init_hash: None,
+            hashes: crate::assertions::VecByteBuf(vec![serde_bytes::ByteBuf::from(vec![0u8; 32])]),
+            fixed_block_size: None,
+            variable_block_sizes: None,
+        }]);
+        assert!(super::check_per_segment_bmff_hash(Some(&bmff_hash)).is_err());
+    }
+
+    #[test]
+    fn per_segment_bmff_hash_without_hash_fails() {
+        let mut bmff_hash = bmff_hash_v3();
+        bmff_hash.clear_hash();
+        assert!(super::check_per_segment_bmff_hash(Some(&bmff_hash)).is_err());
+    }
+
+    #[test]
+    fn per_segment_bmff_hash_before_v3_fails() {
+        let mut bmff_hash = bmff_hash_v3();
+        bmff_hash.set_bmff_version(2);
+        assert!(super::check_per_segment_bmff_hash(Some(&bmff_hash)).is_err());
+    }
+
+    #[test]
+    fn per_segment_manifest_without_bmff_hash_fails() {
+        assert!(super::check_per_segment_bmff_hash(None).is_err());
     }
 }

@@ -452,4 +452,35 @@ mod tests {
         let manifest = reader.active_manifest().unwrap();
         assert_eq!(manifest.label().unwrap(), manifest_id);
     }
+
+    /// A segment signed with the per-segment method has a `c2pa.hash.bmff.v3` `hash` and no
+    /// `merkle` (C2PA 2.5), so it passes `validate_segment_hash_binding`.
+    #[test]
+    fn signed_media_segment_has_a_conformant_hash_binding() {
+        use crate::{live_video::LiveVideoValidator, status_tracker::StatusTracker};
+
+        let _guard = TrustVerificationOff::new();
+        let signer = test_signer();
+        let mut live_signer = LiveVideoSigner::from_manifest_json(test_manifest_json()).unwrap();
+        let signed = live_signer
+            .sign_media_segment(segment_fixture(), "video/mp4", &signer)
+            .unwrap();
+        let reader =
+            Reader::from_context(crate::live_video::context_from_thread_local_settings().unwrap())
+                .with_stream("video/mp4", Cursor::new(&signed))
+                .unwrap();
+
+        let mut tracker = StatusTracker::default();
+        LiveVideoValidator::new()
+            .validate_segment_hash_binding(&reader, &mut tracker)
+            .unwrap();
+
+        let failures: Vec<_> = tracker
+            .logged_items()
+            .iter()
+            .filter_map(|i| i.validation_status.as_deref())
+            .filter(|s| s.starts_with("livevideo"))
+            .collect();
+        assert!(failures.is_empty(), "unexpected failures: {failures:?}");
+    }
 }
