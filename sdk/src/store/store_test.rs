@@ -2372,6 +2372,53 @@ fn test_update_manifest_with_timestamp_assertion() {
     assert!(pc.update_manifest());
 }
 
+#[test]
+#[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
+fn test_v1_timestamp_rejects_sha1_message_imprint() {
+    use openssl::hash::MessageDigest;
+
+    use crate::{
+        crypto::{
+            cose::CertificateTrustPolicy,
+            time_stamp::verify::message_imprint_regression::{build_token, OID_SHA1, OID_SHA256},
+        },
+        utils::test::create_test_store_v1,
+    };
+
+    let context = Context::new();
+    let (format, mut input_stream, mut output_stream) = create_test_streams("earth_apollo17.jpg");
+    let signer = test_signer(SigningAlg::Ps256);
+
+    let mut store = create_test_store_v1().unwrap();
+    store
+        .save_to_stream(
+            format,
+            &mut input_stream,
+            &mut output_stream,
+            signer.as_ref(),
+            &context,
+        )
+        .unwrap();
+
+    let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+    output_stream.rewind().unwrap();
+    let restored_store =
+        Store::from_stream(format, &mut output_stream, &mut report, &context).unwrap();
+    let claim = restored_store.provenance_claim().unwrap();
+    assert_eq!(claim.version(), 1);
+
+    let signature = claim.cose_sign1().unwrap().signature;
+    let ctp = CertificateTrustPolicy::default();
+
+    // control: a SHA-256 imprint over the claim signature is accepted
+    let sha256_token = build_token(OID_SHA256, MessageDigest::sha256(), &signature);
+    assert!(Store::verified_timestamp_for_claim(claim, &sha256_token, &ctp).is_some());
+
+    // same signature and a matching imprint, but SHA-1 must be ignored
+    let sha1_token = build_token(OID_SHA1, MessageDigest::sha1(), &signature);
+    assert!(Store::verified_timestamp_for_claim(claim, &sha1_token, &ctp).is_none());
+}
+
 fn add_ingredient_assertion_to_claim(
     store: &Store,
     claim: &mut Claim,

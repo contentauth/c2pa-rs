@@ -932,7 +932,7 @@ mod tests {
 /// Builds a signed RFC 3161 token locally so `verify_time_stamp` is exercised end to end.
 #[cfg(all(test, feature = "openssl", not(target_arch = "wasm32")))]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
-mod message_imprint_regression {
+pub(crate) mod message_imprint_regression {
     use openssl::{
         asn1::Asn1Time,
         bn::BigNum,
@@ -952,11 +952,11 @@ mod message_imprint_regression {
     };
 
     const OID_MD5: &[u8] = &[0x06, 0x08, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x02, 0x05];
-    const OID_SHA1: &[u8] = &[0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a];
+    pub(crate) const OID_SHA1: &[u8] = &[0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a];
     const OID_SHA224: &[u8] = &[
         0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x04,
     ];
-    const OID_SHA256: &[u8] = &[
+    pub(crate) const OID_SHA256: &[u8] = &[
         0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01,
     ];
     const OID_SHA384: &[u8] = &[
@@ -1001,8 +1001,12 @@ mod message_imprint_regression {
     }
 
     /// Returns a signed time-stamp token (genTime 2020-01-01) whose messageImprint
-    /// covers `DATA` using the given digest.
-    fn build_token(imprint_oid: &[u8], imprint_md: MessageDigest) -> Vec<u8> {
+    /// covers `data` using the given digest.
+    pub(crate) fn build_token(
+        imprint_oid: &[u8],
+        imprint_md: MessageDigest,
+        data: &[u8],
+    ) -> Vec<u8> {
         let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
         let key = PKey::from_ec_key(EcKey::generate(&group).unwrap()).unwrap();
 
@@ -1027,7 +1031,7 @@ mod message_imprint_regression {
         cb.sign(&key, MessageDigest::sha256()).unwrap();
         let cert = cb.build();
 
-        let imprint_hash = hash(imprint_md, DATA).unwrap();
+        let imprint_hash = hash(imprint_md, data).unwrap();
         let message_imprint = tlv(
             0x30,
             &cat(&[
@@ -1087,7 +1091,7 @@ mod message_imprint_regression {
             ("SHA-384", OID_SHA384, MessageDigest::sha384()),
             ("SHA-512", OID_SHA512, MessageDigest::sha512()),
         ] {
-            let token = build_token(oid, md);
+            let token = build_token(oid, md, DATA);
             let mut log = StatusTracker::default();
 
             let result = verify_time_stamp(
@@ -1120,7 +1124,7 @@ mod message_imprint_regression {
             ("SHA3-256", OID_SHA3_256, MessageDigest::sha3_256()),
             ("MD5", OID_MD5, MessageDigest::md5()),
         ] {
-            let token = build_token(oid, md);
+            let token = build_token(oid, md, DATA);
             let mut log = StatusTracker::default();
 
             let result = verify_time_stamp(
@@ -1144,7 +1148,7 @@ mod message_imprint_regression {
     #[test]
     fn mismatched_imprint_is_rejected() {
         // Guards against the positive tests passing without the imprint being compared.
-        let token = build_token(OID_SHA256, MessageDigest::sha256());
+        let token = build_token(OID_SHA256, MessageDigest::sha256(), DATA);
         let mut log = StatusTracker::default();
 
         let result = verify_time_stamp(

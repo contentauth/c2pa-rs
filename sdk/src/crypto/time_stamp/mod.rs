@@ -27,5 +27,5 @@ pub use provider::{default_rfc3161_message, AsyncTimeStampProvider, TimeStampPro
 mod response;
 pub(crate) use response::{ContentInfo, TimeStampResponse};
 
-mod verify;
+pub(crate) mod verify;
 pub use verify::{tsa_signer_cert_der_from_token, verify_time_stamp, verify_time_stamp_async};
