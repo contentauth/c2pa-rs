@@ -1067,6 +1067,10 @@ pub fn moof_sequence_number(segment_data: &[u8]) -> Option<u32> {
 }
 
 #[cfg(test)]
+#[path = "livesim2_interop.rs"]
+mod livesim2_interop;
+
+#[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
 
