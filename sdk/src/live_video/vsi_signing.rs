@@ -211,7 +211,7 @@ impl LiveVideoVsiSigner {
         }
 
         let timescale = self.track_timescale.unwrap_or(1);
-        let event_duration = parse_first_moof_duration_ticks(segment_data).unwrap_or(0);
+        let event_duration = parse_segment_duration_ticks(segment_data).unwrap_or(0);
         // Truncation is safe: a live session realistically never reaches u32::MAX segments,
         // and the id only needs to be unique within the session (§19.4.2), not globally.
         let id = sequence_number as u32;
@@ -631,7 +631,7 @@ fn grow_first_sidx_reference(leading: &mut [u8], by: usize) -> Result<()> {
 // caller supplies the init segment.
 
 /// Parses `moov/trak/mdia/mdhd`'s `timescale` field from an init segment.
-fn parse_first_mdhd_timescale(init_data: &[u8]) -> Option<u32> {
+pub(super) fn parse_first_mdhd_timescale(init_data: &[u8]) -> Option<u32> {
     let moov = box_payload(find_box(init_data, b"moov")?)?;
     let trak = box_payload(find_box(moov, b"trak")?)?;
     let mdia = box_payload(find_box(trak, b"mdia")?)?;
@@ -647,12 +647,57 @@ fn parse_first_mdhd_timescale(init_data: &[u8]) -> Option<u32> {
     Some(u32::from_be_bytes(timescale_bytes.try_into().ok()?))
 }
 
-/// Sums the `moof/traf/tfhd`+`trun` sample durations of a media segment, in
-/// the track's timescale ticks (per ISO/IEC 14496-12 §8.8.7–8.8.8). Falls
-/// back to `tfhd`'s `default_sample_duration * sample_count` when `trun`
-/// doesn't carry per-sample durations.
-fn parse_first_moof_duration_ticks(segment_data: &[u8]) -> Option<u32> {
+/// Sums the `moof/traf/tfhd`+`trun` sample durations of every `moof` in a media
+/// segment (a CMAF segment can hold several chunks), in the track's timescale
+/// ticks (per ISO/IEC 14496-12 §8.8.7–8.8.8). Returns `None` when the segment
+/// has no `moof`, or any `moof`'s duration can't be determined.
+pub(super) fn parse_segment_duration_ticks(segment_data: &[u8]) -> Option<u32> {
+    let mut total: u64 = 0;
+    let mut found_moof = false;
+    for (fourcc, moof_box) in top_level_boxes(segment_data) {
+        if fourcc == b"moof" {
+            total += u64::from(moof_duration_ticks(box_payload(moof_box)?)?);
+            found_moof = true;
+        }
+    }
+    found_moof.then(|| total.min(u64::from(u32::MAX)) as u32)
+}
+
+/// Parses `moof/traf/tfdt`'s `baseMediaDecodeTime` (ISO/IEC 14496-12 §8.8.12) of the
+/// first `moof` in a media segment: the segment's earliest decode time, in track
+/// timescale ticks.
+pub(super) fn parse_first_tfdt(segment_data: &[u8]) -> Option<u64> {
     let moof = box_payload(find_box(segment_data, b"moof")?)?;
+    let traf = box_payload(find_box(moof, b"traf")?)?;
+    let tfdt = box_payload(find_box(traf, b"tfdt")?)?;
+    if *tfdt.first()? == 1 {
+        Some(u64::from_be_bytes(tfdt.get(4..12)?.try_into().ok()?))
+    } else {
+        Some(u64::from(u32::from_be_bytes(
+            tfdt.get(4..8)?.try_into().ok()?,
+        )))
+    }
+}
+
+/// Parses a top-level `prft` box (ISO/IEC 14496-12 §8.16.5) into its
+/// `(ntp_timestamp, media_time)` pair: the 64-bit NTP wall-clock time at which the
+/// sample with `media_time` (in track timescale ticks) was produced.
+pub(super) fn parse_prft(segment_data: &[u8]) -> Option<(u64, u64)> {
+    let prft = box_payload(find_box(segment_data, b"prft")?)?;
+    // FullBox header(4) + reference_track_ID(4)
+    let ntp_timestamp = u64::from_be_bytes(prft.get(8..16)?.try_into().ok()?);
+    let media_time = if *prft.first()? == 0 {
+        u64::from(u32::from_be_bytes(prft.get(16..20)?.try_into().ok()?))
+    } else {
+        u64::from_be_bytes(prft.get(16..24)?.try_into().ok()?)
+    };
+    Some((ntp_timestamp, media_time))
+}
+
+/// Duration of one `moof`'s first `traf`. Falls back to `tfhd`'s
+/// `default_sample_duration * sample_count` when `trun` doesn't carry
+/// per-sample durations.
+fn moof_duration_ticks(moof: &[u8]) -> Option<u32> {
     let traf = box_payload(find_box(moof, b"traf")?)?;
 
     let tfhd = box_payload(find_box(traf, b"tfhd")?)?;
@@ -809,7 +854,62 @@ mod tests {
     #[test]
     fn parses_moof_duration_from_trun_sample_durations() {
         let seg = make_test_media_segment_with_moof(&[1000, 1000, 1000]);
-        assert_eq!(parse_first_moof_duration_ticks(&seg), Some(3000));
+        assert_eq!(parse_segment_duration_ticks(&seg), Some(3000));
+    }
+
+    /// A CMAF segment made of several chunks: the duration covers every `moof`.
+    #[test]
+    fn segment_duration_sums_every_moof() {
+        let seg = [
+            make_test_media_segment_with_moof(&[1000, 1000]),
+            make_test_media_segment_with_moof(&[500]),
+        ]
+        .concat();
+        assert_eq!(parse_segment_duration_ticks(&seg), Some(2500));
+    }
+
+    /// A segment signed with the track timescale from the init segment passes the
+    /// validator's `emsg` timing checks once it has seen the same init segment.
+    #[test]
+    fn signed_segment_passes_emsg_timing_validation() {
+        let signer = make_test_signer();
+        let mut vsi_signer = make_vsi_signer_with_manifest_id(&signer, b"key-1", 1);
+        let init = make_test_init_segment(1000);
+        vsi_signer.track_timescale = parse_first_mdhd_timescale(&init);
+
+        let segment = [
+            make_test_media_segment_with_moof(&[1000, 1000]),
+            make_test_media_segment_with_moof(&[1000]),
+        ]
+        .concat();
+        let signed = vsi_signer.sign_media_segment(&segment).unwrap();
+
+        let session_keys = vsi_signer.build_session_keys_assertion().unwrap();
+        let ee_cert_der = signer.certs().unwrap().into_iter().next().unwrap();
+        let mut validator = LiveVideoValidator::new();
+        let mut tracker = StatusTracker::default();
+        validator
+            .validate_init_segment(&init, &mut tracker)
+            .unwrap();
+        validator
+            .validate_session_keys(
+                &session_keys,
+                TEST_MANIFEST_ID,
+                Some(&ee_cert_der),
+                &mut tracker,
+            )
+            .unwrap();
+        validator
+            .validate_verifiable_segment_info(&signed, &mut tracker)
+            .unwrap();
+
+        let failures: Vec<_> = tracker
+            .logged_items()
+            .iter()
+            .filter_map(|i| i.validation_status.as_deref())
+            .filter(|s| s.starts_with("livevideo"))
+            .collect();
+        assert!(failures.is_empty(), "unexpected failures: {failures:?}");
     }
 
     #[test]
@@ -826,14 +926,14 @@ mod tests {
         let traf = make_box(b"traf", &[tfhd, trun].concat());
         let moof = make_box(b"moof", &traf);
 
-        assert_eq!(parse_first_moof_duration_ticks(&moof), Some(8000));
+        assert_eq!(parse_segment_duration_ticks(&moof), Some(8000));
     }
 
     #[test]
     fn parsers_return_none_for_segments_without_the_relevant_boxes() {
         let plain_segment = make_test_segment();
         assert_eq!(parse_first_mdhd_timescale(&plain_segment), None);
-        assert_eq!(parse_first_moof_duration_ticks(&plain_segment), None);
+        assert_eq!(parse_segment_duration_ticks(&plain_segment), None);
     }
 
     /// Regression test: a `tfhd`/`trun` box truncated shorter than its own fixed fields must
@@ -844,7 +944,7 @@ mod tests {
         let empty_tfhd = make_box(b"tfhd", &[]);
         let traf = make_box(b"traf", &empty_tfhd);
         let moof = make_box(b"moof", &traf);
-        assert_eq!(parse_first_moof_duration_ticks(&moof), None);
+        assert_eq!(parse_segment_duration_ticks(&moof), None);
 
         // `tfhd` present and well-formed, but `trun` truncated to nothing.
         let tfhd_payload = 1u32.to_be_bytes();
@@ -852,7 +952,7 @@ mod tests {
         let empty_trun = make_box(b"trun", &[]);
         let traf = make_box(b"traf", &[tfhd, empty_trun].concat());
         let moof = make_box(b"moof", &traf);
-        assert_eq!(parse_first_moof_duration_ticks(&moof), None);
+        assert_eq!(parse_segment_duration_ticks(&moof), None);
 
         // A zero-length box (just an 8-byte header, no payload at all) as the outermost box.
         let empty_box = make_box(b"moof", &[]);
