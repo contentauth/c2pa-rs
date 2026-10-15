@@ -14,7 +14,7 @@
 #![deny(missing_docs)]
 
 //! The `callback_signer` module provides a way to obtain a [`Signer`] or [`AsyncSigner`]
-//! using a callback and public signing certificates.
+//! using a callback that returns either a raw signature or a complete tagged COSE_Sign1.
 
 use async_trait::async_trait;
 
@@ -22,7 +22,8 @@ use crate::{AsyncSigner, Error, Result, Signer, SigningAlg};
 
 /// Defines a callback function interface for a [`CallbackSigner`].
 ///
-/// The callback should return a signature for the given data.
+/// The callback should return a raw signature, or a complete tagged COSE_Sign1
+/// when created with [`CallbackSigner::new_direct_cose`].
 /// The callback should return an error if the data cannot be signed.
 pub type CallbackFunc =
     dyn Fn(*const (), &[u8]) -> std::result::Result<Vec<u8>, Error> + Send + Sync;
@@ -48,6 +49,9 @@ pub struct CallbackSigner {
 
     /// The optional URL of a Time Stamping Authority.
     pub tsa_url: Option<String>,
+
+    /// Whether the callback handles the complete COSE structure.
+    pub direct_cose_handling: bool,
 }
 
 unsafe impl Send for CallbackSigner {}
@@ -69,6 +73,42 @@ impl CallbackSigner {
             alg,
             certs,
             reserve_size,
+            ..Default::default()
+        }
+    }
+
+    /// Create a callback signer that returns a complete tagged COSE_Sign1.
+    ///
+    /// When used to sign a manifest, the callback receives the serialized C2PA
+    /// claim bytes, rather than the COSE Sig_structure used by raw signers.
+    /// It must return a tagged COSE_Sign1 of exactly `reserve_size` bytes,
+    /// including any required COSE padding. A size mismatch returns
+    /// [`Error::CoseSignature`].
+    ///
+    /// The callback is responsible for the signing algorithm, certificate chain,
+    /// and any timestamps in the COSE object. The SDK bypasses its normal COSE
+    /// construction and post-signing verification in this path. The `alg`,
+    /// `certs`, and `tsa_url` fields are not used by this manifest-signing path.
+    ///
+    /// The callback and any context must remain valid and safe for concurrent
+    /// calls for the lifetime of the signer. Remote callbacks should enforce
+    /// their own timeout. The async implementation invokes the same synchronous
+    /// callback; it does not make a blocking callback nonblocking.
+    pub fn new_direct_cose<F>(callback: F, reserve_size: usize) -> Self
+    where
+        F: Fn(*const (), &[u8]) -> std::result::Result<Vec<u8>, Error> + Send + Sync + 'static,
+    {
+        let callback = move |context, data: &[u8]| {
+            let cose = callback(context, data)?;
+            if cose.len() != reserve_size {
+                return Err(Error::CoseSignature);
+            }
+            Ok(cose)
+        };
+        Self {
+            callback: Box::new(callback),
+            reserve_size,
+            direct_cose_handling: true,
             ..Default::default()
         }
     }
@@ -133,6 +173,7 @@ impl Default for CallbackSigner {
             certs: Vec::new(),
             reserve_size: 10000,
             tsa_url: None,
+            direct_cose_handling: false,
         }
     }
 }
@@ -157,6 +198,10 @@ impl Signer for CallbackSigner {
 
     fn time_authority_url(&self) -> Option<String> {
         self.tsa_url.clone()
+    }
+
+    fn direct_cose_handling(&self) -> bool {
+        self.direct_cose_handling
     }
 }
 
@@ -183,6 +228,10 @@ impl AsyncSigner for CallbackSigner {
     fn time_authority_url(&self) -> Option<String> {
         self.tsa_url.clone()
     }
+
+    fn direct_cose_handling(&self) -> bool {
+        self.direct_cose_handling
+    }
 }
 
 #[cfg(test)]
@@ -206,8 +255,65 @@ mod tests {
     }
 
     #[test]
+    fn direct_cose_signer_sync() {
+        let context = 42u32;
+        let context_ptr = &context as *const u32 as *const ();
+        let signer = CallbackSigner::new_direct_cose(
+            |context, claim| {
+                assert_eq!(unsafe { *(context as *const u32) }, 42);
+                assert_eq!(claim, b"claim bytes");
+                Ok(vec![0xd2, 0x84, 0x40, 0xa0])
+            },
+            4,
+        )
+        .set_context(context_ptr);
+        assert!(Signer::direct_cose_handling(&signer));
+        assert_eq!(Signer::reserve_size(&signer), 4);
+        assert_eq!(
+            Signer::sign(&signer, b"claim bytes").unwrap(),
+            [0xd2, 0x84, 0x40, 0xa0]
+        );
+    }
+
+    #[c2pa_test_async]
+    async fn direct_cose_signer_async() {
+        let signer = CallbackSigner::new_direct_cose(|_, data| Ok(data.to_vec()), 4);
+        assert!(AsyncSigner::direct_cose_handling(&signer));
+        assert_eq!(AsyncSigner::reserve_size(&signer), 4);
+        assert_eq!(
+            AsyncSigner::sign(&signer, vec![1, 2, 3, 4]).await.unwrap(),
+            [1, 2, 3, 4]
+        );
+        for len in [0, 3, 5] {
+            assert!(matches!(
+                AsyncSigner::sign(&signer, vec![0; len]).await,
+                Err(Error::CoseSignature)
+            ));
+        }
+    }
+
+    #[test]
+    fn direct_cose_signer_rejects_wrong_size_and_preserves_errors() {
+        for len in [0, 3, 5] {
+            let signer = CallbackSigner::new_direct_cose(move |_, _| Ok(vec![0; len]), 4);
+            assert!(matches!(
+                Signer::sign(&signer, b"claim"),
+                Err(Error::CoseSignature)
+            ));
+        }
+        let signer = CallbackSigner::new_direct_cose(|_, _| Err(Error::UnsupportedType), 4);
+        assert!(matches!(
+            Signer::sign(&signer, b"claim"),
+            Err(Error::UnsupportedType)
+        ));
+        assert!(!Signer::direct_cose_handling(&CallbackSigner::default()));
+    }
+
+    #[test]
     fn new_sets_expected_defaults() {
         let signer = make_ed25519_signer();
+        assert!(!Signer::direct_cose_handling(&signer));
+        assert!(!AsyncSigner::direct_cose_handling(&signer));
         assert_eq!(signer.alg, SigningAlg::Ed25519);
         assert_eq!(signer.tsa_url, None);
         assert!(signer.context.is_null());
