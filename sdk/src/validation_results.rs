@@ -1314,8 +1314,9 @@ pub mod validation_codes {
     pub const LIVEVIDEO_CONTINUITY_METHOD_INVALID: &str = "livevideo.continuityMethod.invalid";
 
     /// The segment structure is invalid (e.g., a media segment lacks both a
-    /// C2PA Manifest Box and an `emsg` box, or `previousManifestId` does not
-    /// match the previous segment's manifest identifier).
+    /// C2PA Manifest Box and an `emsg` box, `previousManifestId` does not
+    /// match the previous segment's manifest identifier, or a Verifiable Segment
+    /// Info `sequenceNumber` is not greater than the previous segment's).
     ///
     /// See [Live Video - C2PA Technical Specification section 19.7](https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_live_video_validation_process).
     ///
