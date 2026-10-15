@@ -27,6 +27,7 @@ use crate::{
         AssetIO, AssetPatch, C2paReader, C2paWriter, ComposedManifestRef, ObjectLocations,
         ReadSeek, ReadWriteSeek, RemoteManifestUrl, WriteXmp,
     },
+    context::Context,
     error::{Error, Result},
     status_tracker::{ErrorBehavior, StatusTracker},
     store::Store,
@@ -1926,9 +1927,14 @@ impl C2paReader for BmffIO {
             if let Some(update_bytes) = c2pa_boxes.update_bytes {
                 let mut validation_log = StatusTracker::default();
 
+                // The caller's Context is unknown here; defaults apply the standard manifest size limit.
+                let context = Context::new();
+
                 // combine original Store and update Store to single logical manifest Store
-                let mut original_store = Store::from_jumbf(&original_bytes, &mut validation_log)?;
-                let update_store = Store::from_jumbf(&update_bytes, &mut validation_log)?;
+                let mut original_store =
+                    Store::from_jumbf_with_context(&original_bytes, &mut validation_log, &context)?;
+                let update_store =
+                    Store::from_jumbf_with_context(&update_bytes, &mut validation_log, &context)?;
 
                 original_store.append_store(&update_store);
 
@@ -2046,7 +2052,9 @@ impl C2paWriter for BmffIO {
         // if the incoming Store has an update manifest we must split it into original and update stores
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-        let (pc, is_update) = if let Ok(store) = Store::from_jumbf(store_bytes, &mut validation_log)
+        let context = Context::new();
+        let (pc, is_update) = if let Ok(store) =
+            Store::from_jumbf_with_context(store_bytes, &mut validation_log, &context)
         {
             let pc = store
                 .provenance_claim()
@@ -2087,7 +2095,11 @@ impl C2paWriter for BmffIO {
                 .len();
             let pc = pc.ok_or(Error::BadParam("no provenance manifest".to_string()))?;
 
-            let mut update_store = Store::from_jumbf(update_manifest_bytes, &mut validation_log)?;
+            let mut update_store = Store::from_jumbf_with_context(
+                update_manifest_bytes,
+                &mut validation_log,
+                &context,
+            )?;
             // add new update manfiest or replace existing one if the is a finalization pass
             update_store.replace_claim_or_insert(pc.label().to_string(), pc);
 
@@ -3151,8 +3163,6 @@ pub mod tests {
 
     #[test]
     fn test_read_deep_nesting() {
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
-
         let ap = fixture_path("nested_moov_1000.mp4");
         let mut input_stream = std::fs::File::open(&ap).unwrap();
 
@@ -3164,8 +3174,6 @@ pub mod tests {
 
     #[test]
     fn test_read_mp4() {
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
-
         let ap = fixture_path("video1.mp4");
         let mut input_stream = std::fs::File::open(&ap).unwrap();
 

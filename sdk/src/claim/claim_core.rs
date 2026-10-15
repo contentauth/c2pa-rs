@@ -1090,15 +1090,6 @@ impl Claim {
         }
     }
 
-    /// Deprecated in  C2PA 2.4 or greater compatible manifests. Replaced by equiveaent value in ClaimGeneratorInfo.
-    #[deprecated(
-        since = "0.91.0",
-        note = "The `specVersion` claim field is deprecated from C2PA spec version 2.4. Use `ClaimGeneratorInfo::set_spec_version` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub fn set_spec_version(&mut self, spec_version: Option<String>) {
-        self.spec_version = spec_version;
-    }
-
     pub fn add_claim_generator_hint(&mut self, hint_key: &str, hint_value: Value) {
         if self.claim_generator_hints.is_none() {
             self.claim_generator_hints = Some(HashMap::new());
