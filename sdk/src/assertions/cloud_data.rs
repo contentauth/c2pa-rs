@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::{assertion_metadata::AssetType, labels, AssertionMetadata},
-    error::Result,
+    error::{Error, Result},
 };
 
 /// The `location` field of a [`CloudData`] assertion: a URL with its
@@ -134,12 +134,7 @@ impl CloudData {
     ///
     /// [`assertion.cloud-data.hardBinding`]: crate::validation_results::validation_codes::ASSERTION_CLOUD_DATA_HARD_BINDING
     pub(crate) fn is_hard_binding(&self) -> bool {
-        let l = self.label.as_str();
-        l == labels::DATA_HASH
-            || l == labels::BOX_HASH
-            || l == labels::COLLECTION_HASH
-            || l == labels::MULTI_ASSET_HASH
-            || l.starts_with(labels::BMFF_HASH)
+        labels::is_hard_binding_label(&self.label)
     }
 
     /// Returns `true` if [`label`](CloudData::label) names an actions assertion
@@ -151,6 +146,82 @@ impl CloudData {
     /// [`assertion.cloud-data.actions`]: crate::validation_results::validation_codes::ASSERTION_CLOUD_DATA_ACTIONS
     pub(crate) fn is_actions(&self) -> bool {
         labels::base(&self.label) == labels::ACTIONS
+    }
+
+    /// Validates structure of the Cloud Data assertion according to the C2PA 2.4 rules for
+    /// `c2pa.cloud-data` assertions.
+    #[allow(unused)]
+    pub(crate) fn validate(&self) -> Result<()> {
+        if self.label.trim().is_empty() {
+            return Err(Error::ValidationRule(
+                "cloud data assertion label must not be empty".to_owned(),
+            ));
+        }
+
+        if self.size < 1 {
+            return Err(Error::ValidationRule(
+                "cloud data assertion size must be >= 1".to_owned(),
+            ));
+        }
+
+        if self.location.url.trim().is_empty() {
+            return Err(Error::ValidationRule(
+                "cloud data assertion location.url must not be empty".to_owned(),
+            ));
+        }
+
+        if self.location.alg.trim().is_empty() {
+            return Err(Error::ValidationRule(
+                "cloud data assertion location.alg must not be empty".to_owned(),
+            ));
+        }
+
+        if self.location.hash.is_empty() {
+            return Err(Error::ValidationRule(
+                "cloud data assertion location.hash must not be empty".to_owned(),
+            ));
+        }
+
+        if self.is_forbidden().is_err() {
+            return Err(Error::ValidationRule(format!(
+                "cloud data assertion must not reference forbidden label '{}', per C2PA 2.4",
+                self.label
+            )));
+        }
+
+        if self.is_hard_binding() {
+            return Err(Error::ValidationRule(format!(
+                "cloud data assertion must not reference hard binding assertions '{}', per C2PA 2.4",
+                self.label
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// check for any forbidden label types, including hard bindings and the cloud-data assertion itself.
+    pub fn is_forbidden(&self) -> Result<()> {
+        // Per C2PA 2.4 §15.10.3.2.1, the referenced assertion must not be any
+        // of the forbidden label types, including hard bindings and the cloud-data
+        // assertion itself.
+        const FORBIDDEN: [&str; 7] = [
+            "c2pa.action",
+            "c2pa.actions",
+            "c2pa.actions.v2",
+            labels::CLOUD_DATA,
+            "c2pa.ingredient",
+            "c2pa.ingredient.v2",
+            "c2pa.ingredient.v3",
+        ];
+
+        if FORBIDDEN.contains(&self.label.as_str()) {
+            return Err(Error::ValidationRule(format!(
+                "cloud data assertion must not reference forbidden label '{}', per C2PA 2.4",
+                self.label
+            )));
+        }
+
+        Ok(())
     }
 }
 
@@ -239,5 +310,19 @@ pub mod tests {
         assert!(make(labels::ACTIONS).is_actions());
         assert!(make("c2pa.actions.v2").is_actions());
         assert!(!make("c2pa.metadata").is_actions());
+    }
+
+    #[test]
+    fn test_validate_rejects_invalid_structure() {
+        assert!(CloudData::new("", 1, make_location()).validate().is_err());
+        assert!(CloudData::new("c2pa.metadata", 0, make_location())
+            .validate()
+            .is_err());
+        assert!(CloudData::new("c2pa.hash.data", 1, make_location())
+            .validate()
+            .is_err());
+        assert!(CloudData::new("c2pa.metadata", 1, make_location())
+            .validate()
+            .is_ok());
     }
 }

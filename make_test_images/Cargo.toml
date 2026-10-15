@@ -4,7 +4,7 @@ version.workspace = true
 authors = ["Gavin Peacock <gpeacock@adobe.com>"]
 license = "MIT OR Apache-2.0"
 edition = "2021"
-rust-version = "1.88.0"
+rust-version = "1.96.0"
 
 [dependencies]
 anyhow = "1.0.103"
@@ -16,7 +16,7 @@ c2pa = { workspace = true, features = [
 	"pdf",
     "default_http"
 ] }
-env_logger = "0.11"
+env_logger = "0.11.10"
 lazy_static = "1.5.0"
 image = { version = "0.25.10", default-features = false, features = [
 	"jpeg",

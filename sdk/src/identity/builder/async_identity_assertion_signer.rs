@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use c2pa_raw_crypto::{RawSigner, SigningAlg};
 
@@ -34,7 +36,7 @@ pub struct AsyncIdentityAssertionSigner {
 
     cert_chain: Vec<Vec<u8>>,
 
-    identity_assertions: std::sync::RwLock<Vec<AsyncIdentityAssertionBuilder>>,
+    identity_assertions: std::sync::RwLock<Vec<Arc<AsyncIdentityAssertionBuilder>>>,
 }
 
 impl AsyncIdentityAssertionSigner {
@@ -86,16 +88,20 @@ impl AsyncIdentityAssertionSigner {
     /// Add an [`AsyncIdentityAssertionBuilder`] to be used when signing the
     /// next [`Manifest`].
     ///
-    /// IMPORTANT: When [`sign()`] is called, the list of
-    /// [`AsyncIdentityAssertionBuilder`]s will be cleared.
+    /// The registered assertions are retained after signing so that the same
+    /// signer can be used across every signing path, including the split
+    /// signing paths ([`Builder::placeholder`] + [`Builder::sign_embeddable`])
+    /// that query [`dynamic_assertions()`] more than once per manifest.
     ///
     /// [`Manifest`]: crate::Manifest
-    /// [`sign()`]: Self::sign
+    /// [`Builder::placeholder`]: crate::Builder::placeholder
+    /// [`Builder::sign_embeddable`]: crate::Builder::sign_embeddable
+    /// [`dynamic_assertions()`]: AsyncSigner::dynamic_assertions
     pub fn add_identity_assertion(&mut self, iab: AsyncIdentityAssertionBuilder) {
         #[allow(clippy::unwrap_used)]
         let mut identity_assertions = self.identity_assertions.write().unwrap();
         // TO DO: Replace with error handling in the very unlikely case of a panic here.
-        identity_assertions.push(iab);
+        identity_assertions.push(Arc::new(iab));
     }
 }
 
@@ -126,16 +132,18 @@ impl AsyncSigner for AsyncIdentityAssertionSigner {
 
     fn dynamic_assertions(&self) -> Vec<Box<dyn AsyncDynamicAssertion>> {
         #[allow(clippy::unwrap_used)]
-        let mut identity_assertions = self.identity_assertions.write().unwrap();
+        let identity_assertions = self.identity_assertions.read().unwrap();
         // TO DO: Replace with error handling in the very unlikely case of a panic here.
 
-        let ia_clone = identity_assertions.split_off(0);
-        let mut dynamic_assertions: Vec<Box<dyn AsyncDynamicAssertion>> = vec![];
-
-        for ia in ia_clone.into_iter() {
-            dynamic_assertions.push(Box::new(ia));
-        }
-
-        dynamic_assertions
+        // Hand out shared clones instead of draining the list. Several signing
+        // paths (notably `Builder::placeholder` + `Builder::sign_embeddable`)
+        // call this method more than once per manifest – once to reserve
+        // placeholder slots and again to write the assertion content. Draining
+        // on the first call left later calls empty, which silently dropped the
+        // identity assertion (see issue #2055).
+        identity_assertions
+            .iter()
+            .map(|ia| Box::new(Arc::clone(ia)) as Box<dyn AsyncDynamicAssertion>)
+            .collect()
     }
 }

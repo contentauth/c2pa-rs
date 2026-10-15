@@ -1,8 +1,8 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
-    "$id": "https://c2pa.org/crjson/crJSON-schema.json",
-    "title": "Content Credential JSON (CrJSON) Document Schema",
-    "description": "JSON Schema for Content Credential JSON (CrJSON) documents. CrJSON does not include asset_info, content, or metadata.",
+    "$id": "https://c2pa.org/crjson/crJSON.schema.json",
+    "title": "Content Credentials JSON (crJSON) Document Schema",
+    "description": "JSON Schema for Content Credentials JSON (crJSON) documents. crJSON does not include asset_info, content, or metadata.",
     "type": "object",
     "required": [
         "@context",
@@ -74,6 +74,8 @@
             "description": "CrJSON manifest wrapper containing label, assertions, claim or claim.v2, signature, and validationResults. Claim content: claim.cddl claim-map or claim-map-v2.",
             "required": [
                 "label",
+                "isUpdateManifest",
+                "isCompressedManifest",
                 "assertions",
                 "signature",
                 "validationResults"
@@ -94,6 +96,14 @@
                 "label": {
                     "type": "string",
                     "description": "Manifest label or URN identifier"
+                },
+                "isUpdateManifest": {
+                    "type": "boolean",
+                    "description": "True if this is an update manifest, false if it is a standard manifest."
+                },
+                "isCompressedManifest": {
+                    "type": "boolean",
+                    "description": "True if this manifest was compressed in the manifest store."
                 },
                 "assertions": {
                     "type": "object",

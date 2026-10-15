@@ -8,7 +8,7 @@ You can use an intent for any asset type. Intents are about the operation (creat
 
 **References**:
 
-- [C2PA specification](https://spec.c2pa.org/specifications/specifications/2.1/index.html)
+- [C2PA specification](https://spec.c2pa.org/specifications/specifications/2.4/index.html)
 - [Rust library docs](https://opensource.contentauthenticity.org/docs/rust-sdk/)
 - [GitHub repository](https://github.com/contentauth/c2pa-rs)
 - [Content Credentials](https://contentcredentials.org/)

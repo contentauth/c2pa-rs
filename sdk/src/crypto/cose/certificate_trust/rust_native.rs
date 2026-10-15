@@ -15,7 +15,11 @@ use asn1_rs::{Any, Class, FromDer, Header, Tag};
 use c2pa_raw_crypto::{
     oids::*, validator_for_sig_and_hash_algs, RawSignatureValidationError, SigningAlg,
 };
-use x509_parser::{certificate::X509Certificate, x509::AlgorithmIdentifier};
+use web_time::{SystemTime, UNIX_EPOCH};
+use x509_parser::{
+    certificate::{TbsCertificate, X509Certificate},
+    x509::AlgorithmIdentifier,
+};
 
 use crate::crypto::cose::{CertificateTrustError, CertificateTrustPolicy, TrustAnchorType};
 
@@ -30,8 +34,8 @@ pub(crate) fn check_certificate_trust(
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
     signing_time_epoch: Option<i64>,
-) -> Result<TrustAnchorType, CertificateTrustError> {
-    if ctp.trust_anchor_ders().count() == 0 && ctp.user_trust_anchor_ders().count() == 0 {
+) -> Result<(TrustAnchorType, String), CertificateTrustError> {
+    if ctp.anchor_sets().count() == 0 {
         return Err(CertificateTrustError::CertificateNotTrusted);
     }
 
@@ -58,70 +62,55 @@ pub(crate) fn check_certificate_trust(
         full_chain
     };
 
-    // Make sure chain is in the correct order and valid.
-    check_chain_order(&full_chain)?;
+    // Make sure chain is in the correct order, cryptographically valid, and
+    // every issuer is authorized to act as a CA.
+    check_chain_order_and_ca_authorization(&full_chain)?;
 
-    // Build anchors and check against trust anchors.
-    let anchors: Vec<(X509Certificate, &Vec<u8>)> = ctp
-        .trust_anchor_ders()
-        .filter_map(|anchor_der| {
-            let (_, cert) = X509Certificate::from_der(anchor_der)
-                .map_err(|_e| CertificateTrustError::CertificateNotTrusted)
-                .ok()?;
-            Some((cert, anchor_der))
-        })
-        .collect();
-
-    // Build anchors and check against user provided trust anchors.
-    let user_anchors: Vec<(X509Certificate, &Vec<u8>)> = ctp
-        .user_trust_anchor_ders()
-        .filter_map(|anchor_der| {
-            let (_, cert) = X509Certificate::from_der(anchor_der)
-                .map_err(|_e| CertificateTrustError::CertificateNotTrusted)
-                .ok()?;
-            Some((cert, anchor_der))
-        })
-        .collect();
-
-    // Work back from last cert in chain against the trust anchors.
-    for cert in full_chain.iter().rev() {
+    // Make sure every cert in the chain was valid at signing time - as its
+    // own pass over the whole chain, independent of where a trust anchor
+    // match is found below. The trust-anchor search returns as soon as it
+    // finds a match, so a check placed inside that loop would only ever run
+    // for the certs from the anchor match onward, silently skipping every
+    // cert between that match and the leaf.
+    let check_time = match signing_time_epoch {
+        Some(t) => t,
+        None => SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| CertificateTrustError::InternalError("system time invalid".to_string()))?
+            .as_secs() as i64,
+    };
+    let check_time = x509_parser::time::ASN1Time::from_timestamp(check_time)
+        .map_err(|_| CertificateTrustError::CertificateNotTrusted)?;
+    for cert in &full_chain {
         let (_, chain_cert) = X509Certificate::from_der(cert)
             .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?;
-
-        // Make sure the certificate was not expired.
-        if let Some(signing_time) = signing_time_epoch {
-            if !chain_cert.validity().is_valid_at(
-                x509_parser::time::ASN1Time::from_timestamp(signing_time)
-                    .map_err(|_| CertificateTrustError::CertificateNotTrusted)?,
-            ) {
-                return Err(CertificateTrustError::CertificateNotTrusted);
-            }
+        if !chain_cert.validity().is_valid_at(check_time) {
+            return Err(CertificateTrustError::CertificateNotTrusted);
         }
+    }
 
-        // Check against C2PA trust anchors.
-        for (anchor_cert, anchor_der) in &anchors {
-            if chain_cert.issuer() == anchor_cert.subject() {
-                let data = chain_cert.tbs_certificate.as_ref();
-                let sig = chain_cert.signature_value.as_ref();
+    for anchor_set in ctp.anchor_sets() {
+        // Process each anchor set
 
-                let sig_alg = cert_signing_alg(&chain_cert);
+        // Build anchors and check against trust anchors.
+        let anchors: Vec<(X509Certificate, &Vec<u8>)> = anchor_set
+            .trust_anchor_ders
+            .iter()
+            .filter_map(|anchor_der| {
+                let (_, cert) = X509Certificate::from_der(anchor_der)
+                    .map_err(|_e| CertificateTrustError::CertificateNotTrusted)
+                    .ok()?;
+                Some((cert, anchor_der))
+            })
+            .collect();
 
-                let result = verify_data(anchor_der, sig_alg, sig, data);
+        // Work back from last cert in chain against the trust anchors.
+        for cert in full_chain.iter().rev() {
+            let (_, chain_cert) = X509Certificate::from_der(cert)
+                .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?;
 
-                match result {
-                    Ok(b) => {
-                        if b {
-                            return Ok(TrustAnchorType::System);
-                        }
-                    }
-                    Err(_) => continue,
-                }
-            }
-        }
-
-        // Check against user provided trust anchors.
-        if !ctp.trust_anchors_only() {
-            for (anchor_cert, anchor_der) in &user_anchors {
+            // Check against trust anchors.
+            for (anchor_cert, anchor_der) in &anchors {
                 if chain_cert.issuer() == anchor_cert.subject() {
                     let data = chain_cert.tbs_certificate.as_ref();
                     let sig = chain_cert.signature_value.as_ref();
@@ -133,7 +122,10 @@ pub(crate) fn check_certificate_trust(
                     match result {
                         Ok(b) => {
                             if b {
-                                return Ok(TrustAnchorType::User);
+                                return Ok((
+                                    anchor_set.trust_anchor_type,
+                                    anchor_set.trust_anchor_uri.clone(),
+                                ));
                             }
                         }
                         Err(_) => continue,
@@ -146,7 +138,13 @@ pub(crate) fn check_certificate_trust(
     Err(CertificateTrustError::CertificateNotTrusted)
 }
 
-fn check_chain_order(certs: &[Vec<u8>]) -> Result<(), CertificateTrustError> {
+/// Verifies the chain is cryptographically valid (each certificate's
+/// signature validates against the next certificate's public key) and that
+/// every issuing certificate is actually authorized to act as a CA. Without
+/// the latter, a valid cryptographic signature chain alone would let any
+/// ordinary end-entity certificate be used to self-issue a forged certificate
+/// that then chains up to a real trust anchor.
+fn check_chain_order_and_ca_authorization(certs: &[Vec<u8>]) -> Result<(), CertificateTrustError> {
     let chain_length = certs.len();
     if chain_length < 2 {
         return Ok(());
@@ -157,11 +155,52 @@ fn check_chain_order(certs: &[Vec<u8>]) -> Result<(), CertificateTrustError> {
             .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?;
 
         let issuer_der = &certs[i];
+        let (_, issuer_cert) = X509Certificate::from_der(issuer_der)
+            .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?;
+
         let data = current_cert.tbs_certificate.as_ref();
         let sig = current_cert.signature_value.as_ref();
         let sig_alg = cert_signing_alg(&current_cert);
 
         if !verify_data(issuer_der, sig_alg, sig, data)? {
+            return Err(CertificateTrustError::CertificateNotTrusted);
+        }
+
+        // Number of CA certificates between the issuer and the leaf.
+        let certs_below = (i - 1) as u32;
+        check_ca_authorization(&issuer_cert.tbs_certificate, certs_below)?;
+    }
+
+    Ok(())
+}
+
+/// Checks that `issuer_tbscert` is authorized to act as a CA (RFC 5280
+/// 6.1.4(k)/(l)/(n)): `basicConstraints.cA` must be asserted,
+/// `pathLenConstraint` (if declared) must not be exceeded by `certs_below`
+/// (the number of CA certificates between this issuer and the leaf), and
+/// `keyUsage.keyCertSign` must be set when a `keyUsage` extension is present.
+fn check_ca_authorization(
+    issuer_tbscert: &TbsCertificate,
+    certs_below: u32,
+) -> Result<(), CertificateTrustError> {
+    let basic_constraints = issuer_tbscert
+        .basic_constraints()
+        .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?
+        .ok_or(CertificateTrustError::CertificateNotTrusted)?;
+    if !basic_constraints.value.ca {
+        return Err(CertificateTrustError::CertificateNotTrusted);
+    }
+    if let Some(path_len) = basic_constraints.value.path_len_constraint {
+        if certs_below > path_len {
+            return Err(CertificateTrustError::CertificateNotTrusted);
+        }
+    }
+
+    if let Some(key_usage) = issuer_tbscert
+        .key_usage()
+        .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?
+    {
+        if !key_usage.value.key_cert_sign() {
             return Err(CertificateTrustError::CertificateNotTrusted);
         }
     }

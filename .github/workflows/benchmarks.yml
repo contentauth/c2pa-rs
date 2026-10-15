@@ -16,6 +16,7 @@ on:
 
 env:
   S3_BUCKET: adobe-cai-open-source-c2pa-sdk-test-assets-prod
+  RUST_TOOLCHAIN: 1.98.1
 
 jobs:
   build:
@@ -38,21 +39,21 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Check codspeed build cache
         id: cache-codspeed-build
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: target/codspeed/
-          key: codspeed-output-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
+          key: codspeed-output-${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('**/Cargo.toml', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
           lookup-only: true
 
       - name: Install Rust toolchain
         if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
         uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
         with:
-          toolchain: stable
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install cargo-binstall
         if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
@@ -72,10 +73,10 @@ jobs:
 
       - name: Save codspeed build cache
         if: steps.cache-codspeed-build.outputs.cache-hit != 'true'
-        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: target/codspeed/
-          key: codspeed-output-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
+          key: codspeed-output-${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('**/Cargo.toml', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
 
   benchmarks:
     name: Benchmark (${{ matrix.bench }}${{ matrix.format && format('/{0}', matrix.format) || '' }} <${{ matrix.build_mode || 'simulation' }}>)
@@ -101,13 +102,18 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@254c19bd240aabef8777f48595e9d2d7b972184b # v6.2.1
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: us-east-1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
@@ -116,10 +122,10 @@ jobs:
         run: cargo binstall --no-confirm cargo-codspeed
 
       - name: Restore codspeed build
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: target/codspeed/
-          key: codspeed-output-${{ runner.os }}-${{ hashFiles('**/Cargo.lock', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
+          key: codspeed-output-${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('**/Cargo.toml', 'sdk/benches/**/*.rs', 'sdk/src/**/*.rs') }}
           fail-on-cache-miss: true
 
       - name: Set binary permissions
@@ -135,7 +141,7 @@ jobs:
 
       - name: Check asset cache
         id: cache-assets
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: sdk/benches/fixtures
           key: bench-asset-${{ steps.s3-etag.outputs.etag }}
@@ -151,14 +157,14 @@ jobs:
 
       - name: Save asset cache
         if: steps.cache-assets.outputs.cache-hit != 'true'
-        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: sdk/benches/fixtures
           key: bench-asset-${{ steps.s3-etag.outputs.etag }}
 
       - name: Restore asset cache
         if: steps.cache-assets.outputs.cache-hit == 'true'
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: sdk/benches/fixtures
           key: bench-asset-${{ steps.s3-etag.outputs.etag }}

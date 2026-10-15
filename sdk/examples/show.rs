@@ -19,9 +19,14 @@ fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 {
         let ms = Reader::default().with_file(&args[1])?;
-        println!("{ms}");
+        match args.get(2).map(String::as_str) {
+            Some("detailed") => println!("{}", ms.detailed_json()),
+            Some("crjson") => println!("{}", ms.crjson()),
+            _ => println!("{ms}"),
+        }
     } else {
-        println!("Prints a manifest report (requires a file path argument)")
+        println!("Prints a manifest report (requires a file path argument)");
+        println!("Usage: show <file> [detailed|crjson]");
     }
     Ok(())
 }

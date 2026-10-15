@@ -461,21 +461,21 @@ impl From<GeneralizedTime> for chrono::DateTime<chrono::Utc> {
     }
 }
 
-// impl From cannot return Result; conversions should never fail for valid dates
-#[allow(clippy::expect_used)]
-impl From<chrono::DateTime<chrono::Utc>> for GeneralizedTime {
-    fn from(dt: chrono::DateTime<chrono::Utc>) -> Self {
+// Fallible: der's GeneralizedTime only supports 1970-9999, so a DateTime outside
+// that range (e.g. a pre-1970 signing time attacker-supplied in a timestamp token)
+// must return an error rather than panic.
+impl TryFrom<chrono::DateTime<chrono::Utc>> for GeneralizedTime {
+    type Error = der::Error;
+
+    fn try_from(dt: chrono::DateTime<chrono::Utc>) -> Result<Self, Self::Error> {
         // Convert chrono to SystemTime, then to der's GeneralizedTime
         let system_time: std::time::SystemTime = dt.into();
 
-        // Create GeneralizedTime from SystemTime
-        // This should never fail for valid dates (der crate supports dates from 1970-2255)
-        let der_time = der::asn1::GeneralizedTime::from_system_time(system_time)
-            .expect("Failed to create GeneralizedTime from valid DateTime");
+        // der supports 1970-9999; out-of-range dates error here instead of panicking
+        let der_time = der::asn1::GeneralizedTime::from_system_time(system_time)?;
 
         // Convert to our wrapper type
-        // Encoding should never fail for a valid GeneralizedTime
-        Self::from_der_time(der_time).expect("Failed to encode GeneralizedTime (internal error)")
+        Self::from_der_time(der_time)
     }
 }
 
@@ -719,7 +719,7 @@ mod tests {
         let dt = Utc.with_ymd_and_hms(2023, 1, 15, 12, 30, 45).unwrap();
 
         // Convert to GeneralizedTime
-        let gt = GeneralizedTime::from(dt);
+        let gt = GeneralizedTime::try_from(dt).unwrap();
 
         // Verify the time string format (should be "20230115123045Z")
         let time_str = gt.as_str();
@@ -748,7 +748,7 @@ mod tests {
         // Create a GeneralizedTime from a known timestamp and test roundtrip
         use chrono::{Datelike, TimeZone, Utc};
         let test_time = Utc.with_ymd_and_hms(2022, 6, 10, 18, 46, 40).unwrap();
-        let gt = GeneralizedTime::from(test_time);
+        let gt = GeneralizedTime::try_from(test_time).unwrap();
 
         // Get DER bytes and parse them back
         let der_bytes = gt.as_der_bytes();
@@ -797,7 +797,7 @@ mod tests {
 
         // Test GeneralizedTime roundtrip with a timestamp
         let test_time = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
-        let gt = GeneralizedTime::from(test_time);
+        let gt = GeneralizedTime::try_from(test_time).unwrap();
         let der_bytes = gt.as_der_bytes();
         let gt_parsed = GeneralizedTime::from_der_bytes(der_bytes).unwrap();
         assert_eq!(gt, gt_parsed);
@@ -964,7 +964,7 @@ mod tests {
         use chrono::{TimeZone, Utc};
 
         let original_dt = Utc.with_ymd_and_hms(2025, 10, 29, 14, 30, 0).unwrap();
-        let gt1 = GeneralizedTime::from(original_dt);
+        let gt1 = GeneralizedTime::try_from(original_dt).unwrap();
 
         // Get the DER bytes directly
         let der_bytes = gt1.as_der_bytes();
@@ -996,7 +996,7 @@ mod tests {
 
         // Convert to chrono, then to GeneralizedTime
         let dt: chrono::DateTime<chrono::Utc> = system_time.into();
-        let gt = GeneralizedTime::from(dt);
+        let gt = GeneralizedTime::try_from(dt).unwrap();
 
         // Convert back and verify
         let dt_back: chrono::DateTime<chrono::Utc> = gt.into();
@@ -1007,6 +1007,26 @@ mod tests {
             .duration_since(system_time)
             .unwrap_or_else(|_| system_time.duration_since(system_time_back).unwrap());
         assert!(diff.as_secs() < 1);
+    }
+
+    #[test]
+    fn test_generalized_time_try_from_out_of_range() {
+        use chrono::TimeZone;
+
+        // der's GeneralizedTime only supports 1970-9999. Dates outside that range
+        // (e.g. a pre-1970 signing time attacker-supplied in a timestamp token) must
+        // return an error rather than panic. Regression test for the DoS where an
+        // infallible `From` impl called `.expect()` on `from_system_time`.
+        let pre_1970 = chrono::Utc.with_ymd_and_hms(1950, 1, 1, 0, 0, 0).unwrap();
+        assert!(GeneralizedTime::try_from(pre_1970).is_err());
+
+        // A date past der's upper bound (year 9999) must also error rather than panic.
+        let post_9999 = chrono::Utc.with_ymd_and_hms(10000, 1, 1, 0, 0, 0).unwrap();
+        assert!(GeneralizedTime::try_from(post_9999).is_err());
+
+        // A valid in-range date still succeeds.
+        let in_range = chrono::Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+        assert!(GeneralizedTime::try_from(in_range).is_ok());
     }
 
     /// Test Extensions::from_constructed() with IMPLICIT tagging

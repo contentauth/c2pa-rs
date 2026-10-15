@@ -44,6 +44,37 @@ pub fn extension_to_mime(extension: &str) -> Option<&'static str> {
         "arw" => "image/x-sony-arw",
         "nef" => "image/x-nikon-nef",
         "c2pa" | "application/x-c2pa-manifest-store" | "application/c2pa" => "application/c2pa",
+        // Text formats handled by the experimental structured-text asset handler. Gated so a
+        // default build (feature disabled) resolves these extensions exactly as before, with no
+        // handler registered for them. See docs/experimental-features.md.
+        #[cfg(feature = "unstable_structured_text")]
+        "md" | "markdown" => "text/markdown",
+        #[cfg(feature = "unstable_structured_text")]
+        "yaml" | "yml" => "application/yaml",
+        #[cfg(feature = "unstable_structured_text")]
+        "toml" => "application/toml",
+        #[cfg(feature = "unstable_structured_text")]
+        "css" => "text/css",
+        #[cfg(feature = "unstable_structured_text")]
+        "js" | "mjs" => "text/javascript",
+        #[cfg(feature = "unstable_structured_text")]
+        "py" => "text/x-python",
+        #[cfg(feature = "unstable_structured_text")]
+        "sql" => "application/sql",
+        #[cfg(feature = "unstable_structured_text")]
+        "tex" => "application/x-tex",
+        #[cfg(feature = "unstable_structured_text")]
+        "vtt" => "text/vtt",
+        #[cfg(feature = "unstable_structured_text")]
+        "rss" => "application/rss+xml",
+        #[cfg(feature = "unstable_structured_text")]
+        "atom" => "application/atom+xml",
+
+        // Plain text, handled by the experimental A.8 asset handler. Gated so a default build
+        // (feature disabled) resolves this extension exactly as before, with no handler
+        // registered for it. See docs/experimental-features.md.
+        #[cfg(feature = "unstable_plain_text")]
+        "txt" => "text/plain",
         _ => return None,
     })
 }
@@ -110,6 +141,17 @@ pub fn format_from_path<P: AsRef<std::path::Path>>(path: P) -> Option<String> {
     path.as_ref().extension().map(|ext| {
         crate::utils::mime::format_to_mime(ext.to_string_lossy().to_lowercase().as_ref())
     })
+}
+
+/// Return a MIME type given a file path, using the file extension.
+///
+/// Unlike [`format_from_path`], this returns `None` when the extension is missing
+/// or has no known MIME type, rather than falling back to the raw extension.
+pub fn mime_from_path<P: AsRef<std::path::Path>>(path: P) -> Option<String> {
+    path.as_ref()
+        .extension()
+        .and_then(|ext| extension_to_mime(&ext.to_string_lossy()))
+        .map(|mime| mime.to_owned())
 }
 
 #[cfg(test)]

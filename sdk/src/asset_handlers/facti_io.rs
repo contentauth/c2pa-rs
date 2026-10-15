@@ -23,16 +23,12 @@
 //!
 //! The C2PA JUMBF manifest is stored in an extension block with type "C2PA".
 
-use std::{
-    fs::File,
-    io::{Read, Seek, SeekFrom, Write},
-    path::Path,
-};
+use std::io::SeekFrom;
 
 use crate::{
     asset_io::{
-        AssetIO, CAIRead, CAIReadWrite, CAIReader, CAIWriter, ComposedManifestRef,
-        HashBlockObjectType, HashObjectPositions,
+        AssetIO, C2paReader, C2paWriter, ComposedManifestRef, ObjectLocations, ObjectType,
+        ReadSeek, ReadWriteSeek,
     },
     error::{Error, Result},
 };
@@ -73,7 +69,7 @@ fn is_valid_magic(magic: &[u8; 4]) -> bool {
 }
 
 /// Parse the .fact* file layout to locate extension blocks.
-fn parse_layout(reader: &mut dyn CAIRead) -> Result<FactiLayout> {
+fn parse_layout(reader: &mut dyn ReadSeek) -> Result<FactiLayout> {
     reader.rewind()?;
 
     // Read and validate magic
@@ -87,16 +83,16 @@ fn parse_layout(reader: &mut dyn CAIRead) -> Result<FactiLayout> {
 
     // Read metadata length
     let mut meta_len_buf = [0u8; 4];
-    reader.read_exact(&mut meta_len_buf).map_err(|_| {
-        Error::InvalidAsset("Too short for metadata length".to_string())
-    })?;
+    reader
+        .read_exact(&mut meta_len_buf)
+        .map_err(|_| Error::InvalidAsset("Too short for metadata length".to_string()))?;
     let meta_len = u32::from_be_bytes(meta_len_buf) as u64;
 
     // Read JSON metadata to find image_length (v2 indicator)
     let mut meta_bytes = vec![0u8; meta_len as usize];
-    reader.read_exact(&mut meta_bytes).map_err(|_| {
-        Error::InvalidAsset("Metadata truncated".to_string())
-    })?;
+    reader
+        .read_exact(&mut meta_bytes)
+        .map_err(|_| Error::InvalidAsset("Metadata truncated".to_string()))?;
 
     // Parse image_length from JSON to determine v2 format
     let media_length = extract_media_length(&meta_bytes);
@@ -151,9 +147,9 @@ fn parse_layout(reader: &mut dyn CAIRead) -> Result<FactiLayout> {
 
         if &block_type == C2PA_BLOCK_TYPE {
             let mut data = vec![0u8; block_len as usize];
-            reader.read_exact(&mut data).map_err(|_| {
-                Error::InvalidAsset("C2PA block data truncated".to_string())
-            })?;
+            reader
+                .read_exact(&mut data)
+                .map_err(|_| Error::InvalidAsset("C2PA block data truncated".to_string()))?;
             c2pa_data = Some(data);
             c2pa_offset = Some(data_offset);
             c2pa_len = Some(block_len);
@@ -182,7 +178,10 @@ fn extract_media_length(meta_bytes: &[u8]) -> Option<u64> {
             let colon_pos = after_key.find(':')?;
             let after_colon = after_key[colon_pos + 1..].trim_start();
             // Parse digits
-            let num_str: String = after_colon.chars().take_while(|c| c.is_ascii_digit()).collect();
+            let num_str: String = after_colon
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
             if !num_str.is_empty() {
                 return num_str.parse::<u64>().ok();
             }
@@ -192,10 +191,10 @@ fn extract_media_length(meta_bytes: &[u8]) -> Option<u64> {
 }
 
 /// Write a complete .fact* v2 file: copy everything up to ext_start from input,
-/// then write new extension blocks with the provided C2PA store.
+/// then write a single extension block carrying the provided C2PA store.
 fn write_with_c2pa(
-    input_stream: &mut dyn CAIRead,
-    output_stream: &mut dyn CAIReadWrite,
+    input_stream: &mut dyn ReadSeek,
+    output_stream: &mut dyn ReadWriteSeek,
     store_bytes: &[u8],
     ext_start: u64,
 ) -> Result<()> {
@@ -203,9 +202,9 @@ fn write_with_c2pa(
 
     // Copy everything up to the extension block area
     let mut pre_ext = vec![0u8; ext_start as usize];
-    input_stream.read_exact(&mut pre_ext).map_err(|_| {
-        Error::InvalidAsset("Failed to read pre-extension data".to_string())
-    })?;
+    input_stream
+        .read_exact(&mut pre_ext)
+        .map_err(|_| Error::InvalidAsset("Failed to read pre-extension data".to_string()))?;
     output_stream.write_all(&pre_ext)?;
 
     // Write extension blocks: 1 block (C2PA)
@@ -221,60 +220,60 @@ fn write_with_c2pa(
     Ok(())
 }
 
-impl CAIReader for FactiIO {
-    fn read_cai(&self, asset_reader: &mut dyn CAIRead) -> Result<Vec<u8>> {
-        let layout = parse_layout(asset_reader)?;
+impl C2paReader for FactiIO {
+    fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>> {
+        let layout = parse_layout(input_stream)?;
         match layout.c2pa_data {
             Some(data) => Ok(data),
             None => Err(Error::JumbfNotFound),
         }
     }
 
-    fn read_xmp(&self, _asset_reader: &mut dyn CAIRead) -> Option<String> {
+    fn read_xmp(&self, _input_stream: &mut dyn ReadSeek) -> Option<String> {
         // .fact* formats do not contain XMP metadata
         None
     }
 }
 
-impl CAIWriter for FactiIO {
-    fn write_cai(
+impl C2paWriter for FactiIO {
+    fn write_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
         store_bytes: &[u8],
     ) -> Result<()> {
         let layout = parse_layout(input_stream)?;
         write_with_c2pa(input_stream, output_stream, store_bytes, layout.ext_start)
     }
 
-    fn get_object_locations_from_stream(
+    fn get_object_locations(
         &self,
-        input_stream: &mut dyn CAIRead,
-    ) -> Result<Vec<HashObjectPositions>> {
+        input_stream: &mut dyn ReadSeek,
+    ) -> Result<Vec<ObjectLocations>> {
         let layout = parse_layout(input_stream)?;
 
         match (layout.c2pa_offset, layout.c2pa_len) {
-            (Some(offset), Some(len)) => Ok(vec![HashObjectPositions {
-                offset: offset as usize,
-                length: len as usize,
-                htype: HashBlockObjectType::Cai,
+            (Some(offset), Some(len)) => Ok(vec![ObjectLocations {
+                offset,
+                length: len,
+                htype: ObjectType::C2pa,
             }]),
             _ => {
                 // No C2PA block yet — report where it would go
                 // (after ext_start + 2 bytes block count + 4 type + 4 len)
-                Ok(vec![HashObjectPositions {
-                    offset: (layout.ext_start + 2 + 4 + 4) as usize,
+                Ok(vec![ObjectLocations {
+                    offset: layout.ext_start + 2 + 4 + 4,
                     length: 0,
-                    htype: HashBlockObjectType::Cai,
+                    htype: ObjectType::C2pa,
                 }])
             }
         }
     }
 
-    fn remove_cai_store_from_stream(
+    fn remove_c2pa(
         &self,
-        input_stream: &mut dyn CAIRead,
-        output_stream: &mut dyn CAIReadWrite,
+        input_stream: &mut dyn ReadSeek,
+        output_stream: &mut dyn ReadWriteSeek,
     ) -> Result<()> {
         let layout = parse_layout(input_stream)?;
 
@@ -304,66 +303,12 @@ impl AssetIO for FactiIO {
         Box::new(FactiIO::new(asset_type))
     }
 
-    fn get_reader(&self) -> &dyn CAIReader {
+    fn get_reader(&self) -> &dyn C2paReader {
         self
     }
 
-    fn get_writer(&self, _asset_type: &str) -> Option<Box<dyn CAIWriter>> {
+    fn get_writer(&self, _asset_type: &str) -> Option<Box<dyn C2paWriter>> {
         Some(Box::new(FactiIO {}))
-    }
-
-    fn read_cai_store(&self, asset_path: &Path) -> Result<Vec<u8>> {
-        let mut f = File::open(asset_path)?;
-        self.read_cai(&mut f)
-    }
-
-    fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
-        let mut input = File::open(asset_path)?;
-        let layout = parse_layout(&mut input)?;
-
-        let temp_path = asset_path.with_extension("tmp");
-        {
-            let mut output = File::create(&temp_path)?;
-            input.rewind()?;
-
-            let mut pre_ext = vec![0u8; layout.ext_start as usize];
-            input.read_exact(&mut pre_ext)?;
-            output.write_all(&pre_ext)?;
-
-            let block_count: u16 = 1;
-            output.write_all(&block_count.to_be_bytes())?;
-            output.write_all(C2PA_BLOCK_TYPE)?;
-            let store_len = store_bytes.len() as u32;
-            output.write_all(&store_len.to_be_bytes())?;
-            output.write_all(store_bytes)?;
-        }
-
-        std::fs::rename(&temp_path, asset_path)?;
-        Ok(())
-    }
-
-    fn get_object_locations(&self, asset_path: &Path) -> Result<Vec<HashObjectPositions>> {
-        let mut f = File::open(asset_path)?;
-        CAIWriter::get_object_locations_from_stream(self, &mut f)
-    }
-
-    fn remove_cai_store(&self, asset_path: &Path) -> Result<()> {
-        let mut input = File::open(asset_path)?;
-        let layout = parse_layout(&mut input)?;
-
-        let temp_path = asset_path.with_extension("tmp");
-        {
-            let mut output = File::create(&temp_path)?;
-            input.rewind()?;
-            let mut pre_ext = vec![0u8; layout.ext_start as usize];
-            input.read_exact(&mut pre_ext)?;
-            output.write_all(&pre_ext)?;
-            let block_count: u16 = 0;
-            output.write_all(&block_count.to_be_bytes())?;
-        }
-
-        std::fs::rename(&temp_path, asset_path)?;
-        Ok(())
     }
 
     fn supported_types(&self) -> &[&str] {
@@ -447,12 +392,12 @@ pub mod tests {
         let mut reader = Cursor::new(container);
         let mut writer = Cursor::new(Vec::new());
         handler
-            .write_cai(&mut reader, &mut writer, store_bytes)
+            .write_c2pa(&mut reader, &mut writer, store_bytes)
             .unwrap();
 
         // Read it back
         writer.set_position(0);
-        let read_back = handler.read_cai(&mut writer).unwrap();
+        let read_back = handler.read_c2pa(&mut writer).unwrap();
         assert_eq!(read_back, store_bytes);
     }
 
@@ -465,11 +410,11 @@ pub mod tests {
         let mut reader = Cursor::new(container);
         let mut writer = Cursor::new(Vec::new());
         handler
-            .write_cai(&mut reader, &mut writer, store_bytes)
+            .write_c2pa(&mut reader, &mut writer, store_bytes)
             .unwrap();
 
         writer.set_position(0);
-        let read_back = handler.read_cai(&mut writer).unwrap();
+        let read_back = handler.read_c2pa(&mut writer).unwrap();
         assert_eq!(read_back, store_bytes);
     }
 
@@ -482,11 +427,11 @@ pub mod tests {
         let mut reader = Cursor::new(container);
         let mut writer = Cursor::new(Vec::new());
         handler
-            .write_cai(&mut reader, &mut writer, store_bytes)
+            .write_c2pa(&mut reader, &mut writer, store_bytes)
             .unwrap();
 
         writer.set_position(0);
-        let read_back = handler.read_cai(&mut writer).unwrap();
+        let read_back = handler.read_c2pa(&mut writer).unwrap();
         assert_eq!(read_back, store_bytes);
     }
 
@@ -495,12 +440,12 @@ pub mod tests {
         let container = build_test_facti_container();
         let handler = FactiIO::new("facti");
         let mut reader = Cursor::new(container);
-        let result = handler.read_cai(&mut reader);
+        let result = handler.read_c2pa(&mut reader);
         assert!(matches!(result, Err(Error::JumbfNotFound)));
     }
 
     #[test]
-    fn test_remove_cai_store() {
+    fn test_remove_c2pa() {
         let container = build_test_facti_container();
         let handler = FactiIO::new("facti");
         let store_bytes = b"manifest_to_remove";
@@ -509,17 +454,17 @@ pub mod tests {
         let mut reader = Cursor::new(container);
         let mut with_manifest = Cursor::new(Vec::new());
         handler
-            .write_cai(&mut reader, &mut with_manifest, store_bytes)
+            .write_c2pa(&mut reader, &mut with_manifest, store_bytes)
             .unwrap();
 
         with_manifest.set_position(0);
         let mut removed = Cursor::new(Vec::new());
         handler
-            .remove_cai_store_from_stream(&mut with_manifest, &mut removed)
+            .remove_c2pa(&mut with_manifest, &mut removed)
             .unwrap();
 
         removed.set_position(0);
-        let result = handler.read_cai(&mut removed);
+        let result = handler.read_c2pa(&mut removed);
         assert!(matches!(result, Err(Error::JumbfNotFound)));
     }
 
@@ -528,7 +473,7 @@ pub mod tests {
         let bad_data = vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
         let handler = FactiIO::new("facti");
         let mut reader = Cursor::new(bad_data);
-        let result = handler.read_cai(&mut reader);
+        let result = handler.read_c2pa(&mut reader);
         assert!(matches!(result, Err(Error::InvalidAsset(_))));
     }
 
@@ -541,16 +486,14 @@ pub mod tests {
         let mut reader = Cursor::new(container);
         let mut writer = Cursor::new(Vec::new());
         handler
-            .write_cai(&mut reader, &mut writer, store_bytes)
+            .write_c2pa(&mut reader, &mut writer, store_bytes)
             .unwrap();
 
         writer.set_position(0);
-        let locations = handler
-            .get_object_locations_from_stream(&mut writer)
-            .unwrap();
+        let locations = handler.get_object_locations(&mut writer).unwrap();
         assert_eq!(locations.len(), 1);
-        assert_eq!(locations[0].htype, HashBlockObjectType::Cai);
-        assert_eq!(locations[0].length, store_bytes.len());
+        assert_eq!(locations[0].htype, ObjectType::C2pa);
+        assert_eq!(locations[0].length, store_bytes.len() as u64);
     }
 
     #[test]

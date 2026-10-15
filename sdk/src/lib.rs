@@ -196,13 +196,11 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 // Public modules
 /// The `assertions` module contains the definitions for the assertions that are part of the C2PA specification.
 pub mod assertions;
-
 /// The `cose_sign` module contains the definitions for the COSE signing algorithms.
 pub mod cose_sign;
 
 /// The `create_signer` module contains the definitions for the signers that are part of the C2PA specification.
 pub mod create_signer;
-
 /// Cryptography primitives.
 #[doc(hidden)]
 pub mod crypto;
@@ -309,10 +307,12 @@ pub(crate) mod manifest_assertion;
 pub(crate) mod manifest_store_report;
 /// The `maybe_send_sync` module contains traits for conditional Send bounds based on target architecture.
 pub(crate) mod maybe_send_sync;
+pub(crate) mod read_seek;
 pub(crate) mod reader;
 pub(crate) mod resource_store;
 pub(crate) mod salt;
 pub(crate) mod signer;
+pub(crate) mod spec_versions;
 pub(crate) mod store;
 
 pub(crate) mod utils;

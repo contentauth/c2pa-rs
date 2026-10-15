@@ -96,6 +96,11 @@ pub enum DidWebError {
 
     #[error("response body exceeded size limit of {MAX_DID_DOC_SIZE} bytes")]
     ResponseTooLarge,
+
+    #[error(
+        "resolved DID document's id ({resolved}) does not match the requested DID ({requested})"
+    )]
+    DidMismatch { requested: String, resolved: String },
 }
 
 fn prepare_url(did: &Did<'_>) -> Result<String, DidWebError> {
@@ -107,9 +112,25 @@ fn prepare_url(did: &Did<'_>) -> Result<String, DidWebError> {
     to_url(did.method_specific_id())
 }
 
-fn parse_did_doc(bytes: Vec<u8>, url: &str) -> Result<DidDocument, DidWebError> {
+fn parse_did_doc(bytes: Vec<u8>, url: &str, did: &Did<'_>) -> Result<DidDocument, DidWebError> {
     let json = String::from_utf8(bytes).map_err(|_| DidWebError::InvalidData(url.to_owned()))?;
-    DidDocument::from_json(&json).map_err(|_| DidWebError::InvalidData(url.to_owned()))
+    let doc =
+        DidDocument::from_json(&json).map_err(|_| DidWebError::InvalidData(url.to_owned()))?;
+
+    // The resolved document's subject `id` MUST match the DID that was
+    // requested (https://www.w3.org/TR/did-core/#did-subject). Without this
+    // check, a redirected or otherwise substituted response could hand back a
+    // document belonging to a different DID, and callers would have no way to
+    // detect that the returned key material doesn't actually belong to the
+    // DID they asked to resolve.
+    if doc.id != *did {
+        return Err(DidWebError::DidMismatch {
+            requested: did.to_string(),
+            resolved: doc.id.to_string(),
+        });
+    }
+
+    Ok(doc)
 }
 
 pub(crate) async fn resolve_async(
@@ -119,7 +140,7 @@ pub(crate) async fn resolve_async(
     let url = prepare_url(did)?;
     // TODO: https://w3c-ccg.github.io/did-method-web/#in-transit-security
     let bytes = get_did_doc_async(&url, context).await?;
-    parse_did_doc(bytes, &url)
+    parse_did_doc(bytes, &url, did)
 }
 
 fn build_request(url: &str) -> Result<http::Request<Vec<u8>>, DidWebError> {
@@ -188,7 +209,7 @@ pub(crate) fn resolve(did: &Did<'_>, context: &Context) -> Result<DidDocument, D
     let url = prepare_url(did)?;
     // TODO: https://w3c-ccg.github.io/did-method-web/#in-transit-security
     let bytes = get_did_doc(&url, context)?;
-    parse_did_doc(bytes, &url)
+    parse_did_doc(bytes, &url, did)
 }
 
 pub(crate) fn to_url(did: &str) -> Result<String, DidWebError> {
@@ -402,6 +423,62 @@ mod tests {
             did_web::clear_proxies();
 
             did_doc_mock.assert();
+        }
+
+        // Resolution must reject a document whose `id` doesn't match the
+        // requested DID; otherwise a redirect or content swap can hand back a
+        // different DID's document undetected. `parse_did_doc` now enforces this
+        // (`DidWebError::DidMismatch`), so `spoofed_did_doc_is_rejected` passes.
+        // https://jira.corp.adobe.com/browse/CAI-12259
+        #[tokio::test]
+        async fn spoofed_did_doc_is_rejected() {
+            // Simulates: issuer DID is `did:web:did-web-mock.test` (the "trusted"
+            // looking DID referenced by a VC's `issuer` field), but resolution
+            // (e.g. via an HTTP redirect hijacked by an attacker, or a compromised/
+            // misconfigured origin) actually returns a DID document for a
+            // completely different subject, `did:web:attacker.test`, controlled by
+            // the attacker and containing the attacker's own key material.
+            const ATTACKER_DID_JSON: &str = r#"{
+                "@context": "https://www.w3.org/ns/did/v1",
+                "id": "did:web:attacker.test",
+                "verificationMethod": [{
+                    "id": "did:web:attacker.test#key1",
+                    "type": "Ed25519VerificationKey2018",
+                    "controller": "did:web:attacker.test",
+                    "publicKeyBase58": "ATTACKERKEY2VfrpySNEL6xmXJWQg6iY94qwNp1qrJJFBu"
+                }],
+                "assertionMethod": ["did:web:attacker.test#key1"]
+            }"#;
+
+            let server = MockServer::start();
+
+            // The proxy stands in for "wherever the redirect/compromised origin
+            // actually served content from" -- from the caller's point of view, it
+            // asked to resolve `did:web:did-web-mock.test` and nothing signals that
+            // the response body belongs to a different DID.
+            did_web::set_proxy(did_web::TEST_MOCK_DOMAIN, &server.url("/"));
+
+            let attacker_doc_mock = server.mock(|when, then| {
+                when.method(GET).path("/.well-known/did.json");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .body(ATTACKER_DID_JSON);
+            });
+
+            let context = Context::new();
+
+            // Requested DID is the "trusted" one; the attacker's document (a
+            // different subject `id`) must be rejected rather than returned.
+            let result = did_web::resolve_async(&did("did:web:did-web-mock.test"), &context).await;
+
+            did_web::clear_proxies();
+            attacker_doc_mock.assert();
+
+            assert!(
+                matches!(result, Err(DidWebError::DidMismatch { .. })),
+                "resolve_async must reject a DID document whose `id` does not \
+                 match the requested DID, got: {result:?}"
+            );
         }
 
         #[tokio::test]

@@ -54,6 +54,9 @@ pub struct ValidationStatus {
 
     #[serde(skip)]
     ingredient_uri: Option<String>,
+
+    #[serde(skip)]
+    trust_list_uri: Option<String>,
 }
 
 fn default_log_kind() -> LogKind {
@@ -69,6 +72,7 @@ impl ValidationStatus {
             success: None,
             ingredient_uri: None,
             kind: LogKind::Success,
+            trust_list_uri: None,
         }
     }
 
@@ -102,6 +106,11 @@ impl ValidationStatus {
         self.ingredient_uri.as_deref()
     }
 
+    /// Returns the internal JUMBF reference to the trust list that was validated.
+    pub fn trust_list_uri(&self) -> Option<&str> {
+        self.trust_list_uri.as_deref()
+    }
+
     /// Sets the internal JUMBF reference to the entity was validated.
     pub fn set_url<S: Into<String>>(mut self, url: S) -> Self {
         self.url = Some(url.into());
@@ -123,6 +132,12 @@ impl ValidationStatus {
     /// Sets the human-readable description of the validation that was performed.
     pub(crate) fn set_explanation(mut self, explanation: String) -> Self {
         self.explanation = Some(explanation);
+        self
+    }
+
+    /// Sets the internal JUMBF reference to the trust list that was validated this item.
+    pub fn set_trust_list_uri<S: Into<String>>(mut self, uri: S) -> Self {
+        self.trust_list_uri = Some(uri.into());
         self
     }
 
@@ -179,9 +194,15 @@ impl ValidationStatus {
                     .set_url(item.label.to_string())
                     .set_kind(item.kind.clone())
                     .set_explanation(item.description.to_string());
+
                 if let Some(ingredient_uri) = &item.ingredient_uri {
                     vi = vi.set_ingredient_uri(ingredient_uri.to_string());
                 }
+
+                if let Some(trust_list_uri) = &item.trust_list_uri {
+                    vi = vi.set_trust_list_uri(trust_list_uri.to_string());
+                }
+
                 vi
             }),
             // If we don't have a validation_status, then make one from the err_val

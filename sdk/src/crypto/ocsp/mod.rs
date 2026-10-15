@@ -216,25 +216,17 @@ impl OcspResponse {
                     }
 
                     if !in_range {
-                        log_item!(
-                            "OCSP_RESPONSE",
-                            "certificate revoked",
-                            "check_ocsp_response"
-                        )
-                        .validation_status(validation_codes::SIGNING_CREDENTIAL_REVOKED)
-                        .failure_no_throw(
-                            &mut internal_validation_log,
-                            OcspError::CertificateRevoked,
-                        );
+                        log_item!("", "certificate revoked", "check_ocsp_response")
+                            .validation_status(validation_codes::SIGNING_CREDENTIAL_REVOKED)
+                            .failure_no_throw(
+                                &mut internal_validation_log,
+                                OcspError::CertificateRevoked,
+                            );
                     } else {
                         // As soon as we find one successful match, nothing else matters.
-                        log_item!(
-                            "OCSP_RESPONSE",
-                            "certificate not revoked",
-                            "check_ocsp_response"
-                        )
-                        .validation_status(validation_codes::SIGNING_CREDENTIAL_NOT_REVOKED)
-                        .success(validation_log);
+                        log_item!("", "certificate not revoked", "check_ocsp_response")
+                            .validation_status(validation_codes::SIGNING_CREDENTIAL_NOT_REVOKED)
+                            .success(validation_log);
 
                         return Ok(output);
                     }
@@ -270,7 +262,7 @@ impl OcspResponse {
 
                                 let msg = format!("certificate revoked at: {utc_with_offset}");
 
-                                log_item!("OCSP_RESPONSE", msg, "check_ocsp_response")
+                                log_item!("", msg, "check_ocsp_response")
                                     .validation_status(validation_codes::SIGNING_CREDENTIAL_REVOKED)
                                     .failure_no_throw(
                                         &mut internal_validation_log,
@@ -302,7 +294,7 @@ impl OcspResponse {
 
                             if !in_range {
                                 log_item!(
-                                    "OCSP_RESPONSE",
+                                    "",
                                     format!("certificate revoked at: {}", utc_with_offset),
                                     "check_ocsp_response"
                                 )
@@ -323,28 +315,21 @@ impl OcspResponse {
                             }
                         }
                     } else {
-                        log_item!(
-                            "OCSP_RESPONSE",
-                            "certificate revoked",
-                            "check_ocsp_response"
-                        )
-                        .validation_status(validation_codes::SIGNING_CREDENTIAL_REVOKED)
-                        .failure_no_throw(
-                            &mut internal_validation_log,
-                            OcspError::CertificateRevoked,
-                        );
+                        log_item!("", "certificate revoked", "check_ocsp_response")
+                            .validation_status(validation_codes::SIGNING_CREDENTIAL_REVOKED)
+                            .failure_no_throw(
+                                &mut internal_validation_log,
+                                OcspError::CertificateRevoked,
+                            );
                         output.revoked_at =
                             Some(DateTime::from_naive_utc_and_offset(revoked_at_native, Utc));
                     }
                 }
 
                 CertStatus::Unknown(_) => {
-                    log_item!("OCSP_RESPONSE", "unknown certStatus", "check_ocsp_response")
+                    log_item!("", "unknown certStatus", "check_ocsp_response")
                         .validation_status(validation_codes::SIGNING_CREDENTIAL_OCSP_UNKNOWN)
-                        .failure_no_throw(
-                            &mut internal_validation_log,
-                            OcspError::CertificateStatusUnknown,
-                        );
+                        .informational(&mut internal_validation_log);
                 }
             }
         }
@@ -494,7 +479,7 @@ mod tests {
 
     use crate::{
         crypto::ocsp::OcspResponse,
-        status_tracker::StatusTracker,
+        status_tracker::{LogKind, StatusTracker},
         validation_status::{
             SIGNING_CREDENTIAL_NOT_REVOKED, SIGNING_CREDENTIAL_OCSP_UNKNOWN,
             SIGNING_CREDENTIAL_REVOKED,
@@ -567,6 +552,38 @@ mod tests {
         all(target_arch = "wasm32", not(target_os = "wasi")),
         wasm_bindgen_test
     )]
+    fn revoked_status_uses_current_uri() {
+        // OCSP status codes must identify the claim signature box (the
+        // tracker's current URI), not a placeholder label.
+        let rsp_data = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_revoked.der");
+        let signature_uri = "self#jumbf=/c2pa/urn:c2pa:test/c2pa.signature";
+
+        let mut validation_log = StatusTracker::default();
+        validation_log.push_current_uri(signature_uri);
+
+        let test_time = Utc.with_ymd_and_hms(2024, 2, 1, 8, 0, 0).unwrap();
+
+        OcspResponse::from_der_checked(
+            rsp_data,
+            &signing_cert_chain(),
+            Some(test_time),
+            &mut validation_log,
+        )
+        .unwrap();
+
+        let item = validation_log
+            .logged_items()
+            .iter()
+            .find(|item| item.validation_status.as_deref() == Some(SIGNING_CREDENTIAL_REVOKED))
+            .expect("SIGNING_CREDENTIAL_REVOKED log item");
+        assert_eq!(item.label, signature_uri);
+    }
+
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
     fn unknown() {
         let rsp_data = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_unknown.der");
 
@@ -583,8 +600,14 @@ mod tests {
         .unwrap();
 
         assert!(ocsp_data.revoked_at.is_none());
-        assert!(validation_log.has_any_error());
         assert!(validation_log.has_status(SIGNING_CREDENTIAL_OCSP_UNKNOWN));
+
+        let item = validation_log
+            .logged_items()
+            .iter()
+            .find(|item| item.validation_status.as_deref() == Some(SIGNING_CREDENTIAL_OCSP_UNKNOWN))
+            .expect("SIGNING_CREDENTIAL_OCSP_UNKNOWN log item");
+        assert_eq!(item.kind, LogKind::Informational);
     }
 
     /// Crafted OcspResponse DER with `certs = Some([])` (present but empty).

@@ -32,12 +32,12 @@ use {
 
 use crate::{
     assertions::{labels, AssetType, EmbeddedData},
-    asset_io::CAIRead,
     claim::Claim,
     error::Error,
     hashed_uri::HashedUri,
     jumbf::labels::{to_absolute_uri, DATABOXES},
     maybe_send_sync::{MaybeSend, MaybeSync},
+    read_seek::ReadSeek,
     utils::mime::format_to_mime,
     Result,
 };
@@ -590,11 +590,11 @@ fn resolve_within_root(base: &Path, root: &Path, path: &str) -> Result<PathBuf> 
 
 pub trait ResourceResolver {
     /// Read the data in a [`ResourceRef`] via a stream.
-    fn open(&self, reference: &ResourceRef) -> Result<Box<dyn CAIRead>>;
+    fn open(&self, reference: &ResourceRef) -> Result<Box<dyn ReadSeek>>;
 }
 
 impl ResourceResolver for ResourceStore {
-    fn open(&self, reference: &ResourceRef) -> Result<Box<dyn CAIRead>> {
+    fn open(&self, reference: &ResourceRef) -> Result<Box<dyn ReadSeek>> {
         let data = self.get(&reference.identifier)?.into_owned();
         let cursor = std::io::Cursor::new(data);
         Ok(Box::new(cursor))

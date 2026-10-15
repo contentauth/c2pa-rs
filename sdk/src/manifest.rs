@@ -142,7 +142,7 @@ pub struct Manifest {
 }
 
 fn default_instance_id() -> String {
-    format!("xmp:iid:{}", Uuid::new_v4())
+    format!("xmp.iid:{}", Uuid::new_v4())
 }
 
 fn default_format() -> String {
@@ -600,7 +600,10 @@ impl Manifest {
                         Ingredient::from_ingredient_uri(store, manifest_label, &assertion_uri)?;
                     manifest.add_ingredient(ingredient);
                 }
-                labels::DATA_HASH | labels::BMFF_HASH | labels::BOX_HASH => {
+                labels::DATA_HASH
+                | labels::BMFF_HASH
+                | labels::BOX_HASH
+                | labels::COLLECTION_HASH => {
                     // do not include data hash when reading manifests
                 }
                 label if label.starts_with(labels::CLAIM_THUMBNAIL) => {
@@ -612,14 +615,16 @@ impl Manifest {
                     let assertion_metadata = AssertionMetadata::from_assertion(assertion)?;
                     let manifest_assertion =
                         ManifestAssertion::from_assertion(&assertion_metadata)?
-                            .set_instance(claim_assertion.instance());
+                            .set_instance(claim_assertion.instance())
+                            .set_created(created);
                     manifest.assertions.push(manifest_assertion);
                 } // all other labels that end in .metadata are Metadata assertions
                 label if label.ends_with(".metadata") => {
                     let metadata = Metadata::from_assertion(assertion)?;
                     let manifest_assertion = ManifestAssertion::from_assertion(&metadata)?
                         .set_kind(ManifestAssertionKind::Json)
-                        .set_instance(claim_assertion.instance());
+                        .set_instance(claim_assertion.instance())
+                        .set_created(created);
                     manifest.assertions.push(manifest_assertion);
                 }
                 label
