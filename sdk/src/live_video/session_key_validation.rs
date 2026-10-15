@@ -26,7 +26,7 @@ use crate::{
     error::{Error, Result},
     status_tracker::StatusTracker,
     validation_results::validation_codes::{
-        LIVEVIDEO_ASSERTION_INVALID, LIVEVIDEO_SEGMENT_INVALID, LIVEVIDEO_SESSIONKEY_INVALID,
+        LIVEVIDEO_SEGMENT_INVALID, LIVEVIDEO_SESSIONKEY_INVALID,
     },
 };
 
@@ -175,6 +175,10 @@ impl LiveVideoValidator {
         Ok(())
     }
 
+    /// Per C2PA 2.5 (Live Media, Verifiable Segment Info Validation), a segment that is not the
+    /// first and whose `sequenceNumber` is lower than or equal to the previous segment's fails
+    /// with `livevideo.segment.invalid`. `livevideo.assertion.invalid` applies only to the
+    /// `c2pa.livevideo.segment` assertion of the per-segment C2PA Manifest Box method.
     pub(super) fn validate_vsi_sequence_continuity(
         &self,
         seq_num: u64,
@@ -184,7 +188,7 @@ impl LiveVideoValidator {
             if seq_num <= previous.sequence_number {
                 return fail_validation(
                     "VSI sequenceNumber must be strictly greater than the previous segment's",
-                    LIVEVIDEO_ASSERTION_INVALID,
+                    LIVEVIDEO_SEGMENT_INVALID,
                     tracker,
                 );
             }
@@ -833,27 +837,45 @@ mod tests {
         }));
     }
 
-    #[test]
-    fn vsi_regressed_sequence_number_fails() {
+    /// Validates segment `first` and then segment `second`, and returns the `livevideo.*`
+    /// status codes logged for the second segment only.
+    fn vsi_sequence_codes_after(first: u64, second: u64) -> Vec<String> {
         use vsi_crypto_helpers::*;
-
-        use crate::validation_results::validation_codes::LIVEVIDEO_ASSERTION_INVALID;
         let (mut validator, signing_key) = setup_vsi_validator();
         let mut tracker = StatusTracker::default();
 
+        validator
+            .validate_verifiable_segment_info(
+                &make_signed_vsi_segment(first, TEST_MANIFEST_ID, &signing_key),
+                &mut tracker,
+            )
+            .unwrap();
+        let logged_before = tracker.logged_items().len();
+
         let _ = validator.validate_verifiable_segment_info(
-            &make_signed_vsi_segment(5, TEST_MANIFEST_ID, &signing_key),
-            &mut tracker,
-        );
-        let _ = validator.validate_verifiable_segment_info(
-            &make_signed_vsi_segment(4, TEST_MANIFEST_ID, &signing_key),
+            &make_signed_vsi_segment(second, TEST_MANIFEST_ID, &signing_key),
             &mut tracker,
         );
 
-        assert!(tracker
-            .logged_items()
+        tracker.logged_items()[logged_before..]
             .iter()
-            .any(|i| { i.validation_status.as_deref() == Some(LIVEVIDEO_ASSERTION_INVALID) }));
+            .filter_map(|i| i.validation_status.as_deref())
+            .filter(|s| s.starts_with("livevideo"))
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// C2PA 2.5 assigns `livevideo.segment.invalid` (not `livevideo.assertion.invalid`) to a
+    /// VSI segment whose `sequenceNumber` is lower than the previous segment's.
+    #[test]
+    fn vsi_regressed_sequence_number_fails() {
+        assert_eq!(vsi_sequence_codes_after(5, 4), [LIVEVIDEO_SEGMENT_INVALID]);
+    }
+
+    /// A repeated `sequenceNumber` (replayed segment) fails the same way.
+    #[test]
+    fn vsi_duplicate_sequence_number_fails() {
+        assert_eq!(vsi_sequence_codes_after(5, 5), [LIVEVIDEO_SEGMENT_INVALID]);
     }
 
     #[test]
