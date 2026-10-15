@@ -26,7 +26,7 @@ use c2pa::{
     settings::{Settings, TrustAnchor},
     status_tracker::{LogItem, StatusTracker},
     validation_results::validation_codes::{LIVEVIDEO_INIT_INVALID, SIGNING_CREDENTIAL_UNTRUSTED},
-    Context as C2paContext, Error, Manifest, Reader, ValidationState,
+    Context as C2paContext, Error, Reader, ValidationState,
 };
 use serde::Serialize;
 
@@ -512,31 +512,16 @@ fn detect_validation_method(
     };
 
     match manifest.find_assertion::<SessionKeys>(SessionKeys::LABEL) {
-        Ok(session_keys) => {
-            let manifest_id = manifest.label().unwrap_or_default().to_string();
-            let ee_cert_der = extract_ee_cert_der(manifest);
-
-            // A `livevideo.sessionkey.invalid` failure logged here is reported by the caller,
-            // with its status code attached, when it bails on the init segment.
-            let _ = ctx.validator.validate_session_keys(
-                &session_keys,
-                &manifest_id,
-                ee_cert_der.as_deref(),
-                ctx.tracker,
-            );
+        Ok(_) => {
+            // Preserve native CBOR tags when verifying signerBinding.
+            let _ = ctx
+                .validator
+                .validate_session_keys_from_reader(&reader, None, ctx.tracker);
 
             (ValidationMethod::VerifiableSegmentInfo, init_state)
         }
         Err(_) => (ValidationMethod::ManifestBox, init_state),
     }
-}
-
-/// Extracts the DER-encoded end-entity certificate from a manifest's PEM cert chain.
-fn extract_ee_cert_der(manifest: &Manifest) -> Option<Vec<u8>> {
-    let si = manifest.signature_info()?;
-    let pems = pem::parse_many(si.cert_chain()).ok()?;
-    let first = pems.into_iter().next()?;
-    Some(first.into_contents())
 }
 
 fn collect_segments(init_path: &Path, segments_glob: &Path) -> Result<Vec<PathBuf>> {
@@ -695,10 +680,9 @@ fn validate_segment_manifest_box(
 }
 
 /// Validates one segment using section 19.4 (Verifiable Segment Info).
-/// Validates one segment using section 19.4 (Verifiable Segment Info).
 ///
-/// A VSI media segment carries only an `emsg`, never its own manifest, so a segment that passes
-/// inherits `init_state`: the trust standing established once by the init segment's manifest.
+/// An embedded key-update manifest is validated using the same context as the init segment.
+/// The report retains the weaker trust state of the init and update manifests.
 fn validate_segment_vsi(
     ctx: &mut ValidationCtx<'_>,
     segment_path: &Path,
@@ -722,9 +706,11 @@ fn validate_segment_vsi(
     // validation failures rather than raising them as errors), so a successful `Result` alone
     // does not mean the segment is valid — check whether a new failure was logged too.
     let logged_items_before = ctx.tracker.logged_items().len();
-    let result = ctx
-        .validator
-        .validate_verifiable_segment_info(&segment_data, ctx.tracker);
+    let result = ctx.validator.validate_verifiable_segment_info_with_context(
+        &segment_data,
+        ctx.context,
+        ctx.tracker,
+    );
     let has_new_failure = has_new_live_video_failure(ctx.tracker, logged_items_before);
 
     match result {
@@ -732,7 +718,12 @@ fn validate_segment_vsi(
             eprintln!("Segment OK  [{segment_path:?}]");
             SegmentOutcome {
                 ok: true,
-                state: init_state.unwrap_or(ValidationState::Valid),
+                state: weaker(
+                    init_state.unwrap_or(ValidationState::Valid),
+                    ctx.validator
+                        .session_key_manifest_state()
+                        .unwrap_or(ValidationState::Trusted),
+                ),
             }
         }
         Ok(_) => {

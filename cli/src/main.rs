@@ -387,10 +387,18 @@ enum Commands {
         method: LiveVideoSignMethod,
 
         /// Path to an Ed25519 session key file (raw 32-byte seed).
-        /// Required when using --method vsi. The same key must be used across all
-        /// invocations for a given live video session.
+        /// Required when using --method vsi. Additional keys can be pre-announced with
+        /// --session-key-schedule. Resume with the same key and schedule files.
         #[arg(long = "session-key")]
         session_key: Option<PathBuf>,
+
+        /// JSON array of additional VSI keys, announced in the init manifest.
+        /// Each entry has path (raw Ed25519 seed, relative to this JSON file), kid,
+        /// minSequenceNumber and validityPeriod (seconds). The eligible key with the
+        /// greatest minSequenceNumber signs each segment. Include the same schedule
+        /// when resuming with --previous-segment.
+        #[arg(long = "session-key-schedule", requires = "session_key")]
+        session_key_schedule: Option<PathBuf>,
 
         /// The first `sequenceNumber`/`moof/mfhd.sequence_number` valid for this VSI session
         /// key (§18.25.2's `minSequenceNumber`). Only used with --method vsi on the first
@@ -408,7 +416,7 @@ enum Commands {
         /// session reuses the already-signed init segment's session key.
         ///
         /// Validators reject segments once the key is past this window, so a stream that runs
-        /// longer than the period must re-sign its init segment with a fresh key before then.
+        /// longer than the period needs fresh keys announced in an updated manifest.
         #[arg(long = "session-key-validity", default_value_t = 3600)]
         session_key_validity: u64,
     },
@@ -1224,6 +1232,7 @@ fn main() -> Result<()> {
             previous_segment,
             method,
             session_key,
+            session_key_schedule,
             min_sequence_number,
             session_key_validity,
         }) = &args.command
@@ -1263,6 +1272,7 @@ fn main() -> Result<()> {
                     manifest_json: &manifest_json,
                     output_dir: output,
                     session_key_path,
+                    session_key_schedule: session_key_schedule.as_deref(),
                     signer,
                     min_sequence_number: *min_sequence_number,
                     session_key_validity: *session_key_validity,
