@@ -67,7 +67,8 @@ pub use vsi_signing::{moof_sequence_number, LiveVideoVsiSigner};
 
 use self::cose_key::kid_from_cose_key;
 use crate::{
-    assertions::{LiveVideoSegment, SessionKey, SessionKeys},
+    assertion::AssertionBase,
+    assertions::{BmffHash, LiveVideoSegment, SessionKey, SessionKeys},
     error::{Error, Result},
     log_item,
     status_tracker::StatusTracker,
@@ -75,6 +76,7 @@ use crate::{
         LIVEVIDEO_INIT_INVALID, LIVEVIDEO_MANIFEST_INVALID, LIVEVIDEO_SEGMENT_INVALID,
         LIVEVIDEO_SESSIONKEY_INVALID,
     },
+    Reader,
 };
 
 /// Builds a [`crate::Context`] from thread-local settings, for callers ([`LiveVideoSigner`],
@@ -213,9 +215,61 @@ impl LiveVideoValidator {
         fail_validation(description, LIVEVIDEO_MANIFEST_INVALID, tracker)
     }
 
+    /// Checks the hard binding of a segment's own C2PA Manifest for the per-segment C2PA
+    /// Manifest Box method: the active manifest's BMFF hash assertion must be
+    /// `c2pa.hash.bmff.v3` with a `hash` field and no `merkle` field (C2PA 2.5). Logs
+    /// `livevideo.manifest.invalid` otherwise.
+    ///
+    /// `reader` is the [`Reader`] for the media segment. Call this alongside
+    /// [`validate_media_segment`], whose `LiveVideoSegment` assertion comes from the same
+    /// manifest; a reader's [`Manifest`](crate::Manifest) doesn't expose hash assertions.
+    ///
+    /// [`validate_media_segment`]: LiveVideoValidator::validate_media_segment
+    pub fn validate_segment_hash_binding(
+        &self,
+        reader: &Reader,
+        tracker: &mut StatusTracker,
+    ) -> Result<()> {
+        let bmff_hash = match reader.store.provenance_claim() {
+            Some(claim) => match claim.bmff_hash_assertions().first() {
+                Some(assertion) => match BmffHash::from_assertion(assertion.assertion()) {
+                    Ok(bmff_hash) => Some(bmff_hash),
+                    Err(e) => {
+                        return fail_validation(
+                            format!("segment BMFF hash assertion is malformed: {e}"),
+                            LIVEVIDEO_MANIFEST_INVALID,
+                            tracker,
+                        );
+                    }
+                },
+                None => None,
+            },
+            None => {
+                return fail_validation(
+                    "segment has no active manifest",
+                    LIVEVIDEO_MANIFEST_INVALID,
+                    tracker,
+                );
+            }
+        };
+        if let Err(reason) =
+            segment_manifest_validation::check_per_segment_bmff_hash(bmff_hash.as_ref())
+        {
+            return fail_validation(
+                format!("segment {reason}"),
+                LIVEVIDEO_MANIFEST_INVALID,
+                tracker,
+            );
+        }
+        Ok(())
+    }
+
     /// Validates a media segment using the per-segment C2PA Manifest Box method ([§19.3]).
     ///
+    /// Also call [`validate_segment_hash_binding`] for the segment's manifest.
+    ///
     /// [§19.3]: https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#using_c2pa_manifest_box
+    /// [`validate_segment_hash_binding`]: LiveVideoValidator::validate_segment_hash_binding
     pub fn validate_media_segment(
         &mut self,
         segment_data: &[u8],
