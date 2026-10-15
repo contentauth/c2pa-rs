@@ -1686,4 +1686,141 @@ mod tests {
         assert_eq!(map1.sequence_number, 1);
         assert_eq!(map2.sequence_number, 2);
     }
+
+    // ── VSI emsg exclusion alongside other emsg boxes (SCTE-35) ─────────────────
+
+    fn make_emsg_v0(scheme_id_uri: &str, value: &str, message_data: &[u8]) -> Vec<u8> {
+        let mut body = vec![0u8; 4]; // version 0, flags
+        body.extend_from_slice(scheme_id_uri.as_bytes());
+        body.push(0);
+        body.extend_from_slice(value.as_bytes());
+        body.push(0);
+        body.extend_from_slice(&90_000u32.to_be_bytes()); // timescale
+        body.extend_from_slice(&0u32.to_be_bytes()); // presentation_time_delta
+        body.extend_from_slice(&0u32.to_be_bytes()); // event_duration
+        body.extend_from_slice(&7u32.to_be_bytes()); // id
+        body.extend_from_slice(message_data);
+        make_box(b"emsg", &body)
+    }
+
+    /// Byte range of the `index`-th top-level box of type `fourcc` in `data`.
+    fn box_range(data: &[u8], fourcc: &[u8; 4], index: usize) -> Option<std::ops::Range<usize>> {
+        let mut pos = 0;
+        let mut seen = 0;
+        for (f, bytes) in crate::live_video::box_walk::top_level_boxes(data) {
+            if f == fourcc {
+                if seen == index {
+                    return Some(pos..pos + bytes.len());
+                }
+                seen += 1;
+            }
+            pos += bytes.len();
+        }
+        None
+    }
+
+    /// Signs `segment`, then validates `mutate(signed)` and returns its `livevideo.*` codes.
+    fn sign_mutate_and_validate(segment: &[u8], mutate: impl FnOnce(&mut Vec<u8>)) -> Vec<String> {
+        let signer = make_test_signer();
+        let mut vsi_signer = make_vsi_signer_with_manifest_id(&signer, b"key-1", 1);
+        let mut signed = vsi_signer.sign_media_segment(segment).unwrap();
+        mutate(&mut signed);
+
+        let session_keys = vsi_signer.build_session_keys_assertion().unwrap();
+        let ee_cert_der = signer.certs().unwrap().into_iter().next().unwrap();
+        let mut validator = LiveVideoValidator::new();
+        let mut tracker = StatusTracker::default();
+        validator
+            .validate_session_keys(
+                &session_keys,
+                TEST_MANIFEST_ID,
+                Some(&ee_cert_der),
+                &mut tracker,
+            )
+            .unwrap();
+        let _ = validator.validate_verifiable_segment_info(&signed, &mut tracker);
+        tracker
+            .logged_items()
+            .iter()
+            .filter_map(|i| i.validation_status.as_deref())
+            .filter(|s| s.starts_with("livevideo"))
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn segment_with_scte35() -> Vec<u8> {
+        [
+            make_scte35_emsg(),
+            make_test_media_segment_with_moof(&[1000]),
+        ]
+        .concat()
+    }
+
+    #[test]
+    fn segment_with_scte35_emsg_passes_vsi_validation() {
+        assert!(sign_mutate_and_validate(&segment_with_scte35(), |_| {}).is_empty());
+    }
+
+    /// The SCTE-35 `emsg` is not the VSI `emsg`, so `bmffHash` covers it: changing its
+    /// payload invalidates the segment.
+    #[test]
+    fn tampered_scte35_emsg_fails_vsi_validation() {
+        let codes = sign_mutate_and_validate(&segment_with_scte35(), |signed| {
+            let scte35 = box_range(signed, b"emsg", 1).unwrap();
+            signed[scte35.end - 1] ^= 0xff;
+        });
+        assert_eq!(codes, ["livevideo.segment.invalid"]);
+    }
+
+    /// Removing the SCTE-35 `emsg` also invalidates the segment.
+    #[test]
+    fn removed_scte35_emsg_fails_vsi_validation() {
+        let codes = sign_mutate_and_validate(&segment_with_scte35(), |signed| {
+            let scte35 = box_range(signed, b"emsg", 1).unwrap();
+            signed.drain(scte35);
+        });
+        assert_eq!(codes, ["livevideo.segment.invalid"]);
+    }
+
+    /// The VSI `emsg` itself is excluded from `bmffHash`: its `id` field, which isn't
+    /// covered by the signature either, can change without failing the hash check.
+    #[test]
+    fn vsi_emsg_is_excluded_from_the_hash() {
+        let codes = sign_mutate_and_validate(&segment_with_scte35(), |signed| {
+            let vsi = box_range(signed, b"emsg", 0).unwrap();
+            // header(8) + FullBox(4) + scheme_id_uri + NUL + "fseg" + NUL
+            // + timescale(4) + presentation_time_delta(4) + event_duration(4)
+            let id_at = vsi.start + 12 + VSI_SCHEME_ID_URI.len() + 1 + 5 + 12;
+            signed[id_at..id_at + 4].copy_from_slice(&0xdead_beefu32.to_be_bytes());
+        });
+        assert!(codes.is_empty(), "unexpected failures: {codes:?}");
+    }
+
+    /// The `bmffHash` exclusion matches `emsg` boxes whose bytes at offset 12 *start with*
+    /// `urn:c2pa:verifiable-segment-info`, so an `emsg` with a longer scheme (or a
+    /// version 1 `emsg` laid out to match) would be left out of the hash without being the
+    /// VSI `emsg`. Such a box must fail validation rather than ride along unhashed.
+    #[test]
+    fn emsg_matching_the_vsi_exclusion_but_not_vsi_fails() {
+        let lookalike_v0 = make_emsg_v0(
+            "urn:c2pa:verifiable-segment-info-extra",
+            "fseg",
+            b"unhashed",
+        );
+        let codes = sign_mutate_and_validate(&segment_with_scte35(), |signed| {
+            signed.extend_from_slice(&lookalike_v0);
+        });
+        assert_eq!(codes, ["livevideo.segment.invalid"]);
+
+        // A version 1 emsg whose timescale..id fields and the start of scheme_id_uri spell
+        // out the VSI URI at offset 12.
+        let mut body = vec![1u8, 0, 0, 0];
+        body.extend_from_slice(VSI_SCHEME_ID_URI.as_bytes());
+        body.extend_from_slice(b"\0fseg\0unhashed");
+        let lookalike_v1 = make_box(b"emsg", &body);
+        let codes = sign_mutate_and_validate(&segment_with_scte35(), |signed| {
+            signed.extend_from_slice(&lookalike_v1);
+        });
+        assert_eq!(codes, ["livevideo.segment.invalid"]);
+    }
 }

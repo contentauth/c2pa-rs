@@ -104,6 +104,18 @@ pub(crate) fn parse_segment_info_map(cose_sign1_bytes: &[u8]) -> Result<SegmentI
     parse_vsi(cose_sign1_bytes).map(|p| p.segment_info_map)
 }
 
+/// Returns `true` if `segment_data` has a top-level `emsg` box that the VSI `bmffHash`
+/// exclusion (§19.4.1: xpath `/emsg`, the VSI `scheme_id_uri` bytes at offset 12) matches
+/// but that isn't a VSI `emsg` box.
+pub(super) fn has_vsi_excluded_non_vsi_emsg(segment_data: &[u8]) -> bool {
+    let uri_at = VSI_URI_OFFSET_IN_EMSG as usize;
+    let uri = VSI_SCHEME_ID_URI.as_bytes();
+    find_emsg_boxes(segment_data).iter().any(|emsg_box| {
+        emsg_box.get(uri_at..uri_at + uri.len()) == Some(uri)
+            && extract_vsi_from_emsg_box(emsg_box).is_none()
+    })
+}
+
 fn find_emsg_boxes(segment_data: &[u8]) -> Vec<Vec<u8>> {
     super::box_walk::top_level_boxes(segment_data)
         .filter(|(fourcc, _)| **fourcc == *b"emsg")
@@ -297,5 +309,26 @@ mod tests {
 
         let extracted = extract_vsi_payload_from_segment(&segment).unwrap();
         assert_eq!(extracted, payload);
+    }
+
+    #[test]
+    fn only_lookalike_emsg_boxes_count_as_excluded_but_not_vsi() {
+        let vsi = make_emsg_v0(VSI_SCHEME_ID_URI, VSI_VALUE_FSEG, b"cose");
+        let scte35 = make_emsg_v0("urn:scte:scte35:2013:bin", "1", b"\xfc\x30");
+        assert!(!has_vsi_excluded_non_vsi_emsg(
+            &[vsi.clone(), scte35].concat()
+        ));
+
+        let longer_scheme = make_emsg_v0(
+            "urn:c2pa:verifiable-segment-info-extra",
+            VSI_VALUE_FSEG,
+            b"x",
+        );
+        assert!(has_vsi_excluded_non_vsi_emsg(
+            &[vsi.clone(), longer_scheme].concat()
+        ));
+
+        let wrong_value = make_emsg_v0(VSI_SCHEME_ID_URI, "other", b"x");
+        assert!(has_vsi_excluded_non_vsi_emsg(&[vsi, wrong_value].concat()));
     }
 }

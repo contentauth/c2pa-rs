@@ -19,7 +19,8 @@ use super::{
     cose_key::{cose_key_to_der, kid_from_cose_key, signing_alg_from_cose_key},
     fail_validation,
     verifiable_segment_info::{
-        extract_vsi_emsg, extract_vsi_payload_from_segment, parse_vsi, ParsedVsi,
+        extract_vsi_emsg, extract_vsi_payload_from_segment, has_vsi_excluded_non_vsi_emsg,
+        parse_vsi, ParsedVsi,
     },
     vsi_signing::{parse_first_tfdt, parse_prft, parse_segment_duration_ticks},
     LiveVideoValidator,
@@ -340,6 +341,19 @@ impl LiveVideoValidator {
             return fail_validation(
                 "segment-info-map bmffHash must contain an exclusion-map for xpath \"/emsg\" \
                  scoped to the VSI scheme_id_uri",
+                LIVEVIDEO_SEGMENT_INVALID,
+                tracker,
+            );
+        }
+
+        // That exclusion compares only the URI's bytes at offset 12, so it also leaves out of
+        // the hash any `emsg` whose bytes there merely start with the VSI URI: a longer
+        // `scheme_id_uri`, or a version 1 `emsg` laid out to match. Such a box isn't the VSI
+        // `emsg`, so nothing would verify it; fail the segment instead.
+        if has_vsi_excluded_non_vsi_emsg(segment_data) {
+            return fail_validation(
+                "segment has an emsg box that the VSI bmffHash exclusion matches but that is \
+                 not a VSI emsg box, so its contents would not be verified",
                 LIVEVIDEO_SEGMENT_INVALID,
                 tracker,
             );
