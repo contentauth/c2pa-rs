@@ -685,7 +685,9 @@ mod tests {
 
     // Regression test for CAI-13325: `chunk_left as usize` truncated a range of
     // exactly 4 GiB (2^32) to zero on 32-bit targets, so the read loop asked for
-    // zero bytes on every iteration and never terminated.
+    // zero bytes on every iteration and never terminated. The check is on the
+    // clamp itself, because hashing 4 GiB through the loop takes tens of seconds
+    // and only differs from this on a 32-bit `usize`.
     #[test]
     fn chunk_size_does_not_truncate_on_32_bit_targets() {
         let cap = test_hash_buf().get();
@@ -696,6 +698,76 @@ mod tests {
         assert_eq!(chunk_size(cap as u64 + 1, cap), cap);
         assert_eq!(chunk_size(1 << 32, cap), cap);
         assert_eq!(chunk_size(u64::MAX, cap), cap);
+    }
+
+    // Reports a fixed virtual length and yields zeros, so a 4 GiB stream needs no memory.
+    #[cfg(target_pointer_width = "32")]
+    struct ZeroStream {
+        len: u64,
+        pos: u64,
+    }
+
+    #[cfg(target_pointer_width = "32")]
+    impl Read for ZeroStream {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let n = std::cmp::min(buf.len() as u64, self.len - self.pos) as usize;
+            buf[..n].fill(0);
+            self.pos += n as u64;
+            Ok(n)
+        }
+    }
+
+    #[cfg(target_pointer_width = "32")]
+    impl Seek for ZeroStream {
+        fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+            self.pos = match pos {
+                SeekFrom::Start(p) => p,
+                SeekFrom::End(p) => (self.len as i64 + p) as u64,
+                SeekFrom::Current(p) => (self.pos as i64 + p) as u64,
+            };
+            Ok(self.pos)
+        }
+    }
+
+    // CAI-13325 through the real hashing loop, on 32-bit targets only: on a 64-bit `usize`
+    // the range length cannot truncate, so this would pass with or without the fix.
+    //
+    // This replaces a test that hashed a full 4 GiB range (tens of seconds in debug builds).
+    // The loop reports progress after every chunk, so cancelling at the first mid-range tick
+    // ends the run after one chunk. With the fix a full chunk has been read by then. Before
+    // it, `chunk_left as usize` was 0, every buffer was empty, nothing was read, and the loop
+    // only ticked in place.
+    #[cfg(target_pointer_width = "32")]
+    #[test]
+    fn range_of_exactly_4gib_reads_data_before_first_tick() {
+        let cap = 1024 * 1024;
+        let mut reader = ZeroStream {
+            len: 1u64 << 32,
+            pos: 0,
+        };
+
+        // Step 1 fires before any read; step 2 is the first mid-range tick.
+        let result = hash_stream_by_alg_with_progress_impl(
+            "sha256",
+            &mut reader,
+            None,
+            true,
+            &mut |step, _| {
+                if step >= 2 {
+                    Err(Error::OperationCancelled)
+                } else {
+                    Ok(())
+                }
+            },
+            NonZeroUsize::new(cap).unwrap(),
+        );
+
+        assert!(matches!(result, Err(Error::OperationCancelled)));
+        assert!(
+            reader.pos >= cap as u64,
+            "no data was read before the first progress tick (pos = {})",
+            reader.pos
+        );
     }
 
     // Attacker-controlled HashRange with start+length > u64::MAX must return Err,
@@ -822,57 +894,5 @@ mod tests {
             hash,
             hex!("e3301ce38a42503098530b98cd1b652a10c5caf890735017dd0012ec319f04e5")
         );
-    }
-
-    // Reports a fixed virtual length and yields zero bytes on read, so a multi-GiB
-    // stream can be exercised without allocating that much memory.
-    struct ZeroStream {
-        len: u64,
-        pos: u64,
-    }
-
-    impl Read for ZeroStream {
-        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            let remaining = self.len - self.pos;
-            let n = std::cmp::min(buf.len() as u64, remaining) as usize;
-            buf[..n].fill(0);
-            self.pos += n as u64;
-            Ok(n)
-        }
-    }
-
-    impl Seek for ZeroStream {
-        fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
-            self.pos = match pos {
-                SeekFrom::Start(p) => p,
-                SeekFrom::End(p) => (self.len as i64 + p) as u64,
-                SeekFrom::Current(p) => (self.pos as i64 + p) as u64,
-            };
-            Ok(self.pos)
-        }
-    }
-
-    // Regression test for CAI-13325: on 32-bit targets (wasm32) `chunk_left as usize`
-    // truncated a range of exactly 4 GiB (2^32) to zero, so each read-chunk buffer was
-    // empty, `read_exact` on it returned `Ok(())` immediately without decrementing
-    // `chunk_left`, and the loop spun forever. This drives the real hashing loop
-    // across a virtual 4 GiB range so the fix is verified under the project's
-    // wasm32-wasip2 test job, where `usize` is actually 32 bits.
-    #[test]
-    fn hash_range_of_exactly_4gib_terminates() {
-        let mut reader = ZeroStream {
-            len: 1u64 << 32,
-            pos: 0,
-        };
-        let hash = hash_stream_by_alg_with_progress_impl(
-            "sha256",
-            &mut reader,
-            None,
-            true,
-            &mut |_, _| Ok(()),
-            NonZeroUsize::new(1024 * 1024).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(hash.len(), 32);
     }
 }
