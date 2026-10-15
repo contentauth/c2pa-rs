@@ -3564,7 +3564,7 @@ impl Store {
     // fetch remote manifest if possible
     #[cfg(feature = "fetch_remote_manifests")]
     #[async_generic]
-    fn fetch_remote_manifest(url: &str, context: &Context) -> Result<Vec<u8>> {
+    pub(crate) fn fetch_remote_manifest(url: &str, context: &Context) -> Result<Vec<u8>> {
         //const MANIFEST_CONTENT_TYPE: &str = "application/x-c2pa-manifest-store"; // todo verify once these are served
 
         context.check_progress(ProgressPhase::FetchingRemoteManifest, 1, 1)?;

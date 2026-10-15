@@ -153,6 +153,7 @@ pub struct VsiSignArgs<'a> {
     pub manifest_json: &'a str,
     pub output_dir: &'a Path,
     pub session_key_schedule: Option<&'a Path>,
+    pub manifest_uri: Option<&'a str>,
     pub session_key_path: &'a Path,
     pub signer: &'a dyn Signer,
     pub min_sequence_number: Option<u64>,
@@ -183,6 +184,7 @@ pub fn sign_live_video_vsi(args: VsiSignArgs) -> Result<()> {
         output_dir,
         session_key_path,
         session_key_schedule,
+        manifest_uri,
         signer,
         min_sequence_number,
         session_key_validity,
@@ -257,6 +259,19 @@ pub fn sign_live_video_vsi(args: VsiSignArgs) -> Result<()> {
     } else {
         // First invocation: sign the init segment and capture its manifest ID.
         sign_vsi_init_segment(init_path, output_dir, &mut vsi_signer, signer)?;
+    }
+
+    if let Some(url) = manifest_uri {
+        vsi_signer.set_manifest_uri_for_current_manifest(url)?;
+        let manifest_path = output_path_for(init_path, output_dir)?.with_extension("c2pa");
+        fs::write(
+            &manifest_path,
+            vsi_signer
+                .manifest_store()
+                .context("Signed init has no manifest store to host")?,
+        )
+        .with_context(|| format!("Failed to write remote manifest store: {manifest_path:?}"))?;
+        println!("Manifest store for {url}: {manifest_path:?}");
     }
 
     if segment_paths.is_empty() {
@@ -579,6 +594,7 @@ mod tests {
                 manifest_json: vsi_manifest_json(),
                 output_dir: &output_dir,
                 session_key_schedule: None,
+                manifest_uri: None,
                 session_key_path: &key_path,
                 signer: signer.as_ref(),
                 min_sequence_number: Some(1),
@@ -625,6 +641,7 @@ mod tests {
             output_dir: &output_dir,
             session_key_path: &key_path,
             session_key_schedule: Some(&schedule),
+            manifest_uri: None,
             signer: signer.as_ref(),
             min_sequence_number: Some(1),
             session_key_validity: 3600,
@@ -668,6 +685,7 @@ mod tests {
             output_dir: &output_dir,
             session_key_path: &key_path,
             session_key_schedule: Some(&schedule),
+            manifest_uri: None,
             signer: signer.as_ref(),
             min_sequence_number: Some(1),
             session_key_validity: 3600,
@@ -680,6 +698,115 @@ mod tests {
             )
             .unwrap();
         assert_eq!(tracker.filter_errors().count(), 0);
+    }
+
+    #[test]
+    fn vsi_manifest_uri_exports_store_and_resumes_without_changing_it() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        struct Resolver {
+            bytes: Vec<u8>,
+            calls: Arc<AtomicUsize>,
+        }
+        impl c2pa::http::SyncHttpResolver for Resolver {
+            fn http_resolve(
+                &self,
+                request: c2pa::http::http::Request<Vec<u8>>,
+            ) -> std::result::Result<
+                c2pa::http::http::Response<Box<dyn std::io::Read>>,
+                c2pa::http::HttpResolverError,
+            > {
+                assert_eq!(
+                    request.uri().to_string(),
+                    "https://live.example/manifest.c2pa"
+                );
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok(c2pa::http::http::Response::builder()
+                    .status(200)
+                    .body(Box::new(std::io::Cursor::new(self.bytes.clone()))
+                        as Box<dyn std::io::Read>)
+                    .unwrap())
+            }
+        }
+        let (_guard, segments_dir, output_dir, init_path) = setup_vsi_dirs(1);
+        let key_path = segments_dir.join("session.key");
+        fs::write(&key_path, [0x42u8; 32]).unwrap();
+        let signer = test_signer();
+        sign_live_video_vsi(VsiSignArgs {
+            segments_dir: &segments_dir,
+            segments_glob: Path::new("seg_001.m4s"),
+            init_path: &init_path,
+            previous_segment_path: None,
+            manifest_json: vsi_manifest_json(),
+            output_dir: &output_dir,
+            session_key_path: &key_path,
+            session_key_schedule: None,
+            manifest_uri: Some("https://live.example/manifest.c2pa"),
+            signer: signer.as_ref(),
+            min_sequence_number: Some(1),
+            session_key_validity: 3600,
+        })
+        .unwrap();
+        let store = fs::read(output_dir.join("init.c2pa")).unwrap();
+        let init = fs::read(output_dir.join("init.mp4")).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut context = c2pa::Context::new()
+            .with_settings(
+                c2pa::settings::Settings::new()
+                    .with_json(r#"{"verify":{"verify_trust":false}}"#)
+                    .unwrap(),
+            )
+            .unwrap();
+        context
+            .set_resolver(Resolver {
+                bytes: store.clone(),
+                calls: calls.clone(),
+            })
+            .unwrap();
+        let context = Arc::new(context);
+        let mut validator = c2pa::live_video::LiveVideoValidator::new();
+        let mut tracker = c2pa::status_tracker::StatusTracker::default();
+        validator
+            .validate_init_segment(&init, &mut tracker)
+            .unwrap();
+        validator
+            .validate_verifiable_segment_info_with_context(
+                &fs::read(output_dir.join("seg_001.m4s")).unwrap(),
+                &context,
+                &mut tracker,
+            )
+            .unwrap();
+        assert_eq!(tracker.filter_errors().count(), 0);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        write_media_segment(&segments_dir, "seg_002.m4s");
+        let previous = output_dir.join("seg_001.m4s");
+        sign_live_video_vsi(VsiSignArgs {
+            segments_dir: &segments_dir,
+            segments_glob: Path::new("seg_002.m4s"),
+            init_path: &init_path,
+            previous_segment_path: Some(&previous),
+            manifest_json: vsi_manifest_json(),
+            output_dir: &output_dir,
+            session_key_path: &key_path,
+            session_key_schedule: None,
+            manifest_uri: Some("https://live.example/manifest.c2pa"),
+            signer: signer.as_ref(),
+            min_sequence_number: Some(1),
+            session_key_validity: 3600,
+        })
+        .unwrap();
+        assert_eq!(fs::read(output_dir.join("init.c2pa")).unwrap(), store);
+        validator
+            .validate_verifiable_segment_info_with_context(
+                &fs::read(output_dir.join("seg_002.m4s")).unwrap(),
+                &context,
+                &mut tracker,
+            )
+            .unwrap();
+        assert_eq!(tracker.filter_errors().count(), 0);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]
@@ -697,6 +824,7 @@ mod tests {
             manifest_json: vsi_manifest_json(),
             output_dir: &output_dir,
             session_key_schedule: None,
+            manifest_uri: None,
             session_key_path: &key_path,
             signer: signer.as_ref(),
             min_sequence_number: Some(1),
@@ -742,6 +870,7 @@ mod tests {
             manifest_json: vsi_manifest_json(),
             output_dir: &output_dir,
             session_key_schedule: None,
+            manifest_uri: None,
             session_key_path: &key_path,
             signer: signer.as_ref(),
             min_sequence_number: Some(1),
@@ -762,6 +891,7 @@ mod tests {
             manifest_json: vsi_manifest_json(),
             output_dir: &output_dir,
             session_key_schedule: None,
+            manifest_uri: None,
             session_key_path: &key_path,
             signer: signer.as_ref(),
             min_sequence_number: Some(1),
@@ -804,6 +934,7 @@ mod tests {
             manifest_json: vsi_manifest_json(),
             output_dir: &staging,
             session_key_schedule: None,
+            manifest_uri: None,
             session_key_path: &key_path,
             signer: signer.as_ref(),
             min_sequence_number: Some(1),
@@ -820,6 +951,7 @@ mod tests {
             manifest_json: vsi_manifest_json(),
             output_dir: &output_dir,
             session_key_schedule: None,
+            manifest_uri: None,
             session_key_path: &key_path,
             signer: signer.as_ref(),
             min_sequence_number: Some(1),

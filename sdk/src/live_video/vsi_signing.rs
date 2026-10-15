@@ -61,6 +61,8 @@ const VSI_VALUE_FSEG: &str = "fseg";
 ///
 /// </div>
 pub struct LiveVideoVsiSigner {
+    manifest_uri: Option<crate::HashedUri>,
+    manifest_store: Option<Vec<u8>>,
     session_keys: Vec<SessionSigningMaterial>,
     manifest_signer_cert: Vec<u8>,
     keys_need_announcement: bool,
@@ -134,6 +136,8 @@ impl LiveVideoVsiSigner {
         let created_at = chrono::Utc::now().to_rfc3339();
 
         Ok(Self {
+            manifest_uri: None,
+            manifest_store: None,
             session_keys: vec![SessionSigningMaterial {
                 session_signing_key: signing_key,
                 session_cose_key,
@@ -309,7 +313,7 @@ impl LiveVideoVsiSigner {
                 sequence_number,
                 bmff_hash,
                 manifest_id: manifest_id.clone(),
-                manifest_uri: None,
+                manifest_uri: self.manifest_uri.clone(),
             };
             let cose_sign1_bytes =
                 build_vsi_cose_sign1(&segment_info_map, &key.session_signing_key, &key.kid)?;
@@ -426,10 +430,48 @@ impl LiveVideoVsiSigner {
             ));
         }
         output[emsg_offset..emsg_offset + emsg.len()].copy_from_slice(&emsg);
+        // The embedded manifest replaces the active one, so a reference to the previous
+        // store would be stale.
+        self.manifest_uri = None;
+        self.manifest_store = None;
         self.active_manifest_id = Some(label);
         self.keys_need_announcement = false;
         self.next_sequence_number = next_sequence;
         Ok(output)
+    }
+
+    /// Sets the optional hashed external manifest reference emitted in subsequent VSIs.
+    /// `alg` is required for this external URI, despite being optional on [`crate::HashedUri`].
+    /// The caller must host the exact referenced store for the stream's lifetime.
+    /// Configure this after signing or restoring the init segment; those operations
+    /// clear any previous reference.
+    pub fn set_manifest_uri(&mut self, manifest_uri: Option<crate::HashedUri>) -> Result<()> {
+        if let Some(uri) = &manifest_uri {
+            super::manifest_uri::validate_reference(uri)?;
+        }
+        self.manifest_uri = manifest_uri;
+        Ok(())
+    }
+
+    /// References the current init manifest store using SHA-256.
+    /// Obtain the exact bytes to host using [`Self::manifest_store`].
+    pub fn set_manifest_uri_for_current_manifest(&mut self, url: impl Into<String>) -> Result<()> {
+        let bytes = self.manifest_store.as_deref().ok_or_else(|| {
+            Error::BadParam(
+                "sign or restore the initialization segment before setting manifestUri".into(),
+            )
+        })?;
+        let hash = crate::utils::hash_utils::hash_by_alg("sha256", bytes, None);
+        self.set_manifest_uri(Some(crate::HashedUri::new(
+            url.into(),
+            Some("sha256".into()),
+            &hash,
+        )))
+    }
+
+    /// Exact C2PA Manifest Store bytes from the last signed or restored init segment.
+    pub fn manifest_store(&self) -> Option<&[u8]> {
+        self.manifest_store.as_deref()
     }
 
     /// Returns the sequence number assigned to the next media segment.
@@ -481,6 +523,9 @@ impl LiveVideoVsiSigner {
             key.created_at = announced.created_at.to_string();
             key.validity_period = announced.validity_period;
         }
+        self.manifest_store = Some(load_manifest_store(signed_init_data, format)?);
+        // A restored init manifest invalidates any previously configured reference.
+        self.manifest_uri = None;
         self.active_manifest_id = Some(manifest_id.to_string());
         self.keys_need_announcement = false;
         self.track_timescale = parse_first_mdhd_timescale(signed_init_data);
@@ -517,6 +562,10 @@ impl LiveVideoVsiSigner {
 
         self.next_sequence_number = parsed.segment_info_map.sequence_number + 1;
         if !parsed.segment_info_map.manifest_id.is_empty() {
+            if self.active_manifest_id.as_deref() != Some(&parsed.segment_info_map.manifest_id) {
+                self.manifest_uri = None;
+                self.manifest_store = None;
+            }
             self.active_manifest_id = Some(parsed.segment_info_map.manifest_id);
         }
         Ok(())
@@ -562,9 +611,14 @@ impl LiveVideoVsiSigner {
     fn capture_manifest_id(&mut self, signed_data: &[u8], format: &str) -> Result<()> {
         let reader = Reader::from_context(super::context_from_thread_local_settings()?)
             .with_stream(format, std::io::Cursor::new(signed_data))?;
-        if let Some(label) = reader.active_manifest().and_then(|m| m.label()) {
-            self.active_manifest_id = Some(label.to_string());
-        }
+        let label = reader
+            .active_manifest()
+            .and_then(|manifest| manifest.label())
+            .ok_or_else(|| Error::BadParam("signed init has no manifest label".into()))?;
+        self.active_manifest_id = Some(label.to_string());
+        self.manifest_store = Some(load_manifest_store(signed_data, format)?);
+        // A new init manifest invalidates any previously configured reference.
+        self.manifest_uri = None;
         Ok(())
     }
 
@@ -585,6 +639,18 @@ impl LiveVideoVsiSigner {
                 .collect::<Result<Vec<_>>>()?,
         })
     }
+}
+
+/// The exact C2PA Manifest Store bytes embedded in a signed init segment, for hosting
+/// at a `manifestUri`.
+fn load_manifest_store(signed_data: &[u8], format: &str) -> Result<Vec<u8>> {
+    let context = super::context_from_thread_local_settings()?;
+    Ok(crate::store::Store::load_jumbf_from_stream(
+        format,
+        &mut std::io::Cursor::new(signed_data),
+        &context,
+    )?
+    .0)
 }
 
 // ── BMFF hash helper ─────────────────────────────────────────────────────────
@@ -2415,5 +2481,574 @@ mod tests {
             signed.extend_from_slice(&lookalike_v1);
         });
         assert_eq!(codes, ["livevideo.segment.invalid"]);
+    }
+
+    struct ManifestResolver {
+        body: Vec<u8>,
+        status: u16,
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl crate::http::SyncHttpResolver for ManifestResolver {
+        fn http_resolve(
+            &self,
+            request: http::Request<Vec<u8>>,
+        ) -> std::result::Result<
+            http::Response<Box<dyn std::io::Read>>,
+            crate::http::HttpResolverError,
+        > {
+            assert_eq!(
+                request.uri().to_string(),
+                "https://live.example/manifest.c2pa"
+            );
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(http::Response::builder()
+                .status(self.status)
+                .body(Box::new(std::io::Cursor::new(self.body.clone())) as Box<dyn std::io::Read>)
+                .unwrap())
+        }
+    }
+
+    fn remote_manifest_fixture() -> (EphemeralSigner, LiveVideoVsiSigner, Vec<u8>) {
+        let signer = make_test_signer();
+        let mut vsi = LiveVideoVsiSigner::from_signing_key(
+            test_manifest_json_with_actions(),
+            &signer,
+            make_test_signing_key(),
+            b"remote-key".to_vec(),
+            1,
+            3600,
+        )
+        .unwrap();
+        let init =
+            include_bytes!("../../tests/fixtures/bunny/bunny_595491bps/BigBuckBunny_2s_init.mp4");
+        let signed_init = vsi.sign_init_segment(init, "video/mp4", &signer).unwrap();
+        vsi.set_manifest_uri_for_current_manifest("https://live.example/manifest.c2pa")
+            .unwrap();
+        (signer, vsi, signed_init)
+    }
+
+    fn remote_context(
+        body: Vec<u8>,
+        status: u16,
+        fetch: bool,
+    ) -> (
+        std::sync::Arc<crate::Context>,
+        std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    ) {
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let settings = crate::settings::Settings::new()
+            .with_json(&format!(
+                r#"{{"verify":{{"verify_trust":false,"remote_manifest_fetch":{fetch}}}}}"#
+            ))
+            .unwrap();
+        let mut context = crate::Context::new().with_settings(settings).unwrap();
+        context
+            .set_resolver(ManifestResolver {
+                body,
+                status,
+                calls: calls.clone(),
+            })
+            .unwrap();
+        (std::sync::Arc::new(context), calls)
+    }
+
+    #[test]
+    fn manifest_uri_is_optional_and_emits_the_exact_init_store_digest() {
+        use crate::live_video::verifiable_segment_info::parse_vsi;
+        let (_signer, mut vsi, init) = remote_manifest_fixture();
+        let store = vsi.manifest_store().unwrap().to_vec();
+        let segment = vsi.sign_media_segment(&make_test_segment()).unwrap();
+        let reference = parse_vsi(&extract_vsi_payload_from_segment(&segment).unwrap())
+            .unwrap()
+            .segment_info_map
+            .manifest_uri
+            .unwrap();
+        assert_eq!(reference.alg().as_deref(), Some("sha256"));
+        assert_eq!(
+            reference.hash(),
+            crate::utils::hash_utils::hash_by_alg("sha256", &store, None)
+        );
+        assert_eq!(reference.url(), "https://live.example/manifest.c2pa");
+        vsi.set_manifest_uri(None).unwrap();
+        let plain = vsi.sign_media_segment(&make_test_segment()).unwrap();
+        assert!(
+            parse_vsi(&extract_vsi_payload_from_segment(&plain).unwrap())
+                .unwrap()
+                .segment_info_map
+                .manifest_uri
+                .is_none()
+        );
+        vsi.restore_manifest_id_from_signed_init(&init, "video/mp4")
+            .unwrap();
+        assert_eq!(vsi.manifest_store().unwrap(), store);
+    }
+
+    #[test]
+    fn manifest_uri_rejects_missing_algorithm_bad_digest_and_non_http_urls() {
+        let signer = make_test_signer();
+        let mut vsi = make_vsi_signer(&signer, b"key", 1);
+        assert!(vsi
+            .set_manifest_uri_for_current_manifest("https://live.example/manifest.c2pa")
+            .is_err());
+        for uri in [
+            crate::HashedUri::new("https://live.example/manifest.c2pa".into(), None, &[0; 32]),
+            crate::HashedUri::new(
+                "https://live.example/manifest.c2pa".into(),
+                Some("sha1".into()),
+                &[0; 20],
+            ),
+            crate::HashedUri::new(
+                "https://live.example/manifest.c2pa".into(),
+                Some("sha256".into()),
+                &[0; 31],
+            ),
+            crate::HashedUri::new(
+                "file:///tmp/manifest.c2pa".into(),
+                Some("sha256".into()),
+                &[0; 32],
+            ),
+        ] {
+            assert!(vsi.set_manifest_uri(Some(uri)).is_err());
+        }
+    }
+
+    #[test]
+    fn known_manifest_uri_key_never_fetches_even_when_remote_fetch_is_disabled() {
+        let (_signer, mut vsi, init) = remote_manifest_fixture();
+        let (context, calls) = remote_context(vsi.manifest_store().unwrap().to_vec(), 500, false);
+        let reader = Reader::from_shared_context(&context)
+            .with_stream("video/mp4", std::io::Cursor::new(&init))
+            .unwrap();
+        let mut validator = LiveVideoValidator::new();
+        let mut tracker = StatusTracker::default();
+        validator
+            .validate_session_keys_from_reader(&reader, None, &mut tracker)
+            .unwrap();
+        let segment = vsi.sign_media_segment(&make_test_segment()).unwrap();
+        validator
+            .validate_verifiable_segment_info_with_context(&segment, &context, &mut tracker)
+            .unwrap();
+        assert_eq!(tracker.filter_errors().count(), 0);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn unknown_manifest_uri_key_obeys_runtime_fetch_switch() {
+        let (_signer, mut vsi, _init) = remote_manifest_fixture();
+        let (context, calls) = remote_context(vsi.manifest_store().unwrap().to_vec(), 200, false);
+        let segment = vsi.sign_media_segment(&make_test_segment()).unwrap();
+        let mut validator = LiveVideoValidator::new();
+        let mut tracker = StatusTracker::default();
+        validator
+            .validate_verifiable_segment_info_with_context(&segment, &context, &mut tracker)
+            .unwrap();
+        assert!(tracker.filter_errors().count() > 0);
+        assert!(validator.session_keys.is_empty());
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn embedded_manifest_prevents_manifest_uri_fetch() {
+        let (_signer, mut vsi, _init) = remote_manifest_fixture();
+        let (context, calls) = remote_context(vsi.manifest_store().unwrap().to_vec(), 200, true);
+        let mut segment = vsi.sign_media_segment(&make_test_segment()).unwrap();
+        segment.extend_from_slice(&crate::live_video::test_helpers::make_uuid_box(true));
+        let mut validator = LiveVideoValidator::new();
+        let mut tracker = StatusTracker::default();
+        let _ = validator.validate_verifiable_segment_info_with_context(
+            &segment,
+            &context,
+            &mut tracker,
+        );
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(validator.session_keys.is_empty());
+    }
+
+    #[test]
+    #[cfg(feature = "fetch_remote_manifests")]
+    fn manifest_uri_discovers_unknown_key_checks_init_binding_and_caches_it() {
+        let (signer, mut vsi, init) = remote_manifest_fixture();
+        let (context, calls) = remote_context(vsi.manifest_store().unwrap().to_vec(), 200, true);
+        let mut validator = LiveVideoValidator::new();
+        let mut tracker = StatusTracker::default();
+        validator
+            .validate_init_segment(&init, &mut tracker)
+            .unwrap();
+        let old = make_vsi_signer(&signer, b"old", 1);
+        let cert = signer.certs().unwrap().remove(0);
+        validator
+            .validate_session_keys(
+                &old.build_session_keys_assertion().unwrap(),
+                "urn:c2pa:old",
+                Some(&cert),
+                &mut tracker,
+            )
+            .unwrap();
+        for _ in 0..2 {
+            let segment = vsi.sign_media_segment(&make_test_segment()).unwrap();
+            validator
+                .validate_verifiable_segment_info_with_context(&segment, &context, &mut tracker)
+                .unwrap();
+        }
+        assert_eq!(
+            tracker.filter_errors().count(),
+            0,
+            "{:?}",
+            tracker.logged_items()
+        );
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            validator.previous_segment.as_ref().unwrap().sequence_number,
+            2
+        );
+        assert_eq!(
+            validator.session_key_manifest_state(),
+            Some(crate::ValidationState::Valid)
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "fetch_remote_manifests")]
+    fn manifest_uri_can_validate_a_store_bound_to_the_current_media_segment() {
+        let signer = make_test_signer();
+        let vsi = make_vsi_signer(&signer, b"media-key", 1);
+        let label = crate::claim::Claim::new("", None, 2).label().to_string();
+        let reference = crate::HashedUri::new(
+            "https://live.example/manifest.c2pa".into(),
+            Some("sha256".into()),
+            &[0; 32],
+        );
+        let assemble = |reference: crate::HashedUri| {
+            let map = SegmentInfoMap {
+                sequence_number: 1,
+                manifest_id: label.clone(),
+                bmff_hash: build_segment_bmff_hash_placeholder().unwrap(),
+                manifest_uri: Some(reference),
+            };
+            let emsg = build_emsg_box(
+                &build_vsi_cose_sign1(
+                    &map,
+                    &vsi.session_keys[0].session_signing_key,
+                    &vsi.session_keys[0].kid,
+                )
+                .unwrap(),
+                1,
+                0,
+                1,
+            )
+            .unwrap();
+            [
+                make_box(b"styp", b"cmfs\0\0\0\0cmfs"),
+                emsg,
+                make_box(b"mdat", &[1, 2, 3, 4]),
+            ]
+            .concat()
+        };
+        let draft = assemble(reference.clone());
+        let mut builder = Builder::from_context(
+            crate::Context::new()
+                .with_settings(
+                    crate::settings::Settings::new()
+                        .with_json(r#"{"verify":{"verify_trust":false}}"#)
+                        .unwrap(),
+                )
+                .unwrap(),
+        )
+        .with_definition(test_manifest_json_with_actions())
+        .unwrap();
+        builder.definition.label = Some(label.clone());
+        builder.set_no_embed(true);
+        builder
+            .add_assertion(
+                SessionKeys::LABEL,
+                &vsi.build_session_keys_assertion().unwrap(),
+            )
+            .unwrap();
+        let mut hash = new_vsi_bmff_hash();
+        hash.set_hash(vec![0; 32]);
+        builder.add_assertion("c2pa.hash.bmff.v3", &hash).unwrap();
+        builder
+            .update_hash_from_stream("video/mp4", &mut std::io::Cursor::new(&draft))
+            .unwrap();
+        let mut signed_asset = std::io::Cursor::new(Vec::new());
+        let store = builder
+            .sign(
+                &signer,
+                "video/mp4",
+                &mut std::io::Cursor::new(&draft),
+                &mut signed_asset,
+            )
+            .unwrap();
+        let digest = crate::utils::hash_utils::hash_by_alg("sha256", &store, None);
+        let reference = crate::HashedUri::new(reference.url(), Some("sha256".into()), &digest);
+        let provisional = assemble(reference.clone());
+        assert_eq!(provisional.len(), draft.len());
+        let map = SegmentInfoMap {
+            sequence_number: 1,
+            manifest_id: label,
+            bmff_hash: build_segment_bmff_hash(&provisional).unwrap(),
+            manifest_uri: Some(reference),
+        };
+        let emsg = build_emsg_box(
+            &build_vsi_cose_sign1(
+                &map,
+                &vsi.session_keys[0].session_signing_key,
+                &vsi.session_keys[0].kid,
+            )
+            .unwrap(),
+            1,
+            0,
+            1,
+        )
+        .unwrap();
+        let segment = [
+            make_box(b"styp", b"cmfs\0\0\0\0cmfs"),
+            emsg,
+            make_box(b"mdat", &[1, 2, 3, 4]),
+        ]
+        .concat();
+        assert_eq!(segment.len(), draft.len());
+        let (context, calls) = remote_context(store, 200, true);
+        let mut validator = LiveVideoValidator::new();
+        let mut tracker = StatusTracker::default();
+        validator
+            .validate_verifiable_segment_info_with_context(&segment, &context, &mut tracker)
+            .unwrap();
+        assert_eq!(
+            tracker.filter_errors().count(),
+            0,
+            "{:?}",
+            tracker.logged_items()
+        );
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    #[cfg(feature = "fetch_remote_manifests")]
+    fn manifest_uri_bad_store_hash_never_installs_keys() {
+        let (_signer, mut vsi, init) = remote_manifest_fixture();
+        let mut bytes = vsi.manifest_store().unwrap().to_vec();
+        *bytes.last_mut().unwrap() ^= 1;
+        let (context, calls) = remote_context(bytes, 200, true);
+        let mut validator = LiveVideoValidator::new();
+        let mut tracker = StatusTracker::default();
+        validator
+            .validate_init_segment(&init, &mut tracker)
+            .unwrap();
+        let segment = vsi.sign_media_segment(&make_test_segment()).unwrap();
+        validator
+            .validate_verifiable_segment_info_with_context(&segment, &context, &mut tracker)
+            .unwrap();
+        assert!(tracker
+            .filter_errors()
+            .any(|item| item.description.contains("hash does not match")));
+        assert!(validator.session_keys.is_empty());
+        assert!(validator.previous_segment.is_none());
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    #[cfg(feature = "fetch_remote_manifests")]
+    fn manifest_uri_wrong_manifest_id_is_rejected() {
+        let (_signer, mut vsi, init) = remote_manifest_fixture();
+        let (context, _calls) = remote_context(vsi.manifest_store().unwrap().to_vec(), 200, true);
+        vsi.active_manifest_id = Some("urn:c2pa:wrong".into());
+        let mut validator = LiveVideoValidator::new();
+        let mut tracker = StatusTracker::default();
+        validator
+            .validate_init_segment(&init, &mut tracker)
+            .unwrap();
+        let segment = vsi.sign_media_segment(&make_test_segment()).unwrap();
+        validator
+            .validate_verifiable_segment_info_with_context(&segment, &context, &mut tracker)
+            .unwrap();
+        assert!(tracker
+            .filter_errors()
+            .any(|item| item.description.contains("identifier does not match")));
+        assert!(validator.session_keys.is_empty());
+    }
+
+    #[test]
+    #[cfg(feature = "fetch_remote_manifests")]
+    fn manifest_uri_without_the_requested_kid_preserves_cached_keys() {
+        let (signer, mut vsi, init) = remote_manifest_fixture();
+        let (context, calls) = remote_context(vsi.manifest_store().unwrap().to_vec(), 200, true);
+        vsi.session_keys[0].kid = b"not-in-store".to_vec();
+        let mut validator = LiveVideoValidator::new();
+        let mut tracker = StatusTracker::default();
+        validator
+            .validate_init_segment(&init, &mut tracker)
+            .unwrap();
+        let old = make_vsi_signer(&signer, b"old", 1);
+        let cert = signer.certs().unwrap().remove(0);
+        validator
+            .validate_session_keys(
+                &old.build_session_keys_assertion().unwrap(),
+                "urn:c2pa:old",
+                Some(&cert),
+                &mut tracker,
+            )
+            .unwrap();
+        let original = validator.session_keys.clone();
+        let segment = vsi.sign_media_segment(&make_test_segment()).unwrap();
+        validator
+            .validate_verifiable_segment_info_with_context(&segment, &context, &mut tracker)
+            .unwrap();
+        assert!(tracker
+            .filter_errors()
+            .any(|item| item.validation_status.as_deref() == Some("livevideo.segment.invalid")));
+        assert_eq!(validator.session_keys, original);
+        assert!(validator.previous_segment.is_none());
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    #[cfg(feature = "fetch_remote_manifests")]
+    fn manifest_uri_http_error_and_wrong_asset_binding_are_rejected() {
+        let (_signer, mut vsi, _init) = remote_manifest_fixture();
+        let store = vsi.manifest_store().unwrap().to_vec();
+        let segment = vsi.sign_media_segment(&make_test_segment()).unwrap();
+        for status in [404, 200] {
+            let (context, calls) = remote_context(store.clone(), status, true);
+            let mut validator = LiveVideoValidator::new();
+            let mut tracker = StatusTracker::default();
+            // No init asset is supplied, so the init manifest cannot validate its binding.
+            validator
+                .validate_verifiable_segment_info_with_context(&segment, &context, &mut tracker)
+                .unwrap();
+            assert!(tracker.filter_errors().count() > 0);
+            assert!(validator.session_keys.is_empty());
+            assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "fetch_remote_manifests")]
+    fn manifest_uri_supports_sha384_and_sha512() {
+        let (_signer, mut vsi, init) = remote_manifest_fixture();
+        let store = vsi.manifest_store().unwrap().to_vec();
+        for alg in ["sha384", "sha512"] {
+            // Start a fresh first-segment announcement for each algorithm.
+            vsi.next_sequence_number = 1;
+            let digest = crate::utils::hash_utils::hash_by_alg(alg, &store, None);
+            vsi.set_manifest_uri(Some(crate::HashedUri::new(
+                "https://live.example/manifest.c2pa".into(),
+                Some(alg.into()),
+                &digest,
+            )))
+            .unwrap();
+            let (context, calls) = remote_context(store.clone(), 200, true);
+            let mut validator = LiveVideoValidator::new();
+            let mut tracker = StatusTracker::default();
+            validator
+                .validate_init_segment(&init, &mut tracker)
+                .unwrap();
+            let segment = vsi.sign_media_segment(&make_test_segment()).unwrap();
+            validator
+                .validate_verifiable_segment_info_with_context(&segment, &context, &mut tracker)
+                .unwrap();
+            assert_eq!(tracker.filter_errors().count(), 0);
+            assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "fetch_remote_manifests")]
+    fn manifest_uri_rejects_malformed_store_even_when_its_digest_matches() {
+        let (_signer, mut vsi, init) = remote_manifest_fixture();
+        let body = b"not a C2PA manifest store".to_vec();
+        let digest = crate::utils::hash_utils::hash_by_alg("sha256", &body, None);
+        vsi.set_manifest_uri(Some(crate::HashedUri::new(
+            "https://live.example/manifest.c2pa".into(),
+            Some("sha256".into()),
+            &digest,
+        )))
+        .unwrap();
+        let (context, calls) = remote_context(body, 200, true);
+        let mut validator = LiveVideoValidator::new();
+        let mut tracker = StatusTracker::default();
+        validator
+            .validate_init_segment(&init, &mut tracker)
+            .unwrap();
+        let segment = vsi.sign_media_segment(&make_test_segment()).unwrap();
+        validator
+            .validate_verifiable_segment_info_with_context(&segment, &context, &mut tracker)
+            .unwrap();
+        assert!(tracker
+            .filter_errors()
+            .any(|item| item.description.contains("failed validation")));
+        assert!(validator.session_keys.is_empty());
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    #[cfg(feature = "fetch_remote_manifests")]
+    fn manifest_uri_obeys_receivers_trust_policy() {
+        let (_signer, mut vsi, init) = remote_manifest_fixture();
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut context = crate::Context::new();
+        context
+            .set_resolver(ManifestResolver {
+                body: vsi.manifest_store().unwrap().to_vec(),
+                status: 200,
+                calls: calls.clone(),
+            })
+            .unwrap();
+        let context = std::sync::Arc::new(context);
+        let mut validator = LiveVideoValidator::new();
+        let mut tracker = StatusTracker::default();
+        validator
+            .validate_init_segment(&init, &mut tracker)
+            .unwrap();
+        let segment = vsi.sign_media_segment(&make_test_segment()).unwrap();
+        validator
+            .validate_verifiable_segment_info_with_context(&segment, &context, &mut tracker)
+            .unwrap();
+        assert!(tracker
+            .filter_errors()
+            .any(|item| item.validation_status.as_deref() == Some("livevideo.manifest.invalid")));
+        assert!(validator.session_keys.is_empty());
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    #[cfg(feature = "fetch_remote_manifests")]
+    fn manifest_uri_accepts_previously_published_keys_when_retrieved_later() {
+        let (_signer, mut vsi, init) = remote_manifest_fixture();
+        let (context, calls) = remote_context(vsi.manifest_store().unwrap().to_vec(), 200, true);
+        let mut validator = LiveVideoValidator::new();
+        let mut tracker = StatusTracker::default();
+        validator
+            .validate_init_segment(&init, &mut tracker)
+            .unwrap();
+        vsi.next_sequence_number = 2; // key was configured with minimum 1
+        let segment = vsi.sign_media_segment(&make_test_segment()).unwrap();
+        validator
+            .validate_verifiable_segment_info_with_context(&segment, &context, &mut tracker)
+            .unwrap();
+        assert_eq!(tracker.filter_errors().count(), 0);
+        assert_eq!(validator.session_keys.len(), 1);
+        assert_eq!(
+            validator.previous_segment.as_ref().unwrap().sequence_number,
+            2
+        );
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    #[cfg(not(feature = "fetch_remote_manifests"))]
+    fn manifest_uri_never_fetches_without_the_compile_time_feature() {
+        let (_signer, mut vsi, _init) = remote_manifest_fixture();
+        let (context, calls) = remote_context(vsi.manifest_store().unwrap().to_vec(), 200, true);
+        let segment = vsi.sign_media_segment(&make_test_segment()).unwrap();
+        let mut tracker = StatusTracker::default();
+        LiveVideoValidator::new()
+            .validate_verifiable_segment_info_with_context(&segment, &context, &mut tracker)
+            .unwrap();
+        assert!(tracker
+            .filter_errors()
+            .any(|item| item.description.contains("enable fetch_remote_manifests")));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 }

@@ -41,6 +41,7 @@
 
 mod box_walk;
 pub(crate) mod cose_key;
+mod manifest_uri;
 mod segment_manifest_validation;
 mod session_key_validation;
 mod signing;
@@ -110,6 +111,7 @@ struct SegmentState {
     manifest_id: String,
 }
 
+#[derive(Clone, Debug, PartialEq)]
 struct TrustedSessionKey {
     key: SessionKey,
     manifest_id: String,
@@ -135,6 +137,10 @@ struct TrustedSessionKey {
 ///
 /// </div>
 pub struct LiveVideoValidator {
+    /// The init segment, kept to validate the hard binding of manifests retrieved through
+    /// `manifestUri`.
+    #[cfg(feature = "fetch_remote_manifests")]
+    init_segment_data: Option<Vec<u8>>,
     previous_segment: Option<SegmentState>,
     session_keys: Vec<TrustedSessionKey>,
     session_key_manifest_state: Option<crate::ValidationState>,
@@ -152,6 +158,8 @@ pub struct LiveVideoValidator {
 impl LiveVideoValidator {
     pub fn new() -> Self {
         Self {
+            #[cfg(feature = "fetch_remote_manifests")]
+            init_segment_data: None,
             previous_segment: None,
             session_keys: Vec::new(),
             session_key_manifest_state: None,
@@ -161,7 +169,9 @@ impl LiveVideoValidator {
     }
 
     /// Validates an initialization segment ([§19.7.1]), and records its track timescale for
-    /// presentation-time checks of the media segments that follow.
+    /// presentation-time checks of the media segments that follow. When remote fetching is
+    /// enabled, also retains its bytes to validate the hard binding of manifests retrieved
+    /// through `manifestUri`.
     ///
     /// [§19.7.1]: https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_live_video_validation_process
     pub fn validate_init_segment(
@@ -170,14 +180,18 @@ impl LiveVideoValidator {
         tracker: &mut StatusTracker,
     ) -> Result<()> {
         if segment_manifest_validation::segment_contains_box_type(segment_data, MDAT_BOX_TYPE) {
-            fail_validation(
+            return fail_validation(
                 "initialization segment must not contain an mdat box",
                 LIVEVIDEO_INIT_INVALID,
                 tracker,
-            )?;
+            );
         }
         if let Some(timescale) = vsi_signing::parse_first_mdhd_timescale(segment_data) {
             self.track_timescale = Some(timescale);
+        }
+        #[cfg(feature = "fetch_remote_manifests")]
+        {
+            self.init_segment_data = Some(segment_data.to_vec());
         }
         Ok(())
     }
@@ -604,6 +618,8 @@ impl LiveVideoValidator {
     }
 
     /// Validates VSI and embedded key updates using the caller's trust and I/O settings.
+    /// An unknown key may be retrieved through `manifestUri` when remote fetching is enabled;
+    /// call [`Self::validate_init_segment`] first to allow init-bound remote manifests.
     pub fn validate_verifiable_segment_info_with_context(
         &mut self,
         segment_data: &[u8],
@@ -619,6 +635,11 @@ impl LiveVideoValidator {
             context,
             tracker,
         )?;
+        if tracker.filter_errors().count() > failures_before {
+            return Ok(());
+        }
+        // With no embedded manifest, an unknown key may be retrieved through `manifestUri`.
+        self.resolve_manifest_uri(segment_data, &parsed, context, tracker)?;
         if tracker.filter_errors().count() > failures_before {
             return Ok(());
         }

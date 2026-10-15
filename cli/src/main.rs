@@ -400,6 +400,12 @@ enum Commands {
         #[arg(long = "session-key-schedule", requires = "session_key")]
         session_key_schedule: Option<PathBuf>,
 
+        /// URL to emit as manifestUri in each VSI. Writes the referenced store beside
+        /// the signed init with a .c2pa extension. Host that exact file at this HTTP(S)
+        /// URL for the stream's lifetime; this option does not upload it.
+        #[arg(long = "manifest-uri", requires = "session_key")]
+        manifest_uri: Option<String>,
+
         /// The first `sequenceNumber`/`moof/mfhd.sequence_number` valid for this VSI session
         /// key (§18.25.2's `minSequenceNumber`). Only used with --method vsi on the first
         /// invocation (i.e. without --previous-segment); ignored otherwise, since a resumed
@@ -1233,6 +1239,7 @@ fn main() -> Result<()> {
             method,
             session_key,
             session_key_schedule,
+            manifest_uri,
             min_sequence_number,
             session_key_validity,
         }) = &args.command
@@ -1273,6 +1280,7 @@ fn main() -> Result<()> {
                     output_dir: output,
                     session_key_path,
                     session_key_schedule: session_key_schedule.as_deref(),
+                    manifest_uri: manifest_uri.as_deref(),
                     signer,
                     min_sequence_number: *min_sequence_number,
                     session_key_validity: *session_key_validity,

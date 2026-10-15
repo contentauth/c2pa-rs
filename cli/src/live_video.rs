@@ -679,10 +679,11 @@ fn validate_segment_manifest_box(
     }
 }
 
-/// Validates one segment using section 19.4 (Verifiable Segment Info).
+/// Validates one segment using section 19.4 (Verifiable Segment Info), including optional
+/// manifestUri discovery.
 ///
 /// An embedded key-update manifest is validated using the same context as the init segment.
-/// The report retains the weaker trust state of the init and update manifests.
+/// The report retains the weaker trust state of the init and current key-authorizing manifests.
 fn validate_segment_vsi(
     ctx: &mut ValidationCtx<'_>,
     segment_path: &Path,
