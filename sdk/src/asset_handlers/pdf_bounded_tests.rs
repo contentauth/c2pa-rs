@@ -1027,7 +1027,8 @@ fn bounded_synthetic_sparse_file_and_seek_callback() {
         Layout::Table,
         BTreeMap::new(),
     );
-    let mut file = tempfile::tempfile().unwrap();
+    let directory = crate::utils::io_utils::tempdirectory().unwrap();
+    let mut file = tempfile::tempfile_in(directory.path()).unwrap();
     file.set_len(fixture.source.length).unwrap();
     for (offset, bytes) in fixture.source.segments {
         file.seek(SeekFrom::Start(offset)).unwrap();
