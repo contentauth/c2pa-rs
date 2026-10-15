@@ -61,14 +61,9 @@ const VSI_VALUE_FSEG: &str = "fseg";
 ///
 /// </div>
 pub struct LiveVideoVsiSigner {
-    session_signing_key: SigningKey,
-    session_cose_key: c2pa_cbor::Value,
-    kid: Vec<u8>,
-    /// COSE_Sign1_Tagged (`18([...])`) bytes of the detached signer binding.
-    signer_binding: Vec<u8>,
-    min_sequence_number: u64,
-    created_at: String,
-    validity_period: u64,
+    session_keys: Vec<SessionSigningMaterial>,
+    manifest_signer_cert: Vec<u8>,
+    keys_need_announcement: bool,
     next_sequence_number: u64,
     base_manifest_json: String,
     /// Instance ID of the active manifest from the signed init segment.
@@ -80,6 +75,17 @@ pub struct LiveVideoVsiSigner {
     /// to `1` (i.e. seconds) if `sign_init_segment` was never called or the
     /// init segment has no parseable `mdhd`.
     track_timescale: Option<u32>,
+}
+
+struct SessionSigningMaterial {
+    session_signing_key: SigningKey,
+    session_cose_key: c2pa_cbor::Value,
+    kid: Vec<u8>,
+    /// COSE_Sign1_Tagged (`18([...])`) bytes of the detached signer binding.
+    signer_binding: Vec<u8>,
+    min_sequence_number: u64,
+    created_at: String,
+    validity_period: u64,
 }
 
 impl LiveVideoVsiSigner {
@@ -108,6 +114,11 @@ impl LiveVideoVsiSigner {
     ) -> Result<Self> {
         let base_manifest_json = manifest_json.into();
         let kid = kid.into();
+        if kid.is_empty() || validity_period_secs == 0 {
+            return Err(Error::BadParam(
+                "session key requires a nonempty kid and positive validity period".into(),
+            ));
+        }
 
         let session_cose_key = build_ed25519_cose_key(&signing_key.verifying_key(), &kid);
 
@@ -123,18 +134,81 @@ impl LiveVideoVsiSigner {
         let created_at = chrono::Utc::now().to_rfc3339();
 
         Ok(Self {
-            session_signing_key: signing_key,
-            session_cose_key,
-            kid,
-            signer_binding,
-            min_sequence_number,
-            created_at,
-            validity_period: validity_period_secs,
+            session_keys: vec![SessionSigningMaterial {
+                session_signing_key: signing_key,
+                session_cose_key,
+                kid,
+                signer_binding,
+                min_sequence_number,
+                created_at,
+                validity_period: validity_period_secs,
+            }],
+            manifest_signer_cert: ee_cert_der,
+            keys_need_announcement: false,
             next_sequence_number: min_sequence_number,
             base_manifest_json,
             active_manifest_id: None,
             track_timescale: None,
         })
+    }
+
+    /// Adds an Ed25519 key to announce in the next signed initialization segment.
+    /// Keys are selected automatically by greatest eligible `minSequenceNumber`.
+    /// Add scheduled keys before signing the init segment so receivers learn them first.
+    /// To announce keys added later, deliver an updated initialization segment or call
+    /// [`Self::sign_media_segment_with_manifest`]. All keys must bind the same manifest signer.
+    pub fn add_session_key(
+        &mut self,
+        manifest_signer: &dyn Signer,
+        signing_key: SigningKey,
+        kid: impl Into<Vec<u8>>,
+        min_sequence_number: u64,
+        validity_period_secs: u64,
+    ) -> Result<()> {
+        self.check_manifest_signer(manifest_signer)?;
+        let kid = kid.into();
+        if kid.is_empty() || self.session_keys.iter().any(|key| key.kid == kid) {
+            return Err(Error::BadParam(
+                "session key kid must be nonempty and unique".into(),
+            ));
+        }
+        if min_sequence_number < self.next_sequence_number {
+            return Err(Error::BadParam(
+                "new session key minSequenceNumber is below the current sequence number".into(),
+            ));
+        }
+        let mut other = Self::from_signing_key(
+            self.base_manifest_json.clone(),
+            manifest_signer,
+            signing_key,
+            kid,
+            min_sequence_number,
+            validity_period_secs,
+        )?;
+        self.session_keys.append(&mut other.session_keys);
+        // New keys must be announced before any further segment can reference them.
+        self.active_manifest_id = None;
+        self.keys_need_announcement = true;
+        Ok(())
+    }
+
+    fn check_manifest_signer(&self, signer: &dyn Signer) -> Result<()> {
+        if signer.certs()?.first() != Some(&self.manifest_signer_cert) {
+            return Err(Error::BadParam(
+                "manifest signer differs from the session keys' signerBinding certificate".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn key_for_sequence(&self, sequence: u64) -> Result<&SessionSigningMaterial> {
+        self.session_keys
+            .iter()
+            .filter(|key| key.min_sequence_number <= sequence)
+            .max_by_key(|key| key.min_sequence_number)
+            .ok_or_else(|| {
+                Error::BadParam("no session key is valid for this sequence number".into())
+            })
     }
 
     /// Signs an init segment, embedding a `c2pa.session-keys` assertion.
@@ -152,6 +226,7 @@ impl LiveVideoVsiSigner {
         format: &str,
         manifest_signer: &dyn Signer,
     ) -> Result<Vec<u8>> {
+        self.check_manifest_signer(manifest_signer)?;
         self.track_timescale = parse_first_mdhd_timescale(segment_data);
 
         let session_keys = self.build_session_keys_assertion()?;
@@ -165,6 +240,7 @@ impl LiveVideoVsiSigner {
         let signed_bytes = dest.into_inner();
 
         self.capture_manifest_id(&signed_bytes, format)?;
+        self.keys_need_announcement = false;
 
         Ok(signed_bytes)
     }
@@ -182,6 +258,11 @@ impl LiveVideoVsiSigner {
     /// sequence number, a `bmffHash` covering the segment data excluding VSI
     /// `emsg` boxes, and the `manifestId` from the signed init segment per §19.4.
     pub fn sign_media_segment(&mut self, segment_data: &[u8]) -> Result<Vec<u8>> {
+        if self.keys_need_announcement {
+            return Err(Error::BadParam(
+                "announce added session keys before signing media segments".into(),
+            ));
+        }
         let manifest_id = match self.active_manifest_id.as_deref() {
             Some(id) if !id.is_empty() => id.to_string(),
             _ => {
@@ -193,6 +274,7 @@ impl LiveVideoVsiSigner {
             }
         };
         let sequence_number = self.next_sequence_number;
+        let key = self.key_for_sequence(sequence_number)?;
 
         // Per §19.4.1, sequenceNumber "shall either match the mfhd.sequence_number field ...
         // or shall follow the segment-indexing rules defined in ISO/IEC 23009-9". This signer
@@ -230,7 +312,7 @@ impl LiveVideoVsiSigner {
                 manifest_uri: None,
             };
             let cose_sign1_bytes =
-                build_vsi_cose_sign1(&segment_info_map, &self.session_signing_key, &self.kid)?;
+                build_vsi_cose_sign1(&segment_info_map, &key.session_signing_key, &key.kid)?;
             build_emsg_box(&cose_sign1_bytes, timescale, event_duration, id)
         };
 
@@ -254,6 +336,102 @@ impl LiveVideoVsiSigner {
         Ok(signed_segment)
     }
 
+    /// Signs a media segment carrying a manifest that announces the current keys.
+    ///
+    /// Use this after adding a key during a running session. The context must contain
+    /// the manifest signer used to bind those keys. Both the manifest hard binding and
+    /// the VSI hash are computed over their final box offsets. The input must start
+    /// with `styp` or `ftyp`; indexed segments (`sidx`/`ssix`) are not supported.
+    pub fn sign_media_segment_with_manifest(
+        &mut self,
+        segment_data: &[u8],
+        context: std::sync::Arc<crate::Context>,
+    ) -> Result<Vec<u8>> {
+        self.check_manifest_signer(context.signer()?)?;
+        let sequence = self.next_sequence_number;
+        let next_sequence = sequence
+            .checked_add(1)
+            .ok_or_else(|| Error::BadParam("VSI sequence number overflow".into()))?;
+        let key = self.key_for_sequence(sequence)?;
+        if find_box(segment_data, b"sidx").is_some() || find_box(segment_data, b"ssix").is_some() {
+            return Err(Error::BadParam(
+                "indexed media segments are not supported when announcing session keys".into(),
+            ));
+        }
+        if !super::box_walk::top_level_boxes(segment_data)
+            .next()
+            .is_some_and(|(kind, _)| kind == b"styp" || kind == b"ftyp")
+        {
+            return Err(Error::BadParam(
+                "session-key update segment must start with styp or ftyp".into(),
+            ));
+        }
+        if let Some(number) = moof_sequence_number(segment_data) {
+            if u64::from(number) != sequence {
+                return Err(Error::BadParam(
+                    "segment sequence number does not match signer counter".into(),
+                ));
+            }
+        }
+        let mut builder = Builder::from_shared_context(&context)
+            .with_definition(self.base_manifest_json.as_str())?;
+        let label = crate::claim::Claim::new("", None, 2).label().to_string();
+        builder.definition.label = Some(label.clone());
+        builder.add_assertion(SessionKeys::LABEL, &self.build_session_keys_assertion()?)?;
+        let mut hash = BmffHash::new("jumbf manifest", "sha256", None);
+        hash.set_default_exclusions_with_options(context.settings());
+        hash.add_exclusions(&mut vec![vsi_emsg_exclusion()]);
+        hash.set_hash(vec![0; 32]);
+        builder.add_assertion("c2pa.hash.bmff.v3", &hash)?;
+        let placeholder = builder.placeholder("video/mp4")?;
+        let timescale = self.track_timescale.unwrap_or(1);
+        let duration = parse_segment_duration_ticks(segment_data).unwrap_or(0);
+        let make_emsg = |bmff_hash| -> Result<Vec<u8>> {
+            let map = SegmentInfoMap {
+                sequence_number: sequence,
+                bmff_hash,
+                manifest_id: label.clone(),
+                manifest_uri: None,
+            };
+            build_emsg_box(
+                &build_vsi_cose_sign1(&map, &key.session_signing_key, &key.kid)?,
+                timescale,
+                duration,
+                sequence as u32,
+            )
+        };
+        let draft_emsg = make_emsg(build_segment_bmff_hash_placeholder()?)?;
+        // Preserve a leading styp/ftyp; put the manifest and VSI before remaining boxes.
+        let insertion = super::box_walk::top_level_boxes(segment_data)
+            .next()
+            .filter(|(kind, _)| *kind == b"styp" || *kind == b"ftyp")
+            .map_or(0, |(_, bytes)| bytes.len());
+        let mut output = segment_data[..insertion].to_vec();
+        output.extend_from_slice(&placeholder);
+        let emsg_offset = output.len();
+        output.extend_from_slice(&draft_emsg);
+        output.extend_from_slice(&segment_data[insertion..]);
+        builder.update_hash_from_stream("video/mp4", &mut std::io::Cursor::new(&output))?;
+        let manifest = builder.sign_embeddable("video/mp4")?;
+        if manifest.len() != placeholder.len() {
+            return Err(Error::BadParam(
+                "signed manifest does not fit its placeholder".into(),
+            ));
+        }
+        output[insertion..emsg_offset].copy_from_slice(&manifest);
+        let emsg = make_emsg(build_segment_bmff_hash(&output)?)?;
+        if emsg.len() != draft_emsg.len() {
+            return Err(Error::BadParam(
+                "signed VSI does not fit its placeholder".into(),
+            ));
+        }
+        output[emsg_offset..emsg_offset + emsg.len()].copy_from_slice(&emsg);
+        self.active_manifest_id = Some(label);
+        self.keys_need_announcement = false;
+        self.next_sequence_number = next_sequence;
+        Ok(output)
+    }
+
     /// Returns the sequence number assigned to the next media segment.
     pub fn next_sequence_number(&self) -> u64 {
         self.next_sequence_number
@@ -270,8 +448,43 @@ impl LiveVideoVsiSigner {
         signed_init_data: &[u8],
         format: &str,
     ) -> Result<()> {
+        use crate::assertion::AssertionBase;
+        let reader = Reader::from_context(super::context_from_thread_local_settings()?)
+            .with_stream(format, std::io::Cursor::new(signed_init_data))?;
+        let manifest_id = reader
+            .active_manifest()
+            .and_then(|manifest| manifest.label())
+            .ok_or_else(|| Error::BadParam("signed init has no manifest label".into()))?;
+        let claim = reader.store.get_claim(manifest_id).ok_or(Error::NotFound)?;
+        let keys = SessionKeys::from_assertion(
+            claim
+                .get_assertion(SessionKeys::LABEL, 0)
+                .ok_or(Error::NotFound)?,
+        )?;
+        // A resumed schedule must contain only keys authorized by the restored manifest.
+        let authorized = self
+            .session_keys
+            .iter()
+            .map(|key| {
+                keys.keys
+                    .iter()
+                    .find(|announced| announced.key == key.session_cose_key)
+                    .ok_or_else(|| {
+                        Error::BadParam(
+                            "configured session key was not announced in the signed init".into(),
+                        )
+                    })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        for (key, announced) in self.session_keys.iter_mut().zip(authorized) {
+            key.min_sequence_number = announced.min_sequence_number;
+            key.created_at = announced.created_at.to_string();
+            key.validity_period = announced.validity_period;
+        }
+        self.active_manifest_id = Some(manifest_id.to_string());
+        self.keys_need_announcement = false;
         self.track_timescale = parse_first_mdhd_timescale(signed_init_data);
-        self.capture_manifest_id(signed_init_data, format)
+        Ok(())
     }
 
     /// Resumes from a previously signed VSI segment.
@@ -311,7 +524,14 @@ impl LiveVideoVsiSigner {
 
     /// Verifies a VSI COSE_Sign1 against the signer's own session public key.
     fn verify_vsi_sign1(&self, sign1: &coset::CoseSign1) -> Result<()> {
-        let key_alg = signing_alg_from_cose_key(&self.session_cose_key)
+        let key = self
+            .session_keys
+            .iter()
+            .find(|key| key.kid == sign1.unprotected.key_id)
+            .ok_or_else(|| {
+                Error::BadParam("previous segment uses an unknown session key".into())
+            })?;
+        let key_alg = signing_alg_from_cose_key(&key.session_cose_key)
             .ok_or_else(|| Error::BadParam("unsupported session key algorithm".into()))?;
 
         let header_alg = signing_alg_from_sign1(sign1)
@@ -323,7 +543,7 @@ impl LiveVideoVsiSigner {
             )));
         }
 
-        let public_key_der = cose_key_to_der(&self.session_cose_key)
+        let public_key_der = cose_key_to_der(&key.session_cose_key)
             .ok_or_else(|| Error::BadParam("failed to convert session key to DER".into()))?;
 
         let validator = validator_for_signing_alg(key_alg)
@@ -350,13 +570,19 @@ impl LiveVideoVsiSigner {
 
     fn build_session_keys_assertion(&self) -> Result<SessionKeys> {
         Ok(SessionKeys {
-            keys: vec![SessionKey::new(
-                self.session_cose_key.clone(),
-                self.min_sequence_number,
-                self.created_at.clone(),
-                self.validity_period,
-                &self.signer_binding,
-            )?],
+            keys: self
+                .session_keys
+                .iter()
+                .map(|key| {
+                    SessionKey::new(
+                        key.session_cose_key.clone(),
+                        key.min_sequence_number,
+                        key.created_at.clone(),
+                        key.validity_period,
+                        &key.signer_binding,
+                    )
+                })
+                .collect::<Result<Vec<_>>>()?,
         })
     }
 }
@@ -779,6 +1005,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
+    use crate::live_video::verifiable_segment_info::parse_vsi;
     use crate::{
         live_video::{
             verifiable_segment_info::extract_vsi_payload_from_segment, LiveVideoValidator,
@@ -1162,6 +1389,372 @@ mod tests {
             .filter(|s| s.starts_with("livevideo"))
             .map(str::to_string)
             .collect()
+    }
+
+    fn rotation_media_segment() -> Vec<u8> {
+        [
+            make_box(b"styp", b"cmfs\0\0\0\0cmfs"),
+            make_box(b"mdat", &[1, 2, 3, 4]),
+        ]
+        .concat()
+    }
+
+    fn rotation_context() -> std::sync::Arc<crate::Context> {
+        std::sync::Arc::new(
+            crate::Context::new()
+                .with_settings(
+                    crate::settings::Settings::new()
+                        .with_json(r#"{"verify":{"verify_trust":false}}"#)
+                        .unwrap(),
+                )
+                .unwrap()
+                .with_signer(make_test_signer()),
+        )
+    }
+
+    fn rotation_signer(context: &crate::Context) -> LiveVideoVsiSigner {
+        let mut signer = LiveVideoVsiSigner::from_signing_key(
+            test_manifest_json_with_actions(),
+            context.signer().unwrap(),
+            make_test_signing_key(),
+            b"old".to_vec(),
+            1,
+            3600,
+        )
+        .unwrap();
+        signer.active_manifest_id = Some(TEST_MANIFEST_ID.to_string());
+        signer
+    }
+
+    fn register_keys(
+        validator: &mut LiveVideoValidator,
+        signer: &LiveVideoVsiSigner,
+        context: &crate::Context,
+        id: &str,
+    ) {
+        let cert = context.signer().unwrap().certs().unwrap().remove(0);
+        let mut tracker = StatusTracker::default();
+        validator
+            .validate_session_keys(
+                &signer.build_session_keys_assertion().unwrap(),
+                id,
+                Some(&cert),
+                &mut tracker,
+            )
+            .unwrap();
+        assert_eq!(tracker.filter_errors().count(), 0);
+    }
+
+    #[test]
+    fn scheduled_rotation_selects_key_at_boundary_and_resumes_with_either_key() {
+        let context = rotation_context();
+        let mut signer = rotation_signer(&context);
+        signer
+            .add_session_key(
+                context.signer().unwrap(),
+                make_test_signing_key(),
+                b"new".to_vec(),
+                2,
+                3600,
+            )
+            .unwrap();
+        signer.active_manifest_id = Some(TEST_MANIFEST_ID.to_string());
+        signer.keys_need_announcement = false;
+        let mut validator = LiveVideoValidator::new();
+        register_keys(&mut validator, &signer, &context, TEST_MANIFEST_ID);
+        let first = signer.sign_media_segment(&make_test_segment()).unwrap();
+        let second = signer.sign_media_segment(&make_test_segment()).unwrap();
+        assert_eq!(
+            parse_vsi(&extract_vsi_payload_from_segment(&first).unwrap())
+                .unwrap()
+                .sign1
+                .unprotected
+                .key_id,
+            b"old"
+        );
+        assert_eq!(
+            parse_vsi(&extract_vsi_payload_from_segment(&second).unwrap())
+                .unwrap()
+                .sign1
+                .unprotected
+                .key_id,
+            b"new"
+        );
+        for segment in [&first, &second] {
+            let mut tracker = StatusTracker::default();
+            validator
+                .validate_verifiable_segment_info(segment, &mut tracker)
+                .unwrap();
+            assert_eq!(tracker.filter_errors().count(), 0);
+            signer.resume_from_segment(segment).unwrap();
+        }
+        assert_eq!(signer.next_sequence_number(), 3);
+    }
+
+    #[test]
+    fn embedded_manifest_announces_unknown_key_and_retains_previous_manifest() {
+        let context = rotation_context();
+        let mut signer = rotation_signer(&context);
+        let mut validator = LiveVideoValidator::new();
+        register_keys(&mut validator, &signer, &context, TEST_MANIFEST_ID);
+        let first = signer.sign_media_segment(&make_test_segment()).unwrap();
+        validator
+            .validate_verifiable_segment_info(&first, &mut StatusTracker::default())
+            .unwrap();
+        signer
+            .add_session_key(
+                context.signer().unwrap(),
+                make_test_signing_key(),
+                b"new".to_vec(),
+                2,
+                3600,
+            )
+            .unwrap();
+        let update = signer
+            .sign_media_segment_with_manifest(&rotation_media_segment(), context.clone())
+            .unwrap();
+        let mut tracker = StatusTracker::default();
+        validator
+            .validate_verifiable_segment_info_with_context(&update, &context, &mut tracker)
+            .unwrap();
+        assert_eq!(
+            tracker.filter_errors().count(),
+            0,
+            "{:?}",
+            tracker.logged_items()
+        );
+        assert_eq!(validator.session_keys.len(), 3); // old manifest + both keys in new manifest
+        let id = signer.active_manifest_id.clone().unwrap();
+        assert_ne!(id, TEST_MANIFEST_ID);
+        let following = signer.sign_media_segment(&make_test_segment()).unwrap();
+        validator
+            .validate_verifiable_segment_info_with_context(&following, &context, &mut tracker)
+            .unwrap();
+        assert_eq!(tracker.filter_errors().count(), 0);
+        assert_eq!(
+            validator.session_key_manifest_state(),
+            Some(crate::ValidationState::Valid)
+        );
+        // Earlier keys still authorize later segments under their original manifest.
+        signer.session_keys.pop();
+        signer.active_manifest_id = Some(TEST_MANIFEST_ID.to_string());
+        let old_key = signer.sign_media_segment(&make_test_segment()).unwrap();
+        validator
+            .validate_verifiable_segment_info(&old_key, &mut tracker)
+            .unwrap();
+        assert_eq!(tracker.filter_errors().count(), 0);
+    }
+
+    #[test]
+    fn embedded_manifest_tampering_does_not_install_keys() {
+        let context = rotation_context();
+        let mut signer = rotation_signer(&context);
+        let mut validator = LiveVideoValidator::new();
+        register_keys(&mut validator, &signer, &context, TEST_MANIFEST_ID);
+        signer
+            .add_session_key(
+                context.signer().unwrap(),
+                make_test_signing_key(),
+                b"new".to_vec(),
+                1,
+                3600,
+            )
+            .unwrap();
+        let mut update = signer
+            .sign_media_segment_with_manifest(&rotation_media_segment(), context.clone())
+            .unwrap();
+        *update.last_mut().unwrap() ^= 1;
+        let mut tracker = StatusTracker::default();
+        validator
+            .validate_verifiable_segment_info_with_context(&update, &context, &mut tracker)
+            .unwrap();
+        assert!(tracker
+            .filter_errors()
+            .any(|item| item.validation_status.as_deref() == Some("livevideo.manifest.invalid")));
+        assert_eq!(validator.session_keys.len(), 1);
+        assert!(validator.previous_segment.is_none());
+    }
+
+    #[test]
+    fn embedded_manifest_id_must_match_the_vsi_even_with_a_valid_signature() {
+        let context = rotation_context();
+        let mut signer = rotation_signer(&context);
+        let mut validator = LiveVideoValidator::new();
+        register_keys(&mut validator, &signer, &context, TEST_MANIFEST_ID);
+        signer
+            .add_session_key(
+                context.signer().unwrap(),
+                make_test_signing_key(),
+                b"new".to_vec(),
+                1,
+                3600,
+            )
+            .unwrap();
+        let mut update = signer
+            .sign_media_segment_with_manifest(&rotation_media_segment(), context.clone())
+            .unwrap();
+        let parsed = parse_vsi(&extract_vsi_payload_from_segment(&update).unwrap()).unwrap();
+        let mut map = parsed.segment_info_map;
+        let last = map.manifest_id.pop().unwrap();
+        map.manifest_id.push(if last == 'a' { 'b' } else { 'a' });
+        let key = signer.key_for_sequence(1).unwrap();
+        let emsg = build_emsg_box(
+            &build_vsi_cose_sign1(&map, &key.session_signing_key, &key.kid).unwrap(),
+            1,
+            0,
+            1,
+        )
+        .unwrap();
+        let old_emsg = find_box(&update, b"emsg").unwrap();
+        let offset = old_emsg.as_ptr() as usize - update.as_ptr() as usize;
+        assert_eq!(emsg.len(), old_emsg.len());
+        update[offset..offset + emsg.len()].copy_from_slice(&emsg);
+        let mut tracker = StatusTracker::default();
+        validator
+            .validate_verifiable_segment_info_with_context(&update, &context, &mut tracker)
+            .unwrap();
+        assert!(tracker
+            .filter_errors()
+            .any(|item| item.validation_status.as_deref() == Some("livevideo.segment.invalid")));
+        assert_eq!(validator.session_keys.len(), 1);
+    }
+
+    #[test]
+    fn embedded_manifest_uses_the_receivers_trust_policy() {
+        let context = rotation_context();
+        let mut signer = rotation_signer(&context);
+        let mut validator = LiveVideoValidator::new();
+        register_keys(&mut validator, &signer, &context, TEST_MANIFEST_ID);
+        signer
+            .add_session_key(
+                context.signer().unwrap(),
+                make_test_signing_key(),
+                b"new".to_vec(),
+                1,
+                3600,
+            )
+            .unwrap();
+        let update = signer
+            .sign_media_segment_with_manifest(&rotation_media_segment(), context.clone())
+            .unwrap();
+        let receiver = std::sync::Arc::new(crate::Context::new());
+        let mut tracker = StatusTracker::default();
+        validator
+            .validate_verifiable_segment_info_with_context(&update, &receiver, &mut tracker)
+            .unwrap();
+        assert!(tracker
+            .filter_errors()
+            .any(|item| item.validation_status.as_deref() == Some("livevideo.manifest.invalid")));
+        assert_eq!(validator.session_keys.len(), 1);
+    }
+
+    #[test]
+    fn update_rejects_retroactive_keys_and_preserves_existing_keys() {
+        let context = rotation_context();
+        let signer = rotation_signer(&context);
+        let mut validator = LiveVideoValidator::new();
+        register_keys(&mut validator, &signer, &context, TEST_MANIFEST_ID);
+        let mut other = rotation_signer(&context);
+        other.session_keys[0].kid = b"new".to_vec();
+        other.session_keys[0].session_cose_key = build_ed25519_cose_key(
+            &other.session_keys[0].session_signing_key.verifying_key(),
+            b"new",
+        );
+        let cert = context.signer().unwrap().certs().unwrap().remove(0);
+        let mut tracker = StatusTracker::default();
+        validator
+            .validate_session_key_update(
+                &other.build_session_keys_assertion().unwrap(),
+                "urn:c2pa:update",
+                Some(&cert),
+                2,
+                &mut tracker,
+            )
+            .unwrap();
+        assert_eq!(tracker.filter_errors().count(), 1);
+        assert_eq!(validator.session_keys.len(), 1);
+    }
+
+    #[test]
+    fn key_must_be_authorized_by_the_vsi_manifest() {
+        let context = rotation_context();
+        let mut signer = rotation_signer(&context);
+        let mut validator = LiveVideoValidator::new();
+        register_keys(&mut validator, &signer, &context, TEST_MANIFEST_ID);
+        signer.active_manifest_id = Some("urn:c2pa:other".to_string());
+        let segment = signer.sign_media_segment(&make_test_segment()).unwrap();
+        let mut tracker = StatusTracker::default();
+        assert!(validator
+            .validate_verifiable_segment_info(&segment, &mut tracker)
+            .is_err());
+        assert_eq!(tracker.filter_errors().count(), 1);
+    }
+
+    #[test]
+    fn restoring_init_rejects_a_key_added_after_that_init_was_signed() {
+        let context = rotation_context();
+        let mut signer = rotation_signer(&context);
+        let init =
+            include_bytes!("../../tests/fixtures/bunny/bunny_595491bps/BigBuckBunny_2s_init.mp4");
+        let signed_init = signer
+            .sign_init_segment(init, "video/mp4", context.signer().unwrap())
+            .unwrap();
+        signer
+            .add_session_key(
+                context.signer().unwrap(),
+                make_test_signing_key(),
+                b"new".to_vec(),
+                2,
+                3600,
+            )
+            .unwrap();
+        assert!(signer
+            .restore_manifest_id_from_signed_init(&signed_init, "video/mp4")
+            .is_err());
+        assert!(signer.sign_media_segment(&make_test_segment()).is_err());
+    }
+
+    #[test]
+    fn duplicate_key_ids_in_an_assertion_do_not_replace_cached_keys() {
+        let context = rotation_context();
+        let signer = rotation_signer(&context);
+        let mut validator = LiveVideoValidator::new();
+        register_keys(&mut validator, &signer, &context, TEST_MANIFEST_ID);
+        let mut keys = signer.build_session_keys_assertion().unwrap();
+        keys.keys.push(keys.keys[0].clone());
+        let cert = context.signer().unwrap().certs().unwrap().remove(0);
+        let mut tracker = StatusTracker::default();
+        validator
+            .validate_session_keys(&keys, "urn:c2pa:update", Some(&cert), &mut tracker)
+            .unwrap();
+        assert_eq!(tracker.filter_errors().count(), 1);
+        assert_eq!(validator.session_keys.len(), 1);
+    }
+
+    #[test]
+    fn adding_keys_rejects_duplicate_ids_and_requires_an_announcement() {
+        let context = rotation_context();
+        let mut signer = rotation_signer(&context);
+        assert!(signer
+            .add_session_key(
+                context.signer().unwrap(),
+                make_test_signing_key(),
+                b"old".to_vec(),
+                1,
+                3600
+            )
+            .is_err());
+        signer
+            .add_session_key(
+                context.signer().unwrap(),
+                make_test_signing_key(),
+                b"new".to_vec(),
+                2,
+                3600,
+            )
+            .unwrap();
+        assert!(signer.sign_media_segment(&make_test_segment()).is_err());
+        assert_eq!(signer.next_sequence_number(), 1);
     }
 
     #[test]

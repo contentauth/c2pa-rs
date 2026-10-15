@@ -77,6 +77,7 @@ impl LiveVideoValidator {
     pub(super) fn resolve_session_key(
         &self,
         sign1: &coset::CoseSign1,
+        manifest_id: &str,
         tracker: &mut StatusTracker,
     ) -> Result<SessionKey> {
         let kid = &sign1.unprotected.key_id;
@@ -89,7 +90,7 @@ impl LiveVideoValidator {
             return Err(Error::BadParam("livevideo.segment.invalid".into()));
         }
 
-        match self.find_session_key_by_kid(kid) {
+        match self.find_session_key_by_kid(kid, manifest_id) {
             Some(sk) => Ok(sk),
             None => {
                 // Per §19.7.3: "Validation fails if the key cannot be found ... and shall
@@ -102,39 +103,6 @@ impl LiveVideoValidator {
                 Err(Error::BadParam("livevideo.segment.invalid".into()))
             }
         }
-    }
-
-    /// Verifies the segment-info-map's `manifestId` matches the trusted manifest that carried
-    /// the `c2pa.session-keys` assertion ([§19.4.4]).
-    ///
-    /// [§19.4.4]: https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_manifest_retrieval_from_the_manifestid_field
-    pub(super) fn validate_vsi_manifest_id(
-        &self,
-        manifest_id: &str,
-        tracker: &mut StatusTracker,
-    ) -> Result<()> {
-        // `expected_manifest_id` is always set by `validate_session_keys` before any VSI
-        // segment can be validated (enforced by `require_session_keys`). A `None` here
-        // means the validator is in an unexpected state; fail explicitly rather than
-        // silently skipping the binding check.
-        let expected = self.expected_manifest_id.as_deref().ok_or_else(|| {
-            Error::BadParam(
-                "validate_session_keys must be called before validating VSI segments".into(),
-            )
-        })?;
-
-        if manifest_id != expected {
-            return fail_validation(
-                format!(
-                    "segment-info-map manifestId ({manifest_id:?}) does not match the \
-                     verified manifest that carried the session keys ({expected:?})"
-                ),
-                LIVEVIDEO_SEGMENT_INVALID,
-                tracker,
-            );
-        }
-
-        Ok(())
     }
 
     pub(super) fn validate_vsi_sequence_bounds(
@@ -374,15 +342,14 @@ impl LiveVideoValidator {
         Ok(())
     }
 
-    fn find_session_key_by_kid(&self, kid: &[u8]) -> Option<SessionKey> {
+    fn find_session_key_by_kid(&self, kid: &[u8], manifest_id: &str) -> Option<SessionKey> {
         self.session_keys
             .iter()
-            .find(|sk| {
-                kid_from_cose_key(&sk.key)
-                    .map(|k| k == kid)
-                    .unwrap_or(false)
+            .find(|entry| {
+                entry.manifest_id == manifest_id
+                    && kid_from_cose_key(&entry.key.key).is_some_and(|value| value == kid)
             })
-            .cloned()
+            .map(|entry| entry.key.clone())
     }
 
     fn check_key_validity_period(
@@ -690,9 +657,8 @@ mod tests {
 
         pub const TEST_KID: &[u8] = b"test-key-1";
         /// A stand-in for the label of the manifest that carried the session-keys assertion.
-        /// Kept constant across a test's segments since `validate_vsi_manifest_id` now checks
-        /// every VSI segment's `manifestId` against the trusted manifest captured at
-        /// `validate_session_keys` time (§19.4.4).
+        /// Kept constant across a test's segments so key lookup can check `manifestId`
+        /// against the manifest that authorized that key (§19.4.4).
         pub const TEST_MANIFEST_ID: &str = "urn:c2pa:test-manifest";
 
         pub fn test_ee_cert_der() -> Vec<u8> {
