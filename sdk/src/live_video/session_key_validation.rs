@@ -12,12 +12,17 @@
 // each license.
 
 use c2pa_raw_crypto::{ec_utils::parse_ec_der_sig, validator_for_signing_alg};
+use chrono::{DateTime, Duration, TimeZone, Utc};
 use coset::TaggedCborSerializable;
 
 use super::{
     cose_key::{cose_key_to_der, kid_from_cose_key, signing_alg_from_cose_key},
     fail_validation,
-    verifiable_segment_info::{extract_vsi_payload_from_segment, parse_vsi, ParsedVsi},
+    verifiable_segment_info::{
+        extract_vsi_emsg, extract_vsi_payload_from_segment, has_vsi_excluded_non_vsi_emsg,
+        parse_vsi, ParsedVsi,
+    },
+    vsi_signing::{parse_first_tfdt, parse_prft, parse_segment_duration_ticks},
     LiveVideoValidator,
 };
 use crate::{
@@ -152,15 +157,99 @@ impl LiveVideoValidator {
         &self,
         session_key: &SessionKey,
         sign1: &coset::CoseSign1,
+        segment_data: &[u8],
         tracker: &mut StatusTracker,
     ) -> Result<()> {
         // Per §19.7.3, "the segment's presentation time is outside the key's validity period"
         // is a segment-info-map parsing error, coded livevideo.segment.invalid (not
         // livevideo.sessionkey.invalid, which is reserved for signerBinding/shape failures).
-        if let Err(msg) = self.check_key_validity_period(session_key, sign1) {
+        if let Err(msg) = self.check_key_validity_period(session_key, sign1, segment_data) {
             return fail_validation(msg, LIVEVIDEO_SEGMENT_INVALID, tracker);
         }
         Ok(())
+    }
+
+    /// Checks the VSI `emsg` box's timing fields (§19.4.2): `presentation_time_delta` shall be
+    /// 0, and `timescale` and `event_duration` shall cover the whole segment. These fields are
+    /// outside both the signature and `bmffHash`, so they're checked against the track
+    /// timescale from the init segment and the segment's own `moof` sample durations.
+    pub(super) fn validate_vsi_emsg_timing(
+        &self,
+        segment_data: &[u8],
+        tracker: &mut StatusTracker,
+    ) -> Result<()> {
+        // `extract_and_parse_vsi` has already failed the segment if there's no VSI `emsg`.
+        let Some(emsg) = extract_vsi_emsg(segment_data) else {
+            return Ok(());
+        };
+        if emsg.presentation_time_delta != 0 {
+            fail_validation(
+                "VSI emsg presentation_time_delta must be 0",
+                LIVEVIDEO_SEGMENT_INVALID,
+                tracker,
+            )?;
+        }
+        if emsg.timescale == 0 {
+            return fail_validation(
+                "VSI emsg timescale must not be 0",
+                LIVEVIDEO_SEGMENT_INVALID,
+                tracker,
+            );
+        }
+        if let Some(track_timescale) = self.track_timescale {
+            if emsg.timescale != track_timescale {
+                return fail_validation(
+                    format!(
+                        "VSI emsg timescale ({}) does not match the track timescale \
+                         ({track_timescale})",
+                        emsg.timescale
+                    ),
+                    LIVEVIDEO_SEGMENT_INVALID,
+                    tracker,
+                );
+            }
+            if let Some(duration) = parse_segment_duration_ticks(segment_data) {
+                if emsg.event_duration != duration {
+                    return fail_validation(
+                        format!(
+                            "VSI emsg event_duration ({}) does not cover the segment ({duration})",
+                            emsg.event_duration
+                        ),
+                        LIVEVIDEO_SEGMENT_INVALID,
+                        tracker,
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The wall-clock presentation time of the segment's first sample: its `tfdt`, in the
+    /// track timescale from the init segment, mapped through the media-time origin set by
+    /// the caller or, failing that, the segment's `prft` box. `None` when it can't be
+    /// derived. `tfdt` and `prft` are covered by `bmffHash`.
+    fn segment_presentation_time(&self, segment_data: &[u8]) -> Option<DateTime<Utc>> {
+        // Seconds between the NTP epoch (1900-01-01) and the Unix epoch.
+        const NTP_UNIX_OFFSET_SECS: i64 = 2_208_988_800;
+
+        let timescale = i128::from(self.track_timescale.filter(|t| *t != 0)?);
+        let tfdt = i128::from(parse_first_tfdt(segment_data)?);
+
+        let (anchor, anchor_media_time) = match self.media_time_origin {
+            Some(origin) => (origin, 0),
+            None => {
+                let (ntp, media_time) = parse_prft(segment_data)?;
+                let secs = i64::try_from(ntp >> 32).ok()? - NTP_UNIX_OFFSET_SECS;
+                let nanos = ((ntp & 0xffff_ffff) * 1_000_000_000) >> 32;
+                (
+                    Utc.timestamp_opt(secs, u32::try_from(nanos).ok()?)
+                        .single()?,
+                    i128::from(media_time),
+                )
+            }
+        };
+        let offset_nanos = (tfdt - anchor_media_time).checked_mul(1_000_000_000)? / timescale;
+        anchor.checked_add_signed(Duration::nanoseconds(i64::try_from(offset_nanos).ok()?))
     }
 
     pub(super) fn validate_vsi_signature(
@@ -257,6 +346,19 @@ impl LiveVideoValidator {
             );
         }
 
+        // That exclusion compares only the URI's bytes at offset 12, so it also leaves out of
+        // the hash any `emsg` whose bytes there merely start with the VSI URI: a longer
+        // `scheme_id_uri`, or a version 1 `emsg` laid out to match. Such a box isn't the VSI
+        // `emsg`, so nothing would verify it; fail the segment instead.
+        if has_vsi_excluded_non_vsi_emsg(segment_data) {
+            return fail_validation(
+                "segment has an emsg box that the VSI bmffHash exclusion matches but that is \
+                 not a VSI emsg box, so its contents would not be verified",
+                LIVEVIDEO_SEGMENT_INVALID,
+                tracker,
+            );
+        }
+
         // bmff_version is `#[serde(skip)]` and doesn't survive the wire; the VSI CDDL
         // fixes this field to `c2pa.hash.bmff.v3` (§19.4.1).
         bmff_hash.set_bmff_version(3);
@@ -287,9 +389,8 @@ impl LiveVideoValidator {
         &self,
         key: &SessionKey,
         sign1: &coset::CoseSign1,
+        segment_data: &[u8],
     ) -> std::result::Result<(), String> {
-        use chrono::{DateTime, Duration, TimeZone, Utc};
-
         let created_at: DateTime<Utc> = key
             .created_at
             .parse()
@@ -300,12 +401,19 @@ impl LiveVideoValidator {
 
         let expires_at = created_at + Duration::seconds(validity_seconds);
 
-        // Per §19.4.1, the protected header's `iat` claims the segment's actual time of
-        // signing. Prefer it over wall-clock time so validation done after the fact (e.g.
-        // archival/VOD validation of a recorded live stream) checks the segment against the
-        // time it was actually produced, not the time it happens to be validated.
-        let claimed_time = extract_iat(sign1).and_then(|secs| Utc.timestamp_opt(secs, 0).single());
-        let now = claimed_time.unwrap_or_else(Utc::now);
+        // For BMFF/CMAF, the spec checks the segment's presentation time against the key's
+        // validity period. When it can't be derived (no init timescale, or no media-time
+        // origin and no `prft`), fall back to the protected header's `iat`, which claims
+        // the segment's time of signing, so validation done after the fact (e.g. archival
+        // validation of a recorded live stream) still checks the time the segment was
+        // produced. Without `iat` either, use the current time.
+        let (now, time_source) = match self.segment_presentation_time(segment_data) {
+            Some(time) => (time, "presentation time"),
+            None => match extract_iat(sign1).and_then(|secs| Utc.timestamp_opt(secs, 0).single()) {
+                Some(time) => (time, "iat"),
+                None => (Utc::now(), "now"),
+            },
+        };
 
         // §19.4.1's validity window is [createdAt, createdAt + validityPeriod]. Only the upper
         // bound was checked before; a claimed `iat` (or, in principle, a clock skew on `now`)
@@ -322,17 +430,14 @@ impl LiveVideoValidator {
         if now < created_at_floor {
             return Err(format!(
                 "session key not yet valid: createdAt={}, {}={now}",
-                key.created_at,
-                if claimed_time.is_some() { "iat" } else { "now" },
+                key.created_at, time_source,
             ));
         }
 
         if now > expires_at {
             return Err(format!(
                 "session key expired: createdAt={}, validityPeriod={}s, {}={now}",
-                key.created_at,
-                key.validity_period,
-                if claimed_time.is_some() { "iat" } else { "now" },
+                key.created_at, key.validity_period, time_source,
             ));
         }
 
@@ -548,12 +653,23 @@ mod tests {
         }
     }
 
+    /// `emsg` timing fields used by the test segments: `(timescale, presentation_time_delta,
+    /// event_duration)`.
+    type EmsgTiming = (u32, u32, u32);
+
+    /// Timing for the `mdat`-only test segments: no init timescale or `moof` to check against.
+    const DEFAULT_EMSG_TIMING: EmsgTiming = (1000, 0, 0);
+
     /// Builds an `emsg` version 0 box with C2PA VSI scheme carrying `message_data`.
-    fn make_vsi_emsg_box(message_data: &[u8]) -> Vec<u8> {
+    fn make_vsi_emsg_box(message_data: &[u8], timing: EmsgTiming) -> Vec<u8> {
+        let (timescale, presentation_time_delta, event_duration) = timing;
         let mut body = Vec::new();
         body.extend_from_slice(b"urn:c2pa:verifiable-segment-info\0");
         body.extend_from_slice(b"fseg\0");
-        body.extend_from_slice(&[0u8; 16]); // timescale + pts_delta + duration + id
+        body.extend_from_slice(&timescale.to_be_bytes());
+        body.extend_from_slice(&presentation_time_delta.to_be_bytes());
+        body.extend_from_slice(&event_duration.to_be_bytes());
+        body.extend_from_slice(&0u32.to_be_bytes()); // id
         body.extend_from_slice(message_data);
 
         let total_size = (8u32 + 4 + body.len() as u32).to_be_bytes();
@@ -642,7 +758,26 @@ mod tests {
             manifest_id: &str,
             signing_key: &ed25519_dalek::SigningKey,
         ) -> Vec<u8> {
-            let trailer = make_mdat_box();
+            make_signed_vsi_segment_with(
+                sequence_number,
+                manifest_id,
+                signing_key,
+                &[],
+                DEFAULT_EMSG_TIMING,
+                &make_mdat_box(),
+            )
+        }
+
+        /// Like [`make_signed_vsi_segment`], but as `before_emsg + emsg + after_emsg`, with the
+        /// given `emsg` timing fields.
+        pub fn make_signed_vsi_segment_with(
+            sequence_number: u64,
+            manifest_id: &str,
+            signing_key: &ed25519_dalek::SigningKey,
+            before_emsg: &[u8],
+            timing: EmsgTiming,
+            after_emsg: &[u8],
+        ) -> Vec<u8> {
             let build = |bmff_hash: c2pa_cbor::Value| -> Vec<u8> {
                 let map = SegmentInfoMap {
                     sequence_number,
@@ -650,10 +785,11 @@ mod tests {
                     manifest_id: manifest_id.to_string(),
                     manifest_uri: None,
                 };
-                let mut seg =
-                    super::make_vsi_emsg_box(&make_signed_cose_sign1_bytes(&map, signing_key));
-                seg.extend_from_slice(&trailer);
-                seg
+                let emsg = super::make_vsi_emsg_box(
+                    &make_signed_cose_sign1_bytes(&map, signing_key),
+                    timing,
+                );
+                [before_emsg, &emsg, after_emsg].concat()
             };
 
             let draft = build(
@@ -796,7 +932,7 @@ mod tests {
         let (mut validator, _) = vsi_crypto_helpers::setup_vsi_validator();
         let mut tracker = StatusTracker::default();
 
-        let segment = make_vsi_emsg_box(b"not-a-cose-sign1");
+        let segment = make_vsi_emsg_box(b"not-a-cose-sign1", DEFAULT_EMSG_TIMING);
         let _ = validator.validate_verifiable_segment_info(&segment, &mut tracker);
 
         assert!(tracker
@@ -954,6 +1090,232 @@ mod tests {
             .logged_items()
             .iter()
             .any(|i| { i.validation_status.as_deref() == Some(LIVEVIDEO_SEGMENT_INVALID) }));
+    }
+
+    // ── emsg timing and presentation time ─────────────────────────────────────
+
+    /// 2020-01-01T00:00:00Z, the `createdAt` of the key in the presentation-time tests.
+    const KEY_CREATED_AT_UNIX: u64 = 1_577_836_800;
+
+    fn make_box(fourcc: &[u8; 4], payload: &[u8]) -> Vec<u8> {
+        let mut b = ((8 + payload.len()) as u32).to_be_bytes().to_vec();
+        b.extend_from_slice(fourcc);
+        b.extend_from_slice(payload);
+        b
+    }
+
+    fn make_fullbox(fourcc: &[u8; 4], version: u8, payload: &[u8]) -> Vec<u8> {
+        make_box(fourcc, &[&[version, 0, 0, 0], payload].concat())
+    }
+
+    /// An init segment whose single track has the given `mdhd` timescale.
+    fn make_init_segment(timescale: u32) -> Vec<u8> {
+        let mut mdhd = vec![0u8; 8]; // creation_time, modification_time
+        mdhd.extend_from_slice(&timescale.to_be_bytes());
+        mdhd.extend_from_slice(&[0u8; 8]); // duration, language, pre_defined
+        let mdia = make_box(b"mdia", &make_fullbox(b"mdhd", 0, &mdhd));
+        make_box(b"moov", &make_box(b"trak", &mdia))
+    }
+
+    /// A `moof` (with a version 1 `tfdt` and per-sample `trun` durations) plus an `mdat`.
+    fn make_media(tfdt: u64, sample_durations: &[u32]) -> Vec<u8> {
+        let tfhd = make_fullbox(b"tfhd", 0, &1u32.to_be_bytes());
+        let tfdt = make_fullbox(b"tfdt", 1, &tfdt.to_be_bytes());
+        let mut trun = (sample_durations.len() as u32).to_be_bytes().to_vec();
+        for d in sample_durations {
+            trun.extend_from_slice(&d.to_be_bytes());
+        }
+        let trun = make_box(b"trun", &[&[0, 0, 0x01, 0x00], trun.as_slice()].concat());
+        let traf = make_box(b"traf", &[tfhd, tfdt, trun].concat());
+        [make_box(b"moof", &traf), make_box(b"mdat", &[0u8; 4])].concat()
+    }
+
+    /// A version 0 `prft` mapping `media_time` to the Unix time `unix_secs`.
+    fn make_prft(unix_secs: u64, media_time: u32) -> Vec<u8> {
+        let ntp = (unix_secs + 2_208_988_800) << 32;
+        let payload = [
+            1u32.to_be_bytes().as_slice(), // reference_track_ID
+            &ntp.to_be_bytes(),
+            &media_time.to_be_bytes(),
+        ]
+        .concat();
+        make_fullbox(b"prft", 0, &payload)
+    }
+
+    /// A validator whose init segment has a 1000 Hz timescale and whose one session key is
+    /// valid for an hour from [`KEY_CREATED_AT_UNIX`].
+    fn setup_timed_vsi_validator() -> (LiveVideoValidator, ed25519_dalek::SigningKey) {
+        use vsi_crypto_helpers::*;
+        let (signing_key, cose_key) = generate_test_key_pair();
+        let ee_cert_der = test_ee_cert_der();
+        let mut validator = LiveVideoValidator::new();
+        let mut tracker = StatusTracker::default();
+        validator
+            .validate_init_segment(&make_init_segment(1000), &mut tracker)
+            .unwrap();
+        let keys = SessionKeys {
+            keys: vec![SessionKey {
+                created_at: crate::cbor_types::DateT("2020-01-01T00:00:00Z".to_string()),
+                validity_period: 3600,
+                ..session_keys_with_cose_key(cose_key, &signing_key, &ee_cert_der)
+                    .keys
+                    .remove(0)
+            }],
+        };
+        validator
+            .validate_session_keys(&keys, TEST_MANIFEST_ID, Some(&ee_cert_der), &mut tracker)
+            .unwrap();
+        (validator, signing_key)
+    }
+
+    /// The `livevideo.*` codes logged when `validator` validates `segment`.
+    fn livevideo_codes(validator: &mut LiveVideoValidator, segment: &[u8]) -> Vec<String> {
+        let mut tracker = StatusTracker::default();
+        let _ = validator.validate_verifiable_segment_info(segment, &mut tracker);
+        tracker
+            .logged_items()
+            .iter()
+            .filter_map(|i| i.validation_status.as_deref())
+            .filter(|s| s.starts_with("livevideo"))
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// A signed segment `before_emsg + emsg + moof + mdat` whose media starts at `tfdt`
+    /// (1000 Hz ticks) and lasts 2 s.
+    fn make_timed_segment(
+        signing_key: &ed25519_dalek::SigningKey,
+        before_emsg: &[u8],
+        tfdt: u64,
+        timing: EmsgTiming,
+    ) -> Vec<u8> {
+        vsi_crypto_helpers::make_signed_vsi_segment_with(
+            1,
+            vsi_crypto_helpers::TEST_MANIFEST_ID,
+            signing_key,
+            before_emsg,
+            timing,
+            &make_media(tfdt, &[1000, 1000]),
+        )
+    }
+
+    const GOOD_TIMING: EmsgTiming = (1000, 0, 2000);
+
+    /// `tfdt` (1000 Hz ticks from the Unix epoch) of media starting `offset_secs` after the
+    /// key's `createdAt`.
+    fn epoch_tfdt(offset_secs: u64) -> u64 {
+        (KEY_CREATED_AT_UNIX + offset_secs) * 1000
+    }
+
+    #[test]
+    fn vsi_emsg_timing_matching_the_segment_passes() {
+        let (mut validator, key) = setup_timed_vsi_validator();
+        validator.set_media_time_origin(chrono::DateTime::UNIX_EPOCH);
+        let segment = make_timed_segment(&key, &[], epoch_tfdt(1800), GOOD_TIMING);
+        assert_eq!(
+            livevideo_codes(&mut validator, &segment),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn vsi_emsg_nonzero_presentation_time_delta_fails() {
+        let (mut validator, key) = setup_timed_vsi_validator();
+        validator.set_media_time_origin(chrono::DateTime::UNIX_EPOCH);
+        let segment = make_timed_segment(&key, &[], epoch_tfdt(1800), (1000, 5, 2000));
+        assert_eq!(
+            livevideo_codes(&mut validator, &segment),
+            [LIVEVIDEO_SEGMENT_INVALID]
+        );
+    }
+
+    #[test]
+    fn vsi_emsg_zero_timescale_fails() {
+        let (mut validator, key) = vsi_crypto_helpers::setup_vsi_validator();
+        let segment = make_timed_segment(&key, &[], 0, (0, 0, 2000));
+        assert_eq!(
+            livevideo_codes(&mut validator, &segment),
+            [LIVEVIDEO_SEGMENT_INVALID]
+        );
+    }
+
+    #[test]
+    fn vsi_emsg_timescale_not_matching_the_track_fails() {
+        let (mut validator, key) = setup_timed_vsi_validator();
+        validator.set_media_time_origin(chrono::DateTime::UNIX_EPOCH);
+        let segment = make_timed_segment(&key, &[], epoch_tfdt(1800), (90_000, 0, 2000));
+        assert_eq!(
+            livevideo_codes(&mut validator, &segment),
+            [LIVEVIDEO_SEGMENT_INVALID]
+        );
+    }
+
+    #[test]
+    fn vsi_emsg_event_duration_not_covering_the_segment_fails() {
+        let (mut validator, key) = setup_timed_vsi_validator();
+        validator.set_media_time_origin(chrono::DateTime::UNIX_EPOCH);
+        let segment = make_timed_segment(&key, &[], epoch_tfdt(1800), (1000, 0, 1000));
+        assert_eq!(
+            livevideo_codes(&mut validator, &segment),
+            [LIVEVIDEO_SEGMENT_INVALID]
+        );
+    }
+
+    /// With a media-time origin, the key's validity is checked against the segment's
+    /// presentation time, not the current time (2020 keys are long expired by wall clock).
+    #[test]
+    fn vsi_key_validity_uses_presentation_time_from_origin() {
+        let (mut validator, key) = setup_timed_vsi_validator();
+        validator.set_media_time_origin(chrono::DateTime::UNIX_EPOCH);
+
+        let inside = make_timed_segment(&key, &[], epoch_tfdt(1800), GOOD_TIMING);
+        assert_eq!(
+            livevideo_codes(&mut validator, &inside),
+            Vec::<String>::new()
+        );
+
+        let (mut validator, key) = setup_timed_vsi_validator();
+        validator.set_media_time_origin(chrono::DateTime::UNIX_EPOCH);
+        let after = make_timed_segment(&key, &[], epoch_tfdt(7200), GOOD_TIMING);
+        assert_eq!(
+            livevideo_codes(&mut validator, &after),
+            [LIVEVIDEO_SEGMENT_INVALID]
+        );
+    }
+
+    /// Without an origin, a `prft` box maps the segment's media time to wall-clock time.
+    #[test]
+    fn vsi_key_validity_uses_presentation_time_from_prft() {
+        // Media time 0 at 30 minutes after createdAt; the segment starts 10 s later.
+        let prft = make_prft(KEY_CREATED_AT_UNIX + 1800, 0);
+
+        let (mut validator, key) = setup_timed_vsi_validator();
+        let inside = make_timed_segment(&key, &prft, 10_000, GOOD_TIMING);
+        assert_eq!(
+            livevideo_codes(&mut validator, &inside),
+            Vec::<String>::new()
+        );
+
+        // Media time 0 at createdAt + 2 h: outside the one-hour window.
+        let late_prft = make_prft(KEY_CREATED_AT_UNIX + 7200, 0);
+        let (mut validator, key) = setup_timed_vsi_validator();
+        let after = make_timed_segment(&key, &late_prft, 10_000, GOOD_TIMING);
+        assert_eq!(
+            livevideo_codes(&mut validator, &after),
+            [LIVEVIDEO_SEGMENT_INVALID]
+        );
+    }
+
+    /// Without an origin or `prft`, the old fallback (`iat`, then the current time) applies:
+    /// a key from 2020 is expired now.
+    #[test]
+    fn vsi_key_validity_falls_back_to_current_time() {
+        let (mut validator, key) = setup_timed_vsi_validator();
+        let segment = make_timed_segment(&key, &[], epoch_tfdt(1800), GOOD_TIMING);
+        assert_eq!(
+            livevideo_codes(&mut validator, &segment),
+            [LIVEVIDEO_SEGMENT_INVALID]
+        );
     }
 
     #[test]
