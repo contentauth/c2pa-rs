@@ -388,6 +388,34 @@ impl C2paPdf for Pdf {
 }
 
 impl Pdf {
+    pub(super) fn read_xmp_result(&self) -> crate::Result<Option<String>> {
+        let catalog = self
+            .document
+            .catalog()
+            .map_err(|e| crate::Error::InvalidAsset(e.to_string()))?;
+        if !catalog.has(b"Metadata") {
+            return Ok(None);
+        }
+        let stream = catalog
+            .get_deref(b"Metadata", &self.document)
+            .and_then(Object::as_stream)
+            .map_err(|e| crate::Error::InvalidAsset(e.to_string()))?;
+        let subtype = stream
+            .dict
+            .get_deref(SUBTYPE_KEY, &self.document)
+            .and_then(Object::as_name)
+            .map_err(|e| crate::Error::InvalidAsset(e.to_string()))?;
+        if !subtype.eq_ignore_ascii_case(b"XML") {
+            return Err(crate::Error::NotImplemented("PDF non-XML metadata".into()));
+        }
+        let bytes = stream
+            .get_plain_content_with_limit(4 * 1024 * 1024)
+            .map_err(|e| crate::Error::InvalidAsset(e.to_string()))?;
+        String::from_utf8(bytes)
+            .map(Some)
+            .map_err(|e| crate::Error::InvalidAsset(e.to_string()))
+    }
+
     #[allow(dead_code)]
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
         let document = Document::load_mem_with_options(
