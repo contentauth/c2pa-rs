@@ -95,7 +95,7 @@ impl IdentityAssertion {
                 let mut ia: Result<Self, crate::Error> = a.to_assertion();
                 if let Ok(ref mut ia) = ia {
                     if let Some(manifest_label) = manifest.label() {
-                        ia.label = Some(to_assertion_uri(manifest_label, a.label()));
+                        ia.label = Some(to_assertion_uri(manifest_label, &a.label_with_instance()));
                     }
                 }
                 // TO DO: Add error readout if the proposed new setting resulted
@@ -103,7 +103,7 @@ impl IdentityAssertion {
                 // has become incompatible with the now-default behavior to validate
                 // identity assertions during parsing. This applies only if this API
                 // becomes public again.
-                (a.label().to_owned(), ia)
+                (a.label_with_instance(), ia)
             })
             .inspect(|(label, r)| {
                 let mut label = label.to_owned();
