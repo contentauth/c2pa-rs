@@ -64,7 +64,7 @@ mod vsi_signing;
 /// </div>
 pub use ed25519_dalek::SigningKey as Ed25519SessionKey;
 pub use signing::LiveVideoSigner;
-pub use vsi_signing::{moof_sequence_number, LiveVideoVsiSigner};
+pub use vsi_signing::{moof_sequence_number, LiveVideoVsiSigner, SessionSigningKey};
 
 use self::cose_key::kid_from_cose_key;
 use crate::{

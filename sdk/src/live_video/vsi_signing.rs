@@ -20,13 +20,16 @@
 //! signer's end-entity certificate, proving the key is associated with the
 //! manifest signer (§18.25.2).
 
-use c2pa_raw_crypto::validator_for_signing_alg;
-use coset::{iana, CoseSign1Builder, HeaderBuilder, TaggedCborSerializable};
+use c2pa_raw_crypto::{signer_from_private_key, validator_for_signing_alg, RawSigner};
+use coset::{iana, iana::EnumI64, CoseSign1Builder, HeaderBuilder, TaggedCborSerializable};
 use ed25519_dalek::{Signer as Ed25519Signer, SigningKey};
 
 use super::{
     box_walk::{box_payload, find_box, top_level_boxes},
-    cose_key::{build_ed25519_cose_key, cose_key_to_der, signing_alg_from_cose_key},
+    cose_key::{
+        build_ed25519_cose_key, cose_alg_id, cose_key_from_spki, cose_key_to_der,
+        signing_alg_from_cose_key,
+    },
     verifiable_segment_info::{VSI_EXCLUSION_VALUE, VSI_SCHEME_ID_URI, VSI_URI_OFFSET_IN_EMSG},
 };
 use crate::{
@@ -42,7 +45,8 @@ const VSI_VALUE_FSEG: &str = "fseg";
 
 /// Signs live video segments using the Verifiable Segment Info method (§19.4).
 ///
-/// The caller provides an Ed25519 session key via [`from_signing_key`].  The
+/// The caller provides a session key via [`from_signing_key`]: an Ed25519 key, or any
+/// [`SessionSigningKey`] (ES256/384/512, PS256/384/512 or Ed25519).  The
 /// init segment is signed with the manifest [`Signer`] and carries a
 /// `c2pa.session-keys` assertion that includes the session public key and a
 /// `signerBinding` COSE_Sign1 proving the key is associated with the manifest
@@ -80,7 +84,7 @@ pub struct LiveVideoVsiSigner {
 }
 
 struct SessionSigningMaterial {
-    session_signing_key: SigningKey,
+    session_signing_key: SessionSigningKey,
     session_cose_key: c2pa_cbor::Value,
     kid: Vec<u8>,
     /// COSE_Sign1_Tagged (`18([...])`) bytes of the detached signer binding.
@@ -90,8 +94,128 @@ struct SessionSigningMaterial {
     validity_period: u64,
 }
 
+/// A session private key and its public key, for signing VSI and `signerBinding`.
+///
+/// The Live Media specification allows session keys to use any algorithm allowed for
+/// claim-signing certificates: ES256, ES384, ES512, PS256, PS384, PS512 and Ed25519. An
+/// Ed25519 key converts directly (`From<Ed25519SessionKey>`); other keys are built with
+/// [`SessionSigningKey::from_private_key_pem`].
+///
+/// <div class="warning">
+///
+/// **Experimental.** This type is available only with the `unstable_live_video` feature
+/// enabled. It is exempt from this crate's usual semantic-versioning stability guarantees and
+/// may change in a backward-incompatible way, or be removed entirely, in any release.
+///
+/// </div>
+pub struct SessionSigningKey {
+    private_key: SessionPrivateKey,
+    alg: crate::SigningAlg,
+}
+
+enum SessionPrivateKey {
+    Ed25519(SigningKey),
+    /// A raw signer and the DER SubjectPublicKeyInfo of its public key.
+    Raw {
+        signer: Box<dyn RawSigner + Send + Sync>,
+        public_key_der: Vec<u8>,
+    },
+}
+
+impl From<SigningKey> for SessionSigningKey {
+    fn from(key: SigningKey) -> Self {
+        Self {
+            private_key: SessionPrivateKey::Ed25519(key),
+            alg: crate::SigningAlg::Ed25519,
+        }
+    }
+}
+
+impl SessionSigningKey {
+    /// Creates a session key from a PEM private key (PKCS #8), its public key as a DER
+    /// SubjectPublicKeyInfo, and the algorithm to sign with.
+    ///
+    /// Fails if the algorithm isn't available, the public key doesn't fit the algorithm
+    /// (for example, a P-384 key for ES256, or an RSA modulus under 2048 bits), or the
+    /// public key doesn't belong to the private key.
+    pub fn from_private_key_pem(
+        private_key_pem: &[u8],
+        public_key_der: &[u8],
+        alg: crate::SigningAlg,
+    ) -> Result<Self> {
+        let signer = signer_from_private_key(private_key_pem, alg)
+            .map_err(|e| Error::BadParam(format!("session private key: {e}")))?;
+        let key = Self {
+            private_key: SessionPrivateKey::Raw {
+                signer,
+                public_key_der: public_key_der.to_vec(),
+            },
+            alg,
+        };
+        // Check that the two halves belong together, through the COSE_Key a validator sees.
+        let public_key = cose_key_to_der(&key.cose_key(b"probe")?).ok_or_else(|| {
+            Error::BadParam(format!("session public key cannot be used for {alg:?}"))
+        })?;
+        let probe = b"c2pa live media session key";
+        let validator = validator_for_signing_alg(alg)
+            .ok_or_else(|| Error::BadParam(format!("no validator for {alg:?}")))?;
+        validator
+            .validate(&key.sign(probe)?, probe, &public_key)
+            .map_err(|_| {
+                Error::BadParam("session public key does not match the private key".into())
+            })?;
+        Ok(key)
+    }
+
+    /// The signing algorithm.
+    pub fn alg(&self) -> crate::SigningAlg {
+        self.alg
+    }
+
+    /// The COSE protected-header algorithm.
+    fn cose_algorithm(&self) -> Result<iana::Algorithm> {
+        cose_alg_id(self.alg)
+            .and_then(|id| i64::try_from(id).ok())
+            .and_then(iana::Algorithm::from_i64)
+            .ok_or_else(|| {
+                Error::BadParam(format!("unsupported session key algorithm {:?}", self.alg))
+            })
+    }
+
+    /// The public key as a COSE_Key with `kid`.
+    fn cose_key(&self, kid: &[u8]) -> Result<c2pa_cbor::Value> {
+        match &self.private_key {
+            SessionPrivateKey::Ed25519(key) => {
+                Ok(build_ed25519_cose_key(&key.verifying_key(), kid))
+            }
+            SessionPrivateKey::Raw { public_key_der, .. } => {
+                cose_key_from_spki(public_key_der, self.alg, kid).ok_or_else(|| {
+                    Error::BadParam(format!(
+                        "session public key is not a valid {:?} key",
+                        self.alg
+                    ))
+                })
+            }
+        }
+    }
+
+    /// Signs `data`. EC signatures are in the IEEE P1363 `r|s` form COSE uses.
+    fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+        match &self.private_key {
+            SessionPrivateKey::Ed25519(key) => {
+                let signature: ed25519_dalek::Signature = Ed25519Signer::sign(key, data);
+                Ok(signature.to_bytes().to_vec())
+            }
+            SessionPrivateKey::Raw { signer, .. } => signer
+                .sign(data)
+                .map_err(|e| Error::BadParam(format!("session key signing failed: {e}"))),
+        }
+    }
+}
+
 impl LiveVideoVsiSigner {
-    /// Creates a VSI signer from a caller-provided Ed25519 session key.
+    /// Creates a VSI signer from a caller-provided session key: an Ed25519 key, or any
+    /// [`SessionSigningKey`].
     ///
     /// Builds the `signerBinding` COSE_Sign1 per §18.25.2: the session key
     /// signs the manifest signer's end-entity certificate (detached payload).
@@ -102,18 +226,19 @@ impl LiveVideoVsiSigner {
     ///   assertion; one is added automatically when signing the init segment).
     /// * `manifest_signer` — the C2PA [`Signer`] whose end-entity certificate
     ///   is bound to the session key via `signerBinding`.
-    /// * `signing_key` — Ed25519 session private key.
+    /// * `signing_key` — the session private key: an Ed25519 key or a [`SessionSigningKey`].
     /// * `kid` — key identifier for the session key (e.g. `b"session-key-1"`).
     /// * `min_sequence_number` — first sequence number valid for this key.
     /// * `validity_period_secs` — how long (in seconds) the session key is valid.
     pub fn from_signing_key(
         manifest_json: impl Into<String>,
         manifest_signer: &dyn Signer,
-        signing_key: SigningKey,
+        signing_key: impl Into<SessionSigningKey>,
         kid: impl Into<Vec<u8>>,
         min_sequence_number: u64,
         validity_period_secs: u64,
     ) -> Result<Self> {
+        let signing_key = signing_key.into();
         let base_manifest_json = manifest_json.into();
         let kid = kid.into();
         if kid.is_empty() || validity_period_secs == 0 {
@@ -122,7 +247,7 @@ impl LiveVideoVsiSigner {
             ));
         }
 
-        let session_cose_key = build_ed25519_cose_key(&signing_key.verifying_key(), &kid);
+        let session_cose_key = signing_key.cose_key(&kid)?;
 
         let ee_cert_der = manifest_signer
             .certs()
@@ -156,7 +281,8 @@ impl LiveVideoVsiSigner {
         })
     }
 
-    /// Adds an Ed25519 key to announce in the next signed initialization segment.
+    /// Adds a session key (Ed25519 or any [`SessionSigningKey`]) to announce in the next
+    /// signed initialization segment.
     /// Keys are selected automatically by greatest eligible `minSequenceNumber`.
     /// Add scheduled keys before signing the init segment so receivers learn them first.
     /// To announce keys added later, deliver an updated initialization segment or call
@@ -164,7 +290,7 @@ impl LiveVideoVsiSigner {
     pub fn add_session_key(
         &mut self,
         manifest_signer: &dyn Signer,
-        signing_key: SigningKey,
+        signing_key: impl Into<SessionSigningKey>,
         kid: impl Into<Vec<u8>>,
         min_sequence_number: u64,
         validity_period_secs: u64,
@@ -738,16 +864,19 @@ pub(super) fn build_segment_bmff_hash_with(
 // ── Signer binding (§18.25.2) ────────────────────────────────────────────────
 //
 // Per the spec the `signerBinding` is a **detached** COSE_Sign1 where:
-//   - the **session key** signs (EdDSA since we use Ed25519),
+//   - the **session key** signs, with its own algorithm,
 //   - the **payload** is the signer's end-entity certificate encoded as a CBOR
 //     byte string (used in Sig_structure but NOT carried in the COSE_Sign1).
 
-fn build_signer_binding(ee_cert_der: &[u8], session_signing_key: &SigningKey) -> Result<Vec<u8>> {
+fn build_signer_binding(
+    ee_cert_der: &[u8],
+    session_signing_key: &SessionSigningKey,
+) -> Result<Vec<u8>> {
     let external_payload = c2pa_cbor::to_vec(&c2pa_cbor::Value::Bytes(ee_cert_der.to_vec()))
         .map_err(|e| Error::BadParam(format!("failed to CBOR-encode EE certificate: {e}")))?;
 
     let protected = HeaderBuilder::new()
-        .algorithm(iana::Algorithm::EdDSA)
+        .algorithm(session_signing_key.cose_algorithm()?)
         .build();
 
     let mut sign1 = CoseSign1Builder::new().protected(protected).build();
@@ -755,8 +884,7 @@ fn build_signer_binding(ee_cert_der: &[u8], session_signing_key: &SigningKey) ->
     // signerBinding is a detached-payload COSE_Sign1: the cert bytes are the
     // external payload, not AAD. Use tbs_detached_data per RFC 9052 §4.4.
     let tbs = sign1.tbs_detached_data(&external_payload, b"");
-    let signature: ed25519_dalek::Signature = Ed25519Signer::sign(session_signing_key, &tbs);
-    sign1.signature = signature.to_bytes().to_vec();
+    sign1.signature = session_signing_key.sign(&tbs)?;
 
     // The COSE_Sign1_Tagged (`18([...])`) bytes; `SessionKey::new` decodes these into the
     // native tagged CBOR value stored in the assertion per §18.25.
@@ -769,7 +897,7 @@ fn build_signer_binding(ee_cert_der: &[u8], session_signing_key: &SigningKey) ->
 
 fn build_vsi_cose_sign1(
     segment_info_map: &SegmentInfoMap,
-    signing_key: &SigningKey,
+    signing_key: &SessionSigningKey,
     kid: &[u8],
 ) -> Result<Vec<u8>> {
     let payload = c2pa_cbor::to_vec(segment_info_map)
@@ -787,7 +915,7 @@ fn build_vsi_cose_sign1(
     let iat = chrono::Utc::now().timestamp();
 
     let protected = HeaderBuilder::new()
-        .algorithm(iana::Algorithm::EdDSA)
+        .algorithm(signing_key.cose_algorithm()?)
         .text_value("iat".to_string(), coset::cbor::value::Value::from(iat))
         .build();
     let unprotected = HeaderBuilder::new().key_id(kid.to_vec()).build();
@@ -799,8 +927,7 @@ fn build_vsi_cose_sign1(
         .build();
 
     let tbs = sign1.tbs_data(b"");
-    let signature: ed25519_dalek::Signature = signing_key.sign(&tbs);
-    sign1.signature = signature.to_bytes().to_vec();
+    sign1.signature = signing_key.sign(&tbs)?;
 
     sign1
         .to_tagged_vec()
@@ -1810,10 +1937,10 @@ mod tests {
         register_keys(&mut validator, &signer, &context, TEST_MANIFEST_ID);
         let mut other = rotation_signer(&context);
         other.session_keys[0].kid = b"new".to_vec();
-        other.session_keys[0].session_cose_key = build_ed25519_cose_key(
-            &other.session_keys[0].session_signing_key.verifying_key(),
-            b"new",
-        );
+        other.session_keys[0].session_cose_key = other.session_keys[0]
+            .session_signing_key
+            .cose_key(b"new")
+            .unwrap();
         let cert = context.signer().unwrap().certs().unwrap().remove(0);
         let mut tracker = StatusTracker::default();
         validator
@@ -2274,7 +2401,10 @@ mod tests {
         assert_eq!(map1.sequence_number, 1);
         assert_eq!(map2.sequence_number, 2);
 
-        let session_keys = signer2.build_session_keys_assertion().unwrap();
+        // Validate with the first signer's announcement: the resumed signer re-creates the
+        // same key with a later `createdAt`, which a segment signed before it (with a
+        // whole-second `iat`) can precede when a second boundary falls in between.
+        let session_keys = signer1.build_session_keys_assertion().unwrap();
         let ee_cert_der = signer.certs().unwrap().into_iter().next().unwrap();
         let mut validator = LiveVideoValidator::new();
         let mut tracker = StatusTracker::default();
@@ -2729,6 +2859,206 @@ mod tests {
             .sign_media_segment_with_manifest(&segment, context.clone())
             .unwrap_err();
         assert!(err.to_string().contains("base_data_offset"), "{err}");
+    }
+
+    // ── session keys with other algorithms ──────────────────────────────────────
+
+    /// The PEM private key and the end-entity certificate chain of a key fixture.
+    fn fixture_key(alg: crate::SigningAlg) -> (&'static [u8], &'static [u8]) {
+        use crate::SigningAlg::*;
+        match alg {
+            Es256 => (
+                include_bytes!("../../tests/fixtures/certs/es256.pem"),
+                include_bytes!("../../tests/fixtures/certs/es256.pub"),
+            ),
+            Es384 => (
+                include_bytes!("../../tests/fixtures/certs/es384.pem"),
+                include_bytes!("../../tests/fixtures/certs/es384.pub"),
+            ),
+            Es512 => (
+                include_bytes!("../../tests/fixtures/certs/es512.pem"),
+                include_bytes!("../../tests/fixtures/certs/es512.pub"),
+            ),
+            Ps256 => (
+                include_bytes!("../../tests/fixtures/certs/ps256.pem"),
+                include_bytes!("../../tests/fixtures/certs/ps256.pub"),
+            ),
+            Ps384 => (
+                include_bytes!("../../tests/fixtures/certs/ps384.pem"),
+                include_bytes!("../../tests/fixtures/certs/ps384.pub"),
+            ),
+            Ps512 => (
+                include_bytes!("../../tests/fixtures/certs/ps512.pem"),
+                include_bytes!("../../tests/fixtures/certs/ps512.pub"),
+            ),
+            _ => (
+                include_bytes!("../../tests/fixtures/certs/ed25519.pem"),
+                include_bytes!("../../tests/fixtures/certs/ed25519.pub"),
+            ),
+        }
+    }
+
+    /// The DER SubjectPublicKeyInfo of the `index`-th certificate in a PEM chain.
+    fn chain_spki(chain_pem: &[u8], index: usize) -> Vec<u8> {
+        let pem = x509_parser::pem::Pem::iter_from_buffer(chain_pem)
+            .nth(index)
+            .unwrap()
+            .unwrap();
+        let (_, cert) = x509_parser::parse_x509_certificate(&pem.contents).unwrap();
+        cert.tbs_certificate.subject_pki.raw.to_vec()
+    }
+
+    fn fixture_session_key(alg: crate::SigningAlg) -> SessionSigningKey {
+        let (private_key, chain) = fixture_key(alg);
+        SessionSigningKey::from_private_key_pem(private_key, &chain_spki(chain, 0), alg).unwrap()
+    }
+
+    const ALL_SESSION_KEY_ALGS: [crate::SigningAlg; 7] = [
+        crate::SigningAlg::Es256,
+        crate::SigningAlg::Es384,
+        crate::SigningAlg::Es512,
+        crate::SigningAlg::Ps256,
+        crate::SigningAlg::Ps384,
+        crate::SigningAlg::Ps512,
+        crate::SigningAlg::Ed25519,
+    ];
+
+    /// Signs `segment` with `key`, then validates `mutate(signed)` and returns the signed
+    /// segment and its `livevideo.*` codes.
+    fn sign_and_validate_with_key(
+        key: SessionSigningKey,
+        segment: &[u8],
+        mutate: impl FnOnce(&mut Vec<u8>),
+    ) -> (Vec<u8>, Vec<String>) {
+        let signer = make_test_signer();
+        let mut vsi_signer = LiveVideoVsiSigner::from_signing_key(
+            r#"{"assertions": []}"#,
+            &signer,
+            key,
+            b"key-1".to_vec(),
+            1,
+            3600,
+        )
+        .unwrap();
+        vsi_signer.active_manifest_id = Some(TEST_MANIFEST_ID.to_string());
+        let mut signed = vsi_signer.sign_media_segment(segment).unwrap();
+        mutate(&mut signed);
+
+        let ee_cert_der = signer.certs().unwrap().into_iter().next().unwrap();
+        let mut validator = LiveVideoValidator::new();
+        let mut tracker = StatusTracker::default();
+        validator
+            .validate_session_keys(
+                &vsi_signer.build_session_keys_assertion().unwrap(),
+                TEST_MANIFEST_ID,
+                Some(&ee_cert_der),
+                &mut tracker,
+            )
+            .unwrap();
+        let _ = validator.validate_verifiable_segment_info(&signed, &mut tracker);
+        let codes = tracker
+            .logged_items()
+            .iter()
+            .filter_map(|i| i.validation_status.as_deref())
+            .filter(|s| s.starts_with("livevideo"))
+            .map(str::to_string)
+            .collect();
+        (signed, codes)
+    }
+
+    /// Session keys may use any algorithm allowed for claim-signing certificates (Live Media,
+    /// "Session Keys"): each signs a VSI and a signerBinding that validate, with the matching
+    /// COSE `alg` and COSE_Key.
+    #[test]
+    fn every_allowed_session_key_algorithm_signs_and_validates() {
+        for alg in ALL_SESSION_KEY_ALGS {
+            let key = fixture_session_key(alg);
+            assert_eq!(key.alg(), alg);
+            let cose_key = key.cose_key(b"key-1").unwrap();
+            assert_eq!(signing_alg_from_cose_key(&cose_key), Some(alg));
+
+            let (signed, codes) = sign_and_validate_with_key(
+                key,
+                &make_test_media_segment_with_moof(&[1000]),
+                |_| {},
+            );
+            assert!(codes.is_empty(), "{alg:?}: {codes:?}");
+            let sign1 = coset::CoseSign1::from_tagged_slice(
+                &extract_vsi_payload_from_segment(&signed).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(signing_alg_from_sign1(&sign1).unwrap(), alg);
+        }
+    }
+
+    #[test]
+    fn tampering_fails_with_ecdsa_and_rsa_session_keys() {
+        for alg in [crate::SigningAlg::Es256, crate::SigningAlg::Ps256] {
+            let (_, codes) = sign_and_validate_with_key(
+                fixture_session_key(alg),
+                &make_test_media_segment_with_moof(&[1000]),
+                |signed| {
+                    let last = signed.len() - 1;
+                    signed[last] ^= 0xff; // mdat payload
+                },
+            );
+            assert_eq!(codes, ["livevideo.segment.invalid"], "{alg:?}");
+        }
+    }
+
+    /// The public key must fit the algorithm and belong to the private key.
+    #[test]
+    fn session_key_rejects_mismatched_public_key() {
+        use crate::SigningAlg::*;
+        let (es256_private, es256_chain) = fixture_key(Es256);
+        let (_, es384_chain) = fixture_key(Es384);
+        let (_, ps256_chain) = fixture_key(Ps256);
+        // Wrong curve, wrong key type, then the right curve but another key (the issuer's).
+        for public_key in [
+            chain_spki(es384_chain, 0),
+            chain_spki(ps256_chain, 0),
+            chain_spki(es256_chain, 1),
+        ] {
+            assert!(
+                SessionSigningKey::from_private_key_pem(es256_private, &public_key, Es256).is_err()
+            );
+        }
+        // A private key for another algorithm.
+        assert!(SessionSigningKey::from_private_key_pem(
+            es256_private,
+            &chain_spki(es256_chain, 0),
+            Ps256
+        )
+        .is_err());
+    }
+
+    /// Keys added during a session can use another algorithm than the first key.
+    #[test]
+    fn added_session_key_can_use_another_algorithm() {
+        let context = rotation_context();
+        let mut signer = rotation_signer(&context);
+        signer
+            .add_session_key(
+                context.signer().unwrap(),
+                fixture_session_key(crate::SigningAlg::Es256),
+                b"es256".to_vec(),
+                2,
+                3600,
+            )
+            .unwrap();
+        let assertion = signer.build_session_keys_assertion().unwrap();
+        let algs: Vec<_> = assertion
+            .keys
+            .iter()
+            .map(|k| signing_alg_from_cose_key(&k.key))
+            .collect();
+        assert_eq!(
+            algs,
+            [
+                Some(crate::SigningAlg::Ed25519),
+                Some(crate::SigningAlg::Es256)
+            ]
+        );
     }
 
     struct ManifestResolver {

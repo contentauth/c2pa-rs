@@ -425,30 +425,7 @@ impl LiveVideoValidator {
     ) -> std::result::Result<(), String> {
         let key_alg = signing_alg_from_cose_key(&session_key.key)
             .ok_or_else(|| "unsupported key type/curve in session key".to_string())?;
-
-        // RFC 9052 §3: the `alg` field in the protected header must be present and
-        // must match the algorithm implied by the session key.
-        let header_alg = signing_alg_from_sign1(sign1)
-            .map_err(|_| "COSE_Sign1 protected header missing or unrecognised `alg`".to_string())?;
-
-        if header_alg != key_alg {
-            return Err(format!(
-                "COSE_Sign1 `alg` header ({header_alg:?}) does not match session key algorithm ({key_alg:?})"
-            ));
-        }
-
-        // EC (P-256/P-384/P-521) signatures must be in IEEE P1363 r|s format, not DER.
-        // This mirrors the guard in `crypto::cose::verifier::Verifier::verify_signature`;
-        // without it an EC COSE_Sign1 with a DER-encoded signature would silently pass.
-        if matches!(
-            key_alg,
-            crate::SigningAlg::Es256 | crate::SigningAlg::Es384 | crate::SigningAlg::Es512
-        ) && parse_ec_der_sig(&sign1.signature).is_some()
-        {
-            return Err(
-                "EC signature is in DER format; COSE requires IEEE P1363 r|s format".to_string(),
-            );
-        }
+        check_sign1_alg(sign1, key_alg)?;
 
         let public_key_der = cose_key_to_der(&session_key.key)
             .ok_or_else(|| "failed to convert session key to DER".to_string())?;
@@ -509,6 +486,9 @@ impl LiveVideoValidator {
                 tracker,
             );
         };
+        if let Err(e) = check_sign1_alg(&sign1, alg) {
+            return reject_signer_binding(format!("signerBinding: {e}"), tracker);
+        }
 
         let Some(session_public_key_der) = cose_key_to_der(&key.key) else {
             return reject_signer_binding(
@@ -546,6 +526,32 @@ impl LiveVideoValidator {
 
         Ok(true)
     }
+}
+
+/// Checks a session-key COSE_Sign1's protected `alg` against the session key's algorithm
+/// (RFC 9052 §3: it must be present and match), and that an EC signature is in the IEEE P1363
+/// `r|s` form COSE requires, not DER. This mirrors the guard in
+/// `crypto::cose::verifier::Verifier::verify_signature`; without it an EC COSE_Sign1 with a
+/// DER-encoded signature would silently pass.
+fn check_sign1_alg(
+    sign1: &coset::CoseSign1,
+    key_alg: crate::SigningAlg,
+) -> std::result::Result<(), String> {
+    let header_alg = signing_alg_from_sign1(sign1)
+        .map_err(|_| "COSE_Sign1 protected header missing or unrecognised `alg`".to_string())?;
+    if header_alg != key_alg {
+        return Err(format!(
+            "COSE_Sign1 `alg` header ({header_alg:?}) does not match session key algorithm ({key_alg:?})"
+        ));
+    }
+    if matches!(
+        key_alg,
+        crate::SigningAlg::Es256 | crate::SigningAlg::Es384 | crate::SigningAlg::Es512
+    ) && parse_ec_der_sig(&sign1.signature).is_some()
+    {
+        return Err("EC signature is in DER format; COSE requires IEEE P1363 r|s format".into());
+    }
+    Ok(())
 }
 
 /// Records a `livevideo.sessionkey.invalid` failure and returns `Ok(false)`, the shared shape
