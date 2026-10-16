@@ -20,7 +20,8 @@ use super::{
     fail_validation,
     verifiable_segment_info::{
         extract_vsi_emsg, extract_vsi_payload_from_segment, has_vsi_excluded_non_vsi_emsg,
-        parse_vsi, ParsedVsi,
+        parse_vsi, ParsedVsi, VSI_EXCLUSION_VALUE, VSI_LEGACY_EXCLUSION_VALUE,
+        VSI_URI_OFFSET_IN_EMSG,
     },
     vsi_signing::{parse_first_tfdt, parse_prft, parse_segment_duration_ticks},
     LiveVideoValidator,
@@ -295,17 +296,20 @@ impl LiveVideoValidator {
         // `emsg` box specifically (xpath "/emsg" with a `data` sub-field matching the VSI
         // scheme_id_uri) — not just any "/emsg" exclusion, which could also exclude an
         // unrelated (e.g. SCTE-35) emsg box coexisting in the same segment from the hash.
-        let has_vsi_emsg_exclusion = bmff_hash.exclusions().iter().any(|excl| {
-            excl.xpath == "/emsg"
-                && excl.data.as_deref().is_some_and(|data| {
-                    data.iter().any(|d| {
-                        d.offset == super::verifiable_segment_info::VSI_URI_OFFSET_IN_EMSG
-                            && d.value
-                                == super::verifiable_segment_info::VSI_SCHEME_ID_URI.as_bytes()
-                    })
-                })
-        });
-        if !has_vsi_emsg_exclusion {
+        // The value is the NUL-terminated scheme (c2pa-org/specs-core#2542); the earlier
+        // unterminated form is still accepted during the transition.
+        let vsi_exclusion_values: Vec<&[u8]> = bmff_hash
+            .exclusions()
+            .iter()
+            .filter(|excl| excl.xpath == "/emsg")
+            .flat_map(|excl| excl.data.as_deref().unwrap_or_default())
+            .filter(|d| {
+                d.offset == VSI_URI_OFFSET_IN_EMSG
+                    && (d.value == VSI_EXCLUSION_VALUE || d.value == VSI_LEGACY_EXCLUSION_VALUE)
+            })
+            .map(|d| d.value.as_slice())
+            .collect();
+        if vsi_exclusion_values.is_empty() {
             return fail_validation(
                 "segment-info-map bmffHash must contain an exclusion-map for xpath \"/emsg\" \
                  scoped to the VSI scheme_id_uri",
@@ -314,11 +318,14 @@ impl LiveVideoValidator {
             );
         }
 
-        // That exclusion compares only the URI's bytes at offset 12, so it also leaves out of
-        // the hash any `emsg` whose bytes there merely start with the VSI URI: a longer
-        // `scheme_id_uri`, or a version 1 `emsg` laid out to match. Such a box isn't the VSI
-        // `emsg`, so nothing would verify it; fail the segment instead.
-        if has_vsi_excluded_non_vsi_emsg(segment_data) {
+        // An exclusion compares only its value's bytes at offset 12, so it also leaves out of
+        // the hash any other `emsg` whose bytes there match: a version 1 `emsg` laid out to
+        // spell the value, or, with the legacy value, a longer `scheme_id_uri`. Such a box
+        // isn't the VSI `emsg`, so nothing would verify it; fail the segment instead.
+        if vsi_exclusion_values
+            .iter()
+            .any(|value| has_vsi_excluded_non_vsi_emsg(segment_data, value))
+        {
             return fail_validation(
                 "segment has an emsg box that the VSI bmffHash exclusion matches but that is \
                  not a VSI emsg box, so its contents would not be verified",

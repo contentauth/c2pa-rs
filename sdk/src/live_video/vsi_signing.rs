@@ -27,7 +27,7 @@ use ed25519_dalek::{Signer as Ed25519Signer, SigningKey};
 use super::{
     box_walk::{box_payload, find_box, top_level_boxes},
     cose_key::{build_ed25519_cose_key, cose_key_to_der, signing_alg_from_cose_key},
-    verifiable_segment_info::{VSI_SCHEME_ID_URI, VSI_URI_OFFSET_IN_EMSG},
+    verifiable_segment_info::{VSI_EXCLUSION_VALUE, VSI_SCHEME_ID_URI, VSI_URI_OFFSET_IN_EMSG},
 };
 use crate::{
     assertions::{BmffHash, DataMap, ExclusionsMap, SessionKey, SessionKeys},
@@ -262,6 +262,16 @@ impl LiveVideoVsiSigner {
     /// sequence number, a `bmffHash` covering the segment data excluding VSI
     /// `emsg` boxes, and the `manifestId` from the signed init segment per §19.4.
     pub fn sign_media_segment(&mut self, segment_data: &[u8]) -> Result<Vec<u8>> {
+        self.sign_media_segment_with_exclusion(segment_data, VSI_EXCLUSION_VALUE)
+    }
+
+    /// [`Self::sign_media_segment`] with a given `bmffHash` exclusion value; tests use it to
+    /// sign with the legacy unterminated form.
+    fn sign_media_segment_with_exclusion(
+        &mut self,
+        segment_data: &[u8],
+        exclusion_value: &[u8],
+    ) -> Result<Vec<u8>> {
         if self.keys_need_announcement {
             return Err(Error::BadParam(
                 "announce added session keys before signing media segments".into(),
@@ -321,9 +331,10 @@ impl LiveVideoVsiSigner {
         };
 
         let insert_at = vsi_emsg_insertion_point(segment_data)?;
-        let draft_emsg_box = build_emsg(build_segment_bmff_hash_placeholder()?)?;
+        let draft_emsg_box =
+            build_emsg(build_segment_bmff_hash_placeholder_with(exclusion_value)?)?;
         let draft_segment = insert_emsg_box(segment_data, insert_at, &draft_emsg_box)?;
-        let bmff_hash = build_segment_bmff_hash(&draft_segment)?;
+        let bmff_hash = build_segment_bmff_hash_with(&draft_segment, exclusion_value)?;
 
         let emsg_box = build_emsg(bmff_hash)?;
         if draft_emsg_box.len() != emsg_box.len() {
@@ -655,11 +666,17 @@ fn load_manifest_store(signed_data: &[u8], format: &str) -> Result<Vec<u8>> {
 
 // ── BMFF hash helper ─────────────────────────────────────────────────────────
 
+/// The VSI `emsg` exclusion: xpath `/emsg` with the NUL-terminated `scheme_id_uri` at
+/// offset 12 (c2pa-org/specs-core#2542).
 fn vsi_emsg_exclusion() -> ExclusionsMap {
+    vsi_emsg_exclusion_with(VSI_EXCLUSION_VALUE)
+}
+
+fn vsi_emsg_exclusion_with(value: &[u8]) -> ExclusionsMap {
     let mut exclusion = ExclusionsMap::new("/emsg".to_string());
     exclusion.data = Some(vec![DataMap {
         offset: VSI_URI_OFFSET_IN_EMSG,
-        value: VSI_SCHEME_ID_URI.as_bytes().to_vec(),
+        value: value.to_vec(),
     }]);
     exclusion
 }
@@ -667,16 +684,22 @@ fn vsi_emsg_exclusion() -> ExclusionsMap {
 /// A `bmff-hash-map` scoped to exclude the VSI `emsg` box, per §19.4.1. Defaults to
 /// `bmff_version` 3, which per §18.6.2 hashes each included root box as `offset || data`
 /// (8-byte big-endian file offset prefix).
-fn new_vsi_bmff_hash() -> BmffHash {
+fn new_vsi_bmff_hash(exclusion_value: &[u8]) -> BmffHash {
     let mut bmff_hash = BmffHash::new("jumbf manifest", "sha256", None);
-    bmff_hash.add_exclusions(&mut vec![vsi_emsg_exclusion()]);
+    bmff_hash.add_exclusions(&mut vec![vsi_emsg_exclusion_with(exclusion_value)]);
     bmff_hash
 }
 
 /// A same-shape `bmff-hash-map` with a zero-filled placeholder digest, used to size
 /// the draft `emsg` box in [`LiveVideoVsiSigner::sign_media_segment`]'s first pass.
 pub(super) fn build_segment_bmff_hash_placeholder() -> Result<c2pa_cbor::Value> {
-    let mut bmff_hash = new_vsi_bmff_hash();
+    build_segment_bmff_hash_placeholder_with(VSI_EXCLUSION_VALUE)
+}
+
+pub(super) fn build_segment_bmff_hash_placeholder_with(
+    exclusion_value: &[u8],
+) -> Result<c2pa_cbor::Value> {
+    let mut bmff_hash = new_vsi_bmff_hash(exclusion_value);
     bmff_hash.set_hash(vec![0u8; 32]); // sha256 digest size; value is irrelevant, only length matters
     c2pa_cbor::value::to_value(&bmff_hash)
         .map_err(|e| Error::BadParam(format!("failed to serialize placeholder bmffHash: {e}")))
@@ -690,7 +713,16 @@ pub(super) fn build_segment_bmff_hash_placeholder() -> Result<c2pa_cbor::Value> 
 /// position. The hash excludes the VSI `emsg` box itself, identified by its
 /// `scheme_id_uri` field ("urn:c2pa:verifiable-segment-info").
 pub(super) fn build_segment_bmff_hash(full_segment: &[u8]) -> Result<c2pa_cbor::Value> {
-    let mut bmff_hash = new_vsi_bmff_hash();
+    build_segment_bmff_hash_with(full_segment, VSI_EXCLUSION_VALUE)
+}
+
+/// [`build_segment_bmff_hash`] with a given exclusion value; tests use it to produce the
+/// legacy unterminated form.
+pub(super) fn build_segment_bmff_hash_with(
+    full_segment: &[u8],
+    exclusion_value: &[u8],
+) -> Result<c2pa_cbor::Value> {
+    let mut bmff_hash = new_vsi_bmff_hash(exclusion_value);
 
     let mut cursor = std::io::Cursor::new(full_segment);
     bmff_hash
@@ -1076,6 +1108,7 @@ mod tests {
 
     use super::*;
     use crate::live_video::verifiable_segment_info::parse_vsi;
+    use crate::live_video::verifiable_segment_info::VSI_LEGACY_EXCLUSION_VALUE;
     use crate::{
         live_video::{
             verifiable_segment_info::extract_vsi_payload_from_segment, LiveVideoValidator,
@@ -2384,9 +2417,20 @@ mod tests {
 
     /// Signs `segment`, then validates `mutate(signed)` and returns its `livevideo.*` codes.
     fn sign_mutate_and_validate(segment: &[u8], mutate: impl FnOnce(&mut Vec<u8>)) -> Vec<String> {
+        sign_mutate_and_validate_with(segment, VSI_EXCLUSION_VALUE, mutate)
+    }
+
+    /// [`sign_mutate_and_validate`], signing with the given `bmffHash` exclusion value.
+    fn sign_mutate_and_validate_with(
+        segment: &[u8],
+        exclusion_value: &[u8],
+        mutate: impl FnOnce(&mut Vec<u8>),
+    ) -> Vec<String> {
         let signer = make_test_signer();
         let mut vsi_signer = make_vsi_signer_with_manifest_id(&signer, b"key-1", 1);
-        let mut signed = vsi_signer.sign_media_segment(segment).unwrap();
+        let mut signed = vsi_signer
+            .sign_media_segment_with_exclusion(segment, exclusion_value)
+            .unwrap();
         mutate(&mut signed);
 
         let session_keys = vsi_signer.build_session_keys_assertion().unwrap();
@@ -2459,10 +2503,10 @@ mod tests {
         assert!(codes.is_empty(), "unexpected failures: {codes:?}");
     }
 
-    /// The `bmffHash` exclusion matches `emsg` boxes whose bytes at offset 12 *start with*
-    /// `urn:c2pa:verifiable-segment-info`, so an `emsg` with a longer scheme (or a
-    /// version 1 `emsg` laid out to match) would be left out of the hash without being the
-    /// VSI `emsg`. Such a box must fail validation rather than ride along unhashed.
+    /// An `emsg` that the `bmffHash` exclusion matches but that isn't the VSI `emsg` (a
+    /// longer scheme under the legacy prefix match, or a version 1 `emsg` laid out to match)
+    /// would be left out of the hash. Such a box must fail validation rather than ride along
+    /// unhashed.
     #[test]
     fn emsg_matching_the_vsi_exclusion_but_not_vsi_fails() {
         let lookalike_v0 = make_emsg_v0(
@@ -2484,6 +2528,63 @@ mod tests {
         let codes = sign_mutate_and_validate(&segment_with_scte35(), |signed| {
             signed.extend_from_slice(&lookalike_v1);
         });
+        assert_eq!(codes, ["livevideo.segment.invalid"]);
+    }
+
+    /// The signer emits the NUL-terminated exclusion value (c2pa-org/specs-core#2542).
+    #[test]
+    fn signer_emits_nul_terminated_exclusion() {
+        let signer = make_test_signer();
+        let mut vsi_signer = make_vsi_signer_with_manifest_id(&signer, b"key-1", 1);
+        let signed = vsi_signer
+            .sign_media_segment(&make_test_media_segment_with_moof(&[1000]))
+            .unwrap();
+        let vsi = parse_vsi(&extract_vsi_payload_from_segment(&signed).unwrap()).unwrap();
+        let bmff_hash: BmffHash =
+            c2pa_cbor::value::from_value(vsi.segment_info_map.bmff_hash).unwrap();
+        let values: Vec<_> = bmff_hash
+            .exclusions()
+            .iter()
+            .flat_map(|e| e.data.iter().flatten())
+            .map(|d| (d.offset, d.value.as_slice()))
+            .collect();
+        assert_eq!(values, [(VSI_URI_OFFSET_IN_EMSG, VSI_EXCLUSION_VALUE)]);
+    }
+
+    /// Segments signed with the earlier unterminated exclusion value still validate during
+    /// the transition, and tampering with them is still detected.
+    #[test]
+    fn legacy_exclusion_value_still_validates() {
+        let segment = segment_with_scte35();
+        let codes = sign_mutate_and_validate_with(&segment, VSI_LEGACY_EXCLUSION_VALUE, |_| {});
+        assert!(codes.is_empty(), "unexpected failures: {codes:?}");
+
+        let codes = sign_mutate_and_validate_with(&segment, VSI_LEGACY_EXCLUSION_VALUE, |signed| {
+            let scte35 = box_range(signed, b"emsg", 1).unwrap();
+            signed[scte35.end - 1] ^= 0xff;
+        });
+        assert_eq!(codes, ["livevideo.segment.invalid"]);
+    }
+
+    /// An `emsg` whose scheme only starts with the VSI URI is hashed under the
+    /// NUL-terminated exclusion, so a segment carrying one validates; under the legacy
+    /// prefix match it would be excluded without being VSI, and is rejected.
+    #[test]
+    fn longer_scheme_emsg_is_hashed_with_nul_exclusion() {
+        let segment = [
+            make_emsg_v0("urn:c2pa:verifiable-segment-info-extra", "fseg", b"data"),
+            make_test_media_segment_with_moof(&[1000]),
+        ]
+        .concat();
+        assert!(sign_mutate_and_validate(&segment, |_| {}).is_empty());
+
+        let codes = sign_mutate_and_validate(&segment, |signed| {
+            let extra = box_range(signed, b"emsg", 1).unwrap();
+            signed[extra.end - 1] ^= 0xff;
+        });
+        assert_eq!(codes, ["livevideo.segment.invalid"]);
+
+        let codes = sign_mutate_and_validate_with(&segment, VSI_LEGACY_EXCLUSION_VALUE, |_| {});
         assert_eq!(codes, ["livevideo.segment.invalid"]);
     }
 
@@ -2769,7 +2870,7 @@ mod tests {
                 &vsi.build_session_keys_assertion().unwrap(),
             )
             .unwrap();
-        let mut hash = new_vsi_bmff_hash();
+        let mut hash = new_vsi_bmff_hash(VSI_EXCLUSION_VALUE);
         hash.set_hash(vec![0; 32]);
         builder.add_assertion("c2pa.hash.bmff.v3", &hash).unwrap();
         builder

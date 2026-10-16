@@ -32,6 +32,16 @@ const VSI_VALUE_FSEG: &str = "fseg";
 /// box (8-byte BMFF header + 4-byte FullBox version/flags header).
 pub(super) const VSI_URI_OFFSET_IN_EMSG: u64 = 12;
 
+/// The `value` of the VSI `bmffHash` exclusion's data match: the `scheme_id_uri` bytes
+/// including its NUL terminator (c2pa-org/specs-core#2542). Matching the terminator means
+/// the exclusion applies only to `emsg` boxes whose scheme is exactly the VSI URI.
+pub(super) const VSI_EXCLUSION_VALUE: &[u8] = b"urn:c2pa:verifiable-segment-info\0";
+
+/// The earlier exclusion value, without the NUL terminator, still accepted on validation
+/// during the transition. As a prefix it also matches longer schemes that start with the
+/// VSI URI, which the lookalike check ([`has_vsi_excluded_non_vsi_emsg`]) rejects.
+pub(super) const VSI_LEGACY_EXCLUSION_VALUE: &[u8] = VSI_SCHEME_ID_URI.as_bytes();
+
 /// CBOR `segment-info-map` payload of the COSE_Sign1 in a VSI `emsg` box ([§19.4]).
 ///
 /// [§19.4]: https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#verifiable_segment_info
@@ -104,14 +114,14 @@ pub(crate) fn parse_segment_info_map(cose_sign1_bytes: &[u8]) -> Result<SegmentI
     parse_vsi(cose_sign1_bytes).map(|p| p.segment_info_map)
 }
 
-/// Returns `true` if `segment_data` has a top-level `emsg` box that the VSI `bmffHash`
-/// exclusion (§19.4.1: xpath `/emsg`, the VSI `scheme_id_uri` bytes at offset 12) matches
-/// but that isn't a VSI `emsg` box.
-pub(super) fn has_vsi_excluded_non_vsi_emsg(segment_data: &[u8]) -> bool {
+/// Returns `true` if `segment_data` has a top-level `emsg` box that a VSI `bmffHash`
+/// exclusion (§19.4.1: xpath `/emsg`, `exclusion_value` at offset 12) matches but that
+/// isn't a VSI `emsg` box: for example a version 1 `emsg` whose fields spell out the value
+/// at that offset, or, with the legacy value, a longer `scheme_id_uri`.
+pub(super) fn has_vsi_excluded_non_vsi_emsg(segment_data: &[u8], exclusion_value: &[u8]) -> bool {
     let uri_at = VSI_URI_OFFSET_IN_EMSG as usize;
-    let uri = VSI_SCHEME_ID_URI.as_bytes();
     find_emsg_boxes(segment_data).iter().any(|emsg_box| {
-        emsg_box.get(uri_at..uri_at + uri.len()) == Some(uri)
+        emsg_box.get(uri_at..uri_at + exclusion_value.len()) == Some(exclusion_value)
             && extract_vsi_from_emsg_box(emsg_box).is_none()
     })
 }
@@ -315,20 +325,45 @@ mod tests {
     fn only_lookalike_emsg_boxes_count_as_excluded_but_not_vsi() {
         let vsi = make_emsg_v0(VSI_SCHEME_ID_URI, VSI_VALUE_FSEG, b"cose");
         let scte35 = make_emsg_v0("urn:scte:scte35:2013:bin", "1", b"\xfc\x30");
-        assert!(!has_vsi_excluded_non_vsi_emsg(
-            &[vsi.clone(), scte35].concat()
-        ));
-
         let longer_scheme = make_emsg_v0(
             "urn:c2pa:verifiable-segment-info-extra",
             VSI_VALUE_FSEG,
             b"x",
         );
-        assert!(has_vsi_excluded_non_vsi_emsg(
-            &[vsi.clone(), longer_scheme].concat()
-        ));
-
         let wrong_value = make_emsg_v0(VSI_SCHEME_ID_URI, "other", b"x");
-        assert!(has_vsi_excluded_non_vsi_emsg(&[vsi, wrong_value].concat()));
+
+        for value in [VSI_EXCLUSION_VALUE, VSI_LEGACY_EXCLUSION_VALUE] {
+            assert!(!has_vsi_excluded_non_vsi_emsg(
+                &[vsi.clone(), scte35.clone()].concat(),
+                value
+            ));
+            // The exact scheme with another `value` is excluded by either form, so it has to
+            // be rejected (c2pa-org/specs-core#2619).
+            assert!(has_vsi_excluded_non_vsi_emsg(
+                &[vsi.clone(), wrong_value.clone()].concat(),
+                value
+            ));
+        }
+
+        // Only the legacy prefix match excludes a longer scheme; with the NUL terminator it
+        // stays in the hash.
+        let with_longer = [vsi, longer_scheme].concat();
+        assert!(has_vsi_excluded_non_vsi_emsg(
+            &with_longer,
+            VSI_LEGACY_EXCLUSION_VALUE
+        ));
+        assert!(!has_vsi_excluded_non_vsi_emsg(
+            &with_longer,
+            VSI_EXCLUSION_VALUE
+        ));
+    }
+
+    #[test]
+    fn exclusion_value_is_nul_terminated_scheme() {
+        assert_eq!(
+            VSI_EXCLUSION_VALUE,
+            [VSI_SCHEME_ID_URI.as_bytes(), b"\0"].concat().as_slice()
+        );
+        assert_eq!(VSI_LEGACY_EXCLUSION_VALUE, VSI_SCHEME_ID_URI.as_bytes());
     }
 }
