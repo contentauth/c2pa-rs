@@ -1008,6 +1008,87 @@ fn test_builder_unsupported_format_remote_url_rejected() -> Result<()> {
     Ok(())
 }
 
+/// A version in an added assertion's label (`.v2`, `.v3`) is part of the label and must be kept.
+#[test]
+fn test_builder_keeps_versioned_labels() -> Result<()> {
+    let context = Context::new().with_settings(test_settings())?.into_shared();
+    let mut builder = Builder::from_shared_context(&context);
+    builder.set_intent(BuilderIntent::Edit);
+    builder.set_no_embed(true);
+    builder.add_assertion("com.example.cbor.v3", &serde_json::json!({"a": 1}))?;
+    builder.add_assertion_json("com.example.json.v2", &serde_json::json!({"b": 2}))?;
+    builder.add_assertion("com.example.unversioned", &serde_json::json!({"c": 3}))?;
+
+    let format = "application/octet-stream";
+    let mut source = Cursor::new(include_bytes!("fixtures/prompt.txt"));
+    let mut dest = Cursor::new(Vec::new());
+    let manifest_data = builder.save_to_stream(format, &mut source, &mut dest)?;
+
+    source.rewind()?;
+    let reader = Reader::from_shared_context(&context).with_manifest_data_and_stream(
+        &manifest_data,
+        format,
+        &mut source,
+    )?;
+    assert_eq!(reader.validation_state(), ValidationState::Trusted);
+    let labels: Vec<&str> = reader
+        .active_manifest()
+        .unwrap()
+        .assertions()
+        .iter()
+        .map(|a| a.label())
+        .collect();
+    for label in [
+        "com.example.cbor.v3",
+        "com.example.json.v2",
+        "com.example.unversioned",
+    ] {
+        assert!(labels.contains(&label), "{label} missing from {labels:?}");
+    }
+    Ok(())
+}
+
+/// An asset type assertion describes what an asset is, for example a model stored with a
+/// sidecar manifest because its format has no embedding method.
+#[test]
+fn test_builder_asset_type_v2() -> Result<()> {
+    use c2pa::assertions::{AssetType, AssetTypeEnum, AssetTypes};
+
+    let context = Context::new().with_settings(test_settings())?.into_shared();
+    let mut builder = Builder::from_shared_context(&context);
+    builder.set_intent(BuilderIntent::Edit);
+    builder.set_no_embed(true);
+
+    let asset_types = AssetTypes::new(AssetType::new(
+        AssetTypeEnum::ModelPyTorch,
+        Some("2.5.0".to_string()),
+    ))
+    .add_type(AssetType::new(AssetTypeEnum::FormatPickle, None))
+    .set_format("application/octet-stream");
+    builder.add_assertion("c2pa.asset-type.v2", &asset_types)?;
+
+    let format = "application/octet-stream";
+    let mut source = Cursor::new(include_bytes!("fixtures/prompt.txt"));
+    let mut dest = Cursor::new(Vec::new());
+    let manifest_data = builder.save_to_stream(format, &mut source, &mut dest)?;
+
+    source.rewind()?;
+    let reader = Reader::from_shared_context(&context).with_manifest_data_and_stream(
+        &manifest_data,
+        format,
+        &mut source,
+    )?;
+    assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+    let read_back: AssetTypes = reader
+        .active_manifest()
+        .unwrap()
+        .find_assertion("c2pa.asset-type.v2")?;
+    assert_eq!(read_back, asset_types);
+    assert_eq!(read_back.format(), Some("application/octet-stream"));
+    Ok(())
+}
+
 #[test]
 fn test_builder_compressed_manifests() -> Result<()> {
     let mut settings = test_settings();
