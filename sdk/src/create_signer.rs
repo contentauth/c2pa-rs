@@ -192,15 +192,16 @@ mod tests {
     }
 
     /// A credential holder that records the `signer_payload` it was asked to
-    /// sign and returns its CBOR serialization as the "signature".
+    /// sign and returns its CBOR serialization as the "signature". Its
+    /// runtime-owned `sig_type` is returned as a borrow.
     struct RecordingCredentialHolder {
-        sig_type: &'static str,
+        sig_type: String,
         seen: std::sync::Mutex<Vec<crate::identity::SignerPayload>>,
     }
 
     impl crate::identity::builder::CredentialHolder for RecordingCredentialHolder {
-        fn sig_type(&self) -> &'static str {
-            self.sig_type
+        fn sig_type(&self) -> &str {
+            &self.sig_type
         }
 
         fn reserve_size(&self) -> usize {
@@ -251,12 +252,12 @@ mod tests {
         let x509 = super::from_x509_identity(c2pa_signer, identity_signer, &["c2pa.actions"], &[]);
 
         let holder = std::sync::Arc::new(RecordingCredentialHolder {
-            sig_type: "INVALID.identity.recording_credential",
+            sig_type: String::from("INVALID.identity.recording_credential"),
             seen: std::sync::Mutex::new(vec![]),
         });
         struct Shared(std::sync::Arc<RecordingCredentialHolder>);
         impl crate::identity::builder::CredentialHolder for Shared {
-            fn sig_type(&self) -> &'static str {
+            fn sig_type(&self) -> &str {
                 self.0.sig_type()
             }
 
