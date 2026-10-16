@@ -642,16 +642,38 @@ impl Manifest {
 
                     let uri = to_assertion_uri(manifest_label, label);
                     validation_log.push_current_uri(&uri);
-                    let identity_assertion: IdentityAssertion = ma.to_assertion()?;
-                    let value: Option<serde_json::Value> = if _sync {
-                        identity_assertion
-                            .validate_partial_claim(&partial_claim, validation_log, context)
-                            .ok()
-                    } else {
-                        identity_assertion
-                            .validate_partial_claim_async(&partial_claim, validation_log, context)
-                            .await
-                            .ok()
+
+                    // An identity assertion that doesn't match the CDDL is reported
+                    // as `cawg.identity.cbor.invalid` (CAWG Identity 1.3 §7.1 step 1)
+                    // rather than failing to load the whole manifest.
+                    let value: Option<serde_json::Value> = match ma
+                        .to_assertion::<IdentityAssertion>()
+                    {
+                        Ok(identity_assertion) => {
+                            if _sync {
+                                identity_assertion
+                                    .validate_partial_claim(&partial_claim, validation_log, context)
+                                    .ok()
+                            } else {
+                                identity_assertion
+                                    .validate_partial_claim_async(
+                                        &partial_claim,
+                                        validation_log,
+                                        context,
+                                    )
+                                    .await
+                                    .ok()
+                            }
+                        }
+                        Err(err) => {
+                            crate::log_item!(uri.clone(), "invalid CBOR", "Manifest::from_store")
+                                .validation_status("cawg.identity.cbor.invalid")
+                                .failure_no_throw(
+                                    validation_log,
+                                    Error::AssertionSpecificError(err.to_string()),
+                                );
+                            None
+                        }
                     };
                     if let Some(v) = value {
                         //debug!("cawg.identity validation returned: {v}");
