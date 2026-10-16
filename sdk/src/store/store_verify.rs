@@ -26,7 +26,9 @@ use crate::{
     claim::{Claim, ClaimAssetData},
     context::{Context, ProgressPhase},
     crypto::{
-        asn1::rfc3161::TstInfo, cose::cert_chain_from_sign1, ocsp::OcspResponse,
+        asn1::rfc3161::TstInfo,
+        cose::{cert_chain_from_sign1, CertificateTrustPolicy},
+        ocsp::OcspResponse,
         time_stamp::verify_time_stamp,
     },
     error::{Error, Result},
@@ -55,6 +57,24 @@ pub(crate) struct StoreValidationInfo<'a> {
 }
 
 impl Store {
+    // Returns the timestamp info only if the token validates for the claim's signature.
+    pub(crate) fn verified_timestamp_for_claim(
+        claim: &Claim,
+        time_stamp_token: &[u8],
+        ctp: &CertificateTrustPolicy,
+    ) -> Option<TstInfo> {
+        let sign1 = claim.cose_sign1().ok()?;
+        verify_time_stamp(
+            time_stamp_token,
+            &sign1.signature,
+            ctp,
+            &mut StatusTracker::default(),
+            // no trust checks for legacy timestamps
+            claim.version() != 1,
+        )
+        .ok()
+    }
+
     // recursively walk the ingredients and validate
     #[async_generic]
     pub(super) fn ingredient_checks(
@@ -424,19 +444,11 @@ impl Store {
                 // save the valid timestamps stored in the StoreValidationInfo
                 // we only use valid timestamps, otherwise just ignore
                 for (referenced_claim, time_stamp_token) in timestamp_assertion.as_ref() {
-                    let mut tmp_log = StatusTracker::default();
                     if let Some(rc) = svi.manifest_map.get(referenced_claim) {
-                        if let Ok(sign1) = rc.cose_sign1() {
-                            if let Ok(tst_info) = verify_time_stamp(
-                                time_stamp_token,
-                                &sign1.signature,
-                                &self.ctp,
-                                &mut tmp_log,
-                                // no trust checks for leagacy timestamps
-                                rc.version() != 1,
-                            ) {
-                                svi.timestamps.insert(rc.label().to_owned(), tst_info);
-                            }
+                        if let Some(tst_info) =
+                            Self::verified_timestamp_for_claim(rc, time_stamp_token, &self.ctp)
+                        {
+                            svi.timestamps.insert(rc.label().to_owned(), tst_info);
                         }
                     }
                 }
