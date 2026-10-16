@@ -36,6 +36,27 @@ jobs:
         with:
           toolchain: stable
 
+      # Published 0.91.2 requires yanked zip 8.6.0. Supply the unchanged archive
+      # to the baseline's resolver; the PR's zip 9.x requirement is unaffected.
+      # Remove once the published baseline no longer requires zip 8.6.0.
+      - name: Make yanked baseline dependency available
+        shell: bash
+        run: |
+          set -euo pipefail
+          vendor_dir="$RUNNER_TEMP/semver-baseline-deps"
+          mkdir -p "$vendor_dir"
+          curl --fail --location --retry 3 \
+            https://static.crates.io/crates/zip/zip-8.6.0.crate \
+            --output "$vendor_dir/zip-8.6.0.crate"
+          echo "2d04a6b5381502aa6087c94c669499eb1602eb9c5e8198e534de571f7154809b  $vendor_dir/zip-8.6.0.crate" \
+            | sha256sum -c -
+          tar -xzf "$vendor_dir/zip-8.6.0.crate" -C "$vendor_dir"
+          mkdir -p .cargo
+          cat >> .cargo/config.toml <<EOF
+          [patch.crates-io]
+          zip = { path = "$vendor_dir/zip-8.6.0" }
+          EOF
+
       - name: Run cargo-semver-checks
         uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2
         with:
