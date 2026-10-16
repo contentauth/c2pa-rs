@@ -9,6 +9,10 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+### Fixed
+
+* Verify single-file fragmented BMFF assets against the Merkle maps named by their UUID boxes rather than unrelated rendition maps.
+
 ## [0.89.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.89.2...c2pa-v0.89.3)
 _13 July 2026_
 

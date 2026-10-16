@@ -405,6 +405,47 @@ pub struct BmffHash {
     bmff_version: usize,
 }
 
+/// Select the tree named by a single-file fragmented asset's Merkle UUID boxes.
+/// The supported fragmented verification path handles one track/tree per asset,
+/// not arbitrary multiplexed fMP4. Non-fragmented layouts can legitimately name
+/// several trees (for example, one per `mdat`) and must retain every map.
+fn select_fragment_merkle_maps<'a>(
+    mm_vec: &'a [MerkleMap],
+    bmff_merkle: &[BmffMerkleMap],
+    is_fragmented: bool,
+) -> crate::Result<Vec<&'a MerkleMap>> {
+    if !is_fragmented {
+        return Ok(mm_vec.iter().collect());
+    }
+
+    let Some(first) = bmff_merkle.first() else {
+        return Ok(mm_vec.iter().collect());
+    };
+
+    if let Some(bad) = bmff_merkle
+        .iter()
+        .find(|b| b.unique_id != first.unique_id || b.local_id != first.local_id)
+    {
+        return Err(Error::HashMismatch(format!(
+            "fragmented asset carries Merkle boxes for more than one tree: uniqueId {}/localId {} and uniqueId {}/localId {}",
+            first.unique_id, first.local_id, bad.unique_id, bad.local_id
+        )));
+    }
+
+    let matched: Vec<&MerkleMap> = mm_vec
+        .iter()
+        .filter(|mm| mm.unique_id == first.unique_id && mm.local_id == first.local_id)
+        .collect();
+
+    if matched.is_empty() {
+        return Err(Error::HashMismatch(format!(
+            "no MerkleMap for this asset (uniqueId {}, localId {})",
+            first.unique_id, first.local_id
+        )));
+    }
+    Ok(matched)
+}
+
 impl BmffHash {
     pub const LABEL: &'static str = labels::BMFF_HASH;
 
@@ -1387,8 +1428,11 @@ impl BmffHash {
             let first_moof = box_infos.iter().find(|b| b.path == "moof");
             let is_fragmented = first_moof.is_some();
 
+            // Keep mm_vec intact for the non-fragmented paths below.
+            let selected = select_fragment_merkle_maps(mm_vec, bmff_merkle, is_fragmented)?;
+
             // check initialization segments (must do here in separate loop since MP4 will consume the reader)
-            for mm in mm_vec {
+            for mm in &selected {
                 let alg = match &mm.alg {
                     Some(a) => a,
                     None => self
@@ -1422,7 +1466,7 @@ impl BmffHash {
 
             // is this a fragmented BMFF
             if is_fragmented {
-                for mm in mm_vec {
+                for mm in &selected {
                     let alg = match &mm.alg {
                         Some(a) => a,
                         None => self
@@ -3344,6 +3388,226 @@ mod bmff_hash_tests {
     fn tm_box(fourcc: &[u8; 4], payload: &[u8]) -> Vec<u8> {
         let s = (8 + payload.len()) as u32;
         [&s.to_be_bytes()[..], fourcc.as_slice(), payload].concat()
+    }
+
+    /// Minimal parsed BMFF structure, not a playable video. Hashes are computed
+    /// directly over each top-level box and its V2/V3 offset, without using the
+    /// fragmented writer or the verifier's range-selection logic.
+    fn fragmented_merkle_asset(ids: [(usize, usize); 2]) -> (Vec<u8>, MerkleMap) {
+        use crate::asset_handlers::bmff_io::{write_c2pa_box, MERKLE};
+
+        let segments = [
+            vec![
+                tm_box(b"ftyp", b"isom\x00\x00\x00\x00isom"),
+                tm_box(b"moov", &[]),
+            ],
+            vec![tm_box(b"moof", &[]), tm_box(b"mdat", b"first fragment")],
+            vec![tm_box(b"moof", &[]), tm_box(b"mdat", b"second fragment")],
+        ];
+        let mut asset = Vec::new();
+        let mut map = MerkleMap {
+            unique_id: ids[0].0,
+            local_id: ids[0].1,
+            count: 2,
+            ..minimal_merkle_map()
+        };
+        for (index, boxes) in segments.into_iter().enumerate() {
+            let mut hash = Sha256::new();
+            for bytes in boxes {
+                hash.update((asset.len() as u64).to_be_bytes());
+                hash.update(&bytes);
+                asset.extend_from_slice(&bytes);
+            }
+            let hash = ByteBuf::from(hash.finalize().to_vec());
+            if index == 0 {
+                map.init_hash = Some(hash);
+            } else {
+                map.hashes.0.push(hash);
+                let (unique_id, local_id) = ids[index - 1];
+                let merkle_box = BmffMerkleMap {
+                    unique_id,
+                    local_id,
+                    location: index - 1,
+                    hashes: None,
+                };
+                write_c2pa_box(
+                    &mut asset,
+                    &[],
+                    MERKLE,
+                    &c2pa_cbor::to_vec(&merkle_box).unwrap(),
+                    0,
+                )
+                .unwrap();
+            }
+        }
+        (asset, map)
+    }
+
+    #[test]
+    fn fragmented_merkle_verifies_only_named_map() {
+        // Exercise both halves of the selection key, with equal fragment
+        // counts as well as differing counts. Each loop must ignore siblings.
+        for sibling_ids in [(1, 1), (2, 7)] {
+            for fault in ["init", "count", "fragment"] {
+                let (asset, selected) = fragmented_merkle_asset([(2, 1); 2]);
+                let mut sibling = MerkleMap {
+                    unique_id: sibling_ids.0,
+                    local_id: sibling_ids.1,
+                    count: selected.count,
+                    init_hash: selected.init_hash.clone(),
+                    hashes: selected.hashes.clone(),
+                    ..minimal_merkle_map()
+                };
+                let expected_error = match fault {
+                    "init" => {
+                        sibling.init_hash = Some(ByteBuf::from(vec![0; 32]));
+                        "BMFF file level hash mismatch"
+                    }
+                    "count" => {
+                        sibling.count += 1;
+                        "Incorrect number of fragments hashes"
+                    }
+                    _ => {
+                        sibling.hashes.0[0] = ByteBuf::from(vec![0; 32]);
+                        "Fragment not valid"
+                    }
+                };
+                let mut assertion = tm_assertion(Vec::new(), 1);
+                assertion.set_merkle(vec![sibling, selected]);
+                for _ in 0..2 {
+                    let result = assertion.verify_stream_hash(&mut Cursor::new(&asset), None);
+                    assert!(
+                        result.is_ok(),
+                        "unrelated {fault} map {sibling_ids:?}: {result:?}"
+                    );
+                    assertion.merkle.as_mut().unwrap().reverse();
+                }
+
+                // Swap the keys: the same invalid sibling is now the named
+                // map and must fail despite a valid unrelated map remaining.
+                let maps = assertion.merkle.as_mut().unwrap();
+                maps[0].unique_id = 2;
+                maps[0].local_id = 1;
+                maps[1].unique_id = sibling_ids.0;
+                maps[1].local_id = sibling_ids.1;
+                for _ in 0..2 {
+                    let err = assertion
+                        .verify_stream_hash(&mut Cursor::new(&asset), None)
+                        .unwrap_err();
+                    assert!(
+                        matches!(err, Error::HashMismatch(ref m) if m == expected_error),
+                        "named {fault} map {sibling_ids:?}: {err}"
+                    );
+                    assertion.merkle.as_mut().unwrap().reverse();
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fragmented_merkle_single_map_preserves_ids() {
+        // Selection uses the stored IDs unchanged, including zero.
+        for ids in [(0, 1), (1, 1)] {
+            let (asset, map) = fragmented_merkle_asset([ids; 2]);
+            let mut assertion = tm_assertion(Vec::new(), 1);
+            assertion.set_merkle(vec![map]);
+            assertion
+                .verify_stream_hash(&mut Cursor::new(&asset), None)
+                .unwrap();
+            if ids.0 == 0 {
+                assertion.merkle.as_mut().unwrap()[0].unique_id = 1;
+                let err = assertion
+                    .verify_stream_hash(&mut Cursor::new(&asset), None)
+                    .unwrap_err();
+                assert!(
+                    matches!(err, Error::HashMismatch(ref m) if m.contains("no MerkleMap for this asset")),
+                    "{err}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fragmented_merkle_unknown_ids_rejected() {
+        for ids in [(7, 1), (2, 7)] {
+            let (asset, mut map) = fragmented_merkle_asset([ids; 2]);
+            map.unique_id = 2;
+            map.local_id = 1;
+            let mut assertion = tm_assertion(Vec::new(), 1);
+            assertion.set_merkle(vec![map]);
+            let err = assertion
+                .verify_stream_hash(&mut Cursor::new(asset), None)
+                .unwrap_err();
+            assert!(
+                matches!(err, Error::HashMismatch(ref m) if m.contains("no MerkleMap for this asset")),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn fragmented_merkle_disagreeing_ids_rejected() {
+        // The supported single-tree path rejects disagreement on either ID.
+        for ids in [(7, 1), (2, 7)] {
+            let (asset, map) = fragmented_merkle_asset([(2, 1), ids]);
+            let mut assertion = tm_assertion(Vec::new(), 1);
+            assertion.set_merkle(vec![map]);
+            let err = assertion
+                .verify_stream_hash(&mut Cursor::new(asset), None)
+                .unwrap_err();
+            assert!(
+                matches!(err, Error::HashMismatch(ref m) if m.contains("more than one tree")),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn fragment_selection_without_uuid_boxes_keeps_all_maps() {
+        // No boxes means no selection key, not that fragmented verification
+        // will succeed: its existing fragment/box count check still applies.
+        let maps = vec![minimal_merkle_map(), minimal_merkle_map()];
+        assert_eq!(
+            select_fragment_merkle_maps(&maps, &[], true).unwrap(),
+            maps.iter().collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_multi_mdat_asset_is_not_subject_to_selection() {
+        let mut asset = tm_box(b"ftyp", b"isom\x00\x00\x00\x00");
+        // Identical payloads isolate map selection from mdat range ordering.
+        for _ in 0..2 {
+            asset.extend_from_slice(&tm_box(b"mdat", &[0xab; 4096]));
+        }
+        let mut assertion = BmffHash::new("multi-mdat", "sha256", None);
+        assertion
+            .add_merkle_map_for_mdats(&mut Cursor::new(&asset), 1, 5)
+            .unwrap();
+        let maps = assertion.merkle().unwrap();
+        assert_eq!(maps.len(), 2);
+        assert_ne!(maps[0].local_id, maps[1].local_id);
+
+        let uuid_boxes = assertion.merkle_uuid_boxes().unwrap();
+        let mut signed = Vec::new();
+        crate::utils::io_utils::insert_data_at(
+            &mut Cursor::new(asset),
+            &mut signed,
+            uuid_boxes.insertion_point,
+            uuid_boxes.bytes,
+        )
+        .unwrap();
+        let mut reader = Cursor::new(signed);
+        let boxes = read_bmff_c2pa_boxes(&mut reader).unwrap();
+        assert!(boxes
+            .bmff_merkle
+            .iter()
+            .any(|b| b.local_id == maps[0].local_id));
+        assert!(boxes
+            .bmff_merkle
+            .iter()
+            .any(|b| b.local_id == maps[1].local_id));
+        assertion.verify_stream_hash(&mut reader, None).unwrap();
     }
 
     fn tm_fullbox(fourcc: &[u8; 4], payload: &[u8]) -> Vec<u8> {
