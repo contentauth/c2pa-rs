@@ -33,10 +33,12 @@ pub trait CredentialHolder {
     /// Returns the designated `sig_type` value for this kind of credential.
     fn sig_type(&self) -> &'static str;
 
-    /// Returns the maximum expected size in bytes of the `signature`
-    /// field for the identity assertion which will be subsequently
-    /// returned by the [`sign`] function. Signing will fail if the
-    /// subsequent signature is larger than this number of bytes.
+    /// Returns the reserved size of the complete encoded identity assertion,
+    /// including signer payload, signature, and padding. The signature alone
+    /// cannot use this entire budget. Use
+    /// [`IdentityAssertionBuilder::signature_capacity`](super::IdentityAssertionBuilder::signature_capacity)
+    /// with the actual signer payload to calculate its available capacity.
+    /// Signing fails if the signer payload and signature do not fit.
     ///
     /// [`sign`]: Self::sign
     /// [`Error::BadParam`]: crate::Error::BadParam
@@ -48,7 +50,7 @@ pub trait CredentialHolder {
     /// If successful, returns the exact binary content to be placed in
     /// the `signature` field for this identity assertion.
     ///
-    /// The signature MUST NOT be larger than the size previously stated
+    /// The signature and assertion wrapper MUST fit the budget previously stated
     /// by the [`reserve_size`] function.
     ///
     /// [`reserve_size`]: Self::reserve_size
@@ -69,10 +71,12 @@ pub trait AsyncCredentialHolder: MaybeSync + MaybeSend {
     /// Returns the designated `sig_type` value for this kind of credential.
     fn sig_type(&self) -> &'static str;
 
-    /// Returns the maximum expected size in bytes of the `signature`
-    /// field for the identity assertion which will be subsequently
-    /// returned by the [`sign`] function. Signing will fail if the
-    /// subsequent signature is larger than this number of bytes.
+    /// Returns the reserved size of the complete encoded identity assertion,
+    /// including signer payload, signature, and padding. The signature alone
+    /// cannot use this entire budget. Use
+    /// [`IdentityAssertionBuilder::signature_capacity`](super::IdentityAssertionBuilder::signature_capacity)
+    /// with the actual signer payload to calculate its available capacity.
+    /// Signing fails if the signer payload and signature do not fit.
     ///
     /// [`sign`]: Self::sign
     /// [`Error::BadParam`]: crate::Error::BadParam
@@ -84,7 +88,7 @@ pub trait AsyncCredentialHolder: MaybeSync + MaybeSend {
     /// If successful, returns the exact binary content to be placed in
     /// the `signature` field for this identity assertion.
     ///
-    /// The signature MUST NOT be larger than the size previously stated
+    /// The signature and assertion wrapper MUST fit the budget previously stated
     /// by the [`reserve_size`] function.
     ///
     /// [`reserve_size`]: Self::reserve_size
