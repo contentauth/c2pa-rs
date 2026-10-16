@@ -9,6 +9,21 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.91.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.91.2...c2pa-v0.91.3)
+_16 October 2026_
+
+This is an important fix as it resolves a dependency on a now-yanked version of the `zip` crate.
+
+### Fixed
+
+* Update zip to 9.0.4 (backport #2876) ([#2877] (https://github.com/contentauth/c2pa-rs/pull/2877))
+* Validate ed25519 certs have no alg params (backport #2785) ([#2873](https://github.com/contentauth/c2pa-rs/pull/2873))
+* Fix namespacing on SVG root element support (backport #2801) ([#2861](https://github.com/contentauth/c2pa-rs/pull/2861))
+
+### Documented
+
+* *(sdk)* Add example using an archived ingredient as the parent (backport #2871) ([#2872](https://github.com/contentauth/c2pa-rs/pull/2872))
+
 ## [0.91.2](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.91.1...c2pa-v0.91.2)
 _06 October 2026_
 
