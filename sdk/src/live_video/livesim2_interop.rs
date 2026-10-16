@@ -11,8 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! Offline interop with unmodified DASH-IF livesim2 v1.14.0 output.
-//! Capture provenance and licenses: tests/fixtures/live_video/livesim2/README.md.
+//! Offline interop with unmodified DASH-IF livesim2 v1.14.0 output, clear and encrypted.
+//! Capture provenance and licenses: tests/fixtures/live_video/livesim2/README.md and
+//! tests/fixtures/live_video/livesim2_eccp/README.md.
 
 #![allow(clippy::unwrap_used)]
 
@@ -44,6 +45,31 @@ const FIRST_PRESENTATION_SECONDS: i64 = 1_760_000_042;
 const TIMESCALE: u64 = 90_000;
 const SCTE35_URI: &[u8] = b"urn:scte:scte35:2013:bin\0";
 
+/// An encrypted capture: protection scheme, init segment and media segments.
+type EccpCapture = (&'static str, &'static [u8], [&'static [u8]; 3]);
+
+/// The same stream encrypted by livesim2's ECCP option.
+const ECCP: [EccpCapture; 2] = [
+    (
+        "cenc",
+        include_bytes!("../../tests/fixtures/live_video/livesim2_eccp/cenc/init.mp4"),
+        [
+            include_bytes!("../../tests/fixtures/live_video/livesim2_eccp/cenc/880000021.m4s"),
+            include_bytes!("../../tests/fixtures/live_video/livesim2_eccp/cenc/880000022.m4s"),
+            include_bytes!("../../tests/fixtures/live_video/livesim2_eccp/cenc/880000023.m4s"),
+        ],
+    ),
+    (
+        "cbcs",
+        include_bytes!("../../tests/fixtures/live_video/livesim2_eccp/cbcs/init.mp4"),
+        [
+            include_bytes!("../../tests/fixtures/live_video/livesim2_eccp/cbcs/880000021.m4s"),
+            include_bytes!("../../tests/fixtures/live_video/livesim2_eccp/cbcs/880000022.m4s"),
+            include_bytes!("../../tests/fixtures/live_video/livesim2_eccp/cbcs/880000023.m4s"),
+        ],
+    ),
+];
+
 /// The signer currently reads thread-local settings. Restore the prior trust setting,
 /// including when a test unwinds, so a worker thread cannot contaminate another test.
 struct TrustGuard(bool);
@@ -71,7 +97,12 @@ struct SignedCapture {
 }
 
 impl SignedCapture {
+    /// Signs the clear SCTE-35 capture.
     fn new(validity_period: u64) -> Self {
+        Self::sign(INIT, &MEDIA, validity_period)
+    }
+
+    fn sign(source_init: &[u8], source_media: &[&[u8]], validity_period: u64) -> Self {
         let _trust = TrustGuard::new();
         let manifest_signer = EphemeralSigner::new("livesim2-interop.test").unwrap();
         let mut signer = LiveVideoVsiSigner::from_signing_key(
@@ -91,9 +122,9 @@ impl SignedCapture {
             .unwrap()
             .to_rfc3339();
         let init = signer
-            .sign_init_segment(INIT, "video/mp4", &manifest_signer)
+            .sign_init_segment(source_init, "video/mp4", &manifest_signer)
             .unwrap();
-        let media = MEDIA
+        let media = source_media
             .iter()
             .map(|segment| signer.sign_media_segment(segment).unwrap())
             .collect();
@@ -295,4 +326,110 @@ fn livesim2_wrong_epoch_origin_fails_key_validity() {
                 && item.description.contains("presentation time")
         ));
     assert!(validator.previous_segment.is_none());
+}
+
+// ── encrypted (ECCP) captures ───────────────────────────────────────────────────
+
+/// Byte offset of `inner`, a subslice of `outer`, within `outer`.
+fn offset_in(outer: &[u8], inner: &[u8]) -> usize {
+    inner.as_ptr() as usize - outer.as_ptr() as usize
+}
+
+/// Checks that the moof-relative offsets of an encrypted segment hit their targets: the
+/// `saio` offset (`tfhd` default-base-is-moof) lands on the `senc` initialization vectors,
+/// and the `trun` data offset on the `mdat` payload.
+fn assert_offsets_hit_their_targets(segment: &[u8]) {
+    let moof = find_box(segment, b"moof").unwrap();
+    let mdat = find_box(segment, b"mdat").unwrap();
+    let traf = box_payload(find_box(box_payload(moof).unwrap(), b"traf").unwrap()).unwrap();
+    let tfhd = box_payload(find_box(traf, b"tfhd").unwrap()).unwrap();
+    assert_eq!(tfhd[1..4], [0x02, 0x00, 0x00], "default-base-is-moof only");
+
+    // saio v0 without aux_info_type: entry_count(4), then one 32-bit offset.
+    let saio = box_payload(find_box(traf, b"saio").unwrap()).unwrap();
+    assert_eq!(saio[..4], [0, 0, 0, 0]);
+    assert_eq!(u32::from_be_bytes(saio[4..8].try_into().unwrap()), 1);
+    let saio_offset = u32::from_be_bytes(saio[8..12].try_into().unwrap()) as usize;
+    // senc: box header(8), version/flags(4), sample_count(4), then the IVs.
+    let senc = find_box(traf, b"senc").unwrap();
+    assert_eq!(
+        offset_in(segment, moof) + saio_offset,
+        offset_in(segment, senc) + 16
+    );
+
+    // trun with data-offset-present: data_offset follows sample_count.
+    let trun = box_payload(find_box(traf, b"trun").unwrap()).unwrap();
+    assert_ne!(trun[3] & 0x01, 0);
+    let data_offset = i32::from_be_bytes(trun[8..12].try_into().unwrap()) as usize;
+    assert_eq!(
+        offset_in(segment, moof) + data_offset,
+        offset_in(segment, mdat) + 8
+    );
+}
+
+/// Encrypted segments sign and validate like clear ones: the VSI covers `senc`, `saiz`,
+/// `saio` and the encrypted `mdat`, the init keeps its protection boxes, and inserting the
+/// VSI `emsg` leaves every moof-relative offset pointing at its data.
+#[test]
+fn livesim2_encrypted_segments_round_trip() {
+    for (scheme, init, media) in ECCP {
+        let capture = SignedCapture::sign(init, &media, 10);
+        assert_eq!(
+            find_box(&capture.init, b"moov"),
+            find_box(init, b"moov"),
+            "{scheme}: the moov with encv/sinf/tenc is unchanged"
+        );
+        let mut validator = capture.validator();
+        let mut tracker = StatusTracker::default();
+        for (index, (source, signed)) in media.iter().zip(&capture.media).enumerate() {
+            assert_offsets_hit_their_targets(source);
+            assert_offsets_hit_their_targets(signed);
+            let vsi = parse_vsi(&extract_vsi_payload_from_segment(signed).unwrap()).unwrap();
+            assert_eq!(
+                vsi.segment_info_map.sequence_number,
+                FIRST_SEQUENCE + index as u64
+            );
+            let retained: Vec<u8> = top_level_boxes(signed)
+                .filter(|(kind, bytes)| {
+                    !(**kind == *b"emsg"
+                        && box_payload(bytes)
+                            .and_then(|body| body.get(4..))
+                            .is_some_and(|body| body.starts_with(VSI_SCHEME_ID_URI.as_bytes())))
+                })
+                .flat_map(|(_, bytes)| bytes.iter().copied())
+                .collect();
+            assert_eq!(retained, *source, "{scheme}: every original box is kept");
+            validator
+                .validate_verifiable_segment_info(signed, &mut tracker)
+                .unwrap();
+            assert_no_failures(&tracker);
+        }
+    }
+}
+
+/// The `senc` initialization vectors are covered by the segment hash.
+#[test]
+fn livesim2_tampered_senc_fails_the_media_hash() {
+    for (_, init, media) in ECCP {
+        let capture = SignedCapture::sign(init, &media, 10);
+        let mut segment = capture.media[0].clone();
+        let moof = find_box(&segment, b"moof").unwrap();
+        let traf = box_payload(find_box(box_payload(moof).unwrap(), b"traf").unwrap()).unwrap();
+        let first_iv = offset_in(&segment, find_box(traf, b"senc").unwrap()) + 16;
+        segment[first_iv] ^= 1;
+        assert_media_hash_failure(&segment, &capture);
+    }
+}
+
+/// So is the encrypted media.
+#[test]
+fn livesim2_tampered_encrypted_media_fails_the_media_hash() {
+    for (_, init, media) in ECCP {
+        let capture = SignedCapture::sign(init, &media, 10);
+        let mut segment = capture.media[0].clone();
+        let mdat = find_box(&segment, b"mdat").unwrap();
+        let last_byte = offset_in(&segment, mdat) + mdat.len() - 1;
+        segment[last_byte] ^= 1;
+        assert_media_hash_failure(&segment, &capture);
+    }
 }
