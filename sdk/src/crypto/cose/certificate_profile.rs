@@ -176,6 +176,20 @@ pub fn check_certificate_profile(
         }
     }
 
+    // https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.3
+    // The outer signatureAlgorithm MUST match the signed tbsCertificate.signature field.
+    if signcert.tbs_certificate.signature != signcert.signature_algorithm {
+        log_item!(
+            "",
+            "certificate signature algorithm does not match tbsCertificate signature algorithm",
+            "check_certificate_profile"
+        )
+        .validation_status(SIGNING_CREDENTIAL_INVALID)
+        .failure_no_throw(validation_log, CertificateProfileError::InvalidCertificate);
+
+        return Err(CertificateProfileError::InvalidCertificate);
+    }
+
     let cert_alg = &signcert.signature_algorithm.algorithm;
 
     // Certificate must be signed with one of the following algorithms.
@@ -200,6 +214,20 @@ pub fn check_certificate_profile(
         );
 
         return Err(CertificateProfileError::UnsupportedAlgorithm);
+    }
+
+    // https://datatracker.ietf.org/doc/html/rfc8410#section-3
+    // Ed25519 spec: "For all of the OIDs, the parameters MUST be absent."
+    if *cert_alg == ED25519_OID && signcert.signature_algorithm.parameters.is_some() {
+        log_item!(
+            "",
+            "certificate Ed25519 signature algorithm parameters must be absent",
+            "check_certificate_profile"
+        )
+        .validation_status(SIGNING_CREDENTIAL_INVALID)
+        .failure_no_throw(validation_log, CertificateProfileError::InvalidCertificate);
+
+        return Err(CertificateProfileError::InvalidCertificate);
     }
 
     // Verify RSA_PSS parameters.
@@ -316,6 +344,20 @@ pub fn check_certificate_profile(
         } else {
             return Err(CertificateProfileError::InvalidCertificate);
         }
+    }
+
+    // https://datatracker.ietf.org/doc/html/rfc8410#section-3
+    // Ed25519 spec: "For all of the OIDs, the parameters MUST be absent."
+    if skpi_alg.algorithm == ED25519_OID && skpi_alg.parameters.is_some() {
+        log_item!(
+            "",
+            "certificate Ed25519 public key parameters must be absent",
+            "check_certificate_profile"
+        )
+        .validation_status(SIGNING_CREDENTIAL_INVALID)
+        .failure_no_throw(validation_log, CertificateProfileError::InvalidCertificate);
+
+        return Err(CertificateProfileError::InvalidCertificate);
     }
 
     // Check modulus minimum length for RSA & PSS algorithms.
@@ -610,6 +652,8 @@ mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
+    use rasn::types::Any;
+    use rasn_pkix::Certificate;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
     use x509_parser::{num_bigint::BigInt, pem::Pem};
@@ -618,7 +662,10 @@ mod tests {
     use crate::{
         crypto::cose::{check_end_entity_certificate_profile, CertificateTrustPolicy},
         status_tracker::StatusTracker,
-        validation_results::validation_codes::SIGNING_CREDENTIAL_EXPIRED,
+        utils::ephemeral_cert::generate_ephemeral_chain,
+        validation_results::validation_codes::{
+            SIGNING_CREDENTIAL_EXPIRED, SIGNING_CREDENTIAL_INVALID,
+        },
     };
 
     #[test]
@@ -684,6 +731,98 @@ mod tests {
         check_end_entity_certificate_profile(&es384_cert, &ctp, &mut validation_log, None).unwrap();
         check_end_entity_certificate_profile(&es512_cert, &ctp, &mut validation_log, None).unwrap();
         check_end_entity_certificate_profile(&ps256_cert, &ctp, &mut validation_log, None).unwrap();
+    }
+
+    // https://datatracker.ietf.org/doc/html/rfc8410#section-3
+    // Ed25519 spec: "For all of the OIDs, the parameters MUST be absent."
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn ed25519_algorithm_parameters_must_be_absent() {
+        let der_null = Any::new(vec![0x05, 0x00]);
+        let ctp = CertificateTrustPolicy::default();
+
+        let chain = generate_ephemeral_chain("ed25519-profile.local").unwrap();
+
+        let mut validation_log = StatusTracker::default();
+        check_end_entity_certificate_profile(&chain.ee_der, &ctp, &mut validation_log, None)
+            .unwrap();
+
+        let assert_rejected = |cert: &Certificate, expected_description: &str| {
+            let der = rasn::der::encode(cert).unwrap();
+            let mut validation_log = StatusTracker::default();
+            assert!(
+                check_end_entity_certificate_profile(&der, &ctp, &mut validation_log, None)
+                    .is_err()
+            );
+            let item = &validation_log.logged_items()[0];
+            assert_eq!(
+                item.validation_status,
+                Some(SIGNING_CREDENTIAL_INVALID.into())
+            );
+            assert_eq!(item.description, expected_description);
+        };
+
+        // Parameters in the subject public key info algorithm.
+        let mut cert: Certificate = rasn::der::decode(&chain.ee_der).unwrap();
+        cert.tbs_certificate
+            .subject_public_key_info
+            .algorithm
+            .parameters = Some(der_null.clone());
+        assert_rejected(
+            &cert,
+            "certificate Ed25519 public key parameters must be absent",
+        );
+
+        // Parameters in both the outer and the signed (tbsCertificate) signature algorithm.
+        let mut cert: Certificate = rasn::der::decode(&chain.ee_der).unwrap();
+        cert.signature_algorithm.parameters = Some(der_null.clone());
+        cert.tbs_certificate.signature.parameters = Some(der_null.clone());
+        assert_rejected(
+            &cert,
+            "certificate Ed25519 signature algorithm parameters must be absent",
+        );
+    }
+
+    // https://datatracker.ietf.org/doc/html/rfc5280#section-4.1.2.3
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn signature_algorithm_must_match_tbs_signature() {
+        let der_null = Any::new(vec![0x05, 0x00]);
+        let ctp = CertificateTrustPolicy::default();
+
+        let chain = generate_ephemeral_chain("ed25519-profile.local").unwrap();
+
+        let expected =
+            "certificate signature algorithm does not match tbsCertificate signature algorithm";
+
+        // Parameters only in the outer signature algorithm.
+        let mut cert: Certificate = rasn::der::decode(&chain.ee_der).unwrap();
+        cert.signature_algorithm.parameters = Some(der_null.clone());
+
+        // Parameters only in the signed (tbsCertificate) signature algorithm.
+        let mut cert_inner: Certificate = rasn::der::decode(&chain.ee_der).unwrap();
+        cert_inner.tbs_certificate.signature.parameters = Some(der_null);
+
+        for cert in [cert, cert_inner] {
+            let der = rasn::der::encode(&cert).unwrap();
+            let mut validation_log = StatusTracker::default();
+            assert!(
+                check_end_entity_certificate_profile(&der, &ctp, &mut validation_log, None)
+                    .is_err()
+            );
+            let item = &validation_log.logged_items()[0];
+            assert_eq!(
+                item.validation_status,
+                Some(SIGNING_CREDENTIAL_INVALID.into())
+            );
+            assert_eq!(item.description, expected);
+        }
     }
 
     fn x509_der_from_pem(cert_pem: &[u8]) -> Vec<u8> {
