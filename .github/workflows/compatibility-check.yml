@@ -1,0 +1,80 @@
+name: SDK compatibility check
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  compatibility:
+    name: ${{ matrix.direction.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        direction:
+          - name: Baseline signs, current verifies
+            signer_dir: baseline
+            verifier_dir: current
+          - name: Current signs, baseline verifies
+            signer_dir: current
+            verifier_dir: baseline
+    env:
+      COMPAT_DIR: ${{ github.workspace }}/compat
+      RUST_BACKTRACE: '1'
+
+    steps:
+      - name: Checkout current code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: current
+          persist-credentials: false
+
+      - name: Checkout baseline code
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha || 'main' }}
+          path: baseline
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            current
+            baseline
+
+      # Reuse the integration test's signing and verification helpers in both
+      # SDK revisions, including baselines that predate these test files.
+      - name: Prepare SDK compatibility tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$COMPAT_DIR/fixtures/certs" baseline/sdk/tests/common
+          cp current/sdk/tests/fixtures/earth_apollo17.jpg "$COMPAT_DIR/fixtures/"
+          cp current/sdk/tests/fixtures/libpng-test.png "$COMPAT_DIR/fixtures/"
+          cp current/sdk/tests/fixtures/certs/ed25519.pub "$COMPAT_DIR/fixtures/certs/"
+          cp current/sdk/tests/fixtures/certs/ed25519.pem "$COMPAT_DIR/fixtures/certs/"
+          cp current/sdk/tests/common/embed_manifest.rs baseline/sdk/tests/common/embed_manifest.rs
+          cp current/sdk/tests/compatibility_ci.rs baseline/sdk/tests/compatibility_ci.rs
+          git -C current rev-parse HEAD
+          git -C baseline rev-parse HEAD
+
+      # Do not use --locked: this library workspace does not track Cargo.lock.
+      - name: Sign with ${{ matrix.direction.signer_dir }} SDK
+        working-directory: ${{ matrix.direction.signer_dir }}
+        run: cargo test -p c2pa --features file_io --test compatibility_ci compatibility_sign -- --ignored --exact --nocapture
+
+      - name: Verify with ${{ matrix.direction.verifier_dir }} SDK
+        working-directory: ${{ matrix.direction.verifier_dir }}
+        run: cargo test -p c2pa --features file_io --test compatibility_ci compatibility_verify -- --ignored --exact --nocapture
