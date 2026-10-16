@@ -330,6 +330,7 @@ impl LiveVideoVsiSigner {
             build_emsg_box(&cose_sign1_bytes, timescale, event_duration, id)
         };
 
+        check_relocatable(segment_data)?;
         let insert_at = vsi_emsg_insertion_point(segment_data)?;
         let draft_emsg_box =
             build_emsg(build_segment_bmff_hash_placeholder_with(exclusion_value)?)?;
@@ -373,6 +374,7 @@ impl LiveVideoVsiSigner {
                 "indexed media segments are not supported when announcing session keys".into(),
             ));
         }
+        check_relocatable(segment_data)?;
         if !super::box_walk::top_level_boxes(segment_data)
             .next()
             .is_some_and(|(kind, _)| kind == b"styp" || kind == b"ftyp")
@@ -856,6 +858,55 @@ fn build_emsg_box(
 // ISO/IEC 23009-1 (§6.3.4.2) and CMAF require `styp`, when present, to be the first
 // box of a media segment, followed by any `sidx`/`prft` boxes, then `emsg` boxes,
 // then the first `moof`.
+
+/// Checks that inserting boxes ahead of the first `moof` leaves the segment's media
+/// addressable. That holds when every offset into the media is relative to its `moof`: a
+/// `tfhd` without `base-data-offset-present` (flag 0x000001) puts the base of the `trun`
+/// data offsets and of the `saio` offsets (ISO/IEC 14496-12 §8.8.7, §8.7.9) at the `moof`,
+/// as CMAF requires. An explicit `base_data_offset` is an absolute file position, and so
+/// are the `moof_offset`s in an `mfra`/`tfra` index; both would point at the wrong bytes
+/// after the insertion, so such segments are rejected rather than silently corrupted.
+fn check_relocatable(segment_data: &[u8]) -> Result<()> {
+    for (fourcc, box_bytes) in top_level_boxes(segment_data) {
+        match fourcc {
+            b"mfra" => {
+                return Err(Error::BadParam(
+                    "VSI signing does not support media segments with an mfra box \
+                     (absolute moof offsets)"
+                        .into(),
+                ))
+            }
+            b"moof" => {
+                let Some(moof) = box_payload(box_bytes) else {
+                    continue;
+                };
+                for (child, traf) in top_level_boxes(moof) {
+                    if child != b"traf" {
+                        continue;
+                    }
+                    let flags = box_payload(traf)
+                        .and_then(|traf| find_box(traf, b"tfhd"))
+                        .and_then(box_payload)
+                        .and_then(|tfhd| tfhd.get(1..4))
+                        .map(|f| u32::from_be_bytes([0, f[0], f[1], f[2]]));
+                    if flags.is_some_and(|flags| flags & TFHD_BASE_DATA_OFFSET_PRESENT != 0) {
+                        return Err(Error::BadParam(
+                            "VSI signing does not support media segments whose tfhd has an \
+                             explicit base_data_offset (absolute media offsets); use \
+                             moof-relative offsets (default-base-is-moof)"
+                                .into(),
+                        ));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// `tfhd` flag: `base_data_offset` is present (ISO/IEC 14496-12 §8.8.7).
+const TFHD_BASE_DATA_OFFSET_PRESENT: u32 = 0x000001;
 
 /// Returns the byte offset at which the VSI `emsg` box is inserted: after the leading
 /// `styp`, `sidx` and `prft` boxes, before anything else (normally the first `moof`
@@ -2586,6 +2637,98 @@ mod tests {
 
         let codes = sign_mutate_and_validate_with(&segment, VSI_LEGACY_EXCLUSION_VALUE, |_| {});
         assert_eq!(codes, ["livevideo.segment.invalid"]);
+    }
+
+    // ── segments the emsg insertion would corrupt ───────────────────────────────
+
+    /// A one-sample `moof`+`mdat` whose `tfhd` has the given flags, and an explicit
+    /// `base_data_offset` (pointing at the `mdat` payload as laid out here) when
+    /// `TFHD_BASE_DATA_OFFSET_PRESENT` is set.
+    fn segment_with_tfhd_flags(flags: u32) -> Vec<u8> {
+        let traf = |base_data_offset: u64| {
+            let mut tfhd_payload = 1u32.to_be_bytes().to_vec(); // track_ID
+            if flags & TFHD_BASE_DATA_OFFSET_PRESENT != 0 {
+                tfhd_payload.extend_from_slice(&base_data_offset.to_be_bytes());
+            }
+            let tfhd = make_fullbox(b"tfhd", 0, flags, &tfhd_payload);
+            let mut trun_payload = 1u32.to_be_bytes().to_vec(); // sample_count
+            trun_payload.extend_from_slice(&1000u32.to_be_bytes()); // sample_duration
+            let trun = make_fullbox(b"trun", 0, 0x000100, &trun_payload);
+            make_box(b"traf", &[tfhd, trun].concat())
+        };
+        // The base offset is where the mdat payload starts: after the moof and the
+        // mdat header.
+        let moof_len = make_box(b"moof", &traf(0)).len() as u64;
+        let moof = make_box(b"moof", &traf(moof_len + 8));
+        [moof, make_box(b"mdat", &[1, 2, 3, 4])].concat()
+    }
+
+    /// An explicit `tfhd.base_data_offset` is an absolute file position: inserting the
+    /// VSI `emsg` before the `moof` would leave it (and the `trun`/`saio` offsets based on
+    /// it) pointing at the wrong bytes, so signing is refused and the counter is kept.
+    #[test]
+    fn absolute_base_data_offset_is_rejected() {
+        let signer = make_test_signer();
+        let mut vsi_signer = make_vsi_signer_with_manifest_id(&signer, b"key-1", 1);
+        let err = vsi_signer
+            .sign_media_segment(&segment_with_tfhd_flags(TFHD_BASE_DATA_OFFSET_PRESENT))
+            .unwrap_err();
+        assert!(err.to_string().contains("base_data_offset"), "{err}");
+        assert_eq!(vsi_signer.next_sequence_number(), 1);
+    }
+
+    /// Any `traf` counts, not only the first one of the first `moof`.
+    #[test]
+    fn absolute_base_data_offset_in_a_later_moof_is_rejected() {
+        let signer = make_test_signer();
+        let mut vsi_signer = make_vsi_signer_with_manifest_id(&signer, b"key-1", 1);
+        let segment = [
+            segment_with_tfhd_flags(0),
+            segment_with_tfhd_flags(TFHD_BASE_DATA_OFFSET_PRESENT),
+        ]
+        .concat();
+        assert!(vsi_signer.sign_media_segment(&segment).is_err());
+    }
+
+    /// Moof-relative addressing, explicit (`default-base-is-moof`) or implicit, is
+    /// unaffected by the insertion and still signs and validates.
+    #[test]
+    fn moof_relative_offsets_still_sign() {
+        const TFHD_DEFAULT_BASE_IS_MOOF: u32 = 0x020000;
+        for flags in [0, TFHD_DEFAULT_BASE_IS_MOOF] {
+            let codes = sign_mutate_and_validate(&segment_with_tfhd_flags(flags), |_| {});
+            assert!(codes.is_empty(), "flags {flags:#x}: {codes:?}");
+        }
+    }
+
+    /// `tfra` entries in an `mfra` hold absolute `moof` offsets.
+    #[test]
+    fn mfra_is_rejected() {
+        let signer = make_test_signer();
+        let mut vsi_signer = make_vsi_signer_with_manifest_id(&signer, b"key-1", 1);
+        let segment = [
+            make_test_media_segment_with_moof(&[1000]),
+            make_box(b"mfra", &make_fullbox(b"mfro", 0, 0, &16u32.to_be_bytes())),
+        ]
+        .concat();
+        let err = vsi_signer.sign_media_segment(&segment).unwrap_err();
+        assert!(err.to_string().contains("mfra"), "{err}");
+    }
+
+    /// Announcing keys inserts a manifest box ahead of the media too.
+    #[test]
+    fn announcement_rejects_absolute_base_data_offset() {
+        let context = rotation_context();
+        let mut signer = rotation_signer(&context);
+        let segment = [
+            make_box(b"styp", b"cmfs\0\0\0\0cmfs"),
+            segment_with_tfhd_flags(TFHD_BASE_DATA_OFFSET_PRESENT),
+        ]
+        .concat();
+        let err = signer
+            .sign_media_segment_with_manifest(&segment, context.clone())
+            .unwrap_err();
+        assert!(err.to_string().contains("base_data_offset"), "{err}");
     }
 
     struct ManifestResolver {
