@@ -1008,6 +1008,42 @@ fn test_builder_unsupported_format_remote_url_rejected() -> Result<()> {
     Ok(())
 }
 
+/// Re-signing a signed TIFF replaces the previous manifest store rather than leaving it in the
+/// file, for both single-page and multi-page TIFFs.
+#[test]
+fn test_builder_resign_tiff() -> Result<()> {
+    // A C2PA manifest store starts with a JUMBF description box of this type.
+    const MANIFEST_STORE_UUID: [u8; 16] = [
+        0x63, 0x32, 0x70, 0x61, 0x00, 0x11, 0x00, 0x10, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b,
+        0x71,
+    ];
+    let context = Context::new().with_settings(test_settings())?.into_shared();
+    for data in [
+        &include_bytes!("fixtures/test.tiff")[..],
+        &include_bytes!("fixtures/MultiPage.tif")[..],
+    ] {
+        let mut current = data.to_vec();
+        for round in 1..=3 {
+            let mut builder = Builder::from_shared_context(&context);
+            builder.set_intent(BuilderIntent::Edit);
+            let mut dest = Cursor::new(Vec::new());
+            builder.save_to_stream("tiff", &mut Cursor::new(&current), &mut dest)?;
+            current = dest.into_inner();
+
+            let reader =
+                Reader::from_shared_context(&context).with_stream("tiff", Cursor::new(&current))?;
+            assert_eq!(reader.validation_state(), ValidationState::Trusted);
+            assert_eq!(reader.manifests().len(), round);
+            let stores = current
+                .windows(MANIFEST_STORE_UUID.len())
+                .filter(|w| *w == MANIFEST_STORE_UUID)
+                .count();
+            assert_eq!(stores, 1, "earlier manifest stores left in the file");
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn test_builder_compressed_manifests() -> Result<()> {
     let mut settings = test_settings();
