@@ -105,10 +105,10 @@ jobs:
           input-file: lcov-openssl.info
           output-file: lcov-openssl.filtered.info
 
-      # Tokens aren't available for PRs originating from forks,
-      # so we don't attempt to upload code coverage in that case.
+      # Only the upstream repository owns this Codecov integration. Its token
+      # is also unavailable for pull requests originating from forks.
       - name: Upload code coverage results
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        if: github.repository == 'contentauth/c2pa-rs' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -153,10 +153,10 @@ jobs:
           input-file: lcov-rust_native_crypto.info
           output-file: lcov-rust_native_crypto.filtered.info
 
-      # Tokens aren't available for PRs originating from forks,
-      # so we don't attempt to upload code coverage in that case.
+      # Only the upstream repository owns this Codecov integration. Its token
+      # is also unavailable for pull requests originating from forks.
       - name: Upload code coverage results
-        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        if: github.repository == 'contentauth/c2pa-rs' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
