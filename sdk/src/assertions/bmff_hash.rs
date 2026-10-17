@@ -685,6 +685,44 @@ impl BmffHash {
         exclusions.clone_from(&self.exclusions().to_vec());
     }
 
+    /// Appends the configured extra exclusions
+    /// (`builder.bmff_hash_extra_exclusions`) after the defaults, skipping
+    /// exact duplicates of exclusions already present.
+    pub(crate) fn add_extra_exclusions(
+        &mut self,
+        extras: &[crate::settings::builder::BmffHashExclusion],
+    ) {
+        for extra in extras {
+            let exclusion = ExclusionsMap {
+                xpath: extra.xpath.clone(),
+                length: extra.length,
+                data: extra.data.as_ref().map(|data| {
+                    data.iter()
+                        .map(|d| DataMap {
+                            offset: d.offset,
+                            value: d.value.clone(),
+                        })
+                        .collect()
+                }),
+                subset: extra.subset.as_ref().map(|subsets| {
+                    subsets
+                        .iter()
+                        .map(|s| SubsetMap {
+                            offset: s.offset,
+                            length: s.length,
+                        })
+                        .collect()
+                }),
+                version: extra.version,
+                flags: extra.flags.clone().map(ByteBuf::from),
+                exact: extra.exact,
+            };
+            if !self.exclusions.contains(&exclusion) {
+                self.exclusions.push(exclusion);
+            }
+        }
+    }
+
     // Adds default exclusion ranges for BMFF hashes.  Add as needed.
     pub fn set_default_exclusions(&mut self) -> &[ExclusionsMap] {
         self.set_default_exclusions_with_options(&Settings::default())

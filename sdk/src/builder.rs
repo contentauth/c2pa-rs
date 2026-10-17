@@ -2656,6 +2656,9 @@ impl Builder {
                 // Baked into this assertion's exclusions now; later setting
                 // changes won't affect this placeholder or its signed hash.
                 placeholder_bmff.set_default_exclusions_with_options(self.context.settings());
+                placeholder_bmff.add_extra_exclusions(
+                    &self.context.settings().builder.bmff_hash_extra_exclusions,
+                );
                 placeholder_bmff.add_place_holder_hash()?;
                 let assertion_label = placeholder_bmff.to_assertion()?.label();
                 self.add_assertion(&assertion_label, &placeholder_bmff)?;
