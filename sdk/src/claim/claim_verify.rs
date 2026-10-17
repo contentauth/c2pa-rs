@@ -50,6 +50,20 @@ use crate::{
 
 pub(super) const LEGACY_WATERMARKED_ACTION: &str = "c2pa.watermarked";
 
+/// Failure codes that reject a claim because of its signing credential, before
+/// the claim signature itself is validated.
+///
+/// `signingCredential.untrusted` is deliberately not included: a manifest whose
+/// signer is not on a trust list can still be Valid (C2PA Trust Model, "Valid
+/// Manifest"), which requires `claimSignature.validated`.
+const SIGNING_CREDENTIAL_REJECTIONS: &[&str] = &[
+    validation_status::SIGNING_CREDENTIAL_INVALID,
+    validation_status::SIGNING_CREDENTIAL_REVOKED,
+    validation_status::SIGNING_CREDENTIAL_EXPIRED,
+    validation_status::CLAIM_SIGNATURE_OUTSIDE_VALIDITY,
+    validation_status::ALGORITHM_UNSUPPORTED,
+];
+
 // Enum to encapsulate the data type of the source asset.  This simplifies
 // having different implementations for functions as a single entry point can be
 // used to handle different data types.
@@ -1559,6 +1573,24 @@ impl Claim {
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<()> {
+        // Statuses for this claim's signature are logged under its signature URI.
+        let signature_uri = to_signature_uri(claim.label());
+        let signature_has_status = |codes: &[&str]| {
+            validation_log.logged_items().iter().any(|item| {
+                item.label == signature_uri
+                    && item
+                        .validation_status
+                        .as_deref()
+                        .is_some_and(|code| codes.contains(&code))
+            })
+        };
+
+        // C2PA only validates the claim signature, and issues
+        // claimSignature.validated, "if the claim has not yet been rejected" by
+        // the checks on its signing credential. An untrusted credential does not
+        // count here; see SIGNING_CREDENTIAL_REJECTIONS.
+        let credential_rejected = signature_has_status(SIGNING_CREDENTIAL_REJECTIONS);
+
         // signature check
         match verified {
             Ok(vi) => {
@@ -1581,13 +1613,15 @@ impl Claim {
                     .success(validation_log);
 
                     // add signature validated status
-                    log_item!(
-                        to_signature_uri(claim.label()),
-                        "claim signature valid",
-                        "verify_internal"
-                    )
-                    .validation_status(validation_status::CLAIM_SIGNATURE_VALIDATED)
-                    .success(validation_log);
+                    if !credential_rejected {
+                        log_item!(
+                            to_signature_uri(claim.label()),
+                            "claim signature valid",
+                            "verify_internal"
+                        )
+                        .validation_status(validation_status::CLAIM_SIGNATURE_VALIDATED)
+                        .success(validation_log);
+                    }
                 }
             }
             Err(parse_err) => {
