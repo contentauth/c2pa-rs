@@ -139,30 +139,32 @@ impl Store {
                         )?;
             }
 
+            // This is a structural failure of the enclosing manifest's ingredient
+            // assertion, not a failure of the referenced ingredient manifest.
+            // Report it before entering the ingredient validation scope.
+            if ingredient_assertion
+                .version()
+                .is_some_and(|version| version >= 3)
+                && ingredient_assertion.active_manifest.is_some()
+                && ingredient_assertion.validation_results.is_none()
+            {
+                log_item!(
+                    jumbf::labels::to_assertion_uri(claim.label(), &i.label()),
+                    "ingredient V3 must have validation results",
+                    "ingredient_checks"
+                )
+                .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
+                .failure(
+                    validation_log,
+                    Error::ValidationRule("ingredient V3 missing validation status".to_string()),
+                )?;
+            }
+
             validation_log
                 .push_ingredient_uri(jumbf::labels::to_assertion_uri(claim.label(), &i.label()));
 
             // is this an ingredient
             if let Some(c2pa_manifest) = ingredient_assertion.c2pa_manifest() {
-                // if this is a v3 ingredient then it must have validation report indicating it was validated
-                if let Some(ingredient_version) = ingredient_assertion.version() {
-                    if ingredient_version >= 3 && ingredient_assertion.validation_results.is_none()
-                    {
-                        log_item!(
-                            jumbf::labels::to_assertion_uri(claim.label(), &i.label()),
-                            "ingredient V3 must have validation results",
-                            "ingredient_checks"
-                        )
-                        .validation_status(validation_status::ASSERTION_INGREDIENT_MALFORMED)
-                        .failure(
-                            validation_log,
-                            Error::ValidationRule(
-                                "ingredient V3 missing validation status".to_string(),
-                            ),
-                        )?;
-                    }
-                }
-
                 let label = Store::manifest_label_from_path(&c2pa_manifest.url());
 
                 if let Some(ingredient) = store.get_claim(&label) {
