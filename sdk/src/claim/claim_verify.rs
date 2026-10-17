@@ -24,6 +24,8 @@ use crate::{
         Actions, BmffHash, BoxHash, CollectionHash, DataHash, DataMap, Ingredient, Metadata,
         Relationship,
     },
+    asset_handlers::riff_io::RiffIO,
+    asset_io::AssetIO,
     claim::Claim,
     context::{Context, ProgressPhase},
     cose_validator::{
@@ -89,13 +91,15 @@ pub(crate) const ALLOWED_UPDATE_MANIFEST_ACTIONS: [&str; 4] = [
 /// Per C2PA 15.12, the exclusion range containing the manifest store must hold only
 /// the manifest store and padding. `manifest_store_range` is the manifest's real
 /// location, found independently by re-parsing the asset; a legitimate exclusion
-/// covers exactly it. A mismatch means the exclusion covers non-manifest bytes -- a
+/// covers exactly it, optionally retaining the 8-byte RIFF chunk header in the
+/// hash. A mismatch means the exclusion covers non-manifest bytes -- a
 /// detached manifest applied to an unrelated asset, or content injected into the
 /// space freed by shrinking the manifest.
-fn data_hash_exclusions_match_manifest(
+pub(super) fn data_hash_exclusions_match_manifest(
     exclusions: &[HashRange],
     manifest_store_range: Option<&HashRange>,
     is_embedded: bool,
+    asset_format: Option<&str>,
 ) -> bool {
     // Remote/sidecar manifests carry a placeholder exclusion that excludes no
     // bytes; the whole asset is hashed, so there is nothing to police.
@@ -105,7 +109,30 @@ fn data_hash_exclusions_match_manifest(
 
     match manifest_store_range {
         // Manifest present in this asset: an exclusion must cover exactly it.
-        Some(range) => exclusions.contains(range),
+        Some(range) => {
+            if exclusions.contains(range) {
+                return true;
+            }
+            // RIFF embeds the manifest as chunk data. The chunk identifier and
+            // length can remain in the hash, so allow that exact payload range.
+            let is_riff = asset_format.is_some_and(|format| {
+                let format = crate::utils::mime::format_to_mime(format);
+                RiffIO::new(&format)
+                    .supported_types()
+                    .contains(&format.as_str())
+            });
+            is_riff
+                && range.length() >= 8
+                && range.start().checked_add(8).is_some_and(|start| {
+                    let payload_length = range.length() - 8;
+                    exclusions.contains(&HashRange::new(start, payload_length))
+                        // RIFF chunks are word-aligned. A trailing alignment byte
+                        // may remain hashed along with the chunk header.
+                        || (payload_length > 0
+                            && payload_length % 2 == 0
+                            && exclusions.contains(&HashRange::new(start, payload_length - 1)))
+                })
+        }
         // Manifest not in this asset: allow only if it was read from here
         // (embedded); a detached manifest on an unrelated asset is rejected (#2643).
         None => is_embedded,
@@ -1129,6 +1156,7 @@ impl Claim {
                                 exclusions,
                                 svi.manifest_store_range.as_ref(),
                                 svi.is_embedded,
+                                asset_data.format().as_deref(),
                             ) {
                                 log_item!(
                                     claim.assertion_uri(&hash_binding_assertion.label()),
@@ -1143,6 +1171,9 @@ impl Claim {
                                             .to_string(),
                                     ),
                                 )?;
+                                // Continue validating other bindings, but never emit a
+                                // match for this rejected exclusion range.
+                                continue;
                             }
 
                             // there are extra exclusion then log the information code about extra exclusion
