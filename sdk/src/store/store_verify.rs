@@ -368,6 +368,12 @@ impl Store {
 
         // find the manifest with the hash binding
         svi.binding_claim = self.get_hash_binding_manifest(claim).ok_or_else(|| {
+            if validation_log.logged_items().iter().any(|item| {
+                item.validation_status.as_deref() == Some(validation_status::HARD_BINDINGS_MISSING)
+                    && item.label == claim.uri()
+            }) {
+                return Error::ClaimMissingHardBinding;
+            }
             log_item!(
                 to_manifest_uri(claim.label()),
                 "could not find manifest with hard binding",
@@ -525,12 +531,19 @@ impl Store {
         };
 
         // get info needed to complete validation
-        let svi = store.get_store_validation_info(
+        let svi = match store.get_store_validation_info(
             claim,
             asset_data.as_deref_mut(),
             validation_log,
             context,
-        )?;
+        ) {
+            // The status has already been recorded. Keep the decoded manifest
+            // available to readers when validation is configured to continue.
+            Err(Error::ClaimMissingHardBinding) if !validation_log.stops_on_error() => {
+                return Ok(())
+            }
+            result => result?,
+        };
 
         // Per spec §15.11.3.3.1, any box present at a redacted URI must contain only 0x00
         // bytes, regardless of its JUMBF type — reject with `assertion.notRedacted` otherwise.
