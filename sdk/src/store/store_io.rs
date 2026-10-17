@@ -184,6 +184,24 @@ impl Store {
         Err(Error::UnsupportedType)
     }
 
+    fn check_bmff_extra_exclusions(&self, settings: &Settings) -> Result<()> {
+        let extras = &settings.builder.bmff_hash_extra_exclusions;
+        if extras.is_empty() {
+            return Ok(());
+        }
+        let pc = self.provenance_claim().ok_or(Error::ClaimEncoding)?;
+        if pc.update_manifest() {
+            return Err(Error::BadParam(
+                "builder.bmff_hash_extra_exclusions cannot apply to a BMFF update manifest"
+                    .to_string(),
+            ));
+        }
+        for assertion in pc.bmff_hash_assertions() {
+            BmffHash::from_assertion(assertion.assertion())?.check_extra_exclusions(extras)?;
+        }
+        Ok(())
+    }
+
     #[cfg(feature = "file_io")]
     fn add_merkmap_for_rendition(
         &mut self,
@@ -207,8 +225,8 @@ impl Store {
         let mut bmff_hash = if let Some(bmff_hash_assertion) = pc.bmff_hash_assertions().first() {
             // Renditions after the first reuse the assertion generated for the
             // first one, which already carries the extra exclusions.
-            let mut bmff_hash = BmffHash::from_assertion(bmff_hash_assertion.assertion())?;
-            bmff_hash.add_extra_exclusions(&settings.builder.bmff_hash_extra_exclusions);
+            let bmff_hash = BmffHash::from_assertion(bmff_hash_assertion.assertion())?;
+            bmff_hash.check_extra_exclusions(&settings.builder.bmff_hash_extra_exclusions)?;
             bmff_hash
         } else {
             let mut bmff_hash = BmffHash::new("jumbf manifest", pc.alg(), None);
@@ -280,6 +298,7 @@ impl Store {
         signer: &dyn Signer,
         context: &Context,
     ) -> Result<()> {
+        self.check_bmff_extra_exclusions(context.settings())?;
         if init_paths.is_empty() {
             return Err(Error::BadParam(
                 "at least one init segment path must be provided".to_string(),
@@ -601,6 +620,9 @@ impl Store {
         context: &Context,
     ) -> Result<Vec<u8>> {
         let settings = context.settings();
+        if context.io().is_bmff_format(format) {
+            self.check_bmff_extra_exclusions(settings)?;
+        }
         let threshold = settings.core.backing_store_memory_threshold_in_mb;
 
         let input_len = io_utils::stream_len(input_stream)?;
@@ -742,16 +764,6 @@ impl Store {
         }
 
         if is_bmff {
-            // Extra exclusions only apply to a BMFF hash the SDK generates here.
-            // Refuse rather than sign without them.
-            if !settings.builder.bmff_hash_extra_exclusions.is_empty()
-                && (pc.update_manifest() || !pc.bmff_hash_assertions().is_empty())
-            {
-                return Err(Error::BadParam(
-                    "builder.bmff_hash_extra_exclusions applies only to BMFF hash assertions the SDK generates; this claim already has one or is an update manifest".to_string(),
-                ));
-            }
-
             // 2) Get hash ranges if needed, do not generate for update manifests
             let mut needs_hash = false;
             if !pc.update_manifest() && pc.bmff_hash_assertions().is_empty() {

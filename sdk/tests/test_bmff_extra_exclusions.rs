@@ -166,7 +166,7 @@ fn placeholder_carries_the_extras() {
 }
 
 #[test]
-fn caller_supplied_bmff_hash_is_refused() {
+fn caller_supplied_bmff_hash_missing_the_descriptor_is_refused() {
     let mut builder = builder(r#"[{"xpath":"/sidx"}]"#);
     let mut supplied = BmffHash::new("jumbf manifest", "sha256", None);
     supplied.set_default_exclusions();

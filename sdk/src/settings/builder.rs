@@ -641,12 +641,17 @@ pub struct BuilderSettings {
     /// Bytes matched by an exclusion are not covered by the hard binding, so a
     /// change to them is not detected. Only exclude boxes whose content cannot
     /// change how the asset is interpreted, or accept that the excluded data
-    /// is unauthenticated. Validators report extra exclusions as
-    /// `assertion.bmffHash.additionalExclusionsPresent`.
+    /// is unauthenticated. The specification requires the informational code
+    /// `assertion.bmffHash.additionalExclusionsPresent` for additional exclusions;
+    /// older validators may not emit it.
     ///
-    /// Signing fails if this is not empty and the claim already carries a BMFF
-    /// hash assertion supplied by the caller, or is an update manifest. It has
-    /// no effect on other formats. Defaults to an empty list.
+    /// Every existing BMFF hash assertion, including a reused SDK placeholder,
+    /// must already contain each configured exact descriptor. Missing entries
+    /// cause an error before hashing, signing, or output writes; computed hashes
+    /// and their exclusions are never silently changed. Repeated descriptors
+    /// require only one matching entry. BMFF update manifests reject a nonempty
+    /// list. It has no effect on other formats without a BMFF hash assertion.
+    /// Defaults to an empty list.
     #[serde(default)]
     pub bmff_hash_extra_exclusions: Vec<BmffHashExclusion>,
 }

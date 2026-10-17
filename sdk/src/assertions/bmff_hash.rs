@@ -111,6 +111,35 @@ impl ExclusionsMap {
     }
 }
 
+impl From<&crate::settings::builder::BmffHashExclusion> for ExclusionsMap {
+    fn from(extra: &crate::settings::builder::BmffHashExclusion) -> Self {
+        Self {
+            xpath: extra.xpath.clone(),
+            length: extra.length,
+            data: extra.data.as_ref().map(|data| {
+                data.iter()
+                    .map(|d| DataMap {
+                        offset: d.offset,
+                        value: d.value.clone(),
+                    })
+                    .collect()
+            }),
+            subset: extra.subset.as_ref().map(|subsets| {
+                subsets
+                    .iter()
+                    .map(|s| SubsetMap {
+                        offset: s.offset,
+                        length: s.length,
+                    })
+                    .collect()
+            }),
+            version: extra.version,
+            flags: extra.flags.clone().map(ByteBuf::from),
+            exact: extra.exact,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VecByteBuf(pub Vec<ByteBuf>);
 
@@ -693,34 +722,28 @@ impl BmffHash {
         extras: &[crate::settings::builder::BmffHashExclusion],
     ) {
         for extra in extras {
-            let exclusion = ExclusionsMap {
-                xpath: extra.xpath.clone(),
-                length: extra.length,
-                data: extra.data.as_ref().map(|data| {
-                    data.iter()
-                        .map(|d| DataMap {
-                            offset: d.offset,
-                            value: d.value.clone(),
-                        })
-                        .collect()
-                }),
-                subset: extra.subset.as_ref().map(|subsets| {
-                    subsets
-                        .iter()
-                        .map(|s| SubsetMap {
-                            offset: s.offset,
-                            length: s.length,
-                        })
-                        .collect()
-                }),
-                version: extra.version,
-                flags: extra.flags.clone().map(ByteBuf::from),
-                exact: extra.exact,
-            };
+            let exclusion = ExclusionsMap::from(extra);
             if !self.exclusions.contains(&exclusion) {
                 self.exclusions.push(exclusion);
             }
         }
+    }
+
+    /// Checks that every configured extra exclusion is already present as an
+    /// exact descriptor. Never mutates exclusions or invalidates computed hashes;
+    /// repeated configured descriptors require only one matching entry.
+    pub(crate) fn check_extra_exclusions(
+        &self,
+        extras: &[crate::settings::builder::BmffHashExclusion],
+    ) -> crate::Result<()> {
+        for extra in extras {
+            if !self.exclusions.contains(&ExclusionsMap::from(extra)) {
+                return Err(Error::BadParam(format!(
+                    "builder.bmff_hash_extra_exclusions: existing BMFF hash is missing exact exclusion descriptor: {extra:?}"
+                )));
+            }
+        }
+        Ok(())
     }
 
     // Adds default exclusion ranges for BMFF hashes.  Add as needed.
