@@ -26,9 +26,9 @@ const ASSERTION_CREATION_VERSION: usize = 1;
 /// A collection hash is used to hash multiple files within a collection (e.g. a folder or a zip file).
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct CollectionHash {
-    // We use a hash map to avoid potential duplicates.
-    //
-    /// Map of file path to their metadata for the collection.
+    /// Map of file path to metadata. Serialized as the specification's array
+    /// of entries containing `uri`, `hash`, and optional metadata fields.
+    #[serde(with = "uri_entries")]
     pub uris: HashMap<PathBuf, UriHashedDataMap>,
 
     /// Algorithm used to hash the files.
@@ -65,6 +65,89 @@ pub struct UriHashedDataMap {
     /// Additional information about the type of data in the file.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data_types: Option<Vec<AssetType>>,
+}
+
+// Keep the public lookup map while using the C2PA collection wire schema.
+// Reading also accepts the path-keyed map that earlier SDK releases wrote.
+mod uri_entries {
+    use std::fmt;
+
+    use serde::{
+        de::{MapAccess, SeqAccess, Visitor},
+        Deserializer, Serializer,
+    };
+
+    use super::*;
+
+    #[derive(Serialize)]
+    struct EntryRef<'a> {
+        uri: &'a Path,
+        #[serde(flatten)]
+        metadata: &'a UriHashedDataMap,
+    }
+
+    #[derive(Deserialize)]
+    struct Entry {
+        uri: PathBuf,
+        #[serde(flatten)]
+        metadata: UriHashedDataMap,
+    }
+
+    pub fn serialize<S: Serializer>(
+        uris: &HashMap<PathBuf, UriHashedDataMap>,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        let mut entries: Vec<_> = uris
+            .iter()
+            .map(|(uri, metadata)| EntryRef {
+                uri: uri.as_path(),
+                metadata,
+            })
+            .collect();
+        entries.sort_by(|a, b| a.uri.cmp(b.uri));
+        entries.serialize(serializer)
+    }
+
+    struct UrisVisitor;
+
+    impl<'de> Visitor<'de> for UrisVisitor {
+        type Value = HashMap<PathBuf, UriHashedDataMap>;
+
+        fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.write_str("an array of collection entries, or a map of URI to entry")
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(
+            self,
+            mut seq: A,
+        ) -> std::result::Result<Self::Value, A::Error> {
+            let mut uris = HashMap::with_capacity(seq.size_hint().unwrap_or(0));
+            while let Some(entry) = seq.next_element::<Entry>()? {
+                if uris.insert(entry.uri, entry.metadata).is_some() {
+                    return Err(serde::de::Error::custom("duplicate collection URI"));
+                }
+            }
+            Ok(uris)
+        }
+
+        // Earlier SDK releases wrote `uris` as a map keyed by path.
+        fn visit_map<M: MapAccess<'de>>(
+            self,
+            mut map: M,
+        ) -> std::result::Result<Self::Value, M::Error> {
+            let mut uris = HashMap::with_capacity(map.size_hint().unwrap_or(0));
+            while let Some((uri, metadata)) = map.next_entry::<PathBuf, UriHashedDataMap>()? {
+                uris.insert(uri, metadata);
+            }
+            Ok(uris)
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<HashMap<PathBuf, UriHashedDataMap>, D::Error> {
+        deserializer.deserialize_any(UrisVisitor)
+    }
 }
 
 impl CollectionHash {
@@ -374,6 +457,55 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    #[test]
+    #[allow(clippy::unwrap_used, clippy::panic)]
+    fn spec_array_wire_encoding_preserves_byte_hashes() -> Result<()> {
+        // Independently encoded CDDL shape, not produced by this serializer.
+        let bytes = hex_literal::hex!(
+            "a2 63616c67 66736861323536 6475726973 81 a2 63757269 65612e747874 6468617368 420102"
+        );
+        let assertion = Assertion::new(
+            CollectionHash::LABEL,
+            None,
+            crate::assertion::AssertionData::Cbor(bytes.to_vec()),
+        );
+        let collection = CollectionHash::from_assertion(&assertion)?;
+        assert_eq!(collection.uris[Path::new("a.txt")].hash, Some(vec![1, 2]));
+        let encoded = collection.to_assertion()?;
+        let value: c2pa_cbor::Value = c2pa_cbor::from_slice(encoded.data()).unwrap();
+        let c2pa_cbor::Value::Map(map) = value else {
+            panic!("expected map")
+        };
+        let c2pa_cbor::Value::Array(entries) = &map[&c2pa_cbor::Value::Text("uris".into())] else {
+            panic!("expected array")
+        };
+        let c2pa_cbor::Value::Map(entry) = &entries[0] else {
+            panic!("expected entry")
+        };
+        assert_eq!(
+            entry[&c2pa_cbor::Value::Text("uri".into())],
+            c2pa_cbor::Value::Text("a.txt".into())
+        );
+        assert_eq!(
+            entry[&c2pa_cbor::Value::Text("hash".into())],
+            c2pa_cbor::Value::Bytes(vec![1, 2])
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn array_decoding_rejects_duplicate_uris_and_reads_old_maps() {
+        let entry = serde_json::json!({"uri": "a.txt", "hash": [1, 2]});
+        let duplicate = serde_json::json!({"alg": "sha256", "uris": [entry.clone(), entry]});
+        assert!(serde_json::from_value::<CollectionHash>(duplicate).is_err());
+
+        // Earlier SDK releases wrote a map keyed by path; it still reads.
+        let old_map = serde_json::json!({"alg": "sha256", "uris": {"a.txt": {"hash": [1, 2]}}});
+        let collection = serde_json::from_value::<CollectionHash>(old_map).unwrap();
+        assert_eq!(collection.uris[Path::new("a.txt")].hash, Some(vec![1, 2]));
+    }
 
     const ZIP_SAMPLE1: &[u8] = include_bytes!("../../tests/fixtures/sample1.zip");
 
