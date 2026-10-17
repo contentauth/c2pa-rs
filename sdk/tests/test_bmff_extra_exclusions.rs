@@ -224,7 +224,7 @@ fn invalid_entries_are_refused_when_settings_load() {
 #[test]
 #[cfg(feature = "file_io")]
 fn fragmented_files_carry_the_extras() {
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
     let context = Context::new()
         .with_settings(settings(r#"[{"xpath":"/sidx"}]"#))
@@ -233,9 +233,8 @@ fn fragmented_files_carry_the_extras() {
     let mut builder = Builder::from_shared_context(&context)
         .with_definition(DEFINITION)
         .unwrap();
-    let input = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/bunny/bunny_89283bps/BigBuckBunny_2s_init.mp4");
-    let output = tempfile::tempdir().unwrap();
+    let input = common::fixtures_path("bunny/bunny_89283bps/BigBuckBunny_2s_init.mp4");
+    let output = common::tempdirectory().unwrap();
     builder
         .sign_fragmented_files(
             context.signer().unwrap(),

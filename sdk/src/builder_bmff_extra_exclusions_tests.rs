@@ -227,7 +227,7 @@ fn extra_exclusions_do_not_reject_non_bmff_signing() {
 #[cfg(feature = "file_io")]
 #[test]
 fn extra_exclusions_update_and_missing_hash_preserve_output_files() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::utils::io_utils::tempdirectory().unwrap();
     let input = dir.path().join("input.mp4");
     let output = dir.path().join("output.mp4");
     std::fs::write(&input, FLAT).unwrap();
@@ -254,10 +254,9 @@ fn extra_exclusions_update_and_missing_hash_preserve_output_files() {
 #[cfg(feature = "file_io")]
 #[test]
 fn extra_exclusions_fragmented_rejects_missing_hash_before_outputs() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = crate::utils::io_utils::tempdirectory().unwrap();
     let output = dir.path().join("absent");
-    let input = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/bunny/bunny_89283bps/BigBuckBunny_2s_init.mp4");
+    let input = crate::utils::test::fixture_path("bunny/bunny_89283bps/BigBuckBunny_2s_init.mp4");
     let mut builder = builder();
     builder
         .add_assertion("c2pa.hash.bmff.v3", &caller_hash(false))
@@ -297,9 +296,8 @@ fn extra_exclusions_fragmented_rejects_missing_hash_before_outputs() {
 #[cfg(feature = "file_io")]
 #[test]
 fn extra_exclusions_fragmented_reuses_generated_assertion_across_renditions() {
-    let dir = tempfile::tempdir().unwrap();
-    let input = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/bunny/*/BigBuckBunny_2s_init.mp4");
+    let dir = crate::utils::io_utils::tempdirectory().unwrap();
+    let input = crate::utils::test::fixture_path("bunny/*/BigBuckBunny_2s_init.mp4");
     builder()
         .sign_fragmented_files(
             test_signer(SigningAlg::Es256).as_ref(),
