@@ -75,6 +75,25 @@ impl OcspResponse {
         signing_time: Option<DateTime<Utc>>,
         validation_log: &mut StatusTracker,
     ) -> Result<Self, OcspError> {
+        Self::from_der_checked_at(
+            der,
+            signing_cert_chain,
+            signing_time,
+            time::utc_now(),
+            validation_log,
+        )
+    }
+
+    /// As [`from_der_checked`](Self::from_der_checked), evaluated at the
+    /// current time `now`.
+    fn from_der_checked_at(
+        der: &[u8],
+        signing_cert_chain: &[Vec<u8>],
+        signing_time: Option<DateTime<Utc>>,
+        now: DateTime<Utc>,
+        validation_log: &mut StatusTracker,
+    ) -> Result<Self, OcspError> {
+        let now = now.timestamp();
         let mut output = OcspResponse {
             ocsp_der: der.to_vec(),
             ..Default::default()
@@ -171,6 +190,18 @@ impl OcspResponse {
                 continue;
             }
 
+            // C2PA only accepts a response whose thisUpdate is not in the future
+            // ("The current time is no earlier than thisUpdate"). Such a response
+            // says nothing about the certificate, whatever its status.
+            let this_update =
+                NaiveDateTime::parse_from_str(&single_response.this_update.to_string(), DATE_FMT)
+                    .map_err(|_e| OcspError::InvalidCertificate)?
+                    .and_utc()
+                    .timestamp();
+            if now < this_update {
+                continue;
+            }
+
             let cert_status = &single_response.cert_status;
 
             // Extract certificate serial number from cert_id
@@ -181,14 +212,6 @@ impl OcspResponse {
             match cert_status {
                 CertStatus::Good => {
                     // check cert range against signing time
-                    let this_update = NaiveDateTime::parse_from_str(
-                        &single_response.this_update.to_string(),
-                        DATE_FMT,
-                    )
-                    .map_err(|_e| OcspError::InvalidCertificate)?
-                    .and_utc()
-                    .timestamp();
-
                     let next_update = if let Some(nu) = &single_response.next_update {
                         NaiveDateTime::parse_from_str(&nu.to_string(), DATE_FMT)
                             .map_err(|_e| OcspError::InvalidCertificate)?
@@ -205,8 +228,6 @@ impl OcspResponse {
                             || (st.timestamp() >= this_update && st.timestamp() <= next_update)
                     } else {
                         // If no signing time was provided, use current system time.
-                        let now = time::utc_now().timestamp();
-
                         now >= this_update
                     };
 
@@ -252,7 +273,6 @@ impl OcspResponse {
                                 revoked_at > st.timestamp()
                             } else {
                                 // No signing time was provided; use current system time.
-                                let now = time::utc_now().timestamp();
                                 revoked_at > now
                             };
 
@@ -662,6 +682,42 @@ mod tests {
         assert!(result.is_ok());
         // certs were empty so no cert data flows through
         assert!(result.unwrap().ocsp_certs.is_none());
+    }
+
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn response_from_the_future_is_ignored() {
+        // response_good.der has thisUpdate 2025-03-07T14:53:24Z.
+        let rsp_data = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_good.der");
+        let signing_time = Utc.with_ymd_and_hms(2023, 2, 1, 8, 0, 0).unwrap();
+
+        let mut validation_log = StatusTracker::default();
+        let before_this_update = Utc.with_ymd_and_hms(2025, 3, 1, 0, 0, 0).unwrap();
+        OcspResponse::from_der_checked_at(
+            rsp_data,
+            &signing_cert_chain(),
+            Some(signing_time),
+            before_this_update,
+            &mut validation_log,
+        )
+        .unwrap();
+        assert!(!validation_log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+        assert!(!validation_log.has_status(SIGNING_CREDENTIAL_REVOKED));
+
+        let mut validation_log = StatusTracker::default();
+        let after_this_update = Utc.with_ymd_and_hms(2025, 3, 8, 0, 0, 0).unwrap();
+        OcspResponse::from_der_checked_at(
+            rsp_data,
+            &signing_cert_chain(),
+            Some(signing_time),
+            after_this_update,
+            &mut validation_log,
+        )
+        .unwrap();
+        assert!(validation_log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
     }
 
     #[test]
