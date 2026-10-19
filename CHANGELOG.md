@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.91.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.91.3...c2pa-v0.91.4)
+_19 October 2026_
+
+### Fixed
+
+* Ignore SHA-1 timestamp imprints (backport #2830) ([#2886](https://github.com/contentauth/c2pa-rs/pull/2886))
+
 ## [0.91.3](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.91.2...c2pa-v0.91.3)
 _16 October 2026_
 
