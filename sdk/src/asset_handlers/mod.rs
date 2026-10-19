@@ -11,6 +11,9 @@
 // specific language governing permissions and limitations under
 // each license.
 
+// EXPERIMENT (local only, do not commit)
+#[cfg(feature = "asset_io")]
+pub(crate) mod asset_io_adapter;
 pub mod bmff_io;
 pub mod c2pa_io;
 pub mod flac_io;

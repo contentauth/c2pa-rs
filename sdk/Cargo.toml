@@ -41,6 +41,8 @@ unstable_builder_filter = []
 # guarantees and may change or be removed in any release. See docs/experimental-features.md.
 unstable_plain_text = ["dep:unicode-normalization"]
 file_io = []
+# EXPERIMENT (local only, do not commit): JPEG and PNG handled by the asset-io crate.
+asset_io = ["dep:asset-io"]
 fetch_remote_manifests = ["dep:wasi"]
 json_schema = ["dep:schemars"]
 openssl = [
@@ -98,6 +100,8 @@ name = "redaction"
 crate-type = ["lib"]
 
 [dependencies]
+# EXPERIMENT (local only, do not commit): sibling checkout of asset-io.
+asset-io = { path = "../../asset-io", optional = true, default-features = false, features = ["jpeg", "png"] }
 asn1-rs = "0.7.2"
 async-generic = "1.1"
 async-trait = "0.1.89"
@@ -257,6 +261,8 @@ web-sys = { version = "0.3.99", features = [
 ] }
 
 [dev-dependencies]
+# EXPERIMENT (local only, do not commit): sibling checkout of asset-io.
+asset-io = { path = "../../asset-io", default-features = false, features = ["jpeg", "png", "bmff", "riff"] }
 anyhow = "1.0.103"
 env_logger = "0.11.10"
 flate2 = "1.1.10"

@@ -42,9 +42,15 @@ lazy_static! {
         Box::new(PdfIO::new("")),
         Box::new(BmffIO::new("")),
         Box::new(C2paIO::new("")),
+        #[cfg(not(feature = "asset_io"))]
         Box::new(JpegIO::new("")),
+        #[cfg(feature = "asset_io")]
+        Box::new(crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new("jpg")),
         Box::new(JpegXlIO::new("")),
+        #[cfg(not(feature = "asset_io"))]
         Box::new(PngIO::new("")),
+        #[cfg(feature = "asset_io")]
+        Box::new(crate::asset_handlers::asset_io_adapter::AssetIoAdapter::new("png")),
         Box::new(RiffIO::new("")),
         Box::new(SvgIO::new("")),
         Box::new(TiffIO::new("")),

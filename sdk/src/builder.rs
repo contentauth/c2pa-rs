@@ -3870,6 +3870,79 @@ fn rewrite_action_ingredient_urls(
     Ok(())
 }
 
+// EXPERIMENT (local only, do not commit): raw-JUMBF accessors for the asset-io
+// equivalence test. A real API would expose these (e.g. placeholder_jumbf /
+// sign_jumbf) so the caller's container code can compose the manifest itself.
+#[cfg(test)]
+impl Builder {
+    /// Composed placeholder (as `placeholder()` returns) plus the raw JUMBF.
+    pub(crate) fn exp_placeholder(&mut self, format: &str) -> Result<(Vec<u8>, Vec<u8>)> {
+        let composed = self.placeholder(format)?;
+        let raw = self.to_store()?.get_placeholder(format, self.context())?;
+        if Some(raw.len()) != self.placeholder_jumbf_len {
+            return Err(Error::OtherError("raw placeholder length mismatch".into()));
+        }
+        Ok((composed, raw))
+    }
+
+    /// Signed raw JUMBF, zero-padded to the placeholder length.
+    pub(crate) fn exp_sign_raw(&self) -> Result<Vec<u8>> {
+        self.to_store()?
+            .sign_manifest(self.context(), self.placeholder_jumbf_len)
+    }
+
+    pub(crate) fn exp_compose(&self, raw: &[u8], format: &str) -> Result<Vec<u8>> {
+        Store::get_composed_manifest(raw, format, self.context())
+    }
+
+    fn exp_bmff_version(&self) -> Result<usize> {
+        let stored_label = self
+            .definition
+            .assertions
+            .iter()
+            .find(|a| a.label().contains(BmffHash::LABEL))
+            .map(|a| a.label().to_owned())
+            .ok_or(Error::NotFound)?;
+        let (_, version, _) = parse_label(&stored_label);
+        Ok(version)
+    }
+
+    /// The BmffHash's algorithm, version and exclusion list, and the hash
+    /// c2pa-rs's own resolver computes over `stream`.
+    pub(crate) fn exp_bmff_info<R: Read + Seek>(
+        &self,
+        stream: &mut R,
+    ) -> Result<(
+        String,
+        usize,
+        Vec<crate::assertions::ExclusionsMap>,
+        Vec<u8>,
+    )> {
+        let version = self.exp_bmff_version()?;
+        let mut bh = self.find_assertion::<BmffHash>(BmffHash::LABEL)?;
+        bh.set_bmff_version(version);
+        let excl = bh.exclusions().to_vec();
+        let alg = bh.alg().cloned().unwrap_or_else(|| "sha256".to_string());
+        bh.gen_hash_from_stream(stream)?;
+        let hash = bh.hash().cloned().ok_or(Error::NotFound)?;
+        Ok((alg, version, excl, hash))
+    }
+
+    /// Store a hash computed by the caller in the BmffHash assertion.
+    pub(crate) fn exp_set_bmff_hash(&mut self, hash: Vec<u8>) -> Result<()> {
+        let version = self.exp_bmff_version()?;
+        let mut bh = self.find_assertion::<BmffHash>(BmffHash::LABEL)?;
+        bh.set_bmff_version(version);
+        bh.set_hash(hash);
+        self.definition
+            .assertions
+            .retain(|a| !a.label().contains(BmffHash::LABEL));
+        let label = bh.to_assertion()?.label();
+        self.add_assertion(&label, &bh)?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
