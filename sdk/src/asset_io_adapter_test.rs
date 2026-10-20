@@ -16,7 +16,9 @@ use crate::{
     Error,
 };
 
-fn fixtures() -> Vec<(String, Vec<u8>, Box<dyn AssetIO>, Box<dyn AssetIO>)> {
+type Fixture = (String, Vec<u8>, Box<dyn AssetIO>, Box<dyn AssetIO>);
+
+fn fixtures() -> Vec<Fixture> {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     let mut v = Vec::new();
     for e in fs::read_dir(dir).unwrap().flatten() {

@@ -6,7 +6,7 @@
 // store, which asset-io layout becomes which `ObjectLocations` and `BoxMap`, and how
 // errors are reported.
 
-use std::{collections::HashSet, io::Seek, sync::Arc};
+use std::{collections::HashSet, sync::Arc};
 
 use ::asset_io as aio;
 use aio::{ByteRange, ContainerHandler, HandlerRegistry, SegmentKind, Structure, Updates};

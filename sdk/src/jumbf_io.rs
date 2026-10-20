@@ -23,11 +23,12 @@ use crate::asset_handlers::pdf_io::PdfIO;
 use crate::asset_handlers::plain_text_io::PlainTextIO;
 #[cfg(feature = "unstable_structured_text")]
 use crate::asset_handlers::structured_text_io::StructuredTextIO;
+#[cfg(not(feature = "asset_io"))]
+use crate::asset_handlers::{jpeg_io::JpegIO, png_io::PngIO};
 use crate::{
     asset_handlers::{
-        bmff_io::BmffIO, c2pa_io::C2paIO, flac_io::FlacIO, gif_io::GifIO, jpeg_io::JpegIO,
-        jpegxl_io::JpegXlIO, mp3_io::Mp3IO, png_io::PngIO, riff_io::RiffIO, svg_io::SvgIO,
-        tiff_io::TiffIO, zip_io::ZipIO,
+        bmff_io::BmffIO, c2pa_io::C2paIO, flac_io::FlacIO, gif_io::GifIO, jpegxl_io::JpegXlIO,
+        mp3_io::Mp3IO, riff_io::RiffIO, svg_io::SvgIO, tiff_io::TiffIO, zip_io::ZipIO,
     },
     asset_io::{AssetIO, C2paReader, C2paWriter, HandlerRegistry, ReadSeek, ReadWriteSeek},
     error::{Error, Result},
@@ -248,6 +249,8 @@ pub mod tests {
     use std::io::Seek;
 
     use super::*;
+    #[cfg(feature = "asset_io")]
+    use crate::asset_handlers::{jpeg_io::JpegIO, png_io::PngIO};
     use crate::{
         utils::{test::create_test_store, test_signer::test_signer},
         SigningAlg,
