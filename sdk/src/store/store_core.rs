@@ -48,7 +48,7 @@ use crate::{
     },
     log_item,
     manifest_store_report::ManifestStoreReport,
-    settings::{get_thread_local_settings, TrustListKind, MAX_ASSERTIONS},
+    settings::{TrustListKind, MAX_ASSERTIONS},
     status_tracker::{ErrorBehavior, StatusTracker},
     store::{InvalidClaimError, StoreValidationInfo},
     utils::is_zero,
@@ -969,16 +969,6 @@ impl Store {
     }
 
     #[inline]
-    pub fn from_jumbf(buffer: &[u8], validation_log: &mut StatusTracker) -> Result<Store> {
-        // Legacy path: no Context available; read thread-local settings for backward compatibility.
-        let max_manifest_size = get_thread_local_settings()
-            .core
-            .max_decompressed_manifest_size_in_mb
-            .saturating_mul(1024 * 1024);
-        Self::from_jumbf_impl(Store::new(), buffer, validation_log, max_manifest_size)
-    }
-
-    #[inline]
     pub fn from_jumbf_with_context(
         buffer: &[u8],
         validation_log: &mut StatusTracker,
@@ -1534,8 +1524,8 @@ impl Store {
         Ok(jumbf_bytes)
     }
 
-    /// Returns a finalized, signed manifest.  The client is required to have
-    /// included the necessary box hash assertion with the pregenerated hashes.
+    /// Returns a finalized, signed manifest with a precomputed box hash assertion.
+    #[allow(dead_code)]
     #[async_generic(async_signature(
         &mut self,
         signer: &dyn AsyncSigner,

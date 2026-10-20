@@ -230,18 +230,6 @@ pub struct Trust {
     /// List of allowed extended key usage (EKU) object identifiers (OID) that
     /// certificates must have.
     pub trust_config: Option<String>,
-
-    #[deprecated(
-        since = "0.91.0",
-        note = "Use `anchors` to add a user TrustAnchor. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub user_anchors: Option<String>,
-
-    #[deprecated(
-        since = "0.91.0",
-        note = "Use `anchors` to add a TrustAnchor. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub trust_anchors: Option<String>,
 }
 
 impl Trust {
@@ -334,8 +322,6 @@ impl Default for Trust {
             let mut trust = Self {
                 anchors: None,
                 trust_config: None,
-                user_anchors: None,
-                trust_anchors: None,
             };
 
             trust.trust_config = Some(
@@ -354,8 +340,6 @@ impl Default for Trust {
             Self {
                 anchors: None,
                 trust_config: None,
-                user_anchors: None,
-                trust_anchors: None,
             }
         }
     }
@@ -720,10 +704,10 @@ pub struct Settings {
     ///
     /// [`Builder`]: crate::Builder
     pub builder: BuilderSettings,
-    /// Settings for configuring the base C2PA signer, accessible via [`Settings::signer`].
+    /// Settings for configuring the base C2PA signer, accessible via [`crate::Context::signer`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signer: Option<SignerSettings>,
-    /// Settings for configuring the CAWG x509 signer, accessible via [`Settings::signer`].
+    /// Settings for configuring the CAWG x509 signer, used by [`crate::Context::signer`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cawg_x509_signer: Option<SignerSettings>,
     /// List of soft binding algorithms to validate against. If not specified, soft binding errors may be generated.
@@ -731,91 +715,6 @@ pub struct Settings {
 }
 
 impl Settings {
-    #[cfg(feature = "file_io")]
-    /// Load thread-local [Settings] from a file.
-    ///
-    /// Use [`Settings::new().with_file()`](Settings::with_file) instead,
-    /// which does not modify thread-local state.
-    #[doc(hidden)]
-    #[deprecated(
-        since = "0.79.4",
-        note = "Use `Settings::new().with_file(path)` instead, which does not modify thread-local state. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    #[allow(deprecated)]
-    pub fn from_file<P: AsRef<Path>>(settings_path: P) -> Result<Self> {
-        let ext = settings_path
-            .as_ref()
-            .extension()
-            .ok_or(Error::UnsupportedType)?
-            .to_string_lossy();
-
-        let setting_buf = std::fs::read(&settings_path).map_err(Error::IoError)?;
-        Settings::from_string(&String::from_utf8_lossy(&setting_buf), &ext)
-    }
-
-    /// Load thread-local [Settings] from string representation of the configuration.
-    /// Format of configuration must be supplied (json or toml).
-    ///
-    /// Use [`Settings::new().with_json()`](Settings::with_json) or
-    /// [`Settings::new().with_toml()`](Settings::with_toml) instead,
-    /// which do not modify thread-local state.
-    #[doc(hidden)]
-    #[deprecated(
-        since = "0.79.4",
-        note = "Use `Settings::new().with_json(str)` or `Settings::new().with_toml(str)` instead, which do not modify thread-local state. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub fn from_string(settings_str: &str, format: &str) -> Result<Self> {
-        let mut overlay = parse_to_value(settings_str, format)?;
-        let mut merged = SETTINGS.with_borrow(Value::clone);
-
-        // Extract the legacy `trust.trust_anchors` / `trust.user_anchors` fields (and
-        // the newer `trust.anchors`) the same way `with_string()` does, so this
-        // deprecated thread-local path stays consistent with the builder path (#2663).
-        let (new_anchors, legacy_trust_anchors, legacy_user_anchors) =
-            Self::take_trust_anchor_overlay_fields(&mut overlay)?;
-
-        merge_json(&mut merged, overlay);
-
-        let mut settings: Settings =
-            serde_json::from_value(merged.clone()).map_err(|e| Error::BadParam(e.to_string()))?;
-        settings.validate()?;
-
-        Self::merge_legacy_trust_anchors(
-            &mut settings,
-            new_anchors,
-            legacy_trust_anchors,
-            legacy_user_anchors,
-        )?;
-
-        // Reflect the migrated `trust` settings back into the raw thread-local value.
-        // The raw value may carry "hidden" fields outside of `trust` that are not
-        // modeled by `Settings`, so only the `trust` subtree is replaced here rather
-        // than overwriting `merged` wholesale.
-        if let Some(obj) = merged.as_object_mut() {
-            obj.insert(
-                "trust".to_string(),
-                serde_json::to_value(&settings.trust)
-                    .map_err(|err| Error::OtherError(Box::new(err)))?,
-            );
-        }
-        SETTINGS.set(merged);
-
-        Ok(settings)
-    }
-
-    /// Set the thread-local [Settings] from a toml string.
-    ///
-    /// Use [`Settings::new().with_toml()`](Settings::with_toml) instead,
-    /// which does not modify thread-local state.
-    #[deprecated(
-        since = "0.79.4",
-        note = "Use `Settings::new().with_toml(toml)` instead, which does not modify thread-local state. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    #[allow(deprecated)]
-    pub fn from_toml(toml: &str) -> Result<()> {
-        Settings::from_string(toml, "toml").map(|_| ())
-    }
-
     /// Update this `Settings` instance from a string representation.
     /// This overlays the provided configuration on top of the current settings
     /// without affecting the thread-local settings.
@@ -954,8 +853,7 @@ impl Settings {
     /// Load settings from TOML string using the builder pattern.
     ///
     /// This does NOT update thread-local settings. It overlays the TOML configuration
-    /// on top of the current Settings instance. For the legacy behavior that
-    /// updates thread-locals, use `Settings::from_toml()`.
+    /// on top of the current Settings instance.
     ///
     /// # Arguments
     ///
@@ -1130,8 +1028,6 @@ impl Settings {
             a.validate()?;
 
             unique.insert(a);
-
-            settings.trust.trust_anchors = None;
         }
 
         if let Some(ua) = legacy_user_anchors {
@@ -1149,55 +1045,11 @@ impl Settings {
             a.validate()?;
 
             unique.insert(a);
-
-            settings.trust.user_anchors = None;
         }
 
         settings.trust.anchors = Some(unique.into_iter().collect());
 
         Ok(())
-    }
-
-    /// Serializes the thread-local [Settings] into a toml string.
-    ///
-    /// Use `toml::to_string(&settings)` on a [`Settings`] instance instead.
-    #[doc(hidden)]
-    #[deprecated(
-        since = "0.79.4",
-        note = "Use `toml::to_string(&settings)` on a `Settings` instance instead of reading from thread-local state. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub fn to_toml() -> Result<String> {
-        let settings = get_thread_local_settings();
-        Ok(toml::to_string(&settings)?)
-    }
-
-    /// Serializes the thread-local [Settings] into a pretty (formatted) toml string.
-    ///
-    /// Use `toml::to_string_pretty(&settings)` on a [`Settings`] instance instead.
-    #[doc(hidden)]
-    #[deprecated(
-        since = "0.79.4",
-        note = "Use `toml::to_string_pretty(&settings)` on a `Settings` instance instead of reading from thread-local state. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub fn to_pretty_toml() -> Result<String> {
-        let settings = get_thread_local_settings();
-        Ok(toml::to_string_pretty(&settings)?)
-    }
-
-    /// Returns the constructed signer from the thread-local `signer` settings field.
-    ///
-    /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings].
-    ///
-    /// Configure the signer via a [`Context`](crate::Context) passed explicitly to
-    /// [`Builder::from_context`](crate::Builder::from_context) instead.
-    #[inline]
-    #[deprecated(
-        since = "0.79.4",
-        note = "Configure the signer via `Context` and pass it to `Builder::from_context` instead of using thread-local signer settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    #[allow(deprecated)]
-    pub fn signer() -> Result<crate::BoxedSigner> {
-        SignerSettings::signer()
     }
 
     /// Sets a value at the specified path in this Settings instance using the builder pattern.
@@ -1424,31 +1276,31 @@ fn get_at_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
     Some(current)
 }
 
-/// Get a snapshot of the thread-local Settings, always returns a valid Settings object.
-/// If the thread-local settings cannot be deserialized, returns default Settings.
-#[allow(unused)]
-pub(crate) fn get_thread_local_settings() -> Settings {
-    SETTINGS.with_borrow(|value| serde_json::from_value(value.clone()).unwrap_or_default())
-}
+// /// Get a snapshot of the thread-local Settings, always returns a valid Settings object.
+// /// If the thread-local settings cannot be deserialized, returns default Settings.
+// #[allow(unused)]
+// pub(crate) fn get_thread_local_settings() -> Settings {
+//     SETTINGS.with_borrow(|value| serde_json::from_value(value.clone()).unwrap_or_default())
+// }
 
-/// See [Settings::set_thread_local_value] for more information.
-#[cfg(test)]
-pub(crate) fn set_settings_value<T: Into<Value>>(value_path: &str, value: T) -> Result<()> {
-    Settings::set_thread_local_value(value_path, value)
-}
+// /// See [Settings::set_thread_local_value] for more information.
+// #[cfg(test)]
+// pub(crate) fn set_settings_value<T: Into<Value>>(value_path: &str, value: T) -> Result<()> {
+//     Settings::set_thread_local_value(value_path, value)
+// }
 
-/// See [Settings::get_thread_local_value] for more information.
-#[cfg(test)]
-fn get_settings_value<T: serde::de::DeserializeOwned>(value_path: &str) -> Result<T> {
-    Settings::get_thread_local_value(value_path)
-}
+// /// See [Settings::get_thread_local_value] for more information.
+// #[cfg(test)]
+// fn get_settings_value<T: serde::de::DeserializeOwned>(value_path: &str) -> Result<T> {
+//     Settings::get_thread_local_value(value_path)
+// }
 
-/// Reset all settings back to default values.
-#[cfg(test)]
-// #[deprecated = "use `Settings::reset` instead"]
-pub fn reset_default_settings() -> Result<()> {
-    Settings::reset()
-}
+// /// Reset all settings back to default values.
+// #[cfg(test)]
+// // #[deprecated = "use `Settings::reset` instead"]
+// pub fn reset_default_settings() -> Result<()> {
+//     Settings::reset()
+// }
 
 // Used for backwards compatibility with the `config` crate.
 pub(crate) fn deserialize_case_insensitive<'de, D, T>(deserializer: D) -> Result<T, D::Error>
@@ -1491,41 +1343,6 @@ pub mod tests {
     use crate::utils::io_utils::tempdirectory;
     use crate::{utils::test::test_settings, SigningAlg};
 
-    /// Legacy test: verifies the thread-local settings API reads defaults and round-trips values.
-    #[test]
-    fn test_thread_local_settings() {
-        // Verify defaults are accessible via thread-local
-        let settings = get_thread_local_settings();
-        assert_eq!(settings.core, Core::default());
-        assert_eq!(settings.trust, Trust::default());
-        assert_eq!(settings.verify, Verify::default());
-        assert_eq!(settings.builder, BuilderSettings::default());
-
-        // Verify individual values can be read by path
-        assert_eq!(
-            get_settings_value::<bool>("builder.thumbnail.enabled").unwrap(),
-            BuilderSettings::default().thumbnail.enabled
-        );
-        assert_eq!(
-            get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap(),
-            Verify::default().remote_manifest_fetch
-        );
-
-        // Verify set/get round-trip via thread-local API
-        Settings::set_thread_local_value("core.merkle_tree_chunk_size_in_kb", 10).unwrap();
-        Settings::set_thread_local_value("verify.remote_manifest_fetch", false).unwrap();
-        Settings::set_thread_local_value("builder.thumbnail.enabled", false).unwrap();
-
-        assert_eq!(
-            get_settings_value::<usize>("core.merkle_tree_chunk_size_in_kb").unwrap(),
-            10
-        );
-        assert!(!get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap());
-        assert!(!get_settings_value::<bool>("builder.thumbnail.enabled").unwrap());
-
-        reset_default_settings().unwrap();
-    }
-
     #[cfg(feature = "file_io")]
     #[test]
     fn test_save_load() {
@@ -1567,35 +1384,6 @@ pub mod tests {
         let result =
             Settings::default().with_value("core.max_decompressed_manifest_size_in_mb", 1025usize);
         assert!(result.is_err());
-    }
-
-    /// Legacy test: verifies arbitrary (hidden) keys can be stored and retrieved via the
-    /// thread-local Figment config. This is not possible with the instance-based API since
-    /// unknown keys are not part of the `Settings` struct.
-    #[test]
-    #[allow(deprecated)]
-    fn test_thread_local_hidden_setting() {
-        let secret = toml::toml! {
-            [hidden]
-            test1 = true
-            test2 = "hello world"
-            test3 = 123456
-        }
-        .to_string();
-
-        Settings::from_toml(&secret).unwrap();
-
-        assert!(get_settings_value::<bool>("hidden.test1").unwrap());
-        assert_eq!(
-            get_settings_value::<String>("hidden.test2").unwrap(),
-            "hello world".to_string()
-        );
-        assert_eq!(
-            get_settings_value::<u32>("hidden.test3").unwrap(),
-            123456u32
-        );
-
-        reset_default_settings().unwrap();
     }
 
     #[test]
@@ -1882,18 +1670,6 @@ pub mod tests {
             .unwrap();
         assert!(!settings.verify.verify_trust);
         assert!(!settings.verify.verify_after_sign);
-
-        // Test that it doesn't update thread-locals
-        let original = get_thread_local_settings();
-        let _settings = Settings::new()
-            .with_json(r#"{"verify": {"verify_trust": false}}"#)
-            .unwrap();
-        let after = get_thread_local_settings();
-        // thread-local settings should be unchanged
-        assert_eq!(
-            original.verify.verify_trust, after.verify.verify_trust,
-            "Builder pattern should not modify thread_local settings"
-        );
     }
 
     #[test]
@@ -2059,18 +1835,9 @@ pub mod tests {
         );
     }
 
-    // Regression test for https://github.com/contentauth/c2pa-rs/issues/2663:
-    // the deprecated `Settings::from_string()` thread-local API must migrate
-    // legacy `trust.trust_anchors` / `trust.user_anchors` fields the same way
-    // that `Settings::new().with_json()` does.
+    // Regression test for legacy trust-anchor field migration in the instance API.
     #[test]
-    #[allow(deprecated)]
-    fn test_from_string_loads_legacy_trust_anchors() {
-        // Some Wasm/WASI test runners execute all tests in a single process without
-        // per-test thread isolation, so the thread-local `SETTINGS` state can carry
-        // over from an earlier test. Start from a clean baseline.
-        reset_default_settings().unwrap();
-
+    fn test_with_json_loads_legacy_trust_anchors() {
         let legacy_trust_anchors = r#"{
                 "trust": {
                     "trust_anchors": "-----BEGIN CERTIFICATE-----\\nMIICEzCCAcWgAwIBAgIUW4fUnS38162x10PCnB8qFsrQuZgwBQYDK2VwMHcxCzAJ\\nBgNVBAYTAlVTMQswCQYDVQQIDAJDQTESMBAGA1UEBwwJU29tZXdoZXJlMRowGAYD\\nVQQKDBFDMlBBIFRlc3QgUm9vdCBDQTEZMBcGA1UECwwQRk9SIFRFU1RJTkdfT05M\\nWTEQMA4GA1UEAwwHUm9vdCBDQTAeFw0yMjA2MTAxODQ2NDFaFw0zMjA2MDcxODQ2\\nNDFaMHcxCzAJBgNVBAYTAlVTMQswCQYDVQQIDAJDQTESMBAGA1UEBwwJU29tZXdo\\nZXJlMRowGAYDVQQKDBFDMlBBIFRlc3QgUm9vdCBDQTEZMBcGA1UECwwQRk9SIFRF\\nU1RJTkdfT05MWTEQMA4GA1UEAwwHUm9vdCBDQTAqMAUGAytlcAMhAGPUgK9q1H3D\\neKMGqLGjTXJSpsrLpe0kpxkaFMe7KUAuo2MwYTAdBgNVHQ4EFgQUXuZWArP1jiRM\\nfgye6ZqRyGupTowwHwYDVR0jBBgwFoAUXuZWArP1jiRMfgye6ZqRyGupTowwDwYD\\nVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMCAYYwBQYDK2VwA0EA8E79g54u2fUy\\ndfVLPyqKmtjenOUMvVQD7waNbetLY7kvUJZCd5eaDghk30/Q1RaNjiP/2RfA/it8\\nzGxQnM2hCA==\\n-----END CERTIFICATE-----",
@@ -2078,7 +1845,7 @@ pub mod tests {
                 }
         }"#;
 
-        let settings = Settings::from_string(legacy_trust_anchors, "json").unwrap();
+        let settings = Settings::new().with_json(legacy_trust_anchors).unwrap();
 
         assert!(
             settings.trust.anchors.is_some(),
@@ -2108,7 +1875,5 @@ pub mod tests {
             has_system_trust_anchor,
             "Expected system trust anchor to be present"
         );
-
-        reset_default_settings().unwrap();
     }
 }

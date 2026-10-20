@@ -18,6 +18,7 @@ use std::{
 
 use quick_xml::{
     events::{BytesStart, BytesText, Event},
+    name::{NamespaceResolver, QName, ResolveResult},
     Reader, Writer,
 };
 
@@ -38,8 +39,71 @@ const METADATA: &str = "metadata";
 const MANIFEST: &str = "c2pa:manifest";
 const MANIFEST_NS: &str = "xmlns:c2pa";
 const MANIFEST_NS_VAL: &str = "http://c2pa.org/manifest";
+const SVG_NS: &[u8] = b"http://www.w3.org/2000/svg";
+const C2PA_NS: &[u8] = MANIFEST_NS_VAL.as_bytes();
 const XPACKET: &str = "xpacket";
 const XMP_ID: &str = "W5M0MpCehiHzreSzNTczkc9d";
+
+fn canonical_element_name(element: &BytesStart, namespace: ResolveResult<'_>) -> String {
+    let name = element.name();
+    let local = name.local_name();
+    let ns = match namespace {
+        ResolveResult::Bound(ns) => Some(ns.into_inner()),
+        _ => None,
+    };
+    match (local.as_ref(), ns) {
+        (b"svg", Some(SVG_NS)) => SVG.to_string(),
+        (b"metadata", Some(SVG_NS)) => METADATA.to_string(),
+        (b"manifest", Some(C2PA_NS)) => MANIFEST.to_string(),
+        _ => String::from_utf8_lossy(name.as_ref()).into_owned(),
+    }
+}
+
+fn metadata_element_name(root: &BytesStart) -> String {
+    match root.name().prefix() {
+        Some(prefix) => format!(
+            "{}:{METADATA}",
+            String::from_utf8_lossy(prefix.into_inner())
+        ),
+        None => METADATA.to_string(),
+    }
+}
+
+fn is_manifest_path(xml_path: &[String]) -> bool {
+    xml_path == [SVG, METADATA, MANIFEST]
+}
+
+// Only some elements need the namespace scan.
+fn enter_element(
+    xml_path: &mut Vec<String>,
+    ns: &mut NamespaceResolver,
+    element: &BytesStart,
+) -> Result<()> {
+    let local = element.local_name();
+    let on_manifest_path = match xml_path.len() {
+        0 => true,
+        1 => xml_path[0] == SVG && local.as_ref() == b"metadata",
+        2 => xml_path.as_slice() == [SVG, METADATA] && local.as_ref() == b"manifest",
+        _ => false,
+    };
+    if on_manifest_path {
+        ns.push(element)
+            .map_err(|_e| Error::InvalidAsset("XML invalid".to_string()))?;
+        xml_path.push(canonical_element_name(
+            element,
+            ns.resolve_element(element.name()).0,
+        ));
+    } else {
+        xml_path.push(String::new());
+    }
+    Ok(())
+}
+
+fn leave_element(xml_path: &mut Vec<String>, ns: &mut NamespaceResolver) {
+    if xml_path.pop().is_some_and(|name| !name.is_empty()) {
+        ns.pop();
+    }
+}
 
 pub struct SvgIO {}
 
@@ -62,7 +126,7 @@ impl C2paReader for SvgIO {
 
     // Get XMP block
     fn read_xmp(&self, input_stream: &mut dyn ReadSeek) -> Option<String> {
-        let (xmp, _dtd, _insertion_pt) = read_xmp(input_stream).ok()?;
+        let (xmp, _dtd, _insertion_pt, _metadata_qname) = read_xmp(input_stream).ok()?;
         xmp
     }
 }
@@ -102,7 +166,11 @@ impl AssetIO for SvgIO {
 }
 
 // create manifest entry
-fn create_manifest_tag(data: &[u8], with_meta: bool) -> Result<Event<'_>> {
+fn create_manifest_tag(
+    data: &[u8],
+    with_meta: bool,
+    metadata_qname: &str,
+) -> Result<Event<'static>> {
     let output: Vec<u8> = Vec::with_capacity(data.len() + 256);
     let mut writer = Writer::new(Cursor::new(output));
 
@@ -110,7 +178,7 @@ fn create_manifest_tag(data: &[u8], with_meta: bool) -> Result<Event<'_>> {
 
     if with_meta {
         writer
-            .create_element(METADATA)
+            .create_element(metadata_qname)
             .write_inner_content(|writer| {
                 writer
                     .create_element(MANIFEST)
@@ -143,6 +211,7 @@ fn add_c2pa_namespace_if_missing(start: &mut BytesStart) {
 }
 
 enum DetectedTagsDepth {
+    NoRoot,
     Metadata,
     Manifest,
     Xmp,
@@ -158,16 +227,20 @@ fn detect_manifest_location(
     let mut buf = Vec::new();
     let buf_reader = BufReader::new(input_stream);
     let mut xml_reader = Reader::from_reader(buf_reader);
+    let mut ns = NamespaceResolver::default();
     let mut xml_path: Vec<String> = Vec::new();
-    let mut detected_level = DetectedTagsDepth::Empty;
+    let mut root_element_name = String::new();
+    let mut detected_level = DetectedTagsDepth::NoRoot;
     let mut insertion_point = 0;
     let mut output: Option<Vec<u8>> = None;
 
     loop {
         match xml_reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) => {
-                let name = String::from_utf8_lossy(e.name().into_inner()).into_owned();
-                xml_path.push(name);
+                if xml_path.is_empty() {
+                    root_element_name = String::from_utf8_lossy(e.name().into_inner()).into_owned();
+                }
+                enter_element(&mut xml_path, &mut ns, e)?;
 
                 if xml_path.len() == 2 {
                     if xml_path[0] == SVG {
@@ -178,31 +251,28 @@ fn detect_manifest_location(
                     } else {
                         return Err(Error::InvalidAsset(format!(
                             "invalid tag structure: root element must be \"{}\", found \"{}\"",
-                            SVG, xml_path[0]
+                            SVG, root_element_name
                         )));
                     }
                 }
 
-                if xml_path.len() == 3
-                    && xml_path[0] == SVG
-                    && xml_path[1] == METADATA
-                    && xml_path[2] == MANIFEST
-                {
+                if is_manifest_path(&xml_path) {
                     detected_level = DetectedTagsDepth::Manifest;
                     insertion_point = xml_reader.buffer_position();
                 }
 
-                if xml_path.len() == 1 && xml_path[0] == SVG {
+                if xml_path == [SVG] {
                     detected_level = DetectedTagsDepth::Empty;
                     insertion_point = xml_reader.buffer_position();
                 }
             }
-            Ok(Event::Text(e))
-                if xml_path.len() == 3
-                    && xml_path[0] == SVG
-                    && xml_path[1] == METADATA
-                    && xml_path[2] == MANIFEST =>
-            {
+            Ok(Event::Text(e)) if is_manifest_path(&xml_path) => {
+                // Reject double payloads which would make hashing ambiguous.
+                if output.is_some() {
+                    return Err(Error::InvalidAsset(
+                        "multiple c2pa manifest payloads".to_string(),
+                    ));
+                }
                 let encoded_content = e
                     .decode()
                     .map_err(|_e| {
@@ -215,9 +285,7 @@ fn detect_manifest_location(
                     })?);
             }
             Ok(Event::Text(_)) => {}
-            Ok(Event::End(_)) => {
-                let _p = xml_path.pop();
-            }
+            Ok(Event::End(_)) => leave_element(&mut xml_path, &mut ns),
             Ok(Event::Eof) => break,
             Err(_) => return Err(Error::InvalidAsset("XML invalid".to_string())),
             _ => (),
@@ -229,29 +297,33 @@ fn detect_manifest_location(
     Ok((output, detected_level, insertion_point))
 }
 
-fn read_xmp(input_stream: &mut dyn ReadSeek) -> Result<(Option<String>, DetectedTagsDepth, usize)> {
+fn read_xmp(
+    input_stream: &mut dyn ReadSeek,
+) -> Result<(Option<String>, DetectedTagsDepth, usize, String)> {
     input_stream.rewind()?;
 
     let mut insertion_point = stream_len(input_stream)?;
     let mut buf = Vec::new();
     let buf_reader = BufReader::new(input_stream);
     let mut xml_reader = Reader::from_reader(buf_reader);
+    let mut ns = NamespaceResolver::default();
     let mut xml_path: Vec<String> = Vec::new();
-    let mut detected_level = DetectedTagsDepth::Empty;
+    let mut metadata_qname = METADATA.to_string();
+    let mut detected_level = DetectedTagsDepth::NoRoot;
     let mut output = None;
 
     loop {
         match xml_reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) => {
-                let name: String = String::from_utf8_lossy(e.name().into_inner()).into_owned();
-                xml_path.push(name);
+                enter_element(&mut xml_path, &mut ns, e)?;
 
-                if xml_path.len() == 1 && xml_path[0] == SVG {
+                if xml_path == [SVG] {
+                    metadata_qname = metadata_element_name(e);
                     detected_level = DetectedTagsDepth::Empty;
                     insertion_point = xml_reader.buffer_position();
                 }
 
-                if xml_path.len() == 2 && xml_path[0] == SVG && xml_path[1] == METADATA {
+                if xml_path == [SVG, METADATA] {
                     detected_level = DetectedTagsDepth::Metadata;
                     insertion_point = xml_reader.buffer_position();
                 }
@@ -288,9 +360,7 @@ fn read_xmp(input_stream: &mut dyn ReadSeek) -> Result<(Option<String>, Detected
                     break;
                 }
             }
-            Ok(Event::End(_)) => {
-                let _p = xml_path.pop();
-            }
+            Ok(Event::End(_)) => leave_element(&mut xml_path, &mut ns),
             Ok(Event::Eof) => break,
             Err(_) => return Err(Error::InvalidAsset("XML invalid".to_string())),
             _ => (),
@@ -299,7 +369,7 @@ fn read_xmp(input_stream: &mut dyn ReadSeek) -> Result<(Option<String>, Detected
     }
     let insertion_point = usize::try_from(insertion_point)?;
 
-    Ok((output, detected_level, insertion_point))
+    Ok((output, detected_level, insertion_point, metadata_qname))
 }
 
 fn add_required_segs_to_stream(
@@ -352,19 +422,25 @@ impl C2paWriter for SvgIO {
         let mut writer = Writer::new(output_stream);
 
         let mut buf = Vec::new();
+        let mut ns = NamespaceResolver::default();
         let mut xml_path: Vec<String> = Vec::new();
 
         match detected_tag_location {
+            DetectedTagsDepth::NoRoot => {
+                return Err(Error::InvalidAsset(
+                    "SVG root element not found".to_string(),
+                ));
+            }
             DetectedTagsDepth::Metadata => {
                 // add manifest case
+                let mut inserted = false;
                 loop {
                     match reader.read_event_into(&mut buf) {
                         Ok(Event::Start(mut e)) => {
-                            let name = String::from_utf8_lossy(e.name().into_inner()).into_owned();
-                            xml_path.push(name);
+                            enter_element(&mut xml_path, &mut ns, &e)?;
 
                             // Ensure xmlns:c2pa is declared in the SVG root.
-                            if xml_path.len() == 1 && xml_path[0] == SVG {
+                            if xml_path == [SVG] {
                                 add_c2pa_namespace_if_missing(&mut e);
                             }
 
@@ -374,16 +450,16 @@ impl C2paWriter for SvgIO {
                                 .map_err(|_e| Error::XmlWriteError)?;
 
                             // add manifest data
-                            if xml_path.len() == 2 && xml_path[0] == SVG && xml_path[1] == METADATA
-                            {
+                            if xml_path == [SVG, METADATA] && !inserted {
                                 writer
-                                    .write_event(create_manifest_tag(store_bytes, false)?)
+                                    .write_event(create_manifest_tag(store_bytes, false, METADATA)?)
                                     .map_err(|_e| Error::XmlWriteError)?;
+                                inserted = true;
                             }
                         }
                         Ok(Event::Eof) => break,
                         Ok(Event::End(e)) => {
-                            let _p = xml_path.pop();
+                            leave_element(&mut xml_path, &mut ns);
                             writer
                                 .write_event(Event::End(e))
                                 .map_err(|_e| Error::XmlWriteError)?;
@@ -401,11 +477,10 @@ impl C2paWriter for SvgIO {
                 loop {
                     match reader.read_event_into(&mut buf) {
                         Ok(Event::Start(mut e)) => {
-                            let name = String::from_utf8_lossy(e.name().into_inner()).into_owned();
-                            xml_path.push(name);
+                            enter_element(&mut xml_path, &mut ns, &e)?;
 
                             // Ensure xmlns:c2pa is declared in the SVG root.
-                            if xml_path.len() == 1 && xml_path[0] == SVG {
+                            if xml_path == [SVG] {
                                 add_c2pa_namespace_if_missing(&mut e);
                             }
 
@@ -416,11 +491,7 @@ impl C2paWriter for SvgIO {
                         }
                         Ok(Event::Text(e)) => {
                             // add manifest data
-                            if xml_path.len() == 3
-                                && xml_path[0] == SVG
-                                && xml_path[1] == METADATA
-                                && xml_path[2] == MANIFEST
-                            {
+                            if is_manifest_path(&xml_path) {
                                 writer
                                     .write_event(Event::Text(BytesText::new(&encoded)))
                                     .map_err(|_e| Error::XmlWriteError)?;
@@ -432,7 +503,7 @@ impl C2paWriter for SvgIO {
                         }
                         Ok(Event::Eof) => break,
                         Ok(Event::End(e)) => {
-                            let _p = xml_path.pop();
+                            leave_element(&mut xml_path, &mut ns);
                             writer
                                 .write_event(Event::End(e))
                                 .map_err(|_e| Error::XmlWriteError)?;
@@ -443,16 +514,17 @@ impl C2paWriter for SvgIO {
                     buf.clear();
                 }
             }
-            _ => {
+            DetectedTagsDepth::Empty | DetectedTagsDepth::Xmp => {
                 //add metadata & manifest case
                 loop {
                     match reader.read_event_into(&mut buf) {
                         Ok(Event::Start(mut e)) => {
-                            let name = String::from_utf8_lossy(e.name().into_inner()).into_owned();
-                            xml_path.push(name);
+                            enter_element(&mut xml_path, &mut ns, &e)?;
+                            let metadata_qname =
+                                (xml_path == [SVG]).then(|| metadata_element_name(&e));
 
                             // Ensure xmlns:c2pa is declared in the SVG root.
-                            if xml_path.len() == 1 && xml_path[0] == SVG {
+                            if metadata_qname.is_some() {
                                 add_c2pa_namespace_if_missing(&mut e);
                             }
 
@@ -462,15 +534,19 @@ impl C2paWriter for SvgIO {
                                 .map_err(|_e| Error::XmlWriteError)?;
 
                             // add manifest data
-                            if xml_path.len() == 1 && xml_path[0] == SVG {
+                            if let Some(metadata_qname) = metadata_qname {
                                 writer
-                                    .write_event(create_manifest_tag(store_bytes, true)?)
+                                    .write_event(create_manifest_tag(
+                                        store_bytes,
+                                        true,
+                                        &metadata_qname,
+                                    )?)
                                     .map_err(|_e| Error::XmlWriteError)?;
                             }
                         }
                         Ok(Event::Eof) => break,
                         Ok(Event::End(e)) => {
-                            let _p = xml_path.pop();
+                            leave_element(&mut xml_path, &mut ns);
                             writer
                                 .write_event(Event::End(e))
                                 .map_err(|_e| Error::XmlWriteError)?;
@@ -533,6 +609,7 @@ impl C2paWriter for SvgIO {
         input_stream: &mut dyn ReadSeek,
         output_stream: &mut dyn ReadWriteSeek,
     ) -> Result<()> {
+        input_stream.rewind()?;
         let buf_reader = BufReader::new(input_stream);
         let mut reader = Reader::from_reader(buf_reader);
 
@@ -540,60 +617,48 @@ impl C2paWriter for SvgIO {
         let mut writer = Writer::new(output_stream);
 
         let mut buf = Vec::new();
+        let mut ns = NamespaceResolver::default();
         let mut xml_path: Vec<String> = Vec::new();
 
         loop {
-            match reader.read_event_into(&mut buf) {
-                Ok(Event::Start(e)) => {
-                    let name = String::from_utf8_lossy(e.name().into_inner()).into_owned();
-                    xml_path.push(name);
+            let event = reader
+                .read_event_into(&mut buf)
+                .map_err(|_e| Error::InvalidAsset("XML invalid".to_string()))?;
 
-                    if xml_path.len() == 3
-                        && xml_path[0] == SVG
-                        && xml_path[1] == METADATA
-                        && xml_path[2] == MANIFEST
-                    {
-                        // skip the manifest
-                        continue;
+            match event {
+                Event::Start(e) => {
+                    enter_element(&mut xml_path, &mut ns, &e)?;
+                    if is_manifest_path(&xml_path) {
+                        leave_element(&mut xml_path, &mut ns);
+                        // Skip without decoding, so corrupt or duplicate manifests can still be removed.
+                        let end = e.name().as_ref().to_vec();
+                        reader
+                            .read_to_end_into(QName(&end), &mut buf)
+                            .map_err(|_e| Error::InvalidAsset("XML invalid".to_string()))?;
                     } else {
                         writer
                             .write_event(Event::Start(e))
-                            .map_err(|_e| Error::XmlWriteError)?; // pass Event through
+                            .map_err(|_e| Error::XmlWriteError)?;
                     }
                 }
-                Ok(Event::Text(e)) => {
-                    if xml_path.len() == 3
-                        && xml_path[0] == SVG
-                        && xml_path[1] == METADATA
-                        && xml_path[2] == MANIFEST
-                    {
-                        // skip the manifest
-                        continue;
-                    } else {
+                Event::Empty(e) => {
+                    enter_element(&mut xml_path, &mut ns, &e)?;
+                    let is_manifest = is_manifest_path(&xml_path);
+                    leave_element(&mut xml_path, &mut ns);
+                    if !is_manifest {
                         writer
-                            .write_event(Event::Text(e))
-                            .map_err(|_e| Error::XmlWriteError)?; // pass Event through
+                            .write_event(Event::Empty(e))
+                            .map_err(|_e| Error::XmlWriteError)?;
                     }
                 }
-                Ok(Event::Eof) => break,
-                Ok(Event::End(e)) => {
-                    if xml_path.len() == 3
-                        && xml_path[0] == SVG
-                        && xml_path[1] == METADATA
-                        && xml_path[2] == MANIFEST
-                    {
-                        // skip the manifest
-                        let _p = xml_path.pop();
-                        continue;
-                    } else {
-                        let _p = xml_path.pop();
-                        writer
-                            .write_event(Event::End(e))
-                            .map_err(|_e| Error::XmlWriteError)?; // pass Event through
-                    }
+                Event::End(e) => {
+                    leave_element(&mut xml_path, &mut ns);
+                    writer
+                        .write_event(Event::End(e))
+                        .map_err(|_e| Error::XmlWriteError)?;
                 }
-                Ok(e) => writer.write_event(e).map_err(|_e| Error::XmlWriteError)?,
-                Err(_e) => return Err(Error::InvalidAsset("XML invalid".to_string())),
+                Event::Eof => break,
+                e => writer.write_event(e).map_err(|_e| Error::XmlWriteError)?,
             }
             buf.clear();
         }
@@ -638,7 +703,7 @@ impl WriteXmp for SvgIO {
     ) -> Result<()> {
         input_stream.rewind()?;
 
-        let (raw_xmp, dtd, insertion_pt) = read_xmp(input_stream)?;
+        let (raw_xmp, dtd, insertion_pt, metadata_qname) = read_xmp(input_stream)?;
 
         if let Some(raw_xmp) = raw_xmp {
             // replace existing
@@ -661,7 +726,7 @@ impl WriteXmp for SvgIO {
                 ),
                 DetectedTagsDepth::Empty => {
                     // we have to add metadata tag
-                    let new_xmp = format!("<metadata>{xmp}</metadata>");
+                    let new_xmp = format!("<{q}>{xmp}</{q}>", q = metadata_qname);
                     patch_stream(
                         input_stream,
                         output_stream,
@@ -670,6 +735,9 @@ impl WriteXmp for SvgIO {
                         new_xmp.as_bytes(),
                     )
                 }
+                DetectedTagsDepth::NoRoot => Err(Error::InvalidAsset(
+                    "SVG root element not found".to_string(),
+                )),
                 _ => Err(Error::OtherError(
                     "could not determine XML insertion point".into(),
                 )),
@@ -693,17 +761,147 @@ pub mod tests {
     use crate::{
         builder::Builder,
         crypto::base64,
+        settings::signer::SignerSettings,
         store::Store,
         utils::{
             hash_utils::vec_compare,
             io_utils::tempdirectory,
-            test::{fixture_path, temp_dir_path, test_context},
+            test::{fixture_path, temp_dir_path, test_context, test_settings},
             test_signer::test_signer,
             xmp_inmemory_utils::extract_provenance,
         },
         validation_status::ASSERTION_DATAHASH_MISMATCH,
-        Reader, SigningAlg, ValidationState,
+        BuilderIntent, Context, Reader, SigningAlg, ValidationState,
     };
+
+    const NS0_WITH_CHILD: &str = r#"<ns0:svg xmlns:ns0="http://www.w3.org/2000/svg" version="1.1" width="10" height="10"><ns0:g><ns0:rect width="10" height="10"/></ns0:g></ns0:svg>"#;
+    const NS0_EMPTY_CHILDREN: &str = r#"<ns0:svg xmlns:ns0="http://www.w3.org/2000/svg" width="10" height="10"><ns0:rect width="10" height="10"/></ns0:svg>"#;
+    const NS0_WITH_METADATA: &str = r#"<ns0:svg xmlns:ns0="http://www.w3.org/2000/svg" width="10" height="10"><ns0:metadata></ns0:metadata><ns0:rect width="10" height="10"/></ns0:svg>"#;
+    const NS0_INPUTS: [&str; 3] = [NS0_WITH_CHILD, NS0_EMPTY_CHILDREN, NS0_WITH_METADATA];
+
+    #[test]
+    fn tests_prefixed_namespace_root_roundtrips() -> Result<()> {
+        let mut settings = test_settings();
+        match settings.signer.as_mut() {
+            Some(SignerSettings::Local { tsa_url, .. }) => *tsa_url = None,
+            _ => panic!("expected local signer in test settings"),
+        }
+        let context = Context::new().with_settings(settings)?.into_shared();
+        for input in NS0_INPUTS {
+            assert!(matches!(
+                Reader::from_shared_context(&context)
+                    .with_stream("image/svg+xml", Cursor::new(input.as_bytes())),
+                Err(Error::JumbfNotFound)
+            ));
+            let mut builder = Builder::from_shared_context(&context);
+            builder.set_intent(BuilderIntent::Edit);
+            let mut output = Cursor::new(Vec::new());
+            builder.save_to_stream(
+                "image/svg+xml",
+                &mut Cursor::new(input.as_bytes()),
+                &mut output,
+            )?;
+            let xml = std::str::from_utf8(output.get_ref()).unwrap();
+            assert_eq!(xml.matches("<ns0:metadata>").count(), 1);
+            assert!(!xml.contains("<metadata"));
+            output.set_position(0);
+            let reader =
+                Reader::from_shared_context(&context).with_stream("image/svg+xml", output)?;
+            assert_eq!(
+                reader.validation_state(),
+                ValidationState::Trusted,
+                "{input}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_svg_read_rejects_multiple_c2pa_payloads() {
+        let svg_io = SvgIO::new("svg");
+        for input in [
+            r#"<svg xmlns="http://www.w3.org/2000/svg"><metadata><c2pa:manifest>SlVNQkY=</c2pa:manifest><y:manifest xmlns:y="http://c2pa.org/manifest">T1RIRVI=</y:manifest></metadata></svg>"#,
+            r#"<svg xmlns="http://www.w3.org/2000/svg"><metadata><c2pa:manifest>SlVNQkY=</c2pa:manifest></metadata><metadata><c2pa:manifest>T1RIRVI=</c2pa:manifest></metadata></svg>"#,
+            r#"<svg xmlns="http://www.w3.org/2000/svg"><metadata><c2pa:manifest>SlVN<!--x-->QkY=</c2pa:manifest></metadata></svg>"#,
+        ] {
+            assert!(matches!(
+                svg_io.read_c2pa(&mut Cursor::new(input.as_bytes())),
+                Err(Error::InvalidAsset(_))
+            ));
+            // Removal stays tolerant so ambiguous files can still be cleaned.
+            let mut output = Cursor::new(Vec::new());
+            svg_io
+                .remove_c2pa(&mut Cursor::new(input.as_bytes()), &mut output)
+                .unwrap();
+            assert!(!std::str::from_utf8(output.get_ref())
+                .unwrap()
+                .contains(":manifest"));
+        }
+    }
+
+    #[test]
+    fn test_svg_removal_drops_whole_manifest() {
+        const NS: &str =
+            r#"xmlns="http://www.w3.org/2000/svg" xmlns:c2pa="http://c2pa.org/manifest""#;
+        let remove = |body: &str| {
+            let mut output = Cursor::new(Vec::new());
+            SvgIO::new("svg")
+                .remove_c2pa(
+                    &mut Cursor::new(format!("<svg {NS}>{body}").into_bytes()),
+                    &mut output,
+                )
+                .map(|_| String::from_utf8(output.into_inner()).unwrap())
+        };
+        let cleaned = format!("<svg {NS}><metadata></metadata><rect/></svg>");
+        for manifest in [
+            "<c2pa:manifest>!!!notb64</c2pa:manifest>",
+            "<c2pa:manifest/>",
+            "<c2pa:manifest><![CDATA[x]]><!--c--><?pi x?><g><rect/></g></c2pa:manifest>",
+        ] {
+            let body = format!("<metadata>{manifest}</metadata><rect/></svg>");
+            assert_eq!(remove(&body).unwrap(), cleaned, "{manifest}");
+        }
+        assert!(matches!(
+            remove("<metadata><c2pa:manifest>AAAA"),
+            Err(Error::InvalidAsset(_))
+        ));
+        let wrong_parent = "<g><c2pa:manifest>AAAA</c2pa:manifest></g></svg>";
+        assert_eq!(
+            remove(wrong_parent).unwrap(),
+            format!("<svg {NS}>{wrong_parent}")
+        );
+    }
+
+    #[test]
+    fn test_svg_no_double_metadata_write() {
+        let input = r#"<svg xmlns="http://www.w3.org/2000/svg"><metadata></metadata><metadata></metadata></svg>"#;
+        let svg_io = SvgIO::new("svg");
+        let mut output = Cursor::new(Vec::new());
+        svg_io
+            .write_c2pa(&mut Cursor::new(input.as_bytes()), &mut output, b"JUMBF")
+            .unwrap();
+        let xml = std::str::from_utf8(output.get_ref()).unwrap();
+        assert_eq!(xml.matches("<c2pa:manifest>").count(), 1);
+        assert!(xml.find("<c2pa:manifest>").unwrap() < xml.find("</metadata>").unwrap());
+        assert_eq!(svg_io.read_c2pa(&mut output).unwrap(), b"JUMBF");
+    }
+
+    #[test]
+    fn test_svg_namespaces_resolved_on_manifest_path() {
+        let svg_io = SvgIO::new("svg");
+        let shadowed = r#"<s:svg xmlns:s="http://www.w3.org/2000/svg"><s:metadata xmlns:s="urn:x"><c2pa:manifest>c29tZQ==</c2pa:manifest></s:metadata></s:svg>"#;
+        assert!(matches!(
+            svg_io.read_c2pa(&mut Cursor::new(shadowed.as_bytes())),
+            Err(Error::JumbfNotFound)
+        ));
+        let bad_declaration = r#"<svg xmlns="http://www.w3.org/2000/svg"><g xmlns:xml="urn:bad"><rect/></g><metadata><c2pa:manifest>c29tZQ==</c2pa:manifest></metadata></svg>"#;
+        assert_eq!(
+            svg_io
+                .read_c2pa(&mut Cursor::new(bad_declaration.as_bytes()))
+                .unwrap(),
+            b"some"
+        );
+    }
 
     fn assert_c2pa_namespace_on_svg_root(xml: &str) {
         let svg_idx = xml.find("<svg").expect("SVG root tag missing");

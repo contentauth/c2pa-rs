@@ -32,8 +32,6 @@ use c2pa_macros::c2pa_test_async;
 #[cfg(feature = "file_io")]
 use memchr::memmem;
 use serde::Serialize;
-#[cfg(feature = "file_io")]
-use sha2::Sha256;
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 use wasm_bindgen_test::wasm_bindgen_test;
 
@@ -41,20 +39,21 @@ use super::store_core::MAX_INGREDIENT_DEPTH;
 #[cfg(feature = "file_io")]
 use crate::{
     assertion::AssertionJson,
-    assertions::{labels::BOX_HASH, BoxHash, DataHash},
+    assertions::{labels::BOX_HASH, BoxHash},
     asset_io::ObjectType,
     hashed_uri::HashedUri,
     jumbf_io::get_assetio_handler_from_path,
     utils::{
-        hash_utils::{HashRange, Hasher},
         io_utils::tempdirectory,
-        test::{temp_dir_path, write_jpeg_placeholder_file, TEST_USER_ASSERTION},
+        test::{temp_dir_path, TEST_USER_ASSERTION},
         test_signer::test_cawg_signer,
     },
 };
 use crate::{
     assertion::{Assertion, AssertionData},
-    assertions::{labels, Action, Actions, CollectionHash, Ingredient, Relationship, Uuid},
+    assertions::{
+        labels, Action, Actions, CollectionHash, DataHash, Ingredient, Relationship, Uuid,
+    },
     asset_io::ReadWriteSeek,
     claim::{AssertionStoreJsonFormat, Claim, ClaimAssertion, ClaimAssetData},
     context::Context,
@@ -1496,15 +1495,15 @@ fn make_brotli_bomb_jumbf(decompressed_size: usize) -> Vec<u8> {
 
 #[test]
 fn test_from_jumbf_rejects_brotli_bomb_via_thread_local() {
-    crate::settings::set_settings_value("core.max_decompressed_manifest_size_in_mb", 1usize)
+    let settings = Settings::new()
+        .with_value("core.max_decompressed_manifest_size_in_mb", 1usize)
         .unwrap();
-
-    let result = Store::from_jumbf(
+    let context = Context::new().with_settings(settings).unwrap();
+    let result = Store::from_jumbf_with_context(
         &make_brotli_bomb_jumbf(2 * 1024 * 1024),
         &mut StatusTracker::default(),
+        &context,
     );
-
-    crate::settings::reset_default_settings().unwrap();
     assert!(result.is_err());
 }
 
@@ -1549,7 +1548,8 @@ fn test_from_jumbf_reads_c2md_standard_manifest() {
     patched[pos..pos + c2md.len()].copy_from_slice(&c2md);
 
     let mut log = StatusTracker::default();
-    let restored = Store::from_jumbf(&patched, &mut log).expect("c2md manifest should be read");
+    let restored = Store::from_jumbf_with_context(&patched, &mut log, &Context::new())
+        .expect("c2md manifest should be read");
     assert_eq!(
         restored.claims().len(),
         store.claims().len(),
@@ -1582,7 +1582,8 @@ fn test_c2md_manifest_preserved_on_round_trip() {
     patched[pos..pos + c2md.len()].copy_from_slice(&c2md);
 
     let mut log = StatusTracker::default();
-    let restored = Store::from_jumbf(&patched, &mut log).expect("c2md manifest should be read");
+    let restored = Store::from_jumbf_with_context(&patched, &mut log, &Context::new())
+        .expect("c2md manifest should be read");
 
     // Re-serialize the store that was read from a c2md-tagged manifest.
     let round_tripped = restored.to_jumbf_internal(0).unwrap();
@@ -1623,7 +1624,7 @@ fn test_manifest_box_hash_uses_box_uuid_not_label() {
 
     // Baseline: load the untouched manifest and record its box hash.
     let mut log = StatusTracker::default();
-    let baseline = Store::from_jumbf(&jumbf, &mut log).unwrap();
+    let baseline = Store::from_jumbf_with_context(&jumbf, &mut log, &Context::new()).unwrap();
     let baseline_pc = baseline.provenance_claim().unwrap();
     let baseline_hash = baseline
         .get_manifest_box_hashes(baseline_pc)
@@ -1644,7 +1645,7 @@ fn test_manifest_box_hash_uses_box_uuid_not_label() {
     patched[pos..pos + new_label.len()].copy_from_slice(new_label);
 
     let mut log = StatusTracker::default();
-    let tampered = Store::from_jumbf(&patched, &mut log).unwrap();
+    let tampered = Store::from_jumbf_with_context(&patched, &mut log, &Context::new()).unwrap();
     let tampered_pc = tampered.provenance_claim().unwrap();
     let tampered_hash = tampered
         .get_manifest_box_hashes(tampered_pc)
@@ -1696,7 +1697,8 @@ fn test_duplicate_assertion_store_box_is_rejected() {
 
     // Sanity: the untouched manifest reads back fine.
     let mut log = StatusTracker::default();
-    Store::from_jumbf(&jumbf, &mut log).expect("baseline manifest should read");
+    Store::from_jumbf_with_context(&jumbf, &mut log, &Context::new())
+        .expect("baseline manifest should read");
 
     // Duplicate the assertion store superbox in place, right after the original.
     let (as_start, as_len) = superbox_range(&jumbf, CAI_ASSERTION_STORE_UUID);
@@ -1713,7 +1715,7 @@ fn test_duplicate_assertion_store_box_is_rejected() {
     add_u32(&mut patched, 0, as_len);
 
     let mut log = StatusTracker::default();
-    let result = Store::from_jumbf(&patched, &mut log);
+    let result = Store::from_jumbf_with_context(&patched, &mut log, &Context::new());
     assert!(
         matches!(
             result,
@@ -2372,6 +2374,53 @@ fn test_update_manifest_with_timestamp_assertion() {
     assert!(pc.update_manifest());
 }
 
+#[test]
+#[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
+fn test_v1_timestamp_rejects_sha1_message_imprint() {
+    use openssl::hash::MessageDigest;
+
+    use crate::{
+        crypto::{
+            cose::CertificateTrustPolicy,
+            time_stamp::verify::message_imprint_regression::{build_token, OID_SHA1, OID_SHA256},
+        },
+        utils::test::create_test_store_v1,
+    };
+
+    let context = Context::new();
+    let (format, mut input_stream, mut output_stream) = create_test_streams("earth_apollo17.jpg");
+    let signer = test_signer(SigningAlg::Ps256);
+
+    let mut store = create_test_store_v1().unwrap();
+    store
+        .save_to_stream(
+            format,
+            &mut input_stream,
+            &mut output_stream,
+            signer.as_ref(),
+            &context,
+        )
+        .unwrap();
+
+    let mut report = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+    output_stream.rewind().unwrap();
+    let restored_store =
+        Store::from_stream(format, &mut output_stream, &mut report, &context).unwrap();
+    let claim = restored_store.provenance_claim().unwrap();
+    assert_eq!(claim.version(), 1);
+
+    let signature = claim.cose_sign1().unwrap().signature;
+    let ctp = CertificateTrustPolicy::default();
+
+    // control: a SHA-256 imprint over the claim signature is accepted
+    let sha256_token = build_token(OID_SHA256, MessageDigest::sha256(), &signature);
+    assert!(Store::verified_timestamp_for_claim(claim, &sha256_token, &ctp).is_some());
+
+    // same signature and a matching imprint, but SHA-1 must be ignored
+    let sha1_token = build_token(OID_SHA1, MessageDigest::sha1(), &signature);
+    assert!(Store::verified_timestamp_for_claim(claim, &sha1_token, &ctp).is_none());
+}
+
 fn add_ingredient_assertion_to_claim(
     store: &Store,
     claim: &mut Claim,
@@ -2570,7 +2619,9 @@ fn test_ingredient_conflict_with_current_manifest() {
     let mut original_log = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
     let (original_manifest_bytes, _) =
         Store::load_jumbf_from_stream(format, &mut Cursor::new(ingredient_vec), &context).unwrap();
-    let original_store = Store::from_jumbf(&original_manifest_bytes, &mut original_log).unwrap();
+    let original_store =
+        Store::from_jumbf_with_context(&original_manifest_bytes, &mut original_log, &context)
+            .unwrap();
     Store::load_ingredient_to_claim(&mut new_claim, &original_manifest_bytes, None, &context)
         .unwrap();
     // add original ingredient assertion as component to create conflict
@@ -2589,7 +2640,9 @@ fn test_ingredient_conflict_with_current_manifest() {
     let mut redacted_log = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
     let (redacted_manifest_bytes, _) =
         Store::load_jumbf_from_stream(format, &mut output_stream2, &context).unwrap();
-    let redacted_store = Store::from_jumbf(&redacted_manifest_bytes, &mut redacted_log).unwrap();
+    let redacted_store =
+        Store::from_jumbf_with_context(&redacted_manifest_bytes, &mut redacted_log, &context)
+            .unwrap();
     Store::load_ingredient_to_claim(
         &mut new_claim,
         &redacted_manifest_bytes,
@@ -3571,11 +3624,10 @@ fn test_bmff_jumbf_generation_claim_v1() {
 #[cfg(feature = "file_io")]
 #[test]
 fn test_jumbf_generation_with_bmffv3_fixed_block_size() {
-    // use Merkle tree with 1024 byte chunks
-    let context = crate::context::Context::new();
-
-    // use Merkle tree with 1024 byte chunks
-    crate::settings::set_settings_value("core.merkle_tree_chunk_size_in_kb", 1).unwrap();
+    // use Merkle tree with 1 MB chunks (1 KB chunks on this 64 MB asset take minutes)
+    let context = crate::context::Context::new()
+        .with_settings_value("core.merkle_tree_chunk_size_in_kb", 1024)
+        .unwrap();
 
     // test adding to actual image
     let (format, mut input_stream, mut output_stream) =
@@ -3614,13 +3666,14 @@ fn test_jumbf_generation_with_bmffv3_fixed_block_size() {
 
 #[test]
 fn test_jumbf_generation_with_bmffv3_fixed_block_size_no_proof() {
-    let context = crate::context::Context::new();
+    // use Merkle tree with 1024 byte chunks an 0 proofs (no UUID boxes)
+    let context = crate::context::Context::new()
+        .with_settings_value("core.merkle_tree_chunk_size_in_kb", 1)
+        .unwrap()
+        .with_settings_value("core.merkle_tree_max_proofs", 0)
+        .unwrap();
 
     let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
-
-    // use Merkle tree with 1024 byte chunks an 0 proofs (no UUID boxes)
-    crate::settings::set_settings_value("core.merkle_tree_chunk_size_in_kb", 1).unwrap();
-    crate::settings::set_settings_value("core.merkle_tree_max_proofs", 0).unwrap();
 
     // Create claims store.
     let mut store = Store::from_context(&context);
@@ -3655,13 +3708,13 @@ fn test_jumbf_generation_with_bmffv3_fixed_block_size_no_proof() {
 
 #[test]
 fn test_jumbf_generation_with_bmffv3_fixed_block_size_stream() {
-    let context = crate::context::Context::new();
+    // use Merkle tree with 1024 byte chunks
+    let context = crate::context::Context::new()
+        .with_settings_value("core.merkle_tree_chunk_size_in_kb", 1)
+        .unwrap();
 
     // test adding to actual image
     let (format, mut input_stream, mut output_stream) = create_test_streams("video1.mp4");
-
-    // use Merkle tree with 1024 byte chunks
-    crate::settings::set_settings_value("core.merkle_tree_chunk_size_in_kb", 1).unwrap();
 
     // Create claims store.
     let mut store = Store::from_context(&context);
@@ -4201,153 +4254,6 @@ fn test_boxhash_embeddable_manifest() {
     assert!(!report.has_any_error());
 }
 
-#[c2pa_test_async]
-#[cfg(feature = "file_io")]
-async fn test_datahash_embeddable_manifest_async() {
-    let context = crate::context::Context::new();
-
-    // test adding to actual image
-    use std::io::SeekFrom;
-
-    let ap = fixture_path("cloud.jpg");
-
-    // Do we generate JUMBF?
-    let signer = async_test_signer(SigningAlg::Ps256);
-
-    // Create claims store.
-    let mut store = Store::from_context(&context);
-
-    // Create a new claim.
-    let claim = create_test_claim().unwrap();
-
-    store.commit_claim(claim).unwrap();
-
-    // get a placeholder the manifest
-    let placeholder = store
-        .get_data_hashed_manifest_placeholder(signer.reserve_size(), "jpeg", &context)
-        .unwrap();
-
-    let temp_dir = tempdirectory().unwrap();
-    let output = temp_dir_path(&temp_dir, "boxhash-out.jpg");
-    let mut output_file = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&output)
-        .unwrap();
-
-    // write a jpeg file with a placeholder for the manifest (returns offset of the placeholder)
-    let offset = write_jpeg_placeholder_file(&placeholder, &ap, &mut output_file, None).unwrap();
-
-    // build manifest to insert in the hole
-
-    // create an hash exclusion for the manifest
-    let exclusion = HashRange::new(offset as u64, placeholder.len() as u64);
-    let exclusions = vec![exclusion];
-
-    let mut dh = DataHash::new("source_hash", "sha256");
-    dh.exclusions = Some(exclusions);
-
-    // get the embeddable manifest, letting API do the hashing
-    output_file.rewind().unwrap();
-    let cm = store
-        .get_data_hashed_embeddable_manifest_async(
-            &dh,
-            &signer,
-            "jpeg",
-            Some(&mut output_file),
-            &context,
-        )
-        .await
-        .unwrap();
-
-    // path in new composed manifest
-    output_file.seek(SeekFrom::Start(offset as u64)).unwrap();
-    output_file.write_all(&cm).unwrap();
-
-    output_file.rewind().unwrap();
-    let mut report = StatusTracker::default();
-    let _new_store =
-        Store::from_stream_async("image/jpeg", &mut output_file, &mut report, &context)
-            .await
-            .unwrap();
-
-    assert!(!report.has_any_error());
-}
-
-#[test]
-#[cfg(feature = "file_io")]
-fn test_datahash_embeddable_manifest() {
-    let context = crate::context::Context::new();
-
-    // test adding to actual image
-
-    use std::io::SeekFrom;
-    let ap = fixture_path("cloud.jpg");
-
-    // Do we generate JUMBF?
-    let signer = test_signer(SigningAlg::Ps256);
-
-    // Create claims store.
-    let mut store = Store::from_context(&context);
-
-    // Create a new claim.
-    let claim = create_test_claim().unwrap();
-
-    store.commit_claim(claim).unwrap();
-
-    // get a placeholder the manifest
-    let placeholder = store
-        .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg", &context)
-        .unwrap();
-
-    let temp_dir = tempdirectory().unwrap();
-    let output = temp_dir_path(&temp_dir, "boxhash-out.jpg");
-    let mut output_file = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&output)
-        .unwrap();
-
-    // write a jpeg file with a placeholder for the manifest (returns offset of the placeholder)
-    let offset = write_jpeg_placeholder_file(&placeholder, &ap, &mut output_file, None).unwrap();
-
-    // build manifest to insert in the hole
-
-    // create an hash exclusion for the manifest
-    let exclusion = HashRange::new(offset as u64, placeholder.len() as u64);
-    let exclusions = vec![exclusion];
-
-    let mut dh = DataHash::new("source_hash", "sha256");
-    dh.exclusions = Some(exclusions);
-
-    // get the embeddable manifest, letting API do the hashing
-    output_file.rewind().unwrap();
-    let cm = store
-        .get_data_hashed_embeddable_manifest(
-            &dh,
-            signer.as_ref(),
-            "jpeg",
-            Some(&mut output_file),
-            &context,
-        )
-        .unwrap();
-
-    // path in new composed manifest
-    output_file.seek(SeekFrom::Start(offset as u64)).unwrap();
-    output_file.write_all(&cm).unwrap();
-
-    output_file.rewind().unwrap();
-    let mut report = StatusTracker::default();
-    let _new_store =
-        Store::from_stream("image/jpeg", &mut output_file, &mut report, &context).unwrap();
-
-    assert!(!report.has_any_error());
-}
-
 #[test]
 fn test_sign_manifest_reserves_dynamic_assertion_placeholders_itself() {
     // A signer that advertises a dynamic assertion, with the caller never
@@ -4418,19 +4324,20 @@ fn test_sign_manifest_reserves_dynamic_assertion_placeholders_itself() {
     let signer = DynamicSigner(test_signer(SigningAlg::Ps256));
     let context = crate::context::Context::new().with_signer(signer);
 
-    let mut store = Store::from_context(&context);
-    store.commit_claim(create_test_claim().unwrap()).unwrap();
+    let mut claim = create_test_claim().unwrap();
+    let mut hard_binding = DataHash::new("jumbf manifest", "sha256");
+    hard_binding.hash = vec![0; 32];
+    claim.add_assertion(&hard_binding).unwrap();
 
-    // Reserve the hard-binding placeholder only – no dynamic-assertion slots.
-    let reserve_size = context.signer().unwrap().reserve_size();
-    store
-        .get_data_hashed_manifest_placeholder(reserve_size, "jpeg", &context)
-        .unwrap();
+    let mut store = Store::from_context(&context);
+    store.commit_claim(claim).unwrap();
+    store.get_placeholder("jpeg", &context).unwrap();
 
     let jumbf_bytes = store.sign_manifest(&context, None).unwrap();
 
     let mut validation_log = StatusTracker::default();
-    let signed_store = Store::from_jumbf(&jumbf_bytes, &mut validation_log).unwrap();
+    let signed_store =
+        Store::from_jumbf_with_context(&jumbf_bytes, &mut validation_log, &context).unwrap();
     let pc = signed_store.provenance_claim().unwrap();
     assert!(
         pc.assertion_hashed_uri_from_label("com.mycompany.myassertion")
@@ -4440,75 +4347,92 @@ fn test_sign_manifest_reserves_dynamic_assertion_placeholders_itself() {
 }
 
 #[test]
-#[cfg(feature = "file_io")]
-fn test_datahash_embeddable_manifest_user_hashed() {
-    let context = crate::context::Context::new();
+fn test_datahash_embeddable_manifest_user_hashed() -> Result<()> {
+    let sign_with_data_hash = |hash: Vec<u8>, exclusion: crate::HashRange| -> Result<Vec<u8>> {
+        let mut data_hash = DataHash::new("jumbf manifest", "sha256");
+        data_hash.set_hash(hash);
+        data_hash.add_exclusion(exclusion);
 
-    use std::io::SeekFrom;
+        let definition = serde_json::json!({
+            "claim_generator_info": [{"name": "c2pa_test", "version": "1.0.0"}],
+            "title": "Test_Manifest",
+            "assertions": [{
+                "label": "c2pa.actions",
+                "data": {"actions": [{
+                    "action": "c2pa.created",
+                    "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
+                }]}
+            }]
+        })
+        .to_string();
+        let mut builder = crate::Builder::default().with_definition(definition)?;
+        builder.add_assertion(DataHash::LABEL, &data_hash)?;
+        builder.sign_embeddable("image/jpeg")
+    };
 
-    use sha2::Digest;
+    const TEST_IMAGE_CLOUD: &[u8] = include_bytes!("../../tests/fixtures/cloud.jpg");
 
-    // test adding to actual image
-    let ap = fixture_path("cloud.jpg");
+    // Start with a same-sized signed manifest, then update its exclusion range
+    // to the actual embedded location before hashing the asset.
+    let mut placeholder = sign_with_data_hash(vec![0; 32], crate::HashRange::new(0, 0))?;
+    let mut embedded_asset = None;
+    for _ in 0..4 {
+        let mut input_stream = Cursor::new(TEST_IMAGE_CLOUD);
+        let mut output_stream = Cursor::new(Vec::new());
+        let offset = crate::utils::test::write_jpeg_placeholder_stream(
+            &placeholder,
+            "image/jpeg",
+            &mut input_stream,
+            &mut output_stream,
+            None,
+        )?;
+        let next_placeholder = sign_with_data_hash(
+            vec![0; 32],
+            crate::HashRange::new(offset as u64, placeholder.len() as u64),
+        )?;
 
-    let mut hasher = Hasher::SHA256(Sha256::new());
+        if next_placeholder.len() == placeholder.len() {
+            output_stream.seek(SeekFrom::Start(offset as u64))?;
+            output_stream.write_all(&next_placeholder)?;
+            output_stream.rewind()?;
+            embedded_asset = Some((offset, next_placeholder, output_stream));
+            break;
+        }
+        placeholder = next_placeholder;
+    }
 
-    // Do we generate JUMBF?
-    let signer = test_signer(SigningAlg::Ps256);
+    assert!(
+        embedded_asset.is_some(),
+        "Precomputed DataHash placeholder size did not stabilize"
+    );
+    let (offset, placeholder, mut output_stream) = embedded_asset.unwrap();
 
-    // Create claims store.
-    let mut store = Store::from_context(&context);
+    // Calculate the asset hash outside the Builder, excluding the reserved manifest.
+    let mut data_hash = DataHash::new("jumbf manifest", "sha256");
+    data_hash.add_exclusion(crate::HashRange::new(
+        offset as u64,
+        placeholder.len() as u64,
+    ));
+    output_stream.rewind()?;
+    data_hash.gen_hash_from_stream(&mut output_stream)?;
 
-    // Create a new claim.
-    let claim = create_test_claim().unwrap();
+    let signed_manifest = sign_with_data_hash(
+        data_hash.hash.clone(),
+        crate::HashRange::new(offset as u64, placeholder.len() as u64),
+    )?;
+    assert_eq!(
+        signed_manifest.len(),
+        placeholder.len(),
+        "The precomputed DataHash must preserve the reserved manifest size"
+    );
 
-    store.commit_claim(claim).unwrap();
+    output_stream.seek(SeekFrom::Start(offset as u64))?;
+    output_stream.write_all(&signed_manifest)?;
+    output_stream.rewind()?;
+    let reader = crate::Reader::default().with_stream("image/jpeg", output_stream)?;
+    assert_eq!(reader.validation_state(), crate::ValidationState::Trusted);
 
-    // get a placeholder for the manifest
-    let placeholder = store
-        .get_data_hashed_manifest_placeholder(Signer::reserve_size(&signer), "jpeg", &context)
-        .unwrap();
-
-    let temp_dir = tempdirectory().unwrap();
-    let output = temp_dir_path(&temp_dir, "boxhash-out.jpg");
-    let mut output_file = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&output)
-        .unwrap();
-
-    // write a jpeg file with a placeholder for the manifest (returns offset of the placeholder)
-    let offset =
-        write_jpeg_placeholder_file(&placeholder, &ap, &mut output_file, Some(&mut hasher))
-            .unwrap();
-
-    // create target data hash
-    // create an hash exclusion for the manifest
-    let exclusion = HashRange::new(offset as u64, placeholder.len() as u64);
-    let exclusions = vec![exclusion];
-
-    //input_file.rewind().unwrap();
-    let mut dh = DataHash::new("source_hash", "sha256");
-    dh.hash = Hasher::finalize(hasher);
-    dh.exclusions = Some(exclusions);
-
-    // get the embeddable manifest, using user hashing
-    let cm = store
-        .get_data_hashed_embeddable_manifest(&dh, signer.as_ref(), "jpeg", None, &context)
-        .unwrap();
-
-    // path in new composed manifest
-    output_file.seek(SeekFrom::Start(offset as u64)).unwrap();
-    output_file.write_all(&cm).unwrap();
-
-    output_file.rewind().unwrap();
-    let mut report = StatusTracker::default();
-    let _new_store =
-        Store::from_stream("image/jpeg", &mut output_file, &mut report, &context).unwrap();
-
-    assert!(!report.has_any_error());
+    Ok(())
 }
 
 #[test]
@@ -5004,18 +4928,16 @@ fn test_fragmented_jumbf_generation() {
 fn test_bogus_cert() {
     use crate::builder::{Builder, BuilderIntent};
 
-    // bypass auto sig check
-    crate::settings::set_settings_value("verify.verify_after_sign", false).unwrap();
-    crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
-
     let png = include_bytes!("../../tests/fixtures/libpng-test.png"); // Randomly generated local Ed25519
     let ed25519 = include_bytes!("../../tests/fixtures/certs/ed25519.pem");
     let certs = include_bytes!("../../tests/fixtures/certs/es256.pub");
 
-    let mut context = Context::new();
     // bypass auto signature checks
-    context.settings_mut().verify.verify_after_sign = false;
-    context.settings_mut().verify.verify_trust = false;
+    let context = Context::new()
+        .with_settings_value("verify.verify_after_sign", false)
+        .unwrap()
+        .with_settings_value("verify.verify_trust", false)
+        .unwrap();
 
     let mut builder = Builder::from_context(context);
     builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));

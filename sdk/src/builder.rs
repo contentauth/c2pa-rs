@@ -382,7 +382,7 @@ pub enum BuilderIntent {
 /// # use c2pa::Result;
 /// use std::io::Cursor;
 ///
-/// use c2pa::{settings::Settings, Builder, SigningAlg};
+/// use c2pa::{Builder, Context};
 /// use serde::Serialize;
 ///
 /// #[derive(Serialize)]
@@ -391,17 +391,15 @@ pub enum BuilderIntent {
 /// }
 ///
 /// # fn main() -> Result<()> {
-/// {
-///     Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))?;
-///     let mut builder = Builder::from_json(r#"{"title": "Test"}"#)?;
-///     builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
+/// let context =
+///     Context::new().with_settings(include_str!("../tests/fixtures/test_settings.toml"))?;
+/// let mut builder = Builder::from_context(context).with_definition(r#"{"title": "Test"}"#)?;
+/// builder.add_assertion("org.contentauth.test", &Test { my_tag: 42 })?;
 ///
-///     // embed a manifest using the signer
-///     let mut source = std::fs::File::open("tests/fixtures/C.jpg")?;
-///     let mut dest = Cursor::new(Vec::new());
-///     let signer = Settings::signer()?;
-///     let _c2pa_data = builder.sign(&signer, "image/jpeg", &mut source, &mut dest)?;
-/// }
+/// // Embed a signed manifest into the destination stream.
+/// let mut source = std::fs::File::open("tests/fixtures/C.jpg")?;
+/// let mut dest = Cursor::new(Vec::new());
+/// let _c2pa_data = builder.save_to_stream("image/jpeg", &mut source, &mut dest)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -472,28 +470,6 @@ fn path_is_within(child: &Path, ancestor: &Path) -> bool {
 }
 
 impl Builder {
-    /// Creates a new [`Builder`] struct using thread-local settings.
-    ///
-    /// Use [`Builder::default()`](Builder::default) for a builder with default settings, or
-    /// [`Builder::from_context(context)`](Builder::from_context) to pass an explicit
-    /// [`Context`](crate::Context).
-    /// # Returns
-    /// * A new [`Builder`].
-    #[deprecated(
-        since = "0.79.4",
-        note = "Use `Builder::default()` for default settings, or `Builder::from_context(context)` and pass settings in the `Context`. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub fn new() -> Self {
-        // Legacy behavior: explicitly get global settings for backward compatibility
-        // at some point we should remove this and require a Context to be passed in.
-        let settings = crate::settings::get_thread_local_settings();
-        let context = Context::new().with_settings(settings).unwrap_or_default();
-        Self {
-            context: Arc::new(context),
-            ..Default::default()
-        }
-    }
-
     /// Creates a new [`Builder`] struct from a [`Context`].
     ///
     /// This method takes ownership of the Context and wraps it in an Arc internally.
@@ -613,33 +589,6 @@ impl Builder {
         intent
     }
 
-    /// Creates a new [`Builder`] from a JSON [`ManifestDefinition`] string using thread-local settings.
-    ///
-    /// Use [`Builder::from_context(context).with_definition(json)`](Builder::with_definition) instead,
-    /// passing an explicit [`Context`](crate::Context) rather than relying on thread-local settings.
-    ///
-    /// # Arguments
-    /// * `json` - A JSON string representing the [`ManifestDefinition`].
-    /// # Returns
-    /// * A new [`Builder`].
-    /// # Errors
-    /// * Returns an [`Error`] if the JSON is malformed or incorrect.
-    #[deprecated(
-        since = "0.79.4",
-        note = "Use `Builder::from_context(context).with_definition(json)` instead, passing a `Context` explicitly rather than relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub fn from_json(json: &str) -> Result<Self> {
-        // Legacy behavior: explicitly get global settings for backward compatibility
-        let settings = crate::settings::get_thread_local_settings();
-        let context = Context::new().with_settings(settings)?;
-
-        Ok(Self {
-            definition: serde_json::from_str(json).map_err(Error::JsonError)?,
-            context: Arc::new(context),
-            ..Default::default()
-        })
-    }
-
     /// Sets the [`ManifestDefinition`] for this [`Builder`].
     ///
     /// This method accepts anything that can be converted into a [`ManifestDefinition`],
@@ -663,15 +612,15 @@ impl Builder {
     /// # Examples
     ///
     /// ```
-    /// # use c2pa::{Builder, ManifestDefinition, Context, Result};
+    /// # use c2pa::{Builder, ManifestDefinition, Result};
     /// # fn main() -> Result<()> {
     /// // From JSON string
-    /// let builder = Builder::new().with_definition(r#"{"title": "My Image"}"#)?;
+    /// let builder = Builder::default().with_definition(r#"{"title": "My Image"}"#)?;
     ///
     /// // From ManifestDefinition
     /// let mut def = ManifestDefinition::default();
     /// def.title = Some("My Image".to_string());
-    /// let builder = Builder::new().with_definition(def)?;
+    /// let builder = Builder::default().with_definition(def)?;
     /// # Ok(())
     /// # }
     /// ```
@@ -933,7 +882,7 @@ impl Builder {
     ///    "digitalSourceType": "http://c2pa.org/digitalsourcetype/empty"
     /// });
     ///
-    /// let mut builder = Builder::new();
+    /// let mut builder = Builder::default();
     /// builder.add_action(created_action);
     /// ```
     pub fn add_action<T>(&mut self, action: T) -> Result<&mut Self>
@@ -1394,15 +1343,18 @@ impl Builder {
             let mut file = zip
                 .by_index(i)
                 .map_err(|e| Error::OtherError(Box::new(e)))?;
+            let file_name = file
+                .name()
+                .map_err(|e| Error::OtherError(Box::new(e)))?
+                .into_owned();
 
-            if file.name().starts_with("resources/") && file.name() != "resources/" {
+            if file_name.starts_with("resources/") && file_name != "resources/" {
                 // Validate the full path from the archive to prevent path traversal
-                let _sanitized_path = sanitize_archive_path(file.name())?;
+                let _sanitized_path = sanitize_archive_path(&file_name)?;
 
                 let mut data = Vec::new();
                 file.read_to_end(&mut data)?;
-                let id = file
-                    .name()
+                let id = file_name
                     .split('/')
                     .nth(1)
                     .ok_or(Error::BadParam("Invalid resource path".to_string()))?;
@@ -1416,14 +1368,13 @@ impl Builder {
 
             // Load the c2pa_manifests.
             // Adds the manifest data to any ingredient that has a matching active_manfiest label.
-            if file.name().starts_with("manifests/") && file.name() != "manifests/" {
+            if file_name.starts_with("manifests/") && file_name != "manifests/" {
                 // Validate the full path from the archive to prevent path traversal
-                let _sanitized_path = sanitize_archive_path(file.name())?;
+                let _sanitized_path = sanitize_archive_path(&file_name)?;
 
                 let mut data = Vec::new();
                 file.read_to_end(&mut data)?;
-                let manifest_label = file
-                    .name()
+                let manifest_label = file_name
                     .split('/')
                     .nth(1)
                     .ok_or(Error::BadParam("Invalid manifest path".to_string()))?;
@@ -1443,20 +1394,19 @@ impl Builder {
 
             // Keep this for temporary unstable api support (un-versioned).
             // Earlier method used numbered library folders instead of manifests.
-            if file.name().starts_with("ingredients/") && file.name() != "ingredients/" {
+            if file_name.starts_with("ingredients/") && file_name != "ingredients/" {
                 // Validate the full path from the archive to prevent path traversal
-                let _sanitized_path = sanitize_archive_path(file.name())?;
+                let _sanitized_path = sanitize_archive_path(&file_name)?;
 
                 let mut data = Vec::new();
                 file.read_to_end(&mut data)?;
-                let index: usize = file
-                    .name()
+                let index: usize = file_name
                     .split('/')
                     .nth(1)
                     .ok_or_else(|| Error::BadParam("Invalid ingredient path".to_string()))?
                     .parse::<usize>()
                     .map_err(|_| Error::BadParam("Invalid ingredient path".to_string()))?;
-                let id = file.name().split('/').nth(2).unwrap_or_default();
+                let id = file_name.split('/').nth(2).unwrap_or_default();
 
                 // Sanitize id to prevent path traversal via stored key
                 let sanitized_id = if !id.is_empty() {
@@ -1578,43 +1528,6 @@ impl Builder {
             reader.with_store(store, &mut validation_log)?;
             reader.into_builder()
         })
-    }
-
-    /// Create a [`Builder`] from an archive stream using thread-local settings.
-    ///
-    /// Archives contain unsigned working stores (signed with BoxHash placeholder),
-    /// so validation is skipped.
-    ///
-    /// Use [`Builder::from_context(context).with_archive(stream)`](Builder::with_archive) instead,
-    /// passing an explicit [`Context`](crate::Context) rather than relying on thread-local settings.
-    ///
-    /// # Arguments
-    /// * `stream` - The stream to read the archive from.
-    ///
-    /// # Returns
-    /// A new Builder with thread-local context.
-    ///
-    /// # Errors
-    /// Returns an [`Error`] if the archive cannot be read.
-    ///
-    /// # Example
-    /// ```no_run
-    /// # use c2pa::{Builder, Result};
-    /// # use std::io::Cursor;
-    /// # fn main() -> Result<()> {
-    /// # let archive_data = vec![]; // placeholder
-    /// # let stream = Cursor::new(archive_data);
-    /// let builder = Builder::from_archive(stream)?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[deprecated(
-        since = "0.79.4",
-        note = "Use `Builder::from_context(context).with_archive(stream)` instead, passing a `Context` explicitly rather than relying on thread-local settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    #[allow(deprecated)]
-    pub fn from_archive(stream: impl Read + Seek + Send) -> Result<Self> {
-        Builder::new().with_archive(stream)
     }
 
     // Convert a Manifest into a Claim
@@ -2610,45 +2523,6 @@ impl Builder {
         }
     }
 
-    /// Create a placeholder for a hashed data manifest.
-    ///
-    /// This is only used for applications doing their own data_hashed asset management.
-    /// This function does not support dynamic assertions (e.g., CAWG identity).
-    /// Use [`Builder::placeholder`] if you need dynamic assertion support.
-    ///
-    /// # Arguments
-    /// * `reserve_size` - The size to reserve for the signature (taken from the signer).
-    /// * `format` - The format of the target asset, the placeholder will be preformatted for this format.
-    /// # Returns
-    /// * The bytes of the `c2pa_manifest` placeholder.
-    /// # Errors
-    /// * Returns an [`Error`] if the placeholder cannot be created.
-    #[deprecated(
-        since = "0.91.0",
-        note = "Use `Builder::placeholder` instead, which also supports dynamic assertions (e.g., CAWG identity). Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub fn data_hashed_placeholder(
-        &mut self,
-        reserve_size: usize,
-        format: &str,
-    ) -> Result<Vec<u8>> {
-        // Add DataHash to builder's definition if not present, so it persists for sign_data_hashed_embeddable
-        let dh: Result<DataHash> = self.find_assertion(DataHash::LABEL);
-        if dh.is_err() {
-            let mut ph = DataHash::new("jumbf manifest", "sha256");
-            for _ in 0..10 {
-                ph.add_exclusion(HashRange::new(0u64, 2u64));
-            }
-            self.add_assertion(labels::DATA_HASH, &ph)?;
-        }
-        self.definition.format = format.to_string();
-        self.definition.instance_id = format!("xmp.iid:{}", Uuid::new_v4());
-        let mut store = self.to_store()?;
-        let placeholder =
-            store.get_data_hashed_manifest_placeholder(reserve_size, format, self.context())?;
-        Ok(placeholder)
-    }
-
     /// Returns whether a placeholder manifest is required for `format`.
     ///
     /// Most formats need a placeholder: the C2PA manifest is embedded inside the
@@ -3291,104 +3165,6 @@ impl Builder {
         Store::get_composed_manifest(&jumbf, format, self.context())
     }
 
-    /// Create a signed data hashed embeddable manifest using a supplied signer.
-    ///
-    /// This is used to create a manifest that can be embedded into a stream.
-    /// It allows the caller to do the embedding.
-    /// You must call `data_hashed_placeholder` first to create the placeholder.
-    /// The placeholder is then injected into the asset before calculating hashes
-    /// You must either pass a source stream to generate the hashes or provide the hashes.
-    ///
-    /// # Arguments
-    /// * `signer` - The signer to use.
-    /// * `data_hash` - The updated data_hash to use for the manifest.
-    /// * `format` - The format of the stream.
-    /// * `source` - The stream to read from.
-    /// # Returns
-    /// * The bytes of the `c2pa_manifest` that was created (prep-formatted).
-    #[deprecated(
-        since = "0.91.0",
-        note = "Use `Builder::update_hash_from_stream` and `Builder::sign_embeddable` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    #[async_generic(async_signature(
-        &mut self,
-        signer: &dyn AsyncSigner,
-        data_hash: &DataHash,
-        format: &str,
-    ))]
-    pub fn sign_data_hashed_embeddable(
-        &mut self,
-        signer: &dyn Signer,
-        data_hash: &DataHash,
-        format: &str,
-    ) -> Result<Vec<u8>> {
-        let mut store = self.to_store()?;
-        if _sync {
-            store.get_data_hashed_embeddable_manifest(
-                data_hash,
-                signer,
-                format,
-                None,
-                &self.context,
-            )
-        } else {
-            store
-                .get_data_hashed_embeddable_manifest_async(
-                    data_hash,
-                    signer,
-                    format,
-                    None,
-                    &self.context,
-                )
-                .await
-        }
-    }
-
-    /// Create a signed box hashed embeddable manifest using a supplied signer.
-    ///
-    /// This is used to create a manifest that can be embedded into a stream.
-    /// It allows the caller to do the embedding.
-    /// The manifest definition must already include a `BoxHash` assertion.
-    ///
-    /// # Arguments
-    /// * `signer` - The signer to use.
-    /// # Returns
-    /// * The bytes of the c2pa_manifest that was created (prep-formatted).
-    #[deprecated(
-        since = "0.91.0",
-        note = "Use `Builder::update_hash_from_stream` and `Builder::sign_embeddable` instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    #[async_generic(async_signature(
-        &mut self,
-        signer: &dyn AsyncSigner,
-        format: &str
-    ))]
-    pub fn sign_box_hashed_embeddable(
-        &mut self,
-        signer: &dyn Signer,
-        format: &str,
-    ) -> Result<Vec<u8>> {
-        self.definition.instance_id = format!("xmp.iid:{}", Uuid::new_v4());
-
-        let mut store = self.to_store()?;
-        let bytes = if _sync {
-            store.get_box_hashed_embeddable_manifest(signer, &self.context)
-        } else {
-            store
-                .get_box_hashed_embeddable_manifest_async(signer, &self.context)
-                .await
-        }?;
-        if self.context.settings().verify.verify_after_sign {
-            if _sync {
-                store.verify_store_strict(None, &self.context)?;
-            } else {
-                store.verify_store_strict_async(None, &self.context).await?;
-            }
-        }
-        // get composed version for embedding to JPEG
-        Store::get_composed_manifest(&bytes, format, &self.context)
-    }
-
     /// Embed a signed manifest into a stream using a supplied signer.
     ///
     /// # Arguments
@@ -3768,27 +3544,6 @@ impl Builder {
     /// * The bytes of the composed manifest.
     /// # Errors
     /// * Returns an [`Error`] if the manifest cannot be converted.
-    #[deprecated(
-        since = "0.91.0",
-        note = "Use `Builder::compose_manifest` on a `Builder` instance instead; without a `Context`, custom asset I/O handlers registered via `Context::with_io_handler` are not consulted. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub fn composed_manifest(manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
-        // Legacy behavior: no Context available, so only the built-in global registry is used.
-        Store::get_composed_manifest(manifest_bytes, format, &Context::new())
-    }
-
-    /// Converts a manifest into a composed manifest with the specified format.
-    ///
-    /// This wraps the bytes in the container format of the specified format.
-    /// So that it can be directly embedded into a stream of that format.
-    ///
-    /// # Arguments
-    /// * `manifest_bytes` - The bytes of the manifest to convert.
-    /// * `format` - The format to convert to.
-    /// # Returns
-    /// * The bytes of the composed manifest.
-    /// # Errors
-    /// * Returns an [`Error`] if the manifest cannot be converted.
     pub fn compose_manifest(&self, manifest_bytes: &[u8], format: &str) -> Result<Vec<u8>> {
         Store::get_composed_manifest(manifest_bytes, format, self.context())
     }
@@ -4139,7 +3894,7 @@ mod tests {
         asset_handlers::bmff_io::{
             inject_manifest_into_free_box, inject_placeholder, read_bmff_c2pa_boxes,
         },
-        hash_stream_by_alg, jumbf_io,
+        jumbf_io,
         maybe_send_sync::MaybeSend,
         settings::Settings,
         utils::{
@@ -4570,7 +4325,9 @@ mod tests {
                                 "actions": [
                                     {
                                         "action": "c2pa.placed",
-                                        "instanceId": "123"
+                                        "parameters": {
+                                            "ingredientIds": ["123"]
+                                        }
                                     }
                                 ]
                             }
@@ -5342,7 +5099,7 @@ mod tests {
                     source_type = (DigitalSourceType::Empty.to_string())
 
                     [[builder.actions.templates]]
-                    action = (c2pa_action::COLOR_ADJUSTMENTS)
+                    action = ("c2pa.color_adjustments")
                     source_type = (DigitalSourceType::TrainedAlgorithmicData.to_string())
                 }
                 .to_string(),
@@ -5378,7 +5135,7 @@ mod tests {
                 c2pa_action::EDITED => {
                     assert_eq!(template.source_type, Some(DigitalSourceType::Empty));
                 }
-                c2pa_action::COLOR_ADJUSTMENTS => {
+                "c2pa.color_adjustments" => {
                     assert_eq!(
                         template.source_type,
                         Some(DigitalSourceType::TrainedAlgorithmicData)
@@ -5406,7 +5163,7 @@ mod tests {
                     source_type = (DigitalSourceType::Empty.to_string())
 
                     [[builder.actions.actions]]
-                    action = (c2pa_action::COLOR_ADJUSTMENTS)
+                    action = ("c2pa.color_adjustments")
                     source_type = (DigitalSourceType::TrainedAlgorithmicData.to_string())
                 }
                 .to_string(),
@@ -5441,7 +5198,7 @@ mod tests {
                 c2pa_action::EDITED => {
                     assert_eq!(action.source_type(), Some(&DigitalSourceType::Empty));
                 }
-                c2pa_action::COLOR_ADJUSTMENTS => {
+                "c2pa.color_adjustments" => {
                     assert_eq!(
                         action.source_type(),
                         Some(&DigitalSourceType::TrainedAlgorithmicData)
@@ -5804,109 +5561,6 @@ mod tests {
 
         println!("{}", reader.json());
         assert_eq!(reader.validation_status(), None);
-    }
-
-    #[test]
-    fn test_builder_data_hashed_embeddable() {
-        const CLOUD_IMAGE: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
-        let mut input_stream = Cursor::new(CLOUD_IMAGE);
-
-        let signer = test_signer(SigningAlg::Ps256);
-
-        let mut builder = Builder::default()
-            .with_definition(simple_manifest_json())
-            .unwrap();
-
-        // get a placeholder the manifest
-        let placeholder = builder
-            .data_hashed_placeholder(signer.reserve_size(), "image/jpeg")
-            .unwrap();
-
-        let mut output_stream = Cursor::new(Vec::new());
-
-        // write a jpeg file with a placeholder for the manifest (returns offset of the placeholder)
-        let offset = write_jpeg_placeholder_stream(
-            &placeholder,
-            "image/jpeg",
-            &mut input_stream,
-            &mut output_stream,
-            None,
-        )
-        .unwrap();
-
-        println!("offset: {}, size {}", offset, output_stream.get_ref().len());
-        // create an hash exclusion for the manifest
-        let exclusion = crate::HashRange::new(offset as u64, placeholder.len() as u64);
-        let exclusions = vec![exclusion];
-
-        let mut dh = DataHash::new("source_hash", "sha256");
-        dh.exclusions = Some(exclusions);
-
-        // Hash the bytes excluding the manifest we inserted
-        output_stream.rewind().unwrap();
-        let hash =
-            hash_stream_by_alg("sha256", &mut output_stream, dh.exclusions.clone(), true).unwrap();
-        dh.set_hash(hash);
-
-        // get the embeddable manifest, letting API do the hashing
-        let signed_manifest: Vec<u8> = builder
-            .sign_data_hashed_embeddable(signer.as_ref(), &dh, "image/jpeg")
-            .unwrap();
-
-        use std::io::{Seek, SeekFrom, Write};
-
-        output_stream.seek(SeekFrom::Start(offset as u64)).unwrap();
-        output_stream.write_all(&signed_manifest).unwrap();
-        output_stream.flush().unwrap();
-
-        output_stream.rewind().unwrap();
-
-        let reader = Reader::default()
-            .with_stream("image/jpeg", output_stream)
-            .unwrap();
-        println!("{reader}");
-        assert_eq!(reader.validation_status(), None);
-    }
-
-    #[test]
-    fn test_builder_data_hashed_embeddable_min() -> Result<()> {
-        let signer = test_signer(SigningAlg::Ps256);
-
-        let mut builder = Builder::default()
-            .with_definition(simple_manifest_json())
-            .unwrap();
-
-        // get a placeholder the manifest
-        let placeholder = builder
-            .data_hashed_placeholder(signer.reserve_size(), "application/c2pa")
-            .unwrap();
-
-        let offset = 0;
-        // create an hash exclusion for the manifest
-        let exclusion = crate::HashRange::new(offset as u64, placeholder.len() as u64);
-        let exclusions = vec![exclusion];
-
-        let mut dh = DataHash::new("source_hash", "sha256");
-        dh.exclusions = Some(exclusions);
-
-        // Hash the bytes excluding the manifest we inserted
-        let mut output_stream = Cursor::new(placeholder.clone());
-        let hash =
-            hash_stream_by_alg("sha256", &mut output_stream, dh.exclusions.clone(), true).unwrap();
-        dh.set_hash(hash);
-
-        // get the embeddable manifest, letting API do the hashing
-        let signed_manifest: Vec<u8> =
-            builder.sign_data_hashed_embeddable(signer.as_ref(), &dh, "application/c2pa")?;
-
-        let output_stream = Cursor::new(signed_manifest);
-
-        let reader = Reader::default()
-            .with_stream("application/c2pa", output_stream)
-            .unwrap();
-        println!("{reader}");
-        assert_eq!(reader.validation_status(), None);
-        Ok(())
     }
 
     #[test]
@@ -6312,9 +5966,7 @@ mod tests {
         let reader = Reader::default().with_stream("image/jpeg", output_stream)?;
         println!("{reader}");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
-        // 7. Workflow complete. Reader::from_stream loads the asset but the manifest assertion
-        // list may not expose DataHash the same way; the full embed-then-read flow is covered
-        // by test_builder_data_hashed_embeddable which uses write_jpeg_placeholder_stream the same way.
+        // 7. The embedded manifest validates successfully after reading the completed asset.
         assert!(!signed_manifest.is_empty());
 
         Ok(())
@@ -6593,39 +6245,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_builder_box_hashed_embeddable_min() {
-        let mut reader = Cursor::new("");
-        let c2pa_io = jumbf_io::get_assetio_handler("application/c2pa").unwrap();
-        let box_mapper = c2pa_io.asset_box_hash_ref().unwrap();
-        let boxes = box_mapper.get_box_map(&mut reader).unwrap();
-        // Create the BoxHash object
-        let bh = BoxHash::from_box_map(boxes);
-        // And generate the box hashes
-        //bh.generate_box_hash_from_stream(&mut reader, "sha256", box_mapper, true).unwrap();
-
-        let mut builder = Builder::default()
-            .with_definition(simple_manifest_json())
-            .unwrap();
-        builder.add_assertion(labels::BOX_HASH, &bh).unwrap();
-
-        let signer = test_signer(SigningAlg::Ps256);
-
-        let manifest_bytes = builder
-            .sign_box_hashed_embeddable(signer.as_ref(), "application/c2pa")
-            .unwrap();
-
-        let output_stream = Cursor::new(manifest_bytes);
-
-        let reader = Reader::default()
-            .with_stream("application/c2pa", output_stream)
-            .unwrap();
-        println!("{reader}");
-        assert_eq!(reader.validation_status(), None);
-    }
-
     #[c2pa_test_async]
-    #[cfg(target_arch = "wasm32")]
     async fn test_builder_box_hashed_embeddable() {
         use crate::{
             asset_handlers::jpeg_io::JpegIO,
@@ -6647,10 +6267,14 @@ mod tests {
 
         let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ed25519);
 
-        let manifest_bytes = builder
-            .sign_box_hashed_embeddable_async(signer.as_ref(), "image/jpeg")
+        let context = builder.context().clone();
+        let mut store = builder.to_store().unwrap();
+        let manifest_bytes = store
+            .get_box_hashed_embeddable_manifest_async(&signer, &context)
             .await
             .unwrap();
+        let manifest_bytes =
+            Store::get_composed_manifest(&manifest_bytes, "image/jpeg", &context).unwrap();
 
         // insert manifest into output asset
         let jpeg_io = JpegIO {};
@@ -6678,74 +6302,15 @@ mod tests {
 
         out_stream.rewind().unwrap();
 
-        let _reader = Reader::default()
+        let reader = Reader::default()
             .with_stream_async("image/jpeg", out_stream)
             .await
             .unwrap();
-        //println!("{reader}");
-        assert_eq!(_reader.validation_status(), None);
-    }
-
-    #[c2pa_test_async]
-    #[cfg(any(target_arch = "wasm32", feature = "file_io"))]
-    async fn test_builder_box_hashed_embeddable_with_exclusions() {
-        use crate::{
-            asset_handlers::jpeg_io::JpegIO,
-            asset_io::{C2paWriter, ObjectType},
-        };
-        const BOX_HASH_IMAGE: &[u8] = include_bytes!("../tests/fixtures/boxhash.jpg");
-        const BOX_HASH: &[u8] = include_bytes!("../tests/fixtures/boxhash_with_exclusion.json");
-
-        let mut input_stream = Cursor::new(BOX_HASH_IMAGE);
-
-        // get saved box hash settings
-        let box_hash: BoxHash = serde_json::from_slice(BOX_HASH).unwrap();
-
-        let mut builder = Builder::default()
-            .with_definition(simple_manifest_json())
-            .unwrap();
-
-        builder.add_assertion(labels::BOX_HASH, &box_hash).unwrap();
-
-        let signer = crate::utils::test_signer::async_test_signer(SigningAlg::Ed25519);
-
-        let manifest_bytes = builder
-            .sign_box_hashed_embeddable_async(signer.as_ref(), "image/jpeg")
-            .await
-            .unwrap();
-
-        // insert manifest into output asset
-        let jpeg_io = JpegIO {};
-        let ol = jpeg_io.get_object_locations(&mut input_stream).unwrap();
-        input_stream.rewind().unwrap();
-
-        let cai_loc = ol.iter().find(|o| o.htype == ObjectType::C2pa).unwrap();
-
-        // build new asset in memory inserting new manifest
-        let outbuf = Vec::new();
-        let mut out_stream = Cursor::new(outbuf);
-
-        // write before
-        let mut before = vec![0u8; usize::try_from(cai_loc.offset).unwrap()];
-        input_stream.read_exact(before.as_mut_slice()).unwrap();
-        out_stream.write_all(&before).unwrap();
-
-        // write composed bytes
-        out_stream.write_all(&manifest_bytes).unwrap();
-
-        // write bytes after
-        let mut after_buf = Vec::new();
-        input_stream.read_to_end(&mut after_buf).unwrap();
-        out_stream.write_all(&after_buf).unwrap();
-
-        out_stream.rewind().unwrap();
-
-        let _reader = Reader::default()
-            .with_stream_async("image/jpeg", out_stream)
-            .await
-            .unwrap();
-        //println!("{reader}");
-        assert_eq!(_reader.validation_status(), None);
+        assert_eq!(
+            reader.active_manifest().unwrap().title(),
+            Some("Test_Manifest")
+        );
+        assert_eq!(reader.validation_status(), None);
     }
 
     #[cfg(feature = "file_io")]
@@ -7007,21 +6572,11 @@ mod tests {
         // println!("{manifest_store}");
     }
 
-    #[test]
-    fn test_composed_manifest() {
-        let manifest: &[u8; 4] = b"abcd";
-        let format = "image/jpeg";
-        let composed = Builder::composed_manifest(manifest, format).unwrap();
-        assert_eq!(composed.len(), 16);
-    }
-
     /// example of creating a builder directly with a [`ManifestDefinition`]
     #[c2pa_test_async]
     /// test if the sdk can add a cloud ingredient retrieved from a stream and a cloud manifest
     // This works with or without the fetch_remote_manifests feature
     async fn test_add_cloud_ingredient() {
-        crate::settings::reset_default_settings().ok();
-
         let mut input = Cursor::new(TEST_IMAGE_CLEAN);
         let mut cloud_image = Cursor::new(TEST_IMAGE_CLOUD);
 
@@ -7381,7 +6936,9 @@ mod tests {
 
     #[test]
     fn test_redaction_assertion_via_archive() {
-        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+        let _settings = Settings::new()
+            .with_toml(include_str!("../tests/fixtures/test_settings.toml"))
+            .unwrap();
         setup_logger();
 
         const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
@@ -7481,7 +7038,9 @@ mod tests {
 
         // Verify
         output.set_position(0);
-        let reader = Reader::from_stream("jpeg", &mut output).expect("read combined");
+        let reader = Reader::default()
+            .with_stream("jpeg", &mut output)
+            .expect("read combined");
         //println!("{reader}");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
 
@@ -7499,7 +7058,9 @@ mod tests {
     #[cfg(feature = "add_thumbnails")]
     #[test]
     fn test_redaction_thumbnails_via_archive() {
-        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+        let _settings = Settings::new()
+            .with_toml(include_str!("../tests/fixtures/test_settings.toml"))
+            .unwrap();
         setup_logger();
 
         const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
@@ -7581,7 +7142,9 @@ mod tests {
 
         // Discover all thumbnail assertion labels from the ingredient manifest in the archive
         archive_stream.set_position(0);
-        let archive_reader = Reader::from_stream("application/c2pa", &mut archive_stream).unwrap();
+        let archive_reader = Reader::default()
+            .with_stream("application/c2pa", &mut archive_stream)
+            .unwrap();
 
         // Find all thumbnail assertion labels across all manifests in the archive
         let mut thumbnail_labels: Vec<String> = Vec::new();
@@ -7628,7 +7191,9 @@ mod tests {
 
         // Verify
         output.set_position(0);
-        let reader = Reader::from_stream("jpeg", &mut output).expect("read combined");
+        let reader = Reader::default()
+            .with_stream("jpeg", &mut output)
+            .expect("read combined");
         //println!("{reader}");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
 
@@ -7669,7 +7234,9 @@ mod tests {
     #[cfg(feature = "add_thumbnails")]
     #[test]
     fn test_redaction_thumbnails_local_resource_id() {
-        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+        let _settings = Settings::new()
+            .with_toml(include_str!("../tests/fixtures/test_settings.toml"))
+            .unwrap();
         setup_logger();
 
         // Sign the clean image so it carries a manifest with an auto-generated thumbnail.
@@ -7697,8 +7264,9 @@ mod tests {
 
         // Read the signed image to discover the manifest label and thumbnail URIs.
         signed.set_position(0);
-        let parent_reader =
-            Reader::from_stream("image/jpeg", &mut signed).expect("read parent manifest");
+        let parent_reader = Reader::default()
+            .with_stream("image/jpeg", &mut signed)
+            .expect("read parent manifest");
 
         let parent_label = parent_reader
             .active_manifest()
@@ -7770,7 +7338,9 @@ mod tests {
             .expect("combiner sign");
 
         output.set_position(0);
-        let reader = Reader::from_stream("jpeg", &mut output).expect("read combined");
+        let reader = Reader::default()
+            .with_stream("jpeg", &mut output)
+            .expect("read combined");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
 
         // The ingredient manifest's thumbnail should be gone.
@@ -7798,7 +7368,9 @@ mod tests {
 
     #[test]
     fn test_redaction_assertion_two_ingredients_via_archive() {
-        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
+        let _settings = Settings::new()
+            .with_toml(include_str!("../tests/fixtures/test_settings.toml"))
+            .unwrap();
         setup_logger();
 
         const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
@@ -7972,7 +7544,9 @@ mod tests {
 
         // Verify
         output.set_position(0);
-        let reader = Reader::from_stream("jpeg", &mut output).expect("read combined");
+        let reader = Reader::default()
+            .with_stream("jpeg", &mut output)
+            .expect("read combined");
         //println!("{reader}");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
 
@@ -7997,7 +7571,6 @@ mod tests {
     #[cfg(feature = "add_thumbnails")]
     #[test]
     fn test_redaction_thumbnails_two_ingredients_via_archive() {
-        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
         setup_logger();
 
         const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
@@ -8144,8 +7717,9 @@ mod tests {
 
         // Discover all thumbnail assertion labels from both archives
         archive1_stream.set_position(0);
-        let archive1_reader =
-            Reader::from_stream("application/c2pa", &mut archive1_stream).unwrap();
+        let archive1_reader = Reader::default()
+            .with_stream("application/c2pa", &mut archive1_stream)
+            .unwrap();
 
         let mut thumbnail_labels1: Vec<String> = Vec::new();
         for manifest in archive1_reader.iter_manifests() {
@@ -8163,8 +7737,9 @@ mod tests {
         );
 
         archive2_stream.set_position(0);
-        let archive2_reader =
-            Reader::from_stream("application/c2pa", &mut archive2_stream).unwrap();
+        let archive2_reader = Reader::default()
+            .with_stream("application/c2pa", &mut archive2_stream)
+            .unwrap();
 
         let mut thumbnail_labels2: Vec<String> = Vec::new();
         for manifest in archive2_reader.iter_manifests() {
@@ -8213,7 +7788,9 @@ mod tests {
 
         // Verify
         output.set_position(0);
-        let reader = Reader::from_stream("jpeg", &mut output).expect("read combined");
+        let reader = Reader::default()
+            .with_stream("jpeg", &mut output)
+            .expect("read combined");
         //println!("{reader}");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
 
@@ -8266,7 +7843,6 @@ mod tests {
     #[cfg(feature = "add_thumbnails")]
     #[test]
     fn test_redaction_combined_assertions_and_thumbnails() {
-        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
         setup_logger();
 
         const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
@@ -8307,7 +7883,9 @@ mod tests {
 
         // Read parent to discover manifest label and thumbnail URIs
         dest.set_position(0);
-        let parent_reader = Reader::from_stream("image/jpeg", &mut dest).unwrap();
+        let parent_reader = Reader::default()
+            .with_stream("image/jpeg", &mut dest)
+            .unwrap();
 
         let thumbnail_labels: Vec<String> = parent_reader
             .active_manifest()
@@ -8365,7 +7943,9 @@ mod tests {
             .expect("combiner sign");
 
         output.set_position(0);
-        let reader = Reader::from_stream("jpeg", &mut output).expect("read combined");
+        let reader = Reader::default()
+            .with_stream("jpeg", &mut output)
+            .expect("read combined");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
 
         let parent = reader.get_manifest(&ing_label).unwrap();
@@ -8593,7 +8173,6 @@ mod tests {
     #[cfg(feature = "add_thumbnails")]
     #[test]
     fn test_redaction_combined_assertions_and_thumbnails_via_archive() {
-        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
         setup_logger();
 
         const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
@@ -8656,7 +8235,9 @@ mod tests {
 
         // Discover thumbnail labels from archive
         archive_stream.set_position(0);
-        let archive_reader = Reader::from_stream("application/c2pa", &mut archive_stream).unwrap();
+        let archive_reader = Reader::default()
+            .with_stream("application/c2pa", &mut archive_stream)
+            .unwrap();
         let mut thumbnail_labels: Vec<String> = Vec::new();
         for manifest in archive_reader.iter_manifests() {
             for href in manifest.assertion_references() {
@@ -8719,7 +8300,9 @@ mod tests {
             .expect("combiner sign");
 
         output.set_position(0);
-        let reader = Reader::from_stream("jpeg", &mut output).expect("read combined");
+        let reader = Reader::default()
+            .with_stream("jpeg", &mut output)
+            .expect("read combined");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
 
         let active = reader.active_manifest().unwrap();
@@ -8769,7 +8352,6 @@ mod tests {
     #[cfg(feature = "add_thumbnails")]
     #[test]
     fn test_redaction_combined_assertions_and_thumbnails_two_archives() {
-        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
         setup_logger();
 
         const ASSERTION_LABEL: &str = "stds.schema-org.CreativeWork";
@@ -8888,8 +8470,9 @@ mod tests {
 
         // Discover thumbnails from both archives
         archive1_stream.set_position(0);
-        let archive1_reader =
-            Reader::from_stream("application/c2pa", &mut archive1_stream).unwrap();
+        let archive1_reader = Reader::default()
+            .with_stream("application/c2pa", &mut archive1_stream)
+            .unwrap();
         let mut thumbnail_labels1: Vec<String> = Vec::new();
         for manifest in archive1_reader.iter_manifests() {
             for href in manifest.assertion_references() {
@@ -8906,8 +8489,9 @@ mod tests {
         );
 
         archive2_stream.set_position(0);
-        let archive2_reader =
-            Reader::from_stream("application/c2pa", &mut archive2_stream).unwrap();
+        let archive2_reader = Reader::default()
+            .with_stream("application/c2pa", &mut archive2_stream)
+            .unwrap();
         let mut thumbnail_labels2: Vec<String> = Vec::new();
         for manifest in archive2_reader.iter_manifests() {
             for href in manifest.assertion_references() {
@@ -8990,7 +8574,9 @@ mod tests {
             .expect("combiner sign");
 
         output.set_position(0);
-        let reader = Reader::from_stream("jpeg", &mut output).expect("read combined");
+        let reader = Reader::default()
+            .with_stream("jpeg", &mut output)
+            .expect("read combined");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
 
         let active = reader.active_manifest().unwrap();
@@ -9169,7 +8755,6 @@ mod tests {
     #[cfg(feature = "add_thumbnails")]
     #[test]
     fn test_redact_claim_thumbnail_via_update() {
-        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
         setup_logger();
 
         // Start from an image and sign to prepare a test asset
@@ -9196,7 +8781,9 @@ mod tests {
             .unwrap();
 
         dest.set_position(0);
-        let parent_reader = Reader::from_stream("jpeg", &mut dest).expect("read parent");
+        let parent_reader = Reader::default()
+            .with_stream("jpeg", &mut dest)
+            .expect("read parent");
         assert_eq!(parent_reader.validation_state(), ValidationState::Trusted);
         let parent_manifest_label = parent_reader.active_label().unwrap().to_string();
         let parent_manifest = parent_reader.active_manifest().unwrap();
@@ -9243,7 +8830,9 @@ mod tests {
 
         // Verify: no dangling references, no validation errors.
         output.set_position(0);
-        let reader = Reader::from_stream("jpeg", &mut output).expect("read result");
+        let reader = Reader::default()
+            .with_stream("jpeg", &mut output)
+            .expect("read result");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
 
         let parent = reader.get_manifest(&parent_manifest_label).unwrap();
@@ -10237,7 +9826,6 @@ mod tests {
     fn test_redact_ingredient_thumbnail_only() {
         // Redact an ingredient thumbnail (c2pa.thumbnail.ingredient.*),
         // verify claim thumbnail untouched.
-        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
         setup_logger();
 
         // Sign clean image (auto-generates claim thumbnail).
@@ -10297,7 +9885,9 @@ mod tests {
 
         // Find ingredient thumbnail labels only (not claim thumbnails).
         archive_stream.set_position(0);
-        let archive_reader = Reader::from_stream("application/c2pa", &mut archive_stream).unwrap();
+        let archive_reader = Reader::default()
+            .with_stream("application/c2pa", &mut archive_stream)
+            .unwrap();
         let mut ingredient_thumb_labels: Vec<String> = Vec::new();
         let mut claim_thumb_labels: Vec<String> = Vec::new();
         for manifest in archive_reader.iter_manifests() {
@@ -10342,7 +9932,9 @@ mod tests {
 
         // Verify: ingredient thumbnails redacted, claim thumbnails (if any) survive.
         output.set_position(0);
-        let reader = Reader::from_stream("jpeg", &mut output).expect("read combined");
+        let reader = Reader::default()
+            .with_stream("jpeg", &mut output)
+            .expect("read combined");
         assert_eq!(reader.validation_state(), ValidationState::Trusted);
         let parent = reader.get_manifest(&ing_label).unwrap();
         for assertion in parent.assertions() {
@@ -10369,7 +9961,6 @@ mod tests {
     fn test_redact_claim_thumbnail_with_auto_thumbnail_enabled() {
         // Redact parent claim thumbnail; child has add_thumbnails feature ON.
         // Verify the redacted thumbnail is not re-imported into the child manifest.
-        Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml")).unwrap();
         setup_logger();
 
         // Sign with auto-thumbnail.
@@ -10390,7 +9981,9 @@ mod tests {
             .expect("parent sign");
 
         dest.set_position(0);
-        let parent_reader = Reader::from_stream("image/jpeg", &mut dest).expect("read parent");
+        let parent_reader = Reader::default()
+            .with_stream("image/jpeg", &mut dest)
+            .expect("read parent");
         let parent_label = parent_reader.active_label().unwrap().to_string();
         // Find a claim thumbnail label.
         let parent_manifest = parent_reader.get_manifest(&parent_label).unwrap();
@@ -11629,37 +11222,6 @@ mod tests {
         Ok(())
     }
 
-    // #[test]
-    // #[should_panic(expected = "GLOBAL SETTINGS CONFIGURED BUT NOT USED")]
-    // #[cfg(debug_assertions)]
-    // fn test_builder_new_panics_with_global_settings_in_debug() {
-    //     // Clean slate
-    //     crate::settings::reset_default_settings().unwrap();
-
-    //     // Set global settings
-    //     Settings::from_toml(include_str!("../tests/fixtures/test_settings.toml"))
-    //         .expect("should load settings");
-
-    //     // This should panic in debug mode
-    //     let _builder = Builder::default();
-    // }
-
-    #[allow(deprecated)]
-    #[test]
-    fn test_builder_new_succeeds_without_global_settings() {
-        // Clean slate
-        crate::settings::reset_default_settings().unwrap();
-
-        // This should NOT panic - global settings are default
-        let _builder = Builder::new();
-
-        // Verify it created a pure context
-        assert_eq!(
-            _builder.context().settings().verify.verify_trust,
-            Settings::default().verify.verify_trust
-        );
-    }
-
     #[test]
     fn actions_created_assertion() {
         let mut dest = Cursor::new(Vec::new());
@@ -11739,7 +11301,7 @@ mod tests {
     #[test]
     fn test_add_assertion_limit() {
         // Verify all MAX_ASSERTIONS assertions succeed and the next one is rejected.
-        let mut builder = Builder::new();
+        let mut builder = Builder::default();
         let data = serde_json::json!({"value": 1});
         for i in 0..MAX_ASSERTIONS {
             builder
@@ -11781,7 +11343,7 @@ mod tests {
         // Load the "bad_path_archive.zip" fixture, which contains a manifest.json with "base_path": "/".
         let bad_archive = std::fs::File::open(fixture_path("bad_path_archive.zip")).unwrap();
 
-        let loaded = Builder::from_archive(bad_archive).unwrap();
+        let loaded = Builder::default().with_archive(bad_archive).unwrap();
 
         assert!(
             loaded.base_path.is_none(),
@@ -12208,19 +11770,16 @@ mod tests {
             assert!(b.definition.ingredients.is_empty());
         }
 
-        // an action that references its ingredient only via the deprecated top-level `instanceId`
-        // field still keeps that ingredient (exercises the Action::ingredient_ids fallback path).
+        // The instanceId parameter remains supported as an ingredient reference.
         #[test]
-        fn filter_ingredients_deprecated_instance_id_reference() {
+        fn filter_ingredients_instance_id_parameter_reference() {
             let mut b = removal_builder(json!({
                 "ingredients": [
                     { "title": "d", "format": "image/jpeg", "relationship": "componentOf", "instance_id": "dep_id" },
                 ],
                 "assertions": [{ "label": "c2pa.actions.v2", "data": { "actions": [
                     created_action(),
-                    // `instanceId` at the action top level maps to the deprecated `Action::instance_id`
-                    // field, not a parameter.
-                    { "action": "c2pa.placed", "instanceId": "dep_id" },
+                    { "action": "c2pa.placed", "parameters": { "instanceId": "dep_id" } },
                 ]}}]
             }));
             b.filter_ingredients(|_| false).unwrap();

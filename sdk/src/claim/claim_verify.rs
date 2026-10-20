@@ -48,6 +48,8 @@ use crate::{
     validation_status,
 };
 
+pub(super) const LEGACY_WATERMARKED_ACTION: &str = "c2pa.watermarked";
+
 // Enum to encapsulate the data type of the source asset.  This simplifies
 // having different implementations for functions as a single entry point can be
 // used to handle different data types.
@@ -963,10 +965,8 @@ impl Claim {
                 }
 
                 // check watermarks for required softbinding
-                // `c2pa_action::WATERMARKED` is deprecated for producing new content (spec 2.2+),
-                // but validators must still recognize it in older manifests.
-                #[allow(deprecated)]
-                if action.action() == c2pa_action::WATERMARKED
+                // Validators must still recognize the legacy action in existing manifests.
+                if action.action() == LEGACY_WATERMARKED_ACTION
                     || action.action() == c2pa_action::WATERMARKED_BOUND
                 {
                     // there must be at least one soft binding assertions, in the future there may be
