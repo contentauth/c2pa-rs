@@ -1,0 +1,49 @@
+{
+  "base_url": "https://livesim2.dashif.org",
+  "server_reported_version": {
+    "Version": "v1.14.0, date: 2026-09-30"
+  },
+  "upstream_release_tag": "v1.14.0",
+  "upstream_release_commit": "8a8d768017cdad2583dc15d5fd6e5c69d2225241",
+  "source_asset": "https://github.com/Dash-Industry-Forum/livesim-content/tree/main/testpic_2s",
+  "simulated_now_ms": 1760000100000,
+  "representation": "V300",
+  "timescale": 90000,
+  "first_sequence_number": 880000021,
+  "first_presentation_time_seconds": 1760000042,
+  "segment_duration_seconds": 2,
+  "files": [
+    {
+      "name": "Manifest.mpd",
+      "request": "/livesim2/scte35_1/testpic_2s/Manifest.mpd?nowMS=1760000100000",
+      "size": 2206,
+      "sha256": "2649172874a82f3f8120df02903d34977fa4be466d77e76f428f6335d2170d3e"
+    },
+    {
+      "name": "init.mp4",
+      "request": "/livesim2/scte35_1/testpic_2s/V300/init.mp4?nowMS=1760000100000",
+      "size": 678,
+      "sha256": "e922cb882aa584fdd48abb12900175bd81e362b0a8878f646b09d069d23e26bd"
+    },
+    {
+      "name": "880000021.m4s",
+      "request": "/livesim2/scte35_1/testpic_2s/V300/880000021.m4s?nowMS=1760000100000",
+      "size": 39032,
+      "sha256": "484a0ad5b092f53910cd2730f047315ea1c0a7be58ba736b72237729d0a0e702"
+    },
+    {
+      "name": "880000022.m4s",
+      "request": "/livesim2/scte35_1/testpic_2s/V300/880000022.m4s?nowMS=1760000100000",
+      "size": 39479,
+      "sha256": "8a62e597e5cd4f5644544c74f67026d139a7d4df40d69ace7beb156809f466d9"
+    },
+    {
+      "name": "880000023.m4s",
+      "request": "/livesim2/scte35_1/testpic_2s/V300/880000023.m4s?nowMS=1760000100000",
+      "size": 39433,
+      "sha256": "bca600cfdd7a719495cb3b6dcefe366c1ececb1c2af22e73b1460b865045442b"
+    }
+  ],
+  "captured_on": "2026-10-15",
+  "source_repository_revision_observed": "e2db1d1697eca2ef1a6cd0188158655b9f396acf"
+}
