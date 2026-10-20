@@ -81,6 +81,12 @@ pub struct LiveVideoVsiSigner {
     /// to `1` (i.e. seconds) if `sign_init_segment` was never called or the
     /// init segment has no parseable `mdhd`.
     track_timescale: Option<u32>,
+    /// Position of this signer's track among the tracks signed for the same presentation;
+    /// see [`LiveVideoVsiSigner::set_event_ids`].
+    event_id_index: u32,
+    /// Number of tracks signed for the same presentation; see
+    /// [`LiveVideoVsiSigner::set_event_ids`].
+    event_id_count: u32,
 }
 
 struct SessionSigningMaterial {
@@ -278,6 +284,8 @@ impl LiveVideoVsiSigner {
             base_manifest_json,
             active_manifest_id: None,
             track_timescale: None,
+            event_id_index: 0,
+            event_id_count: 1,
         })
     }
 
@@ -434,9 +442,7 @@ impl LiveVideoVsiSigner {
 
         let timescale = self.track_timescale.unwrap_or(1);
         let event_duration = parse_segment_duration_ticks(segment_data).unwrap_or(0);
-        // Truncation is safe: a live session realistically never reaches u32::MAX segments,
-        // and the id only needs to be unique within the session (§19.4.2), not globally.
-        let id = sequence_number as u32;
+        let id = self.event_id(sequence_number);
 
         // Two passes: the offset-prefix (§18.6.2) must reflect each box's absolute offset
         // in the final segment (segment_data with emsg inserted), which requires knowing emsg's size
@@ -540,7 +546,7 @@ impl LiveVideoVsiSigner {
                 &build_vsi_cose_sign1(&map, &key.session_signing_key, &key.kid)?,
                 timescale,
                 duration,
-                sequence as u32,
+                self.event_id(sequence),
             )
         };
         let draft_emsg = make_emsg(build_segment_bmff_hash_placeholder()?)?;
@@ -577,6 +583,37 @@ impl LiveVideoVsiSigner {
         self.keys_need_announcement = false;
         self.next_sequence_number = next_sequence;
         Ok(output)
+    }
+
+    /// Makes this signer's VSI `emsg` ids distinct from those of other tracks signed for the
+    /// same presentation.
+    ///
+    /// `index` is this track's position among `count` tracks (`index < count`). The `emsg` id
+    /// becomes `sequence_number * count + index`, wrapping modulo 2^32. The default
+    /// (`index` 0, `count` 1) uses the sequence number itself.
+    ///
+    /// ISO/IEC 23009-1 treats `emsg` boxes with the same `scheme_id_uri`, `value` and `id` as
+    /// the same event, and players such as dash.js de-duplicate inband events per Period on
+    /// those fields. Since every track carries a VSI for the same sequence number, equal ids
+    /// make a player drop the other tracks' VSI events. This mirrors livesim2's
+    /// `Signer.SetEventIDs`; see <https://github.com/c2pa-org/specs-core/issues/2628>.
+    pub fn set_event_ids(&mut self, index: u32, count: u32) -> Result<()> {
+        if index >= count {
+            return Err(Error::BadParam(format!(
+                "emsg id index ({index}) must be less than the track count ({count})"
+            )));
+        }
+        self.event_id_index = index;
+        self.event_id_count = count;
+        Ok(())
+    }
+
+    /// The VSI `emsg` id for `sequence_number`. Truncation is safe: the id only needs to be
+    /// unique within the session (§19.4.2), and a live session realistically never wraps it.
+    fn event_id(&self, sequence_number: u64) -> u32 {
+        (sequence_number as u32)
+            .wrapping_mul(self.event_id_count)
+            .wrapping_add(self.event_id_index)
     }
 
     /// Sets the optional hashed external manifest reference emitted in subsequent VSIs.
@@ -1506,6 +1543,93 @@ mod tests {
         );
         assert_ne!(id2, 0);
         assert_ne!(id1, id2, "emsg id must be session-unique across segments");
+    }
+
+    #[test]
+    fn emsg_id_defaults_to_sequence_number() {
+        let signer = make_test_signer();
+        let mut vsi_signer = make_vsi_signer_with_manifest_id(&signer, b"k", 7);
+        let signed = vsi_signer.sign_media_segment(&make_test_segment()).unwrap();
+        assert_eq!(read_emsg_timing_fields(&signed).2, 7);
+    }
+
+    #[test]
+    fn set_event_ids_offsets_emsg_id_per_track() {
+        let signer = make_test_signer();
+        let mut vsi_signer = make_vsi_signer_with_manifest_id(&signer, b"k", 7);
+        vsi_signer.set_event_ids(2, 3).unwrap();
+        let first = vsi_signer.sign_media_segment(&make_test_segment()).unwrap();
+        let second = vsi_signer.sign_media_segment(&make_test_segment()).unwrap();
+        assert_eq!(read_emsg_timing_fields(&first).2, 7 * 3 + 2);
+        assert_eq!(read_emsg_timing_fields(&second).2, 8 * 3 + 2);
+        // Wraps modulo 2^32 rather than failing.
+        assert_eq!(
+            vsi_signer.event_id(u64::from(u32::MAX)),
+            u32::MAX.wrapping_mul(3) + 2
+        );
+    }
+
+    #[test]
+    fn set_event_ids_rejects_index_not_below_count() {
+        let signer = make_test_signer();
+        let mut vsi_signer = make_vsi_signer_with_manifest_id(&signer, b"k", 1);
+        assert!(vsi_signer.set_event_ids(2, 2).is_err());
+        assert!(vsi_signer.set_event_ids(0, 0).is_err());
+        // A rejected call leaves the previous configuration in place.
+        assert_eq!(vsi_signer.event_id(5), 5);
+    }
+
+    #[test]
+    fn tracks_signed_for_same_sequence_get_distinct_emsg_ids() {
+        let signer = make_test_signer();
+        let mut video = make_vsi_signer_with_manifest_id(&signer, b"video", 4);
+        let mut audio = make_vsi_signer_with_manifest_id(&signer, b"audio", 4);
+        video.set_event_ids(0, 2).unwrap();
+        audio.set_event_ids(1, 2).unwrap();
+        let video_id =
+            read_emsg_timing_fields(&video.sign_media_segment(&make_test_segment()).unwrap()).2;
+        let audio_id =
+            read_emsg_timing_fields(&audio.sign_media_segment(&make_test_segment()).unwrap()).2;
+        assert_ne!(video_id, audio_id);
+    }
+
+    #[test]
+    fn segments_signed_with_event_ids_validate() {
+        let context = rotation_context();
+        let mut signer = rotation_signer(&context);
+        signer.set_event_ids(1, 2).unwrap();
+        let mut validator = LiveVideoValidator::new();
+        register_keys(&mut validator, &signer, &context, TEST_MANIFEST_ID);
+        let segment = signer.sign_media_segment(&make_test_segment()).unwrap();
+        assert_eq!(read_emsg_timing_fields(&segment).2, 3);
+        let mut tracker = StatusTracker::default();
+        validator
+            .validate_verifiable_segment_info(&segment, &mut tracker)
+            .unwrap();
+        assert_eq!(tracker.filter_errors().count(), 0);
+
+        signer
+            .add_session_key(
+                context.signer().unwrap(),
+                make_test_signing_key(),
+                b"new".to_vec(),
+                2,
+                3600,
+            )
+            .unwrap();
+        let update = signer
+            .sign_media_segment_with_manifest(&rotation_media_segment(), context.clone())
+            .unwrap();
+        assert_eq!(read_emsg_timing_fields(&update).2, 5);
+        validator
+            .validate_verifiable_segment_info_with_context(&update, &context, &mut tracker)
+            .unwrap();
+        assert_eq!(
+            tracker.filter_errors().count(),
+            0,
+            "{:?}",
+            tracker.logged_items()
+        );
     }
 
     fn make_test_media_segment_with_mfhd(sequence_number: u32) -> Vec<u8> {
