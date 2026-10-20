@@ -62,11 +62,10 @@ pub fn check_ocsp_status(
     context: &Context,
 ) -> Result<OcspResponse, CoseError> {
     // When `ocsp_fetch_should_override` is enabled, attempt a live OCSP fetch first into a
-    // scratch log. If the live fetch returns a definitive status (`notRevoked` or `revoked`)
-    // or a fatal error (such as a revoked issuing CA), commit its log and return immediately.
-    // Otherwise (e.g., if the responder is unreachable), keep the live result as a fallback
-    // and check the embedded `CertificateStatus` assertions and COSE OCSP staple first so that
-    // a valid or revoked staple is not downgraded to `inaccessible`.
+    // scratch log. A live revocation is an error. A live not-revoked result is returned only
+    // after checking that embedded responses do not report a valid revocation. If the live
+    // fetch is inconclusive (e.g., the responder is unreachable), keep it as a fallback and
+    // check the embedded responses before reporting the responder as inaccessible.
     let live_override_fallback = if fetch_policy == OcspFetchPolicy::FetchAllowed
         && context.settings().verify.ocsp_fetch_should_override
     {
@@ -78,14 +77,49 @@ pub fn check_ocsp_status(
                 .await
         };
 
+        let mut embedded_log = StatusTracker::default();
+        if _sync {
+            check_embedded_ocsp_responses(
+                sign1,
+                data,
+                ctp,
+                ocsp_responses,
+                tst_info,
+                &mut embedded_log,
+                context.settings(),
+            );
+        } else {
+            check_embedded_ocsp_responses_async(
+                sign1,
+                data,
+                ctp,
+                ocsp_responses,
+                tst_info,
+                &mut embedded_log,
+                context.settings(),
+            )
+            .await;
+        }
+        if embedded_log.has_status(validation_status::SIGNING_CREDENTIAL_REVOKED) {
+            validation_log.append(&embedded_log);
+            return Err(CoseError::CertificateTrustError(
+                CertificateTrustError::CertificateNotTrusted,
+            ));
+        }
+
         match live_result {
             Err(err) => {
                 validation_log.append(&live_log);
                 return Err(err);
             }
+            Ok(_) if live_log.has_status(validation_status::SIGNING_CREDENTIAL_REVOKED) => {
+                validation_log.append(&live_log);
+                return Err(CoseError::CertificateTrustError(
+                    CertificateTrustError::CertificateNotTrusted,
+                ));
+            }
             Ok(ocsp_response)
-                if live_log.has_status(validation_status::SIGNING_CREDENTIAL_REVOKED)
-                    || live_log.has_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED) =>
+                if live_log.has_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED) =>
             {
                 validation_log.append(&live_log);
                 return Ok(ocsp_response);
@@ -303,6 +337,69 @@ pub fn check_ocsp_status(
     }
 }
 
+#[async_generic]
+fn check_embedded_ocsp_responses(
+    sign1: &CoseSign1,
+    data: &[u8],
+    ctp: &CertificateTrustPolicy,
+    ocsp_responses: Option<&Vec<Vec<u8>>>,
+    tst_info: Option<&TstInfo>,
+    validation_log: &mut StatusTracker,
+    settings: &Settings,
+) {
+    if let Some(ocsp_response_ders) = ocsp_responses {
+        if !ocsp_response_ders.is_empty() {
+            let _ = if _sync {
+                process_ocsp_responses(
+                    sign1,
+                    data,
+                    ctp,
+                    ocsp_response_ders,
+                    tst_info,
+                    validation_log,
+                    settings,
+                )
+            } else {
+                process_ocsp_responses_async(
+                    sign1,
+                    data,
+                    ctp,
+                    ocsp_response_ders,
+                    tst_info,
+                    validation_log,
+                    settings,
+                )
+                .await
+            };
+        }
+    }
+
+    if let Some(staple) = get_ocsp_der(sign1) {
+        let _ = if _sync {
+            process_ocsp_responses(
+                sign1,
+                data,
+                ctp,
+                std::slice::from_ref(&staple),
+                tst_info,
+                validation_log,
+                settings,
+            )
+        } else {
+            process_ocsp_responses_async(
+                sign1,
+                data,
+                ctp,
+                std::slice::from_ref(&staple),
+                tst_info,
+                validation_log,
+                settings,
+            )
+            .await
+        };
+    }
+}
+
 /// Processes a list of OCSP responses and validates them.
 /// Returns the first valid non-revoked response or an error if revoked.
 #[async_generic]
@@ -315,6 +412,8 @@ fn process_ocsp_responses(
     validation_log: &mut StatusTracker,
     settings: &Settings,
 ) -> Result<OcspResponse, CoseError> {
+    let mut not_revoked_response = None;
+
     for ocsp_response_der in ocsp_response_ders {
         let mut current_validation_log = StatusTracker::default();
         let ocsp_response = if _sync {
@@ -358,24 +457,29 @@ fn process_ocsp_responses(
             }
             // If certificate is confirmed not revoked, return success
             if current_validation_log.has_status(validation_status::SIGNING_CREDENTIAL_NOT_REVOKED)
+                && not_revoked_response.is_none()
             {
-                log_item!(
-                    "",
-                    format!(
-                        "signing cert not revoked: {}",
-                        ocsp_response.certificate_serial_num
-                    ),
-                    "check_ocsp_status"
-                )
-                .validation_status(SIGNING_CREDENTIAL_NOT_REVOKED)
-                .success(validation_log);
-
-                return Ok(ocsp_response);
+                not_revoked_response = Some(ocsp_response);
             }
         }
     }
 
-    Ok(OcspResponse::default())
+    if let Some(ocsp_response) = not_revoked_response {
+        log_item!(
+            "",
+            format!(
+                "signing cert not revoked: {}",
+                ocsp_response.certificate_serial_num
+            ),
+            "check_ocsp_status"
+        )
+        .validation_status(SIGNING_CREDENTIAL_NOT_REVOKED)
+        .success(validation_log);
+
+        Ok(ocsp_response)
+    } else {
+        Ok(OcspResponse::default())
+    }
 }
 
 /// Policy for fetching OCSP responses.
@@ -1463,7 +1567,7 @@ mod tests {
         assert!(log1.has_status(SIGNING_CREDENTIAL_REVOKED));
         assert_eq!(counter1.load(Ordering::SeqCst), 0);
 
-        // Case 2 (Override enabled, live response_good.der overrides stapled response_revoked.der)
+        // Case 2 (A stapled revocation remains authoritative over a live not-revoked response)
         let counter2 = Arc::new(AtomicUsize::new(0));
         let resolver2 = CountingSyncResolver {
             counter: counter2.clone(),
@@ -1488,10 +1592,42 @@ mod tests {
             &mut log2,
             &context2,
         );
-        assert!(result2.is_ok());
+        assert!(result2.is_err());
         assert!(counter2.load(Ordering::SeqCst) > 0);
-        assert!(log2.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
-        assert!(!log2.has_status(SIGNING_CREDENTIAL_REVOKED));
+        assert!(log2.has_status(SIGNING_CREDENTIAL_REVOKED));
+        assert!(!log2.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+
+        // A later revoked CertificateStatus response must not be hidden by an earlier good response.
+        let assertion_responses = vec![good.clone(), revoked.clone()];
+        let sign1_without_staple = sign1_with_staple(None);
+        let counter2b = Arc::new(AtomicUsize::new(0));
+        let resolver2b = CountingSyncResolver {
+            counter: counter2b.clone(),
+            status: 200,
+            body: good.clone(),
+        };
+        let settings2b = Settings::new()
+            .with_json(r#"{"verify": {"ocsp_fetch_should_override": true}}"#)
+            .unwrap();
+        let context2b = Context::new()
+            .with_settings(settings2b)
+            .unwrap()
+            .with_resolver(resolver2b);
+        let mut log2b = StatusTracker::default();
+        let result2b = check_ocsp_status(
+            &sign1_without_staple,
+            b"data",
+            OcspFetchPolicy::FetchAllowed,
+            &anchored,
+            Some(&assertion_responses),
+            None,
+            &mut log2b,
+            &context2b,
+        );
+        assert!(result2b.is_err());
+        assert!(counter2b.load(Ordering::SeqCst) > 0);
+        assert!(log2b.has_status(SIGNING_CREDENTIAL_REVOKED));
+        assert!(!log2b.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
 
         // Case 3 (Override enabled, live response_revoked.der overrides stapled response_good.der)
         let sign1_good = sign1_with_staple(Some(good.clone()));
@@ -1509,7 +1645,7 @@ mod tests {
             .unwrap()
             .with_resolver(resolver3);
         let mut log3 = StatusTracker::default();
-        let _result3 = check_ocsp_status(
+        let result3 = check_ocsp_status(
             &sign1_good,
             b"data",
             OcspFetchPolicy::FetchAllowed,
@@ -1519,6 +1655,7 @@ mod tests {
             &mut log3,
             &context3,
         );
+        assert!(result3.is_err());
         assert!(counter3.load(Ordering::SeqCst) > 0);
         assert!(log3.has_status(SIGNING_CREDENTIAL_REVOKED));
         assert!(!log3.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
@@ -1682,8 +1819,7 @@ mod tests {
             }
         }
 
-        // 1. With ocsp_fetch_should_override: true, an AsyncHttpResolver returning 200 OK with response_good.der
-        // overrides a stapled response_revoked.der
+        // 1. A stapled revocation remains authoritative over a live not-revoked response.
         let counter1 = Arc::new(AtomicUsize::new(0));
         let resolver1 = CountingAsyncResolver {
             counter: counter1.clone(),
@@ -1709,10 +1845,10 @@ mod tests {
             &context1,
         )
         .await;
-        assert!(result1.is_ok());
+        assert!(result1.is_err());
         assert!(counter1.load(Ordering::SeqCst) > 0);
-        assert!(log1.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
-        assert!(!log1.has_status(SIGNING_CREDENTIAL_REVOKED));
+        assert!(log1.has_status(SIGNING_CREDENTIAL_REVOKED));
+        assert!(!log1.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
 
         // 2. When the AsyncHttpResolver returns 404, check_ocsp_status_async falls back to the stapled response_revoked.der
         let counter2 = Arc::new(AtomicUsize::new(0));
