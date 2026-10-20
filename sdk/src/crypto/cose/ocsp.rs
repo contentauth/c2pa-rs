@@ -1443,7 +1443,7 @@ mod tests {
     }
 
     #[test]
-    fn check_ocsp_status_fetch_override_bypasses_staple_and_falls_back_on_failure() {
+    fn check_ocsp_status_fetch_override_preserves_revocation_and_falls_back_on_failure() {
         use std::{
             io::{Cursor, Read},
             sync::{
