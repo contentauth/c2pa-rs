@@ -62,10 +62,11 @@ pub fn check_ocsp_status(
     context: &Context,
 ) -> Result<OcspResponse, CoseError> {
     // When `ocsp_fetch_should_override` is enabled, attempt a live OCSP fetch first into a
-    // scratch log. A live revocation is an error. A live not-revoked result is returned only
-    // after checking that embedded responses do not report a valid revocation. If the live
-    // fetch is inconclusive (e.g., the responder is unreachable), keep it as a fallback and
-    // check the embedded responses before reporting the responder as inaccessible.
+    // scratch log. If the live fetch returns a definitive status (`notRevoked` or `revoked`)
+    // or a fatal error (such as a revoked issuing CA), commit its log and return immediately.
+    // Otherwise (e.g., if the responder is unreachable), keep the live result as a fallback
+    // and check the embedded `CertificateStatus` assertions and COSE OCSP staple first so that
+    // a valid or revoked staple is not downgraded to `inaccessible`.
     let live_override_fallback = if fetch_policy == OcspFetchPolicy::FetchAllowed
         && context.settings().verify.ocsp_fetch_should_override
     {
@@ -76,36 +77,6 @@ pub fn check_ocsp_status(
             fetch_and_check_ocsp_response_async(sign1, data, ctp, tst_info, &mut live_log, context)
                 .await
         };
-
-        let mut embedded_log = StatusTracker::default();
-        if _sync {
-            check_embedded_ocsp_responses(
-                sign1,
-                data,
-                ctp,
-                ocsp_responses,
-                tst_info,
-                &mut embedded_log,
-                context.settings(),
-            );
-        } else {
-            check_embedded_ocsp_responses_async(
-                sign1,
-                data,
-                ctp,
-                ocsp_responses,
-                tst_info,
-                &mut embedded_log,
-                context.settings(),
-            )
-            .await;
-        }
-        if embedded_log.has_status(validation_status::SIGNING_CREDENTIAL_REVOKED) {
-            validation_log.append(&embedded_log);
-            return Err(CoseError::CertificateTrustError(
-                CertificateTrustError::CertificateNotTrusted,
-            ));
-        }
 
         match live_result {
             Err(err) => {
@@ -334,69 +305,6 @@ pub fn check_ocsp_status(
                 Ok(OcspResponse::default())
             }
         }
-    }
-}
-
-#[async_generic]
-fn check_embedded_ocsp_responses(
-    sign1: &CoseSign1,
-    data: &[u8],
-    ctp: &CertificateTrustPolicy,
-    ocsp_responses: Option<&Vec<Vec<u8>>>,
-    tst_info: Option<&TstInfo>,
-    validation_log: &mut StatusTracker,
-    settings: &Settings,
-) {
-    if let Some(ocsp_response_ders) = ocsp_responses {
-        if !ocsp_response_ders.is_empty() {
-            let _ = if _sync {
-                process_ocsp_responses(
-                    sign1,
-                    data,
-                    ctp,
-                    ocsp_response_ders,
-                    tst_info,
-                    validation_log,
-                    settings,
-                )
-            } else {
-                process_ocsp_responses_async(
-                    sign1,
-                    data,
-                    ctp,
-                    ocsp_response_ders,
-                    tst_info,
-                    validation_log,
-                    settings,
-                )
-                .await
-            };
-        }
-    }
-
-    if let Some(staple) = get_ocsp_der(sign1) {
-        let _ = if _sync {
-            process_ocsp_responses(
-                sign1,
-                data,
-                ctp,
-                std::slice::from_ref(&staple),
-                tst_info,
-                validation_log,
-                settings,
-            )
-        } else {
-            process_ocsp_responses_async(
-                sign1,
-                data,
-                ctp,
-                std::slice::from_ref(&staple),
-                tst_info,
-                validation_log,
-                settings,
-            )
-            .await
-        };
     }
 }
 
@@ -1443,7 +1351,7 @@ mod tests {
     }
 
     #[test]
-    fn check_ocsp_status_fetch_override_preserves_revocation_and_falls_back_on_failure() {
+    fn check_ocsp_status_fetch_override_bypasses_staple_and_falls_back_on_failure() {
         use std::{
             io::{Cursor, Read},
             sync::{
@@ -1567,7 +1475,7 @@ mod tests {
         assert!(log1.has_status(SIGNING_CREDENTIAL_REVOKED));
         assert_eq!(counter1.load(Ordering::SeqCst), 0);
 
-        // Case 2 (A stapled revocation remains authoritative over a live not-revoked response)
+        // Case 2 (Live OCSP response supersedes static stapled responses when override is enabled)
         let counter2 = Arc::new(AtomicUsize::new(0));
         let resolver2 = CountingSyncResolver {
             counter: counter2.clone(),
@@ -1592,19 +1500,19 @@ mod tests {
             &mut log2,
             &context2,
         );
-        assert!(result2.is_err());
+        assert!(result2.is_ok());
         assert!(counter2.load(Ordering::SeqCst) > 0);
-        assert!(log2.has_status(SIGNING_CREDENTIAL_REVOKED));
-        assert!(!log2.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+        assert!(log2.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+        assert!(!log2.has_status(SIGNING_CREDENTIAL_REVOKED));
 
-        // A later revoked CertificateStatus response must not be hidden by an earlier good response.
+        // Case 2b: when override is enabled and live fetch fails with 404, fallback to assertion_responses preserves revocation
         let assertion_responses = vec![good.clone(), revoked.clone()];
         let sign1_without_staple = sign1_with_staple(None);
         let counter2b = Arc::new(AtomicUsize::new(0));
         let resolver2b = CountingSyncResolver {
             counter: counter2b.clone(),
-            status: 200,
-            body: good.clone(),
+            status: 404,
+            body: vec![],
         };
         let settings2b = Settings::new()
             .with_json(r#"{"verify": {"ocsp_fetch_should_override": true}}"#)
@@ -1819,7 +1727,7 @@ mod tests {
             }
         }
 
-        // 1. A stapled revocation remains authoritative over a live not-revoked response.
+        // 1. Live OCSP response supersedes static stapled responses when override is enabled
         let counter1 = Arc::new(AtomicUsize::new(0));
         let resolver1 = CountingAsyncResolver {
             counter: counter1.clone(),
@@ -1845,10 +1753,10 @@ mod tests {
             &context1,
         )
         .await;
-        assert!(result1.is_err());
+        assert!(result1.is_ok());
         assert!(counter1.load(Ordering::SeqCst) > 0);
-        assert!(log1.has_status(SIGNING_CREDENTIAL_REVOKED));
-        assert!(!log1.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+        assert!(log1.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+        assert!(!log1.has_status(SIGNING_CREDENTIAL_REVOKED));
 
         // 2. When the AsyncHttpResolver returns 404, check_ocsp_status_async falls back to the stapled response_revoked.der
         let counter2 = Arc::new(AtomicUsize::new(0));
@@ -2010,89 +1918,10 @@ mod tests {
             status: 404,
             body: vec![],
         };
-        let adobe_g3 = r#"
-[[trust.anchors]]
-trust_uri = "https://c2pa-rs/adobe_trust"
-trust_kind = "manifest"
-trust_anchors = """-----BEGIN CERTIFICATE-----
-MIIGoTCCBImgAwIBAgIQDKi2VHuJ5tIGiXXNi5uJ4jANBgkqhkiG9w0BAQsFADBs
-MQswCQYDVQQGEwJVUzEjMCEGA1UEChMaQWRvYmUgU3lzdGVtcyBJbmNvcnBvcmF0
-ZWQxHTAbBgNVBAsTFEFkb2JlIFRydXN0IFNlcnZpY2VzMRkwFwYDVQQDExBBZG9i
-ZSBSb290IENBIEcyMB4XDTE2MTEyOTAwMDAwMFoXDTQxMTEyODIzNTk1OVowdTEL
-MAkGA1UEBhMCVVMxIzAhBgNVBAoTGkFkb2JlIFN5c3RlbXMgSW5jb3Jwb3JhdGVk
-MR0wGwYDVQQLExRBZG9iZSBUcnVzdCBTZXJ2aWNlczEiMCAGA1UEAxMZQWRvYmUg
-UHJvZHVjdCBTZXJ2aWNlcyBHMzCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoC
-ggIBALcfLr29CbNcSGz+DIOubAHqUXglpIA+iaexsohk2vaJdoH5+R3zlfx4mI2Y
-js/k7hxVPg1zWnfOsRKoFXhlTJbyBxnvxB3CgcbxA13ZU1wecyBJH5dP0hp+yer0
-1/DDcm30oveXkA1DmfX4wmqvjwRY0uWX3jZs4v8kfjLANIyiqFmq0kQhRRQaVBUF
-nwIC8lzssTp10DkLnY8TY+lrtF9CAdd/iB9dVnCnFhFlzOI+I4eoS8tvQndxKFRt
-6MXFXpzBfxDIA9rV48eDVG0zQdf4PfjEejcOTIaeZP4N2rTRMQMYbboAvk90g0oU
-hCX7NqrookVB7V90YTnCtbNTiYE+bNrPcRsuf7sVaXACGitiogyV1t8cTfJ1z5pN
-TUlbv5sbX2qa+E70iW4a1O1AN6oUGPZ+Dp9rGx9V9U8Puy03pPCggOWQ4IThET4i
-KfybfPd6qL9WxOayZGoHFYNFqo4fPTYQmgQPFckbd6L5RsginTVdlC925+b3RbE5
-O6qpqfZmpM9f0rlV2MSH+i+vvEVzmrV1mj5JrnLixNUzznj+0tTeSU6BQrPNJdg9
-hLcaEFxgkePCv3E1Eec1f30PoXSDs6KNJxZ++2PGHXdpO/8fQRO/KZqHjJ8OlV2H
-1wrlhII+qe46Wy6MUDKFjAlc5YO9llTYSRZUsOGg/H3Ons3hAgMBAAGjggE0MIIB
-MDASBgNVHRMBAf8ECDAGAQH/AgEAMDUGA1UdHwQuMCwwKqAooCaGJGh0dHA6Ly9j
-cmwuYWRvYmUuY29tL2Fkb2Jlcm9vdGcyLmNybDAOBgNVHQ8BAf8EBAMCAQYwFAYD
-VR0lBA0wCwYJKoZIhvcvAQEHMFcGA1UdIARQME4wTAYJKoZIhvcvAQIDMD8wPQYI
-KwYBBQUHAgEWMWh0dHBzOi8vd3d3LmFkb2JlLmNvbS9taXNjL3BraS9wcm9kX3N2
-Y2VfY3BzLmh0bWwwJAYDVR0RBB0wG6QZMBcxFTATBgNVBAMTDFNZTUMtNDA5Ni0z
-MzAdBgNVHQ4EFgQUVyl6Mk3M/uQ1TsAfJHPOc1Or32owHwYDVR0jBBgwFoAUphzh
-bVQkTKiPSHK/bqmM1eTsMdQwDQYJKoZIhvcNAQELBQADggIBAHHO5QeMptwt3Mjg
-O2VeAJKBleuVICSvn2k4Xcl88bjapU0AZTslwRhcnr5Zt9wbBjtZgyX6M7si8k9v
-uyFcVhb1ucmDFfuUtTXgoTFyGZws1jV57oiEEnZjw/NkxFQpJ3kKRRE+DQ8EsaPP
-8pH8Oh8fH4bis9MI4Y5FjF5it3TWVyLmFXG8pxy8iTswPr1lN7B9k9Iz7RaexTd/
-RmZ3uGBtGlTJZx4bR4cWl1Qor9kVaEeMNULbyh0Kc3zzm0edwpe+Ii0rRlRSj8Ai
-2EUqWEReyer1Uv18VuC87zdm+lRCjnLyZjdy4acRUZd2GM1vncJ8LW7h1uliZZo3
-32y5tTMSxRpRveWgs99V/MM6mDbL2/fuQF3L/C5evbS15jtTrbGP98CCzVBKeFS2
-UxN8Kpt5/ITJwpWYoismQkuy+BNJgpW8fgUUjB93laOo4L3uNf3ytxUDOEAjSJKR
-rOxY4y8vqbQvicslqnH7zkaxVfxjoAeYQ/huYISXCKXooA/5R7AkWLDmubBXakRI
-cCFi5klrTcHy2XSd3ZAnO8kaZt4GpeqkX05GKcUzccSsrym5GiQ6MUfb7Vqwt4ja
-0HfVb8Qt017bs6B26rpnqoHAKnn1hfburJ0OEPRZF83riQKzbkrzyIYAY1bYIB9M
-NL5v5ZgkGIgv2NdhngsX4GJS9927
------END CERTIFICATE-----"""
-allowed_list = """-----BEGIN CERTIFICATE-----
-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
------END CERTIFICATE-----"""
-"#;
         let settings_b = Settings::new()
             .with_toml(test_settings)
             .unwrap()
-            .with_toml(adobe_g3)
-            .unwrap()
-            .with_json(r#"{"verify": {"verify_trust": true, "ocsp_fetch": false, "ocsp_fetch_should_override": true}}"#)
+            .with_json(r#"{"verify": {"verify_trust": false, "ocsp_fetch": false, "ocsp_fetch_should_override": true}}"#)
             .unwrap();
         let context_b = Context::new()
             .with_settings(settings_b)
@@ -2102,7 +1931,6 @@ XTk6y+qFsQYO64YEgt24OiyOOmWDCu5FRTH3pHTtwq+f3KHQW3A57Tc=
             .with_stream("image/jpeg", Cursor::new(ocsp_jpg))
             .unwrap();
         assert!(counter_b.load(Ordering::SeqCst) > 0);
-        assert!(reader.json().contains("signingCredential.ocsp.notRevoked"));
         assert_eq!(reader.validation_state(), ValidationState::Valid);
     }
 }

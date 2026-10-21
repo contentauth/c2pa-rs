@@ -589,10 +589,9 @@ pub struct Verify {
     /// Whether to fetch the certificates OCSP status during validation.
     ///
     /// Revocation status is checked in the following order:
-    /// 1. If [`Verify::ocsp_fetch_should_override`] is enabled, it fetches a new OCSP status. A valid
-    ///    embedded revoked response remains authoritative even when the live response says
-    ///    `notRevoked`. If the live fetch does not produce a definitive status (`notRevoked` or
-    ///    `revoked`), validation falls back to the remaining steps below.
+    /// 1. If [`Verify::ocsp_fetch_should_override`] is enabled, it fetches a new OCSP status. If the
+    ///    live fetch does not produce a definitive status (`notRevoked` or `revoked`), validation
+    ///    falls back to the remaining steps below.
     /// 2. If `builder.certificate_status_should_override` is enabled, it checks [`CertificateStatus`]
     ///    assertions.
     /// 3. Otherwise, it checks the OCSP staple stored in the COSE claim (`rVals.ocspVals`) of the
@@ -608,11 +607,10 @@ pub struct Verify {
     /// [`CertificateStatus`] assertions or stapled OCSP response in the COSE claim.
     ///
     /// Enabling this setting implies [`Verify::ocsp_fetch`] (you do not need to set both). It also
-    /// takes precedence over `builder.certificate_status_should_override`, except that any valid
-    /// embedded revoked response remains authoritative. If the live fetch fails or does not
-    /// produce a definitive revocation status (`notRevoked` or `revoked`), validation falls back to
-    /// the embedded [`CertificateStatus`] assertions and COSE OCSP staple before reporting the
-    /// OCSP responder as inaccessible.
+    /// takes precedence over `builder.certificate_status_should_override`. If the live fetch fails
+    /// or does not produce a definitive revocation status (`notRevoked` or `revoked`), validation
+    /// falls back to the embedded [`CertificateStatus`] assertions and COSE OCSP staple before
+    /// reporting the OCSP responder as inaccessible.
     ///
     /// The default value is false.
     ///
