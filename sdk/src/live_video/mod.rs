@@ -231,14 +231,18 @@ impl LiveVideoValidator {
         let failures_before = tracker.filter_errors().count();
 
         self.validate_segment_has_c2pa_or_emsg(segment_data, tracker)?;
-        self.validate_continuity_rules(assertion, tracker)?;
+        let chain_broken = self.validate_continuity_rules(assertion, tracker)?;
 
         if let Some(previous) = &self.previous_segment {
             self.validate_sequence_number(assertion, previous, tracker)?;
             self.validate_stream_id(assertion, previous, tracker)?;
         }
 
-        if tracker.filter_errors().count() > failures_before {
+        // A segment that fails only the `previousManifestId` check still becomes the baseline:
+        // its own manifest was validated by the caller, only its predecessor is missing or
+        // rejected. Otherwise one lost or tampered segment would fail every segment after it.
+        let new_failures = tracker.filter_errors().count() - failures_before;
+        if new_failures > usize::from(chain_broken) {
             return Ok(());
         }
 
