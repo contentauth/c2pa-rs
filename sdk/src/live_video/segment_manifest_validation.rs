@@ -78,11 +78,13 @@ impl LiveVideoValidator {
         Ok(())
     }
 
+    /// Returns `true` if the only failure logged is a `previousManifestId` that doesn't match
+    /// the previous segment's manifest identifier.
     pub(super) fn validate_continuity_rules(
         &self,
         assertion: &LiveVideoSegment,
         tracker: &mut StatusTracker,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         match &assertion.continuity_method {
             ContinuityMethod::ManifestId => {
                 self.validate_manifest_id_continuity(assertion, tracker)
@@ -94,7 +96,8 @@ impl LiveVideoValidator {
                 format!("unsupported continuity method: {method}"),
                 LIVEVIDEO_CONTINUITY_METHOD_INVALID,
                 tracker,
-            ),
+            )
+            .map(|()| false),
         }
     }
 
@@ -102,9 +105,9 @@ impl LiveVideoValidator {
         &self,
         assertion: &LiveVideoSegment,
         tracker: &mut StatusTracker,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let Some(previous) = &self.previous_segment else {
-            return Ok(());
+            return Ok(false);
         };
 
         let previous_manifest_id = match &assertion.previous_manifest_id {
@@ -114,7 +117,8 @@ impl LiveVideoValidator {
                     "previousManifestId is required when continuityMethod is c2pa.manifestId",
                     LIVEVIDEO_CONTINUITY_METHOD_INVALID,
                     tracker,
-                );
+                )
+                .map(|()| false);
             }
         };
 
@@ -124,8 +128,9 @@ impl LiveVideoValidator {
                 LIVEVIDEO_SEGMENT_INVALID,
                 tracker,
             )?;
+            return Ok(true);
         }
-        Ok(())
+        Ok(false)
     }
 }
 
@@ -403,6 +408,102 @@ mod tests {
             .iter()
             .any(|i| i.validation_status.as_deref() == Some(LIVEVIDEO_SEGMENT_INVALID));
         assert!(has_segment_invalid);
+    }
+
+    fn chained(sequence_number: u64, previous_manifest_id: Option<&str>) -> LiveVideoSegment {
+        LiveVideoSegment {
+            previous_manifest_id: previous_manifest_id.map(str::to_string),
+            ..make_segment(sequence_number, "stream-1")
+        }
+    }
+
+    /// Validates `assertion` as manifest `manifest_id` and returns the codes it logged.
+    fn validate(
+        validator: &mut LiveVideoValidator,
+        manifest_id: &str,
+        assertion: &LiveVideoSegment,
+    ) -> Vec<String> {
+        let mut tracker = StatusTracker::default();
+        let _ = validator.validate_media_segment(
+            &make_uuid_box(true),
+            manifest_id,
+            assertion,
+            &mut tracker,
+        );
+        tracker
+            .filter_errors()
+            .filter_map(|i| i.validation_status.as_deref().map(str::to_string))
+            .collect()
+    }
+
+    #[test]
+    fn chain_recovers_after_a_lost_segment() {
+        let mut validator = LiveVideoValidator::new();
+        assert!(validate(&mut validator, "m1", &chained(1, None)).is_empty());
+        assert!(validate(&mut validator, "m2", &chained(2, Some("m1"))).is_empty());
+
+        // m3 is lost: m4 can't link to the segment it names, but it becomes the baseline.
+        assert_eq!(
+            validate(&mut validator, "m4", &chained(4, Some("m3"))),
+            [LIVEVIDEO_SEGMENT_INVALID]
+        );
+        assert!(validate(&mut validator, "m5", &chained(5, Some("m4"))).is_empty());
+        assert!(validate(&mut validator, "m6", &chained(6, Some("m5"))).is_empty());
+    }
+
+    #[test]
+    fn chain_recovers_after_a_reordered_segment() {
+        let mut validator = LiveVideoValidator::new();
+        validate(&mut validator, "m1", &chained(1, None));
+        validate(&mut validator, "m2", &chained(2, Some("m1")));
+
+        // m4 arrives before m3: m4 breaks the link, then m3 regresses the sequence number.
+        assert_eq!(
+            validate(&mut validator, "m4", &chained(4, Some("m3"))),
+            [LIVEVIDEO_SEGMENT_INVALID]
+        );
+        assert_eq!(
+            validate(&mut validator, "m3", &chained(3, Some("m2"))),
+            [LIVEVIDEO_SEGMENT_INVALID, LIVEVIDEO_ASSERTION_INVALID]
+        );
+        // m3 didn't become the baseline, so m5 links to m4.
+        assert!(validate(&mut validator, "m5", &chained(5, Some("m4"))).is_empty());
+    }
+
+    #[test]
+    fn broken_link_with_another_failure_does_not_advance() {
+        let mut validator = LiveVideoValidator::new();
+        validate(&mut validator, "m1", &chained(1, None));
+        validate(&mut validator, "m2", &chained(2, Some("m1")));
+
+        let other_stream = LiveVideoSegment {
+            stream_id: "stream-2".to_string(),
+            ..chained(3, Some("x2"))
+        };
+        assert_eq!(
+            validate(&mut validator, "x3", &other_stream),
+            [LIVEVIDEO_SEGMENT_INVALID, LIVEVIDEO_ASSERTION_INVALID]
+        );
+        assert_eq!(
+            validator.previous_segment.as_ref().unwrap().manifest_id,
+            "m2"
+        );
+        assert!(validate(&mut validator, "m3", &chained(3, Some("m2"))).is_empty());
+    }
+
+    #[test]
+    fn missing_previous_manifest_id_does_not_advance() {
+        let mut validator = LiveVideoValidator::new();
+        validate(&mut validator, "m1", &chained(1, None));
+
+        assert_eq!(
+            validate(&mut validator, "m2", &chained(2, None)),
+            [LIVEVIDEO_CONTINUITY_METHOD_INVALID]
+        );
+        assert_eq!(
+            validator.previous_segment.as_ref().unwrap().manifest_id,
+            "m1"
+        );
     }
 
     #[test]
