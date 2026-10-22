@@ -99,27 +99,31 @@ pub fn cert_chain_from_sign1(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>, C
         .header
         .rest
         .iter()
-        .find_map(|x: &(Label, Value)| {
-            if x.0 == Label::Text("x5chain".to_string())
-                || x.0 == Label::Int(iana::HeaderParameter::X5Chain.to_i64())
-            {
-                Some(x.1.clone())
-            } else {
-                None
-            }
-        })
+        .find_map(|x: &(Label, Value)| is_x5chain_label(&x.0).then(|| x.1.clone()))
     else {
         // Not there: Also try unprotected header. (This was permitted in older versions
         // of C2PA.)
         return get_unprotected_header_certs(sign1);
     };
 
-    // Certs may be in protected or unprotected header, but not both.
-    if get_unprotected_header_certs(sign1).is_ok() {
+    // Certs may be in protected or unprotected header, but not both. Check for the
+    // label itself, so a malformed chain in the unprotected header is not ignored.
+    if sign1
+        .unprotected
+        .rest
+        .iter()
+        .any(|x: &(Label, Value)| is_x5chain_label(&x.0))
+    {
         return Err(CoseError::MultipleSigningCertificateChains);
     }
 
     cert_chain_from_cbor_value(value)
+}
+
+/// The x5chain header may use its text label or its IANA integer label (33).
+fn is_x5chain_label(label: &Label) -> bool {
+    *label == Label::Text("x5chain".to_string())
+        || *label == Label::Int(iana::HeaderParameter::X5Chain.to_i64())
 }
 
 fn get_unprotected_header_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>, CoseError> {
@@ -127,13 +131,7 @@ fn get_unprotected_header_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>
         .unprotected
         .rest
         .iter()
-        .find_map(|x: &(Label, Value)| {
-            if x.0 == Label::Text("x5chain".to_string()) {
-                Some(x.1.clone())
-            } else {
-                None
-            }
-        })
+        .find_map(|x: &(Label, Value)| is_x5chain_label(&x.0).then(|| x.1.clone()))
     else {
         return Err(CoseError::MissingSigningCertificateChain);
     };
@@ -144,16 +142,15 @@ fn get_unprotected_header_certs(sign1: &coset::CoseSign1) -> Result<Vec<Vec<u8>>
 fn cert_chain_from_cbor_value(value: Value) -> Result<Vec<Vec<u8>>, CoseError> {
     match value {
         Value::Array(cert_chain) => {
-            let certs: Vec<Vec<u8>> = cert_chain
-                .iter()
-                .filter_map(|c| {
-                    if let Value::Bytes(der_bytes) = c {
-                        Some(der_bytes.clone())
-                    } else {
-                        None
-                    }
+            // Every entry must be a certificate. Skipping a malformed entry would
+            // promote the next certificate to signing certificate.
+            let certs = cert_chain
+                .into_iter()
+                .map(|c| match c {
+                    Value::Bytes(der_bytes) => Ok(der_bytes),
+                    _ => Err(CoseError::MissingSigningCertificateChain),
                 })
-                .collect();
+                .collect::<Result<Vec<Vec<u8>>, CoseError>>()?;
 
             if certs.is_empty() {
                 Err(CoseError::MissingSigningCertificateChain)
@@ -193,5 +190,92 @@ pub fn signing_time_from_sign1(
         Some(tst_info.gen_time.into())
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use coset::{iana, CoseSign1Builder, HeaderBuilder};
+
+    use super::*;
+
+    const X5CHAIN: i64 = iana::HeaderParameter::X5Chain as i64;
+
+    fn chain(certs: &[&[u8]]) -> Value {
+        Value::Array(certs.iter().map(|c| Value::Bytes(c.to_vec())).collect())
+    }
+
+    #[test]
+    fn unprotected_x5chain_integer_label_is_found() {
+        let sign1 = CoseSign1Builder::new()
+            .unprotected(
+                HeaderBuilder::new()
+                    .value(X5CHAIN, chain(&[b"leaf"]))
+                    .build(),
+            )
+            .build();
+
+        assert_eq!(
+            cert_chain_from_sign1(&sign1).unwrap(),
+            vec![b"leaf".to_vec()]
+        );
+    }
+
+    #[test]
+    fn x5chain_in_both_headers_is_rejected_for_either_label() {
+        for unprotected in [
+            HeaderBuilder::new().value(X5CHAIN, chain(&[b"other"])),
+            HeaderBuilder::new().text_value("x5chain".to_string(), chain(&[b"other"])),
+            // A malformed chain must not let the check pass.
+            HeaderBuilder::new().value(X5CHAIN, Value::Text("not a chain".to_string())),
+        ] {
+            let sign1 = CoseSign1Builder::new()
+                .protected(
+                    HeaderBuilder::new()
+                        .value(X5CHAIN, chain(&[b"leaf"]))
+                        .build(),
+                )
+                .unprotected(unprotected.build())
+                .build();
+
+            assert!(matches!(
+                cert_chain_from_sign1(&sign1),
+                Err(CoseError::MultipleSigningCertificateChains)
+            ));
+        }
+    }
+
+    #[test]
+    fn x5chain_with_a_non_certificate_entry_is_rejected() {
+        let entries = Value::Array(vec![
+            Value::Text("not a certificate".to_string()),
+            Value::Bytes(b"intermediate".to_vec()),
+        ]);
+        let sign1 = CoseSign1Builder::new()
+            .protected(HeaderBuilder::new().value(X5CHAIN, entries).build())
+            .build();
+
+        assert!(matches!(
+            cert_chain_from_sign1(&sign1),
+            Err(CoseError::MissingSigningCertificateChain)
+        ));
+    }
+
+    #[test]
+    fn well_formed_x5chain_is_accepted() {
+        let sign1 = CoseSign1Builder::new()
+            .protected(
+                HeaderBuilder::new()
+                    .value(X5CHAIN, chain(&[b"leaf", b"intermediate"]))
+                    .build(),
+            )
+            .build();
+
+        assert_eq!(
+            cert_chain_from_sign1(&sign1).unwrap(),
+            vec![b"leaf".to_vec(), b"intermediate".to_vec()]
+        );
     }
 }
