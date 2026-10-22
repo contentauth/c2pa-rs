@@ -1133,11 +1133,17 @@ fn adjust_known_offsets<W: Write + ReadSeek + ?Sized>(
 
                 // consume the extents
                 for _e in 0..extent_count {
-                    let _extent_index = if version == 1 || (version == 2 && index_size > 0) {
-                        match base_offset_size {
+                    // item_reference_index is only present for version 1 or 2 when index_size > 0,
+                    // and its width is index_size (not base_offset_size)
+                    let _extent_index = if (version == 1 || version == 2) && index_size > 0 {
+                        match index_size {
                             4 => Some(output.read_u32::<BigEndian>()? as u64),
                             8 => Some(output.read_u64::<BigEndian>()?),
-                            _ => None,
+                            _ => {
+                                return Err(Error::InvalidAsset(
+                                    "Bad BMFF: unknown iloc index size".to_string(),
+                                ))
+                            }
                         }
                     } else {
                         None
