@@ -138,7 +138,7 @@ pub struct Claim {
 
     // Internal list of assertions for claim.
     // These are serialized manually based on need.
-    assertion_store: Vec<ClaimAssertion>,
+    pub(super) assertion_store: Vec<ClaimAssertion>,
 
     // Internal list of verifiable credentials for claim.
     // These are serialized manually based on need.
