@@ -4483,21 +4483,25 @@ verify_after_sign = true
         let format = CString::new("image/jpeg").unwrap();
         let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
         let mut source_stream = TestStream::new(source_image.to_vec());
-        assert_eq!(
-            unsafe {
-                c2pa_builder_update_hash_from_stream(
-                    builder,
-                    format.as_ptr(),
-                    source_stream.as_ptr(),
-                )
-            },
-            0
-        );
+        let mut dest_stream = TestStream::new(Vec::new());
 
+        // compose_manifest takes a raw manifest, which signing returns alongside the
+        // asset (sign_embeddable returns one that is already composed).
         let mut manifest_bytes = std::ptr::null();
-        let manifest_size =
-            unsafe { c2pa_builder_sign_embeddable(builder, format.as_ptr(), &mut manifest_bytes) };
-        assert!(manifest_size > 0, "sign_embeddable should succeed");
+        let manifest_size = unsafe {
+            c2pa_builder_sign_context(
+                builder,
+                format.as_ptr(),
+                source_stream.as_ptr(),
+                dest_stream.as_ptr(),
+                &mut manifest_bytes,
+            )
+        };
+        assert!(
+            manifest_size > 0,
+            "signing failed: {:?}",
+            CimplError::last_message()
+        );
         assert!(!manifest_bytes.is_null());
 
         let mut composed_bytes = std::ptr::null();

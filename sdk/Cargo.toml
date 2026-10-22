@@ -96,12 +96,17 @@ name = "progress"
 [[example]]
 name = "redaction"
 
+# EXPERIMENT (local only, do not commit).
+[[example]]
+name = "asset_io_corpus"
+required-features = ["asset_io"]
+
 [lib]
 crate-type = ["lib"]
 
 [dependencies]
-# EXPERIMENT (local only, do not commit): sibling checkout of asset-io.
-asset-io = { path = "../../asset-io", optional = true, default-features = false, features = ["jpeg", "png"] }
+# EXPERIMENT: asset-io from its main branch.
+asset-io = { git = "https://github.com/gpeacock/asset-io", branch = "main", optional = true, default-features = false, features = ["jpeg", "png", "svg"] }
 asn1-rs = "0.7.2"
 async-generic = "1.1"
 async-trait = "0.1.89"
@@ -261,8 +266,8 @@ web-sys = { version = "0.3.99", features = [
 ] }
 
 [dev-dependencies]
-# EXPERIMENT (local only, do not commit): sibling checkout of asset-io.
-asset-io = { path = "../../asset-io", default-features = false, features = ["jpeg", "png", "bmff", "riff"] }
+# EXPERIMENT: asset-io from its main branch.
+asset-io = { git = "https://github.com/gpeacock/asset-io", branch = "main", default-features = false, features = ["jpeg", "png", "svg", "bmff", "riff"] }
 anyhow = "1.0.103"
 env_logger = "0.11.10"
 flate2 = "1.1.10"

@@ -1475,7 +1475,8 @@ pub mod tests {
     }
 
     // End-to-end: a signed update-manifest asset with a non-contiguous CAI
-    // injection must not validate as Valid/Trusted through the Reader.
+    // injection must not validate as Valid/Trusted through the Reader
+    // (either Invalid, or refused as having two manifest stores).
     #[test]
     fn noncontiguous_cai_injection_rejected_by_reader() {
         use crate::{Context, Reader, ValidationState};
@@ -1508,9 +1509,11 @@ pub mod tests {
         let mut out = Cursor::new(Vec::new());
         jpeg.encoder().write_to(&mut out).unwrap();
 
-        let tampered = Reader::from_context(Context::new())
-            .with_stream("image/jpeg", out)
-            .unwrap();
-        assert_eq!(tampered.validation_state(), ValidationState::Invalid);
+        // Rejected either way: the reader reports the asset as Invalid, or (when the
+        // JPEG is read through asset-io) refuses it for having two manifest stores.
+        match Reader::from_context(Context::new()).with_stream("image/jpeg", out) {
+            Ok(tampered) => assert_eq!(tampered.validation_state(), ValidationState::Invalid),
+            Err(e) => assert!(matches!(e, Error::TooManyManifestStores), "{e:?}"),
+        }
     }
 }

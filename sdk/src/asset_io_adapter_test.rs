@@ -1,7 +1,7 @@
 // EXPERIMENT (local only, do not commit).
 //
 // The asset-io adapter against the handlers it replaces (`JpegIO`, `PngIO`), through the
-// same traits the SDK uses, on every JPEG and PNG fixture.
+// same traits the SDK uses, on every JPEG, PNG and SVG fixture.
 //
 // Run with: cargo test --features asset_io asset_io_adapter
 
@@ -11,24 +11,54 @@
 use std::{fs, io::Cursor, mem::discriminant, path::PathBuf};
 
 use crate::{
-    asset_handlers::{asset_io_adapter::AssetIoAdapter, jpeg_io::JpegIO, png_io::PngIO},
+    asset_handlers::{
+        asset_io_adapter::AssetIoAdapter, jpeg_io::JpegIO, png_io::PngIO, svg_io::SvgIO,
+    },
     asset_io::{AssetIO, ObjectType, C2PA_BOXHASH},
     Error,
 };
 
 type Fixture = (String, Vec<u8>, Box<dyn AssetIO>, Box<dyn AssetIO>);
 
+/// The fixtures, and every JPEG and PNG under the folder named by `ASSET_IO_CORPUS`
+/// when it is set, to run these comparisons over a wider range of files. Symlinks are
+/// not followed.
+pub(crate) fn fixture_paths() -> Vec<PathBuf> {
+    fn walk(dir: &std::path::Path, depth: usize, max_depth: usize, out: &mut Vec<PathBuf>) {
+        let Ok(rd) = fs::read_dir(dir) else { return };
+        for e in rd.flatten() {
+            let Ok(t) = e.file_type() else { continue };
+            if t.is_file() {
+                out.push(e.path());
+            } else if t.is_dir() && depth < max_depth {
+                walk(&e.path(), depth + 1, max_depth, out);
+            }
+        }
+    }
+    let mut paths = Vec::new();
+    // The fixtures folder itself, as before; the corpus, all the way down.
+    walk(
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures"),
+        0,
+        0,
+        &mut paths,
+    );
+    if let Some(dir) = std::env::var_os("ASSET_IO_CORPUS") {
+        walk(std::path::Path::new(&dir), 0, 32, &mut paths);
+    }
+    paths.sort();
+    paths
+}
+
 fn fixtures() -> Vec<Fixture> {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
     let mut v = Vec::new();
-    for e in fs::read_dir(dir).unwrap().flatten() {
-        let p = e.path();
+    for p in fixture_paths() {
         let ext = p
             .extension()
             .and_then(|e| e.to_str())
             .map(str::to_ascii_lowercase);
         let (old, new): (Box<dyn AssetIO>, Box<dyn AssetIO>) = match ext.as_deref() {
-            Some("jpg" | "jpeg") => (
+            Some("jpg" | "jpeg" | "mpo") => (
                 Box::new(JpegIO::new("jpg")),
                 Box::new(AssetIoAdapter::new("jpg")),
             ),
@@ -36,12 +66,20 @@ fn fixtures() -> Vec<Fixture> {
                 Box::new(PngIO::new("png")),
                 Box::new(AssetIoAdapter::new("png")),
             ),
+            Some("svg") => (
+                Box::new(SvgIO::new("svg")),
+                Box::new(AssetIoAdapter::new("svg")),
+            ),
             _ => continue,
         };
         let name = p.file_name().unwrap().to_string_lossy().into_owned();
-        v.push((name, fs::read(&p).unwrap(), old, new));
+        let Ok(bytes) = fs::read(&p) else { continue };
+        v.push((name, bytes, old, new));
     }
     v.sort_by(|a, b| a.0.cmp(&b.0));
+    if std::env::var_os("ASSET_IO_CORPUS").is_some() {
+        eprintln!("asset-io corpus: {} JPEG/PNG files loaded", v.len());
+    }
     v
 }
 
@@ -67,7 +105,7 @@ fn superbox(uuid: [u8; 16], payload: &[u8]) -> Vec<u8> {
 }
 
 /// A minimal C2PA store.
-fn store(payload: &[u8]) -> Vec<u8> {
+pub(crate) fn store(payload: &[u8]) -> Vec<u8> {
     superbox(C2PA_UUID, payload)
 }
 
@@ -92,6 +130,15 @@ fn same<T: PartialEq + std::fmt::Debug>(
     }
 }
 
+/// A manifest the legacy handler returns that is not JUMBF at all (the SVG fixtures
+/// hold base64 text). The legacy SVG handler takes any `<c2pa:manifest>` for the store;
+/// asset-io, as for every container, takes only a C2PA JUMBF superbox.
+fn legacy_reads_non_jumbf(old: &dyn AssetIO, bytes: &[u8]) -> bool {
+    old.get_reader()
+        .read_c2pa(&mut Cursor::new(bytes))
+        .is_ok_and(|m| m.get(4..8) != Some(b"jumb".as_slice()))
+}
+
 fn finish(problems: Vec<String>) {
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
@@ -100,12 +147,19 @@ fn finish(problems: Vec<String>) {
 fn reads_agree() {
     let mut problems = Vec::new();
     for (name, bytes, old, new) in fixtures() {
-        same(
-            &format!("{name} read_c2pa"),
-            old.get_reader().read_c2pa(&mut Cursor::new(&bytes)),
-            new.get_reader().read_c2pa(&mut Cursor::new(&bytes)),
-            &mut problems,
-        );
+        if legacy_reads_non_jumbf(&*old, &bytes) {
+            let n = new.get_reader().read_c2pa(&mut Cursor::new(&bytes));
+            if !matches!(n, Err(Error::JumbfNotFound)) {
+                problems.push(format!("{name} read_c2pa: non-JUMBF manifest gave {n:?}"));
+            }
+        } else {
+            same(
+                &format!("{name} read_c2pa"),
+                old.get_reader().read_c2pa(&mut Cursor::new(&bytes)),
+                new.get_reader().read_c2pa(&mut Cursor::new(&bytes)),
+                &mut problems,
+            );
+        }
         let (ox, nx) = (
             old.get_reader().read_xmp(&mut Cursor::new(&bytes)),
             new.get_reader().read_xmp(&mut Cursor::new(&bytes)),
@@ -134,6 +188,9 @@ fn manifest_locations_agree() {
             .get_writer("x")
             .unwrap()
             .get_object_locations(&mut Cursor::new(&bytes));
+        if legacy_reads_non_jumbf(&*old, &bytes) {
+            continue;
+        }
         let has_manifest = old.get_reader().read_c2pa(&mut Cursor::new(&bytes)).is_ok();
         match (ol, nl) {
             (Ok(o), Ok(n)) => {
@@ -391,6 +448,10 @@ fn box_maps_agree_apart_from_the_placeholder() {
     let mut compared = 0;
     for (name, bytes, old, new) in fixtures() {
         let (Some(o), Some(n)) = (old.asset_box_hash_ref(), new.asset_box_hash_ref()) else {
+            // Formats with no box hash (SVG) are the same for both.
+            if old.asset_box_hash_ref().is_none() && new.asset_box_hash_ref().is_none() {
+                continue;
+            }
             problems.push(format!("{name}: box hash support differs"));
             continue;
         };
@@ -435,4 +496,126 @@ fn the_registry_resolves_formats_to_the_adapter() {
     assert_eq!(ctx.io().mime_for("jpg"), Some("image/jpeg"));
     assert_eq!(ctx.io().mime_for("png"), Some("image/png"));
     assert!(!ctx.io().is_bmff_format("jpg"));
+}
+
+/// With a real store in the file, the SVG manifest is excluded by its payload alone,
+/// as the legacy handler does, and everything else is reported around it.
+#[test]
+fn svg_manifest_locations_match_legacy() {
+    let s = store(b"hello");
+    let mut done = 0;
+    for p in fixture_paths() {
+        if p.extension().and_then(|e| e.to_str()) != Some("svg") {
+            continue;
+        }
+        let bytes = fs::read(&p).unwrap();
+        let (old, new) = (SvgIO::new("svg"), AssetIoAdapter::new("svg"));
+        if legacy_reads_non_jumbf(&old, &bytes) {
+            continue;
+        }
+        let name = p.file_name().unwrap().to_string_lossy().into_owned();
+
+        let mut out = Cursor::new(Vec::new());
+        new.get_writer("svg")
+            .unwrap()
+            .write_c2pa(&mut Cursor::new(&bytes), &mut out, &s)
+            .unwrap();
+        let out = out.into_inner();
+
+        let locations = |io: &dyn AssetIO| {
+            let mut v: Vec<_> = io
+                .get_writer("svg")
+                .unwrap()
+                .get_object_locations(&mut Cursor::new(&out))
+                .unwrap()
+                .into_iter()
+                .map(|l| (l.offset, l.length, l.htype))
+                .collect();
+            v.sort_by_key(|l| l.0);
+            v
+        };
+        let (ol, nl) = (locations(&old), locations(&new));
+        let c2pa = |v: &[(u64, u64, ObjectType)]| {
+            v.iter()
+                .find(|l| l.2 == ObjectType::C2pa)
+                .map(|l| (l.0, l.1))
+        };
+        assert_eq!(c2pa(&ol), c2pa(&nl), "{name}");
+
+        // The locations tile the file with no overlap.
+        let mut at = 0;
+        for (offset, length, _) in &nl {
+            assert_eq!(*offset, at, "{name}: gap or overlap in {nl:?}");
+            at += length;
+        }
+        assert_eq!(at, out.len() as u64, "{name}");
+
+        // The legacy reader and remover agree with the new ones.
+        assert_eq!(
+            old.get_reader().read_c2pa(&mut Cursor::new(&out)).unwrap(),
+            s,
+            "{name}"
+        );
+        let remove = |io: &dyn AssetIO| {
+            let mut o = Cursor::new(Vec::new());
+            io.get_writer("svg")
+                .unwrap()
+                .remove_c2pa(&mut Cursor::new(&out), &mut o)
+                .unwrap();
+            o.into_inner()
+        };
+        let removed = remove(&new);
+        assert!(
+            new.get_reader()
+                .read_c2pa(&mut Cursor::new(&removed))
+                .is_err(),
+            "{name}"
+        );
+        assert!(
+            old.get_reader()
+                .read_c2pa(&mut Cursor::new(&removed))
+                .is_err(),
+            "{name}"
+        );
+        done += 1;
+    }
+    assert!(done > 0);
+}
+
+/// Signing an SVG through the adapter yields a file the SDK reads and validates.
+#[test]
+fn svg_signs_and_validates() {
+    use crate::{
+        utils::{test::test_context, test_signer::test_signer},
+        Builder, Reader, SigningAlg,
+    };
+    let signer = test_signer(SigningAlg::Ed25519);
+    let src =
+        fs::read(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample1.svg"))
+            .unwrap();
+    let mut builder = Builder::from_context(test_context())
+        .with_definition(
+            r#"{"title": "svg", "claim_generator_info": [{"name": "t", "version": "1"}]}"#,
+        )
+        .unwrap();
+    let mut out = Cursor::new(Vec::new());
+    builder
+        .sign(
+            signer.as_ref(),
+            "image/svg+xml",
+            &mut Cursor::new(&src),
+            &mut out,
+        )
+        .unwrap();
+    out.set_position(0);
+    let reader = Reader::from_context(test_context())
+        .with_stream("image/svg+xml", &mut out)
+        .unwrap();
+    assert_eq!(reader.active_manifest().unwrap().title(), Some("svg"));
+    assert_ne!(
+        reader.validation_state(),
+        crate::ValidationState::Invalid,
+        "{:?}",
+        reader.validation_status()
+    );
 }

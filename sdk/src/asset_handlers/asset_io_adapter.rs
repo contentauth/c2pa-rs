@@ -6,7 +6,7 @@
 // store, which asset-io layout becomes which `ObjectLocations` and `BoxMap`, and how
 // errors are reported.
 
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, io::Read, sync::Arc};
 
 use ::asset_io as aio;
 use aio::{ByteRange, ContainerHandler, HandlerRegistry, SegmentKind, Structure, Updates};
@@ -44,6 +44,8 @@ fn err(e: aio::Error) -> Error {
 #[derive(Clone)]
 pub(crate) struct AssetIoAdapter {
     handler: Option<Arc<dyn ContainerHandler>>,
+    /// Every extension and media type the handler serves, for `supported_types`.
+    types: Vec<&'static str>,
 }
 
 impl AssetIoAdapter {
@@ -51,18 +53,47 @@ impl AssetIoAdapter {
         self.handler.as_ref().ok_or(Error::UnsupportedType)
     }
 
+    fn container(&self) -> Option<&'static str> {
+        self.handler.as_ref().map(|h| h.id())
+    }
+
     fn parse(&self, input: &mut dyn ReadSeek) -> Result<Structure> {
         let mut input = input;
-        Arc::clone(self.handler()?).parse(&mut input).map_err(err)
+        let handler = self.handler()?;
+        Arc::clone(handler).parse(&mut input).map_err(|e| {
+            // `JpegIO` reported input that is not a JPEG at all as unsupported rather
+            // than as a malformed asset (`PngIO` did not), and callers rely on that.
+            if self.container() == Some(aio::containers::jpeg::ID)
+                && !Self::looks_like(handler.as_ref(), &mut *input)
+            {
+                return Error::UnsupportedType;
+            }
+            err(e)
+        })
+    }
+
+    fn looks_like(handler: &dyn ContainerHandler, input: &mut dyn ReadSeek) -> bool {
+        let mut header = Vec::with_capacity(aio::DETECT_LEN);
+        input.rewind().is_ok()
+            && input
+                .take(aio::DETECT_LEN as u64)
+                .read_to_end(&mut header)
+                .is_ok()
+            && handler.detect(&header)
+    }
+
+    /// Whether a hash excludes only the manifest's payload, not the whole segment
+    /// holding it. SVG keeps its `<c2pa:manifest>` tags in the hashed asset.
+    fn excludes_payload_only(&self) -> bool {
+        self.container() == Some(aio::containers::svg::ID)
     }
 
     /// Whether this container reports `c2pa.hash.boxes` boxes. A decision about
     /// C2PA, not about the container.
     fn supports_box_hash(&self) -> bool {
-        self.handler
-            .as_ref()
-            .and_then(|h| h.formats().first().copied())
-            .is_some_and(|id| matches!(id, "jpg" | "png"))
+        use aio::containers::{jpeg, png};
+        self.container()
+            .is_some_and(|id| id == jpeg::ID || id == png::ID)
     }
 }
 
@@ -88,7 +119,7 @@ impl C2paReader for AssetIoAdapter {
         } else if c2pa.len() == s.entities(SegmentKind::Jumbf).count() {
             s.store(&mut input).map_err(err)?
         } else if c2pa.len() == 1 {
-            Some(s.read_entity(&mut input, c2pa[0]).map_err(err)?)
+            Some(s.read_decoded(&mut input, c2pa[0]).map_err(err)?)
         } else {
             return Err(Error::TooManyManifestStores);
         };
@@ -126,9 +157,9 @@ impl C2paWriter for AssetIoAdapter {
     ) -> Result<Vec<ObjectLocations>> {
         let mut input = input_stream;
         let s = self.parse(&mut *input)?;
-        let existing: Vec<aio::SegmentId> = c2pa_entities(&s, &mut *input)?
+        let existing: Vec<aio::Part> = c2pa_entities(&s, &mut *input)?
             .iter()
-            .flat_map(|e| e.parts().map(|p| p.segment()))
+            .flat_map(|e| e.parts().copied())
             .collect();
 
         // With no manifest, report the layout of the asset as it would be written with
@@ -140,7 +171,7 @@ impl C2paWriter for AssetIoAdapter {
             let ids: Vec<_> = planned
                 .entity(SegmentKind::Jumbf)
                 .map_err(err)?
-                .map(|e| e.parts().map(|p| p.segment()).collect())
+                .map(|e| e.parts().copied().collect())
                 .unwrap_or_default();
             (planned, ids)
         } else {
@@ -149,8 +180,12 @@ impl C2paWriter for AssetIoAdapter {
 
         let mut start = u64::MAX;
         let mut end = 0u64;
-        for id in &manifest {
-            let x = layout.segment(*id).map_err(err)?.extent();
+        for part in &manifest {
+            let x = if self.excludes_payload_only() {
+                part.range()
+            } else {
+                layout.segment(part.segment()).map_err(err)?.extent()
+            };
             start = start.min(x.offset());
             end = end.max(x.end());
         }
@@ -164,15 +199,25 @@ impl C2paWriter for AssetIoAdapter {
             if x.is_empty() || (x.offset() >= start && x.end() <= end) {
                 continue;
             }
-            out.push(ObjectLocations {
-                offset: x.offset(),
-                length: x.len(),
-                htype: if seg.kind() == SegmentKind::Xmp {
-                    ObjectType::Xmp
-                } else {
-                    ObjectType::Other
-                },
-            });
+            let htype = if seg.kind() == SegmentKind::Xmp {
+                ObjectType::Xmp
+            } else {
+                ObjectType::Other
+            };
+            // A segment that only partly overlaps the manifest (the tags around an
+            // SVG manifest's payload) is reported as what lies outside it.
+            for (offset, stop) in [
+                (x.offset(), x.end().min(start)),
+                (x.offset().max(end), x.end()),
+            ] {
+                if stop > offset {
+                    out.push(ObjectLocations {
+                        offset,
+                        length: stop - offset,
+                        htype,
+                    });
+                }
+            }
         }
         out.push(ObjectLocations {
             offset: start,
@@ -247,10 +292,17 @@ fn box_map_from_layout(s: &Structure, mut src: &mut dyn ReadSeek) -> Result<Vec<
         }
     }
 
+    // Bytes beyond the container's structure (data after the last chunk, or the
+    // images after the first one) are not boxes; they are one `c2pa.after` box.
+    let after = s.trailing();
+
     let mut out: Vec<BoxMap> = Vec::new();
     let mut c2pa: Option<usize> = None;
     let mut last_owner: Option<aio::SegmentId> = None;
     s.elements(&mut src, |id, e| {
+        if after.is_some_and(|t| e.extent().offset() >= t.offset()) {
+            return Ok(());
+        }
         let mut ext = e.extent();
 
         // Compatibility with the existing c2pa-rs box maps (see PR #612): when a
@@ -281,7 +333,7 @@ fn box_map_from_layout(s: &Structure, mut src: &mut dyn ReadSeek) -> Result<Vec<
             }
             return Ok(());
         }
-        // Unnamed elements (fill bytes, trailing data) are not boxes.
+        // Unnamed elements (fill bytes) are not boxes.
         let Some(name) = s.box_name(e.name()) else {
             return Ok(());
         };
@@ -298,6 +350,15 @@ fn box_map_from_layout(s: &Structure, mut src: &mut dyn ReadSeek) -> Result<Vec<
         Ok(())
     })
     .map_err(err)?;
+    // C2PA 18.7.2: the last box, hashed from the byte after the last box to the end
+    // of the file. Only the hard binding of the whole asset has it.
+    if let Some(t) = after {
+        out.push(BoxMap::new(
+            vec![aio::AFTER_BOX.to_string()],
+            t.offset(),
+            t.len(),
+        ));
+    }
     Ok(out)
 }
 
@@ -344,9 +405,14 @@ impl AssetIO for AssetIoAdapter {
     where
         Self: Sized,
     {
-        AssetIoAdapter {
-            handler: HandlerRegistry::builtin().handler(asset_type).cloned(),
-        }
+        let handler = HandlerRegistry::builtin().handler(asset_type).cloned();
+        let types = handler.as_ref().map_or_else(Vec::new, |h| {
+            h.formats()
+                .iter()
+                .flat_map(|spec| spec.format_strings())
+                .collect()
+        });
+        AssetIoAdapter { handler, types }
     }
 
     fn get_handler(&self, asset_type: &str) -> Box<dyn AssetIO> {
@@ -362,17 +428,17 @@ impl AssetIO for AssetIoAdapter {
     }
 
     fn supported_types(&self) -> &[&str] {
-        match &self.handler {
-            Some(h) => h.formats(),
-            None => &[],
-        }
+        &self.types
     }
 
     fn mime_type_map(&self) -> Vec<(String, String)> {
         self.handler.as_ref().map_or_else(Vec::new, |h| {
-            h.media_types()
-                .into_iter()
-                .map(|(ext, mime)| (ext.to_owned(), mime.to_owned()))
+            h.formats()
+                .iter()
+                .flat_map(|spec| {
+                    spec.extensions()
+                        .map(|ext| (ext.to_owned(), spec.media_type.to_owned()))
+                })
                 .collect()
         })
     }
@@ -391,6 +457,8 @@ impl AssetIO for AssetIoAdapter {
     }
 
     fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
-        Some(self)
+        // An SVG manifest is excluded from hashes by its payload, which a composed
+        // placeholder (the whole element) cannot say, so SVG does not offer one.
+        (!self.excludes_payload_only()).then_some(self as &dyn ComposedManifestRef)
     }
 }

@@ -19,7 +19,7 @@ CARGO_TEST := $(shell cargo nextest --version > /dev/null 2>&1 && echo "cargo ne
 
 # Common feature set used by check-docs, clippy, and test-local so that all
 # three share the same incremental build cache and avoid redundant recompilation.
-FEATURES := file_io,fetch_remote_manifests,add_thumbnails
+FEATURES := file_io,fetch_remote_manifests,add_thumbnails, asset_io
 
 check-format:
 	cargo +nightly fmt -- --check

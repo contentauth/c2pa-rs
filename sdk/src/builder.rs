@@ -6368,7 +6368,12 @@ mod tests {
         // write composed bytes
         out_stream.write_all(&manifest_bytes).unwrap();
 
-        // write bytes after
+        // skip the asset's old manifest, then write bytes after
+        input_stream
+            .seek(std::io::SeekFrom::Current(
+                i64::try_from(cai_loc.length).unwrap(),
+            ))
+            .unwrap();
         let mut after_buf = Vec::new();
         input_stream.read_to_end(&mut after_buf).unwrap();
         out_stream.write_all(&after_buf).unwrap();

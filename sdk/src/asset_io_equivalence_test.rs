@@ -363,24 +363,14 @@ fn sign_flow_through_asset_io_validates() {
         // asset-io inserts the raw placeholder JUMBF.
         let write = |s: &Structure, src: &[u8], u: &Updates| {
             let mut out = Cursor::new(Vec::new());
-            let dest = if jpeg {
-                containers::jpeg::write(
-                    s,
+            let dest = s
+                .write(
                     &mut Cursor::new(src.to_vec()),
                     &mut out,
                     u,
                     &mut asset_io::NullSink,
                 )
-            } else {
-                containers::png::write(
-                    s,
-                    &mut Cursor::new(src.to_vec()),
-                    &mut out,
-                    u,
-                    &mut asset_io::NullSink,
-                )
-            }
-            .unwrap();
+                .unwrap();
             (out.into_inner(), dest)
         };
         let (mut out, dest) = write(&s, &src, &Updates::new().set_jumbf(raw_ph.clone()));

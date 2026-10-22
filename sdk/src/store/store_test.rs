@@ -4148,7 +4148,7 @@ async fn test_boxhash_embeddable_manifest_async() {
 
     let cai_loc = ol.iter().find(|o| o.htype == ObjectType::C2pa).unwrap();
 
-    // remove any existing manifest
+    // the asset has a manifest, which the new one replaces
     jpeg_io.get_reader().read_c2pa(&mut input_file).unwrap();
 
     // build new asset in memory inserting new manifest
@@ -4164,7 +4164,12 @@ async fn test_boxhash_embeddable_manifest_async() {
     // write composed bytes
     out_stream.write_all(&cm).unwrap();
 
-    // write bytes after
+    // skip the old manifest, then write bytes after
+    input_file
+        .seek(std::io::SeekFrom::Current(
+            i64::try_from(cai_loc.length).unwrap(),
+        ))
+        .unwrap();
     let mut after_buf = Vec::new();
     input_file.read_to_end(&mut after_buf).unwrap();
     out_stream.write_all(&after_buf).unwrap();
@@ -4224,7 +4229,7 @@ fn test_boxhash_embeddable_manifest() {
 
     let cai_loc = ol.iter().find(|o| o.htype == ObjectType::C2pa).unwrap();
 
-    // remove any existing manifest
+    // the asset has a manifest, which the new one replaces
     jpeg_io.get_reader().read_c2pa(&mut input_file).unwrap();
 
     // build new asset in memory inserting new manifest
@@ -4240,7 +4245,12 @@ fn test_boxhash_embeddable_manifest() {
     // write composed bytes
     out_stream.write_all(&cm).unwrap();
 
-    // write bytes after
+    // skip the old manifest, then write bytes after
+    input_file
+        .seek(std::io::SeekFrom::Current(
+            i64::try_from(cai_loc.length).unwrap(),
+        ))
+        .unwrap();
     let mut after_buf = Vec::new();
     input_file.read_to_end(&mut after_buf).unwrap();
     out_stream.write_all(&after_buf).unwrap();

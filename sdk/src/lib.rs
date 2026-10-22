@@ -325,6 +325,8 @@ mod asset_io_adapter_test;
 mod asset_io_bmff_test;
 #[cfg(test)]
 mod asset_io_equivalence_test;
+#[cfg(all(test, feature = "asset_io"))]
+mod asset_io_perf_test;
 #[cfg(test)]
 mod asset_io_riff_test;
 
