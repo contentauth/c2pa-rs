@@ -494,6 +494,13 @@ pub fn check_certificate_profile(
         None => tbscert.is_ca(), // if is not ca it must be present
     };
 
+    // Time-stamping and OCSP signing certificates are valid for exactly one of
+    // those purposes (checked above).
+    let signs_time_stamps_or_ocsp = matches!(
+        tbscert.extended_key_usage(),
+        Ok(Some(BasicExtension { value: eku, .. })) if eku.time_stamping || eku.ocsp_signing
+    );
+
     // Populate needed extension info.
     for e in signcert.extensions() {
         match e.parsed_extension() {
@@ -504,24 +511,36 @@ pub fn check_certificate_profile(
                 ski_good = true;
             }
             ParsedExtension::KeyUsage(ku) => {
-                if ku.digital_signature() {
-                    if ku.key_cert_sign() && !tbscert.is_ca() {
-                        log_item!(
-                            "",
-                            "certificate missing digitalSignature EKU",
-                            "check_certificate_profile"
-                        )
-                        .validation_status(SIGNING_CREDENTIAL_INVALID)
-                        .failure_no_throw(
-                            validation_log,
-                            CertificateProfileError::InvalidCertificate,
-                        );
+                // "The keyCertSign bit shall only be asserted if the cA boolean is
+                // asserted in the Basic Constraints extension."
+                if ku.key_cert_sign() && !tbscert.is_ca() {
+                    log_item!(
+                        "",
+                        "certificate asserts keyCertSign key usage but is not a CA",
+                        "check_certificate_profile"
+                    )
+                    .validation_status(SIGNING_CREDENTIAL_INVALID)
+                    .failure_no_throw(validation_log, CertificateProfileError::InvalidCertificate);
 
-                        return Err(CertificateProfileError::InvalidCertificate);
-                    }
-                    key_usage_good = true;
+                    return Err(CertificateProfileError::InvalidCertificate);
                 }
-                if ku.key_cert_sign() || ku.non_repudiation() {
+
+                // "Certificates used to sign C2PA manifests shall assert the
+                // digitalSignature bit." Time-stamping and OCSP signing certificates
+                // may assert nonRepudiation instead (RFC 3161, section 2.3).
+                if !tbscert.is_ca() && !signs_time_stamps_or_ocsp && !ku.digital_signature() {
+                    log_item!(
+                        "",
+                        "certificate missing digitalSignature key usage",
+                        "check_certificate_profile"
+                    )
+                    .validation_status(SIGNING_CREDENTIAL_INVALID)
+                    .failure_no_throw(validation_log, CertificateProfileError::InvalidCertificate);
+
+                    return Err(CertificateProfileError::InvalidCertificate);
+                }
+
+                if ku.digital_signature() || ku.key_cert_sign() || ku.non_repudiation() {
                     key_usage_good = true;
                 }
 
@@ -823,6 +842,60 @@ mod tests {
             );
             assert_eq!(item.description, expected);
         }
+    }
+
+    // C2PA Trust Model, Certificate Profiles: "Certificates used to sign C2PA
+    // manifests shall assert the digitalSignature bit. The keyCertSign bit shall
+    // only be asserted if the cA boolean is asserted."
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn end_entity_key_usage() {
+        let ctp = CertificateTrustPolicy::default();
+
+        for (cert_pem, expected_description) in [
+            (
+                include_bytes!("../../../tests/fixtures/crypto/cose/ku_keycertsign_not_ca.pub")
+                    .as_slice(),
+                "certificate asserts keyCertSign key usage but is not a CA",
+            ),
+            (
+                include_bytes!("../../../tests/fixtures/crypto/cose/ku_nonrepudiation_only.pub")
+                    .as_slice(),
+                "certificate missing digitalSignature key usage",
+            ),
+        ] {
+            let mut validation_log = StatusTracker::default();
+            assert!(check_end_entity_certificate_profile(
+                &x509_der_from_pem(cert_pem),
+                &ctp,
+                &mut validation_log,
+                None
+            )
+            .is_err());
+
+            let item = &validation_log.logged_items()[0];
+            assert_eq!(
+                item.validation_status,
+                Some(SIGNING_CREDENTIAL_INVALID.into())
+            );
+            assert_eq!(item.description, expected_description);
+        }
+
+        // A time-stamping certificate may assert nonRepudiation without
+        // digitalSignature (RFC 3161, section 2.3).
+        let mut validation_log = StatusTracker::default();
+        check_end_entity_certificate_profile(
+            &x509_der_from_pem(include_bytes!(
+                "../../../tests/fixtures/crypto/cose/ku_nonrepudiation_tsa.pub"
+            )),
+            &ctp,
+            &mut validation_log,
+            None,
+        )
+        .unwrap();
     }
 
     fn x509_der_from_pem(cert_pem: &[u8]) -> Vec<u8> {
