@@ -146,15 +146,11 @@ impl Claim {
             } // relative signature box
         };
 
-        if sig_box_err {
-            log_item!(
-                to_signature_uri(claim.label()),
-                "signature missing",
-                "verify_claim"
-            )
-            .validation_status(validation_status::CLAIM_SIGNATURE_MISSING)
-            .failure(validation_log, Error::ClaimMissingSignatureBox)?;
-        }
+        let sig_box_err = sig_box_err
+            || claim
+                .signature_box_label
+                .as_deref()
+                .is_some_and(|label| label != jumbf::labels::SIGNATURE);
 
         // for V2 and greater claims the label must conform
         if claim.version() > 1 && manifest_label_to_parts(claim.label()).is_none() {
@@ -165,6 +161,27 @@ impl Claim {
             )
             .validation_status(validation_status::CLAIM_MALFORMED)
             .failure(validation_log, Error::ClaimInvalidContent)?;
+        }
+
+        if sig_box_err {
+            log_item!(
+                to_signature_uri(claim.label()),
+                "signature missing",
+                "verify_claim"
+            )
+            .validation_status(validation_status::CLAIM_SIGNATURE_MISSING)
+            .failure(validation_log, Error::ClaimMissingSignatureBox)?;
+            // A signature at a different label cannot authenticate this claim.
+            // Continue assertion checks without parsing or verifying that COSE data.
+            let result = Claim::verify_internal(
+                claim,
+                svi,
+                Err(Error::ClaimMissingSignatureBox),
+                validation_log,
+                context,
+            );
+            validation_log.pop_current_uri();
+            return result;
         }
 
         // If we are validating a claim that has been loaded from a file
@@ -1590,6 +1607,8 @@ impl Claim {
                     .success(validation_log);
                 }
             }
+            // Resolution already reported missing; it is not a signature mismatch.
+            Err(Error::ClaimMissingSignatureBox) => {}
             Err(parse_err) => {
                 // handle case where lower level failed to log
                 log_item!(
