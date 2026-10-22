@@ -33,6 +33,7 @@ fn err(e: aio::Error) -> Error {
         aio::Error::Io(e) => Error::IoError(e),
         aio::Error::UserCanceled => Error::OperationCancelled,
         aio::Error::UnsupportedFormat => Error::UnsupportedType,
+        aio::Error::UnsupportedFeature(f) => Error::NotImplemented(f.to_string()),
         aio::Error::Ambiguous { what, .. } if what == SegmentKind::Jumbf.as_str() => {
             Error::TooManyManifestStores
         }
@@ -144,11 +145,39 @@ impl C2paWriter for AssetIoAdapter {
         output_stream: &mut dyn ReadWriteSeek,
         store_bytes: &[u8],
     ) -> Result<()> {
-        self.apply(
-            input_stream,
-            output_stream,
+        let mut input = input_stream;
+        let mut output = output_stream;
+        let s = self.parse(&mut *input)?;
+
+        // The sign pipeline writes a placeholder, hashes around it, then writes the
+        // final manifest of the same size. Filling the placeholder in place keeps
+        // every byte the hash covers where it is, which a rewrite does not promise
+        // (a PDF appends a revision instead of replacing the store).
+        if let [entity] = c2pa_entities(&s, &mut *input)?.as_slice() {
+            let stored = s
+                .handler()
+                .encode_entity(&s, entity, store_bytes)
+                .map_err(err)?;
+            if stored.len() as u64 == entity.len() {
+                input.rewind()?;
+                output.rewind()?;
+                std::io::copy(&mut *input, &mut *output)?;
+                // Patching seeks back, which a buffered stream may refuse while it
+                // holds unwritten data.
+                output.flush()?;
+                return s.patch_exact(&mut output, entity, store_bytes).map_err(err);
+            }
+        }
+
+        output.rewind()?;
+        s.write(
+            &mut input,
+            &mut output,
             &Updates::new().set_jumbf(store_bytes.to_vec()),
+            &mut aio::NullSink,
         )
+        .map_err(err)?;
+        Ok(())
     }
 
     fn get_object_locations(

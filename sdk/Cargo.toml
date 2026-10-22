@@ -106,7 +106,7 @@ crate-type = ["lib"]
 
 [dependencies]
 # EXPERIMENT: asset-io from its main branch.
-asset-io = { git = "https://github.com/gpeacock/asset-io", branch = "main", optional = true, default-features = false, features = ["jpeg", "png", "svg"] }
+asset-io = { git = "https://github.com/gpeacock/asset-io", branch = "main", optional = true, default-features = false, features = ["jpeg", "png", "svg", "riff", "pdf"] }
 asn1-rs = "0.7.2"
 async-generic = "1.1"
 async-trait = "0.1.89"
@@ -267,7 +267,7 @@ web-sys = { version = "0.3.99", features = [
 
 [dev-dependencies]
 # EXPERIMENT: asset-io from its main branch.
-asset-io = { git = "https://github.com/gpeacock/asset-io", branch = "main", default-features = false, features = ["jpeg", "png", "svg", "bmff", "riff"] }
+asset-io = { git = "https://github.com/gpeacock/asset-io", branch = "main", default-features = false, features = ["jpeg", "png", "svg", "bmff", "riff", "pdf"] }
 anyhow = "1.0.103"
 env_logger = "0.11.10"
 flate2 = "1.1.10"

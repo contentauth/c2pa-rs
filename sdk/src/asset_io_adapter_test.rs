@@ -1,7 +1,7 @@
 // EXPERIMENT (local only, do not commit).
 //
 // The asset-io adapter against the handlers it replaces (`JpegIO`, `PngIO`), through the
-// same traits the SDK uses, on every JPEG, PNG and SVG fixture.
+// same traits the SDK uses, on every JPEG, PNG, SVG, RIFF and PDF fixture.
 //
 // Run with: cargo test --features asset_io asset_io_adapter
 
@@ -12,7 +12,8 @@ use std::{fs, io::Cursor, mem::discriminant, path::PathBuf};
 
 use crate::{
     asset_handlers::{
-        asset_io_adapter::AssetIoAdapter, jpeg_io::JpegIO, png_io::PngIO, svg_io::SvgIO,
+        asset_io_adapter::AssetIoAdapter, jpeg_io::JpegIO, png_io::PngIO, riff_io::RiffIO,
+        svg_io::SvgIO,
     },
     asset_io::{AssetIO, ObjectType, C2PA_BOXHASH},
     Error,
@@ -65,6 +66,15 @@ fn fixtures() -> Vec<Fixture> {
             Some("png") => (
                 Box::new(PngIO::new("png")),
                 Box::new(AssetIoAdapter::new("png")),
+            ),
+            Some(ext @ ("wav" | "webp" | "avi")) => (
+                Box::new(RiffIO::new(ext)),
+                Box::new(AssetIoAdapter::new(ext)),
+            ),
+            #[cfg(feature = "pdf")]
+            Some("pdf") => (
+                Box::new(crate::asset_handlers::pdf_io::PdfIO::new("pdf")),
+                Box::new(AssetIoAdapter::new("pdf")),
             ),
             Some("svg") => (
                 Box::new(SvgIO::new("svg")),
@@ -139,6 +149,15 @@ fn legacy_reads_non_jumbf(old: &dyn AssetIO, bytes: &[u8]) -> bool {
         .is_ok_and(|m| m.get(4..8) != Some(b"jumb".as_slice()))
 }
 
+/// asset-io declines the file on purpose (an encrypted PDF, or one with a populated
+/// signature field), which the legacy handlers did not.
+fn declined<T>(result: &crate::Result<T>) -> bool {
+    matches!(result, Err(Error::NotImplemented(_)))
+}
+
+/// Files asset-io reads that the legacy handler refuses.
+const MORE_TOLERANT: &[&str] = &["riff_bomb_1000.wav"];
+
 fn finish(problems: Vec<String>) {
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
@@ -147,6 +166,9 @@ fn finish(problems: Vec<String>) {
 fn reads_agree() {
     let mut problems = Vec::new();
     for (name, bytes, old, new) in fixtures() {
+        if declined(&new.get_reader().read_c2pa(&mut Cursor::new(&bytes))) {
+            continue;
+        }
         if legacy_reads_non_jumbf(&*old, &bytes) {
             let n = new.get_reader().read_c2pa(&mut Cursor::new(&bytes));
             if !matches!(n, Err(Error::JumbfNotFound)) {
@@ -188,7 +210,7 @@ fn manifest_locations_agree() {
             .get_writer("x")
             .unwrap()
             .get_object_locations(&mut Cursor::new(&bytes));
-        if legacy_reads_non_jumbf(&*old, &bytes) {
+        if legacy_reads_non_jumbf(&*old, &bytes) || declined(&nl) {
             continue;
         }
         let has_manifest = old.get_reader().read_c2pa(&mut Cursor::new(&bytes)).is_ok();
@@ -211,6 +233,7 @@ fn manifest_locations_agree() {
                 }
             }
             (Err(_), Err(_)) => {}
+            (Err(_), Ok(_)) if MORE_TOLERANT.contains(&name.as_str()) => {}
             (o, n) => problems.push(format!("{name}: old ok={} new ok={}", o.is_ok(), n.is_ok())),
         }
     }
@@ -235,11 +258,14 @@ fn written_manifests_read_back_with_either_reader() {
             continue;
         }
         let mut out = Cursor::new(Vec::new());
-        if let Err(e) =
+        let written =
             new.get_writer("x")
                 .unwrap()
-                .write_c2pa(&mut Cursor::new(&bytes), &mut out, &s)
-        {
+                .write_c2pa(&mut Cursor::new(&bytes), &mut out, &s);
+        if declined(&written) {
+            continue;
+        }
+        if let Err(e) = written {
             problems.push(format!("{name}: write failed: {e}"));
             continue;
         }
@@ -582,40 +608,58 @@ fn svg_manifest_locations_match_legacy() {
     assert!(done > 0);
 }
 
-/// Signing an SVG through the adapter yields a file the SDK reads and validates.
+/// Signing through the adapter yields a file the SDK reads and validates, in each
+/// format the adapter serves beyond JPEG and PNG.
 #[test]
-fn svg_signs_and_validates() {
+fn signs_and_validates() {
     use crate::{
         utils::{test::test_context, test_signer::test_signer},
         Builder, Reader, SigningAlg,
     };
     let signer = test_signer(SigningAlg::Ed25519);
-    let src =
-        fs::read(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample1.svg"))
+    let mut cases = vec![
+        ("sample1.svg", "image/svg+xml"),
+        ("sample1.webp", "image/webp"),
+        ("sample1.wav", "audio/wav"),
+        ("test.avi", "video/avi"),
+    ];
+    if cfg!(feature = "pdf") {
+        cases.extend([
+            ("basic.pdf", "application/pdf"),
+            ("express.pdf", "application/pdf"),
+            ("basic-no-xmp.pdf", "application/pdf"),
+        ]);
+    }
+    for (file, mime) in cases {
+        let src = fs::read(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures")
+                .join(file),
+        )
+        .unwrap();
+        let mut builder = Builder::from_context(test_context())
+            .with_definition(
+                r#"{"title": "t", "claim_generator_info": [{"name": "t", "version": "1"}]}"#,
+            )
             .unwrap();
-    let mut builder = Builder::from_context(test_context())
-        .with_definition(
-            r#"{"title": "svg", "claim_generator_info": [{"name": "t", "version": "1"}]}"#,
-        )
-        .unwrap();
-    let mut out = Cursor::new(Vec::new());
-    builder
-        .sign(
-            signer.as_ref(),
-            "image/svg+xml",
-            &mut Cursor::new(&src),
-            &mut out,
-        )
-        .unwrap();
-    out.set_position(0);
-    let reader = Reader::from_context(test_context())
-        .with_stream("image/svg+xml", &mut out)
-        .unwrap();
-    assert_eq!(reader.active_manifest().unwrap().title(), Some("svg"));
-    assert_ne!(
-        reader.validation_state(),
-        crate::ValidationState::Invalid,
-        "{:?}",
-        reader.validation_status()
-    );
+        let mut out = Cursor::new(Vec::new());
+        builder
+            .sign(signer.as_ref(), mime, &mut Cursor::new(&src), &mut out)
+            .unwrap_or_else(|e| panic!("{file}: sign failed: {e}"));
+        out.set_position(0);
+        let reader = Reader::from_context(test_context())
+            .with_stream(mime, &mut out)
+            .unwrap_or_else(|e| panic!("{file}: read failed: {e}"));
+        assert_eq!(
+            reader.active_manifest().unwrap().title(),
+            Some("t"),
+            "{file}"
+        );
+        assert_ne!(
+            reader.validation_state(),
+            crate::ValidationState::Invalid,
+            "{file}: {:?}",
+            reader.validation_status()
+        );
+    }
 }

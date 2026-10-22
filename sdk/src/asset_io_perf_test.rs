@@ -1,12 +1,12 @@
 // EXPERIMENT (local only, do not commit).
 //
-// Timing of the asset-io adapter against the handlers it replaces (`JpegIO`, `PngIO`),
+// Timing of the asset-io adapter against the handlers it replaces (`JpegIO`, `PngIO`, `SvgIO`, `RiffIO`, `PdfIO`),
 // through the same traits the SDK uses. Not run by default: it only reports.
 //
 //   cargo test --release --features asset_io asset_io_perf -- --ignored --nocapture
 //
 // Environment:
-//   ASSET_IO_CORPUS=<dir>   also time every JPEG and PNG under <dir>
+//   ASSET_IO_CORPUS=<dir>   also time every JPEG, PNG, SVG, RIFF and PDF under <dir>
 //   ASSET_IO_PERF_FILE=1    read from files on disk (many small reads and seeks) instead
 //                           of from memory
 //   ASSET_IO_SYNTH_MB=<n>   also time synthetic PNGs of <n> MB with 8 KB, 64 KB and 1 MB
@@ -34,7 +34,10 @@ use std::{
 };
 
 use crate::{
-    asset_handlers::{asset_io_adapter::AssetIoAdapter, jpeg_io::JpegIO, png_io::PngIO},
+    asset_handlers::{
+        asset_io_adapter::AssetIoAdapter, jpeg_io::JpegIO, png_io::PngIO, riff_io::RiffIO,
+        svg_io::SvgIO,
+    },
     asset_io::AssetIO,
     asset_io_adapter_test::{fixture_paths, store},
     read_seek::{ReadSeek, ReadWriteSeek},
@@ -141,16 +144,28 @@ const OPS: [(&str, Op); 6] = [
 ];
 
 fn handlers(ext: &str) -> (Box<dyn AssetIO>, Box<dyn AssetIO>) {
-    if ext == "png" {
-        (
+    match ext {
+        "png" => (
             Box::new(PngIO::new("png")),
             Box::new(AssetIoAdapter::new("png")),
-        )
-    } else {
-        (
+        ),
+        "svg" => (
+            Box::new(SvgIO::new("svg")),
+            Box::new(AssetIoAdapter::new("svg")),
+        ),
+        "wav" | "webp" | "avi" => (
+            Box::new(RiffIO::new(ext)),
+            Box::new(AssetIoAdapter::new(ext)),
+        ),
+        #[cfg(feature = "pdf")]
+        "pdf" => (
+            Box::new(crate::asset_handlers::pdf_io::PdfIO::new("pdf")),
+            Box::new(AssetIoAdapter::new("pdf")),
+        ),
+        _ => (
             Box::new(JpegIO::new("jpg")),
             Box::new(AssetIoAdapter::new("jpg")),
-        )
+        ),
     }
 }
 
@@ -226,6 +241,12 @@ fn cases() -> Vec<Case> {
         {
             Some("jpg" | "jpeg" | "mpo") => "jpg",
             Some("png") => "png",
+            Some("svg") => "svg",
+            Some("wav") => "wav",
+            Some("webp") => "webp",
+            Some("avi") => "avi",
+            #[cfg(feature = "pdf")]
+            Some("pdf") => "pdf",
             _ => continue,
         };
         let Ok(bytes) = fs::read(&path) else { continue };
