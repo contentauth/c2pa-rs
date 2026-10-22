@@ -1898,7 +1898,14 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
 pub(crate) fn read_bmff_c2pa_boxes<R: Read + Seek + ?Sized>(
     reader: &mut R,
 ) -> Result<C2PABmffBoxes> {
-    let (bmff_tree, bmff_map) = BMFFArena::from_stream(reader)?;
+    let (bmff_tree, bmff_map) = BMFFArena::from_stream(reader).map_err(|err| match err {
+        // Truncated or garbled box headers mean the stream isn't valid BMFF
+        // (e.g. a different format passed with a BMFF MIME type).
+        Error::IoError(io_err) => Error::InvalidAsset(format!(
+            "invalid BMFF structure: unable to parse boxes: {io_err}"
+        )),
+        other => other,
+    })?;
 
     reader.rewind()?;
 
@@ -1907,17 +1914,9 @@ pub(crate) fn read_bmff_c2pa_boxes<R: Read + Seek + ?Sized>(
 
 impl C2paReader for BmffIO {
     fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>> {
-        input_stream.seek(SeekFrom::Start(4))?;
-
-        let mut header = [0u8; 4];
-        input_stream.read_exact(&mut header)?;
-
-        if header[..4] != *b"ftyp" {
-            return Err(Error::InvalidAsset(format!(
-                "invalid BMFF structure: expected box type \"ftyp\" at offset 4, found {}",
-                String::from_utf8_lossy(&header[..4])
-            )));
-        }
+        // QuickTime files may legitimately start with a box other than `ftyp`
+        // (e.g. `mdat` or `wide`), so the box parser validates the structure.
+        input_stream.rewind()?;
 
         let c2pa_boxes = read_bmff_c2pa_boxes(input_stream)?;
 
