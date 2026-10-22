@@ -298,6 +298,7 @@ pub(crate) mod error;
 pub(crate) mod external_manifest;
 pub(crate) mod hashed_uri;
 pub(crate) mod ingredient;
+mod multi_asset;
 
 #[allow(dead_code)]
 pub(crate) mod jumbf;
