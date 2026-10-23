@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.91.5](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.91.4...c2pa-v0.91.5)
+_23 October 2026_
+
+### Fixed
+
+* Bmff_io type check not allowing valid mov (backport #2894) ([#2899](https://github.com/contentauth/c2pa-rs/pull/2899))
+
 ## [0.91.4](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.91.3...c2pa-v0.91.4)
 _19 October 2026_
 
