@@ -1008,6 +1008,31 @@ fn test_builder_unsupported_format_remote_url_rejected() -> Result<()> {
     Ok(())
 }
 
+/// Keras 3 models (`.keras`) are ZIP archives and are signed through the ZIP handler.
+#[test]
+fn test_builder_sign_keras() -> Result<()> {
+    let context = Context::new().with_settings(test_settings())?.into_shared();
+    let data = include_bytes!("fixtures/sample1.keras");
+
+    let mut builder = Builder::from_shared_context(&context);
+    builder.set_intent(BuilderIntent::Edit);
+    let mut dest = Cursor::new(Vec::new());
+    builder.save_to_stream("keras", &mut Cursor::new(&data[..]), &mut dest)?;
+
+    dest.rewind()?;
+    let reader = Reader::from_shared_context(&context).with_stream("keras", &mut dest)?;
+    assert_eq!(reader.validation_state(), ValidationState::Trusted);
+
+    // Changing the model's weights (inside the first entries of the archive) is detected.
+    let mut tampered = dest.into_inner();
+    tampered[data.len() / 2] ^= 0x01;
+    let state = Reader::from_shared_context(&context)
+        .with_stream("keras", Cursor::new(&tampered))
+        .map(|r| r.validation_state());
+    assert!(!matches!(state, Ok(ValidationState::Trusted)));
+    Ok(())
+}
+
 #[test]
 fn test_builder_compressed_manifests() -> Result<()> {
     let mut settings = test_settings();
