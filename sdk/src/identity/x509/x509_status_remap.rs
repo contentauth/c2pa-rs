@@ -63,7 +63,19 @@ impl Drop for X509StatusRemapGuard<'_> {
 /// later, per [`X509StatusRemapGuard`]. Not exported: called only from that
 /// guard's `Drop` impl.
 fn remap_x509_cose_status_codes(status_tracker: &mut StatusTracker, first_new_item: usize) {
+    // CAWG Identity 1.3 §7.2: "The `url` field for a status code MUST always be
+    // the label of the identity assertion." Some `crypto::cose` log items carry a
+    // fixed, non-URI label (such as `Cose_Sign1`); point those at the identity
+    // assertion being validated, which is the tracker's current URI.
+    let current_uri = status_tracker.current_uri().map(str::to_owned);
+
     for item in status_tracker.logged_items_mut()[first_new_item..].iter_mut() {
+        if let Some(uri) = &current_uri {
+            if !item.label.starts_with("self#jumbf=") {
+                item.label = uri.clone().into();
+            }
+        }
+
         let Some(old_code) = item.validation_status.as_deref() else {
             continue;
         };
@@ -178,6 +190,31 @@ mod tests {
             status_of(&st, 5),
             validation_status::CAWG_X509_SIGNATURE_MISMATCH
         );
+    }
+
+    #[test]
+    fn points_non_uri_labels_at_the_identity_assertion() {
+        let identity_uri = "self#jumbf=/c2pa/urn:c2pa:test/c2pa.assertions/cawg.identity__1";
+        let other_uri = "self#jumbf=/c2pa/urn:c2pa:test/c2pa.assertions/cawg.identity";
+
+        let mut st = StatusTracker::default();
+        st.push_current_uri(identity_uri);
+
+        {
+            let mut guard = X509StatusRemapGuard::new(&mut st);
+            log_item!("Cose_Sign1", "unsupported or missing Cose algorithm", "f")
+                .validation_status(validation_status::ALGORITHM_UNSUPPORTED)
+                .informational(guard.status_tracker());
+            log_item!(other_uri, "d", "f").informational(guard.status_tracker());
+        }
+
+        assert_eq!(st.logged_items()[0].label, identity_uri);
+        assert_eq!(
+            status_of(&st, 0),
+            validation_status::CAWG_X509_ALGORITHM_UNSUPPORTED
+        );
+        // A label that is already a JUMBF URI is left alone.
+        assert_eq!(st.logged_items()[1].label, other_uri);
     }
 
     #[test]
