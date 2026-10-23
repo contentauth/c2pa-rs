@@ -42,6 +42,11 @@ pub enum ValidationError<SignatureError> {
     #[error("no hard binding assertion is referenced")]
     NoHardBindingAssertion,
 
+    /// The identity assertion references a hard-binding assertion other than
+    /// the one in its own claim.
+    #[error("the hard binding assertion {0:#?} is not the claim's own hard binding")]
+    IncorrectHardBindingAssertion(String),
+
     /// The `sig_type` field is not recognized.
     #[error("unable to parse a signature of type {0:#?}")]
     UnknownSignatureType(String),
