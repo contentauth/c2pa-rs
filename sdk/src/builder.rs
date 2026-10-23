@@ -1730,7 +1730,10 @@ impl Builder {
                     AssertionData::Cbor(value) => {
                         add_assertion(
                             &mut claim,
-                            &UserCbor::new(manifest_assertion.label(), c2pa_cbor::to_vec(value)?),
+                            &UserCbor::new(
+                                manifest_assertion.label(),
+                                c2pa_cbor::to_vec_deterministic(value)?,
+                            ),
                             manifest_assertion.created(),
                         )?;
                     }
