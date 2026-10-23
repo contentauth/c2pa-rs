@@ -310,11 +310,22 @@ impl Verifier<'_> {
             dt.timestamp()
         });
 
+        // A claim signer must chain to a manifest trust anchor, not a TSA one.
         let verify_result = if _sync {
-            ctp.check_certificate_trust(chain_der, end_entity_cert_der, signing_time_epoch)
+            ctp.check_certificate_trust_for(
+                Some(TrustAnchorType::Manifest),
+                chain_der,
+                end_entity_cert_der,
+                signing_time_epoch,
+            )
         } else {
-            ctp.check_certificate_trust_async(chain_der, end_entity_cert_der, signing_time_epoch)
-                .await
+            ctp.check_certificate_trust_for_async(
+                Some(TrustAnchorType::Manifest),
+                chain_der,
+                end_entity_cert_der,
+                signing_time_epoch,
+            )
+            .await
         };
 
         match verify_result {

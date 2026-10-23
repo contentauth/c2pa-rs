@@ -21,17 +21,18 @@ use crate::crypto::cose::{CertificateTrustError, CertificateTrustPolicy, TrustAn
 
 pub(crate) fn check_certificate_trust(
     ctp: &CertificateTrustPolicy,
+    anchor_type: Option<TrustAnchorType>,
     chain_der: &[Vec<u8>],
     cert_der: &[u8],
     signing_time_epoch: Option<i64>,
 ) -> Result<(TrustAnchorType, String), CertificateTrustError> {
     let _openssl = OpenSslMutex::acquire()?;
 
-    if ctp.anchor_sets().count() == 0 {
+    if ctp.anchor_sets_of_type(anchor_type).count() == 0 {
         return Err(CertificateTrustError::CertificateNotTrusted);
     }
 
-    for anchor_set in ctp.anchor_sets() {
+    for anchor_set in ctp.anchor_sets_of_type(anchor_type) {
         // Process each anchor set
 
         let mut cert_chain = Stack::new()?;
