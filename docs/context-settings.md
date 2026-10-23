@@ -246,6 +246,7 @@ Here's the `Settings` JSON with all default values:
     "verify_trust": true,
     "verify_timestamp_trust": true,
     "ocsp_fetch": false,
+    "ocsp_fetch_should_override": false,
     "remote_manifest_fetch": true,
     "skip_ingredient_conflict_resolution": false,
     "strict_v1_validation": false
