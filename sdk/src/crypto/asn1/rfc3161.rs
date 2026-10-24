@@ -510,6 +510,7 @@ mod tests {
             let der = encoded(request.encode_ref());
             let decoded =
                 Constructed::decode(der.as_slice(), Mode::Der, TimeStampReq::take_from).unwrap();
+
             assert_eq!(decoded, request);
             assert!(
                 Constructed::decode(&der[..der.len() - 1], Mode::Der, TimeStampReq::take_from)
@@ -567,25 +568,30 @@ mod tests {
         };
 
         let mut der = encoded(info.encode_ref());
+
         // GeneralizedTime::encode_ref currently wraps the complete time DER
         // in an OCTET STRING, so TstInfo encoding does not roundtrip as-is.
         assert!(Constructed::decode(der.as_slice(), Mode::Der, TstInfo::take_from).is_err());
+
         let time = info.gen_time.as_der_bytes();
         let time_pos = der
             .windows(time.len())
             .position(|window| window == time)
             .unwrap();
         assert_eq!(&der[time_pos - 2..time_pos], &[4, time.len() as u8]);
+
         der.drain(time_pos - 2..time_pos);
         der[1] -= 2;
         assert_eq!(
             Constructed::decode(der.as_slice(), Mode::Der, TstInfo::take_from).unwrap(),
             info
         );
+
         let optional = [0xa0, 5, 0x82, 3, b't', b's', b'a', 0xa1, 0];
         assert!(der.len() + optional.len() < 128);
         der[1] += optional.len() as u8;
         der.extend(optional);
+
         let decoded = Constructed::decode(der.as_slice(), Mode::Der, TstInfo::take_from).unwrap();
         assert!(decoded.tsa.is_some());
         assert!(decoded.extensions.is_some());
@@ -595,18 +601,21 @@ mod tests {
     #[test]
     fn accuracy_decodes_implicit_subseconds_but_encoder_uses_integer_tags() {
         let der = [0x30, 9, 2, 1, 2, 0x80, 1, 3, 0x81, 1, 4];
+
         let accuracy = Constructed::decode(der.as_slice(), Mode::Der, Accuracy::take_opt_from)
             .unwrap()
             .unwrap();
         assert_eq!(accuracy.seconds, Some(2.into()));
         assert_eq!(accuracy.millis, Some(3.into()));
         assert_eq!(accuracy.micros, Some(4.into()));
+
         // Characterize the existing non-roundtripping encoder; RFC 3161
         // requires context tags on millis/micros, not universal INTEGER tags.
         assert_eq!(
             encoded(accuracy.encode_ref()),
             [0x30, 9, 2, 1, 2, 2, 1, 3, 2, 1, 4]
         );
+
         assert!(Constructed::decode(
             encoded(accuracy.encode_ref()).as_slice(),
             Mode::Der,
@@ -668,6 +677,7 @@ mod tests {
                 Constructed::decode(der.as_slice(), Mode::Der, PkiFailureInfo::take_from).is_err()
             );
         }
+
         // The existing failure parser accepts INTEGER rather than the
         // BIT STRING required by RFC 3161; standard badAlg is rejected.
         let standard = [0x30, 9, 0x30, 7, 2, 1, 2, 3, 2, 7, 0x80];
