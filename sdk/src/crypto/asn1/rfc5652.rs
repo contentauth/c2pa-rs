@@ -1553,6 +1553,7 @@ mod tests {
                 ]
                 .concat(),
             );
+
             let der = tlv(
                 0x30,
                 &[
@@ -1565,6 +1566,7 @@ mod tests {
                 ]
                 .concat(),
             );
+
             let signer = Constructed::decode(der.as_slice(), Mode::Der, SignerInfo::take_opt_from)
                 .unwrap()
                 .unwrap();
