@@ -578,8 +578,7 @@ mod tests {
     #[test]
     fn signed_init_session_keys_validate_after_read_back() {
         use c2pa::{
-            assertions::SessionKeys, live_video::LiveVideoValidator,
-            status_tracker::StatusTracker,
+            assertions::SessionKeys, live_video::LiveVideoValidator, status_tracker::StatusTracker,
         };
 
         let (_guard, segments_dir, output_dir, init_path) = setup_vsi_dirs(1);
