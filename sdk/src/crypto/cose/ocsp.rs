@@ -1297,6 +1297,7 @@ mod tests {
             staple(&mut sign1, value);
             assert!(get_ocsp_der(&sign1).is_none());
         }
+
         let mut sign1 = CoseSign1::default();
         sign1.unprotected.rest.push((Label::Int(42), Value::Null));
         staple(
@@ -1531,6 +1532,7 @@ mod tests {
             } else {
                 CertificateTrustPolicy::new()
             };
+
             let mut log = StatusTracker::default();
             let result = check_ocsp_status(
                 &sign1,
@@ -1575,6 +1577,7 @@ mod tests {
             } else {
                 CertificateTrustPolicy::new()
             };
+
             let mut log = StatusTracker::default();
             let result = check_ocsp_status_async(
                 &sign1,

@@ -670,6 +670,7 @@ mod tests {
         ] {
             assert_eq!(TrustAnchorType::from(kind), expected);
         }
+
         let cert_pem = include_bytes!("../../../tests/fixtures/certs/ed25519.pub");
         let certs = crate::crypto::cert_chain_pem_to_der(cert_pem).unwrap();
         let escaped = String::from_utf8_lossy(cert_pem).replace('\n', "\\n");
@@ -692,6 +693,7 @@ mod tests {
             assert_eq!(anchor.trust_config.as_deref(), Some("1.2.3"));
             assert_eq!(anchor.trust_anchor_type, kind);
         }
+
         assert_eq!(policy.signing_trust_anchors().len(), 1);
         assert_eq!(policy.tsa_trust_anchors().len(), 1);
         assert_eq!(policy.cawg_trust_anchors().len(), 1);

@@ -286,6 +286,7 @@ mod tests {
         ] {
             assert!(build_ocsp_request(subject, issuer, url).is_none());
         }
+
         assert!(process_ocsp_responders(&[], 0).is_none());
         assert!(process_ocsp_responders(&certs, 2).is_none());
         assert!(process_ocsp_responders(&certs, 3).is_none());
@@ -328,6 +329,7 @@ mod tests {
             if matches!(self.reply, Reply::TransportError) {
                 return Err(HttpResolverError::Other("fixture transport failure".into()));
             }
+
             let mut response =
                 Response::builder().status(if matches!(self.reply, Reply::NonSuccess) {
                     503
@@ -339,6 +341,7 @@ mod tests {
                 Reply::InvalidLength => response.header(header::CONTENT_LENGTH, "not-a-number"),
                 _ => response,
             };
+
             let body: Box<dyn Read> = match self.reply {
                 Reply::ReadError => Box::new(BrokenReader),
                 Reply::Oversize => Box::new(io::repeat(42).take(1_000_001)),
@@ -380,6 +383,7 @@ mod tests {
                 Reply::Oversize => assert_eq!(result.unwrap(), vec![42; 1_000_000]),
                 _ => assert_eq!(result.unwrap(), vec![1, 2, 3]),
             }
+
             let requests = requests.lock().unwrap();
             assert_eq!(requests.len(), 1);
             assert_eq!(requests[0].method(), http::Method::GET);
@@ -439,11 +443,13 @@ mod tests {
             } else {
                 assert!(result.is_none());
             }
+
             assert_eq!(
                 requests.lock().unwrap()[0].headers()[header::HOST],
                 "ca-ocsp.test"
             );
         }
+
         let (resolver, requests) = resolver(Reply::Bytes);
         let context = Context::new()
             .with_resolver_async(resolver)

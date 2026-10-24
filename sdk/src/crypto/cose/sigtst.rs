@@ -396,12 +396,14 @@ mod tests {
                     .rest
                     .push((Label::Text("sigTst".into()), value));
             }
+
             let mut log = StatusTracker::default();
             assert!(validate_cose_tst_info(&sign1, b"payload", &policy, &mut log, false).is_err());
             assert_eq!(
                 log.has_status(validation_status::TIMESTAMP_MALFORMED),
                 malformed
             );
+
             let mut log = StatusTracker::default();
             assert!(
                 validate_cose_tst_info_async(&sign1, b"payload", &policy, &mut log, false)
@@ -516,11 +518,13 @@ mod tests {
                 signature,
                 ..Default::default()
             };
+
             let expected_bytes = if version == TimeStampStorage::V1_sigTst {
                 signer.timestamp.as_ref().unwrap()
             } else {
                 &token
             };
+
             assert_eq!(
                 &timestamp_token_bytes_from_sign1(&sign1).unwrap(),
                 expected_bytes

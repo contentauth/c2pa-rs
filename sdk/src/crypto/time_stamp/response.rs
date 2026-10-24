@@ -222,6 +222,7 @@ pub(crate) mod tests {
                 assert!(result.unwrap().is_none());
             }
         }
+
         assert!(signed_data_from_time_stamp_response(&[0x30, 1, 0]).is_err());
         // A non-SEQUENCE prefix is currently treated as an absent optional token.
         assert!(signed_data_from_time_stamp_response(b"bad DER")
@@ -266,6 +267,7 @@ pub(crate) mod tests {
                 content_type: ObjectIdentifier::new(content_type).unwrap(),
                 content: Any::new(vec![0x30, 0]),
             };
+
             let token = rasn::der::encode(&malformed).unwrap();
             let response = decode(&response_der(0, Some(&token)));
             assert!(response.signed_data().is_err());

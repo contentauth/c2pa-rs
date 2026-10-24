@@ -506,6 +506,7 @@ mod tests {
                 cert_req: include_optional.then_some(true),
                 extensions: None,
             };
+
             let der = encoded(request.encode_ref());
             let decoded =
                 Constructed::decode(der.as_slice(), Mode::Der, TimeStampReq::take_from).unwrap();
@@ -515,6 +516,7 @@ mod tests {
                     .is_err()
             );
         }
+
         let request = TimeStampReq {
             version: 1.into(),
             message_imprint: imprint(),
@@ -523,11 +525,15 @@ mod tests {
             cert_req: None,
             extensions: Some(extensions()),
         };
+
         let mut der = encoded(request.encode_ref());
+
         // Existing Extensions encoding emits a primitive context tag, whereas
         // its decoder (and RFC 3161) expects a constructed tag.
         assert_eq!(der[der.len() - 2], 0x80);
+
         assert!(Constructed::decode(der.as_slice(), Mode::Der, TimeStampReq::take_from).is_err());
+
         let tag_pos = der.len() - 2;
         der[tag_pos] = 0xa0;
         assert_eq!(
@@ -559,6 +565,7 @@ mod tests {
             tsa: None,
             extensions: None,
         };
+
         let mut der = encoded(info.encode_ref());
         // GeneralizedTime::encode_ref currently wraps the complete time DER
         // in an OCTET STRING, so TstInfo encoding does not roundtrip as-is.

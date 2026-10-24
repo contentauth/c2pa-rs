@@ -60,9 +60,9 @@ These include such things as Rust code format, Clippy/lint checks, and unit test
 
 ### Code formatting
 
-Separate consecutive multi-line code blocks with a blank line when they represent distinct
-steps or cases. In particular, leave a blank line between independent loops, conditionals,
-and other sibling control-flow blocks to make the structure easier to scan.
+Set multi-line code blocks apart from adjacent statements and sibling blocks with a blank
+line wherever rustfmt permits. This includes loops, conditionals, matches, and multi-line
+expressions; keep related continuations such as `else` attached to their block.
 
 We encourage you to raise an issue in GitHub before starting work on a major addition to the crate.
 This will give us an opportunity to discuss API design and avoid duplicate efforts.

@@ -144,9 +144,11 @@ pub(super) mod tests {
             if self.fail_sign {
                 return Err(RawSignerError::InternalError("test signing failure".into()));
             }
+
             if let Some(signature) = &self.signature {
                 return Ok(signature.clone());
             }
+
             let (_, key) = cert_chain_and_private_key_for_alg(self.alg);
             signer_from_private_key(key, self.alg)?.sign(data)
         }
@@ -246,6 +248,7 @@ pub(super) mod tests {
                 Ok(Vec::new())
             }
         }
+
         assert!(DefaultOcsp.ocsp_response().await.is_none());
     }
 }

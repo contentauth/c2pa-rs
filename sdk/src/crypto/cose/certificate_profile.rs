@@ -1053,11 +1053,13 @@ mod tests {
                 Err(super::CertificateProfileError::InvalidCertificate)
             );
         }
+
         #[derive(rasn::AsnType, rasn::Encode, rasn::Decode)]
         struct RsaKey {
             modulus: rasn::types::Integer,
             exponent: rasn::types::Integer,
         }
+
         let mut cert: Certificate = rasn::der::decode(&x509_der_from_pem(include_bytes!(
             "../../../tests/fixtures/certs/ps256.pub"
         )))
@@ -1077,6 +1079,7 @@ mod tests {
             .subject_public_key_info
             .subject_public_key =
             rasn::types::BitString::from_slice(&rasn::der::encode(&invalid).unwrap());
+
         assert_profile_error(&cert, super::CertificateProfileError::InvalidCertificate);
     }
 
@@ -1117,10 +1120,12 @@ mod tests {
                 algorithm: oid(&hash),
                 parameters: None,
             };
+
             let mask_alg = rasn_pkix::AlgorithmIdentifier {
                 algorithm: oid(&mask_hash),
                 parameters: None,
             };
+
             let params = rasn::der::encode(&PssParameters {
                 hash: hash_alg,
                 mask: rasn_pkix::AlgorithmIdentifier {
@@ -1129,6 +1134,7 @@ mod tests {
                 },
             })
             .unwrap();
+
             let mut cert = profile_cert();
             cert.signature_algorithm = rasn_pkix::AlgorithmIdentifier {
                 algorithm: oid(&[1, 2, 840, 113549, 1, 1, 10]),
@@ -1174,6 +1180,7 @@ mod tests {
             serial: rasn::types::Integer,
             time: rasn::types::GeneralizedTime,
         }
+
         let bytes = rasn::der::encode(&Timestamp {
             version: 1.into(),
             policy: oid(&[1, 2, 3]),
@@ -1234,6 +1241,7 @@ mod tests {
             algorithm: oid(&[2, 16, 840, 1, 101, 3, 4, 2, 1]),
             parameters: None,
         };
+
         let hash = rasn::der::encode(&sha256).unwrap();
         let mut malformed = vec![
             vec![5, 0],
@@ -1247,6 +1255,7 @@ mod tests {
             } else {
                 vec![tag, 2, 5, 0]
             };
+
             let mut body = vec![0xa0, hash.len() as u8];
             body.extend_from_slice(&hash);
             body.extend_from_slice(&second);
@@ -1342,6 +1351,7 @@ mod tests {
                 ParsedExtension::InvalidityDate(_) => "InvalidityDate",
                 other => panic!("unexpected extension: {other:?}"),
             };
+
             assert_eq!(actual, expected);
             let mut log = StatusTracker::default();
             check_end_entity_certificate_profile(

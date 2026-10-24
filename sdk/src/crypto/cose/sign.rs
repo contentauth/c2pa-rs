@@ -731,6 +731,7 @@ mod tests {
                     Err(CoseError::RawSignerError(_))
                 ));
             }
+
             let mut signer = TestSigner::new(SigningAlg::Es256);
             signer.signature = Some(vec![0x30, 6, 2, 1, 1, 2, 1, 2]);
             for certs in [
@@ -751,6 +752,7 @@ mod tests {
             signature: vec![1; 64],
             ..Default::default()
         };
+
         let unpadded = original.clone().to_tagged_vec().unwrap();
         assert_eq!(pad_cose_sig(&mut original.clone(), None).unwrap(), unpadded);
         assert_eq!(
@@ -767,6 +769,7 @@ mod tests {
                 ));
             }
         }
+
         let mut saw_second_pad = false;
         for size in (unpadded.len() + PAD_OFFSET + 256..unpadded.len() + 600)
             .chain(unpadded.len() + 65520..unpadded.len() + 65570)
@@ -784,6 +787,7 @@ mod tests {
                     .rest
                     .push((Label::Text(PAD.into()), Value::Bytes(vec![0; 20])));
             }
+
             let encoded = pad_cose_sig(&mut input, Some(size))
                 .unwrap_or_else(|error| panic!("padding size {size}: {error}"));
             assert_eq!(encoded.len(), size);
@@ -796,9 +800,11 @@ mod tests {
                 let Value::Bytes(bytes) = value else {
                     panic!("padding must be bytes")
                 };
+
                 assert!(bytes.iter().all(|&byte| byte == 0));
             }
         }
+
         assert!(
             saw_second_pad,
             "must exercise the CBOR length discontinuity"

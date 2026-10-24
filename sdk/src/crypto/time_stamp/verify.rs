@@ -952,6 +952,7 @@ mod tests {
             millis: None,
             micros: None,
         };
+
         assert_eq!(tst_accuracy_seconds(Some(&accuracy)), 0);
         accuracy.micros = Some(1.into());
         assert_eq!(tst_accuracy_seconds(Some(&accuracy)), 1);
@@ -1209,6 +1210,7 @@ pub(crate) mod message_imprint_regression {
         } else {
             None
         };
+
         let tbs = attributes
             .as_ref()
             .map(|attrs| tlv(0x31, attrs))
@@ -1225,6 +1227,7 @@ pub(crate) mod message_imprint_regression {
             OID_SHA512 => &[6, 8, 0x2a, 0x86, 0x48, 0xce, 0x3d, 4, 3, 4],
             _ => OID_ECDSA_SHA256,
         };
+
         let signer_info = tlv(
             0x30,
             &cat(&[
@@ -1509,6 +1512,7 @@ pub(crate) mod message_imprint_regression {
             } else {
                 TIMESTAMP_MALFORMED
             };
+
             let error = check_error(&encode_token(&sd), status);
             if case == 5 {
                 // The cardinality guard rejects an empty SET before the
@@ -1516,6 +1520,7 @@ pub(crate) mod message_imprint_regression {
                 assert!(matches!(&error, TimeStampError::DecodeError(message)
                     if message == "message digest attribute has 0 values, should have one"));
             }
+
             assert!(if case == 3 {
                 matches!(error, TimeStampError::InvalidData)
             } else {
@@ -1548,6 +1553,7 @@ pub(crate) mod message_imprint_regression {
                 TimeStampError::InvalidData
             ));
         }
+
         let mut bad_signature = sd.clone();
         let mut signer = bad_signature.signer_infos.to_vec().remove(0).clone();
         signer.signature = vec![0].into();
@@ -1778,6 +1784,7 @@ pub(crate) mod message_imprint_regression {
             } else {
                 assert_eq!(signer.signed_attributes_digested_content().unwrap(), None);
             }
+
             let mut encoded = Vec::new();
             signer
                 .encode_ref()
@@ -1789,6 +1796,7 @@ pub(crate) mod message_imprint_regression {
                 assert!(roundtrip.is_err());
                 continue;
             }
+
             let roundtrip = roundtrip.unwrap().unwrap();
             assert_eq!(roundtrip.signature, signer.signature);
             assert_eq!(roundtrip.sid, signer.sid);
@@ -1826,6 +1834,7 @@ pub(crate) mod message_imprint_regression {
                 Err(TimeStampError::InvalidData)
             ));
         }
+
         let mut sd = decode_token(&token);
         let other: rasn_cms::CertificateChoices =
             rasn::der::decode(&tlv(0xa3, &cat(&[OID_POLICY, &[0x05, 0]]))).unwrap();
@@ -1850,6 +1859,7 @@ pub(crate) mod message_imprint_regression {
                 name.append_entry_by_nid(Nid::COMMONNAME, value).unwrap();
                 name.build()
             };
+
             let mut cert = X509Builder::new().unwrap();
             cert.set_version(2).unwrap();
             cert.set_serial_number(&BigNum::from_u32(serial).unwrap().to_asn1_integer().unwrap())
@@ -1864,6 +1874,7 @@ pub(crate) mod message_imprint_regression {
             cert.sign(&key, MessageDigest::sha256()).unwrap();
             cert.build().to_der().unwrap()
         }
+
         let leaf = cert("leaf", "intermediate", 1);
         let intermediate = cert("intermediate", "root", 2);
         let root = cert("root", "root", 3);

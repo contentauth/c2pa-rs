@@ -252,6 +252,7 @@ mod tests {
                 TimeStampProvider::time_stamp_request_body(self, message)
             }
         }
+
         assert!(TimeStampProvider::send_time_stamp_request(&InvalidBody, b"data").is_none());
         assert!(
             AsyncTimeStampProvider::send_time_stamp_request(&InvalidBody, b"data")

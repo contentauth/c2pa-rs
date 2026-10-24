@@ -265,6 +265,7 @@ mod tests {
                 assert_eq!(cert_chain_from_sign1(&sign1).unwrap(), expected);
             }
         }
+
         let mut legacy = CoseSign1::default();
         legacy
             .unprotected
@@ -297,6 +298,7 @@ mod tests {
                 Err(CoseError::MissingSigningCertificateChain)
             ));
         }
+
         let mut sign1 = CoseSign1::default();
         sign1.unprotected.rest.push((
             Label::Int(iana::HeaderParameter::X5Chain.to_i64()),
@@ -316,6 +318,7 @@ mod tests {
             signature: vec![1, 2],
             ..Default::default()
         };
+
         let encoded = original.to_tagged_vec().unwrap();
         let mut log = StatusTracker::default();
         let parsed = parse_cose_sign1(&encoded, b"detached", &mut log).unwrap();

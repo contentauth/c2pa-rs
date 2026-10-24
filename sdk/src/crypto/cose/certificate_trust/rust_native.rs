@@ -382,6 +382,7 @@ mod tests {
             algorithm: oid(&[1, 2, 840, 113549, 1, 1, 10]),
             parameters: parameters.map(types::Any::new),
         };
+
         let der = rasn::der::encode(&algorithm).unwrap();
         let (_, algorithm) = AlgorithmIdentifier::from_der(&der).unwrap();
         signing_alg_from_rsapss_alg(&algorithm)
@@ -465,10 +466,12 @@ mod tests {
             #[rasn(tag(explicit(1)))]
             mask: rasn_pkix::AlgorithmIdentifier,
         }
+
         let alg = |id: &[u32]| rasn_pkix::AlgorithmIdentifier {
             algorithm: oid(id),
             parameters: None,
         };
+
         let sha256 = vec![2, 16, 840, 1, 101, 3, 4, 2, 1];
         let sha384 = vec![2, 16, 840, 1, 101, 3, 4, 2, 2];
         let sha512 = vec![2, 16, 840, 1, 101, 3, 4, 2, 3];
@@ -494,6 +497,7 @@ mod tests {
                 algorithm: oid(&[1, 2, 840, 113549, 1, 1, 10]),
                 parameters: Some(types::Any::new(params)),
             };
+
             let der = rasn::der::encode(&cert).unwrap();
             let (_, parsed) = X509Certificate::from_der(&der).unwrap();
             assert_eq!(cert_signing_alg(&parsed).as_deref(), expected);
@@ -523,6 +527,7 @@ mod tests {
                     parameters: mask_params.map(types::Any::new),
                 },
             };
+
             assert!(pss_algorithm(Some(rasn::der::encode(&params).unwrap())).is_none());
         }
 
@@ -593,6 +598,7 @@ mod tests {
                     .unwrap()
                     .extn_value = vec![3, 2, 7, 0x80].into();
             }
+
             let der = rasn::der::encode(&cert).unwrap();
             let (_, parsed) = X509Certificate::from_der(&der).unwrap();
             assert_eq!(
@@ -643,11 +649,13 @@ mod tests {
                     .unwrap()
                     .extn_value = rasn::der::encode(&vec![oid(&[1, 2, 3, 4])]).unwrap().into();
             }
+
             assert_eq!(
                 check_certificate_trust(&policy, &[], &rasn::der::encode(&cert).unwrap(), None),
                 Err(CertificateTrustError::InvalidEku)
             );
         }
+
         assert_eq!(
             check_certificate_trust(&policy, &[], &[0], None),
             Err(CertificateTrustError::InvalidCertificate)

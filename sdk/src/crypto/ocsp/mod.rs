@@ -810,6 +810,7 @@ mod tests {
         ] {
             assert!(!super::cert_id_matches_signer(&original, &invalid_chain));
         }
+
         let mut wrong_serial = original.clone();
         wrong_serial.serial_number = 0.into();
         let mut wrong_name = original.clone();
@@ -866,6 +867,7 @@ mod tests {
                 digest
             );
         }
+
         let unsupported = "1.2.3.4".parse::<bcder::Oid>().unwrap();
         assert_eq!(
             super::validate_ocsp_sig(
@@ -1006,6 +1008,7 @@ mod tests {
                         }
                         _ => signing_time.map(|st| st >= revoked_at).unwrap_or(true),
                     };
+
                     let mut log = StatusTracker::default();
                     let parsed = OcspResponse::from_der_checked(
                         &der,
@@ -1063,6 +1066,7 @@ mod tests {
                     });
                 }
             }
+
             let mut log = StatusTracker::default();
             let result = OcspResponse::from_der_checked(
                 &sign_response(basic),

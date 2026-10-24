@@ -229,13 +229,16 @@ mod tests {
             if self.fail_resolve {
                 return Err(HttpResolverError::SyncHttpResolverNotImplemented);
             }
+
             let mut response = Response::builder().status(self.status);
             if let Some(value) = self.content_type {
                 response = response.header(header::CONTENT_TYPE, value);
             }
+
             if let Some(value) = self.content_length {
                 response = response.header(header::CONTENT_LENGTH, value);
             }
+
             let body: Box<dyn Read> = if self.fail_read {
                 Box::new(BrokenReader)
             } else {
@@ -320,6 +323,7 @@ mod tests {
                 });
             }
         }
+
         let context = FixtureResolver::new(Vec::new()).context();
         assert!(matches!(
             default_rfc3161_request(
