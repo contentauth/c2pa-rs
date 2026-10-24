@@ -1374,6 +1374,62 @@ pub mod validation_codes {
     #[cfg(feature = "unstable_live_video")]
     pub const LIVEVIDEO_SESSIONKEY_INVALID: &str = "livevideo.sessionkey.invalid";
 
+    /// A session key conforms to the requirements for session keys and its `signerBinding` validated.
+    ///
+    /// See the proposed success codes in [c2pa-org/specs-core#2636](https://github.com/c2pa-org/specs-core/pull/2636); these names are provisional until that is agreed.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This item is available only with the `unstable_live_video` feature
+    /// enabled. It is exempt from this crate's usual semantic-versioning stability guarantees
+    /// and may change in a backward-incompatible way, or be removed entirely, in any release.
+    ///
+    /// </div>
+    #[cfg(feature = "unstable_live_video")]
+    pub const LIVEVIDEO_SESSIONKEY_VALIDATED: &str = "livevideo.sessionkey.validated";
+
+    /// The signature in the segment's `verifiable-segment-info` validated with the session key identified by its `kid`.
+    ///
+    /// See the proposed success codes in [c2pa-org/specs-core#2636](https://github.com/c2pa-org/specs-core/pull/2636); these names are provisional until that is agreed.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This item is available only with the `unstable_live_video` feature
+    /// enabled. It is exempt from this crate's usual semantic-versioning stability guarantees
+    /// and may change in a backward-incompatible way, or be removed entirely, in any release.
+    ///
+    /// </div>
+    #[cfg(feature = "unstable_live_video")]
+    pub const LIVEVIDEO_SEGMENTINFO_VALIDATED: &str = "livevideo.segmentInfo.validated";
+
+    /// The segment's `sequenceNumber` is greater than the previous segment's and not lower than the session key's `minSequenceNumber`.
+    ///
+    /// See the proposed success codes in [c2pa-org/specs-core#2636](https://github.com/c2pa-org/specs-core/pull/2636); these names are provisional until that is agreed.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This item is available only with the `unstable_live_video` feature
+    /// enabled. It is exempt from this crate's usual semantic-versioning stability guarantees
+    /// and may change in a backward-incompatible way, or be removed entirely, in any release.
+    ///
+    /// </div>
+    #[cfg(feature = "unstable_live_video")]
+    pub const LIVEVIDEO_SEQUENCENUMBER_VALIDATED: &str = "livevideo.sequenceNumber.validated";
+
+    /// The segment was created within the validity period of the session key used to validate it.
+    ///
+    /// See the proposed success codes in [c2pa-org/specs-core#2636](https://github.com/c2pa-org/specs-core/pull/2636); these names are provisional until that is agreed.
+    ///
+    /// <div class="warning">
+    ///
+    /// **Experimental.** This item is available only with the `unstable_live_video` feature
+    /// enabled. It is exempt from this crate's usual semantic-versioning stability guarantees
+    /// and may change in a backward-incompatible way, or be removed entirely, in any release.
+    ///
+    /// </div>
+    #[cfg(feature = "unstable_live_video")]
+    pub const LIVEVIDEO_SESSIONKEY_INSIDE_VALIDITY: &str = "livevideo.sessionkey.insideValidity";
+
     /// Returns `true` if the status code is a known C2PA success status code.
     ///
     /// Returns `false` if the status code is a known C2PA failure status
@@ -1412,6 +1468,11 @@ pub mod validation_codes {
             | INGREDIENT_CLAIM_SIGNATURE_VALIDATED
             | CAWG_X509_CREDENTIAL_TRUSTED
             | CAWG_X509_SIGNATURE_VALIDATED => LogKind::Success,
+            #[cfg(feature = "unstable_live_video")]
+            LIVEVIDEO_SESSIONKEY_VALIDATED
+            | LIVEVIDEO_SEGMENTINFO_VALIDATED
+            | LIVEVIDEO_SEQUENCENUMBER_VALIDATED
+            | LIVEVIDEO_SESSIONKEY_INSIDE_VALIDITY => LogKind::Success,
             SIGNING_CREDENTIAL_OCSP_SKIPPED
             | SIGNING_CREDENTIAL_OCSP_INACCESSIBLE
             | SIGNING_CREDENTIAL_OCSP_UNKNOWN
