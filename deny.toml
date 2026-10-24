@@ -17,6 +17,9 @@ yanked = "deny"
 ignore = [
   "RUSTSEC-2023-0071", # rsa Marvin Attack: (https://jira.corp.adobe.com/browse/CAI-5104)
   "RUSTSEC-2024-0370", # proc-macro-error
+  # Temporary: c2pa_raw_crypto's elliptic-curve dependency requires crypto-bigint 0.5.
+  # Remove after upstream remediation: https://github.com/contentauth/c2pa-rs/issues/2904
+  "RUSTSEC-2026-0387",
 ]
 
 [bans]

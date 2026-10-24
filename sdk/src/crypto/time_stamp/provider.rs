@@ -176,6 +176,8 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use bcder::decode::Constructed;
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::*;
 

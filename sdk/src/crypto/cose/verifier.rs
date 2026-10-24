@@ -389,6 +389,8 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use c2pa_raw_crypto::SigningAlg;
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
     use x509_parser::prelude::{FromDer, Pem, X509Certificate};
 
     use super::spki_matches_signing_alg;

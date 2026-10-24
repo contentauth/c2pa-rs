@@ -330,6 +330,9 @@ pub fn timestamptoken_from_timestamprsp(ts: &[u8]) -> Result<Vec<u8>> {
 mod tests {
     #![allow(clippy::unwrap_used)]
 
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
+
     use super::*;
     use crate::crypto::cose::cose_signer::tests::TestSigner;
 

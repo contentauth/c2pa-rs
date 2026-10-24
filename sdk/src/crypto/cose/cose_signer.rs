@@ -105,6 +105,8 @@ pub(super) mod tests {
     #![allow(clippy::unwrap_used)]
 
     use c2pa_raw_crypto::signer_from_private_key;
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::*;
     use crate::{

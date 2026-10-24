@@ -163,6 +163,8 @@ mod tests {
 
     use async_trait::async_trait;
     use http::{Request, Response};
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::*;
     use crate::{
