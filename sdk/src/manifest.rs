@@ -664,11 +664,23 @@ impl Manifest {
                 _ => {
                     // inject assertions for all other assertions
                     match assertion.decode_data() {
-                        AssertionData::Cbor(_) => {
+                        AssertionData::Cbor(cbor) => {
                             let value = assertion.as_json_object()?;
-                            let ma = ManifestAssertion::new(base_label.clone(), value)
+                            let mut ma = ManifestAssertion::new(base_label.clone(), value)
                                 .set_instance(claim_assertion.instance())
                                 .set_created(created);
+
+                            // JSON cannot carry the CBOR tags and byte strings of a
+                            // session-keys assertion, so keep its native CBOR for
+                            // `find_assertion`.
+                            #[cfg(feature = "unstable_live_video")]
+                            if base_label == crate::assertions::SessionKeys::LABEL {
+                                if let Ok(native) = c2pa_cbor::from_slice(cbor) {
+                                    ma = ma.set_native(native);
+                                }
+                            }
+                            #[cfg(not(feature = "unstable_live_video"))]
+                            let _ = cbor;
 
                             manifest.assertions.push(ma);
                         }
