@@ -48,6 +48,11 @@ pub struct ManifestAssertion {
     /// This maps to a created vs a gathered assertion. (defaults to false)
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     created: bool,
+    /// The assertion's CBOR as read from the store, kept for assertions whose values JSON
+    /// cannot represent (CBOR tags, byte strings, integer map keys). `data` is lossy for
+    /// those, so [`Self::to_assertion`] decodes from here when it is present.
+    #[serde(skip)]
+    native: Option<CborValue>,
 }
 
 impl ManifestAssertion {
@@ -59,7 +64,15 @@ impl ManifestAssertion {
             instance: None,
             kind: None,
             created: false,
+            native: None,
         }
+    }
+
+    /// Keeps the assertion's native CBOR so [`Self::to_assertion`] can decode it without
+    /// the loss of a trip through JSON.
+    pub(crate) fn set_native(mut self, native: CborValue) -> Self {
+        self.native = Some(native);
+        self
     }
 
     /// An assertion label in reverse domain format
@@ -181,6 +194,16 @@ impl ManifestAssertion {
     /// # }
     /// ```
     pub fn to_assertion<T: DeserializeOwned>(&self) -> Result<T> {
+        if let Some(native) = &self.native {
+            return c2pa_cbor::from_value(native.clone()).map_err(|e| {
+                Error::AssertionDecoding(AssertionDecodeError::from_err(
+                    self.label.to_owned(),
+                    None,
+                    "application/cbor".to_owned(),
+                    e,
+                ))
+            });
+        }
         serde_json::from_value(self.value()?.to_owned()).map_err(|e| {
             Error::AssertionDecoding(AssertionDecodeError::from_json_err(
                 self.label.to_owned(),

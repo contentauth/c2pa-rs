@@ -570,6 +570,63 @@ mod tests {
         }
     }
 
+    /// Regression test: the session keys of a signed init segment must validate after a round
+    /// trip through `Reader` and `Manifest::find_assertion`, the path `c2patool live-video`
+    /// takes. That path used to go through JSON, which drops the CBOR tag 18 on `signerBinding`
+    /// (and turns byte strings into number arrays), so the c2patool validator rejected the init
+    /// segment c2patool had just signed with `livevideo.sessionkey.invalid`.
+    #[test]
+    fn signed_init_session_keys_validate_after_read_back() {
+        use c2pa::{
+            assertions::SessionKeys, live_video::LiveVideoValidator, status_tracker::StatusTracker,
+        };
+
+        let (_guard, segments_dir, output_dir, init_path) = setup_vsi_dirs(1);
+        let key_path = segments_dir.join("session.key");
+        fs::write(&key_path, [0x42u8; 32]).unwrap();
+        let signer = test_signer();
+
+        sign_live_video_vsi(VsiSignArgs {
+            segments_dir: &segments_dir,
+            segments_glob: Path::new("seg_*.m4s"),
+            init_path: &init_path,
+            previous_segment_path: None,
+            manifest_json: vsi_manifest_json(),
+            output_dir: &output_dir,
+            session_key_path: &key_path,
+            signer: signer.as_ref(),
+            min_sequence_number: Some(1),
+            session_key_validity: 3600,
+        })
+        .unwrap();
+
+        let signed_init = fs::read(output_dir.join("init.mp4")).unwrap();
+        let reader = c2pa::Reader::from_context(c2pa::Context::new())
+            .with_stream("video/mp4", std::io::Cursor::new(&signed_init))
+            .unwrap();
+        let manifest = reader.active_manifest().unwrap();
+        let keys: SessionKeys = manifest.find_assertion(SessionKeys::LABEL).unwrap();
+
+        let pems = pem::parse_many(manifest.signature_info().unwrap().cert_chain()).unwrap();
+        let ee_cert_der = pems.into_iter().next().unwrap().into_contents();
+
+        let mut validator = LiveVideoValidator::new();
+        let mut tracker = StatusTracker::default();
+        validator
+            .validate_session_keys(
+                &keys,
+                manifest.label().unwrap(),
+                Some(&ee_cert_der),
+                &mut tracker,
+            )
+            .unwrap();
+        assert!(
+            !tracker.has_any_error(),
+            "a freshly signed init's session keys must validate: {:?}",
+            tracker.logged_items()
+        );
+    }
+
     #[test]
     fn vsi_signs_init_and_media_segments() {
         let (_guard, segments_dir, output_dir, init_path) = setup_vsi_dirs(2);
