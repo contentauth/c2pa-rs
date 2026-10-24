@@ -901,6 +901,7 @@ mod tests {
             }
             assert_profile_error(&cert, super::CertificateProfileError::InvalidCertificate);
         }
+
         for parameters in [
             None,
             Some(Any::new(vec![5, 0])),
@@ -938,6 +939,7 @@ mod tests {
             );
             assert_profile_error(&cert, super::CertificateProfileError::InvalidCertificate);
         }
+
         for removed in [&[2, 5, 29, 35][..], &[2, 5, 29, 15], &[2, 5, 29, 37]] {
             let mut cert = profile_cert();
             cert.tbs_certificate
@@ -947,11 +949,13 @@ mod tests {
                 .retain(|e| e.extn_id != oid(removed));
             assert_profile_error(&cert, super::CertificateProfileError::InvalidCertificate);
         }
+
         for usage in [vec![3, 2, 2, 0x84], vec![3, 2, 0, 0]] {
             let mut cert = profile_cert();
             extension(&mut cert, &[2, 5, 29, 15], usage);
             assert_profile_error(&cert, super::CertificateProfileError::InvalidCertificate);
         }
+
         for critical in [false, true] {
             let mut cert = profile_cert();
             cert.tbs_certificate
@@ -1085,6 +1089,7 @@ mod tests {
             #[rasn(tag(explicit(1)))]
             mask: rasn_pkix::AlgorithmIdentifier,
         }
+
         for (hash, mask_hash, valid) in [
             (
                 vec![2, 16, 840, 1, 101, 3, 4, 2, 1],
@@ -1144,6 +1149,7 @@ mod tests {
             );
             assert_eq!(log.has_status(SIGNING_CREDENTIAL_INVALID), !valid);
         }
+
         let mut cert = profile_cert();
         cert.signature_algorithm = rasn_pkix::AlgorithmIdentifier {
             algorithm: oid(&[1, 2, 840, 113549, 1, 1, 10]),
@@ -1248,6 +1254,7 @@ mod tests {
             sequence.extend_from_slice(&body);
             malformed.push(sequence);
         }
+
         for params in malformed {
             let mut cert = profile_cert();
             cert.signature_algorithm = rasn_pkix::AlgorithmIdentifier {

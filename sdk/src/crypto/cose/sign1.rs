@@ -225,6 +225,7 @@ mod tests {
                 assert_eq!(signing_alg_from_sign1(&sign1).unwrap(), expected);
             }
         }
+
         for alg in [
             None,
             Some(RegisteredLabelWithPrivate::Assigned(Algorithm::A128GCM)),

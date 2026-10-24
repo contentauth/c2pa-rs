@@ -437,6 +437,7 @@ mod tests {
             assert_eq!(sig.as_ref(), sig_oid.as_bytes());
             assert_eq!(hash.as_ref(), hash_oid.as_bytes());
         }
+
         for (name, hash_oid) in [
             ("ps256", &SHA256_OID),
             ("ps384", &SHA384_OID),
@@ -446,6 +447,7 @@ mod tests {
             assert_eq!(sig.as_ref(), RSA_PSS_OID.as_bytes());
             assert_eq!(hash.as_ref(), hash_oid.as_bytes());
         }
+
         assert!(signing_alg_to_sig_and_hash_oid("unknown").is_none());
         let mut cert = certificate();
         cert.signature_algorithm.algorithm = oid(&[1, 2, 3, 4]);
@@ -496,6 +498,7 @@ mod tests {
             let (_, parsed) = X509Certificate::from_der(&der).unwrap();
             assert_eq!(cert_signing_alg(&parsed).as_deref(), expected);
         }
+
         assert!(pss_algorithm(None).is_none());
         for value in [
             vec![5, 0],
@@ -505,6 +508,7 @@ mod tests {
         ] {
             assert!(pss_algorithm(Some(value)).is_none());
         }
+
         for mask_params in [
             None,
             Some(vec![5, 0]),
@@ -521,6 +525,7 @@ mod tests {
             };
             assert!(pss_algorithm(Some(rasn::der::encode(&params).unwrap())).is_none());
         }
+
         let hash = rasn::der::encode(&alg(&sha256)).unwrap();
         for tag in [0xa0, 0x81, 0xa1] {
             let mut body = vec![0xa0, hash.len() as u8];
@@ -595,6 +600,7 @@ mod tests {
                 valid
             );
         }
+
         let mut cert = root;
         cert.tbs_certificate
             .extensions
@@ -607,6 +613,7 @@ mod tests {
             check_ca_authorization(&parsed.tbs_certificate, 0),
             Err(CertificateTrustError::CertificateNotTrusted)
         );
+
         assert!(check_chain_order_and_ca_authorization(&[vec![0], root_der.clone()]).is_err());
         assert!(check_chain_order_and_ca_authorization(&[root_der, vec![0]]).is_err());
     }

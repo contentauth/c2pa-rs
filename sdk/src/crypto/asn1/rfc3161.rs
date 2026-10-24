@@ -624,6 +624,7 @@ mod tests {
             assert_eq!(response.status.status, status);
             assert!(response.time_stamp_token.is_none());
         }
+
         for failure in [
             PkiFailureInfo::BadAlg,
             PkiFailureInfo::BadRequest,
@@ -652,6 +653,7 @@ mod tests {
                 failure
             );
         }
+
         for bad in [-1i8, 6, 127] {
             let der = encoded(bad.encode());
             assert!(Constructed::decode(der.as_slice(), Mode::Der, PkiStatus::take_from).is_err());

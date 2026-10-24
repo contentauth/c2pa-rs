@@ -1504,6 +1504,7 @@ mod tests {
             let dt: chrono::DateTime<chrono::Utc> = decoded.into();
             assert_eq!(dt.timestamp(), expected);
         }
+
         for (tag, time) in [
             (0x17, b"200132000000Z".as_slice()),
             (0x18, b"20200101000000.1Z".as_slice()),
@@ -1531,6 +1532,7 @@ mod tests {
                 version
             );
         }
+
         for bad in [6, 255] {
             assert!(
                 Constructed::decode([2, 1, bad].as_slice(), Mode::Der, CmsVersion::take_from)

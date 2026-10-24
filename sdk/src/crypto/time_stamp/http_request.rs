@@ -296,6 +296,7 @@ mod tests {
                 );
             }
         }
+
         for (read, resolve) in [(false, false), (true, false), (false, true)] {
             let mut resolver = FixtureResolver::new(vec![0]);
             resolver.fail_read = read;

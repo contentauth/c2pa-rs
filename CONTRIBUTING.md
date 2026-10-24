@@ -58,6 +58,12 @@ for more information on sending pull requests.
 Code submissions will need to pass all automated tests in place at the time of submission.
 These include such things as Rust code format, Clippy/lint checks, and unit test coverage.
 
+### Code formatting
+
+Separate consecutive multi-line code blocks with a blank line when they represent distinct
+steps or cases. In particular, leave a blank line between independent loops, conditionals,
+and other sibling control-flow blocks to make the structure easier to scan.
+
 We encourage you to raise an issue in GitHub before starting work on a major addition to the crate.
 This will give us an opportunity to discuss API design and avoid duplicate efforts.
 
