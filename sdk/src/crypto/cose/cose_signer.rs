@@ -99,3 +99,153 @@ impl CoseSigner for RawSignerCoseSigner<'_> {
 }
 
 impl TimeStampProvider for RawSignerCoseSigner<'_> {}
+
+#[cfg(test)]
+pub(super) mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use c2pa_raw_crypto::signer_from_private_key;
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use super::*;
+    use crate::{
+        crypto::{cert_chain_pem_to_der, time_stamp::TimeStampError},
+        utils::test_signer::cert_chain_and_private_key_for_alg,
+    };
+
+    pub(crate) struct TestSigner {
+        pub alg: SigningAlg,
+        pub certs: Vec<Vec<u8>>,
+        pub signature: Option<Vec<u8>>,
+        pub timestamp: Option<Vec<u8>>,
+        pub ocsp: Option<Vec<u8>>,
+        pub fail_sign: bool,
+        pub fail_certs: bool,
+    }
+
+    impl TestSigner {
+        pub fn new(alg: SigningAlg) -> Self {
+            let (certs, _) = cert_chain_and_private_key_for_alg(alg);
+            Self {
+                alg,
+                certs: cert_chain_pem_to_der(certs).unwrap(),
+                signature: None,
+                timestamp: None,
+                ocsp: None,
+                fail_sign: false,
+                fail_certs: false,
+            }
+        }
+    }
+
+    impl CoseSigner for TestSigner {
+        fn sign(&self, data: &[u8]) -> Result<Vec<u8>, RawSignerError> {
+            if self.fail_sign {
+                return Err(RawSignerError::InternalError("test signing failure".into()));
+            }
+            if let Some(signature) = &self.signature {
+                return Ok(signature.clone());
+            }
+            let (_, key) = cert_chain_and_private_key_for_alg(self.alg);
+            signer_from_private_key(key, self.alg)?.sign(data)
+        }
+
+        fn alg(&self) -> SigningAlg {
+            self.alg
+        }
+
+        fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError> {
+            if self.fail_certs {
+                return Err(RawSignerError::InternalError(
+                    "test certificate failure".into(),
+                ));
+            }
+            Ok(self.certs.clone())
+        }
+
+        fn ocsp_response(&self) -> Option<Vec<u8>> {
+            self.ocsp.clone()
+        }
+    }
+
+    impl TimeStampProvider for TestSigner {
+        fn send_time_stamp_request(
+            &self,
+            _message: &[u8],
+        ) -> Option<Result<Vec<u8>, TimeStampError>> {
+            self.timestamp.clone().map(Ok)
+        }
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    impl AsyncCoseSigner for TestSigner {
+        async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>, RawSignerError> {
+            CoseSigner::sign(self, &data)
+        }
+
+        fn alg(&self) -> SigningAlg {
+            self.alg
+        }
+
+        fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError> {
+            CoseSigner::cert_chain(self)
+        }
+
+        async fn ocsp_response(&self) -> Option<Vec<u8>> {
+            self.ocsp.clone()
+        }
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    impl AsyncTimeStampProvider for TestSigner {
+        async fn send_time_stamp_request(
+            &self,
+            _message: &[u8],
+        ) -> Option<Result<Vec<u8>, TimeStampError>> {
+            self.timestamp.clone().map(Ok)
+        }
+    }
+
+    #[test]
+    fn raw_signer_adapter_preserves_signature_and_chain_without_services() {
+        let (pem, key) = cert_chain_and_private_key_for_alg(SigningAlg::Ed25519);
+        let raw = signer_from_private_key(key, SigningAlg::Ed25519).unwrap();
+        let certs = cert_chain_pem_to_der(pem).unwrap();
+        let adapter = RawSignerCoseSigner::new(raw.as_ref(), &certs);
+        assert_eq!(adapter.alg(), SigningAlg::Ed25519);
+        assert_eq!(adapter.cert_chain().unwrap(), certs);
+        assert_eq!(
+            adapter.sign(b"payload").unwrap(),
+            raw.sign(b"payload").unwrap()
+        );
+        assert!(adapter.ocsp_response().is_none());
+        assert!(adapter.send_time_stamp_request(b"payload").is_none());
+    }
+
+    #[c2pa_macros::c2pa_test_async]
+    async fn async_signer_defaults_have_no_ocsp_response() {
+        struct DefaultOcsp;
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        impl AsyncTimeStampProvider for DefaultOcsp {}
+        #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+        #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+        impl AsyncCoseSigner for DefaultOcsp {
+            async fn sign(&self, _data: Vec<u8>) -> Result<Vec<u8>, RawSignerError> {
+                Ok(Vec::new())
+            }
+
+            fn alg(&self) -> SigningAlg {
+                SigningAlg::Ed25519
+            }
+
+            fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError> {
+                Ok(Vec::new())
+            }
+        }
+        assert!(DefaultOcsp.ocsp_response().await.is_none());
+    }
+}

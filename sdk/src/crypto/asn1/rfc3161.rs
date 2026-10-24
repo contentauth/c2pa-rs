@@ -462,3 +462,208 @@ impl Accuracy {
         ))
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use std::str::FromStr;
+
+    use bcder::Mode;
+    use chrono::{TimeZone, Utc};
+
+    use super::*;
+
+    fn encoded(value: impl Values) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        value.write_encoded(Mode::Der, &mut bytes).unwrap();
+        bytes
+    }
+
+    fn imprint() -> MessageImprint {
+        MessageImprint {
+            hash_algorithm: AlgorithmIdentifier {
+                algorithm: Oid::from_str("2.16.840.1.101.3.4.2.1").unwrap(),
+            },
+            hashed_message: OctetString::new(vec![0xab; 32].into()),
+        }
+    }
+
+    fn extensions() -> Extensions {
+        Constructed::decode([0x30, 0].as_slice(), Mode::Der, |cons| {
+            cons.take_sequence(Extensions::from_constructed)
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn request_roundtrips_optional_policy_nonce_certificate_and_extensions() {
+        for include_optional in [false, true] {
+            let request = TimeStampReq {
+                version: 1.into(),
+                message_imprint: imprint(),
+                req_policy: include_optional.then(|| Oid::from_str("1.2.3.4").unwrap()),
+                nonce: include_optional.then(|| Integer::from(u64::MAX)),
+                cert_req: include_optional.then_some(true),
+                extensions: None,
+            };
+            let der = encoded(request.encode_ref());
+            let decoded =
+                Constructed::decode(der.as_slice(), Mode::Der, TimeStampReq::take_from).unwrap();
+            assert_eq!(decoded, request);
+            assert!(
+                Constructed::decode(&der[..der.len() - 1], Mode::Der, TimeStampReq::take_from)
+                    .is_err()
+            );
+        }
+        let request = TimeStampReq {
+            version: 1.into(),
+            message_imprint: imprint(),
+            req_policy: None,
+            nonce: None,
+            cert_req: None,
+            extensions: Some(extensions()),
+        };
+        let mut der = encoded(request.encode_ref());
+        // Existing Extensions encoding emits a primitive context tag, whereas
+        // its decoder (and RFC 3161) expects a constructed tag.
+        assert_eq!(der[der.len() - 2], 0x80);
+        assert!(Constructed::decode(der.as_slice(), Mode::Der, TimeStampReq::take_from).is_err());
+        let tag_pos = der.len() - 2;
+        der[tag_pos] = 0xa0;
+        assert_eq!(
+            Constructed::decode(der.as_slice(), Mode::Der, TimeStampReq::take_from).unwrap(),
+            request
+        );
+    }
+
+    #[test]
+    fn tst_info_preserves_optional_fields_and_large_serials() {
+        let info = TstInfo {
+            version: 1.into(),
+            policy: Oid::from_str("1.2.3.4").unwrap(),
+            message_imprint: imprint(),
+            serial_number: u64::MAX.into(),
+            gen_time: Utc
+                .timestamp_opt(1_577_836_800, 0)
+                .single()
+                .unwrap()
+                .try_into()
+                .unwrap(),
+            accuracy: Some(Accuracy {
+                seconds: Some(2.into()),
+                millis: None,
+                micros: None,
+            }),
+            ordering: Some(true),
+            nonce: Some(42.into()),
+            tsa: None,
+            extensions: None,
+        };
+        let mut der = encoded(info.encode_ref());
+        // GeneralizedTime::encode_ref currently wraps the complete time DER
+        // in an OCTET STRING, so TstInfo encoding does not roundtrip as-is.
+        assert!(Constructed::decode(der.as_slice(), Mode::Der, TstInfo::take_from).is_err());
+        let time = info.gen_time.as_der_bytes();
+        let time_pos = der
+            .windows(time.len())
+            .position(|window| window == time)
+            .unwrap();
+        assert_eq!(&der[time_pos - 2..time_pos], &[4, time.len() as u8]);
+        der.drain(time_pos - 2..time_pos);
+        der[1] -= 2;
+        assert_eq!(
+            Constructed::decode(der.as_slice(), Mode::Der, TstInfo::take_from).unwrap(),
+            info
+        );
+        let optional = [0xa0, 5, 0x82, 3, b't', b's', b'a', 0xa1, 0];
+        assert!(der.len() + optional.len() < 128);
+        der[1] += optional.len() as u8;
+        der.extend(optional);
+        let decoded = Constructed::decode(der.as_slice(), Mode::Der, TstInfo::take_from).unwrap();
+        assert!(decoded.tsa.is_some());
+        assert!(decoded.extensions.is_some());
+        assert_eq!(decoded.nonce, info.nonce);
+    }
+
+    #[test]
+    fn accuracy_decodes_implicit_subseconds_but_encoder_uses_integer_tags() {
+        let der = [0x30, 9, 2, 1, 2, 0x80, 1, 3, 0x81, 1, 4];
+        let accuracy = Constructed::decode(der.as_slice(), Mode::Der, Accuracy::take_opt_from)
+            .unwrap()
+            .unwrap();
+        assert_eq!(accuracy.seconds, Some(2.into()));
+        assert_eq!(accuracy.millis, Some(3.into()));
+        assert_eq!(accuracy.micros, Some(4.into()));
+        // Characterize the existing non-roundtripping encoder; RFC 3161
+        // requires context tags on millis/micros, not universal INTEGER tags.
+        assert_eq!(
+            encoded(accuracy.encode_ref()),
+            [0x30, 9, 2, 1, 2, 2, 1, 3, 2, 1, 4]
+        );
+        assert!(Constructed::decode(
+            encoded(accuracy.encode_ref()).as_slice(),
+            Mode::Der,
+            Accuracy::take_opt_from
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn response_status_text_and_legacy_integer_failure_info_are_decoded() {
+        for status in [
+            PkiStatus::Granted,
+            PkiStatus::GrantedWithMods,
+            PkiStatus::Rejection,
+            PkiStatus::Waiting,
+            PkiStatus::RevocationWarning,
+            PkiStatus::RevocationNotification,
+        ] {
+            let der = encoded(encode::sequence(encode::sequence(status.encode())));
+            let response =
+                Constructed::decode(der.as_slice(), Mode::Der, TimeStampResp::take_from).unwrap();
+            assert_eq!(response.status.status, status);
+            assert!(response.time_stamp_token.is_none());
+        }
+        for failure in [
+            PkiFailureInfo::BadAlg,
+            PkiFailureInfo::BadRequest,
+            PkiFailureInfo::BadDataFormat,
+            PkiFailureInfo::TimeNotAvailable,
+            PkiFailureInfo::UnacceptedPolicy,
+            PkiFailureInfo::UnacceptedExtension,
+            PkiFailureInfo::AddInfoNotAvailable,
+            PkiFailureInfo::SystemFailure,
+        ] {
+            let der = encoded(encode::sequence(encode::sequence((
+                PkiStatus::Rejection.encode(),
+                encode::sequence((
+                    bcder::Utf8String::from_str("rejected").unwrap().encode(),
+                    bcder::Utf8String::from_str("retry").unwrap().encode(),
+                )),
+                failure.encode(),
+            ))));
+            let response =
+                Constructed::decode(der.as_slice(), Mode::Der, TimeStampResp::take_from).unwrap();
+            assert_eq!(response.status.fail_info, Some(failure));
+            assert!(response.status.status_string.is_some());
+            let der = encoded(failure.encode());
+            assert_eq!(
+                Constructed::decode(der.as_slice(), Mode::Der, PkiFailureInfo::take_from).unwrap(),
+                failure
+            );
+        }
+        for bad in [-1i8, 6, 127] {
+            let der = encoded(bad.encode());
+            assert!(Constructed::decode(der.as_slice(), Mode::Der, PkiStatus::take_from).is_err());
+            assert!(
+                Constructed::decode(der.as_slice(), Mode::Der, PkiFailureInfo::take_from).is_err()
+            );
+        }
+        // The existing failure parser accepts INTEGER rather than the
+        // BIT STRING required by RFC 3161; standard badAlg is rejected.
+        let standard = [0x30, 9, 0x30, 7, 2, 1, 2, 3, 2, 7, 0x80];
+        assert!(
+            Constructed::decode(standard.as_slice(), Mode::Der, TimeStampResp::take_from).is_err()
+        );
+    }
+}
