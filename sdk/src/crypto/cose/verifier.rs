@@ -210,6 +210,11 @@ impl Verifier<'_> {
 
         validator.validate(&sign1.signature, &tbs, pk_der)?;
 
+        // Deliberate simplification, not accidental error-swallowing (see #2540): a missing
+        // Organization attribute and one that is present but not valid UTF-8 both end up as `None`
+        // in `CertificateInfo::issuer_org`, and callers cannot tell them apart from the result. The
+        // `Result::ok()` below is what does that. The `common_name` extraction just below uses the
+        // same idiom for the same reason.
         let subject = sign_cert
             .subject()
             .iter_organization()
