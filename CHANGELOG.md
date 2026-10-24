@@ -9,6 +9,13 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.91.6](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.91.5...c2pa-v0.91.6)
+_24 October 2026_
+
+### Added
+
+* Adopt c2pa_raw_crypto 0.2.0 and updated ECDSA stack (backport #2908) ([#2909](https://github.com/contentauth/c2pa-rs/pull/2909))
+
 ## [0.91.5](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.91.4...c2pa-v0.91.5)
 _23 October 2026_
 
