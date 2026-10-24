@@ -255,6 +255,13 @@ impl CollectionHash {
             )));
         }
 
+        // The schema requires at least one entry: `"uris": [1* uri-hashed-data-map]`.
+        if self.uris.is_empty() {
+            return Err(Error::C2PAValidation(
+                ASSERTION_COLLECTIONHASH_MALFORMED.to_string(),
+            ));
+        }
+
         for (uri, uri_map) in &self.uris {
             let hash = uri_map.hash.as_ref().ok_or_else(|| {
                 Error::C2PAValidation(ASSERTION_COLLECTIONHASH_MALFORMED.to_string())
@@ -369,6 +376,13 @@ impl CollectionHash {
             .zip_central_directory_hash
             .as_ref()
             .ok_or_else(|| Error::C2PAValidation(ASSERTION_COLLECTIONHASH_MALFORMED.to_string()))?;
+
+        // The schema requires at least one entry: `"uris": [1* uri-hashed-data-map]`.
+        if self.uris.is_empty() {
+            return Err(Error::C2PAValidation(
+                ASSERTION_COLLECTIONHASH_MALFORMED.to_string(),
+            ));
+        }
 
         let zip_central_directory_hash_range = zip_central_directory_range(stream)?;
         if !verify_stream_by_alg(
@@ -638,6 +652,20 @@ mod tests {
     }
 
     #[test]
+    fn test_verify_zip_empty_uris_is_malformed() -> Result<()> {
+        let mut collection = gen_zip_collection_hash()?;
+        collection.uris.clear();
+
+        let mut stream = Cursor::new(ZIP_SAMPLE1);
+        assert!(matches!(
+            collection.verify_zip_stream_hash(&mut stream, None),
+            Err(Error::C2PAValidation(code)) if code == ASSERTION_COLLECTIONHASH_MALFORMED
+        ));
+
+        Ok(())
+    }
+
+    #[test]
     fn test_verify_zip_invalid_uri() -> Result<()> {
         let mut collection = gen_zip_collection_hash()?;
         collection.uris.insert(
@@ -749,6 +777,20 @@ mod tests {
         if let Some(entry) = collection.uris.values_mut().next() {
             entry.hash = None;
         }
+
+        assert!(matches!(
+            collection.verify_hash(dir.path()),
+            Err(Error::C2PAValidation(code)) if code == ASSERTION_COLLECTIONHASH_MALFORMED
+        ));
+
+        Ok(())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn test_directory_verify_empty_uris_is_malformed() -> Result<()> {
+        let (dir, mut collection) = gen_dir_collection_hash()?;
+        collection.uris.clear();
 
         assert!(matches!(
             collection.verify_hash(dir.path()),
