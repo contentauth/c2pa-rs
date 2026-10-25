@@ -2864,6 +2864,81 @@ mod tests {
         assert_eq!(unsafe { c2pa_free(signer as *const c_void) }, 0);
     }
 
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn test_sign_file_to_file_with_fd_streams() {
+        use crate::{c2pa_create_stream_from_fd, c2pa_release_stream};
+
+        let dir = tempfile::tempdir().unwrap();
+        let source_path = dir.path().join("source.jpg");
+        let dest_path = dir.path().join("dest.jpg");
+        std::fs::write(&source_path, include_bytes!(fixture_path!("IMG_0003.jpg"))).unwrap();
+        let source_fd = crate::c2pa_stream::tests::open_fd(&source_path, libc::O_RDONLY);
+        let dest_fd = crate::c2pa_stream::tests::open_fd(
+            &dest_path,
+            libc::O_RDWR | libc::O_CREAT | libc::O_TRUNC,
+        );
+        let source = unsafe { c2pa_create_stream_from_fd(source_fd) };
+        let dest = unsafe { c2pa_create_stream_from_fd(dest_fd) };
+        assert!(!source.is_null() && !dest.is_null());
+
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+        let result = unsafe {
+            c2pa_builder_set_intent(
+                builder,
+                C2paBuilderIntent::Create,
+                C2paDigitalSourceType::DigitalCreation,
+            )
+        };
+        assert_eq!(result, 0);
+        let format = CString::new("image/jpeg").unwrap();
+        let mut manifest_bytes_ptr = std::ptr::null();
+        let result = unsafe {
+            c2pa_builder_sign(
+                builder,
+                format.as_ptr(),
+                source,
+                dest,
+                signer,
+                &mut manifest_bytes_ptr,
+            )
+        };
+        assert!(
+            result > 0,
+            "signing failed: {:?}",
+            CimplError::last_message()
+        );
+        unsafe {
+            c2pa_release_stream(source);
+            c2pa_release_stream(dest);
+            libc::close(source_fd);
+            libc::close(dest_fd);
+            assert_eq!(c2pa_free(manifest_bytes_ptr as *const c_void), 0);
+            assert_eq!(c2pa_free(builder as *const c_void), 0);
+            assert_eq!(c2pa_free(signer as *const c_void), 0);
+        }
+
+        // The signed file reads back through a descriptor stream too.
+        let read_fd = crate::c2pa_stream::tests::open_fd(&dest_path, libc::O_RDONLY);
+        let stream = unsafe { c2pa_create_stream_from_fd(read_fd) };
+        let reader = unsafe { c2pa_reader_with_stream(c2pa_reader_new(), format.as_ptr(), stream) };
+        assert!(
+            !reader.is_null(),
+            "reader creation failed: {:?}",
+            CimplError::last_message()
+        );
+        let json = unsafe { c2pa_reader_json(reader) };
+        assert!(!json.is_null());
+        let json_str = unsafe { CStr::from_ptr(json) }.to_str().unwrap().to_owned();
+        assert!(json_str.contains("c2pa.created"), "{json_str}");
+        unsafe {
+            assert_eq!(c2pa_free(json as *const c_void), 0);
+            assert_eq!(c2pa_free(reader as *const c_void), 0);
+            c2pa_release_stream(stream);
+            libc::close(read_fd);
+        }
+    }
+
     #[test]
     fn test_sign_with_info() {
         let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));

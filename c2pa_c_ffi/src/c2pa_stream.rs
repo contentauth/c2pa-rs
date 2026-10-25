@@ -12,7 +12,9 @@
 // each license.
 
 use std::{
+    fs::File,
     io::{Cursor, Read, Seek, SeekFrom, Write},
+    os::raw::c_int,
     slice,
 };
 
@@ -20,7 +22,10 @@ use cimpl::{box_tracked, cimpl_free, deref_mut_or_return_int, untrack_owned, Err
 #[cfg(test)]
 use cimpl::{deref_mut_option, TypedExclusive};
 
-use crate::{error::C2paError, macros::ok_or_return_int};
+use crate::{
+    error::C2paError,
+    macros::{ok_or_return_int, ok_or_return_null},
+};
 #[repr(C)]
 #[derive(Debug)]
 /// An opaque struct to hold a context value for the stream callbacks.
@@ -65,10 +70,24 @@ type FlushCallback = unsafe extern "C" fn(context: *mut StreamContext) -> isize;
 
 /// A C2paStream is a Rust Read/Write/Seek stream that can be created and used in C.
 ///
+/// It is backed either by callbacks implemented in the calling language
+/// ([`c2pa_create_stream`]) or by an open file read and written natively
+/// ([`c2pa_create_stream_from_fd`]).
+///
 /// Not `#[repr(C)]`, so cbindgen writes an opaque forward declaration: the C FFI
 /// now handles opaque ids, and we shouldn't dereference anything directly anymore.
 #[derive(Debug)]
-pub struct C2paStream {
+pub struct C2paStream(StreamBacking);
+
+#[derive(Debug)]
+enum StreamBacking {
+    Callbacks(CallbackStream),
+    File(File),
+}
+
+/// A stream whose reads, seeks, writes and flushes call back into the calling language.
+#[derive(Debug)]
+struct CallbackStream {
     context: *mut StreamContext,
     reader: ReadCallback,
     seeker: SeekCallback,
@@ -99,17 +118,56 @@ impl C2paStream {
         writer: WriteCallback,
         flusher: FlushCallback,
     ) -> Self {
-        Self {
+        Self(StreamBacking::Callbacks(CallbackStream {
             context, // : unsafe { Box::from_raw(context) },
             reader,
             seeker,
             writer,
             flusher,
-        }
+        }))
+    }
+
+    /// Creates a new C2paStream that reads and writes `file` natively.
+    pub fn from_file(file: File) -> Self {
+        Self(StreamBacking::File(file))
     }
 }
 
 impl Read for C2paStream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match &mut self.0 {
+            StreamBacking::Callbacks(stream) => stream.read(buf),
+            StreamBacking::File(file) => file.read(buf),
+        }
+    }
+}
+
+impl Seek for C2paStream {
+    fn seek(&mut self, from: SeekFrom) -> std::io::Result<u64> {
+        match &mut self.0 {
+            StreamBacking::Callbacks(stream) => stream.seek(from),
+            StreamBacking::File(file) => file.seek(from),
+        }
+    }
+}
+
+impl Write for C2paStream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match &mut self.0 {
+            StreamBacking::Callbacks(stream) => stream.write(buf),
+            StreamBacking::File(file) => file.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match &mut self.0 {
+            StreamBacking::Callbacks(stream) => stream.flush(),
+            StreamBacking::File(file) => file.flush(),
+        }
+    }
+}
+
+impl Read for CallbackStream {
     /// Reads bytes from the stream into the provided buffer.
     ///
     /// # Arguments
@@ -147,7 +205,7 @@ impl Read for C2paStream {
     }
 }
 
-impl Seek for C2paStream {
+impl Seek for CallbackStream {
     /// Seeks to a position in the stream.
     ///
     /// # Arguments
@@ -192,7 +250,7 @@ impl Seek for C2paStream {
     }
 }
 
-impl Write for C2paStream {
+impl Write for CallbackStream {
     /// Writes bytes from the provided buffer to the stream.
     ///
     /// # Arguments
@@ -242,10 +300,10 @@ impl Write for C2paStream {
     }
 }
 
-// SAFETY: C2paStream = 4 C function pointers + 1 context pointer.
+// SAFETY: CallbackStream = 4 C function pointers + 1 context pointer.
 // The callbacks and context should be safe to call from any thread.
-unsafe impl Send for C2paStream {}
-unsafe impl Sync for C2paStream {}
+unsafe impl Send for CallbackStream {}
+unsafe impl Sync for CallbackStream {}
 
 #[cfg(test)]
 /// Test-only wrapper around a tracked C2paStream for cleaner test code.
@@ -318,6 +376,75 @@ pub unsafe extern "C" fn c2pa_create_stream(
     flusher: FlushCallback,
 ) -> *mut C2paStream {
     box_tracked!(C2paStream::new(context, reader, seeker, writer, flusher,))
+}
+
+/// Creates a new C2paStream that reads and writes an open file natively, without callbacks.
+///
+/// Every read, seek and write happens in native code. Bindings whose stream callbacks must
+/// re-enter their runtime (for instance retake Python's GIL, once per callback) can hand
+/// regular files to this instead of [`c2pa_create_stream`]: an asset needs tens of thousands
+/// of stream operations.
+///
+/// The stream owns a duplicate of `fd`: the caller keeps owning `fd` and may close it at any
+/// time. Both share the file position, so the stream starts at the descriptor's current offset
+/// and leaves it wherever the stream stopped. On Windows, `fd` is a C runtime file descriptor
+/// (as returned by `_open` or `_fileno`).
+///
+/// # Errors
+/// Returns NULL if `fd` is not an open descriptor or cannot be duplicated, and on platforms
+/// without file descriptors. The error can be retrieved with `c2pa_error`.
+///
+/// # Safety
+/// `fd` must be an open file descriptor for the duration of this call.
+///
+/// The resulting C2paStream must be released by calling c2pa_release_stream.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_create_stream_from_fd(fd: c_int) -> *mut C2paStream {
+    let file = ok_or_return_null!(duplicate_fd(fd));
+    box_tracked!(C2paStream::from_file(file))
+}
+
+/// Opens an owned duplicate of an open file descriptor.
+#[cfg(unix)]
+unsafe fn duplicate_fd(fd: c_int) -> std::io::Result<File> {
+    use std::os::fd::BorrowedFd;
+
+    if fd < 0 {
+        return Err(invalid_fd());
+    }
+    // SAFETY: the caller guarantees `fd` is open for the duration of this call.
+    let owned = unsafe { BorrowedFd::borrow_raw(fd) }.try_clone_to_owned()?;
+    Ok(File::from(owned))
+}
+
+/// Opens an owned duplicate of the handle behind a C runtime file descriptor.
+#[cfg(windows)]
+unsafe fn duplicate_fd(fd: c_int) -> std::io::Result<File> {
+    use std::os::windows::io::{BorrowedHandle, RawHandle};
+
+    let handle = unsafe { libc::get_osfhandle(fd) };
+    if handle == -1 {
+        return Err(invalid_fd());
+    }
+    // SAFETY: the C runtime owns `handle` while `fd` is open, for the duration of this call.
+    let owned = unsafe { BorrowedHandle::borrow_raw(handle as RawHandle) }.try_clone_to_owned()?;
+    Ok(File::from(owned))
+}
+
+#[cfg(not(any(unix, windows)))]
+unsafe fn duplicate_fd(_fd: c_int) -> std::io::Result<File> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "file descriptor streams are not supported on this platform",
+    ))
+}
+
+#[cfg(any(unix, windows))]
+fn invalid_fd() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        "not an open file descriptor",
+    )
 }
 
 /// Releases a C2paStream allocated by Rust.
@@ -432,13 +559,105 @@ impl TestC2paStream {
         let Ok(real_stream) = untrack_owned::<C2paStream>(c_stream) else {
             return;
         };
-        cimpl_free(real_stream.context as *mut std::ffi::c_void);
+        if let StreamBacking::Callbacks(callbacks) = real_stream.0 {
+            cimpl_free(callbacks.context as *mut std::ffi::c_void);
+        }
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    /// Opens `path` with the C runtime, as a binding would before handing the descriptor over.
+    #[cfg(any(unix, windows))]
+    pub(crate) fn open_fd(path: &std::path::Path, flags: c_int) -> c_int {
+        #[cfg(windows)]
+        let flags = flags | libc::O_BINARY;
+        let path = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+        let fd = unsafe { libc::open(path.as_ptr(), flags, 0o600) };
+        assert!(fd >= 0, "open failed: {}", std::io::Error::last_os_error());
+        fd
+    }
+
+    #[cfg(any(unix, windows))]
+    fn fd_stream(fd: c_int) -> TypedExclusive<C2paStream> {
+        let stream = unsafe { c2pa_create_stream_from_fd(fd) };
+        assert!(!stream.is_null(), "{:?}", CimplError::last_message());
+        deref_mut_option!(stream, C2paStream).unwrap()
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn test_fd_stream_reads_seeks_and_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("data.bin");
+        std::fs::write(&path, b"0123456789").unwrap();
+        let fd = open_fd(&path, libc::O_RDWR);
+
+        let stream = unsafe { c2pa_create_stream_from_fd(fd) };
+        assert!(!stream.is_null(), "{:?}", CimplError::last_message());
+        {
+            let mut s = deref_mut_option!(stream, C2paStream).unwrap();
+            let mut buf = [0u8; 4];
+            s.read_exact(&mut buf).unwrap();
+            assert_eq!(&buf, b"0123");
+            assert_eq!(s.seek(SeekFrom::End(-2)).unwrap(), 8);
+            let mut tail = Vec::new();
+            s.read_to_end(&mut tail).unwrap();
+            assert_eq!(tail, b"89");
+            s.seek(SeekFrom::Start(2)).unwrap();
+            s.write_all(b"ab").unwrap();
+            s.flush().unwrap();
+        }
+        unsafe {
+            c2pa_release_stream(stream);
+            libc::close(fd);
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), b"01ab456789");
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn test_fd_stream_shares_the_descriptor_offset() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("data.bin");
+        std::fs::write(&path, b"0123456789").unwrap();
+        let fd = open_fd(&path, libc::O_RDONLY);
+        assert_eq!(unsafe { libc::lseek(fd, 3, libc::SEEK_SET) }, 3);
+
+        let stream = unsafe { c2pa_create_stream_from_fd(fd) };
+        {
+            let mut s = deref_mut_option!(stream, C2paStream).unwrap();
+            let mut buf = [0u8; 2];
+            s.read_exact(&mut buf).unwrap();
+            assert_eq!(&buf, b"34");
+        }
+        unsafe { c2pa_release_stream(stream) };
+        assert_eq!(unsafe { libc::lseek(fd, 0, libc::SEEK_CUR) }, 5);
+        unsafe { libc::close(fd) };
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn test_fd_stream_outlives_the_callers_descriptor() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("data.bin");
+        std::fs::write(&path, b"0123456789").unwrap();
+        let fd = open_fd(&path, libc::O_RDONLY);
+        let mut s = fd_stream(fd);
+        unsafe { libc::close(fd) };
+
+        let mut all = Vec::new();
+        s.read_to_end(&mut all).unwrap();
+        assert_eq!(all, b"0123456789");
+    }
+
+    #[test]
+    fn test_fd_stream_rejects_an_invalid_descriptor() {
+        assert!(unsafe { c2pa_create_stream_from_fd(-1) }.is_null());
+        assert!(CimplError::last_message().is_some());
+    }
 
     #[test]
     fn test_cstream_read() {
