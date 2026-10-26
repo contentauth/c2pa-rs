@@ -5831,6 +5831,65 @@ fn build_asset_with_input_to_ingredient(corrupt_hash: bool) -> (&'static str, Ve
 // manifest was never checked against its signed hash. The success code
 // `ingredient.manifest.validated` is only emitted when that check runs.
 #[test]
+fn test_missing_v3_results_are_enclosing_manifest_failures() {
+    use crate::assertion::AssertionBase;
+
+    for relationship in [
+        Relationship::ParentOf,
+        Relationship::ComponentOf,
+        Relationship::InputTo,
+    ] {
+        let context = Context::new();
+        let store = Store::from_context(&context);
+        let mut claim = create_test_claim().unwrap();
+        let mut ingredient = Ingredient::new_v3(relationship);
+        ingredient.active_manifest = Some(HashedUri::new(
+            "self#jumbf=/c2pa/urn:c2pa:missing".to_owned(),
+            None,
+            &[1; 32],
+        ));
+        ingredient.validation_results = Some(crate::ValidationResults::default());
+        let valid = ingredient.to_assertion().unwrap();
+        let mut value: c2pa_cbor::Value = c2pa_cbor::from_slice(valid.data()).unwrap();
+        if let c2pa_cbor::Value::Map(map) = &mut value {
+            map.remove(&c2pa_cbor::Value::Text("validationResults".into()));
+        }
+        let malformed =
+            Assertion::from_data_cbor(&valid.label(), &c2pa_cbor::to_vec(&value).unwrap());
+        let assertion = crate::claim::ClaimAssertion::new(
+            malformed,
+            0,
+            &[1; 32],
+            claim.alg(),
+            None,
+            crate::claim::ClaimAssertionType::Created,
+        );
+        claim.put_assertion_store(assertion);
+        let mut tracker = StatusTracker::default();
+        Store::ingredient_checks(
+            &store,
+            &claim,
+            &StoreValidationInfo::default(),
+            &mut tracker,
+            0,
+            &context,
+            &mut HashSet::new(),
+        )
+        .unwrap();
+        let failure = tracker
+            .logged_items()
+            .iter()
+            .find(|item| {
+                item.validation_status.as_deref()
+                    == Some(validation_status::ASSERTION_INGREDIENT_MALFORMED)
+            })
+            .expect("missing structural failure");
+        assert!(failure.ingredient_uri.is_none());
+        assert_eq!(failure.label.as_ref(), claim.assertion_uri(&valid.label()));
+    }
+}
+
+#[test]
 fn test_input_to_ingredient_is_validated() {
     let context = Context::new();
     let (format, m2_vec) = build_asset_with_input_to_ingredient(false);
