@@ -68,6 +68,12 @@ pub enum Error {
     /// outer file — its raw byte range can't be located this way.
     #[error("C2PA manifest object is stored in a compressed xref entry; its byte range can't be determined")]
     ManifestObjectNotByteAddressable,
+
+    #[error("Invalid PDF manifest stream: {0}")]
+    InvalidManifestStream(&'static str),
+
+    #[error("Unsupported PDF manifest stream filter or decoding parameters")]
+    UnsupportedManifestEncoding,
 }
 
 /// MIME subtype for a C2PA Manifest Store's embedded file specification, per
@@ -92,9 +98,8 @@ pub(crate) trait C2paPdf: Sized {
     /// Writes provided `bytes` as a PDF `Annotation`.
     fn write_manifest_as_annotation(&mut self, vec: Vec<u8>) -> Result<(), Error>;
 
-    /// Returns a reference to the C2PA manifest bytes.
-    #[allow(clippy::needless_lifetimes)] // required for automock::mockall
-    fn read_manifest_bytes<'a>(&'a self) -> Result<Option<Vec<&'a [u8]>>, Error>;
+    /// Returns decoded C2PA manifest bytes, independently of their on-disk encoding.
+    fn read_manifest_bytes(&self) -> Result<Option<Vec<Vec<u8>>>, Error>;
 
     fn remove_manifest_bytes(&mut self) -> Result<(), Error>;
 
@@ -232,36 +237,27 @@ impl C2paPdf for Pdf {
         Ok(())
     }
 
-    /// Gets a reference to the `C2PA` manifest bytes of the PDF.
+    /// Gets decoded `C2PA` manifest bytes of the PDF.
     ///
     /// This method will read the bytes of the manifest, whether the manifest was added to the
     /// PDF via an `Annotation` or an `EmbeddedFile`.
     ///
-    /// Returns an `Ok(None)` if no manifest is present. Returns a `Ok(Some(Vec<&[u8]>))` when a manifest
+    /// Returns an `Ok(None)` if no manifest is present. Returns a `Ok(Some(Vec<Vec<u8>>))` when a manifest
     /// is present.
     ///
     /// ### Note:
     ///
-    /// A `Vec<&[u8]>` is returned because it's possible for a PDF's manifests to be stored
+    /// A `Vec<Vec<u8>>` is returned because it's possible for a PDF's manifests to be stored
     /// separately, due to PDF's "Incremental Update" feature. See the spec for more details:
     /// [embedding_manifests_into_pdfs - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/1.3/specs/C2PA_Specification.html#_embedding_manifests_into_pdfs)
-    fn read_manifest_bytes(&self) -> Result<Option<Vec<&[u8]>>, Error> {
-        let Some(id) = self.c2pa_file_spec_object_id() else {
+    fn read_manifest_bytes(&self) -> Result<Option<Vec<Vec<u8>>>, Error> {
+        let Some(stream) = self.manifest_stream()? else {
             return Ok(None);
         };
-
-        let ef = &self
-            .document
-            .get_object(id)
-            .and_then(Object::as_dict)?
-            .get_deref(b"EF", &self.document)?
-            .as_dict()?; // EF dictionary
-
-        Ok(Some(vec![
-            &ef.get_deref(b"F", &self.document)? // F embedded file stream
-                .as_stream()?
-                .content,
-        ]))
+        Ok(Some(vec![Self::decode_manifest_stream(
+            stream,
+            MAX_PDF_DECOMPRESSED_SIZE,
+        )?]))
     }
 
     fn remove_manifest_bytes(&mut self) -> Result<(), Error> {
@@ -388,6 +384,22 @@ impl C2paPdf for Pdf {
 }
 
 impl Pdf {
+    /// The encoded stream is used for byte locations, never for JUMBF parsing.
+    pub(crate) fn manifest_stream(&self) -> Result<Option<&Stream>, Error> {
+        let Some(id) = self.c2pa_file_spec_object_id() else {
+            return Ok(None);
+        };
+        Ok(Some(
+            self.document
+                .get_object(id)?
+                .as_dict()?
+                .get_deref(b"EF", &self.document)?
+                .as_dict()?
+                .get_deref(b"F", &self.document)?
+                .as_stream()?,
+        ))
+    }
+
     #[allow(dead_code)]
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
         let document = Document::load_mem_with_options(
@@ -398,6 +410,80 @@ impl Pdf {
             },
         )?;
         Ok(Self { document })
+    }
+
+    fn decode_manifest_stream(stream: &Stream, limit: usize) -> Result<Vec<u8>, Error> {
+        // lopdf treats malformed /Filter values as unfiltered and tolerates corrupt
+        // Flate data. Validate both before using its bounded PDF filter decoder.
+        let filters = if stream.dict.has(b"Filter") {
+            stream.filters()?
+        } else {
+            Vec::new()
+        };
+        if filters.iter().any(|filter| *filter != b"FlateDecode") {
+            return Err(Error::UnsupportedManifestEncoding);
+        }
+        if let Ok(params) = stream.dict.get(b"DecodeParms") {
+            let trivial = |param: &Object| {
+                matches!(param, Object::Null)
+                    || matches!(param, Object::Dictionary(dict) if dict.is_empty())
+            };
+            let supported = match params {
+                Object::Array(params) => {
+                    params.len() == filters.len() && params.iter().all(trivial)
+                }
+                param => trivial(param),
+            };
+            if !supported {
+                return Err(Error::UnsupportedManifestEncoding);
+            }
+        }
+        if filters.is_empty() {
+            if stream.content.len() > limit {
+                return Err(
+                    lopdf::Error::from(lopdf::DecompressError::MemoryLimitExceeded { limit })
+                        .into(),
+                );
+            }
+            return Ok(stream.content.clone());
+        }
+
+        let mut content = stream.content.clone();
+        for _ in filters {
+            Self::validate_manifest_flate(&content, limit)?;
+            let layer = Stream::new(dictionary! { "Filter" => "FlateDecode" }, content);
+            content = layer.decompressed_content_with_limit(limit)?;
+        }
+        Ok(content)
+    }
+
+    fn validate_manifest_flate(content: &[u8], limit: usize) -> Result<(), Error> {
+        use flate2::{Decompress, FlushDecompress, Status};
+
+        let mut decoder = Decompress::new(true);
+        let mut buffer = [0; 8192];
+        loop {
+            let before = (decoder.total_in(), decoder.total_out());
+            let status = decoder
+                .decompress(
+                    &content[decoder.total_in() as usize..],
+                    &mut buffer,
+                    FlushDecompress::None,
+                )
+                .map_err(|_| Error::InvalidManifestStream("corrupt FlateDecode data"))?;
+            if decoder.total_out() > limit as u64 {
+                return Err(
+                    lopdf::Error::from(lopdf::DecompressError::MemoryLimitExceeded { limit })
+                        .into(),
+                );
+            }
+            if status == Status::StreamEnd {
+                return Ok(());
+            }
+            if before == (decoder.total_in(), decoder.total_out()) {
+                return Err(Error::InvalidManifestStream("truncated FlateDecode data"));
+            }
+        }
     }
 
     pub fn from_reader<R: Read>(source: R) -> Result<Self, Error> {
@@ -664,10 +750,188 @@ impl Pdf {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
+
+    pub(crate) fn pdf_with_manifest_stream(stream: Stream) -> Vec<u8> {
+        let mut pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
+        pdf.write_manifest_as_embedded_file(Vec::new()).unwrap();
+        let id = pdf.c2pa_manifest_stream_object_id().unwrap();
+        pdf.document
+            .objects
+            .insert(id, Object::Stream(stream.with_compression(false)));
+        let mut bytes = Vec::new();
+        pdf.save_to(&mut bytes).unwrap();
+        bytes
+    }
+
+    pub(crate) fn flate_manifest_stream(bytes: &[u8]) -> Stream {
+        use flate2::{write::ZlibEncoder, Compression};
+
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(bytes).unwrap();
+        Stream::new(
+            dictionary! { "Filter" => "FlateDecode" },
+            encoder.finish().unwrap(),
+        )
+    }
+
+    #[test]
+    fn test_read_decodes_manifest_filter_arrays() {
+        let manifest = b"\0\0\0\x08jumb";
+        let inner = flate_manifest_stream(manifest);
+        let mut outer = flate_manifest_stream(&inner.content);
+        outer.dict.set(
+            "Filter",
+            vec![Name(b"FlateDecode".to_vec()), Name(b"FlateDecode".to_vec())],
+        );
+        outer
+            .dict
+            .set("DecodeParms", vec![Object::Null, Object::Null]);
+        let bytes = pdf_with_manifest_stream(outer);
+        let pdf = Pdf::from_bytes(&bytes).unwrap();
+        assert_eq!(pdf.read_manifest_bytes().unwrap().unwrap(), vec![manifest]);
+    }
+
+    #[test]
+    fn test_read_rejects_invalid_manifest_encodings() {
+        let mut bad_checksum = flate_manifest_stream(b"some manifest bytes");
+        let last = bad_checksum.content.len() - 1;
+        bad_checksum.content[last] ^= 1;
+        let mut truncated = flate_manifest_stream(b"some manifest bytes");
+        truncated.content.truncate(truncated.content.len() - 3);
+        let streams = [
+            bad_checksum,
+            truncated,
+            Stream::new(dictionary! { "Filter" => "FlateDecode" }, vec![0xff; 20]),
+            Stream::new(dictionary! { "Filter" => "FlateDecode" }, Vec::new()),
+            Stream::new(dictionary! { "Filter" => "DCTDecode" }, vec![1, 2]),
+            Stream::new(dictionary! { "Filter" => 42 }, vec![1, 2]),
+            Stream::new(
+                dictionary! { "Filter" => vec![Object::Integer(42)] },
+                vec![1, 2],
+            ),
+            Stream::new(
+                dictionary! {
+                    "Filter" => "FlateDecode",
+                    "DecodeParms" => dictionary! { "Predictor" => 12 },
+                },
+                flate_manifest_stream(b"manifest").content,
+            ),
+        ];
+        for stream in streams {
+            let bytes = pdf_with_manifest_stream(stream);
+            let pdf = Pdf::from_bytes(&bytes).unwrap();
+            assert!(pdf.read_manifest_bytes().is_err());
+        }
+    }
+
+    #[test]
+    fn test_manifest_decoding_limit_boundaries() {
+        let manifest = vec![0; 1024];
+        for stream in [
+            Stream::new(dictionary! {}, manifest.clone()),
+            Stream::new(
+                dictionary! { "Filter" => Vec::<Object>::new() },
+                manifest.clone(),
+            ),
+            flate_manifest_stream(&manifest),
+        ] {
+            assert_eq!(
+                Pdf::decode_manifest_stream(&stream, 1024).unwrap(),
+                manifest
+            );
+            assert!(matches!(
+                Pdf::decode_manifest_stream(&stream, 1023),
+                Err(Error::UnableToReadPdf(lopdf::Error::Decompress(
+                    lopdf::DecompressError::MemoryLimitExceeded { limit: 1023 }
+                )))
+            ));
+        }
+        assert_eq!(
+            Pdf::decode_manifest_stream(&flate_manifest_stream(&[]), 0).unwrap(),
+            Vec::<u8>::new()
+        );
+    }
+
+    #[test]
+    fn test_manifest_decoding_bounds_intermediate_filter_layers() {
+        use flate2::{write::ZlibEncoder, Compression};
+
+        let manifest = vec![0; 1024];
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::none());
+        encoder.write_all(&manifest).unwrap();
+        let inner = encoder.finish().unwrap();
+        assert!(inner.len() > manifest.len());
+        let mut outer = flate_manifest_stream(&inner);
+        outer.dict.set(
+            "Filter",
+            vec![Name(b"FlateDecode".to_vec()), Name(b"FlateDecode".to_vec())],
+        );
+        assert!(matches!(
+            Pdf::decode_manifest_stream(&outer, 1024),
+            Err(Error::UnableToReadPdf(lopdf::Error::Decompress(
+                lopdf::DecompressError::MemoryLimitExceeded { limit: 1024 }
+            )))
+        ));
+        assert_eq!(
+            Pdf::decode_manifest_stream(&outer, inner.len()).unwrap(),
+            manifest
+        );
+    }
+
+    #[test]
+    fn test_read_bounds_explicit_manifest_decompression() {
+        use flate2::{write::ZlibEncoder, Compression};
+
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        let chunk = [0; 8192];
+        for _ in 0..MAX_PDF_DECOMPRESSED_SIZE / chunk.len() {
+            encoder.write_all(&chunk).unwrap();
+        }
+        encoder.write_all(&[0]).unwrap();
+        let bytes = pdf_with_manifest_stream(Stream::new(
+            dictionary! { "Filter" => "FlateDecode" },
+            encoder.finish().unwrap(),
+        ));
+        // Loading succeeds: LoadOptions alone does not bound later manifest decoding.
+        let pdf = Pdf::from_bytes(&bytes).unwrap();
+        assert!(matches!(
+            pdf.read_manifest_bytes(),
+            Err(Error::UnableToReadPdf(lopdf::Error::Decompress(
+                lopdf::DecompressError::MemoryLimitExceeded { .. }
+            )))
+        ));
+    }
+
+    #[test]
+    fn test_compressed_manifest_remains_readable_with_invalid_binding() {
+        use std::io::Cursor;
+
+        use crate::{Context, Reader, ValidationState};
+
+        let mut pdf =
+            Pdf::from_bytes(include_bytes!("../../tests/fixtures/express-signed.pdf")).unwrap();
+        let manifest = pdf.read_manifest_bytes().unwrap().unwrap().remove(0);
+        let id = pdf.c2pa_manifest_stream_object_id().unwrap();
+        pdf.document
+            .objects
+            .insert(id, Object::Stream(flate_manifest_stream(&manifest)));
+        let mut bytes = Vec::new();
+        pdf.save_to(&mut bytes).unwrap();
+        let reader = Reader::from_context(Context::new())
+            .with_stream("application/pdf", Cursor::new(bytes))
+            .unwrap();
+        assert!(reader.active_manifest().is_some());
+        assert_eq!(reader.validation_state(), ValidationState::Invalid);
+        assert!(reader
+            .validation_status()
+            .unwrap()
+            .iter()
+            .any(|status| status.code() == "assertion.dataHash.mismatch"));
+    }
 
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);

@@ -47,7 +47,7 @@ openssl = [
     "dep:openssl",
     "c2pa_raw_crypto/openssl",
 ]
-pdf = ["dep:lopdf"]
+pdf = ["dep:lopdf", "dep:flate2"]
 rust_native_crypto = ["c2pa_raw_crypto/rust_native_crypto"]
 # Native structured-text asset handler (C2PA A.9 ASCII-armour comment block). Experimental
 # feature: exempt from the crate's usual semantic-versioning stability guarantees and may change
@@ -115,6 +115,7 @@ const-hex = "1.19"
 coset = "0.4.2"
 der = { version = "0.8.1", features = ["alloc", "std", "oid"] }
 extfmt = "0.2.0"
+flate2 = { version = "1.1.10", optional = true }
 getrandom = { version = "0.3.4", default-features = false, features = ["std"] }
 glob = "0.3.3"
 ed25519-dalek = { version = "2.2.0", features = [

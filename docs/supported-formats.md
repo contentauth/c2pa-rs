@@ -33,6 +33,16 @@ The following table summarizes the supported media (asset) file formats. This in
 | `wav`           | `audio/wav`                                                                     |
 | `webp`          | `image/webp`                                                                    |
 
+## PDF manifest streams
+
+PDF support requires the `pdf` feature. Embedded document manifests can be
+unfiltered or use `FlateDecode`, including arrays of Flate filters. Decoding is
+limited to 64 MiB per filter layer (and for unfiltered manifests). Corrupt Flate
+data, malformed filter declarations, other filters, and nontrivial `DecodeParms`
+are reported as errors; only absent, null, or empty decoding parameters are supported.
+Byte locations and hash exclusions refer to the encoded bytes in the original PDF.
+Reading a compressed manifest does not repair or make a failed asset binding valid.
+
 ## Experimental feature: Text formats
 
 The Rust library supports the following text formats when the `unstable_structured_text` feature is enabled.
