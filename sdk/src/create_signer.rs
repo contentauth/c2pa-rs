@@ -178,7 +178,28 @@ mod tests {
 
         dest.rewind().unwrap();
 
-        let manifest_store = Reader::default().with_stream(format, &mut dest).unwrap();
+        // The identity signer must chain to a CAWG trust anchor; the test roots
+        // that the default (test) policy trusts for claim signers do not count.
+        let mut settings = crate::settings::Settings::default();
+        settings
+            .trust
+            .anchors
+            .get_or_insert_with(Vec::new)
+            .push(crate::settings::TrustAnchor {
+                trust_anchors: include_str!(
+                    "../tests/fixtures/crypto/raw_signature/test_cert_root_bundle.pem"
+                )
+                .to_string(),
+                trust_uri: Some("https://c2pa-rs/test_cawg_roots".to_string()),
+                trust_kind: crate::settings::TrustListKind::CAWG,
+                trust_config: None,
+                allowed_list: None,
+                trusted_ica_issuers: None,
+            });
+        let context = crate::Context::new().with_settings(settings).unwrap();
+        let manifest_store = Reader::from_context(context)
+            .with_stream(format, &mut dest)
+            .unwrap();
         assert_eq!(
             manifest_store.validation_state(),
             crate::ValidationState::Trusted

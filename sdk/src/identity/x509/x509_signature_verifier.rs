@@ -490,8 +490,10 @@ mod tests {
     /// expect the reader to report it as trusted through the end-entity list,
     /// which is only possible if the caller's settings were consulted (the
     /// default policy would find it in the test trust anchors instead).
-    #[c2pa_test_async]
-    async fn reader_uses_context_cawg_trust_settings() {
+    /// Signs `CA.jpg` with the test claim signer (PS256) plus a CAWG X.509
+    /// identity assertion signed by the Ed25519 test credentials. Returns the
+    /// signed asset, rewound, and the identity certificate chain (PEM).
+    fn sign_with_ed25519_cawg_identity() -> (Cursor<Vec<u8>>, Vec<u8>) {
         let format = "image/jpeg";
         let mut source = Cursor::new(TEST_IMAGE);
         let mut dest = Cursor::new(Vec::new());
@@ -526,6 +528,13 @@ mod tests {
             .unwrap();
 
         dest.rewind().unwrap();
+        (dest, cawg_cert_chain)
+    }
+
+    #[c2pa_test_async]
+    async fn reader_uses_context_cawg_trust_settings() {
+        let format = "image/jpeg";
+        let (mut dest, cawg_cert_chain) = sign_with_ed25519_cawg_identity();
 
         // Read back with the identity certificate on a CAWG allowed list.
         let mut settings = crate::settings::Settings::default();
@@ -567,6 +576,114 @@ mod tests {
         assert_eq!(
             trusted.explanation().unwrap_or(""),
             "signing certificate trusted, found in [] trust anchors"
+        );
+    }
+
+    /// Reads `asset` with a single trust anchor whose PEM is the CA of the
+    /// identity certificate chain, of the given kind, and returns the
+    /// `(code, explanation)` pairs reported for the `cawg.identity` assertion.
+    async fn cawg_identity_codes(
+        asset: &mut Cursor<Vec<u8>>,
+        cawg_cert_chain: &[u8],
+        kind: crate::settings::TrustListKind,
+    ) -> Vec<(String, String)> {
+        // The chain is end-entity first; its last certificate is the issuing CA.
+        let chain = String::from_utf8(cawg_cert_chain.to_vec()).unwrap();
+        let ca = &chain[chain.rfind("-----BEGIN CERTIFICATE-----").unwrap()..];
+
+        let mut settings = crate::settings::Settings::default();
+        settings.core.decode_identity_assertions = true;
+        settings
+            .trust
+            .anchors
+            .get_or_insert_with(Vec::new)
+            .push(crate::settings::TrustAnchor {
+                trust_anchors: ca.to_string(),
+                trust_uri: Some(TEST_IDENTITY_CA_URI.to_string()),
+                trust_kind: kind,
+                trust_config: None,
+                allowed_list: None,
+                trusted_ica_issuers: None,
+            });
+        let context = Context::new()
+            .with_settings(settings)
+            .unwrap()
+            .into_shared();
+        let reader = Reader::from_shared_context(&context)
+            .with_stream_async("image/jpeg", asset)
+            .await
+            .unwrap();
+
+        let results = reader.validation_results().unwrap();
+        let active = results.active_manifest().unwrap();
+        active
+            .success()
+            .iter()
+            .chain(active.failure())
+            .filter(|s| s.url().is_some_and(|u| u.ends_with("/cawg.identity")))
+            .map(|s| {
+                (
+                    s.code().to_string(),
+                    s.explanation().unwrap_or("").to_string(),
+                )
+            })
+            .collect()
+    }
+
+    const TEST_IDENTITY_CA_URI: &str = "https://c2pa-rs/test_identity_ca";
+
+    /// A CAWG trust anchor (a CA, not an end-entity allowed list) must make a
+    /// CAWG X.509 identity signer trusted. The claim-signer trust check only
+    /// accepts manifest anchors, and the identity check must not inherit that
+    /// restriction, or no CAWG anchor could ever be satisfied.
+    ///
+    /// In test builds `CertificateTrustPolicy::default()` also carries the test
+    /// root bundle as manifest anchors, which would trust this identity too, so
+    /// the trust must be credited to the CAWG anchor supplied here.
+    #[c2pa_test_async]
+    async fn cawg_trust_anchor_trusts_x509_identity() {
+        let (mut asset, cawg_cert_chain) = sign_with_ed25519_cawg_identity();
+        let codes = cawg_identity_codes(
+            &mut asset,
+            &cawg_cert_chain,
+            crate::settings::TrustListKind::CAWG,
+        )
+        .await;
+
+        let trusted = codes
+            .iter()
+            .find(|(code, _)| code == CAWG_X509_CREDENTIAL_TRUSTED)
+            .unwrap_or_else(|| panic!("identity not trusted: {codes:?}"));
+        assert!(trusted.1.contains(TEST_IDENTITY_CA_URI), "{codes:?}");
+        assert!(
+            !codes
+                .iter()
+                .any(|(c, _)| c == CAWG_X509_CREDENTIAL_UNTRUSTED),
+            "{codes:?}"
+        );
+    }
+
+    /// The same CA on the C2PA manifest trust list does not make a CAWG X.509
+    /// identity signer trusted: the two lists are separate.
+    #[c2pa_test_async]
+    async fn manifest_trust_anchor_does_not_trust_x509_identity() {
+        let (mut asset, cawg_cert_chain) = sign_with_ed25519_cawg_identity();
+        let codes = cawg_identity_codes(
+            &mut asset,
+            &cawg_cert_chain,
+            crate::settings::TrustListKind::Manifest,
+        )
+        .await;
+
+        assert!(
+            codes
+                .iter()
+                .any(|(c, _)| c == CAWG_X509_CREDENTIAL_UNTRUSTED),
+            "{codes:?}"
+        );
+        assert!(
+            !codes.iter().any(|(c, _)| c == CAWG_X509_CREDENTIAL_TRUSTED),
+            "{codes:?}"
         );
     }
 }
