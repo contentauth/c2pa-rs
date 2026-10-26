@@ -9,6 +9,14 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.91.7](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.91.6...c2pa-v0.91.7)
+_26 October 2026_
+
+### Fixed
+
+* Enforce compatible TLS dependency minimums (backport #2930) ([#2932](https://github.com/contentauth/c2pa-rs/pull/2932))
+* Require eMudhra distrust updates in TLS dependencies (backport #2928) ([#2929](https://github.com/contentauth/c2pa-rs/pull/2929))
+
 ## [0.91.6](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.91.5...c2pa-v0.91.6)
 _24 October 2026_
 
