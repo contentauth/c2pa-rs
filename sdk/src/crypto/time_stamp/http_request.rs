@@ -84,25 +84,32 @@ fn time_stamp_request_http(
     use std::io::Read;
 
     let mut body = Vec::new();
+
     timestamp_request
         .encode_ref()
         .write_encoded(bcder::Mode::Der, &mut body)?;
+
     let mut workflow = acquire_with_body(url, headers.unwrap_or_default(), &body)?;
+
     loop {
         match workflow.advance()? {
             Step::Complete => return Ok(workflow.finish()?.into_der()),
             Step::AwaitHost => {}
+
             _ => {
                 return Err(TimeStampError::InternalError(
                     "unexpected timestamp workflow step".into(),
                 ))
             }
         }
+
         let operation = workflow.outstanding_requests().first().ok_or_else(|| {
             TimeStampError::InternalError("timestamp workflow has no HTTP request".into())
         })?;
+
         let id = operation.id;
         let AcquisitionRequest::HttpPost(request) = &operation.kind;
+
         let response = if _sync {
             context.resolver().http_resolve(request.clone())?
         } else {
@@ -111,17 +118,22 @@ fn time_stamp_request_http(
                 .http_resolve_async(request.clone())
                 .await?
         };
+
         let (parts, body) = response.into_parts();
+
         let content_type = parts
             .headers
             .get(header::CONTENT_TYPE)
             .and_then(|value| value.to_str().ok());
+
         let mut bytes = Vec::new();
+
         // Do not read an HTTP error body: retain the existing error precedence.
         if parts.status == 200 && content_type == Some("application/timestamp-reply") {
             body.take(MAX_RESPONSE_BYTES as u64 + 1)
                 .read_to_end(&mut bytes)?;
         }
+
         workflow.fulfill(
             id,
             AcquisitionReply::Http(Ok(http::Response::from_parts(parts, bytes))),
@@ -149,10 +161,15 @@ mod tests {
     #[derive(Clone)]
     struct FixtureResolver {
         status: u16,
+
         content_type: Option<&'static str>,
+
         content_length: Option<&'static str>,
+
         body: Vec<u8>,
+
         fail_read: bool,
+
         fail_resolve: bool,
     }
 
@@ -189,22 +206,27 @@ mod tests {
         ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
             assert_eq!(request.method(), http::Method::POST);
             assert_eq!(request.uri(), "https://tsa.example/");
+
             assert_eq!(
                 request.headers()[header::CONTENT_TYPE],
                 "application/timestamp-query"
             );
+
             assert_eq!(request.headers()["x-test"], "characterization");
+
             assert!(Constructed::decode(
                 request.body().as_slice(),
                 bcder::Mode::Der,
                 TimeStampReq::take_from
             )
             .is_ok());
+
             if self.fail_resolve {
                 return Err(HttpResolverError::SyncHttpResolverNotImplemented);
             }
 
             let mut response = Response::builder().status(self.status);
+
             if let Some(value) = self.content_type {
                 response = response.header(header::CONTENT_TYPE, value);
             }
@@ -218,6 +240,7 @@ mod tests {
             } else {
                 Box::new(Cursor::new(self.body.clone()))
             };
+
             Ok(response.body(body).unwrap())
         }
     }
@@ -249,6 +272,7 @@ mod tests {
     #[c2pa_macros::c2pa_test_async]
     async fn status_content_type_decode_and_transport_failures_propagate() {
         let request = request();
+
         for (status, content_type) in [
             (503, Some("application/timestamp-reply")),
             (200, Some("application/octet-stream")),
@@ -258,6 +282,7 @@ mod tests {
             resolver.status = status;
             resolver.content_type = content_type;
             let context = resolver.context();
+
             for result in [
                 time_stamp_request_http("https://tsa.example/", headers(), &request, &context),
                 time_stamp_request_http_async(
@@ -279,6 +304,7 @@ mod tests {
             resolver.fail_read = read;
             resolver.fail_resolve = resolve;
             let context = resolver.context();
+
             for result in [
                 time_stamp_request_http("https://tsa.example/", headers(), &request, &context),
                 time_stamp_request_http_async(
@@ -299,6 +325,7 @@ mod tests {
         }
 
         let context = FixtureResolver::new(Vec::new()).context();
+
         assert!(matches!(
             default_rfc3161_request(
                 "https://tsa.example/",
@@ -309,6 +336,7 @@ mod tests {
             ),
             Err(TimeStampError::InternalError(_))
         ));
+
         assert!(matches!(
             default_rfc3161_request_async(
                 "https://tsa.example/",
@@ -328,6 +356,7 @@ mod tests {
         let mut resolver = FixtureResolver::new(vec![0; MAX_RESPONSE_BYTES + 1]);
         resolver.content_length = Some("0");
         let context = resolver.context();
+
         for result in [
             time_stamp_request_http("https://tsa.example/", headers(), &request, &context),
             time_stamp_request_http_async("https://tsa.example/", headers(), &request, &context)
@@ -344,10 +373,12 @@ mod tests {
         let mut resolver = FixtureResolver::new(response.clone());
         resolver.content_length = Some("18446744073709551615");
         let context = resolver.context();
+
         assert_eq!(
             time_stamp_request_http("https://tsa.example/", headers(), &request, &context).unwrap(),
             response
         );
+
         assert_eq!(
             time_stamp_request_http_async("https://tsa.example/", headers(), &request, &context,)
                 .await
@@ -360,11 +391,13 @@ mod tests {
     async fn non_granted_response_is_preserved_by_transport() {
         let response = response_der(2, None);
         let context = FixtureResolver::new(response.clone()).context();
+
         assert_eq!(
             time_stamp_request_http("https://tsa.example/", headers(), &request(), &context)
                 .unwrap(),
             response
         );
+
         assert_eq!(
             time_stamp_request_http_async("https://tsa.example/", headers(), &request(), &context)
                 .await
@@ -386,15 +419,18 @@ mod tests {
         let response = response_der(0, Some(&token));
         let mut request = request();
         request.nonce = None;
+
         for content_length in [None, Some("invalid"), Some("0"), Some("4096")] {
             let mut resolver = FixtureResolver::new(response.clone());
             resolver.content_length = content_length;
             let context = resolver.context();
             let mut body = Vec::new();
+
             request
                 .encode_ref()
                 .write_encoded(bcder::Mode::Der, &mut body)
                 .unwrap();
+
             assert_eq!(
                 default_rfc3161_request(
                     "https://tsa.example/",
@@ -406,6 +442,7 @@ mod tests {
                 .unwrap(),
                 response
             );
+
             assert_eq!(
                 default_rfc3161_request_async(
                     "https://tsa.example/",
@@ -419,12 +456,15 @@ mod tests {
                 response
             );
         }
+
         let context = FixtureResolver::new(response.clone()).context();
         let mut body = Vec::new();
+
         request
             .encode_ref()
             .write_encoded(bcder::Mode::Der, &mut body)
             .unwrap();
+
         for result in [
             default_rfc3161_request(
                 "https://tsa.example/",
@@ -444,12 +484,15 @@ mod tests {
         ] {
             assert!(matches!(result, Err(TimeStampError::InvalidData)));
         }
+
         request.nonce = Some(bcder::Integer::from(1));
         let context = FixtureResolver::new(response).context();
+
         assert!(matches!(
             time_stamp_request_http("https://tsa.example/", headers(), &request, &context),
             Err(TimeStampError::NonceMismatch)
         ));
+
         assert!(matches!(
             time_stamp_request_http_async("https://tsa.example/", headers(), &request, &context)
                 .await,

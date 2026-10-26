@@ -46,24 +46,31 @@ pub enum AcquisitionError {
     /// Invalid host/workflow interaction.
     #[error(transparent)]
     Protocol(#[from] ProtocolError),
+
     /// A request could not be built.
     #[error("invalid timestamp request: {0}")]
     InvalidRequest(String),
+
     /// The HTTP request URI or headers were invalid.
     #[error("invalid timestamp HTTP request ({0})")]
     HttpRequestError(#[from] http::Error),
+
     /// DER or CMS content could not be decoded.
     #[error("decode error ({0})")]
     DecodeError(String),
+
     /// HTTP status or Content-Type was not the expected timestamp reply.
     #[error("service responded with an HTTP error (status = {0}, content-type = {1:?})")]
     HttpErrorResponse(u16, Option<String>),
+
     /// The host could not complete the HTTP operation.
     #[error("unable to complete HTTP request ({0})")]
     Transport(String),
+
     /// The timestamp response did not reflect the request's nonce.
     #[error("nonce mismatch")]
     NonceMismatch,
+
     /// The response exceeded the bounded acquisition buffer.
     #[error("timestamp response exceeds {MAX_RESPONSE_BYTES} bytes")]
     ResponseTooLarge,
@@ -127,26 +134,32 @@ pub type AcquisitionWorkflow =
 pub fn request_body(message: &[u8], nonce: u64) -> Result<Vec<u8>, AcquisitionError> {
     let request = TimeStampReq {
         version: Integer::from(1_u8),
+
         message_imprint: asn1::rfc3161::MessageImprint {
             hash_algorithm: asn1::AlgorithmIdentifier {
                 algorithm: bcder::Oid(bytes::Bytes::from_static(&[
                     96, 134, 72, 1, 101, 3, 4, 2, 1,
                 ])),
             },
+
             hashed_message: OctetString::new(bytes::Bytes::copy_from_slice(&Sha256::digest(
                 message,
             ))),
         },
+
         req_policy: None,
         nonce: Some(Integer::from(nonce)),
         cert_req: Some(true),
         extensions: None,
     };
+
     let mut body = Vec::new();
+
     request
         .encode_ref()
         .write_encoded(bcder::Mode::Der, &mut body)
         .map_err(|err| AcquisitionError::InvalidRequest(err.to_string()))?;
+
     Ok(body)
 }
 
@@ -174,19 +187,26 @@ pub fn acquire_with_body(
 ) -> Result<AcquisitionWorkflow, AcquisitionError> {
     let timestamp_request = Constructed::decode(body, bcder::Mode::Der, TimeStampReq::take_from)
         .map_err(|err| AcquisitionError::InvalidRequest(err.to_string()))?;
+
     let mut body = Vec::new();
+
     timestamp_request
         .encode_ref()
         .write_encoded(bcder::Mode::Der, &mut body)
         .map_err(|err| AcquisitionError::InvalidRequest(err.to_string()))?;
+
     let mut request = HttpRequest::post(url);
+
     for (name, value) in headers {
         request = request.header(name, value);
     }
+
     let request = request
         .header(header::CONTENT_TYPE, "application/timestamp-query")
         .body(body)?;
+
     let nonce = timestamp_request.nonce;
+
     Ok(CoroutineWorkflow::new(move |host| async move {
         acquire_response(host, request, nonce).await
     }))
@@ -198,27 +218,34 @@ async fn acquire_response(
     nonce: Option<Integer>,
 ) -> Result<UnverifiedTimeStampResponse, AcquisitionError> {
     host.set_phase("Requesting timestamp");
+
     let response = host
         .ask(AcquisitionRequest::HttpPost(request), |_, reply| {
             let AcquisitionReply::Http(result) = reply;
             result.map_err(AcquisitionError::Transport)
         })
         .await?;
+
     host.set_phase("Checking timestamp response");
+
     let content_type = response
         .headers()
         .get(header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok());
+
     if response.status() != 200 || content_type != Some("application/timestamp-reply") {
         return Err(AcquisitionError::HttpErrorResponse(
             response.status().as_u16(),
             content_type.map(str::to_owned),
         ));
     }
+
     if response.body().len() > MAX_RESPONSE_BYTES {
         return Err(AcquisitionError::ResponseTooLarge);
     }
+
     let bytes = response.into_body();
+
     let response = response::TimeStampResponse(
         Constructed::decode(
             bytes.as_slice(),
@@ -227,6 +254,7 @@ async fn acquire_response(
         )
         .map_err(|err| AcquisitionError::DecodeError(err.to_string()))?,
     );
+
     // Non-granted responses and missing tokens remain for the caller's verifier
     // to reject, as in the existing SDK acquisition layer.
     if response.is_success() {
@@ -236,5 +264,6 @@ async fn acquire_response(
             }
         }
     }
+
     Ok(UnverifiedTimeStampResponse(bytes))
 }

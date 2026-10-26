@@ -38,6 +38,7 @@ use crate::asn1::rfc3281::AttributeCertificate;
 pub struct UtcTime {
     // Store the der type for proper time parsing (handles Y2K correctly)
     der_time: der::asn1::UtcTime,
+
     // Cache the DER encoding for bcder compatibility
     der_bytes: Vec<u8>,
 }
@@ -56,12 +57,15 @@ impl UtcTime {
     ) -> Result<Self, DecodeError<S::Error>> {
         // Get the raw bytes (without tag/length)
         let bytes = prim.take_all()?;
+
         // Reconstruct DER encoding using helper (tag 0x17 = UTC_TIME)
         let der_bytes = super::reconstruct_der_bytes(0x17, bytes.as_ref())
             .map_err(|_| DecodeError::content("failed to reconstruct DER bytes", prim.pos()))?;
+
         // Parse with der crate - it handles Y2K correctly and validates format
         let der_time = der::asn1::UtcTime::from_der(&der_bytes)
             .map_err(|_| DecodeError::content("invalid UtcTime", prim.pos()))?;
+
         Ok(UtcTime {
             der_time,
             der_bytes,
@@ -136,6 +140,7 @@ impl Certificate {
 #[derive(Clone, Debug)]
 pub struct Attribute {
     pub typ: Oid,
+
     pub values: Captured,
 }
 
@@ -212,6 +217,7 @@ pub const OID_SIGNING_TIME: ConstOid = Oid(&[42, 134, 72, 134, 247, 13, 1, 9, 5]
 #[derive(Clone, Debug)]
 pub struct ContentInfo {
     pub content_type: ContentType,
+
     pub content: Captured,
 }
 
@@ -271,10 +277,15 @@ impl Values for ContentInfo {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SignedData {
     pub version: CmsVersion,
+
     pub digest_algorithms: DigestAlgorithmIdentifiers,
+
     pub content_info: EncapsulatedContentInfo,
+
     pub certificates: Option<CertificateSet>,
+
     pub crls: Option<RevocationInfoChoices>,
+
     pub signer_infos: SignerInfos,
 }
 
@@ -284,11 +295,14 @@ impl SignedData {
             let version = CmsVersion::take_from(cons)?;
             let digest_algorithms = DigestAlgorithmIdentifiers::take_from(cons)?;
             let content_info = EncapsulatedContentInfo::take_from(cons)?;
+
             let certificates =
                 cons.take_opt_constructed_if(Tag::CTX_0, |cons| CertificateSet::take_from(cons))?;
+
             let crls = cons.take_opt_constructed_if(Tag::CTX_1, |cons| {
                 RevocationInfoChoices::take_from(cons)
             })?;
+
             let signer_infos = SignerInfos::take_from(cons)?;
 
             Ok(Self {
@@ -387,6 +401,7 @@ impl SignerInfos {
 #[derive(Clone, Eq, PartialEq)]
 pub struct EncapsulatedContentInfo {
     pub content_type: ContentType,
+
     pub content: Option<OctetString>,
 }
 
@@ -394,6 +409,7 @@ impl Debug for EncapsulatedContentInfo {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let mut s = f.debug_struct("EncapsulatedContentInfo");
         s.field("content_type", &format_args!("{}", self.content_type));
+
         s.field(
             "content",
             &format_args!(
@@ -403,6 +419,7 @@ impl Debug for EncapsulatedContentInfo {
                     .map(|x| hex::encode(x.clone().to_bytes().as_ref()))
             ),
         );
+
         s.finish()
     }
 }
@@ -411,6 +428,7 @@ impl EncapsulatedContentInfo {
     pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
         cons.take_sequence(|cons| {
             let content_type = ContentType::take_from(cons)?;
+
             let content =
                 cons.take_opt_constructed_if(Tag::CTX_0, |cons| OctetString::take_from(cons))?;
 
@@ -437,11 +455,17 @@ impl EncapsulatedContentInfo {
 #[derive(Clone, Eq, PartialEq)]
 pub struct SignerInfo {
     pub version: CmsVersion,
+
     pub sid: SignerIdentifier,
+
     pub digest_algorithm: DigestAlgorithmIdentifier,
+
     pub signed_attributes: Option<SignedAttributes>,
+
     pub signature_algorithm: SignatureAlgorithmIdentifier,
+
     pub signature: SignatureValue,
+
     pub unsigned_attributes: Option<UnsignedAttributes>,
 
     /// Raw bytes backing signed attributes data.
@@ -463,6 +487,7 @@ impl SignerInfo {
         let version = CmsVersion::take_from(cons)?;
         let sid = SignerIdentifier::take_from(cons)?;
         let digest_algorithm = DigestAlgorithmIdentifier::take_from(cons)?;
+
         let signed_attributes = cons.take_opt_constructed_if(Tag::CTX_0, |cons| {
             // RFC 5652 Section 5.3: SignedAttributes MUST be DER encoded, even if the
             // rest of the structure is BER encoded. So buffer all data so we can
@@ -493,6 +518,7 @@ impl SignerInfo {
 
         let signature_algorithm = SignatureAlgorithmIdentifier::take_from(cons)?;
         let signature = SignatureValue::take_from(cons)?;
+
         let unsigned_attributes = cons
             .take_opt_constructed_if(Tag::CTX_1, |cons| UnsignedAttributes::take_from_set(cons))?;
 
@@ -619,6 +645,7 @@ impl Debug for SignerInfo {
         s.field("digest_algorithm", &self.digest_algorithm);
         s.field("signed_attributes", &self.signed_attributes);
         s.field("signature_algorithm", &self.signature_algorithm);
+
         s.field(
             "signature",
             &format_args!(
@@ -626,7 +653,9 @@ impl Debug for SignerInfo {
                 hex::encode(self.signature.clone().into_bytes().as_ref())
             ),
         );
+
         s.field("unsigned_attributes", &self.unsigned_attributes);
+
         s.field(
             "signed_attributes_data",
             &format_args!(
@@ -634,6 +663,7 @@ impl Debug for SignerInfo {
                 self.signed_attributes_data.as_ref().map(hex::encode)
             ),
         );
+
         s.finish()
     }
 }
@@ -657,6 +687,7 @@ impl Values for SignerInfo {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SignerIdentifier {
     IssuerAndSerialNumber(IssuerAndSerialNumber),
+
     SubjectKeyIdentifier(SubjectKeyIdentifier),
 }
 
@@ -685,6 +716,7 @@ impl Values for SignerIdentifier {
     fn write_encoded<W: Write>(&self, mode: Mode, target: &mut W) -> Result<(), std::io::Error> {
         match self {
             Self::IssuerAndSerialNumber(v) => v.encode_ref().write_encoded(mode, target),
+
             Self::SubjectKeyIdentifier(v) => {
                 v.encode_ref_as(Tag::CTX_0).write_encoded(mode, target)
             }
@@ -855,9 +887,13 @@ pub type SignatureValue = OctetString;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EnvelopedData {
     pub version: CmsVersion,
+
     pub originator_info: Option<OriginatorInfo>,
+
     pub recipient_infos: RecipientInfos,
+
     pub encrypted_content_info: EncryptedContentInfo,
+
     pub unprotected_attributes: Option<UnprotectedAttributes>,
 }
 
@@ -871,6 +907,7 @@ pub struct EnvelopedData {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OriginatorInfo {
     pub certs: Option<CertificateSet>,
+
     pub crls: Option<RevocationInfoChoices>,
 }
 
@@ -887,7 +924,9 @@ pub type RecipientInfos = Vec<RecipientInfo>;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EncryptedContentInfo {
     pub content_type: ContentType,
+
     pub content_encryption_algorithms: ContentEncryptionAlgorithmIdentifier,
+
     pub encrypted_content: Option<EncryptedContent>,
 }
 
@@ -910,9 +949,13 @@ pub type UnprotectedAttributes = Vec<Attribute>;
 #[allow(clippy::enum_variant_names)]
 pub enum RecipientInfo {
     KeyTransRecipientInfo(KeyTransRecipientInfo),
+
     KeyAgreeRecipientInfo(KeyAgreeRecipientInfo),
+
     KekRecipientInfo(KekRecipientInfo),
+
     PasswordRecipientInfo(PasswordRecipientInfo),
+
     OtherRecipientInfo(OtherRecipientInfo),
 }
 
@@ -930,8 +973,11 @@ pub type EncryptedKey = OctetString;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KeyTransRecipientInfo {
     pub version: CmsVersion,
+
     pub rid: RecipientIdentifier,
+
     pub key_encryption_algorithm: KeyEncryptionAlgorithmIdentifier,
+
     pub encrypted_key: EncryptedKey,
 }
 
@@ -946,6 +992,7 @@ pub struct KeyTransRecipientInfo {
 #[allow(unused)]
 pub enum RecipientIdentifier {
     IssuerAndSerialNumber(IssuerAndSerialNumber),
+
     SubjectKeyIdentifier(SubjectKeyIdentifier),
 }
 
@@ -962,9 +1009,13 @@ pub enum RecipientIdentifier {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KeyAgreeRecipientInfo {
     pub version: CmsVersion,
+
     pub originator: OriginatorIdentifierOrKey,
+
     pub ukm: Option<UserKeyingMaterial>,
+
     pub key_encryption_algorithm: KeyEncryptionAlgorithmIdentifier,
+
     pub recipient_encrypted_keys: RecipientEncryptedKeys,
 }
 
@@ -980,7 +1031,9 @@ pub struct KeyAgreeRecipientInfo {
 #[allow(unused)]
 pub enum OriginatorIdentifierOrKey {
     IssuerAndSerialNumber(IssuerAndSerialNumber),
+
     SubjectKeyIdentifier(SubjectKeyIdentifier),
+
     OriginatorKey(OriginatorPublicKey),
 }
 
@@ -994,6 +1047,7 @@ pub enum OriginatorIdentifierOrKey {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OriginatorPublicKey {
     pub algorithm: AlgorithmIdentifier,
+
     pub public_key: BitString,
 }
 
@@ -1010,6 +1064,7 @@ type RecipientEncryptedKeys = Vec<RecipientEncryptedKey>;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RecipientEncryptedKey {
     pub rid: KeyAgreeRecipientInfo,
+
     pub encrypted_key: EncryptedKey,
 }
 
@@ -1024,6 +1079,7 @@ pub struct RecipientEncryptedKey {
 #[allow(unused)]
 pub enum KeyAgreeRecipientIdentifier {
     IssuerAndSerialNumber(IssuerAndSerialNumber),
+
     RKeyId(RecipientKeyIdentifier),
 }
 
@@ -1038,7 +1094,9 @@ pub enum KeyAgreeRecipientIdentifier {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RecipientKeyIdentifier {
     pub subject_key_identifier: SubjectKeyIdentifier,
+
     pub date: Option<GeneralizedTime>,
+
     pub other: Option<OtherKeyAttribute>,
 }
 
@@ -1056,8 +1114,11 @@ type SubjectKeyIdentifier = OctetString;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KekRecipientInfo {
     pub version: CmsVersion,
+
     pub kek_id: KekIdentifier,
+
     pub kek_encryption_algorithm: KeyEncryptionAlgorithmIdentifier,
+
     pub encrypted_key: EncryptedKey,
 }
 
@@ -1072,7 +1133,9 @@ pub struct KekRecipientInfo {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct KekIdentifier {
     pub key_identifier: OctetString,
+
     pub date: Option<GeneralizedTime>,
+
     pub other: Option<OtherKeyAttribute>,
 }
 
@@ -1089,14 +1152,18 @@ pub struct KekIdentifier {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PasswordRecipientInfo {
     pub version: CmsVersion,
+
     pub key_derivation_algorithm: Option<KeyDerivationAlgorithmIdentifier>,
+
     pub key_encryption_algorithm: KeyEncryptionAlgorithmIdentifier,
+
     pub encrypted_key: EncryptedKey,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OtherRecipientInfo {
     pub ori_type: Oid,
+
     // TODO Any
     pub ori_value: Option<()>,
 }
@@ -1113,8 +1180,11 @@ pub struct OtherRecipientInfo {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DigestedData {
     pub version: CmsVersion,
+
     pub digest_algorithm: DigestAlgorithmIdentifier,
+
     pub content_type: EncapsulatedContentInfo,
+
     pub digest: Digest,
 }
 
@@ -1131,7 +1201,9 @@ pub type Digest = OctetString;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EncryptedData {
     pub version: CmsVersion,
+
     pub encrypted_content_info: EncryptedContentInfo,
+
     pub unprotected_attributes: Option<UnprotectedAttributes>,
 }
 
@@ -1152,13 +1224,21 @@ pub struct EncryptedData {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AuthenticatedData {
     pub version: CmsVersion,
+
     pub originator_info: Option<OriginatorInfo>,
+
     pub recipient_infos: RecipientInfos,
+
     pub mac_algorithm: MessageAuthenticationCodeAlgorithm,
+
     pub digest_algorithm: Option<DigestAlgorithmIdentifier>,
+
     pub content_info: EncapsulatedContentInfo,
+
     pub authenticated_attributes: Option<AuthAttributes>,
+
     pub mac: MessageAuthenticationCode,
+
     pub unauthenticated_attributes: Option<UnauthAttributes>,
 }
 
@@ -1203,6 +1283,7 @@ impl RevocationInfoChoices {
 #[allow(unused)]
 pub enum RevocationInfoChoice {
     Crl(Box<CertificateList>),
+
     Other(OtherRevocationInfoFormat),
 }
 
@@ -1216,6 +1297,7 @@ pub enum RevocationInfoChoice {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OtherRevocationInfoFormat {
     pub other_rev_info_info_format: Oid,
+
     // TODO Any
     pub other_rev_info: Option<()>,
 }
@@ -1233,9 +1315,11 @@ pub struct OtherRevocationInfoFormat {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CertificateChoices {
     Certificate(Box<Certificate>),
+
     // ExtendedCertificate(ExtendedCertificate),
     // AttributeCertificateV1(AttributeCertificateV1),
     AttributeCertificateV2(Box<AttributeCertificateV2>),
+
     Other(Box<OtherCertificateFormat>),
 }
 
@@ -1246,6 +1330,7 @@ impl CertificateChoices {
         cons.take_opt_constructed_if(Tag::CTX_0, |cons| -> Result<(), DecodeError<S::Error>> {
             Err(cons.content_err("ExtendedCertificate parsing not implemented"))
         })?;
+
         cons.take_opt_constructed_if(Tag::CTX_1, |cons| -> Result<(), DecodeError<S::Error>> {
             Err(cons.content_err("AttributeCertificateV1 parsing not implemented"))
         })?;
@@ -1297,6 +1382,7 @@ impl Values for CertificateChoices {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OtherCertificateFormat {
     pub other_cert_format: Oid,
+
     // TODO Any
     pub other_cert: Option<()>,
 }
@@ -1346,6 +1432,7 @@ impl CertificateSet {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IssuerAndSerialNumber {
     pub issuer: Name,
+
     pub serial_number: CertificateSerialNumber,
 }
 
@@ -1378,10 +1465,15 @@ pub type CertificateSerialNumber = Integer;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CmsVersion {
     V0 = 0,
+
     V1 = 1,
+
     V2 = 2,
+
     V3 = 3,
+
     V4 = 4,
+
     V5 = 5,
 }
 
@@ -1428,6 +1520,7 @@ pub type UserKeyingMaterial = OctetString;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OtherKeyAttribute {
     pub key_attribute_id: Oid,
+
     // TODO Any
     pub key_attribute: Option<()>,
 }
@@ -1444,6 +1537,7 @@ pub type ContentType = Oid;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Time {
     UtcTime(UtcTime),
+
     GeneralizedTime(GeneralizedTime),
 }
 
@@ -1483,12 +1577,14 @@ mod tests {
 
     fn tlv(tag: u8, body: &[u8]) -> Vec<u8> {
         let mut result = vec![tag];
+
         match body.len() {
             n if n < 128 => result.push(n as u8),
             n if n < 256 => result.extend([0x81, n as u8]),
             n if n < 65_536 => result.extend([0x82, (n >> 8) as u8, n as u8]),
             n => result.extend([0x83, (n >> 16) as u8, (n >> 8) as u8, n as u8]),
         }
+
         result.extend(body);
         result
     }
@@ -1527,6 +1623,7 @@ mod tests {
         ] {
             let mut der = Vec::new();
             version.encode().write_encoded(Mode::Der, &mut der).unwrap();
+
             assert_eq!(
                 Constructed::decode(der.as_slice(), Mode::Der, CmsVersion::take_from).unwrap(),
                 version
@@ -1544,6 +1641,7 @@ mod tests {
     #[test]
     fn cached_signed_attributes_reconstruct_set_lengths_without_touching_content() {
         let algorithm = [0x30, 0x0b, 6, 9, 0x60, 0x86, 0x48, 1, 0x65, 3, 4, 2, 1];
+
         for size in [0, 90, 128, 256, 65_536] {
             let attribute = tlv(
                 0x30,
@@ -1570,12 +1668,15 @@ mod tests {
             let signer = Constructed::decode(der.as_slice(), Mode::Der, SignerInfo::take_opt_from)
                 .unwrap()
                 .unwrap();
+
             assert_eq!(signer.signed_attributes.as_ref().unwrap().len(), 1);
             assert_eq!(signer.unsigned_attributes.as_ref().unwrap().len(), 1);
+
             assert_eq!(
                 signer.signed_attributes_digested_content().unwrap(),
                 Some(tlv(0x31, &attribute))
             );
+
             assert_eq!(signer.signature.to_bytes().as_ref(), &[0]);
         }
     }
@@ -1586,6 +1687,7 @@ mod tests {
         // the RFC 3161 engine uses rasn_cms instead.
         for tag in [0xa0, 0xa1, 0xa2, 0xa3] {
             let der = tlv(tag, &[0x30, 0]);
+
             assert!(Constructed::decode(
                 der.as_slice(),
                 Mode::Der,

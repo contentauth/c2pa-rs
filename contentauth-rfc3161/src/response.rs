@@ -41,11 +41,14 @@ impl TimeStampResponse {
                     "Invalid OID for signed data".to_string(),
                 ));
             }
+
             let mut bytes = Vec::new();
+
             token
                 .content
                 .write_encoded(bcder::Mode::Der, &mut bytes)
                 .map_err(|_| AcquisitionError::DecodeError("time stamp invalid".to_string()))?;
+
             rasn::der::decode(&bytes)
                 .map(Some)
                 .map_err(|_| AcquisitionError::DecodeError("time stamp invalid".to_string()))
@@ -58,14 +61,17 @@ impl TimeStampResponse {
         let Some(signed_data) = self.signed_data()? else {
             return Ok(None);
         };
+
         if signed_data.encap_content_info.content_type
             != Oid::ISO_MEMBER_BODY_US_RSADSI_PKCS9_SMIME_CT_TSTINFO
         {
             return Ok(None);
         }
+
         let Some(content) = signed_data.encap_content_info.content else {
             return Ok(None);
         };
+
         Constructed::decode(content.as_ref(), bcder::Mode::Der, TstInfo::take_from)
             .map(Some)
             .map_err(|err| AcquisitionError::DecodeError(err.to_string()))

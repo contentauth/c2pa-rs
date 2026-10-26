@@ -36,10 +36,15 @@ pub const OID_CONTENT_TYPE_TST_INFO: ConstOid = Oid(&[42, 134, 72, 134, 247, 13,
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TimeStampReq {
     pub version: Integer,
+
     pub message_imprint: MessageImprint,
+
     pub req_policy: Option<TsaPolicyId>,
+
     pub nonce: Option<Integer>,
+
     pub cert_req: Option<bool>,
+
     pub extensions: Option<Extensions>,
 }
 
@@ -50,9 +55,12 @@ impl TimeStampReq {
             let version = Integer::take_from(cons)?;
             let message_imprint = MessageImprint::take_from(cons)?;
             let req_policy = TsaPolicyId::take_opt_from(cons)?;
+
             let nonce =
                 cons.take_opt_primitive_if(Tag::INTEGER, |prim| Integer::from_primitive(prim))?;
+
             let cert_req = cons.take_opt_bool()?;
+
             let extensions = cons
                 .take_opt_constructed_if(Tag::CTX_0, |cons| Extensions::from_constructed(cons))?;
 
@@ -93,6 +101,7 @@ impl TimeStampReq {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageImprint {
     pub hash_algorithm: AlgorithmIdentifier,
+
     pub hashed_message: OctetString,
 }
 
@@ -126,6 +135,7 @@ pub type TsaPolicyId = Oid;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TimeStampResp {
     pub status: PkiStatusInfo,
+
     pub time_stamp_token: Option<TimeStampToken>,
 }
 
@@ -154,7 +164,9 @@ impl TimeStampResp {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PkiStatusInfo {
     pub status: PkiStatus,
+
     pub status_string: Option<PkiFreeText>,
+
     pub fail_info: Option<PkiFailureInfo>,
 }
 
@@ -200,10 +212,15 @@ impl PkiStatusInfo {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PkiStatus {
     Granted = 0,
+
     GrantedWithMods = 1,
+
     Rejection = 2,
+
     Waiting = 3,
+
     RevocationWarning = 4,
+
     RevocationNotification = 5,
 }
 
@@ -263,12 +280,19 @@ impl From<PkiStatus> for u8 {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PkiFailureInfo {
     BadAlg = 0,
+
     BadRequest = 1,
+
     BadDataFormat = 5,
+
     TimeNotAvailable = 14,
+
     UnacceptedPolicy = 15,
+
     UnacceptedExtension = 16,
+
     AddInfoNotAvailable = 17,
+
     SystemFailure = 25,
 }
 
@@ -350,14 +374,23 @@ pub type TimeStampToken = ContentInfo;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TstInfo {
     pub version: Integer,
+
     pub policy: TsaPolicyId,
+
     pub message_imprint: MessageImprint,
+
     pub serial_number: Integer,
+
     pub gen_time: GeneralizedTime,
+
     pub accuracy: Option<Accuracy>,
+
     pub ordering: Option<bool>,
+
     pub nonce: Option<Integer>,
+
     pub tsa: Option<GeneralName>,
+
     pub extensions: Option<Extensions>,
 }
 
@@ -371,10 +404,13 @@ impl TstInfo {
             let gen_time = GeneralizedTime::take_from_allow_fractional_z(cons)?;
             let accuracy = Accuracy::take_opt_from(cons)?;
             let ordering = cons.take_opt_bool()?;
+
             let nonce =
                 cons.take_opt_primitive_if(Tag::INTEGER, |prim| Integer::from_primitive(prim))?;
+
             let tsa =
                 cons.take_opt_constructed_if(Tag::CTX_0, |cons| GeneralName::take_from(cons))?;
+
             let extensions = cons
                 .take_opt_constructed_if(Tag::CTX_1, |cons| Extensions::from_constructed(cons))?;
 
@@ -424,7 +460,9 @@ impl TstInfo {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Accuracy {
     pub seconds: Option<Integer>,
+
     pub millis: Option<Integer>,
+
     pub micros: Option<Integer>,
 }
 
@@ -484,6 +522,7 @@ mod tests {
             hash_algorithm: AlgorithmIdentifier {
                 algorithm: Oid::from_str("2.16.840.1.101.3.4.2.1").unwrap(),
             },
+
             hashed_message: OctetString::new(vec![0xab; 32].into()),
         }
     }
@@ -508,10 +547,12 @@ mod tests {
             };
 
             let der = encoded(request.encode_ref());
+
             let decoded =
                 Constructed::decode(der.as_slice(), Mode::Der, TimeStampReq::take_from).unwrap();
 
             assert_eq!(decoded, request);
+
             assert!(
                 Constructed::decode(&der[..der.len() - 1], Mode::Der, TimeStampReq::take_from)
                     .is_err()
@@ -537,6 +578,7 @@ mod tests {
 
         let tag_pos = der.len() - 2;
         der[tag_pos] = 0xa0;
+
         assert_eq!(
             Constructed::decode(der.as_slice(), Mode::Der, TimeStampReq::take_from).unwrap(),
             request
@@ -550,17 +592,20 @@ mod tests {
             policy: Oid::from_str("1.2.3.4").unwrap(),
             message_imprint: imprint(),
             serial_number: u64::MAX.into(),
+
             gen_time: Utc
                 .timestamp_opt(1_577_836_800, 0)
                 .single()
                 .unwrap()
                 .try_into()
                 .unwrap(),
+
             accuracy: Some(Accuracy {
                 seconds: Some(2.into()),
                 millis: None,
                 micros: None,
             }),
+
             ordering: Some(true),
             nonce: Some(42.into()),
             tsa: None,
@@ -574,14 +619,17 @@ mod tests {
         assert!(Constructed::decode(der.as_slice(), Mode::Der, TstInfo::take_from).is_err());
 
         let time = info.gen_time.as_der_bytes();
+
         let time_pos = der
             .windows(time.len())
             .position(|window| window == time)
             .unwrap();
+
         assert_eq!(&der[time_pos - 2..time_pos], &[4, time.len() as u8]);
 
         der.drain(time_pos - 2..time_pos);
         der[1] -= 2;
+
         assert_eq!(
             Constructed::decode(der.as_slice(), Mode::Der, TstInfo::take_from).unwrap(),
             info
@@ -605,6 +653,7 @@ mod tests {
         let accuracy = Constructed::decode(der.as_slice(), Mode::Der, Accuracy::take_opt_from)
             .unwrap()
             .unwrap();
+
         assert_eq!(accuracy.seconds, Some(2.into()));
         assert_eq!(accuracy.millis, Some(3.into()));
         assert_eq!(accuracy.micros, Some(4.into()));
@@ -635,8 +684,10 @@ mod tests {
             PkiStatus::RevocationNotification,
         ] {
             let der = encoded(encode::sequence(encode::sequence(status.encode())));
+
             let response =
                 Constructed::decode(der.as_slice(), Mode::Der, TimeStampResp::take_from).unwrap();
+
             assert_eq!(response.status.status, status);
             assert!(response.time_stamp_token.is_none());
         }
@@ -659,11 +710,14 @@ mod tests {
                 )),
                 failure.encode(),
             ))));
+
             let response =
                 Constructed::decode(der.as_slice(), Mode::Der, TimeStampResp::take_from).unwrap();
+
             assert_eq!(response.status.fail_info, Some(failure));
             assert!(response.status.status_string.is_some());
             let der = encoded(failure.encode());
+
             assert_eq!(
                 Constructed::decode(der.as_slice(), Mode::Der, PkiFailureInfo::take_from).unwrap(),
                 failure
@@ -673,6 +727,7 @@ mod tests {
         for bad in [-1i8, 6, 127] {
             let der = encoded(bad.encode());
             assert!(Constructed::decode(der.as_slice(), Mode::Der, PkiStatus::take_from).is_err());
+
             assert!(
                 Constructed::decode(der.as_slice(), Mode::Der, PkiFailureInfo::take_from).is_err()
             );
@@ -681,6 +736,7 @@ mod tests {
         // The existing failure parser accepts INTEGER rather than the
         // BIT STRING required by RFC 3161; standard badAlg is rejected.
         let standard = [0x30, 9, 0x30, 7, 2, 1, 2, 3, 2, 7, 0x80];
+
         assert!(
             Constructed::decode(standard.as_slice(), Mode::Der, TimeStampResp::take_from).is_err()
         );

@@ -69,6 +69,7 @@ pub(crate) fn signed_data_from_time_stamp_response(
     }
 
     let mut sd_bytes = Vec::new();
+
     token
         .content
         .write_encoded(bcder::Mode::Der, &mut sd_bytes)
@@ -77,6 +78,7 @@ pub(crate) fn signed_data_from_time_stamp_response(
     // decode ContentInfo DER as SignedData
     match rasn::der::decode(&sd_bytes) {
         Ok(signed_data) => Ok(Some(signed_data)),
+
         Err(_) => Err(TimeStampError::DecodeError(
             "time stamp invalid".to_string(),
         )),
@@ -115,15 +117,19 @@ pub(crate) mod tests {
         struct Status {
             status: rasn::types::Integer,
         }
+
         #[derive(AsnType, Encode)]
         struct Response {
             status: Status,
+
             token: Option<Any>,
         }
+
         rasn::der::encode(&Response {
             status: Status {
                 status: status.into(),
             },
+
             token: token.map(|token| Any::new(token.to_vec())),
         })
         .unwrap()
@@ -146,12 +152,14 @@ pub(crate) mod tests {
             assert!(response.tst_info().unwrap().is_none());
             let result = signed_data_from_time_stamp_response(&der);
             assert_eq!(result.is_ok(), status <= 1);
+
             if status <= 1 {
                 assert!(result.unwrap().is_none());
             }
         }
 
         assert!(signed_data_from_time_stamp_response(&[0x30, 1, 0]).is_err());
+
         // A non-SEQUENCE prefix is currently treated as an absent optional token.
         assert!(signed_data_from_time_stamp_response(b"bad DER")
             .unwrap()
@@ -170,17 +178,21 @@ pub(crate) mod tests {
         let token = build_token(OID_SHA256, MessageDigest::sha256(), b"data");
         let response = decode(&response_der(0, Some(&token)));
         let signed_data = response.signed_data().unwrap().unwrap();
+
         assert_eq!(
             signed_data_from_time_stamp_response(&token)
                 .unwrap()
                 .unwrap(),
             signed_data
         );
+
         let expected = response.tst_info().unwrap().unwrap();
+
         assert_eq!(
             tst_info_from_signed_data(&signed_data).unwrap().unwrap(),
             expected
         );
+
         let mut missing = signed_data.clone();
         missing.encap_content_info.content = None;
         assert!(tst_info_from_signed_data(&missing).unwrap().is_none());
@@ -190,6 +202,7 @@ pub(crate) mod tests {
         let mut malformed = signed_data;
         malformed.encap_content_info.content = Some(vec![0].into());
         assert!(tst_info_from_signed_data(&malformed).is_err());
+
         for content_type in [vec![1, 2, 3], vec![1, 2, 840, 113549, 1, 7, 2]] {
             let malformed = ContentInfo {
                 content_type: ObjectIdentifier::new(content_type).unwrap(),

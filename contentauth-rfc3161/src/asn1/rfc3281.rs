@@ -65,7 +65,9 @@ impl Eq for UniqueIdentifier {}
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AttributeCertificate {
     pub ac_info: AttributeCertificateInfo,
+
     pub signature_algorithm: AlgorithmIdentifier,
+
     pub signature_value: BitString,
 }
 
@@ -103,13 +105,21 @@ impl AttributeCertificate {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AttributeCertificateInfo {
     pub version: AttCertVersion,
+
     pub holder: Holder,
+
     pub issuer: AttCertIssuer,
+
     pub signature: AlgorithmIdentifier,
+
     pub serial_number: CertificateSerialNumber,
+
     pub attr_cert_validity_period: AttCertValidityPeriod,
+
     pub attributes: Vec<Attribute>,
+
     pub issuer_unique_ud: Option<UniqueIdentifier>,
+
     pub extensions: Option<Extensions>,
 }
 
@@ -141,7 +151,9 @@ pub enum AttCertVersion {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Holder {
     pub base_certificate_id: Option<IssuerSerial>,
+
     pub entity_name: Option<GeneralNames>,
+
     pub object_digest_info: Option<ObjectDigestInfo>,
 }
 
@@ -149,7 +161,9 @@ pub struct Holder {
 #[allow(unused)]
 pub enum DigestedObjectType {
     PublicKey = 0,
+
     PublicKeyCert = 1,
+
     OtherObjectTypes = 2,
 }
 
@@ -170,8 +184,11 @@ pub enum DigestedObjectType {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ObjectDigestInfo {
     pub digested_object_type: DigestedObjectType,
+
     pub other_object_type_id: Oid,
+
     pub digest_algorithm: AlgorithmIdentifier,
+
     pub object_digest: BitString,
 }
 
@@ -188,6 +205,7 @@ pub struct ObjectDigestInfo {
 #[allow(unused)]
 pub enum AttCertIssuer {
     V1Form(GeneralNames),
+
     V2Form(Box<V2Form>),
 }
 
@@ -206,7 +224,9 @@ pub enum AttCertIssuer {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct V2Form {
     pub issuer_name: Option<GeneralNames>,
+
     pub base_certificate_id: Option<IssuerSerial>,
+
     pub object_digest_info: Option<ObjectDigestInfo>,
 }
 
@@ -220,7 +240,9 @@ pub struct V2Form {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IssuerSerial {
     pub issuer: GeneralNames,
+
     pub serial: CertificateSerialNumber,
+
     pub issuer_uid: Option<UniqueIdentifier>,
 }
 
@@ -234,6 +256,7 @@ pub struct IssuerSerial {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AttCertValidityPeriod {
     pub not_before_time: GeneralizedTime,
+
     pub not_after_time: GeneralizedTime,
 }
 
@@ -249,6 +272,7 @@ pub struct AttCertValidityPeriod {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Attribute {
     pub typ: AttributeType,
+
     pub values: Vec<AttributeValue>,
 }
 
