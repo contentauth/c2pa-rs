@@ -652,13 +652,19 @@ mod tests {
             }
 
             assert_eq!(
-                check_certificate_trust(&policy, &[], &rasn::der::encode(&cert).unwrap(), None),
+                check_certificate_trust(
+                    &policy,
+                    None,
+                    &[],
+                    &rasn::der::encode(&cert).unwrap(),
+                    None
+                ),
                 Err(CertificateTrustError::InvalidEku)
             );
         }
 
         assert_eq!(
-            check_certificate_trust(&policy, &[], &[0], None),
+            check_certificate_trust(&policy, None, &[], &[0], None),
             Err(CertificateTrustError::InvalidCertificate)
         );
     }
