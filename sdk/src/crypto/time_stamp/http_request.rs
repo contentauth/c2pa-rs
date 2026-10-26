@@ -35,7 +35,7 @@ use crate::{
 /// Request an [RFC 3161] time stamp for a given piece of data from a timestamp
 /// provider.
 ///
-/// If successful, responds with the raw bytestream of the response.
+/// On success, return the raw bytes of the response.
 ///
 /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
 #[async_generic]
@@ -161,15 +161,10 @@ mod tests {
     #[derive(Clone)]
     struct FixtureResolver {
         status: u16,
-
         content_type: Option<&'static str>,
-
         content_length: Option<&'static str>,
-
         body: Vec<u8>,
-
         fail_read: bool,
-
         fail_resolve: bool,
     }
 

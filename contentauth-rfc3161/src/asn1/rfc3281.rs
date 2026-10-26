@@ -4,7 +4,7 @@
 
 //! ASN.1 types defined by [RFC 3281].
 //!
-//! [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3281
+//! [RFC 3281]: https://datatracker.ietf.org/doc/html/rfc3281
 
 use bcder::{
     decode::{Constructed, DecodeError, Source},
@@ -13,11 +13,11 @@ use bcder::{
 
 use super::{AlgorithmIdentifier, Extensions, GeneralizedTime};
 
-// Define opaque types for RFC 3281 that are not currently parsed
+// Define opaque types for RFC 3281 that are not currently parsed.
 // Since AttributeCertificateInfo::take_from is not implemented, these are just
-// opaque wrappers around Captured for type safety
+// opaque wrappers around Captured for type safety.
 
-/// General names (opaque - not parsed)
+/// General names (opaque; not parsed).
 #[derive(Clone, Debug)]
 pub(crate) struct GeneralNames(Captured);
 
@@ -29,7 +29,7 @@ impl PartialEq for GeneralNames {
 
 impl Eq for GeneralNames {}
 
-/// Certificate serial number (opaque - not parsed)
+/// Certificate serial number (opaque; not parsed).
 #[derive(Clone, Debug)]
 pub(crate) struct CertificateSerialNumber(Captured);
 
@@ -41,7 +41,7 @@ impl PartialEq for CertificateSerialNumber {
 
 impl Eq for CertificateSerialNumber {}
 
-/// Unique identifier (opaque - not parsed)
+/// Unique identifier (opaque; not parsed).
 #[derive(Clone, Debug)]
 pub(crate) struct UniqueIdentifier(Captured);
 
@@ -95,7 +95,7 @@ impl AttributeCertificate {
     }
 }
 
-/// Attribute certificate info.
+/// Attribute certificate information.
 ///
 /// ```ASN.1
 /// AttributeCertificateInfo ::= SEQUENCE {
@@ -157,7 +157,7 @@ pub(crate) enum AttCertVersion {
     V2 = 1,
 }
 
-/// Holder
+/// Certificate holder.
 ///
 /// ```ASN.1
 /// Holder ::= SEQUENCE {
@@ -169,6 +169,7 @@ pub(crate) enum AttCertVersion {
 ///   objectDigestInfo    [2] ObjectDigestInfo OPTIONAL
 ///     -- used to directly authenticate the holder,
 ///     -- for example, an executable
+/// }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Holder {
@@ -196,7 +197,7 @@ pub(crate) enum DigestedObjectType {
     OtherObjectTypes = 2,
 }
 
-/// Object digest info.
+/// Object digest information.
 ///
 /// ```ASN.1
 /// ObjectDigestInfo ::= SEQUENCE {
@@ -209,6 +210,7 @@ pub(crate) enum DigestedObjectType {
 ///   otherObjectTypeID   OBJECT IDENTIFIER OPTIONAL,
 ///   digestAlgorithm     AlgorithmIdentifier,
 ///   objectDigest        BIT STRING
+/// }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ObjectDigestInfo {
@@ -225,7 +227,7 @@ pub(crate) struct ObjectDigestInfo {
     pub(crate) object_digest: BitString,
 }
 
-/// Att cert issuer
+/// Attribute certificate issuer.
 ///
 /// ```ASN.1
 /// AttCertIssuer ::= CHOICE {
@@ -244,7 +246,7 @@ pub(crate) enum AttCertIssuer {
     V2Form(Box<V2Form>),
 }
 
-/// V2 Form
+/// Version 2 issuer naming form.
 ///
 /// ```ASN.1
 /// V2Form ::= SEQUENCE {
@@ -270,11 +272,13 @@ pub(crate) struct V2Form {
 
 /// Issuer serial.
 ///
+/// ```ASN.1
 /// IssuerSerial  ::=  SEQUENCE {
 ///   issuer         GeneralNames,
 ///   serial         CertificateSerialNumber,
 ///   issuerUID      UniqueIdentifier OPTIONAL
 /// }
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct IssuerSerial {
     /// Names of the certificate issuer.
@@ -287,13 +291,14 @@ pub(crate) struct IssuerSerial {
     pub(crate) issuer_uid: Option<UniqueIdentifier>,
 }
 
-/// Att cert validity period
+/// Attribute certificate validity period.
 ///
 /// ```ASN.1
 /// AttCertValidityPeriod  ::= SEQUENCE {
 ///   notBeforeTime  GeneralizedTime,
 ///   notAfterTime   GeneralizedTime
 /// }
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AttCertValidityPeriod {
     /// Earliest instant at which the attribute certificate is valid.
@@ -303,7 +308,7 @@ pub(crate) struct AttCertValidityPeriod {
     pub(crate) not_after_time: GeneralizedTime,
 }
 
-/// Attribute
+/// Attribute.
 ///
 /// ```ASN.1
 /// Attribute ::= SEQUENCE {
@@ -324,6 +329,6 @@ pub(crate) struct Attribute {
 /// Object identifier selecting an attribute's syntax.
 pub(crate) type AttributeType = Oid;
 
-// TODO Any.
-/// Placeholder for an attribute value whose ASN.1 ANY syntax is not implemented.
+// TODO: Support ASN.1 ANY values.
+/// Placeholder for an attribute value whose ASN.1 `ANY` syntax is not implemented.
 pub(crate) type AttributeValue = Option<()>;

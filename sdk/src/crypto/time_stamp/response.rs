@@ -27,7 +27,6 @@ use crate::crypto::{
 #[derive(AsnType, Clone, Debug, Decode, Encode, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct ContentInfo {
     pub(crate) content_type: rasn::types::ObjectIdentifier,
-
     #[rasn(tag(explicit(0)))]
     pub(crate) content: rasn::types::Any,
 }
@@ -75,7 +74,7 @@ pub(crate) fn signed_data_from_time_stamp_response(
         .write_encoded(bcder::Mode::Der, &mut sd_bytes)
         .map_err(|_err| TimeStampError::DecodeError("time stamp invalid".to_string()))?;
 
-    // decode ContentInfo DER as SignedData
+    // Decode the ContentInfo DER as SignedData.
     match rasn::der::decode(&sd_bytes) {
         Ok(signed_data) => Ok(Some(signed_data)),
 
@@ -121,7 +120,6 @@ pub(crate) mod tests {
         #[derive(AsnType, Encode)]
         struct Response {
             status: Status,
-
             token: Option<Any>,
         }
 

@@ -18,21 +18,18 @@ use crate::{
 #[derive(AsnType, Encode)]
 struct Status {
     status: Integer,
-
     text: Option<Vec<Utf8String>>,
 }
 
 #[derive(AsnType, Encode)]
 struct TimestampResponse {
     status: Status,
-
     token: Option<Any>,
 }
 
 #[derive(AsnType, Encode)]
 struct ContentInfo {
     content_type: ObjectIdentifier,
-
     #[rasn(tag(explicit(0)))]
     content: Any,
 }
@@ -40,33 +37,24 @@ struct ContentInfo {
 #[derive(AsnType, Encode)]
 struct SignedData {
     version: Integer,
-
     digests: SetOf<Any>,
-
     content: rasn_cms::EncapsulatedContentInfo,
-
     signers: SetOf<Any>,
 }
 
 #[derive(AsnType, Encode)]
 struct MessageImprint {
     algorithm: rasn_cms::AlgorithmIdentifier,
-
     digest: OctetString,
 }
 
 #[derive(AsnType, Encode)]
 struct TimestampInfo {
     version: Integer,
-
     policy: ObjectIdentifier,
-
     imprint: MessageImprint,
-
     serial: Integer,
-
     generated: GeneralizedTime,
-
     nonce: Option<Integer>,
 }
 

@@ -9,17 +9,11 @@
 use bcder::{
     decode::{Constructed, DecodeError, Primitive, Source},
     encode::{self, PrimitiveContent, Values},
-    ConstOid, Integer, OctetString, Oid, Tag,
+    Integer, OctetString, Oid, Tag,
 };
 
 use super::{AlgorithmIdentifier, Extensions, GeneralName, GeneralizedTime};
 use crate::asn1::{rfc4210::PkiFreeText, rfc5652::ContentInfo};
-
-/// Content-Type for Time-Stamp Token Info.
-///
-/// 1.2.840.113549.1.9.16.1.4
-pub(crate) const OID_CONTENT_TYPE_TST_INFO: ConstOid =
-    Oid(&[42, 134, 72, 134, 247, 13, 1, 9, 16, 1, 4]);
 
 /// A time-stamp request.
 ///
@@ -58,8 +52,7 @@ pub struct TimeStampReq {
 }
 
 impl TimeStampReq {
-    /// Decode a timestamp request from its ASN.1 SEQUENCE.
-    #[allow(dead_code)] // not used on all platforms
+    /// Decode a timestamp request from its ASN.1 `SEQUENCE`.
     pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
         cons.take_sequence(|cons| {
             let version = Integer::take_from(cons)?;
@@ -119,7 +112,7 @@ pub struct MessageImprint {
 }
 
 impl MessageImprint {
-    /// Decode a message imprint from its ASN.1 SEQUENCE.
+    /// Decode a message imprint from its ASN.1 `SEQUENCE`.
     pub(crate) fn take_from<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Self, DecodeError<S::Error>> {
@@ -143,7 +136,7 @@ impl MessageImprint {
 /// Object identifier of a timestamp authority's policy.
 pub(crate) type TsaPolicyId = Oid;
 
-/// Time stamp response.
+/// Timestamp response.
 ///
 /// ```ASN.1
 /// TimeStampResp ::= SEQUENCE  {
@@ -160,7 +153,7 @@ pub struct TimeStampResp {
 }
 
 impl TimeStampResp {
-    /// Decode a timestamp response from its ASN.1 SEQUENCE.
+    /// Decode a timestamp response from its ASN.1 `SEQUENCE`.
     pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
         cons.take_sequence(|cons| {
             let status = PkiStatusInfo::take_from(cons)?;
@@ -174,7 +167,7 @@ impl TimeStampResp {
     }
 }
 
-/// PKI status info
+/// PKI status information.
 ///
 /// ```ASN.1
 /// PKIStatusInfo ::= SEQUENCE {
@@ -195,7 +188,7 @@ pub struct PkiStatusInfo {
 }
 
 impl PkiStatusInfo {
-    /// Decode the status and optional details from their ASN.1 SEQUENCE.
+    /// Decode the status and optional details from their ASN.1 `SEQUENCE`.
     pub(crate) fn take_from<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Self, DecodeError<S::Error>> {
@@ -258,7 +251,7 @@ pub enum PkiStatus {
 }
 
 impl PkiStatus {
-    /// Decode a supported status value from its ASN.1 INTEGER.
+    /// Decode a supported status value from its ASN.1 `INTEGER`.
     pub(crate) fn take_from<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Self, DecodeError<S::Error>> {
@@ -273,7 +266,8 @@ impl PkiStatus {
         }
     }
 
-    /// Encode the status as its ASN.1 INTEGER value.
+    /// Encode the status as its ASN.1 `INTEGER` value.
+    #[cfg(test)]
     pub(crate) fn encode(self) -> impl Values {
         u8::from(self).encode()
     }
@@ -292,7 +286,7 @@ impl From<PkiStatus> for u8 {
     }
 }
 
-/// PKI failure info.
+/// PKI failure information.
 ///
 /// ```ASN.1
 /// PKIFailureInfo ::= BIT STRING {
@@ -342,21 +336,22 @@ pub(crate) enum PkiFailureInfo {
 }
 
 impl PkiFailureInfo {
-    /// Decode an optional failure value using this codec's INTEGER representation.
+    /// Decode an optional failure value using this codec's `INTEGER` representation.
     pub(crate) fn take_opt_from<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Option<Self>, DecodeError<S::Error>> {
         cons.take_opt_primitive_if(Tag::INTEGER, Self::from_primitive)
     }
 
-    /// Decode a required failure value using this codec's INTEGER representation.
+    /// Decode a required failure value using this codec's `INTEGER` representation.
+    #[cfg(test)]
     pub(crate) fn take_from<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Self, DecodeError<S::Error>> {
         cons.take_primitive_if(Tag::INTEGER, Self::from_primitive)
     }
 
-    /// Map a primitive INTEGER to a supported failure value.
+    /// Map a primitive `INTEGER` to a supported failure value.
     pub(crate) fn from_primitive<S: Source>(
         prim: &mut Primitive<S>,
     ) -> Result<Self, DecodeError<S::Error>> {
@@ -373,7 +368,8 @@ impl PkiFailureInfo {
         }
     }
 
-    /// Encode the failure value using this codec's INTEGER representation.
+    /// Encode the failure value using this codec's `INTEGER` representation.
+    #[cfg(test)]
     pub(crate) fn encode(self) -> impl Values {
         u8::from(self).encode()
     }
@@ -394,14 +390,14 @@ impl From<PkiFailureInfo> for u8 {
     }
 }
 
-/// Time stamp token.
+/// Timestamp token.
 ///
 /// ```ASN.1
 /// TimeStampToken ::= ContentInfo
 /// ```
 pub type TimeStampToken = ContentInfo;
 
-/// Time stamp token info.
+/// Timestamp token information.
 ///
 /// ```ASN.1
 /// TSTInfo ::= SEQUENCE  {
@@ -456,7 +452,7 @@ pub struct TstInfo {
 }
 
 impl TstInfo {
-    /// Decode timestamp token information from its ASN.1 SEQUENCE.
+    /// Decode timestamp token information from its ASN.1 `SEQUENCE`.
     pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
         cons.take_sequence(|cons| {
             let version = Integer::take_from(cons)?;
@@ -491,6 +487,7 @@ impl TstInfo {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn encode_ref(&self) -> impl Values + '_ {
         encode::sequence((
             (&self.version).encode(),
@@ -511,7 +508,7 @@ impl TstInfo {
     }
 }
 
-/// Accuracy
+/// Timestamp accuracy.
 ///
 /// ```ASN.1
 /// Accuracy ::= SEQUENCE {
@@ -532,14 +529,14 @@ pub struct Accuracy {
 }
 
 impl Accuracy {
-    /// Decode an optional accuracy SEQUENCE.
+    /// Decode an optional accuracy `SEQUENCE`.
     pub(crate) fn take_opt_from<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Option<Self>, DecodeError<S::Error>> {
         cons.take_opt_sequence(|cons| Self::from_sequence(cons))
     }
 
-    /// Decode accuracy components after entering their SEQUENCE.
+    /// Decode accuracy components after entering their `SEQUENCE`.
     pub(crate) fn from_sequence<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Self, DecodeError<S::Error>> {
@@ -559,6 +556,7 @@ impl Accuracy {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn encode_ref(&self) -> impl Values + '_ {
         encode::sequence((
             self.seconds.as_ref().map(|seconds| seconds.encode()),
@@ -682,7 +680,7 @@ mod tests {
         let mut der = encoded(info.encode_ref());
 
         // GeneralizedTime::encode_ref currently wraps the complete time DER
-        // in an OCTET STRING, so TstInfo encoding does not roundtrip as-is.
+        // in an OCTET STRING, so TstInfo encoding does not round trip as-is.
         assert!(Constructed::decode(der.as_slice(), Mode::Der, TstInfo::take_from).is_err());
 
         let time = info.gen_time.as_der_bytes();
@@ -725,7 +723,7 @@ mod tests {
         assert_eq!(accuracy.millis, Some(3.into()));
         assert_eq!(accuracy.micros, Some(4.into()));
 
-        // Characterize the existing non-roundtripping encoder; RFC 3161
+        // Characterize the existing non-round-tripping encoder; RFC 3161
         // requires context tags on millis/micros, not universal INTEGER tags.
         assert_eq!(
             encoded(accuracy.encode_ref()),

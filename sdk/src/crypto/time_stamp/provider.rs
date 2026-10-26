@@ -16,20 +16,20 @@ use rand::RngExt;
 
 use crate::{context::Context, crypto::time_stamp::TimeStampError, maybe_send_sync::MaybeSync};
 
-/// A `TimeStampProvider` implementation can contact a [RFC 3161] time stamp
+/// A `TimeStampProvider` implementation can contact an [RFC 3161] time stamp
 /// service and generate a corresponding time stamp for a specific piece of
 /// data.
 ///
 /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
 pub trait TimeStampProvider {
-    /// Return the URL for time stamp service.
+    /// Return the URL for the time stamp service.
     fn time_stamp_service_url(&self) -> Option<String> {
         None
     }
 
     /// Additional request headers to pass to the time stamp service.
     ///
-    /// IMPORTANT: You should not include the "Content-type" header here.
+    /// Do not include the `Content-Type` header here.
     /// That is provided by default.
     fn time_stamp_request_headers(&self) -> Option<Vec<(String, String)>> {
         None
@@ -41,14 +41,14 @@ pub trait TimeStampProvider {
         default_rfc3161_message(message)
     }
 
-    /// Request a [RFC 3161] time stamp over an arbitrary data packet.
+    /// Request an [RFC 3161] time stamp over an arbitrary data packet.
     ///
     /// The default implementation will send the request to the URL
     /// provided by [`Self::time_stamp_service_url()`], if any.
     ///
     /// [RFC 3161]: https://datatracker.ietf.org/doc/html/rfc3161
     ///
-    /// todo: THIS CODE IS NOT COMPATIBLE WITH C2PA 2.x sigTst2
+    /// TODO: This code is not compatible with C2PA 2.x `sigTst2`.
     fn send_time_stamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>, TimeStampError>> {
         if let Some(url) = self.time_stamp_service_url() {
             if let Ok(body) = self.time_stamp_request_body(message) {
@@ -65,7 +65,7 @@ pub trait TimeStampProvider {
     }
 }
 
-/// An `AsyncTimeStampProvider` implementation can contact a [RFC 3161] time
+/// An `AsyncTimeStampProvider` implementation can contact an [RFC 3161] time
 /// stamp service and generate a corresponding time stamp for a specific piece
 /// of data.
 ///
@@ -76,14 +76,14 @@ pub trait TimeStampProvider {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 pub trait AsyncTimeStampProvider: MaybeSync {
-    /// Return the URL for time stamp service.
+    /// Return the URL for the time stamp service.
     fn time_stamp_service_url(&self) -> Option<String> {
         None
     }
 
     /// Additional request headers to pass to the time stamp service.
     ///
-    /// IMPORTANT: You should not include the "Content-type" header here.
+    /// Do not include the `Content-Type` header here.
     /// That is provided by default.
     fn time_stamp_request_headers(&self) -> Option<Vec<(String, String)>> {
         None
@@ -95,7 +95,7 @@ pub trait AsyncTimeStampProvider: MaybeSync {
         default_rfc3161_message(message)
     }
 
-    /// Request a [RFC 3161] time stamp over an arbitrary data packet.
+    /// Request an [RFC 3161] time stamp over an arbitrary data packet.
     ///
     /// The default implementation will send the request to the URL
     /// provided by [`Self::time_stamp_service_url()`], if any.

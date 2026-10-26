@@ -38,7 +38,7 @@ pub enum TimeStampError {
     #[error("time stamp contains an unsupported algorithm")]
     UnsupportedAlgorithm,
 
-    /// The time stamp authority is not on trust list
+    /// The time stamp authority is not on the trust list.
     #[error("time stamp authority is untrusted")]
     Untrusted,
 
@@ -71,7 +71,7 @@ pub enum TimeStampError {
     #[error("internal error ({0})")]
     InternalError(String),
 
-    /// An error occurred while resolving the http request.
+    /// An error occurred while resolving the HTTP request.
     #[error(transparent)]
     HttpResolverError(#[from] HttpResolverError),
 

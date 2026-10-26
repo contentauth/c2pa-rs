@@ -39,7 +39,7 @@ impl TimeStampResponse {
         )
     }
 
-    /// Decode the token's CMS SignedData, if a token is present.
+    /// Decode the token's CMS `SignedData`, if a token is present.
     ///
     /// This neither checks the response status nor verifies the signature.
     pub fn signed_data(&self) -> Result<Option<SignedData>, AcquisitionError> {

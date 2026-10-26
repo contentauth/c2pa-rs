@@ -25,7 +25,7 @@ use crate::{asn1, asn1::rfc3161::TimeStampReq, response};
 /// Maximum accepted timestamp response size, in bytes.
 ///
 /// Hosts must bound reads to this limit plus one byte to detect overflow,
-/// regardless of the peer's Content-Length.
+/// regardless of the peer's `Content-Length`.
 pub const MAX_RESPONSE_BYTES: usize = 1_000_000;
 
 /// Failures while preparing or acquiring a timestamp; never a trust verdict.
@@ -47,7 +47,7 @@ pub enum AcquisitionError {
     #[error("decode error ({0})")]
     DecodeError(String),
 
-    /// HTTP status or Content-Type was not the expected timestamp reply.
+    /// The HTTP status or `Content-Type` did not identify a timestamp reply.
     #[error("service responded with an HTTP error (status = {0}, content-type = {1:?})")]
     HttpErrorResponse(u16, Option<String>),
 
@@ -76,7 +76,7 @@ pub enum AcquisitionRequest {
 /// The host's HTTP result, including explicit transport failure.
 #[derive(Clone, Debug)]
 pub enum AcquisitionReply {
-    /// HTTP completed; non-200 status is still a response, not a transport error.
+    /// HTTP completed; a non-200 status is still a response, not a transport error.
     Http(Result<HttpResponse<Vec<u8>>, String>),
 }
 

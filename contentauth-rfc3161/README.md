@@ -73,11 +73,15 @@ them through the workflow vocabulary.
 
 ## Codec bridge and eventual extraction
 
-The `asn1` module is the SDK's existing codec dependency closure, moved with
-its tests rather than copied or rewritten. Its supporting CMS, attribute
-certificate and PKI types are implementation dependencies, not additional
-workflow features. The `asn1` and `response` modules are private. The default
-public API exposes no ASN.1 types.
+The `asn1` module contains the SDK's existing codecs, moved with their tests
+rather than copied or redesigned. Unused CMS data shapes have been removed.
+Legacy signed-data codecs in `asn1/rfc5652/signed_data.rs` and their attribute
+certificate dependencies are compiled only for `sdk-compat` or codec tests.
+Encoders and time-parsing helpers used only by tests are test-only, rather
+than hidden behind dead-code allowances. Supporting CMS, attribute certificate,
+and PKI types are implementation dependencies, not additional workflow features.
+The `asn1` and `response` modules are private. The default public API exposes
+no ASN.1 types.
 
 The SDK explicitly enables `sdk-compat` to access the small, documented
 `sdk_compat` bridge: timestamp structures and the CMS entry points required by

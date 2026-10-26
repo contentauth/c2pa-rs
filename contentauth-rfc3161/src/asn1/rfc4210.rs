@@ -20,14 +20,14 @@ use bcder::{
 pub(crate) struct PkiFreeText(Vec<Utf8String>);
 
 impl PkiFreeText {
-    /// Decode an optional SEQUENCE of UTF-8 status messages.
+    /// Decode an optional `SEQUENCE` of UTF-8 status messages.
     pub(crate) fn take_opt_from<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Option<Self>, DecodeError<S::Error>> {
         cons.take_opt_sequence(|cons| Self::from_sequence(cons))
     }
 
-    /// Decode status messages after entering their SEQUENCE.
+    /// Decode status messages after entering their `SEQUENCE`.
     pub(crate) fn from_sequence<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Self, DecodeError<S::Error>> {
