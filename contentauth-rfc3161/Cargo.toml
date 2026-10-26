@@ -8,6 +8,10 @@ description = "Experimental host-driven RFC 3161 timestamp acquisition"
 readme = "README.md"
 publish = false
 
+[features]
+# Temporary bridge for the SDK's existing verification and COSE code.
+sdk-compat = []
+
 [dependencies]
 bcder = "0.7.6"
 bytes = "1.11.1"

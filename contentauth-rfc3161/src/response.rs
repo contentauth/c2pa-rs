@@ -16,7 +16,11 @@ use crate::{
     AcquisitionError,
 };
 
-pub struct TimeStampResponse(pub TimeStampResp);
+/// Decoded response envelope; no cryptographic verification is performed.
+pub struct TimeStampResponse(
+    /// Parsed status and optional timestamp token.
+    pub TimeStampResp,
+);
 
 impl std::ops::Deref for TimeStampResponse {
     type Target = TimeStampResp;
@@ -27,6 +31,7 @@ impl std::ops::Deref for TimeStampResponse {
 }
 
 impl TimeStampResponse {
+    /// Whether the TSA reports granted or granted-with-modifications status.
     pub fn is_success(&self) -> bool {
         matches!(
             self.0.status.status,
@@ -34,6 +39,9 @@ impl TimeStampResponse {
         )
     }
 
+    /// Decode the token's CMS SignedData, if a token is present.
+    ///
+    /// This neither checks the response status nor verifies the signature.
     pub fn signed_data(&self) -> Result<Option<SignedData>, AcquisitionError> {
         if let Some(token) = &self.0.time_stamp_token {
             if token.content_type != OID_ID_SIGNED_DATA {
@@ -57,6 +65,9 @@ impl TimeStampResponse {
         }
     }
 
+    /// Decode embedded timestamp information, if present and of the expected type.
+    ///
+    /// The decoded values remain unverified.
     pub fn tst_info(&self) -> Result<Option<TstInfo>, AcquisitionError> {
         let Some(signed_data) = self.signed_data()? else {
             return Ok(None);

@@ -18,7 +18,8 @@ use crate::asn1::{rfc4210::PkiFreeText, rfc5652::ContentInfo};
 /// Content-Type for Time-Stamp Token Info.
 ///
 /// 1.2.840.113549.1.9.16.1.4
-pub const OID_CONTENT_TYPE_TST_INFO: ConstOid = Oid(&[42, 134, 72, 134, 247, 13, 1, 9, 16, 1, 4]);
+pub(crate) const OID_CONTENT_TYPE_TST_INFO: ConstOid =
+    Oid(&[42, 134, 72, 134, 247, 13, 1, 9, 16, 1, 4]);
 
 /// A time-stamp request.
 ///
@@ -35,20 +36,29 @@ pub const OID_CONTENT_TYPE_TST_INFO: ConstOid = Oid(&[42, 134, 72, 134, 247, 13,
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TimeStampReq {
+    /// Protocol version; RFC 3161 defines version 1.
     pub version: Integer,
 
+    /// Hash algorithm and digest of the data to be time-stamped.
     pub message_imprint: MessageImprint,
 
+    /// Optional timestamp policy OID requested from the TSA.
     pub req_policy: Option<TsaPolicyId>,
 
+    /// Optional client nonce that the TSA must echo in the timestamp token.
     pub nonce: Option<Integer>,
 
+    /// Whether to include the TSA signing certificate in the response.
+    ///
+    /// An omitted value defaults to `false`.
     pub cert_req: Option<bool>,
 
+    /// Optional extensions carrying additional information for the TSA.
     pub extensions: Option<Extensions>,
 }
 
 impl TimeStampReq {
+    /// Decode a timestamp request from its ASN.1 SEQUENCE.
     #[allow(dead_code)] // not used on all platforms
     pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
         cons.take_sequence(|cons| {
@@ -75,6 +85,7 @@ impl TimeStampReq {
         })
     }
 
+    /// Borrow an encoder for the timestamp request.
     pub fn encode_ref(&self) -> impl Values + '_ {
         encode::sequence((
             (&self.version).encode(),
@@ -100,13 +111,18 @@ impl TimeStampReq {
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MessageImprint {
+    /// Algorithm used to hash the data to be time-stamped.
     pub hash_algorithm: AlgorithmIdentifier,
 
+    /// Digest of the data, computed using `hash_algorithm`.
     pub hashed_message: OctetString,
 }
 
 impl MessageImprint {
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
+    /// Decode a message imprint from its ASN.1 SEQUENCE.
+    pub(crate) fn take_from<S: Source>(
+        cons: &mut Constructed<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
         cons.take_sequence(|cons| {
             let hash_algorithm = AlgorithmIdentifier::take_from(cons)?;
             let hashed_message = OctetString::take_from(cons)?;
@@ -118,12 +134,14 @@ impl MessageImprint {
         })
     }
 
-    pub fn encode_ref(&self) -> impl Values + '_ {
+    /// Borrow an encoder for the message imprint.
+    pub(crate) fn encode_ref(&self) -> impl Values + '_ {
         encode::sequence((&self.hash_algorithm, self.hashed_message.encode_ref()))
     }
 }
 
-pub type TsaPolicyId = Oid;
+/// Object identifier of a timestamp authority's policy.
+pub(crate) type TsaPolicyId = Oid;
 
 /// Time stamp response.
 ///
@@ -134,12 +152,15 @@ pub type TsaPolicyId = Oid;
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TimeStampResp {
+    /// TSA processing status and optional failure details.
     pub status: PkiStatusInfo,
 
+    /// CMS timestamp token, when supplied by the TSA.
     pub time_stamp_token: Option<TimeStampToken>,
 }
 
 impl TimeStampResp {
+    /// Decode a timestamp response from its ASN.1 SEQUENCE.
     pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
         cons.take_sequence(|cons| {
             let status = PkiStatusInfo::take_from(cons)?;
@@ -163,15 +184,21 @@ impl TimeStampResp {
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PkiStatusInfo {
+    /// Outcome of the timestamp request.
     pub status: PkiStatus,
 
-    pub status_string: Option<PkiFreeText>,
+    /// Optional human-readable status messages from the TSA.
+    pub(crate) status_string: Option<PkiFreeText>,
 
-    pub fail_info: Option<PkiFailureInfo>,
+    /// Optional reason the TSA could not fulfill the request.
+    pub(crate) fail_info: Option<PkiFailureInfo>,
 }
 
 impl PkiStatusInfo {
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
+    /// Decode the status and optional details from their ASN.1 SEQUENCE.
+    pub(crate) fn take_from<S: Source>(
+        cons: &mut Constructed<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
         cons.take_sequence(|cons| {
             let status = PkiStatus::take_from(cons)?;
             let status_string = PkiFreeText::take_opt_from(cons)?;
@@ -211,21 +238,30 @@ impl PkiStatusInfo {
 /// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PkiStatus {
+    /// The requested timestamp was granted.
     Granted = 0,
 
+    /// A timestamp was granted with modifications to the request.
     GrantedWithMods = 1,
 
+    /// The request was rejected.
     Rejection = 2,
 
+    /// The request is still pending.
     Waiting = 3,
 
+    /// Revocation is imminent.
     RevocationWarning = 4,
 
+    /// Revocation has occurred.
     RevocationNotification = 5,
 }
 
 impl PkiStatus {
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
+    /// Decode a supported status value from its ASN.1 INTEGER.
+    pub(crate) fn take_from<S: Source>(
+        cons: &mut Constructed<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
         match cons.take_primitive_if(Tag::INTEGER, Integer::i8_from_primitive)? {
             0 => Ok(Self::Granted),
             1 => Ok(Self::GrantedWithMods),
@@ -237,7 +273,8 @@ impl PkiStatus {
         }
     }
 
-    pub fn encode(self) -> impl Values {
+    /// Encode the status as its ASN.1 INTEGER value.
+    pub(crate) fn encode(self) -> impl Values {
         u8::from(self).encode()
     }
 }
@@ -278,36 +315,49 @@ impl From<PkiStatus> for u8 {
 ///       -- the request cannot be handled due to system failure  }
 /// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PkiFailureInfo {
+pub(crate) enum PkiFailureInfo {
+    /// The requested algorithm is unsupported or unrecognized.
     BadAlg = 0,
 
+    /// The request is not permitted or supported.
     BadRequest = 1,
 
+    /// The submitted data has the wrong format.
     BadDataFormat = 5,
 
+    /// The TSA's time source is unavailable.
     TimeNotAvailable = 14,
 
+    /// The requested timestamp policy is unsupported.
     UnacceptedPolicy = 15,
 
+    /// The requested extension is unsupported.
     UnacceptedExtension = 16,
 
+    /// Required additional information is unavailable.
     AddInfoNotAvailable = 17,
 
+    /// An internal TSA failure prevented processing.
     SystemFailure = 25,
 }
 
 impl PkiFailureInfo {
-    pub fn take_opt_from<S: Source>(
+    /// Decode an optional failure value using this codec's INTEGER representation.
+    pub(crate) fn take_opt_from<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Option<Self>, DecodeError<S::Error>> {
         cons.take_opt_primitive_if(Tag::INTEGER, Self::from_primitive)
     }
 
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
+    /// Decode a required failure value using this codec's INTEGER representation.
+    pub(crate) fn take_from<S: Source>(
+        cons: &mut Constructed<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
         cons.take_primitive_if(Tag::INTEGER, Self::from_primitive)
     }
 
-    pub fn from_primitive<S: Source>(
+    /// Map a primitive INTEGER to a supported failure value.
+    pub(crate) fn from_primitive<S: Source>(
         prim: &mut Primitive<S>,
     ) -> Result<Self, DecodeError<S::Error>> {
         match Integer::i8_from_primitive(prim)? {
@@ -323,7 +373,8 @@ impl PkiFailureInfo {
         }
     }
 
-    pub fn encode(self) -> impl Values {
+    /// Encode the failure value using this codec's INTEGER representation.
+    pub(crate) fn encode(self) -> impl Values {
         u8::from(self).encode()
     }
 }
@@ -373,28 +424,39 @@ pub type TimeStampToken = ContentInfo;
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TstInfo {
+    /// Timestamp token information version; RFC 3161 defines version 1.
     pub version: Integer,
 
+    /// TSA policy under which the token was issued.
     pub policy: TsaPolicyId,
 
+    /// Hash algorithm and digest of the time-stamped data.
     pub message_imprint: MessageImprint,
 
+    /// Token serial number assigned by the TSA.
     pub serial_number: Integer,
 
+    /// Time at which the TSA generated the token.
     pub gen_time: GeneralizedTime,
 
+    /// Optional bounds on the precision of `gen_time`.
     pub accuracy: Option<Accuracy>,
 
+    /// Whether `gen_time` orders tokens from this TSA regardless of accuracy.
     pub ordering: Option<bool>,
 
+    /// Client nonce echoed from the request, if one was supplied.
     pub nonce: Option<Integer>,
 
+    /// Optional name identifying the TSA.
     pub tsa: Option<GeneralName>,
 
+    /// Optional extensions included by the TSA.
     pub extensions: Option<Extensions>,
 }
 
 impl TstInfo {
+    /// Decode timestamp token information from its ASN.1 SEQUENCE.
     pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
         cons.take_sequence(|cons| {
             let version = Integer::take_from(cons)?;
@@ -429,7 +491,7 @@ impl TstInfo {
         })
     }
 
-    pub fn encode_ref(&self) -> impl Values + '_ {
+    pub(crate) fn encode_ref(&self) -> impl Values + '_ {
         encode::sequence((
             (&self.version).encode(),
             self.policy.encode_ref(),
@@ -459,21 +521,26 @@ impl TstInfo {
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Accuracy {
+    /// Whole seconds of uncertainty around the generation time.
     pub seconds: Option<Integer>,
 
+    /// Additional milliseconds of uncertainty, in the range 1 through 999.
     pub millis: Option<Integer>,
 
+    /// Additional microseconds of uncertainty, in the range 1 through 999.
     pub micros: Option<Integer>,
 }
 
 impl Accuracy {
-    pub fn take_opt_from<S: Source>(
+    /// Decode an optional accuracy SEQUENCE.
+    pub(crate) fn take_opt_from<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Option<Self>, DecodeError<S::Error>> {
         cons.take_opt_sequence(|cons| Self::from_sequence(cons))
     }
 
-    pub fn from_sequence<S: Source>(
+    /// Decode accuracy components after entering their SEQUENCE.
+    pub(crate) fn from_sequence<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Self, DecodeError<S::Error>> {
         let seconds =
@@ -492,7 +559,7 @@ impl Accuracy {
         })
     }
 
-    pub fn encode_ref(&self) -> impl Values + '_ {
+    pub(crate) fn encode_ref(&self) -> impl Values + '_ {
         encode::sequence((
             self.seconds.as_ref().map(|seconds| seconds.encode()),
             self.millis.as_ref().map(|millis| millis.encode()),

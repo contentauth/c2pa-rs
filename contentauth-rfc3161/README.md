@@ -6,6 +6,10 @@ The API is provisional and may change without compatibility guarantees.
 Keep this crate in the workspace while evaluating the experiment; a separate
 repository and publication are decisions for later.
 
+Acquisition lives in `src/acquisition.rs`, leaving `lib.rs` as the crate's
+module and re-export entry point. The crate keeps the RFC 3161 name so that a
+future verification module can share the same private codecs.
+
 ## Boundary
 
 The crate builds SHA-256 timestamp requests, yields HTTP POST operations to its
@@ -72,9 +76,17 @@ them through the workflow vocabulary.
 The `asn1` module is the SDK's existing codec dependency closure, moved with
 its tests rather than copied or rewritten. Its supporting CMS, attribute
 certificate and PKI types are implementation dependencies, not additional
-workflow features. The SDK aliases this module at its existing internal path.
-The hidden `response` module similarly bridges the existing response parser.
-These hidden modules are temporary integration surfaces, not stable APIs.
+workflow features. The `asn1` and `response` modules are private. The default
+public API exposes no ASN.1 types.
+
+The SDK explicitly enables `sdk-compat` to access the small, documented
+`sdk_compat` bridge: timestamp structures and the CMS entry points required by
+its existing verifier and legacy codec regression tests. Other codec types,
+fields and methods have crate-only visibility wherever possible. This bridge
+is provisional, not a stable API, and is not enabled by default. The SDK aliases
+the bridge at its existing internal ASN.1 path. Missing-documentation checks
+apply to the compatibility exports as well as the acquisition API.
+
 Public certificate fixtures used by codec tests are kept here so the crate's
 tests do not depend on the SDK's filesystem layout.
 
@@ -97,10 +109,12 @@ Run from the workspace root:
 
 ```sh
 cargo test -p contentauth-rfc3161
+cargo test -p contentauth-rfc3161 --features sdk-compat
 cargo test -p c2pa --lib crypto::time_stamp
 cargo test -p c2pa --lib crypto::cose::sigtst
 cargo test -p c2pa --no-default-features --features rust_native_crypto --lib crypto::time_stamp
 cargo clippy -p contentauth-rfc3161 --all-targets -- -D warnings
+cargo clippy -p contentauth-rfc3161 --all-targets --features sdk-compat -- -D warnings
 cargo +nightly-2026-07-12 fmt --all -- --check
 ```
 

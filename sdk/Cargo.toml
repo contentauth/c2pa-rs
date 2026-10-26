@@ -112,7 +112,7 @@ chrono = { version = "0.4.44", default-features = false, features = ["serde"] }
 c2pa_cbor = "0.78.0"
 c2pa_raw_crypto = { version = "0.2.0", default-features = false }
 const-hex = "1.19"
-contentauth-rfc3161 = { path = "../contentauth-rfc3161" }
+contentauth-rfc3161 = { path = "../contentauth-rfc3161", features = ["sdk-compat"] }
 contentauth-sans-io-core = "0.2.0"
 coset = "0.4.2"
 der = { version = "0.8.1", features = ["alloc", "std", "oid"] }

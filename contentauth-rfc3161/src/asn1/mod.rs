@@ -2,8 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-#![allow(missing_docs)]
-
 //! Holds Rust struct definitions for various ASN.1 primitives.
 
 // This code is copied from a subset of version 0.22.0 of the
@@ -93,7 +91,10 @@ pub struct AlgorithmIdentifier {
 }
 
 impl AlgorithmIdentifier {
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
+    /// Decode an algorithm identifier, retaining its OID and discarding parameters.
+    pub(crate) fn take_from<S: Source>(
+        cons: &mut Constructed<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
         cons.take_sequence(|cons| {
             let algorithm = Oid::take_from(cons)?;
             // Skip any remaining content (parameters) - we only need the algorithm OID
@@ -103,7 +104,8 @@ impl AlgorithmIdentifier {
         })
     }
 
-    pub fn take_opt_from<S: Source>(
+    /// Decode an optional algorithm identifier, retaining only its OID.
+    pub(crate) fn take_opt_from<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Option<Self>, DecodeError<S::Error>> {
         cons.take_opt_sequence(|cons| {
@@ -146,13 +148,14 @@ impl Extensions {
     /// In RFC 3161, Extensions always appears with IMPLICIT tagging:
     /// - TimeStampReq: `extensions [0] IMPLICIT Extensions OPTIONAL`
     /// - TstInfo: `extensions [1] IMPLICIT Extensions OPTIONAL`
-    pub fn from_constructed<S: Source>(
+    pub(crate) fn from_constructed<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Self, DecodeError<S::Error>> {
         cons.capture_all().map(Extensions)
     }
 
-    pub fn encode_ref_as(&self, tag: Tag) -> Captured {
+    /// Encode the captured extensions with the supplied implicit tag.
+    pub(crate) fn encode_ref_as(&self, tag: Tag) -> Captured {
         Captured::from_values(Mode::Der, self.0.clone().encode_as(tag))
     }
 }
@@ -174,7 +177,10 @@ impl PartialEq for GeneralName {
 impl Eq for GeneralName {}
 
 impl GeneralName {
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
+    /// Capture a general name's encoded content without interpreting its choice.
+    pub(crate) fn take_from<S: Source>(
+        cons: &mut Constructed<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
         cons.capture_all().map(GeneralName)
     }
 }
@@ -223,7 +229,7 @@ impl std::fmt::Display for GeneralizedTime {
 
 impl GeneralizedTime {
     /// Create from der::asn1::GeneralizedTime
-    pub fn from_der_time(der_time: der::asn1::GeneralizedTime) -> Result<Self, der::Error> {
+    pub(crate) fn from_der_time(der_time: der::asn1::GeneralizedTime) -> Result<Self, der::Error> {
         let mut der_bytes = Vec::new();
         der_time.encode_to_vec(&mut der_bytes)?;
 
@@ -257,7 +263,7 @@ impl GeneralizedTime {
     ///   - "20231115183045.643Z" (643 milliseconds)
     ///
     /// Real-world example from test data: "20251121125823.643Z"
-    pub fn from_der_bytes_rfc3161(bytes: &[u8]) -> Result<Self, der::Error> {
+    pub(crate) fn from_der_bytes_rfc3161(bytes: &[u8]) -> Result<Self, der::Error> {
         // First, try the strict RFC 5280 parser (for compatibility with times without fractions)
         if let Ok(result) = Self::from_der_bytes(bytes) {
             return Ok(result);
@@ -391,13 +397,9 @@ impl GeneralizedTime {
     }
 
     /// Get DER encoding for bcder
-    pub fn as_der_bytes(&self) -> &[u8] {
+    #[cfg(test)]
+    pub(crate) fn as_der_bytes(&self) -> &[u8] {
         &self.der_bytes
-    }
-
-    /// Get the underlying der time
-    pub fn as_der_time(&self) -> &der::asn1::GeneralizedTime {
-        &self.der_time
     }
 
     /// Parse from bcder Constructed (allows fractional seconds and Z per RFC 3161)
@@ -410,7 +412,7 @@ impl GeneralizedTime {
     ///
     /// This means we must accept formats like: "20231115183045.123Z"
     /// whereas RFC 5280 only allows: "20231115183045Z"
-    pub fn take_from_allow_fractional_z<S: Source>(
+    pub(crate) fn take_from_allow_fractional_z<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Self, DecodeError<S::Error>> {
         // Capture the raw DER bytes including tag and length
@@ -425,7 +427,7 @@ impl GeneralizedTime {
     ///
     /// This is used by CMS Time structures (RFC 5652) which use strict DER encoding.
     #[allow(dead_code)] // Used by rfc5652::Time::take_from
-    pub fn from_primitive_no_fractional_or_timezone_offsets<S: bcder::decode::Source>(
+    pub(crate) fn from_primitive_no_fractional_or_timezone_offsets<S: bcder::decode::Source>(
         prim: &mut bcder::decode::Primitive<S>,
     ) -> Result<Self, bcder::decode::DecodeError<S::Error>> {
         let bytes = prim.take_all()?;
@@ -441,7 +443,7 @@ impl GeneralizedTime {
     }
 
     /// Encode for bcder
-    pub fn encode_ref(&self) -> Captured {
+    pub(crate) fn encode_ref(&self) -> Captured {
         // Return the raw DER bytes as a Captured value
         // These bytes already include tag, length, and content
         Captured::from_values(Mode::Der, bcder::OctetString::encode_slice(&self.der_bytes))
@@ -451,7 +453,7 @@ impl GeneralizedTime {
     ///
     /// Returns an empty string if the DER bytes cannot be decoded.
     /// This should never fail for valid GeneralizedTime instances.
-    pub fn as_str(&self) -> &str {
+    pub(crate) fn as_str(&self) -> &str {
         extract_der_content(&self.der_bytes).unwrap_or("")
     }
 }
@@ -496,13 +498,13 @@ impl TryFrom<chrono::DateTime<chrono::Utc>> for GeneralizedTime {
 }
 
 #[allow(dead_code)]
-pub mod rfc3161;
+pub(crate) mod rfc3161;
 #[allow(dead_code)]
-pub mod rfc3281;
+mod rfc3281;
 #[allow(dead_code)]
-pub mod rfc4210;
+mod rfc4210;
 #[allow(dead_code)]
-pub mod rfc5652;
+pub(crate) mod rfc5652;
 
 #[cfg(test)]
 mod tests {

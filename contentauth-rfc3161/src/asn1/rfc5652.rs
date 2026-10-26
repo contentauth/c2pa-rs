@@ -35,7 +35,7 @@ use crate::asn1::rfc3281::AttributeCertificate;
 
 /// UTC time compatible with bcder - hybrid approach using der crate
 #[derive(Clone, Debug)]
-pub struct UtcTime {
+pub(crate) struct UtcTime {
     // Store the der type for proper time parsing (handles Y2K correctly)
     der_time: der::asn1::UtcTime,
 
@@ -52,7 +52,7 @@ impl PartialEq for UtcTime {
 impl Eq for UtcTime {}
 
 impl UtcTime {
-    pub fn from_primitive<S: Source>(
+    pub(crate) fn from_primitive<S: Source>(
         prim: &mut Primitive<S>,
     ) -> Result<Self, DecodeError<S::Error>> {
         // Get the raw bytes (without tag/length)
@@ -73,7 +73,7 @@ impl UtcTime {
     }
 
     /// Convert to chrono DateTime
-    pub fn to_datetime(&self) -> chrono::DateTime<chrono::Utc> {
+    pub(crate) fn to_datetime(&self) -> chrono::DateTime<chrono::Utc> {
         // Convert der's time to SystemTime, then to chrono
         let system_time = self.der_time.to_system_time();
         system_time.into()
@@ -103,18 +103,20 @@ impl PartialEq for Name {
 impl Eq for Name {}
 
 impl Name {
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
+    pub(crate) fn take_from<S: Source>(
+        cons: &mut Constructed<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
         cons.capture_one().map(Name)
     }
 
-    pub fn encode_ref(&self) -> impl Values + '_ {
+    pub(crate) fn encode_ref(&self) -> impl Values + '_ {
         &self.0
     }
 }
 
 /// Certificate type (opaque - just captures the DER encoding)
 #[derive(Clone, Debug)]
-pub struct Certificate(Captured);
+pub(crate) struct Certificate(Captured);
 
 impl PartialEq for Certificate {
     fn eq(&self, other: &Self) -> bool {
@@ -125,23 +127,23 @@ impl PartialEq for Certificate {
 impl Eq for Certificate {}
 
 impl Certificate {
-    pub fn from_sequence<S: Source>(
+    pub(crate) fn from_sequence<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Self, DecodeError<S::Error>> {
         cons.capture_all().map(Certificate)
     }
 
-    pub fn encode_ref(&self) -> impl Values + '_ {
+    pub(crate) fn encode_ref(&self) -> impl Values + '_ {
         &self.0
     }
 }
 
 /// Attribute type with type and values fields
 #[derive(Clone, Debug)]
-pub struct Attribute {
-    pub typ: Oid,
+pub(crate) struct Attribute {
+    pub(crate) typ: Oid,
 
-    pub values: Captured,
+    pub(crate) values: Captured,
 }
 
 impl PartialEq for Attribute {
@@ -153,7 +155,7 @@ impl PartialEq for Attribute {
 impl Eq for Attribute {}
 
 impl Attribute {
-    pub fn take_opt_from<S: Source>(
+    pub(crate) fn take_opt_from<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Option<Self>, DecodeError<S::Error>> {
         cons.take_opt_sequence(|cons| {
@@ -163,7 +165,7 @@ impl Attribute {
         })
     }
 
-    pub fn encode_ref(&self) -> impl Values + '_ {
+    pub(crate) fn encode_ref(&self) -> impl Values + '_ {
         encode::sequence((self.typ.encode_ref(), &self.values))
     }
 }
@@ -182,7 +184,7 @@ impl PrimitiveContent for Attribute {
 
 /// Certificate list type (opaque - just captures the DER encoding)
 #[derive(Clone, Debug)]
-pub struct CertificateList(Captured);
+pub(crate) struct CertificateList(Captured);
 
 impl PartialEq for CertificateList {
     fn eq(&self, other: &Self) -> bool {
@@ -200,12 +202,12 @@ pub const OID_ID_SIGNED_DATA: ConstOid = Oid(&[42, 134, 72, 134, 247, 13, 1, 7, 
 /// Identifies the message-digest attribute.
 ///
 /// 1.2.840.113549.1.9.4
-pub const OID_MESSAGE_DIGEST: ConstOid = Oid(&[42, 134, 72, 134, 247, 13, 1, 9, 4]);
+pub(crate) const OID_MESSAGE_DIGEST: ConstOid = Oid(&[42, 134, 72, 134, 247, 13, 1, 9, 4]);
 
 /// Identifies the signing-time attribute.
 ///
 /// 1.2.840.113549.1.9.5
-pub const OID_SIGNING_TIME: ConstOid = Oid(&[42, 134, 72, 134, 247, 13, 1, 9, 5]);
+pub(crate) const OID_SIGNING_TIME: ConstOid = Oid(&[42, 134, 72, 134, 247, 13, 1, 9, 5]);
 
 /// Content info.
 ///
@@ -216,8 +218,10 @@ pub const OID_SIGNING_TIME: ConstOid = Oid(&[42, 134, 72, 134, 247, 13, 1, 9, 5]
 /// ```
 #[derive(Clone, Debug)]
 pub struct ContentInfo {
+    /// Object identifier selecting the syntax of the encapsulated content.
     pub content_type: ContentType,
 
+    /// Captured encoded content, not a verified signature or trust result.
     pub content: Captured,
 }
 
@@ -231,13 +235,14 @@ impl PartialEq for ContentInfo {
 impl Eq for ContentInfo {}
 
 impl ContentInfo {
+    /// Decode an optional CMS content envelope from its SEQUENCE.
     pub fn take_opt_from<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Option<Self>, DecodeError<S::Error>> {
         cons.take_opt_sequence(|cons| Self::from_sequence(cons))
     }
 
-    pub fn from_sequence<S: Source>(
+    pub(crate) fn from_sequence<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Self, DecodeError<S::Error>> {
         let content_type = ContentType::take_from(cons)?;
@@ -276,20 +281,23 @@ impl Values for ContentInfo {
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SignedData {
-    pub version: CmsVersion,
+    pub(crate) version: CmsVersion,
 
+    /// Digest algorithms declared by the CMS signers.
     pub digest_algorithms: DigestAlgorithmIdentifiers,
 
-    pub content_info: EncapsulatedContentInfo,
+    pub(crate) content_info: EncapsulatedContentInfo,
 
-    pub certificates: Option<CertificateSet>,
+    pub(crate) certificates: Option<CertificateSet>,
 
-    pub crls: Option<RevocationInfoChoices>,
+    pub(crate) crls: Option<RevocationInfoChoices>,
 
+    /// Per-signer signature metadata.
     pub signer_infos: SignerInfos,
 }
 
 impl SignedData {
+    /// Decode CMS SignedData without verifying its signatures.
     pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
         cons.take_sequence(|cons| {
             let version = CmsVersion::take_from(cons)?;
@@ -340,7 +348,9 @@ impl DerefMut for DigestAlgorithmIdentifiers {
 }
 
 impl DigestAlgorithmIdentifiers {
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
+    pub(crate) fn take_from<S: Source>(
+        cons: &mut Constructed<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
         cons.take_set(|cons| {
             let mut identifiers = Vec::new();
 
@@ -353,7 +363,7 @@ impl DigestAlgorithmIdentifiers {
     }
 }
 
-pub type DigestAlgorithmIdentifier = AlgorithmIdentifier;
+pub(crate) type DigestAlgorithmIdentifier = AlgorithmIdentifier;
 
 /// Signer infos.
 ///
@@ -378,7 +388,9 @@ impl DerefMut for SignerInfos {
 }
 
 impl SignerInfos {
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
+    pub(crate) fn take_from<S: Source>(
+        cons: &mut Constructed<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
         cons.take_set(|cons| {
             let mut infos = Vec::new();
 
@@ -399,10 +411,10 @@ impl SignerInfos {
 ///   eContent [0] EXPLICIT OCTET STRING OPTIONAL }
 /// ```
 #[derive(Clone, Eq, PartialEq)]
-pub struct EncapsulatedContentInfo {
-    pub content_type: ContentType,
+pub(crate) struct EncapsulatedContentInfo {
+    pub(crate) content_type: ContentType,
 
-    pub content: Option<OctetString>,
+    pub(crate) content: Option<OctetString>,
 }
 
 impl Debug for EncapsulatedContentInfo {
@@ -425,7 +437,9 @@ impl Debug for EncapsulatedContentInfo {
 }
 
 impl EncapsulatedContentInfo {
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
+    pub(crate) fn take_from<S: Source>(
+        cons: &mut Constructed<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
         cons.take_sequence(|cons| {
             let content_type = ContentType::take_from(cons)?;
 
@@ -454,19 +468,21 @@ impl EncapsulatedContentInfo {
 /// ```
 #[derive(Clone, Eq, PartialEq)]
 pub struct SignerInfo {
-    pub version: CmsVersion,
+    pub(crate) version: CmsVersion,
 
+    /// Certificate identifier of the signer.
     pub sid: SignerIdentifier,
 
-    pub digest_algorithm: DigestAlgorithmIdentifier,
+    pub(crate) digest_algorithm: DigestAlgorithmIdentifier,
 
-    pub signed_attributes: Option<SignedAttributes>,
+    pub(crate) signed_attributes: Option<SignedAttributes>,
 
-    pub signature_algorithm: SignatureAlgorithmIdentifier,
+    pub(crate) signature_algorithm: SignatureAlgorithmIdentifier,
 
+    /// Raw CMS signature value.
     pub signature: SignatureValue,
 
-    pub unsigned_attributes: Option<UnsignedAttributes>,
+    pub(crate) unsigned_attributes: Option<UnsignedAttributes>,
 
     /// Raw bytes backing signed attributes data.
     ///
@@ -475,13 +491,14 @@ pub struct SignerInfo {
 }
 
 impl SignerInfo {
+    /// Decode optional signer metadata without verifying its signature.
     pub fn take_opt_from<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Option<Self>, DecodeError<S::Error>> {
         cons.take_opt_sequence(|cons| Self::from_sequence(cons))
     }
 
-    pub fn from_sequence<S: Source>(
+    pub(crate) fn from_sequence<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Self, DecodeError<S::Error>> {
         let version = CmsVersion::take_from(cons)?;
@@ -534,6 +551,9 @@ impl SignerInfo {
         })
     }
 
+    /// Borrow an encoder for the signer metadata.
+    ///
+    /// Use `signed_attributes_digested_content` for signature input instead.
     pub fn encode_ref(&self) -> impl Values + '_ {
         encode::sequence((
             u8::from(self.version).encode(),
@@ -686,13 +706,17 @@ impl Values for SignerInfo {
 ///   subjectKeyIdentifier [0] SubjectKeyIdentifier }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SignerIdentifier {
+    /// Identify a signing certificate by its issuer and serial number.
     IssuerAndSerialNumber(IssuerAndSerialNumber),
 
+    /// Identify a signing certificate by its subject key identifier.
     SubjectKeyIdentifier(SubjectKeyIdentifier),
 }
 
 impl SignerIdentifier {
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
+    pub(crate) fn take_from<S: Source>(
+        cons: &mut Constructed<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
         if let Some(identifier) =
             cons.take_opt_constructed_if(Tag::CTX_0, |cons| SubjectKeyIdentifier::take_from(cons))?
         {
@@ -730,7 +754,7 @@ impl Values for SignerIdentifier {
 /// SignedAttributes ::= SET SIZE (1..MAX) OF Attribute
 /// ```
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct SignedAttributes(Vec<Attribute>);
+pub(crate) struct SignedAttributes(Vec<Attribute>);
 
 impl Deref for SignedAttributes {
     type Target = Vec<Attribute>;
@@ -747,7 +771,7 @@ impl DerefMut for SignedAttributes {
 }
 
 impl SignedAttributes {
-    pub fn take_from_set<S: Source>(
+    pub(crate) fn take_from_set<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Self, DecodeError<S::Error>> {
         let mut attributes = Vec::new();
@@ -762,7 +786,7 @@ impl SignedAttributes {
     /// Obtain an instance where the attributes are sorted according to DER
     /// rules. See the comment in
     /// [SignerInfo::signed_attributes_digested_content].
-    pub fn as_sorted(&self) -> Result<Self, std::io::Error> {
+    pub(crate) fn as_sorted(&self) -> Result<Self, std::io::Error> {
         // All elements of the set have the same type. So sorting is based on encoded
         // values, with shorter elements padded with 0s. Rust will sort a shorter value
         // with a prefix match against a longer value as less than, so we can avoid the
@@ -806,10 +830,10 @@ impl Values for SignedAttributes {
     }
 }
 
-pub struct SignedAttributesDer(SignedAttributes, Option<Tag>);
+pub(crate) struct SignedAttributesDer(SignedAttributes, Option<Tag>);
 
 impl SignedAttributesDer {
-    pub fn new(sa: SignedAttributes, tag: Option<Tag>) -> Self {
+    pub(crate) fn new(sa: SignedAttributes, tag: Option<Tag>) -> Self {
         Self(sa, tag)
     }
 }
@@ -838,7 +862,7 @@ impl Values for SignedAttributesDer {
 /// UnsignedAttributes ::= SET SIZE (1..MAX) OF Attribute
 /// ```
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct UnsignedAttributes(Vec<Attribute>);
+pub(crate) struct UnsignedAttributes(Vec<Attribute>);
 
 impl Deref for UnsignedAttributes {
     type Target = Vec<Attribute>;
@@ -855,7 +879,7 @@ impl DerefMut for UnsignedAttributes {
 }
 
 impl UnsignedAttributes {
-    pub fn take_from_set<S: Source>(
+    pub(crate) fn take_from_set<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Self, DecodeError<S::Error>> {
         let mut attributes = Vec::new();
@@ -867,12 +891,12 @@ impl UnsignedAttributes {
         Ok(Self(attributes))
     }
 
-    pub fn encode_ref_as(&self, tag: Tag) -> impl Values + '_ {
+    pub(crate) fn encode_ref_as(&self, tag: Tag) -> impl Values + '_ {
         encode::set_as(tag, encode::slice(&self.0, |x| x.clone().encode()))
     }
 }
 
-pub type SignatureValue = OctetString;
+pub(crate) type SignatureValue = OctetString;
 
 /// Enveloped-data content type.
 ///
@@ -885,16 +909,16 @@ pub type SignatureValue = OctetString;
 ///   unprotectedAttrs [1] IMPLICIT UnprotectedAttributes OPTIONAL }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct EnvelopedData {
-    pub version: CmsVersion,
+pub(crate) struct EnvelopedData {
+    pub(crate) version: CmsVersion,
 
-    pub originator_info: Option<OriginatorInfo>,
+    pub(crate) originator_info: Option<OriginatorInfo>,
 
-    pub recipient_infos: RecipientInfos,
+    pub(crate) recipient_infos: RecipientInfos,
 
-    pub encrypted_content_info: EncryptedContentInfo,
+    pub(crate) encrypted_content_info: EncryptedContentInfo,
 
-    pub unprotected_attributes: Option<UnprotectedAttributes>,
+    pub(crate) unprotected_attributes: Option<UnprotectedAttributes>,
 }
 
 /// Originator info.
@@ -905,13 +929,13 @@ pub struct EnvelopedData {
 ///   crls [1] IMPLICIT RevocationInfoChoices OPTIONAL }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OriginatorInfo {
-    pub certs: Option<CertificateSet>,
+pub(crate) struct OriginatorInfo {
+    pub(crate) certs: Option<CertificateSet>,
 
-    pub crls: Option<RevocationInfoChoices>,
+    pub(crate) crls: Option<RevocationInfoChoices>,
 }
 
-pub type RecipientInfos = Vec<RecipientInfo>;
+pub(crate) type RecipientInfos = Vec<RecipientInfo>;
 
 /// Encrypted content info.
 ///
@@ -922,17 +946,17 @@ pub type RecipientInfos = Vec<RecipientInfo>;
 ///   encryptedContent [0] IMPLICIT EncryptedContent OPTIONAL }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct EncryptedContentInfo {
-    pub content_type: ContentType,
+pub(crate) struct EncryptedContentInfo {
+    pub(crate) content_type: ContentType,
 
-    pub content_encryption_algorithms: ContentEncryptionAlgorithmIdentifier,
+    pub(crate) content_encryption_algorithms: ContentEncryptionAlgorithmIdentifier,
 
-    pub encrypted_content: Option<EncryptedContent>,
+    pub(crate) encrypted_content: Option<EncryptedContent>,
 }
 
-pub type EncryptedContent = OctetString;
+pub(crate) type EncryptedContent = OctetString;
 
-pub type UnprotectedAttributes = Vec<Attribute>;
+pub(crate) type UnprotectedAttributes = Vec<Attribute>;
 
 /// Recipient info.
 ///
@@ -947,7 +971,7 @@ pub type UnprotectedAttributes = Vec<Attribute>;
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(unused)]
 #[allow(clippy::enum_variant_names)]
-pub enum RecipientInfo {
+pub(crate) enum RecipientInfo {
     KeyTransRecipientInfo(KeyTransRecipientInfo),
 
     KeyAgreeRecipientInfo(KeyAgreeRecipientInfo),
@@ -959,7 +983,7 @@ pub enum RecipientInfo {
     OtherRecipientInfo(OtherRecipientInfo),
 }
 
-pub type EncryptedKey = OctetString;
+pub(crate) type EncryptedKey = OctetString;
 
 /// Key trans recipient info.
 ///
@@ -971,14 +995,14 @@ pub type EncryptedKey = OctetString;
 ///   encryptedKey EncryptedKey }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct KeyTransRecipientInfo {
-    pub version: CmsVersion,
+pub(crate) struct KeyTransRecipientInfo {
+    pub(crate) version: CmsVersion,
 
-    pub rid: RecipientIdentifier,
+    pub(crate) rid: RecipientIdentifier,
 
-    pub key_encryption_algorithm: KeyEncryptionAlgorithmIdentifier,
+    pub(crate) key_encryption_algorithm: KeyEncryptionAlgorithmIdentifier,
 
-    pub encrypted_key: EncryptedKey,
+    pub(crate) encrypted_key: EncryptedKey,
 }
 
 /// Recipient identifier.
@@ -990,7 +1014,7 @@ pub struct KeyTransRecipientInfo {
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(unused)]
-pub enum RecipientIdentifier {
+pub(crate) enum RecipientIdentifier {
     IssuerAndSerialNumber(IssuerAndSerialNumber),
 
     SubjectKeyIdentifier(SubjectKeyIdentifier),
@@ -1007,16 +1031,16 @@ pub enum RecipientIdentifier {
 ///   recipientEncryptedKeys RecipientEncryptedKeys }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct KeyAgreeRecipientInfo {
-    pub version: CmsVersion,
+pub(crate) struct KeyAgreeRecipientInfo {
+    pub(crate) version: CmsVersion,
 
-    pub originator: OriginatorIdentifierOrKey,
+    pub(crate) originator: OriginatorIdentifierOrKey,
 
-    pub ukm: Option<UserKeyingMaterial>,
+    pub(crate) ukm: Option<UserKeyingMaterial>,
 
-    pub key_encryption_algorithm: KeyEncryptionAlgorithmIdentifier,
+    pub(crate) key_encryption_algorithm: KeyEncryptionAlgorithmIdentifier,
 
-    pub recipient_encrypted_keys: RecipientEncryptedKeys,
+    pub(crate) recipient_encrypted_keys: RecipientEncryptedKeys,
 }
 
 /// Originator identifier or key.
@@ -1029,7 +1053,7 @@ pub struct KeyAgreeRecipientInfo {
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(unused)]
-pub enum OriginatorIdentifierOrKey {
+pub(crate) enum OriginatorIdentifierOrKey {
     IssuerAndSerialNumber(IssuerAndSerialNumber),
 
     SubjectKeyIdentifier(SubjectKeyIdentifier),
@@ -1045,10 +1069,10 @@ pub enum OriginatorIdentifierOrKey {
 ///   publicKey BIT STRING }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OriginatorPublicKey {
-    pub algorithm: AlgorithmIdentifier,
+pub(crate) struct OriginatorPublicKey {
+    pub(crate) algorithm: AlgorithmIdentifier,
 
-    pub public_key: BitString,
+    pub(crate) public_key: BitString,
 }
 
 /// SEQUENCE of RecipientEncryptedKey.
@@ -1062,10 +1086,10 @@ type RecipientEncryptedKeys = Vec<RecipientEncryptedKey>;
 ///   encryptedKey EncryptedKey }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RecipientEncryptedKey {
-    pub rid: KeyAgreeRecipientInfo,
+pub(crate) struct RecipientEncryptedKey {
+    pub(crate) rid: KeyAgreeRecipientInfo,
 
-    pub encrypted_key: EncryptedKey,
+    pub(crate) encrypted_key: EncryptedKey,
 }
 
 /// Key agreement recipient identifier.
@@ -1077,7 +1101,7 @@ pub struct RecipientEncryptedKey {
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(unused)]
-pub enum KeyAgreeRecipientIdentifier {
+pub(crate) enum KeyAgreeRecipientIdentifier {
     IssuerAndSerialNumber(IssuerAndSerialNumber),
 
     RKeyId(RecipientKeyIdentifier),
@@ -1092,12 +1116,12 @@ pub enum KeyAgreeRecipientIdentifier {
 ///   other OtherKeyAttribute OPTIONAL }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RecipientKeyIdentifier {
-    pub subject_key_identifier: SubjectKeyIdentifier,
+pub(crate) struct RecipientKeyIdentifier {
+    pub(crate) subject_key_identifier: SubjectKeyIdentifier,
 
-    pub date: Option<GeneralizedTime>,
+    pub(crate) date: Option<GeneralizedTime>,
 
-    pub other: Option<OtherKeyAttribute>,
+    pub(crate) other: Option<OtherKeyAttribute>,
 }
 
 type SubjectKeyIdentifier = OctetString;
@@ -1112,14 +1136,14 @@ type SubjectKeyIdentifier = OctetString;
 ///   encryptedKey EncryptedKey }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct KekRecipientInfo {
-    pub version: CmsVersion,
+pub(crate) struct KekRecipientInfo {
+    pub(crate) version: CmsVersion,
 
-    pub kek_id: KekIdentifier,
+    pub(crate) kek_id: KekIdentifier,
 
-    pub kek_encryption_algorithm: KeyEncryptionAlgorithmIdentifier,
+    pub(crate) kek_encryption_algorithm: KeyEncryptionAlgorithmIdentifier,
 
-    pub encrypted_key: EncryptedKey,
+    pub(crate) encrypted_key: EncryptedKey,
 }
 
 /// Key encryption key identifier.
@@ -1131,12 +1155,12 @@ pub struct KekRecipientInfo {
 ///   other OtherKeyAttribute OPTIONAL }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct KekIdentifier {
-    pub key_identifier: OctetString,
+pub(crate) struct KekIdentifier {
+    pub(crate) key_identifier: OctetString,
 
-    pub date: Option<GeneralizedTime>,
+    pub(crate) date: Option<GeneralizedTime>,
 
-    pub other: Option<OtherKeyAttribute>,
+    pub(crate) other: Option<OtherKeyAttribute>,
 }
 
 /// Password recipient info.
@@ -1150,22 +1174,22 @@ pub struct KekIdentifier {
 ///   encryptedKey EncryptedKey }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PasswordRecipientInfo {
-    pub version: CmsVersion,
+pub(crate) struct PasswordRecipientInfo {
+    pub(crate) version: CmsVersion,
 
-    pub key_derivation_algorithm: Option<KeyDerivationAlgorithmIdentifier>,
+    pub(crate) key_derivation_algorithm: Option<KeyDerivationAlgorithmIdentifier>,
 
-    pub key_encryption_algorithm: KeyEncryptionAlgorithmIdentifier,
+    pub(crate) key_encryption_algorithm: KeyEncryptionAlgorithmIdentifier,
 
-    pub encrypted_key: EncryptedKey,
+    pub(crate) encrypted_key: EncryptedKey,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OtherRecipientInfo {
-    pub ori_type: Oid,
+pub(crate) struct OtherRecipientInfo {
+    pub(crate) ori_type: Oid,
 
     // TODO Any
-    pub ori_value: Option<()>,
+    pub(crate) ori_value: Option<()>,
 }
 
 /// Digested data.
@@ -1178,17 +1202,17 @@ pub struct OtherRecipientInfo {
 ///   digest Digest }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DigestedData {
-    pub version: CmsVersion,
+pub(crate) struct DigestedData {
+    pub(crate) version: CmsVersion,
 
-    pub digest_algorithm: DigestAlgorithmIdentifier,
+    pub(crate) digest_algorithm: DigestAlgorithmIdentifier,
 
-    pub content_type: EncapsulatedContentInfo,
+    pub(crate) content_type: EncapsulatedContentInfo,
 
-    pub digest: Digest,
+    pub(crate) digest: Digest,
 }
 
-pub type Digest = OctetString;
+pub(crate) type Digest = OctetString;
 
 /// Encrypted data.
 ///
@@ -1199,12 +1223,12 @@ pub type Digest = OctetString;
 ///   unprotectedAttrs [1] IMPLICIT UnprotectedAttributes OPTIONAL }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct EncryptedData {
-    pub version: CmsVersion,
+pub(crate) struct EncryptedData {
+    pub(crate) version: CmsVersion,
 
-    pub encrypted_content_info: EncryptedContentInfo,
+    pub(crate) encrypted_content_info: EncryptedContentInfo,
 
-    pub unprotected_attributes: Option<UnprotectedAttributes>,
+    pub(crate) unprotected_attributes: Option<UnprotectedAttributes>,
 }
 
 /// Authenticated data.
@@ -1222,41 +1246,41 @@ pub struct EncryptedData {
 ///   unauthAttrs [3] IMPLICIT UnauthAttributes OPTIONAL }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AuthenticatedData {
-    pub version: CmsVersion,
+pub(crate) struct AuthenticatedData {
+    pub(crate) version: CmsVersion,
 
-    pub originator_info: Option<OriginatorInfo>,
+    pub(crate) originator_info: Option<OriginatorInfo>,
 
-    pub recipient_infos: RecipientInfos,
+    pub(crate) recipient_infos: RecipientInfos,
 
-    pub mac_algorithm: MessageAuthenticationCodeAlgorithm,
+    pub(crate) mac_algorithm: MessageAuthenticationCodeAlgorithm,
 
-    pub digest_algorithm: Option<DigestAlgorithmIdentifier>,
+    pub(crate) digest_algorithm: Option<DigestAlgorithmIdentifier>,
 
-    pub content_info: EncapsulatedContentInfo,
+    pub(crate) content_info: EncapsulatedContentInfo,
 
-    pub authenticated_attributes: Option<AuthAttributes>,
+    pub(crate) authenticated_attributes: Option<AuthAttributes>,
 
-    pub mac: MessageAuthenticationCode,
+    pub(crate) mac: MessageAuthenticationCode,
 
-    pub unauthenticated_attributes: Option<UnauthAttributes>,
+    pub(crate) unauthenticated_attributes: Option<UnauthAttributes>,
 }
 
-pub type AuthAttributes = Vec<Attribute>;
+pub(crate) type AuthAttributes = Vec<Attribute>;
 
-pub type UnauthAttributes = Vec<Attribute>;
+pub(crate) type UnauthAttributes = Vec<Attribute>;
 
-pub type MessageAuthenticationCode = OctetString;
+pub(crate) type MessageAuthenticationCode = OctetString;
 
-pub type SignatureAlgorithmIdentifier = AlgorithmIdentifier;
+pub(crate) type SignatureAlgorithmIdentifier = AlgorithmIdentifier;
 
-pub type KeyEncryptionAlgorithmIdentifier = AlgorithmIdentifier;
+pub(crate) type KeyEncryptionAlgorithmIdentifier = AlgorithmIdentifier;
 
-pub type ContentEncryptionAlgorithmIdentifier = AlgorithmIdentifier;
+pub(crate) type ContentEncryptionAlgorithmIdentifier = AlgorithmIdentifier;
 
-pub type MessageAuthenticationCodeAlgorithm = AlgorithmIdentifier;
+pub(crate) type MessageAuthenticationCodeAlgorithm = AlgorithmIdentifier;
 
-pub type KeyDerivationAlgorithmIdentifier = AlgorithmIdentifier;
+pub(crate) type KeyDerivationAlgorithmIdentifier = AlgorithmIdentifier;
 
 /// Revocation info choices.
 ///
@@ -1264,10 +1288,12 @@ pub type KeyDerivationAlgorithmIdentifier = AlgorithmIdentifier;
 /// RevocationInfoChoices ::= SET OF RevocationInfoChoice
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RevocationInfoChoices(Vec<RevocationInfoChoice>);
+pub(crate) struct RevocationInfoChoices(Vec<RevocationInfoChoice>);
 
 impl RevocationInfoChoices {
-    pub fn take_from<S: Source>(cons: &Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
+    pub(crate) fn take_from<S: Source>(
+        cons: &Constructed<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
         Err(cons.content_err("RevocationInfoChoices parsing not implemented"))
     }
 }
@@ -1281,7 +1307,7 @@ impl RevocationInfoChoices {
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(unused)]
-pub enum RevocationInfoChoice {
+pub(crate) enum RevocationInfoChoice {
     Crl(Box<CertificateList>),
 
     Other(OtherRevocationInfoFormat),
@@ -1295,11 +1321,11 @@ pub enum RevocationInfoChoice {
 ///   otherRevInfo ANY DEFINED BY otherRevInfoFormat }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OtherRevocationInfoFormat {
-    pub other_rev_info_info_format: Oid,
+pub(crate) struct OtherRevocationInfoFormat {
+    pub(crate) other_rev_info_info_format: Oid,
 
     // TODO Any
-    pub other_rev_info: Option<()>,
+    pub(crate) other_rev_info: Option<()>,
 }
 
 /// Certificate choices.
@@ -1313,7 +1339,7 @@ pub struct OtherRevocationInfoFormat {
 ///   other [3] IMPLICIT OtherCertificateFormat }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CertificateChoices {
+pub(crate) enum CertificateChoices {
     Certificate(Box<Certificate>),
 
     // ExtendedCertificate(ExtendedCertificate),
@@ -1324,7 +1350,7 @@ pub enum CertificateChoices {
 }
 
 impl CertificateChoices {
-    pub fn take_opt_from<S: Source>(
+    pub(crate) fn take_opt_from<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Option<Self>, DecodeError<S::Error>> {
         cons.take_opt_constructed_if(Tag::CTX_0, |cons| -> Result<(), DecodeError<S::Error>> {
@@ -1353,7 +1379,7 @@ impl CertificateChoices {
         }
     }
 
-    pub fn encode_ref(&self) -> impl Values + '_ {
+    pub(crate) fn encode_ref(&self) -> impl Values + '_ {
         match self {
             Self::Certificate(cert) => cert.encode_ref(),
             Self::AttributeCertificateV2(_) => unimplemented!(),
@@ -1380,21 +1406,23 @@ impl Values for CertificateChoices {
 ///   otherCert ANY DEFINED BY otherCertFormat }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OtherCertificateFormat {
-    pub other_cert_format: Oid,
+pub(crate) struct OtherCertificateFormat {
+    pub(crate) other_cert_format: Oid,
 
     // TODO Any
-    pub other_cert: Option<()>,
+    pub(crate) other_cert: Option<()>,
 }
 
 impl OtherCertificateFormat {
-    pub fn take_from<S: Source>(cons: &Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
+    pub(crate) fn take_from<S: Source>(
+        cons: &Constructed<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
         Err(cons.content_err("OtherCertificateFormat parsing not implemented"))
     }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct CertificateSet(Vec<CertificateChoices>);
+pub(crate) struct CertificateSet(Vec<CertificateChoices>);
 
 impl Deref for CertificateSet {
     type Target = Vec<CertificateChoices>;
@@ -1411,7 +1439,9 @@ impl DerefMut for CertificateSet {
 }
 
 impl CertificateSet {
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
+    pub(crate) fn take_from<S: Source>(
+        cons: &mut Constructed<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
         let mut certs = Vec::new();
 
         while let Some(cert) = CertificateChoices::take_opt_from(cons)? {
@@ -1431,13 +1461,15 @@ impl CertificateSet {
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IssuerAndSerialNumber {
-    pub issuer: Name,
+    pub(crate) issuer: Name,
 
-    pub serial_number: CertificateSerialNumber,
+    pub(crate) serial_number: CertificateSerialNumber,
 }
 
 impl IssuerAndSerialNumber {
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
+    pub(crate) fn take_from<S: Source>(
+        cons: &mut Constructed<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
         cons.take_sequence(|cons| {
             let issuer = Name::take_from(cons)?;
             let serial_number = Integer::take_from(cons)?;
@@ -1449,12 +1481,12 @@ impl IssuerAndSerialNumber {
         })
     }
 
-    pub fn encode_ref(&self) -> impl Values + '_ {
+    pub(crate) fn encode_ref(&self) -> impl Values + '_ {
         encode::sequence((self.issuer.encode_ref(), (&self.serial_number).encode()))
     }
 }
 
-pub type CertificateSerialNumber = Integer;
+pub(crate) type CertificateSerialNumber = Integer;
 
 /// Version number.
 ///
@@ -1463,7 +1495,7 @@ pub type CertificateSerialNumber = Integer;
 ///                { v0(0), v1(1), v2(2), v3(3), v4(4), v5(5) }
 /// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CmsVersion {
+pub(crate) enum CmsVersion {
     V0 = 0,
 
     V1 = 1,
@@ -1478,7 +1510,9 @@ pub enum CmsVersion {
 }
 
 impl CmsVersion {
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
+    pub(crate) fn take_from<S: Source>(
+        cons: &mut Constructed<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
         match cons.take_primitive_if(Tag::INTEGER, Integer::i8_from_primitive)? {
             0 => Ok(Self::V0),
             1 => Ok(Self::V1),
@@ -1490,7 +1524,7 @@ impl CmsVersion {
         }
     }
 
-    pub fn encode(self) -> impl Values {
+    pub(crate) fn encode(self) -> impl Values {
         u8::from(self).encode()
     }
 }
@@ -1508,7 +1542,7 @@ impl From<CmsVersion> for u8 {
     }
 }
 
-pub type UserKeyingMaterial = OctetString;
+pub(crate) type UserKeyingMaterial = OctetString;
 
 /// Other key attribute.
 ///
@@ -1518,14 +1552,14 @@ pub type UserKeyingMaterial = OctetString;
 ///   keyAttr ANY DEFINED BY keyAttrId OPTIONAL }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OtherKeyAttribute {
-    pub key_attribute_id: Oid,
+pub(crate) struct OtherKeyAttribute {
+    pub(crate) key_attribute_id: Oid,
 
     // TODO Any
-    pub key_attribute: Option<()>,
+    pub(crate) key_attribute: Option<()>,
 }
 
-pub type ContentType = Oid;
+pub(crate) type ContentType = Oid;
 
 /// Time variant.
 ///
@@ -1535,14 +1569,16 @@ pub type ContentType = Oid;
 ///   generalizedTime GeneralizedTime }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Time {
+pub(crate) enum Time {
     UtcTime(UtcTime),
 
     GeneralizedTime(GeneralizedTime),
 }
 
 impl Time {
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
+    pub(crate) fn take_from<S: Source>(
+        cons: &mut Constructed<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
         if let Some(utc) =
             cons.take_opt_primitive_if(Tag::UTC_TIME, |prim| UtcTime::from_primitive(prim))?
         {
@@ -1568,7 +1604,7 @@ impl From<Time> for chrono::DateTime<chrono::Utc> {
     }
 }
 
-pub type AttributeCertificateV2 = AttributeCertificate;
+pub(crate) type AttributeCertificateV2 = AttributeCertificate;
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]

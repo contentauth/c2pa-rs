@@ -5,14 +5,15 @@
 // at your option.
 
 use bcder::{decode::Constructed, encode::Values, Integer as BcderInteger};
-use contentauth_rfc3161::{
-    acquire, acquire_with_body, asn1::rfc3161::TimeStampReq, request_body, AcquisitionError,
-    AcquisitionReply, AcquisitionRequest, AcquisitionWorkflow, MAX_RESPONSE_BYTES,
-};
 use contentauth_sans_io_core::{ProtocolError, Step, Workflow};
 use http::{header, Response};
 use rasn::prelude::*;
 use sha2::{Digest, Sha256};
+
+use crate::{
+    acquire, acquire_with_body, asn1::rfc3161::TimeStampReq, request_body, AcquisitionError,
+    AcquisitionReply, AcquisitionRequest, AcquisitionWorkflow, MAX_RESPONSE_BYTES,
+};
 
 #[derive(AsnType, Encode)]
 struct Status {

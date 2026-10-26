@@ -19,7 +19,7 @@ use super::{AlgorithmIdentifier, Extensions, GeneralizedTime};
 
 /// General names (opaque - not parsed)
 #[derive(Clone, Debug)]
-pub struct GeneralNames(Captured);
+pub(crate) struct GeneralNames(Captured);
 
 impl PartialEq for GeneralNames {
     fn eq(&self, other: &Self) -> bool {
@@ -31,7 +31,7 @@ impl Eq for GeneralNames {}
 
 /// Certificate serial number (opaque - not parsed)
 #[derive(Clone, Debug)]
-pub struct CertificateSerialNumber(Captured);
+pub(crate) struct CertificateSerialNumber(Captured);
 
 impl PartialEq for CertificateSerialNumber {
     fn eq(&self, other: &Self) -> bool {
@@ -43,7 +43,7 @@ impl Eq for CertificateSerialNumber {}
 
 /// Unique identifier (opaque - not parsed)
 #[derive(Clone, Debug)]
-pub struct UniqueIdentifier(Captured);
+pub(crate) struct UniqueIdentifier(Captured);
 
 impl PartialEq for UniqueIdentifier {
     fn eq(&self, other: &Self) -> bool {
@@ -63,16 +63,24 @@ impl Eq for UniqueIdentifier {}
 /// }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AttributeCertificate {
-    pub ac_info: AttributeCertificateInfo,
+pub(crate) struct AttributeCertificate {
+    /// Attribute certificate contents covered by the signature.
+    pub(crate) ac_info: AttributeCertificateInfo,
 
-    pub signature_algorithm: AlgorithmIdentifier,
+    /// Algorithm used to sign the attribute certificate.
+    pub(crate) signature_algorithm: AlgorithmIdentifier,
 
-    pub signature_value: BitString,
+    /// Signature over the attribute certificate information.
+    pub(crate) signature_value: BitString,
 }
 
 impl AttributeCertificate {
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
+    /// Decode an attribute certificate; its information parser is not implemented.
+    ///
+    /// Currently returns a decoding error when it reaches `ac_info`.
+    pub(crate) fn take_from<S: Source>(
+        cons: &mut Constructed<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
         cons.take_sequence(|cons| {
             let ac_info = AttributeCertificateInfo::take_from(cons)?;
             let signature_algorithm = AlgorithmIdentifier::take_from(cons)?;
@@ -103,35 +111,49 @@ impl AttributeCertificate {
 /// }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AttributeCertificateInfo {
-    pub version: AttCertVersion,
+pub(crate) struct AttributeCertificateInfo {
+    /// Attribute certificate version.
+    pub(crate) version: AttCertVersion,
 
-    pub holder: Holder,
+    /// Entity to which the attributes apply.
+    pub(crate) holder: Holder,
 
-    pub issuer: AttCertIssuer,
+    /// Authority issuing the attribute certificate.
+    pub(crate) issuer: AttCertIssuer,
 
-    pub signature: AlgorithmIdentifier,
+    /// Algorithm used to sign this information.
+    pub(crate) signature: AlgorithmIdentifier,
 
-    pub serial_number: CertificateSerialNumber,
+    /// Serial number assigned by the issuer.
+    pub(crate) serial_number: CertificateSerialNumber,
 
-    pub attr_cert_validity_period: AttCertValidityPeriod,
+    /// Interval during which the attribute certificate is valid.
+    pub(crate) attr_cert_validity_period: AttCertValidityPeriod,
 
-    pub attributes: Vec<Attribute>,
+    /// Attributes certified for the holder.
+    pub(crate) attributes: Vec<Attribute>,
 
-    pub issuer_unique_ud: Option<UniqueIdentifier>,
+    /// Optional unique identifier of the issuer.
+    pub(crate) issuer_unique_ud: Option<UniqueIdentifier>,
 
-    pub extensions: Option<Extensions>,
+    /// Optional attribute certificate extensions.
+    pub(crate) extensions: Option<Extensions>,
 }
 
 impl AttributeCertificateInfo {
-    pub fn take_from<S: Source>(cons: &Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
+    /// Return a decoding error because attribute certificate information is unsupported.
+    pub(crate) fn take_from<S: Source>(
+        cons: &Constructed<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
         Err(cons.content_err("AttributeCertificateInfo parsing not implemented"))
     }
 }
 
+/// Supported attribute certificate version.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[allow(unused)]
-pub enum AttCertVersion {
+pub(crate) enum AttCertVersion {
+    /// Version 2, represented by ASN.1 integer 1.
     V2 = 1,
 }
 
@@ -149,21 +171,28 @@ pub enum AttCertVersion {
 ///     -- for example, an executable
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Holder {
-    pub base_certificate_id: Option<IssuerSerial>,
+pub(crate) struct Holder {
+    /// Optional issuer and serial number of the holder's certificate.
+    pub(crate) base_certificate_id: Option<IssuerSerial>,
 
-    pub entity_name: Option<GeneralNames>,
+    /// Optional names identifying the holder.
+    pub(crate) entity_name: Option<GeneralNames>,
 
-    pub object_digest_info: Option<ObjectDigestInfo>,
+    /// Optional digest identifying an object associated with the holder.
+    pub(crate) object_digest_info: Option<ObjectDigestInfo>,
 }
 
+/// Kind of object identified by an attribute certificate's digest.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(unused)]
-pub enum DigestedObjectType {
+pub(crate) enum DigestedObjectType {
+    /// The holder's public key.
     PublicKey = 0,
 
+    /// The holder's public-key certificate.
     PublicKeyCert = 1,
 
+    /// Another object type identified by an OID.
     OtherObjectTypes = 2,
 }
 
@@ -182,14 +211,18 @@ pub enum DigestedObjectType {
 ///   objectDigest        BIT STRING
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ObjectDigestInfo {
-    pub digested_object_type: DigestedObjectType,
+pub(crate) struct ObjectDigestInfo {
+    /// Kind of object whose digest is carried here.
+    pub(crate) digested_object_type: DigestedObjectType,
 
-    pub other_object_type_id: Oid,
+    /// Object type OID for the `OtherObjectTypes` choice.
+    pub(crate) other_object_type_id: Oid,
 
-    pub digest_algorithm: AlgorithmIdentifier,
+    /// Algorithm used to compute the object digest.
+    pub(crate) digest_algorithm: AlgorithmIdentifier,
 
-    pub object_digest: BitString,
+    /// Digest identifying the object.
+    pub(crate) object_digest: BitString,
 }
 
 /// Att cert issuer
@@ -203,9 +236,11 @@ pub struct ObjectDigestInfo {
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(unused)]
-pub enum AttCertIssuer {
+pub(crate) enum AttCertIssuer {
+    /// Legacy issuer naming form, not permitted by the RFC 3281 profile.
     V1Form(GeneralNames),
 
+    /// Version 2 issuer naming form.
     V2Form(Box<V2Form>),
 }
 
@@ -222,12 +257,15 @@ pub enum AttCertIssuer {
 /// }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct V2Form {
-    pub issuer_name: Option<GeneralNames>,
+pub(crate) struct V2Form {
+    /// Optional issuer names; required by the RFC 3281 profile.
+    pub(crate) issuer_name: Option<GeneralNames>,
 
-    pub base_certificate_id: Option<IssuerSerial>,
+    /// Optional issuer certificate reference, excluded by the RFC 3281 profile.
+    pub(crate) base_certificate_id: Option<IssuerSerial>,
 
-    pub object_digest_info: Option<ObjectDigestInfo>,
+    /// Optional issuer object digest, excluded by the RFC 3281 profile.
+    pub(crate) object_digest_info: Option<ObjectDigestInfo>,
 }
 
 /// Issuer serial.
@@ -238,12 +276,15 @@ pub struct V2Form {
 ///   issuerUID      UniqueIdentifier OPTIONAL
 /// }
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct IssuerSerial {
-    pub issuer: GeneralNames,
+pub(crate) struct IssuerSerial {
+    /// Names of the certificate issuer.
+    pub(crate) issuer: GeneralNames,
 
-    pub serial: CertificateSerialNumber,
+    /// Certificate serial number assigned by that issuer.
+    pub(crate) serial: CertificateSerialNumber,
 
-    pub issuer_uid: Option<UniqueIdentifier>,
+    /// Optional issuer unique identifier.
+    pub(crate) issuer_uid: Option<UniqueIdentifier>,
 }
 
 /// Att cert validity period
@@ -254,10 +295,12 @@ pub struct IssuerSerial {
 ///   notAfterTime   GeneralizedTime
 /// }
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AttCertValidityPeriod {
-    pub not_before_time: GeneralizedTime,
+pub(crate) struct AttCertValidityPeriod {
+    /// Earliest instant at which the attribute certificate is valid.
+    pub(crate) not_before_time: GeneralizedTime,
 
-    pub not_after_time: GeneralizedTime,
+    /// Latest instant at which the attribute certificate is valid.
+    pub(crate) not_after_time: GeneralizedTime,
 }
 
 /// Attribute
@@ -270,13 +313,17 @@ pub struct AttCertValidityPeriod {
 /// }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Attribute {
-    pub typ: AttributeType,
+pub(crate) struct Attribute {
+    /// Object identifier selecting the attribute's syntax.
+    pub(crate) typ: AttributeType,
 
-    pub values: Vec<AttributeValue>,
+    /// Values of the attribute in this codec's placeholder representation.
+    pub(crate) values: Vec<AttributeValue>,
 }
 
-pub type AttributeType = Oid;
+/// Object identifier selecting an attribute's syntax.
+pub(crate) type AttributeType = Oid;
 
 // TODO Any.
-pub type AttributeValue = Option<()>;
+/// Placeholder for an attribute value whose ASN.1 ANY syntax is not implemented.
+pub(crate) type AttributeValue = Option<()>;

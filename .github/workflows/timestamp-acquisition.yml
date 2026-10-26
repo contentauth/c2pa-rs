@@ -32,9 +32,13 @@ jobs:
           targets: wasm32-unknown-unknown,wasm32-wasip2
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: Test acquisition crate independently
-        run: cargo test -p contentauth-rfc3161
+        run: |
+          cargo test -p contentauth-rfc3161
+          cargo test -p contentauth-rfc3161 --features sdk-compat
       - name: Lint acquisition crate
-        run: cargo clippy -p contentauth-rfc3161 --all-targets -- -D warnings
+        run: |
+          cargo clippy -p contentauth-rfc3161 --all-targets -- -D warnings
+          cargo clippy -p contentauth-rfc3161 --all-targets --features sdk-compat -- -D warnings
       - name: Check runtime-independent WebAssembly builds
         run: |
           cargo check -p contentauth-rfc3161 --target wasm32-unknown-unknown

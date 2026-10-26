@@ -13,7 +13,7 @@
 
 use ::rasn::prelude::*;
 use bcder::{decode::Constructed, encode::Values};
-pub(crate) use contentauth_rfc3161::response::TimeStampResponse;
+pub(crate) use contentauth_rfc3161::sdk_compat::TimeStampResponse;
 use rasn_cms::SignedData;
 
 use crate::crypto::{
