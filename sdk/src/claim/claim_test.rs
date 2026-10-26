@@ -38,6 +38,119 @@ use crate::{
 };
 
 #[test]
+fn rejected_hard_bindings_are_skipped_before_decoding() {
+    use crate::{
+        assertions::labels,
+        claim::{ClaimAssertion, ClaimAssetData},
+    };
+
+    for label in [
+        labels::DATA_HASH,
+        labels::BMFF_HASH,
+        labels::BOX_HASH,
+        labels::COLLECTION_HASH,
+    ] {
+        for relative in [true, false] {
+            let mut claim = Claim::new("test", None, 2);
+            let uri = if relative {
+                format!("self#jumbf=c2pa.assertions/{label}")
+            } else {
+                claim.assertion_uri(label)
+            };
+            let references = [
+                vec![HashedUri::new(uri.clone(), None, &[1; 32])],
+                Vec::new(),
+                vec![HashedUri::new(
+                    to_assertion_uri("urn:c2pa:other", label),
+                    None,
+                    &[2; 32],
+                )],
+                vec![
+                    HashedUri::new(uri.clone(), None, &[2; 32]),
+                    HashedUri::new(uri, None, &[1; 32]),
+                ],
+            ];
+            // Invalid CBOR would fail decoding if the rejected assertion were used.
+            claim.assertion_store.push(ClaimAssertion::new(
+                Assertion::new(label, None, AssertionData::Cbor(vec![0xff])),
+                0,
+                &[2; 32],
+                "sha256",
+                None,
+                ClaimAssertionType::Created,
+            ));
+            let svi = StoreValidationInfo {
+                binding_claim: claim.label().to_owned(),
+                ..Default::default()
+            };
+            for references in references {
+                claim.assertions = references;
+                let mut tracker = StatusTracker::default();
+                let mut asset = ClaimAssetData::Bytes(b"asset", "image/jpeg");
+                Claim::verify_hash_binding(&claim, &mut asset, &svi, &mut tracker, &Context::new())
+                    .unwrap();
+                assert!(tracker.logged_items().is_empty(), "{label}");
+            }
+        }
+    }
+}
+
+#[test]
+fn assertion_hash_algorithm_override_and_fallback() {
+    use crate::{claim::ClaimAssertion, utils::hash_utils::hash_size_by_alg};
+
+    for claim_alg in ["sha256", "sha1"] {
+        for reference_alg in [
+            None,
+            Some("sha1"),
+            Some("sha256"),
+            Some("sha384"),
+            Some("sha512"),
+        ] {
+            let mut claim = Claim::new("test", None, 1);
+            claim.alg = Some(claim_alg.to_owned());
+            let effective_alg = reference_alg.unwrap_or(claim_alg);
+            let supported = hash_size_by_alg(effective_alg).is_ok();
+            let assertion = Assertion::from_data_json("test.assertion", b"{}").unwrap();
+            let hash =
+                Claim::calc_assertion_box_hash("test.assertion", &assertion, None, effective_alg)
+                    .unwrap();
+            claim.assertions.push(HashedUri::new(
+                claim.assertion_uri("test.assertion"),
+                reference_alg.map(str::to_owned),
+                &hash,
+            ));
+            claim.assertion_store.push(ClaimAssertion::new(
+                assertion,
+                0,
+                &hash,
+                effective_alg,
+                None,
+                ClaimAssertionType::V1,
+            ));
+            let mut tracker = StatusTracker::default();
+            Claim::verify_internal(
+                &claim,
+                &StoreValidationInfo::default(),
+                Err(Error::CoseSignature),
+                &mut tracker,
+                &Context::new(),
+            )
+            .unwrap();
+            assert_eq!(
+                tracker.has_status(validation_status::ALGORITHM_UNSUPPORTED),
+                !supported
+            );
+            assert_eq!(
+                tracker.has_status(validation_status::ASSERTION_HASHEDURI_MATCH),
+                supported
+            );
+            assert!(!tracker.has_status(validation_status::ASSERTION_HASHEDURI_MISMATCH));
+        }
+    }
+}
+
+#[test]
 fn test_build_claim() {
     // Create a new claim.
     let mut claim = create_test_claim().expect("create test claim");
