@@ -5625,6 +5625,183 @@ fn test_sign_zip_update_manifest_is_unsupported() {
     );
 }
 
+#[cfg(feature = "fetch_remote_manifests")]
+mod remote_manifest_response_tests {
+    use std::sync::atomic::AtomicUsize;
+
+    use super::*;
+    use crate::{
+        http::{AsyncHttpResolver, HttpResolverError, SyncHttpResolver},
+        store::store_core::MAX_MANIFEST_RESPONSE_SIZE,
+    };
+
+    struct Resolver {
+        content_length: Option<&'static str>,
+        body_length: u64,
+        read_error: bool,
+        bytes_read: Arc<AtomicUsize>,
+    }
+
+    struct Body {
+        remaining: u64,
+        read_error: bool,
+        eof_returned: bool,
+        bytes_read: Arc<AtomicUsize>,
+    }
+
+    impl Read for Body {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.read_error || self.eof_returned {
+                return Err(std::io::Error::other("test stream failure"));
+            }
+            let len = self.remaining.min(buf.len() as u64) as usize;
+            buf[..len].fill(b'x');
+            self.remaining -= len as u64;
+            if !buf.is_empty() && len == 0 {
+                self.eof_returned = true;
+            }
+            self.bytes_read.fetch_add(len, Ordering::SeqCst);
+            Ok(len)
+        }
+    }
+
+    impl SyncHttpResolver for Resolver {
+        fn http_resolve(
+            &self,
+            _request: http::Request<Vec<u8>>,
+        ) -> std::result::Result<http::Response<Box<dyn Read>>, HttpResolverError> {
+            let mut response = http::Response::builder().status(200);
+            if let Some(len) = self.content_length {
+                response = response.header(http::header::CONTENT_LENGTH, len);
+            }
+            Ok(response
+                .body(Box::new(Body {
+                    remaining: self.body_length,
+                    read_error: self.read_error,
+                    eof_returned: false,
+                    bytes_read: self.bytes_read.clone(),
+                }) as Box<dyn Read>)
+                .unwrap())
+        }
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait::async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait::async_trait(?Send))]
+    impl AsyncHttpResolver for Resolver {
+        async fn http_resolve_async(
+            &self,
+            request: http::Request<Vec<u8>>,
+        ) -> std::result::Result<http::Response<Box<dyn Read>>, HttpResolverError> {
+            self.http_resolve(request)
+        }
+    }
+
+    async fn fetch(
+        content_length: Option<&'static str>,
+        body_length: u64,
+        read_error: bool,
+        use_async: bool,
+    ) -> (Result<Vec<u8>>, usize) {
+        let bytes_read = Arc::new(AtomicUsize::new(0));
+        let resolver = Arc::new(Resolver {
+            content_length,
+            body_length,
+            read_error,
+            bytes_read: bytes_read.clone(),
+        });
+        let context = Context::new()
+            .with_resolver(resolver.clone())
+            .with_resolver_async(resolver);
+        let result = if use_async {
+            Store::fetch_remote_manifest_async("https://example.com/manifest.c2pa", &context).await
+        } else {
+            Store::fetch_remote_manifest("https://example.com/manifest.c2pa", &context)
+        };
+        (result, bytes_read.load(Ordering::SeqCst))
+    }
+
+    fn assert_size_error(result: Result<Vec<u8>>) {
+        assert!(
+            matches!(result, Err(Error::RemoteManifestFetch(ref msg)) if msg.contains("10 MiB")),
+            "expected response size error, got {result:?}"
+        );
+    }
+
+    #[c2pa_test_async]
+    async fn test_remote_manifest_oversized_header_rejected_before_reading() {
+        for use_async in [false, true] {
+            for header in ["18446744073709551615", "4294967295", "10485761"] {
+                let (result, bytes_read) = fetch(Some(header), 1, false, use_async).await;
+                assert_size_error(result);
+                assert_eq!(bytes_read, 0);
+            }
+        }
+    }
+
+    #[c2pa_test_async]
+    async fn test_remote_manifest_body_limit_ignores_untrusted_header() {
+        for use_async in [false, true] {
+            for header in [
+                None,
+                Some("1"),
+                Some("invalid"),
+                Some("18446744073709551616"),
+            ] {
+                let (result, bytes_read) =
+                    fetch(header, MAX_MANIFEST_RESPONSE_SIZE + 100, false, use_async).await;
+                assert_size_error(result);
+                assert_eq!(bytes_read as u64, MAX_MANIFEST_RESPONSE_SIZE + 1);
+            }
+        }
+    }
+
+    #[c2pa_test_async]
+    async fn test_remote_manifest_exact_limit_accepted() {
+        for use_async in [false, true] {
+            for header in [None, Some("10485760")] {
+                let (result, bytes_read) =
+                    fetch(header, MAX_MANIFEST_RESPONSE_SIZE, false, use_async).await;
+                let body = result.unwrap();
+                assert_eq!(body.len() as u64, MAX_MANIFEST_RESPONSE_SIZE);
+                assert!(body.iter().all(|byte| *byte == b'x'));
+                assert_eq!(bytes_read as u64, MAX_MANIFEST_RESPONSE_SIZE);
+            }
+        }
+    }
+
+    #[c2pa_test_async]
+    async fn test_remote_manifest_small_body_not_truncated_by_header() {
+        for use_async in [false, true] {
+            for header in [
+                None,
+                Some("0"),
+                Some("1"),
+                Some("3"),
+                Some("10"),
+                Some("invalid"),
+            ] {
+                let (result, bytes_read) = fetch(header, 3, false, use_async).await;
+                assert_eq!(result.unwrap(), b"xxx");
+                assert_eq!(bytes_read, 3);
+            }
+            let (result, bytes_read) = fetch(Some("0"), 0, false, use_async).await;
+            assert!(result.unwrap().is_empty());
+            assert_eq!(bytes_read, 0);
+        }
+    }
+
+    #[c2pa_test_async]
+    async fn test_remote_manifest_body_read_error_propagated() {
+        for use_async in [false, true] {
+            let (result, _) = fetch(None, 3, true, use_async).await;
+            assert!(
+                matches!(result, Err(Error::RemoteManifestFetch(ref msg)) if msg.contains("error reading content stream")),
+                "expected stream read error, got {result:?}"
+            );
+        }
+    }
+}
+
 // SSRF via HTTP redirect during remote-manifest fetch
 // (CAI-12574 / HackerOne #3784091).
 //

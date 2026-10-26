@@ -608,6 +608,11 @@ pub struct Verify {
     /// [`Reader`]: crate::Reader
     /// [`Ingredient`]: crate::Ingredient
     /// [`Builder`]: crate::Builder
+    /// Remote manifest responses are limited to 10 MiB. Responses with a larger
+    /// `Content-Length` or body return [`Error::RemoteManifestFetch`].
+    ///
+    /// This limit is enforced after the HTTP resolver returns. It does not bound
+    /// buffering inside a resolver, including the built-in reqwest adapters.
     pub remote_manifest_fetch: bool,
     /// Whether to skip ingredient conflict resolution when multiple ingredients have the same
     /// manifest identifier. This settings is only applicable for C2PA v2 validation.
