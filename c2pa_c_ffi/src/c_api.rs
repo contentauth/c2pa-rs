@@ -2940,6 +2940,73 @@ mod tests {
     }
 
     #[test]
+    fn test_sign_in_memory_with_memory_streams() {
+        use crate::{c2pa_create_stream_from_bytes, c2pa_release_stream, c2pa_stream_get_bytes};
+
+        let image = include_bytes!(fixture_path!("IMG_0003.jpg"));
+        let source = unsafe { c2pa_create_stream_from_bytes(image.as_ptr(), image.len()) };
+        let dest = unsafe { c2pa_create_stream_from_bytes(std::ptr::null(), 0) };
+        assert!(!source.is_null() && !dest.is_null());
+
+        let (signer, builder) = setup_signer_and_builder_for_signing_tests();
+        let result = unsafe {
+            c2pa_builder_set_intent(
+                builder,
+                C2paBuilderIntent::Create,
+                C2paDigitalSourceType::DigitalCreation,
+            )
+        };
+        assert_eq!(result, 0);
+        let format = CString::new("image/jpeg").unwrap();
+        let mut manifest_bytes_ptr = std::ptr::null();
+        let result = unsafe {
+            c2pa_builder_sign(
+                builder,
+                format.as_ptr(),
+                source,
+                dest,
+                signer,
+                &mut manifest_bytes_ptr,
+            )
+        };
+        assert!(
+            result > 0,
+            "signing failed: {:?}",
+            CimplError::last_message()
+        );
+        let mut signed_ptr = std::ptr::null();
+        let len = unsafe { c2pa_stream_get_bytes(dest, &mut signed_ptr) };
+        assert!(len > image.len() as i64, "{len}");
+        let signed = unsafe { std::slice::from_raw_parts(signed_ptr, len as usize) }.to_vec();
+        unsafe {
+            c2pa_release_stream(source);
+            c2pa_release_stream(dest);
+            assert_eq!(c2pa_free(signed_ptr as *const c_void), 0);
+            assert_eq!(c2pa_free(manifest_bytes_ptr as *const c_void), 0);
+            assert_eq!(c2pa_free(builder as *const c_void), 0);
+            assert_eq!(c2pa_free(signer as *const c_void), 0);
+        }
+
+        // The signed bytes read back through a memory stream too.
+        let stream = unsafe { c2pa_create_stream_from_bytes(signed.as_ptr(), signed.len()) };
+        let reader = unsafe { c2pa_reader_with_stream(c2pa_reader_new(), format.as_ptr(), stream) };
+        assert!(
+            !reader.is_null(),
+            "reader creation failed: {:?}",
+            CimplError::last_message()
+        );
+        let json = unsafe { c2pa_reader_json(reader) };
+        assert!(!json.is_null());
+        let json_str = unsafe { CStr::from_ptr(json) }.to_str().unwrap().to_owned();
+        assert!(json_str.contains("c2pa.created"), "{json_str}");
+        unsafe {
+            assert_eq!(c2pa_free(json as *const c_void), 0);
+            assert_eq!(c2pa_free(reader as *const c_void), 0);
+            c2pa_release_stream(stream);
+        }
+    }
+
+    #[test]
     fn test_sign_with_info() {
         let source_image = include_bytes!(fixture_path!("IMG_0003.jpg"));
         let mut source_stream = TestStream::new(source_image.to_vec());

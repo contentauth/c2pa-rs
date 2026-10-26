@@ -14,11 +14,14 @@
 use std::{
     fs::File,
     io::{Cursor, Read, Seek, SeekFrom, Write},
-    os::raw::c_int,
+    os::raw::{c_int, c_uchar},
     slice,
 };
 
-use cimpl::{box_tracked, cimpl_free, deref_mut_or_return_int, untrack_owned, Error as CimplError};
+use cimpl::{
+    box_tracked, bytes_or_return_null, cimpl_free, deref_mut_or_return_int, deref_or_return_int,
+    out_bytes_or_return_int, untrack_owned, Error as CimplError,
+};
 #[cfg(test)]
 use cimpl::{deref_mut_option, TypedExclusive};
 
@@ -70,9 +73,9 @@ type FlushCallback = unsafe extern "C" fn(context: *mut StreamContext) -> isize;
 
 /// A C2paStream is a Rust Read/Write/Seek stream that can be created and used in C.
 ///
-/// It is backed either by callbacks implemented in the calling language
-/// ([`c2pa_create_stream`]) or by an open file read and written natively
-/// ([`c2pa_create_stream_from_fd`]).
+/// It is backed by callbacks implemented in the calling language ([`c2pa_create_stream`]),
+/// or natively, without callbacks, by an open file ([`c2pa_create_stream_from_fd`]) or by a
+/// buffer the stream owns ([`c2pa_create_stream_from_bytes`]).
 ///
 /// Not `#[repr(C)]`, so cbindgen writes an opaque forward declaration: the C FFI
 /// now handles opaque ids, and we shouldn't dereference anything directly anymore.
@@ -83,6 +86,7 @@ pub struct C2paStream(StreamBacking);
 enum StreamBacking {
     Callbacks(CallbackStream),
     File(File),
+    Memory(Cursor<Vec<u8>>),
 }
 
 /// A stream whose reads, seeks, writes and flushes call back into the calling language.
@@ -131,6 +135,19 @@ impl C2paStream {
     pub fn from_file(file: File) -> Self {
         Self(StreamBacking::File(file))
     }
+
+    /// Creates a new C2paStream that reads and writes `bytes` in memory, starting at offset 0.
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        Self(StreamBacking::Memory(Cursor::new(bytes)))
+    }
+
+    /// The contents of a memory stream, or None for any other stream.
+    pub fn memory_contents(&self) -> Option<&[u8]> {
+        match &self.0 {
+            StreamBacking::Memory(cursor) => Some(cursor.get_ref()),
+            _ => None,
+        }
+    }
 }
 
 impl Read for C2paStream {
@@ -138,6 +155,7 @@ impl Read for C2paStream {
         match &mut self.0 {
             StreamBacking::Callbacks(stream) => stream.read(buf),
             StreamBacking::File(file) => file.read(buf),
+            StreamBacking::Memory(cursor) => cursor.read(buf),
         }
     }
 }
@@ -147,6 +165,7 @@ impl Seek for C2paStream {
         match &mut self.0 {
             StreamBacking::Callbacks(stream) => stream.seek(from),
             StreamBacking::File(file) => file.seek(from),
+            StreamBacking::Memory(cursor) => cursor.seek(from),
         }
     }
 }
@@ -156,6 +175,7 @@ impl Write for C2paStream {
         match &mut self.0 {
             StreamBacking::Callbacks(stream) => stream.write(buf),
             StreamBacking::File(file) => file.write(buf),
+            StreamBacking::Memory(cursor) => cursor.write(buf),
         }
     }
 
@@ -163,6 +183,7 @@ impl Write for C2paStream {
         match &mut self.0 {
             StreamBacking::Callbacks(stream) => stream.flush(),
             StreamBacking::File(file) => file.flush(),
+            StreamBacking::Memory(cursor) => cursor.flush(),
         }
     }
 }
@@ -402,6 +423,62 @@ pub unsafe extern "C" fn c2pa_create_stream(
 pub unsafe extern "C" fn c2pa_create_stream_from_fd(fd: c_int) -> *mut C2paStream {
     let file = ok_or_return_null!(duplicate_fd(fd));
     box_tracked!(C2paStream::from_file(file))
+}
+
+/// Creates a new C2paStream that reads and writes a copy of `data` in memory, without callbacks.
+///
+/// Every read, seek and write happens in native code, like [`c2pa_create_stream_from_fd`], for
+/// assets the caller holds in memory. The stream owns a copy of the `len` bytes at `data` and
+/// starts at offset 0. Writes past the end grow it. Pass `data` = NULL and `len` = 0 for an
+/// empty stream to sign into, then read the result with [`c2pa_stream_get_bytes`].
+///
+/// # Errors
+/// Returns NULL if `data` is NULL with a non-zero `len`. The error can be retrieved with
+/// `c2pa_error`.
+///
+/// # Safety
+/// `data` must point to `len` readable bytes for the duration of this call.
+///
+/// The resulting C2paStream must be released by calling c2pa_release_stream.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_create_stream_from_bytes(
+    data: *const c_uchar,
+    len: usize,
+) -> *mut C2paStream {
+    let bytes = if data.is_null() && len == 0 {
+        Vec::new()
+    } else {
+        bytes_or_return_null!(data, len, "data").to_vec()
+    };
+    box_tracked!(C2paStream::from_bytes(bytes))
+}
+
+/// Copies the whole contents of a stream made by [`c2pa_create_stream_from_bytes`].
+///
+/// The contents are returned whatever the stream's position, and the position is unchanged.
+///
+/// # Parameters
+/// * stream: a stream made by [`c2pa_create_stream_from_bytes`].
+/// * bytes_ptr: pointer to a pointer to a c_uchar to return the contents (optional, can be
+///   NULL to only get their size). Set to NULL for an empty stream.
+///
+/// # Errors
+/// Returns -1 if `stream` is not a memory stream. The error can be retrieved with `c2pa_error`.
+///
+/// # Safety
+/// If `bytes_ptr` is not NULL, the returned bytes must be released by calling c2pa_free.
+#[no_mangle]
+pub unsafe extern "C" fn c2pa_stream_get_bytes(
+    stream: *mut C2paStream,
+    bytes_ptr: *mut *const c_uchar,
+) -> i64 {
+    let stream = deref_or_return_int!(stream, C2paStream);
+    let bytes: &[u8] =
+        ok_or_return_int!(stream.memory_contents().ok_or_else(|| std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "not a stream made by c2pa_create_stream_from_bytes",
+        )));
+    out_bytes_or_return_int!(bytes.to_vec(), bytes_ptr)
 }
 
 /// Opens an owned duplicate of an open file descriptor.
@@ -651,6 +728,72 @@ pub(crate) mod tests {
         let mut all = Vec::new();
         s.read_to_end(&mut all).unwrap();
         assert_eq!(all, b"0123456789");
+    }
+
+    #[test]
+    fn test_memory_stream_reads_seeks_writes_and_grows() {
+        let data = b"0123456789";
+        let stream = unsafe { c2pa_create_stream_from_bytes(data.as_ptr(), data.len()) };
+        assert!(!stream.is_null(), "{:?}", CimplError::last_message());
+        {
+            let mut s = deref_mut_option!(stream, C2paStream).unwrap();
+            let mut buf = [0u8; 4];
+            s.read_exact(&mut buf).unwrap();
+            assert_eq!(&buf, b"0123");
+            assert_eq!(s.seek(SeekFrom::End(-2)).unwrap(), 8);
+            s.write_all(b"abcd").unwrap();
+            s.seek(SeekFrom::Start(1)).unwrap();
+        }
+        let mut out = std::ptr::null();
+        let len = unsafe { c2pa_stream_get_bytes(stream, &mut out) };
+        assert_eq!(len, 12);
+        let contents = unsafe { slice::from_raw_parts(out, len as usize) }.to_vec();
+        assert_eq!(contents, b"01234567abcd");
+        {
+            // Reading the contents leaves the position alone.
+            let mut s = deref_mut_option!(stream, C2paStream).unwrap();
+            assert_eq!(s.stream_position().unwrap(), 1);
+        }
+        unsafe {
+            assert_eq!(crate::c2pa_free(out as *const std::ffi::c_void), 0);
+            c2pa_release_stream(stream);
+        }
+    }
+
+    #[test]
+    fn test_memory_stream_starts_empty_without_data() {
+        let stream = unsafe { c2pa_create_stream_from_bytes(std::ptr::null(), 0) };
+        assert!(!stream.is_null(), "{:?}", CimplError::last_message());
+        let mut out = std::ptr::null();
+        assert_eq!(unsafe { c2pa_stream_get_bytes(stream, &mut out) }, 0);
+        assert!(out.is_null());
+        {
+            let mut s = deref_mut_option!(stream, C2paStream).unwrap();
+            s.write_all(b"signed").unwrap();
+        }
+        assert_eq!(
+            unsafe { c2pa_stream_get_bytes(stream, std::ptr::null_mut()) },
+            6
+        );
+        unsafe { c2pa_release_stream(stream) };
+    }
+
+    #[test]
+    fn test_memory_stream_rejects_null_data_with_a_length() {
+        assert!(unsafe { c2pa_create_stream_from_bytes(std::ptr::null(), 4) }.is_null());
+        assert!(CimplError::last_message().is_some());
+    }
+
+    #[test]
+    fn test_get_bytes_rejects_a_callback_stream() {
+        let mut stream = TestStream::new(b"0123".to_vec());
+        let mut out = std::ptr::null();
+        assert_eq!(
+            unsafe { c2pa_stream_get_bytes(stream.as_ptr(), &mut out) },
+            -1
+        );
+        assert!(out.is_null());
+        assert!(CimplError::last_message().is_some());
     }
 
     #[test]
