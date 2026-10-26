@@ -1094,6 +1094,119 @@ fn test_verify_translated_action_with_languages_valid() {
     );
 }
 
+#[test]
+fn test_verify_claim_generator_resource_ref_icons_rejected() {
+    for version in [1, 2] {
+        let mut claim = Claim::new("test", Some("test"), version);
+        let info: ClaimGeneratorInfo = serde_json::from_value(json!({
+            "name": "test",
+            "icon": {"format": "image/png", "identifier": "icon.png"}
+        }))
+        .unwrap();
+        claim.add_claim_generator_info(info);
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+        Claim::verify_internal(
+            &claim,
+            &StoreValidationInfo::default(),
+            Err(Error::CoseSignature),
+            &mut validation_log,
+            &Context::new(),
+        )
+        .unwrap();
+        assert!(validation_log.has_status(validation_status::HASHED_URI_MISSING));
+    }
+}
+
+#[test]
+fn test_verify_resource_ref_icons_rejected() {
+    let icon = json!({"format": "image/png", "identifier": "icon.png"});
+    let cases = [
+        json!({"actions": [{"action": "c2pa.created", "softwareAgent": {"name": "test", "icon": icon}}]}),
+        json!({"actions": [{"action": "c2pa.created"}], "softwareAgents": [{"name": "test", "icon": icon}]}),
+        json!({"actions": [{"action": "c2pa.created"}], "templates": [{"action": "com.example.edit", "icon": icon}]}),
+    ];
+    for case in cases {
+        let mut claim = Claim::new("test", Some("test"), 2);
+        let actions: Actions = serde_json::from_value(case.clone()).unwrap();
+        claim.add_assertion(&actions).unwrap();
+        for behavior in [
+            ErrorBehavior::ContinueWhenPossible,
+            ErrorBehavior::StopOnFirstError,
+        ] {
+            let stop_on_error = matches!(behavior, ErrorBehavior::StopOnFirstError);
+            let mut validation_log = StatusTracker::with_error_behavior(behavior);
+            let result = Claim::verify_actions(
+                &claim,
+                &StoreValidationInfo::default(),
+                &mut validation_log,
+                &Settings::default(),
+            );
+            assert!(
+                validation_log.has_status(validation_status::HASHED_URI_MISSING),
+                "resource reference icon must be rejected: {case}"
+            );
+            if stop_on_error {
+                assert!(result.is_err());
+            } else {
+                assert!(result.is_ok());
+            }
+        }
+    }
+}
+
+#[test]
+fn test_verify_hashed_icons_and_resource_ref_after_databox() {
+    let mut claim = Claim::new("test", Some("test"), 2);
+    let embedded_icon = claim
+        .add_assertion(&assertions::EmbeddedData::new(
+            assertions::labels::ICON,
+            "image/png",
+            vec![1, 2, 3],
+        ))
+        .unwrap();
+    let databox_icon = claim.add_databox("image/png", vec![1, 2, 3], None).unwrap();
+    let mut actions_json = json!({
+        "actions": [{
+            "action": "c2pa.created",
+            "digitalSourceType": "http://cv.iptc.org/newscodes/digitalsourcetype/algorithmicMedia",
+            "softwareAgent": {"name": "test", "icon": embedded_icon}
+        }],
+        "softwareAgents": [{"name": "test", "icon": databox_icon}],
+        "templates": [{"action": "com.example.edit", "icon": embedded_icon}]
+    });
+    for invalid in [false, true] {
+        if invalid {
+            actions_json["softwareAgents"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({
+                    "name": "invalid",
+                    "icon": {"format": "image/png", "identifier": "icon.png"}
+                }));
+        }
+        let mut test_claim = claim.clone();
+        let actions: Actions = serde_json::from_value(actions_json.clone()).unwrap();
+        test_claim.add_assertion(&actions).unwrap();
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+        Claim::verify_actions(
+            &test_claim,
+            &StoreValidationInfo::default(),
+            &mut validation_log,
+            &Settings::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            validation_log.has_status(validation_status::HASHED_URI_MISSING),
+            invalid
+        );
+        if !invalid {
+            assert!(!validation_log.has_any_error(), "{validation_log:?}");
+        }
+    }
+}
+
 fn verify_related_assertions(claim: &mut Claim, related: Vec<HashedUri>) -> StatusTracker {
     let edited = Action::new(c2pa_action::EDITED)
         .set_parameter("relatedAssertions", related)
