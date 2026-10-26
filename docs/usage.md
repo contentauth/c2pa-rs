@@ -70,8 +70,10 @@ These features toggle compilation with different HTTP libraries, depending on th
 - `http_wasi`: Enables `wasi` for sync HTTP requests on WASI.
 - `http_wstd`: Enables `wstd` for async HTTP requests on WASI.
 
-Native `ureq` and `reqwest` HTTPS clients require `webpki-roots` 1.0.11 or
-newer and `rustls-webpki` 0.103.16 or newer. These minimums remove eMudhra
+Native `ureq` and `reqwest` HTTPS clients require `rustls` 0.23.24 or newer,
+`webpki-roots` 1.0.11 or newer, and `rustls-webpki` 0.103.16 or newer.
+The Rustls minimum ensures both clients use the patched WebPKI verifier
+rather than an older, separate version. These minimums remove eMudhra
 trust anchors and reject the compromised intermediate keys, including their
 Sectigo cross-signs. Rebuild and redistribute applications and native bindings
 to update the TLS verifier and root bundle embedded in existing binaries;
