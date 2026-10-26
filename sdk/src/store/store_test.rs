@@ -5638,23 +5638,30 @@ mod remote_manifest_response_tests {
     struct Resolver {
         content_length: Option<&'static str>,
         body_length: u64,
-        read_error: bool,
+        error_after: Option<u64>,
         bytes_read: Arc<AtomicUsize>,
     }
 
     struct Body {
         remaining: u64,
-        read_error: bool,
+        error_after: Option<u64>,
         eof_returned: bool,
         bytes_read: Arc<AtomicUsize>,
     }
 
     impl Read for Body {
         fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            if self.read_error || self.eof_returned {
+            if self
+                .error_after
+                .is_some_and(|limit| self.bytes_read.load(Ordering::SeqCst) as u64 >= limit)
+                || self.eof_returned
+            {
                 return Err(std::io::Error::other("test stream failure"));
             }
-            let len = self.remaining.min(buf.len() as u64) as usize;
+            let until_error = self.error_after.map_or(u64::MAX, |limit| {
+                limit - self.bytes_read.load(Ordering::SeqCst) as u64
+            });
+            let len = self.remaining.min(buf.len() as u64).min(until_error) as usize;
             buf[..len].fill(b'x');
             self.remaining -= len as u64;
             if !buf.is_empty() && len == 0 {
@@ -5677,7 +5684,7 @@ mod remote_manifest_response_tests {
             Ok(response
                 .body(Box::new(Body {
                     remaining: self.body_length,
-                    read_error: self.read_error,
+                    error_after: self.error_after,
                     eof_returned: false,
                     bytes_read: self.bytes_read.clone(),
                 }) as Box<dyn Read>)
@@ -5699,14 +5706,14 @@ mod remote_manifest_response_tests {
     async fn fetch(
         content_length: Option<&'static str>,
         body_length: u64,
-        read_error: bool,
+        error_after: Option<u64>,
         use_async: bool,
     ) -> (Result<Vec<u8>>, usize) {
         let bytes_read = Arc::new(AtomicUsize::new(0));
         let resolver = Arc::new(Resolver {
             content_length,
             body_length,
-            read_error,
+            error_after,
             bytes_read: bytes_read.clone(),
         });
         let context = Context::new()
@@ -5731,7 +5738,7 @@ mod remote_manifest_response_tests {
     async fn test_remote_manifest_oversized_header_rejected_before_reading() {
         for use_async in [false, true] {
             for header in ["18446744073709551615", "4294967295", "10485761"] {
-                let (result, bytes_read) = fetch(Some(header), 1, false, use_async).await;
+                let (result, bytes_read) = fetch(Some(header), 1, None, use_async).await;
                 assert_size_error(result);
                 assert_eq!(bytes_read, 0);
             }
@@ -5748,7 +5755,7 @@ mod remote_manifest_response_tests {
                 Some("18446744073709551616"),
             ] {
                 let (result, bytes_read) =
-                    fetch(header, MAX_MANIFEST_RESPONSE_SIZE + 100, false, use_async).await;
+                    fetch(header, MAX_MANIFEST_RESPONSE_SIZE + 100, None, use_async).await;
                 assert_size_error(result);
                 assert_eq!(bytes_read as u64, MAX_MANIFEST_RESPONSE_SIZE + 1);
             }
@@ -5760,7 +5767,7 @@ mod remote_manifest_response_tests {
         for use_async in [false, true] {
             for header in [None, Some("10485760")] {
                 let (result, bytes_read) =
-                    fetch(header, MAX_MANIFEST_RESPONSE_SIZE, false, use_async).await;
+                    fetch(header, MAX_MANIFEST_RESPONSE_SIZE, None, use_async).await;
                 let body = result.unwrap();
                 assert_eq!(body.len() as u64, MAX_MANIFEST_RESPONSE_SIZE);
                 assert!(body.iter().all(|byte| *byte == b'x'));
@@ -5780,11 +5787,11 @@ mod remote_manifest_response_tests {
                 Some("10"),
                 Some("invalid"),
             ] {
-                let (result, bytes_read) = fetch(header, 3, false, use_async).await;
+                let (result, bytes_read) = fetch(header, 3, None, use_async).await;
                 assert_eq!(result.unwrap(), b"xxx");
                 assert_eq!(bytes_read, 3);
             }
-            let (result, bytes_read) = fetch(Some("0"), 0, false, use_async).await;
+            let (result, bytes_read) = fetch(Some("0"), 0, None, use_async).await;
             assert!(result.unwrap().is_empty());
             assert_eq!(bytes_read, 0);
         }
@@ -5793,11 +5800,29 @@ mod remote_manifest_response_tests {
     #[c2pa_test_async]
     async fn test_remote_manifest_body_read_error_propagated() {
         for use_async in [false, true] {
-            let (result, _) = fetch(None, 3, true, use_async).await;
+            let (result, _) = fetch(None, 3, Some(0), use_async).await;
             assert!(
                 matches!(result, Err(Error::RemoteManifestFetch(ref msg)) if msg.contains("error reading content stream")),
                 "expected stream read error, got {result:?}"
             );
+        }
+    }
+
+    #[c2pa_test_async]
+    async fn test_remote_manifest_overflow_probe_read_error_propagated() {
+        for use_async in [false, true] {
+            let (result, bytes_read) = fetch(
+                Some("10485760"),
+                MAX_MANIFEST_RESPONSE_SIZE,
+                Some(MAX_MANIFEST_RESPONSE_SIZE),
+                use_async,
+            )
+            .await;
+            assert!(
+                matches!(result, Err(Error::RemoteManifestFetch(ref msg)) if msg == "error reading content stream"),
+                "expected overflow probe read error, got {result:?}"
+            );
+            assert_eq!(bytes_read as u64, MAX_MANIFEST_RESPONSE_SIZE);
         }
     }
 }
