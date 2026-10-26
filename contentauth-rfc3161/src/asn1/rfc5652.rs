@@ -29,7 +29,7 @@ use der::Decode;
 
 // Re-use common types from parent module
 use super::{AlgorithmIdentifier, GeneralizedTime};
-use crate::crypto::asn1::rfc3281::AttributeCertificate;
+use crate::asn1::rfc3281::AttributeCertificate;
 
 // Define local bcder-compatible types to replace x509_certificate imports
 

@@ -13,6 +13,7 @@
 
 use ::rasn::prelude::*;
 use bcder::{decode::Constructed, encode::Values};
+pub(crate) use contentauth_rfc3161::response::TimeStampResponse;
 use rasn_cms::SignedData;
 
 use crate::crypto::{
@@ -22,79 +23,6 @@ use crate::crypto::{
     },
     time_stamp::TimeStampError,
 };
-
-pub(crate) struct TimeStampResponse(pub TimeStampResp);
-
-impl std::ops::Deref for TimeStampResponse {
-    type Target = TimeStampResp;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl TimeStampResponse {
-    /// Return `true` if the request was successful.
-    pub(crate) fn is_success(&self) -> bool {
-        use crate::crypto::asn1::rfc3161::PkiStatus;
-
-        matches!(
-            self.0.status.status,
-            PkiStatus::Granted | PkiStatus::GrantedWithMods
-        )
-    }
-
-    pub(crate) fn signed_data(&self) -> Result<Option<SignedData>, TimeStampError> {
-        if let Some(token) = &self.0.time_stamp_token {
-            if token.content_type == OID_ID_SIGNED_DATA {
-                let mut sd_bytes = Vec::new();
-                token
-                    .content
-                    .write_encoded(bcder::Mode::Der, &mut sd_bytes)
-                    .map_err(|_err| {
-                        TimeStampError::DecodeError("time stamp invalid".to_string())
-                    })?;
-
-                // decode ContentInfo as SignedData
-                match rasn::der::decode(&sd_bytes) {
-                    Ok(signed_data) => Ok(Some(signed_data)),
-                    Err(_) => Err(TimeStampError::DecodeError(
-                        "time stamp invalid".to_string(),
-                    )),
-                }
-            } else {
-                Err(TimeStampError::DecodeError(
-                    "Invalid OID for signed data".to_string(),
-                ))
-            }
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub(crate) fn tst_info(&self) -> Result<Option<TstInfo>, TimeStampError> {
-        if let Some(signed_data) = self.signed_data()? {
-            if signed_data.encap_content_info.content_type
-                == Oid::ISO_MEMBER_BODY_US_RSADSI_PKCS9_SMIME_CT_TSTINFO
-            {
-                if let Some(content) = signed_data.encap_content_info.content {
-                    Ok(Some(
-                        Constructed::decode(content.as_ref(), bcder::Mode::Der, |cons| {
-                            TstInfo::take_from(cons)
-                        })
-                        .map_err(|e| TimeStampError::DecodeError(e.to_string()))?,
-                    ))
-                } else {
-                    Ok(None)
-                }
-            } else {
-                Ok(None)
-            }
-        } else {
-            Ok(None)
-        }
-    }
-}
 
 #[derive(AsnType, Clone, Debug, Decode, Encode, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct ContentInfo {

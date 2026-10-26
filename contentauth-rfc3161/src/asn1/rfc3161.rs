@@ -13,7 +13,7 @@ use bcder::{
 };
 
 use super::{AlgorithmIdentifier, Extensions, GeneralName, GeneralizedTime};
-use crate::crypto::asn1::{rfc4210::PkiFreeText, rfc5652::ContentInfo};
+use crate::asn1::{rfc4210::PkiFreeText, rfc5652::ContentInfo};
 
 /// Content-Type for Time-Stamp Token Info.
 ///

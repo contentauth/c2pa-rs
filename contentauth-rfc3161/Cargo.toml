@@ -1,0 +1,25 @@
+[package]
+name = "contentauth-rfc3161"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.96.0"
+license = "MIT OR Apache-2.0"
+description = "Experimental host-driven RFC 3161 timestamp acquisition"
+readme = "README.md"
+publish = false
+
+[dependencies]
+bcder = "0.7.6"
+bytes = "1.11.1"
+chrono = { version = "0.4.44", default-features = false, features = ["std"] }
+contentauth-sans-io-core = "0.2.0"
+der = { version = "0.8.1", features = ["alloc", "std", "oid"] }
+http = "1.4.1"
+hex = "0.4.3"
+rasn = "0.28.13"
+rasn-cms = "0.28.13"
+sha2 = "0.11.0"
+thiserror = "2.0.18"
+
+[dev-dependencies]
+pem = "4.0.0"

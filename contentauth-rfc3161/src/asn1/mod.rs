@@ -499,7 +499,7 @@ mod tests {
 
     // Helper to load test certificate
     fn load_test_cert_pem(name: &str) -> Vec<u8> {
-        let path = format!("tests/fixtures/certs/{name}");
+        let path = format!("{}/tests/fixtures/certs/{name}", env!("CARGO_MANIFEST_DIR"));
         std::fs::read(&path).unwrap_or_else(|_| panic!("Failed to read test certificate: {path}"))
     }
 
