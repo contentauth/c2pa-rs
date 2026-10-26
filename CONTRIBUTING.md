@@ -64,10 +64,10 @@ Set multi-line code blocks apart from adjacent statements and sibling blocks wit
 line wherever rustfmt permits. This includes loops, conditionals, matches, and multi-line
 expressions; keep related continuations such as `else` attached to their block.
 
-Separate sibling struct fields and enum variants with exactly one blank line wherever
-rustfmt permits. Keep each member's documentation comments and attributes attached to
-that member: a comment/field or comment/variant group should stand apart from the next
-group by one blank line.
+When struct fields or enum variants have comments, separate each comment/member group
+from adjacent members with exactly one blank line wherever rustfmt permits. Keep each
+member's comments and attributes attached to that member. Blank lines between adjacent
+members without comments are optional; attributes alone do not require blank lines.
 
 We encourage you to raise an issue in GitHub before starting work on a major addition to the crate.
 This will give us an opportunity to discuss API design and avoid duplicate efforts.
