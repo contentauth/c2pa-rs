@@ -186,7 +186,7 @@ jobs:
                      /etc/apt/sources.list.d/azure-cli.sources
 
       - name: Run the benchmarks
-        uses: CodSpeedHQ/action@a4a36bb07c0638b0b4ca52bf1f3dad1b4289e52f # v4.18.1
+        uses: CodSpeedHQ/action@78102a468f96d8e0ccb92d0ec49425753fc42062 # v5.6.0
         with:
           mode: ${{ matrix.build_mode || 'simulation' }}
           run: cargo codspeed run --bench ${{ matrix.bench }} ${{ matrix.format && format('-- "{0} {1}{2}"', matrix.bench, matrix.format, steps.size.outputs.suffix) || '' }}

@@ -280,13 +280,13 @@ wasm-bindgen-test = "0.3.72"
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 httpmock = "0.8.3"
 tokio = { version = "1.52.3", features = ["full"] }
-criterion = { package = "codspeed-criterion-compat", version = "4.7.0" }
+criterion = { package = "codspeed-criterion-compat", version = "6.0.0" }
 dhat = "0.3.3"
 
 # WASM/WASI doesn't support default criterion features.
 # https://github.com/bheisler/criterion.rs/blob/4c19e913b84e6a7e4a8470cb0f766796886ed891/book/src/user_guide/wasi.md
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-criterion = { package = "codspeed-criterion-compat", version = "4.7.0", default-features = false }
+criterion = { package = "codspeed-criterion-compat", version = "6.0.0", default-features = false }
 
 [[bench]]
 name = "sign"
