@@ -2701,6 +2701,72 @@ mod tests {
         };
     }
 
+    unsafe fn assert_returned_bytes_and_free(ptr: *const c_uchar, len: i64) {
+        assert!(len > 0, "byte API failed: {:?}", CimplError::last_message());
+        assert!(!ptr.is_null());
+        let bytes = std::slice::from_raw_parts(ptr, usize::try_from(len).unwrap());
+        assert!(bytes.iter().any(|byte| *byte != 0));
+        assert_eq!(c2pa_free(ptr.cast()), 0);
+    }
+
+    fn setup_builder_with_context_signer() -> *mut C2paBuilder {
+        unsafe {
+            let settings = c2pa_settings_new();
+            assert!(!settings.is_null());
+            let data = CString::new(include_str!(fixture_path!("test_settings.json"))).unwrap();
+            let format = CString::new("json").unwrap();
+            assert_eq!(
+                c2pa_settings_update_from_string(settings, data.as_ptr(), format.as_ptr()),
+                0
+            );
+            let context_builder = c2pa_context_builder_new();
+            assert!(!context_builder.is_null());
+            assert_eq!(
+                c2pa_context_builder_set_settings(context_builder, settings),
+                0
+            );
+            let context = c2pa_context_builder_build(context_builder);
+            assert!(!context.is_null());
+            let builder = c2pa_builder_from_context(context);
+            assert!(!builder.is_null());
+            assert_eq!(c2pa_free(settings.cast()), 0);
+            assert_eq!(c2pa_free(context.cast()), 0);
+            builder
+        }
+    }
+
+    #[test]
+    fn test_c2pa_builder_sign_context_returned_bytes() {
+        let builder = setup_builder_with_context_signer();
+        let format = CString::new("image/jpeg").unwrap();
+        let mut source = TestStream::new(include_bytes!(fixture_path!("IMG_0003.jpg")).to_vec());
+        let mut dest = TestStream::new(Vec::new());
+        let mut bytes = std::ptr::null();
+        unsafe {
+            let len = c2pa_builder_sign_context(
+                builder,
+                format.as_ptr(),
+                source.as_ptr(),
+                dest.as_ptr(),
+                &mut bytes,
+            );
+            assert_returned_bytes_and_free(bytes, len);
+            assert_eq!(c2pa_free(builder.cast()), 0);
+        }
+    }
+
+    #[test]
+    fn test_c2pa_builder_placeholder_returned_bytes() {
+        let builder = setup_builder_with_context_signer();
+        let format = CString::new("image/jpeg").unwrap();
+        let mut bytes = std::ptr::null();
+        unsafe {
+            let len = c2pa_builder_placeholder(builder, format.as_ptr(), &mut bytes);
+            assert_returned_bytes_and_free(bytes, len);
+            assert_eq!(c2pa_free(builder.cast()), 0);
+        }
+    }
+
     /// Helper to create a signer and builder for testing
     /// Returns (signer, builder)
     fn setup_signer_and_builder_for_signing_tests() -> (*mut C2paSigner, *mut C2paBuilder) {
@@ -3203,7 +3269,7 @@ mod tests {
         );
 
         unsafe {
-            assert_eq!(c2pa_free(manifest_bytes_ptr as *const c_void), 0);
+            assert_returned_bytes_and_free(manifest_bytes_ptr, sign_result);
             c2pa_free(reader as *mut c_void);
             c2pa_free(builder as *mut c_void);
             c2pa_free(signer as *mut c_void);
@@ -4514,8 +4580,8 @@ verify_after_sign = true
         assert!(!composed_bytes.is_null());
 
         unsafe {
-            assert_eq!(c2pa_free(manifest_bytes as *const c_void), 0);
-            assert_eq!(c2pa_free(composed_bytes as *const c_void), 0);
+            assert_returned_bytes_and_free(manifest_bytes, manifest_size);
+            assert_returned_bytes_and_free(composed_bytes, composed_size);
             assert_eq!(c2pa_free(settings as *const c_void), 0);
             assert_eq!(c2pa_free(context as *const c_void), 0);
             assert_eq!(c2pa_free(builder as *const c_void), 0);
@@ -4884,7 +4950,10 @@ verify_after_sign = true
         assert!(!signature.is_null(), "Should return signature");
 
         unsafe {
-            assert_eq!(c2pa_free(signature as *const c_void), 0);
+            let expected = CallbackSigner::ed25519_sign(bytes, private_key_pem).unwrap();
+            assert_eq!(expected.len(), 64);
+            assert_eq!(std::slice::from_raw_parts(signature, 64), expected);
+            assert_returned_bytes_and_free(signature, 64);
         }
     }
 
