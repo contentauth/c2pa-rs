@@ -449,21 +449,22 @@ pub fn verify_time_stamp(
         }
 
         // Make sure the time stamp is valid for the specified data.
-        let digest_algorithm = match DigestAlgorithm::try_from(&mi.hash_algorithm.algorithm) {
-            Ok(d) => d,
-            Err(_) => {
-                log_item!(
-                    "",
-                    "timestamp unknown message digest algorithm",
-                    "verify_time_stamp"
-                )
-                .validation_status(TIMESTAMP_UNTRUSTED)
-                .informational(&mut current_validation_log);
+        let digest_algorithm =
+            match DigestAlgorithm::for_message_imprint(&mi.hash_algorithm.algorithm) {
+                Some(d) => d,
+                None => {
+                    log_item!(
+                        "",
+                        "timestamp unknown message digest algorithm",
+                        "verify_time_stamp"
+                    )
+                    .validation_status(TIMESTAMP_UNTRUSTED)
+                    .informational(&mut current_validation_log);
 
-                last_err = TimeStampError::UnsupportedAlgorithm;
-                continue;
-            }
-        };
+                    last_err = TimeStampError::UnsupportedAlgorithm;
+                    continue;
+                }
+            };
 
         let mut h = digest_algorithm.digester();
         h.update(data);
@@ -665,6 +666,13 @@ impl DigestAlgorithm {
             DigestAlgorithm::Sha384 => Hasher::Sha384(<Sha384 as sha2::Digest>::new()),
             DigestAlgorithm::Sha512 => Hasher::Sha512(<Sha512 as sha2::Digest>::new()),
         }
+    }
+
+    // C2PA 13.1/15.8.2: a messageImprint must use SHA-256/384/512. SHA-1 is only tolerated for the CMS digest.
+    fn for_message_imprint(oid: &bcder::Oid) -> Option<Self> {
+        Self::try_from(oid)
+            .ok()
+            .filter(|d| !matches!(d, DigestAlgorithm::Sha1))
     }
 }
 
@@ -876,4 +884,1015 @@ fn validate_timestamp_sig(
     validator
         .validate(&sig_val.to_bytes(), tbs, signing_key_der)
         .map_err(|_| TimeStampError::InvalidData)
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use std::str::FromStr;
+
+    use super::DigestAlgorithm;
+
+    fn oid(s: &str) -> bcder::Oid {
+        bcder::Oid::from_str(s).expect("valid OID")
+    }
+
+    #[test]
+    fn message_imprint_rejects_sha1_and_unlisted_algorithms() {
+        for o in [
+            "1.3.14.3.2.26",          // SHA-1
+            "2.16.840.1.101.3.4.2.4", // SHA-224
+            "2.16.840.1.101.3.4.2.8", // SHA3-256
+            "1.2.840.113549.2.5",     // MD5
+        ] {
+            assert!(
+                DigestAlgorithm::for_message_imprint(&oid(o)).is_none(),
+                "{o}"
+            );
+        }
+    }
+
+    #[test]
+    fn message_imprint_accepts_sha2() {
+        for o in [
+            "2.16.840.1.101.3.4.2.1",
+            "2.16.840.1.101.3.4.2.2",
+            "2.16.840.1.101.3.4.2.3",
+        ] {
+            assert!(DigestAlgorithm::for_message_imprint(&oid(o)).is_some());
+        }
+    }
+
+    #[test]
+    fn cms_digest_still_accepts_sha1() {
+        assert!(DigestAlgorithm::try_from(&oid("1.3.14.3.2.26")).is_ok());
+    }
+
+    #[test]
+    fn digesters_match_published_abc_vectors_across_updates() {
+        for (algorithm, expected) in [
+            (DigestAlgorithm::Sha1, "a9993e364706816aba3e25717850c26c9cd0d89d"),
+            (DigestAlgorithm::Sha256, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"),
+            (DigestAlgorithm::Sha384, "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7"),
+            (DigestAlgorithm::Sha512, "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"),
+        ] {
+            let mut hasher = algorithm.digester();
+            hasher.update(b"a");
+            hasher.update(b"bc");
+            assert_eq!(hex::encode(hasher.finish().as_ref()), expected);
+        }
+    }
+
+    #[test]
+    fn accuracy_rounds_up_subseconds_and_saturates() {
+        use super::{integer_to_i64, tst_accuracy_seconds, Accuracy};
+        assert_eq!(tst_accuracy_seconds(None), 0);
+        let mut accuracy = Accuracy {
+            seconds: None,
+            millis: None,
+            micros: None,
+        };
+
+        assert_eq!(tst_accuracy_seconds(Some(&accuracy)), 0);
+        accuracy.micros = Some(1.into());
+        assert_eq!(tst_accuracy_seconds(Some(&accuracy)), 1);
+        accuracy.seconds = Some(2.into());
+        accuracy.millis = Some(999.into());
+        accuracy.micros = Some(999.into());
+        assert_eq!(tst_accuracy_seconds(Some(&accuracy)), 3);
+        accuracy.seconds = Some(i64::MAX.into());
+        assert_eq!(tst_accuracy_seconds(Some(&accuracy)), i64::MAX / 1_000_000);
+        assert_eq!(integer_to_i64(&bcder::Integer::from(-1)), 255);
+    }
+
+    #[test]
+    fn timestamp_conversions_reject_unsupported_dates() {
+        use chrono::{TimeZone, Utc};
+
+        use super::{time_to_datetime, timestamp_to_generalized_time};
+        assert!(timestamp_to_generalized_time(-1).is_none());
+        assert!(timestamp_to_generalized_time(i64::MAX).is_none());
+        let utc = Utc.timestamp_opt(1_577_836_800, 0).single().expect("date");
+        assert_eq!(time_to_datetime(rasn_pkix::Time::Utc(utc)), utc);
+        assert_eq!(time_to_datetime(rasn_pkix::Time::General(utc.into())), utc);
+    }
+
+    #[test]
+    fn malformed_tokens_are_reported_and_empty_chains_are_rejected() {
+        use super::*;
+        let mut log = StatusTracker::default();
+        assert!(matches!(
+            verify_time_stamp(
+                b"not DER",
+                b"",
+                &CertificateTrustPolicy::default(),
+                &mut log,
+                false
+            ),
+            Err(TimeStampError::DecodeError(_))
+        ));
+        assert!(log.has_status(TIMESTAMP_MALFORMED));
+        assert!(matches!(
+            order_certificates_leaf_to_root(&[], 0),
+            Err(TimeStampError::DecodeError(_))
+        ));
+        assert!(matches!(
+            order_certificates_leaf_to_root(&[vec![0x30, 0]], 0),
+            Err(TimeStampError::DecodeError(_))
+        ));
+        // A non-SEQUENCE is treated as an absent optional token by lookup.
+        assert!(tsa_signer_cert_der_from_token(b"not DER")
+            .expect("non-SEQUENCE is treated as an absent token")
+            .is_none());
+    }
+}
+
+/// Builds a signed RFC 3161 token locally so `verify_time_stamp` is exercised end to end.
+#[cfg(all(test, feature = "openssl", not(target_arch = "wasm32")))]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+pub(crate) mod message_imprint_regression {
+    use openssl::{
+        asn1::Asn1Time,
+        bn::BigNum,
+        ec::{EcGroup, EcKey},
+        hash::{hash, MessageDigest},
+        nid::Nid,
+        pkey::PKey,
+        sign::Signer,
+        x509::{extension::ExtendedKeyUsage, X509Builder, X509NameBuilder},
+    };
+
+    use super::{generalized_time_to_datetime, verify_time_stamp};
+    use crate::{
+        crypto::{cose::CertificateTrustPolicy, time_stamp::TimeStampError},
+        status_tracker::StatusTracker,
+        validation_status::{TIMESTAMP_TRUSTED, TIMESTAMP_UNTRUSTED, TIMESTAMP_VALIDATED},
+    };
+
+    const OID_MD5: &[u8] = &[0x06, 0x08, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x02, 0x05];
+    pub(crate) const OID_SHA1: &[u8] = &[0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a];
+    const OID_SHA224: &[u8] = &[
+        0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x04,
+    ];
+    pub(crate) const OID_SHA256: &[u8] = &[
+        0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01,
+    ];
+    const OID_SHA384: &[u8] = &[
+        0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x02,
+    ];
+    const OID_SHA512: &[u8] = &[
+        0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x03,
+    ];
+    const OID_SHA3_256: &[u8] = &[
+        0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x08,
+    ];
+    const OID_ECDSA_SHA256: &[u8] = &[0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02];
+    const OID_SIGNED_DATA: &[u8] = &[
+        0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x02,
+    ];
+    const OID_TST_INFO: &[u8] = &[
+        0x06, 0x0b, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x10, 0x01, 0x04,
+    ];
+    const OID_POLICY: &[u8] = &[0x06, 0x03, 0x2a, 0x03, 0x04];
+
+    // DER integer 1
+    const INT_1: &[u8] = &[0x02, 0x01, 0x01];
+
+    const DATA: &[u8] = b"claim signature bytes";
+
+    fn tlv(tag: u8, body: &[u8]) -> Vec<u8> {
+        let len = body.len();
+        let mut out = vec![tag];
+        if len < 0x80 {
+            out.push(len as u8);
+        } else if len <= 0xff {
+            out.extend([0x81, len as u8]);
+        } else {
+            out.extend([0x82, (len >> 8) as u8, len as u8]);
+        }
+        out.extend_from_slice(body);
+        out
+    }
+
+    fn cat(parts: &[&[u8]]) -> Vec<u8> {
+        parts.concat()
+    }
+
+    /// Returns a signed time-stamp token (genTime 2020-01-01) whose messageImprint
+    /// covers `data` using the given digest.
+    pub(crate) fn build_token(
+        imprint_oid: &[u8],
+        imprint_md: MessageDigest,
+        data: &[u8],
+    ) -> Vec<u8> {
+        build_token_with(imprint_oid, imprint_md, data, TokenOptions::default())
+    }
+
+    #[derive(Default)]
+    struct TokenOptions<'a> {
+        gen_time: Option<&'a [u8]>,
+        accuracy: Option<&'a [u8]>,
+        signed_time: Option<(u8, &'a [u8])>,
+        signed_attrs: bool,
+        profile_extensions: bool,
+        cms_digest: Option<(&'a [u8], MessageDigest)>,
+    }
+
+    fn build_token_with(
+        imprint_oid: &[u8],
+        imprint_md: MessageDigest,
+        data: &[u8],
+        options: TokenOptions<'_>,
+    ) -> Vec<u8> {
+        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
+        let key = PKey::from_ec_key(EcKey::generate(&group).unwrap()).unwrap();
+
+        let mut name = X509NameBuilder::new().unwrap();
+        name.append_entry_by_nid(Nid::COMMONNAME, "Test TSA")
+            .unwrap();
+        let name = name.build();
+
+        let mut cb = X509Builder::new().unwrap();
+        cb.set_version(2).unwrap();
+        cb.set_serial_number(&BigNum::from_u32(1).unwrap().to_asn1_integer().unwrap())
+            .unwrap();
+        cb.set_subject_name(&name).unwrap();
+        cb.set_issuer_name(&name).unwrap();
+        cb.set_pubkey(&key).unwrap();
+        cb.set_not_before(&Asn1Time::from_unix(1_500_000_000).unwrap())
+            .unwrap();
+        cb.set_not_after(&Asn1Time::from_unix(1_900_000_000).unwrap())
+            .unwrap();
+        cb.append_extension(ExtendedKeyUsage::new().time_stamping().build().unwrap())
+            .unwrap();
+        if options.profile_extensions {
+            use openssl::x509::extension::{
+                AuthorityKeyIdentifier, KeyUsage, SubjectKeyIdentifier,
+            };
+            cb.append_extension(
+                KeyUsage::new()
+                    .critical()
+                    .digital_signature()
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+            let ski = SubjectKeyIdentifier::new()
+                .build(&cb.x509v3_context(None, None))
+                .unwrap();
+            cb.append_extension(ski).unwrap();
+            let aki = AuthorityKeyIdentifier::new()
+                .keyid(true)
+                .build(&cb.x509v3_context(None, None))
+                .unwrap();
+            cb.append_extension(aki).unwrap();
+        }
+        cb.sign(&key, MessageDigest::sha256()).unwrap();
+        let cert = cb.build();
+
+        let imprint_hash = hash(imprint_md, data).unwrap();
+        let message_imprint = tlv(
+            0x30,
+            &cat(&[
+                &tlv(0x30, &cat(&[imprint_oid, &[0x05, 0x00]])),
+                &tlv(0x04, &imprint_hash),
+            ]),
+        );
+        let tst_info = tlv(
+            0x30,
+            &cat(&[
+                INT_1,
+                OID_POLICY,
+                &message_imprint,
+                INT_1,
+                &tlv(0x18, options.gen_time.unwrap_or(b"20200101000000Z")),
+                options.accuracy.unwrap_or_default(),
+            ]),
+        );
+
+        let (cms_oid, cms_md) = options
+            .cms_digest
+            .unwrap_or((OID_SHA256, MessageDigest::sha256()));
+        let attributes = if options.signed_attrs {
+            let mut attrs = vec![
+                tlv(
+                    0x30,
+                    &cat(&[
+                        &[
+                            0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x03,
+                        ],
+                        &tlv(0x31, OID_TST_INFO),
+                    ]),
+                ),
+                tlv(
+                    0x30,
+                    &cat(&[
+                        &[
+                            0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x04,
+                        ],
+                        &tlv(0x31, &tlv(0x04, &hash(cms_md, &tst_info).unwrap())),
+                    ]),
+                ),
+            ];
+            if let Some((tag, time)) = options.signed_time {
+                attrs.push(tlv(
+                    0x30,
+                    &cat(&[
+                        &[
+                            0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x05,
+                        ],
+                        &tlv(0x31, &tlv(tag, time)),
+                    ]),
+                ));
+            }
+            attrs.sort();
+            Some(attrs.concat())
+        } else {
+            None
+        };
+
+        let tbs = attributes
+            .as_ref()
+            .map(|attrs| tlv(0x31, attrs))
+            .unwrap_or_else(|| tst_info.clone());
+        let signature = Signer::new(cms_md, &key)
+            .unwrap()
+            .sign_oneshot_to_vec(&tbs)
+            .unwrap();
+
+        let issuer_and_serial = tlv(0x30, &cat(&[&cert.issuer_name().to_der().unwrap(), INT_1]));
+        let signature_oid: &[u8] = match cms_oid {
+            OID_SHA1 => &[6, 7, 0x2a, 0x86, 0x48, 0xce, 0x3d, 4, 1],
+            OID_SHA384 => &[6, 8, 0x2a, 0x86, 0x48, 0xce, 0x3d, 4, 3, 3],
+            OID_SHA512 => &[6, 8, 0x2a, 0x86, 0x48, 0xce, 0x3d, 4, 3, 4],
+            _ => OID_ECDSA_SHA256,
+        };
+
+        let signer_info = tlv(
+            0x30,
+            &cat(&[
+                INT_1,
+                &issuer_and_serial,
+                &tlv(0x30, cms_oid),
+                &attributes
+                    .as_ref()
+                    .map(|attrs| tlv(0xa0, attrs))
+                    .unwrap_or_default(),
+                &tlv(0x30, signature_oid),
+                &tlv(0x04, &signature),
+            ]),
+        );
+        let signed_data = tlv(
+            0x30,
+            &cat(&[
+                &[0x02, 0x01, 0x03],
+                &tlv(0x31, &tlv(0x30, cms_oid)),
+                &tlv(
+                    0x30,
+                    &cat(&[OID_TST_INFO, &tlv(0xa0, &tlv(0x04, &tst_info))]),
+                ),
+                &tlv(0xa0, &cert.to_der().unwrap()),
+                &tlv(0x31, &signer_info),
+            ]),
+        );
+
+        tlv(0x30, &cat(&[OID_SIGNED_DATA, &tlv(0xa0, &signed_data)]))
+    }
+
+    #[test]
+    fn allowed_message_imprint_algorithms_are_accepted() {
+        for (name, oid, md) in [
+            ("SHA-256", OID_SHA256, MessageDigest::sha256()),
+            ("SHA-384", OID_SHA384, MessageDigest::sha384()),
+            ("SHA-512", OID_SHA512, MessageDigest::sha512()),
+        ] {
+            let token = build_token(oid, md, DATA);
+            let mut log = StatusTracker::default();
+
+            let result = verify_time_stamp(
+                &token,
+                DATA,
+                &CertificateTrustPolicy::default(),
+                &mut log,
+                false,
+            );
+            assert!(result.is_ok(), "{name}: {result:?}");
+            let tst = result.unwrap();
+
+            assert_eq!(
+                generalized_time_to_datetime(tst.gen_time.clone()).timestamp(),
+                1_577_836_800,
+                "{name}"
+            );
+            assert!(log.has_status(TIMESTAMP_VALIDATED), "{name}");
+            assert!(log.has_status(TIMESTAMP_TRUSTED), "{name}");
+        }
+    }
+
+    #[test]
+    fn disallowed_message_imprint_algorithms_are_untrusted_and_ignored() {
+        // Each token has a valid signature and a matching imprint; only the algorithm is
+        // disallowed (C2PA 15.8.2: anything other than SHA-256/384/512).
+        for (name, oid, md) in [
+            ("SHA-1", OID_SHA1, MessageDigest::sha1()),
+            ("SHA-224", OID_SHA224, MessageDigest::sha224()),
+            ("SHA3-256", OID_SHA3_256, MessageDigest::sha3_256()),
+            ("MD5", OID_MD5, MessageDigest::md5()),
+        ] {
+            let token = build_token(oid, md, DATA);
+            let mut log = StatusTracker::default();
+
+            let result = verify_time_stamp(
+                &token,
+                DATA,
+                &CertificateTrustPolicy::default(),
+                &mut log,
+                false,
+            );
+
+            assert!(
+                matches!(result, Err(TimeStampError::UnsupportedAlgorithm)),
+                "{name}: {result:?}"
+            );
+            assert!(log.has_status(TIMESTAMP_UNTRUSTED), "{name}");
+            assert!(!log.has_status(TIMESTAMP_VALIDATED), "{name}");
+            assert!(!log.has_status(TIMESTAMP_TRUSTED), "{name}");
+        }
+    }
+
+    #[test]
+    fn mismatched_imprint_is_rejected() {
+        // Guards against the positive tests passing without the imprint being compared.
+        let token = build_token(OID_SHA256, MessageDigest::sha256(), DATA);
+        let mut log = StatusTracker::default();
+
+        let result = verify_time_stamp(
+            &token,
+            b"different data",
+            &CertificateTrustPolicy::default(),
+            &mut log,
+            false,
+        );
+
+        assert!(matches!(result, Err(TimeStampError::InvalidData)));
+        assert!(!log.has_status(TIMESTAMP_TRUSTED));
+    }
+
+    fn decode_token(token: &[u8]) -> rasn_cms::SignedData {
+        super::signed_data_from_time_stamp_response(token)
+            .unwrap()
+            .unwrap()
+    }
+
+    fn encode_token(sd: &rasn_cms::SignedData) -> Vec<u8> {
+        tlv(
+            0x30,
+            &cat(&[OID_SIGNED_DATA, &tlv(0xa0, &rasn::der::encode(sd).unwrap())]),
+        )
+    }
+
+    fn check_error(token: &[u8], status: &str) -> TimeStampError {
+        let mut log = StatusTracker::default();
+        let error = verify_time_stamp(
+            token,
+            DATA,
+            &CertificateTrustPolicy::default(),
+            &mut log,
+            false,
+        )
+        .unwrap_err();
+        assert!(log.has_status(status), "{error:?}: {log:?}");
+        assert!(!log.has_status(TIMESTAMP_TRUSTED));
+        error
+    }
+
+    #[test]
+    fn signed_attributes_validate_all_supported_cms_digests() {
+        for (oid, md) in [
+            (OID_SHA1, MessageDigest::sha1()),
+            (OID_SHA256, MessageDigest::sha256()),
+            (OID_SHA384, MessageDigest::sha384()),
+            (OID_SHA512, MessageDigest::sha512()),
+        ] {
+            let token = build_token_with(
+                OID_SHA256,
+                MessageDigest::sha256(),
+                DATA,
+                TokenOptions {
+                    signed_attrs: true,
+                    cms_digest: Some((oid, md)),
+                    ..Default::default()
+                },
+            );
+            let mut log = StatusTracker::default();
+            assert_eq!(
+                verify_time_stamp(
+                    &token,
+                    DATA,
+                    &CertificateTrustPolicy::default(),
+                    &mut log,
+                    false
+                )
+                .is_ok(),
+                oid != OID_SHA1,
+                "{log:?}"
+            );
+            // SHA-1 is accepted as a CMS content digest, but EC/SHA-1
+            // signatures are not supported by the signature validator.
+            assert_eq!(log.has_status(TIMESTAMP_VALIDATED), oid != OID_SHA1);
+        }
+    }
+
+    #[test]
+    fn signed_signing_time_overrides_tst_info_time() {
+        for (tag, time) in [
+            (0x17, b"210102030405Z".as_slice()),
+            (0x18, b"20210102030405Z".as_slice()),
+        ] {
+            let token = build_token_with(
+                OID_SHA256,
+                MessageDigest::sha256(),
+                DATA,
+                TokenOptions {
+                    gen_time: Some(b"20400101000000Z"),
+                    signed_attrs: true,
+                    signed_time: Some((tag, time)),
+                    ..Default::default()
+                },
+            );
+            let tst = verify_time_stamp(
+                &token,
+                DATA,
+                &CertificateTrustPolicy::default(),
+                &mut StatusTracker::default(),
+                false,
+            )
+            .unwrap();
+            assert_eq!(
+                generalized_time_to_datetime(tst.gen_time).timestamp(),
+                1_609_556_645
+            );
+        }
+        // An invalid signing-time value is ignored, not a malformed-token error.
+        let token = build_token_with(
+            OID_SHA256,
+            MessageDigest::sha256(),
+            DATA,
+            TokenOptions {
+                signed_attrs: true,
+                signed_time: Some((0x04, b"not a time")),
+                ..Default::default()
+            },
+        );
+        let tst = verify_time_stamp(
+            &token,
+            DATA,
+            &CertificateTrustPolicy::default(),
+            &mut StatusTracker::default(),
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            generalized_time_to_datetime(tst.gen_time).timestamp(),
+            1_577_836_800
+        );
+    }
+
+    #[test]
+    fn signed_message_digest_failures_have_distinct_statuses() {
+        use rasn::types::{Any, ObjectIdentifier};
+
+        use crate::validation_status::{TIMESTAMP_MALFORMED, TIMESTAMP_MISMATCH};
+        let token = build_token_with(
+            OID_SHA256,
+            MessageDigest::sha256(),
+            DATA,
+            TokenOptions {
+                signed_attrs: true,
+                ..Default::default()
+            },
+        );
+        for case in 0..6 {
+            let mut sd = decode_token(&token);
+            let mut signer = sd.signer_infos.to_vec().remove(0).clone();
+            let mut attrs: Vec<_> = signer
+                .signed_attrs
+                .take()
+                .unwrap()
+                .to_vec()
+                .into_iter()
+                .cloned()
+                .collect();
+            let pos = attrs
+                .iter()
+                .position(|a| {
+                    a.r#type == rasn::types::Oid::ISO_MEMBER_BODY_US_RSADSI_PKCS9_MESSAGE_DIGEST
+                })
+                .unwrap();
+            match case {
+                0 => {
+                    attrs.remove(pos);
+                }
+                1 => {
+                    attrs[pos].values =
+                        vec![Any::new(vec![0x04, 0x01, 1]), Any::new(vec![0x04, 0x01, 2])].into()
+                }
+                2 => attrs[pos].values = vec![Any::new(vec![0x02, 0x01, 1])].into(),
+                3 => attrs[pos].values = vec![Any::new(vec![0x04, 0x01, 1])].into(),
+                5 => attrs[pos].values = Vec::<Any>::new().into(),
+                _ => {
+                    signer.digest_algorithm.algorithm =
+                        ObjectIdentifier::new(vec![1, 2, 3, 4]).unwrap()
+                }
+            }
+            signer.signed_attrs = Some(attrs.into());
+            sd.signer_infos = vec![signer].into();
+            let status = if case == 3 {
+                TIMESTAMP_MISMATCH
+            } else {
+                TIMESTAMP_MALFORMED
+            };
+
+            let error = check_error(&encode_token(&sd), status);
+            if case == 5 {
+                // The cardinality guard rejects an empty SET before the
+                // subsequent first-value lookup can return None.
+                assert!(matches!(&error, TimeStampError::DecodeError(message)
+                    if message == "message digest attribute has 0 values, should have one"));
+            }
+
+            assert!(if case == 3 {
+                matches!(error, TimeStampError::InvalidData)
+            } else {
+                matches!(error, TimeStampError::DecodeError(_))
+            });
+        }
+    }
+
+    #[test]
+    fn token_structure_and_signature_failures_are_not_trusted() {
+        use crate::validation_status::TIMESTAMP_MALFORMED;
+        let token = build_token(OID_SHA256, MessageDigest::sha256(), DATA);
+        let sd = decode_token(&token);
+        let mut missing = sd.clone();
+        missing.certificates = None;
+        assert!(matches!(
+            check_error(&encode_token(&missing), TIMESTAMP_UNTRUSTED),
+            TimeStampError::DecodeError(_)
+        ));
+        assert!(
+            super::tsa_signer_cert_der_from_token(&encode_token(&missing))
+                .unwrap()
+                .is_none()
+        );
+        for content in [None, Some(vec![0x30, 0].into())] {
+            let mut broken = sd.clone();
+            broken.encap_content_info.content = content;
+            assert!(matches!(
+                check_error(&encode_token(&broken), TIMESTAMP_MALFORMED),
+                TimeStampError::InvalidData
+            ));
+        }
+
+        let mut bad_signature = sd.clone();
+        let mut signer = bad_signature.signer_infos.to_vec().remove(0).clone();
+        signer.signature = vec![0].into();
+        bad_signature.signer_infos = vec![signer].into();
+        assert!(matches!(
+            check_error(&encode_token(&bad_signature), TIMESTAMP_UNTRUSTED),
+            TimeStampError::Untrusted
+        ));
+        let mut no_signers = sd;
+        no_signers.signer_infos = Vec::<rasn_cms::SignerInfo>::new().into();
+        let mut log = StatusTracker::default();
+        assert!(matches!(
+            verify_time_stamp(
+                &encode_token(&no_signers),
+                DATA,
+                &CertificateTrustPolicy::default(),
+                &mut log,
+                false
+            ),
+            Err(TimeStampError::InvalidData)
+        ));
+        assert!(
+            super::tsa_signer_cert_der_from_token(&encode_token(&no_signers))
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn certificate_validity_and_accuracy_boundaries() {
+        use crate::validation_status::TIMESTAMP_OUTSIDE_VALIDITY;
+        for time in [b"20170101000000Z".as_slice(), b"20310101000000Z".as_slice()] {
+            let token = build_token_with(
+                OID_SHA256,
+                MessageDigest::sha256(),
+                DATA,
+                TokenOptions {
+                    gen_time: Some(time),
+                    ..Default::default()
+                },
+            );
+            assert!(matches!(
+                check_error(&token, TIMESTAMP_OUTSIDE_VALIDITY),
+                TimeStampError::ExpiredCertificate
+            ));
+        }
+        // notBefore is 2017-07-14T02:40:00Z; one microsecond of accuracy
+        // deliberately rounds up to a one-second validation margin.
+        for (time, accuracy, valid) in [
+            (b"20170714024000Z".as_slice(), None, true),
+            (b"20300317174640Z".as_slice(), None, true),
+            (b"20170714023959Z".as_slice(), None, false),
+            (
+                b"20170714023959Z".as_slice(),
+                Some([0x30, 3, 0x81, 1, 1].as_slice()),
+                true,
+            ),
+            (
+                b"20170714023958Z".as_slice(),
+                Some([0x30, 3, 0x81, 1, 1].as_slice()),
+                false,
+            ),
+        ] {
+            let token = build_token_with(
+                OID_SHA256,
+                MessageDigest::sha256(),
+                DATA,
+                TokenOptions {
+                    gen_time: Some(time),
+                    accuracy,
+                    ..Default::default()
+                },
+            );
+            let result = verify_time_stamp(
+                &token,
+                DATA,
+                &CertificateTrustPolicy::default(),
+                &mut StatusTracker::default(),
+                false,
+            );
+            assert_eq!(result.is_ok(), valid, "{time:?}: {result:?}");
+        }
+    }
+
+    #[test]
+    fn signer_lookup_matches_issuer_serial_and_current_raw_ski_convention() {
+        use rasn_cms::{CertificateChoices, SignerIdentifier};
+        let token = build_token_with(
+            OID_SHA256,
+            MessageDigest::sha256(),
+            DATA,
+            TokenOptions {
+                profile_extensions: true,
+                ..Default::default()
+            },
+        );
+        let expected = super::tsa_signer_cert_der_from_token(&token)
+            .unwrap()
+            .unwrap();
+        for raw_extension in [false, true] {
+            let mut sd = decode_token(&token);
+            let certs = sd.certificates.as_ref().unwrap().to_vec();
+            let cert = certs
+                .iter()
+                .find_map(|choice| match choice {
+                    CertificateChoices::Certificate(cert) => Some(cert),
+                    _ => None,
+                })
+                .expect("test token contains a certificate");
+            let ski = cert.tbs_certificate.extensions.as_ref().unwrap().iter().find(|e| e.extn_id == rasn::types::Oid::JOINT_ISO_ITU_T_DS_CERTIFICATE_EXTENSION_SUBJECT_KEY_IDENTIFIER).unwrap().extn_value.clone();
+            let mut signer = sd.signer_infos.to_vec().remove(0).clone();
+            // Current lookup compares the DER-wrapped extension value rather
+            // than the decoded key identifier required by CMS.
+            signer.sid = SignerIdentifier::SubjectKeyIdentifier(if raw_extension {
+                ski
+            } else {
+                rasn::der::decode::<rasn::types::OctetString>(&ski).unwrap()
+            });
+            sd.signer_infos = vec![signer].into();
+            let token = encode_token(&sd);
+            assert_eq!(
+                super::tsa_signer_cert_der_from_token(&token).unwrap(),
+                if raw_extension {
+                    Some(expected.clone())
+                } else {
+                    None
+                }
+            );
+            let result = verify_time_stamp(
+                &token,
+                DATA,
+                &CertificateTrustPolicy::default(),
+                &mut StatusTracker::default(),
+                false,
+            );
+            assert_eq!(result.is_ok(), raw_extension);
+        }
+    }
+
+    #[test]
+    fn trust_is_separate_from_signature_and_profile_validation() {
+        use crate::crypto::cose::TrustAnchorType;
+        for valid_profile in [false, true] {
+            let token = build_token_with(
+                OID_SHA256,
+                MessageDigest::sha256(),
+                DATA,
+                TokenOptions {
+                    profile_extensions: valid_profile,
+                    ..Default::default()
+                },
+            );
+            let mut policy = CertificateTrustPolicy::default();
+            policy.clear();
+            let mut log = StatusTracker::default();
+            assert!(
+                matches!(
+                    verify_time_stamp(&token, DATA, &policy, &mut log, true),
+                    Err(TimeStampError::Untrusted)
+                ),
+                "{log:?}"
+            );
+            assert!(log.has_status(TIMESTAMP_VALIDATED));
+            assert!(log.has_status(TIMESTAMP_UNTRUSTED));
+            if valid_profile {
+                let cert = super::tsa_signer_cert_der_from_token(&token)
+                    .unwrap()
+                    .unwrap();
+                let pem = openssl::x509::X509::from_der(&cert)
+                    .unwrap()
+                    .to_pem()
+                    .unwrap();
+                policy
+                    .add_trust_anchors(&pem, "test:tsa", TrustAnchorType::TSA, None)
+                    .unwrap();
+                let mut log = StatusTracker::default();
+                assert!(
+                    verify_time_stamp(&token, DATA, &policy, &mut log, true).is_ok(),
+                    "{log:?}"
+                );
+                assert!(log.has_status(TIMESTAMP_TRUSTED));
+            }
+        }
+    }
+
+    #[test]
+    fn legacy_cms_decoder_preserves_signed_attribute_signature_input() {
+        use bcder::{decode::Constructed, encode::Values, Mode};
+
+        use crate::crypto::asn1::rfc5652::{ContentInfo, SignedData, SignerInfo};
+        for signed_attrs in [false, true] {
+            let token = build_token_with(
+                OID_SHA256,
+                MessageDigest::sha256(),
+                DATA,
+                TokenOptions {
+                    signed_attrs,
+                    ..Default::default()
+                },
+            );
+            let content =
+                Constructed::decode(token.as_slice(), Mode::Der, ContentInfo::take_opt_from)
+                    .unwrap()
+                    .unwrap();
+            let legacy =
+                Constructed::decode(content.content.as_slice(), Mode::Der, SignedData::take_from)
+                    .unwrap();
+            let current = decode_token(&token);
+            assert_eq!(legacy.signer_infos.len(), 1);
+            assert_eq!(legacy.digest_algorithms.len(), 1);
+            let mut signer = legacy.signer_infos[0].clone();
+            let expected =
+                super::signed_attributes_digested_content(current.signer_infos.to_vec()[0])
+                    .unwrap();
+            assert_eq!(
+                signer.signed_attributes_digested_content().unwrap(),
+                expected
+            );
+            signer.signed_attributes_data = None;
+            if signed_attrs {
+                // The legacy encoder wraps Attribute's complete SEQUENCE in
+                // another primitive SEQUENCE tag. Captured input is lossless;
+                // regenerating it is currently not.
+                assert_ne!(
+                    signer.signed_attributes_digested_content().unwrap(),
+                    expected
+                );
+            } else {
+                assert_eq!(signer.signed_attributes_digested_content().unwrap(), None);
+            }
+
+            let mut encoded = Vec::new();
+            signer
+                .encode_ref()
+                .write_encoded(Mode::Der, &mut encoded)
+                .unwrap();
+            let roundtrip =
+                Constructed::decode(encoded.as_slice(), Mode::Der, SignerInfo::take_opt_from);
+            if signed_attrs {
+                assert!(roundtrip.is_err());
+                continue;
+            }
+
+            let roundtrip = roundtrip.unwrap().unwrap();
+            assert_eq!(roundtrip.signature, signer.signature);
+            assert_eq!(roundtrip.sid, signer.sid);
+            assert_eq!(
+                roundtrip.signed_attributes_digested_content().unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn signer_lookup_handles_missing_serial_ski_and_unsupported_cert_choices() {
+        let token = build_token(OID_SHA256, MessageDigest::sha256(), DATA);
+        for ski in [false, true] {
+            let mut sd = decode_token(&token);
+            let mut signer = sd.signer_infos.to_vec()[0].clone();
+            if ski {
+                signer.sid = rasn_cms::SignerIdentifier::SubjectKeyIdentifier(vec![1, 2, 3].into());
+            } else if let rasn_cms::SignerIdentifier::IssuerAndSerialNumber(sn) = &mut signer.sid {
+                sn.serial_number = 99.into();
+            }
+            sd.signer_infos = vec![signer].into();
+            let token = encode_token(&sd);
+            assert!(super::tsa_signer_cert_der_from_token(&token)
+                .unwrap()
+                .is_none());
+            assert!(matches!(
+                verify_time_stamp(
+                    &token,
+                    DATA,
+                    &CertificateTrustPolicy::default(),
+                    &mut StatusTracker::default(),
+                    false
+                ),
+                Err(TimeStampError::InvalidData)
+            ));
+        }
+
+        let mut sd = decode_token(&token);
+        let other: rasn_cms::CertificateChoices =
+            rasn::der::decode(&tlv(0xa3, &cat(&[OID_POLICY, &[0x05, 0]]))).unwrap();
+        sd.certificates = Some(vec![other].into());
+        let token = encode_token(&sd);
+        assert!(super::tsa_signer_cert_der_from_token(&token).is_err());
+        assert!(matches!(
+            check_error(&token, TIMESTAMP_UNTRUSTED),
+            TimeStampError::DecodeError(_)
+        ));
+    }
+
+    #[test]
+    fn certificate_ordering_follows_names_and_omits_unrelated_certificates() {
+        fn cert(subject: &str, issuer: &str, serial: u32) -> Vec<u8> {
+            let key = PKey::from_ec_key(
+                EcKey::generate(&EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap()).unwrap(),
+            )
+            .unwrap();
+            let name = |value: &str| {
+                let mut name = X509NameBuilder::new().unwrap();
+                name.append_entry_by_nid(Nid::COMMONNAME, value).unwrap();
+                name.build()
+            };
+
+            let mut cert = X509Builder::new().unwrap();
+            cert.set_version(2).unwrap();
+            cert.set_serial_number(&BigNum::from_u32(serial).unwrap().to_asn1_integer().unwrap())
+                .unwrap();
+            cert.set_subject_name(&name(subject)).unwrap();
+            cert.set_issuer_name(&name(issuer)).unwrap();
+            cert.set_pubkey(&key).unwrap();
+            cert.set_not_before(&Asn1Time::from_unix(1_500_000_000).unwrap())
+                .unwrap();
+            cert.set_not_after(&Asn1Time::from_unix(1_900_000_000).unwrap())
+                .unwrap();
+            cert.sign(&key, MessageDigest::sha256()).unwrap();
+            cert.build().to_der().unwrap()
+        }
+
+        let leaf = cert("leaf", "intermediate", 1);
+        let intermediate = cert("intermediate", "root", 2);
+        let root = cert("root", "root", 3);
+        let unrelated = cert("unrelated", "unrelated", 4);
+        let shuffled = vec![root.clone(), unrelated, leaf.clone(), intermediate.clone()];
+        assert_eq!(
+            super::order_certificates_leaf_to_root(&shuffled, 2).unwrap(),
+            vec![leaf.clone(), intermediate, root]
+        );
+        assert_eq!(
+            super::order_certificates_leaf_to_root(std::slice::from_ref(&leaf), 0).unwrap(),
+            vec![leaf]
+        );
+        let cycle_a = cert("a", "b", 5);
+        let cycle_b = cert("b", "a", 6);
+        assert_eq!(
+            super::order_certificates_leaf_to_root(&[cycle_a.clone(), cycle_b.clone()], 0).unwrap(),
+            vec![cycle_a, cycle_b]
+        );
+    }
 }
