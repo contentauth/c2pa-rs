@@ -26,6 +26,12 @@ For these reasons, use the the C++ API unless you have a specific reason to use 
 
 Pre-requisite: You must have the Rust toolchain (cargo) installed.
 
+For zero-copy development, the `cimpl` dependency currently uses the sibling
+checkout at `../cimpl` relative to the repository root. Check out
+`contentauth/cimpl` there with the allocation-handoff changes. This local path
+must be replaced with a released version containing those changes before
+publishing; the current version requirement alone does not include them.
+
 To build and test locally, run:
 
 ```sh

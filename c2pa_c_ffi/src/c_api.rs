@@ -299,7 +299,9 @@ pub struct C2paHttpRequest {
 ///
 /// The callback must set `status`, `body`, and `body_len`.
 /// `body` must be allocated with `malloc()`. Rust will call `free()` on it
-/// after copying the data.
+/// when the response body is dropped, without an intermediate body copy.
+/// The callback must not access the allocation after returning. A null body
+/// is treated as empty; a non-null body is freed even when `body_len` is zero.
 #[repr(C)]
 pub struct C2paHttpResponse {
     /// HTTP status code (e.g. 200, 404)
@@ -371,9 +373,52 @@ impl OwnedC2paHttpRequest {
     }
 }
 
+struct MallocBody {
+    ptr: *mut u8,
+    len: usize,
+    pos: usize,
+}
+
+impl From<C2paHttpResponse> for MallocBody {
+    fn from(response: C2paHttpResponse) -> Self {
+        Self {
+            ptr: response.body,
+            len: if response.body.is_null() {
+                0
+            } else {
+                response.body_len
+            },
+            pos: 0,
+        }
+    }
+}
+
+impl std::io::Read for MallocBody {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let count = buf.len().min(self.len - self.pos);
+        if count > 0 {
+            // SAFETY: the callback transferred a malloc allocation readable for
+            // len bytes. The destination cannot alias this owned allocation.
+            unsafe {
+                std::ptr::copy_nonoverlapping(self.ptr.add(self.pos), buf.as_mut_ptr(), count);
+            }
+        }
+        self.pos += count;
+        Ok(count)
+    }
+}
+
+impl Drop for MallocBody {
+    fn drop(&mut self) {
+        // SAFETY: ownership came from the callback; free also accepts null.
+        unsafe { libc::free(self.ptr.cast()) };
+    }
+}
+
 /// Converts a [`C2paHttpResponse`] into an `http::Response`.
 ///
-/// Copies the body, then calls `free()` on the C-allocated `body` pointer.
+/// Retains the C allocation as a reader, calling `free()` when it is dropped,
+/// including when response construction fails.
 ///
 /// # Safety
 /// `body` must have been allocated with `malloc()` (or be null).
@@ -383,17 +428,11 @@ impl TryFrom<C2paHttpResponse> for c2pa::http::http::Response<Box<dyn std::io::R
     type Error = c2pa::http::HttpResolverError;
 
     fn try_from(resp: C2paHttpResponse) -> Result<Self, Self::Error> {
-        let body_vec = if resp.body.is_null() || resp.body_len == 0 {
-            Vec::new()
-        } else {
-            let v = unsafe { std::slice::from_raw_parts(resp.body, resp.body_len) }.to_vec();
-            unsafe { libc::free(resp.body as *mut c_void) };
-            v
-        };
-
+        let status = resp.status;
+        let body = MallocBody::from(resp);
         c2pa::http::http::Response::builder()
-            .status(resp.status as u16)
-            .body(Box::new(std::io::Cursor::new(body_vec)) as Box<dyn std::io::Read>)
+            .status(status as u16)
+            .body(Box::new(body) as Box<dyn std::io::Read>)
             .map_err(c2pa::http::HttpResolverError::Http)
     }
 }
@@ -2707,6 +2746,158 @@ mod tests {
         let bytes = std::slice::from_raw_parts(ptr, usize::try_from(len).unwrap());
         assert!(bytes.iter().any(|byte| *byte != 0));
         assert_eq!(c2pa_free(ptr.cast()), 0);
+    }
+
+    #[test]
+    fn test_byte_return_adapter_allocation_identity() {
+        unsafe fn return_bytes(bytes: Vec<u8>, out: *mut *const c_uchar) -> i64 {
+            out_bytes_or_return_int!(bytes, out)
+        }
+
+        for capacity in [5, 64, 4096] {
+            for use_out_param in [false, true] {
+                let mut bytes = Vec::with_capacity(capacity);
+                bytes.extend_from_slice(&[1, 2, 3, 4, 5]);
+                let original = bytes.as_ptr();
+                let mut returned = std::ptr::null();
+                let len = if use_out_param {
+                    unsafe { return_bytes(bytes, &mut returned) }
+                } else {
+                    returned = crate::to_c_bytes(bytes);
+                    5
+                };
+                assert_eq!(len, 5);
+                assert!(!returned.is_null());
+                if (original as usize).is_multiple_of(2) {
+                    assert_eq!(returned, original);
+                } else {
+                    assert_ne!(returned, original);
+                }
+                assert_eq!(
+                    unsafe { std::slice::from_raw_parts(returned, 5) },
+                    [1, 2, 3, 4, 5]
+                );
+                unsafe { assert_returned_bytes_and_free(returned, len) };
+            }
+        }
+        let mut returned = std::ptr::dangling();
+        assert_eq!(unsafe { return_bytes(Vec::new(), &mut returned) }, 0);
+        assert!(returned.is_null());
+        assert_eq!(
+            unsafe { return_bytes(vec![1, 2, 3], std::ptr::null_mut()) },
+            3
+        );
+    }
+
+    fn malloc_http_response(status: i32, bytes: &[u8]) -> C2paHttpResponse {
+        let body = unsafe { libc::malloc(bytes.len().max(1)) }.cast::<u8>();
+        assert!(!body.is_null());
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), body, bytes.len()) };
+        C2paHttpResponse {
+            status,
+            body,
+            body_len: bytes.len(),
+        }
+    }
+
+    #[test]
+    fn test_http_body_allocation_identity_and_partial_reads() {
+        let response = malloc_http_response(200, b"hello");
+        let original = response.body;
+        let mut body = MallocBody::from(response);
+        assert_eq!(body.ptr, original);
+        assert_eq!(body.read(&mut []).unwrap(), 0);
+        let mut first = [0; 2];
+        assert_eq!(body.read(&mut first).unwrap(), 2);
+        assert_eq!(&first, b"he");
+        let mut rest = Vec::new();
+        body.read_to_end(&mut rest).unwrap();
+        assert_eq!(&rest, b"llo");
+        assert_eq!(body.read(&mut first).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_http_body_empty_and_null() {
+        let responses = [
+            malloc_http_response(200, b""),
+            C2paHttpResponse {
+                status: 200,
+                body: std::ptr::null_mut(),
+                body_len: 0,
+            },
+            C2paHttpResponse {
+                status: 200,
+                body: std::ptr::null_mut(),
+                body_len: 10,
+            },
+        ];
+        for response in responses {
+            let mut response =
+                c2pa::http::http::Response::<Box<dyn Read>>::try_from(response).unwrap();
+            let mut bytes = Vec::new();
+            assert_eq!(response.body_mut().read_to_end(&mut bytes).unwrap(), 0);
+            assert!(bytes.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_http_body_resolver_success_and_error_cleanup() {
+        unsafe extern "C" fn callback(
+            context: *mut c_void,
+            _request: *const C2paHttpRequest,
+            response: *mut C2paHttpResponse,
+        ) -> c_int {
+            let (source, rc) = &mut *context.cast::<(C2paHttpResponse, c_int)>();
+            response.write(C2paHttpResponse {
+                status: source.status,
+                body: std::mem::replace(&mut source.body, std::ptr::null_mut()),
+                body_len: source.body_len,
+            });
+            if *rc != 0 {
+                CimplError::other("test HTTP callback failure").set_last();
+            }
+            *rc
+        }
+
+        for (status, rc) in [(200, 0), (0, 0), (200, -1)] {
+            let mut context = (malloc_http_response(status, b"hello"), rc);
+            let resolver = C2paHttpResolver {
+                context: (&mut context as *mut (C2paHttpResponse, c_int)).cast(),
+                callback,
+            };
+            let request = c2pa::http::http::Request::builder()
+                .uri("https://example.com/manifest")
+                .body(Vec::new())
+                .unwrap();
+            let response = c2pa::http::SyncHttpResolver::http_resolve(&resolver, request);
+            assert!(context.0.body.is_null());
+            if status == 200 && rc == 0 {
+                let mut response = response.unwrap();
+                assert_eq!(response.status(), 200);
+                let mut bytes = Vec::new();
+                response.body_mut().read_to_end(&mut bytes).unwrap();
+                assert_eq!(&bytes, b"hello");
+            } else {
+                assert!(response.is_err());
+                if rc != 0 {
+                    assert!(response
+                        .err()
+                        .unwrap()
+                        .to_string()
+                        .contains("test HTTP callback failure"));
+                    CimplError::take_last();
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_http_body_drop_before_eof() {
+        let response = malloc_http_response(200, b"hello");
+        let mut response = c2pa::http::http::Response::<Box<dyn Read>>::try_from(response).unwrap();
+        let mut byte = [0];
+        assert_eq!(response.body_mut().read(&mut byte).unwrap(), 1);
+        assert_eq!(&byte, b"h");
     }
 
     fn setup_builder_with_context_signer() -> *mut C2paBuilder {
