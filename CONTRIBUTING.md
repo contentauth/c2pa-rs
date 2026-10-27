@@ -64,6 +64,16 @@ Set multi-line code blocks apart from adjacent statements and sibling blocks wit
 line wherever rustfmt permits. This includes loops, conditionals, matches, and multi-line
 expressions; keep related continuations such as `else` attached to their block.
 
+When struct fields or enum variants have comments, separate each comment/member group
+from adjacent members with exactly one blank line wherever rustfmt permits. Keep each
+member's comments and attributes attached to that member. Do not put blank lines between
+adjacent members without comments; attributes alone do not require blank lines.
+
+Use sentence-style capitalization and punctuation in prose comments, and capitalize
+acronyms correctly (for example, DER and HTTP). Enclose code references in doc comments
+in backticks, preserving the actual spelling and capitalization of identifiers and
+crate names. Keep quoted specification text faithful to its source.
+
 We encourage you to raise an issue in GitHub before starting work on a major addition to the crate.
 This will give us an opportunity to discuss API design and avoid duplicate efforts.
 

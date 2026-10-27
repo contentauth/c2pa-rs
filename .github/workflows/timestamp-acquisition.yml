@@ -1,0 +1,51 @@
+name: Timestamp acquisition experiment
+
+on:
+  push:
+    paths:
+      - 'contentauth-rfc3161/**'
+      - 'sdk/src/crypto/**'
+      - 'sdk/Cargo.toml'
+      - 'Cargo.toml'
+      - '.github/workflows/timestamp-acquisition.yml'
+  pull_request:
+    paths:
+      - 'contentauth-rfc3161/**'
+      - 'sdk/src/crypto/**'
+      - 'sdk/Cargo.toml'
+      - 'Cargo.toml'
+      - '.github/workflows/timestamp-acquisition.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  acquisition:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
+          components: clippy
+          targets: wasm32-unknown-unknown,wasm32-wasip2
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - name: Test acquisition crate independently
+        run: |
+          cargo test -p contentauth-rfc3161
+          cargo test -p contentauth-rfc3161 --features sdk-compat
+      - name: Lint acquisition crate
+        run: |
+          cargo clippy -p contentauth-rfc3161 --all-targets -- -D warnings
+          cargo clippy -p contentauth-rfc3161 --all-targets --features sdk-compat -- -D warnings
+      - name: Check runtime-independent WebAssembly builds
+        run: |
+          cargo check -p contentauth-rfc3161 --target wasm32-unknown-unknown
+          cargo check -p contentauth-rfc3161 --target wasm32-wasip2
+      - name: Test SDK adapters and timestamp packaging
+        run: |
+          cargo test -p c2pa --lib crypto::time_stamp
+          cargo test -p c2pa --lib crypto::cose::sigtst
+      - name: Test SDK with Rust-native cryptography
+        run: cargo test -p c2pa --no-default-features --features rust_native_crypto --lib crypto::time_stamp

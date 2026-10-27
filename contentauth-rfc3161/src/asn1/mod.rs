@@ -2,16 +2,14 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-#![allow(missing_docs)]
-
-//! Holds Rust struct definitions for various ASN.1 primitives.
+//! Rust representations of ASN.1 primitives.
 
 // This code is copied from a subset of version 0.22.0 of the
 // cryptographic-message-syntax crate located at:
 // https://github.com/indygreg/cryptography-rs/tree/main/cryptographic-message-syntax/src/asn1
 
-// We can not incorporate the entire crate directly because it relies on x509-certificate which
-// relies on ring.
+// We cannot incorporate the entire crate directly because it relies on
+// x509-certificate, which relies on ring.
 
 // Migrating fully from bcder to der will eliminate the need for much of this code.
 
@@ -23,54 +21,55 @@ use bcder::{
     Captured, Mode, Oid, Tag,
 };
 use chrono::{TimeZone, Timelike};
-// Use der crate for time types to avoid custom date parsing
+// Use the der crate for time types to avoid custom date parsing.
 use der::{Decode, Encode};
 
-// Common ASN.1 types shared across multiple RFCs
+// Common ASN.1 types shared across multiple RFCs.
 
-/// Helper function to reconstruct DER encoding from primitive content
-/// (tag + length + content bytes)
+/// Reconstruct the DER encoding from primitive content
+/// (tag, length, and content bytes).
 ///
-/// Uses the `der` crate's `Header` type to ensure proper DER length encoding,
+/// Uses the `der` crate's `Header` type to ensure correct DER length encoding,
 /// including support for long-form lengths (>= 128 bytes).
 ///
 /// # Errors
 ///
 /// Returns an error if:
-/// - The tag value is invalid for DER encoding
-/// - The content length exceeds the maximum supported by DER encoding
-/// - The header cannot be encoded
+/// - The tag value is invalid for DER encoding.
+/// - The content length exceeds the maximum supported by DER encoding.
+/// - The header cannot be encoded.
+#[cfg(test)]
 pub(crate) fn reconstruct_der_bytes(tag: u8, content: &[u8]) -> Result<Vec<u8>, der::Error> {
-    // Use der crate's Header which handles both short and long form length encoding
+    // Use the der crate's Header which handles both short-form and long-form length encoding.
     let der_tag = der::Tag::from_der(&[tag])?;
     let header = der::Header::new(der_tag, der::Length::try_from(content.len())?);
 
-    // Encode the header (tag + length)
+    // Encode the header (tag + length).
     let mut der_bytes = Vec::new();
     header.encode_to_vec(&mut der_bytes)?;
     der_bytes.extend_from_slice(content);
     Ok(der_bytes)
 }
 
-/// Helper function to extract string content from DER bytes
-/// DER format: tag (1 byte) + length (variable) + content
+/// Extract string content from DER bytes.
+/// The DER format is a tag (1 byte), a variable-length length field, and content.
 ///
-/// Uses the `der` crate's `Header::decode()` and `SliceReader` to properly parse
+/// Uses the `der` crate's `Header::decode()` and `SliceReader` to parse
 /// DER-encoded data, supporting both short-form (< 128 bytes) and long-form (>= 128 bytes)
 /// length encoding automatically.
 ///
 /// # Errors
 ///
 /// Returns an error if:
-/// - The buffer is too short to contain a valid DER structure
-/// - The DER header is malformed
-/// - The content is not valid UTF-8
+/// - The buffer is too short to contain a valid DER structure.
+/// - The DER header is malformed.
+/// - The content is not valid UTF-8.
 fn extract_der_content(der_bytes: &[u8]) -> Result<&str, der::Error> {
-    // Use der crate to decode the header (tag + length)
+    // Use the der crate to decode the header (tag + length).
     let mut reader = der::SliceReader::new(der_bytes)?;
     let header = der::Header::decode(&mut reader)?;
 
-    // Get the content portion - header.encoded_len() gives a Length we need to convert
+    // Get the content portion; header.encoded_len() returns a Length to convert.
     let header_len: usize = header.encoded_len()?.try_into()?;
     let content_len: usize = header.length().try_into()?;
 
@@ -78,32 +77,37 @@ fn extract_der_content(der_bytes: &[u8]) -> Result<&str, der::Error> {
         Err(der::Tag::GeneralizedTime.length_error())?;
     }
 
-    // Extract and validate UTF-8
+    // Extract and validate UTF-8.
     Ok(
         std::str::from_utf8(&der_bytes[header_len..header_len + content_len])
             .map_err(|_| der::Tag::Utf8String.value_error())?,
     )
 }
 
-/// Algorithm identifier for use with bcder
+/// Algorithm identifier for use with `bcder`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AlgorithmIdentifier {
-    /// The algorithm OID
+    /// The algorithm OID.
     pub algorithm: Oid,
 }
 
 impl AlgorithmIdentifier {
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
+    /// Decode an algorithm identifier, retaining its OID and discarding parameters.
+    pub(crate) fn take_from<S: Source>(
+        cons: &mut Constructed<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
         cons.take_sequence(|cons| {
             let algorithm = Oid::take_from(cons)?;
-            // Skip any remaining content (parameters) - we only need the algorithm OID
+            // Skip the remaining parameters; only the algorithm OID is needed.
             let _params = cons.capture_all();
 
             Ok(Self { algorithm })
         })
     }
 
-    pub fn take_opt_from<S: Source>(
+    /// Decode an optional algorithm identifier, retaining only its OID.
+    #[cfg(any(test, feature = "sdk-compat"))]
+    pub(crate) fn take_opt_from<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Option<Self>, DecodeError<S::Error>> {
         cons.take_opt_sequence(|cons| {
@@ -124,7 +128,7 @@ impl Values for AlgorithmIdentifier {
     }
 }
 
-/// Extensions for use with bcder  
+/// `Extensions` for use with `bcder`.
 #[derive(Clone, Debug)]
 pub struct Extensions(Captured);
 
@@ -137,31 +141,32 @@ impl PartialEq for Extensions {
 impl Eq for Extensions {}
 
 impl Extensions {
-    /// Parse Extensions for IMPLICIT tagging context.
+    /// Parse `Extensions` in an `IMPLICIT` tagging context.
     ///
-    /// This method is used when Extensions appears with IMPLICIT tagging (e.g., `[0] IMPLICIT Extensions`),
-    /// where the SEQUENCE tag is replaced by the context-specific tag. The caller has already
+    /// This method is used when `Extensions` appears with `IMPLICIT` tagging (e.g., `[0] IMPLICIT Extensions`),
+    /// where the `SEQUENCE` tag is replaced by the context-specific tag. The caller has already
     /// entered the context-specific tag, so we just capture the content directly.
     ///
-    /// In RFC 3161, Extensions always appears with IMPLICIT tagging:
-    /// - TimeStampReq: `extensions [0] IMPLICIT Extensions OPTIONAL`
-    /// - TstInfo: `extensions [1] IMPLICIT Extensions OPTIONAL`
-    pub fn from_constructed<S: Source>(
+    /// In RFC 3161, `Extensions` always appears with `IMPLICIT` tagging:
+    /// - `TimeStampReq`: `extensions [0] IMPLICIT Extensions OPTIONAL`.
+    /// - `TstInfo`: `extensions [1] IMPLICIT Extensions OPTIONAL`.
+    pub(crate) fn from_constructed<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Self, DecodeError<S::Error>> {
         cons.capture_all().map(Extensions)
     }
 
-    pub fn encode_ref_as(&self, tag: Tag) -> Captured {
+    /// Encode the captured extensions with the supplied implicit tag.
+    pub(crate) fn encode_ref_as(&self, tag: Tag) -> Captured {
         Captured::from_values(Mode::Der, self.0.clone().encode_as(tag))
     }
 }
 
-/// General name for use with bcder
+/// General name for use with `bcder`.
 ///
-/// Note: GeneralName is a CHOICE type (not a SEQUENCE), so it doesn't need separate
+/// Note: `GeneralName` is a `CHOICE` type (not a `SEQUENCE`), so it doesn't need separate
 /// `from_constructed` and `take_from` methods. It can use the same implementation
-/// for both IMPLICIT and EXPLICIT tagging contexts.
+/// for both `IMPLICIT` and `EXPLICIT` tagging contexts.
 #[derive(Clone, Debug)]
 pub struct GeneralName(Captured);
 
@@ -174,7 +179,10 @@ impl PartialEq for GeneralName {
 impl Eq for GeneralName {}
 
 impl GeneralName {
-    pub fn take_from<S: Source>(cons: &mut Constructed<S>) -> Result<Self, DecodeError<S::Error>> {
+    /// Capture a general name's encoded content without interpreting its choice.
+    pub(crate) fn take_from<S: Source>(
+        cons: &mut Constructed<S>,
+    ) -> Result<Self, DecodeError<S::Error>> {
         cons.capture_all().map(GeneralName)
     }
 }
@@ -191,16 +199,18 @@ impl PrimitiveContent for GeneralName {
     }
 }
 
-/// Generalized time structure - hybrid bcder/der approach
-/// Uses der crate's GeneralizedTime internally for proper time handling
+/// `GeneralizedTime` wrapper combining `bcder` encoding with `der` time parsing.
+/// Uses `der::asn1::GeneralizedTime` internally for time handling.
 #[derive(Clone, Debug)]
 pub struct GeneralizedTime {
-    // Store the der type for proper time parsing (without fractional seconds)
+    // Store the der type for time parsing (without fractional seconds).
     der_time: der::asn1::GeneralizedTime,
-    // Cache the DER encoding for bcder compatibility (may include fractional seconds)
+
+    // Cache the DER encoding for bcder compatibility (may include fractional seconds).
     der_bytes: Vec<u8>,
+
     // Store nanoseconds separately to preserve fractional seconds from RFC 3161
-    // (der::asn1::GeneralizedTime doesn't support fractional seconds per RFC 5280)
+    // (der::asn1::GeneralizedTime doesn't support fractional seconds per RFC 5280).
     nanoseconds: u32,
 }
 
@@ -214,16 +224,17 @@ impl Eq for GeneralizedTime {}
 
 impl std::fmt::Display for GeneralizedTime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Format the time string manually from DER bytes
+        // Format the time string manually from DER bytes.
         write!(f, "{}", self.as_str())
     }
 }
 
 impl GeneralizedTime {
-    /// Create from der::asn1::GeneralizedTime
-    pub fn from_der_time(der_time: der::asn1::GeneralizedTime) -> Result<Self, der::Error> {
+    /// Create a wrapper from `der::asn1::GeneralizedTime`.
+    pub(crate) fn from_der_time(der_time: der::asn1::GeneralizedTime) -> Result<Self, der::Error> {
         let mut der_bytes = Vec::new();
         der_time.encode_to_vec(&mut der_bytes)?;
+
         Ok(Self {
             der_time,
             der_bytes,
@@ -231,11 +242,12 @@ impl GeneralizedTime {
         })
     }
 
-    /// Parse from DER bytes (for bcder compatibility) - RFC 5280 strict
+    /// Parse DER bytes using the strict RFC 5280 format for `bcder` compatibility.
     ///
     /// This enforces RFC 5280 rules: no fractional seconds allowed.
     pub fn from_der_bytes(bytes: &[u8]) -> Result<Self, der::Error> {
         let der_time = der::asn1::GeneralizedTime::from_der(bytes)?;
+
         Ok(Self {
             der_time,
             der_bytes: bytes.to_vec(),
@@ -243,18 +255,18 @@ impl GeneralizedTime {
         })
     }
 
-    /// Parse from DER bytes allowing fractional seconds (RFC 3161 compliant)
+    /// Parse DER bytes allowing fractional seconds, as permitted by RFC 3161.
     ///
-    /// RFC 3161 allows fractional seconds in GeneralizedTime, unlike RFC 5280.
-    /// Format: YYYYMMDDHHmmss[.f*]Z
+    /// RFC 3161 allows fractional seconds in `GeneralizedTime`, unlike RFC 5280.
+    /// Format: `YYYYMMDDHHmmss[.f*]Z`.
     /// Examples:
-    ///   - "20231115183045Z" (no fractional, RFC 5280 compatible)
-    ///   - "20231115183045.5Z" (half second)
-    ///   - "20231115183045.643Z" (643 milliseconds)
+    ///   - `"20231115183045Z"` (no fractional seconds; compatible with RFC 5280).
+    ///   - `"20231115183045.5Z"` (half a second).
+    ///   - `"20231115183045.643Z"` (643 milliseconds).
     ///
-    /// Real-world example from test data: "20251121125823.643Z"
-    pub fn from_der_bytes_rfc3161(bytes: &[u8]) -> Result<Self, der::Error> {
-        // First, try the strict RFC 5280 parser (for compatibility with times without fractions)
+    /// An example from test data is `"20251121125823.643Z"`.
+    pub(crate) fn from_der_bytes_rfc3161(bytes: &[u8]) -> Result<Self, der::Error> {
+        // First, try the strict RFC 5280 parser (for compatibility with times without fractions).
         if let Ok(result) = Self::from_der_bytes(bytes) {
             return Ok(result);
         }
@@ -271,76 +283,86 @@ impl GeneralizedTime {
         }
 
         let length = bytes[1] as usize;
+
         if bytes.len() != length + 2 {
             return Err(der::Tag::GeneralizedTime.length_error().into());
         }
 
         let content = &bytes[2..];
+
         let time_str =
             std::str::from_utf8(content).map_err(|_| der::Tag::Utf8String.value_error())?;
 
         // Parse RFC 3161 format: YYYYMMDDHHmmss[.f*]Z
-        // Minimum length: 15 chars (YYYYMMDDHHmmssZ)
+        // Minimum length: 15 characters (YYYYMMDDHHmmssZ)
         if time_str.len() < 15 || !time_str.ends_with('Z') {
             return Err(der::Tag::GeneralizedTime.value_error().into());
         }
 
-        // Extract components
+        // Extract components.
         let year = time_str
             .get(0..4)
             .and_then(|s| s.parse::<i32>().ok())
             .ok_or_else(|| der::Tag::GeneralizedTime.value_error())?;
+
         let month = time_str
             .get(4..6)
             .and_then(|s| s.parse::<u32>().ok())
             .ok_or_else(|| der::Tag::GeneralizedTime.value_error())?;
+
         let day = time_str
             .get(6..8)
             .and_then(|s| s.parse::<u32>().ok())
             .ok_or_else(|| der::Tag::GeneralizedTime.value_error())?;
+
         let hour = time_str
             .get(8..10)
             .and_then(|s| s.parse::<u32>().ok())
             .ok_or_else(|| der::Tag::GeneralizedTime.value_error())?;
+
         let minute = time_str
             .get(10..12)
             .and_then(|s| s.parse::<u32>().ok())
             .ok_or_else(|| der::Tag::GeneralizedTime.value_error())?;
+
         let second = time_str
             .get(12..14)
             .and_then(|s| s.parse::<u32>().ok())
             .ok_or_else(|| der::Tag::GeneralizedTime.value_error())?;
 
-        // Parse fractional seconds if present (between position 14 and 'Z')
-        let frac_part = &time_str[14..time_str.len() - 1]; // Everything between seconds and 'Z'
+        // Parse fractional seconds if present (between position 14 and 'Z').
+        let frac_part = &time_str[14..time_str.len() - 1]; // Everything between seconds and 'Z'.
+
         let nanoseconds = if !frac_part.is_empty() {
-            // Should start with a dot
+            // Should start with a dot.
             if !frac_part.starts_with('.') {
                 return Err(der::Tag::GeneralizedTime.value_error().into());
             }
 
-            let frac_digits = &frac_part[1..]; // Remove leading dot
+            let frac_digits = &frac_part[1..]; // Remove leading dot.
+
             if frac_digits.is_empty() || frac_digits.len() > 9 {
                 return Err(der::Tag::GeneralizedTime.value_error().into());
             }
 
-            // Verify all bytes are ASCII digits
+            // Reject a non-digit first byte before parsing the complete fractional value.
             if !frac_digits.as_bytes()[0].is_ascii_digit() {
                 return Err(der::Tag::GeneralizedTime.value_error().into());
             }
 
-            // Decode the fractional seconds using approach from RustCrypto's x509-tsp
-            // (See: https://github.com/RustCrypto/formats/blob/master/x509-tsp/src/generalized_time_nanos.rs)
-            // Parse as u32, then multiply by appropriate power of 10 to convert to nanoseconds
+            // Decode the fractional seconds using the approach from RustCrypto's x509-tsp
+            // See https://github.com/RustCrypto/formats/blob/master/x509-tsp/src/generalized_time_nanos.rs.
+            // Parse as u32, then multiply by the appropriate power of 10 to obtain nanoseconds.
             // e.g., ".5" -> 5 * 10^8 = 500000000 nanoseconds
             //       ".643" -> 643 * 10^6 = 643000000 nanoseconds
-            // TODO: use u32::from_ascii when it stabilizes
+            // TODO: Use u32::from_ascii when it stabilizes.
             let fract_str = std::str::from_utf8(frac_digits.as_bytes())
                 .map_err(|_| der::Tag::GeneralizedTime.value_error())?;
+
             let fract_num =
                 u32::from_str(fract_str).map_err(|_| der::Tag::GeneralizedTime.value_error())?;
 
-            // Multiply to convert to nanoseconds
+            // Multiply to convert to nanoseconds.
             fract_num
                 .checked_mul(
                     10_u32.pow(
@@ -353,7 +375,7 @@ impl GeneralizedTime {
             0
         };
 
-        // Create a chrono DateTime
+        // Create a chrono DateTime.
         let dt = chrono::Utc
             .with_ymd_and_hms(year, month, day, hour, minute, second)
             .single()
@@ -361,96 +383,95 @@ impl GeneralizedTime {
             .with_nanosecond(nanoseconds)
             .ok_or_else(|| der::Tag::GeneralizedTime.value_error())?;
 
-        // Convert to SystemTime for der crate compatibility
+        // Convert to SystemTime for the der crate compatibility.
         let system_time: std::time::SystemTime = dt.into();
 
-        // Create der::asn1::GeneralizedTime (this will lose fractional seconds in re-encoding)
+        // Create der::asn1::GeneralizedTime (this will lose fractional seconds in re-encoding).
         let der_time = der::asn1::GeneralizedTime::from_system_time(system_time)
             .map_err(|_| der::Tag::GeneralizedTime.value_error())?;
 
-        // Store the original DER bytes to preserve fractional seconds
+        // Store the original DER bytes to preserve fractional seconds.
         Ok(Self {
             der_time,
             der_bytes: bytes.to_vec(),
-            nanoseconds, // Store the parsed fractional seconds
+            nanoseconds, // Store the parsed fractional seconds.
         })
     }
 
-    /// Get DER encoding for bcder
-    pub fn as_der_bytes(&self) -> &[u8] {
+    /// Get the DER encoding for `bcder`.
+    #[cfg(test)]
+    pub(crate) fn as_der_bytes(&self) -> &[u8] {
         &self.der_bytes
     }
 
-    /// Get the underlying der time
-    pub fn as_der_time(&self) -> &der::asn1::GeneralizedTime {
-        &self.der_time
-    }
-
-    /// Parse from bcder Constructed (allows fractional seconds and Z per RFC 3161)
+    /// Parse from `bcder::decode::Constructed`, allowing fractional seconds and Z per RFC 3161.
     ///
     /// RFC 3161 Section 2.4.2 states:
-    /// "The ASN.1 GeneralizedTime syntax can include fraction-of-second details.
-    ///  Such syntax, without the restrictions from [RFC 2459] Section 4.1.2.5.2,
-    ///  where GeneralizedTime is limited to represent the time with a granularity
-    ///  of one second, may be used here."
+    /// > "The ASN.1 `GeneralizedTime` syntax can include fraction-of-second details.
+    /// > Such syntax, without the restrictions from [RFC 2459] Section 4.1.2.5.2,
+    /// > where `GeneralizedTime` is limited to represent the time with a granularity
+    /// > of one second, may be used here."
     ///
-    /// This means we must accept formats like: "20231115183045.123Z"
-    /// whereas RFC 5280 only allows: "20231115183045Z"
-    pub fn take_from_allow_fractional_z<S: Source>(
+    /// This permits values such as `"20231115183045.123Z"`,
+    /// whereas RFC 5280 permits only whole seconds, such as `"20231115183045Z"`.
+    pub(crate) fn take_from_allow_fractional_z<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Self, DecodeError<S::Error>> {
-        // Capture the raw DER bytes including tag and length
+        // Capture the raw DER bytes including tag and length.
         let captured = cons.capture_one()?;
         let bytes = captured.as_slice();
 
-        // Try parsing with RFC 3161-compliant parser (allows fractional seconds)
+        // Try parsing with RFC 3161-compliant parser (allows fractional seconds).
         Self::from_der_bytes_rfc3161(bytes).map_err(|_| cons.content_err("invalid GeneralizedTime"))
     }
 
-    /// Parse from bcder Primitive (no fractional or timezone offsets)
+    /// Parse from `bcder::decode::Primitive` without fractional seconds or time zone offsets.
     ///
-    /// This is used by CMS Time structures (RFC 5652) which use strict DER encoding.
-    #[allow(dead_code)] // Used by rfc5652::Time::take_from
-    pub fn from_primitive_no_fractional_or_timezone_offsets<S: bcder::decode::Source>(
+    /// CMS `Time` structures (RFC 5652) use this strict DER parser.
+    #[cfg(test)]
+    pub(crate) fn from_primitive_no_fractional_or_timezone_offsets<S: bcder::decode::Source>(
         prim: &mut bcder::decode::Primitive<S>,
     ) -> Result<Self, bcder::decode::DecodeError<S::Error>> {
         let bytes = prim.take_all()?;
-        // Reconstruct DER encoding using helper (tag 0x18 = GENERALIZED_TIME)
+
+        // Reconstruct DER encoding using helper (tag 0x18 = GENERALIZED_TIME).
         let der_bytes = reconstruct_der_bytes(0x18, bytes.as_ref()).map_err(|_| {
             bcder::decode::DecodeError::content("failed to reconstruct DER bytes", prim.pos())
         })?;
-        // Parse with der crate - it will properly validate the time format
+
+        // Parse with the der crate - it will properly validate the time format.
         Self::from_der_bytes(&der_bytes)
             .map_err(|_| bcder::decode::DecodeError::content("invalid GeneralizedTime", prim.pos()))
     }
 
-    /// Encode for bcder
-    pub fn encode_ref(&self) -> Captured {
-        // Return the raw DER bytes as a Captured value
-        // These bytes already include tag, length, and content
+    /// Encode the stored time DER as an `OCTET STRING` for legacy `bcder` compatibility.
+    #[cfg(test)]
+    pub(crate) fn encode_ref(&self) -> Captured {
+        // Wrap the stored DER bytes in an OCTET STRING within a Captured value.
+        // These bytes already include tag, length, and content.
         Captured::from_values(Mode::Der, bcder::OctetString::encode_slice(&self.der_bytes))
     }
 
-    /// Get time string representation (for compatibility)
+    /// Get the time's string representation for compatibility.
     ///
     /// Returns an empty string if the DER bytes cannot be decoded.
-    /// This should never fail for valid GeneralizedTime instances.
-    pub fn as_str(&self) -> &str {
+    /// This should never fail for valid `GeneralizedTime` instances.
+    pub(crate) fn as_str(&self) -> &str {
         extract_der_content(&self.der_bytes).unwrap_or("")
     }
 }
 
 impl From<GeneralizedTime> for chrono::DateTime<chrono::Utc> {
     fn from(gt: GeneralizedTime) -> Self {
-        // Use der's conversion to SystemTime, then to chrono
+        // Use der's conversion to SystemTime, then to chrono.
         let system_time = gt.der_time.to_system_time();
         let mut dt: chrono::DateTime<chrono::Utc> = system_time.into();
 
         // Add the fractional seconds that were parsed but not stored in der_time
-        // (der::asn1::GeneralizedTime doesn't support fractional seconds per RFC 5280)
+        // (der::asn1::GeneralizedTime doesn't support fractional seconds per RFC 5280).
         if gt.nanoseconds > 0 {
-            // SAFETY: nanoseconds is validated to be < 1_000_000_000 during parsing in
-            // from_der_bytes_rfc3161 (line 350-351). If with_nanosecond returns None here,
+            // Parsing validates that nanoseconds is less than 1_000_000_000 in
+            // from_der_bytes_rfc3161. If with_nanosecond returns None here,
             // it indicates a serious internal error that should never happen.
             dt = dt
                 .with_nanosecond(gt.nanoseconds)
@@ -461,32 +482,29 @@ impl From<GeneralizedTime> for chrono::DateTime<chrono::Utc> {
     }
 }
 
-// Fallible: der's GeneralizedTime only supports 1970-9999, so a DateTime outside
-// that range (e.g. a pre-1970 signing time attacker-supplied in a timestamp token)
+// Fallible: der's GeneralizedTime only supports 1970-9999, so a DateTime value outside
+// that range (e.g. an attacker-supplied pre-1970 signing time in a timestamp token)
 // must return an error rather than panic.
 impl TryFrom<chrono::DateTime<chrono::Utc>> for GeneralizedTime {
     type Error = der::Error;
 
     fn try_from(dt: chrono::DateTime<chrono::Utc>) -> Result<Self, Self::Error> {
-        // Convert chrono to SystemTime, then to der's GeneralizedTime
+        // Convert chrono to SystemTime, then to der's GeneralizedTime.
         let system_time: std::time::SystemTime = dt.into();
 
-        // der supports 1970-9999; out-of-range dates error here instead of panicking
+        // der supports 1970-9999; out-of-range dates return an error here instead of panicking.
         let der_time = der::asn1::GeneralizedTime::from_system_time(system_time)?;
 
-        // Convert to our wrapper type
+        // Convert to our wrapper type.
         Self::from_der_time(der_time)
     }
 }
 
-#[allow(dead_code)]
-pub mod rfc3161;
-#[allow(dead_code)]
-pub mod rfc3281;
-#[allow(dead_code)]
-pub mod rfc4210;
-#[allow(dead_code)]
-pub mod rfc5652;
+pub(crate) mod rfc3161;
+#[cfg(any(test, feature = "sdk-compat"))]
+mod rfc3281;
+mod rfc4210;
+pub(crate) mod rfc5652;
 
 #[cfg(test)]
 mod tests {
@@ -497,18 +515,18 @@ mod tests {
 
     use super::*;
 
-    // Helper to load test certificate
+    // Load a test certificate.
     fn load_test_cert_pem(name: &str) -> Vec<u8> {
-        let path = format!("tests/fixtures/certs/{name}");
+        let path = format!("{}/tests/fixtures/certs/{name}", env!("CARGO_MANIFEST_DIR"));
         std::fs::read(&path).unwrap_or_else(|_| panic!("Failed to read test certificate: {path}"))
     }
 
-    // Helper to parse PEM and extract DER certificate
+    // Parse PEM and extract the DER-encoded certificate.
     fn extract_cert_der_from_pem(pem_data: &[u8]) -> Vec<u8> {
-        // Use the pem crate to parse
+        // Use the pem crate to parse.
         let pems = pem::parse_many(pem_data).expect("Failed to parse PEM data");
 
-        // Find the first certificate
+        // Find the first certificate.
         for p in pems {
             if p.tag() == "CERTIFICATE" {
                 return p.contents().to_vec();
@@ -520,20 +538,21 @@ mod tests {
 
     #[test]
     fn test_algorithm_identifier_encoding() {
-        // SHA-256 OID: 2.16.840.1.101.3.4.2.1
+        // SHA-256 OID: 2.16.840.1.101.3.4.2.1.
         let sha256_bytes = bytes::Bytes::from_static(&[96, 134, 72, 1, 101, 3, 4, 2, 1]);
         let sha256_oid = Oid(sha256_bytes.clone());
+
         let alg_id = AlgorithmIdentifier {
             algorithm: sha256_oid.clone(),
         };
 
-        // Encode and verify
+        // Encode and verify.
         let mut encoded = Vec::new();
         alg_id.write_encoded(Mode::Der, &mut encoded).unwrap();
 
         assert!(!encoded.is_empty());
 
-        // Decode and verify round-trip
+        // Decode and verify round-trip.
         let decoded = Constructed::decode(encoded.as_slice(), Mode::Der, |cons| {
             AlgorithmIdentifier::take_from(cons)
         })
@@ -544,27 +563,29 @@ mod tests {
 
     #[test]
     fn test_algorithm_identifier_with_es256_cert() {
-        // Load ES256 certificate to verify ECDSA-SHA256 algorithm handling
+        // Load ES256 certificate to verify ECDSA with SHA-256 algorithm handling.
         let pem_data = load_test_cert_pem("es256.pub");
         let cert_der = extract_cert_der_from_pem(&pem_data);
 
-        // Verify we got valid DER data (X.509 cert starts with SEQUENCE tag 0x30)
+        // Verify we got valid DER data (an X.509 certificate starts with SEQUENCE tag 0x30).
         assert!(!cert_der.is_empty(), "Certificate DER should not be empty");
+
         assert_eq!(
             cert_der[0], 0x30,
             "Certificate should start with SEQUENCE tag"
         );
 
-        // Create an AlgorithmIdentifier manually from known ECDSA-SHA256 OID
-        // (which the es256 cert uses)
+        // Create an AlgorithmIdentifier manually from known ECDSA with SHA-256 OID
+        // (which the es256 certificate uses).
         let ecdsa_sha256_oid = bytes::Bytes::from_static(&[
             0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02, // 1.2.840.10045.4.3.2
         ]);
+
         let alg_id = AlgorithmIdentifier {
             algorithm: Oid(ecdsa_sha256_oid.clone()),
         };
 
-        // Verify we can encode and decode it
+        // Verify we can encode and decode it.
         let mut encoded = Vec::new();
         alg_id.write_encoded(Mode::Der, &mut encoded).unwrap();
 
@@ -573,22 +594,23 @@ mod tests {
         })
         .unwrap();
 
-        // Verify round-trip works
+        // Verify round-trip works.
         assert_eq!(alg_id.algorithm.as_ref(), decoded.algorithm.as_ref());
     }
 
     #[test]
     fn test_algorithm_identifier_with_es384_cert() {
-        // Load ES384 certificate to verify ECDSA-SHA384 algorithm handling
+        // Load ES384 certificate to verify ECDSA with SHA-384 algorithm handling.
         let pem_data = load_test_cert_pem("es384.pub");
         let cert_der = extract_cert_der_from_pem(&pem_data);
 
         assert!(!cert_der.is_empty());
         assert_eq!(cert_der[0], 0x30);
 
-        // ECDSA-SHA384 OID: 1.2.840.10045.4.3.3
+        // ECDSA with SHA-384 OID: 1.2.840.10045.4.3.3
         let ecdsa_sha384_oid =
             bytes::Bytes::from_static(&[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x03]);
+
         let alg_id = AlgorithmIdentifier {
             algorithm: Oid(ecdsa_sha384_oid.clone()),
         };
@@ -606,16 +628,17 @@ mod tests {
 
     #[test]
     fn test_algorithm_identifier_with_es512_cert() {
-        // Load ES512 certificate to verify ECDSA-SHA512 algorithm handling
+        // Load ES512 certificate to verify ECDSA with SHA-512 algorithm handling.
         let pem_data = load_test_cert_pem("es512.pub");
         let cert_der = extract_cert_der_from_pem(&pem_data);
 
         assert!(!cert_der.is_empty());
         assert_eq!(cert_der[0], 0x30);
 
-        // ECDSA-SHA512 OID: 1.2.840.10045.4.3.4
+        // ECDSA with SHA-512 OID: 1.2.840.10045.4.3.4
         let ecdsa_sha512_oid =
             bytes::Bytes::from_static(&[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x04]);
+
         let alg_id = AlgorithmIdentifier {
             algorithm: Oid(ecdsa_sha512_oid.clone()),
         };
@@ -633,16 +656,17 @@ mod tests {
 
     #[test]
     fn test_algorithm_identifier_with_rsa_pss_cert() {
-        // Load PS256 certificate to verify RSA-PSS algorithm handling
+        // Load PS256 certificate to verify RSA-PSS algorithm handling.
         let pem_data = load_test_cert_pem("ps256.pub");
         let cert_der = extract_cert_der_from_pem(&pem_data);
 
         assert!(!cert_der.is_empty());
         assert_eq!(cert_der[0], 0x30);
 
-        // RSA-PSS OID: 1.2.840.113549.1.1.10
+        // RSA-PSS OID: 1.2.840.113549.1.1.10.
         let rsa_pss_oid =
             bytes::Bytes::from_static(&[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0a]);
+
         let alg_id = AlgorithmIdentifier {
             algorithm: Oid(rsa_pss_oid.clone()),
         };
@@ -660,15 +684,16 @@ mod tests {
 
     #[test]
     fn test_algorithm_identifier_with_ed25519_cert() {
-        // Load Ed25519 certificate to verify EdDSA algorithm handling
+        // Load Ed25519 certificate to verify EdDSA algorithm handling.
         let pem_data = load_test_cert_pem("ed25519.pub");
         let cert_der = extract_cert_der_from_pem(&pem_data);
 
         assert!(!cert_der.is_empty());
         assert_eq!(cert_der[0], 0x30);
 
-        // Ed25519 OID: 1.3.101.112
+        // Ed25519 OID: 1.3.101.112.
         let ed25519_oid = bytes::Bytes::from_static(&[0x2b, 0x65, 0x70]);
+
         let alg_id = AlgorithmIdentifier {
             algorithm: Oid(ed25519_oid.clone()),
         };
@@ -686,16 +711,17 @@ mod tests {
 
     #[test]
     fn test_algorithm_identifier_with_rsa_cert() {
-        // Load RS256 certificate to verify standard RSA algorithm handling
+        // Load RS256 certificate to verify standard RSA algorithm handling.
         let pem_data = load_test_cert_pem("rs256.pub");
         let cert_der = extract_cert_der_from_pem(&pem_data);
 
         assert!(!cert_der.is_empty());
         assert_eq!(cert_der[0], 0x30);
 
-        // SHA256withRSA OID: 1.2.840.113549.1.1.11
+        // SHA256withRSA OID: 1.2.840.113549.1.1.11.
         let sha256_rsa_oid =
             bytes::Bytes::from_static(&[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b]);
+
         let alg_id = AlgorithmIdentifier {
             algorithm: Oid(sha256_rsa_oid.clone()),
         };
@@ -715,18 +741,18 @@ mod tests {
     fn test_generalized_time_from_chrono() {
         use chrono::{Datelike, TimeZone, Timelike, Utc};
 
-        // Create a known timestamp: 2023-01-15 12:30:45 UTC
+        // Create a known timestamp: 2023-01-15 12:30:45 UTC.
         let dt = Utc.with_ymd_and_hms(2023, 1, 15, 12, 30, 45).unwrap();
 
-        // Convert to GeneralizedTime
+        // Convert to GeneralizedTime.
         let gt = GeneralizedTime::try_from(dt).unwrap();
 
-        // Verify the time string format (should be "20230115123045Z")
+        // Verify the time string format (should be "20230115123045Z").
         let time_str = gt.as_str();
         assert!(time_str.starts_with("20230115"));
         assert!(time_str.contains("123045"));
 
-        // Convert back to chrono and verify
+        // Convert back to chrono and verify.
         let dt_back: chrono::DateTime<chrono::Utc> = gt.into();
         assert_eq!(dt_back.year(), 2023);
         assert_eq!(dt_back.month(), 1);
@@ -738,26 +764,26 @@ mod tests {
 
     #[test]
     fn test_generalized_time_from_der_bytes() {
-        // Load a real certificate to verify it contains valid time data
+        // Load a real certificate to verify it contains valid time data.
         let pem_data = load_test_cert_pem("es256.pub");
         let cert_der = extract_cert_der_from_pem(&pem_data);
 
-        // Verify we got valid DER data
+        // Verify we got valid DER data.
         assert!(!cert_der.is_empty(), "Certificate DER should not be empty");
 
-        // Create a GeneralizedTime from a known timestamp and test roundtrip
+        // Create a GeneralizedTime from a known timestamp and test round trip.
         use chrono::{Datelike, TimeZone, Utc};
         let test_time = Utc.with_ymd_and_hms(2022, 6, 10, 18, 46, 40).unwrap();
         let gt = GeneralizedTime::try_from(test_time).unwrap();
 
-        // Get DER bytes and parse them back
+        // Get DER bytes and parse them back.
         let der_bytes = gt.as_der_bytes();
         let gt_parsed = GeneralizedTime::from_der_bytes(der_bytes).unwrap();
 
-        // Verify they match
+        // Verify they match.
         assert_eq!(gt, gt_parsed);
 
-        // Convert back to DateTime
+        // Convert back to DateTime.
         let dt_back: chrono::DateTime<chrono::Utc> = gt_parsed.into();
         assert_eq!(dt_back.year(), 2022);
         assert_eq!(dt_back.month(), 6);
@@ -767,7 +793,7 @@ mod tests {
     #[test]
     fn test_generalized_time_with_multiple_cert_types() {
         // Test that we can load and parse certificates with different algorithms
-        // This verifies the der/bcder integration works across all supported cert types
+        // This verifies the der/bcder integration works across all supported certificate types.
         use chrono::{TimeZone, Utc};
 
         let cert_types = vec![
@@ -780,22 +806,23 @@ mod tests {
         ];
 
         for cert_name in cert_types {
-            // Load the certificate
+            // Load the certificate.
             let pem_data = load_test_cert_pem(cert_name);
             let cert_der = extract_cert_der_from_pem(&pem_data);
 
-            // Verify we got valid DER data for each cert type
+            // Verify we got valid DER data for each certificate type.
             assert!(
                 !cert_der.is_empty(),
                 "Certificate {cert_name} DER should not be empty",
             );
+
             assert_eq!(
                 cert_der[0], 0x30,
                 "Certificate {cert_name} should start with SEQUENCE tag",
             );
         }
 
-        // Test GeneralizedTime roundtrip with a timestamp
+        // Test GeneralizedTime round trip with a timestamp.
         let test_time = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
         let gt = GeneralizedTime::try_from(test_time).unwrap();
         let der_bytes = gt.as_der_bytes();
@@ -805,76 +832,86 @@ mod tests {
 
     #[test]
     fn test_generalized_time_invalid_der() {
-        // Invalid format - should fail
+        // An invalid format should fail.
         let invalid_der = vec![0x18, 0x05, b't', b'e', b's', b't', b'!'];
         assert!(GeneralizedTime::from_der_bytes(&invalid_der).is_err());
     }
 
     #[test]
     fn test_reconstruct_der_bytes_short_form() {
-        // Test short form length encoding (< 128 bytes)
+        // Test short-form length encoding (< 128 bytes).
         let content = b"20231215120000Z"; // 15 bytes
         let der_bytes = reconstruct_der_bytes(0x18, content).unwrap();
 
-        // Should be: tag (0x18) + length (0x0F = 15) + content (15 bytes)
+        // Should be: tag (0x18) + length (0x0F = 15) + content (15 bytes).
         assert_eq!(der_bytes[0], 0x18, "Tag should be GeneralizedTime");
         assert_eq!(der_bytes[1], 0x0f, "Length should be 15 in short form");
+
         assert_eq!(
             der_bytes.len(),
             1 + 1 + 15,
             "Total length should be tag + len + content"
         );
+
         assert_eq!(&der_bytes[2..], content);
     }
 
     #[test]
     fn test_reconstruct_der_bytes_long_form() {
-        // Test long form length encoding (>= 128 bytes)
-        // Create content that's exactly 128 bytes
+        // Test long-form length encoding (>= 128 bytes)
+        // Create content that's exactly 128 bytes.
         let content = vec![b'X'; 128];
         let der_bytes = reconstruct_der_bytes(0x18, &content).unwrap();
 
-        // Long form: tag (0x18) + length_encoding + content
-        // For length 128: 0x81 0x80 (1 byte to encode the length, value 128)
+        // Long-form length: tag (0x18) + length_encoding + content
+        // For length 128: 0x81 0x80 (1 byte to encode the length, value 128).
         assert_eq!(der_bytes[0], 0x18, "Tag should be GeneralizedTime");
+
         assert_eq!(
             der_bytes[1], 0x81,
             "Should use long form with 1 byte for length"
         );
+
         assert_eq!(der_bytes[2], 0x80, "Length value should be 128");
+
         assert_eq!(
             der_bytes.len(),
             1 + 2 + 128,
             "Total length should be tag + length_encoding(2) + content"
         );
+
         assert_eq!(&der_bytes[3..], &content[..]);
     }
 
     #[test]
     fn test_reconstruct_der_bytes_very_long() {
-        // Test with 256 bytes (requires 2 bytes for length in long form)
+        // Test with 256 bytes (requires 2 bytes for length in long form).
         let content = vec![b'Y'; 256];
         let der_bytes = reconstruct_der_bytes(0x18, &content).unwrap();
 
-        // For length 256: 0x82 0x01 0x00 (2 bytes to encode the length, value 256)
+        // For length 256: 0x82 0x01 0x00 (2 bytes to encode the length, value 256).
         assert_eq!(der_bytes[0], 0x18, "Tag should be GeneralizedTime");
+
         assert_eq!(
             der_bytes[1], 0x82,
             "Should use long form with 2 bytes for length"
         );
+
         assert_eq!(der_bytes[2], 0x01, "Length high byte should be 1");
         assert_eq!(der_bytes[3], 0x00, "Length low byte should be 0");
+
         assert_eq!(
             der_bytes.len(),
             1 + 3 + 256,
             "Total length should be tag + length_encoding(3) + content"
         );
+
         assert_eq!(&der_bytes[4..], &content[..]);
     }
 
     #[test]
     fn test_reconstruct_der_bytes_invalid_tag() {
-        // Test that invalid tags return an error
+        // Test that invalid tags return an error.
         let content = b"test";
         let result = reconstruct_der_bytes(0xff, content);
         assert!(result.is_err(), "Should fail with invalid tag");
@@ -882,10 +919,10 @@ mod tests {
 
     #[test]
     fn test_extract_der_content_short_form() {
-        // Test short form length encoding (< 128 bytes)
-        // Tag 0x18 (GeneralizedTime), length 15, then content
+        // Test short-form length encoding (< 128 bytes)
+        // Tag 0x18 (GeneralizedTime), followed by length 15 and content.
         let der_bytes = vec![
-            0x18, 0x0f, // tag + length (15 bytes)
+            0x18, 0x0f, // tag + length (15 bytes).
             b'2', b'0', b'2', b'3', b'1', b'2', b'1', b'5', b'1', b'2', b'0', b'0', b'0', b'0',
             b'Z',
         ];
@@ -896,16 +933,17 @@ mod tests {
 
     #[test]
     fn test_extract_der_content_long_form() {
-        // Test long form length encoding (>= 128 bytes)
-        // Create 128 bytes of content
+        // Test long-form length encoding (>= 128 bytes)
+        // Create 128 bytes of content.
         let mut content_bytes = vec![b'X'; 128];
 
-        // Build DER: tag + long-form length + content
+        // Build DER: tag + long-form length + content.
         let mut der_bytes = vec![
-            0x18, // GeneralizedTime tag
-            0x81, // Long form: 1 byte for length
+            0x18, // GeneralizedTime tag.
+            0x81, // Long-form length: 1 byte for length
             0x80, // Length value: 128
         ];
+
         der_bytes.append(&mut content_bytes);
 
         let content = extract_der_content(&der_bytes).unwrap();
@@ -915,14 +953,15 @@ mod tests {
 
     #[test]
     fn test_extract_der_content_very_long_form() {
-        // Test with 256 bytes (2 bytes for length encoding)
+        // Test with 256 bytes (2 bytes for length encoding).
         let mut content_bytes = vec![b'Y'; 256];
 
         let mut der_bytes = vec![
-            0x18, // GeneralizedTime tag
-            0x82, // Long form: 2 bytes for length
+            0x18, // GeneralizedTime tag.
+            0x82, // Long-form length: 2 bytes for length
             0x01, 0x00, // Length value: 256
         ];
+
         der_bytes.append(&mut content_bytes);
 
         let content = extract_der_content(&der_bytes).unwrap();
@@ -932,29 +971,29 @@ mod tests {
 
     #[test]
     fn test_extract_der_content_buffer_too_short() {
-        // Buffer with only 1 byte
+        // Buffer with only 1 byte.
         let der_bytes = vec![0x18];
         assert!(extract_der_content(&der_bytes).is_err());
 
-        // Length claims more data than available
+        // Length claims more data than available.
         let der_bytes = vec![0x18, 0x10, b't', b'e', b's', b't'];
         assert!(extract_der_content(&der_bytes).is_err());
     }
 
     #[test]
     fn test_extract_der_content_invalid_utf8() {
-        // Valid DER structure but invalid UTF-8
+        // Valid DER structure but invalid UTF-8.
         let der_bytes = vec![0x18, 0x02, 0xff, 0xfe];
         assert!(extract_der_content(&der_bytes).is_err());
     }
 
     #[test]
     fn test_extract_der_content_invalid_long_form() {
-        // Long form with 0 length bytes (0x80)
+        // Long form with 0 length bytes (0x80).
         let der_bytes = vec![0x18, 0x80, b't', b'e', b's', b't'];
         assert!(extract_der_content(&der_bytes).is_err());
 
-        // Long form with too many length bytes (> 4)
+        // Long form with too many length bytes (> 4).
         let der_bytes = vec![0x18, 0x85, 0x01, 0x02, 0x03, 0x04, 0x05];
         assert!(extract_der_content(&der_bytes).is_err());
     }
@@ -966,23 +1005,25 @@ mod tests {
         let original_dt = Utc.with_ymd_and_hms(2025, 10, 29, 14, 30, 0).unwrap();
         let gt1 = GeneralizedTime::try_from(original_dt).unwrap();
 
-        // Get the DER bytes directly
+        // Get the DER bytes directly.
         let der_bytes = gt1.as_der_bytes();
 
-        // Decode from DER bytes
+        // Decode from DER bytes.
         let decoded = GeneralizedTime::from_der_bytes(der_bytes).unwrap();
 
-        // Verify equality
+        // Verify equality.
         assert_eq!(gt1, decoded);
 
-        // Also verify conversion back to chrono works
+        // Also verify conversion back to chrono works.
         let dt_back: chrono::DateTime<chrono::Utc> = decoded.into();
-        // Times should be close (within 1 second due to potential precision loss)
+
+        // Times should be close (within 1 second due to potential precision loss).
         let diff = if original_dt > dt_back {
             original_dt.signed_duration_since(dt_back)
         } else {
             dt_back.signed_duration_since(original_dt)
         };
+
         assert!(diff.num_seconds().abs() <= 1);
     }
 
@@ -991,21 +1032,22 @@ mod tests {
     fn test_generalized_time_from_system_time() {
         use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-        // Create a SystemTime 1 day after epoch
+        // Create a SystemTime 1 day after epoch.
         let system_time = UNIX_EPOCH + Duration::from_secs(86400);
 
-        // Convert to chrono, then to GeneralizedTime
+        // Convert to chrono, then to GeneralizedTime.
         let dt: chrono::DateTime<chrono::Utc> = system_time.into();
         let gt = GeneralizedTime::try_from(dt).unwrap();
 
-        // Convert back and verify
+        // Convert back and verify.
         let dt_back: chrono::DateTime<chrono::Utc> = gt.into();
         let system_time_back: SystemTime = dt_back.into();
 
-        // Should be within 1 second (due to potential precision loss)
+        // Should be within 1 second (due to potential precision loss).
         let diff = system_time_back
             .duration_since(system_time)
             .unwrap_or_else(|_| system_time.duration_since(system_time_back).unwrap());
+
         assert!(diff.as_secs() < 1);
     }
 
@@ -1014,7 +1056,7 @@ mod tests {
         use chrono::TimeZone;
 
         // der's GeneralizedTime only supports 1970-9999. Dates outside that range
-        // (e.g. a pre-1970 signing time attacker-supplied in a timestamp token) must
+        // (e.g. an attacker-supplied pre-1970 signing time in a timestamp token) must
         // return an error rather than panic. Regression test for the DoS where an
         // infallible `From` impl called `.expect()` on `from_system_time`.
         let pre_1970 = chrono::Utc.with_ymd_and_hms(1950, 1, 1, 0, 0, 0).unwrap();
@@ -1029,13 +1071,13 @@ mod tests {
         assert!(GeneralizedTime::try_from(in_range).is_ok());
     }
 
-    /// Test Extensions::from_constructed() with IMPLICIT tagging
+    /// Test `Extensions::from_constructed()` with `IMPLICIT` tagging.
     ///
-    /// RFC 3161 specifies:  extensions [1] IMPLICIT Extensions OPTIONAL
+    /// RFC 3161 specifies `extensions [1] IMPLICIT Extensions OPTIONAL`.
     ///
-    /// With IMPLICIT tagging, the SEQUENCE tag is REPLACED by the context tag.
-    /// This test validates that from_constructed() correctly parses the content
-    /// without expecting an inner SEQUENCE tag.
+    /// With `IMPLICIT` tagging, the `SEQUENCE` tag is replaced by the context tag.
+    /// This test validates that `from_constructed()` correctly parses the content
+    /// without expecting an inner `SEQUENCE` tag.
     ///
     /// ## Test Data Generation
     ///
@@ -1055,13 +1097,13 @@ mod tests {
     /// print(decoded[0]['extnID'])  # Should print: 1.2.3.4
     /// ```
     ///
-    /// The IMPLICIT variant simply replaces the outer SEQUENCE tag (0x30) with [1] (0xA1).
+    /// The `IMPLICIT` variant replaces the outer `SEQUENCE` tag (0x30) with `[1]` (0xA1).
     #[test]
     fn test_extensions_implicit_tagging() {
         use bcder::decode::Constructed;
 
         // Extensions ::= SEQUENCE SIZE (1..MAX) OF Extension
-        // One Extension with OID 1.2.3.4 and NULL extnValue
+        // One Extension with OID 1.2.3.4 and NULL extnValue.
         //
         // DER structure (hex: 300B300906032A030404020500):
         //   30 0b           SEQUENCE (11 bytes) - Extensions
@@ -1078,7 +1120,7 @@ mod tests {
         ];
 
         // Same Extensions with [1] IMPLICIT tagging (RFC 3161 format)
-        // The outer SEQUENCE tag (0x30) is REPLACED by context tag [1] (0xA1)
+        // The outer SEQUENCE tag (0x30) is REPLACED by context tag [1] (0xA1).
         //
         // DER structure (hex: A10B300906032A030404020500):
         //   A1 0b           [1] IMPLICIT (11 bytes) - replaces SEQUENCE tag
@@ -1094,7 +1136,7 @@ mod tests {
             0x04, 0x02, 0x05, 0x00, //     OCTET STRING containing NULL
         ];
 
-        // Test 1: Parse normal Extensions with SEQUENCE tag (baseline)
+        // Test 1: Parse normal Extensions with SEQUENCE tag (baseline).
         let extensions_explicit = Constructed::decode(EXTENSIONS_DER, bcder::Mode::Der, |cons| {
             cons.take_constructed_if(Tag::SEQUENCE, |cons| cons.capture_all().map(Extensions))
         })
@@ -1103,7 +1145,7 @@ mod tests {
         assert!(!extensions_explicit.0.as_slice().is_empty());
 
         // Test 2: Parse Extensions with IMPLICIT [1] tagging using from_constructed()
-        // This is how RFC 3161 uses it: extensions [1] IMPLICIT Extensions
+        // This is how RFC 3161 uses it: extensions [1] IMPLICIT Extensions.
         let extensions_implicit =
             Constructed::decode(EXTENSIONS_IMPLICIT, bcder::Mode::Der, |cons| {
                 cons.take_opt_constructed_if(Tag::CTX_1, Extensions::from_constructed)
@@ -1114,13 +1156,15 @@ mod tests {
             extensions_implicit.is_some(),
             "Extensions should be present"
         );
+
         let extensions_implicit = extensions_implicit.unwrap();
         assert!(!extensions_implicit.0.as_slice().is_empty());
 
-        // Verify the tag is CTX_1, not SEQUENCE
+        // Verify the tag is CTX_1, not SEQUENCE.
         let (tag, _) =
             bcder::Tag::take_from(&mut bcder::decode::SliceSource::new(EXTENSIONS_IMPLICIT))
                 .expect("Failed to read tag");
+
         assert_eq!(
             tag,
             Tag::CTX_1,
@@ -1128,17 +1172,17 @@ mod tests {
         );
     }
 
-    /// Test GeneralName::take_from() with RFC 3161 TstInfo context
+    /// Test `GeneralName::take_from()` in an RFC 3161 `TstInfo` context.
     ///
-    /// In RFC 3161, GeneralName is used as: tsa [0] GeneralName OPTIONAL
+    /// RFC 3161 uses `GeneralName` as `tsa [0] GeneralName OPTIONAL`.
     ///
-    /// GeneralName is a CHOICE type from RFC 5280 with multiple alternatives,
-    /// each having its own IMPLICIT tag. This test validates parsing GeneralName
-    /// as it appears in the TstInfo structure with [0] EXPLICIT wrapping.
+    /// `GeneralName` is a `CHOICE` type from RFC 5280 with multiple alternatives,
+    /// each having its own `IMPLICIT` tag. This test validates parsing `GeneralName`
+    /// as it appears in the `TstInfo` structure with `[0] EXPLICIT` wrapping.
     ///
     /// ## Test Data Generation
     ///
-    /// The DER data was generated using openssl and validated:
+    /// The DER data was generated using OpenSSL and validated:
     ///
     /// ```bash
     /// # Inner GeneralName (dNSName [2]):
@@ -1154,7 +1198,7 @@ mod tests {
         use bcder::decode::Constructed;
 
         // GeneralName with dNSName [2] IMPLICIT IA5String
-        // Wrapped in [0] EXPLICIT as used in RFC 3161 TstInfo
+        // Wrapped in [0] EXPLICIT as used in RFC 3161 TstInfo.
         //
         // DER structure:
         //   A0 17     [0] EXPLICIT (23 bytes) - TstInfo's tsa context tag
@@ -1169,7 +1213,7 @@ mod tests {
         ];
 
         // GeneralName with URI [6] IMPLICIT IA5String
-        // Wrapped in [0] EXPLICIT for TstInfo
+        // Wrapped in [0] EXPLICIT for TstInfo.
         //
         // DER structure:
         //   A0 19     [0] EXPLICIT (25 bytes)
@@ -1182,7 +1226,7 @@ mod tests {
             0x61, 0x6d, 0x70, 0x6c, 0x65, 0x2e, 0x63, 0x6f, 0x6d, // "https://tsa.example.com"
         ];
 
-        // Test parsing as it's done in TstInfo::take_from()
+        // Test parsing as it's done in TstInfo::take_from().
         let general_name_dns =
             Constructed::decode(TSA_GENERAL_NAME_DNS, bcder::Mode::Der, |cons| {
                 cons.take_opt_constructed_if(Tag::CTX_0, GeneralName::take_from)
@@ -1191,10 +1235,10 @@ mod tests {
 
         assert!(general_name_dns.is_some(), "GeneralName should be present");
         let general_name_dns = general_name_dns.unwrap();
-        // The captured data should be the inner [2] tagged value
+        // The captured data should be the inner [2] tagged value.
         assert!(general_name_dns.0.as_slice().starts_with(&[0x82]));
 
-        // Test URI variant
+        // Test URI variant.
         let general_name_uri =
             Constructed::decode(TSA_GENERAL_NAME_URI, bcder::Mode::Der, |cons| {
                 cons.take_opt_constructed_if(Tag::CTX_0, GeneralName::take_from)
@@ -1203,25 +1247,26 @@ mod tests {
 
         assert!(general_name_uri.is_some(), "GeneralName should be present");
         let general_name_uri = general_name_uri.unwrap();
-        // The captured data should be the inner [6] tagged value
+        // The captured data should be the inner [6] tagged value.
         assert!(general_name_uri.0.as_slice().starts_with(&[0x86]));
 
-        // Verify outer tag is [0]
+        // Verify outer tag is [0].
         let (tag, _) =
             bcder::Tag::take_from(&mut bcder::decode::SliceSource::new(TSA_GENERAL_NAME_DNS))
                 .expect("Failed to read outer tag");
+
         assert_eq!(tag, Tag::CTX_0, "Outer tag should be [0] for TstInfo.tsa");
     }
 
-    /// Test from_primitive_no_fractional_or_timezone_offsets via CMS Time
+    /// Test `GeneralizedTime::from_primitive_no_fractional_or_timezone_offsets` via CMS `Time`.
     ///
-    /// This method is used by CMS Time structures (RFC 5652) for strict DER encoding.
-    /// We test it indirectly through the Time::take_from() parser.
+    /// CMS `Time` structures (RFC 5652) use this method for strict DER encoding.
+    /// We test it indirectly through the `Time::take_from()` parser.
     ///
     /// ## Test Data
     ///
-    /// Standard GeneralizedTime DER format: Tag(0x18) + Length + YYYYMMDDHHmmssZ
-    /// Example: "20240115120000Z" = January 15, 2024, 12:00:00 UTC
+    /// Standard `GeneralizedTime` DER format: tag (0x18), length, and `YYYYMMDDHHmmssZ`.
+    /// Example: `"20240115120000Z"` represents January 15, 2024, at 12:00:00 UTC.
     #[test]
     fn test_generalized_time_from_primitive_no_fractional() {
         use bcder::decode::Constructed;
@@ -1238,37 +1283,38 @@ mod tests {
             b'Z',
         ];
 
-        // Parse using Time::take_from which calls from_primitive_no_fractional_or_timezone_offsets
+        // Parse using Time::take_from which calls from_primitive_no_fractional_or_timezone_offsets.
         let time = Constructed::decode(TIME_DER, bcder::Mode::Der, Time::take_from)
             .expect("Failed to parse CMS Time with GeneralizedTime");
 
-        // Verify it's the GeneralizedTime variant
+        // Verify it's the GeneralizedTime variant.
         let gen_time = match time {
             Time::GeneralizedTime(gt) => gt,
             Time::UtcTime(_) => panic!("Expected GeneralizedTime, got UtcTime"),
         };
 
-        // Verify the time value
+        // Verify the time value.
         let dt: chrono::DateTime<chrono::Utc> = gen_time.into();
+
         assert_eq!(
             dt.format("%Y-%m-%d %H:%M:%S").to_string(),
             "2024-01-15 12:00:00"
         );
     }
 
-    /// Test RFC 3161 GeneralizedTime with fractional seconds
+    /// Test RFC 3161 `GeneralizedTime` with fractional seconds.
     ///
-    /// C2PA manifest with timestamp from freetsa.org: "20251121125823.643Z"
+    /// A C2PA manifest contains a timestamp from freetsa.org: `"20251121125823.643Z"`.
     ///
     /// This test validates that we can parse RFC 3161 timestamps that include
     /// fractional seconds, which are explicitly allowed by RFC 3161 Section 2.4.2:
     ///
-    /// > "The ASN.1 GeneralizedTime syntax can include fraction-of-second details.
+    /// > "The ASN.1 `GeneralizedTime` syntax can include fraction-of-second details.
     /// >  Such syntax, without the restrictions from [RFC 2459] Section 4.1.2.5.2,
-    /// >  where GeneralizedTime is limited to represent the time with a granularity
+    /// >  where `GeneralizedTime` is limited to represent the time with a granularity
     /// >  of one second, may be used here."
     ///
-    /// The der crate's GeneralizedTime enforces RFC 5280's strict "no fractional"
+    /// The `der` crate's `GeneralizedTime` enforces RFC 5280's strict "no fractional"
     /// rule, so we need custom parsing for RFC 3161 compliance.
     #[test]
     fn test_generalized_time_rfc3161_fractional_seconds() {
@@ -1289,30 +1335,30 @@ mod tests {
         // 00002e5d: 1813 3230 3235 3131 3231 3132 3538 3233  ..20251121125823
         // 00002e6d: 2e36 3433 5a                             .643Z
 
-        // This should succeed with the RFC 3161 parser
+        // This should succeed with the RFC 3161 parser.
         let gen_time = GeneralizedTime::from_der_bytes_rfc3161(TIME_DER_FRACTIONAL)
             .expect("Failed to parse RFC 3161 GeneralizedTime with fractional seconds");
 
-        // Verify that the original DER bytes are preserved (important for signature validation)
+        // Verify that the original DER bytes are preserved (important for signature validation).
         assert_eq!(gen_time.as_der_bytes(), TIME_DER_FRACTIONAL);
 
-        // Convert to chrono DateTime
+        // Convert to chrono::DateTime.
         let dt: chrono::DateTime<chrono::Utc> = gen_time.into();
 
-        // Verify the parsed time
+        // Verify the parsed time.
         assert_eq!(
             dt.format("%Y-%m-%d %H:%M:%S").to_string(),
             "2025-11-21 12:58:23"
         );
 
-        // Verify fractional seconds: .643 seconds = 643 milliseconds = 643,000,000 nanoseconds
+        // Verify fractional seconds: .643 seconds = 643 milliseconds = 643,000,000 nanoseconds.
         assert_eq!(dt.timestamp_subsec_millis(), 643);
         assert_eq!(dt.timestamp_subsec_nanos(), 643_000_000);
     }
 
-    /// Test that RFC 5280 strict format still works and is compatible
+    /// Test that the strict RFC 5280 format remains compatible.
     ///
-    /// RFC 5280 Section 4.1.2.5.2 requires GeneralizedTime without fractional seconds.
+    /// RFC 5280 Section 4.1.2.5.2 requires `GeneralizedTime` without fractional seconds.
     /// Our RFC 3161 parser should also handle this format for backward compatibility.
     #[test]
     fn test_generalized_time_rfc5280_no_fractional() {
@@ -1324,26 +1370,28 @@ mod tests {
             b'Z',
         ];
 
-        // Should work with both parsers
+        // Should work with both parsers.
         let gen_time_strict = GeneralizedTime::from_der_bytes(TIME_DER_NO_FRACTIONAL)
             .expect("RFC 5280 parser should handle no-fractional format");
 
         let gen_time_rfc3161 = GeneralizedTime::from_der_bytes_rfc3161(TIME_DER_NO_FRACTIONAL)
             .expect("RFC 3161 parser should handle no-fractional format");
 
-        // Both should produce the same result
+        // Both should produce the same result.
         assert_eq!(gen_time_strict, gen_time_rfc3161);
 
-        // Convert to DateTime and verify
+        // Convert to DateTime and verify.
         let dt: chrono::DateTime<chrono::Utc> = gen_time_rfc3161.into();
+
         assert_eq!(
             dt.format("%Y-%m-%d %H:%M:%S").to_string(),
             "2025-11-21 12:58:23"
         );
-        assert_eq!(dt.timestamp_subsec_nanos(), 0); // No fractional seconds
+
+        assert_eq!(dt.timestamp_subsec_nanos(), 0); // No fractional seconds.
     }
 
-    /// Test various fractional second precisions
+    /// Test various fractional-second precisions.
     #[test]
     fn test_generalized_time_fractional_precisions() {
         let test_cases = vec![
@@ -1358,7 +1406,7 @@ mod tests {
         ];
 
         for (time_str, expected_nanos, desc) in test_cases {
-            // Construct DER bytes
+            // Construct DER bytes.
             let mut der_bytes = vec![0x18, time_str.len() as u8];
             der_bytes.extend_from_slice(time_str.as_bytes());
 
@@ -1366,6 +1414,7 @@ mod tests {
                 .unwrap_or_else(|_| panic!("Failed to parse: {desc}"));
 
             let dt: chrono::DateTime<chrono::Utc> = gen_time.into();
+
             assert_eq!(
                 dt.timestamp_subsec_nanos(),
                 expected_nanos,
@@ -1378,8 +1427,10 @@ mod tests {
     #[test]
     fn test_rfc3161_too_short() {
         let empty: &[u8] = &[];
+
         let err = GeneralizedTime::from_der_bytes_rfc3161(empty)
             .expect_err("empty buffer should be rejected");
+
         assert_eq!(
             err.kind(),
             der::ErrorKind::Length {
@@ -1390,8 +1441,10 @@ mod tests {
         );
 
         let tag_only: &[u8] = &[0x18];
+
         let err = GeneralizedTime::from_der_bytes_rfc3161(tag_only)
             .expect_err("tag byte without length should be rejected");
+
         assert_eq!(
             err.kind(),
             der::ErrorKind::Length {
@@ -1402,7 +1455,7 @@ mod tests {
         );
     }
 
-    /// First byte is not the GENERALIZED_TIME tag (0x18).
+    /// First byte is not the `GENERALIZED_TIME` tag (0x18).
     #[test]
     fn test_rfc3161_wrong_tag() {
         // 0x17 = UTCTime, not GeneralizedTime.
@@ -1411,6 +1464,7 @@ mod tests {
 
         let err = GeneralizedTime::from_der_bytes_rfc3161(&der_bytes)
             .expect_err("UTCTime tag should be rejected");
+
         assert_eq!(
             err.kind(),
             der::ErrorKind::Value {
@@ -1423,14 +1477,16 @@ mod tests {
 
     /// Declared DER length does not match the actual content length.
     /// The check is an exact comparison (`bytes.len() != length + 2`), so both
-    /// an over-declared and an under-declared length are rejected.
+    /// an overstated and an understated length are rejected.
     #[test]
     fn test_rfc3161_length_mismatch() {
         // Content is 15 bytes, but the length byte claims 32.
         let mut over = vec![0x18, 0x20];
         over.extend_from_slice(b"20230101000000Z");
+
         let err = GeneralizedTime::from_der_bytes_rfc3161(&over)
             .expect_err("over-declared length should be rejected");
+
         assert_eq!(
             err.kind(),
             der::ErrorKind::Length {
@@ -1443,8 +1499,10 @@ mod tests {
         // Content is 15 bytes, but the length byte claims 5.
         let mut under = vec![0x18, 0x05];
         under.extend_from_slice(b"20230101000000Z");
+
         let err = GeneralizedTime::from_der_bytes_rfc3161(&under)
             .expect_err("under-declared length should be rejected");
+
         assert_eq!(
             err.kind(),
             der::ErrorKind::Length {
@@ -1455,14 +1513,16 @@ mod tests {
         );
     }
 
-    /// Content is shorter than the 15-char minimum, or does not end with 'Z'.
+    /// Content is shorter than the 15-character minimum, or does not end with 'Z'.
     #[test]
     fn test_rfc3161_too_short_time_str() {
         let short = "2023";
         let mut der_bytes = vec![0x18, short.len() as u8];
         der_bytes.extend_from_slice(short.as_bytes());
+
         let err = GeneralizedTime::from_der_bytes_rfc3161(&der_bytes)
             .expect_err("content under 15 chars should be rejected");
+
         assert_eq!(
             err.kind(),
             der::ErrorKind::Value {
@@ -1475,8 +1535,10 @@ mod tests {
         let no_z = "20230101000000X";
         let mut der_bytes = vec![0x18, no_z.len() as u8];
         der_bytes.extend_from_slice(no_z.as_bytes());
+
         let err = GeneralizedTime::from_der_bytes_rfc3161(&der_bytes)
             .expect_err("content without trailing 'Z' should be rejected");
+
         assert_eq!(
             err.kind(),
             der::ErrorKind::Value {
@@ -1496,6 +1558,7 @@ mod tests {
 
         let err = GeneralizedTime::from_der_bytes_rfc3161(&der_bytes)
             .expect_err("fractional part without leading dot should be rejected");
+
         assert_eq!(
             err.kind(),
             der::ErrorKind::Value {
@@ -1506,7 +1569,7 @@ mod tests {
         );
     }
 
-    /// A '.' immediately followed by 'Z', i.e. zero fractional digits.
+    /// A '.' immediately followed by 'Z', with zero fractional digits.
     #[test]
     fn test_rfc3161_frac_empty() {
         let time_str = "20230101000000.Z";
@@ -1515,6 +1578,7 @@ mod tests {
 
         let err = GeneralizedTime::from_der_bytes_rfc3161(&der_bytes)
             .expect_err("empty fractional digits should be rejected");
+
         assert_eq!(
             err.kind(),
             der::ErrorKind::Value {
@@ -1525,7 +1589,7 @@ mod tests {
         );
     }
 
-    /// More than 9 fractional digits (nanosecond precision is the maximum).
+    /// More than nine fractional digits (nanosecond precision is the maximum).
     #[test]
     fn test_rfc3161_frac_too_long() {
         let time_str = "20230101000000.1234567890Z"; // 10 fractional digits
@@ -1534,6 +1598,7 @@ mod tests {
 
         let err = GeneralizedTime::from_der_bytes_rfc3161(&der_bytes)
             .expect_err("more than 9 fractional digits should be rejected");
+
         assert_eq!(
             err.kind(),
             der::ErrorKind::Value {
@@ -1546,7 +1611,7 @@ mod tests {
 
     /// The fractional part starts with a non-digit byte.
     /// Kept to a single character on purpose: only the first fractional byte is
-    /// checked here, so something like ".5aZ" would instead fail later during
+    /// checked here, so a value such as `".5aZ"` would instead fail later during
     /// integer parsing.
     #[test]
     fn test_rfc3161_frac_nonascii_digit() {
@@ -1556,6 +1621,7 @@ mod tests {
 
         let err = GeneralizedTime::from_der_bytes_rfc3161(&der_bytes)
             .expect_err("non-digit fractional part should be rejected");
+
         assert_eq!(
             err.kind(),
             der::ErrorKind::Value {

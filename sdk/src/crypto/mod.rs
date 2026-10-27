@@ -13,7 +13,7 @@
 
 #![deny(missing_docs)]
 
-pub(crate) mod asn1;
+pub(crate) use contentauth_rfc3161::sdk_compat as asn1;
 pub(crate) mod base64;
 pub mod cose;
 pub(crate) mod hash;

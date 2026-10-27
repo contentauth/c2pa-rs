@@ -17,16 +17,18 @@ use bcder::{
 /// PKIFreeText ::= SEQUENCE SIZE (1..MAX) OF UTF8String
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PkiFreeText(Vec<Utf8String>);
+pub(crate) struct PkiFreeText(Vec<Utf8String>);
 
 impl PkiFreeText {
-    pub fn take_opt_from<S: Source>(
+    /// Decode an optional `SEQUENCE` of UTF-8 status messages.
+    pub(crate) fn take_opt_from<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Option<Self>, DecodeError<S::Error>> {
         cons.take_opt_sequence(|cons| Self::from_sequence(cons))
     }
 
-    pub fn from_sequence<S: Source>(
+    /// Decode status messages after entering their `SEQUENCE`.
+    pub(crate) fn from_sequence<S: Source>(
         cons: &mut Constructed<S>,
     ) -> Result<Self, DecodeError<S::Error>> {
         let mut res = vec![];
