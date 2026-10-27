@@ -378,7 +378,7 @@ jobs:
         run: rustup target add wasm32-unknown-unknown
 
       - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@732870f031d2fb36309d0deaf36abcc704a7be65 # v1.20.1
+        uses: cargo-bins/cargo-binstall@b874e25ea559687bec77e281e9b271aa1367b624 # v1.23.0
 
       - name: Extract wasm-bindgen version
         id: wasm-bindgen-version
