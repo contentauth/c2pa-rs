@@ -20,7 +20,7 @@ use serde_json::json;
 
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionJson},
-    assertions::{labels, SchemaDotOrg, SchemaDotOrgPerson},
+    assertions::{SchemaDotOrg, SchemaDotOrgPerson},
     error::Result,
 };
 
@@ -45,7 +45,7 @@ impl CreativeWork {
     /// Label prefix for a creative work assertion. NOTE: This is deprecated.
     ///
     /// See [Creative_work assertion - C2PA Technical Specification](https://spec.c2pa.org/specifications/specifications/1.4/specs/C2PA_Specification.html#_creative_work). NOTE: This is an old version of the spec.
-    pub const LABEL: &'static str = labels::CREATIVE_WORK;
+    pub const LABEL: &'static str = "stds.schema-org.CreativeWork";
 
     pub fn new() -> CreativeWork {
         Self(

@@ -27,12 +27,11 @@ use crate::{
     identity::{
         claim_aggregation::{IcaSignatureVerifier, IcaValidationError},
         tests::{
-            fixtures::claim_aggregation::ica_credential_example, ica_test_context,
-            ICA_FIXTURE_JWK_ISSUER,
+            add_cawg_ica_issuers, fixtures::claim_aggregation::ica_credential_example,
+            ica_test_context, ICA_FIXTURE_JWK_ISSUER,
         },
         IdentityAssertion, ValidationError,
     },
-    settings::TrustAnchor,
     status_tracker::{LogKind, StatusTracker},
 };
 
@@ -990,20 +989,8 @@ async fn issuer_trusted_on_allow_list() {
     drop(ia_iter);
 
     // Trust exactly the issuer that signed this fixture.
-    // CAWG anchors are separate from Signer anchors so we need to add CAWG anchor.
-    // Let's just add a CAWG specific anchor..
-    let mut settings = crate::settings::get_thread_local_settings();
-    if let Some(anchors) = &mut settings.trust.anchors {
-        // make sure there is a CAWG trust anchor with the ICA fixture issuers.
-        let cawg_anchor = TrustAnchor {
-            trust_kind: crate::settings::TrustListKind::CAWG,
-            trusted_ica_issuers: Some(vec![ICA_FIXTURE_JWK_ISSUER.to_string()]),
-            trust_uri: Some("cawg_trust".to_string()),
-            ..Default::default()
-        };
-
-        anchors.push(cawg_anchor);
-    }
+    let mut settings = crate::settings::Settings::default();
+    add_cawg_ica_issuers(&mut settings, &[ICA_FIXTURE_JWK_ISSUER]);
     let context = crate::Context::new().with_settings(settings).unwrap();
     let isv = IcaSignatureVerifier::new(&context);
 
