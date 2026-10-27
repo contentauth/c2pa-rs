@@ -4475,6 +4475,58 @@ mod tests {
         );
     }
 
+    // Regression (CAI-13962 / c2pa-rs#2720): a v1 claim whose manifest already declares its own
+    // c2pa.opened/created action must not get a second actions assertion auto-added under an Edit
+    // intent. v1 claims have no created/gathered split, so the auto-parent guard has to inspect
+    // all action assertions (not only `created_action_assertions()`); otherwise a second actions
+    // assertion is added and validation fails with "only one action assertion allowed for v1
+    // claims".
+    #[test]
+    fn test_v1_declared_action_blocks_auto_parent_and_second_actions_assertion() {
+        #[cfg(target_os = "wasi")]
+        Settings::reset().unwrap();
+
+        let format = "image/jpeg";
+        let mut source = Cursor::new(TEST_IMAGE);
+        let mut dest = Cursor::new(Vec::new());
+
+        let manifest = json!({
+            "claim_version": 1,
+            "title": "V1 Declared Action",
+            "assertions": [
+                {
+                    "label": "c2pa.actions",
+                    "data": { "actions": [ { "action": "c2pa.opened" } ] }
+                }
+            ]
+        })
+        .to_string();
+
+        let mut builder = Builder::from_context(test_context())
+            .with_definition(manifest)
+            .unwrap();
+        // Default c2patool behaviour: Edit intent with no explicitly supplied parent.
+        builder.set_intent(BuilderIntent::Edit);
+
+        let signer = test_signer(SigningAlg::Ps256);
+        builder
+            .sign(signer.as_ref(), format, &mut source, &mut dest)
+            .unwrap();
+
+        dest.rewind().unwrap();
+        let reader = Reader::from_stream(format, &mut dest).unwrap();
+        assert_ne!(reader.validation_state(), ValidationState::Invalid);
+
+        // Exactly one c2pa.actions assertion must exist for the v1 claim.
+        let active = reader.active_manifest().unwrap();
+        let action_assertions = active
+            .assertions()
+            .iter()
+            .filter(|a| a.label().starts_with("c2pa.actions"))
+            .count();
+        assert_eq!(action_assertions, 1);
+    }
+
     #[test]
     fn test_auto_inception_not_duplicated_across_actions_assertions() {
         #[cfg(target_os = "wasi")]
