@@ -22,6 +22,41 @@ The C language is not object-oriented, does not perform garbage collection, and 
 
 For these reasons, use the the C++ API unless you have a specific reason to use C.
 
+## Byte-buffer ownership
+
+The byte arrays returned by the following APIs are the library's allocations:
+
+* `c2pa_builder_sign` and `c2pa_builder_sign_context`
+* `c2pa_builder_placeholder` and `c2pa_builder_sign_embeddable`
+* `c2pa_builder_compose_manifest`
+* `c2pa_ed25519_sign`
+
+Treat returned bytes as read-only. Read only the returned byte count (64 bytes
+for an Ed25519 signature) and release each non-null allocation exactly once
+with `c2pa_free`. The pointer is invalid after release. Never use C `free`,
+`realloc`, C++ `delete`, or a foreign container's deallocator for these buffers.
+Copying the bytes into application-owned storage is optional and explicit.
+
+The cimpl allocation handoff avoids an intermediate Rust-side payload copy
+when the original allocation's address is even. It retains the original
+length and capacity until release, without shrinking or copying to reduce
+spare capacity. Odd-addressed allocations use an even-addressed copy fallback
+to preserve the registry's separation between buffer addresses and opaque
+handle IDs. This does not remove SDK-internal copies or copies made by
+language-binding containers.
+
+Stream read/write callbacks borrow the buffer supplied by the Rust caller
+directly. These pointers are valid only during the callback: do not retain
+or free them.
+
+HTTP resolver response bodies follow a different ownership contract: the
+callback allocates `C2paHttpResponse.body` with `malloc` and transfers ownership
+to Rust when it returns. Rust reads that allocation without an intermediate
+body copy and calls `free` when the response body reader is dropped, not
+necessarily when the callback returns or EOF is reached. The callback must
+not access or free the body after returning. Non-null zero-length bodies are
+also freed. A body allocated before a callback error is freed on the error path.
+
 ## Building locally
 
 Pre-requisite: You must have the Rust toolchain (cargo) installed.

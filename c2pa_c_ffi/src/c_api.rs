@@ -1827,8 +1827,9 @@ pub unsafe extern "C" fn c2pa_builder_write_ingredient_archive(
 ///
 /// # Safety
 /// Reads from NULL-terminated C strings
-/// If manifest_bytes_ptr is not NULL, the returned value must be released by calling c2pa_free,
-/// and it is no longer valid after that call.
+/// If manifest_bytes_ptr is not NULL, the returned bytes are the library's
+/// allocation. Treat them as read-only and release them exactly once with
+/// c2pa_free, never C free or realloc. They are invalid after release.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_builder_sign(
     builder_ptr: *mut C2paBuilder,
@@ -1876,8 +1877,9 @@ pub unsafe extern "C" fn c2pa_builder_sign(
 /// # Safety
 ///
 /// Reads from NULL-terminated C strings.
-/// If `manifest_bytes_ptr` is not NULL, the returned bytes MUST be released by
-/// calling `c2pa_free`.
+/// If `manifest_bytes_ptr` is not NULL, the returned bytes are the library's
+/// allocation. Treat them as read-only and release them exactly once with
+/// `c2pa_free`, never C `free` or `realloc`. They are invalid after release.
 ///
 /// # Returns
 ///
@@ -1982,7 +1984,9 @@ pub unsafe extern "C" fn c2pa_builder_hash_type(
 ///
 /// # Safety
 /// Reads from NULL-terminated C strings.
-/// If manifest_bytes_ptr is not NULL, the returned bytes MUST be released by calling c2pa_free.
+/// If manifest_bytes_ptr is not NULL, the returned bytes are the library's
+/// allocation. Treat them as read-only and release them exactly once with
+/// c2pa_free, never C free or realloc. They are invalid after release.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_builder_placeholder(
     builder_ptr: *mut C2paBuilder,
@@ -2024,7 +2028,9 @@ pub unsafe extern "C" fn c2pa_builder_placeholder(
 ///
 /// # Safety
 /// Reads from NULL-terminated C strings.
-/// If manifest_bytes_ptr is not NULL, the returned bytes MUST be released by calling c2pa_free.
+/// If manifest_bytes_ptr is not NULL, the returned bytes are the library's
+/// allocation. Treat them as read-only and release them exactly once with
+/// c2pa_free, never C free or realloc. They are invalid after release.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_builder_sign_embeddable(
     builder_ptr: *mut C2paBuilder,
@@ -2236,8 +2242,9 @@ pub unsafe extern "C" fn c2pa_builder_update_hash_from_stream(
 ///
 /// # Safety
 /// Reads from NULL-terminated C strings.
-/// The returned value MUST be released by calling c2pa_free
-/// and it is no longer valid after that call.
+/// The returned bytes are the library's allocation. Treat them as read-only
+/// and release them exactly once with c2pa_free, never C free or realloc.
+/// They are invalid after release.
 #[no_mangle]
 pub unsafe extern "C" fn c2pa_builder_compose_manifest(
     builder_ptr: *mut C2paBuilder,
@@ -2650,8 +2657,9 @@ pub unsafe extern "C" fn c2pa_signer_reserve_size(signer_ptr: *mut C2paSigner) -
 #[no_mangle]
 /// Signs a byte array using the Ed25519 algorithm.
 /// # Safety
-/// The returned value MUST be freed by calling c2pa_free
-/// and it is no longer valid after that call.
+/// The returned bytes are the library's allocation. Treat them as read-only
+/// and release them exactly once with c2pa_free, never C free or realloc.
+/// They are invalid after release.
 pub unsafe extern "C" fn c2pa_ed25519_sign(
     bytes: *const c_uchar,
     len: usize,
