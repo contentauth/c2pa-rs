@@ -332,14 +332,14 @@ fn other_jumbf_is_left_alone() {
         .find(|f| f.0.ends_with(".jpg"))
         .expect("a JPEG fixture");
     let writer = new.get_writer("x").unwrap();
-    let entities = |data: &[u8]| {
+    let items = |data: &[u8]| {
         let reg = ::asset_io::HandlerRegistry::builtin();
         let s = reg.parse("jpg", &mut Cursor::new(data.to_vec())).unwrap();
-        s.entities(::asset_io::SegmentKind::Jumbf)
+        s.items_of(::asset_io::ItemKind::Jumbf)
             .map(|e| {
                 (
                     e.jumbf_type(),
-                    s.read_entity(&mut Cursor::new(data.to_vec()), e).unwrap(),
+                    s.read_item(&mut Cursor::new(data.to_vec()), e).unwrap(),
                 )
             })
             .collect::<Vec<_>>()
@@ -363,7 +363,7 @@ fn other_jumbf_is_left_alone() {
     .unwrap();
     let with_other = with_other.into_inner();
     assert_eq!(
-        entities(&with_other),
+        items(&with_other),
         [(Some([9; 16]), other.clone())],
         "{name}"
     );
@@ -384,7 +384,7 @@ fn other_jumbf_is_left_alone() {
         new.get_reader().read_c2pa(&mut Cursor::new(&both)).unwrap(),
         c2pa
     );
-    let found = entities(&both);
+    let found = items(&both);
     assert_eq!(found.len(), 2, "{name}");
     assert!(found.contains(&(Some([9; 16]), other.clone())));
 
@@ -401,14 +401,14 @@ fn other_jumbf_is_left_alone() {
             .unwrap(),
         c2pa2
     );
-    assert!(entities(&replaced).contains(&(Some([9; 16]), other.clone())));
+    assert!(items(&replaced).contains(&(Some([9; 16]), other.clone())));
 
     // Removing the store leaves only the other JUMBF.
     let mut removed = Cursor::new(Vec::new());
     writer
         .remove_c2pa(&mut Cursor::new(&replaced), &mut removed)
         .unwrap();
-    assert_eq!(entities(&removed.into_inner()), [(Some([9; 16]), other)]);
+    assert_eq!(items(&removed.into_inner()), [(Some([9; 16]), other)]);
 }
 
 #[test]

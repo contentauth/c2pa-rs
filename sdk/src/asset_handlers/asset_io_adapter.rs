@@ -9,7 +9,10 @@
 use std::{collections::HashSet, io::Read, sync::Arc};
 
 use ::asset_io as aio;
-use aio::{ByteRange, ContainerHandler, HandlerRegistry, SegmentKind, Structure, Updates};
+use aio::{
+    ByteRange, ContainerHandler, HandlerRegistry, ItemKind, SegmentId, Structure, TransferEncoding,
+    Updates,
+};
 
 use crate::{
     asset_io::{
@@ -34,7 +37,7 @@ fn err(e: aio::Error) -> Error {
         aio::Error::UserCanceled => Error::OperationCancelled,
         aio::Error::UnsupportedFormat => Error::UnsupportedType,
         aio::Error::UnsupportedFeature(f) => Error::NotImplemented(f.to_string()),
-        aio::Error::Ambiguous { what, .. } if what == SegmentKind::Jumbf.as_str() => {
+        aio::Error::Ambiguous { what, .. } if what == ItemKind::Jumbf.as_str() => {
             Error::TooManyManifestStores
         }
         other => Error::InvalidAsset(other.to_string()),
@@ -98,11 +101,11 @@ impl AssetIoAdapter {
     }
 }
 
-/// The JUMBF entities that are C2PA Manifest Stores.
-fn c2pa_entities<'s>(s: &'s Structure, src: &mut dyn ReadSeek) -> Result<Vec<&'s aio::Entity>> {
+/// The JUMBF items that are C2PA Manifest Stores.
+fn c2pa_items<'s>(s: &'s Structure, src: &mut dyn ReadSeek) -> Result<Vec<&'s aio::Item>> {
     let mut src = src;
     let mut v = Vec::new();
-    for e in s.entities(SegmentKind::Jumbf) {
+    for e in s.items_of(ItemKind::Jumbf) {
         if s.jumbf_type(&mut src, e).map_err(err)? == Some(C2PA_STORE_UUID) {
             v.push(e);
         }
@@ -110,17 +113,25 @@ fn c2pa_entities<'s>(s: &'s Structure, src: &mut dyn ReadSeek) -> Result<Vec<&'s
     Ok(v)
 }
 
+/// Whether segment `id` holds an item of one of `kinds` (with `plain`, only one
+/// stored as is, with no transfer encoding).
+fn holds(s: &Structure, id: SegmentId, kinds: &[ItemKind], plain: bool) -> bool {
+    s.items_in(id).any(|i| {
+        kinds.contains(&i.kind()) && (!plain || *i.transfer() == TransferEncoding::Identity)
+    })
+}
+
 impl C2paReader for AssetIoAdapter {
     fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>> {
         let mut input = input_stream;
         let s = self.parse(&mut *input)?;
-        let c2pa = c2pa_entities(&s, &mut *input)?;
+        let c2pa = c2pa_items(&s, &mut *input)?;
         let store = if c2pa.is_empty() {
             None
-        } else if c2pa.len() == s.entities(SegmentKind::Jumbf).count() {
+        } else if c2pa.len() == s.items_of(ItemKind::Jumbf).count() {
             s.store(&mut input).map_err(err)?
         } else if c2pa.len() == 1 {
-            Some(s.read_decoded(&mut input, c2pa[0]).map_err(err)?)
+            Some(s.read_content(&mut input, c2pa[0]).map_err(err)?)
         } else {
             return Err(Error::TooManyManifestStores);
         };
@@ -153,19 +164,16 @@ impl C2paWriter for AssetIoAdapter {
         // final manifest of the same size. Filling the placeholder in place keeps
         // every byte the hash covers where it is, which a rewrite does not promise
         // (a PDF appends a revision instead of replacing the store).
-        if let [entity] = c2pa_entities(&s, &mut *input)?.as_slice() {
-            let stored = s
-                .handler()
-                .encode_entity(&s, entity, store_bytes)
-                .map_err(err)?;
-            if stored.len() as u64 == entity.len() {
+        if let [item] = c2pa_items(&s, &mut *input)?.as_slice() {
+            let stored = item.transfer().encode(store_bytes).map_err(err)?;
+            if stored.len() as u64 == item.len() {
                 input.rewind()?;
                 output.rewind()?;
                 std::io::copy(&mut *input, &mut *output)?;
                 // Patching seeks back, which a buffered stream may refuse while it
                 // holds unwritten data.
                 output.flush()?;
-                return s.patch_exact(&mut output, entity, store_bytes).map_err(err);
+                return s.patch_exact(&mut output, item, store_bytes).map_err(err);
             }
         }
 
@@ -186,9 +194,9 @@ impl C2paWriter for AssetIoAdapter {
     ) -> Result<Vec<ObjectLocations>> {
         let mut input = input_stream;
         let s = self.parse(&mut *input)?;
-        let existing: Vec<aio::Part> = c2pa_entities(&s, &mut *input)?
+        let existing: Vec<aio::Extent> = c2pa_items(&s, &mut *input)?
             .iter()
-            .flat_map(|e| e.parts().copied())
+            .flat_map(|e| e.extents().copied())
             .collect();
 
         // With no manifest, report the layout of the asset as it would be written with
@@ -198,9 +206,9 @@ impl C2paWriter for AssetIoAdapter {
                 .plan(&mut input, &Updates::new().set_jumbf(PLACEHOLDER.to_vec()))
                 .map_err(err)?;
             let ids: Vec<_> = planned
-                .entity(SegmentKind::Jumbf)
+                .item(ItemKind::Jumbf)
                 .map_err(err)?
-                .map(|e| e.parts().copied().collect())
+                .map(|e| e.extents().copied().collect())
                 .unwrap_or_default();
             (planned, ids)
         } else {
@@ -209,11 +217,11 @@ impl C2paWriter for AssetIoAdapter {
 
         let mut start = u64::MAX;
         let mut end = 0u64;
-        for part in &manifest {
+        for extent in &manifest {
             let x = if self.excludes_payload_only() {
-                part.range()
+                extent.range()
             } else {
-                layout.segment(part.segment()).map_err(err)?.extent()
+                layout.segment(extent.segment()).map_err(err)?.range()
             };
             start = start.min(x.offset());
             end = end.max(x.end());
@@ -223,12 +231,13 @@ impl C2paWriter for AssetIoAdapter {
         }
 
         let mut out = Vec::new();
-        for seg in layout.segments() {
-            let x = seg.extent();
+        for (i, seg) in layout.segments().iter().enumerate() {
+            let x = seg.range();
             if x.is_empty() || (x.offset() >= start && x.end() <= end) {
                 continue;
             }
-            let htype = if seg.kind() == SegmentKind::Xmp {
+            let id = SegmentId::from_index(i).map_err(err)?;
+            let htype = if holds(&layout, id, &[ItemKind::Xmp], false) {
                 ObjectType::Xmp
             } else {
                 ObjectType::Other
@@ -305,7 +314,7 @@ impl WriteXmp for AssetIoAdapter {
 impl ComposedManifestRef for AssetIoAdapter {
     fn compose_manifest(&self, manifest_data: &[u8], _format: &str) -> Result<Vec<u8>> {
         self.handler()?
-            .compose(SegmentKind::Jumbf, manifest_data)
+            .compose(ItemKind::Jumbf, manifest_data)
             .map_err(err)
     }
 }
@@ -315,10 +324,8 @@ impl ComposedManifestRef for AssetIoAdapter {
 fn box_map_from_layout(s: &Structure, mut src: &mut dyn ReadSeek) -> Result<Vec<BoxMap>> {
     // Which segments belong to the C2PA Manifest Store (not just any JUMBF).
     let mut store: HashSet<aio::SegmentId> = HashSet::new();
-    for e in s.entities(SegmentKind::Jumbf) {
-        if s.jumbf_type(&mut src, e).map_err(err)? == Some(C2PA_STORE_UUID) {
-            store.extend(e.parts().map(|p| p.segment()));
-        }
+    for e in c2pa_items(s, &mut *src)? {
+        store.extend(e.extents().map(|p| p.segment()));
     }
 
     // Bytes beyond the container's structure (data after the last chunk, or the
@@ -329,17 +336,17 @@ fn box_map_from_layout(s: &Structure, mut src: &mut dyn ReadSeek) -> Result<Vec<
     let mut c2pa: Option<usize> = None;
     let mut last_owner: Option<aio::SegmentId> = None;
     s.elements(&mut src, |id, e| {
-        if after.is_some_and(|t| e.extent().offset() >= t.offset()) {
+        if after.is_some_and(|t| e.range().offset() >= t.offset()) {
             return Ok(());
         }
-        let mut ext = e.extent();
+        let mut ext = e.range();
 
         // Compatibility with the existing c2pa-rs box maps (see PR #612): when a
         // segment is expanded into parts, the first part is reported with the
         // whole segment's extent and each later part with only its own header
         // (e.g. a JPEG scan, then the 2-byte RSTn markers inside it). The boxes
         // therefore overlap, as they do today. asset-io itself never overlaps.
-        let owner = s.segment(id)?.extent();
+        let owner = s.segment(id)?.range();
         if ext != owner {
             ext = if last_owner != Some(id) {
                 owner
@@ -367,7 +374,9 @@ fn box_map_from_layout(s: &Structure, mut src: &mut dyn ReadSeek) -> Result<Vec<
             return Ok(());
         };
         let mut bm = BoxMap::new(vec![name.into_owned()], ext.offset(), ext.len());
-        if matches!(e.kind(), SegmentKind::Xmp | SegmentKind::Exif) {
+        // Only metadata stored as is: a compressed PNG XMP `iTXt` has never been
+        // given an exclusion here.
+        if holds(s, id, &[ItemKind::Xmp, ItemKind::Exif], true) {
             // Metadata may be excluded after its header; the trailer (e.g. a PNG
             // CRC) changes with the data, so it is excludable too.
             bm = bm.with_allowed_exclusions(vec![AllowedExclusion::after_header(
@@ -407,14 +416,14 @@ impl AssetBoxHash for AssetIoAdapter {
                 .plan(&mut input, &Updates::new().set_jumbf(PLACEHOLDER.to_vec()))
                 .map_err(err)?;
             let first = planned
-                .entity(SegmentKind::Jumbf)
+                .item(ItemKind::Jumbf)
                 .map_err(err)?
-                .and_then(|e| e.parts().next())
+                .and_then(|e| e.extents().next())
                 .ok_or(Error::EmbeddingError)?;
             let at = planned
                 .segment(first.segment())
                 .map_err(err)?
-                .extent()
+                .range()
                 .offset();
             let index = out
                 .iter()

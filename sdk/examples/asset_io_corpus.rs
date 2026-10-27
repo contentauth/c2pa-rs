@@ -36,7 +36,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use asset_io::{Chunk, Error, HandlerRegistry, SegmentKind, Structure, Updates};
+use asset_io::{Chunk, Error, HandlerRegistry, ItemKind, Structure, Updates};
 use sha2::{Digest, Sha256};
 
 /// Files that take longer than this to check are reported: a sign of work that is not
@@ -316,7 +316,7 @@ fn check(bytes: &[u8]) -> Outcome {
     let mut r = Report {
         multi: s.subassets().len() > 1,
         trailing: s.trailing().is_some(),
-        manifest: s.entities(SegmentKind::Jumbf).next().is_some(),
+        manifest: s.items_of(ItemKind::Jumbf).next().is_some(),
         ..Report::default()
     };
 
@@ -337,14 +337,14 @@ fn check_layout(s: &Structure, bytes: &[u8], r: &mut Report) {
     }
     let mut at = 0u64;
     for (i, seg) in s.segments().iter().enumerate() {
-        if seg.extent().offset() != at {
+        if seg.range().offset() != at {
             r.failures.push(format!(
                 "segment {i} starts at {}, expected {at}",
-                seg.extent().offset()
+                seg.range().offset()
             ));
             return;
         }
-        at = seg.extent().end();
+        at = seg.range().end();
     }
     if at != s.total_size() {
         r.failures
@@ -500,8 +500,8 @@ fn check_edits(s: &Structure, bytes: &[u8], r: &mut Report) {
         };
         match *name {
             "set manifest" | "set both" => {
-                let found = re.entities(SegmentKind::Jumbf).any(|e| {
-                    re.read_entity(&mut Cursor::new(&out[..]), e)
+                let found = re.items_of(ItemKind::Jumbf).any(|e| {
+                    re.read_item(&mut Cursor::new(&out[..]), e)
                         .is_ok_and(|b| b == store)
                 });
                 if !found {
@@ -523,7 +523,7 @@ fn check_edits(s: &Structure, bytes: &[u8], r: &mut Report) {
                 )),
             }
         }
-        if *name == "remove all" && re.entities(SegmentKind::Jumbf).next().is_some() {
+        if *name == "remove all" && re.items_of(ItemKind::Jumbf).next().is_some() {
             r.failures.push("remove all: a manifest is left".into());
         }
     }
@@ -609,9 +609,9 @@ fn verify_output(
             "{name}: the reported trailing data is not the written one"
         ));
     }
-    if entity_layout(dest) != entity_layout(&re) {
+    if item_layout(dest) != item_layout(&re) {
         r.notes.push(format!(
-            "{name}: the reported entities differ from the written ones"
+            "{name}: the reported items differ from the written ones"
         ));
     }
 
@@ -642,22 +642,22 @@ fn verify_output(
     }
 }
 
-type EntityLayout = Vec<(SegmentKind, Option<[u8; 16]>, Vec<(u64, u64)>)>;
+type ItemLayout = Vec<(ItemKind, Option<[u8; 16]>, Vec<(u64, u64)>)>;
 
-fn entity_layout(s: &Structure) -> EntityLayout {
+fn item_layout(s: &Structure) -> ItemLayout {
     [
-        SegmentKind::Xmp,
-        SegmentKind::Jumbf,
-        SegmentKind::Exif,
-        SegmentKind::Thumbnail,
+        ItemKind::Xmp,
+        ItemKind::Jumbf,
+        ItemKind::Exif,
+        ItemKind::EmbeddedAsset,
     ]
     .into_iter()
     .flat_map(|k| {
-        s.entities(k).map(move |e| {
+        s.items_of(k).map(move |e| {
             (
                 k,
                 e.jumbf_type(),
-                e.parts()
+                e.extents()
                     .map(|p| (p.range().offset(), p.range().len()))
                     .collect(),
             )

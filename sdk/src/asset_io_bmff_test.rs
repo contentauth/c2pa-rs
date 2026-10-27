@@ -13,7 +13,7 @@
 
 use std::{collections::BTreeMap, fs, io::Cursor, path::PathBuf};
 
-use asset_io::{containers::bmff, NullSink, SegmentKind, Structure, Updates};
+use asset_io::{containers::bmff, ItemKind, NullSink, Structure, Updates};
 
 use crate::{
     asset_handlers::bmff_io::{read_bmff_c2pa_boxes, BMFFArena, BmffIO},
@@ -48,7 +48,7 @@ fn new_tree(bytes: &[u8]) -> asset_io::Result<(Structure, PathMap)> {
     s.walk(&mut Cursor::new(bytes), |n| {
         m.entry(n.path.to_string())
             .or_default()
-            .push((n.extent.offset(), n.extent.len()));
+            .push((n.range.offset(), n.range.len()));
         Ok(())
     })?;
     Ok((s, m))
@@ -152,8 +152,8 @@ fn nodes(s: &Structure, bytes: &[u8]) -> asset_io::Result<Vec<N>> {
     s.walk(&mut Cursor::new(bytes), |n| {
         v.push(N {
             path: n.path.to_string(),
-            offset: n.extent.offset(),
-            size: n.extent.len(),
+            offset: n.range.offset(),
+            size: n.range.len(),
             version: n.version,
             flags: n.flags,
             depth: n.depth,
@@ -274,18 +274,18 @@ fn exclusions_from_entities(s: &Structure, v2: bool, free_skip: bool) -> Vec<Has
         let n = seg.name();
         let named = |t: &[u8; 4]| n == Name::FourCC(*t);
         if named(b"ftyp") || named(b"mfra") || (free_skip && (named(b"free") || named(b"skip"))) {
-            whole.push((seg.extent().offset(), seg.extent().len()));
+            whole.push((seg.range().offset(), seg.range().len()));
         }
     }
     for (kind, label) in [
-        (SegmentKind::Jumbf, "manifest"),
-        (SegmentKind::Jumbf, "original"),
-        (SegmentKind::Jumbf, "update"),
-        (SegmentKind::Other, "merkle"),
+        (ItemKind::Jumbf, "manifest"),
+        (ItemKind::Jumbf, "original"),
+        (ItemKind::Jumbf, "update"),
+        (ItemKind::Other, "merkle"),
     ] {
-        for e in s.entities_labelled(kind, label) {
-            for p in e.parts() {
-                let ext = s.segment(p.segment()).unwrap().extent();
+        for e in s.items_labelled(kind, label) {
+            for p in e.extents() {
+                let ext = s.segment(p.segment()).unwrap().range();
                 whole.push((ext.offset(), ext.len()));
             }
         }
@@ -295,7 +295,7 @@ fn exclusions_from_entities(s: &Structure, v2: bool, free_skip: bool) -> Vec<Has
     let mut v: Vec<HashRange> = whole.iter().map(|(o, l)| HashRange::new(*o, *l)).collect();
     if v2 {
         for seg in s.segments() {
-            let start = seg.extent().offset();
+            let start = seg.range().offset();
             if !seg.name().is_none() && !skipped.contains(&start) {
                 let mut r = HashRange::new(start, 1);
                 r.set_bmff_offset(start);
@@ -538,7 +538,7 @@ fn bmff_sign_flow_through_asset_io_validates() {
         let Ok(s) = bmff::parse(&mut Cursor::new(&src)) else {
             continue;
         };
-        if s.entities(SegmentKind::Jumbf).next().is_some() || nodes(&s, &src).is_err() {
+        if s.items_of(ItemKind::Jumbf).next().is_some() || nodes(&s, &src).is_err() {
             continue; // only clean, walkable assets
         }
 
@@ -569,14 +569,14 @@ fn bmff_sign_flow_through_asset_io_validates() {
 
         let out = new_write(&src, &Updates::new().set_jumbf(raw_ph.clone())).unwrap();
         let dest = bmff::parse(&mut Cursor::new(&out)).unwrap();
-        let entity = dest
-            .entities_labelled(SegmentKind::Jumbf, "manifest")
+        let item = dest
+            .items_labelled(ItemKind::Jumbf, "manifest")
             .next()
             .unwrap();
         let ext = dest
-            .segment(entity.parts().next().unwrap().segment())
+            .segment(item.extents().next().unwrap().segment())
             .unwrap()
-            .extent();
+            .range();
         let at = ext.offset() as usize..ext.end() as usize;
         // `composed_ph` is from an earlier call whose JUMBF can differ in content
         // (generated ids); compare against the composition of the raw bytes we wrote.
@@ -612,7 +612,7 @@ fn bmff_sign_flow_through_asset_io_validates() {
         );
 
         let mut cur = Cursor::new(out);
-        dest.patch_exact(&mut cur, entity, &signed_raw).unwrap();
+        dest.patch_exact(&mut cur, item, &signed_raw).unwrap();
         let out = cur.into_inner();
         assert_eq!(out.len() as u64, dest.total_size());
         let composed_signed = builder.exp_compose(&signed_raw, mime).unwrap();
@@ -721,16 +721,16 @@ fn bmff_set_manifest_matches_existing_writer() {
     assert!(same > 0);
 }
 
-fn payload(s: &Structure, bytes: &[u8], kind: SegmentKind, label: &str) -> Option<Vec<u8>> {
-    s.entities_labelled(kind, label)
+fn payload(s: &Structure, bytes: &[u8], kind: ItemKind, label: &str) -> Option<Vec<u8>> {
+    s.items_labelled(kind, label)
         .next()
-        .map(|e| s.read_entity(&mut Cursor::new(bytes), e).unwrap())
+        .map(|e| s.read_item(&mut Cursor::new(bytes), e).unwrap())
 }
 
-fn extent_of(s: &Structure, kind: SegmentKind, label: &str) -> Option<(u64, u64)> {
-    s.entities_labelled(kind, label).next().map(|e| {
-        let seg = s.segment(e.parts().next().unwrap().segment()).unwrap();
-        (seg.extent().offset(), seg.extent().len())
+fn extent_of(s: &Structure, kind: ItemKind, label: &str) -> Option<(u64, u64)> {
+    s.items_labelled(kind, label).next().map(|e| {
+        let seg = s.segment(e.extents().next().unwrap().segment()).unwrap();
+        (seg.range().offset(), seg.range().len())
     })
 }
 
@@ -760,7 +760,7 @@ fn bmff_c2pa_boxes_match_existing_handler() {
             }
         };
         checked += 1;
-        let j = SegmentKind::Jumbf;
+        let j = ItemKind::Jumbf;
         let mut check = |what: &str, ok: bool| {
             if !ok {
                 failures.push(format!("{name}: {what} differs"));
@@ -788,10 +788,10 @@ fn bmff_c2pa_boxes_match_existing_handler() {
         );
 
         let new_merkle: Vec<(u64, u64)> = s
-            .entities_labelled(SegmentKind::Other, "merkle")
+            .items_labelled(ItemKind::Other, "merkle")
             .map(|e| {
-                let seg = s.segment(e.parts().next().unwrap().segment()).unwrap();
-                (seg.extent().offset(), seg.extent().len())
+                let seg = s.segment(e.extents().next().unwrap().segment()).unwrap();
+                (seg.range().offset(), seg.range().len())
             })
             .collect();
         let old_merkle: Vec<(u64, u64)> = o
@@ -801,17 +801,23 @@ fn bmff_c2pa_boxes_match_existing_handler() {
             .collect();
         check("merkle boxes", new_merkle == old_merkle);
 
-        let new_xmp = s
-            .entity(SegmentKind::Xmp)
-            .unwrap()
+        // The XMP `uuid` box only: a HEIF `mime` XMP item (one with an item id) is
+        // also an XMP item, but c2pa-rs's BMFF handler does not report it.
+        let xmp_boxes: Vec<_> = s
+            .items_of(ItemKind::Xmp)
+            .filter(|e| e.native_id().is_none())
+            .collect();
+        assert!(xmp_boxes.len() <= 1, "{name}: several XMP boxes");
+        let new_xmp = xmp_boxes
+            .first()
             .map(|e| {
-                let seg = s.segment(e.parts().next().unwrap().segment()).unwrap();
-                (seg.extent().offset(), seg.extent().len())
+                let seg = s.segment(e.extents().next().unwrap().segment()).unwrap();
+                (seg.range().offset(), seg.range().len())
             })
             .unwrap_or((0, 0));
         check("xmp box", new_xmp == (o.xmp_box_offset, o.xmp_box_size));
 
-        let any_c2pa = s.entities(SegmentKind::Jumbf).next().is_some() || !new_merkle.is_empty();
+        let any_c2pa = s.items_of(ItemKind::Jumbf).next().is_some() || !new_merkle.is_empty();
         check("c2pa presence", any_c2pa == o.c2pa_box_present);
         if any_c2pa {
             with_c2pa += 1;

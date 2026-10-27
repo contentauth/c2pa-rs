@@ -6,7 +6,7 @@
 // For every JPEG/PNG fixture whose active claim has a c2pa.hash.data assertion:
 //   1. read the stored DataHash (alg, hash, exclusions) straight off the claim;
 //   2. parse the same bytes with asset_io;
-//   3. derive exclusions from the manifest entity's segments under two policies
+//   3. derive exclusions from the manifest item's segments under two policies
 //      (whole segment extent / payload+trailer only);
 //   4. hash with each and compare to the stored hash.
 //
@@ -17,7 +17,7 @@
 
 use std::{fs, io::Cursor, path::PathBuf};
 
-use asset_io::{containers, ByteRange, SegmentKind, Structure};
+use asset_io::{containers, ByteRange, ItemKind, SegmentId, Structure, TransferEncoding};
 
 use crate::{
     assertions::DataHash,
@@ -62,11 +62,11 @@ fn merge(mut v: Vec<ByteRange>) -> Vec<(u64, u64)> {
 
 fn manifest_ranges(s: &Structure, whole_extent: bool) -> Vec<(u64, u64)> {
     let mut v = Vec::new();
-    for e in s.entities(SegmentKind::Jumbf) {
-        for p in e.parts() {
+    for e in s.items_of(ItemKind::Jumbf) {
+        for p in e.extents() {
             let seg = s.segment(p.segment()).unwrap();
             if whole_extent {
-                v.push(seg.extent());
+                v.push(seg.range());
             } else {
                 v.push(seg.payload());
                 if !seg.trailer().is_empty() {
@@ -101,6 +101,14 @@ const C2PA_STORE_UUID: [u8; 16] = [
     0x63, 0x32, 0x70, 0x61, 0x00, 0x11, 0x00, 0x10, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71,
 ];
 
+/// Whether segment `id` holds XMP or EXIF stored as is (no transfer encoding).
+fn holds_plain_metadata(s: &Structure, id: SegmentId) -> bool {
+    s.items_in(id).any(|i| {
+        matches!(i.kind(), ItemKind::Xmp | ItemKind::Exif)
+            && *i.transfer() == TransferEncoding::Identity
+    })
+}
+
 /// Box map from the layout model alone. The only format knowledge here is the
 /// name table; the traversal is the same for every container.
 fn box_map_from_layout(s: &Structure, mut src: &mut dyn ReadSeek) -> Result<Vec<BoxMap>> {
@@ -108,9 +116,9 @@ fn box_map_from_layout(s: &Structure, mut src: &mut dyn ReadSeek) -> Result<Vec<
 
     // Which segments belong to the C2PA Manifest Store (not just any JUMBF).
     let mut store: HashSet<asset_io::SegmentId> = HashSet::new();
-    for e in s.entities(SegmentKind::Jumbf) {
+    for e in s.items_of(ItemKind::Jumbf) {
         if s.jumbf_type(&mut src, e).map_err(io)? == Some(C2PA_STORE_UUID) {
-            store.extend(e.parts().map(|p| p.segment()));
+            store.extend(e.extents().map(|p| p.segment()));
         }
     }
 
@@ -118,14 +126,14 @@ fn box_map_from_layout(s: &Structure, mut src: &mut dyn ReadSeek) -> Result<Vec<
     let mut c2pa: Option<usize> = None;
     let mut last_owner: Option<asset_io::SegmentId> = None;
     s.elements(&mut src, |id, e| {
-        let mut ext = e.extent();
+        let mut ext = e.range();
 
         // Compatibility with the existing c2pa-rs box maps (see PR #612): when a
         // segment is expanded into parts, the first part is reported with the
         // whole segment's extent and each later part with only its own header
         // (e.g. a JPEG scan, then the 2-byte RSTn markers inside it). The boxes
         // therefore overlap, as they do today. asset-io itself never overlaps.
-        let owner = s.segment(id)?.extent();
+        let owner = s.segment(id)?.range();
         if ext != owner {
             ext = if last_owner != Some(id) {
                 owner
@@ -153,7 +161,7 @@ fn box_map_from_layout(s: &Structure, mut src: &mut dyn ReadSeek) -> Result<Vec<
             return Ok(());
         };
         let mut bm = BoxMap::new(vec![name.into_owned()], ext.offset(), ext.len());
-        if matches!(e.kind(), SegmentKind::Xmp | SegmentKind::Exif) {
+        if holds_plain_metadata(s, id) {
             // Metadata may be excluded after its header; the trailer (e.g. a PNG
             // CRC) changes with the data, so it is excludable too.
             bm = bm.with_allowed_exclusions(vec![AllowedExclusion::after_header(
@@ -278,7 +286,7 @@ fn box_hash_cross_generate_and_verify() {
         }) else {
             continue;
         };
-        if s.entities(SegmentKind::Jumbf).next().is_none()
+        if s.items_of(ItemKind::Jumbf).next().is_none()
             || old_h.get_box_map(&mut Cursor::new(bytes.clone())).is_err()
         {
             continue;
@@ -337,7 +345,7 @@ fn sign_flow_through_asset_io_validates() {
             }
         };
         let Ok(s) = parse(&src) else { continue };
-        if s.entities(SegmentKind::Jumbf).next().is_some() {
+        if s.items_of(ItemKind::Jumbf).next().is_some() {
             continue; // only clean assets
         }
 
@@ -405,9 +413,9 @@ fn sign_flow_through_asset_io_validates() {
         );
 
         // Patch in place.
-        let entity = dest.require_entity(SegmentKind::Jumbf).unwrap().clone();
+        let item = dest.require_item(ItemKind::Jumbf).unwrap().clone();
         let mut cur = Cursor::new(std::mem::take(&mut out));
-        dest.patch_exact(&mut cur, &entity, &signed_raw).unwrap();
+        dest.patch_exact(&mut cur, &item, &signed_raw).unwrap();
         let out = cur.into_inner();
         assert_eq!(out.len() as u64, dest.total_size());
 
