@@ -4496,7 +4496,7 @@ mod tests {
             .unwrap();
 
         dest.rewind().unwrap();
-        let reader = Reader::from_stream(format, &mut dest).unwrap();
+        let reader = Reader::default().with_stream(format, &mut dest).unwrap();
         assert_ne!(reader.validation_state(), ValidationState::Invalid);
 
         // Exactly one c2pa.actions assertion must exist for the v1 claim.
