@@ -5632,8 +5632,10 @@ mod remote_manifest_response_tests {
     use super::*;
     use crate::{
         http::{AsyncHttpResolver, HttpResolverError, SyncHttpResolver},
-        store::store_core::MAX_MANIFEST_RESPONSE_SIZE,
+        settings::DEFAULT_MAX_MANIFEST_RESPONSE_SIZE,
     };
+
+    const TEST_RESPONSE_SIZE: u64 = 16;
 
     struct Resolver {
         content_length: Option<&'static str>,
@@ -5709,6 +5711,19 @@ mod remote_manifest_response_tests {
         error_after: Option<u64>,
         use_async: bool,
     ) -> (Result<Vec<u8>>, usize) {
+        let context = Context::new()
+            .with_settings_value("verify.max_manifest_response_size", TEST_RESPONSE_SIZE)
+            .unwrap();
+        fetch_with_context(context, content_length, body_length, error_after, use_async).await
+    }
+
+    async fn fetch_with_context(
+        context: Context,
+        content_length: Option<&'static str>,
+        body_length: u64,
+        error_after: Option<u64>,
+        use_async: bool,
+    ) -> (Result<Vec<u8>>, usize) {
         let bytes_read = Arc::new(AtomicUsize::new(0));
         let resolver = Arc::new(Resolver {
             content_length,
@@ -5716,7 +5731,7 @@ mod remote_manifest_response_tests {
             error_after,
             bytes_read: bytes_read.clone(),
         });
-        let context = Context::new()
+        let context = context
             .with_resolver(resolver.clone())
             .with_resolver_async(resolver);
         let result = if use_async {
@@ -5729,7 +5744,7 @@ mod remote_manifest_response_tests {
 
     fn assert_size_error(result: Result<Vec<u8>>) {
         assert!(
-            matches!(result, Err(Error::RemoteManifestFetch(ref msg)) if msg.contains("10 MiB")),
+            matches!(result, Err(Error::RemoteManifestFetch(ref msg)) if msg == "remote manifest exceeds the 16 byte response size limit"),
             "expected response size error, got {result:?}"
         );
     }
@@ -5737,7 +5752,7 @@ mod remote_manifest_response_tests {
     #[c2pa_test_async]
     async fn test_remote_manifest_oversized_header_rejected_before_reading() {
         for use_async in [false, true] {
-            for header in ["18446744073709551615", "4294967295", "10485761"] {
+            for header in ["18446744073709551615", "4294967295", "17"] {
                 let (result, bytes_read) = fetch(Some(header), 1, None, use_async).await;
                 assert_size_error(result);
                 assert_eq!(bytes_read, 0);
@@ -5755,9 +5770,9 @@ mod remote_manifest_response_tests {
                 Some("18446744073709551616"),
             ] {
                 let (result, bytes_read) =
-                    fetch(header, MAX_MANIFEST_RESPONSE_SIZE + 100, None, use_async).await;
+                    fetch(header, TEST_RESPONSE_SIZE + 100, None, use_async).await;
                 assert_size_error(result);
-                assert_eq!(bytes_read as u64, MAX_MANIFEST_RESPONSE_SIZE + 1);
+                assert_eq!(bytes_read as u64, TEST_RESPONSE_SIZE + 1);
             }
         }
     }
@@ -5765,13 +5780,12 @@ mod remote_manifest_response_tests {
     #[c2pa_test_async]
     async fn test_remote_manifest_exact_limit_accepted() {
         for use_async in [false, true] {
-            for header in [None, Some("10485760")] {
-                let (result, bytes_read) =
-                    fetch(header, MAX_MANIFEST_RESPONSE_SIZE, None, use_async).await;
+            for header in [None, Some("16")] {
+                let (result, bytes_read) = fetch(header, TEST_RESPONSE_SIZE, None, use_async).await;
                 let body = result.unwrap();
-                assert_eq!(body.len() as u64, MAX_MANIFEST_RESPONSE_SIZE);
+                assert_eq!(body.len() as u64, TEST_RESPONSE_SIZE);
                 assert!(body.iter().all(|byte| *byte == b'x'));
-                assert_eq!(bytes_read as u64, MAX_MANIFEST_RESPONSE_SIZE);
+                assert_eq!(bytes_read as u64, TEST_RESPONSE_SIZE);
             }
         }
     }
@@ -5812,9 +5826,9 @@ mod remote_manifest_response_tests {
     async fn test_remote_manifest_overflow_probe_read_error_propagated() {
         for use_async in [false, true] {
             let (result, bytes_read) = fetch(
-                Some("10485760"),
-                MAX_MANIFEST_RESPONSE_SIZE,
-                Some(MAX_MANIFEST_RESPONSE_SIZE),
+                Some("16"),
+                TEST_RESPONSE_SIZE,
+                Some(TEST_RESPONSE_SIZE),
                 use_async,
             )
             .await;
@@ -5822,7 +5836,74 @@ mod remote_manifest_response_tests {
                 matches!(result, Err(Error::RemoteManifestFetch(ref msg)) if msg == "error reading content stream"),
                 "expected overflow probe read error, got {result:?}"
             );
-            assert_eq!(bytes_read as u64, MAX_MANIFEST_RESPONSE_SIZE);
+            assert_eq!(bytes_read as u64, TEST_RESPONSE_SIZE);
+        }
+    }
+
+    #[c2pa_test_async]
+    async fn test_remote_manifest_default_and_raised_limits_are_independent() {
+        for use_async in [false, true] {
+            let raised = Context::new()
+                .with_settings_value(
+                    "verify.max_manifest_response_size",
+                    DEFAULT_MAX_MANIFEST_RESPONSE_SIZE + 1,
+                )
+                .unwrap();
+            let (result, bytes_read) = fetch_with_context(
+                raised,
+                Some("10485761"),
+                DEFAULT_MAX_MANIFEST_RESPONSE_SIZE + 1,
+                None,
+                use_async,
+            )
+            .await;
+            let body = result.unwrap();
+            assert_eq!(body.len() as u64, DEFAULT_MAX_MANIFEST_RESPONSE_SIZE + 1);
+            assert_eq!(bytes_read, body.len());
+
+            let default = Context::new();
+            assert_eq!(
+                default.settings().verify.max_manifest_response_size,
+                DEFAULT_MAX_MANIFEST_RESPONSE_SIZE
+            );
+            let (result, bytes_read) =
+                fetch_with_context(default, Some("10485761"), 1, None, use_async).await;
+            assert!(
+                matches!(result, Err(Error::RemoteManifestFetch(ref msg)) if msg == "remote manifest exceeds the 10485760 byte response size limit"),
+                "expected the default limit to remain unchanged, got {result:?}"
+            );
+            assert_eq!(bytes_read, 0);
+
+            let (result, bytes_read) = fetch_with_context(
+                Context::new(),
+                Some("10485760"),
+                DEFAULT_MAX_MANIFEST_RESPONSE_SIZE,
+                None,
+                use_async,
+            )
+            .await;
+            assert_eq!(
+                result.unwrap().len() as u64,
+                DEFAULT_MAX_MANIFEST_RESPONSE_SIZE
+            );
+            assert_eq!(bytes_read as u64, DEFAULT_MAX_MANIFEST_RESPONSE_SIZE);
+        }
+    }
+
+    #[c2pa_test_async]
+    async fn test_remote_manifest_directly_mutated_invalid_limit_rejected() {
+        for use_async in [false, true] {
+            for limit in [0, u64::MAX] {
+                let mut context = Context::new();
+                context.settings_mut().verify.max_manifest_response_size = limit;
+                let (result, bytes_read) =
+                    fetch_with_context(context, None, 1, None, use_async).await;
+                assert!(
+                    matches!(result, Err(Error::BadParam(ref msg)) if msg.contains("max_manifest_response_size")),
+                    "expected invalid settings error, got {result:?}"
+                );
+                assert_eq!(bytes_read, 0);
+            }
         }
     }
 }
