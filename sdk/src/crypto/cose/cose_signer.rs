@@ -41,9 +41,9 @@ pub(crate) trait CoseSigner: TimeStampProvider {
     /// Return the signing certificate chain, end-entity first, each in DER form.
     fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError>;
 
-    /// Return a pre-queried OCSP response for the signing certificate, if any.
-    fn ocsp_response(&self) -> Option<Vec<u8>> {
-        None
+    /// Return pre-queried OCSP responses for the signing certificate chain, if any.
+    fn ocsp_responses(&self) -> Vec<Vec<u8>> {
+        Vec::new()
     }
 }
 
@@ -60,9 +60,9 @@ pub(crate) trait AsyncCoseSigner: AsyncTimeStampProvider + MaybeSync + MaybeSend
     /// Return the signing certificate chain, end-entity first, each in DER form.
     fn cert_chain(&self) -> Result<Vec<Vec<u8>>, RawSignerError>;
 
-    /// Return a pre-queried OCSP response for the signing certificate, if any.
-    async fn ocsp_response(&self) -> Option<Vec<u8>> {
-        None
+    /// Return pre-queried OCSP responses for the signing certificate chain, if any.
+    async fn ocsp_responses(&self) -> Vec<Vec<u8>> {
+        Vec::new()
     }
 }
 
@@ -166,8 +166,8 @@ pub(super) mod tests {
             Ok(self.certs.clone())
         }
 
-        fn ocsp_response(&self) -> Option<Vec<u8>> {
-            self.ocsp.clone()
+        fn ocsp_responses(&self) -> Vec<Vec<u8>> {
+            self.ocsp.clone().into_iter().collect()
         }
     }
 
@@ -195,8 +195,8 @@ pub(super) mod tests {
             CoseSigner::cert_chain(self)
         }
 
-        async fn ocsp_response(&self) -> Option<Vec<u8>> {
-            self.ocsp.clone()
+        async fn ocsp_responses(&self) -> Vec<Vec<u8>> {
+            self.ocsp.clone().into_iter().collect()
         }
     }
 
@@ -223,12 +223,12 @@ pub(super) mod tests {
             adapter.sign(b"payload").unwrap(),
             raw.sign(b"payload").unwrap()
         );
-        assert!(adapter.ocsp_response().is_none());
+        assert!(adapter.ocsp_responses().is_empty());
         assert!(adapter.send_time_stamp_request(b"payload").is_none());
     }
 
     #[c2pa_macros::c2pa_test_async]
-    async fn async_signer_defaults_have_no_ocsp_response() {
+    async fn async_signer_defaults_have_no_ocsp_responses() {
         struct DefaultOcsp;
         #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
         #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -249,6 +249,6 @@ pub(super) mod tests {
             }
         }
 
-        assert!(DefaultOcsp.ocsp_response().await.is_none());
+        assert!(DefaultOcsp.ocsp_responses().await.is_empty());
     }
 }
