@@ -32,19 +32,6 @@ use crate::{
     status_tracker::StatusTracker,
 };
 
-/// Attempts of a blocking time-stamp request before its last error is returned.
-const TIME_STAMP_REQUEST_ATTEMPTS: u32 = 3;
-
-/// Time limit of each attempt: a time stamp service answers in well under a second, and an
-/// attempt that hangs would otherwise wait for the HTTP client's default timeout.
-const TIME_STAMP_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// Pause before the second attempt, doubled before each later one.
-#[cfg(not(test))]
-const TIME_STAMP_RETRY_DELAY: Duration = Duration::from_millis(500);
-#[cfg(test)]
-const TIME_STAMP_RETRY_DELAY: Duration = Duration::ZERO;
-
 /// Request an [RFC 3161] time stamp for a given piece of data from a timestamp
 /// provider.
 ///
@@ -89,18 +76,27 @@ pub fn default_rfc3161_request(
 
 /// Sends a blocking time-stamp request, and sends it again after a transient failure.
 ///
-/// Only the blocking path retries: the async one has no runtime-independent way to pause.
+/// The number of attempts and the pause between them come from the context's settings
+/// ([`Core::time_stamp_request_attempts`], [`Core::time_stamp_retry_delay_in_ms`]). Only the
+/// blocking path retries: the async one has no runtime-independent way to pause.
+///
+/// [`Core::time_stamp_request_attempts`]: crate::settings::Core::time_stamp_request_attempts
+/// [`Core::time_stamp_retry_delay_in_ms`]: crate::settings::Core::time_stamp_retry_delay_in_ms
 fn time_stamp_request_http_with_retries(
     url: &str,
     headers: Option<Vec<(String, String)>>,
     timestamp_request: &TimeStampReq,
     context: &Context,
 ) -> Result<Vec<u8>, TimeStampError> {
+    let core = &context.settings().core;
+    let attempts = core.time_stamp_request_attempts.max(1);
+    let mut delay = Duration::from_millis(core.time_stamp_retry_delay_in_ms);
     let mut attempt = 1;
     loop {
         match time_stamp_request_http(url, headers.clone(), timestamp_request, context) {
-            Err(err) if attempt < TIME_STAMP_REQUEST_ATTEMPTS && is_transient(&err) => {
-                std::thread::sleep(TIME_STAMP_RETRY_DELAY * 2u32.pow(attempt - 1));
+            Err(err) if attempt < attempts && is_transient(&err) => {
+                std::thread::sleep(delay);
+                delay = delay.saturating_mul(2);
                 attempt += 1;
             }
             result => return result,
@@ -152,7 +148,9 @@ fn time_stamp_request_http(
 
     let request = request
         .header(header::CONTENT_TYPE, HTTP_CONTENT_TYPE_REQUEST)
-        .extension(RequestTimeout(TIME_STAMP_REQUEST_TIMEOUT));
+        .extension(RequestTimeout(Duration::from_millis(
+            context.settings().core.time_stamp_request_timeout_in_ms,
+        )));
 
     let response = if _sync {
         context
@@ -465,8 +463,19 @@ mod tests {
         }
     }
 
-    fn request_with_retries(resolver: &SequenceResolver) -> Result<Vec<u8>, TimeStampError> {
-        let context = Context::new().with_resolver(resolver.clone());
+    /// Sends a request through `resolver` with the given attempts, a 2 s timeout and no pause.
+    fn request_with_retries(
+        resolver: &SequenceResolver,
+        attempts: u32,
+    ) -> Result<Vec<u8>, TimeStampError> {
+        let context = Context::new()
+            .with_settings_value("core.time_stamp_request_attempts", attempts)
+            .unwrap()
+            .with_settings_value("core.time_stamp_request_timeout_in_ms", 2000u64)
+            .unwrap()
+            .with_settings_value("core.time_stamp_retry_delay_in_ms", 0u64)
+            .unwrap()
+            .with_resolver(resolver.clone());
         time_stamp_request_http_with_retries("https://tsa.example/", None, &request(), &context)
     }
 
@@ -474,7 +483,7 @@ mod tests {
     fn transient_failures_are_retried_with_a_timeout_on_each_attempt() {
         let resolver = SequenceResolver::new(vec![Outcome::Unreachable, Outcome::Status(503)]);
         assert_eq!(
-            request_with_retries(&resolver).unwrap(),
+            request_with_retries(&resolver, 3).unwrap(),
             response_der(2, None)
         );
         assert_eq!(resolver.calls(), 3);
@@ -483,35 +492,34 @@ mod tests {
             .lock()
             .unwrap()
             .iter()
-            .all(|timeout| *timeout == Some(RequestTimeout(TIME_STAMP_REQUEST_TIMEOUT))));
+            .all(|timeout| *timeout == Some(RequestTimeout(Duration::from_millis(2000)))));
     }
 
     #[test]
     fn retries_stop_after_the_last_attempt() {
-        let resolver = SequenceResolver::new(
-            (0..TIME_STAMP_REQUEST_ATTEMPTS + 1)
-                .map(|_| Outcome::Status(429))
-                .collect(),
-        );
-        assert!(matches!(
-            request_with_retries(&resolver),
-            Err(TimeStampError::HttpErrorResponse(429, _))
-        ));
-        assert_eq!(resolver.calls(), TIME_STAMP_REQUEST_ATTEMPTS as usize);
+        for attempts in [1, 2, 5] {
+            let resolver =
+                SequenceResolver::new((0..attempts + 1).map(|_| Outcome::Status(429)).collect());
+            assert!(matches!(
+                request_with_retries(&resolver, attempts),
+                Err(TimeStampError::HttpErrorResponse(429, _))
+            ));
+            assert_eq!(resolver.calls(), attempts as usize);
+        }
     }
 
     #[test]
     fn permanent_failures_are_not_retried() {
         let resolver = SequenceResolver::new(vec![Outcome::Status(400)]);
         assert!(matches!(
-            request_with_retries(&resolver),
+            request_with_retries(&resolver, 3),
             Err(TimeStampError::HttpErrorResponse(400, _))
         ));
         assert_eq!(resolver.calls(), 1);
 
         let resolver = SequenceResolver::new(vec![Outcome::Disallowed]);
         assert!(matches!(
-            request_with_retries(&resolver),
+            request_with_retries(&resolver, 3),
             Err(TimeStampError::HttpResolverError(
                 HttpResolverError::UriDisallowed { .. }
             ))

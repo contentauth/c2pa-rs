@@ -48,6 +48,15 @@ const MERGE_MAX_DEPTH: usize = 64;
 /// all enforcement points use the same value.
 pub(crate) const MAX_ASSERTIONS: usize = 100_000;
 
+/// Default number of attempts of a blocking time-stamp request.
+pub(crate) const DEFAULT_TIME_STAMP_REQUEST_ATTEMPTS: u32 = 3;
+
+/// Default time limit of each time-stamp request attempt, in milliseconds.
+pub(crate) const DEFAULT_TIME_STAMP_REQUEST_TIMEOUT_IN_MS: u64 = 10_000;
+
+/// Default pause before the second time-stamp request attempt, in milliseconds.
+pub(crate) const DEFAULT_TIME_STAMP_RETRY_DELAY_IN_MS: u64 = 500;
+
 thread_local!(
     static SETTINGS: RefCell<Value> = RefCell::new(
         serde_json::to_value(Settings::default()).unwrap_or(Value::Object(Map::new())),
@@ -502,6 +511,24 @@ pub struct Core {
     ///
     /// The default is 32 MB.
     pub max_decompressed_manifest_size_in_mb: usize,
+    /// Number of times a blocking time-stamp request is sent before its last error is
+    /// returned. A new attempt is made only after a transient failure: no answer, a
+    /// timeout, or an HTTP 408, 429, 500, 502, 503 or 504 response. `1` disables retries.
+    ///
+    /// The default is 3. The value must be at least 1. Async time-stamp requests are sent
+    /// once.
+    pub time_stamp_request_attempts: u32,
+    /// Time limit of each time-stamp request attempt, in milliseconds, applied by the
+    /// SDK's built-in HTTP resolvers. A time-stamp service answers in well under a second;
+    /// without a limit an attempt that hangs would wait for the HTTP client's default.
+    ///
+    /// The default is 10,000 (10 seconds). The value must be positive.
+    pub time_stamp_request_timeout_in_ms: u64,
+    /// Pause before the second time-stamp request attempt, in milliseconds, doubled before
+    /// each later one.
+    ///
+    /// The default is 500.
+    pub time_stamp_retry_delay_in_ms: u64,
 }
 
 impl Default for Core {
@@ -515,6 +542,9 @@ impl Default for Core {
             allow_redirects: true,
             prefer_compress_manifests: false,
             max_decompressed_manifest_size_in_mb: 32,
+            time_stamp_request_attempts: DEFAULT_TIME_STAMP_REQUEST_ATTEMPTS,
+            time_stamp_request_timeout_in_ms: DEFAULT_TIME_STAMP_REQUEST_TIMEOUT_IN_MS,
+            time_stamp_retry_delay_in_ms: DEFAULT_TIME_STAMP_RETRY_DELAY_IN_MS,
         }
     }
 }
@@ -526,6 +556,16 @@ impl SettingsValidate for Core {
             return Err(Error::BadParam(format!(
                 "max_decompressed_manifest_size_in_mb must not exceed {MAX_MANIFEST_SIZE_MB} MB"
             )));
+        }
+        if self.time_stamp_request_attempts == 0 {
+            return Err(Error::BadParam(
+                "time_stamp_request_attempts must be at least 1".to_string(),
+            ));
+        }
+        if self.time_stamp_request_timeout_in_ms == 0 {
+            return Err(Error::BadParam(
+                "time_stamp_request_timeout_in_ms must be positive".to_string(),
+            ));
         }
         Ok(())
     }
@@ -1362,6 +1402,72 @@ pub mod tests {
         let result =
             Settings::default().with_value("core.max_decompressed_manifest_size_in_mb", 1025usize);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_time_stamp_request_configuration() {
+        let core = Settings::default().core;
+        assert_eq!(
+            (
+                core.time_stamp_request_attempts,
+                core.time_stamp_request_timeout_in_ms,
+                core.time_stamp_retry_delay_in_ms
+            ),
+            (
+                DEFAULT_TIME_STAMP_REQUEST_ATTEMPTS,
+                DEFAULT_TIME_STAMP_REQUEST_TIMEOUT_IN_MS,
+                DEFAULT_TIME_STAMP_RETRY_DELAY_IN_MS
+            )
+        );
+
+        for context in [
+            crate::Context::new()
+                .with_settings(
+                    r#"{"core":{"time_stamp_request_attempts":5,"time_stamp_request_timeout_in_ms":2000,"time_stamp_retry_delay_in_ms":0}}"#,
+                )
+                .unwrap(),
+            crate::Context::new()
+                .with_settings(
+                    "[core]\ntime_stamp_request_attempts = 5\ntime_stamp_request_timeout_in_ms = 2000\ntime_stamp_retry_delay_in_ms = 0",
+                )
+                .unwrap(),
+            crate::Context::new()
+                .with_settings_value("core.time_stamp_request_attempts", 5u32)
+                .unwrap()
+                .with_settings_value("core.time_stamp_request_timeout_in_ms", 2000u64)
+                .unwrap()
+                .with_settings_value("core.time_stamp_retry_delay_in_ms", 0u64)
+                .unwrap(),
+        ] {
+            let core = &context.settings().core;
+            assert_eq!(
+                (
+                    core.time_stamp_request_attempts,
+                    core.time_stamp_request_timeout_in_ms,
+                    core.time_stamp_retry_delay_in_ms
+                ),
+                (5, 2000, 0)
+            );
+        }
+    }
+
+    #[test]
+    fn test_time_stamp_request_validation() {
+        for (key, value) in [
+            ("core.time_stamp_request_attempts", 0u64),
+            ("core.time_stamp_request_timeout_in_ms", 0u64),
+        ] {
+            let result = Settings::new().with_value(key, value);
+            assert!(
+                matches!(result, Err(Error::BadParam(ref msg)) if msg.contains(&key[5..])),
+                "expected an invalid {key} error, got {result:?}"
+            );
+        }
+        for value in [serde_json::json!(-1), serde_json::json!("never")] {
+            assert!(Settings::new()
+                .with_value("core.time_stamp_request_attempts", value)
+                .is_err());
+        }
     }
 
     #[test]
