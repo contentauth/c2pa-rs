@@ -62,13 +62,39 @@ pub(crate) fn read_id3_tag(input_stream: &mut dyn ReadSeek) -> Option<Tag> {
 /// remain in the stream, `Ok(true)` otherwise, including when there is no tag or it is
 /// malformed in some other way, which `id3` reports itself.
 fn frame_sizes_fit(input_stream: &mut dyn ReadSeek, start: u64) -> Result<bool> {
+    Ok(walk_frames(input_stream, start, &mut |_, _, _| Ok(()))? != FrameWalk::Oversized)
+}
+
+/// How [`walk_frames`] ended.
+#[derive(Debug, PartialEq)]
+enum FrameWalk {
+    /// The stream has no ID3v2 tag, or the tag is malformed in a way `id3` reports itself.
+    NoTag,
+    /// A frame declares more bytes than remain in the stream.
+    Oversized,
+    /// Every frame was visited.
+    Done,
+}
+
+/// Called by [`walk_frames`] with the tag version, the raw frame header and the frame content.
+type FrameVisitor<'a> = dyn FnMut(u8, &[u8], &mut dyn Read) -> Result<()> + 'a;
+
+/// Walks the frames of the ID3v2 tag at `start` the way the `id3` crate does, calling
+/// `visit(version, frame_header, content)` for each frame. `content` yields at most the
+/// frame's declared size, after tag-level unsynchronisation is undone; whatever `visit`
+/// leaves unread is skipped without being read into memory.
+fn walk_frames(
+    input_stream: &mut dyn ReadSeek,
+    start: u64,
+    visit: &mut FrameVisitor<'_>,
+) -> Result<FrameWalk> {
     const UNSYNCHRONISATION: u8 = 0x80;
     const EXTENDED_HEADER: u8 = 0x40;
 
     let available = stream_len(input_stream)?.saturating_sub(start);
     let mut header = [0u8; 10];
     if input_stream.read_exact(&mut header).is_err() || &header[0..3] != b"ID3" {
-        return Ok(true);
+        return Ok(FrameWalk::NoTag);
     }
     let (version, flags) = (header[3], header[5]);
     let syncsafe = |b: &[u8]| {
@@ -82,11 +108,11 @@ fn frame_sizes_fit(input_stream: &mut dyn ReadSeek, start: u64) -> Result<bool> 
     if flags & EXTENDED_HEADER != 0 {
         let mut ext = [0u8; 6];
         if reader.read_exact(&mut ext).is_err() {
-            return Ok(true);
+            return Ok(FrameWalk::NoTag);
         }
         ext_size = syncsafe(&ext[0..4]);
         if ext_size < 6 {
-            return Ok(true);
+            return Ok(FrameWalk::NoTag);
         }
         std::io::copy(&mut (&mut reader).take(ext_size - 6), &mut std::io::sink())?;
     }
@@ -125,15 +151,81 @@ fn frame_sizes_fit(input_stream: &mut dyn ReadSeek, start: u64) -> Result<bool> 
             _ => syncsafe(&frame_header[4..8]),
         };
         if size > available {
-            return Ok(false);
+            return Ok(FrameWalk::Oversized);
         }
-        let skipped = std::io::copy(&mut (&mut frames).take(size), &mut std::io::sink())?;
-        if skipped < size {
-            break;
+        let mut content = (&mut frames).take(size);
+        visit(version, &frame_header[..header_len], &mut content)?;
+        std::io::copy(&mut content, &mut std::io::sink())?;
+        if content.limit() > 0 {
+            break; // the frame runs past the end of the data
         }
         offset += header_len as u64 + size;
     }
-    Ok(true)
+    Ok(FrameWalk::Done)
+}
+
+/// Returns the data of every GEOB frame with a C2PA MIME type in the ID3v2 tag at the start
+/// of the stream, in tag order, or `None` if the tag can't be walked.
+///
+/// The `id3` crate keeps only one GEOB frame per content description when it reads a tag, so
+/// two C2PA GEOB frames that share a description look like one, and a later non-C2PA GEOB
+/// frame with the same description hides a C2PA one. This visits every GEOB frame with
+/// [`walk_frames`] and decodes each on its own, in a one-frame tag of the same version, so
+/// `id3` still handles text encodings and frame flags.
+fn c2pa_geob_payloads(input_stream: &mut dyn ReadSeek) -> Result<Option<Vec<Vec<u8>>>> {
+    input_stream.rewind()?;
+    let mut payloads = Vec::new();
+    let mut decoded_all = true;
+    let walk = walk_frames(input_stream, 0, &mut |version, frame_header, content| {
+        let geob_id: &[u8] = if version == 2 { b"GEO" } else { b"GEOB" };
+        if !frame_header.starts_with(geob_id) {
+            return Ok(());
+        }
+        // The frame's size is bounded by the stream length, which `walk_frames` checked.
+        let mut frame = frame_header.to_vec();
+        content.read_to_end(&mut frame)?;
+        let size = u32::try_from(frame.len())
+            .map_err(|_| Error::InvalidAsset("ID3 frame too large".to_string()))?;
+        let mut single = vec![b'I', b'D', b'3', version, 0, 0];
+        single.extend_from_slice(&ID3V2Header::encode_tag_size(size).to_be_bytes());
+        single.extend_from_slice(&frame);
+        match Tag::read_from2(Cursor::new(single)) {
+            Ok(tag) => payloads.extend(
+                tag.encapsulated_objects()
+                    .filter(|eo| is_c2pa_mime_type(&eo.mime_type))
+                    .map(|eo| eo.data.clone()),
+            ),
+            Err(_) => decoded_all = false,
+        }
+        Ok(())
+    })?;
+    Ok((walk == FrameWalk::Done && decoded_all).then_some(payloads))
+}
+
+/// Reads the C2PA manifest store from the GEOB frame of an ID3v2-tagged stream.
+///
+/// Returns `Ok(None)` when there is no C2PA GEOB frame, and
+/// `Err(Error::TooManyManifestStores)` when there is more than one, including frames that
+/// share a content description.
+pub(crate) fn read_manifest_from_id3(input_stream: &mut dyn ReadSeek) -> Result<Option<Vec<u8>>> {
+    input_stream.rewind()?;
+    let Some(tag) = read_id3_tag(&mut *input_stream) else {
+        return Ok(None);
+    };
+    // Fall back to the frames the `id3` crate kept if the tag can't be walked.
+    let mut payloads = match c2pa_geob_payloads(input_stream) {
+        Ok(Some(payloads)) => payloads,
+        _ => tag
+            .encapsulated_objects()
+            .filter(|eo| is_c2pa_mime_type(&eo.mime_type))
+            .map(|eo| eo.data.clone())
+            .collect(),
+    };
+    match payloads.len() {
+        0 => Ok(None),
+        1 => Ok(payloads.pop()),
+        _ => Err(Error::TooManyManifestStores),
+    }
 }
 
 /// Undoes ID3v2 unsynchronisation: drops each `0x00` that follows `0xFF`.
@@ -223,6 +315,10 @@ impl ID3V2Header {
     fn decode_tag_size(n: u32) -> u32 {
         (n & 0xff) | ((n & 0xff00) >> 1) | ((n & 0xff0000) >> 2) | ((n & 0xff000000) >> 3)
     }
+
+    fn encode_tag_size(n: u32) -> u32 {
+        (n & 0x7f) | ((n & 0x3f80) << 1) | ((n & 0x1f_c000) << 2) | ((n & 0x0fe0_0000) << 3)
+    }
 }
 
 // ── Free helpers ────────────────────────────────────────────────────────────
@@ -239,21 +335,12 @@ pub(crate) fn get_manifest_pos(mut input_stream: &mut dyn ReadSeek) -> Result<Op
     let mut buf = [0u8; 10];
     input_stream.read_exact(&mut buf)?;
     let header = ID3V2Header::parse_from_bytes(&buf)?;
-    input_stream.rewind()?;
 
-    if let Some(tag) = read_id3_tag(&mut *input_stream) {
-        let mut manifests = Vec::new();
-        for eo in tag.encapsulated_objects() {
-            if is_c2pa_mime_type(&eo.mime_type) {
-                manifests.push(eo.data.clone());
-            }
-        }
-        if manifests.len() == 1 {
-            input_stream.rewind()?;
-            let tag_bytes = input_stream.read_to_vec(header.map_or(0, |h| h.get_size()) as u64)?;
-            if let Some(pos) = memmem::find(&tag_bytes, &manifests[0]) {
-                return Ok(Some((pos as u64, manifests[0].len() as u32)));
-            }
+    if let Ok(Some(manifest)) = read_manifest_from_id3(&mut *input_stream) {
+        input_stream.rewind()?;
+        let tag_bytes = input_stream.read_to_vec(header.map_or(0, |h| h.get_size()) as u64)?;
+        if let Some(pos) = memmem::find(&tag_bytes, &manifest) {
+            return Ok(Some((pos as u64, manifest.len() as u32)));
         }
     }
     Ok(None)
@@ -457,17 +544,6 @@ pub(crate) mod test_helpers {
         h
     }
 
-    /// Serialise `tag` using the `id3` crate then append `payload` verbatim.
-    ///
-    /// Used by both MP3 and FLAC tests to build in-memory streams for
-    /// testing ID3 frame parsing without needing real audio files.
-    pub(crate) fn id3_tag_with_payload(tag: Tag, payload: &[u8]) -> Vec<u8> {
-        let mut buf = Vec::new();
-        tag.write_to(&mut buf, Version::Id3v24).expect("write id3");
-        buf.extend_from_slice(payload);
-        buf
-    }
-
     // ── Shared ID3/CAI read_cai tests ────────────────────────────────────────
 
     /// Any bytes that are neither `"ID3"` nor a format-specific magic word must
@@ -495,9 +571,58 @@ pub(crate) mod test_helpers {
         }
     }
 
+    /// Builds an ID3v2 tag holding exactly `frames`, in order, then appends
+    /// `payload`.
+    ///
+    /// The `id3` crate replaces a frame that matches one already in a tag (for
+    /// GEOB, one with the same content description), so each frame is encoded
+    /// in a tag of its own and the encoded frames are joined by hand.
+    pub(crate) fn id3_tag_with_frames(
+        version: Version,
+        frames: &[Frame],
+        payload: &[u8],
+    ) -> Vec<u8> {
+        let mut body = Vec::new();
+        for frame in frames {
+            let mut tag = Tag::new();
+            tag.add_frame(frame.clone());
+            let mut single = Vec::new();
+            tag.write_to(&mut single, version).expect("write id3");
+            let size = u32::from_be_bytes(single[14..18].try_into().unwrap());
+            let size = match version {
+                Version::Id3v24 => super::ID3V2Header::decode_tag_size(size),
+                _ => size,
+            } as usize;
+            body.extend_from_slice(&single[10..20 + size]);
+        }
+        let major = match version {
+            Version::Id3v22 => 2,
+            Version::Id3v23 => 3,
+            Version::Id3v24 => 4,
+        };
+        let mut buf = id3_header(major, body.len() as u32).to_vec();
+        buf.extend_from_slice(&body);
+        buf.extend_from_slice(payload);
+        buf
+    }
+
+    /// A GEOB frame with the given MIME type, the C2PA file name and
+    /// description, and `data`.
+    pub(crate) fn geob(mime_type: &str, data: &[u8]) -> Frame {
+        Frame::with_content(
+            "GEOB",
+            Content::EncapsulatedObject(EncapsulatedObject {
+                mime_type: mime_type.to_string(),
+                filename: super::GEOB_FRAME_FILE_NAME.to_string(),
+                description: super::GEOB_FRAME_DESCRIPTION.to_string(),
+                data: data.to_vec(),
+            }),
+        )
+    }
+
     /// An ID3 tag containing two C2PA GEOB frames must cause `read_cai` to
-    /// return `TooManyManifestStores` (or `Ok` with one payload when the id3
-    /// crate deduplicates frames with the same ID).
+    /// return `TooManyManifestStores`, including when the frames share a
+    /// content description or are identical.
     ///
     /// `audio_payload` is appended after the ID3 tag so format-specific stream
     /// validation (e.g. the FLAC `fLaC` check) can be satisfied by the caller.
@@ -505,34 +630,71 @@ pub(crate) mod test_helpers {
         handler: &dyn AssetIO,
         audio_payload: &[u8],
     ) {
-        let mut tag = Tag::new();
-        for data in [b"first".as_ref(), b"second".as_ref()] {
-            let geob = Frame::with_content(
-                "GEOB",
-                Content::EncapsulatedObject(EncapsulatedObject {
-                    mime_type: super::GEOB_FRAME_MIME_TYPE.to_string(),
-                    filename: super::GEOB_FRAME_FILE_NAME.to_string(),
-                    description: super::GEOB_FRAME_DESCRIPTION.to_string(),
-                    data: data.to_vec(),
-                }),
-            );
-            let _ = tag.add_frame(geob);
-        }
-        let buf = id3_tag_with_payload(tag, audio_payload);
-        let mut cursor = Cursor::new(buf);
-        match handler.get_reader().read_c2pa(&mut cursor) {
-            Err(Error::TooManyManifestStores) => {}
-            Ok(data) => {
-                assert!(
-                    data == b"first" || data == b"second",
-                    "if one GEOB returned, must be first or second; got {:?}",
-                    data
-                );
-            }
-            other => panic!(
-                "expected TooManyManifestStores or Ok(first|second), got {:?}",
-                other
+        let mime = super::GEOB_FRAME_MIME_TYPE;
+        let cases: [(&str, [Frame; 2]); 2] = [
+            (
+                "different data",
+                [geob(mime, b"first"), geob(mime, b"second")],
             ),
+            (
+                "identical frames",
+                [geob(mime, b"same"), geob(mime, b"same")],
+            ),
+        ];
+        for version in [Version::Id3v23, Version::Id3v24] {
+            for (name, frames) in &cases {
+                let buf = id3_tag_with_frames(version, frames, audio_payload);
+                match handler.get_reader().read_c2pa(&mut Cursor::new(buf)) {
+                    Err(Error::TooManyManifestStores) => {}
+                    other => {
+                        panic!("{version:?}, {name}: expected TooManyManifestStores, got {other:?}")
+                    }
+                }
+            }
+        }
+    }
+
+    /// A non-C2PA GEOB frame with the same content description as the C2PA
+    /// GEOB frame, placed after it, must not hide the manifest.
+    pub(crate) fn run_read_cai_c2pa_geob_not_hidden(handler: &dyn AssetIO, audio_payload: &[u8]) {
+        for version in [Version::Id3v23, Version::Id3v24] {
+            let frames = [
+                geob(super::GEOB_FRAME_MIME_TYPE, b"manifest"),
+                geob("text/plain", b"not a manifest"),
+            ];
+            let buf = id3_tag_with_frames(version, &frames, audio_payload);
+            match handler.get_reader().read_c2pa(&mut Cursor::new(buf)) {
+                Ok(data) => assert_eq!(data, b"manifest", "{version:?}"),
+                other => panic!("{version:?}: expected the manifest, got {other:?}"),
+            }
+        }
+    }
+
+    /// An ID3v2.4 extended header before the frames must not stop the reader
+    /// from seeing both C2PA GEOB frames.
+    pub(crate) fn run_read_cai_too_many_manifest_stores_extended_header(
+        handler: &dyn AssetIO,
+        audio_payload: &[u8],
+    ) {
+        let mime = super::GEOB_FRAME_MIME_TYPE;
+        let mut buf = id3_tag_with_frames(
+            Version::Id3v24,
+            &[geob(mime, b"same"), geob(mime, b"same")],
+            &[],
+        );
+        // Minimal v2.4 extended header: size 6 (synchsafe, includes itself),
+        // one flag byte, no flags set.
+        let ext = [0, 0, 0, 6, 1, 0];
+        let tag_size =
+            super::ID3V2Header::decode_tag_size(u32::from_be_bytes(buf[6..10].try_into().unwrap()))
+                + ext.len() as u32;
+        buf.splice(10..10, ext);
+        buf[5] |= 0x40;
+        buf[6..10].copy_from_slice(&id3_header(4, tag_size)[6..10]);
+        buf.extend_from_slice(audio_payload);
+        match handler.get_reader().read_c2pa(&mut Cursor::new(buf)) {
+            Err(Error::TooManyManifestStores) => {}
+            other => panic!("expected TooManyManifestStores, got {other:?}"),
         }
     }
 

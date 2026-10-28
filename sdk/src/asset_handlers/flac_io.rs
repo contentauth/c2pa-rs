@@ -105,17 +105,7 @@ impl C2paReader for FlacIO {
         input_stream.rewind()?;
 
         if let Some(h) = header {
-            let mut manifest: Option<Vec<u8>> = None;
-            if let Some(tag) = id3_helper::read_id3_tag(&mut *input_stream) {
-                for eo in tag.encapsulated_objects() {
-                    if id3_helper::is_c2pa_mime_type(&eo.mime_type) {
-                        match &manifest {
-                            Some(_) => return Err(Error::TooManyManifestStores),
-                            None => manifest = Some(eo.data.clone()),
-                        }
-                    }
-                }
-            }
+            let manifest = id3_helper::read_manifest_from_id3(&mut *input_stream)?;
             input_stream.seek(SeekFrom::Start(h.get_size() as u64))?;
             validate_flac_stream(input_stream)?;
             if let Some(m) = manifest {
@@ -384,6 +374,19 @@ mod tests {
     #[test]
     fn test_read_cai_too_many_manifest_stores() {
         test_helpers::run_read_cai_too_many_manifest_stores(&FlacIO::new("flac"), MINIMAL_FLAC);
+    }
+
+    #[test]
+    fn test_read_cai_c2pa_geob_not_hidden() {
+        test_helpers::run_read_cai_c2pa_geob_not_hidden(&FlacIO::new("flac"), MINIMAL_FLAC);
+    }
+
+    #[test]
+    fn test_read_cai_too_many_manifest_stores_extended_header() {
+        test_helpers::run_read_cai_too_many_manifest_stores_extended_header(
+            &FlacIO::new("flac"),
+            MINIMAL_FLAC,
+        );
     }
 
     #[test]
