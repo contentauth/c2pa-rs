@@ -23,6 +23,10 @@ descriptor structure and subset arithmetic, not the semantic safety of
 excluding the selected content. For example, excluding essential media or
 decoding metadata can undermine the intended hard binding.
 
+`version` and `flags` conditions require a FullBox type recognized by the
+SDK's BMFF parser; unsupported conditions fail during settings loading.
+The `data` selector remains available for caller-known byte layouts.
+
 The setting applies to automatic file hashing, `mdat` Merkle hashing,
 fragmented signing, and BMFF placeholders. One assertion list covers
 initialization and media hashes: `/sidx` excludes every matching root-level

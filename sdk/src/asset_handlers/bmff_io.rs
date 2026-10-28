@@ -60,7 +60,7 @@ const ORIGINAL: &str = "original";
 const UPDATE: &str = "update";
 
 // ISO IEC 14496-12_2022 FullBoxes
-const FULL_BOX_TYPES: &[&str; 80] = &[
+pub(crate) const FULL_BOX_TYPES: &[&str; 80] = &[
     "pdin", "mvhd", "tkhd", "mdhd", "hdlr", "nmhd", "elng", "stsd", "stdp", "stts", "ctts", "cslg",
     "stss", "stsh", "stdp", "elst", "dref", "stsz", "stz2", "stsc", "stco", "co64", "padb", "subs",
     "saiz", "saio", "mehd", "trex", "mfhd", "tfhd", "trun", "tfra", "mfro", "tfdt", "leva", "trep",

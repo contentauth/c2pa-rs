@@ -679,10 +679,12 @@ pub struct BmffHashExclusion {
     /// Exclude only these byte ranges of the box, relative to its start.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subset: Option<Vec<BmffHashExclusionSubset>>,
-    /// Only exclude full boxes with this version.
+    /// Only exclude full boxes with this version. The path must select a
+    /// FullBox type recognized by the SDK's BMFF parser.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<u8>,
-    /// Only exclude full boxes with these flags (three bytes).
+    /// Only exclude full boxes with these flags (three bytes). The path must
+    /// select a FullBox type recognized by the SDK's BMFF parser.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub flags: Option<Vec<u8>>,
     /// Whether `flags` must match exactly rather than as a mask.
@@ -733,6 +735,12 @@ impl BmffHashExclusion {
             .any(|element| element.len() != 4 || !element.is_ascii())
         {
             return bad("xpath elements must be four-character box types");
+        }
+        if (self.version.is_some() || self.flags.is_some())
+            && !crate::asset_handlers::bmff_io::FULL_BOX_TYPES
+                .contains(&path.rsplit('/').next().unwrap_or(""))
+        {
+            return bad("version and flags require a FullBox type recognized by the SDK");
         }
         if let Some(data) = &self.data {
             if data.is_empty() || data.iter().any(|d| d.value.is_empty()) {

@@ -203,6 +203,18 @@ fn invalid_entries_are_refused_when_settings_load() {
         (r#"[{"xpath":"/sidx","flags":[1]}]"#, "short flags"),
         (r#"[{"xpath":"/sidx","exact":true}]"#, "exact without flags"),
         (r#"[{"xpath":"/sidx","data":[]}]"#, "empty data"),
+        (
+            r#"[{"xpath":"/ftyp","version":0}]"#,
+            "version on a non-FullBox",
+        ),
+        (
+            r#"[{"xpath":"/moov/pssh","version":0}]"#,
+            "unrecognized FullBox version",
+        ),
+        (
+            r#"[{"xpath":"/emsg","flags":[0,0,1]}]"#,
+            "unrecognized FullBox flags",
+        ),
     ] {
         assert!(
             Settings::new()
@@ -219,6 +231,10 @@ fn invalid_entries_are_refused_when_settings_load() {
             r#"{{"builder":{{"bmff_hash_extra_exclusions":{too_many}}}}}"#
         ))
         .is_err());
+
+    // Raw data selectors remain available when a box's layout is known to
+    // the caller but its version/flags are not parsed by the SDK.
+    settings(r#"[{"xpath":"/moov/pssh","data":[{"offset":8,"value":[0,0,0,0]}]}]"#);
 }
 
 #[test]
