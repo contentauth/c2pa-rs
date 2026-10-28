@@ -451,6 +451,26 @@ impl BoxHash {
             ));
         }
 
+        // The named boxes must also account for every byte of the asset. Data
+        // appended after the last box - e.g. a payload after a JPEG's EOI
+        // marker - belongs to no box map entry, so the per-box check above
+        // never sees it, yet it is neither hashed nor excluded. Per C2PA 2.5
+        // §16.3.3.2 such trailing bytes are a `c2pa.after` box ("arbitrary data
+        // beyond the end of the box structure ... until the end of the physical
+        // file"); a manifest not listing one must be rejected as `unknownBox`
+        // (§14.12.3).
+        let asset_len = reader.seek(SeekFrom::End(0))?;
+        let covered_end = source_bms
+            .iter()
+            .map(|bm| bm.range_start + bm.range_len)
+            .max()
+            .unwrap_or(0);
+        if asset_len > covered_end {
+            return Err(Error::HashMismatch(
+                ASSERTION_BOXHASH_UNKNOWN_BOX.to_owned(),
+            ));
+        }
+
         Ok(metadata_exclusion_used)
     }
 
@@ -1295,6 +1315,67 @@ mod tests {
         assert!(
             matches!(&result, Err(Error::HashMismatch(s)) if s == ASSERTION_BOXHASH_UNKNOWN_BOX),
             "unexpected result: {result:?}"
+        );
+    }
+
+    /// Data appended after the last box (e.g. a payload after a JPEG's EOI
+    /// marker) is covered by no box map entry, so the per-box checks never see
+    /// it. Per C2PA 2.5 §16.3.3.2 such trailing bytes are a `c2pa.after` box and a
+    /// manifest not listing one must be rejected with `unknownBox` (§14.12.3).
+    #[test]
+    fn test_verify_rejects_data_after_last_box() {
+        let alg = "sha256";
+
+        // The box map ends at offset 10, but the asset is 20 bytes long: the
+        // trailing 10 bytes belong to no box.
+        let make_mock = || {
+            let mut mock = MockMABH::new();
+            mock.expect_get_box_map().returning(|_| {
+                Ok(vec![AssetBoxMap::new(
+                    vec![C2PA_BOXHASH.to_string()],
+                    0,
+                    10,
+                )])
+            });
+            mock
+        };
+        let bh = BoxHash {
+            boxes: vec![BoxMap {
+                names: vec![C2PA_BOXHASH.to_string()],
+                alg: Some(alg.to_string()),
+                hash: ByteBuf::from(vec![]),
+                excluded: None,
+                exclusions: None,
+                pad: ByteBuf::from(vec![]),
+                range_start: 0,
+                range_len: 10,
+            }],
+        };
+
+        let mut appended = Cursor::new((0..20u8).collect::<Vec<u8>>());
+        let result = bh.verify_stream_hash_with_progress(
+            &mut appended,
+            Some(alg),
+            &make_mock(),
+            &mut |_, _| Ok(()),
+        );
+        assert!(
+            matches!(&result, Err(Error::HashMismatch(s)) if s == ASSERTION_BOXHASH_UNKNOWN_BOX),
+            "appended data must be rejected as unknownBox: {result:?}"
+        );
+
+        // The same box map over an asset that ends exactly at the last box must
+        // still verify (no false positive from the trailing-data check).
+        let mut exact = Cursor::new((0..10u8).collect::<Vec<u8>>());
+        let result = bh.verify_stream_hash_with_progress(
+            &mut exact,
+            Some(alg),
+            &make_mock(),
+            &mut |_, _| Ok(()),
+        );
+        assert!(
+            result.is_ok(),
+            "asset ending at the last box must verify: {result:?}"
         );
     }
 
