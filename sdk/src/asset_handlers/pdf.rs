@@ -17,7 +17,7 @@
 use std::io::{Read, Write};
 
 use lopdf::{
-    dictionary, Document, Object,
+    dictionary, Document, LoadOptions, Object,
     Object::{Array, Name, Reference},
     ObjectId, Stream,
 };
@@ -34,6 +34,8 @@ static METADATA_KEY: &[u8] = b"Metadata";
 static SUBTYPE_KEY: &[u8] = b"Subtype";
 static TYPE_KEY: &[u8] = b"Type";
 static NAMES_KEY: &[u8] = b"Names";
+
+const MAX_PDF_DECOMPRESSED_SIZE: usize = 64 * 1024 * 1024;
 
 /// Error representing failure scenarios while interacting with PDFs.
 #[derive(Debug, Error)]
@@ -388,12 +390,24 @@ impl C2paPdf for Pdf {
 impl Pdf {
     #[allow(dead_code)]
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
-        let document = Document::load_mem(bytes)?;
+        let document = Document::load_mem_with_options(
+            bytes,
+            LoadOptions {
+                max_decompressed_size: Some(MAX_PDF_DECOMPRESSED_SIZE),
+                ..Default::default()
+            },
+        )?;
         Ok(Self { document })
     }
 
     pub fn from_reader<R: Read>(source: R) -> Result<Self, Error> {
-        let document = Document::load_from(source)?;
+        let document = Document::load_from_with_options(
+            source,
+            LoadOptions {
+                max_decompressed_size: Some(MAX_PDF_DECOMPRESSED_SIZE),
+                ..Default::default()
+            },
+        )?;
         Ok(Self { document })
     }
 
@@ -670,6 +684,56 @@ mod tests {
         let bytes = include_bytes!("../../tests/fixtures/basic.pdf");
         let pdf_result = Pdf::from_bytes(bytes);
         assert!(pdf_result.is_ok());
+    }
+
+    #[test]
+    fn test_rejects_pdf_with_oversized_xref_stream() {
+        use std::io::Cursor;
+
+        use flate2::{write::ZlibEncoder, Compression};
+
+        const XREF_ENTRY_COUNT: usize = 10_000_000;
+        const XREF_ENTRY_SIZE: usize = 7;
+
+        let mut pdf = b"%PDF-1.5\n".to_vec();
+        let catalog_offset = pdf.len() as u32;
+        pdf.extend_from_slice(b"1 0 obj\n<< /Type /Catalog >>\nendobj\n");
+        let xref_offset = pdf.len() as u32;
+
+        let mut xref_data = vec![0; XREF_ENTRY_COUNT * XREF_ENTRY_SIZE];
+        xref_data[5..7].copy_from_slice(&u16::MAX.to_be_bytes());
+        for (id, offset) in [(1, catalog_offset), (2, xref_offset)] {
+            let entry_start = id * XREF_ENTRY_SIZE;
+            xref_data[entry_start] = 1;
+            xref_data[entry_start + 1..entry_start + 5].copy_from_slice(&offset.to_be_bytes());
+        }
+
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&xref_data).unwrap();
+        let compressed_xref = encoder.finish().unwrap();
+
+        pdf.extend_from_slice(
+            format!(
+                "2 0 obj\n<< /Type /XRef /Size {XREF_ENTRY_COUNT} /W [1 4 2] \
+                 /Index [0 {XREF_ENTRY_COUNT}] /Root 1 0 R /Filter /FlateDecode \
+                 /Length {} >>\nstream\n",
+                compressed_xref.len()
+            )
+            .as_bytes(),
+        );
+        pdf.extend_from_slice(&compressed_xref);
+        pdf.extend_from_slice(
+            format!("\nendstream\nendobj\nstartxref\n{xref_offset}\n%%EOF\n").as_bytes(),
+        );
+
+        assert!(matches!(
+            Pdf::from_bytes(&pdf),
+            Err(Error::UnableToReadPdf(_))
+        ));
+        assert!(matches!(
+            Pdf::from_reader(Cursor::new(pdf)),
+            Err(Error::UnableToReadPdf(_))
+        ));
     }
 
     #[test]

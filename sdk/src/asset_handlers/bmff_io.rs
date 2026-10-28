@@ -27,6 +27,7 @@ use crate::{
         AssetIO, AssetPatch, C2paReader, C2paWriter, ComposedManifestRef, ObjectLocations,
         ReadSeek, ReadWriteSeek, RemoteManifestUrl, WriteXmp,
     },
+    context::Context,
     error::{Error, Result},
     status_tracker::{ErrorBehavior, StatusTracker},
     store::Store,
@@ -1898,7 +1899,14 @@ fn c2pa_boxes_from_tree_and_map<R: Read + Seek + ?Sized>(
 pub(crate) fn read_bmff_c2pa_boxes<R: Read + Seek + ?Sized>(
     reader: &mut R,
 ) -> Result<C2PABmffBoxes> {
-    let (bmff_tree, bmff_map) = BMFFArena::from_stream(reader)?;
+    let (bmff_tree, bmff_map) = BMFFArena::from_stream(reader).map_err(|err| match err {
+        // Truncated or garbled box headers mean the stream isn't valid BMFF
+        // (e.g. a different format passed with a BMFF MIME type).
+        Error::IoError(io_err) => Error::InvalidAsset(format!(
+            "invalid BMFF structure: unable to parse boxes: {io_err}"
+        )),
+        other => other,
+    })?;
 
     reader.rewind()?;
 
@@ -1907,17 +1915,9 @@ pub(crate) fn read_bmff_c2pa_boxes<R: Read + Seek + ?Sized>(
 
 impl C2paReader for BmffIO {
     fn read_c2pa(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<u8>> {
-        input_stream.seek(SeekFrom::Start(4))?;
-
-        let mut header = [0u8; 4];
-        input_stream.read_exact(&mut header)?;
-
-        if header[..4] != *b"ftyp" {
-            return Err(Error::InvalidAsset(format!(
-                "invalid BMFF structure: expected box type \"ftyp\" at offset 4, found {}",
-                String::from_utf8_lossy(&header[..4])
-            )));
-        }
+        // QuickTime files may legitimately start with a box other than `ftyp`
+        // (e.g. `mdat` or `wide`), so the box parser validates the structure.
+        input_stream.rewind()?;
 
         let c2pa_boxes = read_bmff_c2pa_boxes(input_stream)?;
 
@@ -1926,9 +1926,14 @@ impl C2paReader for BmffIO {
             if let Some(update_bytes) = c2pa_boxes.update_bytes {
                 let mut validation_log = StatusTracker::default();
 
+                // The caller's Context is unknown here; defaults apply the standard manifest size limit.
+                let context = Context::new();
+
                 // combine original Store and update Store to single logical manifest Store
-                let mut original_store = Store::from_jumbf(&original_bytes, &mut validation_log)?;
-                let update_store = Store::from_jumbf(&update_bytes, &mut validation_log)?;
+                let mut original_store =
+                    Store::from_jumbf_with_context(&original_bytes, &mut validation_log, &context)?;
+                let update_store =
+                    Store::from_jumbf_with_context(&update_bytes, &mut validation_log, &context)?;
 
                 original_store.append_store(&update_store);
 
@@ -2046,7 +2051,9 @@ impl C2paWriter for BmffIO {
         // if the incoming Store has an update manifest we must split it into original and update stores
         let mut validation_log =
             StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
-        let (pc, is_update) = if let Ok(store) = Store::from_jumbf(store_bytes, &mut validation_log)
+        let context = Context::new();
+        let (pc, is_update) = if let Ok(store) =
+            Store::from_jumbf_with_context(store_bytes, &mut validation_log, &context)
         {
             let pc = store
                 .provenance_claim()
@@ -2087,7 +2094,11 @@ impl C2paWriter for BmffIO {
                 .len();
             let pc = pc.ok_or(Error::BadParam("no provenance manifest".to_string()))?;
 
-            let mut update_store = Store::from_jumbf(update_manifest_bytes, &mut validation_log)?;
+            let mut update_store = Store::from_jumbf_with_context(
+                update_manifest_bytes,
+                &mut validation_log,
+                &context,
+            )?;
             // add new update manfiest or replace existing one if the is a finalization pass
             update_store.replace_claim_or_insert(pc.label().to_string(), pc);
 
@@ -3151,8 +3162,6 @@ pub mod tests {
 
     #[test]
     fn test_read_deep_nesting() {
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
-
         let ap = fixture_path("nested_moov_1000.mp4");
         let mut input_stream = std::fs::File::open(&ap).unwrap();
 
@@ -3164,8 +3173,6 @@ pub mod tests {
 
     #[test]
     fn test_read_mp4() {
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
-
         let ap = fixture_path("video1.mp4");
         let mut input_stream = std::fs::File::open(&ap).unwrap();
 

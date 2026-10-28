@@ -165,12 +165,43 @@ mod tests {
 
     use crate::{
         identity::tests::fixtures::{manifest_json, parent_json},
-        utils::test_signer::test_signer,
+        utils::test_signer::{cert_chain_and_private_key_for_alg, test_signer},
         Builder, Reader, Signer, SigningAlg,
     };
 
     const TEST_IMAGE: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
     const TEST_THUMBNAIL: &[u8] = include_bytes!("../tests/fixtures/thumbnail.jpg");
+
+    #[c2pa_test_async]
+    async fn from_keys_ecdsa_signatures_round_trip() {
+        use c2pa_raw_crypto::validator_for_signing_alg;
+        use x509_parser::prelude::{FromDer, X509Certificate};
+
+        let message = b"ECDSA dependency upgrade regression";
+        for (alg, signature_len) in [
+            (SigningAlg::Es256, 64),
+            (SigningAlg::Es384, 96),
+            (SigningAlg::Es512, 132),
+        ] {
+            let (cert_chain, private_key) = cert_chain_and_private_key_for_alg(alg);
+            let signer = super::from_keys(cert_chain, private_key, alg, None).unwrap();
+            let signature = signer.sign(message).unwrap();
+            assert_eq!(signature.len(), signature_len, "{alg}");
+
+            let certs = signer.certs().unwrap();
+            let (_, cert) = X509Certificate::from_der(&certs[0]).unwrap();
+            let validator = validator_for_signing_alg(alg).unwrap();
+            validator
+                .validate(&signature, message, cert.public_key().raw)
+                .unwrap();
+            assert!(
+                validator
+                    .validate(&signature, b"tampered message", cert.public_key().raw)
+                    .is_err(),
+                "{alg}"
+            );
+        }
+    }
 
     /// Verify that `from_x509_identity` produces a valid manifest containing
     /// one X.509 identity assertion signed by the identity signer and
