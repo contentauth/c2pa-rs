@@ -305,7 +305,10 @@ fn test_binary_thumbnails_use_schema_fields() -> Result<()> {
             }
         }
     }
-    assert!(claim_thumbnails > 0, "fixtures must contain claim thumbnails");
+    assert!(
+        claim_thumbnails > 0,
+        "fixtures must contain claim thumbnails"
+    );
     assert!(
         ingredient_thumbnails > 0,
         "fixtures must contain ingredient thumbnails"
