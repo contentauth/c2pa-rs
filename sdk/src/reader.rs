@@ -572,20 +572,21 @@ impl Reader {
     /// Add manifest store from an initial segment and one fragment of a
     /// single-file fragmented MP4 to the [`Reader`].
     ///
-    /// Use this when the fragment was cut out of a single-file fragmented
-    /// asset (a byte-range HLS segment, for example) rather than stored as a
-    /// file of its own. `fragment_base_offset` is the absolute byte offset of
-    /// the fragment's first byte within that asset; the hard binding of such
-    /// an asset covers absolute box offsets, so without it the hash cannot
-    /// match. The required cut points are documented on
+    /// Use this for a supplied segment buffer from a single-file fragmented
+    /// asset, such as a byte-range HLS segment. `fragment_base_offset` is the
+    /// absolute byte position of the supplied segment buffer's first byte in
+    /// the original single-file signed asset. The verifier adds this offset
+    /// to each included root box's position within the buffer to reproduce
+    /// its signed position. Hash-input requirements and the default-layout
+    /// UUID-to-UUID cuts are documented on
     /// [`BmffHash::verify_stream_segment_at_offset`].
     ///
     /// [`BmffHash::verify_stream_segment_at_offset`]: crate::assertions::BmffHash::verify_stream_segment_at_offset
     /// # Arguments
     /// * `format` - The format of the stream.
     /// * `stream` - The initial segment stream.
-    /// * `fragment` - The fragment stream.
-    /// * `fragment_base_offset` - Absolute offset of `fragment` in the single-file asset.
+    /// * `fragment` - The supplied segment buffer as a stream.
+    /// * `fragment_base_offset` - Absolute position of the buffer's first byte in the original single-file signed asset.
     /// # Returns
     /// The updated [`Reader`] with the added manifest store.
     /// # Errors

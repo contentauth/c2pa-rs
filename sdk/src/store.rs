@@ -3988,16 +3988,17 @@ impl Store {
     /// Load Store from an initialization segment stream and a fragment that
     /// was cut out of a single-file fragmented BMFF asset.
     ///
-    /// `fragment_base_offset` is the absolute byte offset of the fragment's
-    /// first byte within that asset; it lets the hard-binding check reproduce
-    /// the absolute root-box offsets the asset was signed with. Pass `0` for
+    /// `fragment_base_offset` is the absolute byte position of the supplied
+    /// segment buffer's first byte in the original single-file signed asset.
+    /// The verifier adds it to each included root box's position within the
+    /// buffer to reproduce its signed position. Pass `0` for
     /// fragments that are their own files (the multi-file form), which is
     /// what [`Store::load_fragment_from_stream`] does.
     ///
     /// asset_type: asset extension or mime type
     /// stream: reference to initial segment asset
     /// fragment: reference to fragment asset
-    /// fragment_base_offset: absolute offset of `fragment` in the single-file asset
+    /// fragment_base_offset: absolute position of the supplied segment buffer's first byte in the original single-file signed asset
     /// validation_log: If present all found errors are logged and returned, otherwise first error causes exit and is returned
     #[async_generic(async_signature(
         format: &str,
