@@ -504,3 +504,173 @@ impl RawSigner for OwnedSignerWrapper {
         Signer::reserve_size(self.0.as_ref())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
+
+    use super::*;
+
+    struct LegacyOcspSigner(Option<Vec<u8>>);
+
+    impl Signer for LegacyOcspSigner {
+        fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+            Ok(data.to_vec())
+        }
+
+        fn alg(&self) -> SigningAlg {
+            SigningAlg::Ed25519
+        }
+
+        fn certs(&self) -> Result<Vec<Vec<u8>>> {
+            Ok(vec![vec![1, 2, 3]])
+        }
+
+        fn reserve_size(&self) -> usize {
+            1024
+        }
+
+        fn ocsp_val(&self) -> Option<Vec<u8>> {
+            self.0.clone()
+        }
+
+        fn direct_cose_handling(&self) -> bool {
+            true
+        }
+
+        fn dynamic_assertions(&self) -> Vec<Box<dyn DynamicAssertion>> {
+            vec![Box::new(Self(self.0.clone()))]
+        }
+
+        fn time_authority_url(&self) -> Option<String> {
+            Some("https://timestamp.example.test".into())
+        }
+
+        fn timestamp_request_headers(&self) -> Option<Vec<(String, String)>> {
+            Some(vec![("X-Test".into(), "signer-header".into())])
+        }
+
+        fn timestamp_request_body(&self, message: &[u8]) -> Result<Vec<u8>> {
+            if message.is_empty() {
+                return Err(crate::Error::BadParam("empty timestamp message".into()));
+            }
+            Ok([b"body:".as_slice(), message].concat())
+        }
+
+        fn send_timestamp_request(&self, message: &[u8]) -> Option<Result<Vec<u8>>> {
+            Some(Signer::timestamp_request_body(self, message))
+        }
+    }
+
+    impl DynamicAssertion for LegacyOcspSigner {
+        fn label(&self) -> String {
+            "test.ocsp-forwarding".into()
+        }
+
+        fn reserve_size(&self) -> Result<usize> {
+            Ok(2)
+        }
+
+        fn content(
+            &self,
+            _label: &str,
+            _size: Option<usize>,
+            _claim: &crate::dynamic_assertion::PartialClaim,
+        ) -> Result<crate::dynamic_assertion::DynamicAssertionContent> {
+            Ok(crate::dynamic_assertion::DynamicAssertionContent::Json(
+                "{}".into(),
+            ))
+        }
+    }
+
+    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+    impl AsyncSigner for LegacyOcspSigner {
+        async fn sign(&self, data: Vec<u8>) -> Result<Vec<u8>> {
+            Signer::sign(self, &data)
+        }
+
+        fn alg(&self) -> SigningAlg {
+            Signer::alg(self)
+        }
+
+        fn certs(&self) -> Result<Vec<Vec<u8>>> {
+            Signer::certs(self)
+        }
+
+        fn reserve_size(&self) -> usize {
+            Signer::reserve_size(self)
+        }
+
+        async fn ocsp_val(&self) -> Option<Vec<u8>> {
+            self.0.clone()
+        }
+    }
+
+    #[c2pa_macros::c2pa_test_async]
+    async fn legacy_ocsp_defaults_and_boxed_signers_preserve_responses() {
+        for response in [None, Some(vec![1, 2, 3])] {
+            let expected: Vec<Vec<u8>> = response.clone().into_iter().collect();
+            let signer: BoxedSigner = Box::new(LegacyOcspSigner(response.clone()));
+            assert_eq!(Signer::ocsp_vals(signer.as_ref()), expected);
+            assert_eq!(Signer::ocsp_vals(&signer), expected);
+
+            let signer: BoxedAsyncSigner = Box::new(LegacyOcspSigner(response));
+            assert_eq!(AsyncSigner::ocsp_vals(signer.as_ref()).await, expected);
+            assert_eq!(AsyncSigner::ocsp_vals(&signer).await, expected);
+        }
+    }
+
+    #[test]
+    fn ocsp_stapled_signer_preserves_signer_hooks() {
+        let signer = crate::create_signer::with_ocsp_responses(
+            Box::new(LegacyOcspSigner(Some(vec![1, 2, 3]))),
+            vec![vec![4, 5, 6]],
+        );
+
+        assert_eq!(signer.ocsp_vals(), vec![vec![1, 2, 3], vec![4, 5, 6]]);
+        assert_eq!(signer.ocsp_val(), Some(vec![1, 2, 3]));
+        assert!(signer.direct_cose_handling());
+        let assertions = signer.dynamic_assertions();
+        assert_eq!(assertions.len(), 1);
+        assert_eq!(assertions[0].label(), "test.ocsp-forwarding");
+        assert_eq!(assertions[0].reserve_size().unwrap(), 2);
+        assert!(matches!(
+            assertions[0]
+                .content(
+                    "test.ocsp-forwarding",
+                    Some(2),
+                    &crate::dynamic_assertion::PartialClaim::default(),
+                )
+                .unwrap(),
+            crate::dynamic_assertion::DynamicAssertionContent::Json(content) if content == "{}"
+        ));
+        assert_eq!(
+            signer.time_authority_url().as_deref(),
+            Some("https://timestamp.example.test")
+        );
+        assert_eq!(
+            signer.timestamp_request_headers(),
+            Some(vec![("X-Test".into(), "signer-header".into())])
+        );
+        assert_eq!(
+            signer.timestamp_request_body(b"message").unwrap(),
+            b"body:message"
+        );
+        assert_eq!(
+            signer.send_timestamp_request(b"message").unwrap().unwrap(),
+            b"body:message"
+        );
+        assert!(matches!(
+            signer.timestamp_request_body(b""),
+            Err(crate::Error::BadParam(message)) if message == "empty timestamp message"
+        ));
+        assert!(matches!(
+            signer.send_timestamp_request(b""),
+            Some(Err(crate::Error::BadParam(message))) if message == "empty timestamp message"
+        ));
+    }
+}

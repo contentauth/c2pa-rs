@@ -245,6 +245,17 @@ mod tests {
             .any(|a| a.label().contains("cawg.identity")));
     }
 
+    #[test]
+    fn with_ocsp_responses_empty_preserves_signer() {
+        let signer = test_signer(SigningAlg::Ed25519);
+        let original = signer.as_ref() as *const _;
+        let signer = super::with_ocsp_responses(signer, Vec::new());
+
+        assert!(std::ptr::eq(original, signer.as_ref()));
+        assert_eq!(signer.alg(), SigningAlg::Ed25519);
+        assert!(signer.ocsp_vals().is_empty());
+    }
+
     /// Verify that `with_ocsp_responses` staples its responses after those of the
     /// wrapped signer, in order, and reserves room for them.
     #[c2pa_test_async]
