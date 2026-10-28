@@ -17,7 +17,7 @@ pub mod sync_impl {
 
     use http::{Request, Response};
 
-    use crate::http::{HttpResolverError, SyncHttpResolver};
+    use crate::http::{HttpResolverError, RequestTimeout, SyncHttpResolver};
 
     pub type Impl = ureq::Agent;
 
@@ -35,6 +35,13 @@ pub mod sync_impl {
             &self,
             request: Request<Vec<u8>>,
         ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
+            let request = match request.extensions().get::<RequestTimeout>().copied() {
+                Some(RequestTimeout(timeout)) => self
+                    .configure_request(request)
+                    .timeout_global(Some(timeout))
+                    .build(),
+                None => request,
+            };
             let response = self.run(request)?;
 
             let mut builder = http::Response::builder()

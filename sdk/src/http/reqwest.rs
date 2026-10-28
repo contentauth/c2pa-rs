@@ -24,7 +24,7 @@ pub mod sync_impl {
 
     use http::{Request, Response};
 
-    use crate::http::{HttpResolverError, SyncHttpResolver};
+    use crate::http::{HttpResolverError, RequestTimeout, SyncHttpResolver};
 
     pub type Impl = reqwest::blocking::Client;
 
@@ -58,7 +58,13 @@ pub mod sync_impl {
             &self,
             request: Request<Vec<u8>>,
         ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
-            let response = self.execute(request.try_into()?)?;
+            // The conversion drops request extensions, so the timeout is carried over here.
+            let timeout = request.extensions().get::<RequestTimeout>().copied();
+            let mut request: reqwest::blocking::Request = request.try_into()?;
+            if let Some(RequestTimeout(timeout)) = timeout {
+                *request.timeout_mut() = Some(timeout);
+            }
+            let response = self.execute(request)?;
 
             let mut builder = http::Response::builder()
                 .status(response.status())
@@ -110,6 +116,8 @@ pub mod async_impl {
     use async_trait::async_trait;
     use http::{Request, Response};
 
+    #[cfg(not(target_arch = "wasm32"))]
+    use crate::http::RequestTimeout;
     use crate::http::{AsyncHttpResolver, HttpResolverError};
 
     pub type Impl = reqwest::Client;
@@ -149,7 +157,15 @@ pub mod async_impl {
             &self,
             request: Request<Vec<u8>>,
         ) -> Result<Response<Box<dyn Read>>, HttpResolverError> {
-            let response = self.execute(request.try_into()?).await?;
+            #[cfg(not(target_arch = "wasm32"))]
+            let timeout = request.extensions().get::<RequestTimeout>().copied();
+            #[allow(unused_mut)]
+            let mut request: reqwest::Request = request.try_into()?;
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(RequestTimeout(timeout)) = timeout {
+                *request.timeout_mut() = Some(timeout);
+            }
+            let response = self.execute(request).await?;
 
             let mut builder = Response::builder().status(response.status());
             #[cfg(not(target_arch = "wasm32"))]
