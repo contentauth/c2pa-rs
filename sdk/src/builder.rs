@@ -4352,7 +4352,9 @@ mod tests {
         assert!(contains(&bstr), "soft binding value is not a CBOR bstr");
 
         // And it still reads back as the typed assertion.
-        let reader = Reader::from_stream(format, Cursor::new(out)).unwrap();
+        let reader = Reader::default()
+            .with_stream(format, Cursor::new(out))
+            .unwrap();
         let sb: crate::assertions::SoftBinding = reader
             .active_manifest()
             .unwrap()
