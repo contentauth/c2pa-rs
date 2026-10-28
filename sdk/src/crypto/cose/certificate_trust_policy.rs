@@ -424,6 +424,19 @@ impl CertificateTrustPolicy {
         self.mandatory_ekus.clear();
     }
 
+    /// Remove the private credential store (privately-accepted end-entity
+    /// certificates), leaving trust anchors and EKUs intact.
+    ///
+    /// Per [§14.4.3, Private Credential Storage], the private credential store
+    /// "shall only apply to validating signed C2PA manifests, and shall not
+    /// apply to validating time-stamps". Callers validating time-stamps use
+    /// this to drop it before the trust check.
+    ///
+    /// [§14.4.3, Private Credential Storage]: https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_private_credential_storage
+    pub fn clear_end_entity_credentials(&mut self) {
+        self.end_entity_cert_set.clear();
+    }
+
     /// Remove all trust anchors, private credentials, and EKUs previously
     /// configured.
     pub fn clear(&mut self) {

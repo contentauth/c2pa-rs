@@ -521,7 +521,13 @@ pub fn verify_time_stamp(
                 continue;
             }
 
-            match ctp.check_certificate_trust(
+            // Per C2PA §14.4.3, the private credential store applies only to
+            // manifest signers, never to time-stamps; drop it before checking
+            // timestamp trust so a private entry cannot act as a TSA.
+            let mut ts_ctp = ctp.clone();
+            ts_ctp.clear_end_entity_credentials();
+
+            match ts_ctp.check_certificate_trust(
                 &ordered_cert_ders[0..],
                 &ordered_cert_ders[0],
                 Some(signing_time),
@@ -1336,6 +1342,69 @@ pub(crate) mod message_imprint_regression {
 
         assert!(matches!(result, Err(TimeStampError::InvalidData)));
         assert!(!log.has_status(TIMESTAMP_TRUSTED));
+    }
+
+    /// Regression for the private-credential-store timestamp-authority bypass.
+    ///
+    /// Per C2PA §14.4.3 the private credential store "shall not apply to
+    /// validating time-stamps". A verifier that privately trusts a signer's
+    /// own certificate must not thereby accept that certificate as a trusted
+    /// time-stamping authority, whose attested time could otherwise suppress
+    /// the signer certificate's expiry.
+    #[test]
+    fn private_credential_store_is_not_a_timestamp_authority() {
+        use openssl::x509::X509;
+
+        use super::tsa_signer_cert_der_from_token;
+        use crate::crypto::cose::TrustAnchorType;
+
+        let token = build_token_with(
+            OID_SHA256,
+            MessageDigest::sha256(),
+            DATA,
+            TokenOptions {
+                profile_extensions: true,
+                ..TokenOptions::default()
+            },
+        );
+        let signer_der = tsa_signer_cert_der_from_token(&token)
+            .unwrap()
+            .expect("token carries its signer certificate");
+        let signer_pem = X509::from_der(&signer_der).unwrap().to_pem().unwrap();
+
+        // The TSA signer certificate is present only in the private credential
+        // store, with no trust anchors. It must NOT be accepted for time-stamps.
+        let mut ctp = CertificateTrustPolicy::default();
+        ctp.add_end_entity_credentials(&signer_pem).unwrap();
+
+        let mut log = StatusTracker::default();
+        let result = verify_time_stamp(&token, DATA, &ctp, &mut log, true);
+        assert!(
+            matches!(result, Err(TimeStampError::Untrusted)),
+            "private-store signer must not be a trusted TSA: {result:?}"
+        );
+        assert!(log.has_status(TIMESTAMP_UNTRUSTED));
+        assert!(!log.has_status(TIMESTAMP_TRUSTED));
+
+        // Positive control: the same certificate on the TSA trust list is
+        // legitimately accepted, so the fix does not over-block real TSAs.
+        let mut trusted_ctp = CertificateTrustPolicy::default();
+        trusted_ctp
+            .add_trust_anchors(
+                &signer_pem,
+                "http://tsa_trust_list",
+                TrustAnchorType::TSA,
+                None,
+            )
+            .unwrap();
+
+        let mut trusted_log = StatusTracker::default();
+        let trusted = verify_time_stamp(&token, DATA, &trusted_ctp, &mut trusted_log, true);
+        assert!(
+            trusted.is_ok(),
+            "a TSA on the trust list must verify: {trusted:?}"
+        );
+        assert!(trusted_log.has_status(TIMESTAMP_TRUSTED));
     }
 
     fn decode_token(token: &[u8]) -> rasn_cms::SignedData {
