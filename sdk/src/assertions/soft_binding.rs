@@ -81,6 +81,59 @@ impl SoftBinding {
     }
 }
 
+/// Re-encodes the byte-string fields of a soft binding map as CBOR byte strings.
+///
+/// The CDDL declares a soft binding block's `value` (and the map's `pad` and `pad2`)
+/// as `bstr`. JSON has no byte type, so an assertion supplied as JSON (a manifest
+/// definition, or [`Builder::add_assertion`] with a JSON value) arrives here as a CBOR
+/// array of integers, or, after a builder archive round trip, as crJSON's `b64'<base64>'`
+/// text. This converts either form into `Value::Bytes` (an array only when every element
+/// is 0..=255) and leaves every other field untouched. Values that are already byte
+/// strings are unchanged, so typed callers see no difference.
+///
+/// [`Builder::add_assertion`]: crate::Builder::add_assertion
+pub(crate) fn soft_binding_bytes_to_bstr(value: &mut Value) {
+    fn array_to_bytes(v: &mut Value) {
+        // crJSON's byte-string form, used when a builder archive is written and read back.
+        if let Value::Text(t) = v {
+            if let Some(bytes) = crate::crypto::base64::decode_b64_wrapped(t) {
+                *v = Value::Bytes(bytes);
+            }
+            return;
+        }
+        if let Value::Array(items) = v {
+            let bytes: Option<Vec<u8>> = items
+                .iter()
+                .map(|i| match i {
+                    Value::Integer(n) => u8::try_from(*n).ok(),
+                    _ => None,
+                })
+                .collect();
+            if let Some(bytes) = bytes {
+                *v = Value::Bytes(bytes);
+            }
+        }
+    }
+
+    let Value::Map(map) = value else {
+        return;
+    };
+    for key in ["pad", "pad2"] {
+        if let Some(v) = map.get_mut(&Value::Text(key.to_owned())) {
+            array_to_bytes(v);
+        }
+    }
+    if let Some(Value::Array(blocks)) = map.get_mut(&Value::Text("blocks".to_owned())) {
+        for block in blocks {
+            if let Value::Map(block) = block {
+                if let Some(v) = block.get_mut(&Value::Text("value".to_owned())) {
+                    array_to_bytes(v);
+                }
+            }
+        }
+    }
+}
+
 /// Details about the soft binding, including the referenced value and scope.
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct SoftBindingBlock {
