@@ -934,7 +934,7 @@ mod tests {
                 Some(json!({
                     "format": "application/octet-stream",
                     "identifier": to_assertion_uri("urn:uuid:test", &assertion.label()),
-                    "hash": base64::encode_b64_wrapped(&[4, 5, 6]),
+                    "hash": format!("b64'{}'", base64::encode(&[4, 5, 6])),
                 }))
             );
         }
@@ -961,7 +961,7 @@ mod tests {
             Some(json!({
                 "format": "application/octet-stream",
                 "identifier": to_assertion_uri("urn:uuid:test", &assertion.label()),
-                "hash": base64::encode_b64_wrapped(&[4, 5, 6]),
+                "hash": format!("b64'{}'", base64::encode(&[4, 5, 6])),
             }))
         );
         Ok(())
