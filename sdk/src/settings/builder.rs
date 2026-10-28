@@ -638,10 +638,13 @@ pub struct BuilderSettings {
     /// `data`, `subset`, `version`, `flags`, `exact`). Exact duplicates of an
     /// existing exclusion are not added twice.
     ///
-    /// Bytes matched by an exclusion are not covered by the hard binding, so a
-    /// change to them is not detected. Only exclude boxes whose content cannot
-    /// change how the asset is interpreted, or accept that the excluded data
-    /// is unauthenticated. The specification requires the informational code
+    /// Excluded bytes are unauthenticated. Callers are responsible for choosing
+    /// an exclusion policy appropriate to their media and consumers. Altered
+    /// indexes can affect fetching, seeking, presentation completeness, and
+    /// demuxed timing even when retained sample and timing-field bytes are
+    /// unchanged. Settings validation checks descriptor structure and subset
+    /// arithmetic; the caller assesses semantic safety. The specification
+    /// requires the informational code
     /// `assertion.bmffHash.additionalExclusionsPresent` for additional exclusions;
     /// older validators may not emit it.
     ///
