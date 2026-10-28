@@ -54,7 +54,7 @@ struct Base64Bytes(Vec<u8>);
 
 impl Serialize for Base64Bytes {
     fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
-        s.serialize_str(&format!("b64'{}'", base64::encode(&self.0)))
+        s.serialize_str(&base64::encode_b64_wrapped(&self.0))
     }
 }
 
