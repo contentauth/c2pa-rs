@@ -262,34 +262,54 @@ fn test_assertion_instance_labeling() -> Result<()> {
     Ok(())
 }
 
-/// Binary assertions (thumbnails, embedded data) must use the reference object form.
+/// Binary thumbnails use the schema-defined `{thumbnailType, mimeType}` form,
+/// not the `{format, identifier, hash}` reference object used for other binary
+/// and UUID assertions. Those reference objects retain separate coverage in
+/// `test_binary_thumbnail_crjson_unrelated_binary_unchanged` and
+/// `test_binary_thumbnail_crjson_uuid_unchanged` in the exporter unit tests.
 #[test]
-fn test_binary_assertions_use_ref_format() -> Result<()> {
-    let reader = Reader::default().with_stream("image/jpeg", Cursor::new(IMAGE_WITH_MANIFEST))?;
-    let json_value = reader.to_crjson_value()?;
+fn test_binary_thumbnails_use_schema_fields() -> Result<()> {
+    let schema_value: serde_json::Value = serde_json::from_str(CRJSON_SCHEMA)?;
+    let validator = validator_for(&schema_value["definitions"]["thumbnailAssertion"])
+        .expect("thumbnail assertion schema must compile without errors");
+    let mut claim_thumbnails = 0;
+    let mut ingredient_thumbnails = 0;
 
-    for manifest in json_value["manifests"].as_array().unwrap() {
-        let assertions = manifest["assertions"].as_object().unwrap();
-        for (key, value) in assertions {
-            if key.starts_with("c2pa.thumbnail") {
-                let obj = value
-                    .as_object()
-                    .unwrap_or_else(|| panic!("thumbnail assertion '{key}' must be an object"));
+    for image in [
+        include_bytes!("../fixtures/C.jpg").as_slice(),
+        IMAGE_WITH_MANIFEST,
+    ] {
+        let reader = Reader::default().with_stream("image/jpeg", Cursor::new(image))?;
+        let json_value = reader.to_crjson_value()?;
+        for manifest in json_value["manifests"].as_array().unwrap() {
+            let assertions = manifest["assertions"].as_object().unwrap();
+            for (key, value) in assertions {
+                let thumbnail_type = if key.starts_with("c2pa.thumbnail.claim.") {
+                    claim_thumbnails += 1;
+                    0
+                } else if key.starts_with("c2pa.thumbnail.ingredient.") {
+                    ingredient_thumbnails += 1;
+                    1
+                } else {
+                    continue;
+                };
+                assert!(validator.is_valid(value), "thumbnail '{key}': {value}");
+                assert_eq!(value["thumbnailType"], thumbnail_type, "thumbnail '{key}'");
+                let mime_type = value["mimeType"]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("thumbnail '{key}' must have a MIME string"));
                 assert!(
-                    obj.contains_key("format"),
-                    "thumbnail '{key}' ref object must have 'format'"
-                );
-                assert!(
-                    obj.contains_key("identifier"),
-                    "thumbnail '{key}' ref object must have 'identifier'"
-                );
-                assert!(
-                    obj.get("hash").and_then(|v| v.as_str()).is_some(),
-                    "thumbnail '{key}' ref object 'hash' must be a base64 string"
+                    matches!(mime_type, "image/jpeg" | "image/png"),
+                    "thumbnail '{key}' has unexpected fixture MIME type '{mime_type}'"
                 );
             }
         }
     }
+    assert!(claim_thumbnails > 0, "fixtures must contain claim thumbnails");
+    assert!(
+        ingredient_thumbnails > 0,
+        "fixtures must contain ingredient thumbnails"
+    );
     Ok(())
 }
 
