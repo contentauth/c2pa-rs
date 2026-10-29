@@ -34,4 +34,6 @@ pub mod zip_io;
 #[cfg(feature = "pdf")]
 pub(crate) mod pdf;
 #[cfg(feature = "pdf")]
+mod pdf_bounded;
+#[cfg(feature = "pdf")]
 pub mod pdf_io;
