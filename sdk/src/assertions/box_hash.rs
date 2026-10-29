@@ -25,7 +25,7 @@ use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor, AssertionJson},
     assertions::labels,
     asset_io::{
-        AllowedExclusion, AssetBoxHash, BoxMap as AssetBoxMap, ExclusionKind, ReadSeek,
+        AllowedExclusion, AssetBoxHash, BoxMap as AssetBoxMap, ExclusionKind, ReadSeek, C2PA_AFTER,
         C2PA_BOXHASH,
     },
     error::{Error, Result},
@@ -318,7 +318,7 @@ impl BoxHash {
             return Err(Error::HashMismatch("No box hash found".to_string()));
         }
 
-        let source_bms = bhp.get_box_map(reader)?;
+        let mut source_bms = bhp.get_box_map(reader)?;
         let mut source_index = 0;
 
         if let Some(first_expected_bms) = source_bms.get(source_index) {
@@ -336,6 +336,27 @@ impl BoxHash {
         } else {
             return Err(Error::HashMismatch("No data boxes found".to_string()));
         };
+
+        // Bytes after the last parsed box are a `c2pa.after` logical box per
+        // C2PA 2.5 §16.3.3.2 ("arbitrary data beyond the end of the box structure
+        // ... until the end of the physical file"). Asset handlers stop at the
+        // box structure, so synthesize that box here: a hard binding may
+        // legitimately list and hash it, while a manifest that omits it is left
+        // as an unconsumed source box and rejected below as `unknownBox`
+        // (§14.12.3), exactly as for any other unlisted box.
+        let asset_len = reader.seek(SeekFrom::End(0))?;
+        let covered_end = source_bms
+            .iter()
+            .map(|bm| bm.range_start + bm.range_len)
+            .max()
+            .unwrap_or(0);
+        if asset_len > covered_end {
+            source_bms.push(AssetBoxMap::new(
+                vec![C2PA_AFTER.to_string()],
+                covered_end,
+                asset_len - covered_end,
+            ));
+        }
 
         let mut metadata_exclusion_used = false;
 
@@ -444,28 +465,10 @@ impl BoxHash {
         // truncated list leaves trailing boxes (e.g. all scan/pixel data)
         // completely unhashed while still returning a match (CAI-13354). Per
         // C2PA 2.4 §15.12.3, any box present in the asset but absent from the
-        // list must be rejected with `assertion.boxesHash.unknownBox`.
+        // list must be rejected with `assertion.boxesHash.unknownBox`. This also
+        // catches a `c2pa.after` trailer (synthesized above) that the manifest
+        // did not list.
         if source_index != source_bms.len() {
-            return Err(Error::HashMismatch(
-                ASSERTION_BOXHASH_UNKNOWN_BOX.to_owned(),
-            ));
-        }
-
-        // The named boxes must also account for every byte of the asset. Data
-        // appended after the last box - e.g. a payload after a JPEG's EOI
-        // marker - belongs to no box map entry, so the per-box check above
-        // never sees it, yet it is neither hashed nor excluded. Per C2PA 2.5
-        // §16.3.3.2 such trailing bytes are a `c2pa.after` box ("arbitrary data
-        // beyond the end of the box structure ... until the end of the physical
-        // file"); a manifest not listing one must be rejected as `unknownBox`
-        // (§14.12.3).
-        let asset_len = reader.seek(SeekFrom::End(0))?;
-        let covered_end = source_bms
-            .iter()
-            .map(|bm| bm.range_start + bm.range_len)
-            .max()
-            .unwrap_or(0);
-        if asset_len > covered_end {
             return Err(Error::HashMismatch(
                 ASSERTION_BOXHASH_UNKNOWN_BOX.to_owned(),
             ));
@@ -1376,6 +1379,104 @@ mod tests {
         assert!(
             result.is_ok(),
             "asset ending at the last box must verify: {result:?}"
+        );
+    }
+
+    /// A manifest that lists the trailing bytes as a final `c2pa.after` box and
+    /// hashes them must validate (C2PA 2.5 §16.3.3.2): only an *unlisted* trailer
+    /// is an `unknownBox`.
+    #[test]
+    fn test_verify_accepts_listed_c2pa_after_box() {
+        let alg = "sha256";
+
+        // Box map ends at offset 10; the asset is 20 bytes, so [10, 20) is the
+        // `c2pa.after` trailer the manifest lists and hashes below.
+        let make_mock = || {
+            let mut mock = MockMABH::new();
+            mock.expect_get_box_map().returning(|_| {
+                Ok(vec![AssetBoxMap::new(
+                    vec![C2PA_BOXHASH.to_string()],
+                    0,
+                    10,
+                )])
+            });
+            mock
+        };
+
+        let trailer_hash = hash_by_alg(alg, &(10..20u8).collect::<Vec<u8>>(), None);
+        let bh = BoxHash {
+            boxes: vec![
+                BoxMap {
+                    names: vec![C2PA_BOXHASH.to_string()],
+                    alg: Some(alg.to_string()),
+                    hash: ByteBuf::from(vec![]),
+                    excluded: None,
+                    exclusions: None,
+                    pad: ByteBuf::from(vec![]),
+                    range_start: 0,
+                    range_len: 10,
+                },
+                BoxMap {
+                    names: vec![C2PA_AFTER.to_string()],
+                    alg: Some(alg.to_string()),
+                    hash: ByteBuf::from(trailer_hash),
+                    excluded: None,
+                    exclusions: None,
+                    pad: ByteBuf::from(vec![]),
+                    range_start: 10,
+                    range_len: 10,
+                },
+            ],
+        };
+
+        let mut asset = Cursor::new((0..20u8).collect::<Vec<u8>>());
+        let result = bh.verify_stream_hash_with_progress(
+            &mut asset,
+            Some(alg),
+            &make_mock(),
+            &mut |_, _| Ok(()),
+        );
+        assert!(
+            result.is_ok(),
+            "a listed and correctly hashed c2pa.after box must verify: {result:?}"
+        );
+
+        // A wrong trailer hash on a listed c2pa.after box is a plain mismatch,
+        // not an unknownBox.
+        let bad = BoxHash {
+            boxes: vec![
+                BoxMap {
+                    names: vec![C2PA_BOXHASH.to_string()],
+                    alg: Some(alg.to_string()),
+                    hash: ByteBuf::from(vec![]),
+                    excluded: None,
+                    exclusions: None,
+                    pad: ByteBuf::from(vec![]),
+                    range_start: 0,
+                    range_len: 10,
+                },
+                BoxMap {
+                    names: vec![C2PA_AFTER.to_string()],
+                    alg: Some(alg.to_string()),
+                    hash: ByteBuf::from(vec![0u8; 32]),
+                    excluded: None,
+                    exclusions: None,
+                    pad: ByteBuf::from(vec![]),
+                    range_start: 10,
+                    range_len: 10,
+                },
+            ],
+        };
+        let mut asset = Cursor::new((0..20u8).collect::<Vec<u8>>());
+        let result = bad.verify_stream_hash_with_progress(
+            &mut asset,
+            Some(alg),
+            &make_mock(),
+            &mut |_, _| Ok(()),
+        );
+        assert!(
+            matches!(&result, Err(Error::HashMismatch(s)) if s == "Hashes do not match"),
+            "a wrong c2pa.after hash must be a mismatch: {result:?}"
         );
     }
 
