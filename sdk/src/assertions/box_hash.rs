@@ -245,6 +245,31 @@ pub struct BoxHash {
 impl BoxHash {
     pub const LABEL: &'static str = labels::BOX_HASH;
 
+    /// Appends the `c2pa.after` logical box (C2PA 2.5 §16.3.3.2) covering any
+    /// bytes past the last parsed box to a handler's `source_bms`. Asset handlers
+    /// stop at the end of the box structure, so both generation and verification
+    /// call this to agree on a trailer: generation hashes and lists it, and
+    /// verification requires it to be listed or reports `unknownBox`.
+    fn append_c2pa_after_box(
+        source_bms: &mut Vec<AssetBoxMap>,
+        reader: &mut dyn ReadSeek,
+    ) -> Result<()> {
+        let asset_len = reader.seek(SeekFrom::End(0))?;
+        let covered_end = source_bms
+            .iter()
+            .map(|bm| bm.range_start + bm.range_len)
+            .max()
+            .unwrap_or(0);
+        if asset_len > covered_end {
+            source_bms.push(AssetBoxMap::new(
+                vec![C2PA_AFTER.to_string()],
+                covered_end,
+                asset_len - covered_end,
+            ));
+        }
+        Ok(())
+    }
+
     /// Builds an unhashed placeholder [`BoxHash`] straight from
     /// `AssetBoxHash::get_box_map`'s output, with every entry's `hash` left
     /// empty and `alg` unset.
@@ -338,25 +363,10 @@ impl BoxHash {
         };
 
         // Bytes after the last parsed box are a `c2pa.after` logical box per
-        // C2PA 2.5 §16.3.3.2 ("arbitrary data beyond the end of the box structure
-        // ... until the end of the physical file"). Asset handlers stop at the
-        // box structure, so synthesize that box here: a hard binding may
-        // legitimately list and hash it, while a manifest that omits it is left
-        // as an unconsumed source box and rejected below as `unknownBox`
-        // (§14.12.3), exactly as for any other unlisted box.
-        let asset_len = reader.seek(SeekFrom::End(0))?;
-        let covered_end = source_bms
-            .iter()
-            .map(|bm| bm.range_start + bm.range_len)
-            .max()
-            .unwrap_or(0);
-        if asset_len > covered_end {
-            source_bms.push(AssetBoxMap::new(
-                vec![C2PA_AFTER.to_string()],
-                covered_end,
-                asset_len - covered_end,
-            ));
-        }
+        // C2PA 2.5 §16.3.3.2; a hard binding may list and hash it, while a
+        // manifest that omits it is left as an unconsumed source box and
+        // rejected below as `unknownBox` (§14.12.3).
+        Self::append_c2pa_after_box(&mut source_bms, &mut *reader)?;
 
         let mut metadata_exclusion_used = false;
 
@@ -557,7 +567,12 @@ impl BoxHash {
         F: FnMut(u32, u32) -> Result<()>,
     {
         // get source box list
-        let source_bms = bhp.get_box_map(reader)?;
+        let mut source_bms = bhp.get_box_map(reader)?;
+
+        // Hash and list any trailing bytes as the `c2pa.after` box (C2PA 2.5
+        // §16.3.3.2), symmetrically with verification, so a signed asset with a
+        // trailer is not rejected by its own hard binding.
+        Self::append_c2pa_after_box(&mut source_bms, &mut *reader)?;
 
         if minimal_form {
             let mut before_c2pa = BoxMap {
@@ -794,6 +809,39 @@ mod tests {
             .unwrap();
 
         // see if they match reading
+        bh.verify_stream_hash(&mut input, Some("sha256"), bhp)
+            .unwrap();
+    }
+
+    /// Generation and verification agree on a `c2pa.after` trailer (PR #2949): a
+    /// JPEG with bytes after its EOI marker generates a hard binding that lists
+    /// and hashes those bytes, and that same binding verifies. Without the
+    /// generation half, the verifier would reject the generator's own output.
+    #[test]
+    fn test_generate_and_verify_c2pa_after_trailer() {
+        let ap = fixture_path("CA.jpg");
+
+        let bhp = get_assetio_handler_from_path(&ap)
+            .unwrap()
+            .asset_box_hash_ref()
+            .unwrap();
+
+        let mut bytes = Vec::new();
+        File::open(&ap).unwrap().read_to_end(&mut bytes).unwrap();
+        bytes.extend_from_slice(b"arbitrary trailing bytes after EOI");
+        let mut input = Cursor::new(bytes);
+
+        let mut bh = BoxHash { boxes: Vec::new() };
+        bh.generate_box_hash_from_stream(&mut input, "sha256", bhp, false)
+            .unwrap();
+
+        assert!(
+            bh.boxes
+                .iter()
+                .any(|b| b.names.first().is_some_and(|n| n == C2PA_AFTER)),
+            "generation must list a c2pa.after box for the trailer"
+        );
+
         bh.verify_stream_hash(&mut input, Some("sha256"), bhp)
             .unwrap();
     }
