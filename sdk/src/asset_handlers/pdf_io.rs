@@ -17,7 +17,7 @@ use crate::{
         AssetIO, C2paReader, C2paWriter, ComposedManifestRef, ObjectLocations, ObjectType,
         ReadSeek, ReadWriteSeek, RemoteManifestUrl, WriteXmp,
     },
-    Error::{self, JumbfNotFound, NotImplemented, PdfReadError},
+    Error::{self, JumbfNotFound, NotImplemented},
 };
 
 static SUPPORTED_TYPES: [&str; 2] = ["pdf", "application/pdf"];
@@ -51,7 +51,13 @@ fn find_stream_content_start(bytes: &[u8], header_offset: usize) -> Option<usize
     }
 }
 
-/// Locates the raw byte range `(content_start, content_len)` of the C2PA manifest
+struct ManifestLocation {
+    offset: u64,
+    length: u64,
+    filtered: bool,
+}
+
+/// Locates the raw byte range of the C2PA manifest
 /// already embedded in `bytes`, by re-parsing `bytes` and following its xref
 /// table to the manifest stream's declaration.
 ///
@@ -60,7 +66,7 @@ fn find_stream_content_start(bytes: &[u8], header_offset: usize) -> Option<usize
 /// this way (a compressed xref entry with no outer-file offset, or the
 /// located bytes don't actually match the manifest's own content) — callers
 /// must not treat that as "no manifest", since a manifest genuinely exists.
-fn locate_manifest_content(bytes: &[u8]) -> crate::Result<Option<(u64, u64)>> {
+fn locate_manifest_content(bytes: &[u8]) -> crate::Result<Option<ManifestLocation>> {
     let pdf = Pdf::from_bytes(bytes).map_err(|e| Error::InvalidAsset(e.to_string()))?;
 
     let header_offset = match pdf.manifest_object_offset() {
@@ -69,13 +75,11 @@ fn locate_manifest_content(bytes: &[u8]) -> crate::Result<Option<(u64, u64)>> {
         Err(e) => return Err(unlocatable_manifest_error_from(e)),
     };
 
-    let manifest_bytes = pdf
-        .read_manifest_bytes()
+    let stream = pdf
+        .manifest_stream()
         .map_err(unlocatable_manifest_error_from)?
         .ok_or_else(unlocatable_manifest_error)?;
-    let [manifest_bytes] = manifest_bytes.as_slice() else {
-        return Err(unlocatable_manifest_error());
-    };
+    let manifest_bytes = stream.content.as_slice();
 
     let content_start = find_stream_content_start(bytes, header_offset as usize)
         .ok_or_else(unlocatable_manifest_error)?;
@@ -86,11 +90,15 @@ fn locate_manifest_content(bytes: &[u8]) -> crate::Result<Option<(u64, u64)>> {
     // Verify the located range actually holds the manifest's own bytes before
     // trusting it, rather than any `stream` keyword occurrence the (possibly
     // externally-authored) dict happens to contain.
-    if bytes.get(content_start..content_end) != Some(*manifest_bytes) {
+    if bytes.get(content_start..content_end) != Some(manifest_bytes) {
         return Err(unlocatable_manifest_error());
     }
 
-    Ok(Some((content_start as u64, manifest_bytes.len() as u64)))
+    Ok(Some(ManifestLocation {
+        offset: content_start as u64,
+        length: manifest_bytes.len() as u64,
+        filtered: stream.dict.has(b"Filter"),
+    }))
 }
 
 fn unlocatable_manifest_error() -> Error {
@@ -131,19 +139,20 @@ impl C2paReader for PdfIO {
 
 impl PdfIO {
     fn read_manifest_bytes(&self, pdf: impl C2paPdf) -> crate::Result<Vec<u8>> {
-        let Ok(result) = pdf.read_manifest_bytes() else {
-            return Err(PdfReadError);
-        };
+        let result = pdf
+            .read_manifest_bytes()
+            .map_err(|e| Error::InvalidAsset(format!("PDF manifest read failed: {e}")))?;
 
-        let Some(bytes) = result else {
+        let Some(mut bytes) = result else {
             return Err(JumbfNotFound);
         };
 
-        match bytes.as_slice() {
-            [bytes] => Ok(bytes.to_vec()),
-            _ => Err(NotImplemented(
+        if bytes.len() == 1 {
+            Ok(bytes.remove(0))
+        } else {
+            Err(NotImplemented(
                 "c2pa-rs only supports reading PDFs with one manifest".into(),
-            )),
+            ))
         }
     }
 
@@ -170,13 +179,15 @@ impl C2paWriter for PdfIO {
         // depend on prior edit history), shifting the manifest out from under the
         // hash exclusion already computed against the first write. Same-length
         // in-place substitution keeps that offset stable across both passes.
+        // Filtered streams must be rewritten with a new stream dictionary:
+        // raw manifest bytes are not valid input for the existing /Filter.
         //
         // If the existing manifest's byte range can't be safely determined (see
         // `locate_manifest_content`), fall through to the full-rewrite path below
         // instead of guessing — it's always correct, just not offset-stable.
-        if let Ok(Some((content_start, content_len))) = locate_manifest_content(&bytes) {
-            if content_len == store_bytes.len() as u64 {
-                let start = content_start as usize;
+        if let Ok(Some(location)) = locate_manifest_content(&bytes) {
+            if !location.filtered && location.length == store_bytes.len() as u64 {
+                let start = location.offset as usize;
                 let end = start + store_bytes.len();
                 output_stream.rewind()?;
                 output_stream.write_all(&bytes[..start])?;
@@ -212,7 +223,7 @@ impl C2paWriter for PdfIO {
         input_stream.read_to_end(&mut bytes)?;
         let file_len = bytes.len() as u64;
 
-        let Some((content_start, manifest_len)) = locate_manifest_content(&bytes)? else {
+        let Some(location) = locate_manifest_content(&bytes)? else {
             // No manifest embedded yet: report a placeholder at the end of the file,
             // since a full rewrite always appends the new stream object last.
             return Ok(vec![
@@ -229,6 +240,8 @@ impl C2paWriter for PdfIO {
             ]);
         };
 
+        let content_start = location.offset;
+        let manifest_len = location.length;
         let content_end = content_start + manifest_len;
 
         Ok(vec![
@@ -353,11 +366,99 @@ pub mod tests {
     use super::{find_stream_content_start, locate_manifest_content};
     use crate::{
         asset_handlers,
-        asset_handlers::{pdf::MockC2paPdf, pdf_io::PdfIO},
+        asset_handlers::{
+            pdf::{
+                tests::{flate_manifest_stream, pdf_with_manifest_stream},
+                MockC2paPdf, Pdf,
+            },
+            pdf_io::PdfIO,
+        },
         asset_io::{AssetIO, C2paReader},
     };
 
     static MANIFEST_BYTES: &[u8; 2] = &[10u8, 20u8];
+
+    #[test]
+    fn test_compressed_manifest_read_and_encoded_locations() {
+        let manifest = vec![42; 4096];
+        let stream = flate_manifest_stream(&manifest);
+        let encoded = stream.content.clone();
+        assert_ne!(encoded.len(), manifest.len());
+        let source = pdf_with_manifest_stream(stream);
+        let pdf_io = PdfIO::new("pdf");
+        let mut input = Cursor::new(source.clone());
+        assert_eq!(pdf_io.read_c2pa(&mut input).unwrap(), manifest);
+
+        let writer = pdf_io.get_writer("pdf").unwrap();
+        let locations = writer.get_object_locations(&mut input).unwrap();
+        assert_eq!(locations.len(), 3);
+        let location = &locations[1];
+        assert_eq!(location.htype, crate::asset_io::ObjectType::C2pa);
+        assert_eq!(location.length, encoded.len() as u64);
+        let end = location.offset + location.length;
+        assert_eq!(&source[location.offset as usize..end as usize], encoded);
+        assert_eq!(locations[0].length, location.offset);
+        assert_eq!(locations[2].offset, end);
+        assert_eq!(end + locations[2].length, source.len() as u64);
+    }
+
+    #[test]
+    fn test_filtered_manifest_is_never_replaced_in_place() {
+        let manifest = vec![42; 4096];
+        let stream = flate_manifest_stream(&manifest);
+        let encoded_len = stream.content.len();
+        let source = pdf_with_manifest_stream(stream);
+        let pdf_io = PdfIO::new("pdf");
+        let writer = pdf_io.get_writer("pdf").unwrap();
+
+        // Neither equal encoded length nor equal decoded length permits a raw patch.
+        for length in [encoded_len, manifest.len()] {
+            let replacement = vec![21; length];
+            let mut input = Cursor::new(source.clone());
+            let mut output = Cursor::new(Vec::new());
+            writer
+                .write_c2pa(&mut input, &mut output, &replacement)
+                .unwrap();
+            assert_eq!(pdf_io.read_c2pa(&mut output).unwrap(), replacement);
+            let pdf = Pdf::from_bytes(output.get_ref()).unwrap();
+            assert!(!pdf.manifest_stream().unwrap().unwrap().dict.has(b"Filter"));
+            let locations = writer.get_object_locations(&mut output).unwrap();
+            let location = &locations[1];
+            assert_eq!(location.length, replacement.len() as u64);
+            assert_eq!(
+                &output.get_ref()
+                    [location.offset as usize..(location.offset + location.length) as usize],
+                replacement
+            );
+        }
+    }
+
+    #[test]
+    fn test_manifest_decoding_failures_preserve_the_cause() {
+        use lopdf::{dictionary, Stream};
+
+        let pdf_io = PdfIO::new("pdf");
+        for (stream, expected) in [
+            (
+                Stream::new(dictionary! { "Filter" => "DCTDecode" }, vec![1, 2]),
+                "Unsupported PDF manifest stream",
+            ),
+            (
+                Stream::new(dictionary! { "Filter" => "FlateDecode" }, vec![0xff; 20]),
+                "corrupt FlateDecode",
+            ),
+            (
+                Stream::new(dictionary! { "Filter" => 42 }, vec![1, 2]),
+                "Name or Array",
+            ),
+        ] {
+            let mut input = Cursor::new(pdf_with_manifest_stream(stream));
+            assert!(matches!(
+                pdf_io.read_c2pa(&mut input),
+                Err(crate::Error::InvalidAsset(message)) if message.contains(expected)
+            ));
+        }
+    }
 
     #[test]
     fn test_error_reading_manifest_fails() {
@@ -371,7 +472,7 @@ pub mod tests {
         let pdf_io = PdfIO::new("pdf");
         assert!(matches!(
             pdf_io.read_manifest_bytes(mock_pdf),
-            Err(crate::Error::PdfReadError)
+            Err(crate::Error::InvalidAsset(message)) if message.contains("PDF manifest read failed")
         ))
     }
 
@@ -392,7 +493,7 @@ pub mod tests {
         let mut mock_pdf = MockC2paPdf::default();
         mock_pdf
             .expect_read_manifest_bytes()
-            .returning(|| Ok(Some(vec![MANIFEST_BYTES])));
+            .returning(|| Ok(Some(vec![MANIFEST_BYTES.to_vec()])));
 
         let pdf_io = PdfIO::new("pdf");
         assert_eq!(
@@ -406,7 +507,7 @@ pub mod tests {
         let mut mock_pdf = MockC2paPdf::default();
         mock_pdf
             .expect_read_manifest_bytes()
-            .returning(|| Ok(Some(vec![MANIFEST_BYTES, MANIFEST_BYTES, MANIFEST_BYTES])));
+            .returning(|| Ok(Some(vec![MANIFEST_BYTES.to_vec(); 3])));
 
         let pdf_io = PdfIO::new("pdf");
 
