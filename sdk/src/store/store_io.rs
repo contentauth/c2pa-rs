@@ -1096,15 +1096,26 @@ impl Store {
                         })?;
 
                     // Check for excess data without growing the manifest buffer beyond the limit.
-                    let mut extra = [0u8; 1];
-                    if response_bytes.len() as u64 == max_response_size
-                        && body.read(&mut extra).map_err(|_err| {
-                            Error::RemoteManifestFetch("error reading content stream".to_string())
-                        })? != 0
-                    {
-                        return Err(Error::RemoteManifestFetch(format!(
-                            "remote manifest exceeds the {max_response_size} byte response size limit"
-                        )));
+                    if response_bytes.len() as u64 == max_response_size {
+                        let mut extra = [0u8; 1];
+                        loop {
+                            match body.read(&mut extra) {
+                                Ok(0) => break,
+                                Ok(_) => {
+                                    return Err(Error::RemoteManifestFetch(format!(
+                                        "remote manifest exceeds the {max_response_size} byte response size limit"
+                                    )));
+                                }
+                                Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {
+                                    continue
+                                }
+                                Err(_) => {
+                                    return Err(Error::RemoteManifestFetch(
+                                        "error reading content stream".to_string(),
+                                    ));
+                                }
+                            }
+                        }
                     }
 
                     Ok(response_bytes)

@@ -110,6 +110,11 @@ responses exactly at the limit are accepted.
 
 This limit is enforced after the HTTP resolver returns. It does **not** bound
 resolver-internal buffering, including buffering in the built-in reqwest adapters.
+It also does not bound downloads or allocations performed by language bindings
+before their resolver callbacks return. For example, the C HTTP callback supplies
+an already-buffered body, which is copied into Rust memory before Store checks it.
+End-to-end protection requires the binding or HTTP adapter to enforce a limit
+while receiving the response, before buffering or copying it.
 Increasing it allows correspondingly larger Store allocations.
 
 ## Using Context

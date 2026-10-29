@@ -5641,18 +5641,26 @@ mod remote_manifest_response_tests {
         content_length: Option<&'static str>,
         body_length: u64,
         error_after: Option<u64>,
+        probe_interruptions: usize,
         bytes_read: Arc<AtomicUsize>,
     }
 
     struct Body {
         remaining: u64,
         error_after: Option<u64>,
+        probe_interruptions: usize,
         eof_returned: bool,
         bytes_read: Arc<AtomicUsize>,
     }
 
     impl Read for Body {
         fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.bytes_read.load(Ordering::SeqCst) as u64 == TEST_RESPONSE_SIZE
+                && self.probe_interruptions > 0
+            {
+                self.probe_interruptions -= 1;
+                return Err(std::io::ErrorKind::Interrupted.into());
+            }
             if self
                 .error_after
                 .is_some_and(|limit| self.bytes_read.load(Ordering::SeqCst) as u64 >= limit)
@@ -5687,6 +5695,7 @@ mod remote_manifest_response_tests {
                 .body(Box::new(Body {
                     remaining: self.body_length,
                     error_after: self.error_after,
+                    probe_interruptions: self.probe_interruptions,
                     eof_returned: false,
                     bytes_read: self.bytes_read.clone(),
                 }) as Box<dyn Read>)
@@ -5729,6 +5738,7 @@ mod remote_manifest_response_tests {
             content_length,
             body_length,
             error_after,
+            probe_interruptions: 0,
             bytes_read: bytes_read.clone(),
         });
         let context = context
@@ -5747,6 +5757,42 @@ mod remote_manifest_response_tests {
             matches!(result, Err(Error::RemoteManifestFetch(ref msg)) if msg == "remote manifest exceeds the 16 byte response size limit"),
             "expected response size error, got {result:?}"
         );
+    }
+
+    #[c2pa_test_async]
+    async fn test_remote_manifest_overflow_probe_retries_interrupted() {
+        for use_async in [false, true] {
+            for body_length in [TEST_RESPONSE_SIZE, TEST_RESPONSE_SIZE + 1] {
+                let bytes_read = Arc::new(AtomicUsize::new(0));
+                let resolver = Arc::new(Resolver {
+                    content_length: None,
+                    body_length,
+                    error_after: None,
+                    probe_interruptions: 2,
+                    bytes_read: bytes_read.clone(),
+                });
+                let context = Context::new()
+                    .with_settings_value("verify.max_manifest_response_size", TEST_RESPONSE_SIZE)
+                    .unwrap()
+                    .with_resolver(resolver.clone())
+                    .with_resolver_async(resolver);
+                let result = if use_async {
+                    Store::fetch_remote_manifest_async(
+                        "https://example.com/manifest.c2pa",
+                        &context,
+                    )
+                    .await
+                } else {
+                    Store::fetch_remote_manifest("https://example.com/manifest.c2pa", &context)
+                };
+                if body_length == TEST_RESPONSE_SIZE {
+                    assert_eq!(result.unwrap(), vec![b'x'; TEST_RESPONSE_SIZE as usize]);
+                } else {
+                    assert_size_error(result);
+                }
+                assert_eq!(bytes_read.load(Ordering::SeqCst) as u64, body_length);
+            }
+        }
     }
 
     #[c2pa_test_async]
