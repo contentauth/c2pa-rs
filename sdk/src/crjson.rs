@@ -54,7 +54,7 @@ struct Base64Bytes(Vec<u8>);
 
 impl Serialize for Base64Bytes {
     fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
-        s.serialize_str(&format!("b64'{}'", base64::encode(&self.0)))
+        s.serialize_str(&base64::encode_b64_wrapped(&self.0))
     }
 }
 
@@ -394,7 +394,7 @@ impl<'a> CrJsonExporter<'a> {
                         key,
                         json!({
                             "identifier": absolute_uri,
-                            "hash": format!("b64'{}'", base64::encode(&assertion_ref.hash()))
+                            "hash": base64::encode_b64_wrapped(&assertion_ref.hash())
                         }),
                     );
                 }
@@ -408,7 +408,8 @@ impl<'a> CrJsonExporter<'a> {
     ///
     /// * Ingredient assertions use the internal [`assertions::Ingredient`] custom serializer,
     ///   which emits Dublin-Core field names (`dc:title`, `dc:format`, …).
-    /// * Binary / UUID assertions emit the reference-object form `{format, identifier, hash}`.
+    /// * Binary thumbnails emit `{thumbnailType, mimeType}` per the crJSON schema.
+    /// * Other binary / UUID assertions emit the reference-object form `{format, identifier, hash}`.
     /// * Everything else is decoded via [`Assertion::as_json_object`] and passed through
     ///   [`fix_hash_encoding`] to convert byte arrays to base64.
     fn claim_assertion_to_value(
@@ -432,11 +433,30 @@ impl<'a> CrJsonExporter<'a> {
 
         match assertion.decode_data() {
             AssertionData::Binary(_) | AssertionData::Uuid(_, _) => {
+                // Preserve the embedded MIME, including invalid values, so consumers
+                // can evaluate it rather than infer a valid type from the label.
+                if matches!(assertion.decode_data(), AssertionData::Binary(_)) {
+                    let label = ca.label_raw();
+                    for (prefix, thumbnail_type) in [
+                        (assertion_labels::CLAIM_THUMBNAIL, 0),
+                        (assertion_labels::INGREDIENT_THUMBNAIL, 1),
+                    ] {
+                        if let Some(suffix) = label.strip_prefix(prefix) {
+                            if suffix.is_empty() || suffix.starts_with('.') {
+                                return Ok(Some(json!({
+                                    "thumbnailType": thumbnail_type,
+                                    "mimeType": assertion.content_type()
+                                })));
+                            }
+                        }
+                    }
+                }
+
                 let absolute_uri = to_assertion_uri(manifest_label, &ca.label());
                 Ok(Some(json!({
                     "format": assertion.content_type(),
                     "identifier": absolute_uri,
-                    "hash": format!("b64'{}'", base64::encode(ca.hash()))
+                    "hash": base64::encode_b64_wrapped(ca.hash())
                 })))
             }
             _ => Ok(assertion.as_json_object().ok().map(fix_hash_encoding)),
@@ -659,11 +679,14 @@ fn build_manifest_validation_results(
     }
 }
 
-/// Normalize byte-array hash/pad/signature fields to base64 strings after CBOR→JSON decoding.
+/// Normalize byte-array hash/pad/signature fields to base64 strings, and decode
+/// the CAWG `signature` field into a structured object.
 ///
-/// This is applied to assertion values obtained via [`Assertion::as_json_object`] and to
-/// ingredient assertions serialized via the internal [`Ingredient`] type.
-/// All other output paths use typed structs with [`Base64Bytes`] serialization.
+/// [`Assertion::as_json_object`] now emits CBOR byte strings pre-wrapped as
+/// `b64'<base64>'`, so the array-of-numbers branches below only fire for the
+/// [`Ingredient`] custom serializer path, which still produces plain `Vec<u8>` →
+/// JSON-number-array output. All other output paths use typed structs with
+/// [`Base64Bytes`] serialization.
 fn fix_hash_encoding(value: Value) -> Value {
     match value {
         Value::Object(mut map) => {
@@ -685,7 +708,7 @@ fn fix_hash_encoding(value: Value) -> Value {
                                 .collect();
                             map.insert(
                                 field.to_string(),
-                                json!(format!("b64'{}'", base64::encode(&bytes))),
+                                json!(base64::encode_b64_wrapped(&bytes)),
                             );
                         }
                     }
@@ -694,21 +717,25 @@ fn fix_hash_encoding(value: Value) -> Value {
 
             // Ensure hash-bearing objects also carry a (possibly empty) pad field.
             if map.contains_key("hash") && !map.contains_key("pad") {
-                map.insert("pad".to_string(), json!("b64''"));
+                map.insert("pad".to_string(), json!(base64::encode_b64_wrapped(&[])));
             }
 
             if let Some(sig_val) = map.get("signature") {
-                if let Some(sig_arr) = sig_val.as_array() {
-                    if sig_arr.iter().all(|v| v.is_u64() || v.is_i64()) {
-                        let sig_bytes: Vec<u8> = sig_arr
-                            .iter()
+                let sig_bytes = match sig_val {
+                    // already-decoded crJSON bstr, from Assertion::as_json_object
+                    Value::String(s) => base64::decode_b64_wrapped(s),
+                    // legacy array-of-numbers form
+                    Value::Array(arr) if arr.iter().all(|v| v.is_u64() || v.is_i64()) => Some(
+                        arr.iter()
                             .filter_map(|v| v.as_u64().map(|n| n as u8))
-                            .collect();
-                        let decoded = decode_cawg_signature(&sig_bytes).unwrap_or_else(|_| {
-                            json!(format!("b64'{}'", base64::encode(&sig_bytes)))
-                        });
-                        map.insert("signature".to_string(), decoded);
-                    }
+                            .collect(),
+                    ),
+                    _ => None,
+                };
+                if let Some(sig_bytes) = sig_bytes {
+                    let decoded = decode_cawg_signature(&sig_bytes)
+                        .unwrap_or_else(|_| json!(base64::encode_b64_wrapped(&sig_bytes)));
+                    map.insert("signature".to_string(), decoded);
                 }
             }
 
@@ -843,6 +870,160 @@ mod tests {
     use crate::{reader::Reader, validation_results::ValidationState};
 
     const IMAGE_WITH_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CA.jpg");
+
+    fn binary_test_assertion(
+        label: &str,
+        mime_type: &str,
+        instance: usize,
+    ) -> crate::claim::ClaimAssertion {
+        crate::claim::ClaimAssertion::new(
+            crate::assertion::Assertion::from_data_binary(label, mime_type, &[1, 2, 3]),
+            instance,
+            &[4, 5, 6],
+            "sha256",
+            None,
+            crate::claim::ClaimAssertionType::Created,
+        )
+    }
+
+    #[test]
+    fn test_binary_thumbnail_crjson_schema_fields() -> Result<()> {
+        let reader = Reader::default();
+        for (label, mime_type, instance, thumbnail_type) in [
+            ("c2pa.thumbnail.claim.jpeg", "image/jpeg", 0, 0),
+            ("c2pa.thumbnail.claim.png", "image/png", 0, 0),
+            ("c2pa.thumbnail.ingredient.png", "image/png", 0, 1),
+            ("c2pa.thumbnail.ingredient.jpeg", "image/jpeg", 2, 1),
+            ("c2pa.thumbnail.claim", "image/jpeg", 0, 0),
+            ("c2pa.thumbnail.ingredient", "image/png", 1, 1),
+        ] {
+            let assertion = binary_test_assertion(label, mime_type, instance);
+            let value = CrJsonExporter::new(&reader)
+                .claim_assertion_to_value("urn:uuid:test", &assertion)?;
+            assert_eq!(
+                value,
+                Some(json!({
+                    "thumbnailType": thumbnail_type,
+                    "mimeType": mime_type,
+                })),
+                "{label}, instance {instance}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_binary_thumbnail_crjson_preserves_invalid_mime() -> Result<()> {
+        let reader = Reader::default();
+        for mime_type in ["application/octet-stream", "", "image/not-a-supported-type"] {
+            let assertion = binary_test_assertion("c2pa.thumbnail.claim.jpeg", mime_type, 0);
+            assert_eq!(
+                CrJsonExporter::new(&reader)
+                    .claim_assertion_to_value("urn:uuid:test", &assertion)?,
+                Some(json!({ "thumbnailType": 0, "mimeType": mime_type }))
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_binary_thumbnail_crjson_unrelated_binary_unchanged() -> Result<()> {
+        let reader = Reader::default();
+        for label in [
+            "org.example.binary",
+            "c2pa.thumbnail",
+            "org.example.thumbnail",
+        ] {
+            let assertion = binary_test_assertion(label, "application/octet-stream", 1);
+            assert_eq!(
+                CrJsonExporter::new(&reader)
+                    .claim_assertion_to_value("urn:uuid:test", &assertion)?,
+                Some(json!({
+                    "format": "application/octet-stream",
+                    "identifier": to_assertion_uri("urn:uuid:test", &assertion.label()),
+                    "hash": base64::encode_b64_wrapped(&[4, 5, 6]),
+                }))
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_binary_thumbnail_crjson_uuid_unchanged() -> Result<()> {
+        let assertion = crate::claim::ClaimAssertion::new(
+            crate::assertion::Assertion::from_data_uuid(
+                "c2pa.thumbnail.claim.jpeg",
+                "00000000-0000-0000-0000-000000000001",
+                &[1, 2, 3],
+            ),
+            0,
+            &[4, 5, 6],
+            "sha256",
+            None,
+            crate::claim::ClaimAssertionType::Created,
+        );
+        assert_eq!(
+            CrJsonExporter::new(&Reader::default())
+                .claim_assertion_to_value("urn:uuid:test", &assertion)?,
+            Some(json!({
+                "format": "application/octet-stream",
+                "identifier": to_assertion_uri("urn:uuid:test", &assertion.label()),
+                "hash": base64::encode_b64_wrapped(&[4, 5, 6]),
+            }))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_binary_thumbnail_crjson_signed_fixtures() -> Result<()> {
+        let schema: Value =
+            serde_json::from_str(include_str!("../tests/fixtures/schemas/crJSON-schema.json"))?;
+        let validator =
+            jsonschema::validator_for(&schema["definitions"]["thumbnailAssertion"]).unwrap();
+        let mut claim_thumbnails = 0;
+        let mut ingredient_thumbnails = 0;
+        for image in [
+            include_bytes!("../tests/fixtures/C.jpg").as_slice(),
+            IMAGE_WITH_MANIFEST,
+        ] {
+            let reader =
+                Reader::default().with_stream("image/jpeg", std::io::Cursor::new(image))?;
+            let document = reader.to_crjson_value()?;
+            for manifest in document["manifests"].as_array().unwrap() {
+                for (label, thumbnail) in manifest["assertions"].as_object().unwrap() {
+                    let thumbnail_type = if label.starts_with("c2pa.thumbnail.claim") {
+                        claim_thumbnails += 1;
+                        0
+                    } else if label.starts_with("c2pa.thumbnail.ingredient") {
+                        ingredient_thumbnails += 1;
+                        1
+                    } else {
+                        continue;
+                    };
+                    assert!(validator.is_valid(thumbnail), "{label}: {thumbnail}");
+                    let mime_type = if label.ends_with(".png") {
+                        "image/png"
+                    } else {
+                        "image/jpeg"
+                    };
+                    assert_eq!(
+                        thumbnail,
+                        &json!({ "thumbnailType": thumbnail_type, "mimeType": mime_type }),
+                        "{label}"
+                    );
+                }
+            }
+        }
+        assert!(
+            claim_thumbnails > 0,
+            "fixture must exercise claim thumbnails"
+        );
+        assert!(
+            ingredient_thumbnails > 0,
+            "fixture must exercise ingredient thumbnails"
+        );
+        Ok(())
+    }
 
     #[test]
     fn test_jpeg_trust_reader_from_stream() -> Result<()> {

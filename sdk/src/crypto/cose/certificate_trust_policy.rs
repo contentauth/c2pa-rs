@@ -424,6 +424,30 @@ impl CertificateTrustPolicy {
         self.mandatory_ekus.clear();
     }
 
+    /// Remove the private credential store (privately-accepted end-entity
+    /// certificates), leaving trust anchors and EKUs intact.
+    ///
+    /// Per [§14.4.3, Private Credential Storage], the private credential store
+    /// "shall only apply to validating signed C2PA manifests, and shall not
+    /// apply to validating time-stamps". Callers validating time-stamps use
+    /// this to drop it before the trust check.
+    ///
+    /// [§14.4.3, Private Credential Storage]: https://spec.c2pa.org/specifications/specifications/2.3/specs/C2PA_Specification.html#_private_credential_storage
+    pub fn clear_end_entity_credentials(&mut self) {
+        self.end_entity_cert_set.clear();
+    }
+
+    /// Remove every trust anchor whose type is not `kind`, leaving private
+    /// credentials and EKUs intact.
+    ///
+    /// C2PA maintains separate trust lists for manifest signers and
+    /// time-stamping authorities; callers validating time-stamps use this to
+    /// keep only [`TrustAnchorType::TSA`] anchors so a signer anchor cannot
+    /// vouch for a time-stamp.
+    pub fn retain_trust_anchors(&mut self, kind: TrustAnchorType) {
+        self.trust_anchors.retain(|a| a.trust_anchor_type == kind);
+    }
+
     /// Remove all trust anchors, private credentials, and EKUs previously
     /// configured.
     pub fn clear(&mut self) {
@@ -658,6 +682,104 @@ mod tests {
     fn impl_debug() {
         let ctp = CertificateTrustPolicy::new();
         let _ = format!("{ctp:#?}");
+    }
+
+    #[test]
+    fn trust_list_kinds_and_named_anchor_sets_preserve_configuration() {
+        use crate::settings::TrustListKind;
+        for (kind, expected) in [
+            (TrustListKind::Manifest, TrustAnchorType::Manifest),
+            (TrustListKind::TSA, TrustAnchorType::TSA),
+            (TrustListKind::CAWG, TrustAnchorType::CAWG),
+        ] {
+            assert_eq!(TrustAnchorType::from(kind), expected);
+        }
+
+        let cert_pem = include_bytes!("../../../tests/fixtures/certs/ed25519.pub");
+        let certs = crate::crypto::cert_chain_pem_to_der(cert_pem).unwrap();
+        let escaped = String::from_utf8_lossy(cert_pem).replace('\n', "\\n");
+        let mut policy = CertificateTrustPolicy::new();
+        for kind in [
+            TrustAnchorType::Manifest,
+            TrustAnchorType::TSA,
+            TrustAnchorType::CAWG,
+        ] {
+            policy
+                .add_trust_anchors(
+                    escaped.as_bytes(),
+                    "urn:test:anchors",
+                    kind,
+                    Some("1.2.3".into()),
+                )
+                .unwrap();
+            let anchor = policy.get_anchor_set(kind, "urn:test:anchors").unwrap();
+            assert_eq!(anchor.trust_anchor_ders, certs);
+            assert_eq!(anchor.trust_config.as_deref(), Some("1.2.3"));
+            assert_eq!(anchor.trust_anchor_type, kind);
+        }
+
+        assert_eq!(policy.signing_trust_anchors().len(), 1);
+        assert_eq!(policy.tsa_trust_anchors().len(), 1);
+        assert_eq!(policy.cawg_trust_anchors().len(), 1);
+        assert!(policy
+            .get_anchor_set(TrustAnchorType::TSA, "urn:missing")
+            .is_none());
+        assert!(policy
+            .get_anchor_set(TrustAnchorType::EndEntity, "urn:test:anchors")
+            .is_none());
+        policy.add_mandatory_ekus(&[0xff]);
+        assert!(!policy.has_mandatory_ekus());
+        policy.add_mandatory_ekus(b"# comment\nnot an OID\n\n1.3.6.1.5.5.7.3.4\n");
+        assert!(policy.verify_mandatory_ekus(&email_eku()));
+        assert!(!policy.verify_mandatory_ekus(&time_stamping_eku()));
+    }
+
+    #[c2pa_test_async]
+    async fn passthrough_is_explicit_and_empty_policy_does_not_grant_trust() {
+        let chain = test_cert_chain(SigningAlg::Ed25519);
+        let policy = CertificateTrustPolicy::passthrough();
+        assert_eq!(
+            policy
+                .check_certificate_trust(&chain[1..], &chain[0], Some(0))
+                .unwrap(),
+            (TrustAnchorType::NoCheck, String::new())
+        );
+        assert_eq!(
+            policy
+                .check_certificate_trust_async(&chain[1..], &chain[0], Some(0))
+                .await
+                .unwrap(),
+            (TrustAnchorType::NoCheck, String::new())
+        );
+        let policy = CertificateTrustPolicy::new();
+        assert_eq!(
+            policy.check_certificate_trust(&chain[1..], &chain[0], None),
+            Err(CertificateTrustError::CertificateNotTrusted)
+        );
+        assert_eq!(
+            policy
+                .check_certificate_trust_async(&chain[1..], &chain[0], None)
+                .await,
+            Err(CertificateTrustError::CertificateNotTrusted)
+        );
+    }
+
+    #[c2pa_test_async]
+    async fn malformed_chain_and_leaf_fail_before_trust_can_be_granted() {
+        let policy = CertificateTrustPolicy::default();
+        let chain = test_cert_chain(SigningAlg::Ed25519);
+        for (intermediates, leaf) in [
+            (chain[1..].to_vec(), vec![0]),
+            (vec![vec![0]], chain[0].clone()),
+        ] {
+            assert!(policy
+                .check_certificate_trust(&intermediates, &leaf, None)
+                .is_err());
+            assert!(policy
+                .check_certificate_trust_async(&intermediates, &leaf, None)
+                .await
+                .is_err());
+        }
     }
 
     #[test]

@@ -154,7 +154,7 @@ fn save_cai_store(&self, asset_path: &Path, store_bytes: &[u8]) -> Result<()> {
 ```
 
 Most handlers never override these two — only override when a format needs different
-file-level semantics (e.g. `C2paIO`'s sidecar format, or `PdfIO`'s read-only stub).
+file-level semantics (e.g. `C2paIO`'s sidecar format).
 `remove_cai_store` only backs the already-deprecated `jumbf_io::remove_jumbf_from_file`;
 it and its default will be removed together in a future release.
 
@@ -369,12 +369,11 @@ All traits require `Sync + Send`. Handlers must be **stateless structs** with no
 | **Mp3IO** (MP3) | Y | Y | Y | Y | -- | -- | Y |
 | **GifIO** (GIF) | Y | Y | Y | Y | Y | Y | Y |
 | **C2paIO** (C2PA sidecar) | Y | Y | Y | -- | Y | Y | -- |
-| **PdfIO** (PDF) | Y | -- | Y | -- | -- | Y | -- |
+| **PdfIO** (PDF) | Y | Y | Y | -- | -- | Y | -- |
 
 ### Key observations
 
 - `C2paReader` + `AssetIO` are implemented by **every** handler (minimum requirement)
-- `C2paWriter` is implemented by everything except PDF (which is currently read-only)
 - `AssetPatch` is a performance optimization — formats that support it can update manifests in-place
 - All traits are independent; format capabilities, as defined by the C2PA specification, determine which ones to implement
 

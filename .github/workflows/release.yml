@@ -1,12 +1,13 @@
-name: Release-plz publish
+name: Release-plz
 
-# Publishes crates to crates.io and creates GitHub releases/tags.
+# Publishes pending releases, then opens or updates the next release PR.
 #
 # Under the open-source release process (see docs/release-process.md), crates
 # are published ONLY from release-line branches -- never from `main` (which is
 # nightly-like and intentionally unpublished) and never from release-candidate
 # branches (which bake before promotion). A push to a release-line branch
-# happens when a release-plz release PR (see release-pr.yml) is merged.
+# first publishes any merged release PR, then runs release-plz `release-pr`
+# from a fresh checkout so newly-created tags are included in its baseline.
 #
 # release-plz creates the `c2pa-v*` tag here; that tag then drives the binary
 # builds in library-release.yml. This workflow no longer builds binaries
@@ -111,3 +112,43 @@ jobs:
           gh api repos/contentauth/c2patool/dispatches \
             -f event_type=c2pa-rs-release \
             -F "client_payload[version]=$VERSION"
+
+  release-pr:
+    name: Release PR
+    runs-on: ubuntu-latest
+    needs: release-plz
+
+    steps:
+      # This checkout intentionally happens after publishing so release-plz sees
+      # tags created by the preceding job when it calculates the next version.
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PLZ_ORG_TOKEN }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master@2026-06-30
+        with:
+          toolchain: stable
+
+      - name: Run release-plz (release-pr)
+        uses: MarcoIeni/release-plz-action@aec534bbd8631793b9b3b8f1ee6cd886c322e17f # v0.5.133
+        with:
+          command: release-pr
+          verbose: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_ORG_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_ORG_TOKEN }}
+
+      # release-plz sometimes opens a new release branch + PR instead of
+      # updating the existing one, leaving the old branch behind. Delete stale
+      # release-plz branches to reduce noise, keeping the most recent.
+      - name: Clean up stale release-plz branches
+        run: |
+          git --no-pager branch --remote |\
+            grep 'origin/release-plz-' |\
+            sort -r |\
+            tail -n +2 |\
+            sed 's/origin\///' |\
+            xargs -r -I {} git push origin --delete {}

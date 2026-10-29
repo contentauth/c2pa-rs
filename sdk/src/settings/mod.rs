@@ -35,6 +35,11 @@ use crate::{
 
 const VERSION: u32 = 1;
 
+/// The newer `trust.anchors` field and the deprecated `trust.trust_anchors` /
+/// `trust.user_anchors` fields, as extracted from an overlay JSON value by
+/// [`Settings::take_trust_anchor_overlay_fields`].
+type LegacyTrustAnchorFields = (Option<Vec<TrustAnchor>>, Option<String>, Option<String>);
+
 /// Maximum recursion depth for JSON merging.
 const MERGE_MAX_DEPTH: usize = 64;
 
@@ -42,6 +47,9 @@ const MERGE_MAX_DEPTH: usize = 64;
 /// Shared by [`BuilderSettings`], [`Verify`], [`crate::Claim`], and [`crate::Store`] so that
 /// all enforcement points use the same value.
 pub(crate) const MAX_ASSERTIONS: usize = 100_000;
+
+/// Default maximum remote manifest response size in bytes (10 MiB).
+pub(crate) const DEFAULT_MAX_MANIFEST_RESPONSE_SIZE: u64 = 10 * 1024 * 1024;
 
 thread_local!(
     static SETTINGS: RefCell<Value> = RefCell::new(
@@ -145,7 +153,8 @@ pub struct TrustAnchor {
 
 impl Default for TrustAnchor {
     fn default() -> Self {
-        if cfg!(not(test)) {
+        #[cfg(not(test))]
+        {
             Self {
                 trust_anchors: "".into(),
                 trust_uri: None,
@@ -154,7 +163,9 @@ impl Default for TrustAnchor {
                 allowed_list: None,
                 trusted_ica_issuers: None,
             }
-        } else {
+        }
+        #[cfg(test)]
+        {
             // In unit tests, trust the ICA issuer DIDs used by the bundled CAWG
             // ICA fixtures so the existing ICA validation tests continue to
             // produce `cawg.ica.credential_valid`. In production the allow-list
@@ -222,18 +233,6 @@ pub struct Trust {
     /// List of allowed extended key usage (EKU) object identifiers (OID) that
     /// certificates must have.
     pub trust_config: Option<String>,
-
-    #[deprecated(
-        since = "0.91.0",
-        note = "Use `anchors` to add a user TrustAnchor. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub user_anchors: Option<String>,
-
-    #[deprecated(
-        since = "0.91.0",
-        note = "Use `anchors` to add a TrustAnchor. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub trust_anchors: Option<String>,
 }
 
 impl Trust {
@@ -326,8 +325,6 @@ impl Default for Trust {
             let mut trust = Self {
                 anchors: None,
                 trust_config: None,
-                user_anchors: None,
-                trust_anchors: None,
             };
 
             trust.trust_config = Some(
@@ -346,8 +343,6 @@ impl Default for Trust {
             Self {
                 anchors: None,
                 trust_config: None,
-                user_anchors: None,
-                trust_anchors: None,
             }
         }
     }
@@ -432,9 +427,13 @@ pub struct Core {
     ///
     /// The behavior is as follows:
     /// - `None` (default): no host allow-list is applied. Redirect handling is governed
-    ///   independently by [`allow_redirects`] (which rejects redirects to internal addresses).
+    ///   independently by [`allow_redirects`] (which rejects redirects to internal addresses), and
+    ///   the initial request is still rejected if it directly names a link-local/cloud-metadata
+    ///   address (SSRF – <https://github.com/contentauth/c2pa-rs/issues/2430>); see [`allow_redirects`] for the full initial-request policy.
     /// - `Some(vec)` where `vec` is empty, all traffic is blocked.
-    /// - `Some(vec)` with at least one pattern, filtering enabled for only those patterns.
+    /// - `Some(vec)` with at least one pattern, filtering enabled for only those patterns. Setting
+    ///   this takes over the initial-request policy entirely, superseding the default
+    ///   link-local/cloud-metadata guard described above.
     ///
     /// When an allow-list is set it is enforced on every request, including each redirect hop the
     /// SDK follows, so a redirect to a host outside the allow-list is rejected.
@@ -478,14 +477,19 @@ pub struct Core {
     /// - `false`: redirects are not followed at all; a redirect response is surfaced as
     ///   [`HttpResolverError::RedirectDisallowed`].
     ///
-    /// This applies to redirect *targets*, not the initial request: a URL that *directly* names an
-    /// internal host (for example an enterprise OCSP responder on a private address, or a
-    /// `localhost` development server) is still fetched. Use [`allowed_network_hosts`] to restrict
-    /// which hosts may be contacted at all.
+    /// This applies to redirect *targets*, not the initial request. Independently of this setting,
+    /// the initial request is rejected by default when it directly names a link-local or
+    /// cloud-metadata address (e.g. `169.254.169.254`), reported as
+    /// [`HttpResolverError::MetadataOrLinkLocalUriDisallowed`] (SSRF – <https://github.com/contentauth/c2pa-rs/issues/2430>). A URL that
+    /// directly names a loopback or private (RFC 1918) host (for example an enterprise OCSP
+    /// responder on a private address, or a `localhost` development server) is not covered by that
+    /// guard and is still fetched. Use [`allowed_network_hosts`] to restrict which hosts — including
+    /// loopback/private ones — may be contacted at all.
     ///
     /// [`allowed_network_hosts`]: Core::allowed_network_hosts
     /// [`HttpResolverError::RedirectTargetDisallowed`]: crate::http::HttpResolverError::RedirectTargetDisallowed
     /// [`HttpResolverError::RedirectDisallowed`]: crate::http::HttpResolverError::RedirectDisallowed
+    /// [`HttpResolverError::MetadataOrLinkLocalUriDisallowed`]: crate::http::HttpResolverError::MetadataOrLinkLocalUriDisallowed
     pub allow_redirects: bool,
     /// Whether to prefer compressing manifests. This can reduce the size of the manifest. Compressed manifest
     /// are not always possible and will default back to uncompressed if the manifest contains features
@@ -608,6 +612,16 @@ pub struct Verify {
     /// [`Ingredient`]: crate::Ingredient
     /// [`Builder`]: crate::Builder
     pub remote_manifest_fetch: bool,
+    /// Maximum remote manifest response size in bytes. Responses with a larger
+    /// `Content-Length` or body return [`Error::RemoteManifestFetch`].
+    ///
+    /// The default is 10 MiB (10,485,760 bytes). The value must be positive and
+    /// must not exceed the platform's maximum vector capacity (`isize::MAX`).
+    /// Applies only when the `fetch_remote_manifests` feature is enabled.
+    ///
+    /// This limit is enforced after the HTTP resolver returns. It does not bound
+    /// buffering inside a resolver, including the built-in reqwest adapters.
+    pub max_manifest_response_size: u64,
     /// Whether to skip ingredient conflict resolution when multiple ingredients have the same
     /// manifest identifier. This settings is only applicable for C2PA v2 validation.
     ///
@@ -632,13 +646,26 @@ impl Default for Verify {
             verify_timestamp_trust: !cfg!(test), // verify timestamp trust unless in test mode
             ocsp_fetch: false,
             remote_manifest_fetch: true,
+            max_manifest_response_size: DEFAULT_MAX_MANIFEST_RESPONSE_SIZE,
             skip_ingredient_conflict_resolution: false,
             strict_v1_validation: false,
         }
     }
 }
 
-impl SettingsValidate for Verify {}
+impl SettingsValidate for Verify {
+    fn validate(&self) -> Result<()> {
+        if self.max_manifest_response_size == 0
+            || self.max_manifest_response_size > isize::MAX as u64
+        {
+            return Err(Error::BadParam(format!(
+                "max_manifest_response_size must be between 1 and {} bytes",
+                isize::MAX
+            )));
+        }
+        Ok(())
+    }
+}
 
 #[cfg_attr(
     feature = "json_schema",
@@ -681,10 +708,10 @@ pub struct Settings {
     ///
     /// [`Builder`]: crate::Builder
     pub builder: BuilderSettings,
-    /// Settings for configuring the base C2PA signer, accessible via [`Settings::signer`].
+    /// Settings for configuring the base C2PA signer, accessible via [`crate::Context::signer`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signer: Option<SignerSettings>,
-    /// Settings for configuring the CAWG x509 signer, accessible via [`Settings::signer`].
+    /// Settings for configuring the CAWG x509 signer, used by [`crate::Context::signer`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cawg_x509_signer: Option<SignerSettings>,
     /// List of soft binding algorithms to validate against. If not specified, soft binding errors may be generated.
@@ -692,65 +719,6 @@ pub struct Settings {
 }
 
 impl Settings {
-    #[cfg(feature = "file_io")]
-    /// Load thread-local [Settings] from a file.
-    ///
-    /// Use [`Settings::new().with_file()`](Settings::with_file) instead,
-    /// which does not modify thread-local state.
-    #[doc(hidden)]
-    #[deprecated(
-        since = "0.79.4",
-        note = "Use `Settings::new().with_file(path)` instead, which does not modify thread-local state. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    #[allow(deprecated)]
-    pub fn from_file<P: AsRef<Path>>(settings_path: P) -> Result<Self> {
-        let ext = settings_path
-            .as_ref()
-            .extension()
-            .ok_or(Error::UnsupportedType)?
-            .to_string_lossy();
-
-        let setting_buf = std::fs::read(&settings_path).map_err(Error::IoError)?;
-        Settings::from_string(&String::from_utf8_lossy(&setting_buf), &ext)
-    }
-
-    /// Load thread-local [Settings] from string representation of the configuration.
-    /// Format of configuration must be supplied (json or toml).
-    ///
-    /// Use [`Settings::new().with_json()`](Settings::with_json) or
-    /// [`Settings::new().with_toml()`](Settings::with_toml) instead,
-    /// which do not modify thread-local state.
-    #[doc(hidden)]
-    #[deprecated(
-        since = "0.79.4",
-        note = "Use `Settings::new().with_json(str)` or `Settings::new().with_toml(str)` instead, which do not modify thread-local state. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub fn from_string(settings_str: &str, format: &str) -> Result<Self> {
-        let overlay = parse_to_value(settings_str, format)?;
-        let mut merged = SETTINGS.with_borrow(Value::clone);
-        merge_json(&mut merged, overlay);
-
-        let settings: Settings =
-            serde_json::from_value(merged.clone()).map_err(|e| Error::BadParam(e.to_string()))?;
-        settings.validate()?;
-
-        SETTINGS.set(merged);
-        Ok(settings)
-    }
-
-    /// Set the thread-local [Settings] from a toml string.
-    ///
-    /// Use [`Settings::new().with_toml()`](Settings::with_toml) instead,
-    /// which does not modify thread-local state.
-    #[deprecated(
-        since = "0.79.4",
-        note = "Use `Settings::new().with_toml(toml)` instead, which does not modify thread-local state. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    #[allow(deprecated)]
-    pub fn from_toml(toml: &str) -> Result<()> {
-        Settings::from_string(toml, "toml").map(|_| ())
-    }
-
     /// Update this `Settings` instance from a string representation.
     /// This overlays the provided configuration on top of the current settings
     /// without affecting the thread-local settings.
@@ -889,8 +857,7 @@ impl Settings {
     /// Load settings from TOML string using the builder pattern.
     ///
     /// This does NOT update thread-local settings. It overlays the TOML configuration
-    /// on top of the current Settings instance. For the legacy behavior that
-    /// updates thread-locals, use `Settings::from_toml()`.
+    /// on top of the current Settings instance.
     ///
     /// # Arguments
     ///
@@ -950,13 +917,37 @@ impl Settings {
     ///
     /// This overlays the parsed configuration on top of the current Settings
     /// instance without touching thread-local state.
-    #[allow(deprecated)]
     fn with_string(&self, settings_str: &str, format: &str) -> Result<Self> {
         let mut overlay = parse_to_value(settings_str, format)?;
         let mut merged =
             serde_json::to_value(self).map_err(|err| Error::OtherError(Box::new(err)))?;
 
-        // remove any trust settings that will be manually merged since merge_json does not handle arrays
+        // Remove any trust anchor settings that will be manually merged since
+        // `merge_json` does not handle arrays.
+        let (new_anchors, legacy_trust_anchors, legacy_user_anchors) =
+            Self::take_trust_anchor_overlay_fields(&mut overlay)?;
+
+        merge_json(&mut merged, overlay);
+
+        let mut settings: Settings =
+            serde_json::from_value(merged).map_err(|err| Error::BadParam(err.to_string()))?;
+        settings.validate()?;
+
+        Self::merge_legacy_trust_anchors(
+            &mut settings,
+            new_anchors,
+            legacy_trust_anchors,
+            legacy_user_anchors,
+        )?;
+
+        Ok(settings)
+    }
+
+    /// Takes the newer `trust.anchors` field and the deprecated
+    /// `trust.trust_anchors` / `trust.user_anchors` fields out of an overlay
+    /// JSON value, removing them from the overlay so that `merge_json` (which
+    /// does not handle arrays) does not clobber the existing values.
+    fn take_trust_anchor_overlay_fields(overlay: &mut Value) -> Result<LegacyTrustAnchorFields> {
         let mut new_anchors = None;
         let mut legacy_trust_anchors = None;
         let mut legacy_user_anchors = None;
@@ -965,29 +956,23 @@ impl Settings {
             if let Some(trust) = overlay_map.get_mut("trust").and_then(|t| t.as_object_mut()) {
                 if let Some(new_anchors_value) = trust.get_mut("anchors") {
                     let v = new_anchors_value.take();
-                    let na: Option<Vec<TrustAnchor>> = serde_json::from_value(v)
+                    new_anchors = serde_json::from_value(v)
                         .map_err(|err| Error::OtherError(Box::new(err)))?;
-
-                    new_anchors = na;
                 }
 
                 if let Some(trust_anchors_value) = trust.get_mut("trust_anchors") {
                     let v = trust_anchors_value.take();
-                    let ta: Option<String> = serde_json::from_value(v)
+                    legacy_trust_anchors = serde_json::from_value(v)
                         .map_err(|err| Error::OtherError(Box::new(err)))?;
-
-                    legacy_trust_anchors = ta;
                 }
 
                 if let Some(user_anchors_value) = trust.get_mut("user_anchors") {
                     let v = user_anchors_value.take();
-                    let ua: Option<String> = serde_json::from_value(v)
+                    legacy_user_anchors = serde_json::from_value(v)
                         .map_err(|err| Error::OtherError(Box::new(err)))?;
-
-                    legacy_user_anchors = ua;
                 }
 
-                // remove so that these do not override existing values improperly
+                // Remove so that these do not override existing values improperly.
                 if new_anchors.is_some() {
                     trust.remove("anchors");
                 }
@@ -1000,112 +985,75 @@ impl Settings {
             }
         }
 
-        merge_json(&mut merged, overlay);
+        Ok((new_anchors, legacy_trust_anchors, legacy_user_anchors))
+    }
 
-        let mut settings: Settings =
-            serde_json::from_value(merged).map_err(|err| Error::BadParam(err.to_string()))?;
-        settings.validate()?;
-
-        // merge to legacy anchors and new anchors into current anchors set (deduping)
-        if new_anchors.is_some() || legacy_trust_anchors.is_some() || legacy_user_anchors.is_some()
+    /// Merges the newer `trust.anchors` field and the deprecated
+    /// `trust.trust_anchors` / `trust.user_anchors` fields (as extracted by
+    /// [`Self::take_trust_anchor_overlay_fields`]) into `settings.trust.anchors`,
+    /// deduping and clearing the deprecated fields for backwards compatibility.
+    #[allow(deprecated)]
+    fn merge_legacy_trust_anchors(
+        settings: &mut Settings,
+        new_anchors: Option<Vec<TrustAnchor>>,
+        legacy_trust_anchors: Option<String>,
+        legacy_user_anchors: Option<String>,
+    ) -> Result<()> {
+        if new_anchors.is_none() && legacy_trust_anchors.is_none() && legacy_user_anchors.is_none()
         {
-            let mut unique = HashSet::new();
-
-            // load existing anchors
-            if let Some(existing_anchors) = settings.trust.anchors.take() {
-                unique.extend(existing_anchors);
-            }
-
-            // load new_anchors
-            if let Some(new_anchors) = new_anchors {
-                unique.extend(new_anchors);
-            }
-
-            // load legacy trust_anchors
-            if let Some(ta) = legacy_trust_anchors {
-                test_load_trust(ta.as_bytes())?;
-
-                // add in those anchors to the anchors list for backwards compatibility
-                let a = TrustAnchor {
-                    trust_anchors: ta.clone(),
-                    trust_uri: Some("system_anchors".to_string()),
-                    trust_kind: TrustListKind::Manifest,
-                    trust_config: None,
-                    allowed_list: None,
-                    trusted_ica_issuers: None,
-                };
-                a.validate()?;
-
-                unique.insert(a);
-
-                settings.trust.trust_anchors = None;
-            }
-
-            if let Some(ua) = legacy_user_anchors {
-                test_load_trust(ua.as_bytes())?;
-
-                // add in those anchors to the anchors list for backwards compatibility
-                let a = TrustAnchor {
-                    trust_anchors: ua.clone(),
-                    trust_uri: Some("user_anchors".to_string()),
-                    trust_kind: TrustListKind::Manifest,
-                    trust_config: None,
-                    allowed_list: None,
-                    trusted_ica_issuers: None,
-                };
-                a.validate()?;
-
-                unique.insert(a);
-
-                settings.trust.user_anchors = None;
-            }
-
-            settings.trust.anchors = Some(unique.into_iter().collect());
+            return Ok(());
         }
 
-        Ok(settings)
-    }
+        let mut unique = HashSet::new();
 
-    /// Serializes the thread-local [Settings] into a toml string.
-    ///
-    /// Use `toml::to_string(&settings)` on a [`Settings`] instance instead.
-    #[doc(hidden)]
-    #[deprecated(
-        since = "0.79.4",
-        note = "Use `toml::to_string(&settings)` on a `Settings` instance instead of reading from thread-local state. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub fn to_toml() -> Result<String> {
-        let settings = get_thread_local_settings();
-        Ok(toml::to_string(&settings)?)
-    }
+        // Load existing anchors.
+        if let Some(existing_anchors) = settings.trust.anchors.take() {
+            unique.extend(existing_anchors);
+        }
 
-    /// Serializes the thread-local [Settings] into a pretty (formatted) toml string.
-    ///
-    /// Use `toml::to_string_pretty(&settings)` on a [`Settings`] instance instead.
-    #[doc(hidden)]
-    #[deprecated(
-        since = "0.79.4",
-        note = "Use `toml::to_string_pretty(&settings)` on a `Settings` instance instead of reading from thread-local state. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub fn to_pretty_toml() -> Result<String> {
-        let settings = get_thread_local_settings();
-        Ok(toml::to_string_pretty(&settings)?)
-    }
+        // Load new_anchors.
+        if let Some(new_anchors) = new_anchors {
+            unique.extend(new_anchors);
+        }
 
-    /// Returns the constructed signer from the thread-local `signer` settings field.
-    ///
-    /// If the signer settings aren't specified, this function will return [Error::MissingSignerSettings].
-    ///
-    /// Configure the signer via a [`Context`](crate::Context) passed explicitly to
-    /// [`Builder::from_context`](crate::Builder::from_context) instead.
-    #[inline]
-    #[deprecated(
-        since = "0.79.4",
-        note = "Configure the signer via `Context` and pass it to `Builder::from_context` instead of using thread-local signer settings. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    #[allow(deprecated)]
-    pub fn signer() -> Result<crate::BoxedSigner> {
-        SignerSettings::signer()
+        // Load legacy trust_anchors.
+        if let Some(ta) = legacy_trust_anchors {
+            test_load_trust(ta.as_bytes())?;
+
+            // Add in those anchors to the anchors list for backwards compatibility.
+            let a = TrustAnchor {
+                trust_anchors: ta.clone(),
+                trust_uri: Some("system_anchors".to_string()),
+                trust_kind: TrustListKind::Manifest,
+                trust_config: None,
+                allowed_list: None,
+                trusted_ica_issuers: None,
+            };
+            a.validate()?;
+
+            unique.insert(a);
+        }
+
+        if let Some(ua) = legacy_user_anchors {
+            test_load_trust(ua.as_bytes())?;
+
+            // Add in those anchors to the anchors list for backwards compatibility.
+            let a = TrustAnchor {
+                trust_anchors: ua.clone(),
+                trust_uri: Some("user_anchors".to_string()),
+                trust_kind: TrustListKind::Manifest,
+                trust_config: None,
+                allowed_list: None,
+                trusted_ica_issuers: None,
+            };
+            a.validate()?;
+
+            unique.insert(a);
+        }
+
+        settings.trust.anchors = Some(unique.into_iter().collect());
+
+        Ok(())
     }
 
     /// Sets a value at the specified path in this Settings instance using the builder pattern.
@@ -1263,6 +1211,7 @@ impl SettingsValidate for Settings {
         }
         self.trust.validate()?;
         self.core.validate()?;
+        self.verify.validate()?;
         self.builder.validate()
     }
 }
@@ -1332,31 +1281,31 @@ fn get_at_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
     Some(current)
 }
 
-/// Get a snapshot of the thread-local Settings, always returns a valid Settings object.
-/// If the thread-local settings cannot be deserialized, returns default Settings.
-#[allow(unused)]
-pub(crate) fn get_thread_local_settings() -> Settings {
-    SETTINGS.with_borrow(|value| serde_json::from_value(value.clone()).unwrap_or_default())
-}
+// /// Get a snapshot of the thread-local Settings, always returns a valid Settings object.
+// /// If the thread-local settings cannot be deserialized, returns default Settings.
+// #[allow(unused)]
+// pub(crate) fn get_thread_local_settings() -> Settings {
+//     SETTINGS.with_borrow(|value| serde_json::from_value(value.clone()).unwrap_or_default())
+// }
 
-/// See [Settings::set_thread_local_value] for more information.
-#[cfg(test)]
-pub(crate) fn set_settings_value<T: Into<Value>>(value_path: &str, value: T) -> Result<()> {
-    Settings::set_thread_local_value(value_path, value)
-}
+// /// See [Settings::set_thread_local_value] for more information.
+// #[cfg(test)]
+// pub(crate) fn set_settings_value<T: Into<Value>>(value_path: &str, value: T) -> Result<()> {
+//     Settings::set_thread_local_value(value_path, value)
+// }
 
-/// See [Settings::get_thread_local_value] for more information.
-#[cfg(test)]
-fn get_settings_value<T: serde::de::DeserializeOwned>(value_path: &str) -> Result<T> {
-    Settings::get_thread_local_value(value_path)
-}
+// /// See [Settings::get_thread_local_value] for more information.
+// #[cfg(test)]
+// fn get_settings_value<T: serde::de::DeserializeOwned>(value_path: &str) -> Result<T> {
+//     Settings::get_thread_local_value(value_path)
+// }
 
-/// Reset all settings back to default values.
-#[cfg(test)]
-// #[deprecated = "use `Settings::reset` instead"]
-pub fn reset_default_settings() -> Result<()> {
-    Settings::reset()
-}
+// /// Reset all settings back to default values.
+// #[cfg(test)]
+// // #[deprecated = "use `Settings::reset` instead"]
+// pub fn reset_default_settings() -> Result<()> {
+//     Settings::reset()
+// }
 
 // Used for backwards compatibility with the `config` crate.
 pub(crate) fn deserialize_case_insensitive<'de, D, T>(deserializer: D) -> Result<T, D::Error>
@@ -1398,41 +1347,6 @@ pub mod tests {
     #[cfg(feature = "file_io")]
     use crate::utils::io_utils::tempdirectory;
     use crate::{utils::test::test_settings, SigningAlg};
-
-    /// Legacy test: verifies the thread-local settings API reads defaults and round-trips values.
-    #[test]
-    fn test_thread_local_settings() {
-        // Verify defaults are accessible via thread-local
-        let settings = get_thread_local_settings();
-        assert_eq!(settings.core, Core::default());
-        assert_eq!(settings.trust, Trust::default());
-        assert_eq!(settings.verify, Verify::default());
-        assert_eq!(settings.builder, BuilderSettings::default());
-
-        // Verify individual values can be read by path
-        assert_eq!(
-            get_settings_value::<bool>("builder.thumbnail.enabled").unwrap(),
-            BuilderSettings::default().thumbnail.enabled
-        );
-        assert_eq!(
-            get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap(),
-            Verify::default().remote_manifest_fetch
-        );
-
-        // Verify set/get round-trip via thread-local API
-        Settings::set_thread_local_value("core.merkle_tree_chunk_size_in_kb", 10).unwrap();
-        Settings::set_thread_local_value("verify.remote_manifest_fetch", false).unwrap();
-        Settings::set_thread_local_value("builder.thumbnail.enabled", false).unwrap();
-
-        assert_eq!(
-            get_settings_value::<usize>("core.merkle_tree_chunk_size_in_kb").unwrap(),
-            10
-        );
-        assert!(!get_settings_value::<bool>("verify.remote_manifest_fetch").unwrap());
-        assert!(!get_settings_value::<bool>("builder.thumbnail.enabled").unwrap());
-
-        reset_default_settings().unwrap();
-    }
 
     #[cfg(feature = "file_io")]
     #[test]
@@ -1477,33 +1391,77 @@ pub mod tests {
         assert!(result.is_err());
     }
 
-    /// Legacy test: verifies arbitrary (hidden) keys can be stored and retrieved via the
-    /// thread-local Figment config. This is not possible with the instance-based API since
-    /// unknown keys are not part of the `Settings` struct.
     #[test]
-    #[allow(deprecated)]
-    fn test_thread_local_hidden_setting() {
-        let secret = toml::toml! {
-            [hidden]
-            test1 = true
-            test2 = "hello world"
-            test3 = 123456
+    fn test_max_manifest_response_size_configuration() {
+        assert_eq!(
+            Settings::default().verify.max_manifest_response_size,
+            DEFAULT_MAX_MANIFEST_RESPONSE_SIZE
+        );
+        for settings in [
+            Settings::new()
+                .with_json(r#"{"verify":{"remote_manifest_fetch":true}}"#)
+                .unwrap(),
+            Settings::new()
+                .with_toml("[verify]\nremote_manifest_fetch = true")
+                .unwrap(),
+        ] {
+            assert_eq!(
+                settings.verify.max_manifest_response_size,
+                DEFAULT_MAX_MANIFEST_RESPONSE_SIZE
+            );
         }
-        .to_string();
 
-        Settings::from_toml(&secret).unwrap();
+        for context in [
+            crate::Context::new()
+                .with_settings(r#"{"verify":{"max_manifest_response_size":20971520}}"#)
+                .unwrap(),
+            crate::Context::new()
+                .with_settings("[verify]\nmax_manifest_response_size = 20971520")
+                .unwrap(),
+            crate::Context::new()
+                .with_settings_value("verify.max_manifest_response_size", 20971520u64)
+                .unwrap(),
+        ] {
+            assert_eq!(
+                context.settings().verify.max_manifest_response_size,
+                20971520
+            );
+            let json = serde_json::to_string(context.settings()).unwrap();
+            assert_eq!(
+                Settings::new()
+                    .with_json(&json)
+                    .unwrap()
+                    .verify
+                    .max_manifest_response_size,
+                20971520
+            );
+        }
+    }
 
-        assert!(get_settings_value::<bool>("hidden.test1").unwrap());
-        assert_eq!(
-            get_settings_value::<String>("hidden.test2").unwrap(),
-            "hello world".to_string()
-        );
-        assert_eq!(
-            get_settings_value::<u32>("hidden.test3").unwrap(),
-            123456u32
-        );
-
-        reset_default_settings().unwrap();
+    #[test]
+    fn test_max_manifest_response_size_validation() {
+        for value in [0, isize::MAX as u64 + 1, u64::MAX] {
+            let result = Settings::new().with_value("verify.max_manifest_response_size", value);
+            assert!(
+                matches!(result, Err(Error::BadParam(ref msg)) if msg.contains("max_manifest_response_size")),
+                "expected invalid response limit error, got {result:?}"
+            );
+        }
+        for value in [1, isize::MAX as u64] {
+            assert_eq!(
+                Settings::new()
+                    .with_value("verify.max_manifest_response_size", value)
+                    .unwrap()
+                    .verify
+                    .max_manifest_response_size,
+                value
+            );
+        }
+        for value in [serde_json::json!(-1), serde_json::json!("unlimited")] {
+            assert!(Settings::new()
+                .with_value("verify.max_manifest_response_size", value)
+                .is_err());
+        }
     }
 
     #[test]
@@ -1790,18 +1748,6 @@ pub mod tests {
             .unwrap();
         assert!(!settings.verify.verify_trust);
         assert!(!settings.verify.verify_after_sign);
-
-        // Test that it doesn't update thread-locals
-        let original = get_thread_local_settings();
-        let _settings = Settings::new()
-            .with_json(r#"{"verify": {"verify_trust": false}}"#)
-            .unwrap();
-        let after = get_thread_local_settings();
-        // thread-local settings should be unchanged
-        assert_eq!(
-            original.verify.verify_trust, after.verify.verify_trust,
-            "Builder pattern should not modify thread_local settings"
-        );
     }
 
     #[test]
@@ -1940,6 +1886,48 @@ pub mod tests {
         assert!(
             settings.trust.anchors.is_some(),
             "Expected trust anchors to be loaded from legacy fields"
+        );
+
+        let anchors = settings.trust.anchors.as_ref().unwrap();
+        assert_eq!(
+            anchors.len(),
+            3,
+            "Expected two trust anchors loaded from legacy fields"
+        );
+
+        let has_user_trust_anchor = anchors
+            .iter()
+            .any(|anchor| anchor.trust_uri.as_deref() == Some("user_anchors"));
+
+        let has_system_trust_anchor = anchors
+            .iter()
+            .any(|anchor| anchor.trust_uri.as_deref() == Some("system_anchors"));
+
+        assert!(
+            has_user_trust_anchor,
+            "Expected user trust anchor to be present"
+        );
+        assert!(
+            has_system_trust_anchor,
+            "Expected system trust anchor to be present"
+        );
+    }
+
+    // Regression test for legacy trust-anchor field migration in the instance API.
+    #[test]
+    fn test_with_json_loads_legacy_trust_anchors() {
+        let legacy_trust_anchors = r#"{
+                "trust": {
+                    "trust_anchors": "-----BEGIN CERTIFICATE-----\\nMIICEzCCAcWgAwIBAgIUW4fUnS38162x10PCnB8qFsrQuZgwBQYDK2VwMHcxCzAJ\\nBgNVBAYTAlVTMQswCQYDVQQIDAJDQTESMBAGA1UEBwwJU29tZXdoZXJlMRowGAYD\\nVQQKDBFDMlBBIFRlc3QgUm9vdCBDQTEZMBcGA1UECwwQRk9SIFRFU1RJTkdfT05M\\nWTEQMA4GA1UEAwwHUm9vdCBDQTAeFw0yMjA2MTAxODQ2NDFaFw0zMjA2MDcxODQ2\\nNDFaMHcxCzAJBgNVBAYTAlVTMQswCQYDVQQIDAJDQTESMBAGA1UEBwwJU29tZXdo\\nZXJlMRowGAYDVQQKDBFDMlBBIFRlc3QgUm9vdCBDQTEZMBcGA1UECwwQRk9SIFRF\\nU1RJTkdfT05MWTEQMA4GA1UEAwwHUm9vdCBDQTAqMAUGAytlcAMhAGPUgK9q1H3D\\neKMGqLGjTXJSpsrLpe0kpxkaFMe7KUAuo2MwYTAdBgNVHQ4EFgQUXuZWArP1jiRM\\nfgye6ZqRyGupTowwHwYDVR0jBBgwFoAUXuZWArP1jiRMfgye6ZqRyGupTowwDwYD\\nVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMCAYYwBQYDK2VwA0EA8E79g54u2fUy\\ndfVLPyqKmtjenOUMvVQD7waNbetLY7kvUJZCd5eaDghk30/Q1RaNjiP/2RfA/it8\\nzGxQnM2hCA==\\n-----END CERTIFICATE-----",
+                    "user_anchors": "-----BEGIN CERTIFICATE-----\\n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\\nxPd7wFhjRZHfuWb2cs63xjAGjQ==\\n-----END CERTIFICATE-----"
+                }
+        }"#;
+
+        let settings = Settings::new().with_json(legacy_trust_anchors).unwrap();
+
+        assert!(
+            settings.trust.anchors.is_some(),
+            "Expected trust anchors to be loaded from legacy fields via from_string()"
         );
 
         let anchors = settings.trust.anchors.as_ref().unwrap();

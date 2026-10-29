@@ -19,7 +19,7 @@ use std::sync::{
 use crate::{
     asset_io::{AssetIO, HandlerRegistry},
     http::{
-        restricted::{RedirectResolver, RestrictedResolver},
+        restricted::{MetadataGuardResolver, RedirectResolver, RestrictedResolver},
         AsyncGenericResolver, AsyncHttpResolver, SyncGenericResolver, SyncHttpResolver,
     },
     maybe_send_sync::{MaybeSend, MaybeSync},
@@ -374,6 +374,48 @@ impl Context {
         Ok(self)
     }
 
+    /// Configure this Context with a single settings key-value pair.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The settings key to set.
+    /// * `value` - The value to set for the given key.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::{Context, Result};
+    /// # fn main() -> Result<()> {
+    /// let context =
+    ///     Context::new().with_settings_value("core.max_decompressed_manifest_size_in_mb", 1usize)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_settings_value(
+        mut self,
+        key: &str,
+        value: impl Into<serde_json::Value>,
+    ) -> Result<Self> {
+        self.settings.set_value(key, value)?;
+        Ok(self)
+    }
+
+    /// Configure this Context with the provided settings, replacing any existing settings.
+    ///
+    /// # Arguments
+    ///
+    /// * `settings` - Any type that implements `IntoSettings`
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use c2pa::{Context, Result};
+    /// # fn main() -> Result<()> {
+    /// let mut context = Context::new();
+    /// context.set_settings(r#"{"verify": {"verify_after_sign": true}}"#)?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn set_settings<S: IntoSettings>(&mut self, settings: S) -> Result<()> {
         self.settings = settings.into_settings()?;
         Ok(())
@@ -473,8 +515,12 @@ impl Context {
     /// The base HTTP client never auto-follows redirects; a [`RedirectResolver`] follows them at the
     /// SDK layer so it can reject hops to internal addresses (SSRF hardening, CAI-12574). An explicit
     /// allow-list, when configured, is applied *inside* the redirect follower via
-    /// [`RestrictedResolver`], so it is re-checked on every hop. Concrete wrapper types are used (no
-    /// intermediate `Arc<dyn ..>`) so the stack stays `Send`/`Sync` where required, including WASM.
+    /// [`RestrictedResolver`], so it is re-checked on every hop. When no allow-list is configured, a
+    /// [`MetadataGuardResolver`] is applied instead, rejecting the *initial* request when it directly
+    /// names a link-local/cloud-metadata address (SSRF hardening, CAI-13326); an explicit allow-list
+    /// is a stronger, intentional policy and takes precedence over this default guard. Concrete
+    /// wrapper types are used (no intermediate `Arc<dyn ..>`) so the stack stays `Send`/`Sync` where
+    /// required, including WASM.
     ///
     /// [`allow_redirects`]: crate::settings::Core::allow_redirects
     /// [`allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
@@ -487,7 +533,8 @@ impl Context {
             restricted.set_allowed_hosts(Some(allowed_hosts));
             Arc::new(RedirectResolver::new(restricted, core.allow_redirects))
         } else {
-            Arc::new(RedirectResolver::new(client, core.allow_redirects))
+            let guarded = MetadataGuardResolver::new(client);
+            Arc::new(RedirectResolver::new(guarded, core.allow_redirects))
         }
     }
 
@@ -519,7 +566,8 @@ impl Context {
             restricted.set_allowed_hosts(Some(allowed_hosts));
             Arc::new(RedirectResolver::new(restricted, core.allow_redirects))
         } else {
-            Arc::new(RedirectResolver::new(client, core.allow_redirects))
+            let guarded = MetadataGuardResolver::new(client);
+            Arc::new(RedirectResolver::new(guarded, core.allow_redirects))
         }
     }
 
@@ -870,10 +918,13 @@ impl Context {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
+    use http::Request;
+
     use super::*;
     #[cfg(not(target_arch = "wasm32"))]
     use crate::utils::test_signer::async_test_signer;
     use crate::{
+        http::{HttpResolverError, SyncHttpResolver},
         utils::{test::test_context, test_signer::test_signer},
         SigningAlg,
     };
@@ -1143,12 +1194,12 @@ mod tests {
         let _resolver = context.resolver_async();
     }
 
-    // The default policy (`allow_redirects = true`) must NOT block direct requests to internal
-    // hosts – that would break enterprise OCSP/timestamp endpoints and local development. Only
-    // *redirects* to internal hosts are blocked. This is a deliberate, documented trade-off (an
-    // accepted risk – see the "Accepted risk" section in the `crate::http` module docs), not an
-    // oversight. Here a loopback mock server (an internal host) is reached successfully under the
-    // default policy.
+    // The default policy must NOT block direct requests to loopback/private hosts – that would
+    // break enterprise OCSP/timestamp endpoints and local development. Only *redirects* to internal
+    // hosts, and *direct* requests to link-local/cloud-metadata hosts (CAI-13326), are blocked. This
+    // is a deliberate, documented trade-off (an accepted risk – see the "Accepted risk" section in
+    // the `crate::http` module docs), not an oversight. Here a loopback mock server is reached
+    // successfully under the default policy.
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn test_default_allows_direct_internal_host() {
@@ -1206,6 +1257,26 @@ mod tests {
             "a redirect to an internal address must be rejected"
         );
         redirect.assert_calls(1);
+    }
+
+    // Under the default policy, a request whose URI *directly* names a link-local/cloud-metadata
+    // address is rejected as `MetadataOrLinkLocalUriDisallowed` (SSRF – CAI-13326), even though no
+    // redirect is involved. No network call is made — the guard rejects before dialing out.
+    #[test]
+    fn test_default_blocks_direct_metadata_host() {
+        let resolver = Context::new().resolver();
+        let request = Request::get("http://169.254.169.254/latest/meta-data/")
+            .body(vec![])
+            .unwrap();
+        let result = resolver.http_resolve(request);
+
+        assert!(
+            matches!(
+                result,
+                Err(HttpResolverError::MetadataOrLinkLocalUriDisallowed { .. })
+            ),
+            "a direct request to a link-local/cloud-metadata address must be rejected"
+        );
     }
 
     // `allow_redirects = false` refuses to follow any redirect, reporting `RedirectDisallowed`.

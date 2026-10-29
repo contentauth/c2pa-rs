@@ -17,9 +17,16 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    assertions::labels::is_hard_binding_label, dynamic_assertion::PartialClaim,
-    identity::ValidationError, log_current_item, status_tracker::StatusTracker, HashedUri,
-    Manifest,
+    assertions::labels::is_hard_binding_label,
+    dynamic_assertion::PartialClaim,
+    identity::ValidationError,
+    log_current_item,
+    status_tracker::StatusTracker,
+    validation_status::{
+        CAWG_IDENTITY_ASSERTION_DUPLICATE, CAWG_IDENTITY_ASSERTION_MISMATCH,
+        CAWG_IDENTITY_HARD_BINDING_MISSING,
+    },
+    HashedUri, Manifest,
 };
 
 /// A set of _referenced assertions_ and other related data, known overall as
@@ -68,16 +75,22 @@ impl SignerPayload {
                 url == ref_assertion.url()
             }) {
                 if claim_assertion.hash() != ref_assertion.hash() {
-                    return Err(ValidationError::AssertionMismatch(
-                        ref_assertion.url().to_owned(),
-                    ));
+                    log_current_item!(
+                        "referenced assertion hash mismatch",
+                        "SignerPayload::check_against_partial_claim"
+                    )
+                    .validation_status("cawg.identity.assertion.mismatch")
+                    .failure(
+                        status_tracker,
+                        ValidationError::<E>::AssertionMismatch(ref_assertion.url().to_owned()),
+                    )?;
                 }
             } else {
                 log_current_item!(
                     "referenced assertion not in claim",
                     "SignerPayload::check_against_manifest"
                 )
-                .validation_status("cawg.identity.assertion.mismatch")
+                .validation_status(CAWG_IDENTITY_ASSERTION_MISMATCH)
                 .failure(
                     status_tracker,
                     ValidationError::<E>::AssertionNotInClaim(ref_assertion.url().to_owned()),
@@ -103,7 +116,7 @@ impl SignerPayload {
                 "no hard binding assertion",
                 "SignerPayload::check_against_manifest"
             )
-            .validation_status("cawg.identity.hard_binding_missing")
+            .validation_status(CAWG_IDENTITY_HARD_BINDING_MISSING)
             .failure(status_tracker, ValidationError::<E>::NoHardBindingAssertion)?;
         }
 
@@ -117,7 +130,7 @@ impl SignerPayload {
                     "multiple references to same assertion",
                     "SignerPayload::check_against_manifest"
                 )
-                .validation_status("cawg.identity.assertion.duplicate")
+                .validation_status(CAWG_IDENTITY_ASSERTION_DUPLICATE)
                 .failure(
                     status_tracker,
                     ValidationError::<E>::DuplicateAssertionReference(label.clone()),
@@ -148,9 +161,15 @@ impl SignerPayload {
                 url == ref_assertion.url()
             }) {
                 if claim_assertion.hash() != ref_assertion.hash() {
-                    return Err(ValidationError::AssertionMismatch(
-                        ref_assertion.url().to_owned(),
-                    ));
+                    log_current_item!(
+                        "referenced assertion hash mismatch",
+                        "SignerPayload::check_against_manifest"
+                    )
+                    .validation_status("cawg.identity.assertion.mismatch")
+                    .failure(
+                        status_tracker,
+                        ValidationError::<E>::AssertionMismatch(ref_assertion.url().to_owned()),
+                    )?;
                 }
 
                 // TO REVIEW WITH GAVIN: I'm getting different value for
@@ -174,7 +193,7 @@ impl SignerPayload {
                     "referenced assertion not in claim",
                     "SignerPayload::check_against_manifest"
                 )
-                .validation_status("cawg.identity.assertion.mismatch")
+                .validation_status(CAWG_IDENTITY_ASSERTION_MISMATCH)
                 .failure(
                     status_tracker,
                     ValidationError::<E>::AssertionNotInClaim(ref_assertion.url().to_owned()),
@@ -200,7 +219,7 @@ impl SignerPayload {
                 "no hard binding assertion",
                 "SignerPayload::check_against_manifest"
             )
-            .validation_status("cawg.identity.hard_binding_missing")
+            .validation_status(CAWG_IDENTITY_HARD_BINDING_MISSING)
             .failure(status_tracker, ValidationError::<E>::NoHardBindingAssertion)?;
         }
 
@@ -214,7 +233,7 @@ impl SignerPayload {
                     "multiple references to same assertion",
                     "SignerPayload::check_against_manifest"
                 )
-                .validation_status("cawg.identity.assertion.duplicate")
+                .validation_status(CAWG_IDENTITY_ASSERTION_DUPLICATE)
                 .failure(
                     status_tracker,
                     ValidationError::<E>::DuplicateAssertionReference(label.clone()),
@@ -240,7 +259,51 @@ mod tests {
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
 
-    use crate::{identity::SignerPayload, HashedUri};
+    use crate::{
+        dynamic_assertion::PartialClaim,
+        identity::{SignerPayload, ValidationError},
+        status_tracker::{ErrorBehavior, StatusTracker},
+        HashedUri,
+    };
+
+    #[test]
+    fn mismatch_is_logged_and_propagated() {
+        let referenced = HashedUri::new(
+            "self#jumbf=c2pa.assertions/c2pa.hash.data".to_owned(),
+            Some("sha256".to_owned()),
+            &[0u8; 32],
+        );
+        let claim_reference = HashedUri::new(
+            "self#jumbf=c2pa.assertions/c2pa.hash.data".to_owned(),
+            Some("sha256".to_owned()),
+            &[255u8; 32],
+        );
+
+        let mut partial_claim = PartialClaim::default();
+        partial_claim.add_assertion(&claim_reference);
+
+        let mut status_tracker =
+            StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+        let signer_payload = SignerPayload {
+            referenced_assertions: vec![referenced],
+            roles: vec![],
+            sig_type: "cawg.x509.cose".to_owned(),
+        };
+
+        let err: ValidationError<String> = signer_payload
+            .check_against_partial_claim(&partial_claim, &mut status_tracker)
+            .unwrap_err();
+
+        assert!(matches!(err, ValidationError::AssertionMismatch(_)));
+        assert_eq!(status_tracker.logged_items().len(), 1);
+        assert_eq!(
+            status_tracker.logged_items()[0]
+                .validation_status
+                .as_deref()
+                .unwrap(),
+            "cawg.identity.assertion.mismatch"
+        );
+    }
 
     #[test]
     #[cfg_attr(

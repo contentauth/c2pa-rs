@@ -219,7 +219,7 @@ jobs:
 
       - name: Create Release
         id: create_release
-        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
+        uses: softprops/action-gh-release@e598afbe1493e6b1bafb1f389cabb956eab91231 # v3.0.3
         with:
           tag_name: ${{ steps.extract_tag.outputs.tag_name }}
           # Attach the release to the commit the triggering tag points at, never
@@ -229,6 +229,10 @@ jobs:
           files: dist/*
           draft: false
           prerelease: true
+          # Upload assets one at a time instead of all at once: firing ~16
+          # concurrent uploads has intermittently tripped a transient
+          # "Error creating asset temp dir" failure on GitHub's backend.
+          preserve_order: true
 
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

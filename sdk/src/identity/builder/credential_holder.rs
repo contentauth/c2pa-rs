@@ -39,6 +39,7 @@ pub trait CredentialHolder {
     /// subsequent signature is larger than this number of bytes.
     ///
     /// [`sign`]: Self::sign
+    /// [`Error::BadParam`]: crate::Error::BadParam
     fn reserve_size(&self) -> usize;
 
     /// Signs the [`SignerPayload`] data structure on behalf of the credential
@@ -74,6 +75,7 @@ pub trait AsyncCredentialHolder: MaybeSync + MaybeSend {
     /// subsequent signature is larger than this number of bytes.
     ///
     /// [`sign`]: Self::sign
+    /// [`Error::BadParam`]: crate::Error::BadParam
     fn reserve_size(&self) -> usize;
 
     /// Signs the [`SignerPayload`] data structure on behalf of the credential
