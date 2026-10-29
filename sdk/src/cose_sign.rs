@@ -184,8 +184,8 @@ impl CoseSigner for SignerWrapper<'_> {
             .map_err(|e| RawSignerError::InternalError(e.to_string()))
     }
 
-    fn ocsp_response(&self) -> Option<Vec<u8>> {
-        self.0.ocsp_val()
+    fn ocsp_responses(&self) -> Vec<Vec<u8>> {
+        self.0.ocsp_vals()
     }
 }
 
@@ -237,8 +237,8 @@ impl AsyncCoseSigner for AsyncSignerWrapper<'_> {
             .map_err(|e| RawSignerError::InternalError(e.to_string()))
     }
 
-    async fn ocsp_response(&self) -> Option<Vec<u8>> {
-        self.0.ocsp_val().await
+    async fn ocsp_responses(&self) -> Vec<Vec<u8>> {
+        self.0.ocsp_vals().await
     }
 }
 
