@@ -215,20 +215,27 @@ impl OcspResponse {
                         output.next_update = DateTime::from_naive_utc_and_offset(nu_utc, Utc);
                     }
 
-                    if !in_range {
-                        log_item!("", "certificate revoked", "check_ocsp_response")
-                            .validation_status(validation_codes::SIGNING_CREDENTIAL_REVOKED)
-                            .failure_no_throw(
-                                &mut internal_validation_log,
-                                OcspError::CertificateRevoked,
-                            );
-                    } else {
+                    if in_range {
                         // As soon as we find one successful match, nothing else matters.
                         log_item!("", "certificate not revoked", "check_ocsp_response")
                             .validation_status(validation_codes::SIGNING_CREDENTIAL_NOT_REVOKED)
                             .success(validation_log);
 
                         return Ok(output);
+                    }
+
+                    // Without an attested signing time, a response outside its validity
+                    // window cannot establish the certificate's current status (C2PA
+                    // §15.9.1), but it is not evidence of revocation either. Leave the
+                    // status undetermined so callers can try another response or fall
+                    // back to an online check.
+                    if signing_time.is_some() {
+                        log_item!("", "certificate revoked", "check_ocsp_response")
+                            .validation_status(validation_codes::SIGNING_CREDENTIAL_REVOKED)
+                            .failure_no_throw(
+                                &mut internal_validation_log,
+                                OcspError::CertificateRevoked,
+                            );
                     }
                 }
 
@@ -466,6 +473,9 @@ const DATE_FMT: &str = "%Y-%m-%d %H:%M:%S %Z";
 mod fetch;
 
 pub(crate) use fetch::{fetch_ocsp_response, fetch_ocsp_response_async};
+
+#[cfg(all(test, feature = "openssl"))]
+pub(crate) mod test_responder;
 
 #[cfg(test)]
 mod tests {
@@ -757,8 +767,10 @@ mod tests {
         )
         .unwrap();
 
+        // A stale response is unusable evidence: neither "not revoked" nor "revoked".
         assert!(!log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
-        assert!(log.has_status(SIGNING_CREDENTIAL_REVOKED));
+        assert!(!log.has_status(SIGNING_CREDENTIAL_REVOKED));
+        assert!(!log.has_any_error());
     }
 
     fn encode_response(basic: &rasn_ocsp::BasicOcspResponse) -> Vec<u8> {
@@ -949,7 +961,6 @@ mod tests {
             (Some(this_update), true),
             (Some(next_update), true),
             (Some(next_update + chrono::Duration::seconds(1)), false),
-            (None, false),
         ] {
             let mut log = StatusTracker::default();
             let parsed =
@@ -959,6 +970,16 @@ mod tests {
             assert_eq!(log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED), accepted);
             assert_eq!(log.has_status(SIGNING_CREDENTIAL_REVOKED), !accepted);
         }
+
+        // Without an attested signing time the response has long expired, which is
+        // inconclusive rather than a revocation.
+        let mut log = StatusTracker::default();
+        let parsed =
+            OcspResponse::from_der_checked(&der, &signing_cert_chain(), None, &mut log).unwrap();
+        assert_eq!(parsed.next_update, next_update);
+        assert!(!log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+        assert!(!log.has_status(SIGNING_CREDENTIAL_REVOKED));
+        assert!(!log.has_any_error());
 
         let mut no_next_update = basic;
         no_next_update.tbs_response_data.responses[0].next_update = None;
@@ -995,7 +1016,9 @@ mod tests {
             &mut log,
         )
         .unwrap();
-        assert!(log.has_status(SIGNING_CREDENTIAL_REVOKED));
+        assert!(!log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+        assert!(!log.has_status(SIGNING_CREDENTIAL_REVOKED));
+        assert!(!log.has_any_error());
     }
 
     #[cfg(feature = "openssl")]
@@ -1033,8 +1056,9 @@ mod tests {
                 accepted,
                 "thisUpdate={this_update_hours}h, producedAt={produced_at_hours}h, nextUpdate={next_update_hours:?}h"
             );
-            assert_eq!(log.has_status(SIGNING_CREDENTIAL_REVOKED), !accepted);
-            assert_eq!(log.has_any_error(), !accepted);
+            // Out-of-window responses are inconclusive, never a revocation.
+            assert!(!log.has_status(SIGNING_CREDENTIAL_REVOKED));
+            assert!(!log.has_any_error());
         }
     }
 
