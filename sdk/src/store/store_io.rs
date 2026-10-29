@@ -901,6 +901,26 @@ impl Store {
 
             context.check_progress(ProgressPhase::Writing, 2, 2)?;
         } else {
+            // Formats whose members a handler reports (e.g. the records of a WARC file) are
+            // bound with a collection data hash. The C2PA Manifest Store is not a member, so
+            // no placeholder pass is needed, and the data hash below is skipped.
+            if pc.hash_assertions().is_empty() && !pc.update_manifest() {
+                if let Some(collection_handler) =
+                    io_handler.and_then(|h| h.asset_collection_hash_ref())
+                {
+                    let mut collection_hash = CollectionHash::new(pc.alg().to_owned());
+                    if source_is_intermediate {
+                        intermediate_stream.rewind()?;
+                        collection_hash
+                            .gen_hash_from_members(&mut intermediate_stream, collection_handler)?;
+                    } else {
+                        input_stream.rewind()?;
+                        collection_hash.gen_hash_from_members(input_stream, collection_handler)?;
+                    }
+                    pc.add_assertion(&collection_hash)?;
+                }
+            }
+
             // we will not do automatic hashing if we detect a box hash present
             let mut needs_hashing = false;
             if pc.hash_assertions().is_empty() {
