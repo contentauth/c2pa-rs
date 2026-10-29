@@ -437,6 +437,17 @@ impl CertificateTrustPolicy {
         self.end_entity_cert_set.clear();
     }
 
+    /// Remove every trust anchor whose type is not `kind`, leaving private
+    /// credentials and EKUs intact.
+    ///
+    /// C2PA maintains separate trust lists for manifest signers and
+    /// time-stamping authorities; callers validating time-stamps use this to
+    /// keep only [`TrustAnchorType::TSA`] anchors so a signer anchor cannot
+    /// vouch for a time-stamp.
+    pub fn retain_trust_anchors(&mut self, kind: TrustAnchorType) {
+        self.trust_anchors.retain(|a| a.trust_anchor_type == kind);
+    }
+
     /// Remove all trust anchors, private credentials, and EKUs previously
     /// configured.
     pub fn clear(&mut self) {

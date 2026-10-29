@@ -27,7 +27,7 @@ use sha2::{Sha256, Sha384, Sha512};
 use crate::{
     crypto::{
         asn1::rfc3161::{Accuracy, TstInfo},
-        cose::{check_end_entity_certificate_profile, CertificateTrustPolicy},
+        cose::{check_end_entity_certificate_profile, CertificateTrustPolicy, TrustAnchorType},
         time_stamp::{
             response::{signed_data_from_time_stamp_response, tst_info_from_signed_data},
             TimeStampError,
@@ -523,9 +523,12 @@ pub fn verify_time_stamp(
 
             // Per C2PA §14.4.3, the private credential store applies only to
             // manifest signers, never to time-stamps; drop it before checking
-            // timestamp trust so a private entry cannot act as a TSA.
+            // timestamp trust so a private entry cannot act as a TSA. C2PA also
+            // keeps TSA anchors separate from signer anchors, so restrict the
+            // check to TSA anchors - a signer anchor must not vouch for a token.
             let mut ts_ctp = ctp.clone();
             ts_ctp.clear_end_entity_credentials();
+            ts_ctp.retain_trust_anchors(TrustAnchorType::TSA);
 
             match ts_ctp.check_certificate_trust(
                 &ordered_cert_ders[0..],
@@ -1405,6 +1408,51 @@ pub(crate) mod message_imprint_regression {
             "a TSA on the trust list must verify: {trusted:?}"
         );
         assert!(trusted_log.has_status(TIMESTAMP_TRUSTED));
+    }
+
+    /// A time-stamp must validate against the TSA trust list, not signer
+    /// anchors: C2PA keeps those lists separate, so a token chaining only to a
+    /// manifest (signer) trust anchor must not be reported trusted.
+    #[test]
+    fn manifest_trust_anchor_is_not_a_timestamp_authority() {
+        use openssl::x509::X509;
+
+        use super::tsa_signer_cert_der_from_token;
+        use crate::crypto::cose::TrustAnchorType;
+
+        let token = build_token_with(
+            OID_SHA256,
+            MessageDigest::sha256(),
+            DATA,
+            TokenOptions {
+                profile_extensions: true,
+                ..TokenOptions::default()
+            },
+        );
+        let signer_der = tsa_signer_cert_der_from_token(&token)
+            .unwrap()
+            .expect("token carries its signer certificate");
+        let signer_pem = X509::from_der(&signer_der).unwrap().to_pem().unwrap();
+
+        // The TSA signer certificate is trusted only as a manifest-signer
+        // anchor; it must not thereby be accepted for time-stamps.
+        let mut ctp = CertificateTrustPolicy::new();
+        ctp.add_trust_anchors(
+            &signer_pem,
+            "http://manifest_trust_list",
+            TrustAnchorType::Manifest,
+            None,
+        )
+        .unwrap();
+
+        let mut log = StatusTracker::default();
+        let result = verify_time_stamp(&token, DATA, &ctp, &mut log, true);
+        assert!(
+            matches!(result, Err(TimeStampError::Untrusted)),
+            "a signer anchor must not vouch for a time-stamp: {result:?}"
+        );
+        assert!(log.has_status(TIMESTAMP_UNTRUSTED));
+        assert!(!log.has_status(TIMESTAMP_TRUSTED));
     }
 
     fn decode_token(token: &[u8]) -> rasn_cms::SignedData {
