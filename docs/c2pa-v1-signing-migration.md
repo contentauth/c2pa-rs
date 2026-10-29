@@ -2,7 +2,7 @@
 
 C2PA v1 claim signing is deprecated in **0.92.0** and will be removed in
 **0.93.0**, scheduled for **mid-January 2027**. Version 0.92 continues to sign
-v1 claims, with a deprecation warning. This change does not affect reading or
+v1 claims, with a deprecation warning. This change will not affect reading or
 validating existing C2PA v1 claims, including using them as ingredients.
 
 Signing support is being consolidated on C2PA v2 rather than maintaining both
