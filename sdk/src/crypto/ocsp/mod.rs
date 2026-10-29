@@ -224,19 +224,11 @@ impl OcspResponse {
                         return Ok(output);
                     }
 
-                    // Without an attested signing time, a response outside its validity
-                    // window cannot establish the certificate's current status (C2PA
-                    // §15.9.1), but it is not evidence of revocation either. Leave the
-                    // status undetermined so callers can try another response or fall
-                    // back to an online check.
-                    if signing_time.is_some() {
-                        log_item!("", "certificate revoked", "check_ocsp_response")
-                            .validation_status(validation_codes::SIGNING_CREDENTIAL_REVOKED)
-                            .failure_no_throw(
-                                &mut internal_validation_log,
-                                OcspError::CertificateRevoked,
-                            );
-                    }
+                    // A "good" response whose validity window does not cover the signing
+                    // time (or, without an attested time, the current time) cannot establish
+                    // that the certificate was not revoked (C2PA §15.9.1), but it is not
+                    // evidence of revocation either. Leave the status undetermined so
+                    // callers can try another response or fall back to an online check.
                 }
 
                 CertStatus::Revoked(revoked_info) => {
@@ -474,7 +466,7 @@ mod fetch;
 
 pub(crate) use fetch::{fetch_ocsp_response, fetch_ocsp_response_async};
 
-#[cfg(all(test, feature = "openssl"))]
+#[cfg(test)]
 pub(crate) mod test_responder;
 
 #[cfg(test)]
@@ -490,7 +482,13 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::{
-        crypto::{internal::time, ocsp::OcspResponse},
+        crypto::{
+            internal::time,
+            ocsp::{
+                test_responder::{encode_response, good_basic_response as basic_response},
+                OcspResponse,
+            },
+        },
         status_tracker::{LogKind, StatusTracker},
         validation_status::{
             SIGNING_CREDENTIAL_NOT_REVOKED, SIGNING_CREDENTIAL_OCSP_UNKNOWN,
@@ -696,9 +694,12 @@ mod tests {
         )
         .unwrap();
 
+        // The attested time is long after the response's validity window: the
+        // response is unusable evidence, neither "not revoked" nor "revoked".
         assert!(ocsp_data.revoked_at.is_none());
-        assert!(validation_log.has_any_error());
-        assert!(validation_log.has_status(SIGNING_CREDENTIAL_REVOKED));
+        assert!(!validation_log.has_any_error());
+        assert!(!validation_log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+        assert!(!validation_log.has_status(SIGNING_CREDENTIAL_REVOKED));
     }
 
     #[test]
@@ -734,14 +735,6 @@ mod tests {
         assert!(!validation_log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
     }
 
-    fn basic_response() -> rasn_ocsp::BasicOcspResponse {
-        let response: rasn_ocsp::OcspResponse = rasn::der::decode(include_bytes!(
-            "../../../tests/fixtures/crypto/ocsp/response_good.der"
-        ))
-        .unwrap();
-        rasn::der::decode(&response.bytes.unwrap().response).unwrap()
-    }
-
     #[test]
     #[cfg_attr(
         all(target_arch = "wasm32", not(target_os = "wasi")),
@@ -771,15 +764,6 @@ mod tests {
         assert!(!log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
         assert!(!log.has_status(SIGNING_CREDENTIAL_REVOKED));
         assert!(!log.has_any_error());
-    }
-
-    fn encode_response(basic: &rasn_ocsp::BasicOcspResponse) -> Vec<u8> {
-        let mut response: rasn_ocsp::OcspResponse = rasn::der::decode(include_bytes!(
-            "../../../tests/fixtures/crypto/ocsp/response_good.der"
-        ))
-        .unwrap();
-        response.bytes.as_mut().unwrap().response = rasn::der::encode(basic).unwrap().into();
-        rasn::der::encode(&response).unwrap()
     }
 
     #[test]
@@ -925,27 +909,8 @@ mod tests {
     // Re-sign mutated response data so the tests exercise status interpretation,
     // rather than stopping at signature verification.
     #[cfg(feature = "openssl")]
-    fn sign_response(mut basic: rasn_ocsp::BasicOcspResponse) -> Vec<u8> {
-        use openssl::{hash::MessageDigest, pkey::PKey, sign::Signer};
-
-        let certs = pem::parse_many(include_bytes!(
-            "../../../tests/fixtures/crypto/raw_signature/es256.pub"
-        ))
-        .unwrap();
-        basic.certs = Some(vec![rasn::der::decode(certs[0].contents()).unwrap()]);
-        basic.signature_algorithm.algorithm =
-            rasn::types::ObjectIdentifier::new_unchecked(vec![1, 2, 840, 10045, 4, 3, 2].into());
-        basic.signature_algorithm.parameters = None;
-        let key = PKey::private_key_from_pem(include_bytes!(
-            "../../../tests/fixtures/crypto/raw_signature/es256.priv"
-        ))
-        .unwrap();
-        let mut signer = Signer::new(MessageDigest::sha256(), &key).unwrap();
-        signer
-            .update(&rasn::der::encode(&basic.tbs_response_data).unwrap())
-            .unwrap();
-        basic.signature = rasn::types::BitString::from_vec(signer.sign_to_vec().unwrap());
-        encode_response(&basic)
+    fn sign_response(basic: rasn_ocsp::BasicOcspResponse) -> Vec<u8> {
+        super::test_responder::TestResponder::new().sign(basic)
     }
 
     #[cfg(feature = "openssl")]
@@ -968,7 +933,9 @@ mod tests {
                     .unwrap();
             assert_eq!(parsed.next_update, next_update);
             assert_eq!(log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED), accepted);
-            assert_eq!(log.has_status(SIGNING_CREDENTIAL_REVOKED), !accepted);
+            // Outside the window is inconclusive, never a revocation.
+            assert!(!log.has_status(SIGNING_CREDENTIAL_REVOKED));
+            assert!(!log.has_any_error());
         }
 
         // Without an attested signing time the response has long expired, which is

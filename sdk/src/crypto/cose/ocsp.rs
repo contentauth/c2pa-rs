@@ -155,9 +155,34 @@ pub fn check_ocsp_status(
             }
         }
 
-        // If the stapled response could not be validated and online fetching is disabled,
-        // return default without logging SIGNING_CREDENTIAL_OCSP_SKIPPED.
+        // The stapled response could not establish a status. With online fetching
+        // disabled, use any OCSP responses from certificate status assertions (C2PA
+        // §15.9); otherwise return default without logging SIGNING_CREDENTIAL_OCSP_SKIPPED.
         if fetch_policy == OcspFetchPolicy::DoNotFetch {
+            if let Some(ocsp_response_ders) = ocsp_responses.filter(|ders| !ders.is_empty()) {
+                return if _sync {
+                    process_ocsp_responses(
+                        sign1,
+                        data,
+                        ctp,
+                        ocsp_response_ders,
+                        tst_info,
+                        validation_log,
+                        context.settings(),
+                    )
+                } else {
+                    process_ocsp_responses_async(
+                        sign1,
+                        data,
+                        ctp,
+                        ocsp_response_ders,
+                        tst_info,
+                        validation_log,
+                        context.settings(),
+                    )
+                    .await
+                };
+            }
             return Ok(OcspResponse::default());
         }
     }
@@ -1369,6 +1394,7 @@ mod tests {
         InvalidStaple,
         GoodStaple,
         StaleGoodStapleFetches,
+        StaleStapleUsesSupplied,
         RevokedStaple,
         SuppliedGood,
         SuppliedRevoked,
@@ -1378,14 +1404,55 @@ mod tests {
         OverrideEmpty,
         OverrideMissing,
         StapleWins,
-        InvalidStapleIgnoresSupplied,
+        InvalidStapleUsesSupplied,
         FetchIgnoresSupplied,
         InvalidStapleFetches,
         UntrustedStapleFetches,
     }
 
-    fn status_case(case: StatusCase) -> (CoseSign1, Vec<Vec<u8>>, bool, OcspFetchPolicy, bool) {
-        let good = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_good.der").to_vec();
+    /// The "good" OCSP response used by a matrix run. The bundled fixture is stale,
+    /// so without a trusted timestamp it is unusable evidence; on the OpenSSL backend
+    /// the matrix also runs with a freshly signed response to cover the "good" paths.
+    struct GoodVariant {
+        fresh: bool,
+        good: Vec<u8>,
+        ctp: CertificateTrustPolicy,
+    }
+
+    fn good_variants() -> Vec<GoodVariant> {
+        #[allow(unused_mut)]
+        let mut variants = vec![GoodVariant {
+            fresh: false,
+            good: STALE_GOOD.to_vec(),
+            ctp: trusted_responder(),
+        }];
+
+        #[cfg(feature = "openssl")]
+        {
+            let (mut ctp, _, fresh) = stale_and_fresh_good_responses();
+            ctp.add_end_entity_credentials(include_bytes!(
+                "../../../tests/fixtures/crypto/ocsp/ocsp_responder.pem"
+            ))
+            .unwrap();
+            variants.push(GoodVariant {
+                fresh: true,
+                good: fresh,
+                ctp,
+            });
+        }
+
+        variants
+    }
+
+    const STALE_GOOD: &[u8] =
+        include_bytes!("../../../tests/fixtures/crypto/ocsp/response_good.der");
+
+    fn status_case(
+        case: StatusCase,
+        good: &[u8],
+    ) -> (CoseSign1, Vec<Vec<u8>>, bool, OcspFetchPolicy, bool) {
+        let good = good.to_vec();
+        let stale = STALE_GOOD.to_vec();
         let revoked =
             include_bytes!("../../../tests/fixtures/crypto/ocsp/response_revoked.der").to_vec();
         let mut sign1 = sign1_with_x5chain(&ocsp_signing_chain());
@@ -1399,7 +1466,11 @@ mod tests {
             StatusCase::GoodStaple => staple(&mut sign1, rvals(vec![Value::Bytes(good)])),
             StatusCase::StaleGoodStapleFetches => {
                 fetch = OcspFetchPolicy::FetchAllowed;
-                staple(&mut sign1, rvals(vec![Value::Bytes(good)]));
+                staple(&mut sign1, rvals(vec![Value::Bytes(stale)]));
+            }
+            StatusCase::StaleStapleUsesSupplied => {
+                staple(&mut sign1, rvals(vec![Value::Bytes(stale)]));
+                supplied = vec![good];
             }
             StatusCase::RevokedStaple => staple(&mut sign1, rvals(vec![Value::Bytes(revoked)])),
             StatusCase::SuppliedGood => supplied = vec![vec![0], good],
@@ -1420,7 +1491,7 @@ mod tests {
                 staple(&mut sign1, rvals(vec![Value::Bytes(good)]));
                 supplied = vec![revoked];
             }
-            StatusCase::InvalidStapleIgnoresSupplied => {
+            StatusCase::InvalidStapleUsesSupplied => {
                 staple(&mut sign1, rvals(vec![Value::Bytes(vec![0])]));
                 supplied = vec![good];
             }
@@ -1443,17 +1514,28 @@ mod tests {
 
     fn assert_status_case(
         case: StatusCase,
+        fresh: bool,
         result: Result<OcspResponse, CoseError>,
         log: &StatusTracker,
         calls: usize,
     ) {
-        // The "Good" fixture is stale and these cases have no trusted timestamp, so
-        // "good" responses are unusable evidence: they neither assert "not revoked"
-        // nor fail validation as revoked.
+        // A stale "good" response is unusable evidence: it neither asserts "not
+        // revoked" nor fails validation, so an unusable staple defers to any supplied
+        // responses (e.g. a stale staple no longer "wins" over a supplied revocation).
         let revoked = matches!(
             case,
             StatusCase::RevokedStaple | StatusCase::SuppliedRevoked | StatusCase::OverrideRevoked
-        );
+        ) || (!fresh && matches!(case, StatusCase::StapleWins));
+        let good = fresh
+            && matches!(
+                case,
+                StatusCase::GoodStaple
+                    | StatusCase::StaleStapleUsesSupplied
+                    | StatusCase::SuppliedGood
+                    | StatusCase::OverrideGood
+                    | StatusCase::StapleWins
+                    | StatusCase::InvalidStapleUsesSupplied
+            );
         let skipped = matches!(
             case,
             StatusCase::Missing
@@ -1468,35 +1550,37 @@ mod tests {
                 | StatusCase::UntrustedStapleFetches
                 | StatusCase::StaleGoodStapleFetches
         );
-        assert_eq!(result.is_err(), revoked, "{case:?}");
+        let ctx = format!("{case:?} (fresh: {fresh})");
+        assert_eq!(result.is_err(), revoked, "{ctx}");
+        assert_eq!(log.has_status(SIGNING_CREDENTIAL_REVOKED), revoked, "{ctx}");
         assert_eq!(
-            log.has_status(SIGNING_CREDENTIAL_REVOKED),
-            revoked,
-            "{case:?}"
+            log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED),
+            good,
+            "{ctx}"
         );
-        assert!(!log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED), "{case:?}");
         assert_eq!(
             log.has_status(SIGNING_CREDENTIAL_OCSP_SKIPPED),
             skipped,
-            "{case:?}"
+            "{ctx}"
         );
         assert_eq!(
             log.has_status(SIGNING_CREDENTIAL_OCSP_INACCESSIBLE),
             fetched,
-            "{case:?}"
+            "{ctx}"
         );
-        assert_eq!(calls > 0, fetched, "{case:?}");
+        assert_eq!(calls > 0, fetched, "{ctx}");
         if let Ok(response) = result {
-            assert!(response.ocsp_der.is_empty(), "{case:?}");
+            assert_eq!(!response.ocsp_der.is_empty(), good, "{ctx}");
         }
     }
 
-    const STATUS_CASES: [StatusCase; 18] = [
+    const STATUS_CASES: [StatusCase; 19] = [
         StatusCase::Missing,
         StatusCase::Empty,
         StatusCase::InvalidStaple,
         StatusCase::GoodStaple,
         StatusCase::StaleGoodStapleFetches,
+        StatusCase::StaleStapleUsesSupplied,
         StatusCase::RevokedStaple,
         StatusCase::SuppliedGood,
         StatusCase::SuppliedRevoked,
@@ -1506,7 +1590,7 @@ mod tests {
         StatusCase::OverrideEmpty,
         StatusCase::OverrideMissing,
         StatusCase::StapleWins,
-        StatusCase::InvalidStapleIgnoresSupplied,
+        StatusCase::InvalidStapleUsesSupplied,
         StatusCase::FetchIgnoresSupplied,
         StatusCase::InvalidStapleFetches,
         StatusCase::UntrustedStapleFetches,
@@ -1514,96 +1598,99 @@ mod tests {
 
     #[test]
     fn check_status_policy_matrix() {
-        for case in STATUS_CASES {
-            let (sign1, supplied, override_status, fetch, trusted) = status_case(case);
-            let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-            let context = Context::new()
-                .with_resolver(RecordingResolver {
-                    calls: calls.clone(),
-                })
-                .with_settings_value(
-                    "builder.certificate_status_should_override",
-                    override_status,
-                )
-                .unwrap();
-            let ctp = if trusted {
-                trusted_responder()
-            } else {
-                CertificateTrustPolicy::new()
-            };
+        for variant in good_variants() {
+            for case in STATUS_CASES {
+                let (sign1, supplied, override_status, fetch, trusted) =
+                    status_case(case, &variant.good);
+                let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let context = Context::new()
+                    .with_resolver(RecordingResolver {
+                        calls: calls.clone(),
+                    })
+                    .with_settings_value(
+                        "builder.certificate_status_should_override",
+                        override_status,
+                    )
+                    .unwrap();
+                let untrusted = CertificateTrustPolicy::new();
+                let ctp = if trusted { &variant.ctp } else { &untrusted };
 
-            let mut log = StatusTracker::default();
-            let result = check_ocsp_status(
-                &sign1,
-                b"payload",
-                fetch,
-                &ctp,
-                if matches!(case, StatusCase::Missing | StatusCase::OverrideMissing) {
-                    None
-                } else {
-                    Some(&supplied)
-                },
-                None,
-                &mut log,
-                &context,
-            );
-            assert_status_case(
-                case,
-                result,
-                &log,
-                calls.load(std::sync::atomic::Ordering::SeqCst),
-            );
+                let mut log = StatusTracker::default();
+                let result = check_ocsp_status(
+                    &sign1,
+                    b"payload",
+                    fetch,
+                    ctp,
+                    if matches!(case, StatusCase::Missing | StatusCase::OverrideMissing) {
+                        None
+                    } else {
+                        Some(&supplied)
+                    },
+                    None,
+                    &mut log,
+                    &context,
+                );
+                assert_status_case(
+                    case,
+                    variant.fresh,
+                    result,
+                    &log,
+                    calls.load(std::sync::atomic::Ordering::SeqCst),
+                );
+            }
         }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn check_status_policy_matrix_async() {
-        for case in STATUS_CASES {
-            let (sign1, supplied, override_status, fetch, trusted) = status_case(case);
-            let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-            let context = Context::new()
-                .with_resolver_async(RecordingResolver {
-                    calls: calls.clone(),
-                })
-                .with_settings_value(
-                    "builder.certificate_status_should_override",
-                    override_status,
-                )
-                .unwrap();
-            let ctp = if trusted {
-                trusted_responder()
-            } else {
-                CertificateTrustPolicy::new()
-            };
+        for variant in good_variants() {
+            for case in STATUS_CASES {
+                let (sign1, supplied, override_status, fetch, trusted) =
+                    status_case(case, &variant.good);
+                let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let context = Context::new()
+                    .with_resolver_async(RecordingResolver {
+                        calls: calls.clone(),
+                    })
+                    .with_settings_value(
+                        "builder.certificate_status_should_override",
+                        override_status,
+                    )
+                    .unwrap();
+                let untrusted = CertificateTrustPolicy::new();
+                let ctp = if trusted { &variant.ctp } else { &untrusted };
 
-            let mut log = StatusTracker::default();
-            let result = check_ocsp_status_async(
-                &sign1,
-                b"payload",
-                fetch,
-                &ctp,
-                if matches!(case, StatusCase::Missing | StatusCase::OverrideMissing) {
-                    None
-                } else {
-                    Some(&supplied)
-                },
-                None,
-                &mut log,
-                &context,
-            )
-            .await;
-            assert_status_case(
-                case,
-                result,
-                &log,
-                calls.load(std::sync::atomic::Ordering::SeqCst),
-            );
+                let mut log = StatusTracker::default();
+                let result = check_ocsp_status_async(
+                    &sign1,
+                    b"payload",
+                    fetch,
+                    ctp,
+                    if matches!(case, StatusCase::Missing | StatusCase::OverrideMissing) {
+                        None
+                    } else {
+                        Some(&supplied)
+                    },
+                    None,
+                    &mut log,
+                    &context,
+                )
+                .await;
+                assert_status_case(
+                    case,
+                    variant.fresh,
+                    result,
+                    &log,
+                    calls.load(std::sync::atomic::Ordering::SeqCst),
+                );
+            }
         }
     }
 
     /// A trust policy that trusts the ephemeral test responder, plus a stale
-    /// "Good" response (the fixture) and a freshly signed "Good" response.
+    /// "Good" response (the fixture's data) and a freshly signed "Good" response,
+    /// both signed by that responder.
     #[cfg(feature = "openssl")]
     fn stale_and_fresh_good_responses() -> (CertificateTrustPolicy, Vec<u8>, Vec<u8>) {
         use crate::crypto::ocsp::test_responder::{good_basic_response, TestResponder};
@@ -1627,29 +1714,71 @@ mod tests {
         (policy, stale, responder.sign(basic))
     }
 
+    // With a trusted timestamp, a "good" response whose window ended before the
+    // attested time is inconclusive: it must neither fail validation as revoked nor
+    // hide a later usable response or the online-fetch fallback.
     #[cfg(feature = "openssl")]
     #[test]
-    fn fresh_good_staple_without_timestamp_is_not_revoked() {
-        let (ctp, _, fresh) = stale_and_fresh_good_responses();
-        let mut sign1 = sign1_with_x5chain(&ocsp_signing_chain());
-        staple(&mut sign1, rvals(vec![Value::Bytes(fresh)]));
+    fn out_of_window_response_with_timestamp_is_inconclusive() {
+        use crate::crypto::ocsp::test_responder::{good_basic_response, TestResponder};
 
+        let timestamp = supplied_timestamp();
+        let attested: DateTime<Utc> = timestamp.gen_time.clone().into();
+        let responder = TestResponder::new();
+        let mut ctp = CertificateTrustPolicy::new();
+        ctp.add_end_entity_credentials(&responder.cert_pem())
+            .unwrap();
+        let response_for = |this_update_hours: i64, next_update_hours: i64| {
+            let this_update = attested + chrono::Duration::hours(this_update_hours);
+            let mut basic = good_basic_response();
+            basic.tbs_response_data.produced_at = this_update.fixed_offset();
+            let single = &mut basic.tbs_response_data.responses[0];
+            single.this_update = this_update.fixed_offset();
+            single.next_update =
+                Some((attested + chrono::Duration::hours(next_update_hours)).fixed_offset());
+            responder.sign(basic)
+        };
+        let expired = response_for(-48, -24);
+        let valid = response_for(-1, 24);
+
+        let supplied = vec![expired.clone(), valid.clone()];
         let mut log = StatusTracker::default();
         let response = check_ocsp_status(
-            &sign1,
+            &sign1_with_x5chain(&ocsp_signing_chain()),
             b"payload",
             OcspFetchPolicy::DoNotFetch,
             &ctp,
-            None,
-            None,
+            Some(&supplied),
+            Some(&timestamp),
             &mut log,
             &Context::new(),
         )
         .unwrap();
-
-        assert!(!response.ocsp_der.is_empty());
+        assert_eq!(response.ocsp_der, valid);
         assert!(log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
         assert!(!log.has_status(SIGNING_CREDENTIAL_REVOKED));
+
+        let mut sign1 = sign1_with_x5chain(&ocsp_signing_chain());
+        staple(&mut sign1, rvals(vec![Value::Bytes(expired)]));
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let context = Context::new().with_resolver(RecordingResolver {
+            calls: calls.clone(),
+        });
+        let mut log = StatusTracker::default();
+        check_ocsp_status(
+            &sign1,
+            b"payload",
+            OcspFetchPolicy::FetchAllowed,
+            &ctp,
+            None,
+            Some(&timestamp),
+            &mut log,
+            &context,
+        )
+        .unwrap();
+        assert!(!log.has_status(SIGNING_CREDENTIAL_REVOKED));
+        assert!(log.has_status(SIGNING_CREDENTIAL_OCSP_INACCESSIBLE));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     // A stale response is inconclusive, so it must not stop a later usable response
