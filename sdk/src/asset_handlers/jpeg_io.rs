@@ -44,6 +44,9 @@ const PHOTOSHOP_SIGNATURE: &[u8] = b"Photoshop 3.0\0"; // APP13 Image Resource B
 
 const MAX_JPEG_MARKER_SIZE: usize = 64000; // technically it's 64K but a bit smaller is fine
 
+// Max JPEG segment payload: the u16 length field counts itself plus the payload.
+const MAX_JPEG_SEGMENT_PAYLOAD: usize = u16::MAX as usize - 2;
+
 const C2PA_MARKER: [u8; 4] = [0x63, 0x32, 0x70, 0x61];
 
 fn vec_compare(va: &[u8], vb: &[u8]) -> bool {
@@ -556,6 +559,13 @@ impl WriteXmp for JpegIO {
 
         // add the JPEG XMP signature prefix
         let xmp = format!("{XMP_SIGNATURE}\0{xmp}");
+        // A single APP1 segment can't hold more than the u16 length limit; reject
+        // rather than letting the encoder panic on the oversized segment.
+        if xmp.len() > MAX_JPEG_SEGMENT_PAYLOAD {
+            return Err(Error::InvalidAsset(
+                "XMP does not fit in a JPEG APP1 segment".to_owned(),
+            ));
+        }
         let segment = JpegSegment::new_with_contents(markers::APP1, Bytes::from(xmp));
         // insert or replace the segment
         match xmp_index {
@@ -1061,6 +1071,31 @@ pub mod tests {
         assertions::ExclusionKind,
         utils::io_utils::{safe_vec, tempdirectory},
     };
+    // An XMP whose signature-prefixed content exceeds the JPEG APP1 u16 payload
+    // limit must be rejected with an error, not crash the encoder (previously the
+    // oversized segment panicked in img-parts via `(len-2).try_into().unwrap()`).
+    #[test]
+    fn write_xmp_oversized_is_rejected_not_panic() {
+        use crate::asset_io::WriteXmp;
+        let jpeg_io = JpegIO {};
+        let src = include_bytes!("../../tests/fixtures/C.jpg");
+
+        // One byte too big: signature prefix + xmp == MAX_JPEG_SEGMENT_PAYLOAD + 1.
+        let over = "x".repeat(MAX_JPEG_SEGMENT_PAYLOAD + 1 - XMP_SIGNATURE_BUFFER_SIZE);
+        let mut input = Cursor::new(src.to_vec());
+        let mut output = Cursor::new(Vec::new());
+        assert!(matches!(
+            jpeg_io.write_xmp(&mut input, &mut output, &over),
+            Err(Error::InvalidAsset(_))
+        ));
+
+        // Largest XMP that still fits must succeed (don't over-block).
+        let fits = "x".repeat(MAX_JPEG_SEGMENT_PAYLOAD - XMP_SIGNATURE_BUFFER_SIZE);
+        let mut input = Cursor::new(src.to_vec());
+        let mut output = Cursor::new(Vec::new());
+        jpeg_io.write_xmp(&mut input, &mut output, &fits).unwrap();
+    }
+
     #[test]
     fn test_extract_xmp() {
         let contents = Bytes::from_static(b"http://ns.adobe.com/xap/1.0/\0stuff");

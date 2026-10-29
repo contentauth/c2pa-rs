@@ -10,14 +10,18 @@ The certificates are organized by supported C2PA signing algorithm.  For each su
 ## Certificates with missing attributes
 
 `es256_no_org.{pem,pub}` is an ES256 key and chain whose end-entity certificate
-deliberately omits the `O=` (Organization) attribute.  Every other chain here
-carries one, so this is the only fixture that exercises the missing-attribute
-path in `Verifier::verify_signature`.
+deliberately omits the `O=` (Organization) attribute, exercising the
+missing-attribute path in `Verifier::verify_signature`.
 
 Unlike the chains above, these were generated locally rather than obtained from
-a certificate authority.  To regenerate them:
+a certificate authority.  This fixture includes its self-signed root certificate,
+despite that certificate's "Intermediate CA" common name.  The leaf has no
+extended key usage extension and is not C2PA-profile-compliant; use it with
+`Verifier::IgnoreProfileAndTrustPolicy`, not `VerifyCertificateProfileOnly`.
 
-```sh
+To regenerate them in a temporary directory using Bash:
+
+```bash
 openssl ecparam -name prime256v1 -genkey -noout -out ca.sec1.key
 openssl req -new -x509 -key ca.sec1.key -days 3650 -out ca.pem \
   -subj "/C=US/ST=CA/L=Somewhere/O=C2PA Test Intermediate Root CA/OU=FOR TESTING_ONLY/CN=Intermediate CA" \
@@ -34,6 +38,7 @@ openssl x509 -req -in leaf.csr -CA ca.pem -CAkey ca.sec1.key -CAcreateserial \
 
 openssl pkcs8 -topk8 -nocrypt -in leaf.sec1.key -out es256_no_org.pem
 cat leaf.pem ca.pem > es256_no_org.pub
+rm ca.sec1.key ca.pem ca.srl leaf.sec1.key leaf.csr leaf.pem
 ```
 
 ## More info

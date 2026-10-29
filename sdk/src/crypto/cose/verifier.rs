@@ -389,6 +389,8 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use c2pa_raw_crypto::SigningAlg;
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
     use x509_parser::prelude::{FromDer, Pem, X509Certificate};
 
     use super::spki_matches_signing_alg;
@@ -438,9 +440,7 @@ mod tests {
         assert!(!key_matches(ES512, SigningAlg::Es256));
     }
 
-    /// A chain whose end-entity certificate carries no `O=` (Organization)
-    /// attribute. Every other chain under `tests/fixtures/certs` includes one,
-    /// so this is the only fixture that exercises the missing-attribute path.
+    /// A chain whose end-entity certificate carries no `O=` (Organization) attribute.
     const ES256_NO_ORG_CHAIN: &[u8] =
         include_bytes!("../../../tests/fixtures/certs/es256_no_org.pub");
     const ES256_NO_ORG_KEY: &[u8] =
@@ -451,8 +451,8 @@ mod tests {
     ///
     /// `verify_signature` must still succeed, and `issuer_org` must come back as
     /// `None` rather than the whole call erroring out.
-    #[test]
-    fn verify_signature_succeeds_without_organization_attribute() {
+    #[c2pa_macros::c2pa_test_async]
+    async fn verify_signature_succeeds_without_organization_attribute() {
         use c2pa_raw_crypto::signer_from_private_key;
 
         use crate::{
@@ -475,17 +475,105 @@ mod tests {
         )
         .unwrap();
 
-        let mut validation_log = StatusTracker::default();
-        // Before #2540 this call failed outright with
-        // `CoseError::MissingSigningCertificateChain` for a chain like this one.
-        let cert_info = Verifier::IgnoreProfileAndTrustPolicy
-            .verify_signature(&cose_sign1, data, b"", None, &mut validation_log)
+        let verifier = Verifier::IgnoreProfileAndTrustPolicy;
+        for use_async in [false, true] {
+            let mut validation_log = StatusTracker::default();
+            let cert_info = if use_async {
+                verifier
+                    .verify_signature_async(&cose_sign1, data, b"", None, &mut validation_log)
+                    .await
+            } else {
+                verifier.verify_signature(&cose_sign1, data, b"", None, &mut validation_log)
+            }
             .unwrap();
 
-        // The absent attribute surfaces as `None`, not as a hard error.
-        assert_eq!(cert_info.issuer_org, None);
-        // The rest of the certificate info is still extracted as usual.
-        assert_eq!(cert_info.common_name.as_deref(), Some("C2PA Signer"));
-        assert!(cert_info.validated);
+            assert_eq!(cert_info.issuer_org, None);
+            assert_eq!(cert_info.common_name.as_deref(), Some("C2PA Signer"));
+            assert!(cert_info.validated);
+            assert!(!validation_log.has_any_error());
+        }
+    }
+
+    #[c2pa_macros::c2pa_test_async]
+    async fn malformed_algorithms_and_signature_formats_fail_with_status() {
+        use coset::{iana::Algorithm, RegisteredLabelWithPrivate, TaggedCborSerializable};
+
+        use super::*;
+        use crate::crypto::cose::{cose_signer::tests::TestSigner, sign, TimeStampStorage};
+
+        let signer = TestSigner::new(SigningAlg::Es256);
+        let bytes = sign(&signer, b"data", None, TimeStampStorage::V2_sigTst2_CTT).unwrap();
+        let original = CoseSign1::from_tagged_slice(&bytes).unwrap();
+        let verifier = Verifier::IgnoreProfileAndTrustPolicy;
+        for (alg, signature, expected_status) in [
+            (None, original.signature.clone(), ALGORITHM_UNSUPPORTED),
+            (
+                Some(RegisteredLabelWithPrivate::Assigned(Algorithm::ES256)),
+                vec![0x30, 6, 2, 1, 1, 2, 1, 2],
+                SIGNING_CREDENTIAL_INVALID,
+            ),
+            (
+                Some(RegisteredLabelWithPrivate::Assigned(Algorithm::EdDSA)),
+                original.signature.clone(),
+                SIGNING_CREDENTIAL_INVALID,
+            ),
+        ] {
+            let mut sign1 = original.clone();
+            sign1.protected.original_data = None;
+            sign1.protected.header.alg = alg;
+            sign1.signature = signature;
+            let bytes = sign1.to_tagged_vec().unwrap();
+            let mut log = StatusTracker::default();
+            assert!(verifier
+                .verify_signature(&bytes, b"data", b"", None, &mut log)
+                .is_err());
+            assert!(log.has_status(expected_status));
+            let mut log = StatusTracker::default();
+            assert!(verifier
+                .verify_signature_async(&bytes, b"data", b"", None, &mut log)
+                .await
+                .is_err());
+            assert!(log.has_status(expected_status));
+        }
+    }
+
+    #[c2pa_macros::c2pa_test_async]
+    async fn profile_only_skips_trust_and_applies_additional_ekus() {
+        use std::borrow::Cow;
+
+        use coset::TaggedCborSerializable;
+
+        use super::*;
+        use crate::crypto::cose::{cose_signer::tests::TestSigner, sign, TimeStampStorage};
+
+        let signer = TestSigner::new(SigningAlg::Ed25519);
+        let bytes = sign(&signer, b"data", None, TimeStampStorage::V1_sigTst).unwrap();
+        let sign1 = CoseSign1::from_tagged_slice(&bytes).unwrap();
+        let policy = CertificateTrustPolicy::default();
+        let verifier = Verifier::VerifyCertificateProfileOnly(Cow::Borrowed(&policy));
+        let mut log = StatusTracker::default();
+        assert_eq!(
+            verifier.verify_trust(&sign1, None, &mut log).unwrap(),
+            (TrustAnchorType::NoCheck, None)
+        );
+        assert_eq!(
+            verifier
+                .verify_trust_async(&sign1, None, &mut log)
+                .await
+                .unwrap(),
+            (TrustAnchorType::NoCheck, None)
+        );
+        assert!(verifier
+            .verify_profile(&sign1, None, Some("1.2.3.4".into()), &mut log)
+            .is_ok());
+        assert!(verifier
+            .verify_profile_async(&sign1, None, Some("1.2.3.4".into()), &mut log)
+            .await
+            .is_ok());
+        assert!(!log.has_any_error());
+        assert!(matches!(
+            Verifier::default(),
+            Verifier::VerifyTrustPolicy(_)
+        ));
     }
 }
