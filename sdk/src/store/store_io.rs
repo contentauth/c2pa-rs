@@ -21,7 +21,7 @@ use std::{
 use async_generic::async_generic;
 
 #[cfg(feature = "fetch_remote_manifests")]
-use super::store_core::DEFAULT_MANIFEST_RESPONSE_SIZE;
+use crate::settings::SettingsValidate;
 use crate::{
     assertion::AssertionBase,
     assertions::{BmffHash, BoxHash, CollectionHash, DataHash},
@@ -1215,6 +1215,8 @@ impl Store {
     pub(super) fn fetch_remote_manifest(url: &str, context: &Context) -> Result<Vec<u8>> {
         //const MANIFEST_CONTENT_TYPE: &str = "application/x-c2pa-manifest-store"; // todo verify once these are served
 
+        context.settings().verify.validate()?;
+        let max_response_size = context.settings().verify.max_manifest_response_size;
         context.check_progress(ProgressPhase::FetchingRemoteManifest, 1, 1)?;
 
         let request = http::Request::get(url).body(Vec::new())?;
@@ -1231,20 +1233,44 @@ impl Store {
                         .headers()
                         .get(http::header::CONTENT_LENGTH)
                         .and_then(|content_length| content_length.to_str().ok())
-                        .and_then(|content_length| content_length.parse().ok())
-                        .unwrap_or(DEFAULT_MANIFEST_RESPONSE_SIZE); // todo figure out good max to accept
-                    let body = response.into_body();
+                        .and_then(|content_length| content_length.parse::<u64>().ok());
+                    if len.is_some_and(|len| len > max_response_size) {
+                        return Err(Error::RemoteManifestFetch(format!(
+                            "remote manifest exceeds the {max_response_size} byte response size limit"
+                        )));
+                    }
+                    let mut body = response.into_body();
+                    let mut response_bytes = Vec::new();
 
-                    let mut response_bytes: Vec<u8> = Vec::with_capacity(len);
-
-                    let len64 = u64::try_from(len)
-                        .map_err(|_err| Error::BadParam("value out of range".to_string()))?;
-
-                    body.take(len64)
+                    body.by_ref()
+                        .take(max_response_size)
                         .read_to_end(&mut response_bytes)
                         .map_err(|_err| {
                             Error::RemoteManifestFetch("error reading content stream".to_string())
                         })?;
+
+                    // Check for excess data without growing the manifest buffer beyond the limit.
+                    if response_bytes.len() as u64 == max_response_size {
+                        let mut extra = [0u8; 1];
+                        loop {
+                            match body.read(&mut extra) {
+                                Ok(0) => break,
+                                Ok(_) => {
+                                    return Err(Error::RemoteManifestFetch(format!(
+                                        "remote manifest exceeds the {max_response_size} byte response size limit"
+                                    )));
+                                }
+                                Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {
+                                    continue
+                                }
+                                Err(_) => {
+                                    return Err(Error::RemoteManifestFetch(
+                                        "error reading content stream".to_string(),
+                                    ));
+                                }
+                            }
+                        }
+                    }
 
                     Ok(response_bytes)
                 } else {
