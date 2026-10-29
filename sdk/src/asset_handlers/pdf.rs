@@ -16,6 +16,7 @@
 
 use std::io::{Read, Write};
 
+use flate2::{Decompress, FlushDecompress, Status};
 use lopdf::{
     dictionary, Document, LoadOptions, Object,
     Object::{Array, Name, Reference},
@@ -36,6 +37,7 @@ static TYPE_KEY: &[u8] = b"Type";
 static NAMES_KEY: &[u8] = b"Names";
 
 const MAX_PDF_DECOMPRESSED_SIZE: usize = 64 * 1024 * 1024;
+const MAX_MANIFEST_FILTER_LAYERS: usize = 8;
 
 /// Error representing failure scenarios while interacting with PDFs.
 #[derive(Debug, Error)]
@@ -414,12 +416,15 @@ impl Pdf {
 
     fn decode_manifest_stream(stream: &Stream, limit: usize) -> Result<Vec<u8>, Error> {
         // lopdf treats malformed /Filter values as unfiltered and tolerates corrupt
-        // Flate data. Validate both before using its bounded PDF filter decoder.
+        // Flate data, so decode manifest streams strictly.
         let filters = if stream.dict.has(b"Filter") {
             stream.filters()?
         } else {
             Vec::new()
         };
+        if filters.len() > MAX_MANIFEST_FILTER_LAYERS {
+            return Err(Error::InvalidManifestStream("too many filter layers"));
+        }
         if filters.iter().any(|filter| *filter != b"FlateDecode") {
             return Err(Error::UnsupportedManifestEncoding);
         }
@@ -448,20 +453,17 @@ impl Pdf {
             return Ok(stream.content.clone());
         }
 
-        let mut content = stream.content.clone();
-        for _ in filters {
-            Self::validate_manifest_flate(&content, limit)?;
-            let layer = Stream::new(dictionary! { "Filter" => "FlateDecode" }, content);
-            content = layer.decompressed_content_with_limit(limit)?;
+        let mut content = Self::decode_manifest_flate(&stream.content, limit)?;
+        for _ in filters.iter().skip(1) {
+            content = Self::decode_manifest_flate(&content, limit)?;
         }
         Ok(content)
     }
 
-    fn validate_manifest_flate(content: &[u8], limit: usize) -> Result<(), Error> {
-        use flate2::{Decompress, FlushDecompress, Status};
-
+    fn decode_manifest_flate(content: &[u8], limit: usize) -> Result<Vec<u8>, Error> {
         let mut decoder = Decompress::new(true);
         let mut buffer = [0; 8192];
+        let mut decoded = Vec::new();
         loop {
             let before = (decoder.total_in(), decoder.total_out());
             let status = decoder
@@ -477,8 +479,10 @@ impl Pdf {
                         .into(),
                 );
             }
+            let written = (decoder.total_out() - before.1) as usize;
+            decoded.extend_from_slice(&buffer[..written]);
             if status == Status::StreamEnd {
-                return Ok(());
+                return Ok(decoded);
             }
             if before == (decoder.total_in(), decoder.total_out()) {
                 return Err(Error::InvalidManifestStream("truncated FlateDecode data"));
@@ -753,6 +757,8 @@ impl Pdf {
 pub(crate) mod tests {
     #![allow(clippy::unwrap_used)]
 
+    use flate2::{write::ZlibEncoder, Compression};
+
     use super::*;
 
     pub(crate) fn pdf_with_manifest_stream(stream: Stream) -> Vec<u8> {
@@ -768,8 +774,6 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn flate_manifest_stream(bytes: &[u8]) -> Stream {
-        use flate2::{write::ZlibEncoder, Compression};
-
         let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
         encoder.write_all(bytes).unwrap();
         Stream::new(
@@ -797,10 +801,11 @@ pub(crate) mod tests {
 
     #[test]
     fn test_read_rejects_invalid_manifest_encodings() {
-        let mut bad_checksum = flate_manifest_stream(b"some manifest bytes");
+        let manifest = vec![0; 8193];
+        let mut bad_checksum = flate_manifest_stream(&manifest);
         let last = bad_checksum.content.len() - 1;
         bad_checksum.content[last] ^= 1;
-        let mut truncated = flate_manifest_stream(b"some manifest bytes");
+        let mut truncated = flate_manifest_stream(&manifest);
         truncated.content.truncate(truncated.content.len() - 3);
         let streams = [
             bad_checksum,
@@ -830,25 +835,27 @@ pub(crate) mod tests {
 
     #[test]
     fn test_manifest_decoding_limit_boundaries() {
-        let manifest = vec![0; 1024];
-        for stream in [
-            Stream::new(dictionary! {}, manifest.clone()),
-            Stream::new(
-                dictionary! { "Filter" => Vec::<Object>::new() },
-                manifest.clone(),
-            ),
-            flate_manifest_stream(&manifest),
-        ] {
-            assert_eq!(
-                Pdf::decode_manifest_stream(&stream, 1024).unwrap(),
-                manifest
-            );
-            assert!(matches!(
-                Pdf::decode_manifest_stream(&stream, 1023),
-                Err(Error::UnableToReadPdf(lopdf::Error::Decompress(
-                    lopdf::DecompressError::MemoryLimitExceeded { limit: 1023 }
-                )))
-            ));
+        for size in [1024, 8192, 8193] {
+            let manifest = vec![0; size];
+            for stream in [
+                Stream::new(dictionary! {}, manifest.clone()),
+                Stream::new(
+                    dictionary! { "Filter" => Vec::<Object>::new() },
+                    manifest.clone(),
+                ),
+                flate_manifest_stream(&manifest),
+            ] {
+                assert_eq!(
+                    Pdf::decode_manifest_stream(&stream, size).unwrap(),
+                    manifest
+                );
+                assert!(matches!(
+                    Pdf::decode_manifest_stream(&stream, size - 1),
+                    Err(Error::UnableToReadPdf(lopdf::Error::Decompress(
+                        lopdf::DecompressError::MemoryLimitExceeded { limit }
+                    ))) if limit == size - 1
+                ));
+            }
         }
         assert_eq!(
             Pdf::decode_manifest_stream(&flate_manifest_stream(&[]), 0).unwrap(),
@@ -857,9 +864,31 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn test_manifest_decoding_bounds_intermediate_filter_layers() {
-        use flate2::{write::ZlibEncoder, Compression};
+    fn test_manifest_decoding_caps_filter_layers() {
+        let manifest = b"\0\0\0\x08jumb";
+        let mut content = manifest.to_vec();
+        for depth in 1..=MAX_MANIFEST_FILTER_LAYERS + 1 {
+            let mut stream = flate_manifest_stream(&content);
+            stream
+                .dict
+                .set("Filter", vec![Name(b"FlateDecode".to_vec()); depth]);
+            if depth <= MAX_MANIFEST_FILTER_LAYERS {
+                assert_eq!(
+                    Pdf::decode_manifest_stream(&stream, 1024).unwrap(),
+                    manifest
+                );
+            } else {
+                assert!(matches!(
+                    Pdf::decode_manifest_stream(&stream, 1024),
+                    Err(Error::InvalidManifestStream("too many filter layers"))
+                ));
+            }
+            content = stream.content;
+        }
+    }
 
+    #[test]
+    fn test_manifest_decoding_bounds_intermediate_filter_layers() {
         let manifest = vec![0; 1024];
         let mut encoder = ZlibEncoder::new(Vec::new(), Compression::none());
         encoder.write_all(&manifest).unwrap();
@@ -884,8 +913,6 @@ pub(crate) mod tests {
 
     #[test]
     fn test_read_bounds_explicit_manifest_decompression() {
-        use flate2::{write::ZlibEncoder, Compression};
-
         let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
         let chunk = [0; 8192];
         for _ in 0..MAX_PDF_DECOMPRESSED_SIZE / chunk.len() {
