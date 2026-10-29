@@ -56,11 +56,11 @@ unstable_structured_text = []
 # TODO: make our async tests always use the async API so we don't need ureq + reqwest
 #       see https://github.com/contentauth/c2pa-rs/issues/1364
 default_http = ["http_reqwest", "http_ureq", "http_wasi", "http_wstd"]
-http_reqwest_blocking = ["dep:reqwest", "reqwest/blocking"]
-http_ureq = ["dep:ureq"]
+http_reqwest_blocking = ["dep:reqwest", "reqwest/blocking", "dep:rustls", "dep:webpki", "dep:webpki-roots"]
+http_ureq = ["dep:ureq", "dep:rustls", "dep:webpki", "dep:webpki-roots"]
 http_wasi = ["dep:wasi"]
 http_wstd = ["dep:wstd"]
-http_reqwest = ["dep:reqwest"]
+http_reqwest = ["dep:reqwest", "dep:rustls", "dep:webpki", "dep:webpki-roots"]
 
 # The diagnostics feature is unsupported and might be removed.
 # It enables some low-overhead timing features used in our development cycle.
@@ -111,7 +111,6 @@ byteordered = "0.6.0"
 chrono = { version = "0.4.44", default-features = false, features = ["serde"] }
 c2pa_cbor = "0.78.0"
 c2pa_raw_crypto = { version = "0.2.0", default-features = false }
-const-hex = "1.19"
 coset = "0.4.2"
 der = { version = "0.8.1", features = ["alloc", "std", "oid"] }
 extfmt = "0.2.0"
@@ -154,7 +153,6 @@ riff = "2.0.0"
 schemars = { version = "1.2.1", optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_bytes = "0.11.19"
-serde_derive = "1.0.228"
 serde_json = { version = "1.0.150", features = ["preserve_order"] }
 serde_with = "3.20.0"
 serde-transcode = "1.1.1"
@@ -185,6 +183,12 @@ reqwest = { version = "0.12.28", default-features = false, features = [
 ], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# Security floors for both HTTP clients: remove eMudhra roots and reject the
+# compromised intermediate keys, including their Sectigo cross-signs.
+# Rustls 0.23.24 is the first release using WebPKI 0.103 rather than 0.102.
+rustls = { version = "0.23.24", default-features = false, optional = true }
+webpki = { package = "rustls-webpki", version = "0.103.16", default-features = false, features = ["std"], optional = true }
+webpki-roots = { version = "1.0.11", default-features = false, optional = true }
 openssl = { version = "0.10.80", features = ["vendored"], optional = true }
 ureq = { version = "3.3.0", default-features = false, features = [
     "rustls"
@@ -264,7 +268,6 @@ flate2 = "1.1.10"
 glob = "0.3.3"
 hex-literal = "1.1.0"
 image = { version = "0.25.10", default-features = false, features = ["jpeg"] }
-jumbf = "0.7.0"
 c2pa_macros = { path = "../macros" }
 mockall = "0.15.0"
 jsonschema = { version = "0.49.4", default-features = false }
@@ -280,15 +283,15 @@ rand_core_06 = { package = "rand_core", version = "0.6.4", features = [
 wasm-bindgen-test = "0.3.72"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+rustls-pki-types = "1.12"
 httpmock = "0.8.3"
 tokio = { version = "1.52.3", features = ["full"] }
-criterion = { package = "codspeed-criterion-compat", version = "4.7.0" }
-dhat = "0.3.3"
+criterion = { package = "codspeed-criterion-compat", version = "6.0.0" }
 
 # WASM/WASI doesn't support default criterion features.
 # https://github.com/bheisler/criterion.rs/blob/4c19e913b84e6a7e4a8470cb0f766796886ed891/book/src/user_guide/wasi.md
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-criterion = { package = "codspeed-criterion-compat", version = "4.7.0", default-features = false }
+criterion = { package = "codspeed-criterion-compat", version = "6.0.0", default-features = false }
 
 [[bench]]
 name = "sign"
@@ -304,8 +307,4 @@ harness = false
 
 [[bench]]
 name = "settings"
-harness = false
-
-[[bench]]
-name = "settings_memory"
 harness = false

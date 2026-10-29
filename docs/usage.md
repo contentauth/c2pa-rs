@@ -70,6 +70,17 @@ These features toggle compilation with different HTTP libraries, depending on th
 - `http_wasi`: Enables `wasi` for sync HTTP requests on WASI.
 - `http_wstd`: Enables `wstd` for async HTTP requests on WASI.
 
+Native `ureq` and `reqwest` HTTPS clients require `webpki-roots` 1.0.11 or
+newer and `rustls-webpki` 0.103.16 or newer. These minimums remove eMudhra
+trust anchors and reject the compromised intermediate keys, including their
+Sectigo cross-signs. Rebuild and redistribute applications and native bindings
+to update the TLS verifier and root bundle embedded in existing binaries;
+updating the operating system's trust store alone does not update them.
+
+These HTTPS trust settings are separate from C2PA signing-certificate trust.
+Custom HTTP resolvers, browser-based WebAssembly, and WASI hosts remain
+responsible for updating their own TLS verifiers and trust stores.
+
 ### Features no longer supported
 
 The following features are no longer supported:
