@@ -60,7 +60,7 @@ const ORIGINAL: &str = "original";
 const UPDATE: &str = "update";
 
 // ISO IEC 14496-12_2022 FullBoxes
-const FULL_BOX_TYPES: &[&str; 80] = &[
+pub(crate) const FULL_BOX_TYPES: &[&str; 80] = &[
     "pdin", "mvhd", "tkhd", "mdhd", "hdlr", "nmhd", "elng", "stsd", "stdp", "stts", "ctts", "cslg",
     "stss", "stsh", "stdp", "elst", "dref", "stsz", "stz2", "stsc", "stco", "co64", "padb", "subs",
     "saiz", "saio", "mehd", "trex", "mfhd", "tfhd", "trun", "tfra", "mfro", "tfdt", "leva", "trep",
@@ -780,35 +780,32 @@ where
 
                 // check the version
                 if let Some(desired_version) = bmff_exclusion.version {
-                    if let Some(box_version) = box_info.version {
-                        if desired_version != box_version {
-                            continue;
-                        }
+                    if box_info.version != Some(desired_version) {
+                        continue;
                     }
                 }
 
                 // check the flags
                 if let Some(desired_flag_bytes) = &bmff_exclusion.flags {
+                    let Some(box_flags) = box_info.flags else {
+                        continue;
+                    };
                     let mut temp_bytes = [0u8; 4];
                     if desired_flag_bytes.len() >= 3 {
-                        temp_bytes[0] = desired_flag_bytes[0];
-                        temp_bytes[1] = desired_flag_bytes[1];
-                        temp_bytes[2] = desired_flag_bytes[2];
+                        temp_bytes[1..].copy_from_slice(&desired_flag_bytes[..3]);
                     }
                     let desired_flags = u32::from_be_bytes(temp_bytes);
 
-                    if let Some(box_flags) = box_info.flags {
-                        let exact = bmff_exclusion.exact.unwrap_or(true);
+                    let exact = bmff_exclusion.exact.unwrap_or(true);
 
-                        if exact {
-                            if desired_flags != box_flags {
-                                continue;
-                            }
-                        } else {
-                            // bitwise match
-                            if (desired_flags | box_flags) != desired_flags {
-                                continue;
-                            }
+                    if exact {
+                        if desired_flags != box_flags {
+                            continue;
+                        }
+                    } else {
+                        // All requested bits must be set; additional box flags are allowed.
+                        if (desired_flags & box_flags) != desired_flags {
+                            continue;
                         }
                     }
                 }
@@ -3159,6 +3156,142 @@ pub mod tests {
         io_utils::tempdirectory,
         test::{fixture_path, temp_dir_path},
     };
+
+    fn assert_conditional_exclusion_bytes(
+        version_flags: [u8; 4],
+        exclusion: &ExclusionsMap,
+        excluded: Option<(usize, usize)>,
+    ) {
+        use sha2::{Digest, Sha256};
+
+        use crate::utils::hash_utils::hash_stream_by_alg;
+
+        // Independent bytes: ftyp [0,16), moof [16,40), mfhd [24,40), mdat [40,52).
+        let data = [
+            b"\0\0\0\x10ftypmp41\0\0\0\0".as_slice(),
+            b"\0\0\0\x18moof\0\0\0\x10mfhd",
+            &version_flags,
+            b"\0\0\0\x07\0\0\0\x0cmdatDATA",
+        ]
+        .concat();
+
+        for bmff_v2 in [false, true] {
+            let ranges = bmff_to_jumbf_exclusions(
+                &mut Cursor::new(&data),
+                std::slice::from_ref(exclusion),
+                bmff_v2,
+            )
+            .unwrap();
+            let actual_exclusions: Vec<_> = ranges
+                .iter()
+                .filter(|range| range.bmff_offset().is_none())
+                .map(|range| (range.start(), range.length()))
+                .collect();
+            let expected_exclusions: Vec<_> = excluded
+                .map(|(start, end)| (start as u64, (end - start) as u64))
+                .into_iter()
+                .collect();
+            assert_eq!(actual_exclusions, expected_exclusions, "{exclusion:?}");
+
+            // Construct the expected hash input without using the resolver's ranges.
+            let mut expected_input = Vec::new();
+            for (start, end) in [(0, 16), (16, 40), (40, 52)] {
+                if excluded == Some((start, end)) {
+                    continue;
+                }
+                if bmff_v2 {
+                    expected_input.extend_from_slice(&(start as u64).to_be_bytes());
+                }
+                for (offset, byte) in data.iter().enumerate().take(end).skip(start) {
+                    if !excluded.is_some_and(|(a, b)| (a..b).contains(&offset)) {
+                        expected_input.push(*byte);
+                    }
+                }
+            }
+            let actual_hash =
+                hash_stream_by_alg("sha256", &mut Cursor::new(&data), Some(ranges), true).unwrap();
+            assert_eq!(
+                actual_hash,
+                Sha256::digest(&expected_input).to_vec(),
+                "bmff_v2={bmff_v2}, {exclusion:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_bmff_conditional_exclusion_flags_exact() {
+        for flags in [[0, 0, 0], [0, 0, 1], [0, 1, 0], [0x12, 0x34, 0x56]] {
+            for desired in [[0, 0, 0], [0, 0, 1], [0, 1, 0], [0x12, 0x34, 0x56]] {
+                for exact in [None, Some(true)] {
+                    let mut exclusion = ExclusionsMap::new("/moof/mfhd".to_string());
+                    exclusion.flags = Some(desired.to_vec().into());
+                    exclusion.exact = exact;
+                    assert_conditional_exclusion_bytes(
+                        [0, flags[0], flags[1], flags[2]],
+                        &exclusion,
+                        (flags == desired).then_some((24, 40)),
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_bmff_conditional_exclusion_flags_mask() {
+        // C2PA 2.4 section 18.6.2: all requested bits must be set; extra bits are allowed.
+        for (flags, desired, matches) in [
+            ([0, 0, 3], [0, 0, 1], true),
+            ([0, 0, 1], [0, 0, 3], false),
+            ([0, 0, 0], [0, 0, 1], false),
+            ([0, 0, 1], [0, 0, 1], true),
+            ([0, 1, 0], [0, 0, 1], false),
+            ([0x80, 1, 1], [0x80, 0, 1], true),
+            ([0, 0, 0], [0, 0, 0], true),
+            ([0xff, 0xff, 0xff], [0, 0, 0], true),
+        ] {
+            let mut exclusion = ExclusionsMap::new("/moof/mfhd".to_string());
+            exclusion.flags = Some(desired.to_vec().into());
+            exclusion.exact = Some(false);
+            assert_conditional_exclusion_bytes(
+                [0, flags[0], flags[1], flags[2]],
+                &exclusion,
+                matches.then_some((24, 40)),
+            );
+        }
+    }
+
+    #[test]
+    fn test_bmff_conditional_exclusion_version() {
+        for version in [0, 1] {
+            let mut exclusion = ExclusionsMap::new("/moof/mfhd".to_string());
+            exclusion.version = Some(version);
+            assert_conditional_exclusion_bytes(
+                [1, 0, 0, 1],
+                &exclusion,
+                (version == 1).then_some((24, 40)),
+            );
+            exclusion.flags = Some(vec![0, 1, 0].into());
+            assert_conditional_exclusion_bytes([1, 0, 0, 1], &exclusion, None);
+        }
+    }
+
+    #[test]
+    fn test_bmff_conditional_exclusion_non_fullbox() {
+        let mut exclusion = ExclusionsMap::new("/ftyp".to_string());
+        assert_conditional_exclusion_bytes([0; 4], &exclusion, Some((0, 16)));
+        for version in [0, 1] {
+            exclusion.version = Some(version);
+            assert_conditional_exclusion_bytes([0; 4], &exclusion, None);
+        }
+        exclusion.version = None;
+        for flags in [[0, 0, 0], [0, 0, 1]] {
+            for exact in [None, Some(true), Some(false)] {
+                exclusion.flags = Some(flags.to_vec().into());
+                exclusion.exact = exact;
+                assert_conditional_exclusion_bytes([0; 4], &exclusion, None);
+            }
+        }
+    }
 
     #[test]
     fn test_read_deep_nesting() {
