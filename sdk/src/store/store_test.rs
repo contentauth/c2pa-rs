@@ -107,6 +107,120 @@ fn create_capture_claim(claim: &mut Claim) -> Result<&mut Claim> {
 }
 
 #[test]
+fn test_claim_signature_inspection() -> Result<()> {
+    let store = Store::new();
+    let settings = Settings::default();
+    let signer = test_signer(SigningAlg::Es256);
+    let mut claim = create_test_claim()?;
+    assert!(claim.cose_sign1().is_err());
+    assert!(!claim.has_ocsp_vals());
+    let signature = store.sign_claim(&claim, signer.as_ref(), signer.reserve_size(), &settings)?;
+    claim.set_signature_val(signature);
+
+    assert!(claim.cose_sign1().is_ok());
+    let info = claim.signature_info().expect("signature info");
+    let cert_chain = claim.get_cert_chain(&settings)?;
+    assert!(!cert_chain.is_empty());
+    assert_eq!(cert_chain, info.cert_chain);
+    assert!(!claim.has_ocsp_vals());
+    Ok(())
+}
+
+#[c2pa_test_async]
+async fn test_claim_signature_inspection_requires_serializable_claim() {
+    let claim = Claim::new("test", Some("test"), 2);
+    assert!(claim.data().is_err());
+    assert!(claim.cose_sign1().is_err());
+    assert!(claim.signature_info().is_none());
+    assert!(claim.signature_info_async().await.is_none());
+    assert!(claim.get_cert_chain(&Settings::default()).is_err());
+    assert!(!claim.has_ocsp_vals());
+}
+
+#[c2pa_test_async]
+async fn test_claim_signature_inspection_async() -> Result<()> {
+    let store = Store::new();
+    let settings = Settings::default();
+    let signer = async_test_signer(SigningAlg::Es256);
+    let mut claim = create_test_claim()?;
+    let signature = store
+        .sign_claim_async(&claim, signer.as_ref(), signer.reserve_size(), &settings)
+        .await?;
+    claim.set_signature_val(signature);
+    let info = claim.signature_info_async().await.expect("signature info");
+    assert_eq!(claim.get_cert_chain(&settings)?, info.cert_chain);
+    assert!(!info.cert_chain.is_empty());
+    Ok(())
+}
+
+#[test]
+fn test_ocsp_manifest_selection() -> Result<()> {
+    use crate::settings::builder::OcspFetchScope;
+
+    let mut store = Store::new();
+    let mut first = create_test_claim()?;
+    first.set_signature_val(vec![1]);
+    let first_label = store.commit_claim(first)?;
+    let mut second = create_test_claim()?;
+    second.set_signature_val(vec![1]);
+    let active_label = store.commit_claim(second)?;
+    let mut settings = Settings::default();
+    for scope in [
+        None,
+        Some(OcspFetchScope::Active),
+        Some(OcspFetchScope::All),
+    ] {
+        for should_override in [None, Some(false), Some(true)] {
+            settings.builder.certificate_status_fetch = scope;
+            settings.builder.certificate_status_should_override = should_override;
+            let expected = match (scope, should_override) {
+                (Some(OcspFetchScope::Active), Some(_)) => vec![active_label.clone()],
+                (Some(OcspFetchScope::All), Some(_)) => {
+                    vec![first_label.clone(), active_label.clone()]
+                }
+                _ => Vec::new(),
+            };
+            assert_eq!(store.get_manifest_labels_for_ocsp(&settings), expected);
+        }
+    }
+    settings.builder.certificate_status_fetch = Some(OcspFetchScope::Active);
+    settings.builder.certificate_status_should_override = Some(true);
+    assert!(Store::new()
+        .get_manifest_labels_for_ocsp(&settings)
+        .is_empty());
+    Ok(())
+}
+
+#[c2pa_test_async]
+async fn test_ocsp_missing_and_invalid_claims() -> Result<()> {
+    let context = Context::new();
+    let mut store = Store::new();
+    assert!(store.get_ocsp_status(&context).is_none());
+    assert!(store.get_ocsp_status_async(&context).await.is_none());
+    let mut log = StatusTracker::default();
+    assert!(store
+        .get_ocsp_response_ders(vec!["missing".to_string()], &mut log, &context)?
+        .is_empty());
+    assert!(store
+        .get_ocsp_response_ders_async(vec!["missing".to_string()], &mut log, &context)
+        .await?
+        .is_empty());
+    let mut claim = create_test_claim()?;
+    claim.set_signature_val(vec![1]);
+    let label = store.commit_claim(claim)?;
+    assert!(store.get_ocsp_status(&context).is_none());
+    assert!(store.get_ocsp_status_async(&context).await.is_none());
+    assert!(store
+        .get_ocsp_response_ders(vec![label.clone()], &mut log, &context)
+        .is_err());
+    assert!(store
+        .get_ocsp_response_ders_async(vec![label], &mut log, &context)
+        .await
+        .is_err());
+    Ok(())
+}
+
+#[test]
 fn test_jumbf_generation() {
     let context = Context::new();
 

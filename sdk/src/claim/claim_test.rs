@@ -70,6 +70,301 @@ fn test_build_claim() {
 }
 
 #[test]
+fn test_assertion_store_json_formats() -> Result<()> {
+    let mut claim = Claim::new("test", Some("test"), 1);
+    let binary = vec![0xde, 0xad, 0xbe, 0xef];
+    claim.add_assertion(&assertions::User::new("test.json", r#"{"value":7}"#))?;
+    claim.add_assertion(&Actions::new().add_action(Action::new(c2pa_action::CREATED)))?;
+    claim.add_assertion(&assertions::EmbeddedData::new(
+        "test.binary",
+        "application/octet-stream",
+        binary.clone(),
+    ))?;
+    claim.add_assertion(&assertions::Uuid::new(
+        "test.uuid",
+        "deadbeefdeadbeefdeadbeefdeadbeef".to_string(),
+        binary.clone(),
+    ))?;
+
+    for pretty in [false, true] {
+        for (format, ordered, omit_binary) in [
+            (AssertionStoreJsonFormat::KeyValue, false, false),
+            (AssertionStoreJsonFormat::KeyValueNoBinary, false, true),
+            (AssertionStoreJsonFormat::OrderedList, true, false),
+            (AssertionStoreJsonFormat::OrderedListNoBinary, true, true),
+        ] {
+            let report: Value = serde_json::from_str(&claim.to_json(format, pretty)?)?;
+            assert_eq!(report["label"], claim.label());
+            let store = &report["assertion_store"];
+            let expected_binary = if omit_binary {
+                "omitted".to_string()
+            } else {
+                crate::crypto::base64::encode(&binary)
+            };
+            if ordered {
+                let entries = store.as_array().expect("ordered assertion store");
+                assert_eq!(entries.len(), 4);
+                assert_eq!(entries[0]["data"], json!({"value": 7}));
+                assert_eq!(entries[0]["is_binary"], false);
+                assert_eq!(
+                    entries[1]["data"]["actions"][0]["action"],
+                    c2pa_action::CREATED
+                );
+                assert_eq!(entries[2]["data"], expected_binary);
+                assert_eq!(entries[2]["is_binary"], true);
+                assert_eq!(entries[3]["data"]["data"], expected_binary);
+                assert_eq!(
+                    entries[3]["data"]["uuid"],
+                    "deadbeefdeadbeefdeadbeefdeadbeef"
+                );
+                assert_eq!(entries[3]["is_binary"], true);
+            } else {
+                assert_eq!(store["test.json"], json!({"value": 7}));
+                assert_eq!(
+                    store["c2pa.actions.v2"]["actions"][0]["action"],
+                    c2pa_action::CREATED
+                );
+                assert_eq!(store["test.binary"], expected_binary);
+                assert_eq!(store["test.uuid"]["data"], expected_binary);
+                assert_eq!(
+                    store["test.uuid"]["uuid"],
+                    "deadbeefdeadbeefdeadbeefdeadbeef"
+                );
+                assert!(report["vc_store"].is_array());
+            }
+        }
+    }
+
+    let report: Value =
+        serde_json::from_str(&claim.to_json(AssertionStoreJsonFormat::None, false)?)?;
+    assert!(report.get("assertion_store").is_none());
+    Ok(())
+}
+
+#[test]
+fn test_action_ingredient_relationships() -> Result<()> {
+    for action_name in [
+        c2pa_action::OPENED,
+        c2pa_action::PLACED,
+        c2pa_action::REMOVED,
+        c2pa_action::TRANSCODED,
+        c2pa_action::REPACKAGED,
+    ] {
+        for relationship in [Relationship::ParentOf, Relationship::ComponentOf] {
+            for plural in [false, true] {
+                for missing in [false, true] {
+                    let mut claim = Claim::new("test", Some("test"), 2);
+                    let ingredient = Ingredient::new_v3(relationship.clone())
+                        .set_title("source.jpg")
+                        .set_format("image/jpeg");
+                    let reference = claim.add_assertion(&ingredient)?;
+                    let reference = if missing {
+                        HashedUri::new(
+                            "self#jumbf=c2pa.assertions/c2pa.ingredient__99".to_string(),
+                            None,
+                            &[0; 32],
+                        )
+                    } else {
+                        reference
+                    };
+                    let action = if plural {
+                        Action::new(action_name).set_parameter("ingredients", vec![reference])?
+                    } else {
+                        Action::new(action_name).set_parameter("ingredient", reference)?
+                    };
+                    let actions = if action_name == c2pa_action::OPENED {
+                        Actions::new()
+                    } else {
+                        Actions::new().add_action(
+                            Action::new(c2pa_action::CREATED)
+                                .set_source_type(DigitalSourceType::Empty),
+                        )
+                    };
+                    claim.add_assertion(&actions.add_action(action))?;
+                    let mut log =
+                        StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+                    Claim::verify_actions(
+                        &claim,
+                        &StoreValidationInfo::default(),
+                        &mut log,
+                        &Settings::default(),
+                    )?;
+                    let expected_relationship = if action_name == c2pa_action::PLACED
+                        || action_name == c2pa_action::REMOVED
+                    {
+                        Relationship::ComponentOf
+                    } else {
+                        Relationship::ParentOf
+                    };
+                    let mismatch = missing || relationship != expected_relationship;
+                    let failures: Vec<_> = log
+                        .logged_items()
+                        .iter()
+                        .filter(|item| {
+                            item.validation_status.as_deref()
+                                == Some(validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH)
+                        })
+                        .collect();
+                    assert_eq!(
+                        !failures.is_empty(),
+                        mismatch,
+                        "{action_name}, {relationship:?}, plural={plural}, missing={missing}: {log:?}"
+                    );
+                    if mismatch {
+                        assert!(failures[0].description.contains(if missing {
+                            "not found"
+                        } else {
+                            "source.jpg"
+                        }));
+                    } else {
+                        assert!(log.logged_items().is_empty(), "{log:?}");
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn test_action_missing_ingredient_parameters() -> Result<()> {
+    for action_name in [
+        c2pa_action::OPENED,
+        c2pa_action::PLACED,
+        c2pa_action::REMOVED,
+    ] {
+        for parameters in [None, Some(json!({})), Some(json!({"ingredients": []}))] {
+            let mut claim = Claim::new("test", Some("test"), 2);
+            let mut action = json!({"action": action_name});
+            if let Some(parameters) = parameters {
+                action["parameters"] = parameters;
+            }
+            let action: Action = serde_json::from_value(action)?;
+            let actions = if action_name == c2pa_action::OPENED {
+                Actions::new()
+            } else {
+                Actions::new().add_action(
+                    Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty),
+                )
+            };
+            claim.add_assertion(&actions.add_action(action))?;
+            let mut log = StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+            Claim::verify_actions(
+                &claim,
+                &StoreValidationInfo::default(),
+                &mut log,
+                &Settings::default(),
+            )?;
+            assert!(
+                log.logged_items()
+                    .iter()
+                    .any(|item| item.validation_status.as_deref()
+                        == Some(validation_status::ASSERTION_ACTION_INGREDIENT_MISMATCH)),
+                "{action_name}: {log:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn test_action_validation_v1_strictness_and_empty_actions() -> Result<()> {
+    for strict in [false, true] {
+        let mut claim = Claim::new("test", Some("test"), 1);
+        claim.add_assertion(&Actions::new())?;
+        let mut settings = Settings::default();
+        settings.verify.strict_v1_validation = strict;
+        let mut log = StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+        let result =
+            Claim::verify_actions(&claim, &StoreValidationInfo::default(), &mut log, &settings);
+        assert_eq!(result.is_err(), strict);
+        assert_eq!(log.logged_items().is_empty(), !strict);
+        if strict {
+            assert_eq!(
+                log.logged_items()[0].validation_status.as_deref(),
+                Some(validation_status::ASSERTION_ACTION_MALFORMED)
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn test_action_validation_malformed_actions() -> Result<()> {
+    for (actions, description) in [
+        (Actions::new(), "Actions missing action array"),
+        (
+            Actions::new().add_action(Action::new("c2pa.edited")),
+            "first action must be created or opened",
+        ),
+        (
+            Actions::new().add_action(Action::new(c2pa_action::CREATED)),
+            "c2pa.created action must have a digitalSourceType",
+        ),
+        (
+            Actions::new()
+                .add_action(
+                    Action::new(c2pa_action::CREATED).set_source_type(DigitalSourceType::Empty),
+                )
+                .add_action(Action::new("")),
+            "action must have an action.",
+        ),
+    ] {
+        let mut claim = Claim::new("test", Some("test"), 2);
+        claim.add_assertion(&actions)?;
+        for (behavior, stop_on_error) in [
+            (ErrorBehavior::StopOnFirstError, true),
+            (ErrorBehavior::ContinueWhenPossible, false),
+        ] {
+            let mut log = StatusTracker::with_error_behavior(behavior);
+            let result = Claim::verify_actions(
+                &claim,
+                &StoreValidationInfo::default(),
+                &mut log,
+                &Settings::default(),
+            );
+            assert!(
+                log.logged_items()
+                    .iter()
+                    .any(|item| item.validation_status.as_deref()
+                        == Some(validation_status::ASSERTION_ACTION_MALFORMED)
+                        && item.description == description),
+                "{description}: {log:?}"
+            );
+            let should_throw = description == "Actions missing action array"
+                || (stop_on_error
+                    && description != "c2pa.created action must have a digitalSourceType");
+            assert_eq!(result.is_err(), should_throw, "{description}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn test_action_validation_v1_rejects_multiple_assertions() -> Result<()> {
+    let mut claim = Claim::new("test", Some("test"), 1);
+    claim.add_assertion(&Actions::new().add_action(Action::new(c2pa_action::CREATED)))?;
+    claim.add_assertion(&Actions::new().add_action(Action::new("c2pa.edited")))?;
+    let mut log = StatusTracker::with_error_behavior(ErrorBehavior::StopOnFirstError);
+    assert!(Claim::verify_actions(
+        &claim,
+        &StoreValidationInfo::default(),
+        &mut log,
+        &Settings::default(),
+    )
+    .is_err());
+    assert_eq!(
+        log.logged_items()[0].validation_status.as_deref(),
+        Some(validation_status::ASSERTION_ACTION_MALFORMED)
+    );
+    assert_eq!(
+        log.logged_items()[0].description,
+        "only one action assertion allowed for v1 claims"
+    );
+    Ok(())
+}
+
+#[test]
 fn test_build_claim_generator_hints() {
     // Create a new claim.
     let mut claim = create_test_claim().expect("create test claim");
