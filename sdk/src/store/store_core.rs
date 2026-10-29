@@ -1452,8 +1452,11 @@ impl Store {
             ));
         };
 
-        // Write dynamic assertions into the slots reserved by the caller, using
-        // the same dynamic_assertions() result throughout the operation.
+        // Reserve placeholder slots for any dynamic assertions exposed by the
+        // signer, then write their real content in place. This must reuse the
+        // same `dynamic_assertions()` result across the whole operation –
+        // draining it on an earlier call is what silently dropped identity
+        // assertions in issue #2055.
         let dynamic_assertions = signer.dynamic_assertions();
         if !dynamic_assertions.is_empty() {
             let missing: Vec<String> = dynamic_assertions

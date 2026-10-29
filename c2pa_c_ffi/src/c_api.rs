@@ -265,10 +265,18 @@ pub struct C2paSigner {
     pub signer: Box<dyn crate::maybe_send_sync::C2paSignerObject>,
 }
 
-/// Defines a callback to read from a stream.
+/// Defines a callback to sign data.
 ///
 /// # Parameters
-/// * context: A generic context value to used by the C code, often a file or stream reference.
+/// * `context`: an opaque context value supplied to [`c2pa_signer_create`].
+/// * `data`: the bytes to sign.
+/// * `len`: the length of `data` in bytes.
+/// * `signed_bytes`: the buffer in which to write the signature.
+/// * `signed_len`: the capacity of `signed_bytes` in bytes.
+///
+/// # Returns
+/// The number of signature bytes written, which must not exceed `signed_len`, or a negative value
+/// on failure.
 pub type SignerCallback = unsafe extern "C" fn(
     context: *const (),
     data: *const c_uchar,
@@ -2700,6 +2708,7 @@ pub unsafe extern "C" fn c2pa_builder_compose_manifest(
 /// Creates a C2paSigner from a callback and configuration.
 ///
 /// # Parameters
+/// * context: an opaque context value passed to the callback.
 /// * callback: a callback function to sign data.
 /// * alg: the signing algorithm.
 /// * certs: a pointer to a NULL-terminated string containing the certificate chain in PEM format.
@@ -2717,9 +2726,14 @@ pub unsafe extern "C" fn c2pa_builder_compose_manifest(
 /// enough, possibly being re-used and called multiple times. The callback is logically
 /// owned by the host/caller.
 ///
+/// # Callback contract
+///
+/// Return a negative value to propagate an error on failure. A successful return value must not
+/// exceed the `signed_len` supplied to the callback.
+///
 /// # Example
 /// ```c
-/// auto result = c2pa_signer_create(callback, alg, certs, tsa_url);
+/// auto result = c2pa_signer_create(context, callback, alg, certs, tsa_url);
 /// if (result == NULL) {
 ///     auto error = c2pa_error();
 ///     printf("Error: %s\n", error);
@@ -2743,7 +2757,9 @@ pub unsafe extern "C" fn c2pa_signer_create(
     // the context set on the CallbackSigner closure
     let c_callback = move |context: *const (), data: &[u8]| {
         // we need to guess at a max signed size, the callback must verify this is big enough or fail.
-        let signed_len_max = data.len() * 2;
+        let signed_len_max = data.len().checked_mul(2).ok_or_else(|| {
+            c2pa::Error::BadParam("signer callback buffer length overflow".to_string())
+        })?;
         let mut signed_bytes: Vec<u8> = vec![0; signed_len_max];
         let signed_size = unsafe {
             (callback)(
@@ -2757,7 +2773,13 @@ pub unsafe extern "C" fn c2pa_signer_create(
         if signed_size < 0 {
             return Err(c2pa::Error::CoseSignature); // todo:: return errors from callback
         }
-        signed_bytes.set_len(signed_size as usize);
+        let signed_size = signed_size as usize;
+        if signed_size > signed_len_max {
+            return Err(c2pa::Error::BadParam(format!(
+                "signer callback returned {signed_size} bytes for a buffer with capacity {signed_len_max}"
+            )));
+        }
+        signed_bytes.truncate(signed_size);
         Ok(signed_bytes)
     };
 
@@ -4096,6 +4118,101 @@ mod tests {
             }
         })
         .is_ok());
+    }
+
+    fn sign_with_callback(callback: SignerCallback, data: &[u8]) -> c2pa::Result<Vec<u8>> {
+        let certs = include_str!(fixture_path!("certs/ed25519.pub"));
+        let certs_cstr = CString::new(certs).unwrap();
+        let signer_ptr = unsafe {
+            c2pa_signer_create(
+                std::ptr::null(),
+                callback,
+                C2paSigningAlg::Ed25519,
+                certs_cstr.as_ptr(),
+                std::ptr::null(),
+            )
+        };
+        assert!(!signer_ptr.is_null());
+
+        let result = unsafe { &*signer_ptr }.signer.sign(data);
+
+        assert_eq!(unsafe { c2pa_free(signer_ptr as *const c_void) }, 0);
+        result
+    }
+
+    #[test]
+    fn test_callback_signer_rejects_negative_size() {
+        extern "C" fn callback(
+            _context: *const (),
+            _data: *const c_uchar,
+            _len: usize,
+            _signed_bytes: *mut c_uchar,
+            _signed_len: usize,
+        ) -> isize {
+            -1
+        }
+
+        assert!(matches!(
+            sign_with_callback(callback, b"test"),
+            Err(c2pa::Error::CoseSignature)
+        ));
+    }
+
+    #[test]
+    fn test_callback_signer_accepts_exact_capacity() {
+        extern "C" fn callback(
+            _context: *const (),
+            _data: *const c_uchar,
+            _len: usize,
+            signed_bytes: *mut c_uchar,
+            signed_len: usize,
+        ) -> isize {
+            unsafe { std::ptr::write_bytes(signed_bytes, 0xa5, signed_len) };
+            signed_len.try_into().expect("test buffer fits in isize")
+        }
+
+        let signature = sign_with_callback(callback, b"test").expect("exact capacity is valid");
+        assert_eq!(signature, vec![0xa5; 8]);
+    }
+
+    #[test]
+    fn test_callback_signer_rejects_capacity_plus_one() {
+        extern "C" fn callback(
+            _context: *const (),
+            _data: *const c_uchar,
+            _len: usize,
+            _signed_bytes: *mut c_uchar,
+            signed_len: usize,
+        ) -> isize {
+            (signed_len + 1)
+                .try_into()
+                .expect("test buffer fits in isize")
+        }
+
+        let err = sign_with_callback(callback, b"test").unwrap_err();
+        assert!(
+            matches!(&err, c2pa::Error::BadParam(message) if message.contains("returned 9 bytes") && message.contains("capacity 8")),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn test_callback_signer_rejects_isize_max_size() {
+        extern "C" fn callback(
+            _context: *const (),
+            _data: *const c_uchar,
+            _len: usize,
+            _signed_bytes: *mut c_uchar,
+            _signed_len: usize,
+        ) -> isize {
+            isize::MAX
+        }
+
+        let err = sign_with_callback(callback, b"test").unwrap_err();
+        assert!(
+            matches!(&err, c2pa::Error::BadParam(message) if message.contains("capacity 8")),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[test]
