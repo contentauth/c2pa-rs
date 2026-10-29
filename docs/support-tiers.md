@@ -32,36 +32,34 @@ See [validation gating](https://github.com/contentauth/c2pa-rs/blob/main/docs/re
 
 ### Slack alerts for failing checks on main
 
-The [Main CI Slack alerts wrapper](../.github/workflows/main-ci-slack.yml) calls
-the reusable notifier in [contentauth/ci-workflows](https://github.com/contentauth/ci-workflows),
-pinned to a reviewed commit. It monitors completed Tier 1A, Tier 1B, and Tier 2
-runs on `main` from pushes, schedules, and manual dispatches. Pull-request runs
-and experimental features are excluded. Grant this repository access to the
-organization Actions secret `SLACK_WEBHOOK_URL`, containing an incoming webhook
-for the shared Slack channel. A repository secret of the same name also works
-and takes precedence; remove it only after the organization secret is available.
+The [wrapper](../.github/workflows/main-ci-slack.yml) uses
+[contentauth/ci-workflows](https://github.com/contentauth/ci-workflows), pinned to
+a reviewed commit.
 
-Each tier alerts on its first observed failure and on a passing-to-failing
-transition. Repeated failures do not alert; a success silently re-arms alerts.
-Timeouts and startup failures count as failures. Cancelled and skipped runs do
-not change the saved state. Reruns are tracked by attempt; results from older
-run numbers are ignored once a newer run has been processed.
+* **Scope:** Tier 1A, Tier 1B, and Tier 2 on `main`; push, schedule, and manual
+  runs only. PRs and experimental features are excluded.
+* **Alerts:** Each tier's first failure alerts; repeats stay silent. Success
+  silently re-arms alerts. Timeouts and startup failures count as failures;
+  cancelled and skipped runs preserve state.
+* **Reruns:** Track attempts; ignore older run numbers after processing a newer run.
+* **State:** Per-tier artifacts in this repository; 90-day retention, refreshed
+  per processed result. Deleting or expiring state resets deduplication.
+  Notifications are serialized per tier, with up to 100 pending jobs.
+* **Retries:** Slack errors fail without advancing state. Fix delivery, then rerun
+  the notifier. Delivery and state upload are not atomic; failed uploads after
+  accepted delivery can cause duplicates on retry.
+* **Secret:** Set `SLACK_WEBHOOK_URL` to the channel's incoming webhook URL.
+  Repository secrets override org secrets. Remove the repository override only
+  after granting this repository access to the org secret.
+* **Security:** No triggering-run code is checked out or executed. Review shared
+  implementation changes before updating the commit pin.
 
-State is saved in this repository as per-tier Actions artifacts, retained for 90 days and refreshed
-on each processed result. Do not delete these artifacts if you want to preserve
-deduplication. If all state expires or is deleted, the next failure alerts again.
-Notifications are serialized per tier with up to 100 pending jobs. Slack delivery
-errors fail the notifier without advancing state; rerun the failed notifier after
-fixing delivery. If Slack accepts a message but saving state fails, retrying may
-send a duplicate (delivery and artifact storage are not an atomic transaction).
+Merge into `main` to enable alerts. For a labeled test message, select
+**Actions > Main CI Slack alerts > Run workflow**, using `main`.
+The test requires a working webhook and does not change alert state.
 
-Merge the wrapper into `main` to enable it. Run **Main CI Slack alerts** manually
-from the Actions tab on `main` to send a labeled test message without changing
-health state. This requires a working webhook. The shared repository owns the
-notifier implementation and its tests; see its
+Implementation and tests live in the shared repository; see
 [development instructions](https://github.com/contentauth/ci-workflows#development).
-When updating the shared workflow pin, review the implementation at the new
-commit. No code from the triggering run is checked out or executed by the notifier.
 
 ## Tier 1A
 
