@@ -1269,6 +1269,51 @@ pub mod tests {
     const SAMPLE1_HEIC: &[u8] = include_bytes!("../tests/fixtures/sample1.heic");
 
     #[test]
+    fn json_report_preserves_partial_reader_manifests() -> Result<()> {
+        let mut reader = Reader::from_context(test_context())
+            .with_stream("image/jpeg", Cursor::new(IMAGE_WITH_INGREDIENT_MANIFEST))?;
+        assert!(reader.manifests.len() > 1);
+        let active = reader.active_manifest.clone().unwrap();
+        let ingredient = reader
+            .manifests
+            .keys()
+            .find(|label| **label != active)
+            .unwrap()
+            .clone();
+        reader.manifests.remove(&ingredient);
+
+        // A report-only assertion need not have an original entry in the store.
+        let data = serde_json::json!({"values": [96, 384]});
+        reader
+            .manifests
+            .get_mut(&active)
+            .unwrap()
+            .assertions
+            .push(ManifestAssertion::new(
+                "org.example.report-only".to_owned(),
+                data.clone(),
+            ));
+        let report = reader.to_json_formatted()?;
+        assert!(report["manifests"].get(&ingredient).is_none());
+        assert!(report["manifests"].get(&active).is_some());
+        assert_eq!(
+            report["manifests"][&active]["assertions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|a| a["label"] == "org.example.report-only")
+                .unwrap()["data"],
+            data
+        );
+
+        reader.manifests.clear();
+        let report = reader.to_json_formatted()?;
+        assert_eq!(report["manifests"], serde_json::json!({}));
+        assert_eq!(report["active_manifest"], active);
+        Ok(())
+    }
+
+    #[test]
     // Verify that we can convert a Reader back into a Builder re-sign and the read it back again
     fn test_into_builder() -> Result<()> {
         let context = test_context().into_shared();

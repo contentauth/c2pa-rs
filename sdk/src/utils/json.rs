@@ -337,6 +337,140 @@ mod tests {
     }
 
     #[test]
+    fn json_report_serialization_preserves_compound_shapes() {
+        #[derive(Serialize)]
+        struct Newtype(serde_bytes::ByteBuf);
+
+        #[derive(Serialize)]
+        struct Tuple(serde_bytes::ByteBuf, Vec<u64>);
+
+        #[derive(Serialize)]
+        struct Unit;
+
+        #[derive(Serialize)]
+        struct Optional {
+            #[serde(skip_serializing_if = "Option::is_none")]
+            omitted: Option<String>,
+            present: u64,
+        }
+
+        #[derive(Serialize)]
+        enum Variant {
+            Optional {
+                #[serde(skip_serializing_if = "Option::is_none")]
+                omitted: Option<String>,
+                bytes: serde_bytes::ByteBuf,
+            },
+        }
+
+        let bytes = || serde_bytes::ByteBuf::from(vec![96, 128]);
+        assert_eq!(to_value(&Newtype(bytes())).unwrap(), json!("YIA="));
+        assert_eq!(
+            to_value(&Tuple(bytes(), vec![96, 384])).unwrap(),
+            json!(["YIA=", [96, 384]])
+        );
+        assert_eq!(
+            to_value(&(bytes(), vec![96, 384])).unwrap(),
+            json!(["YIA=", [96, 384]])
+        );
+        assert_eq!(to_value(&Unit).unwrap(), Value::Null);
+        assert_eq!(to_value(&()).unwrap(), Value::Null);
+        assert_eq!(to_value(&None::<u8>).unwrap(), Value::Null);
+        assert_eq!(
+            to_value(&Optional {
+                omitted: None,
+                present: u64::MAX,
+            })
+            .unwrap(),
+            json!({"present": u64::MAX})
+        );
+        assert_eq!(
+            to_value(&Variant::Optional {
+                omitted: None,
+                bytes: bytes(),
+            })
+            .unwrap(),
+            json!({"Optional": {"bytes": "YIA="}})
+        );
+    }
+
+    #[test]
+    fn json_report_serialization_forwards_primitives_and_errors() {
+        macro_rules! check {
+            ($($value:expr),* $(,)?) => {
+                $(
+                    assert_eq!(
+                        to_value(&$value).unwrap(),
+                        serde_json::to_value($value).unwrap()
+                    );
+                )*
+            };
+        }
+
+        check!(
+            true,
+            i8::MIN,
+            i16::MIN,
+            i32::MIN,
+            i64::MIN,
+            i128::from(i64::MIN),
+            u8::MAX,
+            u16::MAX,
+            u32::MAX,
+            u64::MAX,
+            u128::from(u64::MAX),
+            1.5_f32,
+            2.5_f64,
+            f64::NAN,
+            'x',
+            "text",
+        );
+        assert!(to_value(&u128::MAX).is_err());
+        assert!(to_value(&i128::MIN).is_err());
+
+        struct Invalid;
+        impl Serialize for Invalid {
+            fn serialize<S: Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+                Err(serde::ser::Error::custom("invalid report data"))
+            }
+        }
+
+        #[derive(Serialize)]
+        struct Nested {
+            value: Invalid,
+        }
+
+        for error in [
+            to_value(&Invalid).unwrap_err(),
+            to_value(&Nested { value: Invalid }).unwrap_err(),
+            to_value(&vec![Invalid]).unwrap_err(),
+            to_value(&BTreeMap::from([("value", Invalid)])).unwrap_err(),
+        ] {
+            assert_eq!(error.to_string(), "invalid report data");
+        }
+    }
+
+    #[test]
+    fn json_report_restoration_leaves_nonmatching_values_unchanged() {
+        for (mut value, source) in [
+            (json!([96, 128]), json!("not a byte marker")),
+            (json!([96, 128]), json!("b64'!invalid!'")),
+            (json!([0, 255]), json!("b64'YIA='")),
+            (json!(["b64'YIA='"]), json!([])),
+            (
+                json!({"values": [96, 384]}),
+                json!({"missing": "b64'YIA='"}),
+            ),
+            (Value::Null, json!("b64'YIA='")),
+            (json!(true), json!({"bytes": "b64'YIA='"})),
+        ] {
+            let expected = value.clone();
+            restore_byte_strings(&mut value, &source);
+            assert_eq!(value, expected);
+        }
+    }
+
+    #[test]
     fn json_report_restores_only_matching_byte_fields() {
         let mut normalized = json!({
             "hash": [96, 128],
