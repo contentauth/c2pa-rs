@@ -893,14 +893,76 @@ fn test_verify_signature_box_uri_absolute_to_other_box() {
     assert!(signature_box_uri_missing(claim, uri));
 }
 
+/// Creates a V2 test claim declaring `spec_version` in `claim_generator_info` (Spec 2.4 style).
+fn create_test_claim_with_cgi_spec_version(spec_version: &str) -> Claim {
+    let mut claim = create_test_claim().expect("create test claim");
+    let cgi = claim
+        .claim_generator_info
+        .as_mut()
+        .expect("test claim has claim_generator_info");
+    cgi[0].set_spec_version(spec_version);
+    claim
+}
+
 #[test]
-fn test_verify_signature_box_uri_relative_v2() {
+fn test_verify_signature_box_uri_relative_v2_spec_2_3() {
     // A relative URI does not name the manifest label, so it cannot bind the label to the
-    // signed claim. A V2 claim must use an absolute URI.
-    let claim = create_test_claim().expect("create test claim");
+    // signed claim. Since Spec 2.3, a V2 claim must use an absolute URI.
+    for version in ["2.3", "2.3.0", "2.4.0", "2.10.0", "3"] {
+        let claim = create_test_claim_with_cgi_spec_version(version);
+        assert!(
+            signature_box_uri_missing(claim, "self#jumbf=c2pa.signature".to_string()),
+            "relative URI should be rejected for spec {version}"
+        );
+    }
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v2_claim_map_spec_2_3() {
+    // Spec 2.3 declared specVersion in the claim map rather than in claim_generator_info.
+    let mut claim = create_test_claim().expect("create test claim");
+    claim.spec_version = Some("2.3.0".to_string());
     assert!(signature_box_uri_missing(
         claim,
         "self#jumbf=c2pa.signature".to_string()
+    ));
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v2_unparseable_spec_version() {
+    let claim = create_test_claim_with_cgi_spec_version("next");
+    assert!(signature_box_uri_missing(
+        claim,
+        "self#jumbf=c2pa.signature".to_string()
+    ));
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v2_before_spec_2_3() {
+    // Spec 2.2 allows a relative URI to this manifest's signature box (its own claim example
+    // uses one), so V2 claims that do not declare Spec 2.3 or later remain valid.
+    let undeclared = create_test_claim().expect("create test claim");
+    assert!(!signature_box_uri_missing(
+        undeclared,
+        "self#jumbf=c2pa.signature".to_string()
+    ));
+
+    for version in ["2.2", "2.2.0", "2"] {
+        let claim = create_test_claim_with_cgi_spec_version(version);
+        assert!(
+            !signature_box_uri_missing(claim, "self#jumbf=c2pa.signature".to_string()),
+            "relative URI should be accepted for spec {version}"
+        );
+    }
+}
+
+#[test]
+fn test_verify_signature_box_uri_relative_v2_to_other_box() {
+    // The relaxation only covers a relative URI to the signature box itself.
+    let claim = create_test_claim().expect("create test claim");
+    assert!(signature_box_uri_missing(
+        claim,
+        "self#jumbf=c2pa.assertions".to_string()
     ));
 }
 
