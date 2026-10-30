@@ -210,6 +210,10 @@ impl Verifier<'_> {
 
         validator.validate(&sign1.signature, &tbs, pk_der)?;
 
+        // Use the last Organization attribute if `as_str()` can decode it. Deliberately
+        // leave `issuer_org` unset for either an absent attribute or a decoding error
+        // (including invalid UTF-8 or an unsupported ASN.1 string type; see #2540).
+        // The common-name extraction below uses the same last-attribute/decoding behavior.
         let subject = sign_cert
             .subject()
             .iter_organization()
