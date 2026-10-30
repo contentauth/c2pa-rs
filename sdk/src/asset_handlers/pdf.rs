@@ -576,7 +576,9 @@ impl Pdf {
             "EF" => dictionary! {
                 "F" => Reference(file_stream_ref),
             },
-            TYPE_KEY => Name("FileSpec".into()),
+            // PDF names are case-sensitive: the file specification type is `Filespec`
+            // (ISO 32000-2, 7.11.3).
+            TYPE_KEY => Name("Filespec".into()),
             "UF" => Object::string_literal(CONTENT_CREDS),
         };
 
@@ -586,11 +588,24 @@ impl Pdf {
     /// Adds the provided `bytes` as an embedded file stream (`Type` `EmbeddedFile`, `Subtype`
     /// `application/c2pa`) to the PDF document. Returns the [Reference] of the added
     /// [Object].
+    ///
+    /// The stream also gets a `Params` dictionary with its `Size` and `ModDate`. ISO 32000-2
+    /// (7.11.4) requires `Params`, and `ModDate` within it, for an embedded file stream that is
+    /// an associated file, as the C2PA Manifest Store is. Both values have a fixed width for a
+    /// given store size, so a same-size rewrite keeps the manifest at the same offset.
     fn add_c2pa_embedded_file_stream(&mut self, bytes: Vec<u8>) -> ObjectId {
+        let mod_date = format!(
+            "D:{}Z",
+            crate::crypto::internal::time::utc_now().format("%Y%m%d%H%M%S")
+        );
         let stream = Stream::new(
             dictionary! {
                 TYPE_KEY => Name("EmbeddedFile".into()),
                 SUBTYPE_KEY => C2PA_MIME_TYPE,
+                "Params" => dictionary! {
+                    "Size" => Object::Integer(bytes.len() as i64),
+                    "ModDate" => Object::string_literal(mod_date),
+                },
             },
             bytes,
         );
@@ -880,6 +895,11 @@ mod tests {
             file_spec.get(SUBTYPE_KEY).unwrap().as_name().unwrap(),
             b"application/c2pa"
         );
+        // PDF names are case-sensitive (ISO 32000-2, 7.11.3).
+        assert_eq!(
+            file_spec.get(TYPE_KEY).unwrap().as_name().unwrap(),
+            b"Filespec"
+        );
         assert_eq!(
             file_spec
                 .get(AF_RELATIONSHIP_KEY)
@@ -933,6 +953,13 @@ mod tests {
             stream.dict.get(TYPE_KEY).unwrap().as_name().unwrap(),
             b"EmbeddedFile"
         );
+
+        // ISO 32000-2 7.11.4: an associated file's embedded file stream has `Params` with a
+        // `ModDate`.
+        let params = stream.dict.get(b"Params").unwrap().as_dict().unwrap();
+        assert_eq!(params.get(b"Size").unwrap().as_i64().unwrap(), 2);
+        let mod_date = params.get(b"ModDate").unwrap().as_str().unwrap();
+        assert!(mod_date.starts_with(b"D:") && mod_date.ends_with(b"Z") && mod_date.len() == 17);
         assert!(matches!(
             pdf.read_manifest_bytes(),
             Ok(Some(manifests)) if manifests[0] == [10u8, 20u8]
