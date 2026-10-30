@@ -431,6 +431,12 @@ pub trait AssetPatch {
 /// `caBX` chunk, a BMFF `uuid` box, ...).
 pub const C2PA_BOXHASH: &str = "C2PA";
 
+/// The logical box covering arbitrary data after the end of a format's box
+/// structure (C2PA 2.5 §16.3.3.2). A hard binding may list it as its final box
+/// to hash a trailer; any trailing bytes not listed under this name are an
+/// `unknownBox`.
+pub const C2PA_AFTER: &str = "c2pa.after";
+
 /// Describes one hashable region ("box") in an asset's container format.
 ///
 /// Returned by [`AssetBoxHash::get_box_map`] to describe the byte range and name
