@@ -45,25 +45,9 @@ pub struct SoftBinding {
     /// Additional metadata of the soft binding. Useful for binding-specific information.
     #[serde(rename = "bindingMetadata", skip_serializing_if = "Option::is_none")]
     pub binding_metadata: Option<SoftBindingMetadata>,
-
-    #[serde(skip_serializing)]
-    url: Option<UriT>,
 }
 
-#[allow(unused)]
 impl SoftBinding {
-    /// A file or http(s) URL to where the bytes that are being hashed lived.
-    ///
-    /// This is useful for cases where the data lives in a different file chunk or side-car
-    /// than the claim.
-    #[deprecated(
-        since = "0.59.0",
-        note = "Use the asset reference assertion instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub fn url(&self) -> Option<&UriT> {
-        self.url.as_ref()
-    }
-
     /// Zero-filled bytes used for filling up space.
     ///
     /// This field is not applicable to `c2pa-rs` as it employs a single step processing approach to precompute assertion sizes, unlike the
@@ -78,6 +62,59 @@ impl SoftBinding {
     /// See [`SoftBinding::pad`] for more information.
     pub fn pad2(&self) -> Option<&[u8]> {
         self.pad2.as_ref().map(|bytes| bytes.as_slice())
+    }
+}
+
+/// Re-encodes the byte-string fields of a soft binding map as CBOR byte strings.
+///
+/// The CDDL declares a soft binding block's `value` (and the map's `pad` and `pad2`)
+/// as `bstr`. JSON has no byte type, so an assertion supplied as JSON (a manifest
+/// definition, or [`Builder::add_assertion`] with a JSON value) arrives here as a CBOR
+/// array of integers, or, after a builder archive round trip, as crJSON's `b64'<base64>'`
+/// text. This converts either form into `Value::Bytes` (an array only when every element
+/// is 0..=255) and leaves every other field untouched. Values that are already byte
+/// strings are unchanged, so typed callers see no difference.
+///
+/// [`Builder::add_assertion`]: crate::Builder::add_assertion
+pub(crate) fn soft_binding_bytes_to_bstr(value: &mut Value) {
+    fn array_to_bytes(v: &mut Value) {
+        // crJSON's byte-string form, used when a builder archive is written and read back.
+        if let Value::Text(t) = v {
+            if let Some(bytes) = crate::crypto::base64::decode_b64_wrapped(t) {
+                *v = Value::Bytes(bytes);
+            }
+            return;
+        }
+        if let Value::Array(items) = v {
+            let bytes: Option<Vec<u8>> = items
+                .iter()
+                .map(|i| match i {
+                    Value::Integer(n) => u8::try_from(*n).ok(),
+                    _ => None,
+                })
+                .collect();
+            if let Some(bytes) = bytes {
+                *v = Value::Bytes(bytes);
+            }
+        }
+    }
+
+    let Value::Map(map) = value else {
+        return;
+    };
+    for key in ["pad", "pad2"] {
+        if let Some(v) = map.get_mut(&Value::Text(key.to_owned())) {
+            array_to_bytes(v);
+        }
+    }
+    if let Some(Value::Array(blocks)) = map.get_mut(&Value::Text("blocks".to_owned())) {
+        for block in blocks {
+            if let Value::Map(block) = block {
+                if let Some(v) = block.get_mut(&Value::Text("value".to_owned())) {
+                    array_to_bytes(v);
+                }
+            }
+        }
     }
 }
 
@@ -102,22 +139,6 @@ pub struct SoftBindingScope {
     /// Region of interest in regard to the soft binding.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub region: Option<RegionOfInterest>,
-
-    #[serde(skip_serializing)]
-    #[serde(default, with = "serde_bytes")]
-    extent: Option<serde_bytes::ByteBuf>,
-}
-
-#[allow(unused)]
-impl SoftBindingScope {
-    /// In algorithm specific format, the part of the digital content over which the soft binding value has been computed.
-    #[deprecated(
-        since = "0.59.0",
-        note = "Use the `region` field instead. Will be removed in 0.92.0 (scheduled for mid-November 2026)."
-    )]
-    pub fn extent(&self) -> Option<&[u8]> {
-        self.extent.as_ref().map(|b| b.as_slice())
-    }
 }
 
 /// Soft binding timespan for temporal assets.
@@ -369,12 +390,9 @@ pub mod tests {
             ]
         });
 
-        let mut original: SoftBinding = serde_json::from_value(json).unwrap();
+        let original: SoftBinding = serde_json::from_value(json).unwrap();
         let assertion = original.to_assertion().unwrap();
         let result = SoftBinding::from_assertion(&assertion).unwrap();
-
-        // Deprecated fields shouldn't be serialized.
-        original.url = None;
 
         assert_eq!(result, original);
     }

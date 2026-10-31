@@ -482,7 +482,7 @@ pub(crate) fn declare_opc_c2pa_content_type(
 
             for index in 0..reader.len() {
                 let file = reader.by_index_raw(index)?;
-                if file.name() == OPC_CONTENT_TYPES_PATH {
+                if file.name()? == OPC_CONTENT_TYPES_PATH {
                     let mut options =
                         SimpleFileOptions::DEFAULT.compression_method(CompressionMethod::Deflated);
                     if let Some(time) = file.last_modified() {
@@ -703,12 +703,14 @@ where
     let mut entries = Vec::new();
     for index in 0..reader.len() {
         // Raw access: only offsets are needed, and the hash is over the stored (compressed)
-        // bytes, so the entry must not be decompressed. Decompression is not compiled in
-        // (`zip` is built without default features), so `by_name` fails on deflated entries.
+        // bytes, so the entry is never decompressed.
         let file = reader
             .by_index_raw(index)
             .map_err(|e| Error::InvalidAsset(format!("could not read the ZIP: {e}")))?;
-        let file_name = file.name().to_owned();
+        let file_name = file
+            .name()
+            .map_err(|e| Error::InvalidAsset(format!("could not read the ZIP: {e}")))?
+            .into_owned();
 
         let path = match file.enclosed_name() {
             Some(path) => path,
@@ -730,7 +732,7 @@ where
             path,
             header_start,
             data_end: data_start + file.compressed_size(),
-            using_data_descriptor: metadata.using_data_descriptor,
+            using_data_descriptor: metadata.is_using_data_descriptor(),
             large_file: metadata.large_file,
         });
     }
@@ -1040,10 +1042,11 @@ mod tests {
         for index in 0..original.len() {
             let a = original.by_index_raw(index).unwrap();
             let b = copy.by_index_raw(index).unwrap();
-            assert_eq!(a.name(), b.name());
-            if a.name() != OPC_CONTENT_TYPES_PATH {
-                assert_eq!(a.crc32(), b.crc32(), "{}", a.name());
-                assert_eq!(a.compressed_size(), b.compressed_size(), "{}", a.name());
+            let name = a.name().unwrap();
+            assert_eq!(name, b.name().unwrap());
+            if name != OPC_CONTENT_TYPES_PATH {
+                assert_eq!(a.crc32(), b.crc32(), "{name}");
+                assert_eq!(a.compressed_size(), b.compressed_size(), "{name}");
             }
         }
         drop((original, copy));
@@ -1166,7 +1169,10 @@ mod tests {
             assert_eq!(unreferenced_bytes(second.get_ref()), 0);
             let names = |zip: &Vec<u8>| {
                 let archive = ZipArchive::new(Cursor::new(zip)).unwrap();
-                archive.file_names().map(str::to_owned).collect::<Vec<_>>()
+                archive
+                    .file_names()
+                    .map(|name| name.unwrap().into_owned())
+                    .collect::<Vec<_>>()
             };
             assert_eq!(names(first.get_ref()), names(second.get_ref()));
         }

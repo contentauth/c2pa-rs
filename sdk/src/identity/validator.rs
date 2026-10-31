@@ -79,7 +79,7 @@ mod tests {
 
     use crate::{
         http::{AsyncHttpResolver, HttpResolverError},
-        Context, Reader, ValidationState,
+        Context, Reader, Settings, ValidationState,
     };
 
     const CONNECTED_IDENTITIES_VALID: &[u8] =
@@ -146,27 +146,21 @@ mod tests {
 
     #[c2pa_test_async]
     async fn test_connected_identities_valid() {
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
-        crate::settings::set_settings_value(
-            "soft_binding.soft_binding_algorithms",
-            [
-                "com.adobe.trustmark.P".to_string(),
-                "com.adobe.icn.dense".to_string(),
-            ],
-        )
-        .unwrap();
-        let mut settings = crate::settings::get_thread_local_settings();
-        // add a CAWG specific trust anchor set
-        let anchors = &mut settings.trust.anchors.unwrap();
-        let mut cawg_anchor: crate::settings::TrustAnchor = anchors[0].clone();
-        cawg_anchor.trust_kind = crate::settings::TrustListKind::CAWG;
-        cawg_anchor.trust_uri = Some("cawg_trust".to_string());
-        cawg_anchor.trusted_ica_issuers = Some(vec![
-                "did:jwk:eyJhbGciOiJFZERTQSIsImt0eSI6Ik9LUCIsImNydiI6IkVkMjU1MTkiLCJ4IjoiTXA1LTBlODNuTmdRaGRoQlc4UnNoa2p5OTBzYTFBOUpJemtJdGNEcUN1SSJ9".to_string(),
-                "did:web:connected-identities.identity-stage.adobe.com".to_string(),
-            ]);
-        anchors.push(cawg_anchor);
-        settings.trust.anchors = Some(anchors.clone());
+        let mut settings = Settings::new()
+            .with_value("verify.verify_trust", false)
+            .unwrap()
+            .with_value(
+                "soft_binding.soft_binding_algorithms",
+                [
+                    "com.adobe.trustmark.P".to_string(),
+                    "com.adobe.icn.dense".to_string(),
+                ],
+            )
+            .unwrap();
+        crate::identity::tests::add_cawg_ica_issuers(
+            &mut settings,
+            &crate::identity::tests::ICA_FIXTURE_ISSUERS,
+        );
 
         // Serve did:web resolution from an in-process resolver rather than a real
         // network connection, so this test is hermetic on every target (including
@@ -197,16 +191,17 @@ mod tests {
 
     #[c2pa_test_async]
     async fn test_multiple_identities_valid() {
-        crate::settings::set_settings_value("verify.verify_trust", false).unwrap();
-        crate::settings::set_settings_value(
-            "soft_binding.soft_binding_algorithms",
-            [
-                "com.adobe.trustmark.P".to_string(),
-                "com.adobe.icn.dense".to_string(),
-            ],
-        )
-        .unwrap();
-        let settings = crate::settings::get_thread_local_settings();
+        let settings = Settings::new()
+            .with_value("verify.verify_trust", false)
+            .unwrap()
+            .with_value(
+                "soft_binding.soft_binding_algorithms",
+                [
+                    "com.adobe.trustmark.P".to_string(),
+                    "com.adobe.icn.dense".to_string(),
+                ],
+            )
+            .unwrap();
         let context = Context::new()
             .with_settings(settings)
             .unwrap()
