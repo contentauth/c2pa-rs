@@ -25,7 +25,7 @@ use coset::{iana, CoseSign1Builder, HeaderBuilder, TaggedCborSerializable};
 use ed25519_dalek::{Signer as Ed25519Signer, SigningKey};
 
 use super::{
-    box_walk::{box_payload, find_box},
+    box_walk::{box_payload, find_box, top_level_boxes},
     cose_key::{build_ed25519_cose_key, cose_key_to_der, signing_alg_from_cose_key},
     verifiable_segment_info::{VSI_SCHEME_ID_URI, VSI_URI_OFFSET_IN_EMSG},
 };
@@ -49,7 +49,7 @@ const VSI_VALUE_FSEG: &str = "fseg";
 /// signer.
 ///
 /// Each media segment receives a COSE_Sign1 `emsg` box signed by the session
-/// key; the box is prepended to the segment bytes.
+/// key; the box is inserted after any leading `styp`/`sidx`/`prft` boxes.
 ///
 /// [`from_signing_key`]: LiveVideoVsiSigner::from_signing_key
 ///
@@ -169,7 +169,14 @@ impl LiveVideoVsiSigner {
         Ok(signed_bytes)
     }
 
-    /// Signs a media segment by prepending a COSE_Sign1 `emsg` box.
+    /// Signs a media segment by inserting a COSE_Sign1 `emsg` box.
+    ///
+    /// The box goes after any leading `styp`, `sidx` and `prft` boxes and before the
+    /// first `moof` (ISO/IEC 23009-1 and CMAF require `styp`, when present, to be the
+    /// first box of a media segment). A single-level `sidx` has its first
+    /// `referenced_size` grown by the size of the `emsg`, which becomes part of the
+    /// first subsegment. Segments with an `ssix`, more than one `sidx`, or a `sidx`
+    /// that references another `sidx` are rejected.
     ///
     /// The COSE_Sign1 payload is a CBOR `SegmentInfoMap` with the current
     /// sequence number, a `bmffHash` covering the segment data excluding VSI
@@ -204,13 +211,13 @@ impl LiveVideoVsiSigner {
         }
 
         let timescale = self.track_timescale.unwrap_or(1);
-        let event_duration = parse_first_moof_duration_ticks(segment_data).unwrap_or(0);
+        let event_duration = parse_segment_duration_ticks(segment_data).unwrap_or(0);
         // Truncation is safe: a live session realistically never reaches u32::MAX segments,
         // and the id only needs to be unique within the session (§19.4.2), not globally.
         let id = sequence_number as u32;
 
         // Two passes: the offset-prefix (§18.6.2) must reflect each box's absolute offset
-        // in the final segment (emsg + segment_data), which requires knowing emsg's size
+        // in the final segment (segment_data with emsg inserted), which requires knowing emsg's size
         // before its own contents (the hash) can be computed. Pass 1 hashes against a
         // same-size draft emsg (placeholder digest) to get real offsets; pass 2 rebuilds
         // emsg with the real hash, which only changes opaque digest/signature bytes, not
@@ -227,9 +234,9 @@ impl LiveVideoVsiSigner {
             build_emsg_box(&cose_sign1_bytes, timescale, event_duration, id)
         };
 
+        let insert_at = vsi_emsg_insertion_point(segment_data)?;
         let draft_emsg_box = build_emsg(build_segment_bmff_hash_placeholder()?)?;
-        let mut draft_segment = draft_emsg_box.clone();
-        draft_segment.extend_from_slice(segment_data);
+        let draft_segment = insert_emsg_box(segment_data, insert_at, &draft_emsg_box)?;
         let bmff_hash = build_segment_bmff_hash(&draft_segment)?;
 
         let emsg_box = build_emsg(bmff_hash)?;
@@ -241,8 +248,7 @@ impl LiveVideoVsiSigner {
             ));
         }
 
-        let mut signed_segment = emsg_box;
-        signed_segment.extend_from_slice(segment_data);
+        let signed_segment = insert_emsg_box(segment_data, insert_at, &emsg_box)?;
 
         self.next_sequence_number += 1;
         Ok(signed_segment)
@@ -387,7 +393,7 @@ pub(super) fn build_segment_bmff_hash_placeholder() -> Result<c2pa_cbor::Value> 
 /// Computes the `bmff-hash-map` for a media segment per §19.4.1.
 ///
 /// `full_segment` must be the complete bytes that will be delivered — i.e. the
-/// (draft or real) `emsg` box followed by the raw segment data — so that the
+/// raw segment data with the (draft or real) `emsg` box inserted — so that the
 /// `c2pa.hash.bmff.v3` offset-prefix (§18.6.2) reflects each box's real final
 /// position. The hash excludes the VSI `emsg` box itself, identified by its
 /// `scheme_id_uri` field ("urn:c2pa:verifiable-segment-info").
@@ -521,6 +527,100 @@ fn build_emsg_box(
     Ok(emsg)
 }
 
+// ── emsg placement ───────────────────────────────────────────────────────────
+//
+// ISO/IEC 23009-1 (§6.3.4.2) and CMAF require `styp`, when present, to be the first
+// box of a media segment, followed by any `sidx`/`prft` boxes, then `emsg` boxes,
+// then the first `moof`.
+
+/// Returns the byte offset at which the VSI `emsg` box is inserted: after the leading
+/// `styp`, `sidx` and `prft` boxes, before anything else (normally the first `moof`
+/// or an existing `emsg`).
+fn vsi_emsg_insertion_point(segment_data: &[u8]) -> Result<usize> {
+    let mut insert_at = 0;
+    let mut sidx_count = 0;
+    for (fourcc, box_bytes) in top_level_boxes(segment_data) {
+        match fourcc {
+            b"styp" | b"prft" => {}
+            b"sidx" => sidx_count += 1,
+            b"ssix" => {
+                return Err(Error::BadParam(
+                    "VSI signing does not support media segments with an ssix box".into(),
+                ))
+            }
+            _ => break,
+        }
+        insert_at += box_bytes.len();
+    }
+    if sidx_count > 1 {
+        return Err(Error::BadParam(
+            "VSI signing does not support media segments with more than one sidx box".into(),
+        ));
+    }
+    Ok(insert_at)
+}
+
+/// Returns `segment_data` with `emsg_box` inserted at `insert_at` (from
+/// [`vsi_emsg_insertion_point`]), growing a leading `sidx`'s first reference to cover it.
+fn insert_emsg_box(segment_data: &[u8], insert_at: usize, emsg_box: &[u8]) -> Result<Vec<u8>> {
+    let mut out = Vec::with_capacity(segment_data.len() + emsg_box.len());
+    out.extend_from_slice(&segment_data[..insert_at]);
+    out.extend_from_slice(emsg_box);
+    out.extend_from_slice(&segment_data[insert_at..]);
+    grow_first_sidx_reference(&mut out[..insert_at], emsg_box.len())?;
+    Ok(out)
+}
+
+/// The `emsg` box sits between the `sidx` and the first `moof`, so it belongs to the
+/// first subsegment: grow that reference's `referenced_size` (ISO/IEC 14496-12 §8.16.3)
+/// by `by` bytes. Does nothing when `leading` has no `sidx` or the `sidx` has no references.
+fn grow_first_sidx_reference(leading: &mut [u8], by: usize) -> Result<()> {
+    let mut sidx_start = None;
+    let mut pos = 0;
+    for (fourcc, box_bytes) in top_level_boxes(leading) {
+        if fourcc == b"sidx" {
+            sidx_start = Some(pos);
+            break;
+        }
+        pos += box_bytes.len();
+    }
+    let Some(sidx_start) = sidx_start else {
+        return Ok(());
+    };
+
+    let sidx = &mut leading[sidx_start..];
+    let read_be = |sidx: &[u8], at: usize, len: usize| -> Result<u32> {
+        let bytes = sidx
+            .get(at..at + len)
+            .ok_or_else(|| Error::BadParam("malformed sidx box".into()))?;
+        Ok(bytes.iter().fold(0u32, |acc, b| (acc << 8) | u32::from(*b)))
+    };
+    let header_len = if read_be(sidx, 0, 4)? == 1 { 16 } else { 8 };
+    let version = read_be(sidx, header_len, 1)?;
+    // FullBox header(4) + reference_ID(4) + timescale(4)
+    // + earliest_presentation_time and first_offset (4 + 4 for version 0, 8 + 8 otherwise)
+    // + reserved(2)
+    let reference_count_at = header_len + 12 + if version == 0 { 8 } else { 16 } + 2;
+    if read_be(sidx, reference_count_at, 2)? == 0 {
+        return Ok(());
+    }
+
+    let first_ref_at = reference_count_at + 2;
+    let value = read_be(sidx, first_ref_at, 4)?;
+    if value & 0x8000_0000 != 0 {
+        return Err(Error::BadParam(
+            "VSI signing does not support a sidx that references another sidx".into(),
+        ));
+    }
+    let referenced_size = u32::try_from(by)
+        .ok()
+        .and_then(|by| (value & 0x7fff_ffff).checked_add(by))
+        .filter(|size| *size <= 0x7fff_ffff)
+        .ok_or_else(|| Error::BadParam("sidx referenced_size overflows".into()))?;
+    sidx[first_ref_at..first_ref_at + 4].copy_from_slice(&referenced_size.to_be_bytes());
+    Ok(())
+}
+
 // ── minimal BMFF box lookups for emsg timing fields ──────────────────────────
 //
 // `timescale`/`event_duration` in the emsg box must reflect the segment's
@@ -531,7 +631,7 @@ fn build_emsg_box(
 // caller supplies the init segment.
 
 /// Parses `moov/trak/mdia/mdhd`'s `timescale` field from an init segment.
-fn parse_first_mdhd_timescale(init_data: &[u8]) -> Option<u32> {
+pub(super) fn parse_first_mdhd_timescale(init_data: &[u8]) -> Option<u32> {
     let moov = box_payload(find_box(init_data, b"moov")?)?;
     let trak = box_payload(find_box(moov, b"trak")?)?;
     let mdia = box_payload(find_box(trak, b"mdia")?)?;
@@ -547,12 +647,57 @@ fn parse_first_mdhd_timescale(init_data: &[u8]) -> Option<u32> {
     Some(u32::from_be_bytes(timescale_bytes.try_into().ok()?))
 }
 
-/// Sums the `moof/traf/tfhd`+`trun` sample durations of a media segment, in
-/// the track's timescale ticks (per ISO/IEC 14496-12 §8.8.7–8.8.8). Falls
-/// back to `tfhd`'s `default_sample_duration * sample_count` when `trun`
-/// doesn't carry per-sample durations.
-fn parse_first_moof_duration_ticks(segment_data: &[u8]) -> Option<u32> {
+/// Sums the `moof/traf/tfhd`+`trun` sample durations of every `moof` in a media
+/// segment (a CMAF segment can hold several chunks), in the track's timescale
+/// ticks (per ISO/IEC 14496-12 §8.8.7–8.8.8). Returns `None` when the segment
+/// has no `moof`, or any `moof`'s duration can't be determined.
+pub(super) fn parse_segment_duration_ticks(segment_data: &[u8]) -> Option<u32> {
+    let mut total: u64 = 0;
+    let mut found_moof = false;
+    for (fourcc, moof_box) in top_level_boxes(segment_data) {
+        if fourcc == b"moof" {
+            total += u64::from(moof_duration_ticks(box_payload(moof_box)?)?);
+            found_moof = true;
+        }
+    }
+    found_moof.then(|| total.min(u64::from(u32::MAX)) as u32)
+}
+
+/// Parses `moof/traf/tfdt`'s `baseMediaDecodeTime` (ISO/IEC 14496-12 §8.8.12) of the
+/// first `moof` in a media segment: the segment's earliest decode time, in track
+/// timescale ticks.
+pub(super) fn parse_first_tfdt(segment_data: &[u8]) -> Option<u64> {
     let moof = box_payload(find_box(segment_data, b"moof")?)?;
+    let traf = box_payload(find_box(moof, b"traf")?)?;
+    let tfdt = box_payload(find_box(traf, b"tfdt")?)?;
+    if *tfdt.first()? == 1 {
+        Some(u64::from_be_bytes(tfdt.get(4..12)?.try_into().ok()?))
+    } else {
+        Some(u64::from(u32::from_be_bytes(
+            tfdt.get(4..8)?.try_into().ok()?,
+        )))
+    }
+}
+
+/// Parses a top-level `prft` box (ISO/IEC 14496-12 §8.16.5) into its
+/// `(ntp_timestamp, media_time)` pair: the 64-bit NTP wall-clock time at which the
+/// sample with `media_time` (in track timescale ticks) was produced.
+pub(super) fn parse_prft(segment_data: &[u8]) -> Option<(u64, u64)> {
+    let prft = box_payload(find_box(segment_data, b"prft")?)?;
+    // FullBox header(4) + reference_track_ID(4)
+    let ntp_timestamp = u64::from_be_bytes(prft.get(8..16)?.try_into().ok()?);
+    let media_time = if *prft.first()? == 0 {
+        u64::from(u32::from_be_bytes(prft.get(16..20)?.try_into().ok()?))
+    } else {
+        u64::from_be_bytes(prft.get(16..24)?.try_into().ok()?)
+    };
+    Some((ntp_timestamp, media_time))
+}
+
+/// Duration of one `moof`'s first `traf`. Falls back to `tfhd`'s
+/// `default_sample_duration * sample_count` when `trun` doesn't carry
+/// per-sample durations.
+fn moof_duration_ticks(moof: &[u8]) -> Option<u32> {
     let traf = box_payload(find_box(moof, b"traf")?)?;
 
     let tfhd = box_payload(find_box(traf, b"tfhd")?)?;
@@ -709,7 +854,62 @@ mod tests {
     #[test]
     fn parses_moof_duration_from_trun_sample_durations() {
         let seg = make_test_media_segment_with_moof(&[1000, 1000, 1000]);
-        assert_eq!(parse_first_moof_duration_ticks(&seg), Some(3000));
+        assert_eq!(parse_segment_duration_ticks(&seg), Some(3000));
+    }
+
+    /// A CMAF segment made of several chunks: the duration covers every `moof`.
+    #[test]
+    fn segment_duration_sums_every_moof() {
+        let seg = [
+            make_test_media_segment_with_moof(&[1000, 1000]),
+            make_test_media_segment_with_moof(&[500]),
+        ]
+        .concat();
+        assert_eq!(parse_segment_duration_ticks(&seg), Some(2500));
+    }
+
+    /// A segment signed with the track timescale from the init segment passes the
+    /// validator's `emsg` timing checks once it has seen the same init segment.
+    #[test]
+    fn signed_segment_passes_emsg_timing_validation() {
+        let signer = make_test_signer();
+        let mut vsi_signer = make_vsi_signer_with_manifest_id(&signer, b"key-1", 1);
+        let init = make_test_init_segment(1000);
+        vsi_signer.track_timescale = parse_first_mdhd_timescale(&init);
+
+        let segment = [
+            make_test_media_segment_with_moof(&[1000, 1000]),
+            make_test_media_segment_with_moof(&[1000]),
+        ]
+        .concat();
+        let signed = vsi_signer.sign_media_segment(&segment).unwrap();
+
+        let session_keys = vsi_signer.build_session_keys_assertion().unwrap();
+        let ee_cert_der = signer.certs().unwrap().into_iter().next().unwrap();
+        let mut validator = LiveVideoValidator::new();
+        let mut tracker = StatusTracker::default();
+        validator
+            .validate_init_segment(&init, &mut tracker)
+            .unwrap();
+        validator
+            .validate_session_keys(
+                &session_keys,
+                TEST_MANIFEST_ID,
+                Some(&ee_cert_der),
+                &mut tracker,
+            )
+            .unwrap();
+        validator
+            .validate_verifiable_segment_info(&signed, &mut tracker)
+            .unwrap();
+
+        let failures: Vec<_> = tracker
+            .logged_items()
+            .iter()
+            .filter_map(|i| i.validation_status.as_deref())
+            .filter(|s| s.starts_with("livevideo"))
+            .collect();
+        assert!(failures.is_empty(), "unexpected failures: {failures:?}");
     }
 
     #[test]
@@ -726,14 +926,14 @@ mod tests {
         let traf = make_box(b"traf", &[tfhd, trun].concat());
         let moof = make_box(b"moof", &traf);
 
-        assert_eq!(parse_first_moof_duration_ticks(&moof), Some(8000));
+        assert_eq!(parse_segment_duration_ticks(&moof), Some(8000));
     }
 
     #[test]
     fn parsers_return_none_for_segments_without_the_relevant_boxes() {
         let plain_segment = make_test_segment();
         assert_eq!(parse_first_mdhd_timescale(&plain_segment), None);
-        assert_eq!(parse_first_moof_duration_ticks(&plain_segment), None);
+        assert_eq!(parse_segment_duration_ticks(&plain_segment), None);
     }
 
     /// Regression test: a `tfhd`/`trun` box truncated shorter than its own fixed fields must
@@ -744,7 +944,7 @@ mod tests {
         let empty_tfhd = make_box(b"tfhd", &[]);
         let traf = make_box(b"traf", &empty_tfhd);
         let moof = make_box(b"moof", &traf);
-        assert_eq!(parse_first_moof_duration_ticks(&moof), None);
+        assert_eq!(parse_segment_duration_ticks(&moof), None);
 
         // `tfhd` present and well-formed, but `trun` truncated to nothing.
         let tfhd_payload = 1u32.to_be_bytes();
@@ -752,7 +952,7 @@ mod tests {
         let empty_trun = make_box(b"trun", &[]);
         let traf = make_box(b"traf", &[tfhd, empty_trun].concat());
         let moof = make_box(b"moof", &traf);
-        assert_eq!(parse_first_moof_duration_ticks(&moof), None);
+        assert_eq!(parse_segment_duration_ticks(&moof), None);
 
         // A zero-length box (just an 8-byte header, no payload at all) as the outermost box.
         let empty_box = make_box(b"moof", &[]);
@@ -897,8 +1097,162 @@ mod tests {
         vsi_signer
     }
 
+    fn top_level_types(data: &[u8]) -> Vec<[u8; 4]> {
+        top_level_boxes(data).map(|(fourcc, _)| *fourcc).collect()
+    }
+
+    /// A version 0 `sidx` with one reference per `(reference_type, referenced_size)`.
+    fn make_sidx(references: &[(bool, u32)]) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&1u32.to_be_bytes()); // reference_ID
+        payload.extend_from_slice(&1000u32.to_be_bytes()); // timescale
+        payload.extend_from_slice(&0u32.to_be_bytes()); // earliest_presentation_time
+        payload.extend_from_slice(&0u32.to_be_bytes()); // first_offset
+        payload.extend_from_slice(&0u16.to_be_bytes()); // reserved
+        payload.extend_from_slice(&(references.len() as u16).to_be_bytes());
+        for (is_sidx, size) in references {
+            let type_and_size = if *is_sidx { size | 0x8000_0000 } else { *size };
+            payload.extend_from_slice(&type_and_size.to_be_bytes());
+            payload.extend_from_slice(&1000u32.to_be_bytes()); // subsegment_duration
+            payload.extend_from_slice(&0x9000_0000u32.to_be_bytes()); // starts_with_SAP, SAP_type 1
+        }
+        make_fullbox(b"sidx", 0, 0, &payload)
+    }
+
+    /// First reference's `referenced_size` of the first top-level `sidx` in `data`.
+    fn first_sidx_referenced_size(data: &[u8]) -> u32 {
+        let sidx = find_box(data, b"sidx").unwrap();
+        // header(8) + FullBox(4) + reference_ID(4) + timescale(4) + ept(4) + first_offset(4)
+        // + reserved(2) + reference_count(2)
+        u32::from_be_bytes(sidx[32..36].try_into().unwrap()) & 0x7fff_ffff
+    }
+
+    fn make_scte35_emsg() -> Vec<u8> {
+        let mut body = vec![0u8; 4]; // version 0, flags
+        body.extend_from_slice(b"urn:scte:scte35:2013:bin\0\0");
+        body.extend_from_slice(&[0u8; 16]); // timescale, presentation_time_delta, duration, id
+        body.extend_from_slice(&[0xfc, 0x30]); // start of a splice_info_section
+        make_box(b"emsg", &body)
+    }
+
+    /// Validates `signed` with the session keys of `vsi_signer` and returns the `livevideo.*`
+    /// failure codes.
+    fn vsi_validation_failures(
+        signer: &EphemeralSigner,
+        vsi_signer: &LiveVideoVsiSigner,
+        signed: &[u8],
+    ) -> Vec<String> {
+        let session_keys = vsi_signer.build_session_keys_assertion().unwrap();
+        let ee_cert_der = signer.certs().unwrap().into_iter().next().unwrap();
+        let mut validator = LiveVideoValidator::new();
+        let mut tracker = StatusTracker::default();
+        validator
+            .validate_session_keys(
+                &session_keys,
+                TEST_MANIFEST_ID,
+                Some(&ee_cert_der),
+                &mut tracker,
+            )
+            .unwrap();
+        let _ = validator.validate_verifiable_segment_info(signed, &mut tracker);
+        tracker
+            .logged_items()
+            .iter()
+            .filter_map(|i| i.validation_status.as_deref())
+            .filter(|s| s.starts_with("livevideo"))
+            .map(str::to_string)
+            .collect()
+    }
+
     #[test]
-    fn sign_media_segment_prepends_emsg_box() {
+    fn sign_media_segment_puts_emsg_after_styp() {
+        let signer = make_test_signer();
+        let mut vsi_signer = make_vsi_signer_with_manifest_id(&signer, b"key-1", 1);
+
+        let styp = make_box(b"styp", b"msdhmsdh");
+        let segment = [styp.clone(), make_test_media_segment_with_moof(&[1000])].concat();
+        let signed = vsi_signer.sign_media_segment(&segment).unwrap();
+
+        assert_eq!(
+            top_level_types(&signed),
+            [*b"styp", *b"emsg", *b"moof", *b"mdat"]
+        );
+        assert_eq!(&signed[..styp.len()], styp.as_slice());
+        assert!(vsi_validation_failures(&signer, &vsi_signer, &signed).is_empty());
+    }
+
+    #[test]
+    fn sign_media_segment_puts_emsg_after_sidx_and_prft_and_grows_sidx() {
+        let signer = make_test_signer();
+        let mut vsi_signer = make_vsi_signer_with_manifest_id(&signer, b"key-1", 1);
+
+        let media = [
+            make_scte35_emsg(),
+            make_test_media_segment_with_moof(&[1000]),
+        ]
+        .concat();
+        let segment = [
+            make_box(b"styp", b"msdhmsdh"),
+            make_sidx(&[(false, media.len() as u32)]),
+            make_fullbox(b"prft", 0, 0, &[0u8; 12]),
+            media.clone(),
+        ]
+        .concat();
+        let signed = vsi_signer.sign_media_segment(&segment).unwrap();
+
+        assert_eq!(
+            top_level_types(&signed),
+            [*b"styp", *b"sidx", *b"prft", *b"emsg", *b"emsg", *b"moof", *b"mdat"]
+        );
+        // The VSI emsg comes first of the two; the SCTE-35 one is untouched.
+        let vsi_emsg_len = signed.len() - segment.len();
+        assert_eq!(
+            first_sidx_referenced_size(&signed),
+            (media.len() + vsi_emsg_len) as u32
+        );
+        assert!(vsi_validation_failures(&signer, &vsi_signer, &signed).is_empty());
+    }
+
+    #[test]
+    fn sign_media_segment_rejects_unsupported_index_layouts() {
+        let signer = make_test_signer();
+        let media = make_test_media_segment_with_moof(&[1000]);
+        let cases = [
+            (
+                "ssix",
+                [
+                    make_sidx(&[(false, 100)]),
+                    make_fullbox(b"ssix", 0, 0, &0u32.to_be_bytes()),
+                    media.clone(),
+                ]
+                .concat(),
+            ),
+            (
+                "two sidx",
+                [
+                    make_sidx(&[(false, 100)]),
+                    make_sidx(&[(false, 100)]),
+                    media.clone(),
+                ]
+                .concat(),
+            ),
+            (
+                "hierarchical sidx",
+                [make_sidx(&[(true, 100)]), media.clone()].concat(),
+            ),
+        ];
+        for (name, segment) in cases {
+            let mut vsi_signer = make_vsi_signer_with_manifest_id(&signer, b"key-1", 1);
+            assert!(
+                vsi_signer.sign_media_segment(&segment).is_err(),
+                "{name} should be rejected"
+            );
+            assert_eq!(vsi_signer.next_sequence_number(), 1, "{name}");
+        }
+    }
+
+    #[test]
+    fn sign_media_segment_without_styp_starts_with_emsg() {
         let signer = make_test_signer();
         let mut vsi_signer = make_vsi_signer_with_manifest_id(&signer, b"key-1", 1);
 
@@ -906,6 +1260,7 @@ mod tests {
         let signed = vsi_signer.sign_media_segment(&segment).unwrap();
 
         assert!(signed.len() > segment.len());
+        assert_eq!(top_level_types(&signed), [*b"emsg", *b"mdat"]);
 
         let vsi_payload = extract_vsi_payload_from_segment(&signed);
         assert!(
@@ -1330,5 +1685,142 @@ mod tests {
         );
         assert_eq!(map1.sequence_number, 1);
         assert_eq!(map2.sequence_number, 2);
+    }
+
+    // ── VSI emsg exclusion alongside other emsg boxes (SCTE-35) ─────────────────
+
+    fn make_emsg_v0(scheme_id_uri: &str, value: &str, message_data: &[u8]) -> Vec<u8> {
+        let mut body = vec![0u8; 4]; // version 0, flags
+        body.extend_from_slice(scheme_id_uri.as_bytes());
+        body.push(0);
+        body.extend_from_slice(value.as_bytes());
+        body.push(0);
+        body.extend_from_slice(&90_000u32.to_be_bytes()); // timescale
+        body.extend_from_slice(&0u32.to_be_bytes()); // presentation_time_delta
+        body.extend_from_slice(&0u32.to_be_bytes()); // event_duration
+        body.extend_from_slice(&7u32.to_be_bytes()); // id
+        body.extend_from_slice(message_data);
+        make_box(b"emsg", &body)
+    }
+
+    /// Byte range of the `index`-th top-level box of type `fourcc` in `data`.
+    fn box_range(data: &[u8], fourcc: &[u8; 4], index: usize) -> Option<std::ops::Range<usize>> {
+        let mut pos = 0;
+        let mut seen = 0;
+        for (f, bytes) in crate::live_video::box_walk::top_level_boxes(data) {
+            if f == fourcc {
+                if seen == index {
+                    return Some(pos..pos + bytes.len());
+                }
+                seen += 1;
+            }
+            pos += bytes.len();
+        }
+        None
+    }
+
+    /// Signs `segment`, then validates `mutate(signed)` and returns its `livevideo.*` codes.
+    fn sign_mutate_and_validate(segment: &[u8], mutate: impl FnOnce(&mut Vec<u8>)) -> Vec<String> {
+        let signer = make_test_signer();
+        let mut vsi_signer = make_vsi_signer_with_manifest_id(&signer, b"key-1", 1);
+        let mut signed = vsi_signer.sign_media_segment(segment).unwrap();
+        mutate(&mut signed);
+
+        let session_keys = vsi_signer.build_session_keys_assertion().unwrap();
+        let ee_cert_der = signer.certs().unwrap().into_iter().next().unwrap();
+        let mut validator = LiveVideoValidator::new();
+        let mut tracker = StatusTracker::default();
+        validator
+            .validate_session_keys(
+                &session_keys,
+                TEST_MANIFEST_ID,
+                Some(&ee_cert_der),
+                &mut tracker,
+            )
+            .unwrap();
+        let _ = validator.validate_verifiable_segment_info(&signed, &mut tracker);
+        tracker
+            .logged_items()
+            .iter()
+            .filter_map(|i| i.validation_status.as_deref())
+            .filter(|s| s.starts_with("livevideo"))
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn segment_with_scte35() -> Vec<u8> {
+        [
+            make_scte35_emsg(),
+            make_test_media_segment_with_moof(&[1000]),
+        ]
+        .concat()
+    }
+
+    #[test]
+    fn segment_with_scte35_emsg_passes_vsi_validation() {
+        assert!(sign_mutate_and_validate(&segment_with_scte35(), |_| {}).is_empty());
+    }
+
+    /// The SCTE-35 `emsg` is not the VSI `emsg`, so `bmffHash` covers it: changing its
+    /// payload invalidates the segment.
+    #[test]
+    fn tampered_scte35_emsg_fails_vsi_validation() {
+        let codes = sign_mutate_and_validate(&segment_with_scte35(), |signed| {
+            let scte35 = box_range(signed, b"emsg", 1).unwrap();
+            signed[scte35.end - 1] ^= 0xff;
+        });
+        assert_eq!(codes, ["livevideo.segment.invalid"]);
+    }
+
+    /// Removing the SCTE-35 `emsg` also invalidates the segment.
+    #[test]
+    fn removed_scte35_emsg_fails_vsi_validation() {
+        let codes = sign_mutate_and_validate(&segment_with_scte35(), |signed| {
+            let scte35 = box_range(signed, b"emsg", 1).unwrap();
+            signed.drain(scte35);
+        });
+        assert_eq!(codes, ["livevideo.segment.invalid"]);
+    }
+
+    /// The VSI `emsg` itself is excluded from `bmffHash`: its `id` field, which isn't
+    /// covered by the signature either, can change without failing the hash check.
+    #[test]
+    fn vsi_emsg_is_excluded_from_the_hash() {
+        let codes = sign_mutate_and_validate(&segment_with_scte35(), |signed| {
+            let vsi = box_range(signed, b"emsg", 0).unwrap();
+            // header(8) + FullBox(4) + scheme_id_uri + NUL + "fseg" + NUL
+            // + timescale(4) + presentation_time_delta(4) + event_duration(4)
+            let id_at = vsi.start + 12 + VSI_SCHEME_ID_URI.len() + 1 + 5 + 12;
+            signed[id_at..id_at + 4].copy_from_slice(&0xdead_beefu32.to_be_bytes());
+        });
+        assert!(codes.is_empty(), "unexpected failures: {codes:?}");
+    }
+
+    /// The `bmffHash` exclusion matches `emsg` boxes whose bytes at offset 12 *start with*
+    /// `urn:c2pa:verifiable-segment-info`, so an `emsg` with a longer scheme (or a
+    /// version 1 `emsg` laid out to match) would be left out of the hash without being the
+    /// VSI `emsg`. Such a box must fail validation rather than ride along unhashed.
+    #[test]
+    fn emsg_matching_the_vsi_exclusion_but_not_vsi_fails() {
+        let lookalike_v0 = make_emsg_v0(
+            "urn:c2pa:verifiable-segment-info-extra",
+            "fseg",
+            b"unhashed",
+        );
+        let codes = sign_mutate_and_validate(&segment_with_scte35(), |signed| {
+            signed.extend_from_slice(&lookalike_v0);
+        });
+        assert_eq!(codes, ["livevideo.segment.invalid"]);
+
+        // A version 1 emsg whose timescale..id fields and the start of scheme_id_uri spell
+        // out the VSI URI at offset 12.
+        let mut body = vec![1u8, 0, 0, 0];
+        body.extend_from_slice(VSI_SCHEME_ID_URI.as_bytes());
+        body.extend_from_slice(b"\0fseg\0unhashed");
+        let lookalike_v1 = make_box(b"emsg", &body);
+        let codes = sign_mutate_and_validate(&segment_with_scte35(), |signed| {
+            signed.extend_from_slice(&lookalike_v1);
+        });
+        assert_eq!(codes, ["livevideo.segment.invalid"]);
     }
 }

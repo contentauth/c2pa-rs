@@ -137,6 +137,15 @@ pub struct LiveVideoValidator {
     ///
     /// [`validate_session_keys`]: LiveVideoValidator::validate_session_keys
     expected_manifest_id: Option<String>,
+    /// The track timescale (`moov/trak/mdia/mdhd`), captured by [`validate_init_segment`].
+    /// Needed to turn a media segment's `tfdt` into a presentation time.
+    ///
+    /// [`validate_init_segment`]: LiveVideoValidator::validate_init_segment
+    track_timescale: Option<u32>,
+    /// Wall-clock time of media time 0, set by [`set_media_time_origin`].
+    ///
+    /// [`set_media_time_origin`]: LiveVideoValidator::set_media_time_origin
+    media_time_origin: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl LiveVideoValidator {
@@ -145,14 +154,17 @@ impl LiveVideoValidator {
             previous_segment: None,
             session_keys: Vec::new(),
             expected_manifest_id: None,
+            track_timescale: None,
+            media_time_origin: None,
         }
     }
 
-    /// Validates an initialization segment ([§19.7.1]).
+    /// Validates an initialization segment ([§19.7.1]), and records its track timescale for
+    /// presentation-time checks of the media segments that follow.
     ///
     /// [§19.7.1]: https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_live_video_validation_process
     pub fn validate_init_segment(
-        &self,
+        &mut self,
         segment_data: &[u8],
         tracker: &mut StatusTracker,
     ) -> Result<()> {
@@ -163,7 +175,25 @@ impl LiveVideoValidator {
                 tracker,
             )?;
         }
+        if let Some(timescale) = vsi_signing::parse_first_mdhd_timescale(segment_data) {
+            self.track_timescale = Some(timescale);
+        }
         Ok(())
+    }
+
+    /// Sets the wall-clock time that corresponds to media time 0 of the stream, so a
+    /// media segment's presentation time can be checked against its session key's validity
+    /// period (C2PA 2.5, Verifiable Segment Info Validation).
+    ///
+    /// For DASH this is `MPD@availabilityStartTime + Period@start`, less
+    /// `presentationTimeOffset / timescale`. For a stream whose `tfdt` counts from the Unix
+    /// epoch (as DASH-IF livesim2 does), it's the Unix epoch.
+    ///
+    /// Without an origin, a segment's `prft` box is used to map its media time to wall-clock
+    /// time; without either, the key's validity period is checked against the segment's
+    /// claimed signing time (`iat`), or the current time.
+    pub fn set_media_time_origin(&mut self, origin: chrono::DateTime<chrono::Utc>) {
+        self.media_time_origin = Some(origin);
     }
 
     /// Records a manifest-level validation failure for a segment ([§19.3]).
@@ -342,9 +372,10 @@ impl LiveVideoValidator {
         // become the trusted continuity baseline for the next one.
         let failures_before = tracker.filter_errors().count();
 
+        self.validate_vsi_emsg_timing(segment_data, tracker)?;
         self.validate_vsi_manifest_id(&parsed.segment_info_map.manifest_id, tracker)?;
         self.validate_vsi_sequence_bounds(seq_num, &session_key, tracker)?;
-        self.validate_vsi_key_validity(&session_key, &parsed.sign1, tracker)?;
+        self.validate_vsi_key_validity(&session_key, &parsed.sign1, segment_data, tracker)?;
         self.validate_vsi_signature(&parsed.sign1, &session_key, tracker)?;
         self.validate_vsi_sequence_continuity(seq_num, tracker)?;
         self.validate_vsi_bmff_hash(segment_data, &parsed.segment_info_map.bmff_hash, tracker)?;
