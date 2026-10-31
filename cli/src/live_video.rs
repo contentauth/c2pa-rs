@@ -24,7 +24,7 @@ use c2pa::{
     format_from_path,
     live_video::LiveVideoValidator,
     settings::{Settings, TrustAnchor},
-    status_tracker::{LogItem, StatusTracker},
+    status_tracker::{LogItem, LogKind, StatusTracker},
     validation_results::validation_codes::{LIVEVIDEO_INIT_INVALID, SIGNING_CREDENTIAL_UNTRUSTED},
     Context as C2paContext, Error, Manifest, Reader, ValidationState,
 };
@@ -52,6 +52,10 @@ struct SegmentReport {
     /// straight from the reports instead of from a second vector that could drift.
     #[serde(serialize_with = "serialize_validation_state")]
     state: ValidationState,
+    /// Success statuses recorded while validating this segment (for a §19.4 segment, the
+    /// `livevideo.*` steps and the segment hash match).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    success: Vec<ReportStatus>,
 }
 
 fn serialize_validation_state<S: serde::Serializer>(
@@ -74,6 +78,9 @@ struct LiveVideoReport {
 
 #[derive(Serialize, Default)]
 struct ReportResults {
+    /// Success statuses recorded for the init segment (for §19.4, one per verified session key).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    success: Vec<ReportStatus>,
     failure: Vec<ReportStatus>,
 }
 
@@ -201,6 +208,7 @@ pub fn validate_live_video(
     };
 
     let (method, init_state) = validate_init(&mut ctx, init_path, &init_data)?;
+    let init_successes = collect_live_video_successes(ctx.tracker.logged_items());
 
     eprintln!("Method:    {}", method_label(&method));
 
@@ -217,7 +225,10 @@ pub fn validate_live_video(
             method: Some(method_label(&method)),
             init_segment: init_path.display().to_string(),
             segments: Vec::new(),
-            validation_results: ReportResults::default(),
+            validation_results: ReportResults {
+                success: init_successes,
+                failure: Vec::new(),
+            },
         }
         .emit();
         return Ok(());
@@ -253,7 +264,10 @@ pub fn validate_live_video(
         method: Some(method_label(&method)),
         init_segment: init_path.display().to_string(),
         segments: segment_reports,
-        validation_results: ReportResults { failure: failures },
+        validation_results: ReportResults {
+            success: init_successes,
+            failure: failures,
+        },
     }
     .emit();
 
@@ -286,6 +300,7 @@ fn invalid_init_report(init_path: &Path, tracker: &StatusTracker) -> LiveVideoRe
         init_segment: init_path.display().to_string(),
         segments: Vec::new(),
         validation_results: ReportResults {
+            success: Vec::new(),
             failure: collect_live_video_failures(tracker),
         },
     }
@@ -430,6 +445,7 @@ fn validate_segments(
     let mut failed = 0usize;
 
     for segment_path in segment_paths {
+        let logged_before = ctx.tracker.logged_items().len();
         let outcome = match method {
             ValidationMethod::ManifestBox => validate_segment_manifest_box(ctx, segment_path),
             ValidationMethod::VerifiableSegmentInfo => {
@@ -442,6 +458,7 @@ fn validate_segments(
         reports.push(SegmentReport {
             path: segment_path.display().to_string(),
             state: outcome.state,
+            success: collect_live_video_successes(&ctx.tracker.logged_items()[logged_before..]),
         });
     }
 
@@ -756,7 +773,8 @@ fn validate_segment_vsi(
 fn live_video_failures(items: &[LogItem]) -> impl Iterator<Item = (&str, &str)> {
     items.iter().filter_map(|item| {
         let code = item.validation_status.as_deref()?;
-        code.starts_with(LIVEVIDEO_CODE_PREFIX)
+        // Success statuses share the prefix, so the kind has to be checked too.
+        (item.kind == LogKind::Failure && code.starts_with(LIVEVIDEO_CODE_PREFIX))
             .then(|| (code, item.description.as_ref()))
     })
 }
@@ -788,6 +806,28 @@ fn collect_live_video_failures(tracker: &StatusTracker) -> Vec<ReportStatus> {
         .map(|(code, description)| ReportStatus {
             code: code.to_string(),
             explanation: Some(description.to_string()),
+        })
+        .collect()
+}
+
+/// Whether `code` is a status the live video report lists as a success: the `livevideo.*`
+/// success codes plus the segment hash match.
+fn is_live_video_success(code: &str) -> bool {
+    use c2pa::validation_results::validation_codes::{is_success, ASSERTION_BMFFHASH_MATCH};
+    is_success(code)
+        && (code.starts_with(LIVEVIDEO_CODE_PREFIX) || code == ASSERTION_BMFFHASH_MATCH)
+}
+
+/// Every live video success among `items`, as report statuses.
+fn collect_live_video_successes(items: &[LogItem]) -> Vec<ReportStatus> {
+    items
+        .iter()
+        .filter_map(|item| {
+            let code = item.validation_status.as_deref()?;
+            is_live_video_success(code).then(|| ReportStatus {
+                code: code.to_string(),
+                explanation: Some(item.description.to_string()),
+            })
         })
         .collect()
 }

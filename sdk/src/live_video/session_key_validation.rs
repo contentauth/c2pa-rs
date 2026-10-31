@@ -830,7 +830,123 @@ mod tests {
                 .as_deref()
                 .map(|s| s.starts_with("livevideo"))
                 .unwrap_or(false)
+                && i.kind == crate::status_tracker::LogKind::Failure
         }));
+    }
+
+    fn status_count(tracker: &StatusTracker, code: &str) -> usize {
+        tracker
+            .logged_items()
+            .iter()
+            .filter(|i| i.validation_status.as_deref() == Some(code))
+            .count()
+    }
+
+    #[test]
+    fn vsi_valid_segment_reports_each_step_as_a_success() {
+        use vsi_crypto_helpers::*;
+
+        use crate::validation_results::validation_codes::{
+            ASSERTION_BMFFHASH_MATCH, LIVEVIDEO_SEGMENTINFO_VALIDATED,
+            LIVEVIDEO_SEQUENCENUMBER_VALIDATED, LIVEVIDEO_SESSIONKEY_INSIDE_VALIDITY,
+        };
+        let (mut validator, signing_key) = setup_vsi_validator();
+        let mut tracker = StatusTracker::default();
+
+        validator
+            .validate_verifiable_segment_info(
+                &make_signed_vsi_segment(1, TEST_MANIFEST_ID, &signing_key),
+                &mut tracker,
+            )
+            .unwrap();
+
+        for code in [
+            LIVEVIDEO_SEGMENTINFO_VALIDATED,
+            LIVEVIDEO_SEQUENCENUMBER_VALIDATED,
+            LIVEVIDEO_SESSIONKEY_INSIDE_VALIDITY,
+            ASSERTION_BMFFHASH_MATCH,
+        ] {
+            assert_eq!(
+                status_count(&tracker, code),
+                1,
+                "{code} should be reported once"
+            );
+        }
+        assert!(!tracker.has_any_error());
+    }
+
+    #[test]
+    fn vsi_bad_signature_reports_no_success() {
+        use vsi_crypto_helpers::*;
+
+        use crate::validation_results::validation_codes::{
+            ASSERTION_BMFFHASH_MATCH, LIVEVIDEO_SEGMENTINFO_VALIDATED,
+            LIVEVIDEO_SEQUENCENUMBER_VALIDATED, LIVEVIDEO_SESSIONKEY_INSIDE_VALIDITY,
+        };
+        let (mut validator, _) = setup_vsi_validator();
+        let (other_key, _) = generate_test_key_pair();
+        let mut tracker = StatusTracker::default();
+
+        let _ = validator.validate_verifiable_segment_info(
+            &make_signed_vsi_segment(1, TEST_MANIFEST_ID, &other_key),
+            &mut tracker,
+        );
+
+        // The validity period, sequence number and bmffHash are read from an unauthenticated
+        // payload, so none of them may be reported as validated.
+        assert!(tracker.has_any_error());
+        for code in [
+            LIVEVIDEO_SEGMENTINFO_VALIDATED,
+            LIVEVIDEO_SEQUENCENUMBER_VALIDATED,
+            LIVEVIDEO_SESSIONKEY_INSIDE_VALIDITY,
+            ASSERTION_BMFFHASH_MATCH,
+        ] {
+            assert_eq!(status_count(&tracker, code), 0, "{code} reported");
+        }
+    }
+
+    #[test]
+    fn vsi_regressed_sequence_number_reports_no_sequence_success() {
+        use vsi_crypto_helpers::*;
+
+        use crate::validation_results::validation_codes::{
+            LIVEVIDEO_SEGMENTINFO_VALIDATED, LIVEVIDEO_SEQUENCENUMBER_VALIDATED,
+        };
+        let (mut validator, signing_key) = setup_vsi_validator();
+        let mut tracker = StatusTracker::default();
+
+        for seq in [5, 4] {
+            let _ = validator.validate_verifiable_segment_info(
+                &make_signed_vsi_segment(seq, TEST_MANIFEST_ID, &signing_key),
+                &mut tracker,
+            );
+        }
+
+        // Segment 5 passed every step; segment 4's signature is fine but its sequence number
+        // is not, so only the sequence success is withheld.
+        assert_eq!(
+            status_count(&tracker, LIVEVIDEO_SEQUENCENUMBER_VALIDATED),
+            1
+        );
+        assert_eq!(status_count(&tracker, LIVEVIDEO_SEGMENTINFO_VALIDATED), 2);
+    }
+
+    #[test]
+    fn verified_session_key_reports_success() {
+        use vsi_crypto_helpers::*;
+
+        use crate::validation_results::validation_codes::LIVEVIDEO_SESSIONKEY_VALIDATED;
+        let (signing_key, cose_key) = generate_test_key_pair();
+        let ee_cert_der = test_ee_cert_der();
+        let mut validator = LiveVideoValidator::new();
+        let mut tracker = StatusTracker::default();
+        let keys = session_keys_with_cose_key(cose_key, &signing_key, &ee_cert_der);
+
+        validator
+            .validate_session_keys(&keys, TEST_MANIFEST_ID, Some(&ee_cert_der), &mut tracker)
+            .unwrap();
+
+        assert_eq!(status_count(&tracker, LIVEVIDEO_SESSIONKEY_VALIDATED), 1);
     }
 
     #[test]
@@ -1066,6 +1182,7 @@ mod tests {
                 .as_deref()
                 .map(|s| s.starts_with("livevideo"))
                 .unwrap_or(false)
+                && i.kind == crate::status_tracker::LogKind::Failure
         }));
     }
 

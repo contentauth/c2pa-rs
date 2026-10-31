@@ -961,6 +961,7 @@ mod tests {
                     .as_deref()
                     .map(|s| s.starts_with("livevideo"))
                     .unwrap_or(false)
+                    && i.kind == crate::status_tracker::LogKind::Failure
             })
             .collect();
         assert!(
@@ -1006,6 +1007,7 @@ mod tests {
                     .as_deref()
                     .map(|s| s.starts_with("livevideo"))
                     .unwrap_or(false)
+                    && i.kind == crate::status_tracker::LogKind::Failure
             })
             .collect();
         assert!(
@@ -1200,6 +1202,7 @@ mod tests {
                     .as_deref()
                     .map(|s| s.starts_with("livevideo"))
                     .unwrap_or(false)
+                    && i.kind == crate::status_tracker::LogKind::Failure
             })
             .collect();
         assert!(failures.is_empty(), "validation failures: {failures:?}");
