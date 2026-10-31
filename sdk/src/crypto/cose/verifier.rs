@@ -246,7 +246,8 @@ impl Verifier<'_> {
             common_name,
             validated: true,
             cert_chain: dump_cert_chain(&certs)?,
-            revocation_status: Some(true),
+            // No revocation check runs here, so the status is unknown.
+            revocation_status: None,
             ..Default::default()
         })
     }
