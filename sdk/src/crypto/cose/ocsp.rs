@@ -2144,6 +2144,8 @@ mod tests {
             case,
             StatusCase::Missing
                 | StatusCase::Empty
+                | StatusCase::InvalidStaple
+                | StatusCase::InvalidStapleIgnoresSupplied
                 | StatusCase::OverrideEmpty
                 | StatusCase::OverrideMissing
         );
