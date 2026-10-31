@@ -1009,7 +1009,7 @@ fn test_builder_unsupported_format_remote_url_rejected() -> Result<()> {
 }
 
 /// Real-world ZIP-based documents store their entries deflated. Hashing them must not
-/// require decompression, which is not compiled in.
+/// require decompressing them.
 #[test]
 fn test_builder_sign_deflated_zip_formats() -> Result<()> {
     let context = Context::new().with_settings(test_settings())?.into_shared();
