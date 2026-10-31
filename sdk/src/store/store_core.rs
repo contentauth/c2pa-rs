@@ -920,6 +920,15 @@ impl Store {
         Ok(cai_store)
     }
 
+    /// Length in bytes of `claim`'s JUMBF manifest box as it appears inside
+    /// the manifest store. The box is rebuilt exactly as in
+    /// [`Store::calc_manifest_box_hash`], so for a signed claim the length
+    /// matches the box that was written to the asset.
+    pub(crate) fn manifest_box_length(claim: &Claim) -> Result<u64> {
+        let cai_manifest = Store::build_manifest_box(claim, 0)?;
+        Ok(u64::from(cai_manifest.super_box().box_size()?))
+    }
+
     // calculate the hash of the manifest JUMBF box
     pub fn calc_manifest_box_hash(
         claim: &Claim,

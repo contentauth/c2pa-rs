@@ -1440,3 +1440,29 @@ fn test_verify_cloud_data_actions_in_non_update_manifest_not_allowed() {
         "actions in cloud-data of a non-update manifest should fail"
     );
 }
+
+#[test]
+fn test_format_inflates_store_matches_base64_handlers() {
+    use super::claim_verify::format_inflates_store;
+
+    // Every type a base64-embedding handler claims must take the
+    // inflated widening bound (update manifests in update_manifest.jpg
+    // exercise the raw-byte branch end to end).
+    for t in crate::asset_handlers::svg_io::SUPPORTED_TYPES {
+        assert!(format_inflates_store(Some(t)), "{t} should inflate");
+    }
+    #[cfg(feature = "unstable_plain_text")]
+    for t in crate::asset_handlers::plain_text_io::SUPPORTED_TYPES {
+        assert!(format_inflates_store(Some(t)), "{t} should inflate");
+    }
+    #[cfg(feature = "unstable_structured_text")]
+    for t in crate::asset_handlers::structured_text_io::SUPPORTED_TYPES {
+        assert!(format_inflates_store(Some(t)), "{t} should inflate");
+    }
+
+    assert!(format_inflates_store(Some("SVG")));
+    for t in ["jpg", "jpeg", "png", "tif", "mp4", "application/pdf"] {
+        assert!(!format_inflates_store(Some(t)), "{t} should not inflate");
+    }
+    assert!(!format_inflates_store(None));
+}
