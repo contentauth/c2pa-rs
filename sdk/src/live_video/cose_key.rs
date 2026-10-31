@@ -14,7 +14,11 @@
 //! Converts a COSE_Key ([RFC 9052]) stored as a [`c2pa_cbor::Value`] into a DER-encoded
 //! SubjectPublicKeyInfo byte vector suitable for [`RawSignatureValidator::validate`].
 //!
-//! Supports EC2 keys (P-256, P-384, P-521) and OKP keys (Ed25519).
+//! Supports EC2 keys (P-256, P-384, P-521), OKP keys (Ed25519) and RSA keys for RSASSA-PSS
+//! ([RFC 8230]): every algorithm allowed for claim-signing certificates, which the Live Media
+//! specification allows for session keys.
+//!
+//! [RFC 8230]: https://www.rfc-editor.org/rfc/rfc8230
 //!
 //! [RFC 9052]: https://www.rfc-editor.org/rfc/rfc9052
 
@@ -30,10 +34,19 @@ use crate::SigningAlg;
 // COSE_Key common parameter labels (RFC 9052 §7.1).
 const KTY: i128 = 1;
 const KID: i128 = 2;
+const ALG: i128 = 3;
 
 // COSE_Key type values.
 const KTY_EC2: i128 = 2;
 const KTY_OKP: i128 = 1;
+const KTY_RSA: i128 = 3;
+
+// RSA key parameters (RFC 8230 §4).
+const RSA_N: i128 = -1;
+const RSA_E: i128 = -2;
+
+/// The smallest RSA modulus accepted, as for claim-signing certificates.
+const MIN_RSA_MODULUS_BITS: usize = 2048;
 
 // EC2 key parameters (RFC 9052 §13.1.1).
 const EC2_CRV: i128 = -1;
@@ -56,6 +69,36 @@ const P256_OID: &[u32] = &[1, 2, 840, 10045, 3, 1, 7];
 const P384_OID: &[u32] = &[1, 3, 132, 0, 34];
 const P521_OID: &[u32] = &[1, 3, 132, 0, 35];
 const ED25519_OID: &[u32] = &[1, 3, 101, 112];
+const RSA_ENCRYPTION_OID: &[u32] = &[1, 2, 840, 113549, 1, 1, 1];
+const RSASSA_PSS_OID: &[u32] = &[1, 2, 840, 113549, 1, 1, 10];
+
+/// The COSE algorithm identifier (RFC 9053, RFC 8230) for a signing algorithm.
+pub(crate) fn cose_alg_id(alg: SigningAlg) -> Option<i128> {
+    match alg {
+        SigningAlg::Es256 => Some(-7),
+        SigningAlg::Es384 => Some(-35),
+        SigningAlg::Es512 => Some(-36),
+        SigningAlg::Ps256 => Some(-37),
+        SigningAlg::Ps384 => Some(-38),
+        SigningAlg::Ps512 => Some(-39),
+        SigningAlg::Ed25519 => Some(-8),
+        _ => None,
+    }
+}
+
+fn alg_from_cose_id(id: i128) -> Option<SigningAlg> {
+    [
+        SigningAlg::Es256,
+        SigningAlg::Es384,
+        SigningAlg::Es512,
+        SigningAlg::Ps256,
+        SigningAlg::Ps384,
+        SigningAlg::Ps512,
+        SigningAlg::Ed25519,
+    ]
+    .into_iter()
+    .find(|alg| cose_alg_id(*alg) == Some(id))
+}
 
 /// Extracts the `kid` (key identifier) from a COSE_Key stored as a CBOR Value map.
 pub(crate) fn kid_from_cose_key(cose_key: &CborValue) -> Option<Vec<u8>> {
@@ -68,28 +111,46 @@ pub(crate) fn kid_from_cose_key(cose_key: &CborValue) -> Option<Vec<u8>> {
 }
 
 /// Determines the [`SigningAlg`] for a COSE_Key.
+///
+/// EC2 and OKP keys imply their algorithm through the curve. An RSA key doesn't, so it needs
+/// an `alg` of PS256, PS384 or PS512. When an `alg` is present it must agree with the key;
+/// a key that declares a different algorithm, or an unknown one, is rejected.
 pub(crate) fn signing_alg_from_cose_key(cose_key: &CborValue) -> Option<SigningAlg> {
     let map = as_cbor_int_map(cose_key)?;
     let kty = cbor_to_i128(map.get(&KTY)?)?;
 
-    match kty {
+    let implied = match kty {
         KTY_EC2 => {
             let crv = cbor_to_i128(map.get(&EC2_CRV)?)?;
             match crv {
                 CRV_P256 => Some(SigningAlg::Es256),
                 CRV_P384 => Some(SigningAlg::Es384),
                 CRV_P521 => Some(SigningAlg::Es512),
-                _ => None,
+                _ => return None,
             }
         }
         KTY_OKP => {
             let crv = cbor_to_i128(map.get(&OKP_CRV)?)?;
             match crv {
                 CRV_ED25519 => Some(SigningAlg::Ed25519),
-                _ => None,
+                _ => return None,
             }
         }
-        _ => None,
+        KTY_RSA => None,
+        _ => return None,
+    };
+    let declared = match map.get(&ALG) {
+        Some(value) => Some(alg_from_cose_id(cbor_to_i128(value)?)?),
+        None => None,
+    };
+
+    match (implied, declared) {
+        (Some(implied), None) => Some(implied),
+        (Some(implied), Some(declared)) => (implied == declared).then_some(implied),
+        (None, Some(declared @ (SigningAlg::Ps256 | SigningAlg::Ps384 | SigningAlg::Ps512))) => {
+            Some(declared)
+        }
+        (None, _) => None,
     }
 }
 
@@ -103,8 +164,103 @@ pub(crate) fn cose_key_to_der(cose_key: &CborValue) -> Option<Vec<u8>> {
     match kty {
         KTY_EC2 => ec2_to_der(&map),
         KTY_OKP => okp_to_der(&map),
+        KTY_RSA => rsa_to_der(&map),
         _ => None,
     }
+}
+
+/// Builds the COSE_Key for a public key given as a DER-encoded SubjectPublicKeyInfo, for use
+/// with `alg`: an OKP key for Ed25519, an EC2 key for ES256/384/512 (whose curve must match),
+/// or an RSA key for PS256/384/512 (with a modulus of at least 2048 bits). The key carries
+/// `kid` and `alg`. Returns `None` if the key doesn't fit `alg` or can't be parsed.
+pub(crate) fn cose_key_from_spki(
+    spki_der: &[u8],
+    alg: SigningAlg,
+    kid: &[u8],
+) -> Option<CborValue> {
+    use x509_parser::{
+        prelude::FromDer,
+        public_key::{PublicKey, RSAPublicKey},
+        x509::SubjectPublicKeyInfo,
+    };
+
+    let (rest, spki) = SubjectPublicKeyInfo::from_der(spki_der).ok()?;
+    if !rest.is_empty() {
+        return None;
+    }
+    let algorithm = spki.algorithm.algorithm.to_id_string();
+    let curve = spki
+        .algorithm
+        .parameters
+        .as_ref()
+        .and_then(|p| p.as_oid().ok())
+        .map(|oid| oid.to_id_string());
+
+    // COSE labels and values are small; they always fit an i64.
+    let int = |v: i128| CborValue::Integer(v as i64);
+    let mut map = BTreeMap::new();
+    map.insert(KID, CborValue::Bytes(kid.to_vec()));
+    map.insert(ALG, int(cose_alg_id(alg)?));
+    match alg {
+        SigningAlg::Ed25519 => {
+            if algorithm != oid_string(ED25519_OID) {
+                return None;
+            }
+            let x = spki.subject_public_key.data.to_vec();
+            if x.len() != 32 {
+                return None;
+            }
+            map.insert(KTY, int(KTY_OKP));
+            map.insert(OKP_CRV, int(CRV_ED25519));
+            map.insert(OKP_X, CborValue::Bytes(x));
+        }
+        SigningAlg::Es256 | SigningAlg::Es384 | SigningAlg::Es512 => {
+            let (crv, curve_oid, field_len) = match alg {
+                SigningAlg::Es256 => (CRV_P256, P256_OID, 32),
+                SigningAlg::Es384 => (CRV_P384, P384_OID, 48),
+                _ => (CRV_P521, P521_OID, 66),
+            };
+            if algorithm != oid_string(EC_PUBLIC_KEY_OID)
+                || curve.as_deref() != Some(oid_string(curve_oid).as_str())
+            {
+                return None;
+            }
+            let PublicKey::EC(point) = spki.parsed().ok()? else {
+                return None;
+            };
+            // SEC1 uncompressed point: 0x04 || x || y.
+            let point = point.data();
+            if point.len() != 1 + 2 * field_len || point[0] != 0x04 {
+                return None;
+            }
+            map.insert(KTY, int(KTY_EC2));
+            map.insert(EC2_CRV, int(crv));
+            map.insert(EC2_X, CborValue::Bytes(point[1..=field_len].to_vec()));
+            map.insert(EC2_Y, CborValue::Bytes(point[1 + field_len..].to_vec()));
+        }
+        SigningAlg::Ps256 | SigningAlg::Ps384 | SigningAlg::Ps512 => {
+            // RSA keys appear under rsaEncryption or, in PS* certificates, id-RSASSA-PSS
+            // (RFC 4055 §1.2); both carry an RSAPublicKey.
+            if algorithm != oid_string(RSA_ENCRYPTION_OID)
+                && algorithm != oid_string(RSASSA_PSS_OID)
+            {
+                return None;
+            }
+            let (_, rsa) = RSAPublicKey::from_der(&spki.subject_public_key.data).ok()?;
+            let n = strip_leading_zeros(rsa.modulus);
+            let e = strip_leading_zeros(rsa.exponent);
+            if modulus_bits(n) < MIN_RSA_MODULUS_BITS || e.is_empty() {
+                return None;
+            }
+            map.insert(KTY, int(KTY_RSA));
+            map.insert(RSA_N, CborValue::Bytes(n.to_vec()));
+            map.insert(RSA_E, CborValue::Bytes(e.to_vec()));
+        }
+        _ => return None,
+    }
+    Some(CborValue::Map(
+        map.into_iter().map(|(k, v)| (int(k), v)).collect(),
+    ))
 }
 
 /// Builds an OKP COSE_Key (CBOR Value) for an Ed25519 public key ([RFC 9052] §7, §13.2).
@@ -186,6 +342,40 @@ fn okp_to_der(map: &BTreeMap<i128, &CborValue>) -> Option<Vec<u8>> {
     )
 }
 
+fn rsa_to_der(map: &BTreeMap<i128, &CborValue>) -> Option<Vec<u8>> {
+    let n = cbor_as_bytes(map.get(&RSA_N)?)?;
+    let e = cbor_as_bytes(map.get(&RSA_E)?)?;
+    let (n, e) = (strip_leading_zeros(&n), strip_leading_zeros(&e));
+    if modulus_bits(n) < MIN_RSA_MODULUS_BITS || e.is_empty() {
+        return None;
+    }
+
+    // RSAPublicKey ::= SEQUENCE { modulus INTEGER, publicExponent INTEGER } (RFC 8017 §A.1.1),
+    // under rsaEncryption with NULL parameters (RFC 3279 §2.3.1).
+    let rsa_public_key = der_tlv(
+        0x30,
+        &[der_unsigned_integer(n), der_unsigned_integer(e)].concat(),
+    );
+    spki_to_der(
+        AlgorithmIdentifier {
+            algorithm: oid(RSA_ENCRYPTION_OID)?,
+            parameters: Some(Any::new(vec![0x05, 0x00])),
+        },
+        &rsa_public_key,
+    )
+}
+
+fn strip_leading_zeros(bytes: &[u8]) -> &[u8] {
+    let first = bytes.iter().position(|b| *b != 0).unwrap_or(bytes.len());
+    &bytes[first..]
+}
+
+/// Bit length of a big-endian unsigned integer without leading zero bytes.
+fn modulus_bits(n: &[u8]) -> usize {
+    n.first()
+        .map_or(0, |b| n.len() * 8 - b.leading_zeros() as usize)
+}
+
 /// Left-pads `bytes` with zeros to exactly `len` bytes, or returns `None` if `bytes` is already
 /// longer than `len` (an oversized, malformed coordinate).
 fn left_pad(bytes: &[u8], len: usize) -> Option<Vec<u8>> {
@@ -201,6 +391,40 @@ fn left_pad(bytes: &[u8], len: usize) -> Option<Vec<u8>> {
 
 fn oid(components: &[u32]) -> Option<ObjectIdentifier> {
     ObjectIdentifier::new(components.to_vec())
+}
+
+fn oid_string(components: &[u32]) -> String {
+    components
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+/// A DER tag-length-value with a definite length.
+fn der_tlv(tag: u8, value: &[u8]) -> Vec<u8> {
+    let mut out = vec![tag];
+    let len = value.len();
+    if len < 0x80 {
+        out.push(len as u8);
+    } else {
+        let len_bytes = len.to_be_bytes();
+        let len_bytes = strip_leading_zeros(&len_bytes);
+        out.push(0x80 | len_bytes.len() as u8);
+        out.extend_from_slice(len_bytes);
+    }
+    out.extend_from_slice(value);
+    out
+}
+
+/// A DER INTEGER for an unsigned big-endian value without leading zero bytes: a zero byte
+/// is prepended when the high bit is set, so it stays positive.
+fn der_unsigned_integer(value: &[u8]) -> Vec<u8> {
+    if value.first().is_some_and(|b| b & 0x80 != 0) {
+        der_tlv(0x02, &[&[0u8][..], value].concat())
+    } else {
+        der_tlv(0x02, value)
+    }
 }
 
 fn spki_to_der(algorithm: AlgorithmIdentifier, public_key: &[u8]) -> Option<Vec<u8>> {
@@ -474,5 +698,134 @@ mod tests {
         let key = CborValue::Map(map);
 
         assert!(cose_key_to_der(&key).is_none());
+    }
+
+    fn cert_spki(chain_pem: &[u8]) -> Vec<u8> {
+        let pem = x509_parser::pem::Pem::iter_from_buffer(chain_pem)
+            .next()
+            .unwrap()
+            .unwrap();
+        let (_, cert) = x509_parser::parse_x509_certificate(&pem.contents).unwrap();
+        cert.tbs_certificate.subject_pki.raw.to_vec()
+    }
+
+    fn make_rsa_cose_key(n: &[u8], alg: Option<i64>) -> CborValue {
+        let mut map = vec![
+            (cbor_int(1), cbor_int(3)), // kty: RSA
+            (cbor_int(2), CborValue::Bytes(b"rsa".to_vec())),
+            (cbor_int(-1), CborValue::Bytes(n.to_vec())),
+            (cbor_int(-2), CborValue::Bytes(vec![1, 0, 1])),
+        ];
+        if let Some(alg) = alg {
+            map.push((cbor_int(3), cbor_int(alg)));
+        }
+        CborValue::Map(map.into_iter().collect())
+    }
+
+    /// EC and Ed25519 keys round-trip from a certificate's SubjectPublicKeyInfo to a COSE_Key
+    /// and back to the same DER.
+    #[test]
+    fn spki_round_trips_for_ec_and_ed25519_keys() {
+        for (chain, alg) in [
+            (
+                &include_bytes!("../../tests/fixtures/certs/es256.pub")[..],
+                SigningAlg::Es256,
+            ),
+            (
+                &include_bytes!("../../tests/fixtures/certs/es384.pub")[..],
+                SigningAlg::Es384,
+            ),
+            (
+                &include_bytes!("../../tests/fixtures/certs/es512.pub")[..],
+                SigningAlg::Es512,
+            ),
+            (
+                &include_bytes!("../../tests/fixtures/certs/ed25519.pub")[..],
+                SigningAlg::Ed25519,
+            ),
+        ] {
+            let spki = cert_spki(chain);
+            let cose_key = cose_key_from_spki(&spki, alg, b"k").unwrap();
+            assert_eq!(signing_alg_from_cose_key(&cose_key), Some(alg));
+            assert_eq!(kid_from_cose_key(&cose_key), Some(b"k".to_vec()));
+            assert_eq!(cose_key_to_der(&cose_key), Some(spki), "{alg:?}");
+        }
+    }
+
+    /// A PS* certificate's key (under id-RSASSA-PSS) becomes an RSA COSE_Key, whose DER is an
+    /// rsaEncryption SubjectPublicKeyInfo with the same modulus and exponent.
+    #[test]
+    fn rsa_pss_spki_becomes_rsa_cose_key() {
+        let spki = cert_spki(include_bytes!("../../tests/fixtures/certs/ps256.pub"));
+        let cose_key = cose_key_from_spki(&spki, SigningAlg::Ps256, b"k").unwrap();
+        assert_eq!(
+            signing_alg_from_cose_key(&cose_key),
+            Some(SigningAlg::Ps256)
+        );
+        let der = cose_key_to_der(&cose_key).unwrap();
+        let (_, parsed) =
+            <x509_parser::x509::SubjectPublicKeyInfo as x509_parser::prelude::FromDer<_>>::from_der(
+                &der,
+            )
+            .unwrap();
+        assert_eq!(
+            parsed.algorithm.algorithm.to_id_string(),
+            oid_string(RSA_ENCRYPTION_OID)
+        );
+        let x509_parser::public_key::PublicKey::RSA(rsa) = parsed.parsed().unwrap() else {
+            unreachable!("expected an RSA key");
+        };
+        assert_eq!(rsa.key_size(), 4096);
+        // The wrong algorithm for the key is refused.
+        assert!(cose_key_from_spki(&spki, SigningAlg::Es256, b"k").is_none());
+    }
+
+    /// An RSA key needs a PS* `alg`; an `alg` that contradicts the key is rejected.
+    #[test]
+    fn declared_alg_must_fit_the_key() {
+        let n = [&[0xc0u8][..], &[0x11; 255]].concat(); // 2048-bit modulus
+        assert_eq!(
+            signing_alg_from_cose_key(&make_rsa_cose_key(&n, None)),
+            None
+        );
+        assert_eq!(
+            signing_alg_from_cose_key(&make_rsa_cose_key(&n, Some(-38))),
+            Some(SigningAlg::Ps384)
+        );
+        assert_eq!(
+            signing_alg_from_cose_key(&make_rsa_cose_key(&n, Some(-7))),
+            None
+        );
+        assert_eq!(
+            signing_alg_from_cose_key(&make_rsa_cose_key(&n, Some(-999))),
+            None
+        );
+
+        let ec = make_ec2_cose_key(1, &[1; 32], &[2; 32], b"k");
+        let CborValue::Map(mut map) = ec else {
+            unreachable!()
+        };
+        map.insert(cbor_int(3), cbor_int(-35)); // ES384 on a P-256 key
+        assert_eq!(
+            signing_alg_from_cose_key(&CborValue::Map(map.clone())),
+            None
+        );
+        map.insert(cbor_int(3), cbor_int(-7));
+        assert_eq!(
+            signing_alg_from_cose_key(&CborValue::Map(map)),
+            Some(SigningAlg::Es256)
+        );
+    }
+
+    /// RSA moduli under 2048 bits are rejected, as for claim-signing certificates.
+    #[test]
+    fn short_rsa_modulus_is_rejected() {
+        let n2048 = [&[0x80u8][..], &[0x11; 255]].concat();
+        assert!(cose_key_to_der(&make_rsa_cose_key(&n2048, Some(-37))).is_some());
+        let n2047 = [&[0x40u8][..], &[0x11; 255]].concat();
+        assert!(cose_key_to_der(&make_rsa_cose_key(&n2047, Some(-37))).is_none());
+        // Leading zero bytes don't count towards the size.
+        let padded = [&[0u8, 0][..], &n2047].concat();
+        assert!(cose_key_to_der(&make_rsa_cose_key(&padded, Some(-37))).is_none());
     }
 }
