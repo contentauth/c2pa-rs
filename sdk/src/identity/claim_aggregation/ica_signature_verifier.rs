@@ -1008,6 +1008,12 @@ fn verified_identities_problem(vc: &serde_json::Value) -> Option<IcaValidationEr
 
     let non_empty_string =
         |v: Option<&Value>| v.and_then(Value::as_str).is_some_and(|s| !s.is_empty());
+    // `provider.id` and `uri` are parsed as `UriBuf`s, so check them the same way: otherwise
+    // the credential fails to parse and only the generic invalid-credential code is reported.
+    let uri = |v: Option<&Value>| {
+        v.and_then(Value::as_str)
+            .is_some_and(|s| iref::Uri::new(s).is_ok())
+    };
     let invalid = |index: usize, reason: &str| {
         Some(IcaValidationError::VerifiedIdentitiesInvalid(format!(
             "entry {index}: {reason}"
@@ -1023,6 +1029,9 @@ fn verified_identities_problem(vc: &serde_json::Value) -> Option<IcaValidationEr
         }
         match identity.get("provider") {
             Some(Value::Object(provider)) => {
+                if !uri(provider.get("id")) {
+                    return invalid(index, "provider.id must be a URI");
+                }
                 if !non_empty_string(provider.get("name")) {
                     return invalid(index, "provider.name must be a non-empty string");
                 }
@@ -1042,6 +1051,9 @@ fn verified_identities_problem(vc: &serde_json::Value) -> Option<IcaValidationEr
                     );
                 }
             }
+        }
+        if identity.get("uri").is_some() && !uri(identity.get("uri")) {
+            return invalid(index, "uri must be a URI if present");
         }
     }
     None
@@ -1105,6 +1117,11 @@ mod tests {
             |v| {
                 v["provider"].as_object_mut().unwrap().remove("name");
             },
+            |v| {
+                v["provider"].as_object_mut().unwrap().remove("id");
+            },
+            |v| v["provider"]["id"] = json!("not a uri"),
+            |v| v["uri"] = json!("not a uri"),
             |v| {
                 v.as_object_mut().unwrap().remove("verifiedAt");
             },
