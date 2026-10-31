@@ -1008,6 +1008,51 @@ fn test_builder_unsupported_format_remote_url_rejected() -> Result<()> {
     Ok(())
 }
 
+/// HEIF image sequences are HEIF files with a `moov` track of frames, signed through the
+/// BMFF handler like other HEIF files, and recorded with their own media types.
+#[test]
+fn test_builder_sign_heif_sequence() -> Result<()> {
+    let context = Context::new().with_settings(test_settings())?.into_shared();
+    let data = include_bytes!("fixtures/sample1.heics");
+
+    for (format, mime) in [
+        ("heics", "image/heic-sequence"),
+        ("image/heic-sequence", "image/heic-sequence"),
+        ("heifs", "image/heif-sequence"),
+        ("image/heif-sequence", "image/heif-sequence"),
+    ] {
+        let mut builder = Builder::from_shared_context(&context);
+        builder.set_intent(BuilderIntent::Edit);
+        let mut dest = Cursor::new(Vec::new());
+        builder.save_to_stream(format, &mut Cursor::new(&data[..]), &mut dest)?;
+
+        dest.rewind()?;
+        let reader = Reader::from_shared_context(&context).with_stream(format, &mut dest)?;
+        assert_eq!(
+            reader.validation_state(),
+            ValidationState::Trusted,
+            "{format}"
+        );
+        let manifest = reader.active_manifest().unwrap();
+        assert_eq!(manifest.ingredients()[0].format(), Some(mime), "{format}");
+
+        // Changing frame data is detected. The signed file is `ftyp`, the C2PA box, then the
+        // original boxes unchanged, so this is the original's middle byte, inside an `mdat`.
+        let signed = dest.into_inner();
+        let mut tampered = signed.clone();
+        let middle = signed.len() - data.len() / 2;
+        tampered[middle] ^= 0x01;
+        let state = Reader::from_shared_context(&context)
+            .with_stream(format, Cursor::new(&tampered))
+            .map(|r| r.validation_state());
+        assert!(
+            !matches!(state, Ok(ValidationState::Trusted)),
+            "{format}: tampering was not detected"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn test_builder_compressed_manifests() -> Result<()> {
     let mut settings = test_settings();
