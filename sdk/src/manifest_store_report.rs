@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    assertion::AssertionData, claim::Claim, crypto::base64, store::Store,
+    assertion::AssertionData, claim::Claim, crypto::base64, store::Store, utils::json,
     validation_results::ValidationResults, validation_status::ValidationStatus, Result,
     ValidationState,
 };
@@ -129,7 +129,7 @@ impl ManifestReport {
             },
             None => SignatureReport::default(),
         };
-        let mut claim_value = serde_json::to_value(claim)?; // todo:  this will lose tagging info
+        let mut claim_value = json::to_value(claim)?;
         if let Value::Object(map) = &mut claim_value {
             map.insert(
                 "claim_version".to_string(),
