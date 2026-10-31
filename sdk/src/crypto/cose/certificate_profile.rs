@@ -898,6 +898,62 @@ mod tests {
         .unwrap();
     }
 
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn ocsp_signing_allows_nonrepudiation_without_digital_signature() {
+        let chain = generate_ephemeral_chain("ocsp-key-usage.local").unwrap();
+        let mut cert: Certificate = rasn::der::decode(&chain.ee_der).unwrap();
+        // KeyUsage BIT STRING with only nonRepudiation asserted.
+        extension(&mut cert, &[2, 5, 29, 15], vec![0x03, 0x02, 0x06, 0x40]);
+        extension(
+            &mut cert,
+            &[2, 5, 29, 37],
+            rasn::der::encode(&vec![oid(&[1, 3, 6, 1, 5, 5, 7, 3, 9])]).unwrap(),
+        );
+
+        let ctp = CertificateTrustPolicy::default();
+        let mut validation_log = StatusTracker::default();
+        assert_eq!(
+            check_end_entity_certificate_profile(
+                &rasn::der::encode(&cert).unwrap(),
+                &ctp,
+                &mut validation_log,
+                None,
+            ),
+            Ok(())
+        );
+        assert!(validation_log.logged_items().is_empty());
+
+        // The same key usage must still be rejected for manifest signing.
+        extension(
+            &mut cert,
+            &[2, 5, 29, 37],
+            rasn::der::encode(&vec![oid(&[1, 3, 6, 1, 5, 5, 7, 3, 4])]).unwrap(),
+        );
+        let mut validation_log = StatusTracker::default();
+        assert_eq!(
+            check_end_entity_certificate_profile(
+                &rasn::der::encode(&cert).unwrap(),
+                &ctp,
+                &mut validation_log,
+                None,
+            ),
+            Err(super::CertificateProfileError::InvalidCertificate)
+        );
+        let item = &validation_log.logged_items()[0];
+        assert_eq!(
+            item.validation_status,
+            Some(SIGNING_CREDENTIAL_INVALID.into())
+        );
+        assert_eq!(
+            item.description,
+            "certificate missing digitalSignature key usage"
+        );
+    }
+
     fn x509_der_from_pem(cert_pem: &[u8]) -> Vec<u8> {
         let mut pems = Pem::iter_from_buffer(cert_pem);
         let pem = pems.next().unwrap().unwrap();
