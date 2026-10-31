@@ -215,11 +215,9 @@ impl OcspResponse {
                         output.next_update = DateTime::from_naive_utc_and_offset(nu_utc, Utc);
                     }
 
-                    if !in_range {
-                        // A good response outside its validity window cannot be
-                        // used, but it is not evidence that the certificate was
-                        // revoked.
-                    } else {
+                    // A good response outside its validity window cannot be
+                    // used, but is not evidence that the certificate was revoked.
+                    if in_range {
                         // As soon as we find one successful match, nothing else matters.
                         log_item!("", "certificate not revoked", "check_ocsp_response")
                             .validation_status(validation_codes::SIGNING_CREDENTIAL_NOT_REVOKED)

@@ -948,6 +948,77 @@ mod tests {
         }
     }
 
+    #[test]
+    fn process_ocsp_responses_skips_expired_good_response() {
+        use crate::crypto::asn1::{rfc3161::MessageImprint, AlgorithmIdentifier, GeneralizedTime};
+
+        let chain = ocsp_signing_chain();
+        let sign1 = sign1_with_x5chain(&chain);
+        let good = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_good.der").to_vec();
+        let revoked =
+            include_bytes!("../../../tests/fixtures/crypto/ocsp/response_revoked.der").to_vec();
+        let tst_info = TstInfo {
+            version: 1.into(),
+            policy: "1.2.3".parse().unwrap(),
+            message_imprint: MessageImprint {
+                hash_algorithm: AlgorithmIdentifier {
+                    algorithm: "2.16.840.1.101.3.4.2.1".parse().unwrap(),
+                },
+                hashed_message: bcder::OctetString::new(bytes::Bytes::from_static(&[0; 32])),
+            },
+            serial_number: 1.into(),
+            gen_time: GeneralizedTime::from_der_bytes(b"\x18\x0f20260201080000Z").unwrap(),
+            accuracy: None,
+            ordering: None,
+            nonce: None,
+            tsa: None,
+            extensions: None,
+        };
+        let mut ctp = CertificateTrustPolicy::new();
+        ctp.add_end_entity_credentials(include_bytes!(
+            "../../../tests/fixtures/crypto/ocsp/ocsp_responder.pem"
+        ))
+        .unwrap();
+        let settings = Settings::default();
+        let mut log = StatusTracker::default();
+
+        let response = process_ocsp_responses(
+            &sign1,
+            b"data",
+            &ctp,
+            std::slice::from_ref(&good),
+            Some(&tst_info),
+            &mut log,
+            &settings,
+        )
+        .unwrap();
+        assert!(response.ocsp_certs.is_none());
+        assert!(response.revoked_at.is_none());
+        assert!(!log.has_any_error());
+        assert!(!log.has_status(SIGNING_CREDENTIAL_REVOKED));
+        assert!(!log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+
+        // Skipping an expired good response must not hide a later revocation.
+        let mut log = StatusTracker::default();
+        let result = process_ocsp_responses(
+            &sign1,
+            b"data",
+            &ctp,
+            &[good, revoked],
+            Some(&tst_info),
+            &mut log,
+            &settings,
+        );
+        assert!(matches!(
+            result,
+            Err(CoseError::CertificateTrustError(
+                CertificateTrustError::CertificateNotTrusted
+            ))
+        ));
+        assert!(log.has_status(SIGNING_CREDENTIAL_REVOKED));
+        assert!(!log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
+    }
+
     // Drives the full online path: each cert (leaf and issuing CA) is queried
     // against its own AIA responder and the responses are processed.
     #[test]
