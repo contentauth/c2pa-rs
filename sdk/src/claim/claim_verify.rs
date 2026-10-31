@@ -113,6 +113,49 @@ fn data_hash_exclusions_match_manifest(
 }
 
 impl Claim {
+    /// Verify that the claim `signature` field points to the signature box of this manifest.
+    ///
+    /// The claim label comes from the JUMBF label of the manifest, which is outside the signed
+    /// claim. For V2 and greater claims the `signature` field must be an absolute URI. That URI
+    /// names the manifest label, so it binds the label to the signed claim. Without it, the label
+    /// could be changed without invalidating the signature. V1 claims may use a relative URI.
+    ///
+    /// The signature must also be in a box labeled `c2pa.signature`. Returns `true`, after
+    /// logging `claimSignature.missing`, if it isn't where it should be.
+    pub(crate) fn verify_signature_box_uri(
+        claim: &Claim,
+        validation_log: &mut StatusTracker,
+    ) -> Result<bool> {
+        let is_signature_box = jumbf::labels::box_name_from_uri(&claim.signature)
+            .unwrap_or_default()
+            == jumbf::labels::SIGNATURE;
+
+        let sig_box_err = match manifest_label_from_uri(&claim.signature) {
+            Some(signature_url) if signature_url != claim.label() => true,
+            Some(_) => !is_signature_box,
+            // relative signature box
+            None => claim.version() > 1 || !is_signature_box,
+        };
+
+        // the signature is found by its box label, which must also be the signature's
+        let sig_box_err = sig_box_err
+            || claim
+                .signature_box_label
+                .as_deref()
+                .is_some_and(|label| label != jumbf::labels::SIGNATURE);
+
+        if sig_box_err {
+            log_item!(
+                to_signature_uri(claim.label()),
+                "signature missing",
+                "verify_claim"
+            )
+            .validation_status(validation_status::CLAIM_SIGNATURE_MISSING)
+            .failure(validation_log, Error::ClaimMissingSignatureBox)?;
+        }
+        Ok(sig_box_err)
+    }
+
     /// Verify claim signature, assertion store and asset hashes
     /// claim - claim to be verified
     /// asset_bytes - reference to bytes of the asset
@@ -137,20 +180,7 @@ impl Claim {
         // use the signature uri as the current uri while validating the signature info
         validation_log.push_current_uri(to_signature_uri(claim.label()));
 
-        // make sure signature manifest if present points to this manifest
-        let sig_box_err = match jumbf::labels::manifest_label_from_uri(&claim.signature) {
-            Some(signature_url) if signature_url != claim.label() => true,
-            _ => {
-                jumbf::labels::box_name_from_uri(&claim.signature).unwrap_or_default()
-                    != jumbf::labels::SIGNATURE
-            } // relative signature box
-        };
-
-        let sig_box_err = sig_box_err
-            || claim
-                .signature_box_label
-                .as_deref()
-                .is_some_and(|label| label != jumbf::labels::SIGNATURE);
+        let sig_box_err = Claim::verify_signature_box_uri(claim, validation_log)?;
 
         // for V2 and greater claims the label must conform
         if claim.version() > 1 && manifest_label_to_parts(claim.label()).is_none() {
@@ -164,13 +194,6 @@ impl Claim {
         }
 
         if sig_box_err {
-            log_item!(
-                to_signature_uri(claim.label()),
-                "signature missing",
-                "verify_claim"
-            )
-            .validation_status(validation_status::CLAIM_SIGNATURE_MISSING)
-            .failure(validation_log, Error::ClaimMissingSignatureBox)?;
             // A signature at a different label cannot authenticate this claim.
             // Continue assertion checks without parsing or verifying that COSE data.
             let result = Claim::verify_internal(
