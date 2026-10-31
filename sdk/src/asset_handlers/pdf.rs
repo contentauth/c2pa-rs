@@ -70,9 +70,12 @@ pub enum Error {
     ManifestObjectNotByteAddressable,
 }
 
-/// MIME subtype for a C2PA Manifest Store's embedded file specification, per
-/// C2PA spec §A.4.1: "The embedded file specification dictionary shall have
-/// a Subtype key whose value is `application/c2pa`".
+/// MIME subtype for a C2PA Manifest Store's embedded file. C2PA 2.5 requires it
+/// on the embedded file stream dictionary ("The embedded file stream dictionary
+/// (referenced by the `EF` key of the file specification dictionary) shall have a
+/// `Subtype` key whose value is `application/c2pa`"), as ISO 32000-2 §7.11.4 does
+/// for any embedded file. C2PA 2.4 and earlier required it on the embedded file
+/// specification dictionary instead, so it is written on both.
 const C2PA_MIME_TYPE: &str = "application/c2pa";
 
 #[cfg_attr(test, mockall::automock)]
@@ -561,9 +564,9 @@ impl Pdf {
     /// Adds the `Embedded File Specification` to the PDF document. Returns the [Reference]
     /// to the added `Embedded File Specification`.
     ///
-    /// Sets `Subtype` and `AFRelationship` on this dictionary per C2PA spec §A.4.1: "The
-    /// embedded file specification dictionary shall have a Subtype key whose value is
-    /// `application/c2pa` and an AFRelationship key ... whose value is `C2PA_Manifest`."
+    /// Sets `AFRelationship` to `C2PA_Manifest` on this dictionary, as C2PA requires. Also
+    /// sets `Subtype` to `application/c2pa`, which C2PA 2.4 and earlier required here (see
+    /// [C2PA_MIME_TYPE]).
     fn add_embedded_file_specification(&mut self, file_stream_ref: ObjectId) -> ObjectId {
         let embedded_file_stream = dictionary! {
             AF_RELATIONSHIP_KEY => Name(C2PA_RELATIONSHIP.into()),
@@ -573,17 +576,39 @@ impl Pdf {
             "EF" => dictionary! {
                 "F" => Reference(file_stream_ref),
             },
-            TYPE_KEY => Name("FileSpec".into()),
+            // PDF names are case-sensitive: the file specification type is `Filespec`
+            // (ISO 32000-2, 7.11.3).
+            TYPE_KEY => Name("Filespec".into()),
             "UF" => Object::string_literal(CONTENT_CREDS),
         };
 
         self.document.add_object(embedded_file_stream)
     }
 
-    /// Adds the provided `bytes` as a `StreamDictionary` to the PDF document. Returns the
-    /// [Reference] of the added [Object].
+    /// Adds the provided `bytes` as an embedded file stream (`Type` `EmbeddedFile`, `Subtype`
+    /// `application/c2pa`) to the PDF document. Returns the [Reference] of the added
+    /// [Object].
+    ///
+    /// The stream also gets a `Params` dictionary with its `Size` and `ModDate`. ISO 32000-2
+    /// (7.11.4) requires `Params`, and `ModDate` within it, for an embedded file stream that is
+    /// an associated file, as the C2PA Manifest Store is. Both values have a fixed width for a
+    /// given store size, so a same-size rewrite keeps the manifest at the same offset.
     fn add_c2pa_embedded_file_stream(&mut self, bytes: Vec<u8>) -> ObjectId {
-        let stream = Stream::new(dictionary! {}, bytes);
+        let mod_date = format!(
+            "D:{}Z",
+            crate::crypto::internal::time::utc_now().format("%Y%m%d%H%M%S")
+        );
+        let stream = Stream::new(
+            dictionary! {
+                TYPE_KEY => Name("EmbeddedFile".into()),
+                SUBTYPE_KEY => C2PA_MIME_TYPE,
+                "Params" => dictionary! {
+                    "Size" => Object::Integer(bytes.len() as i64),
+                    "ModDate" => Object::string_literal(mod_date),
+                },
+            },
+            bytes,
+        );
 
         self.document.add_object(stream)
     }
@@ -870,6 +895,11 @@ mod tests {
             file_spec.get(SUBTYPE_KEY).unwrap().as_name().unwrap(),
             b"application/c2pa"
         );
+        // PDF names are case-sensitive (ISO 32000-2, 7.11.3).
+        assert_eq!(
+            file_spec.get(TYPE_KEY).unwrap().as_name().unwrap(),
+            b"Filespec"
+        );
         assert_eq!(
             file_spec
                 .get(AF_RELATIONSHIP_KEY)
@@ -878,6 +908,62 @@ mod tests {
                 .unwrap(),
             C2PA_RELATIONSHIP
         );
+    }
+
+    // C2PA 2.5: "The embedded file stream dictionary (referenced by the EF key of the file
+    // specification dictionary) shall have a Subtype key whose value is application/c2pa."
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn test_embedded_file_stream_has_spec_required_subtype() {
+        let mut pdf = Pdf::from_bytes(include_bytes!("../../tests/fixtures/basic.pdf")).unwrap();
+        pdf.write_manifest_as_embedded_file(vec![10u8, 20u8])
+            .unwrap();
+
+        let file_spec_ref = pdf.c2pa_file_spec_object_id().unwrap();
+        let file_spec = pdf
+            .document
+            .get_object(file_spec_ref)
+            .unwrap()
+            .as_dict()
+            .unwrap();
+        let stream_ref = file_spec
+            .get(b"EF")
+            .unwrap()
+            .as_dict()
+            .unwrap()
+            .get(b"F")
+            .unwrap()
+            .as_reference()
+            .unwrap();
+        let stream = pdf
+            .document
+            .get_object(stream_ref)
+            .unwrap()
+            .as_stream()
+            .unwrap();
+
+        assert_eq!(
+            stream.dict.get(SUBTYPE_KEY).unwrap().as_name().unwrap(),
+            b"application/c2pa"
+        );
+        assert_eq!(
+            stream.dict.get(TYPE_KEY).unwrap().as_name().unwrap(),
+            b"EmbeddedFile"
+        );
+
+        // ISO 32000-2 7.11.4: an associated file's embedded file stream has `Params` with a
+        // `ModDate`.
+        let params = stream.dict.get(b"Params").unwrap().as_dict().unwrap();
+        assert_eq!(params.get(b"Size").unwrap().as_i64().unwrap(), 2);
+        let mod_date = params.get(b"ModDate").unwrap().as_str().unwrap();
+        assert!(mod_date.starts_with(b"D:") && mod_date.ends_with(b"Z") && mod_date.len() == 17);
+        assert!(matches!(
+            pdf.read_manifest_bytes(),
+            Ok(Some(manifests)) if manifests[0] == [10u8, 20u8]
+        ));
     }
 
     // A manifest recorded via a compressed xref entry (stored inside an
