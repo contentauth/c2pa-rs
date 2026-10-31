@@ -20,6 +20,10 @@
 //!
 //! Only the top-level fields of the `ModelProto` are scanned, and the rest of the file is
 //! copied unchanged, so models of any size are handled without loading the graph.
+//!
+//! A model whose tensors keep their data in external files (`data_location = EXTERNAL`) is
+//! not signed: the data hash covers only the `.onnx` file, so those weights could be
+//! replaced without breaking it.
 
 use std::{
     io::{self, Read, SeekFrom},
@@ -47,6 +51,31 @@ const WIRE_VARINT: u8 = 0;
 const WIRE_FIXED64: u8 = 1;
 const WIRE_LEN: u8 = 2;
 const WIRE_FIXED32: u8 = 5;
+
+// The fields leading to every `TensorProto` in a model, and the tensor's own
+// `external_data` and `data_location`.
+const MODEL_GRAPH_FIELD: u64 = 7;
+const MODEL_TRAINING_INFO_FIELD: u64 = 20;
+const MODEL_FUNCTIONS_FIELD: u64 = 25;
+const TRAINING_INFO_INITIALIZATION_FIELD: u64 = 1;
+const TRAINING_INFO_ALGORITHM_FIELD: u64 = 2;
+const GRAPH_NODE_FIELD: u64 = 1;
+const GRAPH_INITIALIZER_FIELD: u64 = 5;
+const GRAPH_SPARSE_INITIALIZER_FIELD: u64 = 15;
+const NODE_ATTRIBUTE_FIELD: u64 = 5;
+const ATTRIBUTE_T_FIELD: u64 = 5;
+const ATTRIBUTE_G_FIELD: u64 = 6;
+const ATTRIBUTE_TENSORS_FIELD: u64 = 10;
+const ATTRIBUTE_GRAPHS_FIELD: u64 = 11;
+const ATTRIBUTE_SPARSE_TENSOR_FIELD: u64 = 22;
+const ATTRIBUTE_SPARSE_TENSORS_FIELD: u64 = 23;
+const SPARSE_TENSOR_VALUES_FIELD: u64 = 1;
+const SPARSE_TENSOR_INDICES_FIELD: u64 = 2;
+const FUNCTION_NODE_FIELD: u64 = 7;
+const TENSOR_EXTERNAL_DATA_FIELD: u64 = 13;
+const TENSOR_DATA_LOCATION_FIELD: u64 = 14;
+const DATA_LOCATION_EXTERNAL: u64 = 1;
+const MAX_NESTING: u32 = 64;
 
 const MANIFEST_KEY: &str = "c2pa:manifest";
 /// `metadata_props` entries are small; anything larger is not a key/value pair we read.
@@ -336,6 +365,116 @@ fn write_model(
     Ok(())
 }
 
+/// The protobuf messages on the way to a `TensorProto`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Message {
+    Model,
+    TrainingInfo,
+    Graph,
+    Node,
+    Attribute,
+    SparseTensor,
+    Function,
+    Tensor,
+}
+
+impl Message {
+    /// The message type of field `number`, if it can lead to a tensor.
+    fn child(self, number: u64) -> Option<Message> {
+        use Message::*;
+        match (self, number) {
+            (Model, MODEL_GRAPH_FIELD) => Some(Graph),
+            (Model, MODEL_TRAINING_INFO_FIELD) => Some(TrainingInfo),
+            (Model, MODEL_FUNCTIONS_FIELD) => Some(Function),
+            (TrainingInfo, TRAINING_INFO_INITIALIZATION_FIELD | TRAINING_INFO_ALGORITHM_FIELD) => {
+                Some(Graph)
+            }
+            (Graph, GRAPH_NODE_FIELD) | (Function, FUNCTION_NODE_FIELD) => Some(Node),
+            (Graph, GRAPH_INITIALIZER_FIELD) => Some(Tensor),
+            (Graph, GRAPH_SPARSE_INITIALIZER_FIELD) => Some(SparseTensor),
+            (Node, NODE_ATTRIBUTE_FIELD) => Some(Attribute),
+            (Attribute, ATTRIBUTE_T_FIELD | ATTRIBUTE_TENSORS_FIELD) => Some(Tensor),
+            (Attribute, ATTRIBUTE_G_FIELD | ATTRIBUTE_GRAPHS_FIELD) => Some(Graph),
+            (Attribute, ATTRIBUTE_SPARSE_TENSOR_FIELD | ATTRIBUTE_SPARSE_TENSORS_FIELD) => {
+                Some(SparseTensor)
+            }
+            (SparseTensor, SPARSE_TENSOR_VALUES_FIELD | SPARSE_TENSOR_INDICES_FIELD) => {
+                Some(Tensor)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Returns `true` if a tensor in the `message` that ends at `end` keeps its data outside
+/// the file. Tensor data and other fields that can't hold a tensor are skipped, not read.
+fn has_external_data(
+    stream: &mut dyn ReadSeek,
+    end: u64,
+    message: Message,
+    depth: u32,
+) -> Result<bool> {
+    if depth > MAX_NESTING {
+        return Err(invalid("model is nested too deeply"));
+    }
+    while stream.stream_position()? < end {
+        let tag = read_varint(stream)?.ok_or_else(|| invalid("truncated field"))?;
+        let (number, wire_type) = (tag >> 3, (tag & 7) as u8);
+        match wire_type {
+            WIRE_VARINT => {
+                let value = read_varint(stream)?.ok_or_else(|| invalid("truncated varint"))?;
+                if message == Message::Tensor
+                    && number == TENSOR_DATA_LOCATION_FIELD
+                    && value == DATA_LOCATION_EXTERNAL
+                {
+                    return Ok(true);
+                }
+            }
+            WIRE_FIXED64 => {
+                stream.seek(SeekFrom::Current(8))?;
+            }
+            WIRE_FIXED32 => {
+                stream.seek(SeekFrom::Current(4))?;
+            }
+            WIRE_LEN => {
+                let size = read_varint(stream)?.ok_or_else(|| invalid("truncated length"))?;
+                let value_end = stream
+                    .stream_position()?
+                    .checked_add(size)
+                    .filter(|&value_end| value_end <= end)
+                    .ok_or_else(|| invalid("field extends past its message"))?;
+                if message == Message::Tensor && number == TENSOR_EXTERNAL_DATA_FIELD {
+                    return Ok(true);
+                }
+                if let Some(child) = message.child(number) {
+                    if has_external_data(stream, value_end, child, depth + 1)? {
+                        return Ok(true);
+                    }
+                }
+                stream.seek(SeekFrom::Start(value_end))?;
+            }
+            _ => return Err(invalid("unsupported wire type")),
+        }
+    }
+    if stream.stream_position()? > end {
+        return Err(invalid("field extends past its message"));
+    }
+    Ok(false)
+}
+
+/// Fails if the model's weights aren't all in the file, so the data hash can't cover them.
+fn reject_external_data(stream: &mut dyn ReadSeek, model: &Model) -> Result<()> {
+    stream.rewind()?;
+    if has_external_data(stream, model.len, Message::Model, 0)? {
+        return Err(Error::InvalidAsset(
+            "ONNX models with external tensor data can't be signed: the data hash would not \
+             cover it"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
 pub struct OnnxIO {}
 
 impl C2paReader for OnnxIO {
@@ -361,6 +500,7 @@ impl C2paWriter for OnnxIO {
         store_bytes: &[u8],
     ) -> Result<()> {
         let model = Model::read(input_stream)?;
+        reject_external_data(input_stream, &model)?;
         let layout = Layout::new(&model)?;
         let (field, _) = manifest_field(&base64::encode(store_bytes));
         write_model(input_stream, output_stream, &model, &layout, &field)
@@ -371,6 +511,7 @@ impl C2paWriter for OnnxIO {
         input_stream: &mut dyn ReadSeek,
     ) -> Result<Vec<ObjectLocations>> {
         let model = Model::read(input_stream)?;
+        reject_external_data(input_stream, &model)?;
 
         let (start, end, file_len) = match model.manifest_entry()? {
             Some(entry) => (entry.value.start, entry.value.end, model.len),
@@ -601,6 +742,52 @@ mod tests {
         let mut other = WITH_FUNCTIONS.to_vec();
         other.extend(entry(b"c2pa:manifest2", b"AAAA"));
         assert!(matches!(read(&other), Err(Error::JumbfNotFound)));
+    }
+
+    /// A length-delimited field.
+    fn len_field(number: u64, value: &[u8]) -> Vec<u8> {
+        [
+            varint_bytes(number << 3 | WIRE_LEN as u64),
+            varint_bytes(value.len() as u64),
+            value.to_vec(),
+        ]
+        .concat()
+    }
+
+    /// A model whose only tensor is a `Constant` node's attribute, with `data_location`.
+    fn model_with_tensor_location(location: u8) -> Vec<u8> {
+        let tensor = [(TENSOR_DATA_LOCATION_FIELD << 3) as u8, location];
+        let attribute = len_field(ATTRIBUTE_T_FIELD, &tensor);
+        let node = len_field(NODE_ATTRIBUTE_FIELD, &attribute);
+        let graph = len_field(GRAPH_NODE_FIELD, &node);
+        [vec![0x08, 0x07], len_field(MODEL_GRAPH_FIELD, &graph)].concat()
+    }
+
+    #[test]
+    fn test_rejects_external_tensor_data() {
+        let external = model_with_tensor_location(DATA_LOCATION_EXTERNAL as u8);
+        let mut output = Cursor::new(Vec::new());
+        assert!(matches!(
+            OnnxIO {}.write_c2pa(&mut Cursor::new(&external), &mut output, b"store"),
+            Err(Error::InvalidAsset(_))
+        ));
+        assert!(matches!(
+            OnnxIO {}.get_object_locations(&mut Cursor::new(&external)),
+            Err(Error::InvalidAsset(_))
+        ));
+
+        let location = [len_field(1, b"location"), len_field(2, b"w.bin")].concat();
+        let initializer = len_field(TENSOR_EXTERNAL_DATA_FIELD, &location);
+        let graph = len_field(GRAPH_INITIALIZER_FIELD, &initializer);
+        let external_entries = [vec![0x08, 0x07], len_field(MODEL_GRAPH_FIELD, &graph)].concat();
+        assert!(matches!(
+            OnnxIO {}.get_object_locations(&mut Cursor::new(&external_entries)),
+            Err(Error::InvalidAsset(_))
+        ));
+
+        // DEFAULT keeps the data in the file
+        let internal = model_with_tensor_location(0);
+        assert_eq!(read(&write(&internal, b"store")).unwrap(), b"store");
     }
 
     #[test]
