@@ -1001,6 +1001,23 @@ zGxQnM2hCA==
             Err(CertificateTrustError::CaCertificateOutsideValidity),
             "an expired intermediate CA certificate must not be trusted"
         );
+
+        // With no anchor the chain reaches, it's simply untrusted, on either
+        // backend: the expired intermediate is only reported for a chain that
+        // would otherwise be trusted.
+        let mut unrelated = CertificateTrustPolicy::new();
+        unrelated
+            .add_trust_anchors(
+                include_bytes!("../../../tests/fixtures/crypto/cose/ca_authorization_root.pub"),
+                "http://some_trust_list",
+                TrustAnchorType::Manifest,
+                None,
+            )
+            .unwrap();
+        assert_eq!(
+            unrelated.check_certificate_trust(&expired_certs[1..], &expired_certs[0], None),
+            Err(CertificateTrustError::CertificateNotTrusted)
+        );
     }
 
     /// Regression: an ordinary end-entity certificate (`basicConstraints

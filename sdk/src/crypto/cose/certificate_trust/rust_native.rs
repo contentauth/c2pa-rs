@@ -81,17 +81,19 @@ pub(crate) fn check_certificate_trust(
     };
     let check_time = x509_parser::time::ASN1Time::from_timestamp(check_time)
         .map_err(|_| CertificateTrustError::CertificateNotTrusted)?;
+    // The end-entity certificate's validity is reported by the certificate
+    // profile check. A CA certificate outside its validity is reported as such
+    // only if the chain otherwise reaches a trust anchor, as OpenSSL does;
+    // otherwise the chain is simply not trusted.
+    let mut ca_outside_validity = false;
     for (depth, cert) in full_chain.iter().enumerate() {
         let (_, chain_cert) = X509Certificate::from_der(cert)
             .map_err(|_e| CertificateTrustError::CertificateNotTrusted)?;
         if !chain_cert.validity().is_valid_at(check_time) {
-            // The end-entity certificate's validity is reported by the
-            // certificate profile check.
-            return Err(if depth == 0 {
-                CertificateTrustError::CertificateNotTrusted
-            } else {
-                CertificateTrustError::CaCertificateOutsideValidity
-            });
+            if depth == 0 {
+                return Err(CertificateTrustError::CertificateNotTrusted);
+            }
+            ca_outside_validity = true;
         }
     }
 
@@ -128,6 +130,11 @@ pub(crate) fn check_certificate_trust(
                     match result {
                         Ok(b) => {
                             if b {
+                                if ca_outside_validity {
+                                    return Err(
+                                        CertificateTrustError::CaCertificateOutsideValidity,
+                                    );
+                                }
                                 return Ok((
                                     anchor_set.trust_anchor_type,
                                     anchor_set.trust_anchor_uri.clone(),

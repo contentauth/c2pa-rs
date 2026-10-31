@@ -91,7 +91,10 @@ fn remap_x509_cose_status_codes(status_tracker: &mut StatusTracker, first_new_it
                 validation_status::CAWG_X509_CREDENTIAL_INVALID
             }
 
-            validation_status::SIGNING_CREDENTIAL_EXPIRED => {
+            // An expired end-entity certificate, or a CA certificate in its chain outside its
+            // validity period.
+            validation_status::SIGNING_CREDENTIAL_EXPIRED
+            | validation_status::CLAIM_SIGNATURE_OUTSIDE_VALIDITY => {
                 validation_status::CAWG_X509_SIGNATURE_OUTSIDE_VALIDITY
             }
 
@@ -119,6 +122,21 @@ mod tests {
             .as_ref()
             .unwrap()
             .as_ref()
+    }
+
+    #[test]
+    fn remaps_ca_outside_validity() {
+        let mut st = StatusTracker::default();
+        log_item!("l", "d", "f")
+            .validation_status(validation_status::CLAIM_SIGNATURE_OUTSIDE_VALIDITY)
+            .informational(&mut st);
+
+        remap_x509_cose_status_codes(&mut st, 0);
+
+        assert_eq!(
+            status_of(&st, 0),
+            validation_status::CAWG_X509_SIGNATURE_OUTSIDE_VALIDITY
+        );
     }
 
     #[test]
