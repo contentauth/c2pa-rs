@@ -2422,7 +2422,12 @@ impl BmffHash {
         // build map of uniqueId and localId to mdat hash ranges
         let mut mdats = c2pa_boxes.box_infos.clone();
         mdats.retain(|bi| bi.path == "mdat");
-        let mut mdat_ranges = HashMap::new();
+        // Positional list: `mdat_ranges[i]` holds the hash ranges for the i-th
+        // mdat box, paired with the i-th signed MerkleMap. This must stay an
+        // ordered Vec, never a HashMap: driving the MerkleMap-to-mdat pairing
+        // off unspecified HashMap iteration order let a keyless attacker swap
+        // two equal-size mdat payloads and still validate as trusted.
+        let mut mdat_ranges: Vec<Vec<HashRange>> = Vec::new();
 
         // there should be one MerkeMap per mdat
         if mdats.len() != mm_vec.len() {
@@ -2438,7 +2443,7 @@ impl BmffHash {
         const MDAT_EXCLUSION_SIZE: u64 = 16;
 
         // find the hash ranges for each mdat
-        for (index, (box_info, merkle_map)) in mdats.into_iter().zip(mm_vec).enumerate() {
+        for (box_info, merkle_map) in mdats.into_iter().zip(mm_vec) {
             if let Some(fixed_block_size) = merkle_map.fixed_block_size {
                 let mut block_start = box_info.start().saturating_add(MDAT_EXCLUSION_SIZE);
                 let mut bytes_left = box_info.size().saturating_sub(MDAT_EXCLUSION_SIZE);
@@ -2461,7 +2466,7 @@ impl BmffHash {
                     bytes_left -= leaf_length;
                     block_start += leaf_length;
                 }
-                mdat_ranges.insert(index, hash_ranges);
+                mdat_ranges.push(hash_ranges);
             } else if let Some(variable_block_sizes) = &merkle_map.variable_block_sizes {
                 let mut block_start = box_info.start().saturating_add(MDAT_EXCLUSION_SIZE);
 
@@ -2482,16 +2487,13 @@ impl BmffHash {
                     hash_ranges.push(HashRange::new(block_start, *block_size));
                     block_start += block_size;
                 }
-                mdat_ranges.insert(index, hash_ranges);
+                mdat_ranges.push(hash_ranges);
             } else {
                 // only one leaf, so just hash the entire box
-                mdat_ranges.insert(
-                    index,
-                    vec![HashRange::new(
-                        box_info.start().saturating_add(MDAT_EXCLUSION_SIZE),
-                        box_info.size().saturating_sub(MDAT_EXCLUSION_SIZE),
-                    )],
-                );
+                mdat_ranges.push(vec![HashRange::new(
+                    box_info.start().saturating_add(MDAT_EXCLUSION_SIZE),
+                    box_info.size().saturating_sub(MDAT_EXCLUSION_SIZE),
+                )]);
             }
         }
 
@@ -2503,7 +2505,10 @@ impl BmffHash {
 
         // if no BmffMerkleMaps try to check directly against MerkleMap
         if c2pa_boxes.bmff_merkle.is_empty() {
-            for (mm, ranges) in mm_vec.iter().zip(mdat_ranges.values()) {
+            // Pair positionally: the i-th signed MerkleMap is checked against
+            // the i-th mdat box's bytes. Zipping two ordered Vecs keeps this
+            // deterministic (a prior HashMap `.values()` zip did not).
+            for (mm, ranges) in mm_vec.iter().zip(mdat_ranges.iter()) {
                 let alg = match &mm.alg {
                     Some(a) => a,
                     None => self
@@ -2568,16 +2573,21 @@ impl BmffHash {
                 ));
             }
 
-            // validate the BmffMerkleMaps against the mdats corresponding Merkle tree
-            let merkle_maps_with_ranges = bmff_merkle_maps
-                .values()
-                .zip(mdat_ranges.values())
-                .collect::<Vec<(&BmffMerkleGroup, &Vec<HashRange>)>>();
-
-            for (mm_index, ((bmff_mm, bmff_mm_infos), ranges)) in
-                merkle_maps_with_ranges.into_iter().enumerate()
-            {
-                let current_mm = &mm_vec[mm_index];
+            // Validate each signed MerkleMap against the mdat box it covers.
+            // The pairing is positional (the i-th MerkleMap covers the i-th
+            // mdat box, i.e. `mdat_ranges[i]`) and the proof-box group is
+            // looked up by the map's own `local_id`. Both associations must be
+            // deterministic: driving them off HashMap iteration order let a
+            // keyless attacker swap two equal-size mdat payloads (and their
+            // proof boxes) and still validate as trusted.
+            for (mm_index, current_mm) in mm_vec.iter().enumerate() {
+                let ranges = &mdat_ranges[mm_index];
+                let (bmff_mm, bmff_mm_infos) =
+                    bmff_merkle_maps.get(&current_mm.local_id).ok_or_else(|| {
+                        Error::HashMismatch(
+                            "no Merkle proof boxes for MerkleMap local_id".to_string(),
+                        )
+                    })?;
 
                 let alg = match &current_mm.alg {
                     Some(a) => a,
@@ -3033,6 +3043,179 @@ mod bmff_hash_tests {
         assert!(
             matches!(result, Err(Error::HashMismatch(_))),
             "chunk+proof reordering must be rejected, got {result:?}"
+        );
+    }
+
+    // Two equal-size, single-leaf `mdat` boxes (scene A then scene B), each
+    // with its own signed `MerkleMap` (`local_id` = positional index). The
+    // Merkle root is stored directly in the map, so no auxiliary proof boxes
+    // are needed and validation takes the `bmff_merkle.is_empty()` branch.
+    // Returns the assertion and the honest, physically-ordered asset bytes:
+    // `[16-byte mdat exclusion header][chunk_a][16-byte header][chunk_b]`.
+    fn two_mdat_direct_fixture() -> (BmffHash, Vec<u8>) {
+        let alg = "sha256";
+        let chunk_a = b"AAAAAAAA".to_vec();
+        let chunk_b = b"BBBBBBBB".to_vec();
+
+        let mm_a = MerkleMap {
+            unique_id: 0,
+            local_id: 0,
+            count: 1,
+            alg: Some(alg.to_string()),
+            init_hash: None,
+            hashes: VecByteBuf(vec![ByteBuf::from(hash_by_alg(alg, &chunk_a, None))]),
+            fixed_block_size: None,
+            variable_block_sizes: None,
+        };
+        let mm_b = MerkleMap {
+            unique_id: 1,
+            local_id: 1,
+            count: 1,
+            alg: Some(alg.to_string()),
+            init_hash: None,
+            hashes: VecByteBuf(vec![ByteBuf::from(hash_by_alg(alg, &chunk_b, None))]),
+            fixed_block_size: None,
+            variable_block_sizes: None,
+        };
+
+        let mut bmff_hash = BmffHash::new("test", alg, None);
+        bmff_hash.set_merkle(vec![mm_a, mm_b]);
+
+        let mut asset = vec![0u8; 16];
+        asset.extend_from_slice(&chunk_a);
+        asset.extend_from_slice(&[0u8; 16]);
+        asset.extend_from_slice(&chunk_b);
+
+        (bmff_hash, asset)
+    }
+
+    fn two_mdat_c2pa_boxes() -> C2PABmffBoxes {
+        C2PABmffBoxes {
+            manifest_bytes: None,
+            original_bytes: None,
+            update_bytes: None,
+            c2pa_box_present: true,
+            manifest_box_bytes: None,
+            update_box_bytes: None,
+            bmff_merkle: vec![],
+            bmff_merkle_box_infos: vec![],
+            box_infos: vec![
+                BoxInfoLite {
+                    path: "mdat".to_string(),
+                    offset: 0,
+                    size: 24,
+                },
+                BoxInfoLite {
+                    path: "mdat".to_string(),
+                    offset: 24,
+                    size: 24,
+                },
+            ],
+            xmp: None,
+            manifest_box_offset: None,
+            update_box_offset: None,
+            first_aux_uuid_offset: 0,
+            xmp_box_offset: 0,
+            xmp_box_size: 0,
+        }
+    }
+
+    /// Fixture sanity check: the two honest, physically-ordered mdat boxes
+    /// must validate.
+    #[test]
+    fn test_validate_merkle_maps_two_mdat_boxes_accepts_honest_order() {
+        let (bmff_hash, honest) = two_mdat_direct_fixture();
+        let c2pa_boxes = two_mdat_c2pa_boxes();
+        let mut reader: Box<dyn ReadSeek> = Box::new(Cursor::new(honest));
+
+        bmff_hash
+            .validate_merkle_maps_mdat_boxes(reader.as_mut(), &c2pa_boxes)
+            .expect("two honest mdat boxes must validate");
+    }
+
+    /// A keyless attacker swaps the payload bodies of two equal-size `mdat`
+    /// boxes, leaving every other byte -- the signed assertion included --
+    /// bit-identical. Each signed `MerkleMap` is keyed to its mdat by
+    /// positional index (`local_id`), so the i-th map must be checked against
+    /// the i-th mdat's bytes. Before the fix the map-to-mdat pairing was
+    /// driven by unspecified `HashMap` iteration order, so a reordering that
+    /// re-united each signed root with its original bytes validated as
+    /// trusted. The pairing is now deterministic, so the swap is always
+    /// rejected.
+    #[test]
+    fn test_validate_merkle_maps_two_mdat_boxes_rejects_payload_swap() {
+        let (bmff_hash, honest) = two_mdat_direct_fixture();
+
+        // mdat0 payload is honest[16..24] (scene A), mdat1 payload is
+        // honest[40..48] (scene B). Swap the two bodies in place.
+        let mut swapped = honest.clone();
+        swapped[16..24].copy_from_slice(&honest[40..48]);
+        swapped[40..48].copy_from_slice(&honest[16..24]);
+
+        let c2pa_boxes = two_mdat_c2pa_boxes();
+        let mut reader: Box<dyn ReadSeek> = Box::new(Cursor::new(swapped));
+
+        let result = bmff_hash.validate_merkle_maps_mdat_boxes(reader.as_mut(), &c2pa_boxes);
+        assert!(
+            matches!(result, Err(Error::HashMismatch(_))),
+            "swapping two equal-size mdat payloads must be rejected, got {result:?}"
+        );
+    }
+
+    // The same two-mdat scenario, but each mdat carries an auxiliary Merkle
+    // proof UUID box, so validation takes the `bmff_merkle` (non-empty)
+    // branch that looks the proof group up by `local_id`.
+    fn two_mdat_proof_c2pa_boxes() -> C2PABmffBoxes {
+        let mut boxes = two_mdat_c2pa_boxes();
+        boxes.bmff_merkle = vec![
+            BmffMerkleMap {
+                unique_id: 0,
+                local_id: 0,
+                location: 0,
+                hashes: Some(VecByteBuf(vec![])),
+            },
+            BmffMerkleMap {
+                unique_id: 1,
+                local_id: 1,
+                location: 0,
+                hashes: Some(VecByteBuf(vec![])),
+            },
+        ];
+        boxes.bmff_merkle_box_infos = sequential_merkle_box_infos(2);
+        boxes
+    }
+
+    /// Fixture sanity check for the proof-box branch: honest order validates.
+    #[test]
+    fn test_validate_merkle_maps_two_mdat_boxes_with_proofs_accepts_honest_order() {
+        let (bmff_hash, honest) = two_mdat_direct_fixture();
+        let c2pa_boxes = two_mdat_proof_c2pa_boxes();
+        let mut reader: Box<dyn ReadSeek> = Box::new(Cursor::new(honest));
+
+        bmff_hash
+            .validate_merkle_maps_mdat_boxes(reader.as_mut(), &c2pa_boxes)
+            .expect("two honest mdat boxes with proof boxes must validate");
+    }
+
+    /// The payload swap on the `bmff_merkle` (proof-box) branch: the signed
+    /// map's proof group is fetched by `local_id` and paired with the mdat
+    /// bytes positionally, so the swap is rejected deterministically rather
+    /// than depending on `HashMap` iteration order.
+    #[test]
+    fn test_validate_merkle_maps_two_mdat_boxes_with_proofs_rejects_payload_swap() {
+        let (bmff_hash, honest) = two_mdat_direct_fixture();
+
+        let mut swapped = honest.clone();
+        swapped[16..24].copy_from_slice(&honest[40..48]);
+        swapped[40..48].copy_from_slice(&honest[16..24]);
+
+        let c2pa_boxes = two_mdat_proof_c2pa_boxes();
+        let mut reader: Box<dyn ReadSeek> = Box::new(Cursor::new(swapped));
+
+        let result = bmff_hash.validate_merkle_maps_mdat_boxes(reader.as_mut(), &c2pa_boxes);
+        assert!(
+            matches!(result, Err(Error::HashMismatch(_))),
+            "swapping two equal-size mdat payloads must be rejected, got {result:?}"
         );
     }
 
