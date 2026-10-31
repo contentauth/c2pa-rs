@@ -17,7 +17,7 @@ use asn1_rs::FromDer;
 use async_generic::async_generic;
 use bcder::OctetString;
 use c2pa_raw_crypto::validator_for_sig_and_hash_algs;
-use chrono::{offset::LocalResult, DateTime, TimeZone, Utc};
+use chrono::{DateTime, Utc};
 use der::asn1::ObjectIdentifier;
 use rasn::{prelude::*, types};
 use rasn_cms::{CertificateChoices, SignerIdentifier};
@@ -136,7 +136,7 @@ fn timestamp_asn1_children(data: &[u8]) -> Option<Vec<asn1_rs::Any<'_>>> {
 // for nonconforming tokens, not an alternative permitted by that RFC.
 //
 // Replace the IMPLICIT [0] tag with a SET OF header, and require the located bytes
-// to decode to the attributes whose message digest and signing time were checked.
+// to decode to the attributes whose message digest was checked.
 // Signature values are unique because verify_time_stamp rejects duplicates.
 fn received_signed_attributes(
     signer_infos: &[asn1_rs::Any<'_>],
@@ -309,7 +309,7 @@ pub fn verify_time_stamp(
 
         // Load TstInfo. We will verify its contents below against signed
         // values.
-        let Ok(Some(mut tst)) = tst_info_from_signed_data(&sd) else {
+        let Ok(Some(tst)) = tst_info_from_signed_data(&sd) else {
             log_item!("", "timestamp response had no TstInfo", "verify_time_stamp")
                 .validation_status(TIMESTAMP_MALFORMED)
                 .informational(&mut current_validation_log);
@@ -321,41 +321,12 @@ pub fn verify_time_stamp(
         let mi = &tst.message_imprint;
 
         // Check for time stamp expiration.
-        let mut signing_time = generalized_time_to_datetime(tst.gen_time.clone()).timestamp();
+        // The attested time is the TSTInfo genTime (C2PA validation, RFC 3161). A CMS
+        // signingTime attribute is not the attested time and is not used.
+        let signing_time = generalized_time_to_datetime(tst.gen_time.clone()).timestamp();
 
         // Check the signer info's signed attributes.
         if let Some(attributes) = &signer_info.signed_attrs {
-            // If there is a signed signing time attribute use it
-            if let Some(Some(attrib_signing_time)) = attributes
-                .to_vec()
-                .iter()
-                .find(|attr| attr.r#type == Oid::ISO_MEMBER_BODY_US_RSADSI_PKCS9_SIGNING_TIME)
-                .map(|attr| {
-                    if attr.values.len() != 1 {
-                        // per CMS spec can only contain 1 signing time value
-                        return None;
-                    }
-
-                    attr.values
-                        .to_vec()
-                        .first()
-                        .and_then(|v| rasn::der::decode::<rasn_pkix::Time>(v.as_bytes()).ok())
-                })
-            {
-                let signed_signing_time = match attrib_signing_time {
-                    rasn_pkix::Time::Utc(date_time) => date_time.timestamp(),
-                    rasn_pkix::Time::General(date_time) => {
-                        generalized_time_to_datetime(date_time).timestamp()
-                    }
-                };
-
-                if let Some(gt) = timestamp_to_generalized_time(signed_signing_time) {
-                    // Use actual signed time.
-                    signing_time = generalized_time_to_datetime(gt.clone()).timestamp();
-                    tst.gen_time = gt;
-                };
-            }
-
             // Check that the mandatory signed message digest is self-consistent.
             match attributes
                 .to_vec()
@@ -782,14 +753,6 @@ fn generalized_time_to_datetime<T: Into<DateTime<Utc>>>(gt: T) -> DateTime<Utc> 
     gt.into()
 }
 
-fn timestamp_to_generalized_time(dt: i64) -> Option<crate::crypto::asn1::GeneralizedTime> {
-    match Utc.timestamp_opt(dt, 0) {
-        // try_into fails for dates outside der's supported 1970-9999 range
-        LocalResult::Single(time) => time.try_into().ok(),
-        _ => None,
-    }
-}
-
 /// Digest algorithm enum compatible with bcder OIDs
 #[derive(Clone, Copy, Debug)]
 enum DigestAlgorithm {
@@ -1071,6 +1034,16 @@ mod tests {
     fn cms_digest_still_accepts_sha1() {
         assert!(DigestAlgorithm::try_from(&oid("1.3.14.3.2.26")).is_ok());
     }
+
+    #[test]
+    fn timestamp_conversions_preserve_utc_and_generalized_dates() {
+        use chrono::{TimeZone, Utc};
+
+        use super::time_to_datetime;
+        let utc = Utc.timestamp_opt(1_577_836_800, 0).single().expect("date");
+        assert_eq!(time_to_datetime(rasn_pkix::Time::Utc(utc)), utc);
+        assert_eq!(time_to_datetime(rasn_pkix::Time::General(utc.into())), utc);
+    }
 }
 
 /// Builds a signed RFC 3161 token locally so `verify_time_stamp` is exercised end to end.
@@ -1151,6 +1124,16 @@ pub(crate) mod message_imprint_regression {
         imprint_md: MessageDigest,
         data: &[u8],
     ) -> Vec<u8> {
+        build_token_with_times(imprint_oid, imprint_md, data, b"20200101000000Z", None)
+    }
+
+    fn build_token_with_times(
+        imprint_oid: &[u8],
+        imprint_md: MessageDigest,
+        data: &[u8],
+        gen_time: &[u8],
+        signing_time: Option<(u8, &[u8])>,
+    ) -> Vec<u8> {
         let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap();
         let key = PKey::from_ec_key(EcKey::generate(&group).unwrap()).unwrap();
 
@@ -1190,23 +1173,64 @@ pub(crate) mod message_imprint_regression {
                 OID_POLICY,
                 &message_imprint,
                 INT_1,
-                &tlv(0x18, b"20200101000000Z"),
+                &tlv(0x18, gen_time),
             ]),
         );
 
-        // No signed attributes, so the signature covers the TSTInfo content directly.
+        let signed_attrs = signing_time.map(|(tag, time)| {
+            let mut attributes = [
+                tlv(
+                    0x30,
+                    &cat(&[
+                        &[
+                            0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x03,
+                        ],
+                        &tlv(0x31, OID_TST_INFO),
+                    ]),
+                ),
+                tlv(
+                    0x30,
+                    &cat(&[
+                        &[
+                            0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x04,
+                        ],
+                        &tlv(
+                            0x31,
+                            &tlv(0x04, &hash(MessageDigest::sha256(), &tst_info).unwrap()),
+                        ),
+                    ]),
+                ),
+                tlv(
+                    0x30,
+                    &cat(&[
+                        &[
+                            0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x05,
+                        ],
+                        &tlv(0x31, &tlv(tag, time)),
+                    ]),
+                ),
+            ];
+            attributes.sort();
+            tlv(0x31, &attributes.concat())
+        });
+        let signed_content = signed_attrs.as_deref().unwrap_or(&tst_info);
         let signature = Signer::new(MessageDigest::sha256(), &key)
             .unwrap()
-            .sign_oneshot_to_vec(&tst_info)
+            .sign_oneshot_to_vec(signed_content)
             .unwrap();
 
         let issuer_and_serial = tlv(0x30, &cat(&[&cert.issuer_name().to_der().unwrap(), INT_1]));
+        let mut encoded_attrs = signed_attrs.unwrap_or_default();
+        if let Some(tag) = encoded_attrs.first_mut() {
+            *tag = 0xa0;
+        }
         let signer_info = tlv(
             0x30,
             &cat(&[
                 INT_1,
                 &issuer_and_serial,
                 &tlv(0x30, OID_SHA256),
+                &encoded_attrs,
                 &tlv(0x30, OID_ECDSA_SHA256),
                 &tlv(0x04, &signature),
             ]),
@@ -1305,6 +1329,33 @@ pub(crate) mod message_imprint_regression {
 
         assert!(matches!(result, Err(TimeStampError::InvalidData)));
         assert!(!log.has_status(TIMESTAMP_TRUSTED));
+    }
+
+    #[test]
+    fn signed_signing_time_does_not_override_expired_tst_info_time() {
+        for (tag, time) in [
+            (0x17, b"210102030405Z".as_slice()),
+            (0x18, b"20210102030405Z".as_slice()),
+            (0x05, b"".as_slice()),
+        ] {
+            let token = build_token_with_times(
+                OID_SHA256,
+                MessageDigest::sha256(),
+                DATA,
+                b"20400101000000Z",
+                Some((tag, time)),
+            );
+            let mut log = StatusTracker::default();
+            let result = verify_time_stamp(
+                &token,
+                DATA,
+                &CertificateTrustPolicy::default(),
+                &mut log,
+                false,
+            );
+            assert!(matches!(result, Err(TimeStampError::ExpiredCertificate)));
+            assert!(log.has_status(crate::validation_status::TIMESTAMP_OUTSIDE_VALIDITY));
+        }
     }
 }
 
@@ -1656,5 +1707,29 @@ mod signed_attrs_tests {
             rasn::types::SetOf::from_vec(v)
         });
         assert!(received_signed_attributes(&raw, &si).is_none());
+    }
+
+    #[test]
+    fn uses_gen_time_not_cms_signing_time() {
+        // genTime is within the signing certificate's validity; the CMS
+        // signingTime attribute is after the certificate expires.
+        let ts = include_bytes!(
+            "../../../tests/fixtures/crypto/time_stamp/signing_time_after_expiry.tst"
+        );
+        let mut log = StatusTracker::default();
+
+        let tst = verify_time_stamp(
+            ts,
+            DATA,
+            &CertificateTrustPolicy::default(),
+            &mut log,
+            false,
+        )
+        .unwrap();
+
+        let gen_time = generalized_time_to_datetime(tst.gen_time).timestamp();
+        assert_eq!(gen_time, 1_735_689_600); // 2025-01-01T00:00:00Z
+        assert!(log.has_status(TIMESTAMP_VALIDATED));
+        assert!(!log.has_status(TIMESTAMP_OUTSIDE_VALIDITY));
     }
 }
