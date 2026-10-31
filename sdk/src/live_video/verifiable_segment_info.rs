@@ -47,6 +47,20 @@ pub struct SegmentInfoMap {
 
 /// Returns the `COSE_Sign1_Tagged` bytes from the VSI `emsg` box in `segment_data`, if present.
 pub fn extract_vsi_payload_from_segment(segment_data: &[u8]) -> Option<Vec<u8>> {
+    extract_vsi_emsg(segment_data).map(|emsg| emsg.message_data)
+}
+
+/// The fields of a VSI `emsg` box (§19.4.2). Only `message_data` is covered by the
+/// session key's signature; the timing fields are outside it and outside `bmffHash`.
+pub(super) struct VsiEmsg {
+    pub timescale: u32,
+    pub presentation_time_delta: u32,
+    pub event_duration: u32,
+    pub message_data: Vec<u8>,
+}
+
+/// Returns the first VSI `emsg` box in `segment_data`, if present.
+pub(super) fn extract_vsi_emsg(segment_data: &[u8]) -> Option<VsiEmsg> {
     find_emsg_boxes(segment_data)
         .into_iter()
         .find_map(|emsg_box| extract_vsi_from_emsg_box(&emsg_box))
@@ -90,6 +104,23 @@ pub(crate) fn parse_segment_info_map(cose_sign1_bytes: &[u8]) -> Result<SegmentI
     parse_vsi(cose_sign1_bytes).map(|p| p.segment_info_map)
 }
 
+/// Returns `true` if `segment_data` has a top-level `emsg` box that the VSI `bmffHash`
+/// exclusion (§19.4.1: xpath `/emsg`, the VSI `scheme_id_uri` bytes at offset 12) matches
+/// but that isn't the one VSI `emsg` box that is verified: a lookalike, or any VSI `emsg`
+/// after the first.
+pub(super) fn has_vsi_excluded_non_vsi_emsg(segment_data: &[u8]) -> bool {
+    let uri_at = VSI_URI_OFFSET_IN_EMSG as usize;
+    let uri = VSI_SCHEME_ID_URI.as_bytes();
+    let excluded: Vec<Vec<u8>> = find_emsg_boxes(segment_data)
+        .into_iter()
+        .filter(|emsg_box| emsg_box.get(uri_at..uri_at + uri.len()) == Some(uri))
+        .collect();
+    excluded.len() > 1
+        || excluded
+            .iter()
+            .any(|emsg_box| extract_vsi_from_emsg_box(emsg_box).is_none())
+}
+
 fn find_emsg_boxes(segment_data: &[u8]) -> Vec<Vec<u8>> {
     super::box_walk::top_level_boxes(segment_data)
         .filter(|(fourcc, _)| **fourcc == *b"emsg")
@@ -97,7 +128,7 @@ fn find_emsg_boxes(segment_data: &[u8]) -> Vec<Vec<u8>> {
         .collect()
 }
 
-fn extract_vsi_from_emsg_box(emsg_box: &[u8]) -> Option<Vec<u8>> {
+fn extract_vsi_from_emsg_box(emsg_box: &[u8]) -> Option<VsiEmsg> {
     let mut cursor = Cursor::new(emsg_box);
 
     // Skip box header (8 bytes: size + type).
@@ -113,21 +144,35 @@ fn extract_vsi_from_emsg_box(emsg_box: &[u8]) -> Option<Vec<u8>> {
         return None;
     }
 
-    let (scheme_id_uri, value, message_data) = parse_emsg_v0_body(&mut cursor)?;
+    let (scheme_id_uri, value, emsg) = parse_emsg_v0_body(&mut cursor)?;
 
     if scheme_id_uri != VSI_SCHEME_ID_URI || value != VSI_VALUE_FSEG {
         return None;
     }
 
-    Some(message_data)
+    Some(emsg)
 }
 
-fn parse_emsg_v0_body(cursor: &mut Cursor<&[u8]>) -> Option<(String, String, Vec<u8>)> {
+fn parse_emsg_v0_body(cursor: &mut Cursor<&[u8]>) -> Option<(String, String, VsiEmsg)> {
     let scheme_id_uri = read_null_terminated_string(cursor)?;
     let value = read_null_terminated_string(cursor)?;
-    skip_bytes(cursor, 16)?; // timescale + presentation_time_delta + event_duration + id
-    let message_data = read_remaining(cursor);
-    Some((scheme_id_uri, value, message_data))
+    let timescale = read_u32(cursor)?;
+    let presentation_time_delta = read_u32(cursor)?;
+    let event_duration = read_u32(cursor)?;
+    let _id = read_u32(cursor)?;
+    let emsg = VsiEmsg {
+        timescale,
+        presentation_time_delta,
+        event_duration,
+        message_data: read_remaining(cursor),
+    };
+    Some((scheme_id_uri, value, emsg))
+}
+
+fn read_u32(cursor: &mut Cursor<&[u8]>) -> Option<u32> {
+    let mut bytes = [0u8; 4];
+    cursor.read_exact(&mut bytes).ok()?;
+    Some(u32::from_be_bytes(bytes))
 }
 
 fn read_null_terminated_string(cursor: &mut Cursor<&[u8]>) -> Option<String> {
@@ -141,15 +186,6 @@ fn read_null_terminated_string(cursor: &mut Cursor<&[u8]>) -> Option<String> {
         bytes.push(byte[0]);
     }
     String::from_utf8(bytes).ok()
-}
-
-fn skip_bytes(cursor: &mut Cursor<&[u8]>, count: u64) -> Option<()> {
-    let new_pos = cursor.position().checked_add(count)?;
-    if new_pos > cursor.get_ref().len() as u64 {
-        return None;
-    }
-    cursor.set_position(new_pos);
-    Some(())
 }
 
 fn read_remaining(cursor: &mut Cursor<&[u8]>) -> Vec<u8> {
@@ -278,5 +314,32 @@ mod tests {
 
         let extracted = extract_vsi_payload_from_segment(&segment).unwrap();
         assert_eq!(extracted, payload);
+    }
+
+    #[test]
+    fn only_lookalike_emsg_boxes_count_as_excluded_but_not_vsi() {
+        let vsi = make_emsg_v0(VSI_SCHEME_ID_URI, VSI_VALUE_FSEG, b"cose");
+        let scte35 = make_emsg_v0("urn:scte:scte35:2013:bin", "1", b"\xfc\x30");
+        assert!(!has_vsi_excluded_non_vsi_emsg(
+            &[vsi.clone(), scte35].concat()
+        ));
+
+        let longer_scheme = make_emsg_v0(
+            "urn:c2pa:verifiable-segment-info-extra",
+            VSI_VALUE_FSEG,
+            b"x",
+        );
+        assert!(has_vsi_excluded_non_vsi_emsg(
+            &[vsi.clone(), longer_scheme].concat()
+        ));
+
+        let wrong_value = make_emsg_v0(VSI_SCHEME_ID_URI, "other", b"x");
+        assert!(has_vsi_excluded_non_vsi_emsg(
+            &[vsi.clone(), wrong_value].concat()
+        ));
+
+        // only the first VSI emsg is verified, so a second one would go unchecked
+        let second_vsi = make_emsg_v0(VSI_SCHEME_ID_URI, VSI_VALUE_FSEG, b"unverified");
+        assert!(has_vsi_excluded_non_vsi_emsg(&[vsi, second_vsi].concat()));
     }
 }

@@ -164,7 +164,7 @@ mod tests {
 
     #[test]
     fn init_segment_without_mdat_is_valid() {
-        let validator = LiveVideoValidator::new();
+        let mut validator = LiveVideoValidator::new();
         let segment = make_uuid_box(true);
         let mut tracker = StatusTracker::default();
 
@@ -187,7 +187,7 @@ mod tests {
 
     #[test]
     fn init_segment_with_mdat_fails() {
-        let validator = LiveVideoValidator::new();
+        let mut validator = LiveVideoValidator::new();
         let mut segment = make_uuid_box(true);
         segment.extend(make_mdat_box());
         let mut tracker = StatusTracker::default();
