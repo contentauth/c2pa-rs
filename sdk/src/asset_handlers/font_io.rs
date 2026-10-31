@@ -17,7 +17,10 @@
 //! layout as preliminary. The hard binding is a general box hash in which each table is a
 //! box, listed in table-directory order, with `head.checkSumAdjustment` hashed as zero.
 
-use std::io::{self, SeekFrom};
+use std::{
+    collections::HashSet,
+    io::{self, SeekFrom},
+};
 
 use crate::{
     asset_io::{
@@ -37,6 +40,8 @@ const HEAD_TAG: [u8; 4] = *b"head";
 
 const SFNT_HEADER_LEN: u64 = 12;
 const TABLE_RECORD_LEN: u64 = 16;
+/// The most tables a font can have while `numTables * 16` and `searchRange` fit in a u16.
+const MAX_TABLES: u16 = 4095;
 
 /// Offset of `checkSumAdjustment` within the `head` table.
 const CHECKSUM_ADJUSTMENT_OFFSET: u64 = 8;
@@ -101,6 +106,7 @@ impl Sfnt {
         let directory = stream.read_to_vec(directory_len)?;
 
         let mut tables: Vec<TableRecord> = Vec::with_capacity(num_tables as usize);
+        let mut tags = HashSet::with_capacity(num_tables as usize);
         for record in directory.chunks_exact(TABLE_RECORD_LEN as usize) {
             let word = |i: usize| {
                 u32::from_be_bytes([record[i], record[i + 1], record[i + 2], record[i + 3]])
@@ -116,7 +122,7 @@ impl Sfnt {
                     table.name()
                 )));
             }
-            if tables.iter().any(|t| t.tag == table.tag) {
+            if !tags.insert(table.tag) {
                 return Err(Error::InvalidAsset(format!(
                     "font has more than one `{}` table",
                     table.name()
@@ -261,8 +267,11 @@ fn write_font(
         .c2pa_index();
         directory.insert(index, placeholder);
     }
+    // `searchRange` (the largest power of two <= numTables, times 16) must fit in a u16.
     let num_tables = u16::try_from(directory.len())
-        .map_err(|_| Error::InvalidAsset("font has too many tables".to_string()))?;
+        .ok()
+        .filter(|&n| n <= MAX_TABLES)
+        .ok_or_else(|| Error::InvalidAsset("font has too many tables".to_string()))?;
 
     // Lay the tables out in their current file order, followed by the `C2PA` table.
     let mut file_order: Vec<usize> = (0..directory.len())
@@ -711,6 +720,27 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn test_too_many_tables_is_rejected() {
+        // 4096 empty tables: `numTables * 16` no longer fits in a u16
+        let num_tables: u16 = 4096;
+        let mut font = vec![0x00, 0x01, 0x00, 0x00];
+        font.extend_from_slice(&num_tables.to_be_bytes());
+        font.extend_from_slice(&[0u8; 6]);
+        for i in 0..num_tables {
+            font.extend_from_slice(b"t");
+            font.extend_from_slice(&[0]);
+            font.extend_from_slice(&i.to_be_bytes());
+            font.extend_from_slice(&[0u8; 12]);
+        }
+        let result = FontIO {}.write_c2pa(
+            &mut Cursor::new(&font),
+            &mut Cursor::new(Vec::new()),
+            b"store",
+        );
+        assert!(matches!(result, Err(Error::InvalidAsset(_))));
     }
 
     #[test]
