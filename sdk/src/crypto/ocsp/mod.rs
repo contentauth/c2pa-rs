@@ -982,8 +982,10 @@ mod tests {
                 OcspResponse::from_der_checked(&der, &signing_cert_chain(), signing_time, &mut log)
                     .unwrap();
             assert_eq!(parsed.next_update, next_update);
+            assert!(parsed.revoked_at.is_none());
+            assert!(!log.has_any_error());
             assert_eq!(log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED), accepted);
-            assert_eq!(log.has_status(SIGNING_CREDENTIAL_REVOKED), !accepted);
+            assert!(!log.has_status(SIGNING_CREDENTIAL_REVOKED));
         }
 
         let mut no_next_update = basic;
@@ -996,14 +998,17 @@ mod tests {
             (expiry + chrono::Duration::seconds(1), false),
         ] {
             let mut log = StatusTracker::default();
-            OcspResponse::from_der_checked(
+            let parsed = OcspResponse::from_der_checked(
                 &der,
                 &signing_cert_chain(),
                 Some(signing_time),
                 &mut log,
             )
             .unwrap();
+            assert!(parsed.revoked_at.is_none());
+            assert!(!log.has_any_error());
             assert_eq!(log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED), accepted);
+            assert!(!log.has_status(SIGNING_CREDENTIAL_REVOKED));
         }
 
         let mut future = basic_response();
