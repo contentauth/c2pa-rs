@@ -369,6 +369,12 @@ pub trait AssetIO: Sync + Send {
         None
     }
 
+    /// Returns this handler's [`AssetCollectionHash`] implementation, if the format is bound
+    /// with a `c2pa.hash.collection.data` assertion over parts of the asset itself.
+    fn asset_collection_hash_ref(&self) -> Option<&dyn AssetCollectionHash> {
+        None
+    }
+
     /// Returns this handler's [`ComposedManifestRef`] implementation, if it can
     /// produce a pre-composed, format-ready manifest wrapper.
     fn composed_data_ref(&self) -> Option<&dyn ComposedManifestRef> {
@@ -556,6 +562,25 @@ pub trait AssetBoxHash {
     /// information. If the C2PA manifest isn't present yet, include a placeholder
     /// entry at the location it would occupy once written.
     fn get_box_map(&self, input_stream: &mut dyn ReadSeek) -> Result<Vec<BoxMap>>;
+}
+
+/// Provides the members of a `c2pa.hash.collection.data` assertion for a format whose
+/// collection is made of parts of the asset itself, such as the records of a WARC file.
+/// (ZIP-based formats and collections of files on disk are hashed by
+/// [`CollectionHash`](crate::assertions::CollectionHash) directly.)
+///
+/// A format that implements this is always bound with a collection data hash.
+pub trait AssetCollectionHash {
+    /// Returns `(uri, hash)` for every member of the collection, in file order, hashed with
+    /// `alg`. The part holding the C2PA Manifest Store is not a member.
+    ///
+    /// Fails if two members share a `uri`, or if a member can't be read within the
+    /// handler's limits (for example, a compressed member that expands past them).
+    fn member_hashes(
+        &self,
+        input_stream: &mut dyn ReadSeek,
+        alg: &str,
+    ) -> Result<Vec<(String, Vec<u8>)>>;
 }
 
 /// Writes a remote manifest URL into an asset, so a reader can find the manifest

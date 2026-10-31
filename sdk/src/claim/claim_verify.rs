@@ -1473,7 +1473,40 @@ impl Claim {
                     let collection_hash =
                         CollectionHash::from_assertion(hash_binding_assertion.assertion())?;
 
-                    let verify_result = if asset_data
+                    let member_handler = asset_data
+                        .format()
+                        .as_deref()
+                        .and_then(|f| context.io().handler(f))
+                        .and_then(|h| h.asset_collection_hash_ref());
+
+                    let verify_result = if let Some(member_handler) = member_handler {
+                        match asset_data {
+                            #[cfg(feature = "file_io")]
+                            ClaimAssetData::Path(asset_path) => {
+                                let mut file = std::fs::File::open(asset_path)?;
+                                collection_hash.verify_members_hash(
+                                    &mut file,
+                                    Some(claim.alg()),
+                                    member_handler,
+                                )
+                            }
+                            ClaimAssetData::Bytes(asset_bytes, _) => {
+                                let mut cursor = std::io::Cursor::new(*asset_bytes);
+                                collection_hash.verify_members_hash(
+                                    &mut cursor,
+                                    Some(claim.alg()),
+                                    member_handler,
+                                )
+                            }
+                            ClaimAssetData::Stream(stream_data, _) => collection_hash
+                                .verify_members_hash(
+                                    *stream_data,
+                                    Some(claim.alg()),
+                                    member_handler,
+                                ),
+                            _ => return Err(Error::UnsupportedType),
+                        }
+                    } else if asset_data
                         .format()
                         .as_deref()
                         .is_some_and(|f| context.io().is_zip_format(f))
