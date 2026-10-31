@@ -22,7 +22,7 @@ use crate::{
     crypto::{
         asn1::rfc3161::TstInfo,
         cose::{
-            cert_chain_from_sign1, check_end_entity_certificate_profile, validate_cose_tst_info,
+            cert_chain_from_sign1, check_non_signer_certificate_profile, validate_cose_tst_info,
             validate_cose_tst_info_async, CertificateTrustError, CertificateTrustPolicy, CoseError,
         },
         ocsp::OcspResponse,
@@ -478,7 +478,7 @@ fn check_stapled_ocsp_response(
         let mut new_ctp = CertificateTrustPolicy::default();
         new_ctp.clear_ekus();
         new_ctp.add_mandatory_ekus(OCSP_OID_STR.as_bytes()); // ocsp signing EKU
-        if check_end_entity_certificate_profile(
+        if check_non_signer_certificate_profile(
             first_cert,
             &new_ctp,
             validation_log,
@@ -716,7 +716,7 @@ fn validate_fetched_ocsp(
         let mut new_ctp = CertificateTrustPolicy::default();
         new_ctp.clear_ekus();
         new_ctp.add_mandatory_ekus(OCSP_OID_STR.as_bytes()); // ocsp signing EKU
-        if check_end_entity_certificate_profile(
+        if check_non_signer_certificate_profile(
             first_cert,
             &new_ctp,
             &mut current_validation_log,
