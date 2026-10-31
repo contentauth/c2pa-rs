@@ -11,6 +11,8 @@
 // specific language governing permissions and limitations under
 // each license.
 
+use std::borrow::Cow;
+
 use async_generic::async_generic;
 use async_trait::async_trait;
 use c2pa_raw_crypto::RawSignatureValidationError;
@@ -18,7 +20,10 @@ use coset::CoseSign1;
 use serde::Serialize;
 
 use crate::{
-    crypto::cose::{parse_cose_sign1, CertificateInfo, CoseError, Verifier},
+    crypto::cose::{
+        parse_cose_sign1, CertificateInfo, CertificateTrustPolicy, CoseError, TrustAnchorType,
+        Verifier,
+    },
     identity::{
         identity_assertion::signature_verifier::ToCredentialSummary, SignatureVerifier,
         SignerPayload, ValidationError,
@@ -32,12 +37,28 @@ use crate::{
 /// generated from X.509 credentials as specified in [§8.2, X.509 certificates
 /// and COSE signatures].
 ///
+/// The default verifier requires CAWG trust anchors. For a custom trust policy,
+/// set [`Self::cose_verifier`] to [`Verifier::VerifyTrustPolicyFor`] with
+/// [`TrustAnchorType::CAWG`]; [`Verifier::VerifyTrustPolicy`] checks manifest
+/// signers instead.
+///
 /// [`SignatureVerifier`]: crate::identity::SignatureVerifier
 /// [§8.2, X.509 certificates and COSE signatures]: https://cawg.io/identity/1.3/#_x_509_certificates_and_cose_signatures
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct X509SignatureVerifier<'a> {
     /// Describes the verification policy to use for COSE signatures.
     pub cose_verifier: Verifier<'a>,
+}
+
+impl Default for X509SignatureVerifier<'_> {
+    fn default() -> Self {
+        Self {
+            cose_verifier: Verifier::VerifyTrustPolicyFor(
+                Cow::Owned(CertificateTrustPolicy::default()),
+                TrustAnchorType::CAWG,
+            ),
+        }
+    }
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -238,7 +259,7 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     use crate::{
-        crypto::cose::{CertificateTrustPolicy, Verifier},
+        crypto::cose::{CertificateTrustPolicy, TrustAnchorType, Verifier},
         identity::{
             builder::{IdentityAssertionBuilder, IdentityAssertionSigner},
             tests::{
@@ -320,7 +341,7 @@ mod tests {
         let mut ctp = CertificateTrustPolicy::new();
         ctp.add_default_valid_ekus();
 
-        let cose_verifier = Verifier::VerifyTrustPolicy(Cow::Owned(ctp));
+        let cose_verifier = Verifier::VerifyTrustPolicyFor(Cow::Owned(ctp), TrustAnchorType::CAWG);
 
         let x509_verifier = X509SignatureVerifier { cose_verifier };
 
@@ -631,6 +652,75 @@ mod tests {
     }
 
     const TEST_IDENTITY_CA_URI: &str = "https://c2pa-rs/test_identity_ca";
+
+    #[c2pa_test_async]
+    async fn default_x509_verifier_respects_cawg_anchor_type() {
+        let (mut asset, cert_chain) = sign_with_ed25519_cawg_identity();
+        let chain = String::from_utf8(cert_chain).unwrap();
+        let ca = &chain[chain.rfind("-----BEGIN CERTIFICATE-----").unwrap()..];
+        let reader = read_manifest("image/jpeg", &mut asset).await;
+        let manifest = reader.active_manifest().unwrap();
+        let mut parse_log = StatusTracker::default();
+        let identity = IdentityAssertion::from_manifest(manifest, &mut parse_log)
+            .next()
+            .unwrap()
+            .unwrap();
+
+        for kind in [
+            TrustAnchorType::CAWG,
+            TrustAnchorType::Manifest,
+            TrustAnchorType::TSA,
+        ] {
+            let mut verifier = X509SignatureVerifier::default();
+            let policy = match &mut verifier.cose_verifier {
+                Verifier::VerifyTrustPolicyFor(policy, _) | Verifier::VerifyTrustPolicy(policy) => {
+                    policy.to_mut()
+                }
+                _ => panic!("default verifier must check trust"),
+            };
+            policy.clear();
+            policy.add_default_valid_ekus();
+            policy
+                .add_trust_anchors(ca.as_bytes(), TEST_IDENTITY_CA_URI, kind, None)
+                .unwrap();
+
+            let mut async_log = StatusTracker::default();
+            let info = identity
+                .validate(manifest, &mut async_log, &verifier)
+                .await
+                .unwrap();
+            assert_eq!(info.cert_info.alg, Some(SigningAlg::Ed25519));
+
+            let mut sync_log = StatusTracker::default();
+            let info = verifier
+                .check_signature(&identity.signer_payload, &identity.signature, &mut sync_log)
+                .unwrap();
+            assert_eq!(info.cert_info.alg, Some(SigningAlg::Ed25519));
+
+            for log in [&async_log, &sync_log] {
+                let trusted = kind == TrustAnchorType::CAWG;
+                assert_eq!(
+                    log.has_status(CAWG_X509_CREDENTIAL_TRUSTED),
+                    trusted,
+                    "{kind:?}: {log:?}"
+                );
+                assert_eq!(
+                    log.has_status(CAWG_X509_CREDENTIAL_UNTRUSTED),
+                    !trusted,
+                    "{kind:?}: {log:?}"
+                );
+                assert!(log.has_status(CAWG_X509_SIGNATURE_VALIDATED));
+                if trusted {
+                    assert!(
+                        log.logged_items()
+                            .iter()
+                            .any(|item| item.description.contains(TEST_IDENTITY_CA_URI)),
+                        "{log:?}"
+                    );
+                }
+            }
+        }
+    }
 
     /// A CAWG trust anchor (a CA, not an end-entity allowed list) must make a
     /// CAWG X.509 identity signer trusted. The claim-signer trust check only
