@@ -214,8 +214,8 @@ fn front_matter_insert_point(text: &str) -> Option<usize> {
 }
 
 /// Inserts the block at the A.9 position: inside leading front matter (A.9.3), else file
-/// start, end if the first line is reserved (shebang / XML decl), or after the `WEBVTT`
-/// header.
+/// start, end if the first line is a shebang, immediately after an XML declaration, or
+/// after the `WEBVTT` header.
 fn insert_block(cleaned: &str, reference: &str, style: CommentStyle, asset_type: &str) -> String {
     let le = if cleaned.contains("\r\n") {
         "\r\n"
@@ -242,6 +242,14 @@ fn insert_block(cleaned: &str, reference: &str, style: CommentStyle, asset_type:
     }
 
     let trimmed = cleaned.trim_start();
+    if trimmed.starts_with("<?xml") {
+        if let Some(nl) = cleaned.find('\n') {
+            let (head, rest) = cleaned.split_at(nl + 1);
+            let rest = rest.trim_start_matches(['\r', '\n']);
+            return format!("{head}{block_line}{le}{rest}");
+        }
+    }
+
     if trimmed.starts_with("#!") || trimmed.starts_with("<?xml") {
         let base = cleaned.trim_end_matches(['\r', '\n']);
         return format!("{base}{le}{block_line}");
@@ -448,6 +456,20 @@ mod tests {
         assert!(out.starts_with("#!/usr/bin/env python"));
         assert!(out.trim_end().ends_with("-----END C2PA MANIFEST-----"));
         assert_eq!(read_back("py", &out).unwrap(), b"store");
+    }
+
+    #[test]
+    fn xml_declaration_places_block_immediately_after_it() {
+        let out = embed(
+            "atom",
+            "<?xml version=\"1.0\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\"></feed>\n",
+            b"store",
+        );
+        let mut lines = out.lines();
+        assert_eq!(lines.next(), Some("<?xml version=\"1.0\"?>"));
+        assert!(lines.next().unwrap().contains("-----BEGIN C2PA MANIFEST-----"));
+        assert!(out.trim_end().ends_with("</feed>"));
+        assert_eq!(read_back("atom", &out).unwrap(), b"store");
     }
 
     #[test]
