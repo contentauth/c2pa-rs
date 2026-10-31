@@ -269,18 +269,9 @@ Here's the `Settings` JSON with all default values:
     "max_decompressed_manifest_size_in_mb": 32
   },
   "signer": null,
-  "trust":{ 
-    "anchors": [
-        {
-          "trust_uri": null,
-          "trust_kind": "manifest"
-          "trust_anchors": null,
-          "trust_config": null,
-          "allowed_list": null,
-          "trusted_ica_issuers": null
-        }
-    ]
-    "trust_config": null
+  "trust": {
+    "anchors": null,
+    "trust_config": "// id-kp-emailProtection\n1.3.6.1.5.5.7.3.4\n\n// id-kp-documentSigning\n1.3.6.1.5.5.7.3.36\n\n// id-kp-timeStamping\n1.3.6.1.5.5.7.3.8\n\n// id-kp-OCSPSigning\n1.3.6.1.5.5.7.3.9\n\n// MS C2PA Signing\n1.3.6.1.4.1.311.76.59.1.9\n\n// C2PA Signing\n1.3.6.1.4.1.62558.2.1\n"
   },
   "verify": {
     "verify_after_reading": true,
@@ -401,6 +392,17 @@ Here's the `Settings` JSON with all default values:
 ```
 
 ### Production configuration
+
+If `trust.trust_config` is omitted, default settings accept the SDK's built-in
+EKUs, including document signing (`1.3.6.1.5.5.7.3.36`) and C2PA signing
+(`1.3.6.1.4.1.62558.2.1`). Setting `trust_config` explicitly replaces that list;
+it does not append to it. An explicit JSON `null` or an empty string clears
+these configured EKUs. Email protection, timestamping, and OCSP signing remain
+accepted independently of this setting.
+
+Per-trust-list `trust.anchors[].trust_config` values continue to overlay the
+top-level policy for a matching manifest trust list; CAWG trust configuration
+continues to use its own policy.
 
 ```json
 {
