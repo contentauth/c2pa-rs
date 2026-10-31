@@ -720,7 +720,7 @@ impl LiveVideoValidator {
 
 /// Whether any trust anchors are configured, through `trust.anchors` or the PEM
 /// `trust.trust_anchors` / `trust.user_anchors` settings.
-fn trust_configured(settings: &crate::settings::Settings) -> bool {
+pub(super) fn trust_configured(settings: &crate::settings::Settings) -> bool {
     let trust = &settings.trust;
     #[allow(deprecated)]
     let pem_anchors = [&trust.trust_anchors, &trust.user_anchors];
