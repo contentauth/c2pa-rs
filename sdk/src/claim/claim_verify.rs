@@ -92,7 +92,7 @@ pub(crate) const ALLOWED_UPDATE_MANIFEST_ACTIONS: [&str; 4] = [
 /// covers exactly it. A mismatch means the exclusion covers non-manifest bytes -- a
 /// detached manifest applied to an unrelated asset, or content injected into the
 /// space freed by shrinking the manifest.
-fn data_hash_exclusions_match_manifest(
+pub(crate) fn data_hash_exclusions_match_manifest(
     exclusions: &[HashRange],
     manifest_store_range: Option<&HashRange>,
     is_embedded: bool,
@@ -1046,6 +1046,7 @@ impl Claim {
     fn verify_multi_asset_fallback(
         &self,
         asset_data: &mut ClaimAssetData<'_>,
+        svi: &StoreValidationInfo<'_>,
         validation_log: &mut StatusTracker,
         context: &Context,
     ) -> Result<bool> {
@@ -1057,6 +1058,10 @@ impl Claim {
             return Ok(false);
         }
         let format = asset_data.format().ok_or(Error::UnsupportedType)?;
+        let manifest = crate::multi_asset::ManifestLocation {
+            range: svi.manifest_store_range.as_ref(),
+            is_embedded: svi.is_embedded,
+        };
         let result = match asset_data {
             #[cfg(feature = "file_io")]
             ClaimAssetData::Path(path) => crate::multi_asset::verify(
@@ -1064,6 +1069,7 @@ impl Claim {
                 &self.assertion_store,
                 &mut std::fs::File::open(path)?,
                 &format,
+                &manifest,
                 context,
             ),
             ClaimAssetData::Bytes(bytes, _) => crate::multi_asset::verify(
@@ -1071,11 +1077,17 @@ impl Claim {
                 &self.assertion_store,
                 &mut std::io::Cursor::new(*bytes),
                 &format,
+                &manifest,
                 context,
             ),
-            ClaimAssetData::Stream(stream, _) => {
-                crate::multi_asset::verify(self, &self.assertion_store, *stream, &format, context)
-            }
+            ClaimAssetData::Stream(stream, _) => crate::multi_asset::verify(
+                self,
+                &self.assertion_store,
+                *stream,
+                &format,
+                &manifest,
+                context,
+            ),
             _ => return Err(Error::UnsupportedType),
         };
         let uri = self.assertion_uri(labels::MULTI_ASSET_HASH);
@@ -1290,6 +1302,7 @@ impl Claim {
                                     && hash_assertions_len == 1
                                     && claim.verify_multi_asset_fallback(
                                         asset_data,
+                                        svi,
                                         validation_log,
                                         context,
                                     )?
@@ -1536,6 +1549,7 @@ impl Claim {
                                 && hash_assertions_len == 1
                                 && claim.verify_multi_asset_fallback(
                                     asset_data,
+                                    svi,
                                     validation_log,
                                     context,
                                 )?

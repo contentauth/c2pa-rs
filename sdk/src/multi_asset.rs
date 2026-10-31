@@ -20,13 +20,13 @@ use serde::Deserialize;
 use crate::{
     assertion::{AssertionBase, AssertionData},
     assertions::{labels, BoxHash, DataHash},
-    claim::{Claim, ClaimAssertion},
+    claim::{data_hash_exclusions_match_manifest, Claim, ClaimAssertion},
     context::{Context, ProgressPhase},
     error::{Error, Result},
     hashed_uri::HashedUri,
     jumbf::labels::{to_absolute_uri, to_normalized_uri},
     read_seek::ReadSeek,
-    utils::hash_utils::{hash_size_by_alg, vec_compare},
+    utils::hash_utils::{hash_size_by_alg, vec_compare, HashRange},
     validation_status::{
         ASSERTION_MULTI_ASSET_HASH_MALFORMED as MALFORMED,
         ASSERTION_MULTI_ASSET_HASH_MISMATCH as MISMATCH,
@@ -87,11 +87,18 @@ fn authenticated(claim: &Claim, assertion: &ClaimAssertion) -> bool {
     found
 }
 
+/// Where the manifest store is in the asset, to check the part data hashes' exclusions against.
+pub(crate) struct ManifestLocation<'a> {
+    pub range: Option<&'a HashRange>,
+    pub is_embedded: bool,
+}
+
 pub(crate) fn verify(
     claim: &Claim,
     assertions: &[ClaimAssertion],
     stream: &mut dyn ReadSeek,
     format: &str,
+    manifest: &ManifestLocation<'_>,
     context: &Context,
 ) -> Result<()> {
     let mut candidates = assertions
@@ -170,6 +177,23 @@ pub(crate) fn verify(
                 })
             {
                 return Err(failure(MALFORMED));
+            }
+            // As for an ordinary data hash, an exclusion may only leave out the manifest store,
+            // so it must cover exactly where the manifest is. The manifest is in one part;
+            // exclusions are relative to their part.
+            if let Some(exclusions) = &hash.exclusions {
+                let start = part.location.byte_offset;
+                let absolute: Vec<HashRange> = exclusions
+                    .iter()
+                    .map(|r| HashRange::new(start + r.start(), r.length()))
+                    .collect();
+                let manifest_range = manifest.range.filter(|range| {
+                    range.start() >= start && range.start() < start + part.location.length
+                });
+                let is_embedded = manifest.is_embedded && manifest.range.is_none();
+                if !data_hash_exclusions_match_manifest(&absolute, manifest_range, is_embedded) {
+                    return Err(failure(MISMATCH));
+                }
             }
             hash_size_by_alg(hash.alg.as_deref().unwrap_or(claim.alg()))
                 .map_err(|_| failure(crate::validation_status::ALGORITHM_UNSUPPORTED))?;
@@ -422,12 +446,46 @@ mod tests {
         claim
     }
 
+    /// No manifest location to check exclusions against, as for an embedded manifest that
+    /// couldn't be located.
+    const UNKNOWN_MANIFEST: ManifestLocation<'static> = ManifestLocation {
+        range: None,
+        is_embedded: true,
+    };
+
+    #[test]
+    fn part_exclusions_must_cover_the_manifest() {
+        use crate::utils::hash_utils::HashRange;
+
+        // Both parts exclude their byte 1: absolute 1 in the first part, 5 in the second.
+        let claim = synthetic(|_| ());
+        let validate = |range: HashRange| {
+            verify(
+                &claim,
+                claim.claim_assertion_store(),
+                &mut Cursor::new(b"abcdefgh"),
+                "image/jpeg",
+                &ManifestLocation {
+                    range: Some(&range),
+                    is_embedded: true,
+                },
+                &Context::new(),
+            )
+        };
+        // The manifest is in the first part, so the second part's exclusion leaves out bytes
+        // that aren't the manifest.
+        assert_code(validate(HashRange::new(1, 1)), MISMATCH);
+        // The first part's exclusion isn't where the manifest is either.
+        assert_code(validate(HashRange::new(2, 1)), MISMATCH);
+    }
+
     fn validate_synthetic(claim: &Claim, bytes: &[u8]) -> Result<()> {
         verify(
             claim,
             claim.claim_assertion_store(),
             &mut Cursor::new(bytes),
             "image/jpeg",
+            &UNKNOWN_MANIFEST,
             &Context::new(),
         )
     }
@@ -504,6 +562,7 @@ mod tests {
                 &assertions,
                 &mut Cursor::new(b"abcdefgh"),
                 "image/jpeg",
+                &UNKNOWN_MANIFEST,
                 &Context::new(),
             ),
             MALFORMED,
@@ -521,6 +580,7 @@ mod tests {
                 &assertions,
                 &mut Cursor::new(b"abcdefgh"),
                 "image/jpeg",
+                &UNKNOWN_MANIFEST,
                 &Context::new(),
             ),
             MALFORMED,
@@ -536,6 +596,7 @@ mod tests {
                 &assertions,
                 &mut Cursor::new(b"abcdefgh"),
                 "image/jpeg",
+                &UNKNOWN_MANIFEST,
                 &Context::new(),
             ),
             MALFORMED,
@@ -586,6 +647,7 @@ mod tests {
                     &assertions,
                     &mut Cursor::new(b"abcdefgh"),
                     "image/jpeg",
+                    &UNKNOWN_MANIFEST,
                     &Context::new(),
                 ),
                 MALFORMED,
@@ -767,6 +829,7 @@ mod tests {
                 claim.claim_assertion_store(),
                 &mut Cursor::new(b"abcdefgh"),
                 "image/jpeg",
+                &UNKNOWN_MANIFEST,
                 &context
             ),
             Err(Error::OperationCancelled)
