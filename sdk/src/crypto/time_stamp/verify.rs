@@ -63,6 +63,8 @@ fn signed_attributes_digested_content(
 
 // Decode the raw SignerInfo entries from the same SignedData bytes used by
 // rasn. Preserve duplicates here: a SET OF decoder may collapse equal entries.
+// Returns None if the entries cannot be parsed, in which case callers fall back
+// to the DER re-encoding of each decoded SignerInfo's attributes.
 fn received_signer_infos(sd_bytes: &[u8]) -> Option<Vec<asn1_rs::Any<'_>>> {
     use asn1_rs::{Class, Tag};
 
@@ -75,20 +77,47 @@ fn received_signer_infos(sd_bytes: &[u8]) -> Option<Vec<asn1_rs::Any<'_>>> {
         return None;
     }
     let entries = timestamp_asn1_children(signer_infos.data)?;
-    let mut signatures = std::collections::HashSet::new();
     for entry in &entries {
         if entry.class() != Class::Universal || entry.tag() != Tag::Sequence {
             return None;
         }
-        let fields = timestamp_asn1_children(entry.data)?;
-        let signature = fields
-            .iter()
-            .find(|field| field.class() == Class::Universal && field.tag() == Tag::OctetString)?;
-        if !signatures.insert(signature.data) {
-            return None;
-        }
+        raw_signature(entry)?;
     }
     Some(entries)
+}
+
+fn raw_signature<'a>(signer_info: &asn1_rs::Any<'a>) -> Option<&'a [u8]> {
+    use asn1_rs::{Class, Tag};
+
+    timestamp_asn1_children(signer_info.data)?
+        .into_iter()
+        .find(|field| field.class() == Class::Universal && field.tag() == Tag::OctetString)
+        .map(|field| field.data)
+}
+
+// A signature value must identify exactly one SignerInfo. Check the decoded
+// entries and, when available, the raw entries, since rasn may collapse
+// identical entries while decoding the SET OF.
+fn has_duplicate_signatures(
+    sd: &rasn_cms::SignedData,
+    raw_signer_infos: Option<&[asn1_rs::Any<'_>]>,
+) -> bool {
+    let mut decoded = std::collections::HashSet::new();
+    if !sd
+        .signer_infos
+        .to_vec()
+        .iter()
+        .all(|si| decoded.insert(si.signature.as_ref()))
+    {
+        return true;
+    }
+
+    let mut raw = std::collections::HashSet::new();
+    raw_signer_infos.is_some_and(|entries| {
+        !entries
+            .iter()
+            .all(|entry| raw_signature(entry).is_some_and(|sig| raw.insert(sig)))
+    })
 }
 
 fn timestamp_asn1_children(data: &[u8]) -> Option<Vec<asn1_rs::Any<'_>>> {
@@ -108,7 +137,7 @@ fn timestamp_asn1_children(data: &[u8]) -> Option<Vec<asn1_rs::Any<'_>>> {
 //
 // Replace the IMPLICIT [0] tag with a SET OF header, and require the located bytes
 // to decode to the attributes whose message digest and signing time were checked.
-// Signature values are unique because received_signer_infos rejects duplicates.
+// Signature values are unique because verify_time_stamp rejects duplicates.
 fn received_signed_attributes(
     signer_infos: &[asn1_rs::Any<'_>],
     signer_info: &rasn_cms::SignerInfo,
@@ -129,9 +158,11 @@ fn received_signed_attributes(
         if found.is_some() {
             return None;
         }
-        let attrs = fields
-            .iter()
-            .find(|f| f.class() == Class::ContextSpecific && f.tag() == Tag(0))?;
+        // signedAttrs is a constructed [0]. A subjectKeyIdentifier sid is a
+        // primitive [0] and must not be mistaken for the attributes.
+        let attrs = fields.iter().find(|f| {
+            f.class() == Class::ContextSpecific && f.tag() == Tag(0) && f.header.is_constructed()
+        })?;
         found = Some(attrs.data);
     }
     let attrs_body = found?;
@@ -173,19 +204,20 @@ pub fn verify_time_stamp(
 
     // Reject ambiguous signatures before trying any signer, including identical
     // SignerInfo entries that rasn may have collapsed while decoding the SET OF.
-    let Some(raw_signer_infos) = received_signer_infos(&sd_bytes) else {
+    let raw_signer_infos = received_signer_infos(&sd_bytes);
+    if has_duplicate_signatures(&sd, raw_signer_infos.as_deref()) {
         log_item!(
             "",
-            "timestamp signer infos malformed or contain duplicate signatures",
+            "timestamp signer infos contain duplicate signatures",
             "verify_time_stamp"
         )
         .validation_status(TIMESTAMP_MALFORMED)
         .informational(validation_log);
 
         return Err(TimeStampError::DecodeError(
-            "timestamp signer infos malformed or contain duplicate signatures".to_string(),
+            "timestamp signer infos contain duplicate signatures".to_string(),
         ));
-    };
+    }
 
     // Grab the list of certs used in signing this timestamp
     let Some(certs) = &sd.certificates else {
@@ -447,9 +479,10 @@ pub fn verify_time_stamp(
         // use those as the TBS else the TBS is the value of the ContentInfo
         let tbs = match signed_attributes_digested_content(signer_info) {
             Ok(sdc) => match sdc {
-                Some(tbs) => {
-                    received_signed_attributes(&raw_signer_infos, signer_info).unwrap_or(tbs)
-                }
+                Some(tbs) => raw_signer_infos
+                    .as_deref()
+                    .and_then(|raw| received_signed_attributes(raw, signer_info))
+                    .unwrap_or(tbs),
                 None => match &sd.encap_content_info.content {
                     Some(d) => d.to_vec(),
                     None => {
@@ -2468,6 +2501,64 @@ mod signed_attrs_tests {
         for original_first in [false, true] {
             assert_rejected(&forged_token(&valid, true, original_first), FORGED_DATA);
         }
+    }
+
+    // A version 3 SignerInfo identifies its signer by subjectKeyIdentifier, a
+    // primitive [0] that precedes the constructed [0] signedAttrs.
+    #[test]
+    fn locates_unsorted_attributes_with_subject_key_identifier() {
+        use x509_parser::extensions::ParsedExtension;
+
+        let (_, pem) = x509_parser::pem::parse_x509_pem(include_bytes!(
+            "../../../tests/fixtures/crypto/raw_signature/es256.pub"
+        ))
+        .unwrap();
+        let cert = pem.parse_x509().unwrap();
+        let ski = cert
+            .extensions()
+            .iter()
+            .find_map(|e| match e.parsed_extension() {
+                ParsedExtension::SubjectKeyIdentifier(k) => Some(k.0.to_vec()),
+                _ => None,
+            })
+            .unwrap();
+
+        let original = original_signer_info(TOKEN);
+        let (_, raw_si) = asn1_rs::Any::from_der(&original).unwrap();
+        let fields = timestamp_asn1_children(raw_si.data).unwrap();
+        let mut body = tlv(0x02, &[3]);
+        body.extend(tlv(0x80, &ski));
+        for field in &fields[2..] {
+            body.extend(tlv_of(field));
+        }
+        let token = rebuild_token(TOKEN, None, &[tlv(0x30, &body)]);
+
+        let (sd, bytes) = signed_data_and_bytes_from_time_stamp_response(&token)
+            .unwrap()
+            .unwrap();
+        let si = sd.signer_infos.to_vec()[0];
+        assert!(matches!(si.sid, SignerIdentifier::SubjectKeyIdentifier(_)));
+        let raw = received_signer_infos(&bytes).unwrap();
+        let encoded = received_signed_attributes(&raw, si).unwrap();
+        assert_ne!(
+            encoded,
+            rasn::der::encode(si.signed_attrs.as_ref().unwrap()).unwrap()
+        );
+    }
+
+    // Duplicate signatures must be detected from the decoded SignerInfos even
+    // when the raw entries cannot be parsed.
+    #[test]
+    fn detects_duplicate_signatures_without_raw_signer_infos() {
+        let genuine = signed_data_from_time_stamp_response(TOKEN)
+            .unwrap()
+            .unwrap();
+        assert!(!has_duplicate_signatures(&genuine, None));
+
+        let forged = signed_data_from_time_stamp_response(&forged_token(TOKEN, true, false))
+            .unwrap()
+            .unwrap();
+        assert!(has_duplicate_signatures(&forged, None));
     }
 
     #[test]
