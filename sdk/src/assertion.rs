@@ -130,7 +130,8 @@ where
 pub trait AssertionCbor: Serialize + DeserializeOwned + AssertionBase {
     fn to_cbor_assertion(&self) -> Result<Assertion> {
         let data = AssertionData::Cbor(
-            c2pa_cbor::to_vec(self).map_err(|err| Error::AssertionEncoding(err.to_string()))?,
+            c2pa_cbor::to_vec_deterministic(self)
+                .map_err(|err| Error::AssertionEncoding(err.to_string()))?,
         );
         Ok(Assertion::new(self.label(), self.version(), data).set_content_type("application/cbor"))
     }
