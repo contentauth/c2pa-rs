@@ -253,7 +253,10 @@ fn embed(text: &str, store_bytes: &[u8]) -> Result<String> {
                     edits.push((
                         md.span.start,
                         md.span.end,
-                        format!("<{name}>{element}</{name}>"),
+                        format!(
+                            "{}>{element}</{name}>",
+                            &text[md.span.start..md.span.end - 2]
+                        ),
                     ));
                 } else {
                     edits.push((md.span.close_start, md.span.close_start, element));
@@ -273,7 +276,10 @@ fn embed(text: &str, store_bytes: &[u8]) -> Result<String> {
                         edits.push((
                             head.span.start,
                             head.span.end,
-                            format!("<{name}>{block}</{name}>"),
+                            format!(
+                                "{}>{block}</{name}>",
+                                &text[head.span.start..head.span.end - 2]
+                            ),
                         ));
                     }
                     // `tt:metadata` comes first in `tt:head` (TTML2 8.1.1).
@@ -520,6 +526,27 @@ mod tests {
         let out = write(doc, b"store");
         assert!(out.contains("<tt:metadata><c2pa:manifest>"));
         assert_eq!(read(&out).unwrap(), b"store");
+    }
+
+    #[test]
+    fn expanding_empty_elements_preserves_attributes_and_namespaces() {
+        for empty in [
+            r#"<h:head xmlns:h='http://www.w3.org/ns/ttml' xml:id='head' />"#,
+            r#"<head><m:metadata xmlns:m='http://www.w3.org/ns/ttml' xml:id='metadata' /></head>"#,
+            r#"<head xml:lang='fr'/>"#,
+        ] {
+            let doc = format!(r#"<tt xmlns="http://www.w3.org/ns/ttml">{empty}<body/></tt>"#);
+            let out = write(&doc, b"store");
+            // The opening tag is preserved byte for byte except for the slash.
+            let opening = empty.split_once("/>").unwrap().0;
+            assert!(out.contains(&format!("{opening}>")));
+            assert_eq!(read(&out).unwrap(), b"store");
+            let loc = c2pa_location(&out);
+            assert_eq!(
+                &out[loc.offset as usize..(loc.offset + loc.length) as usize],
+                manifest_element(b"store")
+            );
+        }
     }
 
     #[test]
