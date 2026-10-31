@@ -55,6 +55,9 @@ const C2PA_CONTENT_TYPE: &str = "application/c2pa";
 /// The largest a gzip member may decompress to. Bounds the work an untrusted file can force.
 const MAX_MEMBER_SIZE: u64 = 1 << 30;
 
+/// Aggregate limit for retained decompressed bytes across all gzip members.
+const MAX_DECOMPRESSED_SIZE: u64 = 1 << 30;
+
 /// Placeholder used to lay out the C2PA record before a manifest exists.
 const PLACEHOLDER_STORE: &[u8] = b"placeholder manifest";
 
@@ -202,6 +205,10 @@ fn parse_records(data: &[u8], member: usize, records: &mut Vec<Record>) -> Resul
 }
 
 fn parse(file: &[u8]) -> Result<Warc> {
+    parse_with_limit(file, MAX_DECOMPRESSED_SIZE)
+}
+
+fn parse_with_limit(file: &[u8], max_decompressed_size: u64) -> Result<Warc> {
     if file.starts_with(ZSTD_MAGIC) {
         return Err(Error::UnsupportedType);
     }
@@ -225,16 +232,20 @@ fn parse(file: &[u8]) -> Result<Warc> {
 
     let mut members = Vec::new();
     let mut pos = 0;
+    let mut remaining = max_decompressed_size;
     while pos < file.len() {
         let mut decoder = GzDecoder::new(&file[pos..]);
         let mut data = Vec::new();
         (&mut decoder)
-            .take(MAX_MEMBER_SIZE + 1)
+            .take(MAX_MEMBER_SIZE.min(remaining) + 1)
             .read_to_end(&mut data)
             .map_err(|_| invalid("bad gzip member"))?;
         if data.len() as u64 > MAX_MEMBER_SIZE {
             return Err(invalid("gzip member decompresses past the size limit"));
         }
+        remaining = remaining
+            .checked_sub(data.len() as u64)
+            .ok_or_else(|| invalid("gzip members exceed the aggregate decompression limit"))?;
         let rest = decoder.into_inner();
         let end = file.len() - rest.len();
         if end == pos {
@@ -542,6 +553,23 @@ mod tests {
 
     fn members(data: &[u8]) -> Result<Vec<(String, Vec<u8>)>> {
         WarcIO {}.member_hashes(&mut Cursor::new(data.to_vec()), "sha256")
+    }
+
+    #[test]
+    fn aggregate_decompression_limit_covers_all_members() {
+        let records = records();
+        let total = records.iter().map(|r| r.len() as u64).sum::<u64>();
+        let compressed: Vec<u8> = records.iter().flat_map(|r| gzip(r)).collect();
+        assert!(parse_with_limit(&compressed, total).is_ok());
+        assert!(matches!(
+            parse_with_limit(&compressed, total - 1),
+            Err(Error::InvalidAsset(message)) if message.contains("aggregate decompression limit")
+        ));
+        assert!(parse_with_limit(&compressed, 0).is_err());
+        // The same boundary applies when all records share a single gzip member.
+        let compressed = gzip(&records.concat());
+        assert!(parse_with_limit(&compressed, total).is_ok());
+        assert!(parse_with_limit(&compressed, total - 1).is_err());
     }
 
     #[test]
