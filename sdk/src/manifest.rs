@@ -627,12 +627,11 @@ impl Manifest {
                         .set_created(created);
                     manifest.assertions.push(manifest_assertion);
                 }
-                label
-                    if decode_identity_assertions
-                        && (label == "cawg.identity" || label.starts_with("cawg.identity__")) =>
+                base if decode_identity_assertions
+                    && (base == "cawg.identity" || base.starts_with("cawg.identity__")) =>
                 {
                     let value = assertion.as_json_object()?;
-                    let mut ma = ManifestAssertion::new(label.to_string(), value)
+                    let mut ma = ManifestAssertion::new(base.to_string(), value)
                         .set_instance(claim_assertion.instance());
 
                     let mut partial_claim = PartialClaim::default();
@@ -640,7 +639,10 @@ impl Manifest {
                         partial_claim.add_assertion(a);
                     }
 
-                    let uri = to_assertion_uri(manifest_label, label);
+                    // Use the instance label (e.g. `cawg.identity__1`): CAWG
+                    // Identity §7.2 requires each status `url` to name the identity
+                    // assertion it applies to.
+                    let uri = to_assertion_uri(manifest_label, &label);
                     validation_log.push_current_uri(&uri);
                     let identity_assertion: IdentityAssertion = ma.to_assertion()?;
                     let value: Option<serde_json::Value> = if _sync {
@@ -655,7 +657,7 @@ impl Manifest {
                     };
                     if let Some(v) = value {
                         //debug!("cawg.identity validation returned: {v}");
-                        ma = ManifestAssertion::new(label.to_string(), v)
+                        ma = ManifestAssertion::new(base.to_string(), v)
                             .set_instance(claim_assertion.instance());
                     }
                     validation_log.pop_current_uri();
