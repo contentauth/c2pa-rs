@@ -184,3 +184,104 @@ pub(crate) fn tst_info_from_signed_data(
         .map_err(|err| TimeStampError::DecodeError(err.to_string()))?,
     ))
 }
+
+#[cfg(test)]
+pub(crate) mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    pub(crate) fn response_der(status: u8, token: Option<&[u8]>) -> Vec<u8> {
+        #[derive(AsnType, Encode)]
+        struct Status {
+            status: rasn::types::Integer,
+        }
+        #[derive(AsnType, Encode)]
+        struct Response {
+            status: Status,
+            token: Option<Any>,
+        }
+        rasn::der::encode(&Response {
+            status: Status {
+                status: status.into(),
+            },
+            token: token.map(|token| Any::new(token.to_vec())),
+        })
+        .unwrap()
+    }
+
+    fn decode(bytes: &[u8]) -> TimeStampResponse {
+        TimeStampResponse(
+            Constructed::decode(bytes, bcder::Mode::Der, TimeStampResp::take_from).unwrap(),
+        )
+    }
+
+    #[test]
+    fn status_and_absent_token_are_independent() {
+        for status in 0..=5 {
+            let der = response_der(status, None);
+            let response = decode(&der);
+            assert_eq!(response.is_success(), status <= 1);
+            assert!(response.time_stamp_token.is_none());
+            assert!(response.signed_data().unwrap().is_none());
+            assert!(response.tst_info().unwrap().is_none());
+            let result = signed_data_from_time_stamp_response(&der);
+            assert_eq!(result.is_ok(), status <= 1);
+            if status <= 1 {
+                assert!(result.unwrap().is_none());
+            }
+        }
+
+        assert!(signed_data_from_time_stamp_response(&[0x30, 1, 0]).is_err());
+        // A non-SEQUENCE prefix is currently treated as an absent optional token.
+        assert!(signed_data_from_time_stamp_response(b"bad DER")
+            .unwrap()
+            .is_none());
+    }
+
+    #[cfg(all(feature = "openssl", not(target_arch = "wasm32")))]
+    #[test]
+    fn token_and_response_decoding_agree_and_reject_malformed_content() {
+        use openssl::hash::MessageDigest;
+
+        use crate::crypto::time_stamp::verify::message_imprint_regression::{
+            build_token, OID_SHA256,
+        };
+
+        let token = build_token(OID_SHA256, MessageDigest::sha256(), b"data");
+        let response = decode(&response_der(0, Some(&token)));
+        let signed_data = response.signed_data().unwrap().unwrap();
+        assert_eq!(
+            signed_data_from_time_stamp_response(&token)
+                .unwrap()
+                .unwrap(),
+            signed_data
+        );
+        let expected = response.tst_info().unwrap().unwrap();
+        assert_eq!(
+            tst_info_from_signed_data(&signed_data).unwrap().unwrap(),
+            expected
+        );
+        let mut missing = signed_data.clone();
+        missing.encap_content_info.content = None;
+        assert!(tst_info_from_signed_data(&missing).unwrap().is_none());
+        let mut unrelated = signed_data.clone();
+        unrelated.encap_content_info.content_type = ObjectIdentifier::new(vec![1, 2, 3]).unwrap();
+        assert!(tst_info_from_signed_data(&unrelated).unwrap().is_none());
+        let mut malformed = signed_data;
+        malformed.encap_content_info.content = Some(vec![0].into());
+        assert!(tst_info_from_signed_data(&malformed).is_err());
+        for content_type in [vec![1, 2, 3], vec![1, 2, 840, 113549, 1, 7, 2]] {
+            let malformed = ContentInfo {
+                content_type: ObjectIdentifier::new(content_type).unwrap(),
+                content: Any::new(vec![0x30, 0]),
+            };
+
+            let token = rasn::der::encode(&malformed).unwrap();
+            let response = decode(&response_der(0, Some(&token)));
+            assert!(response.signed_data().is_err());
+            assert!(response.tst_info().is_err());
+            assert!(signed_data_from_time_stamp_response(&token).is_err());
+        }
+    }
+}
