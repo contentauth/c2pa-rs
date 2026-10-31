@@ -528,9 +528,9 @@ pub fn verify_time_stamp(
             // check to TSA anchors - a signer anchor must not vouch for a token.
             let mut ts_ctp = ctp.clone();
             ts_ctp.clear_end_entity_credentials();
-            ts_ctp.retain_trust_anchors(TrustAnchorType::TSA);
 
-            match ts_ctp.check_certificate_trust(
+            match ts_ctp.check_certificate_trust_for(
+                Some(TrustAnchorType::TSA),
                 &ordered_cert_ders[0..],
                 &ordered_cert_ders[0],
                 Some(signing_time),
@@ -1807,6 +1807,79 @@ pub(crate) mod message_imprint_regression {
                 false,
             );
             assert_eq!(result.is_ok(), raw_extension);
+        }
+    }
+
+    #[test]
+    fn timestamp_trust_respects_tsa_anchor_list() {
+        use crate::crypto::cose::TrustAnchorType;
+
+        let token = build_token_with(
+            OID_SHA256,
+            MessageDigest::sha256(),
+            DATA,
+            TokenOptions {
+                profile_extensions: true,
+                ..Default::default()
+            },
+        );
+        let cert = super::tsa_signer_cert_der_from_token(&token)
+            .unwrap()
+            .unwrap();
+        let pem = openssl::x509::X509::from_der(&cert)
+            .unwrap()
+            .to_pem()
+            .unwrap();
+
+        for kind in [TrustAnchorType::Manifest, TrustAnchorType::CAWG] {
+            let mut policy = CertificateTrustPolicy::new();
+            policy
+                .add_trust_anchors(&pem, "test:legacy", kind, None)
+                .unwrap();
+
+            let mut log = StatusTracker::default();
+            assert!(matches!(
+                verify_time_stamp(&token, DATA, &policy, &mut log, true),
+                Err(TimeStampError::Untrusted)
+            ));
+            assert!(log.has_status(TIMESTAMP_VALIDATED));
+            assert!(log.has_status(TIMESTAMP_UNTRUSTED));
+            assert!(!log.has_status(TIMESTAMP_TRUSTED));
+
+            policy
+                .add_trust_anchors(
+                    include_bytes!(
+                        "../../../tests/fixtures/crypto/raw_signature/test_cert_root_bundle.pem"
+                    ),
+                    "test:unrelated_tsa",
+                    TrustAnchorType::TSA,
+                    None,
+                )
+                .unwrap();
+            let mut log = StatusTracker::default();
+            assert!(matches!(
+                verify_time_stamp(&token, DATA, &policy, &mut log, true),
+                Err(TimeStampError::Untrusted)
+            ));
+            assert!(log.has_status(TIMESTAMP_VALIDATED));
+            assert!(log.has_status(TIMESTAMP_UNTRUSTED));
+            assert!(!log.has_status(TIMESTAMP_TRUSTED));
+
+            policy
+                .add_trust_anchors(&pem, "test:tsa", TrustAnchorType::TSA, None)
+                .unwrap();
+            let mut log = StatusTracker::default();
+            let trusted_tst = verify_time_stamp(&token, DATA, &policy, &mut log, true).unwrap();
+            assert_eq!(
+                generalized_time_to_datetime(trusted_tst.gen_time).timestamp(),
+                1_577_836_800
+            );
+            assert!(log.has_status(TIMESTAMP_TRUSTED));
+            assert!(!log.has_status(TIMESTAMP_UNTRUSTED));
+            assert!(log
+                .logged_items()
+                .iter()
+                .any(|item| item.description.contains("test:tsa")));
         }
     }
 

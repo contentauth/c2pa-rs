@@ -51,7 +51,15 @@ pub enum Verifier<'a> {
     /// Use a [`CertificateTrustPolicy`] to validate the signing certificate's
     /// profile against C2PA requirements _and_ validate the certificate's
     /// membership against a trust configuration.
+    ///
+    /// The certificate must chain to a [`TrustAnchorType::Manifest`] anchor, as
+    /// a claim signer must; use [`Self::VerifyTrustPolicyFor`] for other signers.
     VerifyTrustPolicy(Cow<'a, CertificateTrustPolicy>),
+
+    /// As [`Self::VerifyTrustPolicy`], but the certificate must chain to a trust
+    /// anchor of the given type, e.g. [`TrustAnchorType::CAWG`] for a CAWG X.509
+    /// identity assertion signer. Anchors of other types do not make it trusted.
+    VerifyTrustPolicyFor(Cow<'a, CertificateTrustPolicy>, TrustAnchorType),
 
     /// Validate the certificate's membership against a trust configuration, but
     /// do not against any trust list. The [`CertificateTrustPolicy`] is used to
@@ -148,7 +156,7 @@ impl Verifier<'_> {
         let override_ekus = match result {
             // only case where we have named trust sets
             Ok((trust_type, Some(trust_uri))) => match self {
-                Self::VerifyTrustPolicy(ref ctp) => {
+                Self::VerifyTrustPolicy(ref ctp) | Self::VerifyTrustPolicyFor(ref ctp, _) => {
                     if let Some(anchor) = ctp.get_anchor_set(trust_type, &trust_uri) {
                         anchor.trust_config.clone()
                     } else {
@@ -254,6 +262,7 @@ impl Verifier<'_> {
     ) -> Result<(), CoseError> {
         let ctp = match self {
             Self::VerifyTrustPolicy(ref ctp) => ctp,
+            Self::VerifyTrustPolicyFor(ref ctp, _) => ctp,
             Self::VerifyCertificateProfileOnly(ref ctp) => ctp,
             Self::IgnoreProfileAndTrustPolicy => {
                 return Ok(());
@@ -293,8 +302,11 @@ impl Verifier<'_> {
     ) -> Result<(TrustAnchorType, Option<String>), CoseError> {
         // should be used in conjunction with verify_profile in most cases
 
-        let ctp = match self {
-            Self::VerifyTrustPolicy(ref ctp) => ctp,
+        // A claim signer must chain to a manifest trust anchor, not a TSA or CAWG
+        // one; other signers say which anchor type they need.
+        let (ctp, anchor_type) = match self {
+            Self::VerifyTrustPolicy(ref ctp) => (ctp, TrustAnchorType::Manifest),
+            Self::VerifyTrustPolicyFor(ref ctp, anchor_type) => (ctp, *anchor_type),
 
             Self::VerifyCertificateProfileOnly(ref _ctp) => {
                 return Ok((TrustAnchorType::NoCheck, None));
@@ -315,10 +327,20 @@ impl Verifier<'_> {
         });
 
         let verify_result = if _sync {
-            ctp.check_certificate_trust(chain_der, end_entity_cert_der, signing_time_epoch)
+            ctp.check_certificate_trust_for(
+                Some(anchor_type),
+                chain_der,
+                end_entity_cert_der,
+                signing_time_epoch,
+            )
         } else {
-            ctp.check_certificate_trust_async(chain_der, end_entity_cert_der, signing_time_epoch)
-                .await
+            ctp.check_certificate_trust_for_async(
+                Some(anchor_type),
+                chain_der,
+                end_entity_cert_der,
+                signing_time_epoch,
+            )
+            .await
         };
 
         match verify_result {
