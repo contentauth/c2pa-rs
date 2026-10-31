@@ -236,14 +236,9 @@ impl OcspResponse {
                         output.next_update = DateTime::from_naive_utc_and_offset(nu_utc, Utc);
                     }
 
-                    if !in_range {
-                        log_item!("", "certificate revoked", "check_ocsp_response")
-                            .validation_status(validation_codes::SIGNING_CREDENTIAL_REVOKED)
-                            .failure_no_throw(
-                                &mut internal_validation_log,
-                                OcspError::CertificateRevoked,
-                            );
-                    } else {
+                    // A good response outside its validity window cannot be
+                    // used, but is not evidence that the certificate was revoked.
+                    if in_range {
                         // As soon as we find one successful match, nothing else matters.
                         log_item!("", "certificate not revoked", "check_ocsp_response")
                             .validation_status(validation_codes::SIGNING_CREDENTIAL_NOT_REVOKED)
@@ -743,9 +738,12 @@ mod tests {
         )
         .unwrap();
 
+        // A good response that is outside its validity window at the signing
+        // time cannot be used, but does not mean the certificate was revoked.
         assert!(ocsp_data.revoked_at.is_none());
-        assert!(validation_log.has_any_error());
-        assert!(validation_log.has_status(SIGNING_CREDENTIAL_REVOKED));
+        assert!(!validation_log.has_any_error());
+        assert!(!validation_log.has_status(SIGNING_CREDENTIAL_REVOKED));
+        assert!(!validation_log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED));
     }
 
     #[test]
@@ -984,8 +982,10 @@ mod tests {
                 OcspResponse::from_der_checked(&der, &signing_cert_chain(), signing_time, &mut log)
                     .unwrap();
             assert_eq!(parsed.next_update, next_update);
+            assert!(parsed.revoked_at.is_none());
+            assert!(!log.has_any_error());
             assert_eq!(log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED), accepted);
-            assert_eq!(log.has_status(SIGNING_CREDENTIAL_REVOKED), !accepted);
+            assert!(!log.has_status(SIGNING_CREDENTIAL_REVOKED));
         }
 
         let mut no_next_update = basic;
@@ -998,14 +998,17 @@ mod tests {
             (expiry + chrono::Duration::seconds(1), false),
         ] {
             let mut log = StatusTracker::default();
-            OcspResponse::from_der_checked(
+            let parsed = OcspResponse::from_der_checked(
                 &der,
                 &signing_cert_chain(),
                 Some(signing_time),
                 &mut log,
             )
             .unwrap();
+            assert!(parsed.revoked_at.is_none());
+            assert!(!log.has_any_error());
             assert_eq!(log.has_status(SIGNING_CREDENTIAL_NOT_REVOKED), accepted);
+            assert!(!log.has_status(SIGNING_CREDENTIAL_REVOKED));
         }
 
         let mut future = basic_response();
