@@ -143,6 +143,9 @@ pub struct LiveVideoValidator {
     init_segment_data: Option<Vec<u8>>,
     previous_segment: Option<SegmentState>,
     session_keys: Vec<TrustedSessionKey>,
+    /// End-entity certificate of the manifest signer whose `signerBinding`s the installed
+    /// session keys verified against. Every later key must bind the same signer.
+    session_key_signer: Option<Vec<u8>>,
     session_key_manifest_state: Option<crate::ValidationState>,
     /// The track timescale (`moov/trak/mdia/mdhd`), captured by [`validate_init_segment`].
     /// Needed to turn a media segment's `tfdt` into a presentation time.
@@ -162,6 +165,7 @@ impl LiveVideoValidator {
             init_segment_data: None,
             previous_segment: None,
             session_keys: Vec::new(),
+            session_key_signer: None,
             session_key_manifest_state: None,
             track_timescale: None,
             media_time_origin: None,
@@ -338,6 +342,20 @@ impl LiveVideoValidator {
             );
         };
 
+        // An update can't introduce keys bound to a different signer than the stream's
+        // existing keys; otherwise anyone able to sign a manifest could take over the stream.
+        if self
+            .session_key_signer
+            .as_ref()
+            .is_some_and(|signer| signer.as_slice() != cert)
+        {
+            return fail_validation(
+                "session keys must bind the same manifest signer as the stream's earlier keys",
+                LIVEVIDEO_SESSIONKEY_INVALID,
+                tracker,
+            );
+        }
+
         let mut verified_keys = Vec::with_capacity(assertion.keys.len());
         let mut seen_kids = Vec::new();
         for key in &assertion.keys {
@@ -415,6 +433,9 @@ impl LiveVideoValidator {
                 manifest_id: manifest_id.to_string(),
                 manifest_state: None,
             });
+        }
+        if !additions.is_empty() && self.session_key_signer.is_none() {
+            self.session_key_signer = Some(cert.to_vec());
         }
         self.session_keys.extend(additions);
         Ok(())
@@ -567,9 +588,7 @@ impl LiveVideoValidator {
                 )
             }
         };
-        let trust_configured = matches!(context.settings().get_value::<Option<Vec<crate::settings::TrustAnchor>>>("trust.anchors"),
-            Ok(Some(anchors)) if !anchors.is_empty());
-        if trust_configured
+        if trust_configured(context.settings())
             && context.settings().verify.verify_trust
             && reader.validation_state() != crate::ValidationState::Trusted
         {
@@ -621,6 +640,25 @@ impl LiveVideoValidator {
     /// An unknown key may be retrieved through `manifestUri` when remote fetching is enabled;
     /// call [`Self::validate_init_segment`] first to allow init-bound remote manifests.
     pub fn validate_verifiable_segment_info_with_context(
+        &mut self,
+        segment_data: &[u8],
+        context: &std::sync::Arc<crate::Context>,
+        tracker: &mut StatusTracker,
+    ) -> Result<()> {
+        // Keys carried by this segment are installed before its own signature and hash are
+        // checked; if the segment then fails, don't keep them.
+        let keys_before = self.session_keys.len();
+        let signer_before = self.session_key_signer.clone();
+        let failures_before = tracker.filter_errors().count();
+        let result = self.validate_vsi_segment(segment_data, context, tracker);
+        if result.is_err() || tracker.filter_errors().count() > failures_before {
+            self.session_keys.truncate(keys_before);
+            self.session_key_signer = signer_before;
+        }
+        result
+    }
+
+    fn validate_vsi_segment(
         &mut self,
         segment_data: &[u8],
         context: &std::sync::Arc<crate::Context>,
@@ -678,6 +716,21 @@ impl LiveVideoValidator {
 
         Ok(())
     }
+}
+
+/// Whether any trust anchors are configured, through `trust.anchors` or the PEM
+/// `trust.trust_anchors` / `trust.user_anchors` settings.
+fn trust_configured(settings: &crate::settings::Settings) -> bool {
+    let trust = &settings.trust;
+    #[allow(deprecated)]
+    let pem_anchors = [&trust.trust_anchors, &trust.user_anchors];
+    trust
+        .anchors
+        .as_ref()
+        .is_some_and(|anchors| !anchors.is_empty())
+        || pem_anchors
+            .iter()
+            .any(|pem| pem.as_ref().is_some_and(|pem| !pem.trim().is_empty()))
 }
 
 impl Default for LiveVideoValidator {
