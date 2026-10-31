@@ -203,9 +203,13 @@ pub fn check_ocsp_status(
             }
         }
 
-        // If the stapled response could not be validated and online fetching is disabled,
-        // return default without logging SIGNING_CREDENTIAL_OCSP_SKIPPED.
+        // The stapled response could not be used. If online fetching is disabled,
+        // the validator has chosen not to perform an online OCSP check.
         if fetch_policy == OcspFetchPolicy::DoNotFetch {
+            log_item!("", "OCSP fetching skipped", "check_ocsp_status")
+                .validation_status(SIGNING_CREDENTIAL_OCSP_SKIPPED)
+                .informational(validation_log);
+
             return Ok(OcspResponse::default());
         }
     }
@@ -1225,6 +1229,87 @@ mod tests {
             &context,
         );
         assert!(without_anchor.is_ok());
+
+        // The unusable staple cannot be checked online when fetching is disabled.
+        assert!(log2.has_status(SIGNING_CREDENTIAL_OCSP_SKIPPED));
+        assert!(!log.has_status(SIGNING_CREDENTIAL_OCSP_SKIPPED));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn check_ocsp_status_stapled_do_not_fetch_sync_and_async() {
+        use crate::{crypto::cose::TrustAnchorType, status_tracker::LogKind};
+
+        let chain = ocsp_signing_chain();
+        let mut ctp = CertificateTrustPolicy::new();
+        ctp.add_trust_anchors(
+            include_bytes!("../../../tests/fixtures/crypto/ocsp/ocsp_chain.pem"),
+            "https://c2pa-rs/test",
+            TrustAnchorType::Manifest,
+            None,
+        )
+        .unwrap();
+        ctp.add_end_entity_credentials(include_bytes!(
+            "../../../tests/fixtures/crypto/ocsp/ocsp_responder.pem"
+        ))
+        .unwrap();
+
+        let good = include_bytes!("../../../tests/fixtures/crypto/ocsp/response_good.der").to_vec();
+        let revoked =
+            include_bytes!("../../../tests/fixtures/crypto/ocsp/response_revoked.der").to_vec();
+        let supplied = vec![good.clone()];
+        let context = Context::new();
+
+        for (staple, responses, expected) in [
+            (good, None, SIGNING_CREDENTIAL_NOT_REVOKED),
+            (revoked, None, SIGNING_CREDENTIAL_REVOKED),
+            (vec![0xff], None, SIGNING_CREDENTIAL_OCSP_SKIPPED),
+            (vec![0xff], Some(&supplied), SIGNING_CREDENTIAL_OCSP_SKIPPED),
+        ] {
+            let mut sign1 = sign1_with_x5chain(&chain);
+            sign1.unprotected.rest.push((
+                Label::Text("rVals".to_string()),
+                Value::Map(vec![(
+                    Value::Text("ocspVals".to_string()),
+                    Value::Array(vec![Value::Bytes(staple)]),
+                )]),
+            ));
+
+            let mut sync_log = StatusTracker::default();
+            let sync_result = check_ocsp_status(
+                &sign1,
+                b"data",
+                OcspFetchPolicy::DoNotFetch,
+                &ctp,
+                responses,
+                None,
+                &mut sync_log,
+                &context,
+            );
+            let mut async_log = StatusTracker::default();
+            let async_result = check_ocsp_status_async(
+                &sign1,
+                b"data",
+                OcspFetchPolicy::DoNotFetch,
+                &ctp,
+                responses,
+                None,
+                &mut async_log,
+                &context,
+            )
+            .await;
+
+            for (result, log) in [(sync_result, sync_log), (async_result, async_log)] {
+                assert_eq!(result.is_err(), expected == SIGNING_CREDENTIAL_REVOKED);
+                assert!(log.has_status(expected));
+                assert_eq!(log.logged_items().len(), 1);
+                if expected == SIGNING_CREDENTIAL_OCSP_SKIPPED {
+                    assert_eq!(log.logged_items()[0].kind, LogKind::Informational);
+                } else {
+                    assert!(!log.has_status(SIGNING_CREDENTIAL_OCSP_SKIPPED));
+                }
+            }
+        }
     }
 
     // Same wiring, through the fetch path (`fetch_and_check_ocsp_response`, the
