@@ -1460,18 +1460,27 @@ fn test_inside_validity_not_reported_with_outside_validity() {
         );
     };
 
-    // A CA certificate in the claim's chain was outside its validity period.
-    let mut validation_log =
-        StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
-    log_item!(
-        to_signature_uri(claim.label()),
-        "certificate chain outside validity period",
-        "test"
-    )
-    .validation_status(validation_status::CLAIM_SIGNATURE_OUTSIDE_VALIDITY)
-    .failure_no_throw(&mut validation_log, Error::CoseSignature);
-    verify(&mut validation_log);
-    assert!(!validation_log.has_status(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY));
+    // A CA certificate in the claim's chain was outside its validity period, or the
+    // signer itself expired (reported as signingCredential.expired by the profile check).
+    for code in [
+        validation_status::CLAIM_SIGNATURE_OUTSIDE_VALIDITY,
+        validation_status::SIGNING_CREDENTIAL_EXPIRED,
+    ] {
+        let mut validation_log =
+            StatusTracker::with_error_behavior(ErrorBehavior::ContinueWhenPossible);
+        log_item!(
+            to_signature_uri(claim.label()),
+            "certificate outside validity period",
+            "test"
+        )
+        .validation_status(code)
+        .failure_no_throw(&mut validation_log, Error::CoseSignature);
+        verify(&mut validation_log);
+        assert!(
+            !validation_log.has_status(validation_status::CLAIM_SIGNATURE_INSIDE_VALIDITY),
+            "{code}"
+        );
+    }
 
     // Without it, insideValidity is reported as before.
     let mut validation_log =
