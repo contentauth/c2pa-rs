@@ -321,14 +321,15 @@ impl LiveVideoValidator {
         // An exclusion compares only its value's bytes at offset 12, so it also leaves out of
         // the hash any other `emsg` whose bytes there match: a version 1 `emsg` laid out to
         // spell the value, or, with the legacy value, a longer `scheme_id_uri`. Such a box
-        // isn't the VSI `emsg`, so nothing would verify it; fail the segment instead.
+        // isn't the VSI `emsg`, and neither is a second VSI `emsg` (only the first is
+        // checked), so nothing would verify it; fail the segment instead.
         if vsi_exclusion_values
             .iter()
             .any(|value| has_vsi_excluded_non_vsi_emsg(segment_data, value))
         {
             return fail_validation(
                 "segment has an emsg box that the VSI bmffHash exclusion matches but that is \
-                 not a VSI emsg box, so its contents would not be verified",
+                 not its one VSI emsg box, so its contents would not be verified",
                 LIVEVIDEO_SEGMENT_INVALID,
                 tracker,
             );
