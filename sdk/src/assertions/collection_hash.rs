@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::{self, File},
     io::{self, Read, Seek},
     path::{Component, Path, PathBuf},
@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     assertion::{Assertion, AssertionBase, AssertionCbor},
     assertions::{labels::COLLECTION_HASH, AssetType},
-    asset_handlers::zip_io::{zip_central_directory_range, zip_uri_ranges},
+    asset_handlers::zip_io::{zip_central_directory_range, zip_uri_ranges, MANIFEST_PATH},
     hash_stream_by_alg,
     hash_utils::{hash_size_by_alg, verify_stream_by_alg},
     utils::mime,
@@ -398,6 +398,7 @@ impl CollectionHash {
         }
 
         let uri_ranges = zip_uri_ranges(stream)?;
+        let mut listed = HashSet::new();
         for (path, uri_map) in &self.uris {
             // Path needs to be a valid URI, so normalize.
             // https://spec.c2pa.org/specifications/specifications/2.4/specs/C2PA_Specification.html#_fields_2
@@ -417,6 +418,21 @@ impl CollectionHash {
                     path.display()
                 )));
             }
+            listed.insert(path);
+        }
+
+        // An entry left out of `uris` is hashed only through the central directory, whose CRC32
+        // and sizes can be kept while its contents change, so every entry must be listed.
+        // The manifest's directory entry is written with the manifest, after the entries are
+        // hashed, so like the manifest it isn't listed.
+        let manifest_dir = Path::new(MANIFEST_PATH).parent();
+        if uri_ranges
+            .keys()
+            .any(|path| !listed.contains(path) && Some(path.as_path()) != manifest_dir)
+        {
+            return Err(Error::C2PAValidation(
+                ASSERTION_COLLECTIONHASH_INCORRECT_FILE_COUNT.to_string(),
+            ));
         }
 
         Ok(())
@@ -723,6 +739,26 @@ mod tests {
                 data_types: None,
             },
         );
+
+        let mut stream = Cursor::new(ZIP_SAMPLE1);
+        assert!(matches!(
+            collection.verify_zip_stream_hash(&mut stream, None),
+            Err(Error::C2PAValidation(code)) if code == ASSERTION_COLLECTIONHASH_INCORRECT_FILE_COUNT
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_verify_zip_unlisted_entry_is_incorrect_file_count() -> Result<()> {
+        let mut collection = gen_zip_collection_hash()?;
+        let unlisted = collection
+            .uris
+            .keys()
+            .next()
+            .cloned()
+            .ok_or(Error::NotFound)?;
+        collection.uris.remove(&unlisted);
 
         let mut stream = Cursor::new(ZIP_SAMPLE1);
         assert!(matches!(

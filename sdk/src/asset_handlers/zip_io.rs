@@ -15,7 +15,7 @@ use crate::{
     Error, HashRange,
 };
 
-const MANIFEST_PATH: &str = "META-INF/content_credential.c2pa";
+pub(crate) const MANIFEST_PATH: &str = "META-INF/content_credential.c2pa";
 
 const CENTRAL_DIRECTORY_CRC_OFFSET: u64 = 16;
 const CRC_LEN: u64 = 4;
