@@ -541,7 +541,9 @@ impl Reader {
                     .and_then(|m| m.get_mut("assertions"))
                     .and_then(Value::as_array_mut)
                 {
+                    // This array was serialized from the same manifest, so its order is unchanged.
                     for (assertion, data) in manifest.assertions.iter().zip(assertions) {
+                        // Missing originals are valid for report-only assertions; preserve their data.
                         if let Some(original) = originals.get(&report_assertion_label(assertion)) {
                             if let crate::assertion::AssertionData::Cbor(_) =
                                 original.assertion().decode_data()
@@ -1267,6 +1269,107 @@ pub mod tests {
     const IMAGE_WITH_REMOTE_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/cloud.jpg");
     const IMAGE_WITH_INGREDIENT_MANIFEST: &[u8] = include_bytes!("../tests/fixtures/CACA.jpg");
     const SAMPLE1_HEIC: &[u8] = include_bytes!("../tests/fixtures/sample1.heic");
+
+    #[test]
+    fn json_report_matches_reordered_normalized_instances() -> Result<()> {
+        let mut builder = Builder::from_context(test_context());
+        builder.set_intent(BuilderIntent::Create(DigitalSourceType::Empty));
+        for bytes in [vec![96, 128], vec![0, 255]] {
+            builder.add_assertion("org.example.bytes", &serde_bytes::ByteBuf::from(bytes))?;
+        }
+        let signer = test_signer(SigningAlg::Ps256);
+        let mut output = Cursor::new(Vec::new());
+        builder.sign(
+            signer.as_ref(),
+            "image/jpeg",
+            &mut Cursor::new(include_bytes!("../tests/fixtures/C.jpg")),
+            &mut output,
+        )?;
+        let reader = Reader::from_context(test_context()).with_stream("image/jpeg", &mut output)?;
+        let active = reader.active_manifest.clone().unwrap();
+        let mut serialized = serde_json::to_value(&reader)?;
+        let assertions = serialized["manifests"][&active]["assertions"]
+            .as_array_mut()
+            .unwrap();
+        for assertion in assertions
+            .iter_mut()
+            .filter(|a| a["label"] == "org.example.bytes")
+        {
+            let instance = assertion["instance"].as_u64().unwrap_or(0);
+            assertion["data"] = if instance == 0 {
+                serde_json::json!([96, 128])
+            } else {
+                assertion["label"] = serde_json::json!("org.example.bytes__1");
+                serde_json::json!([0, 255])
+            };
+        }
+        assertions.reverse();
+        let mut normalized: Reader = serde_json::from_value(serialized)?;
+        normalized.store = reader.store;
+        let report = normalized.to_json_formatted()?;
+        let assertions = report["manifests"][&active]["assertions"]
+            .as_array()
+            .unwrap();
+        for (label, expected) in [
+            ("org.example.bytes", "YIA="),
+            ("org.example.bytes__1", "AP8="),
+        ] {
+            assert_eq!(
+                assertions.iter().find(|a| a["label"] == label).unwrap()["data"],
+                expected
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn json_report_preserves_legacy_signed_assertions_and_hashes() -> Result<()> {
+        for image in [IMAGE_WITH_MANIFEST, IMAGE_WITH_INGREDIENT_MANIFEST] {
+            let reader = Reader::from_context(test_context())
+                .with_stream("image/jpeg", Cursor::new(image))?;
+            let report = reader.to_json_detailed_formatted()?;
+            let mut assertions_checked = 0;
+            let mut hashes_checked = 0;
+            for claim in reader.store.claims() {
+                let manifest = &report["manifests"][claim.label()];
+                for assertion in claim.claim_assertion_store() {
+                    if matches!(
+                        assertion.assertion().decode_data(),
+                        crate::assertion::AssertionData::Cbor(_)
+                            | crate::assertion::AssertionData::Json(_)
+                    ) {
+                        let expected = hash_to_b64(assertion.assertion().as_json_object()?);
+                        assert_eq!(manifest["assertion_store"][assertion.label()], expected);
+                        assertions_checked += 1;
+                    }
+                }
+                let references: Vec<_> =
+                    ["assertions", "created_assertions", "gathered_assertions"]
+                        .iter()
+                        .filter_map(|key| manifest["claim"][key].as_array())
+                        .flatten()
+                        .collect();
+                for reported in &references {
+                    let original = claim
+                        .assertions()
+                        .iter()
+                        .find(|a| reported["url"] == a.url())
+                        .unwrap();
+                    assert_eq!(reported["url"], original.url());
+                    assert_eq!(
+                        reported["hash"],
+                        crate::crypto::base64::encode(&original.hash())
+                    );
+                    hashes_checked += 1;
+                }
+                assert_eq!(references.len(), claim.assertions().len());
+            }
+            assert!(assertions_checked > 0);
+            assert!(hashes_checked > 0);
+            assert_eq!(reader.validation_state(), ValidationState::Trusted);
+        }
+        Ok(())
+    }
 
     #[test]
     fn json_report_preserves_partial_reader_manifests() -> Result<()> {
