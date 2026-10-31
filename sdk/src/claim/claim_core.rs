@@ -2032,7 +2032,9 @@ impl Claim {
     pub fn data(&self) -> Result<Vec<u8>> {
         match self.original_bytes {
             Some(ref ob) => Ok(ob.clone()),
-            None => Ok(c2pa_cbor::ser::to_vec(&self).map_err(|_err| Error::ClaimEncoding)?),
+            None => {
+                Ok(c2pa_cbor::to_vec_deterministic(&self).map_err(|_err| Error::ClaimEncoding)?)
+            }
         }
     }
 

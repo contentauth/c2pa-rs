@@ -1440,3 +1440,37 @@ fn test_verify_cloud_data_actions_in_non_update_manifest_not_allowed() {
         "actions in cloud-data of a non-update manifest should fail"
     );
 }
+
+/// Returns true if `bytes` is CBOR in the Core Deterministic Encoding of RFC 8949 section 4.2.1:
+/// encoding the decoded value again in deterministic mode gives the same bytes.
+fn is_deterministic_cbor(bytes: &[u8]) -> bool {
+    let value: c2pa_cbor::Value = c2pa_cbor::from_slice(bytes).expect("decode CBOR");
+    c2pa_cbor::to_vec_deterministic(&value).expect("encode CBOR") == bytes
+}
+
+#[test]
+fn test_claim_and_assertions_use_deterministic_cbor() {
+    // C2PA requires the Core Deterministic Encoding of RFC 8949 for claims and CBOR assertions.
+    // Struct fields are declared in an order that is not the sorted key order, so a
+    // non-deterministic encoder writes the keys out of order.
+    let claim = create_test_claim().expect("create test claim");
+
+    let claim_cbor = claim.data().expect("claim data");
+    assert!(
+        is_deterministic_cbor(&claim_cbor),
+        "the claim is not deterministic CBOR"
+    );
+
+    let mut cbor_assertions = 0;
+    for ca in claim.claim_assertion_store() {
+        if let AssertionData::Cbor(bytes) = ca.assertion().decode_data() {
+            cbor_assertions += 1;
+            assert!(
+                is_deterministic_cbor(bytes),
+                "assertion {} is not deterministic CBOR",
+                ca.label_raw()
+            );
+        }
+    }
+    assert!(cbor_assertions > 0, "the test claim has no CBOR assertions");
+}
