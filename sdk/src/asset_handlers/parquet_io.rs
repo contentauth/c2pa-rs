@@ -375,14 +375,13 @@ impl Footer {
             }
         };
         for field in &self.fields {
-            if field.id == KEY_VALUE_METADATA_FIELD
-                || (!list_written && field.id > KEY_VALUE_METADATA_FIELD)
-            {
+            if !list_written && field.id >= KEY_VALUE_METADATA_FIELD {
                 write_list(&mut footer, &mut last_id);
                 list_written = true;
-                if field.id == KEY_VALUE_METADATA_FIELD {
-                    continue;
-                }
+            }
+            // the list replaces every existing `key_value_metadata`, even a repeated one
+            if field.id == KEY_VALUE_METADATA_FIELD {
+                continue;
             }
             write_field_header(&mut footer, last_id, field.id, field.field_type);
             footer.extend_from_slice(&self.data[field.value.clone()]);
@@ -397,7 +396,8 @@ impl Footer {
 }
 
 fn write_field_header(out: &mut Vec<u8>, last_id: i16, id: i16, field_type: u8) {
-    match id - last_id {
+    // widened so that ids from an untrusted footer (e.g. 32767 then -32768) can't overflow
+    match id as i32 - last_id as i32 {
         delta @ 1..=15 => out.push(((delta as u8) << 4) | field_type),
         _ => {
             out.push(field_type);
@@ -752,6 +752,17 @@ mod tests {
             ),
             Err(Error::TooManyManifestStores)
         ));
+    }
+
+    #[test]
+    fn test_field_header_extreme_ids() {
+        // a footer can list field ids in any order; the delta must not overflow
+        let mut out = Vec::new();
+        write_field_header(&mut out, i16::MAX, i16::MIN, BINARY);
+        write_field_header(&mut out, i16::MIN, i16::MAX, BINARY);
+        let mut thrift = Thrift { data: &out, pos: 0 };
+        assert_eq!(thrift.field_header(0).unwrap(), Some((i16::MIN, BINARY)));
+        assert_eq!(thrift.field_header(0).unwrap(), Some((i16::MAX, BINARY)));
     }
 
     #[test]
