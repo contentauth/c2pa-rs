@@ -282,9 +282,12 @@ impl C2paWriter for JpegIO {
         let mut jpeg = Jpeg::from_bytes(buf.into()).map_err(|_err| Error::EmbeddingError)?;
 
         // remove existing CAI segments
+        // An existing manifest keeps its place, even directly after SOI (index 0, since the
+        // Jpeg::from_bytes Vec does not contain the SOI marker): get_object_locations and
+        // get_box_map report it there.
         let insertion_point = match delete_cai_segments(&mut jpeg)? {
-            Some(i) if i > 0 => i, // note the Jpeg::from_bytes Vec does not contain the SOI marker
-            _ => c2pa_insertion_index(
+            Some(i) => i,
+            None => c2pa_insertion_index(
                 jpeg.segments()
                     .iter()
                     .map(|segment| (segment.marker(), segment.contents().as_ref())),
@@ -1256,6 +1259,51 @@ pub mod tests {
 
         let mut signed_stream = Cursor::new(signed);
         assert_eq!(jpeg_io.read_c2pa(&mut signed_stream).unwrap(), store);
+    }
+
+    #[test]
+    fn test_write_c2pa_keeps_existing_manifest_after_soi() {
+        // An older signer put the manifest directly after SOI, ahead of the Exif APP1.
+        let source = include_bytes!("../../tests/fixtures/no_manifest.jpg");
+        let jpeg_io = JpegIO {};
+        let store = jpeg_io
+            .read_c2pa(&mut Cursor::new(include_bytes!(
+                "../../tests/fixtures/CA.jpg"
+            )))
+            .unwrap();
+        let mut output = Cursor::new(Vec::new());
+        jpeg_io
+            .write_c2pa(&mut Cursor::new(source.to_vec()), &mut output, &store)
+            .unwrap();
+        let mut jpeg = Jpeg::from_bytes(output.into_inner().into()).unwrap();
+        let segments = jpeg.segments_mut();
+        let app11: Vec<_> = segments
+            .iter()
+            .filter(|s| s.marker() == markers::APP11)
+            .cloned()
+            .collect();
+        segments.retain(|s| s.marker() != markers::APP11);
+        for (i, segment) in app11.into_iter().enumerate() {
+            segments.insert(i, segment);
+        }
+        let mut manifest_first = Vec::new();
+        jpeg.encoder().write_to(&mut manifest_first).unwrap();
+
+        // Re-signing leaves it there, where get_object_locations reports it.
+        let mut input = Cursor::new(manifest_first.clone());
+        let locations = jpeg_io.get_object_locations(&mut input).unwrap();
+        let cai = locations
+            .iter()
+            .find(|l| l.htype == ObjectType::C2pa)
+            .unwrap();
+        assert_eq!(cai.offset, 2);
+
+        let mut output = Cursor::new(Vec::new());
+        jpeg_io
+            .write_c2pa(&mut Cursor::new(manifest_first), &mut output, &store)
+            .unwrap();
+        let jpeg = Jpeg::from_bytes(output.into_inner().into()).unwrap();
+        assert_eq!(jpeg.segments()[0].marker(), markers::APP11);
     }
 
     #[test]
