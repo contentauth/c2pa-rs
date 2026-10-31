@@ -9,6 +9,28 @@ As of December 2025 and until the 1.0.0 version is released, the CAI team will o
 
 ## [Unreleased]
 
+## [0.91.8](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.91.7...c2pa-v0.91.8)
+_31 October 2026_
+
+### Added
+
+* Backport OCSP live-fetch override to stable ([#2787](https://github.com/contentauth/c2pa-rs/pull/2787)) ([#2975](https://github.com/contentauth/c2pa-rs/pull/2975))
+
+### Fixed
+
+* *(sdk)* Use time-stamp genTime as attested time (backport #2816) ([#2978](https://github.com/contentauth/c2pa-rs/pull/2978))
+* *(sdk)* Verify time-stamp signed attributes as encoded (backport #2815) ([#2977](https://github.com/contentauth/c2pa-rs/pull/2977))
+* *(sdk)* Ignore future OCSP responses (backport #2820) ([#2974](https://github.com/contentauth/c2pa-rs/pull/2974))
+* Bound remote manifest response reads (CAI-13473) (backport #2920) ([#2957](https://github.com/contentauth/c2pa-rs/pull/2957))
+* *(sdk)* Send signer TSA headers with timestamp assertion requests (backport #2762) ([#2953](https://github.com/contentauth/c2pa-rs/pull/2953))
+* *(sdk)* Serialize binary thumbnails with crJSON MIME fields (backport #2917) ([#2952](https://github.com/contentauth/c2pa-rs/pull/2952))
+* Encode soft binding block values as CBOR bstr when supplied as JSON ([#2689](https://github.com/contentauth/c2pa-rs/pull/2689)) (backport #2757) ([#2948](https://github.com/contentauth/c2pa-rs/pull/2948))
+* Don't auto-add a second actions assertion for v1 claims (CAI-13962) ([#2782](https://github.com/contentauth/c2pa-rs/pull/2782)) ([#2934](https://github.com/contentauth/c2pa-rs/pull/2934))
+
+### Other
+
+* Add bidirectional compatibility tests (backport #2833) ([#2955](https://github.com/contentauth/c2pa-rs/pull/2955))
+
 ## [0.91.7](https://github.com/contentauth/c2pa-rs/compare/c2pa-v0.91.6...c2pa-v0.91.7)
 _26 October 2026_
 
