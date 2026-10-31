@@ -295,10 +295,13 @@ impl LiveVideoValidator {
             .parse()
             .map_err(|_| "session key createdAt is not a valid RFC 3339 datetime".to_string())?;
 
-        let validity_seconds = i64::try_from(key.validity_period)
-            .map_err(|_| "validityPeriod overflow".to_string())?;
-
-        let expires_at = created_at + Duration::seconds(validity_seconds);
+        // validityPeriod is untrusted: `Duration::seconds` panics past i64::MAX / 1000 seconds,
+        // and adding it to createdAt panics past the end of the representable date range.
+        let expires_at = i64::try_from(key.validity_period)
+            .ok()
+            .and_then(Duration::try_seconds)
+            .and_then(|validity| created_at.checked_add_signed(validity))
+            .ok_or_else(|| "session key validityPeriod is out of range".to_string())?;
 
         // Per §19.4.1, the protected header's `iat` claims the segment's actual time of
         // signing. Prefer it over wall-clock time so validation done after the fact (e.g.
@@ -919,6 +922,45 @@ mod tests {
             .logged_items()
             .iter()
             .any(|i| { i.validation_status.as_deref() == Some(LIVEVIDEO_SEGMENT_INVALID) }));
+    }
+
+    /// A validityPeriod too large for a date (or for `chrono::Duration`) fails the segment
+    /// instead of panicking.
+    #[test]
+    fn vsi_out_of_range_validity_period_fails() {
+        use vsi_crypto_helpers::*;
+        // past i64::MAX / 1000 seconds, past the last representable date, and past i64::MAX
+        for validity_period in [i64::MAX as u64, 10_000_000_000_000, u64::MAX] {
+            let (signing_key, cose_key) = generate_test_key_pair();
+            let ee_cert_der = test_ee_cert_der();
+            let mut validator = LiveVideoValidator::new();
+            let mut tracker = StatusTracker::default();
+
+            let keys = SessionKeys {
+                keys: vec![SessionKey {
+                    validity_period,
+                    ..session_keys_with_cose_key(cose_key, &signing_key, &ee_cert_der)
+                        .keys
+                        .remove(0)
+                }],
+            };
+            validator
+                .validate_session_keys(&keys, TEST_MANIFEST_ID, Some(&ee_cert_der), &mut tracker)
+                .unwrap();
+
+            let _ = validator.validate_verifiable_segment_info(
+                &make_signed_vsi_segment(1, TEST_MANIFEST_ID, &signing_key),
+                &mut tracker,
+            );
+
+            assert!(
+                tracker
+                    .logged_items()
+                    .iter()
+                    .any(|i| { i.validation_status.as_deref() == Some(LIVEVIDEO_SEGMENT_INVALID) }),
+                "{validity_period}"
+            );
+        }
     }
 
     /// Regression test: the validity window is [createdAt, createdAt + validityPeriod], not
