@@ -502,6 +502,13 @@ pub fn check_certificate_profile(
         None => tbscert.is_ca(), // if is not ca it must be present
     };
 
+    // Time-stamping and OCSP signing certificates are valid for exactly one of
+    // those purposes (checked above).
+    let signs_time_stamps_or_ocsp = matches!(
+        tbscert.extended_key_usage(),
+        Ok(Some(BasicExtension { value: eku, .. })) if eku.time_stamping || eku.ocsp_signing
+    );
+
     // Populate needed extension info.
     for e in signcert.extensions() {
         match e.parsed_extension() {
@@ -512,24 +519,36 @@ pub fn check_certificate_profile(
                 ski_good = true;
             }
             ParsedExtension::KeyUsage(ku) => {
-                if ku.digital_signature() {
-                    if ku.key_cert_sign() && !tbscert.is_ca() {
-                        log_item!(
-                            "",
-                            "certificate missing digitalSignature EKU",
-                            "check_certificate_profile"
-                        )
-                        .validation_status(SIGNING_CREDENTIAL_INVALID)
-                        .failure_no_throw(
-                            validation_log,
-                            CertificateProfileError::InvalidCertificate,
-                        );
+                // "The keyCertSign bit shall only be asserted if the cA boolean is
+                // asserted in the Basic Constraints extension."
+                if ku.key_cert_sign() && !tbscert.is_ca() {
+                    log_item!(
+                        "",
+                        "certificate asserts keyCertSign key usage but is not a CA",
+                        "check_certificate_profile"
+                    )
+                    .validation_status(SIGNING_CREDENTIAL_INVALID)
+                    .failure_no_throw(validation_log, CertificateProfileError::InvalidCertificate);
 
-                        return Err(CertificateProfileError::InvalidCertificate);
-                    }
-                    key_usage_good = true;
+                    return Err(CertificateProfileError::InvalidCertificate);
                 }
-                if ku.key_cert_sign() || ku.non_repudiation() {
+
+                // "Certificates used to sign C2PA manifests shall assert the
+                // digitalSignature bit." Time-stamping and OCSP signing certificates
+                // may assert nonRepudiation instead (RFC 3161, section 2.3).
+                if !tbscert.is_ca() && !signs_time_stamps_or_ocsp && !ku.digital_signature() {
+                    log_item!(
+                        "",
+                        "certificate missing digitalSignature key usage",
+                        "check_certificate_profile"
+                    )
+                    .validation_status(SIGNING_CREDENTIAL_INVALID)
+                    .failure_no_throw(validation_log, CertificateProfileError::InvalidCertificate);
+
+                    return Err(CertificateProfileError::InvalidCertificate);
+                }
+
+                if ku.digital_signature() || ku.key_cert_sign() || ku.non_repudiation() {
                     key_usage_good = true;
                 }
 
@@ -660,11 +679,11 @@ mod tests {
     #![allow(clippy::panic)]
     #![allow(clippy::unwrap_used)]
 
-    use rasn::types::Any;
+    use rasn::{types::Any, Decoder, Encoder};
     use rasn_pkix::Certificate;
     #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
     use wasm_bindgen_test::wasm_bindgen_test;
-    use x509_parser::{num_bigint::BigInt, pem::Pem};
+    use x509_parser::{num_bigint::BigInt, pem::Pem, prelude::FromDer};
 
     use super::is_valid_rsa_public_exponent;
     use crate::{
@@ -893,9 +912,653 @@ mod tests {
         }
     }
 
+    // C2PA Trust Model, Certificate Profiles: "Certificates used to sign C2PA
+    // manifests shall assert the digitalSignature bit. The keyCertSign bit shall
+    // only be asserted if the cA boolean is asserted."
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn end_entity_key_usage() {
+        let ctp = CertificateTrustPolicy::default();
+
+        for (cert_pem, expected_description) in [
+            (
+                include_bytes!("../../../tests/fixtures/crypto/cose/ku_keycertsign_not_ca.pub")
+                    .as_slice(),
+                "certificate asserts keyCertSign key usage but is not a CA",
+            ),
+            (
+                include_bytes!("../../../tests/fixtures/crypto/cose/ku_nonrepudiation_only.pub")
+                    .as_slice(),
+                "certificate missing digitalSignature key usage",
+            ),
+        ] {
+            let mut validation_log = StatusTracker::default();
+            assert!(check_end_entity_certificate_profile(
+                &x509_der_from_pem(cert_pem),
+                &ctp,
+                &mut validation_log,
+                None
+            )
+            .is_err());
+
+            let item = &validation_log.logged_items()[0];
+            assert_eq!(
+                item.validation_status,
+                Some(SIGNING_CREDENTIAL_INVALID.into())
+            );
+            assert_eq!(item.description, expected_description);
+        }
+
+        // A time-stamping certificate may assert nonRepudiation without
+        // digitalSignature (RFC 3161, section 2.3).
+        let mut validation_log = StatusTracker::default();
+        check_end_entity_certificate_profile(
+            &x509_der_from_pem(include_bytes!(
+                "../../../tests/fixtures/crypto/cose/ku_nonrepudiation_tsa.pub"
+            )),
+            &ctp,
+            &mut validation_log,
+            None,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(target_os = "wasi")),
+        wasm_bindgen_test
+    )]
+    fn ocsp_signing_allows_nonrepudiation_without_digital_signature() {
+        let chain = generate_ephemeral_chain("ocsp-key-usage.local").unwrap();
+        let mut cert: Certificate = rasn::der::decode(&chain.ee_der).unwrap();
+        // KeyUsage BIT STRING with only nonRepudiation asserted.
+        extension(&mut cert, &[2, 5, 29, 15], vec![0x03, 0x02, 0x06, 0x40]);
+        extension(
+            &mut cert,
+            &[2, 5, 29, 37],
+            rasn::der::encode(&vec![oid(&[1, 3, 6, 1, 5, 5, 7, 3, 9])]).unwrap(),
+        );
+
+        let ctp = CertificateTrustPolicy::default();
+        let mut validation_log = StatusTracker::default();
+        assert_eq!(
+            check_end_entity_certificate_profile(
+                &rasn::der::encode(&cert).unwrap(),
+                &ctp,
+                &mut validation_log,
+                None,
+            ),
+            Ok(())
+        );
+        assert!(validation_log.logged_items().is_empty());
+
+        // The same key usage must still be rejected for manifest signing.
+        extension(
+            &mut cert,
+            &[2, 5, 29, 37],
+            rasn::der::encode(&vec![oid(&[1, 3, 6, 1, 5, 5, 7, 3, 4])]).unwrap(),
+        );
+        let mut validation_log = StatusTracker::default();
+        assert_eq!(
+            check_end_entity_certificate_profile(
+                &rasn::der::encode(&cert).unwrap(),
+                &ctp,
+                &mut validation_log,
+                None,
+            ),
+            Err(super::CertificateProfileError::InvalidCertificate)
+        );
+        let item = &validation_log.logged_items()[0];
+        assert_eq!(
+            item.validation_status,
+            Some(SIGNING_CREDENTIAL_INVALID.into())
+        );
+        assert_eq!(
+            item.description,
+            "certificate missing digitalSignature key usage"
+        );
+    }
+
     fn x509_der_from_pem(cert_pem: &[u8]) -> Vec<u8> {
         let mut pems = Pem::iter_from_buffer(cert_pem);
         let pem = pems.next().unwrap().unwrap();
         pem.contents
+    }
+
+    fn profile_cert() -> Certificate {
+        rasn::der::decode(&x509_der_from_pem(include_bytes!(
+            "../../../tests/fixtures/certs/ed25519.pub"
+        )))
+        .unwrap()
+    }
+
+    fn oid(value: &[u32]) -> rasn::types::ObjectIdentifier {
+        rasn::types::ObjectIdentifier::new(value.to_vec()).unwrap()
+    }
+
+    fn extension(cert: &mut Certificate, id: &[u32], value: Vec<u8>) {
+        let extensions = cert.tbs_certificate.extensions.as_mut().unwrap();
+        let existing = extensions
+            .iter_mut()
+            .find(|e| e.extn_id == oid(id))
+            .unwrap();
+        existing.extn_value = value.into();
+    }
+
+    fn assert_profile_error(cert: &Certificate, expected: super::CertificateProfileError) {
+        // These mutations test profile validation, not certificate signature verification.
+        let der = rasn::der::encode(cert).unwrap();
+        let mut log = StatusTracker::default();
+        let result = super::check_certificate_profile(
+            &der,
+            &CertificateTrustPolicy::default(),
+            &mut log,
+            None,
+        );
+        assert_eq!(result, Err(expected));
+    }
+
+    #[test]
+    fn malformed_version_algorithm_curve_and_unique_ids_are_rejected() {
+        let mut log = StatusTracker::default();
+        assert_eq!(
+            check_end_entity_certificate_profile(
+                b"invalid DER",
+                &CertificateTrustPolicy::default(),
+                &mut log,
+                None,
+            ),
+            Err(super::CertificateProfileError::InvalidCertificate)
+        );
+        assert!(log.has_status(SIGNING_CREDENTIAL_INVALID));
+
+        let mut cert = profile_cert();
+        cert.tbs_certificate.version = rasn_pkix::Version::V2;
+        assert_profile_error(
+            &cert,
+            super::CertificateProfileError::InvalidCertificateVersion,
+        );
+
+        let mut cert = profile_cert();
+        cert.signature_algorithm.algorithm = oid(&[1, 2, 3, 4]);
+        cert.tbs_certificate.signature = cert.signature_algorithm.clone();
+        assert_profile_error(&cert, super::CertificateProfileError::UnsupportedAlgorithm);
+
+        for issuer in [false, true] {
+            let mut cert = profile_cert();
+            if issuer {
+                cert.tbs_certificate.issuer_unique_id =
+                    Some(rasn::types::BitString::from_slice(&[1]));
+            } else {
+                cert.tbs_certificate.subject_unique_id =
+                    Some(rasn::types::BitString::from_slice(&[1]));
+            }
+            assert_profile_error(&cert, super::CertificateProfileError::InvalidCertificate);
+        }
+
+        for parameters in [
+            None,
+            Some(Any::new(vec![5, 0])),
+            Some(Any::new(rasn::der::encode(&oid(&[1, 2, 3, 4])).unwrap())),
+        ] {
+            let mut cert = profile_cert();
+            cert.tbs_certificate.subject_public_key_info.algorithm =
+                rasn_pkix::AlgorithmIdentifier {
+                    algorithm: oid(&[1, 2, 840, 10045, 2, 1]),
+                    parameters,
+                };
+            assert_profile_error(&cert, super::CertificateProfileError::InvalidCertificate);
+        }
+    }
+
+    #[test]
+    fn eku_combinations_and_required_extensions_are_enforced() {
+        for ekus in [
+            vec![oid(&[2, 5, 29, 37, 0])],
+            vec![oid(&[1, 2, 3, 4])],
+            vec![
+                oid(&[1, 3, 6, 1, 5, 5, 7, 3, 8]),
+                oid(&[1, 3, 6, 1, 5, 5, 7, 3, 9]),
+            ],
+            vec![
+                oid(&[1, 3, 6, 1, 5, 5, 7, 3, 8]),
+                oid(&[1, 3, 6, 1, 5, 5, 7, 3, 4]),
+            ],
+        ] {
+            let mut cert = profile_cert();
+            extension(
+                &mut cert,
+                &[2, 5, 29, 37],
+                rasn::der::encode(&ekus).unwrap(),
+            );
+            assert_profile_error(&cert, super::CertificateProfileError::InvalidCertificate);
+        }
+
+        for removed in [&[2, 5, 29, 35][..], &[2, 5, 29, 15], &[2, 5, 29, 37]] {
+            let mut cert = profile_cert();
+            cert.tbs_certificate
+                .extensions
+                .as_mut()
+                .unwrap()
+                .retain(|e| e.extn_id != oid(removed));
+            assert_profile_error(&cert, super::CertificateProfileError::InvalidCertificate);
+        }
+
+        for usage in [vec![3, 2, 2, 0x84], vec![3, 2, 0, 0]] {
+            let mut cert = profile_cert();
+            extension(&mut cert, &[2, 5, 29, 15], usage);
+            assert_profile_error(&cert, super::CertificateProfileError::InvalidCertificate);
+        }
+
+        for critical in [false, true] {
+            let mut cert = profile_cert();
+            cert.tbs_certificate
+                .extensions
+                .as_mut()
+                .unwrap()
+                .push(rasn_pkix::Extension {
+                    extn_id: oid(&[1, 2, 3, 4]),
+                    critical,
+                    extn_value: vec![5, 0].into(),
+                });
+            let mut log = StatusTracker::default();
+            let result = super::check_certificate_profile(
+                &rasn::der::encode(&cert).unwrap(),
+                &CertificateTrustPolicy::default(),
+                &mut log,
+                None,
+            );
+            assert_eq!(result.is_err(), critical);
+            assert_eq!(log.has_status(SIGNING_CREDENTIAL_INVALID), critical);
+        }
+    }
+
+    #[test]
+    fn mandatory_ekus_are_reported_and_ca_is_not_an_end_entity() {
+        let mut ctp = CertificateTrustPolicy::default();
+        ctp.add_mandatory_ekus(b"1.3.6.1.5.5.7.3.8");
+        let cert = profile_cert();
+        let mut log = StatusTracker::default();
+        // Mandatory EKU failures are currently logged, not returned as an error.
+        check_end_entity_certificate_profile(
+            &rasn::der::encode(&cert).unwrap(),
+            &ctp,
+            &mut log,
+            None,
+        )
+        .unwrap();
+        assert!(log.has_status(SIGNING_CREDENTIAL_INVALID));
+        assert!(log
+            .logged_items()
+            .iter()
+            .any(|item| item.description == "certificate missing mandatory EKU"));
+
+        let mut cert = profile_cert();
+        extension(&mut cert, &[2, 5, 29, 19], vec![0x30, 3, 1, 1, 0xff]);
+        extension(&mut cert, &[2, 5, 29, 15], vec![3, 2, 1, 6]);
+        cert.tbs_certificate
+            .extensions
+            .as_mut()
+            .unwrap()
+            .retain(|e| e.extn_id != oid(&[2, 5, 29, 37]));
+        let der = rasn::der::encode(&cert).unwrap();
+        let mut log = StatusTracker::default();
+        assert_eq!(
+            check_end_entity_certificate_profile(&der, &ctp, &mut log, None),
+            Err(super::CertificateProfileError::InvalidCertificate)
+        );
+        assert!(log
+            .logged_items()
+            .iter()
+            .any(|item| item.description == "expected end-entity certificate"));
+        assert!(log
+            .logged_items()
+            .iter()
+            .any(|item| item.description == "certificate missing mandatory EKU"));
+
+        cert.tbs_certificate.issuer = cert.tbs_certificate.subject.clone();
+        assert_profile_error(&cert, super::CertificateProfileError::SelfSignedCertificate);
+    }
+
+    #[test]
+    fn rsa_public_key_shape_size_and_exponent_are_checked() {
+        for key in [
+            vec![0x30, 0],
+            vec![0x30, 3, 2, 1, 3],
+            vec![0x30, 6, 2, 1, 3, 2, 1, 3],
+        ] {
+            let mut cert = profile_cert();
+            cert.tbs_certificate.subject_public_key_info.algorithm =
+                rasn_pkix::AlgorithmIdentifier {
+                    algorithm: oid(&[1, 2, 840, 113549, 1, 1, 1]),
+                    parameters: Some(Any::new(vec![5, 0])),
+                };
+            cert.tbs_certificate
+                .subject_public_key_info
+                .subject_public_key = rasn::types::BitString::from_slice(&key);
+            let der = rasn::der::encode(&cert).unwrap();
+            assert_eq!(
+                super::check_certificate_profile(
+                    &der,
+                    &CertificateTrustPolicy::default(),
+                    &mut StatusTracker::default(),
+                    None
+                ),
+                Err(super::CertificateProfileError::InvalidCertificate)
+            );
+        }
+
+        #[derive(rasn::AsnType, rasn::Encode, rasn::Decode)]
+        struct RsaKey {
+            modulus: rasn::types::Integer,
+            exponent: rasn::types::Integer,
+        }
+
+        let mut cert: Certificate = rasn::der::decode(&x509_der_from_pem(include_bytes!(
+            "../../../tests/fixtures/certs/ps256.pub"
+        )))
+        .unwrap();
+        let key: RsaKey = rasn::der::decode(
+            cert.tbs_certificate
+                .subject_public_key_info
+                .subject_public_key
+                .as_raw_slice(),
+        )
+        .unwrap();
+        let invalid = RsaKey {
+            modulus: key.modulus,
+            exponent: 2.into(),
+        };
+        cert.tbs_certificate
+            .subject_public_key_info
+            .subject_public_key =
+            rasn::types::BitString::from_slice(&rasn::der::encode(&invalid).unwrap());
+
+        assert_profile_error(&cert, super::CertificateProfileError::InvalidCertificate);
+    }
+
+    #[test]
+    fn pss_parameters_require_matching_supported_hashes() {
+        #[derive(rasn::AsnType, rasn::Encode)]
+        struct PssParameters {
+            #[rasn(tag(explicit(0)))]
+            hash: rasn_pkix::AlgorithmIdentifier,
+            #[rasn(tag(explicit(1)))]
+            mask: rasn_pkix::AlgorithmIdentifier,
+        }
+
+        for (hash, mask_hash, valid) in [
+            (
+                vec![2, 16, 840, 1, 101, 3, 4, 2, 1],
+                vec![2, 16, 840, 1, 101, 3, 4, 2, 1],
+                true,
+            ),
+            (
+                vec![2, 16, 840, 1, 101, 3, 4, 2, 2],
+                vec![2, 16, 840, 1, 101, 3, 4, 2, 2],
+                true,
+            ),
+            (
+                vec![2, 16, 840, 1, 101, 3, 4, 2, 3],
+                vec![2, 16, 840, 1, 101, 3, 4, 2, 3],
+                true,
+            ),
+            (vec![1, 3, 14, 3, 2, 26], vec![1, 3, 14, 3, 2, 26], false),
+            (
+                vec![2, 16, 840, 1, 101, 3, 4, 2, 1],
+                vec![2, 16, 840, 1, 101, 3, 4, 2, 2],
+                false,
+            ),
+        ] {
+            let hash_alg = rasn_pkix::AlgorithmIdentifier {
+                algorithm: oid(&hash),
+                parameters: None,
+            };
+
+            let mask_alg = rasn_pkix::AlgorithmIdentifier {
+                algorithm: oid(&mask_hash),
+                parameters: None,
+            };
+
+            let params = rasn::der::encode(&PssParameters {
+                hash: hash_alg,
+                mask: rasn_pkix::AlgorithmIdentifier {
+                    algorithm: oid(&[1, 2, 840, 113549, 1, 1, 8]),
+                    parameters: Some(Any::new(rasn::der::encode(&mask_alg).unwrap())),
+                },
+            })
+            .unwrap();
+
+            let mut cert = profile_cert();
+            cert.signature_algorithm = rasn_pkix::AlgorithmIdentifier {
+                algorithm: oid(&[1, 2, 840, 113549, 1, 1, 10]),
+                parameters: Some(Any::new(params)),
+            };
+            cert.tbs_certificate.signature = cert.signature_algorithm.clone();
+            let mut log = StatusTracker::default();
+            let result = super::check_certificate_profile(
+                &rasn::der::encode(&cert).unwrap(),
+                &CertificateTrustPolicy::default(),
+                &mut log,
+                None,
+            );
+            assert_eq!(
+                result.is_ok(),
+                valid,
+                "{hash:?} / {mask_hash:?}: {result:?}"
+            );
+            assert_eq!(log.has_status(SIGNING_CREDENTIAL_INVALID), !valid);
+        }
+
+        let mut cert = profile_cert();
+        cert.signature_algorithm = rasn_pkix::AlgorithmIdentifier {
+            algorithm: oid(&[1, 2, 840, 113549, 1, 1, 10]),
+            parameters: None,
+        };
+        cert.tbs_certificate.signature = cert.signature_algorithm.clone();
+        assert_profile_error(&cert, super::CertificateProfileError::InvalidCertificate);
+    }
+
+    fn timestamp_at(seconds: i64) -> crate::crypto::asn1::rfc3161::TstInfo {
+        use bcder::decode::Constructed;
+        #[derive(rasn::AsnType, rasn::Encode)]
+        struct Imprint {
+            algorithm: rasn_pkix::AlgorithmIdentifier,
+            digest: rasn::types::OctetString,
+        }
+        #[derive(rasn::AsnType, rasn::Encode)]
+        struct Timestamp {
+            version: rasn::types::Integer,
+            policy: rasn::types::ObjectIdentifier,
+            imprint: Imprint,
+            serial: rasn::types::Integer,
+            time: rasn::types::GeneralizedTime,
+        }
+
+        let bytes = rasn::der::encode(&Timestamp {
+            version: 1.into(),
+            policy: oid(&[1, 2, 3]),
+            imprint: Imprint {
+                algorithm: rasn_pkix::AlgorithmIdentifier {
+                    algorithm: oid(&[2, 16, 840, 1, 101, 3, 4, 2, 1]),
+                    parameters: None,
+                },
+                digest: vec![0; 32].into(),
+            },
+            serial: 1.into(),
+            time: chrono::DateTime::from_timestamp(seconds, 0).unwrap().into(),
+        })
+        .unwrap();
+        Constructed::decode(
+            bytes.as_slice(),
+            bcder::Mode::Der,
+            crate::crypto::asn1::rfc3161::TstInfo::take_from,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn supplied_timestamp_checks_both_validity_boundaries_inclusively() {
+        let cert = profile_cert();
+        let der = rasn::der::encode(&cert).unwrap();
+        let (_, parsed) = x509_parser::prelude::X509Certificate::from_der(&der).unwrap();
+        let start = parsed.validity().not_before.timestamp();
+        let end = parsed.validity().not_after.timestamp();
+        let ctp = CertificateTrustPolicy::default();
+        for (time, valid) in [
+            (start - 1, false),
+            (start, true),
+            (end, true),
+            (end + 1, false),
+        ] {
+            let timestamp = timestamp_at(time);
+            let mut log = StatusTracker::default();
+            let result =
+                check_end_entity_certificate_profile(&der, &ctp, &mut log, Some(&timestamp));
+            if valid {
+                assert_eq!(result, Ok(()));
+                assert!(!log.has_any_error());
+            } else {
+                assert_eq!(
+                    result,
+                    Err(super::CertificateProfileError::CertificateNotValidAtTime)
+                );
+                assert!(log.has_status(SIGNING_CREDENTIAL_EXPIRED));
+                assert_eq!(log.logged_items()[0].description, "certificate expired");
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_pss_parameter_structures_fail_closed() {
+        let sha256 = rasn_pkix::AlgorithmIdentifier {
+            algorithm: oid(&[2, 16, 840, 1, 101, 3, 4, 2, 1]),
+            parameters: None,
+        };
+
+        let hash = rasn::der::encode(&sha256).unwrap();
+        let mut malformed = vec![
+            vec![5, 0],
+            vec![0x30, 0],
+            vec![0x30, 2, 0xa1, 0],
+            vec![0x30, 2, 0xa0, 0],
+        ];
+        for tag in [0xa0, 0x81, 0xa1] {
+            let second = if tag == 0xa1 {
+                vec![tag, 0]
+            } else {
+                vec![tag, 2, 5, 0]
+            };
+
+            let mut body = vec![0xa0, hash.len() as u8];
+            body.extend_from_slice(&hash);
+            body.extend_from_slice(&second);
+            let mut sequence = vec![0x30, body.len() as u8];
+            sequence.extend_from_slice(&body);
+            malformed.push(sequence);
+        }
+
+        for params in malformed {
+            let mut cert = profile_cert();
+            cert.signature_algorithm = rasn_pkix::AlgorithmIdentifier {
+                algorithm: oid(&[1, 2, 840, 113549, 1, 1, 10]),
+                parameters: Some(Any::new(params)),
+            };
+            cert.tbs_certificate.signature = cert.signature_algorithm.clone();
+            let result = super::check_certificate_profile(
+                &rasn::der::encode(&cert).unwrap(),
+                &CertificateTrustPolicy::default(),
+                &mut StatusTracker::default(),
+                None,
+            );
+            assert_eq!(
+                result,
+                Err(super::CertificateProfileError::InvalidCertificate)
+            );
+        }
+    }
+
+    #[test]
+    fn recognized_critical_extensions_do_not_look_like_unknown_extensions() {
+        use x509_parser::extensions::ParsedExtension;
+        let fixtures = [
+            (
+                vec![2, 5, 29, 33],
+                vec![0x30, 10, 0x30, 8, 6, 2, 42, 3, 6, 2, 42, 4],
+                "PolicyMappings",
+            ),
+            (
+                vec![2, 5, 29, 30],
+                [
+                    &[0x30, 17, 0xa0, 15, 0x30, 13, 0x82, 11][..],
+                    b"example.com",
+                ]
+                .concat(),
+                "NameConstraints",
+            ),
+            (
+                vec![2, 5, 29, 36],
+                vec![0x30, 3, 0x80, 1, 0],
+                "PolicyConstraints",
+            ),
+            (vec![2, 5, 29, 54], vec![2, 1, 0], "InhibitAnyPolicy"),
+            (
+                vec![2, 16, 840, 1, 113730, 1, 1],
+                vec![3, 2, 0, 0x80],
+                "NSCertType",
+            ),
+            (vec![2, 5, 29, 20], vec![2, 1, 1], "CRLNumber"),
+            (vec![2, 5, 29, 21], vec![10, 1, 0], "ReasonCode"),
+            (
+                vec![2, 5, 29, 24],
+                [&[0x18, 15][..], b"20200101000000Z"].concat(),
+                "InvalidityDate",
+            ),
+        ];
+        for (id, value, expected) in fixtures {
+            let mut cert = profile_cert();
+            let id = oid(&id);
+            cert.tbs_certificate
+                .extensions
+                .as_mut()
+                .unwrap()
+                .push(rasn_pkix::Extension {
+                    extn_id: id.clone(),
+                    critical: true,
+                    extn_value: value.into(),
+                });
+            let der = rasn::der::encode(&cert).unwrap();
+            let (_, parsed) = x509_parser::prelude::X509Certificate::from_der(&der).unwrap();
+            let parsed_extension = parsed
+                .extensions()
+                .iter()
+                .find(|extension| extension.oid.to_id_string() == id.to_string())
+                .unwrap();
+            let actual = match parsed_extension.parsed_extension() {
+                ParsedExtension::PolicyMappings(_) => "PolicyMappings",
+                ParsedExtension::NameConstraints(_) => "NameConstraints",
+                ParsedExtension::PolicyConstraints(_) => "PolicyConstraints",
+                ParsedExtension::InhibitAnyPolicy(_) => "InhibitAnyPolicy",
+                ParsedExtension::NSCertType(_) => "NSCertType",
+                ParsedExtension::CRLNumber(_) => "CRLNumber",
+                ParsedExtension::ReasonCode(_) => "ReasonCode",
+                ParsedExtension::InvalidityDate(_) => "InvalidityDate",
+                other => panic!("unexpected extension: {other:?}"),
+            };
+
+            assert_eq!(actual, expected);
+            let mut log = StatusTracker::default();
+            check_end_entity_certificate_profile(
+                &der,
+                &CertificateTrustPolicy::default(),
+                &mut log,
+                None,
+            )
+            .unwrap();
+            assert!(!log.has_any_error(), "{expected}");
+        }
     }
 }
