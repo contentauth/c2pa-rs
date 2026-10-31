@@ -802,6 +802,8 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use chrono::{TimeZone, Utc};
+    #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+    use wasm_bindgen_test::wasm_bindgen_test;
 
     use super::*;
     use crate::crypto::cert_chain_pem_to_der;
