@@ -28,7 +28,10 @@
 //! it doesn't change its hash. In a compressed file the C2PA record is written as its own gzip
 //! member. WARC-zstd files are not supported.
 
-use std::io::{Read, Write};
+use std::{
+    collections::HashSet,
+    io::{Read, Write},
+};
 
 use flate2::{bufread::GzDecoder, write::GzEncoder, Compression};
 
@@ -350,6 +353,15 @@ impl C2paReader for WarcIO {
         let warc = parse(&file)?;
         // More than one C2PA record is treated as no manifest.
         match warc.c2pa_records()[..] {
+            // the C2PA record is always the last record of the file
+            [record]
+                if !warc
+                    .records
+                    .last()
+                    .is_some_and(|last| std::ptr::eq(last, record)) =>
+            {
+                Err(invalid("the C2PA record is not the last record"))
+            }
             [record] if record.block_end > record.block_start => Ok(warc
                 .member_data(&file, record.member)[record.block_start..record.block_end]
                 .to_vec()),
@@ -371,12 +383,13 @@ impl AssetCollectionHash for WarcIO {
         let file = read_all(input_stream)?;
         let warc = parse(&file)?;
         let mut members: Vec<(String, Vec<u8>)> = Vec::new();
+        let mut seen = HashSet::new();
         for record in warc.records.iter().filter(|r| !r.is_c2pa) {
             let uri = record
                 .record_id
                 .clone()
                 .ok_or_else(|| Error::HashMismatch("WARC record has no WARC-Record-ID".into()))?;
-            if members.iter().any(|(u, _)| *u == uri) {
+            if !seen.insert(uri.clone()) {
                 return Err(Error::HashMismatch(format!(
                     "two WARC records share the WARC-Record-ID {uri}"
                 )));
@@ -682,6 +695,19 @@ mod tests {
         assert!(matches!(read(&doubled), Err(Error::JumbfNotFound)));
         // Both are left out of the collection.
         assert_eq!(members(&doubled).unwrap(), members(&plain()).unwrap());
+    }
+
+    #[test]
+    fn c2pa_record_must_be_last() {
+        let mut records = records();
+        records.insert(
+            1,
+            record(C2PA_WARC_TYPE, "urn:uuid:c1", C2PA_CONTENT_TYPE, b"store"),
+        );
+        assert!(matches!(
+            read(&records.concat()),
+            Err(Error::InvalidAsset(_))
+        ));
     }
 
     #[test]
