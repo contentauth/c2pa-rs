@@ -314,6 +314,8 @@ pub(crate) mod reader;
 pub(crate) mod resource_store;
 pub(crate) mod salt;
 pub(crate) mod signer;
+#[cfg(all(feature = "tokio", not(target_arch = "wasm32")))]
+mod spawn_blocking;
 pub(crate) mod spec_versions;
 pub(crate) mod store;
 

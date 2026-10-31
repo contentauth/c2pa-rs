@@ -255,7 +255,7 @@ pub enum Error {
     HttpError(#[from] http::Error),
 
     #[error(transparent)]
-    HttpResolverError(#[from] HttpResolverError),
+    HttpResolverError(HttpResolverError),
 
     #[error(transparent)]
     TryFromIntError(#[from] std::num::TryFromIntError),
@@ -289,7 +289,7 @@ pub enum Error {
     InsufficientMemory,
 
     #[error(transparent)]
-    TimeStampError(#[from] crate::crypto::time_stamp::TimeStampError),
+    TimeStampError(crate::crypto::time_stamp::TimeStampError),
 
     #[error(transparent)]
     RawSignatureValidationError(#[from] c2pa_raw_crypto::RawSignatureValidationError),
@@ -327,6 +327,28 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 impl From<std::convert::Infallible> for Error {
     fn from(never: std::convert::Infallible) -> Self {
         match never {}
+    }
+}
+
+/// A request cancelled through [`Context::cancel`](crate::Context::cancel) ends the operation as
+/// cancelled rather than as a network failure.
+impl From<HttpResolverError> for Error {
+    fn from(err: HttpResolverError) -> Self {
+        match err {
+            HttpResolverError::Cancelled => Error::OperationCancelled,
+            err => Error::HttpResolverError(err),
+        }
+    }
+}
+
+impl From<TimeStampError> for Error {
+    fn from(err: TimeStampError) -> Self {
+        match err {
+            TimeStampError::HttpResolverError(HttpResolverError::Cancelled) => {
+                Error::OperationCancelled
+            }
+            err => Error::TimeStampError(err),
+        }
     }
 }
 

@@ -11,94 +11,18 @@
 // specific language governing permissions and limitations under
 // each license.
 
-//! HTTP abstraction layer.
+//! HTTP abstraction layer for the [C2PA Rust SDK](https://docs.rs/c2pa).
 //!
-//! This module defines generic traits and helpers for performing HTTP requests
-//! without hard-wiring a specific HTTP client. It allows host applications to
-//! plug in their own HTTP implementation, restrict where the SDK may connect,
-//! or disable networking entirely.
-//!
-//! # When do network requests occur?
-//!
-//! The SDK may issue HTTP/S requests in the following scenarios:
-//! - [`Reader`]:
-//!     - Fetching remote manifests
-//!     - Validating CAWG identity assertions
-//!     - Fetching OCSP revocation status
-//! - [`Builder`]:
-//!     - Fetching ingredient remote manifests
-//!     - Fetching timestamps
-//!     - Fetching [`TimeStamp`] assertions
-//!     - Fetching OCSP staples
-//!
-//! Network requests may also be issued during the signing process, such as when
-//! [`SignerSettings::Remote`] is specified.
-//!
-//! # Network security policy (SSRF hardening)
-//!
-//! Because some request URLs come from untrusted content, following HTTP redirects can be abused to
-//! reach internal or cloud-metadata endpoints (SSRF – CAI-12574). By default the SDK follows
-//! redirects **except** when a redirect target is a non-globally-routable (internal) address, which
-//! is rejected as [`HttpResolverError::RedirectTargetDisallowed`]. This is controlled by
-//! [`Core::allow_redirects`]; set it to `false` to refuse redirects entirely (reported as
-//! [`HttpResolverError::RedirectDisallowed`]). See [`Core::allowed_network_hosts`] for an explicit
-//! host allow-list.
-//!
-//! Independent of redirects, the *initial* request is also checked: by default a URL that directly
-//! names a link-local or cloud-metadata address (e.g. `169.254.169.254`) is rejected as
-//! [`HttpResolverError::MetadataOrLinkLocalUriDisallowed`] (SSRF – <https://github.com/contentauth/c2pa-rs/issues/2430>). See below for what
-//! this does and does not cover.
-//!
-//! ## Scope: which requests this policy governs
-//!
-//! The policy is applied by the SDK's HTTP *resolvers* ([`Context::resolver`] /
-//! [`Context::resolver_async`]) and therefore covers the requests listed above — remote-manifest
-//! fetches, OCSP, timestamps, and `did:web` resolution — on **both** the read/validate path and the
-//! parts of the signing path that go through those resolvers (e.g. fetching a timestamp or OCSP
-//! staple while building). It does **not** govern the remote-signer transport
-//! ([`SignerSettings::Remote`]), which issues its own request to an operator-configured URL and is
-//! outside this SSRF surface.
-//!
-//! ## Accepted risk: directly-named loopback/private hosts are still reached
-//!
-//! The initial-request check above only rejects link-local/cloud-metadata addresses. A request that
-//! *directly* names a loopback or private (RFC 1918) host — a `localhost` development server acting
-//! as a `did:web` origin or manifest host, or an enterprise OCSP responder on a private address —
-//! **is fetched normally**. This is a deliberate trade-off: it keeps internal PKI and local
-//! development working, and the initial URL is visible to the operator (unlike a stealthy redirect).
-//! Redirects follow the broader [`RedirectTargetDisallowed`] policy above, which also rejects
-//! loopback/private redirect targets — only the *initial* request gets the narrower check. To
-//! constrain the initial host to an explicit set (including loopback/private hosts), configure
-//! [`Core::allowed_network_hosts`].
-//!
-//! [`RedirectTargetDisallowed`]: crate::http::HttpResolverError::RedirectTargetDisallowed
-//!
-//! To restrict which hosts the SDK may contact at all (including each redirect hop), use
-//! [`Core::allowed_network_hosts`]:
-//!
-//! ```
-//! # use c2pa::{Context, Settings};
-//! # fn main() -> c2pa::Result<()> {
-//! // Only allow requests to a local dev server on 127.0.0.1:8080.
-//! let settings =
-//!     Settings::new().with_value("core.allowed_network_hosts", ["127.0.0.1:8080".to_string()])?;
-//! let context = Context::new().with_settings(settings)?;
-//! # let _ = context;
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! [`Reader`]: crate::Reader
-//! [`Builder`]: crate::Builder
-//! [`TimeStamp`]: crate::assertions::TimeStamp
-//! [`SignerSettings::Remote`]: crate::settings::signer::SignerSettings::Remote
-//! [`Context::resolver`]: crate::Context::resolver
-//! [`Context::resolver_async`]: crate::Context::resolver_async
-//! [`HttpResolverError::RedirectTargetDisallowed`]: crate::http::HttpResolverError::RedirectTargetDisallowed
-//! [`HttpResolverError::RedirectDisallowed`]: crate::http::HttpResolverError::RedirectDisallowed
-//! [`HttpResolverError::MetadataOrLinkLocalUriDisallowed`]: crate::http::HttpResolverError::MetadataOrLinkLocalUriDisallowed
-//! [`Core::allow_redirects`]: crate::settings::Core::allow_redirects
-//! [`Core::allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
+//! Defines the [`SyncHttpResolver`] and [`AsyncHttpResolver`] traits the SDK issues every
+//! network request through (remote manifests, OCSP, timestamps, `did:web`), feature-selected
+//! default clients ([`SyncGenericResolver`], [`AsyncGenericResolver`]), and the SSRF-hardening
+//! wrappers in [`restricted`]. The SDK re-exports this crate as `c2pa::http` and assembles the
+//! default policy stack from its settings.
+
+#![deny(clippy::expect_used)]
+#![deny(clippy::panic)]
+#![deny(clippy::unwrap_used)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 use std::{
     io::{self, Cursor, Read},
@@ -109,19 +33,24 @@ use std::{
 use async_trait::async_trait;
 use http::{Request, Response};
 
-use crate::{
-    maybe_send_sync::{MaybeSend, MaybeSync},
-    Result,
-};
+use crate::maybe_send_sync::{MaybeSend, MaybeSync};
 
+mod cancel;
+#[doc(hidden)]
+pub mod maybe_send_sync;
 mod reqwest;
+#[cfg(not(target_arch = "wasm32"))]
+mod scheduler;
 mod ureq;
 mod wasi;
 
 pub mod restricted;
 
+pub use cancel::CancellationToken;
 // Since we expose `http::Request` and `http::Response` in the public API, we also expose the `http` crate.
 pub use http;
+#[cfg(not(target_arch = "wasm32"))]
+pub use scheduler::{RequestHandle, RequestScheduler, ScheduledResolver};
 
 /// A total time limit for one request, set as a request extension.
 ///
@@ -135,13 +64,15 @@ pub use http;
 pub struct RequestTimeout(pub Duration);
 
 /// Adds a default [`RequestTimeout`] to requests that do not set one.
-pub(crate) struct DefaultTimeoutResolver<T> {
+#[doc(hidden)]
+pub struct DefaultTimeoutResolver<T> {
     inner: T,
     timeout: Duration,
 }
 
 impl<T> DefaultTimeoutResolver<T> {
-    pub(crate) fn new(inner: T, timeout: Duration) -> Self {
+    /// Wraps `inner`, giving requests without a [`RequestTimeout`] one of `timeout`.
+    pub fn new(inner: T, timeout: Duration) -> Self {
         Self { inner, timeout }
     }
 
@@ -196,7 +127,7 @@ pub trait SyncHttpResolver: MaybeSend + MaybeSync {
 /// This implementation is particularly useful for compatibility with the return
 /// type of [`Context::resolver`].
 ///
-/// [`Context::resolver`]: crate::Context::resolver
+/// [`Context::resolver`]: https://docs.rs/c2pa/latest/c2pa/struct.Context.html#method.resolver
 impl<T: SyncHttpResolver + ?Sized> SyncHttpResolver for Arc<T> {
     fn http_resolve(
         &self,
@@ -232,7 +163,7 @@ pub trait AsyncHttpResolver: MaybeSend + MaybeSync {
 /// This implementation is particularly useful for compatibility with the return
 /// type of [`Context::resolver_async`].
 ///
-/// [`Context::resolver_async`]: crate::Context::resolver_async
+/// [`Context::resolver_async`]: https://docs.rs/c2pa/latest/c2pa/struct.Context.html#method.resolver_async
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 impl<T: AsyncHttpResolver + ?Sized> AsyncHttpResolver for Arc<T> {
@@ -372,34 +303,51 @@ impl AsyncHttpResolver for AsyncGenericResolver {
         let response = self.inner.http_resolve_async(request).await?;
 
         if let Some(limit) = self.max_response_body_size {
-            // Fast-fail if Content-Length exceeds the limit before reading body bytes.
-            let reported_len = response
-                .headers()
-                .get(http::header::CONTENT_LENGTH)
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.parse::<u64>().ok());
-            if let Some(len) = reported_len {
-                if len > limit {
-                    return Err(HttpResolverError::ResponseTooLarge);
-                }
-            }
-
-            // Read the body with a hard cap so servers that omit or lie about
-            // Content-Length are also bounded.
-            let (parts, body) = response.into_parts();
-            let mut buf = Vec::new();
-            body.take(limit + 1).read_to_end(&mut buf)?;
-            if buf.len() as u64 > limit {
-                return Err(HttpResolverError::ResponseTooLarge);
-            }
+            let (parts, body) = read_body(response, Some(limit))?.into_parts();
             return Ok(http::Response::from_parts(
                 parts,
-                Box::new(Cursor::new(buf)) as Box<dyn Read>,
+                Box::new(Cursor::new(body)) as Box<dyn Read>,
             ));
         }
 
         Ok(response)
     }
+}
+
+/// Reads a response body into memory, failing with [`HttpResolverError::ResponseTooLarge`] if it
+/// exceeds `limit`.
+pub(crate) fn read_body(
+    response: Response<Box<dyn Read>>,
+    limit: Option<u64>,
+) -> Result<Response<Vec<u8>>, HttpResolverError> {
+    let Some(limit) = limit else {
+        let (parts, mut body) = response.into_parts();
+        let mut buf = Vec::new();
+        body.read_to_end(&mut buf)?;
+        return Ok(Response::from_parts(parts, buf));
+    };
+
+    // Fast-fail if Content-Length exceeds the limit before reading body bytes.
+    let reported_len = response
+        .headers()
+        .get(http::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok());
+    if let Some(len) = reported_len {
+        if len > limit {
+            return Err(HttpResolverError::ResponseTooLarge);
+        }
+    }
+
+    // Read the body with a hard cap so servers that omit or lie about
+    // Content-Length are also bounded.
+    let (parts, body) = response.into_parts();
+    let mut buf = Vec::new();
+    body.take(limit.saturating_add(1)).read_to_end(&mut buf)?;
+    if buf.len() as u64 > limit {
+        return Err(HttpResolverError::ResponseTooLarge);
+    }
+    Ok(Response::from_parts(parts, buf))
 }
 
 /// Sanitizes a URI or other attacker-influenced string before it is embedded in an error message.
@@ -457,7 +405,7 @@ pub enum HttpResolverError {
     /// - SDK settings via [`Core::allowed_network_hosts`]
     ///
     /// [`RestrictedResolver`]: restricted::RestrictedResolver
-    /// [`Core::allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
+    /// [`Core::allowed_network_hosts`]: https://docs.rs/c2pa/latest/c2pa/settings/struct.Core.html#structfield.allowed_network_hosts
     #[error("remote URI \"{uri}\" is not permitted by the allowed list")]
     UriDisallowed { uri: String },
 
@@ -474,7 +422,7 @@ pub enum HttpResolverError {
     /// 3xx redirect and the caller has turned redirect following off. To follow redirects (to
     /// public hosts) again, set `core.allow_redirects = true`.
     ///
-    /// [`allow_redirects`]: crate::settings::Core::allow_redirects
+    /// [`allow_redirects`]: https://docs.rs/c2pa/latest/c2pa/settings/struct.Core.html#structfield.allow_redirects
     #[error(
         "HTTP redirect to \"{location}\" (from \"{uri}\") was not followed because \
          core.allow_redirects is false; set core.allow_redirects = true to follow redirects to \
@@ -496,7 +444,7 @@ pub enum HttpResolverError {
     /// internal host (rather than being redirected to one) is not affected by this and is still
     /// fetched.
     ///
-    /// [`allow_redirects`]: crate::settings::Core::allow_redirects
+    /// [`allow_redirects`]: https://docs.rs/c2pa/latest/c2pa/settings/struct.Core.html#structfield.allow_redirects
     #[error(
         "HTTP redirect to \"{location}\" (from \"{uri}\") was rejected: the target is a private or \
          internal address, which is not allowed as a redirect destination (SSRF protection)."
@@ -526,7 +474,7 @@ pub enum HttpResolverError {
     /// affected by this check and are still reachable by default; use [`allowed_network_hosts`]
     /// to restrict those as well.
     ///
-    /// [`allowed_network_hosts`]: crate::settings::Core::allowed_network_hosts
+    /// [`allowed_network_hosts`]: https://docs.rs/c2pa/latest/c2pa/settings/struct.Core.html#structfield.allowed_network_hosts
     /// [`RedirectTargetDisallowed`]: HttpResolverError::RedirectTargetDisallowed
     #[error(
         "remote URI \"{uri}\" was rejected: it directly names a link-local or cloud-metadata \
@@ -540,6 +488,11 @@ pub enum HttpResolverError {
     /// An error occurred from the underlying HTTP resolver.
     #[error("an error occurred from the underlying http resolver: {0}")]
     Other(Box<dyn std::error::Error + Send + Sync>),
+
+    /// The request was cancelled through a [`CancellationToken`] or [`RequestHandle::cancel`]
+    /// before it completed.
+    #[error("the http request was cancelled")]
+    Cancelled,
 }
 
 #[cfg(all(
@@ -548,17 +501,17 @@ pub enum HttpResolverError {
     not(feature = "http_ureq")
 ))]
 mod sync_resolver {
-    pub use crate::http::reqwest::sync_impl::{new, with_redirects, Impl};
+    pub use crate::reqwest::sync_impl::{new, with_redirects, Impl};
 }
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "http_ureq"))]
 mod sync_resolver {
-    pub use crate::http::ureq::sync_impl::{new, with_redirects, Impl};
+    pub use crate::ureq::sync_impl::{new, with_redirects, Impl};
 }
 
 #[cfg(all(target_os = "wasi", feature = "http_wasi"))]
 mod sync_resolver {
-    pub use crate::http::wasi::sync_impl::{new, with_redirects, Impl};
+    pub use crate::wasi::sync_impl::{new, with_redirects, Impl};
 }
 
 #[cfg(not(any(
@@ -593,12 +546,12 @@ mod sync_resolver {
 
 #[cfg(all(not(target_os = "wasi"), feature = "http_reqwest"))]
 mod async_resolver {
-    pub use crate::http::reqwest::async_impl::{new, with_redirects, Impl};
+    pub use crate::reqwest::async_impl::{new, with_redirects, Impl};
 }
 
 #[cfg(all(target_os = "wasi", feature = "http_wstd"))]
 mod async_resolver {
-    pub use crate::http::wasi::async_impl::{new, with_redirects, Impl};
+    pub use crate::wasi::async_impl::{new, with_redirects, Impl};
 }
 
 #[cfg(not(any(
@@ -641,7 +594,23 @@ pub mod tests {
 
     use super::*;
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn read_body_accepts_the_maximum_limit() {
+        let response = Response::new(Box::new(Cursor::new(b"body".to_vec())) as Box<dyn Read>);
+        assert_eq!(
+            read_body(response, Some(u64::MAX)).unwrap().into_body(),
+            b"body"
+        );
+    }
+
+    #[cfg(all(
+        not(target_arch = "wasm32"),
+        any(
+            feature = "http_ureq",
+            feature = "http_reqwest_blocking",
+            feature = "http_reqwest"
+        )
+    ))]
     pub(crate) fn slow_server(delay_body: bool) -> (String, std::thread::JoinHandle<()>) {
         use std::{
             io::{BufRead, BufReader, Write},
