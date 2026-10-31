@@ -1253,7 +1253,9 @@ impl Claim {
                                         format!("asset hash error, name: {name}, error: {e}"),
                                         "verify_internal"
                                     )
-                                    .validation_status(validation_status::ASSERTION_DATAHASH_MISMATCH)
+                                    .validation_status(
+                                        validation_status::ASSERTION_DATAHASH_MISMATCH,
+                                    )
                                     .failure(
                                         validation_log,
                                         Error::HashMismatch(format!("Asset hash failure: {e}")),

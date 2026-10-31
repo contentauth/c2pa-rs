@@ -436,6 +436,10 @@ pub(crate) fn verify_text_data_hash(dh: &DataHash, content: &[u8], alg: &str) ->
     let mut cursor = 0;
     for r in &exclusions {
         let start = r.start() as usize;
+        // a repeated or overlapping exclusion is malformed
+        if start < cursor {
+            return Ok(false);
+        }
         remaining.push_str(&text[cursor..start]);
         cursor = start + r.length() as usize;
     }
@@ -736,6 +740,14 @@ mod tests {
         let (dh, _) = signed_hash(&signed);
         let shifted = signed.replacen("Some", "Some more", 1);
         assert!(!verify_text_data_hash(&dh, shifted.as_bytes(), "sha256").unwrap());
+    }
+
+    #[test]
+    fn repeated_exclusion_is_malformed() {
+        let signed = embed("Some text.", b"store");
+        let (mut dh, w) = signed_hash(&signed);
+        dh.add_exclusion(HashRange::new(w.start as u64, w.length as u64));
+        assert!(!verify_text_data_hash(&dh, signed.as_bytes(), "sha256").unwrap());
     }
 
     #[test]

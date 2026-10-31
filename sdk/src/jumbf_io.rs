@@ -17,10 +17,10 @@ use std::{collections::HashMap, io::Cursor, sync::Arc};
 
 use lazy_static::lazy_static;
 
-#[cfg(feature = "pdf")]
-use crate::asset_handlers::pdf_io::PdfIO;
 #[cfg(feature = "unstable_html")]
 use crate::asset_handlers::html_io::HtmlIO;
+#[cfg(feature = "pdf")]
+use crate::asset_handlers::pdf_io::PdfIO;
 #[cfg(feature = "unstable_plain_text")]
 use crate::asset_handlers::plain_text_io::PlainTextIO;
 #[cfg(feature = "unstable_structured_text")]
