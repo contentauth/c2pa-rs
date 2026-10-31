@@ -1075,10 +1075,10 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use crate::live_video::verifiable_segment_info::parse_vsi;
     use crate::{
         live_video::{
-            verifiable_segment_info::extract_vsi_payload_from_segment, LiveVideoValidator,
+            verifiable_segment_info::{extract_vsi_payload_from_segment, parse_vsi},
+            LiveVideoValidator,
         },
         status_tracker::StatusTracker,
         utils::ephemeral_signer::EphemeralSigner,
@@ -1559,6 +1559,40 @@ mod tests {
             signer.resume_from_segment(segment).unwrap();
         }
         assert_eq!(signer.next_sequence_number(), 3);
+    }
+
+    #[test]
+    fn embedded_manifest_from_another_signer_cannot_add_keys() {
+        let context = rotation_context();
+        let mut signer = rotation_signer(&context);
+        let mut validator = LiveVideoValidator::new();
+        register_keys(&mut validator, &signer, &context, TEST_MANIFEST_ID);
+        let first = signer.sign_media_segment(&make_test_segment()).unwrap();
+        validator
+            .validate_verifiable_segment_info(&first, &mut StatusTracker::default())
+            .unwrap();
+
+        // Someone else, with no trust anchors configured, splices in their own manifest and key.
+        let other_context = rotation_context();
+        let mut other = LiveVideoVsiSigner::from_signing_key(
+            test_manifest_json_with_actions(),
+            other_context.signer().unwrap(),
+            make_test_signing_key(),
+            b"other".to_vec(),
+            signer.next_sequence_number(),
+            3600,
+        )
+        .unwrap();
+        other.next_sequence_number = signer.next_sequence_number();
+        let update = other
+            .sign_media_segment_with_manifest(&rotation_media_segment(), other_context.clone())
+            .unwrap();
+        let mut tracker = StatusTracker::default();
+        validator
+            .validate_verifiable_segment_info_with_context(&update, &context, &mut tracker)
+            .unwrap();
+        assert!(tracker.filter_errors().count() > 0);
+        assert_eq!(validator.session_keys.len(), 1);
     }
 
     #[test]

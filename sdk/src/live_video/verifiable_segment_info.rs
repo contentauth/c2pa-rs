@@ -106,14 +106,19 @@ pub(crate) fn parse_segment_info_map(cose_sign1_bytes: &[u8]) -> Result<SegmentI
 
 /// Returns `true` if `segment_data` has a top-level `emsg` box that the VSI `bmffHash`
 /// exclusion (§19.4.1: xpath `/emsg`, the VSI `scheme_id_uri` bytes at offset 12) matches
-/// but that isn't a VSI `emsg` box.
+/// but that isn't the one VSI `emsg` box that is verified: a lookalike, or any VSI `emsg`
+/// after the first.
 pub(super) fn has_vsi_excluded_non_vsi_emsg(segment_data: &[u8]) -> bool {
     let uri_at = VSI_URI_OFFSET_IN_EMSG as usize;
     let uri = VSI_SCHEME_ID_URI.as_bytes();
-    find_emsg_boxes(segment_data).iter().any(|emsg_box| {
-        emsg_box.get(uri_at..uri_at + uri.len()) == Some(uri)
-            && extract_vsi_from_emsg_box(emsg_box).is_none()
-    })
+    let excluded: Vec<Vec<u8>> = find_emsg_boxes(segment_data)
+        .into_iter()
+        .filter(|emsg_box| emsg_box.get(uri_at..uri_at + uri.len()) == Some(uri))
+        .collect();
+    excluded.len() > 1
+        || excluded
+            .iter()
+            .any(|emsg_box| extract_vsi_from_emsg_box(emsg_box).is_none())
 }
 
 fn find_emsg_boxes(segment_data: &[u8]) -> Vec<Vec<u8>> {
@@ -329,6 +334,12 @@ mod tests {
         ));
 
         let wrong_value = make_emsg_v0(VSI_SCHEME_ID_URI, "other", b"x");
-        assert!(has_vsi_excluded_non_vsi_emsg(&[vsi, wrong_value].concat()));
+        assert!(has_vsi_excluded_non_vsi_emsg(
+            &[vsi.clone(), wrong_value].concat()
+        ));
+
+        // only the first VSI emsg is verified, so a second one would go unchecked
+        let second_vsi = make_emsg_v0(VSI_SCHEME_ID_URI, VSI_VALUE_FSEG, b"unverified");
+        assert!(has_vsi_excluded_non_vsi_emsg(&[vsi, second_vsi].concat()));
     }
 }
