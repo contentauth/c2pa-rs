@@ -36,7 +36,7 @@ use crate::{
     jumbf,
     jumbf::labels::{
         assertion_label_from_uri, manifest_label_from_uri, manifest_label_to_parts,
-        to_absolute_uri, to_assertion_uri, to_manifest_uri, to_signature_uri,
+        to_absolute_uri, to_assertion_uri, to_manifest_uri, to_normalized_uri, to_signature_uri,
     },
     log_item,
     read_seek::ReadSeek,
@@ -44,7 +44,7 @@ use crate::{
     settings::Settings,
     status_tracker::StatusTracker,
     store::StoreValidationInfo,
-    utils::hash_utils::{vec_compare, HashRange},
+    utils::hash_utils::{hash_size_by_alg, vec_compare, HashRange},
     validation_status,
 };
 
@@ -1102,6 +1102,40 @@ impl Claim {
 
             // while this is a vec the spec only expects one at the moment and is checked above
             for hash_binding_assertion in hash_assertions {
+                // Assertion validation reports unsupported reference algorithms.
+                // An assertion whose hash could not be computed is not an
+                // authenticated hard binding, even if its asset hash would match.
+                if hash_size_by_alg(hash_binding_assertion.hash_alg()).is_err() {
+                    continue;
+                }
+
+                // Continuing after assertion validation errors must not promote
+                // untrusted assertion bytes into an asset binding. Require a
+                // reference in this claim whose hash authenticates this assertion.
+                let binding_uri =
+                    to_normalized_uri(&claim.assertion_uri(&hash_binding_assertion.label()));
+                let mut references = claim
+                    .assertions()
+                    .iter()
+                    .filter(|reference| {
+                        let uri = if reference.is_relative_url() {
+                            to_absolute_uri(claim.label(), &reference.url())
+                        } else {
+                            reference.url()
+                        };
+                        to_normalized_uri(&uri) == binding_uri
+                    })
+                    .peekable();
+                let authenticated = references.peek().is_some()
+                    && references.all(|reference| {
+                        vec_compare(hash_binding_assertion.hash(), &reference.hash())
+                    });
+                if !authenticated {
+                    // Assertion validation already reports mismatched or undeclared
+                    // assertions. Do not parse or use a rejected hard binding.
+                    continue;
+                }
+
                 if hash_binding_assertion
                     .label_raw()
                     .starts_with(DataHash::LABEL)
@@ -1831,6 +1865,19 @@ impl Claim {
             match claim.get_claim_assertion(&label, instance) {
                 // get the assertion if label and hash match
                 Some(ca) => {
+                    // A reference's algorithm overrides the claim default. An
+                    // unavailable digest cannot be classified as a hash mismatch.
+                    let alg = assertion.alg().unwrap_or_else(|| claim.alg().to_owned());
+                    if hash_size_by_alg(&alg).is_err() {
+                        log_item!(
+                            assertion_absolute_uri,
+                            format!("unsupported assertion hash algorithm: {alg}"),
+                            "verify_internal"
+                        )
+                        .validation_status(validation_status::ALGORITHM_UNSUPPORTED)
+                        .failure(validation_log, Error::UnknownAlgorithm)?;
+                        continue;
+                    }
                     // if not a redaction then we must check the hash
                     if !vec_compare(ca.hash(), &assertion.hash()) {
                         log_item!(
