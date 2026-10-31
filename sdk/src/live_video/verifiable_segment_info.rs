@@ -116,14 +116,21 @@ pub(crate) fn parse_segment_info_map(cose_sign1_bytes: &[u8]) -> Result<SegmentI
 
 /// Returns `true` if `segment_data` has a top-level `emsg` box that a VSI `bmffHash`
 /// exclusion (§19.4.1: xpath `/emsg`, `exclusion_value` at offset 12) matches but that
-/// isn't a VSI `emsg` box: for example a version 1 `emsg` whose fields spell out the value
-/// at that offset, or, with the legacy value, a longer `scheme_id_uri`.
+/// isn't the one VSI `emsg` box that is verified: for example a version 1 `emsg` whose
+/// fields spell out the value at that offset, with the legacy value a longer
+/// `scheme_id_uri`, or any VSI `emsg` after the first.
 pub(super) fn has_vsi_excluded_non_vsi_emsg(segment_data: &[u8], exclusion_value: &[u8]) -> bool {
     let uri_at = VSI_URI_OFFSET_IN_EMSG as usize;
-    find_emsg_boxes(segment_data).iter().any(|emsg_box| {
-        emsg_box.get(uri_at..uri_at + exclusion_value.len()) == Some(exclusion_value)
-            && extract_vsi_from_emsg_box(emsg_box).is_none()
-    })
+    let excluded: Vec<Vec<u8>> = find_emsg_boxes(segment_data)
+        .into_iter()
+        .filter(|emsg_box| {
+            emsg_box.get(uri_at..uri_at + exclusion_value.len()) == Some(exclusion_value)
+        })
+        .collect();
+    excluded.len() > 1
+        || excluded
+            .iter()
+            .any(|emsg_box| extract_vsi_from_emsg_box(emsg_box).is_none())
 }
 
 fn find_emsg_boxes(segment_data: &[u8]) -> Vec<Vec<u8>> {
@@ -332,9 +339,16 @@ mod tests {
         );
         let wrong_value = make_emsg_v0(VSI_SCHEME_ID_URI, "other", b"x");
 
+        // only the first VSI emsg is verified, so a second one would go unchecked
+        let second_vsi = make_emsg_v0(VSI_SCHEME_ID_URI, VSI_VALUE_FSEG, b"unverified");
+
         for value in [VSI_EXCLUSION_VALUE, VSI_LEGACY_EXCLUSION_VALUE] {
             assert!(!has_vsi_excluded_non_vsi_emsg(
                 &[vsi.clone(), scte35.clone()].concat(),
+                value
+            ));
+            assert!(has_vsi_excluded_non_vsi_emsg(
+                &[vsi.clone(), second_vsi.clone()].concat(),
                 value
             ));
             // The exact scheme with another `value` is excluded by either form, so it has to

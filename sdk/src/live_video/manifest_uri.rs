@@ -137,8 +137,7 @@ impl LiveVideoValidator {
                 tracker,
             );
         }
-        let trust_configured = matches!(context.settings().get_value::<Option<Vec<crate::settings::TrustAnchor>>>("trust.anchors"),
-            Ok(Some(anchors)) if !anchors.is_empty());
+        let trust_configured = super::trust_configured(context.settings());
         // A referenced manifest can bind the current segment or the stream's initialization
         // segment. Both paths run complete Reader validation, including the hard binding.
         let reader = [Some(segment_data), self.init_segment_data.as_deref()]
@@ -173,6 +172,7 @@ impl LiveVideoValidator {
         // Stage key discovery so failed binding/sequence checks cannot replace cached keys.
         let mut candidate = Self::new();
         candidate.session_keys = self.session_keys.clone();
+        candidate.session_key_signer = self.session_key_signer.clone();
         let before = tracker.filter_errors().count();
         // Retrieving an existing remote manifest is not a new embedded announcement.
         // Its key may have started earlier; normal VSI validation enforces sequence >= min.
@@ -193,6 +193,7 @@ impl LiveVideoValidator {
             );
         }
         self.session_keys = candidate.session_keys;
+        self.session_key_signer = candidate.session_key_signer;
         Ok(())
     }
 }
